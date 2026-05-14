@@ -4,7 +4,7 @@ import api from '../lib/api';
 import { alertIncomingNotification, cancelNotificationSpeech } from '../lib/notificationAlert';
 import { setNotificationPrefsCache, getNotificationPrefsCache, isNotificationTypeEnabled } from '../lib/notificationPrefsCache';
 import { isExpiryDeadlineNotificationType } from '../lib/notificationOperationalFilter';
-import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw, Settings, Users, Factory, Calendar, CalendarClock, CheckCircle2 } from 'lucide-react';
+import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw, Settings, Users, Factory, Calendar, CalendarClock, CheckCircle2, Sparkles } from 'lucide-react';
 import { formatDateTime, getInitials, avatarColor } from '../lib/utils';
 import NotificationToast from './NotificationToast';
 import NotificationSettings from './NotificationSettings';
@@ -65,6 +65,7 @@ const ICON_MAP = {
   cskh_followup_reminder: CalendarClock,
   event_created: Calendar,
   event_completed: CheckCircle2,
+  ai_crm_deadline_digest: Sparkles,
 };
 
 /** Khớp backend `dashboard.js` — chỉ tin nhắn CRM/Messenger, không trộn deadline/task */
@@ -111,6 +112,7 @@ const COLOR_MAP = {
   cskh_followup_reminder: 'bg-emerald-100 text-emerald-700',
   event_created: 'bg-violet-100 text-violet-600',
   event_completed: 'bg-emerald-100 text-emerald-600',
+  ai_crm_deadline_digest: 'bg-fuchsia-100 text-fuchsia-700',
 };
 
 const MODULE_FILTER_OPTIONS = [
@@ -422,7 +424,7 @@ export default function NotificationCenter({ socket }) {
               navigate(`/crm/events`);
             } else if (notif.entity_type === 'release_note') {
               navigate(`/updates`);
-            } else if (notif.entity_type === 'cskh_followup' && notif.metadata?.nav_url) {
+            } else if ((notif.entity_type === 'cskh_followup' || notif.type === 'ai_crm_deadline_digest') && notif.metadata?.nav_url) {
               navigate(notif.metadata.nav_url);
             }
             setOpen(false);
@@ -654,7 +656,7 @@ export default function NotificationCenter({ socket }) {
                         navigate(`/crm/events`);
                       } else if (n.entity_type === 'release_note') {
                         navigate(`/updates`);
-                      } else if (n.entity_type === 'cskh_followup' && n.metadata?.nav_url) {
+                      } else if ((n.entity_type === 'cskh_followup' || n.type === 'ai_crm_deadline_digest') && n.metadata?.nav_url) {
                         navigate(n.metadata.nav_url);
                       }
                       setOpen(false);

@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../lib/auth';
 import { messengerThreadKey, messengerUnreadKey, messengerUnreadGroupKey } from '../lib/messengerHubStorage';
+import api from '../lib/api';
 
 const MessengerDockContext = createContext(null);
 
@@ -107,6 +108,38 @@ export function MessengerDockProvider({ children }) {
     }
   }, [unreadByGroupId, uid]);
 
+  // Hydrate unread group counts từ server khi đăng nhập / mở app — đảm bảo badge
+  // hiển thị tin nhắn mới đã đến lúc user offline (không chỉ dựa socket realtime).
+  useEffect(() => {
+    if (!uid) return;
+    let cancelled = false;
+    const hydrateFromServer = async () => {
+      try {
+        const { data } = await api.get('/messenger/groups');
+        if (cancelled || !Array.isArray(data)) return;
+        setUnreadByGroupId((prev) => {
+          const next = { ...prev };
+          for (const g of data) {
+            const n = Number(g?.unread_count) || 0;
+            if (g?.id && n > 0) next[g.id] = n;
+          }
+          return next;
+        });
+      } catch {
+        /* ignore */
+      }
+    };
+    void hydrateFromServer();
+    const tick = () => { if (!document.hidden) void hydrateFromServer(); };
+    const interval = setInterval(tick, 120_000);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', tick);
+    };
+  }, [uid]);
+
   const dismissChatToast = useCallback((id) => {
     setChatToasts((prev) => prev.filter((t) => t.id !== id));
     const tm = toastTimersRef.current.get(id);
@@ -142,6 +175,8 @@ export function MessengerDockProvider({ children }) {
   const markGroupRead = useCallback((groupId) => {
     if (!groupId) return;
     setUnreadByGroupId((prev) => ({ ...prev, [groupId]: 0 }));
+    // Đồng bộ read receipt lên server để lần hydrate sau không khôi phục badge.
+    api.patch(`/messenger/groups/${groupId}/read`).catch(() => { /* ignore */ });
   }, []);
 
   const registerLeadChatPresence = useCallback((leadId) => {

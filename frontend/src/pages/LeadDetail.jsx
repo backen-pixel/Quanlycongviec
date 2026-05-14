@@ -17,6 +17,7 @@ import FacebookChatTab from '../components/FacebookChatTab';
 import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
 import Modal from '../components/Modal';
 import DealCrossScoresPanel from '../components/DealCrossScoresPanel';
+import LeadKpiLedgerPanel from '../components/LeadKpiLedgerPanel';
 import { useCrmNotesFab } from '../context/CrmNotesFabContext';
 import PipelineStepper from '../components/PipelineStepper';
 import DealStageEventModal from '../components/DealStageEventModal';
@@ -191,6 +192,7 @@ export default function LeadDetail() {
     if (!t) return;
     const allowed = new Set([
       'tasks',
+      'kpi_ledger',
       'documents',
       'activities',
       'notes',
@@ -1076,6 +1078,17 @@ export default function LeadDetail() {
                 ✅ Công việc
               </button>
               <button
+                onClick={() => setActiveTab('kpi_ledger')}
+                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                  activeTab === 'kpi_ledger'
+                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+                title="Điểm cộng/trừ theo sổ cái CRM (task, stage, won/lost, SLA) trong tháng"
+              >
+                📊 Điểm KPI
+              </button>
+              <button
                 onClick={() => setActiveTab('documents')}
                 className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'documents'
@@ -1184,6 +1197,8 @@ export default function LeadDetail() {
                   refreshKey={crmTasksRefreshKey}
                   sxTemplateCompanyId={lead?.sx_template_company_id || null}
                 />
+              ) : activeTab === 'kpi_ledger' ? (
+                <LeadKpiLedgerPanel leadId={id} />
               ) : activeTab === 'documents' ? (
                 <>
                   <div className="flex items-center justify-between mb-4">

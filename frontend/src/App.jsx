@@ -152,6 +152,7 @@ import PasswordSettingsPage from './pages/PasswordSettingsPage';
 import { CrmNotesFabProvider } from './context/CrmNotesFabContext';
 import { MessengerDockProvider } from './context/MessengerDockContext';
 import MessengerDock from './components/MessengerDock';
+import AIAssistantChat from './components/AIAssistantChat';
 import { RequireCrmElevated, RequireExecutive } from './components/RequireRole';
 import api from './lib/api';
 import { isCrmOnlyModuleAccess } from './lib/moduleAccess';
@@ -241,6 +242,7 @@ function ProtectedLayout() {
             </main>
           </div>
           {!crmOnly && <PinnedProjectsWidget />}
+          <AIAssistantChat />
         </div>
     </CrmNotesFabProvider>
   );

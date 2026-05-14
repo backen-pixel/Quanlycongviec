@@ -35,16 +35,23 @@ function isCrmRegionAdminUser(user) {
   return normalizeCrmUserRole(user?.role) === 'region_admin' && user?.company_id != null && String(user.company_id).trim() !== '';
 }
 
-/** Giống userSeesAllCrmLeads(role) nhưng gồm admin khu vực (phạm vi region filter riêng trên query). */
-function userSeesAllCrmLeadsForScope(user) {
-  if (userSeesAllCrmLeads(user?.role)) return true;
-  return isCrmRegionAdminUser(user);
+/** Sales Admin: trưởng/phụ trách phòng kinh doanh — xem mọi lead/deal trong phạm vi công ty. */
+function isCrmSalesAdminUser(user) {
+  return normalizeCrmUserRole(user?.role) === 'sales_admin' && user?.company_id != null && String(user.company_id).trim() !== '';
 }
 
-/** Giống userSeesAllCrmDeals(role) nhưng gồm admin khu vực. */
+/** Giống userSeesAllCrmLeads(role) nhưng gồm admin khu vực + sales_admin (phạm vi công ty). */
+function userSeesAllCrmLeadsForScope(user) {
+  if (userSeesAllCrmLeads(user?.role)) return true;
+  if (isCrmRegionAdminUser(user)) return true;
+  return isCrmSalesAdminUser(user);
+}
+
+/** Giống userSeesAllCrmDeals(role) nhưng gồm admin khu vực + sales_admin. */
 function userSeesAllCrmDealsForScope(user) {
   if (userSeesAllCrmDeals(user?.role)) return true;
-  return isCrmRegionAdminUser(user);
+  if (isCrmRegionAdminUser(user)) return true;
+  return isCrmSalesAdminUser(user);
 }
 
 function userSeesAllCrmDeals(role) {
@@ -130,6 +137,7 @@ module.exports = {
   isCrmSystemAdminUser,
   isCrmCompanyAdminUser,
   isCrmRegionAdminUser,
+  isCrmSalesAdminUser,
   userSeesAllCrmLeadsForScope,
   userSeesAllCrmDealsForScope,
 };

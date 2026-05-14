@@ -79,6 +79,8 @@ export default function CrmStaffLeadDealReport() {
   const [dateFrom, setDateFrom] = useState(() => defaultMonthRange().from);
   const [dateTo, setDateTo] = useState(() => defaultMonthRange().to);
   const [filter, setFilter] = useState({ companyId: '', departmentId: '', q: '' });
+  /** 'all' | 'lead' | 'deal' — phân loại xem báo cáo */
+  const [typeView, setTypeView] = useState('all');
   const [rows, setRows] = useState([]);
   const [meta, setMeta] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -96,11 +98,12 @@ export default function CrmStaffLeadDealReport() {
     () => ({
       date_from: dateFrom,
       date_to: dateTo,
+      ...(typeView !== 'all' ? { type: typeView } : {}),
       ...(filter.companyId ? { company_id: filter.companyId } : {}),
       ...(filter.departmentId ? { department_id: filter.departmentId } : {}),
       ...(filter.q?.trim() ? { q: filter.q.trim() } : {}),
     }),
-    [dateFrom, dateTo, filter.companyId, filter.departmentId, filter.q],
+    [dateFrom, dateTo, typeView, filter.companyId, filter.departmentId, filter.q],
   );
 
   const downloadMainPdf = async () => {
@@ -193,6 +196,12 @@ export default function CrmStaffLeadDealReport() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Tự động reload khi đổi phân loại (lead/deal/all) cho UX phản ứng nhanh
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [typeView]);
 
   const totals = useMemo(() => {
     const t = {
@@ -327,6 +336,7 @@ export default function CrmStaffLeadDealReport() {
         date_from: reportQueryParams.date_from,
         date_to: reportQueryParams.date_to,
         ...(reportQueryParams.company_id ? { company_id: reportQueryParams.company_id } : {}),
+        ...(typeView !== 'all' ? { type: typeView } : {}),
       };
       const { data } = await api.get(`/crm/reports/staff-lead-deal/${row.user_id}/pipelines`, { params });
       setDetailData(data);
@@ -488,6 +498,36 @@ export default function CrmStaffLeadDealReport() {
             </button>
           </div>
         </div>
+        {/* Phân loại Lead riêng / Deal riêng / Cả hai */}
+        <div className="flex flex-col gap-1.5">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">Phân loại</span>
+          <div className="inline-flex rounded-xl border border-indigo-200 bg-white p-1 shadow-sm w-fit">
+            {[
+              { id: 'all', label: 'Cả hai', icon: Layers, color: 'from-indigo-500 to-blue-500' },
+              { id: 'lead', label: 'Chỉ Lead', icon: TrendingUp, color: 'from-violet-500 to-indigo-500' },
+              { id: 'deal', label: 'Chỉ Deal', icon: Wallet, color: 'from-cyan-500 to-teal-500' },
+            ].map((opt) => {
+              const Icon = opt.icon;
+              const active = typeView === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setTypeView(opt.id)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                    active
+                      ? `text-white bg-gradient-to-r ${opt.color} shadow`
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                  aria-pressed={active}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <KpiUserFilter value={filter} onChange={setFilter} />
         <button
           type="button"
@@ -517,6 +557,13 @@ export default function CrmStaffLeadDealReport() {
             <CalendarRange className="w-3.5 h-3.5" />
             Kỳ: {meta.date_from} → {meta.date_to}
           </span>
+          <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 font-medium border ${
+            typeView === 'lead' ? 'bg-violet-50 border-violet-200 text-violet-800'
+            : typeView === 'deal' ? 'bg-cyan-50 border-cyan-200 text-cyan-800'
+            : 'bg-slate-100 border-slate-200 text-slate-700'
+          }`}>
+            {typeView === 'lead' ? 'Phân loại: Chỉ Lead' : typeView === 'deal' ? 'Phân loại: Chỉ Deal' : 'Phân loại: Cả Lead & Deal'}
+          </span>
           {meta.basis && (
             <span className="rounded-full bg-slate-100 px-3 py-1 border border-slate-200">Cơ sở: {meta.basis}</span>
           )}
@@ -524,35 +571,50 @@ export default function CrmStaffLeadDealReport() {
       )}
 
       {!loading && rows.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div className="rounded-xl border border-indigo-100 bg-gradient-to-br from-indigo-50 to-white p-4 shadow-sm">
-            <div className="flex items-center gap-2 text-indigo-700 text-xs font-semibold uppercase tracking-wide">
-              <TrendingUp className="w-4 h-4" /> Lead
+        <div className={`grid grid-cols-2 ${typeView === 'lead' ? 'md:grid-cols-2' : 'md:grid-cols-4'} gap-3`}>
+          {typeView !== 'deal' && (
+            <div className="rounded-xl border border-indigo-100 bg-gradient-to-br from-indigo-50 to-white p-4 shadow-sm">
+              <div className="flex items-center gap-2 text-indigo-700 text-xs font-semibold uppercase tracking-wide">
+                <TrendingUp className="w-4 h-4" /> Lead
+              </div>
+              <p className="mt-1 text-2xl font-bold text-slate-900">{totals.lead_count}</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">{formatVND(totals.lead_pipeline_value)}</p>
             </div>
-            <p className="mt-1 text-2xl font-bold text-slate-900">{totals.lead_count}</p>
-            <p className="text-[11px] text-slate-500 mt-0.5">{formatVND(totals.lead_pipeline_value)}</p>
-          </div>
-          <div className="rounded-xl border border-cyan-100 bg-gradient-to-br from-cyan-50 to-white p-4 shadow-sm">
-            <div className="flex items-center gap-2 text-cyan-800 text-xs font-semibold uppercase tracking-wide">
-              <Wallet className="w-4 h-4" /> Deal
+          )}
+          {typeView !== 'lead' && (
+            <>
+              <div className="rounded-xl border border-cyan-100 bg-gradient-to-br from-cyan-50 to-white p-4 shadow-sm">
+                <div className="flex items-center gap-2 text-cyan-800 text-xs font-semibold uppercase tracking-wide">
+                  <Wallet className="w-4 h-4" /> Deal
+                </div>
+                <p className="mt-1 text-2xl font-bold text-slate-900">{totals.deal_count}</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">{formatVND(totals.deal_pipeline_value)}</p>
+              </div>
+              <div className="rounded-xl border border-emerald-100 bg-gradient-to-br from-emerald-50 to-white p-4 shadow-sm">
+                <div className="flex items-center gap-2 text-emerald-800 text-xs font-semibold uppercase tracking-wide">
+                  <CheckCircle2 className="w-4 h-4" /> Đã ký HĐ
+                </div>
+                <p className="mt-1 text-2xl font-bold text-emerald-800">{totals.won_deal_count}</p>
+                <p className="text-[11px] text-emerald-700/80 mt-0.5">{formatVND(totals.won_value)}</p>
+              </div>
+              <div className="rounded-xl border border-rose-100 bg-gradient-to-br from-rose-50 to-white p-4 shadow-sm">
+                <div className="flex items-center gap-2 text-rose-800 text-xs font-semibold uppercase tracking-wide">
+                  <AlertCircle className="w-4 h-4" /> Thua
+                </div>
+                <p className="mt-1 text-2xl font-bold text-rose-900">{totals.lost_deal_count}</p>
+                <p className="text-[11px] text-rose-700/80 mt-0.5">{formatVND(totals.lost_value)}</p>
+              </div>
+            </>
+          )}
+          {typeView === 'lead' && (
+            <div className="rounded-xl border border-violet-100 bg-gradient-to-br from-violet-50 to-white p-4 shadow-sm">
+              <div className="flex items-center gap-2 text-violet-800 text-xs font-semibold uppercase tracking-wide">
+                <Activity className="w-4 h-4" /> NV có lead
+              </div>
+              <p className="mt-1 text-2xl font-bold text-slate-900">{rows.filter(r => (r.lead_count || 0) > 0).length}</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">{rows.length} NV trong phạm vi</p>
             </div>
-            <p className="mt-1 text-2xl font-bold text-slate-900">{totals.deal_count}</p>
-            <p className="text-[11px] text-slate-500 mt-0.5">{formatVND(totals.deal_pipeline_value)}</p>
-          </div>
-          <div className="rounded-xl border border-emerald-100 bg-gradient-to-br from-emerald-50 to-white p-4 shadow-sm">
-            <div className="flex items-center gap-2 text-emerald-800 text-xs font-semibold uppercase tracking-wide">
-              <CheckCircle2 className="w-4 h-4" /> Chốt
-            </div>
-            <p className="mt-1 text-2xl font-bold text-emerald-800">{totals.won_deal_count}</p>
-            <p className="text-[11px] text-emerald-700/80 mt-0.5">{formatVND(totals.won_value)}</p>
-          </div>
-          <div className="rounded-xl border border-rose-100 bg-gradient-to-br from-rose-50 to-white p-4 shadow-sm">
-            <div className="flex items-center gap-2 text-rose-800 text-xs font-semibold uppercase tracking-wide">
-              <AlertCircle className="w-4 h-4" /> Thua
-            </div>
-            <p className="mt-1 text-2xl font-bold text-rose-900">{totals.lost_deal_count}</p>
-            <p className="text-[11px] text-rose-700/80 mt-0.5">{formatVND(totals.lost_value)}</p>
-          </div>
+          )}
         </div>
       )}
 
@@ -564,26 +626,26 @@ export default function CrmStaffLeadDealReport() {
         <div className="text-center py-16 text-gray-400">Đang tải báo cáo…</div>
       ) : (
         <div className="rounded-2xl border border-indigo-100/80 bg-white overflow-x-auto shadow-lg shadow-indigo-500/10 ring-1 ring-indigo-500/5">
-          <table className="w-full text-sm min-w-[1100px]">
+          <table className={`w-full text-sm ${typeView === 'all' ? 'min-w-[1100px]' : 'min-w-[760px]'}`}>
             <thead>
               <tr className="bg-gradient-to-r from-indigo-600 via-blue-600 to-cyan-600 text-left text-[11px] uppercase tracking-wider text-white shadow-inner">
                 <th className="px-3 py-3.5 font-bold sticky left-0 z-10 border-r border-white/20 bg-gradient-to-r from-indigo-700 to-indigo-600">Nhân viên</th>
                 <th className="px-3 py-3.5 font-bold">Phòng ban</th>
-                <th className="px-3 py-3.5 font-bold text-right">Số Lead</th>
-                <th className="px-3 py-3.5 font-bold text-right">Giá trị Lead</th>
-                <th className="px-3 py-3.5 font-bold text-right">Số Deal</th>
-                <th className="px-3 py-3.5 font-bold text-right">Giá trị Deal</th>
-                <th className="px-3 py-3.5 font-bold text-right">Chốt</th>
-                <th className="px-3 py-3.5 font-bold text-right">GT chốt</th>
-                <th className="px-3 py-3.5 font-bold text-right">Thua</th>
-                <th className="px-3 py-3.5 font-bold text-right">GT thua</th>
+                {typeView !== 'deal' && <th className="px-3 py-3.5 font-bold text-right">Số Lead</th>}
+                {typeView !== 'deal' && <th className="px-3 py-3.5 font-bold text-right">Giá trị Lead</th>}
+                {typeView !== 'lead' && <th className="px-3 py-3.5 font-bold text-right">Số Deal</th>}
+                {typeView !== 'lead' && <th className="px-3 py-3.5 font-bold text-right">Giá trị Deal</th>}
+                {typeView !== 'lead' && <th className="px-3 py-3.5 font-bold text-right">Đã ký HĐ</th>}
+                {typeView !== 'lead' && <th className="px-3 py-3.5 font-bold text-right">GT ký HĐ</th>}
+                {typeView !== 'lead' && <th className="px-3 py-3.5 font-bold text-right">Thua</th>}
+                {typeView !== 'lead' && <th className="px-3 py-3.5 font-bold text-right">GT thua</th>}
                 <th className="px-3 py-3.5 font-bold w-10 text-center" aria-label="Chi tiết" />
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-3 py-10 text-center text-gray-400">
+                  <td colSpan={typeView === 'all' ? 11 : (typeView === 'lead' ? 5 : 9)} className="px-3 py-10 text-center text-gray-400">
                     Không có dữ liệu trong phạm vi lọc.
                   </td>
                 </tr>
@@ -612,14 +674,14 @@ export default function CrmStaffLeadDealReport() {
                       </div>
                     </td>
                     <td className="px-3 py-2.5 text-gray-700">{r.department_name || '—'}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums">{r.lead_count ?? 0}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-xs">{formatVND(r.lead_pipeline_value || 0)}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums">{r.deal_count ?? 0}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-xs">{formatVND(r.deal_pipeline_value || 0)}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-emerald-700 font-medium">{r.won_deal_count ?? 0}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-xs text-emerald-800">{formatVND(r.won_value || 0)}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-red-700">{r.lost_deal_count ?? 0}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-xs text-red-800">{formatVND(r.lost_value || 0)}</td>
+                    {typeView !== 'deal' && <td className="px-3 py-2.5 text-right tabular-nums">{r.lead_count ?? 0}</td>}
+                    {typeView !== 'deal' && <td className="px-3 py-2.5 text-right tabular-nums text-xs">{formatVND(r.lead_pipeline_value || 0)}</td>}
+                    {typeView !== 'lead' && <td className="px-3 py-2.5 text-right tabular-nums">{r.deal_count ?? 0}</td>}
+                    {typeView !== 'lead' && <td className="px-3 py-2.5 text-right tabular-nums text-xs">{formatVND(r.deal_pipeline_value || 0)}</td>}
+                    {typeView !== 'lead' && <td className="px-3 py-2.5 text-right tabular-nums text-emerald-700 font-medium">{r.won_deal_count ?? 0}</td>}
+                    {typeView !== 'lead' && <td className="px-3 py-2.5 text-right tabular-nums text-xs text-emerald-800">{formatVND(r.won_value || 0)}</td>}
+                    {typeView !== 'lead' && <td className="px-3 py-2.5 text-right tabular-nums text-red-700">{r.lost_deal_count ?? 0}</td>}
+                    {typeView !== 'lead' && <td className="px-3 py-2.5 text-right tabular-nums text-xs text-red-800">{formatVND(r.lost_value || 0)}</td>}
                     <td className="px-3 py-2.5 text-center text-xs text-gray-400">{r.user_id ? 'Mở' : '—'}</td>
                   </tr>
                 ))
@@ -629,14 +691,14 @@ export default function CrmStaffLeadDealReport() {
                   <td className="px-3 py-3 sticky left-0 bg-indigo-100/90 border-r border-indigo-200" colSpan={2}>
                     Tổng cộng
                   </td>
-                  <td className="px-3 py-3 text-right tabular-nums">{totals.lead_count}</td>
-                  <td className="px-3 py-3 text-right tabular-nums text-xs">{formatVND(totals.lead_pipeline_value)}</td>
-                  <td className="px-3 py-3 text-right tabular-nums">{totals.deal_count}</td>
-                  <td className="px-3 py-3 text-right tabular-nums text-xs">{formatVND(totals.deal_pipeline_value)}</td>
-                  <td className="px-3 py-3 text-right tabular-nums text-emerald-800">{totals.won_deal_count}</td>
-                  <td className="px-3 py-3 text-right tabular-nums text-xs text-emerald-900">{formatVND(totals.won_value)}</td>
-                  <td className="px-3 py-3 text-right tabular-nums text-red-800">{totals.lost_deal_count}</td>
-                  <td className="px-3 py-3 text-right tabular-nums text-xs text-red-900">{formatVND(totals.lost_value)}</td>
+                  {typeView !== 'deal' && <td className="px-3 py-3 text-right tabular-nums">{totals.lead_count}</td>}
+                  {typeView !== 'deal' && <td className="px-3 py-3 text-right tabular-nums text-xs">{formatVND(totals.lead_pipeline_value)}</td>}
+                  {typeView !== 'lead' && <td className="px-3 py-3 text-right tabular-nums">{totals.deal_count}</td>}
+                  {typeView !== 'lead' && <td className="px-3 py-3 text-right tabular-nums text-xs">{formatVND(totals.deal_pipeline_value)}</td>}
+                  {typeView !== 'lead' && <td className="px-3 py-3 text-right tabular-nums text-emerald-800">{totals.won_deal_count}</td>}
+                  {typeView !== 'lead' && <td className="px-3 py-3 text-right tabular-nums text-xs text-emerald-900">{formatVND(totals.won_value)}</td>}
+                  {typeView !== 'lead' && <td className="px-3 py-3 text-right tabular-nums text-red-800">{totals.lost_deal_count}</td>}
+                  {typeView !== 'lead' && <td className="px-3 py-3 text-right tabular-nums text-xs text-red-900">{formatVND(totals.lost_value)}</td>}
                   <td />
                 </tr>
               )}
@@ -737,12 +799,14 @@ export default function CrmStaffLeadDealReport() {
                     )}
                   </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-3">
+                  {/* Hàng 1: tổng quan (KHÔNG trùng lặp) */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                     <div className="rounded-xl border border-blue-100 bg-gradient-to-br from-blue-50 to-white p-3 shadow-sm">
                       <p className="text-[10px] font-bold uppercase tracking-wide text-blue-800">Tổng giá trị</p>
                       <p className="mt-1 text-lg font-bold text-slate-900 leading-tight">
                         {formatVND(detailSummary?.total_pipeline_value ?? detailTotals.total_value)}
                       </p>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Lead + Deal</p>
                     </div>
                     <div className="rounded-xl border border-indigo-100 bg-gradient-to-br from-indigo-50 to-white p-3 shadow-sm">
                       <p className="text-[10px] font-bold uppercase tracking-wide text-indigo-800">Lead</p>
@@ -754,44 +818,68 @@ export default function CrmStaffLeadDealReport() {
                       <p className="mt-1 text-xl font-bold text-slate-900">{detailSummary?.deal_count ?? detailTotals.deal_count}</p>
                       <p className="text-[11px] text-slate-500 tabular-nums">{formatVND(detailSummary?.deal_value ?? detailTotals.deal_value)}</p>
                     </div>
-                    <div className="rounded-xl border border-green-200 bg-gradient-to-br from-green-50 to-white p-3 shadow-sm ring-1 ring-green-200/60">
-                      <p className="text-[10px] font-bold uppercase tracking-wide text-green-900">Hoàn thành</p>
-                      <p className="text-[9px] text-green-800/90 leading-tight mt-0.5">Xong HĐ, thu tiền (slug completed)</p>
-                      <p className="mt-1 text-lg font-bold text-green-800">
-                        {detailSummary?.project_completed_count ?? 0}
-                      </p>
-                      <p className="text-[11px] text-green-800/90 tabular-nums font-semibold">
-                        {formatVND(detailSummary?.project_completed_value ?? detailSummary?.completed_value ?? 0)}
-                      </p>
-                    </div>
                     <div className="rounded-xl border border-sky-200 bg-gradient-to-br from-sky-50 to-white p-3 shadow-sm">
-                      <p className="text-[10px] font-bold uppercase tracking-wide text-sky-900">Đã ký HĐ</p>
-                      <p className="text-[9px] text-sky-800/80 leading-tight mt-0.5">Cờ is_won (thắng sale)</p>
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-sky-900">Đã ký HĐ (cross-cut)</p>
+                      <p className="text-[9px] text-sky-800/80 leading-tight mt-0.5">Cờ is_won — đã nằm trong Hoàn thành / Đang triển khai bên dưới</p>
                       <p className="mt-1 text-xl font-bold text-sky-900">{detailSummary?.won_deal_count ?? detailTotals.won_deal_count}</p>
                       <p className="text-[11px] text-sky-800/90 tabular-nums">{formatVND(detailSummary?.won_value ?? detailTotals.won_value)}</p>
                     </div>
-                    <div className="rounded-xl border border-cyan-300 bg-gradient-to-br from-cyan-50 to-white p-3 shadow-sm">
-                      <p className="text-[10px] font-bold uppercase tracking-wide text-cyan-950">Đang triển khai</p>
-                      <p className="text-[9px] text-cyan-900/85 leading-tight mt-0.5">Từ ký HĐ → trước hoàn thành (SX, lắp…)</p>
-                      <p className="mt-1 text-lg font-bold text-cyan-950">{detailSummary?.implementation_count ?? 0}</p>
-                      <p className="text-[11px] text-cyan-900 tabular-nums font-semibold">
-                        {formatVND(detailSummary?.implementation_value ?? 0)}
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-amber-200 bg-gradient-to-br from-amber-50 to-white p-3 shadow-sm">
-                      <p className="text-[10px] font-bold uppercase tracking-wide text-amber-950">Chưa chốt</p>
-                      <p className="text-[9px] text-amber-900/85 leading-tight mt-0.5">Báo giá, thương lượng, cọc…</p>
-                      <p className="mt-1 text-lg font-bold text-amber-950">{detailSummary?.pre_contract_count ?? 0}</p>
-                      <p className="text-[11px] text-amber-900/90 tabular-nums font-semibold">
-                        {formatVND(detailSummary?.pre_contract_value ?? 0)}
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-rose-100 bg-gradient-to-br from-rose-50 to-white p-3 shadow-sm">
-                      <p className="text-[10px] font-bold uppercase tracking-wide text-rose-900">Thua</p>
-                      <p className="mt-1 text-xl font-bold text-rose-900">{detailSummary?.lost_deal_count ?? detailTotals.lost_deal_count}</p>
-                      <p className="text-[11px] text-rose-700/90 tabular-nums">{formatVND(detailSummary?.lost_value ?? detailTotals.lost_value)}</p>
-                    </div>
                   </div>
+
+                  {/* Hàng 2: PHÂN BỔ deal (4 nhóm exclusive — Σ = Deal count) */}
+                  {(() => {
+                    const exComp = detailSummary?.project_completed_count ?? 0;
+                    const exImpl = detailSummary?.implementation_count ?? 0;
+                    const exPre = detailSummary?.pre_contract_count ?? 0;
+                    const exLost = detailSummary?.lost_deal_count ?? detailTotals.lost_deal_count ?? 0;
+                    const sum4 = exComp + exImpl + exPre + exLost;
+                    const dealTot = detailSummary?.deal_count ?? detailTotals.deal_count ?? 0;
+                    const sumOk = sum4 === dealTot;
+                    return (
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-3">
+                        <div className="flex items-center justify-between mb-2 px-1 flex-wrap gap-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                            Phân bổ deal theo giai đoạn (4 nhóm — không chồng lấp)
+                          </p>
+                          <span className={`text-[11px] font-medium tabular-nums px-2 py-0.5 rounded-full border ${sumOk ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
+                            Σ 4 nhóm = {sum4} {sumOk ? '✓' : `(≠ ${dealTot} deal)`}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          <div className="rounded-xl border border-green-200 bg-gradient-to-br from-green-50 to-white p-3 shadow-sm">
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-green-900">Hoàn thành</p>
+                            <p className="text-[9px] text-green-800/90 leading-tight mt-0.5">Xong HĐ, thu tiền (slug completed)</p>
+                            <p className="mt-1 text-lg font-bold text-green-800">{exComp}</p>
+                            <p className="text-[11px] text-green-800/90 tabular-nums font-semibold">
+                              {formatVND(detailSummary?.project_completed_value ?? detailSummary?.completed_value ?? 0)}
+                            </p>
+                          </div>
+                          <div className="rounded-xl border border-cyan-300 bg-gradient-to-br from-cyan-50 to-white p-3 shadow-sm">
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-cyan-950">Đang triển khai</p>
+                            <p className="text-[9px] text-cyan-900/85 leading-tight mt-0.5">Sau ký HĐ, trước hoàn thành</p>
+                            <p className="mt-1 text-lg font-bold text-cyan-950">{exImpl}</p>
+                            <p className="text-[11px] text-cyan-900 tabular-nums font-semibold">
+                              {formatVND(detailSummary?.implementation_value ?? 0)}
+                            </p>
+                          </div>
+                          <div className="rounded-xl border border-amber-200 bg-gradient-to-br from-amber-50 to-white p-3 shadow-sm">
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-amber-950">Chưa chốt</p>
+                            <p className="text-[9px] text-amber-900/85 leading-tight mt-0.5">Báo giá, thương lượng, cọc…</p>
+                            <p className="mt-1 text-lg font-bold text-amber-950">{exPre}</p>
+                            <p className="text-[11px] text-amber-900/90 tabular-nums font-semibold">
+                              {formatVND(detailSummary?.pre_contract_value ?? 0)}
+                            </p>
+                          </div>
+                          <div className="rounded-xl border border-rose-200 bg-gradient-to-br from-rose-50 to-white p-3 shadow-sm">
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-rose-900">Thua</p>
+                            <p className="text-[9px] text-rose-800/85 leading-tight mt-0.5">is_lost / slug lost</p>
+                            <p className="mt-1 text-lg font-bold text-rose-900">{exLost}</p>
+                            <p className="text-[11px] text-rose-700/90 tabular-nums">{formatVND(detailSummary?.lost_value ?? detailTotals.lost_value)}</p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {detailSummary != null && (detailSummary.open_deal_count > 0 || detailSummary.open_value > 0) && (
                     <p className="text-[11px] text-slate-600 -mt-2 px-1">
                       Deal <strong>chưa ký HĐ</strong> (chưa cờ won):{' '}
@@ -850,87 +938,120 @@ export default function CrmStaffLeadDealReport() {
                           Giá trị estimated_value đang nằm ở từng stage — biết chính xác bao nhiêu tiền trên mỗi cột Kanban
                         </p>
                       </div>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm min-w-[1050px]">
-                          <thead>
-                            <tr className="bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-700">
-                              <th className="px-3 py-2 font-semibold">#</th>
-                              <th className="px-3 py-2 font-semibold">Pipeline</th>
-                              <th className="px-3 py-2 font-semibold">Funnel</th>
-                              <th className="px-3 py-2 font-semibold min-w-[140px]">Giai đoạn</th>
-                              <th className="px-3 py-2 font-semibold">Kết quả deal</th>
-                              <th className="px-3 py-2 font-semibold text-right">Lead</th>
-                              <th className="px-3 py-2 font-semibold text-right">GT Lead</th>
-                              <th className="px-3 py-2 font-semibold text-right">Deal</th>
-                              <th className="px-3 py-2 font-semibold text-right">GT Deal</th>
-                              <th className="px-3 py-2 font-semibold text-right bg-violet-50">Tổng stage</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {detailData.stage_breakdown.map((s, i) => (
-                              <tr
-                                key={s.stage_id || `none-${i}`}
-                                className={`border-t border-slate-100 ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'}`}
-                              >
-                                <td className="px-3 py-2 tabular-nums text-slate-500">{i + 1}</td>
-                                <td className="px-3 py-2 text-slate-800">{s.pipeline_name || '—'}</td>
-                                <td className="px-3 py-2 text-xs font-medium text-slate-600">{s.kanban_type_label || '—'}</td>
-                                <td className="px-3 py-2 font-medium text-slate-900">{s.stage_name}</td>
-                                <td className="px-3 py-2 text-xs">
-                                  {s.deal_outcome_label ? (
-                                    <span
-                                      className={`rounded-full px-2 py-0.5 font-semibold ${
-                                        s.deal_outcome === 'project_completed'
-                                          ? 'bg-green-100 text-green-900 ring-1 ring-green-200'
-                                          : s.deal_outcome === 'implementation'
-                                            ? 'bg-cyan-100 text-cyan-950'
-                                            : s.deal_outcome === 'pre_contract'
-                                              ? 'bg-amber-100 text-amber-950'
-                                              : s.deal_outcome === 'lost'
-                                                ? 'bg-rose-100 text-rose-900'
-                                                : 'bg-slate-100 text-slate-700'
-                                      }`}
+                      {(() => {
+                        const sb = detailData.stage_breakdown || [];
+                        // Lọc khớp typeView để KHÔNG hiển thị stage rỗng (vd stage chỉ có deal khi typeView=lead)
+                        const filtered = sb.filter((s) => {
+                          if (typeView === 'lead') return (s.lead_count || 0) > 0;
+                          if (typeView === 'deal') return (s.deal_count || 0) > 0;
+                          return (s.lead_count || 0) > 0 || (s.deal_count || 0) > 0;
+                        });
+                        const showLead = typeView !== 'deal';
+                        const showDeal = typeView !== 'lead';
+                        const sumLeadC = filtered.reduce((a, s) => a + (s.lead_count || 0), 0);
+                        const sumLeadV = filtered.reduce((a, s) => a + (s.lead_value || 0), 0);
+                        const sumDealC = filtered.reduce((a, s) => a + (s.deal_count || 0), 0);
+                        const sumDealV = filtered.reduce((a, s) => a + (s.deal_value || 0), 0);
+                        const sumTotal = filtered.reduce((a, s) => {
+                          if (typeView === 'lead') return a + (s.lead_value || 0);
+                          if (typeView === 'deal') return a + (s.deal_value || 0);
+                          return a + (s.stage_total_value || 0);
+                        }, 0);
+                        // Số cột "Cộng" colSpan = 5 (#, Pipeline, Funnel, Giai đoạn, Kết quả deal)
+                        return (
+                          <div className="overflow-x-auto">
+                            <table className={`w-full text-sm ${typeView === 'all' ? 'min-w-[1050px]' : 'min-w-[820px]'}`}>
+                              <thead>
+                                <tr className="bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-700">
+                                  <th className="px-3 py-2 font-semibold">#</th>
+                                  <th className="px-3 py-2 font-semibold">Pipeline</th>
+                                  <th className="px-3 py-2 font-semibold">Funnel</th>
+                                  <th className="px-3 py-2 font-semibold min-w-[140px]">Giai đoạn</th>
+                                  {showDeal && <th className="px-3 py-2 font-semibold">Kết quả deal</th>}
+                                  {showLead && <th className="px-3 py-2 font-semibold text-right">Lead</th>}
+                                  {showLead && <th className="px-3 py-2 font-semibold text-right">GT Lead</th>}
+                                  {showDeal && <th className="px-3 py-2 font-semibold text-right">Deal</th>}
+                                  {showDeal && <th className="px-3 py-2 font-semibold text-right">GT Deal</th>}
+                                  <th className="px-3 py-2 font-semibold text-right bg-violet-50">
+                                    {typeView === 'lead' ? 'GT Lead' : typeView === 'deal' ? 'GT Deal' : 'Tổng stage'}
+                                  </th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {filtered.length === 0 ? (
+                                  <tr>
+                                    <td colSpan={2 + (showLead ? 2 : 0) + (showDeal ? 3 : 0) + 3} className="px-3 py-6 text-center text-slate-400 text-xs">
+                                      Không có dữ liệu giai đoạn cho phân loại đang xem.
+                                    </td>
+                                  </tr>
+                                ) : (
+                                  filtered.map((s, i) => (
+                                    <tr
+                                      key={s.stage_id || `none-${i}`}
+                                      className={`border-t border-slate-100 ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'}`}
                                     >
-                                      {s.deal_outcome_label}
-                                    </span>
-                                  ) : (
-                                    <span className="text-slate-400">—</span>
-                                  )}
-                                </td>
-                                <td className="px-3 py-2 text-right tabular-nums">{s.lead_count ?? 0}</td>
-                                <td className="px-3 py-2 text-right tabular-nums text-xs">{formatVND(s.lead_value || 0)}</td>
-                                <td className="px-3 py-2 text-right tabular-nums">{s.deal_count ?? 0}</td>
-                                <td className="px-3 py-2 text-right tabular-nums text-xs">{formatVND(s.deal_value || 0)}</td>
-                                <td className="px-3 py-2 text-right tabular-nums font-semibold text-violet-900 bg-violet-50/50">
-                                  {formatVND(s.stage_total_value || 0)}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                          <tfoot>
-                            <tr className="border-t-2 border-violet-200 bg-violet-50/80 font-bold text-slate-900">
-                              <td colSpan={5} className="px-3 py-2.5 text-right">
-                                Cộng các giai đoạn (= tổng pipeline)
-                              </td>
-                              <td className="px-3 py-2.5 text-right tabular-nums">
-                                {detailData.stage_breakdown.reduce((a, s) => a + (s.lead_count || 0), 0)}
-                              </td>
-                              <td className="px-3 py-2.5 text-right tabular-nums text-xs">
-                                {formatVND(detailData.stage_breakdown.reduce((a, s) => a + (s.lead_value || 0), 0))}
-                              </td>
-                              <td className="px-3 py-2.5 text-right tabular-nums">
-                                {detailData.stage_breakdown.reduce((a, s) => a + (s.deal_count || 0), 0)}
-                              </td>
-                              <td className="px-3 py-2.5 text-right tabular-nums text-xs">
-                                {formatVND(detailData.stage_breakdown.reduce((a, s) => a + (s.deal_value || 0), 0))}
-                              </td>
-                              <td className="px-3 py-2.5 text-right tabular-nums text-violet-950 bg-violet-100/90">
-                                {formatVND(detailData.stage_breakdown.reduce((a, s) => a + (s.stage_total_value || 0), 0))}
-                              </td>
-                            </tr>
-                          </tfoot>
-                        </table>
-                      </div>
+                                      <td className="px-3 py-2 tabular-nums text-slate-500">{i + 1}</td>
+                                      <td className="px-3 py-2 text-slate-800">{s.pipeline_name || '—'}</td>
+                                      <td className="px-3 py-2 text-xs font-medium text-slate-600">{s.kanban_type_label || '—'}</td>
+                                      <td className="px-3 py-2 font-medium text-slate-900">{s.stage_name}</td>
+                                      {showDeal && (
+                                        <td className="px-3 py-2 text-xs">
+                                          {s.deal_outcome_label ? (
+                                            <span
+                                              className={`rounded-full px-2 py-0.5 font-semibold ${
+                                                s.deal_outcome === 'project_completed'
+                                                  ? 'bg-green-100 text-green-900 ring-1 ring-green-200'
+                                                  : s.deal_outcome === 'implementation'
+                                                    ? 'bg-cyan-100 text-cyan-950'
+                                                    : s.deal_outcome === 'pre_contract'
+                                                      ? 'bg-amber-100 text-amber-950'
+                                                      : s.deal_outcome === 'lost'
+                                                        ? 'bg-rose-100 text-rose-900'
+                                                        : 'bg-slate-100 text-slate-700'
+                                              }`}
+                                            >
+                                              {s.deal_outcome_label}
+                                            </span>
+                                          ) : (
+                                            <span className="text-slate-400">—</span>
+                                          )}
+                                        </td>
+                                      )}
+                                      {showLead && <td className="px-3 py-2 text-right tabular-nums">{s.lead_count ?? 0}</td>}
+                                      {showLead && <td className="px-3 py-2 text-right tabular-nums text-xs">{formatVND(s.lead_value || 0)}</td>}
+                                      {showDeal && <td className="px-3 py-2 text-right tabular-nums">{s.deal_count ?? 0}</td>}
+                                      {showDeal && <td className="px-3 py-2 text-right tabular-nums text-xs">{formatVND(s.deal_value || 0)}</td>}
+                                      <td className="px-3 py-2 text-right tabular-nums font-semibold text-violet-900 bg-violet-50/50">
+                                        {formatVND(
+                                          typeView === 'lead' ? (s.lead_value || 0)
+                                          : typeView === 'deal' ? (s.deal_value || 0)
+                                          : (s.stage_total_value || 0)
+                                        )}
+                                      </td>
+                                    </tr>
+                                  ))
+                                )}
+                              </tbody>
+                              {filtered.length > 0 && (
+                                <tfoot>
+                                  <tr className="border-t-2 border-violet-200 bg-violet-50/80 font-bold text-slate-900">
+                                    <td colSpan={4 + (showDeal ? 1 : 0)} className="px-3 py-2.5 text-right">
+                                      Cộng các giai đoạn (= tổng pipeline)
+                                    </td>
+                                    {showLead && <td className="px-3 py-2.5 text-right tabular-nums">{sumLeadC}</td>}
+                                    {showLead && <td className="px-3 py-2.5 text-right tabular-nums text-xs">{formatVND(sumLeadV)}</td>}
+                                    {showDeal && <td className="px-3 py-2.5 text-right tabular-nums">{sumDealC}</td>}
+                                    {showDeal && <td className="px-3 py-2.5 text-right tabular-nums text-xs">{formatVND(sumDealV)}</td>}
+                                    <td className="px-3 py-2.5 text-right tabular-nums text-violet-950 bg-violet-100/90">
+                                      {formatVND(sumTotal)}
+                                    </td>
+                                  </tr>
+                                </tfoot>
+                              )}
+                            </table>
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
 

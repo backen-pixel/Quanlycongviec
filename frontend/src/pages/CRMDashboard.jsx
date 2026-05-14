@@ -9,7 +9,7 @@ import {
   Plus, Search, Filter, X, ChevronLeft, ChevronRight, MoreHorizontal, Calendar,
   FileText, ShoppingCart, Receipt, ArrowRight, Eye, Percent, GripVertical,
   Zap, CheckCircle2, TrendingDown, AlertTriangle, Building2, Rocket, Pin,
-  Clock, List, LayoutGrid, GitMerge, UserCheck, Trash2, CheckSquare
+  Clock, List, LayoutGrid, GitMerge, UserCheck, Trash2, CheckSquare, BarChart3,
 } from 'lucide-react';
 import { ListView, PlannerView } from '../components/CRMViews';
 import EmployeePicker from '../components/EmployeePicker';
@@ -31,6 +31,7 @@ import {
   setStoredCrmFilterCompanyId,
 } from '../lib/crmCompanyFilter';
 import { isCrmCompanyAdmin } from '../lib/crmAdminScope';
+import { buildKpiLedgerMonthTooltipHint } from '../lib/kpiPersonalLedgerHints';
 import DealStageEventModal from '../components/DealStageEventModal';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 
@@ -61,6 +62,22 @@ function formatRemainingMs(ms) {
   if (h > 0) return `${h} giờ`;
   const m = Math.floor(ms / 60000);
   return `${m} phút`;
+}
+
+/** Hiển thị điểm ròng sổ cái KPI (tháng) trên thẻ / bảng */
+function formatKpiLedgerNet(v) {
+  if (v == null || Number.isNaN(Number(v))) return '—';
+  const n = Number(v);
+  const s = n.toLocaleString('vi-VN', { maximumFractionDigits: 2 });
+  return n > 0 ? `+${s}` : s;
+}
+
+/** Nhãn tháng cho API `by_month` (YYYY-MM). */
+function formatContractSignedMonthLabel(ym) {
+  if (!ym || typeof ym !== 'string') return '';
+  const m = ym.match(/^(\d{4})-(\d{2})$/);
+  if (!m) return ym;
+  return `Tháng ${Number(m[2])}/${m[1]}`;
 }
 
 /** SLA cột pipeline: mặc định 7 ngày nếu chưa cấuỉnh sla_days — vàng ≤3 ngày còn, cam ≤24h, đỏ quá hạn */
@@ -169,6 +186,40 @@ function isActiveCrmPipelineItem(item) {
   return !st?.is_won && !st?.is_lost;
 }
 
+/** Cột deal tên chứa «Hoàn thành» — khớp LeadDetail / Zalo OA (chuẩn hóa ASCII). */
+function isCrmDealStageHoanThanhName(name) {
+  const ascii = String(name || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  return ascii.includes('hoan thanh');
+}
+
+function resolveDealStageForKpi(item, stagesDeal) {
+  const sid = item?.stage_id;
+  if (sid && Array.isArray(stagesDeal) && stagesDeal.length) {
+    const s = stagesDeal.find((x) => String(x.id) === String(sid));
+    if (s) return s;
+  }
+  const emb = item?.stage && typeof item.stage === 'object' && !Array.isArray(item.stage) ? item.stage : null;
+  return emb;
+}
+
+/**
+ * Deal đã hoàn thành doanh thu (thu tiền / xong HĐ — nhóm Hoàn thành trên BC NV):
+ * `deal_report_bucket === 'completed'`, hoặc `canonical_slug === 'completed'`, hoặc tên cột chứa «Hoàn thành».
+ */
+function dealIsRevenueCompletedStage(item, stagesDeal) {
+  const st = resolveDealStageForKpi(item, stagesDeal);
+  if (!st) return false;
+  if (st.is_lost || st.canonical_slug === 'lost' || st.deal_report_bucket === 'lost') return false;
+  if (st.deal_report_bucket === 'completed') return true;
+  if (st.canonical_slug === 'completed') return true;
+  if (st.name && isCrmDealStageHoanThanhName(st.name)) return true;
+  return false;
+}
+
 /** Cột Thắng — fallback lookup stages list nếu embed stage thiếu is_won. */
 function dealIsWonStage(item, stagesDeal) {
   if (item?.stage?.is_won) return true;
@@ -215,6 +266,8 @@ export default function CRMDashboard() {
 
   const [dataLead, setDataLead] = useState(null);
   const [dataDeal, setDataDeal] = useState(null);
+  /** GET /crm/contract-signed-revenue — doanh thu ký HĐ theo tháng (theo bộ lọc thời gian + công ty + NV). */
+  const [contractSignedRevenue, setContractSignedRevenue] = useState(null);
   // leads & deals are computed via useMemo (client-side filter) - see below
   const [stagesLead, setStagesLead] = useState([]);
   const [stagesDeal, setStagesDeal] = useState([]);
@@ -876,15 +929,27 @@ export default function CRMDashboard() {
       if (customDateTo) dateParams.date_to = customDateTo;
       try {
         const { data } = await api.get('/crm/dashboard', {
-          params: { type, ...dateParams, ...(dashboardScopeCompanyId ? { company_id: dashboardScopeCompanyId } : {}) },
+          params: {
+            type,
+            ...dateParams,
+            ...(dashboardScopeCompanyId ? { company_id: dashboardScopeCompanyId } : {}),
+            ...(filterAssignee ? { assigned_to: filterAssignee } : {}),
+          },
         });
         if (type === 'lead') setDataLead(data);
         else setDataDeal(data);
+        if (type === 'deal') {
+          const revP = { ...dateParams };
+          if (dashboardScopeCompanyId) revP.company_id = dashboardScopeCompanyId;
+          if (filterAssignee) revP.assigned_to = filterAssignee;
+          const rev = await api.get('/crm/contract-signed-revenue', { params: revP }).catch(() => ({ data: null }));
+          setContractSignedRevenue(rev.data ?? null);
+        }
       } catch (e) {
         console.error('[refreshCrmDashboardSlice]', e);
       }
     },
-    [customDateFrom, customDateTo, dashboardScopeCompanyId],
+    [customDateFrom, customDateTo, dashboardScopeCompanyId, filterAssignee],
   );
 
   const refreshPipelinePhoneTotalsForType = useCallback(
@@ -1132,9 +1197,20 @@ export default function CRMDashboard() {
         return { rows, nextOffset, total };
       };
 
-      const [dashLeadRes, dashDealRes, leadsRows, dealsRows, pipelinesRes, stagesLeadRes, stagesDealRes, sourcesRes, leadTypesRes, companiesRes, usersRes, lcHas, lcNo, lcAll, dcHas, dcNo, dcAll] = await Promise.all([
-        api.get('/crm/dashboard', { params: { type: 'lead', ...dateParams, ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
-        api.get('/crm/dashboard', { params: { type: 'deal', ...dateParams, ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: { pipeline: [], kpis: {}, recent_quotations: [], recent_orders: [] } })),
+      const revenueParams = { ...dateParams };
+      if (resolvedCompanyId) revenueParams.company_id = resolvedCompanyId;
+      if (filterAssignee) revenueParams.assigned_to = filterAssignee;
+
+      const dashListParams = {
+        ...dateParams,
+        ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}),
+        ...(filterAssignee ? { assigned_to: filterAssignee } : {}),
+      };
+
+      const [dashLeadRes, dashDealRes, contractSignedRevRes, leadsRows, dealsRows, pipelinesRes, stagesLeadRes, stagesDealRes, sourcesRes, leadTypesRes, companiesRes, usersRes, lcHas, lcNo, lcAll, dcHas, dcNo, dcAll] = await Promise.all([
+        api.get('/crm/dashboard', { params: { type: 'lead', ...dashListParams } }).catch(() => ({ data: { pipeline: [], kpis: {}, ledger_net_by_lead: {}, recent_quotations: [], recent_orders: [] } })),
+        api.get('/crm/dashboard', { params: { type: 'deal', ...dashListParams } }).catch(() => ({ data: { pipeline: [], kpis: {}, ledger_net_by_lead: {}, recent_quotations: [], recent_orders: [] } })),
+        api.get('/crm/contract-signed-revenue', { params: revenueParams }).catch(() => ({ data: null })),
         fetchKanbanRows('lead'),
         fetchKanbanRows('deal'),
         api.get('/crm/pipelines').catch(() => ({ data: [] })),
@@ -1165,6 +1241,7 @@ export default function CRMDashboard() {
       });
       setDataLead(dashLeadRes.data);
       setDataDeal(dashDealRes.data);
+      setContractSignedRevenue(contractSignedRevRes?.data ?? null);
       setPipelines(
         narrowPipelinesToDefaultForCompany(
           Array.isArray(pipelinesRes.data) ? pipelinesRes.data : [],
@@ -1435,10 +1512,12 @@ export default function CRMDashboard() {
     return typeof t === 'number' ? t : leads.length;
   }, [kpiUsesClientOnlyFilters, leads.length, loadMoreState.leadTotal]);
 
-  /** KPI Deal (Tổng / Thắng / Doanh thu thắng) theo cùng bộ lọc UI như Kanban — không dùng kpis API thuần server. */
+  /** KPI Deal (tổng / đàm phán / thắng / doanh thu thắng / đã DT hoàn thành / KPI sổ cái) — cùng bộ lọc Kanban, không dùng kpis API thuần server. */
   const dealKpisFromFilters = useMemo(() => {
     const won = deals.filter((d) => dealIsWonStage(d, stagesDeal));
     const wonValue = won.reduce((s, l) => s + (Number(l.estimated_value) || 0), 0);
+    const revenueCompleted = deals.filter((d) => dealIsRevenueCompletedStage(d, stagesDeal));
+    const completedRevenueValue = revenueCompleted.reduce((s, l) => s + (Number(l.estimated_value) || 0), 0);
     const totalHeadline = kpiUsesClientOnlyFilters
       ? deals.length
       : typeof loadMoreState.dealTotal === 'number'
@@ -1448,31 +1527,75 @@ export default function CRMDashboard() {
       total_deals: totalHeadline,
       won_deals: won.length,
       won_value: wonValue,
+      completed_revenue_deals: revenueCompleted.length,
+      completed_revenue_value: completedRevenueValue,
     };
   }, [deals, stagesDeal, kpiUsesClientOnlyFilters, loadMoreState.dealTotal]);
+
+  const ledgerMapLead = dataLead?.ledger_net_by_lead || {};
+  const ledgerMapDeal = dataDeal?.ledger_net_by_lead || {};
 
   // Pipeline view: group leads/deals by stage
   const pipelineLead = useMemo(() => {
     if (!stagesLead.length) return [];
+    const attachLedger = (l) => {
+      const raw = ledgerMapLead[String(l.id)];
+      const kpi_ledger_month_net = raw !== undefined ? raw : null;
+      return { ...l, kpi_ledger_month_net };
+    };
     return stagesLead.map((s) => ({
       ...s,
-      items: leads.filter((l) => String(l.stage_id || '') === String(s.id)),
+      items: leads
+        .filter((l) => String(l.stage_id || '') === String(s.id))
+        .map(attachLedger),
       totalValue: leads.filter((l) => String(l.stage_id || '') === String(s.id)).reduce((sum, l) => sum + (l.estimated_value || 0), 0),
     }));
-  }, [stagesLead, leads]);
+  }, [stagesLead, leads, ledgerMapLead]);
 
   const pipelineDeal = useMemo(() => {
     if (!stagesDeal.length) return [];
+    const attachLedger = (l) => {
+      const raw = ledgerMapDeal[String(l.id)];
+      const kpi_ledger_month_net = raw !== undefined ? raw : null;
+      return { ...l, kpi_ledger_month_net };
+    };
     return stagesDeal.map((s) => ({
       ...s,
-      items: deals.filter((l) => String(l.stage_id || '') === String(s.id)),
+      items: deals
+        .filter((l) => String(l.stage_id || '') === String(s.id))
+        .map(attachLedger),
       totalValue: deals.filter((l) => String(l.stage_id || '') === String(s.id)).reduce((sum, l) => sum + (l.estimated_value || 0), 0),
     }));
-  }, [stagesDeal, deals]);
+  }, [stagesDeal, deals, ledgerMapDeal]);
 
   const currentData = pipelineType === 'lead' ? dataLead : dataDeal;
   const currentPipeline = pipelineType === 'lead' ? pipelineLead : pipelineDeal;
   const kpis = currentData?.kpis || {};
+
+  /** Tooltip ô «Điểm KPI (tháng)»: sổ cái + gợi ý gom theo vai trò (bạn hoặc NV đang lọc) từ bảng KPI hướng dẫn. */
+  const kpiLedgerMonthCardHint = useMemo(() => {
+    const periodYm = kpis?.kpi_ledger_period_start
+      ? String(kpis.kpi_ledger_period_start).slice(0, 7)
+      : null;
+    const periodLabel = periodYm || 'tháng hiện tại (theo máy chủ)';
+    let assigneeProfile = null;
+    if (filterAssignee) {
+      const id = String(filterAssignee);
+      const u =
+        employeeFilterList.find((x) => String(x.id) === id) || users.find((x) => String(x.id) === id);
+      assigneeProfile = u
+        ? { id, full_name: u.full_name || null, email: u.email || null, role: u.role || null }
+        : { id, full_name: null, email: null, role: null };
+    }
+    return buildKpiLedgerMonthTooltipHint({
+      periodLabel,
+      viewerUser: user,
+      assigneeProfile,
+      pipelineType,
+      kpis,
+      ledgerNetByLead: pipelineType === 'lead' ? ledgerMapLead : ledgerMapDeal,
+    });
+  }, [kpis, filterAssignee, employeeFilterList, users, pipelineType, user, ledgerMapLead, ledgerMapDeal]);
 
   useEffect(() => {
     saveCrmPipelineSnapshot({
@@ -1581,6 +1704,23 @@ export default function CRMDashboard() {
             throw new Error('Thao tác này cần bước chuyển đổi riêng — không áp dụng khi chuyển hàng loạt.');
           }
           return;
+        }
+
+        // Merge fresh badge fields từ response để không bị silent reload xóa tag SX/VC.
+        if (data && data.id) {
+          const mergePatch = {};
+          if (data.sx_pipeline_stage !== undefined) mergePatch.sx_pipeline_stage = data.sx_pipeline_stage;
+          if (data.vc_pipeline_stage !== undefined) mergePatch.vc_pipeline_stage = data.vc_pipeline_stage;
+          if (data.project_id !== undefined) mergePatch.project_id = data.project_id;
+          if (data.stage_entered_at) mergePatch.stage_entered_at = data.stage_entered_at;
+          if (Object.keys(mergePatch).length > 0) {
+            const setter = pipelineType === 'lead' ? setAllLeads : setAllDeals;
+            setter((prev) =>
+              dedupeCrmKanbanRows(
+                prev.map((x) => (String(x.id) === lid ? { ...x, ...mergePatch } : x)),
+              ),
+            );
+          }
         }
 
         if (data.deal_won) {
@@ -2421,7 +2561,9 @@ export default function CRMDashboard() {
       {/* KPI — hàng ngang trong từng ô, min-w-0 để 4 cột chia đều không chừa khoảng trống */}
       <div
         data-tour="crm-kpis"
-        className="grid grid-cols-2 md:grid-cols-4 gap-1 md:gap-1.5"
+        className={`overflow-visible grid grid-cols-2 sm:grid-cols-3 gap-1 md:gap-1.5 ${
+          pipelineType === 'deal' ? 'xl:grid-cols-6' : 'xl:grid-cols-5'
+        }`}
       >
         {pipelineType === 'lead' ? (
           <>
@@ -2462,6 +2604,17 @@ export default function CRMDashboard() {
               value={`${kpis.conversion_rate || 0}%`}
               trend={null}
             />
+            <KPICard
+              compact
+              icon={<BarChart3 className="h-3 w-3" />}
+              iconBgColor="bg-indigo-100"
+              iconColor="text-indigo-600"
+              label="Điểm KPI (tháng)"
+              value={formatKpiLedgerNet(kpis.kpi_ledger_month_net_sum)}
+              sublabel={kpis.kpi_ledger_period_start ? `Sổ cái · ${String(kpis.kpi_ledger_period_start).slice(0, 7)}` : 'Sổ cái CRM'}
+              trend={null}
+              hint={kpiLedgerMonthCardHint}
+            />
           </>
         ) : (
           <>
@@ -2498,9 +2651,86 @@ export default function CRMDashboard() {
               value={formatVND(dealKpisFromFilters.won_value)}
               trend={null}
             />
+            <KPICard
+              icon={<Receipt className="h-3.5 w-3.5" />}
+              iconBgColor="bg-teal-100"
+              iconColor="text-teal-700"
+              label="Doanh thu đã hoàn thành"
+              value={formatVND(dealKpisFromFilters.completed_revenue_value)}
+              sublabel={`${dealKpisFromFilters.completed_revenue_deals} deal · Ước tính (cột completed / Hoàn thành)`}
+              trend={null}
+            />
+            <KPICard
+              compact
+              icon={<BarChart3 className="h-3 w-3" />}
+              iconBgColor="bg-indigo-100"
+              iconColor="text-indigo-600"
+              label="Điểm KPI (tháng)"
+              value={formatKpiLedgerNet(kpis.kpi_ledger_month_net_sum)}
+              sublabel={kpis.kpi_ledger_period_start ? `Sổ cái · ${String(kpis.kpi_ledger_period_start).slice(0, 7)}` : 'Sổ cái CRM'}
+              trend={null}
+              hint={kpiLedgerMonthCardHint}
+            />
           </>
         )}
       </div>
+
+      {pipelineType === 'deal' &&
+        contractSignedRevenue &&
+        (((contractSignedRevenue.by_month || []).length > 0) ||
+          (Number(contractSignedRevenue.total_value) > 0)) && (
+        <div
+          data-tour="crm-contract-signed-revenue"
+          className={`rounded-xl border border-slate-200 bg-gradient-to-b from-slate-50/90 to-white px-3 py-2.5 sm:px-4 sm:py-3 ${
+            compactLeadUi ? 'mb-2' : 'mb-3'
+          } shadow-sm`}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-1 sm:gap-3 mb-2">
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
+                <TrendingUp className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                Doanh thu ký HĐ theo tháng
+              </h3>
+              <p className="text-[11px] text-slate-500 mt-0.5 leading-snug max-w-3xl">
+                Theo thời điểm deal vào giai đoạn «Ký HĐ» (lịch sử giai đoạn). Dùng chung bộ lọc thời gian phía trên
+                {timePreset === ''
+                  ? ' (mặc định «Tất cả»: tối đa 24 tháng gần nhất)'
+                  : timeFilterLabel
+                    ? ` · ${timeFilterLabel}`
+                    : ''}
+                . Khác Kanban (đang lọc theo ngày tạo deal).
+              </p>
+            </div>
+            <div className="text-left sm:text-right shrink-0">
+              <div className="text-[10px] uppercase tracking-wide text-slate-400 font-medium">Tổng kỳ</div>
+              <div className="text-base font-bold text-emerald-700 tabular-nums">
+                {formatVND(contractSignedRevenue.total_value ?? 0)}
+              </div>
+            </div>
+          </div>
+          {contractSignedRevenue.window_capped && (
+            <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1 mb-2">
+              Bộ lọc «Tất cả» chỉ tính các lần ký HĐ trong <strong>24 tháng</strong> gần nhất (giới hạn hiệu năng).
+            </p>
+          )}
+          {(contractSignedRevenue.by_month || []).length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {(contractSignedRevenue.by_month || []).map((row) => (
+                <div
+                  key={row.month}
+                  className="min-w-[7.5rem] rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 shadow-sm"
+                >
+                  <div className="text-[10px] font-medium text-slate-500">
+                    {formatContractSignedMonthLabel(row.month)}
+                  </div>
+                  <div className="text-sm font-semibold text-slate-900 tabular-nums">{formatVND(row.total ?? 0)}</div>
+                  <div className="text-[10px] text-slate-400">{row.deal_count ?? 0} deal</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* View Mode Toggle */}
       <div className={`flex items-center gap-1 ${compactLeadUi ? 'mb-2' : 'mb-3'}`}>
@@ -2960,12 +3190,13 @@ export default function CRMDashboard() {
 }
 
 // KPI — layout ngang, kích thước ~một nửa bản trước (Lead + Deal)
-function KPICard({ icon, iconBgColor, iconColor, label, value, sublabel, trend, compact }) {
+function KPICard({ icon, iconBgColor, iconColor, label, value, sublabel, trend, compact, hint }) {
   return (
     <div
-      className={`min-w-0 flex items-center rounded-lg border border-gray-200 bg-white shadow-sm hover:shadow-md transition-shadow duration-200 ${
-        compact ? 'gap-1.5 p-1.5' : 'gap-1.5 p-2 md:gap-2 md:p-2'
-      }`}
+      tabIndex={hint ? 0 : undefined}
+      className={`group relative min-w-0 flex items-center rounded-lg border border-gray-200 bg-white shadow-sm outline-none transition-shadow duration-200 hover:shadow-md focus-visible:ring-2 focus-visible:ring-blue-400 ${
+        hint ? 'cursor-help' : ''
+      } ${compact ? 'gap-1.5 p-1.5' : 'gap-1.5 p-2 md:gap-2 md:p-2'}`}
     >
       <div
         className={`shrink-0 rounded-md ${iconBgColor} ${iconColor} p-1`}
@@ -2997,6 +3228,13 @@ function KPICard({ icon, iconBgColor, iconColor, label, value, sublabel, trend, 
           <p className={`text-emerald-600 leading-none ${compact ? 'text-[9px]' : 'text-[10px]'}`}>↑ {trend}%</p>
         )}
       </div>
+      {hint && (
+        <div className="absolute left-0 right-0 top-full z-[70] hidden pt-1 group-hover:block group-focus-within:block">
+          <div className="pointer-events-auto max-h-[min(70vh,24rem)] w-[min(calc(100vw-1.5rem),22rem)] overflow-y-auto rounded-lg border border-gray-700 bg-gray-900 p-2.5 text-[11px] leading-snug text-white shadow-xl">
+            {hint}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -3641,6 +3879,20 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
         borderLeft: `3px solid ${stageColor}`,
       }}
     >
+      {typeof item.kpi_ledger_month_net === 'number' && (
+        <span
+          className={`pointer-events-none absolute top-1 right-1 z-[25] max-w-[4.25rem] truncate rounded px-1 py-0.5 text-[9px] font-bold leading-tight shadow-sm ${
+            item.kpi_ledger_month_net > 0
+              ? 'bg-emerald-600/95 text-white'
+              : item.kpi_ledger_month_net < 0
+                ? 'bg-red-600/95 text-white'
+                : 'bg-slate-500/90 text-white'
+          }`}
+          title="Điểm ròng sổ cái KPI tháng (crm_kpi_ledger)"
+        >
+          {formatKpiLedgerNet(item.kpi_ledger_month_net)}
+        </span>
+      )}
       {splitPickZones && (
         <>
           {/* Hai vùng màu — chỉ hiện khi hover thẻ */}

@@ -4,6 +4,7 @@ const { supabase } = require('../config/supabase');
 const PDFDocument = require('pdfkit');
 const multer = require('multer');
 const XLSX = require('xlsx');
+const { crmTaskHasCompletionEvidence } = require('../helpers/crmTaskCompletionEvidence');
 const { createNotification: createNotif, notifyMultiple: notifyMultipleShared } = require('../helpers/notifications');
 const { DEFAULT_CHECKLISTS } = require('../helpers/defaultChecklists');
 const { generateFlowTasks, generateStepTasks } = require('../helpers/generateFlowTasks');
@@ -607,6 +608,53 @@ async function fetchCrmLeadsForDashboardBatched(type, { company_id, date_from, d
     from += pageSize;
   }
   return rows;
+}
+
+/** Tháng KPI (YYYY-MM-01) theo đồng hồ máy chủ — khớp mặc định tab «Điểm KPI» trên chi tiết lead. */
+function defaultKpiLedgerMonthStartYmd() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  return `${y}-${m}-01`;
+}
+
+/**
+ * Tổng điểm ròng sổ cái KPI (crm_kpi_ledger) theo từng lead_id trong kỳ.
+ * Gom theo chunk vì .in() và phân trang tránh trần PostgREST.
+ */
+async function sumCrmKpiLedgerNetByLeadIds(leadIds, periodStart, periodType = 'monthly') {
+  const sums = Object.create(null);
+  if (!leadIds?.length || !periodStart) return sums;
+  const uniq = [...new Set(leadIds.map((x) => String(x)))];
+  const CHUNK = 150;
+  for (let i = 0; i < uniq.length; i += CHUNK) {
+    const part = uniq.slice(i, i + CHUNK);
+    let from = 0;
+    const PAGE = 1000;
+    for (;;) {
+      const { data, error } = await supabase
+        .from('crm_kpi_ledger')
+        .select('lead_id, points')
+        .in('lead_id', part)
+        .eq('period_type', periodType)
+        .eq('period_start', periodStart)
+        .range(from, from + PAGE - 1);
+      if (error) throw error;
+      const rows = data || [];
+      for (const r of rows) {
+        const lid = r.lead_id;
+        if (!lid) continue;
+        const k = String(lid);
+        sums[k] = (sums[k] || 0) + Number(r.points || 0);
+      }
+      if (rows.length < PAGE) break;
+      from += PAGE;
+    }
+  }
+  for (const k of Object.keys(sums)) {
+    sums[k] = Math.round(sums[k] * 100) / 100;
+  }
+  return sums;
 }
 
 /** Lead/deal của đúng một user — dùng BC chi tiết theo pipeline (tránh trần 1000 dòng). */
@@ -1910,14 +1958,20 @@ r.get('/dashboard', async (req, res) => {
       type === 'deal' && req.user?.userId && !userSeesAllCrmDealsForScope(req.user) ? req.user.userId : null;
     const leadAssigneeOnly =
       type === 'lead' && req.user?.userId && !userSeesAllCrmLeadsForScope(req.user) ? req.user.userId : null;
-    const assigneeOnly = dealAssigneeOnly || leadAssigneeOnly;
+    const selfAssigneeOnly = type === 'deal' ? dealAssigneeOnly : leadAssigneeOnly;
+    const queryAssigneeUuid = uuidQueryOrNull(req.query.assigned_to);
+    const canUseAssigneeQuery =
+      type === 'deal' ? userSeesAllCrmDealsForScope(req.user) : userSeesAllCrmLeadsForScope(req.user);
+    const assigneeFromQuery =
+      !selfAssigneeOnly && canUseAssigneeQuery && queryAssigneeUuid ? queryAssigneeUuid : null;
+    const assigned_to_only = selfAssigneeOnly || assigneeFromQuery || null;
 
     // Leads/Deals theo filter (đủ trang) — tránh trần 1000 dòng của Supabase
     const leads = await fetchCrmLeadsForDashboardBatched(type, {
       company_id: effectiveCompanyId || undefined,
       date_from,
       date_to,
-      assigned_to_only: assigneeOnly,
+      assigned_to_only,
       req,
     });
 
@@ -1944,6 +1998,22 @@ r.get('/dashboard', async (req, res) => {
     } catch (e) {
       console.warn('[crm/dashboard] overdue_tasks count:', e.message);
     }
+
+    const rawLedgerPs = req.query.ledger_period_start && String(req.query.ledger_period_start).trim();
+    const ledgerPeriodStart = (rawLedgerPs && /^\d{4}-\d{2}-\d{2}$/.test(rawLedgerPs.slice(0, 10)))
+      ? rawLedgerPs.slice(0, 10)
+      : defaultKpiLedgerMonthStartYmd();
+    let ledgerNetByLead = {};
+    try {
+      if (leadIdsScope.length) {
+        ledgerNetByLead = await sumCrmKpiLedgerNetByLeadIds(leadIdsScope, ledgerPeriodStart, 'monthly');
+      }
+    } catch (e) {
+      console.warn('[crm/dashboard] kpi ledger sums:', e.message);
+    }
+    const kpiLedgerMonthNetSum = Math.round(
+      Object.values(ledgerNetByLead).reduce((a, b) => a + Number(b || 0), 0) * 100,
+    ) / 100;
 
     // KPIs split by type
     const totalItems = (leads || []).length;
@@ -1984,6 +2054,8 @@ r.get('/dashboard', async (req, res) => {
         total_value: totalValue,
         conversion_value: wonValue,
         overdue_tasks,
+        kpi_ledger_month_net_sum: kpiLedgerMonthNetSum,
+        kpi_ledger_period_start: ledgerPeriodStart,
       };
     } else {
       // Deal KPIs
@@ -1994,6 +2066,8 @@ r.get('/dashboard', async (req, res) => {
         total_value: totalValue,
         won_value: wonValue,
         overdue_tasks,
+        kpi_ledger_month_net_sum: kpiLedgerMonthNetSum,
+        kpi_ledger_period_start: ledgerPeriodStart,
       };
     }
 
@@ -2026,11 +2100,130 @@ r.get('/dashboard', async (req, res) => {
     res.json({
       pipeline: stageStats,
       kpis,
+      ledger_net_by_lead: ledgerNetByLead,
       recent_quotations: recentQuotes,
       recent_orders: recentOrders,
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+/** Doanh thu ký HĐ (ước tính) theo tháng — lọc theo `entered_at` khi deal vào giai đoạn canonical `contract_signed` (khác Kanban lọc `created_at`). */
+r.get('/contract-signed-revenue', async (req, res) => {
+  try {
+    const rawC = req.query.company_id && String(req.query.company_id).trim() ? String(req.query.company_id).trim() : null;
+    let effectiveCompanyId = rawC;
+    const sac = scopedAdminCompanyId(req);
+    if (sac) {
+      effectiveCompanyId = sac;
+    } else if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      effectiveCompanyId = cid;
+    }
+
+    const dfRaw = req.query.date_from && String(req.query.date_from).trim();
+    const dtRaw = req.query.date_to && String(req.query.date_to).trim();
+    const dateFrom = dfRaw && /^\d{4}-\d{2}-\d{2}$/.test(dfRaw.slice(0, 10)) ? dfRaw.slice(0, 10) : null;
+    const dateTo = dtRaw && /^\d{4}-\d{2}-\d{2}$/.test(dtRaw.slice(0, 10)) ? dtRaw.slice(0, 10) : null;
+
+    const assignedToFromQuery =
+      req.query.assigned_to && String(req.query.assigned_to).trim() ? String(req.query.assigned_to).trim() : null;
+    const dealSelfOnly =
+      req.user?.userId && !userSeesAllCrmDealsForScope(req.user) ? req.user.userId : null;
+    const effectiveAssignee = dealSelfOnly || assignedToFromQuery || null;
+
+    let windowCapped = false;
+    let enteredFromIso = dateFrom ? `${dateFrom}T00:00:00.000Z` : null;
+    let enteredToIso = dateTo ? `${dateTo}T23:59:59.999Z` : null;
+    if (!enteredFromIso && !enteredToIso) {
+      const roll = new Date();
+      roll.setUTCMonth(roll.getUTCMonth() - 24);
+      enteredFromIso = roll.toISOString();
+      windowCapped = true;
+    }
+
+    const numEv = (x) => {
+      const n = Number(x);
+      return Number.isFinite(n) ? n : 0;
+    };
+    const utcMonthKey = (iso) => {
+      if (!iso) return null;
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return null;
+      return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+    };
+
+    const PAGE = 1000;
+    const MAX_PAGES = 500;
+    const histRows = [];
+    for (let page = 0, from = 0; page < MAX_PAGES; page += 1, from += PAGE) {
+      let hq = supabase
+        .from('crm_lead_stage_history')
+        .select('lead_id, entered_at')
+        .eq('to_canonical_slug', 'contract_signed')
+        .eq('pipeline_type', 'deal');
+      if (enteredFromIso) hq = hq.gte('entered_at', enteredFromIso);
+      if (enteredToIso) hq = hq.lte('entered_at', enteredToIso);
+      const { data, error } = await hq.range(from, from + PAGE - 1).order('entered_at', { ascending: true });
+      if (error) throw error;
+      const chunk = data || [];
+      histRows.push(...chunk);
+      if (chunk.length < PAGE) break;
+    }
+
+    const leadIds = [...new Set(histRows.map((h) => h.lead_id).filter(Boolean))];
+    const evByLeadId = new Map();
+    const CH = 200;
+    for (let i = 0; i < leadIds.length; i += CH) {
+      const part = leadIds.slice(i, i + CH);
+      let lq = supabase
+        .from('crm_leads')
+        .select('id, estimated_value, company_id, assigned_to')
+        .eq('type', 'deal')
+        .in('id', part);
+      if (effectiveCompanyId) lq = lq.eq('company_id', effectiveCompanyId);
+      lq = applyCrmLeadRegionFilterToQuery(lq, req);
+      if (effectiveAssignee) lq = lq.eq('assigned_to', effectiveAssignee);
+      const { data: leadsChunk, error: le } = await lq;
+      if (le) throw le;
+      for (const L of leadsChunk || []) {
+        if (L?.id) evByLeadId.set(String(L.id), numEv(L.estimated_value));
+      }
+    }
+
+    const byMonthMap = Object.create(null);
+    for (const h of histRows) {
+      const lid = h.lead_id != null ? String(h.lead_id) : '';
+      if (!lid || !evByLeadId.has(lid)) continue;
+      const m = utcMonthKey(h.entered_at);
+      if (!m) continue;
+      if (!byMonthMap[m]) byMonthMap[m] = { total: 0, ids: new Set() };
+      if (byMonthMap[m].ids.has(lid)) continue;
+      byMonthMap[m].ids.add(lid);
+      byMonthMap[m].total += evByLeadId.get(lid);
+    }
+
+    const by_month = Object.keys(byMonthMap)
+      .sort()
+      .map((month) => ({
+        month,
+        total: Math.round(byMonthMap[month].total * 100) / 100,
+        deal_count: byMonthMap[month].ids.size,
+      }));
+    const total_value = Math.round(by_month.reduce((s, r) => s + r.total, 0) * 100) / 100;
+
+    res.json({
+      by_month,
+      total_value,
+      window_capped: windowCapped,
+      date_from: dateFrom,
+      date_to: dateTo,
+    });
+  } catch (e) {
+    console.error('GET /crm/contract-signed-revenue:', e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
   }
 });
 
@@ -5797,6 +5990,21 @@ r.patch('/leads/:id/stage', async (req, res) => {
     if (error) throw error;
     let responseLead = updatedLeadRow;
 
+    // Refresh kèm join SX/VC để frontend cập nhật badge ngay (không phải đợi silent reload).
+    try {
+      const vcJoin = _vcPipelineStageAvailable
+        ? ', vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)'
+        : '';
+      const { data: refreshedWithBadges } = await supabase
+        .from('crm_leads')
+        .select(`*, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug)${vcJoin}`)
+        .eq('id', req.params.id)
+        .single();
+      if (refreshedWithBadges) responseLead = refreshedWithBadges;
+    } catch (badgeErr) {
+      console.warn('[crm/stage] refresh badges:', badgeErr.message);
+    }
+
     // 🔔 NOTIFICATION: Lead/Deal đổi giai đoạn
     try {
       const { data: pStageInfo } = await supabase.from('crm_pipeline_stages')
@@ -5906,9 +6114,12 @@ r.patch('/leads/:id/stage', async (req, res) => {
         } catch (se) {
           console.warn('[crm/stage] sync sx_pipeline_stage_id:', se.message);
         }
+        const vcJoin2 = _vcPipelineStageAvailable
+          ? ', vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)'
+          : '';
         const { data: refreshed } = await supabase
           .from('crm_leads')
-          .select('*, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug)')
+          .select(`*, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug)${vcJoin2}`)
           .eq('id', req.params.id)
           .single();
         if (refreshed) responseLead = refreshed;
@@ -5976,6 +6187,20 @@ r.patch('/leads/:id/stage', async (req, res) => {
     });
 
     emitCrmDashboardChanged(req, { type: lead?.type, company_id: lead?.company_id, lead_id: req.params.id, action: 'stage_changed', stage_id });
+
+    // Emit badge_updated cho mọi deal có project_id để các tab CRM khác cập nhật tag SX/VC realtime.
+    try {
+      const pid = projectAutoCreated?.project_id || lead?.project_id || null;
+      if (pid) {
+        const io = req.app.get('io');
+        if (io) {
+          await emitCrmBadgeUpdateForProject(pid, io);
+        }
+      }
+    } catch (emitErr) {
+      console.warn('[crm/stage] emitCrmBadgeUpdateForProject:', emitErr.message);
+    }
+
     res.json({ ...responseLead, deal_won: dealWonData, project_auto_created: projectAutoCreated });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -9378,22 +9603,6 @@ r.get('/invoices/:id/pdf', async (req, res) => {
 
 const CRM_TASK_SELECT =
   '*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)';
-
-/** Minh chứng khi hoàn thành NV CRM: ghi chú trên task hoặc bất kỳ đính kèm có nội dung (file URL hoặc text). */
-async function crmTaskHasCompletionEvidence(supabase, taskId, taskNotes) {
-  if (taskNotes != null && String(taskNotes).trim() !== '') return true;
-  const { data: rows, error } = await supabase
-    .from('crm_task_attachments')
-    .select('id,file_url,notes')
-    .eq('task_id', taskId)
-    .limit(200);
-  if (error) throw error;
-  for (const r of rows || []) {
-    if (r.file_url && String(r.file_url).trim() !== '') return true;
-    if (r.notes != null && String(r.notes).trim() !== '') return true;
-  }
-  return false;
-}
 
 /**
  * Map task_id -> { files, notes } cho tab NV CRM (khớp logic cũ: doc_type = task_note → note).

@@ -1,9 +1,10 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND } from '../lib/utils';
 import { useAuth } from '../lib/auth';
-import { Upload, FileSpreadsheet, X, AlertTriangle, Loader2, Eye, ChevronDown, ChevronUp, FileEdit } from 'lucide-react';
+import { Upload, FileSpreadsheet, X, AlertTriangle, Loader2, Eye, ChevronDown, ChevronUp, FileEdit, Briefcase } from 'lucide-react';
+import LeadDealPicker from './LeadDealPicker';
 
 /** Dùng chung với QuotationForm (đọc draft khi from_excel=1) */
 export const QUOTATION_EXCEL_DRAFT_KEY = 'quotation_excel_draft_v1';
@@ -44,6 +45,11 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId) {
         }
       }
 
+      // ── Khoá amount theo đúng giá trị Excel — tránh recompute làm sai số làm tròn.
+      // Khi user chỉnh qty/price/discount_percent/spec_factor trong form, lock sẽ tự bị gỡ
+      // (xem updateItem trong QuotationForm). Backend cũng honor lock qua lock_amount.
+      const lockedAmount = i.is_freebie ? 0 : (excelAmount > 0 ? excelAmount : null);
+
       return {
         name: i.name,
         description: i.description || '',
@@ -60,10 +66,15 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId) {
         group_name: i.group_name || '',
         notes: i.is_freebie ? 'HỖ TRỢ' : (i.notes || ''),
         is_freebie: !!i.is_freebie,
+        // ── Excel fidelity: giữ NGUYÊN số tiền Excel ──
+        imported_amount: lockedAmount,
+        lock_amount: lockedAmount !== null,
       };
     });
 
+  // Khi locked, itemsGrossTotal = Σ imported_amount (đúng bằng tổng Excel) → discount_value tổng = 0
   const itemsGrossTotal = itemsPayload.reduce((s, i) => {
+    if (i.lock_amount && typeof i.imported_amount === 'number') return s + i.imported_amount;
     const f = parseFloat(i.spec_factor) || 0;
     const gross =
       f > 0 ? f * (i.quantity || 1) * (i.unit_price || 0) : (i.quantity || 1) * (i.unit_price || 0);
@@ -71,8 +82,9 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId) {
     return s + (gross - ck);
   }, 0);
   const excelGrandTotal = preview.summary?.total || 0;
+  // Nếu items đã khớp grand total Excel thì KHÔNG cần thêm CK tổng — giữ nguyên 0.
   const computedDiscount =
-    excelGrandTotal > 0 && itemsGrossTotal > excelGrandTotal
+    excelGrandTotal > 0 && Math.abs(itemsGrossTotal - excelGrandTotal) > 1
       ? Math.round(itemsGrossTotal - excelGrandTotal)
       : preview.summary?.discount_amount || 0;
 
@@ -138,6 +150,66 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
   const [descPopup, setDescPopup] = useState(null); // { name, description }
   const fileRef = useRef(null);
 
+  /** Deal context từ props (mở từ task/lead detail). Pre-fill picker; user vẫn được đổi. */
+  const contextLeadId = dealId || leadId || '';
+  const [pickedDeal, setPickedDeal] = useState(null);
+  const [contextLoading, setContextLoading] = useState(!!contextLeadId);
+  const effectiveLeadId = pickedDeal?.id || contextLeadId || '';
+
+  // Khi có contextLeadId từ props → fetch info deal để pre-fill picker
+  useEffect(() => {
+    let cancelled = false;
+    if (!contextLeadId) { setContextLoading(false); return; }
+    setContextLoading(true);
+    api.get(`/crm/leads/${contextLeadId}/detail`)
+      .then((r) => {
+        if (cancelled) return;
+        const lead = r.data || {};
+        setPickedDeal({
+          id: lead.id,
+          code: lead.code,
+          title: lead.title,
+          type: lead.type,
+          customer_id: lead.customer_id,
+          customer_name: lead.customer?.full_name || lead.contact_name || '',
+          customer_phone: lead.customer?.phone || lead.phone || '',
+          company_id: lead.company_id,
+          company_name: lead.company?.short_name || lead.company?.name || null,
+          region_id: lead.region_id,
+          region_name: lead.crm_region?.name || lead.region?.name || null,
+          assignee_name: lead.assignee?.full_name || null,
+        });
+      })
+      .catch(() => { /* ignore — vẫn cho upload */ })
+      .finally(() => { if (!cancelled) setContextLoading(false); });
+    return () => { cancelled = true; };
+  }, [contextLeadId]);
+
+  /** Reset về deal context ban đầu (nếu user lỡ đổi sang deal khác) */
+  const restoreContextDeal = () => {
+    if (!contextLeadId) return;
+    setContextLoading(true);
+    api.get(`/crm/leads/${contextLeadId}/detail`)
+      .then((r) => {
+        const lead = r.data || {};
+        setPickedDeal({
+          id: lead.id, code: lead.code, title: lead.title, type: lead.type,
+          customer_id: lead.customer_id,
+          customer_name: lead.customer?.full_name || lead.contact_name || '',
+          customer_phone: lead.customer?.phone || lead.phone || '',
+          company_id: lead.company_id,
+          company_name: lead.company?.short_name || lead.company?.name || null,
+          region_id: lead.region_id,
+          region_name: lead.crm_region?.name || lead.region?.name || null,
+          assignee_name: lead.assignee?.full_name || null,
+        });
+      })
+      .finally(() => setContextLoading(false));
+  };
+
+  /** Cảnh báo: user đã đổi sang deal khác với context (vd. khác deal của task đang import) */
+  const dealChangedFromContext = contextLeadId && pickedDeal && pickedDeal.id !== contextLeadId;
+
   const handleFileSelect = async (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
@@ -168,7 +240,7 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
     if (!preview) return;
     setSaving(true);
     try {
-      const resolvedLead = dealId || leadId || '';
+      const resolvedLead = effectiveLeadId || '';
       const draft = buildQuotationDraftFromPreview(preview, file, user, resolvedLead);
       sessionStorage.setItem(
         QUOTATION_EXCEL_DRAFT_KEY,
@@ -218,6 +290,60 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          {/* Block deal liên kết — LUÔN hiện picker; pre-fill từ context (task/lead) nếu có */}
+          {!preview && (
+            <div className={`rounded-xl p-4 border ${pickedDeal ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
+              <h3 className={`text-sm font-bold flex items-center gap-2 ${pickedDeal ? 'text-emerald-900' : 'text-amber-900'}`}>
+                <Briefcase className="h-4 w-4" />
+                {contextLeadId
+                  ? (dealChangedFromContext ? 'Bạn đã đổi sang deal khác' : 'Báo giá gắn vào deal hiện tại')
+                  : (pickedDeal ? 'Đã chọn deal liên kết' : 'Chọn deal trước khi import')}
+              </h3>
+              <p className="text-[11px] mt-1 text-gray-700">
+                {contextLeadId && !dealChangedFromContext
+                  ? `Đang mở từ ${taskId ? 'nhiệm vụ' : 'deal'} hiện tại — báo giá sẽ tự gắn deal này. Có thể đổi sang deal khác bên dưới nếu cần.`
+                  : 'Báo giá nên gắn vào deal để phân loại theo công ty / khu vực / nhân viên. Có thể bỏ qua nếu thực sự không gắn deal nào (sẽ bị đánh dấu "mồ côi" trong danh sách).'}
+              </p>
+
+              <div className="mt-3 space-y-2">
+                {contextLoading ? (
+                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Đang tải thông tin deal hiện tại…
+                  </div>
+                ) : (
+                  <LeadDealPicker
+                    value={pickedDeal}
+                    onChange={setPickedDeal}
+                    type="deal"
+                    placeholder="Tìm deal theo mã / tên / SĐT khách..."
+                    warnOrphan
+                  />
+                )}
+
+                {dealChangedFromContext && (
+                  <div className="flex items-center justify-between gap-2 px-3 py-2 bg-amber-100 border border-amber-300 rounded-lg text-[11px] text-amber-900">
+                    <span className="flex items-center gap-1.5">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      Bạn đang gắn báo giá vào deal khác với deal/nhiệm vụ ban đầu — kiểm tra kỹ trước khi áp dụng.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={restoreContextDeal}
+                      className="text-[11px] underline text-amber-800 hover:text-amber-950 cursor-pointer font-medium"
+                    >
+                      ↺ Quay về deal ban đầu
+                    </button>
+                  </div>
+                )}
+
+                {taskId && (
+                  <p className="text-[10px] text-gray-500">📌 Liên kết task: <span className="font-mono">{taskId}</span></p>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Upload area */}
           {!preview && !parsing && (
             <div

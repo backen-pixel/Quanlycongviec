@@ -17,9 +17,11 @@ export function userSeesAllCrmDeals(role) {
   return CRM_DEAL_VIEW_ALL_ROLES.has(normalizeCrmUserRole(role));
 }
 
-/** Khớp backend `userSeesAllCrmDealsForScope`: admin khu vực xem deal trong phạm vi region trên server. */
+/** Khớp backend `userSeesAllCrmDealsForScope`: admin khu vực + sales_admin xem deal trong phạm vi (region/công ty). */
 export function userSeesAllCrmDealsScoped(user) {
   if (userSeesAllCrmDeals(user?.role)) return true;
   const r = normalizeCrmUserRole(user?.role);
-  return r === 'region_admin' && !!(user?.company_id != null && String(user.company_id).trim());
+  const hasCompany = !!(user?.company_id != null && String(user.company_id).trim());
+  if (r === 'region_admin' && hasCompany) return true;
+  return r === 'sales_admin' && hasCompany;
 }

@@ -12,6 +12,13 @@ function formatDate(d) {
   return new Date(d).toLocaleDateString('vi-VN');
 }
 
+function formatKpiLedgerCell(v) {
+  if (v == null || Number.isNaN(Number(v))) return '—';
+  const n = Number(v);
+  const s = n.toLocaleString('vi-VN', { maximumFractionDigits: 2 });
+  return n > 0 ? `+${s}` : s;
+}
+
 // ── LIST VIEW ──────────────────────────────────────────────────────────────
 export function ListView({ pipeline, pipelineType, calculateDays }) {
   const allItems = pipeline.flatMap(s => s.items.map(item => ({ ...item, _stage: s })));
@@ -27,6 +34,7 @@ export function ListView({ pipeline, pipelineType, calculateDays }) {
             <th className="px-4 py-3 font-medium">Khách hàng</th>
             <th className="px-4 py-3 font-medium">Giai đoạn</th>
             <th className="px-4 py-3 font-medium text-right">Giá trị</th>
+            <th className="px-4 py-3 font-medium text-right">Điểm KPI</th>
             <th className="px-4 py-3 font-medium">Phụ trách</th>
             <th className="px-4 py-3 font-medium">Nguồn</th>
             <th className="px-4 py-3 font-medium">Ngày tạo</th>
@@ -60,6 +68,13 @@ export function ListView({ pipeline, pipelineType, calculateDays }) {
                   </span>
                 </td>
                 <td className="px-4 py-2.5 text-right font-medium text-gray-900 whitespace-nowrap">{item.estimated_value > 0 ? formatVND(item.estimated_value) : '—'}</td>
+                <td className={`px-4 py-2.5 text-right text-xs font-mono whitespace-nowrap ${
+                  item.kpi_ledger_month_net == null ? 'text-gray-400' :
+                  item.kpi_ledger_month_net > 0 ? 'text-emerald-700 font-semibold' :
+                  item.kpi_ledger_month_net < 0 ? 'text-red-700 font-semibold' : 'text-gray-600'
+                }`} title="Điểm ròng sổ cái KPI tháng (crm_kpi_ledger)">
+                  {formatKpiLedgerCell(item.kpi_ledger_month_net)}
+                </td>
                 <td className="px-4 py-2.5 text-gray-600 text-xs">{item.assignee?.full_name || item.lead_owner?.full_name || '—'}</td>
                 <td className="px-4 py-2.5 text-gray-500 text-xs">{item.source?.icon} {item.source?.name || '—'}</td>
                 <td className="px-4 py-2.5 text-gray-400 text-xs whitespace-nowrap">{formatDate(item.created_at)}</td>
@@ -71,9 +86,14 @@ export function ListView({ pipeline, pipelineType, calculateDays }) {
           })}
         </tbody>
       </table>
-      <div className="px-4 py-2 bg-gray-50 text-xs text-gray-500 flex justify-between">
+      <div className="px-4 py-2 bg-gray-50 text-xs text-gray-500 flex flex-wrap justify-between gap-x-4 gap-y-1">
         <span>Tổng: {allItems.length} {pipelineType === 'deal' ? 'deal' : 'lead'}</span>
         <span>GT: {formatVND(allItems.reduce((s, i) => s + (i.estimated_value || 0), 0))}</span>
+        <span title="Tổng điểm ròng sổ cái KPI (tháng) trên các dòng đang hiển thị">
+          KPI: {formatKpiLedgerCell(
+            allItems.reduce((s, i) => s + (typeof i.kpi_ledger_month_net === 'number' ? i.kpi_ledger_month_net : 0), 0),
+          )}
+        </span>
       </div>
     </div>
   );
@@ -127,6 +147,13 @@ export function PlannerView({ pipeline, pipelineType }) {
         </span>
       </div>
       {item.estimated_value > 0 && <p className="text-xs font-bold text-gray-900 mt-2">{formatVND(item.estimated_value)}</p>}
+      {typeof item.kpi_ledger_month_net === 'number' && (
+        <p className={`text-[10px] font-mono font-semibold mt-1 ${
+          item.kpi_ledger_month_net > 0 ? 'text-emerald-700' : item.kpi_ledger_month_net < 0 ? 'text-red-700' : 'text-gray-600'
+        }`} title="Điểm ròng sổ cái KPI tháng">
+          KPI {formatKpiLedgerCell(item.kpi_ledger_month_net)}
+        </p>
+      )}
     </div>
   );
 
