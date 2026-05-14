@@ -1051,6 +1051,10 @@ async function computeStaffLeadDealReportData(req, res) {
       effectiveCompanyId = cid;
     }
 
+    // ── Filter type: 'all' | 'lead' | 'deal' ──
+    const rawType = String(req.query.type || 'all').toLowerCase();
+    const typeView = rawType === 'lead' || rawType === 'deal' ? rawType : 'all';
+
     const pad = (n) => String(n).padStart(2, '0');
     const now = new Date();
     const defaultFrom = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`;
@@ -1075,15 +1079,17 @@ async function computeStaffLeadDealReportData(req, res) {
     const leadAssigneeOnly =
       req.user?.userId && !userSeesAllCrmLeadsForScope(req.user) ? req.user.userId : null;
 
+    const skipLeads = typeView === 'deal';
+    const skipDeals = typeView === 'lead';
     const [leadRows, dealRows] = await Promise.all([
-      fetchCrmLeadsForDashboardBatched('lead', {
+      skipLeads ? Promise.resolve([]) : fetchCrmLeadsForDashboardBatched('lead', {
         company_id: effectiveCompanyId || undefined,
         date_from: df,
         date_to: dt,
         assigned_to_only: leadAssigneeOnly,
         req,
       }),
-      fetchCrmLeadsForDashboardBatched('deal', {
+      skipDeals ? Promise.resolve([]) : fetchCrmLeadsForDashboardBatched('deal', {
         company_id: effectiveCompanyId || undefined,
         date_from: df,
         date_to: dt,
@@ -1215,7 +1221,7 @@ async function computeStaffLeadDealReportData(req, res) {
     rows.sort((a, b) => (b.won_value || 0) - (a.won_value || 0)
       || (b.deal_pipeline_value || 0) - (a.deal_pipeline_value || 0));
 
-    return { df, dt, effectiveCompanyId, rows };
+    return { df, dt, effectiveCompanyId, rows, typeView };
   } catch (e) {
     console.error('computeStaffLeadDealReportData:', e);
     if (!res.headersSent) res.status(500).json({ error: e.message || 'Lỗi' });
@@ -1259,6 +1265,7 @@ r.get('/reports/staff-lead-deal', async (req, res) => {
       date_to: data.dt,
       company_id: data.effectiveCompanyId || null,
       basis: 'created_at',
+      type: data.typeView || 'all',
       rows: data.rows,
     });
   } catch (e) {
@@ -1328,14 +1335,19 @@ async function computeStaffPipelineDetailPayload(req, res) {
       return Number.isFinite(n) ? n : 0;
     };
 
+    const rawType = String(req.query.type || 'all').toLowerCase();
+    const typeView = rawType === 'lead' || rawType === 'deal' ? rawType : 'all';
+    const skipLeads = typeView === 'deal';
+    const skipDeals = typeView === 'lead';
+
     const [leadRows, dealRows] = await Promise.all([
-      fetchCrmLeadsForUserDetailBatched(targetId, 'lead', {
+      skipLeads ? Promise.resolve([]) : fetchCrmLeadsForUserDetailBatched(targetId, 'lead', {
         company_id: effectiveCompanyId || undefined,
         date_from: df,
         date_to: dt,
         req,
       }),
-      fetchCrmLeadsForUserDetailBatched(targetId, 'deal', {
+      skipDeals ? Promise.resolve([]) : fetchCrmLeadsForUserDetailBatched(targetId, 'deal', {
         company_id: effectiveCompanyId || undefined,
         date_from: df,
         date_to: dt,
@@ -1660,6 +1672,7 @@ async function computeStaffPipelineDetailPayload(req, res) {
       summary,
       timeline,
       stage_breakdown,
+      typeView,
     };
   } catch (e) {
     console.error('computeStaffPipelineDetailPayload:', e);
@@ -1710,6 +1723,7 @@ r.get('/reports/staff-lead-deal/:userId/pipelines', async (req, res) => {
       date_to: p.dt,
       company_id: p.effectiveCompanyId || null,
       basis: 'created_at',
+      type: p.typeView || 'all',
       pipelines: p.pipelines,
       summary: p.summary,
       timeline: p.timeline,
@@ -4133,6 +4147,90 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
   };
 }
 
+// ── Endpoint nhẹ cho deal/lead picker (form báo giá, Excel import…) ──
+// Trả về list ngắn gọn, đã filter theo company của user + region scope (qua JWT).
+// Query: q (search), type=deal|lead (default deal), customer_id, company_id, region_id, limit (max 50).
+r.get('/leads/picker', async (req, res) => {
+  try {
+    const type = req.query.type === 'lead' ? 'lead' : 'deal';
+    const q = String(req.query.q || '').trim();
+    const customerId = uuidQueryOrNull(req.query.customer_id);
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 20, 1), 50);
+
+    let query = supabase
+      .from('crm_leads')
+      .select(
+        'id, code, title, type, status, stage_id, company_id, region_id, customer_id, ' +
+          'assigned_to, lead_owner_id, estimated_value, created_at, ' +
+          'customer:customers(id, full_name, phone), ' +
+          'company:companies!crm_leads_company_id_fkey(id, name, short_name), ' +
+          'region:company_regions!crm_leads_region_id_fkey(id, name, code), ' +
+          'assignee:users!crm_leads_assigned_to_fkey(id, full_name, email)',
+      )
+      .eq('type', type)
+      .order('updated_at', { ascending: false })
+      .limit(limit);
+
+    // Scope theo công ty: admin công ty / nhân viên thường khoá theo company_id của user.
+    const sac = scopedAdminCompanyId(req);
+    if (sac) {
+      query = query.eq('company_id', sac);
+    } else if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      query = query.eq('company_id', cid);
+    } else if (uuidQueryOrNull(req.query.company_id)) {
+      query = query.eq('company_id', uuidQueryOrNull(req.query.company_id));
+    }
+
+    // Scope theo khu vực
+    query = applyCrmLeadRegionFilterToQuery(query, req);
+    if (uuidQueryOrNull(req.query.region_id)) {
+      query = query.eq('region_id', uuidQueryOrNull(req.query.region_id));
+    }
+
+    if (customerId) query = query.eq('customer_id', customerId);
+
+    if (q) {
+      // Search theo code / title / SĐT / tên KH (dùng OR PostgREST)
+      const safe = q.replace(/[(),]/g, ' ').replace(/\s+/g, '%');
+      query = query.or(
+        `code.ilike.%${safe}%,title.ilike.%${safe}%,phone.ilike.%${safe}%`,
+      );
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    res.json({
+      type,
+      total: (data || []).length,
+      results: (data || []).map((l) => ({
+        id: l.id,
+        code: l.code,
+        title: l.title,
+        type: l.type,
+        status: l.status,
+        stage_id: l.stage_id,
+        company_id: l.company_id,
+        company_name: l.company?.short_name || l.company?.name || null,
+        region_id: l.region_id,
+        region_name: l.region?.name || null,
+        customer_id: l.customer_id,
+        customer_name: l.customer?.full_name || null,
+        customer_phone: l.customer?.phone || null,
+        assigned_to: l.assigned_to,
+        assignee_name: l.assignee?.full_name || null,
+        estimated_value: l.estimated_value || 0,
+        created_at: l.created_at,
+      })),
+    });
+  } catch (e) {
+    console.error('[leads/picker]', e);
+    res.status(500).json({ error: e.message || 'Lỗi tìm deal' });
+  }
+});
+
 r.get('/leads', async (req, res) => {
   try {
     const type = req.query.type || 'lead';
@@ -5751,6 +5849,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
                   priority: item.priority || 'medium', stage_slug: stageSlug, order_index: item.order_index,
                   deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
                   created_by: req.user.userId,
+                  completion_requires_file_or_note: !!item.completion_requires_file_or_note,
                 }));
                 await supabase.from('crm_tasks').insert(inserts);
                 console.log(`Auto-created ${inserts.length} CRM tasks for ${stageSlug} on lead ${req.params.id}`);
@@ -6367,9 +6466,20 @@ async function applyLeadOrCustomerSalesFilter(queryBuilder, leadIdVal) {
 
 r.get('/quotations', async (req, res) => {
   try {
-    const { status, search, limit = 50, lead_id, company_id: coQ } = req.query;
+    const {
+      status, search, limit = 50, lead_id,
+      company_id: coQ, region_id: regQ, created_by: createdByQ,
+      orphan, // 'only' | 'exclude' | undefined
+    } = req.query;
     let q = supabase.from('quotations')
-      .select('*, customer:customers(id, full_name, phone), creator:users!quotations_created_by_fkey(id, full_name), approver:users!quotations_approved_by_fkey(id, full_name)')
+      .select(
+        '*, customer:customers(id, full_name, phone), ' +
+        'creator:users!quotations_created_by_fkey(id, full_name), ' +
+        'approver:users!quotations_approved_by_fkey(id, full_name), ' +
+        'company:companies!quotations_company_id_fkey(id, name, short_name), ' +
+        'region:company_regions!quotations_region_id_fkey(id, name, code), ' +
+        'lead:crm_leads!quotations_lead_id_fkey(id, code, title, type, assigned_to)',
+      )
       .order('created_at', { ascending: false })
       .limit(parseInt(limit));
     if (!userIsAdmin(req.user?.role)) {
@@ -6379,12 +6489,40 @@ r.get('/quotations', async (req, res) => {
     } else if (coQ && /^[0-9a-f-]{36}$/i.test(String(coQ))) {
       q = q.eq('company_id', coQ);
     }
+    if (regQ && /^[0-9a-f-]{36}$/i.test(String(regQ))) q = q.eq('region_id', regQ);
+    if (createdByQ && /^[0-9a-f-]{36}$/i.test(String(createdByQ))) q = q.eq('created_by', createdByQ);
     if (status) q = q.eq('status', status);
+    if (orphan === 'only') q = q.is('lead_id', null);
+    else if (orphan === 'exclude') q = q.not('lead_id', 'is', null);
     if (search) q = q.or(`code.ilike.%${search}%,title.ilike.%${search}%,customer_name.ilike.%${search}%`);
     if (lead_id && /^[0-9a-f-]{36}$/i.test(String(lead_id))) q = await applyLeadOrCustomerSalesFilter(q, lead_id);
-    const { data, error } = await q;
+    let { data, error } = await q;
+    // DB cũ chưa có FK quotations_region_id_fkey (migration 160 chưa chạy) → bỏ embed region rồi thử lại
+    if (error && /quotations_region_id_fkey|company_regions/i.test(String(error.message || ''))) {
+      let q2 = supabase.from('quotations')
+        .select(
+          '*, customer:customers(id, full_name, phone), ' +
+          'creator:users!quotations_created_by_fkey(id, full_name), ' +
+          'approver:users!quotations_approved_by_fkey(id, full_name), ' +
+          'company:companies!quotations_company_id_fkey(id, name, short_name), ' +
+          'lead:crm_leads!quotations_lead_id_fkey(id, code, title, type, assigned_to)',
+        )
+        .order('created_at', { ascending: false })
+        .limit(parseInt(limit));
+      if (!userIsAdmin(req.user?.role)) q2 = q2.eq('company_id', req.user.company_id);
+      else if (coQ && /^[0-9a-f-]{36}$/i.test(String(coQ))) q2 = q2.eq('company_id', coQ);
+      if (createdByQ && /^[0-9a-f-]{36}$/i.test(String(createdByQ))) q2 = q2.eq('created_by', createdByQ);
+      if (status) q2 = q2.eq('status', status);
+      if (orphan === 'only') q2 = q2.is('lead_id', null);
+      else if (orphan === 'exclude') q2 = q2.not('lead_id', 'is', null);
+      if (search) q2 = q2.or(`code.ilike.%${search}%,title.ilike.%${search}%,customer_name.ilike.%${search}%`);
+      const r2 = await q2;
+      data = r2.data; error = r2.error;
+    }
     if (error) throw error;
-    res.json(data || []);
+    // Tính flag is_orphan để FE hiển thị badge "Không gắn deal"
+    const out = (data || []).map((row) => ({ ...row, is_orphan: !row.lead_id }));
+    res.json(out);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -6392,13 +6530,33 @@ r.get('/quotations', async (req, res) => {
 
 r.get('/quotations/:id', async (req, res) => {
   try {
-    const { data: quote } = await supabase.from('quotations')
-      .select('*, customer:customers(id, full_name, phone, email, address, company, tax_code), creator:users!quotations_created_by_fkey(id, full_name)')
-      .eq('id', req.params.id).single();
+    const sel =
+      '*, customer:customers(id, full_name, phone, email, address, company, tax_code), ' +
+      'creator:users!quotations_created_by_fkey(id, full_name, email), ' +
+      'approver:users!quotations_approved_by_fkey(id, full_name), ' +
+      'company:companies!quotations_company_id_fkey(id, name, short_name), ' +
+      'region:company_regions!quotations_region_id_fkey(id, name, code), ' +
+      'lead:crm_leads!quotations_lead_id_fkey(id, code, title, type, assigned_to, ' +
+        'lead_assignee:users!crm_leads_assigned_to_fkey(id, full_name))';
+    let { data: quote, error: qe } = await supabase.from('quotations').select(sel).eq('id', req.params.id).single();
+    if (qe && /quotations_region_id_fkey|company_regions/i.test(String(qe.message || ''))) {
+      const fb = await supabase
+        .from('quotations')
+        .select(
+          '*, customer:customers(id, full_name, phone, email, address, company, tax_code), ' +
+          'creator:users!quotations_created_by_fkey(id, full_name, email), ' +
+          'approver:users!quotations_approved_by_fkey(id, full_name), ' +
+          'company:companies!quotations_company_id_fkey(id, name, short_name), ' +
+          'lead:crm_leads!quotations_lead_id_fkey(id, code, title, type, assigned_to)',
+        )
+        .eq('id', req.params.id)
+        .single();
+      quote = fb.data; qe = fb.error;
+    }
     const { data: items } = await supabase.from('quotation_items')
       .select('*, product:products(id, name, code)')
       .eq('quotation_id', req.params.id).order('item_order');
-    res.json({ ...quote, items: items || [] });
+    res.json({ ...quote, items: items || [], is_orphan: !quote?.lead_id });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -6436,7 +6594,7 @@ r.post('/quotations', async (req, res) => {
     const code = await nextCode('BG');
 
     // Sanitize: empty strings → null for UUID fields
-    const uuidFields = ['customer_id', 'lead_id', 'project_id', 'approved_by', 'company_id'];
+    const uuidFields = ['customer_id', 'lead_id', 'project_id', 'approved_by', 'company_id', 'region_id', 'fulfillment_lead_id', 'source_task_id'];
     uuidFields.forEach(f => { if (quoteData[f] === '' || quoteData[f] === undefined) quoteData[f] = null; });
     // Sanitize: empty strings → null for date fields
     const dateFields = ['valid_until', 'issue_date', 'sent_at', 'accepted_at', 'closed_at', 'signed_date', 'delivery_date'];
@@ -6461,10 +6619,17 @@ r.post('/quotations', async (req, res) => {
     if (quoteData.deposit_label === '') quoteData.deposit_label = null;
     if (quoteData.remaining_note === '') quoteData.remaining_note = null;
 
+    // ── Scope: kế thừa company_id + region_id từ deal (cho phép override; sẽ cảnh báo ở UI) ──
     let commercialCo = quoteData.company_id || null;
+    let leadRegionId = null;
     if (quoteData.lead_id) {
-      const { data: lrow } = await supabase.from('crm_leads').select('company_id').eq('id', quoteData.lead_id).maybeSingle();
+      const { data: lrow } = await supabase
+        .from('crm_leads')
+        .select('company_id, region_id')
+        .eq('id', quoteData.lead_id)
+        .maybeSingle();
       if (lrow?.company_id) commercialCo = lrow.company_id;
+      if (lrow?.region_id) leadRegionId = lrow.region_id;
     }
     if (!userIsAdmin(req.user?.role)) {
       const uc = requireUserCompanyId(req, res);
@@ -6475,15 +6640,46 @@ r.post('/quotations', async (req, res) => {
       commercialCo = commercialCo || uc;
     }
     quoteData.company_id = commercialCo;
+
+    // region_id: nếu client gửi → kiểm tra cùng company; nếu rỗng → kế thừa từ lead.
+    if (quoteData.region_id) {
+      const { data: rrow } = await supabase
+        .from('company_regions')
+        .select('id, company_id, is_active')
+        .eq('id', quoteData.region_id)
+        .maybeSingle();
+      if (!rrow) {
+        return res.status(400).json({ error: 'Khu vực không tồn tại' });
+      }
+      if (commercialCo && String(rrow.company_id) !== String(commercialCo)) {
+        return res.status(400).json({ error: 'Khu vực phải cùng công ty với báo giá' });
+      }
+      if (rrow.is_active === false) {
+        return res.status(400).json({ error: 'Khu vực đã bị vô hiệu' });
+      }
+    } else {
+      quoteData.region_id = leadRegionId;
+    }
     
     // Calc totals with per-item VAT + spec_factor (hệ số quy cách)
+    // ── Excel fidelity: nếu item.lock_amount && imported_amount → giữ NGUYÊN số tiền Excel ──
     const processedItems = (items || []).map(item => {
       const specFactor = parseFloat(item.spec_factor) || 0;
       const grossAmount = specFactor > 0
         ? specFactor * (item.quantity || 1) * (item.unit_price || 0)
         : (item.quantity || 1) * (item.unit_price || 0);
-      const discountAmount = grossAmount * (item.discount_percent || 0) / 100;
-      const amount = grossAmount - discountAmount;
+      const importedAmount = (typeof item.imported_amount === 'number' && Number.isFinite(item.imported_amount))
+        ? item.imported_amount
+        : null;
+      const isLocked = !!item.lock_amount && importedAmount !== null;
+      let amount, discountAmount;
+      if (isLocked) {
+        amount = importedAmount;
+        discountAmount = Math.max(0, grossAmount - amount);
+      } else {
+        discountAmount = grossAmount * (item.discount_percent || 0) / 100;
+        amount = grossAmount - discountAmount;
+      }
       const vatRate = item.vat_rate || 0;
       const vatAmount = amount * vatRate / 100;
       const total = amount + vatAmount;
@@ -6759,14 +6955,20 @@ r.put('/quotations/:id', async (req, res) => {
     }
 
     // Sanitize: empty strings → null for UUID fields
-    const uuidFields = ['customer_id', 'lead_id', 'project_id', 'approved_by', 'company_id'];
+    const uuidFields = ['customer_id', 'lead_id', 'project_id', 'approved_by', 'company_id', 'region_id', 'fulfillment_lead_id', 'source_task_id'];
     uuidFields.forEach(f => { if (quoteData[f] === '' || quoteData[f] === undefined) quoteData[f] = null; });
     // Sanitize: empty strings → null for date fields
     ['valid_until', 'issue_date', 'sent_at', 'accepted_at', 'closed_at', 'signed_date', 'delivery_date'].forEach(f => { if (quoteData[f] === '') quoteData[f] = null; });
     let commercialCoPut = quoteData.company_id || null;
+    let leadRegionIdPut = null;
     if (quoteData.lead_id) {
-      const { data: lrowPut } = await supabase.from('crm_leads').select('company_id').eq('id', quoteData.lead_id).maybeSingle();
+      const { data: lrowPut } = await supabase
+        .from('crm_leads')
+        .select('company_id, region_id')
+        .eq('id', quoteData.lead_id)
+        .maybeSingle();
       if (lrowPut?.company_id) commercialCoPut = lrowPut.company_id;
+      if (lrowPut?.region_id) leadRegionIdPut = lrowPut.region_id;
     }
     if (!userIsAdmin(req.user?.role)) {
       const uc = requireUserCompanyId(req, res);
@@ -6777,6 +6979,21 @@ r.put('/quotations/:id', async (req, res) => {
       commercialCoPut = commercialCoPut || uc;
     }
     quoteData.company_id = commercialCoPut;
+
+    // region_id (PUT): nếu client gửi region_id rỗng & lead có region → kế thừa; nếu có → kiểm tra cùng company.
+    if (quoteData.region_id) {
+      const { data: rrowPut } = await supabase
+        .from('company_regions')
+        .select('id, company_id, is_active')
+        .eq('id', quoteData.region_id)
+        .maybeSingle();
+      if (!rrowPut) return res.status(400).json({ error: 'Khu vực không tồn tại' });
+      if (commercialCoPut && String(rrowPut.company_id) !== String(commercialCoPut)) {
+        return res.status(400).json({ error: 'Khu vực phải cùng công ty với báo giá' });
+      }
+    } else if (leadRegionIdPut) {
+      quoteData.region_id = leadRegionIdPut;
+    }
     const quoteMoneyOrNullPut = (v) => {
       if (v === '' || v === undefined || v === null) return null;
       if (typeof v === 'number' && Number.isFinite(v)) return v;
@@ -6804,13 +7021,24 @@ r.put('/quotations/:id', async (req, res) => {
     }
     
     // Calc totals with per-item VAT + spec_factor (hệ số quy cách)
+    // ── Excel fidelity: nếu item.lock_amount && imported_amount → giữ NGUYÊN số tiền Excel ──
     const processedItems = (rawItems || []).map(item => {
       const specFactor = parseFloat(item.spec_factor) || 0;
       const grossAmount = specFactor > 0
         ? specFactor * (item.quantity || 1) * (item.unit_price || 0)
         : (item.quantity || 1) * (item.unit_price || 0);
-      const discountAmount = grossAmount * (item.discount_percent || 0) / 100;
-      const amount = grossAmount - discountAmount;
+      const importedAmount = (typeof item.imported_amount === 'number' && Number.isFinite(item.imported_amount))
+        ? item.imported_amount
+        : null;
+      const isLocked = !!item.lock_amount && importedAmount !== null;
+      let amount, discountAmount;
+      if (isLocked) {
+        amount = importedAmount;
+        discountAmount = Math.max(0, grossAmount - amount);
+      } else {
+        discountAmount = grossAmount * (item.discount_percent || 0) / 100;
+        amount = grossAmount - discountAmount;
+      }
       const vatRate = item.vat_rate || 0;
       const vatAmount = amount * vatRate / 100;
       const total = amount + vatAmount;
@@ -8347,53 +8575,106 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
     if (!rows.length) return res.status(400).json({ error: 'File rỗng' });
 
     // ── 1. Detect header row ──
+    // Helper: từ 1 row (đã upper-cased) build colMap; row2 (nếu có) là sub-header (merge cell "Quy Cách"…).
+    // Format mới (Vạn Phú Thành): có thêm DIỄN GIẢI HẠNG MỤC, ĐƠN GIÁ SAU CHIẾT KHẤU, SỐ TIỀN CHIẾT KHẤU,
+    // % CHIẾT KHẤU per-row, MÃ HÀNG, SỐ LƯỢNG. Phải tránh ghi đè name bằng "DIỄN GIẢI HẠNG MỤC".
+    function buildColMap(headerRow, subRow) {
+      const cm = {};
+      const upper = headerRow.map(c => String(c || '').trim().toUpperCase());
+      // Pass thứ tự ưu tiên: description → name → các cột khác (để DIỄN GIẢI HẠNG MỤC không match name)
+      upper.forEach((label, ci) => {
+        if (!label) return;
+        if (label.includes('DIỄN GIẢI') || label.includes('MÔ TẢ') || label.includes('CHI TIẾT')) {
+          if (cm.description === undefined) cm.description = ci;
+        }
+      });
+      upper.forEach((label, ci) => {
+        if (!label) return;
+        if (label === 'STT' || label === 'TT') {
+          if (cm.stt === undefined) cm.stt = ci;
+        } else if (
+          (label.includes('HẠNG MỤC') || label.includes('TÊN HÀNG') ||
+           label.includes('TÊN SẢN PHẨM') || label === 'TÊN SP' || label.includes('NỘI DUNG'))
+          && !label.includes('DIỄN GIẢI') && !label.includes('MÔ TẢ') && !label.includes('CHI TIẾT')
+        ) {
+          if (cm.name === undefined) cm.name = ci;
+        } else if (label.includes('MÃ HÀNG') || label === 'MÃ SP' || label.includes('MÃ SẢN PHẨM')) {
+          if (cm.sku === undefined) cm.sku = ci;
+        } else if (label === 'ĐVT' || label.includes('ĐƠN VỊ')) {
+          if (cm.unit === undefined) cm.unit = ci;
+        } else if (label.includes('KHỐI LƯỢNG') || label.includes('SỐ LƯỢNG') || label === 'SL' || label === 'KL') {
+          if (cm.quantity === undefined) cm.quantity = ci;
+        } else if (label.includes('NGANG') || (label.includes('DÀI') && !label.includes('BẢO'))) {
+          if (cm.length === undefined) cm.length = ci;
+        } else if (label.includes('SÂU') || label.includes('RỘNG')) {
+          if (cm.width === undefined) cm.width = ci;
+        } else if (label.includes('CAO') && !label.includes('CHIẾT') && !label.includes('CK')) {
+          if (cm.height === undefined) cm.height = ci;
+        } else if (
+          label.includes('% CHIẾT KHẤU') || label.includes('%CHIẾT KHẤU') ||
+          (label.includes('CHIẾT KHẤU') && (label.includes('%') || label === 'CK%')) ||
+          label === '%CK' || label === '% CK'
+        ) {
+          if (cm.discount_percent === undefined) cm.discount_percent = ci;
+        } else if (
+          label.includes('ĐƠN GIÁ') &&
+          !label.includes('SAU') && !label.includes('SỐ TIỀN') && !label.includes('CHIẾT KHẤU')
+        ) {
+          if (cm.unit_price === undefined) cm.unit_price = ci;
+        } else if (label.includes('THÀNH TIỀN') || label.includes('T.TIỀN') || label.includes('TT (VNĐ)')) {
+          if (cm.amount === undefined) cm.amount = ci;
+        } else if (label.includes('GHI CHÚ') || label.includes('NOTE')) {
+          if (cm.notes === undefined) cm.notes = ci;
+        } else if (label.includes('VAT') || label.includes('THUẾ')) {
+          if (cm.vat_rate === undefined) cm.vat_rate = ci;
+        }
+      });
+
+      // Sub-header (merge cell QUY CÁCH → NGANG/SÂU/CAO). Cho phép override length nếu super-header
+      // chỉ là "DÀI (m)" đơn lẻ và sub-row có cả NGANG: ưu tiên NGANG.
+      let subAdvance = false;
+      if (subRow && subRow.length) {
+        const subUpper = subRow.map(c => String(c || '').trim().toUpperCase());
+        subUpper.forEach((label, ci) => {
+          if (!label) return;
+          if (label.includes('NGANG')) {
+            cm.length = ci; subAdvance = true;
+          } else if (label.includes('SÂU') || label.includes('RỘNG')) {
+            if (cm.width === undefined || cm.width === ci) cm.width = ci;
+            subAdvance = true;
+          } else if (label.includes('CAO') && !label.includes('CHIẾT') && !label.includes('CK')) {
+            if (cm.height === undefined || cm.height === ci) cm.height = ci;
+            subAdvance = true;
+          } else if ((label.includes('KHỐI LƯỢNG') || label.includes('SỐ LƯỢNG') || label === 'SL' || label === 'KL') && cm.quantity === undefined) {
+            cm.quantity = ci; subAdvance = true;
+          } else if ((label.includes('% CHIẾT KHẤU') || label === 'CK%' || label === '%CK') && cm.discount_percent === undefined) {
+            cm.discount_percent = ci; subAdvance = true;
+          }
+        });
+      }
+      return { cm, subAdvance };
+    }
+
+    // Helper: row có giống "header" không (để re-detect khi gặp mini-header giữa file).
+    function looksLikeHeaderRow(rowArr) {
+      const upper = rowArr.map(c => String(c || '').trim().toUpperCase());
+      const hasStt = upper.some(c => c === 'STT' || c === 'TT');
+      const hasName = upper.some(c =>
+        (c.includes('HẠNG MỤC') || c.includes('TÊN HÀNG') || c.includes('TÊN SẢN PHẨM') ||
+         c.includes('NỘI DUNG') || c.includes('MÃ HÀNG'))
+        && !c.includes('DIỄN GIẢI')
+      );
+      return hasStt && hasName;
+    }
+
     let headerIdx = -1;
     let colMap = {};
     for (let i = 0; i < Math.min(rows.length, 30); i++) {
-      const row = rows[i].map(c => String(c || '').trim().toUpperCase());
-      const sttIdx = row.findIndex(c => c === 'STT' || c === 'TT');
-      const nameIdx = row.findIndex(c => c.includes('HẠNG MỤC') || c.includes('TÊN HÀNG') || c.includes('NỘI DUNG'));
-      if (sttIdx >= 0 && nameIdx >= 0) {
-        headerIdx = i;
-        row.forEach((label, ci) => {
-          if (label === 'STT' || label === 'TT') colMap.stt = ci;
-          else if (label.includes('HẠNG MỤC') || label.includes('TÊN HÀNG') || label.includes('NỘI DUNG')) colMap.name = ci;
-          else if (label.includes('MÔ TẢ') || label.includes('CHI TIẾT')) colMap.description = ci;
-          else if (label === 'ĐVT' || label.includes('ĐƠN VỊ')) colMap.unit = ci;
-          else if (label.includes('NGANG') || label.includes('DÀI')) colMap.length = ci;
-          else if (label.includes('SÂU') || label.includes('RỘNG')) colMap.width = ci;
-          else if (label.includes('CAO') && !label.includes('CHIẾT')) colMap.height = ci;
-          else if (label.includes('KHỐI LƯỢNG') || label.includes('SỐ LƯỢNG') || label === 'SL' || label === 'KL') colMap.quantity = ci;
-          else if (label.includes('ĐƠN GIÁ')) colMap.unit_price = ci;
-          else if (label.includes('THÀNH TIỀN') || label.includes('T.TIỀN')) colMap.amount = ci;
-          else if (label.includes('GHI CHÚ') || label.includes('NOTE')) colMap.notes = ci;
-          else if (label.includes('VAT') || label.includes('THUẾ')) colMap.vat_rate = ci;
-        });
-
-        // ── 1b. Check next row for sub-headers (merge cell: QUY CÁCH → NGANG/SÂU/CAO) ──
-        if (i + 1 < rows.length) {
-          const subRow = rows[i + 1].map(c => String(c || '').trim().toUpperCase());
-          let hasSubHeader = false;
-          subRow.forEach((label, ci) => {
-            if (label.includes('NGANG') || (label.includes('DÀI') && !label.includes('BẢO'))) {
-              if (colMap.length === undefined) { colMap.length = ci; hasSubHeader = true; }
-            }
-            else if (label.includes('SÂU') || label.includes('RỘNG')) {
-              if (colMap.width === undefined) { colMap.width = ci; hasSubHeader = true; }
-            }
-            else if (label.includes('CAO') && !label.includes('CHIẾT')) {
-              if (colMap.height === undefined) { colMap.height = ci; hasSubHeader = true; }
-            }
-            else if ((label.includes('KHỐI LƯỢNG') || label === 'SL' || label === 'KL') && colMap.quantity === undefined) {
-              colMap.quantity = ci; hasSubHeader = true;
-            }
-          });
-          // If sub-header row found, skip it when parsing items
-          if (hasSubHeader) headerIdx = i + 1;
-        }
-
-        break;
-      }
+      if (!looksLikeHeaderRow(rows[i] || [])) continue;
+      const { cm, subAdvance } = buildColMap(rows[i], rows[i + 1] || []);
+      colMap = cm;
+      headerIdx = subAdvance ? i + 1 : i;
+      break;
     }
     if (headerIdx < 0) return res.status(400).json({ error: 'Không tìm thấy dòng tiêu đề (cần có STT + HẠNG MỤC)' });
     console.log('[parse-excel] headerIdx:', headerIdx, 'colMap:', JSON.stringify(colMap));
@@ -8410,17 +8691,20 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
         // Skip company headers
         if (cellUpper.includes('CÔNG TY') || cellUpper.includes('HOTLINE') || cellUpper.includes('MST') || cellUpper.includes('WEBSITE') || cellUpper.includes('WWW.')) continue;
 
-        // KT Phụ trách (detect before customer to avoid mixing)
-        if (cellUpper.includes('KT PHỤ TRÁCH') || cellUpper.includes('KỸ THUẬT PHỤ TRÁCH') || cellUpper.includes('KĨ THUẬT PHỤ TRÁCH') || cellUpper.includes('NVKD')) {
-          const match = cell.match(/[:\-]\s*(.+)/);
+        // KT Phụ trách (detect before customer to avoid mixing).
+        // "PHỤ TRÁCH KD" (format Vạn Phú Thành) cũng rơi vào nhánh này.
+        if (cellUpper.includes('KT PHỤ TRÁCH') || cellUpper.includes('KỸ THUẬT PHỤ TRÁCH') ||
+            cellUpper.includes('KĨ THUẬT PHỤ TRÁCH') || cellUpper.includes('NVKD') ||
+            cellUpper.includes('PHỤ TRÁCH KD')) {
+          const match = cell.match(/[:;\-]\s*(.+)/);
           if (match) kts_info = match[1].replace(/[-–]\s*(0\d{8,10})/, ' - $1').trim();
           else kts_info = cell;
           continue;
         }
 
-        // Customer name — look for label "Khách hàng:"
+        // Customer name — label "Khách hàng:" / "Tên khách hàng;" (Vạn Phú Thành dùng `;`)
         if (cellUpper.includes('KHÁCH HÀNG') || cellUpper.includes('KHACH HANG')) {
-          const match = cell.match(/[:\-]\s*(.+)/);
+          const match = cell.match(/[:;\-]\s*(.+)/);
           if (match) {
             let namePart = match[1].trim();
             // Remove KT info if embedded
@@ -8439,17 +8723,17 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
 
         // Address
         if (cellUpper.includes('ĐỊA CHỈ') || cellUpper.includes('ĐC:')) {
-          const match = cell.match(/[:\-]\s*(.+)/);
+          const match = cell.match(/[:;\-]\s*(.+)/);
           if (match) {
             let addr = match[1].trim();
             // Remove phone if embedded in address
-            addr = addr.replace(/\s*(SĐT|SDT|ĐT)\s*[:]\s*0\d{8,10}/i, '').trim();
+            addr = addr.replace(/\s*(SĐT|SDT|ĐT)\s*[:;]\s*0\d{8,10}/i, '').trim();
             customer_address = addr;
           }
           continue;
         }
 
-        // SĐT standalone cell
+        // SĐT standalone cell (bao gồm cả "SĐT liên lạc:" của format Vạn Phú Thành)
         if (cellUpper.includes('SĐT') || cellUpper.includes('SDT') || cellUpper.includes('ĐT:')) {
           const phoneMatch = cell.match(/(0\d{8,10})/);
           if (phoneMatch && !customer_phone) customer_phone = phoneMatch[1];
@@ -8486,8 +8770,35 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
       const row = rows[i];
       if (!row || row.every(c => !c && c !== 0)) continue;
 
+      // ── Mini-header lặp lại trong body (vd. format Vạn Phú Thành: row 17 cho section II,
+      // row 23 cho section III có "MÃ HÀNG / Số Lượng"). Strategy:
+      //   1) override các role trong newCm,
+      //   2) clear bất kỳ role cũ nào đang trỏ vào col index đã được newCm gán role khác
+      //      (vd. section III col E = "Số Lượng" → role length cũ ở col 4 phải bị xoá).
+      if (looksLikeHeaderRow(row)) {
+        const { cm: newCm, subAdvance: newSub } = buildColMap(row, rows[i + 1] || []);
+        const merged = { ...colMap, ...newCm };
+        const newColsByIdx = {};
+        for (const [role, idx] of Object.entries(newCm)) {
+          if (typeof idx === 'number') newColsByIdx[idx] = role;
+        }
+        for (const role of Object.keys(merged)) {
+          const idx = merged[role];
+          if (typeof idx === 'number' && newColsByIdx[idx] && newColsByIdx[idx] !== role) {
+            delete merged[role];
+          }
+        }
+        colMap = merged;
+        if (newSub) i += 1;
+        console.log('[parse-excel] re-detected mini-header at row', i, 'colMap:', JSON.stringify(colMap));
+        continue;
+      }
+
       const stt = colMap.stt !== undefined ? String(row[colMap.stt] || '').trim() : '';
-      const name = colMap.name !== undefined ? String(row[colMap.name] || '').trim() : '';
+      const nameRaw = colMap.name !== undefined ? String(row[colMap.name] || '').trim() : '';
+      const skuRaw = colMap.sku !== undefined ? String(row[colMap.sku] || '').trim() : '';
+      // Nếu có cả MÃ HÀNG + TÊN SẢN PHẨM (section III) → name = TÊN, prefix mã vào notes/description bên dưới.
+      const name = nameRaw || skuRaw;
       const nameUpper = name.toUpperCase();
 
       // Collect all text from this row
@@ -8632,12 +8943,30 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
 
       const descCell = colMap.description !== undefined ? String(row[colMap.description] || '').trim() : '';
       const notesCell = colMap.notes !== undefined ? String(row[colMap.notes] || '').trim() : '';
-      const mergedDescription = [descCell, notesCell].filter(Boolean).join('\n\n');
+      // Nếu có MÃ HÀNG riêng (section III VPT): prefix vào description để khỏi mất thông tin.
+      const skuPrefix = (skuRaw && skuRaw !== name) ? `[${skuRaw}] ` : '';
+      const mergedDescription = [
+        skuPrefix ? `${skuPrefix.trim()}` : '',
+        descCell,
+        notesCell,
+      ].filter(Boolean).join('\n\n');
+
+      // % CHIẾT KHẤU per-row: hỗ trợ "35%", "0.35", "0,35"
+      let rowDiscount = 0;
+      if (colMap.discount_percent !== undefined) {
+        const raw = row[colMap.discount_percent];
+        if (raw != null && raw !== '') {
+          const n = typeof raw === 'number' ? raw : parseFloat(String(raw).replace('%', '').replace(',', '.'));
+          if (!isNaN(n) && n > 0) rowDiscount = n <= 1 ? n * 100 : n;
+        }
+      }
+      const effectiveGroupCK = rowDiscount > 0 ? rowDiscount : currentGroupDiscount;
 
       items.push({
         is_group: false,
         group_name: currentGroup,
-        group_discount_percent: currentGroupDiscount,
+        group_discount_percent: effectiveGroupCK,
+        sku: skuRaw || null,
         name,
         description: mergedDescription,
         unit: colMap.unit !== undefined ? String(row[colMap.unit] || '').trim() : 'bộ',
@@ -9050,6 +9379,65 @@ r.get('/invoices/:id/pdf', async (req, res) => {
 const CRM_TASK_SELECT =
   '*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)';
 
+/** Minh chứng khi hoàn thành NV CRM: ghi chú trên task hoặc bất kỳ đính kèm có nội dung (file URL hoặc text). */
+async function crmTaskHasCompletionEvidence(supabase, taskId, taskNotes) {
+  if (taskNotes != null && String(taskNotes).trim() !== '') return true;
+  const { data: rows, error } = await supabase
+    .from('crm_task_attachments')
+    .select('id,file_url,notes')
+    .eq('task_id', taskId)
+    .limit(200);
+  if (error) throw error;
+  for (const r of rows || []) {
+    if (r.file_url && String(r.file_url).trim() !== '') return true;
+    if (r.notes != null && String(r.notes).trim() !== '') return true;
+  }
+  return false;
+}
+
+/**
+ * Map task_id -> { files, notes } cho tab NV CRM (khớp logic cũ: doc_type = task_note → note).
+ * Ưu tiên RPC SQL (161) để tránh trả về quá nhiều dòng attachment → statement timeout.
+ */
+async function loadCrmTaskAttachmentCountMap(supabase, taskIds) {
+  const countMap = {};
+  if (!taskIds?.length) return countMap;
+
+  try {
+    const { data: rows, error } = await supabase.rpc('crm_task_attachment_counts_by_tasks', {
+      p_task_ids: taskIds,
+    });
+    if (!error && Array.isArray(rows)) {
+      for (const r of rows) {
+        if (!r?.task_id) continue;
+        countMap[r.task_id] = {
+          files: Number(r.file_count || 0),
+          notes: Number(r.note_count || 0),
+        };
+      }
+      return countMap;
+    }
+  } catch (_) {
+    /* RPC chưa deploy: fallback */
+  }
+
+  const CHUNK = 80;
+  for (let i = 0; i < taskIds.length; i += CHUNK) {
+    const chunk = taskIds.slice(i, i + CHUNK);
+    const { data: attCounts, error } = await supabase
+      .from('crm_task_attachments')
+      .select('task_id, doc_type')
+      .in('task_id', chunk);
+    if (error) throw error;
+    (attCounts || []).forEach((a) => {
+      if (!countMap[a.task_id]) countMap[a.task_id] = { files: 0, notes: 0 };
+      if (a.doc_type === 'task_note') countMap[a.task_id].notes += 1;
+      else countMap[a.task_id].files += 1;
+    });
+  }
+  return countMap;
+}
+
 /** Deal gốc use_order_tasks: ghi nhiệm vụ mới vào deal fulfillment của đơn đầu tiên (khớp tab chi tiết deal). */
 async function resolveCrmTaskWriteLeadId(routeLeadId) {
   const { data: leadRow } = await supabase
@@ -9143,21 +9531,11 @@ r.get('/leads/:id/tasks', async (req, res) => {
       }
     }
 
-    // Đếm số file + ghi chú cho mỗi task
+    // Đếm số file + ghi chú cho mỗi task (RPC GROUP BY — tránh timeout khi nhiều đính kèm)
     if (data?.length) {
-      const taskIds = data.map(t => t.id);
-      const { data: attCounts } = await supabase.from('crm_task_attachments')
-        .select('task_id, doc_type')
-        .in('task_id', taskIds);
-      
-      const countMap = {};
-      (attCounts || []).forEach(a => {
-        if (!countMap[a.task_id]) countMap[a.task_id] = { files: 0, notes: 0 };
-        if (a.doc_type === 'task_note') countMap[a.task_id].notes++;
-        else countMap[a.task_id].files++;
-      });
-      
-      data = data.map(t => ({
+      const taskIds = data.map((t) => t.id);
+      const countMap = await loadCrmTaskAttachmentCountMap(supabase, taskIds);
+      data = data.map((t) => ({
         ...t,
         file_count: countMap[t.id]?.files || 0,
         note_count: countMap[t.id]?.notes || 0,
@@ -9195,6 +9573,7 @@ r.post('/leads/:id/tasks', async (req, res) => {
       supervisor_id: b.supervisor_id || null,
       deadline: b.deadline || null,
       created_by: req.user.userId,
+      completion_requires_file_or_note: !!b.completion_requires_file_or_note,
     }).select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)').single();
     if (error) throw error;
 
@@ -9248,6 +9627,7 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
       order_index: item.order_index,
       deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
       created_by: req.user.userId,
+      completion_requires_file_or_note: !!item.completion_requires_file_or_note,
     }));
 
     const { data, error } = await supabase.from('crm_tasks').insert(inserts)
@@ -9315,6 +9695,24 @@ r.post('/leads/:id/tasks/generate-production-template', async (req, res) => {
 r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
   try {
     const b = req.body;
+    if (b.status === 'completed') {
+      const { data: prior, error: pErr } = await supabase
+        .from('crm_tasks')
+        .select('id,status,notes,completion_requires_file_or_note')
+        .eq('id', req.params.taskId)
+        .maybeSingle();
+      if (pErr) throw pErr;
+      if (prior && prior.status !== 'completed' && prior.completion_requires_file_or_note) {
+        const ok = await crmTaskHasCompletionEvidence(supabase, req.params.taskId, prior.notes);
+        if (!ok) {
+          return res.status(400).json({
+            error: 'Nhiệm vụ này yêu cầu ghi chú hoặc file đính kèm trước khi hoàn thành (cấu hình tại Cấu hình KPI → Bộ NV CRM).',
+            code: 'crm_task_completion_requires_evidence',
+          });
+        }
+      }
+    }
+
     const update = { updated_at: new Date().toISOString() };
     const fields = ['title','description','status','priority','stage_slug','order_index','assignee_id','supervisor_id','deadline','shared_to_project'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
@@ -9898,6 +10296,7 @@ r.post('/task-templates/:tplId/items', async (req, res) => {
       title: b.title, description: b.description || null,
       priority: b.priority || 'medium', deadline_days: b.deadline_days || 0,
       order_index: nextOrder, checklist: b.checklist || [],
+      completion_requires_file_or_note: !!b.completion_requires_file_or_note,
     }).select().single();
     if (error) throw error;
     res.status(201).json(data);
@@ -9908,7 +10307,7 @@ r.post('/task-templates/:tplId/items', async (req, res) => {
 r.put('/task-templates/:tplId/items/:itemId', async (req, res) => {
   try {
     const update = {};
-    ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist', 'default_allowed_companies', 'default_allowed_departments'].forEach(f => {
+    ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist', 'default_allowed_companies', 'default_allowed_departments', 'completion_requires_file_or_note'].forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
     const { data, error } = await supabase.from('crm_task_template_items')

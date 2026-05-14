@@ -105,6 +105,7 @@ async function autoGenCrmTasks(leadId, type, userId) {
         order_index: item.order_index,
         deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
         created_by: userId,
+        completion_requires_file_or_note: !!item.completion_requires_file_or_note,
       }));
     }
   }

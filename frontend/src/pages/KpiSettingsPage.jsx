@@ -22,6 +22,7 @@ import {
   XCircle,
   AlertCircle,
   Loader2,
+  Paperclip,
 } from 'lucide-react';
 import KpiUserFilter from '../components/KpiUserFilter';
 
@@ -1310,6 +1311,142 @@ function PipelineKpiTab() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// Tab: Bộ NV CRM — bắt buộc minh chứng (file hoặc ghi chú) khi hoàn thành
+// ═════════════════════════════════════════════════════════════════════════════
+function CrmTaskBundleTab() {
+  const [templates, setTemplates] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(null);
+  const [savingKey, setSavingKey] = useState(null);
+
+  const load = async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const { data } = await api.get('/crm/task-templates');
+      setTemplates(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setErr(e.response?.data?.error || e.message);
+      setTemplates([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const setItemEvidence = async (templateId, itemId, value) => {
+    const key = `${templateId}:${itemId}`;
+    setSavingKey(key);
+    setErr(null);
+    try {
+      const { data: updated } = await api.put(`/crm/task-templates/${templateId}/items/${itemId}`, {
+        completion_requires_file_or_note: value,
+      });
+      setTemplates((prev) =>
+        prev.map((tpl) =>
+          tpl.id === templateId
+            ? { ...tpl, items: (tpl.items || []).map((it) => (it.id === itemId ? { ...it, ...updated } : it)) }
+            : tpl,
+        ),
+      );
+    } catch (e) {
+      setErr(e.response?.data?.error || e.message);
+    } finally {
+      setSavingKey(null);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-sm text-slate-700">
+        <p className="font-semibold text-slate-900 flex items-center gap-2">
+          <Paperclip className="w-4 h-4 text-slate-500 shrink-0" />
+          Bộ nhiệm vụ CRM (Lead / Deal)
+        </p>
+        <p className="mt-1 text-slate-600">
+          Cấu hình trên từng <strong>mục trong mẫu CRM</strong> (theo giai đoạn pipeline). Khi bật, nhiệm vụ sinh ra trên
+          lead/deal yêu cầu có <strong>ghi chú trên nhiệm vụ</strong> hoặc <strong>đính kèm</strong> (file hoặc nội dung ghi chú
+          trên đính kèm) trước khi đánh dấu hoàn thành — phù hợp kỷ luật nhiệm vụ liên quan KPI nhóm A.
+        </p>
+      </div>
+      {err && <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">{err}</div>}
+      {loading ? (
+        <div className="text-center py-10 text-gray-400 flex items-center justify-center gap-2">
+          <Loader2 className="w-5 h-5 animate-spin" /> Đang tải mẫu…
+        </div>
+      ) : !templates.length ? (
+        <div className="text-center py-8 text-gray-500 text-sm">Chưa có bộ mẫu CRM hoặc không có quyền đọc.</div>
+      ) : (
+        <div className="space-y-6">
+          {templates.map((tpl) => (
+            <div key={tpl.id} className="border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm">
+              <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-gray-900">{tpl.name}</span>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-mono">{tpl.stage_slug}</span>
+                <span className="text-xs text-gray-500">{tpl.pipeline_type || 'both'}</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-gray-500 border-b border-gray-100 bg-white">
+                      <th className="px-4 py-2 font-medium">Nhiệm vụ mẫu</th>
+                      <th className="px-4 py-2 font-medium w-[240px]">Bắt buộc file hoặc ghi chú khi hoàn thành</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(tpl.items || [])
+                      .slice()
+                      .sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
+                      .map((it) => {
+                        const busy = savingKey === `${tpl.id}:${it.id}`;
+                        const v = !!it.completion_requires_file_or_note;
+                        return (
+                          <tr key={it.id} className="border-b border-gray-50 hover:bg-gray-50/80">
+                            <td className="px-4 py-2.5">
+                              <div className="font-medium text-gray-900">{it.title}</div>
+                              {it.description && (
+                                <div className="text-xs text-gray-500 mt-0.5 line-clamp-2">{it.description}</div>
+                              )}
+                            </td>
+                            <td className="px-4 py-2.5">
+                              <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                                <input
+                                  type="checkbox"
+                                  checked={v}
+                                  disabled={busy}
+                                  onChange={(e) => setItemEvidence(tpl.id, it.id, e.target.checked)}
+                                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span className="text-xs text-gray-600">{v ? 'Đang bật' : 'Tắt'}</span>
+                                {busy && <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />}
+                              </label>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+              {!(tpl.items || []).length && (
+                <div className="px-4 py-3 text-xs text-gray-400">Chưa có mục trong bộ mẫu này.</div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="text-xs text-gray-500">
+        Bộ nhiệm vụ theo <strong>đơn vị / dự án</strong> (quy trình xưởng, checklist từng dòng) chỉnh tại{' '}
+        <a href="/template-sets" className="text-blue-600 underline">
+          Bộ NV mẫu theo đơn vị
+        </a>
+        .
+      </p>
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // Page wrapper
 // ═════════════════════════════════════════════════════════════════════════════
 export default function KpiSettingsPage() {
@@ -1333,6 +1470,7 @@ export default function KpiSettingsPage() {
     { id: 'periods', label: 'Kỳ KPI', desc: 'Khoá / đóng kỳ, recompute' },
     { id: 'calendar', label: 'Lịch làm việc', desc: 'Giờ hành chính, ngày lễ, ngày phép NV' },
     { id: 'pipeline', label: 'Pipeline KPI', desc: 'Map stage pipeline → canonical_slug cho KPI nhóm B' },
+    { id: 'crm_tasks', label: 'Bộ NV CRM', desc: 'Nhiệm vụ mẫu Lead/Deal: bắt buộc file hoặc ghi chú khi hoàn thành' },
   ];
 
   return (
@@ -1365,6 +1503,7 @@ export default function KpiSettingsPage() {
       {tab === 'periods' && <PeriodsTab />}
       {tab === 'calendar' && <CalendarTab />}
       {tab === 'pipeline' && <PipelineKpiTab />}
+      {tab === 'crm_tasks' && <CrmTaskBundleTab />}
     </div>
   );
 }
