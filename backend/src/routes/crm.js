@@ -2579,6 +2579,12 @@ r.post('/pipeline-stages', async (req, res) => {
       default_probability: defaultProbability,
       description: stageDesc,
       ...(slaInsert != null ? { sla_days: slaInsert } : {}),
+      ...(b.counts_as_won_revenue !== undefined
+        ? { counts_as_won_revenue: b.counts_as_won_revenue == null ? null : !!b.counts_as_won_revenue }
+        : {}),
+      ...(b.counts_as_completed_revenue !== undefined
+        ? { counts_as_completed_revenue: b.counts_as_completed_revenue == null ? null : !!b.counts_as_completed_revenue }
+        : {}),
     }).select().single();
     if (error) throw error;
     res.status(201).json(data);
@@ -2604,6 +2610,12 @@ r.put('/pipeline-stages/:id', async (req, res) => {
     ['name', 'color', 'icon', 'order_index', 'is_won', 'is_lost', 'is_active', 'send_zalo_on_enter', 'create_event_on_enter', 'sync_role'].forEach(f => {
       if (b[f] !== undefined) update[f] = (f === 'send_zalo_on_enter' || f === 'create_event_on_enter') ? !!b[f] : b[f];
     });
+    if (b.counts_as_won_revenue !== undefined) {
+      update.counts_as_won_revenue = b.counts_as_won_revenue == null ? null : !!b.counts_as_won_revenue;
+    }
+    if (b.counts_as_completed_revenue !== undefined) {
+      update.counts_as_completed_revenue = b.counts_as_completed_revenue == null ? null : !!b.counts_as_completed_revenue;
+    }
     if (b.sla_days !== undefined) {
       if (b.sla_days === null || b.sla_days === '') update.sla_days = null;
       else {
@@ -4637,22 +4649,56 @@ r.get('/company-regions', async (req, res) => {
   try {
     const co = req.query.company_id && String(req.query.company_id).trim();
     const div = req.query.division_unit_id && String(req.query.division_unit_id).trim();
-    if (!co) return res.status(400).json({ error: 'Thiếu company_id' });
+    const idsParam = req.query.company_ids && String(req.query.company_ids).trim();
+    const coIds = idsParam ? idsParam.split(',').map((s) => s.trim()).filter(Boolean) : [];
+    const forModuleRaw = req.query.for_module && String(req.query.for_module).trim().toLowerCase();
+    if (!co && coIds.length === 0) return res.status(400).json({ error: 'Thiếu company_id' });
+
     const sac = scopedAdminCompanyId(req);
-    if (sac && String(co) !== String(sac)) return res.status(403).json({ error: 'Không xem khu vực công ty khác' });
-    if (isCrmRegionAdminUser(req.user)) {
-      if (String(co) !== String(req.user.company_id)) return res.status(403).json({ error: 'Không có quyền' });
-    } else if (!userIsAdmin(req.user?.role)) {
-      const cid = requireUserCompanyId(req, res);
-      if (!cid) return;
-      if (String(co) !== String(cid)) return res.status(403).json({ error: 'Không có quyền' });
+    const checkOne = (id) => {
+      if (sac && String(id) !== String(sac)) return false;
+      if (isCrmRegionAdminUser(req.user)) {
+        if (String(id) !== String(req.user.company_id)) return false;
+      } else if (!userIsAdmin(req.user?.role)) {
+        if (String(id) !== String(req.user?.company_id || '')) return false;
+      }
+      return true;
+    };
+
+    let allowedIds = [];
+    if (co) {
+      if (!checkOne(co)) return res.status(403).json({ error: 'Không có quyền' });
+      allowedIds = [co];
+    } else {
+      allowedIds = coIds.filter(checkOne);
+      if (allowedIds.length === 0) return res.json([]);
     }
+
+    // Lọc theo khối được cấu hình cho module (vd. for_module=crm) — chỉ trả khu vực
+    // có division_unit_id thuộc các khối CRM. Khu vực chưa gán khối được giữ lại
+    // để tương thích dữ liệu cũ.
+    let moduleDivIds = null;
+    if (forModuleRaw) {
+      try {
+        const { getRestrictedDivisionIdsForModule, KNOWN_MODULE_KEYS } = require('../helpers/ecosystemModuleScope');
+        if (KNOWN_MODULE_KEYS.includes(forModuleRaw)) {
+          const restricted = await getRestrictedDivisionIdsForModule(forModuleRaw);
+          if (restricted && restricted.size > 0) moduleDivIds = [...restricted];
+        }
+      } catch { /* ignore */ }
+    }
+
     let q = supabase
       .from('company_regions')
       .select('*, division:ecosystem_units(id, name, short_name)')
-      .eq('company_id', co)
+      .in('company_id', allowedIds)
       .order('order_index');
-    if (div) q = q.eq('division_unit_id', div);
+    if (div) {
+      q = q.eq('division_unit_id', div);
+    } else if (moduleDivIds && moduleDivIds.length) {
+      // Cho phép cả khu vực thuộc khối module HOẶC chưa gán khối
+      q = q.or(`division_unit_id.in.(${moduleDivIds.join(',')}),division_unit_id.is.null`);
+    }
     const { data, error } = await q;
     if (error) throw error;
     res.json(data || []);

@@ -1151,13 +1151,14 @@ r.get('/company-overview', async (req, res) => {
 
       const { data: tasks } = await supabase
         .from('crm_tasks')
-        .select('id, title, deadline, assignee_id, status')
+        .select('id, title, deadline, assignee_id, status, lead_id, lead:crm_leads(stage:crm_pipeline_stages!crm_leads_stage_id_fkey(is_lost))')
         .in('assignee_id', userIds)
         .neq('status', 'completed')
         .not('deadline', 'is', null)
         .lt('deadline', new Date().toISOString())
-        .limit(200);
-      tasksOverdue = tasks || [];
+        .limit(400);
+      // Bỏ qua nhiệm vụ thuộc lead/deal đang ở cột Mất (is_lost) — không tính trễ KPI/cảnh báo.
+      tasksOverdue = (tasks || []).filter((t) => !(t.lead && t.lead.stage && t.lead.stage.is_lost === true));
 
       const { data: leaves } = await supabase
         .from('kpi_user_leaves')

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
-import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2, Calendar } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2, Calendar, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { resolveDefaultCrmAdminCompanyId, setStoredCrmFilterCompanyId } from '../lib/crmCompanyFilter';
 
@@ -79,6 +79,8 @@ export default function PipelineSettingsPage() {
     description: '',
     is_won: false,
     is_lost: false,
+    counts_as_won_revenue: false,
+    counts_as_completed_revenue: false,
     send_zalo_on_enter: false,
     create_event_on_enter: false,
     sync_role: '',
@@ -419,6 +421,60 @@ export default function PipelineSettingsPage() {
     }
   };
 
+  /**
+   * Bật/tắt nhanh “Cột Thắng” (is_won) cho stage deal. Mỗi pipeline chỉ nên có một
+   * cột Thắng — KPI “Doanh thu thắng” cộng đúng theo cột này.
+   */
+  /**
+   * Bật/tắt nhanh "Cột Mất" (is_lost) cho stage deal/lead. Lead/Deal nằm ở cột này sẽ
+   * bị KPI bỏ qua: không tính SLA, không tính trễ NV, không cộng/trừ điểm.
+   */
+  const toggleLostColumn = async (stage) => {
+    const turningOn = !stage.is_lost;
+    try {
+      await api.put(`/crm/pipeline-stages/${stage.id}`, {
+        is_lost: turningOn,
+        is_won: turningOn ? false : stage.is_won,
+      });
+      load();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi');
+    }
+  };
+
+  const toggleWonColumn = async (stage) => {
+    if (stage.pipeline_type !== 'deal') return;
+    const turningOn = !stage.is_won;
+    if (turningOn) {
+      const others = (stages || []).filter(
+        (s) => s.pipeline_id === stage.pipeline_id && s.id !== stage.id && s.is_won,
+      );
+      if (others.length) {
+        const ok = confirm(
+          `Pipeline đang có ${others.length} cột khác đang đánh dấu Thắng. Tắt các cột đó và đặt "${stage.name}" làm cột Thắng duy nhất?`,
+        );
+        if (!ok) return;
+      }
+    }
+    try {
+      if (turningOn) {
+        const others = (stages || []).filter(
+          (s) => s.pipeline_id === stage.pipeline_id && s.id !== stage.id && s.is_won,
+        );
+        for (const o of others) {
+          await api.put(`/crm/pipeline-stages/${o.id}`, { is_won: false });
+        }
+      }
+      await api.put(`/crm/pipeline-stages/${stage.id}`, {
+        is_won: turningOn,
+        is_lost: turningOn ? false : stage.is_lost,
+      });
+      load();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi');
+    }
+  };
+
   const visiblePipelines = useMemo(() => {
     if (!isAdmin) return pipelines || [];
     if (!selectedCompanyId) return pipelines || [];
@@ -446,6 +502,8 @@ export default function PipelineSettingsPage() {
       description: '',
       is_won: false,
       is_lost: false,
+      counts_as_won_revenue: false,
+      counts_as_completed_revenue: false,
       send_zalo_on_enter: false,
       create_event_on_enter: false,
       sync_role: '',
@@ -464,6 +522,8 @@ export default function PipelineSettingsPage() {
       description: stage.description != null ? String(stage.description) : '',
       is_won: stage.is_won,
       is_lost: stage.is_lost,
+      counts_as_won_revenue: !!stage.counts_as_won_revenue,
+      counts_as_completed_revenue: !!stage.counts_as_completed_revenue,
       send_zalo_on_enter: !!stage.send_zalo_on_enter,
       create_event_on_enter: !!stage.create_event_on_enter,
       sync_role: stage.sync_role || '',
@@ -700,8 +760,38 @@ export default function PipelineSettingsPage() {
               </div>
             </div>
             <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={() => toggleLostColumn(s)}
+                className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
+                  s.is_lost
+                    ? 'bg-red-600 text-white border-red-700'
+                    : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-red-300 hover:text-red-700'
+                }`}
+                title={s.is_lost
+                  ? 'Đang là cột Mất (lost). Lead/Deal ở cột này KPI bỏ qua: không tính SLA, không cộng/trừ điểm trễ nhiệm vụ. Nhấn để bỏ.'
+                  : 'Đánh dấu là cột Mất (lost) — KPI sẽ bỏ qua lead/deal ở cột này: SLA và nhiệm vụ trễ KHÔNG tính điểm trừ/cộng'}
+              >
+                <XCircle className="h-3 w-3" />
+                {s.is_lost ? 'Cột Mất' : 'Mất'}
+              </button>
               {s.pipeline_type === 'deal' && (
                 <>
+                  <button
+                    type="button"
+                    onClick={() => toggleWonColumn(s)}
+                    className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
+                      s.is_won
+                        ? 'bg-emerald-600 text-white border-emerald-700'
+                        : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-emerald-300 hover:text-emerald-700'
+                    }`}
+                    title={s.is_won
+                      ? 'Đang là cột Thắng (doanh thu thắng). Nhấn để bỏ.'
+                      : 'Đánh dấu là cột Thắng — KPI Doanh thu thắng sẽ cộng đúng theo cột này'}
+                  >
+                    <Trophy className="h-3 w-3" />
+                    {s.is_won ? 'Cột Thắng' : 'Thắng'}
+                  </button>
                   <button
                     type="button"
                     onClick={() => toggleCreateEventColumn(s)}
@@ -1496,6 +1586,34 @@ function StageForm({ form, setForm, onSave, onCancel, pipelineType = 'lead', edi
             className="rounded" />
           <XCircle className="h-3.5 w-3.5 text-red-500" /> Giai đoạn Thua/Mất
         </label>
+        {pipelineType === 'deal' && !form.is_lost && (
+          <label
+            className="flex items-center gap-2 text-xs cursor-pointer text-amber-900 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200"
+            title="Tick các cột muốn cộng vào ô 'Doanh thu thắng' trên CRM dashboard. Nếu không tick cột nào, dashboard tự dùng cờ 'Giai đoạn Thắng' (is_won)."
+          >
+            <input
+              type="checkbox"
+              checked={!!form.counts_as_won_revenue}
+              onChange={(e) => setForm((f) => ({ ...f, counts_as_won_revenue: e.target.checked }))}
+              className="rounded border-amber-400"
+            />
+            <Trophy className="h-3.5 w-3.5 text-amber-600" /> Tính vào «Doanh thu thắng»
+          </label>
+        )}
+        {pipelineType === 'deal' && !form.is_lost && (
+          <label
+            className="flex items-center gap-2 text-xs cursor-pointer text-teal-900 bg-teal-50 px-2 py-1 rounded-lg border border-teal-200"
+            title="Tick các cột muốn cộng vào ô 'Doanh thu đã hoàn thành' trên CRM dashboard. Nếu không tick cột nào, dashboard tự dò theo canonical 'completed' / bucket 'completed' / tên chứa 'Hoàn thành'."
+          >
+            <input
+              type="checkbox"
+              checked={!!form.counts_as_completed_revenue}
+              onChange={(e) => setForm((f) => ({ ...f, counts_as_completed_revenue: e.target.checked }))}
+              className="rounded border-teal-400"
+            />
+            <CheckCircle2 className="h-3.5 w-3.5 text-teal-600" /> Tính vào «Doanh thu đã hoàn thành»
+          </label>
+        )}
         {pipelineType === 'deal' && (
           <label className="flex items-center gap-2 text-xs cursor-pointer text-sky-800 bg-sky-50 px-2 py-1 rounded-lg border border-sky-200">
             <input
