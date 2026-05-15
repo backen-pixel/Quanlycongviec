@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { CRM_KPI_COACH_EVENT, KPI_EXPLAIN_EVENT } from '../lib/kpiPersonalLedgerHints';
+import { AI_DEADLINE_DIGEST_EVENT } from '../lib/aiDeadlineDigestEvent';
 import { Bot, X, Send, Sparkles, Lightbulb, Loader2, ArrowRight, Minimize2, Maximize2, GripVertical, MessageCircle, BellRing, RefreshCw, AlertTriangle, Clock, Target, Users } from 'lucide-react';
 import useDraggable from '../hooks/useDraggable';
 
@@ -75,6 +76,33 @@ export default function AIAssistantChat() {
       window.removeEventListener(CRM_KPI_COACH_EVENT, onCrmKpiCoach);
       window.removeEventListener(KPI_EXPLAIN_EVENT, onCrmKpiCoach);
     };
+  }, []);
+
+  /** Nhắc hạn CRM do cron backend (socket → NotificationCenter phát sự kiện). */
+  useEffect(() => {
+    const WELCOME = '👋 Chào! Tôi là trợ lý AI TuBep Pro.\n\nGõ "help" để xem lệnh 😊';
+    const onDigest = (ev) => {
+      const notif = ev.detail || {};
+      const msg = String(notif.message || '').trim();
+      if (!msg) return;
+      setOpen(true);
+      setMinimized(false);
+      setView('chat');
+      const title = String(notif.title || '🤖 Nhắc hạn nhiệm vụ CRM').trim();
+      const nav = notif.metadata?.nav_url ? `\n\n→ Mở: ${notif.metadata.nav_url}` : '';
+      const digestBlock = `${title}\n\n${msg}${nav}`.trim();
+      setMessages((prev) => {
+        const digestMsg = { role: 'assistant', content: digestBlock, source: 'ai_crm_deadline_digest' };
+        if (!prev.length) {
+          return [{ role: 'assistant', content: WELCOME }, digestMsg];
+        }
+        const last = prev[prev.length - 1];
+        if (last?.source === 'ai_crm_deadline_digest' && last.content === digestBlock) return prev;
+        return [...prev, digestMsg];
+      });
+    };
+    window.addEventListener(AI_DEADLINE_DIGEST_EVENT, onDigest);
+    return () => window.removeEventListener(AI_DEADLINE_DIGEST_EVENT, onDigest);
   }, []);
 
   const loadSuggestions = async () => {
