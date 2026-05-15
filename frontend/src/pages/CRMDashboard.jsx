@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -336,23 +336,72 @@ function resolveDealStageForKpi(item, stagesDeal) {
  * Deal đã hoàn thành doanh thu (thu tiền / xong HĐ — nhóm Hoàn thành trên BC NV):
  * `deal_report_bucket === 'completed'`, hoặc `canonical_slug === 'completed'`, hoặc tên cột chứa «Hoàn thành».
  */
+/**
+ * Cột "Đã hoàn thành" cho ô "Doanh thu đã hoàn thành":
+ *   - Ưu tiên cờ `counts_as_completed_revenue` (cấu hình ở Pipeline Settings).
+ *     Nếu pipeline có >= 1 stage tick cờ này → chỉ tính các cột được tick.
+ *   - Fallback: dò theo canonical_slug = 'completed' / deal_report_bucket = 'completed'
+ *     / tên cột chứa "Hoàn thành" (hành vi cũ).
+ */
+function hasExplicitCompletedRevenueStage(stagesDeal) {
+  return Array.isArray(stagesDeal) && stagesDeal.some((s) => !!s?.counts_as_completed_revenue);
+}
+
 function dealIsRevenueCompletedStage(item, stagesDeal) {
   const st = resolveDealStageForKpi(item, stagesDeal);
   if (!st) return false;
   if (st.is_lost || st.canonical_slug === 'lost' || st.deal_report_bucket === 'lost') return false;
+  if (hasExplicitCompletedRevenueStage(stagesDeal)) {
+    return !!st.counts_as_completed_revenue;
+  }
   if (st.deal_report_bucket === 'completed') return true;
   if (st.canonical_slug === 'completed') return true;
   if (st.name && isCrmDealStageHoanThanhName(st.name)) return true;
   return false;
 }
 
-/** Cột Thắng — fallback lookup stages list nếu embed stage thiếu is_won. */
+/**
+ * Cột Thắng (= cột “Đã ký HĐ”) — KHÓA về ĐÚNG 1 stage duy nhất để KPI “Doanh thu thắng”
+ * luôn khớp tổng cột Thắng trên Kanban dù lọc “Tất cả giai đoạn”.
+ *
+ * Cách chọn stage thắng (theo `stagesDeal` của pipeline đang xem):
+ *   1) Ưu tiên stage có `canonical_slug === 'contract_signed'`.
+ *   2) Fallback: stage có `is_won === true` (và không thuộc Hoàn thành / Lost).
+ *   3) Nếu có nhiều stage thỏa: lấy stage đầu tiên (sort theo `position` nếu có).
+ *
+ * Một deal được coi là “Thắng” khi và chỉ khi `stage_id` của deal trùng `id` stage thắng đã chọn.
+ */
+/**
+ * Cột "Thắng" cho ô "Doanh thu thắng" trên dashboard:
+ *   - Ưu tiên cờ `counts_as_won_revenue` (cấu hình ở Pipeline Settings).
+ *     Nếu pipeline có >= 1 stage tick cờ này → cộng đúng các cột được tick.
+ *   - Fallback dùng `is_won` (hành vi mặc định).
+ *   - Luôn loại các stage Lost / Hoàn thành (đã có ô "Doanh thu đã hoàn thành" riêng).
+ */
+function pickDealWonStages(stagesDeal) {
+  if (!Array.isArray(stagesDeal) || !stagesDeal.length) return [];
+  const hasExplicitCompleted = stagesDeal.some((s) => !!s?.counts_as_completed_revenue);
+  const notLostOrCompleted = (s) => {
+    if (!s || s.is_lost) return false;
+    if (s.canonical_slug === 'lost' || s.deal_report_bucket === 'lost') return false;
+    // Nếu admin đã chọn rõ các stage "đã hoàn thành" → loại các stage đó khỏi "thắng".
+    if (hasExplicitCompleted) return !s.counts_as_completed_revenue;
+    // Fallback hành vi cũ: loại các stage được suy luận là "Hoàn thành".
+    if (s.canonical_slug === 'completed' || s.deal_report_bucket === 'completed') return false;
+    if (s.name && isCrmDealStageHoanThanhName(s.name)) return false;
+    return true;
+  };
+  const explicit = stagesDeal.filter((s) => !!s?.counts_as_won_revenue && notLostOrCompleted(s));
+  if (explicit.length) return explicit;
+  return stagesDeal.filter((s) => !!s?.is_won && notLostOrCompleted(s));
+}
+
 function dealIsWonStage(item, stagesDeal) {
-  if (item?.stage?.is_won) return true;
-  const sid = item?.stage_id;
-  if (!sid || !Array.isArray(stagesDeal) || stagesDeal.length === 0) return false;
-  const st = stagesDeal.find((s) => String(s.id) === String(sid));
-  return !!st?.is_won;
+  const wonStages = pickDealWonStages(stagesDeal);
+  if (!wonStages.length) return false;
+  const sid = String(item?.stage_id || '');
+  if (!sid) return false;
+  return wonStages.some((s) => String(s.id) === sid);
 }
 
 /**
@@ -639,6 +688,25 @@ export default function CRMDashboard() {
     api.get('/companies', { params: { for_module: 'production' } })
       .then((r) => setProductionCompaniesForSx(r.data?.companies || []))
       .catch(() => setProductionCompaniesForSx([]));
+  }, []);
+
+  /**
+   * Ưu tiên: nạp danh sách CÔNG TY (cho bộ lọc CRM) ngay lập tức — chạy trước
+   * `load()` chính, để dropdown «Công ty» có dữ liệu đầu tiên (admin có thể đổi
+   * công ty ngay khi mở trang, không phải chờ KPI/Kanban tải xong). Chỉ chạy 1 lần;
+   * `load()` sau đó vẫn refresh lại danh sách để cập nhật.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get('/companies', { params: { for_module: 'crm' } })
+      .then((r) => {
+        if (cancelled) return;
+        const list = r.data?.companies || r.data || [];
+        setCompanies(Array.isArray(list) ? list : []);
+      })
+      .catch(() => { /* fallback do load() chính xử lý */ });
+    return () => { cancelled = true; };
   }, []);
 
   // Phục hồi bộ lọc công ty (admin) + phân loại từ localStorage khi không có session snapshot
@@ -1143,14 +1211,26 @@ export default function CRMDashboard() {
     return c?.name || '';
   }, [dashboardScopeCompanyId, companies]);
 
+  /**
+   * Tải danh sách khu vực:
+   *  - Đã chọn công ty cụ thể → khu vực của công ty đó.
+   *  - Chưa chọn công ty → khu vực của TẤT CẢ công ty thuộc khối CRM (lấy theo `companies` đã được /companies?for_module=crm giới hạn).
+   */
+  const crmCompanyIdsCsv = useMemo(
+    () => (companies || []).map((c) => String(c.id)).filter(Boolean).join(','),
+    [companies],
+  );
   useEffect(() => {
-    if (!dashboardScopeCompanyId) {
+    if (!dashboardScopeCompanyId && !crmCompanyIdsCsv) {
       setCompanyRegions([]);
       return;
     }
     let cancel = false;
+    const params = dashboardScopeCompanyId
+      ? { company_id: dashboardScopeCompanyId, for_module: 'crm' }
+      : { company_ids: crmCompanyIdsCsv, for_module: 'crm' };
     api
-      .get('/crm/company-regions', { params: { company_id: dashboardScopeCompanyId } })
+      .get('/crm/company-regions', { params })
       .then((r) => {
         if (cancel) return;
         const list = Array.isArray(r.data) ? r.data : [];
@@ -1162,7 +1242,7 @@ export default function CRMDashboard() {
     return () => {
       cancel = true;
     };
-  }, [dashboardScopeCompanyId]);
+  }, [dashboardScopeCompanyId, crmCompanyIdsCsv]);
 
   /** Đổi công ty / danh sách khu vực → bỏ chọn uuid không còn trong danh mục (chỉ khi đã có danh mục tải về) */
   useEffect(() => {
@@ -1544,47 +1624,61 @@ export default function CRMDashboard() {
     return !!((item.customer?.phone && item.customer.phone.trim()) || (item.phone && item.phone.trim()));
   }, []);
 
+  /**
+   * Hoãn các ô gõ tự do (search, tên NV) bằng `useDeferredValue` để input
+   * không bị giật khi danh sách 1000+ bản ghi được lọc lại trên mỗi ký tự.
+   * React sẽ giữ giá trị input mượt và lọc lại ở priority thấp.
+   */
+  const deferredSearchText = useDeferredValue(searchText);
+  const deferredAssigneeName = useDeferredValue(filterAssigneeName);
+
   /** pipelineKind: 'lead' | 'deal' — một người phụ trách (assigned_to đồng bộ lead_owner) */
   const filterItemsForPipeline = useCallback((items, _pipelineKind) => {
     let result = items;
 
     // Company filter
     if (filterCompany) {
-      result = result.filter((l) => String(l.company_id || '') === String(filterCompany));
+      const cid = String(filterCompany);
+      result = result.filter((l) => String(l.company_id || '') === cid);
     }
 
     // Assignee filter (UUID — so khớp cả chuỗi normalize + embed id)
     if (filterAssignee) {
       const fid = String(filterAssignee).trim().toLowerCase();
       result = result.filter((l) => {
-        const ids = [l.assigned_to, l.lead_owner_id, l.assignee?.id, l.lead_owner?.id]
-          .filter(Boolean)
-          .map((x) => String(x).trim().toLowerCase());
-        return ids.includes(fid);
+        const a = l.assigned_to ? String(l.assigned_to).trim().toLowerCase() : '';
+        if (a && a === fid) return true;
+        const b = l.lead_owner_id ? String(l.lead_owner_id).trim().toLowerCase() : '';
+        if (b && b === fid) return true;
+        const c = l.assignee?.id ? String(l.assignee.id).trim().toLowerCase() : '';
+        if (c && c === fid) return true;
+        const d = l.lead_owner?.id ? String(l.lead_owner.id).trim().toLowerCase() : '';
+        return d && d === fid;
       });
     }
 
     // Lọc theo tên NV (chỉ assignee / lead_owner, tránh trùng với tên KH ở ô tìm nhanh)
-    if (filterAssigneeName.trim()) {
-      const qn = filterAssigneeName.trim().toLowerCase();
+    const qAssigneeName = deferredAssigneeName.trim().toLowerCase();
+    if (qAssigneeName) {
       result = result.filter((l) => {
         const name = (l.assignee?.full_name || l.lead_owner?.full_name || '').toLowerCase();
-        return name.includes(qn);
+        return name.includes(qAssigneeName);
       });
     }
 
     // Source filter - FB page dùng lead IDs, non-FB dùng source_id
     if (filterSource) {
       if (filterSource.startsWith('fbp:')) {
-        result = result.filter(l => fbPageLeadIds.has(l.id));
+        result = result.filter((l) => fbPageLeadIds.has(l.id));
       } else {
-        result = result.filter(l => l.source_id === filterSource);
+        result = result.filter((l) => l.source_id === filterSource);
       }
     }
 
     // Stage filter
     if (filterStage) {
-      result = result.filter((l) => String(l.stage_id || '') === String(filterStage));
+      const sid = String(filterStage);
+      result = result.filter((l) => String(l.stage_id || '') === sid);
     }
 
     // Khu vực CRM (company_regions)
@@ -1592,7 +1686,8 @@ export default function CRMDashboard() {
       if (filterRegion === '__none__') {
         result = result.filter((l) => l.region_id == null || String(l.region_id).trim() === '');
       } else {
-        result = result.filter((l) => String(l.region_id || '') === String(filterRegion));
+        const rid = String(filterRegion);
+        result = result.filter((l) => String(l.region_id || '') === rid);
       }
     }
 
@@ -1600,32 +1695,56 @@ export default function CRMDashboard() {
     // Phone filter đã được ưu tiên xử lý ở backend để không bị phụ thuộc vào 500 bản ghi đầu.
 
     // Text search - tìm trong tên, mã, SĐT, mô tả, tên KH, email
-    if (searchText.trim()) {
-      const q = searchText.trim().toLowerCase();
-      result = result.filter(l => {
-        const fields = [
-          l.title,
-          l.code,
-          l.description,
-          l.install_address,
-          l.customer?.full_name,
-          l.customer?.phone,
-          l.phone,
-          l.customer?.email,
-          l.customer?.address,
-          l.customer?.company,
-          l.assignee?.full_name,
-          l.lead_owner?.full_name,
-          l.source?.name,
-        ].filter(Boolean).map(s => s.toLowerCase());
-        return fields.some(f => f.includes(q));
+    const q = deferredSearchText.trim().toLowerCase();
+    if (q) {
+      result = result.filter((l) => {
+        // So khớp bằng nhiều `indexOf` rời nhau, dừng sớm khi tìm thấy → nhanh hơn
+        // việc tạo mảng + `.map(toLowerCase)` + `.some(includes)` trên mỗi bản ghi.
+        const c = l.customer;
+        const s = l.source;
+        const a = l.assignee;
+        const o = l.lead_owner;
+        return (
+          (l.title && l.title.toLowerCase().includes(q))
+          || (l.code && l.code.toLowerCase().includes(q))
+          || (l.phone && l.phone.toLowerCase().includes(q))
+          || (c?.phone && c.phone.toLowerCase().includes(q))
+          || (c?.full_name && c.full_name.toLowerCase().includes(q))
+          || (l.description && l.description.toLowerCase().includes(q))
+          || (l.install_address && l.install_address.toLowerCase().includes(q))
+          || (c?.email && c.email.toLowerCase().includes(q))
+          || (c?.address && c.address.toLowerCase().includes(q))
+          || (c?.company && c.company.toLowerCase().includes(q))
+          || (a?.full_name && a.full_name.toLowerCase().includes(q))
+          || (o?.full_name && o.full_name.toLowerCase().includes(q))
+          || (s?.name && s.name.toLowerCase().includes(q))
+        );
       });
     }
 
-    // Ưu tiên đẩy lead/deal có số điện thoại lên đầu danh sách trước khi render Kanban
-    result = [...result].sort((a, b) => Number(hasPhoneNumber(b)) - Number(hasPhoneNumber(a)));
+    // Ưu tiên đẩy lead/deal có số điện thoại lên đầu — phân hoạch O(N) thay cho sort O(N log N).
+    if (result.length > 1) {
+      const withPhone = [];
+      const noPhone = [];
+      for (const it of result) {
+        if (hasPhoneNumber(it)) withPhone.push(it);
+        else noPhone.push(it);
+      }
+      result = withPhone.length && noPhone.length ? withPhone.concat(noPhone) : result;
+    }
     return result;
-  }, [searchText, filterCompany, filterAssignee, filterAssigneeName, filterSource, filterStage, filterRegion, filterPhone, fbPageLeadIds, hasPhoneNumber]);
+  }, [
+    deferredSearchText,
+    filterCompany,
+    filterAssignee,
+    deferredAssigneeName,
+    filterSource,
+    filterStage,
+    filterRegion,
+    filterPhone,
+    fbPageLeadIds,
+    hasPhoneNumber,
+  ]);
 
   const leads = useMemo(() => filterItemsForPipeline(allLeads, 'lead'), [allLeads, filterItemsForPipeline]);
   const deals = useMemo(() => filterItemsForPipeline(allDeals, 'deal'), [allDeals, filterItemsForPipeline]);
@@ -2589,25 +2708,30 @@ export default function CRMDashboard() {
                       setFilterAssignee('');
                       setFilterAssigneeName('');
                     }}
-                    disabled={!dashboardScopeCompanyId}
                     title={
-                      !dashboardScopeCompanyId
-                        ? 'Chọn công ty (bước 1) để lọc theo khu vực và thu hẹp danh sách NV'
-                        : 'Lọc Kanban + danh sách NV theo khu vực'
+                      dashboardScopeCompanyId
+                        ? 'Lọc Kanban + danh sách NV theo khu vực của công ty đã chọn'
+                        : 'Lọc theo khu vực của các công ty thuộc khối CRM'
                     }
-                    className={`h-9 w-44 px-2 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                      dashboardScopeCompanyId ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'
-                    }`}
+                    className="h-9 w-44 px-2 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
                   >
                     <option value="">Tất cả khu vực</option>
                     <option value="__none__">Chưa gán khu vực (NV & pipeline)</option>
-                    {companyRegions.map((reg) => (
-                      <option key={reg.id} value={reg.id}>
-                        {reg.is_active === false ? '· ' : ''}
-                        {reg.name}
-                        {reg.code ? ` (${reg.code})` : ''}
-                      </option>
-                    ))}
+                    {companyRegions.map((reg) => {
+                      const coShort = !dashboardScopeCompanyId
+                        ? (companies.find((c) => String(c.id) === String(reg.company_id))?.short_name
+                          || companies.find((c) => String(c.id) === String(reg.company_id))?.name
+                          || '')
+                        : '';
+                      return (
+                        <option key={reg.id} value={reg.id}>
+                          {reg.is_active === false ? '· ' : ''}
+                          {reg.name}
+                          {reg.code ? ` (${reg.code})` : ''}
+                          {coShort ? ` — ${coShort}` : ''}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
 
@@ -3346,16 +3470,16 @@ function KPICard({ icon, iconBgColor, iconColor, label, value, sublabel, trend, 
       tabIndex={hint ? 0 : undefined}
       className={`group relative min-w-0 flex items-center rounded-lg border border-gray-200 bg-white shadow-sm outline-none transition-shadow duration-200 hover:shadow-md focus-visible:ring-2 focus-visible:ring-blue-400 ${
         hint ? 'cursor-help' : ''
-      } ${compact ? 'gap-1.5 p-1.5' : 'gap-1.5 p-2 md:gap-2 md:p-2'}`}
+      } ${compact ? 'gap-1.5 px-1.5 py-2' : 'gap-1.5 px-2 py-2.5 md:gap-2 md:px-2 md:py-2.5'}`}
     >
       <div
         className={`shrink-0 rounded-md ${iconBgColor} ${iconColor} p-1`}
       >
         {icon}
       </div>
-      <div className="min-w-0 flex-1 flex flex-col justify-center gap-0">
+      <div className="min-w-0 flex-1 flex flex-col justify-center gap-0.5">
         <p
-          className={`text-gray-500 font-semibold uppercase tracking-wide truncate leading-none ${
+          className={`text-gray-500 font-semibold uppercase tracking-wide truncate leading-snug ${
             compact ? 'text-[9px]' : 'text-[10px] md:text-[11px]'
           }`}
           title={label}
@@ -3363,19 +3487,19 @@ function KPICard({ icon, iconBgColor, iconColor, label, value, sublabel, trend, 
           {label}
         </p>
         <p
-          className={`font-bold text-gray-900 tabular-nums leading-tight break-words ${
+          className={`font-bold text-gray-900 tabular-nums leading-snug break-words ${
             compact ? 'text-xs md:text-sm' : 'text-sm md:text-base'
           }`}
         >
           {typeof value === 'number' ? value.toLocaleString('vi-VN') : value}
         </p>
         {sublabel && (
-          <p className="text-[9px] text-amber-700/90 leading-tight truncate" title={sublabel}>
+          <p className="text-[9px] text-amber-700/90 leading-snug truncate" title={sublabel}>
             {sublabel}
           </p>
         )}
         {trend != null && trend !== '' && (
-          <p className={`text-emerald-600 leading-none ${compact ? 'text-[9px]' : 'text-[10px]'}`}>↑ {trend}%</p>
+          <p className={`text-emerald-600 leading-snug ${compact ? 'text-[9px]' : 'text-[10px]'}`}>↑ {trend}%</p>
         )}
       </div>
       {hint && (
@@ -4031,7 +4155,7 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
         borderLeft: `3px solid ${stageColor}`,
       }}
     >
-      {typeof item.kpi_ledger_month_net === 'number' && (
+      {typeof item.kpi_ledger_month_net === 'number' && !stage?.is_lost && (
         <KpiKanbanLedgerBadge
           leadId={item.id}
           net={item.kpi_ledger_month_net}

@@ -22,17 +22,22 @@ app.use(helmet());
 
 // CORS: phần lớn app dùng whitelist; /api/external xác thực bằng X-Api-Key nên cần cho phép
 // gọi từ domain website khác (form landing, widget). Không dùng cookie ở route này.
+// `maxAge` (giây) báo trình duyệt cache CORS preflight; giảm số OPTIONS lặp lại
+// khi dashboard poll live-version & gọi nhiều endpoint từ cùng origin.
+const CORS_PREFLIGHT_MAX_AGE = 600;
 const corsMainApp = cors({
   origin: config.corsOrigins,
   credentials: true,
   allowedHeaders: ['Authorization', 'Content-Type', 'Accept', 'X-Requested-With', 'X-Api-Key'],
   exposedHeaders: ['Content-Disposition'],
+  maxAge: CORS_PREFLIGHT_MAX_AGE,
 });
 const corsExternalApi = cors({
   origin: true,
   credentials: false,
   allowedHeaders: ['Content-Type', 'Accept', 'X-Api-Key'],
   methods: ['GET', 'POST', 'OPTIONS'],
+  maxAge: CORS_PREFLIGHT_MAX_AGE,
 });
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/external')) {

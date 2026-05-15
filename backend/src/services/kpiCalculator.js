@@ -234,20 +234,24 @@ async function calcA3_infoCompleteRate({ userId, periodStart, periodEnd }) {
 /** A4: Tỷ lệ follow-up đúng lịch (gating). */
 async function calcA4_followUpOnTimeRate({ userId, periodStart, periodEnd }) {
   const { startISO, endISO } = rangeFor(periodStart, periodEnd);
-  const { data: tasks, error } = await supabase
+  const { data: tasksRaw, error } = await supabase
     .from('crm_tasks')
-    .select('id, deadline, completed_at, status, assignee_id')
+    .select('id, deadline, completed_at, status, assignee_id, lead_id, lead:crm_leads(stage:crm_pipeline_stages!crm_leads_stage_id_fkey(is_lost))')
     .eq('assignee_id', userId)
     .not('deadline', 'is', null)
     .gte('deadline', startISO)
     .lte('deadline', endISO);
   if (error) throw error;
 
-  const total = (tasks || []).length;
-  if (total === 0) return { actual: null, breakdown: { numerator: 0, denominator: 0 } };
+  // Bỏ qua nhiệm vụ thuộc lead/deal đang ở cột Mất (is_lost) — không tính cộng/trừ KPI A4.
+  const tasks = (tasksRaw || []).filter((t) => !(t.lead && t.lead.stage && t.lead.stage.is_lost === true));
+  const skippedLost = (tasksRaw || []).length - tasks.length;
 
-  const onTime = (tasks || []).filter((t) => t.status === 'completed' && t.completed_at && new Date(t.completed_at) <= new Date(t.deadline)).length;
-  return { actual: (onTime / total) * 100, breakdown: { numerator: onTime, denominator: total } };
+  const total = tasks.length;
+  if (total === 0) return { actual: null, breakdown: { numerator: 0, denominator: 0, skipped_lost_stage: skippedLost } };
+
+  const onTime = tasks.filter((t) => t.status === 'completed' && t.completed_at && new Date(t.completed_at) <= new Date(t.deadline)).length;
+  return { actual: (onTime / total) * 100, breakdown: { numerator: onTime, denominator: total, skipped_lost_stage: skippedLost } };
 }
 
 /** A5: Tỷ lệ deal đúng SLA từng stage (dùng stage_history.duration_seconds vs sla_days). */
