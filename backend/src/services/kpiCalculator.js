@@ -17,7 +17,7 @@ const { supabase } = require('../config/supabase');
 const { computeScore, SCORE_CAP_RATIO } = require('./kpiScoreFormula');
 const { responseMinutes, isUserOff } = require('./businessHours');
 const { buildProgressMap, CANONICAL_RANK } = require('./kpiPipelineRank');
-const { loadCrmTaskIdsWithAttachmentEvidence } = require('../helpers/crmTaskCompletionEvidence');
+const { crmTaskMeetsCompletionRequirements } = require('../helpers/crmTaskCompletionEvidence');
 
 function num(v) {
   const n = Number(v);
@@ -64,9 +64,11 @@ async function fetchEvidenceRequiredCrmTasksByLeadIds(leadIds) {
     const chunk = leadIds.slice(i, i + CHUNK);
     const { data, error } = await supabase
       .from('crm_tasks')
-      .select('id, lead_id, status, notes, completion_requires_file_or_note')
+      .select(
+        'id, lead_id, status, notes, completion_requires_file_or_note, completion_requires_customer_note, completion_requires_customer_contact',
+      )
       .in('lead_id', chunk)
-      .eq('completion_requires_file_or_note', true);
+      .or('completion_requires_file_or_note.eq.true,completion_requires_customer_note.eq.true,completion_requires_customer_contact.eq.true');
     if (error) throw error;
     for (const t of data || []) {
       if (!map.has(t.lead_id)) map.set(t.lead_id, []);
@@ -76,13 +78,12 @@ async function fetchEvidenceRequiredCrmTasksByLeadIds(leadIds) {
   return map;
 }
 
-/** Mọi NV “bắt buộc minh chứng” phải completed và có ghi chú task hoặc file đính kèm (khớp API hoàn thành). */
-function leadMeetsA3EvidenceTasks(flaggedTasks, attachEvidenceTaskIds) {
+/** Mọi NV “bắt buộc minh chứng” phải completed và đủ điều kiện theo từng cờ (khớp API hoàn thành). */
+async function leadMeetsA3EvidenceTasksAsync(flaggedTasks) {
   if (!flaggedTasks?.length) return true;
   for (const t of flaggedTasks) {
     if (t.status !== 'completed') return false;
-    if (t.notes != null && String(t.notes).trim() !== '') continue;
-    if (!attachEvidenceTaskIds.has(t.id)) return false;
+    if (!(await crmTaskMeetsCompletionRequirements(supabase, t.id, t))) return false;
   }
   return true;
 }
@@ -200,23 +201,15 @@ async function calcA3_infoCompleteRate({ userId, periodStart, periodEnd }) {
   const leadIds = leads.map((l) => l.id);
   const tasksByLead = await fetchEvidenceRequiredCrmTasksByLeadIds(leadIds);
 
-  const completedNeedingAttachCheck = [];
-  for (const arr of tasksByLead.values()) {
-    for (const t of arr) {
-      if (t.status === 'completed' && (t.notes == null || String(t.notes).trim() === '')) {
-        completedNeedingAttachCheck.push(t.id);
-      }
-    }
-  }
-  const attachEvidenceTaskIds = await loadCrmTaskIdsWithAttachmentEvidence(supabase, completedNeedingAttachCheck);
-
+  let evidenceRequiredTasksChecked = 0;
   let ok = 0;
   let infoCompleteCount = 0;
   for (const l of leads) {
     if (!l.info_complete) continue;
     infoCompleteCount += 1;
     const flagged = tasksByLead.get(l.id) || [];
-    if (!leadMeetsA3EvidenceTasks(flagged, attachEvidenceTaskIds)) continue;
+    for (const t of flagged) evidenceRequiredTasksChecked += 1;
+    if (!(await leadMeetsA3EvidenceTasksAsync(flagged))) continue;
     ok += 1;
   }
 
@@ -226,7 +219,7 @@ async function calcA3_infoCompleteRate({ userId, periodStart, periodEnd }) {
       numerator: ok,
       denominator: total,
       info_complete_count: infoCompleteCount,
-      evidence_required_tasks_checked: completedNeedingAttachCheck.length,
+      evidence_required_tasks_checked: evidenceRequiredTasksChecked,
     },
   };
 }
@@ -309,29 +302,71 @@ async function calcA6_overSlaCount({ userId }) {
 // Nhóm B — Chất lượng chuyển đổi
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** B1: Tỷ lệ liên hệ thành công — lead có ≥ 1 activity outcome IS NOT NULL (call/zalo/meeting). */
+/**
+ * B1: Tiếp xúc đã minh chứng — lead có ≥1 ghi âm gắn lead trong kỳ HOẶC hoàn thành đúng nhiệm vụ CRM
+ * được cấu hình «ghi chú KH» / «minh chứng liên hệ» (hoặc cờ cũ file/ghi chú) trong kỳ.
+ */
 async function calcB1_contactSuccessRate({ userId, periodStart, periodEnd }) {
-  const leads = await fetchLeadsByOwner({ userId, periodStart, periodEnd });
+  const { startISO, endISO } = rangeFor(periodStart, periodEnd);
+  const leads = await fetchLeadsByOwner({ userId, periodStart, periodEnd, type: 'lead' });
   const total = leads.length;
   if (total === 0) return { actual: null, breakdown: { numerator: 0, denominator: 0 } };
 
   const ids = leads.map((l) => l.id);
+  const successSet = new Set();
   const chunks = [];
   for (let i = 0; i < ids.length; i += 200) chunks.push(ids.slice(i, i + 200));
-  const successSet = new Set();
+
   for (const chunk of chunks) {
-    const { data, error } = await supabase
-      .from('crm_activities')
-      .select('lead_id, type, outcome')
+    try {
+      const { data: recA } = await supabase
+        .from('voice_recordings')
+        .select('lead_id')
+        .in('lead_id', chunk)
+        .gte('created_at', startISO)
+        .lte('created_at', endISO);
+      for (const r of recA || []) {
+        if (r.lead_id) successSet.add(r.lead_id);
+      }
+      const { data: recB } = await supabase
+        .from('voice_recordings')
+        .select('lead_id')
+        .in('lead_id', chunk)
+        .not('call_started_at', 'is', null)
+        .gte('call_started_at', startISO)
+        .lte('call_started_at', endISO);
+      for (const r of recB || []) {
+        if (r.lead_id) successSet.add(r.lead_id);
+      }
+    } catch (_) {
+      /* voice_recordings có thể chưa tồn tại */
+    }
+
+    const { data: tasks, error: te } = await supabase
+      .from('crm_tasks')
+      .select(
+        'id, lead_id, status, notes, completed_at, completion_requires_file_or_note, completion_requires_customer_note, completion_requires_customer_contact',
+      )
       .in('lead_id', chunk)
-      .in('type', ['call', 'zalo', 'meeting'])
-      .not('outcome', 'is', null);
-    if (error) throw error;
-    for (const a of data || []) successSet.add(a.lead_id);
+      .eq('status', 'completed')
+      .not('completed_at', 'is', null)
+      .gte('completed_at', startISO)
+      .lte('completed_at', endISO)
+      .or('completion_requires_file_or_note.eq.true,completion_requires_customer_note.eq.true,completion_requires_customer_contact.eq.true');
+    if (te) throw te;
+    for (const t of tasks || []) {
+      if (!t.lead_id) continue;
+      if (await crmTaskMeetsCompletionRequirements(supabase, t.id, t)) successSet.add(t.lead_id);
+    }
   }
+
   return {
     actual: (successSet.size / total) * 100,
-    breakdown: { numerator: successSet.size, denominator: total },
+    breakdown: {
+      numerator: successSet.size,
+      denominator: total,
+      rule: 'voice_recording_in_period OR completed_flagged_crm_task_in_period',
+    },
   };
 }
 

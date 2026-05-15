@@ -681,12 +681,21 @@ export default function CRMTasksTab({
                   Đơn: {task.order_label}
                 </span>
               )}
-              {task.completion_requires_file_or_note && task.status !== 'completed' && (
+              {(!!task.completion_requires_file_or_note ||
+                !!task.completion_requires_customer_note ||
+                !!task.completion_requires_customer_contact) &&
+                task.status !== 'completed' && (
                 <span
                   className="shrink-0 text-[10px] font-medium text-violet-900 bg-violet-50 border border-violet-100 px-1.5 py-0.5 rounded"
-                  title="Cần ghi chú hoặc đính kèm trước khi hoàn thành (Cấu hình KPI → Bộ NV CRM)"
+                  title="Cần ghi chú / minh chứng liên hệ trước khi hoàn thành (Cấu hình KPI → Bộ NV CRM)"
                 >
-                  📎 Ghi chú / file
+                  {(() => {
+                    const n = !!task.completion_requires_customer_note;
+                    const c = !!(task.completion_requires_customer_contact || task.completion_requires_file_or_note);
+                    if (n && c) return '📝+📎 Minh chứng';
+                    if (n) return '📝 Ghi chú KH';
+                    return '📎 Minh chứng';
+                  })()}
                 </span>
               )}
             </div>

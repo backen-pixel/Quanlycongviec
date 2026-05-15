@@ -1409,19 +1409,24 @@ function CrmTaskBundleTab({ companyId }) {
     return { leadTemplates: lead, dealTemplates: deal, sharedTemplates: shared };
   }, [templates, companyId]);
 
-  const setItemEvidence = async (templateId, itemId, value) => {
-    const key = `${templateId}:${itemId}`;
+  const patchCrmTemplateItem = async (templateId, item, patch) => {
+    const key = `${templateId}:${item.id}`;
     setSavingKey(key);
     setErr(null);
     try {
-      const { data: updated } = await api.put(`/crm/task-templates/${templateId}/items/${itemId}`, {
-        completion_requires_file_or_note: value,
-      });
+      const merged = { ...item, ...patch };
+      const contactOn = !!(merged.completion_requires_customer_contact || merged.completion_requires_file_or_note);
+      const body = {
+        completion_requires_customer_note: !!merged.completion_requires_customer_note,
+        completion_requires_customer_contact: contactOn,
+        completion_requires_file_or_note: contactOn,
+      };
+      const { data: updated } = await api.put(`/crm/task-templates/${templateId}/items/${item.id}`, body);
       setTemplates((prev) =>
-        prev.map((tpl) =>
-          tpl.id === templateId
-            ? { ...tpl, items: (tpl.items || []).map((it) => (it.id === itemId ? { ...it, ...updated } : it)) }
-            : tpl,
+        prev.map((t) =>
+          t.id === templateId
+            ? { ...t, items: (t.items || []).map((x) => (x.id === item.id ? { ...x, ...updated } : x)) }
+            : t,
         ),
       );
     } catch (e) {
@@ -1469,7 +1474,7 @@ function CrmTaskBundleTab({ companyId }) {
           <thead>
             <tr className="text-left text-xs text-gray-500 border-b border-gray-100 bg-white">
               <th className="px-4 py-2 font-medium">Nhiệm vụ mẫu</th>
-              <th className="px-4 py-2 font-medium w-[240px]">Bắt buộc file hoặc ghi chú khi hoàn thành</th>
+              <th className="px-4 py-2 font-medium min-w-[220px]">Yêu cầu khi hoàn thành (KPI B1 / A3)</th>
             </tr>
           </thead>
           <tbody>
@@ -1478,7 +1483,8 @@ function CrmTaskBundleTab({ companyId }) {
               .sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
               .map((it) => {
                 const busy = savingKey === `${tpl.id}:${it.id}`;
-                const v = !!it.completion_requires_file_or_note;
+                const noteOn = !!it.completion_requires_customer_note;
+                const contactOn = !!(it.completion_requires_customer_contact || it.completion_requires_file_or_note);
                 return (
                   <tr key={it.id} className="border-b border-gray-50 hover:bg-gray-50/80">
                     <td className="px-4 py-2.5">
@@ -1488,17 +1494,42 @@ function CrmTaskBundleTab({ companyId }) {
                       )}
                     </td>
                     <td className="px-4 py-2.5">
-                      <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-                        <input
-                          type="checkbox"
-                          checked={v}
-                          disabled={busy}
-                          onChange={(e) => setItemEvidence(tpl.id, it.id, e.target.checked)}
-                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        />
-                        <span className="text-xs text-gray-600">{v ? 'Đang bật' : 'Tắt'}</span>
+                      <div className="flex flex-col gap-2 text-xs text-gray-700">
+                        <label className="inline-flex items-start gap-2 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            className="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            checked={noteOn}
+                            disabled={busy}
+                            onChange={(e) =>
+                              patchCrmTemplateItem(tpl.id, it, { completion_requires_customer_note: e.target.checked })
+                            }
+                          />
+                          <span>
+                            <span className="font-medium text-gray-800">Ghi chú khách hàng</span>
+                            <span className="block text-[10px] text-gray-500">Bắt buộc có nội dung ghi chú trên nhiệm vụ khi xong.</span>
+                          </span>
+                        </label>
+                        <label className="inline-flex items-start gap-2 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            className="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            checked={contactOn}
+                            disabled={busy}
+                            onChange={(e) =>
+                              patchCrmTemplateItem(tpl.id, it, {
+                                completion_requires_customer_contact: e.target.checked,
+                                completion_requires_file_or_note: e.target.checked,
+                              })
+                            }
+                          />
+                          <span>
+                            <span className="font-medium text-gray-800">Minh chứng liên hệ</span>
+                            <span className="block text-[10px] text-gray-500">Ghi chú hoặc file đính kèm khi hoàn thành (đếm KPI B1 nếu không có ghi âm).</span>
+                          </span>
+                        </label>
                         {busy && <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />}
-                      </label>
+                      </div>
                     </td>
                   </tr>
                 );

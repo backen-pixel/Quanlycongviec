@@ -41,4 +41,47 @@ async function loadCrmTaskIdsWithAttachmentEvidence(supabase, taskIds) {
   return ok;
 }
 
-module.exports = { crmTaskHasCompletionEvidence, loadCrmTaskIdsWithAttachmentEvidence };
+/** Có bất kỳ quy tắc bắt buộc minh chứng khi hoàn thành (cờ cũ hoặc mới). */
+function crmTaskRequiresCompletionEvidence(prior) {
+  if (!prior) return false;
+  return !!(
+    prior.completion_requires_file_or_note ||
+    prior.completion_requires_customer_note ||
+    prior.completion_requires_customer_contact
+  );
+}
+
+/**
+ * Kiểm tra task (trước khi chuyển completed) đã đủ điều kiện theo cấu hình mẫu:
+ * - Chỉ «ghi chú KH»: bắt buộc notes khác rỗng.
+ * - «Minh chứng liên hệ» hoặc cờ legacy: ghi chú task hoặc đính kèm có nội dung.
+ * - Gộp note + contact (hoặc note + legacy): vừa có notes vừa đủ minh chứng liên hệ (file/ghi chú đính kèm hoặc ghi chú task đủ cho contact).
+ */
+async function crmTaskMeetsCompletionRequirements(supabase, taskId, prior) {
+  if (!prior || !crmTaskRequiresCompletionEvidence(prior)) return true;
+
+  const reqLegacy = !!prior.completion_requires_file_or_note;
+  const reqNote = !!prior.completion_requires_customer_note;
+  const reqContact = !!prior.completion_requires_customer_contact;
+
+  const hasNote = prior.notes != null && String(prior.notes).trim() !== '';
+  const hasEvidence = await crmTaskHasCompletionEvidence(supabase, taskId, prior.notes);
+
+  if (reqNote && !reqContact && !reqLegacy) {
+    return hasNote;
+  }
+  if ((reqContact || reqLegacy) && !reqNote) {
+    return hasEvidence;
+  }
+  if (reqNote && (reqContact || reqLegacy)) {
+    return hasNote && hasEvidence;
+  }
+  return hasEvidence;
+}
+
+module.exports = {
+  crmTaskHasCompletionEvidence,
+  loadCrmTaskIdsWithAttachmentEvidence,
+  crmTaskRequiresCompletionEvidence,
+  crmTaskMeetsCompletionRequirements,
+};

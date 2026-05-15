@@ -9,6 +9,7 @@ import {
   resolveDefaultCrmAdminCompanyId,
 } from '../lib/crmCompanyFilter';
 import { isCrmCompanyAdmin } from '../lib/crmAdminScope';
+import EmployeePicker from '../components/EmployeePicker';
 import {
   CalendarClock,
   Search,
@@ -23,6 +24,7 @@ import {
   Tag,
   CheckCircle2,
   Circle,
+  ArrowRightCircle,
 } from 'lucide-react';
 
 function startOfDay(d) {
@@ -101,7 +103,8 @@ export default function CrmFollowUpCarePage() {
   const [pipelineId, setPipelineId] = useState(() => {
     return new URLSearchParams(window.location.search).get('pipeline_id') || '';
   });
-  const [stages, setStages] = useState([]);
+  const [stagesLead, setStagesLead] = useState([]);
+  const [stagesDeal, setStagesDeal] = useState([]);
   const [pipelineType, setPipelineType] = useState(() => {
     const qt = new URLSearchParams(window.location.search).get('type');
     if (qt === 'lead' || qt === 'deal') return qt;
@@ -136,6 +139,18 @@ export default function CrmFollowUpCarePage() {
   /** lead_id → mark object ({ marked_at, expires_at }) — đã chăm sóc trong 30 ngày */
   const [careMarks, setCareMarks] = useState({});
   const [careBusyId, setCareBusyId] = useState(null);
+  const [stageMoveBusyId, setStageMoveBusyId] = useState(null);
+  const [wonAssignModal, setWonAssignModal] = useState(false);
+  const [wonAssignLeadId, setWonAssignLeadId] = useState(null);
+  const [wonAssignUser, setWonAssignUser] = useState('');
+  const [wonAssigning, setWonAssigning] = useState(false);
+  const [wonAssignError, setWonAssignError] = useState('');
+  const [lostModalOpen, setLostModalOpen] = useState(false);
+  const [lostModalRow, setLostModalRow] = useState(null);
+  const [lostModalStageId, setLostModalStageId] = useState(null);
+  const [lostReason, setLostReason] = useState('');
+  const [lostSubmitting, setLostSubmitting] = useState(false);
+  const [lostError, setLostError] = useState('');
 
   // Áp filter từ URL search params mỗi khi URL thay đổi (kể cả khi component đã mount sẵn,
   // ví dụ user bấm thông báo CSKH lần thứ hai). Không xóa params để giữ làm "source of truth"
@@ -190,31 +205,82 @@ export default function CrmFollowUpCarePage() {
   useEffect(() => {
     let cancel = false;
     const pid = pipelineId || null;
+    const base = pid ? { pipeline_id: pid } : {};
     (async () => {
       try {
-        // Lọc theo cả pipeline_id (nếu có) và type — 1 pipeline có thể chứa cả stage lead lẫn deal,
-        // ta chỉ lấy đúng type người dùng chọn.
-        const params = { type: pipelineType };
-        if (pid) params.pipeline_id = pid;
-        const { data } = await api.get('/crm/pipeline-stages', { params });
+        const [leadRes, dealRes] = await Promise.all([
+          api.get('/crm/pipeline-stages', { params: { ...base, type: 'lead' } }),
+          api.get('/crm/pipeline-stages', { params: { ...base, type: 'deal' } }),
+        ]);
         if (cancel) return;
-        const list = Array.isArray(data) ? data : [];
-        setStages(list);
+        setStagesLead(Array.isArray(leadRes.data) ? leadRes.data : []);
+        setStagesDeal(Array.isArray(dealRes.data) ? dealRes.data : []);
       } catch {
-        if (!cancel) setStages([]);
+        if (!cancel) {
+          setStagesLead([]);
+          setStagesDeal([]);
+        }
       }
     })();
     return () => { cancel = true; };
-  }, [pipelineType, pipelineId]);
+  }, [pipelineId]);
+
+  const effectiveCompanyId = useMemo(
+    () => (isAdmin ? filterCompany : user?.company_id ? String(user.company_id) : ''),
+    [isAdmin, filterCompany, user?.company_id],
+  );
+
+  /** Pipeline thuộc công ty đang lọc — dùng cho danh sách cột «Chuyển cột». */
+  const companyPipelineIds = useMemo(() => {
+    if (!effectiveCompanyId) return new Set((pipelines || []).map((p) => String(p.id)));
+    return new Set(
+      (pipelines || [])
+        .filter((p) => String(p.company_id || '') === String(effectiveCompanyId))
+        .map((p) => String(p.id)),
+    );
+  }, [pipelines, effectiveCompanyId]);
+
+  const filterStagesForCompany = useCallback(
+    (list) =>
+      (list || [])
+        .filter((s) => {
+          if (pipelineId && String(s.pipeline_id || '') !== String(pipelineId)) return false;
+          if (effectiveCompanyId && s.pipeline_id && !companyPipelineIds.has(String(s.pipeline_id))) return false;
+          return true;
+        })
+        .slice()
+        .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0)),
+    [pipelineId, effectiveCompanyId, companyPipelineIds],
+  );
+
+  /** Cột lọc theo tab Lead/Deal đang chọn */
+  const filterStages = useMemo(
+    () => filterStagesForCompany(pipelineType === 'deal' ? stagesDeal : stagesLead),
+    [pipelineType, stagesLead, stagesDeal, filterStagesForCompany],
+  );
+
+  /** Cột «Chuyển cột» theo từng dòng: lead → cột lead, deal → cột deal */
+  const getMoveStagesForRow = useCallback(
+    (row) => filterStagesForCompany(row?.type === 'deal' ? stagesDeal : stagesLead),
+    [stagesLead, stagesDeal, filterStagesForCompany],
+  );
 
   useEffect(() => {
-    if (!stageId || !stages.length) return;
-    // Stages chưa load đúng pipeline / type hiện tại → đợi, đừng xóa stageId.
-    if (pipelineId && !stages.some((s) => String(s.pipeline_id) === String(pipelineId))) return;
-    if (stages.some((s) => s.pipeline_type && s.pipeline_type !== pipelineType)) return;
-    const ok = stages.some((s) => String(s.id) === String(stageId));
+    if (!isAdmin || !filterCompany || !pipelines.length) return;
+    const byCo = pipelines.filter((p) => String(p.company_id || '') === String(filterCompany));
+    if (!byCo.length) return;
+    const current = pipelineId ? pipelines.find((p) => String(p.id) === String(pipelineId)) : null;
+    if (current && String(current.company_id || '') === String(filterCompany)) return;
+    const def = byCo.find((p) => p.is_default) || byCo[0];
+    if (def?.id) setPipelineId(String(def.id));
+  }, [isAdmin, filterCompany, pipelines, pipelineId]);
+
+  useEffect(() => {
+    if (!stageId || !filterStages.length) return;
+    if (pipelineId && !filterStages.some((s) => String(s.pipeline_id) === String(pipelineId))) return;
+    const ok = filterStages.some((s) => String(s.id) === String(stageId));
     if (!ok) setStageId('');
-  }, [stageId, stages, pipelineId, pipelineType]);
+  }, [stageId, filterStages, pipelineId]);
 
   useEffect(() => {
     api.get('/users').then((r) => setUsers(r.data?.users || [])).catch(() => setUsers([]));
@@ -325,6 +391,173 @@ export default function CrmFollowUpCarePage() {
     return () => { cancel = true; };
   }, [leads]);
 
+  const applyStageChangeOnRow = useCallback((row, newStageId, target, data) => {
+    const nextStage = data?.stage || target;
+    setLeads((prev) =>
+      prev.map((l) =>
+        String(l.id) === String(row.id)
+          ? {
+              ...l,
+              stage_id: newStageId,
+              stage: nextStage,
+              stage_entered_at: data?.stage_entered_at || l.stage_entered_at,
+              ...(data?.type ? { type: data.type } : {}),
+              ...(data?.lost_reason !== undefined ? { lost_reason: data.lost_reason } : {}),
+            }
+          : l,
+      ),
+    );
+  }, []);
+
+  const moveLeadToStage = useCallback(
+    async (row, newStageId) => {
+      if (!row?.id || !newStageId || stageMoveBusyId) return;
+      if (String(row.stage_id || '') === String(newStageId)) return;
+
+      const rowMoveStages = getMoveStagesForRow(row);
+      const target = rowMoveStages.find((s) => String(s.id) === String(newStageId));
+      if (!target) return;
+
+      const rowType = row.type === 'deal' ? 'deal' : 'lead';
+
+      if (target.is_won && rowType === 'lead') {
+        setWonAssignLeadId(row.id);
+        setWonAssignUser(row.assigned_to || row.lead_owner_id || filterAssignee || user?.id || '');
+        setWonAssignError('');
+        setWonAssignModal(true);
+        return;
+      }
+
+      if (target.is_lost) {
+        setLostModalRow(row);
+        setLostModalStageId(newStageId);
+        setLostReason(row.lost_reason?.trim() || '');
+        setLostError('');
+        setLostModalOpen(true);
+        return;
+      }
+
+      if (
+        target.is_won &&
+        rowType === 'deal' &&
+        !row.project_id &&
+        !window.confirm('Chuyển deal sang cột Thắng? Nếu chưa có dự án SX, hệ thống có thể yêu cầu chọn xưởng trên Kanban CRM.')
+      ) {
+        return;
+      }
+
+      setStageMoveBusyId(row.id);
+      try {
+        const { data } = await api.patch(`/crm/leads/${encodeURIComponent(row.id)}/stage`, {
+          stage_id: newStageId,
+        });
+        if (data?.requires_conversion) {
+          setWonAssignLeadId(row.id);
+          setWonAssignUser(row.assigned_to || row.lead_owner_id || filterAssignee || user?.id || '');
+          setWonAssignError('');
+          setWonAssignModal(true);
+          return;
+        }
+        if (data?.requires_production_company) {
+          alert('Cần chọn công ty sản xuất — chuyển trên Kanban CRM hoặc trang chi tiết deal.');
+          return;
+        }
+        applyStageChangeOnRow(row, newStageId, target, data);
+      } catch (e) {
+        alert(e.response?.data?.error || e.message || 'Không chuyển được cột');
+      } finally {
+        setStageMoveBusyId(null);
+      }
+    },
+    [getMoveStagesForRow, stageMoveBusyId, applyStageChangeOnRow, filterAssignee, user?.id],
+  );
+
+  const closeLostModal = useCallback(() => {
+    if (lostSubmitting) return;
+    setLostModalOpen(false);
+    setLostModalRow(null);
+    setLostModalStageId(null);
+    setLostReason('');
+    setLostError('');
+  }, [lostSubmitting]);
+
+  const confirmLostStageMove = useCallback(async () => {
+    const reason = lostReason.trim();
+    if (!reason) {
+      setLostError('Vui lòng nhập lý do thua / mất');
+      return;
+    }
+    const row = lostModalRow;
+    const newStageId = lostModalStageId;
+    if (!row?.id || !newStageId) return;
+
+    const target = getMoveStagesForRow(row).find((s) => String(s.id) === String(newStageId));
+    if (!target) return;
+
+    setLostSubmitting(true);
+    setLostError('');
+    setStageMoveBusyId(row.id);
+    try {
+      const { data } = await api.patch(`/crm/leads/${encodeURIComponent(row.id)}/stage`, {
+        stage_id: newStageId,
+        lost_reason: reason,
+      });
+      if (data?.requires_conversion) {
+        closeLostModal();
+        setWonAssignLeadId(row.id);
+        setWonAssignUser(row.assigned_to || row.lead_owner_id || filterAssignee || user?.id || '');
+        setWonAssignError('');
+        setWonAssignModal(true);
+        return;
+      }
+      if (data?.requires_production_company) {
+        alert('Deal cần chọn công ty sản xuất — hãy chuyển trên Kanban CRM hoặc trang chi tiết deal.');
+        return;
+      }
+      applyStageChangeOnRow(row, newStageId, target, { ...data, lost_reason: data?.lost_reason ?? reason });
+      closeLostModal();
+    } catch (e) {
+      setLostError(e.response?.data?.error || e.message || 'Không chuyển được cột');
+    } finally {
+      setLostSubmitting(false);
+      setStageMoveBusyId(null);
+    }
+  }, [
+    lostReason,
+    lostModalRow,
+    lostModalStageId,
+    getMoveStagesForRow,
+    applyStageChangeOnRow,
+    closeLostModal,
+    filterAssignee,
+    user?.id,
+  ]);
+
+  const handleWonAssignConvert = useCallback(async () => {
+    if (!wonAssignUser) {
+      setWonAssignError('Vui lòng chọn nhân viên phụ trách deal');
+      return;
+    }
+    const lead = leads.find((l) => String(l.id) === String(wonAssignLeadId));
+    if (!lead) return;
+    setWonAssigning(true);
+    setWonAssignError('');
+    try {
+      await api.post(`/crm/leads/${encodeURIComponent(wonAssignLeadId)}/convert-to-deal`, {
+        assigned_to: wonAssignUser,
+        company_id: lead.company_id || effectiveCompanyId || undefined,
+      });
+      setWonAssignModal(false);
+      setWonAssignLeadId(null);
+      setLeads((prev) => prev.filter((l) => String(l.id) !== String(wonAssignLeadId)));
+      void load();
+    } catch (e) {
+      setWonAssignError(e.response?.data?.error || 'Lỗi chuyển sang Deal');
+    } finally {
+      setWonAssigning(false);
+    }
+  }, [wonAssignUser, wonAssignLeadId, leads, effectiveCompanyId, load]);
+
   const toggleCareMark = useCallback(async (leadId) => {
     if (!leadId || careBusyId) return;
     setCareBusyId(leadId);
@@ -379,7 +612,8 @@ export default function CrmFollowUpCarePage() {
             CSKH — Lead theo tuổi & pipeline
           </h1>
           <p className="text-sm text-gray-500 mt-1">
-            Lọc theo tuổi lead (dựa trên <span className="font-mono">created_at</span>) và theo cột pipeline để chăm sóc.
+            Lọc theo tuổi lead (dựa trên <span className="font-mono">created_at</span>) và cột pipeline. Cột{' '}
+            <strong>Chuyển cột</strong> dùng các giai đoạn thuộc pipeline công ty đang chọn.
           </p>
         </div>
         <button
@@ -454,7 +688,7 @@ export default function CrmFollowUpCarePage() {
               className="h-9 px-2 rounded-lg border border-gray-200 text-sm bg-white"
             >
               <option value="">Tất cả cột</option>
-              {stages.map((s) => (
+              {filterStages.map((s) => (
                 <option key={s.id} value={s.id}>{s.icon ? `${s.icon} ` : ''}{s.name}</option>
               ))}
             </select>
@@ -571,6 +805,11 @@ export default function CrmFollowUpCarePage() {
             {filtered.filter((l) => careMarks[l.id]).length} đã chăm sóc
           </span>
         )}
+        {(stagesLead.length === 0 && stagesDeal.length === 0) && (
+          <span className="text-amber-700 text-xs">
+            Chưa có danh sách cột để chuyển — chọn pipeline CRM (và công ty nếu là admin).
+          </span>
+        )}
       </div>
 
       {loading ? (
@@ -592,6 +831,12 @@ export default function CrmFollowUpCarePage() {
                 <th className="px-3 py-2.5">Nguồn</th>
                 <th className="px-3 py-2.5">SĐT</th>
                 <th className="px-3 py-2.5">Cột pipeline</th>
+                <th className="px-3 py-2.5 min-w-[11rem]">
+                  <span className="inline-flex items-center gap-1">
+                    <ArrowRightCircle className="h-3.5 w-3.5" />
+                    Chuyển cột
+                  </span>
+                </th>
                 <th className="px-3 py-2.5">Theo dõi tiếp</th>
                 <th className="px-3 py-2.5">Phụ trách</th>
               </tr>
@@ -609,6 +854,10 @@ export default function CrmFollowUpCarePage() {
                 const mark = careMarks[row.id];
                 const isMarked = !!mark;
                 const busy = careBusyId === row.id;
+                const moving = stageMoveBusyId === row.id;
+                const rowMoveStages = getMoveStagesForRow(row);
+                const moveDisabled = moving || rowMoveStages.length === 0;
+                const rowTypeLabel = row.type === 'deal' ? 'Deal' : 'Lead';
                 return (
                   <tr key={row.id} className={`hover:bg-emerald-50/40 ${isMarked ? 'bg-emerald-50/60' : ''}`}>
                     <td className="px-3 py-2 align-middle text-center">
@@ -631,12 +880,21 @@ export default function CrmFollowUpCarePage() {
                       </button>
                     </td>
                     <td className="px-3 py-2 align-top">
-                      <Link
-                        to={`/crm/leads/${row.id}`}
-                        className="font-medium text-indigo-600 hover:underline"
-                      >
-                        {row.code ? `${row.code} · ` : ''}{row.title}
-                      </Link>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span
+                          className={`shrink-0 text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                            row.type === 'deal' ? 'bg-cyan-100 text-cyan-800' : 'bg-blue-100 text-blue-800'
+                          }`}
+                        >
+                          {rowTypeLabel}
+                        </span>
+                        <Link
+                          to={`/crm/leads/${row.id}`}
+                          className="font-medium text-indigo-600 hover:underline"
+                        >
+                          {row.code ? `${row.code} · ` : ''}{row.title}
+                        </Link>
+                      </div>
                     </td>
                     <td className="px-3 py-2 align-top text-gray-800">
                       {row.customer?.full_name || '—'}
@@ -661,7 +919,7 @@ export default function CrmFollowUpCarePage() {
                         '—'
                       )}
                     </td>
-                    <td className="px-3 py-2 align-top">
+                    <td className="px-3 py-2 align-top max-w-[14rem]">
                       {st ? (
                         <span
                           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium"
@@ -675,6 +933,49 @@ export default function CrmFollowUpCarePage() {
                       ) : (
                         '—'
                       )}
+                      {row.lost_reason && (
+                        <div
+                          className="mt-1.5 px-2 py-1.5 bg-red-50 border border-red-100 rounded-lg"
+                          title={row.lost_reason}
+                        >
+                          <p className="text-[10px] text-red-500 font-medium">❌ Lý do mất</p>
+                          <p className="text-xs text-red-700 line-clamp-3 whitespace-pre-wrap break-words">
+                            {row.lost_reason}
+                          </p>
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 align-top">
+                      <select
+                        value={String(row.stage_id || '')}
+                        disabled={moveDisabled}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v && v !== String(row.stage_id || '')) moveLeadToStage(row, v);
+                        }}
+                        className={`w-full max-w-[12rem] h-8 px-2 rounded-lg border text-xs bg-white ${
+                          moving ? 'border-emerald-300 opacity-60' : 'border-gray-200 hover:border-emerald-400'
+                        }`}
+                        title={
+                          rowMoveStages.length
+                            ? `Chọn cột pipeline ${rowTypeLabel} (cùng công ty / pipeline đang lọc)`
+                            : 'Chọn công ty và pipeline CRM để tải danh sách cột'
+                        }
+                      >
+                        <option value={row.stage_id || ''}>
+                          {st ? `${st.icon ? `${st.icon} ` : ''}${st.name}` : '— Chọn cột —'}
+                        </option>
+                        {rowMoveStages
+                          .filter((s) => String(s.id) !== String(row.stage_id || ''))
+                          .map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.icon ? `${s.icon} ` : ''}
+                              {s.name}
+                              {s.is_won ? ' · Thắng' : ''}
+                              {s.is_lost ? ' · Mất' : ''}
+                            </option>
+                          ))}
+                      </select>
                     </td>
                     <td className="px-3 py-2 align-top whitespace-nowrap">
                       {nf ? (
@@ -702,6 +1003,152 @@ export default function CrmFollowUpCarePage() {
           Admin công ty: dữ liệu giới hạn theo phạm vi API (công ty / khu vực đã cấu hình).
         </p>
       )}
+
+      {lostModalOpen && lostModalRow && (
+        <div
+          className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
+          onClick={closeLostModal}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold mb-1">❌ Lý do thua / mất</h3>
+            <p className="text-xs text-gray-500 mb-3 truncate">
+              {lostModalRow.code ? `${lostModalRow.code} · ` : ''}{lostModalRow.title}
+            </p>
+            <textarea
+              className="w-full border border-gray-200 rounded-lg p-3 text-sm min-h-[100px] focus:ring-2 focus:ring-red-300 focus:border-red-400"
+              placeholder="Nhập lý do (giá cao, đối thủ, KH hủy…)"
+              value={lostReason}
+              onChange={(e) => {
+                setLostReason(e.target.value);
+                setLostError('');
+              }}
+              autoFocus
+              disabled={lostSubmitting}
+            />
+            {lostError && (
+              <p className="mt-2 text-xs text-red-600">{lostError}</p>
+            )}
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                type="button"
+                onClick={closeLostModal}
+                disabled={lostSubmitting}
+                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmLostStageMove()}
+                disabled={lostSubmitting || !lostReason.trim()}
+                className="px-4 py-2 text-sm bg-red-600 hover:bg-red-700 text-white rounded-lg disabled:opacity-50"
+              >
+                {lostSubmitting ? 'Đang lưu…' : 'Xác nhận chuyển mất'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {wonAssignModal && (() => {
+        const wonLead = leads.find((l) => String(l.id) === String(wonAssignLeadId));
+        return (
+          <div
+            className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
+            onClick={() => {
+              if (!wonAssigning) {
+                setWonAssignModal(false);
+                setWonAssignError('');
+              }
+            }}
+          >
+            <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center gap-3 mb-1">
+                <span className="text-2xl">🏆</span>
+                <h3 className="text-base font-bold text-gray-900">Chuyển sang Deal</h3>
+              </div>
+
+              {wonLead && (
+                <div className="bg-gray-50 rounded-xl px-3 py-2 mb-4 mt-2">
+                  <p className="text-xs font-semibold text-gray-500 mb-0.5">Lead:</p>
+                  <p className="text-sm font-medium text-gray-900 truncate">{wonLead.title}</p>
+                  {wonLead.customer?.full_name && (
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      👤 {wonLead.customer.full_name}
+                      {wonLead.customer.phone && (
+                        <span className="ml-2 text-green-600">📞 {wonLead.customer.phone}</span>
+                      )}
+                      {!wonLead.customer.phone && (
+                        <span className="ml-2 text-amber-500">⚠️ Chưa có SĐT</span>
+                      )}
+                    </p>
+                  )}
+                  {!wonLead.customer_id && (
+                    <p className="text-xs text-red-500 mt-0.5 font-medium">
+                      ⛔ Chưa liên kết khách hàng — cần vào chi tiết Lead để thêm trước
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <div className="mb-4">
+                <label className="text-xs font-semibold text-gray-700 mb-1.5 block">👤 Người phụ trách deal</label>
+                <EmployeePicker
+                  companyId={wonLead?.company_id}
+                  value={wonAssignUser}
+                  onChange={(userId) => {
+                    setWonAssignUser(userId || '');
+                    setWonAssignError('');
+                  }}
+                  placeholder="Tìm và chọn nhân viên..."
+                  size="md"
+                />
+                {!wonLead?.company_id && (
+                  <p className="text-[10px] text-amber-500 mt-1">⚠️ Lead chưa có công ty — hiển thị toàn bộ nhân viên</p>
+                )}
+              </div>
+
+              {wonAssignError && (
+                <div className="mb-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+                  ⛔ {wonAssignError}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWonAssignModal(false);
+                    setWonAssignError('');
+                  }}
+                  disabled={wonAssigning}
+                  className="flex-1 h-10 border rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 cursor-pointer disabled:opacity-50"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleWonAssignConvert()}
+                  disabled={wonAssigning || !wonAssignUser || !wonLead?.customer_id}
+                  className="flex-1 h-10 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {wonAssigning ? (
+                    <>
+                      <span className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
+                      Đang xử lý...
+                    </>
+                  ) : (
+                    <>✅ Xác nhận & Chuyển Deal</>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

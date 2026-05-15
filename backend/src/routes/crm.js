@@ -4,7 +4,7 @@ const { supabase } = require('../config/supabase');
 const PDFDocument = require('pdfkit');
 const multer = require('multer');
 const XLSX = require('xlsx');
-const { crmTaskHasCompletionEvidence } = require('../helpers/crmTaskCompletionEvidence');
+const { crmTaskMeetsCompletionRequirements, crmTaskRequiresCompletionEvidence } = require('../helpers/crmTaskCompletionEvidence');
 const { createNotification: createNotif, notifyMultiple: notifyMultipleShared } = require('../helpers/notifications');
 const { DEFAULT_CHECKLISTS } = require('../helpers/defaultChecklists');
 const { generateFlowTasks, generateStepTasks } = require('../helpers/generateFlowTasks');
@@ -6129,6 +6129,8 @@ r.patch('/leads/:id/stage', async (req, res) => {
                   deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
                   created_by: req.user.userId,
                   completion_requires_file_or_note: !!item.completion_requires_file_or_note,
+                  completion_requires_customer_note: !!item.completion_requires_customer_note,
+                  completion_requires_customer_contact: !!item.completion_requires_customer_contact,
                 }));
                 await supabase.from('crm_tasks').insert(inserts);
                 console.log(`Auto-created ${inserts.length} CRM tasks for ${stageSlug} on lead ${req.params.id}`);
@@ -9963,6 +9965,8 @@ r.post('/leads/:id/tasks', async (req, res) => {
       deadline: b.deadline || null,
       created_by: req.user.userId,
       completion_requires_file_or_note: !!b.completion_requires_file_or_note,
+      completion_requires_customer_note: !!b.completion_requires_customer_note,
+      completion_requires_customer_contact: !!b.completion_requires_customer_contact,
     }).select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)').single();
     if (error) throw error;
 
@@ -10017,6 +10021,8 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
       deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
       created_by: req.user.userId,
       completion_requires_file_or_note: !!item.completion_requires_file_or_note,
+      completion_requires_customer_note: !!item.completion_requires_customer_note,
+      completion_requires_customer_contact: !!item.completion_requires_customer_contact,
     }));
 
     const { data, error } = await supabase.from('crm_tasks').insert(inserts)
@@ -10087,15 +10093,16 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
     if (b.status === 'completed') {
       const { data: prior, error: pErr } = await supabase
         .from('crm_tasks')
-        .select('id,status,notes,completion_requires_file_or_note')
+        .select('id,status,notes,completion_requires_file_or_note,completion_requires_customer_note,completion_requires_customer_contact')
         .eq('id', req.params.taskId)
         .maybeSingle();
       if (pErr) throw pErr;
-      if (prior && prior.status !== 'completed' && prior.completion_requires_file_or_note) {
-        const ok = await crmTaskHasCompletionEvidence(supabase, req.params.taskId, prior.notes);
+      if (prior && prior.status !== 'completed' && crmTaskRequiresCompletionEvidence(prior)) {
+        const ok = await crmTaskMeetsCompletionRequirements(supabase, req.params.taskId, prior);
         if (!ok) {
           return res.status(400).json({
-            error: 'Nhiệm vụ này yêu cầu ghi chú hoặc file đính kèm trước khi hoàn thành (cấu hình tại Cấu hình KPI → Bộ NV CRM).',
+            error:
+              'Nhiệm vụ này yêu cầu ghi chú khách hàng và/hoặc minh chứng liên hệ (ghi chú hoặc file đính kèm) trước khi hoàn thành — cấu hình tại Cấu hình KPI → Bộ NV CRM.',
             code: 'crm_task_completion_requires_evidence',
           });
         }
@@ -10686,6 +10693,8 @@ r.post('/task-templates/:tplId/items', async (req, res) => {
       priority: b.priority || 'medium', deadline_days: b.deadline_days || 0,
       order_index: nextOrder, checklist: b.checklist || [],
       completion_requires_file_or_note: !!b.completion_requires_file_or_note,
+      completion_requires_customer_note: !!b.completion_requires_customer_note,
+      completion_requires_customer_contact: !!b.completion_requires_customer_contact,
     }).select().single();
     if (error) throw error;
     res.status(201).json(data);
@@ -10696,7 +10705,7 @@ r.post('/task-templates/:tplId/items', async (req, res) => {
 r.put('/task-templates/:tplId/items/:itemId', async (req, res) => {
   try {
     const update = {};
-    ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist', 'default_allowed_companies', 'default_allowed_departments', 'completion_requires_file_or_note'].forEach(f => {
+    ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist', 'default_allowed_companies', 'default_allowed_departments', 'completion_requires_file_or_note', 'completion_requires_customer_note', 'completion_requires_customer_contact'].forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
     const { data, error } = await supabase.from('crm_task_template_items')
