@@ -25,6 +25,7 @@ const {
   applyCrmLeadRegionFilterToQuery,
   assertLeadReadableByRegionScope,
   assertRegionBelongsToCompany,
+  normalizeRegionIdList,
 } = require('../helpers/crmRegionScope');
 const {
   filterUserIdsForCrmLeadScopedNotification,
@@ -2080,6 +2081,7 @@ r.get('/dashboard', async (req, res) => {
         .order('created_at', { ascending: false })
         .limit(5);
       if (effectiveCompanyId) qQ = qQ.eq('company_id', effectiveCompanyId);
+      if (!userIsAdmin(req.user?.role) && req.user?.userId) qQ = qQ.eq('created_by', req.user.userId);
       const { data } = await qQ;
       recentQuotes = data || [];
     }
@@ -3115,8 +3117,26 @@ r.get('/employees-by-company', async (req, res) => {
       .eq('is_active', true)
       .order('full_name');
 
+    const userRows = users || [];
+    const userIds = userRows.map((u) => u.id).filter(Boolean);
+    const regionByUser = {};
+    if (userIds.length) {
+      const { data: urRows } = await supabase
+        .from('user_company_regions')
+        .select('user_id, region_id')
+        .in('user_id', userIds);
+      for (const row of urRows || []) {
+        if (!row.user_id) continue;
+        if (!regionByUser[row.user_id]) regionByUser[row.user_id] = [];
+        regionByUser[row.user_id].push(row.region_id);
+      }
+    }
+    for (const u of userRows) {
+      u.crm_region_ids = normalizeRegionIdList(regionByUser[u.id] || []);
+    }
+
     res.json({
-      users: users || [],
+      users: userRows,
       departments: targetDepts,
       company_id: companyId,
       is_sales_filtered: salesDepts.length > 0,
@@ -6689,6 +6709,17 @@ async function applyLeadOrCustomerSalesFilter(queryBuilder, leadIdVal) {
   return queryBuilder.eq('lead_id', lid);
 }
 
+/** Admin hệ thống xem/sửa mọi báo giá; NV chỉ báo giá do chính họ tạo (cùng company). */
+function userMayAccessQuotationRow(req, row) {
+  if (!row) return false;
+  if (userIsAdmin(req.user?.role)) return true;
+  const uid = req.user?.userId;
+  const cid = req.user?.company_id;
+  if (!uid || !cid) return false;
+  if (String(row.company_id || '') !== String(cid)) return false;
+  return String(row.created_by || '') === String(uid);
+}
+
 r.get('/quotations', async (req, res) => {
   try {
     const {
@@ -6711,11 +6742,14 @@ r.get('/quotations', async (req, res) => {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
       q = q.eq('company_id', cid);
+      if (req.user?.userId) q = q.eq('created_by', req.user.userId);
     } else if (coQ && /^[0-9a-f-]{36}$/i.test(String(coQ))) {
       q = q.eq('company_id', coQ);
     }
     if (regQ && /^[0-9a-f-]{36}$/i.test(String(regQ))) q = q.eq('region_id', regQ);
-    if (createdByQ && /^[0-9a-f-]{36}$/i.test(String(createdByQ))) q = q.eq('created_by', createdByQ);
+    if (userIsAdmin(req.user?.role) && createdByQ && /^[0-9a-f-]{36}$/i.test(String(createdByQ))) {
+      q = q.eq('created_by', createdByQ);
+    }
     if (status) q = q.eq('status', status);
     if (orphan === 'only') q = q.is('lead_id', null);
     else if (orphan === 'exclude') q = q.not('lead_id', 'is', null);
@@ -6734,13 +6768,19 @@ r.get('/quotations', async (req, res) => {
         )
         .order('created_at', { ascending: false })
         .limit(parseInt(limit));
-      if (!userIsAdmin(req.user?.role)) q2 = q2.eq('company_id', req.user.company_id);
-      else if (coQ && /^[0-9a-f-]{36}$/i.test(String(coQ))) q2 = q2.eq('company_id', coQ);
-      if (createdByQ && /^[0-9a-f-]{36}$/i.test(String(createdByQ))) q2 = q2.eq('created_by', createdByQ);
+      if (!userIsAdmin(req.user?.role)) {
+        q2 = q2.eq('company_id', req.user.company_id);
+        if (req.user?.userId) q2 = q2.eq('created_by', req.user.userId);
+      } else if (coQ && /^[0-9a-f-]{36}$/i.test(String(coQ))) q2 = q2.eq('company_id', coQ);
+      if (userIsAdmin(req.user?.role) && createdByQ && /^[0-9a-f-]{36}$/i.test(String(createdByQ))) {
+        q2 = q2.eq('created_by', createdByQ);
+      }
+      if (regQ && /^[0-9a-f-]{36}$/i.test(String(regQ))) q2 = q2.eq('region_id', regQ);
       if (status) q2 = q2.eq('status', status);
       if (orphan === 'only') q2 = q2.is('lead_id', null);
       else if (orphan === 'exclude') q2 = q2.not('lead_id', 'is', null);
       if (search) q2 = q2.or(`code.ilike.%${search}%,title.ilike.%${search}%,customer_name.ilike.%${search}%`);
+      if (lead_id && /^[0-9a-f-]{36}$/i.test(String(lead_id))) q2 = await applyLeadOrCustomerSalesFilter(q2, lead_id);
       const r2 = await q2;
       data = r2.data; error = r2.error;
     }
@@ -6778,6 +6818,14 @@ r.get('/quotations/:id', async (req, res) => {
         .single();
       quote = fb.data; qe = fb.error;
     }
+    if (!quote) {
+      const benign = qe && (qe.code === 'PGRST116' || /JSON object requested/i.test(String(qe.message || '')));
+      if (qe && !benign) return res.status(500).json({ error: qe.message || 'Lỗi tải báo giá' });
+      return res.status(404).json({ error: 'Không tìm thấy báo giá' });
+    }
+    if (!userMayAccessQuotationRow(req, quote)) {
+      return res.status(403).json({ error: 'Không có quyền xem báo giá này' });
+    }
     const { data: items } = await supabase.from('quotation_items')
       .select('*, product:products(id, name, code)')
       .eq('quotation_id', req.params.id).order('item_order');
@@ -6789,6 +6837,15 @@ r.get('/quotations/:id', async (req, res) => {
 
 r.get('/quotations/:id/history', async (req, res) => {
   try {
+    const { data: qMeta } = await supabase
+      .from('quotations')
+      .select('created_by, company_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!qMeta) return res.status(404).json({ error: 'Không tìm thấy báo giá' });
+    if (!userMayAccessQuotationRow(req, qMeta)) {
+      return res.status(403).json({ error: 'Không có quyền xem lịch sử báo giá này' });
+    }
     const { data: rows, error } = await supabase
       .from('quotation_edit_history')
       .select('id, action, summary, detail, created_at, created_by')
@@ -7161,6 +7218,16 @@ async function getNotifyTargets(leadId) {
 
 r.put('/quotations/:id', async (req, res) => {
   try {
+    const { data: qAuth } = await supabase
+      .from('quotations')
+      .select('created_by, company_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!qAuth) return res.status(404).json({ error: 'Không tìm thấy báo giá' });
+    if (!userMayAccessQuotationRow(req, qAuth)) {
+      return res.status(403).json({ error: 'Không có quyền sửa báo giá này' });
+    }
+
     const { items: itemsBody, quotation_source: _qs, ...quoteDataFromBody } = req.body;
 
     const { data: prevQuote } = await supabase.from('quotations')
@@ -7356,6 +7423,9 @@ r.post('/quotations/:id/convert-to-order', async (req, res) => {
   try {
     const { data: quote } = await supabase.from('quotations').select('*').eq('id', req.params.id).single();
     if (!quote) return res.status(404).json({ error: 'Không tìm thấy báo giá' });
+    if (!userMayAccessQuotationRow(req, quote)) {
+      return res.status(403).json({ error: 'Không có quyền chuyển báo giá này sang đơn hàng' });
+    }
 
     const { data: qItems } = await supabase.from('quotation_items').select('*').eq('quotation_id', req.params.id).order('item_order');
 
@@ -7393,13 +7463,22 @@ r.post('/quotations/:id/convert-to-order', async (req, res) => {
 // ═══ DELETE QUOTATION ═══
 r.delete('/quotations/:id', async (req, res) => {
   try {
+    const { data: delScope } = await supabase
+      .from('quotations')
+      .select('created_by, company_id, code, lead_id, customer_name')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!delScope) return res.status(404).json({ error: 'Không tìm thấy báo giá' });
+    if (!userMayAccessQuotationRow(req, delScope)) {
+      return res.status(403).json({ error: 'Không có quyền xóa báo giá này' });
+    }
+    const delQ = { code: delScope.code, lead_id: delScope.lead_id, customer_name: delScope.customer_name };
+
     // Unlink orders referencing this quotation
     await supabase.from('orders').update({ quotation_id: null }).eq('quotation_id', req.params.id);
     // Delete items
     await supabase.from('quotation_items').delete().eq('quotation_id', req.params.id);
     // Delete quotation
-    // Get info before delete for notification
-    const { data: delQ } = await supabase.from('quotations').select('code, lead_id, customer_name').eq('id', req.params.id).single();
     const { error } = await supabase.from('quotations').delete().eq('id', req.params.id);
     if (error) throw error;
 
@@ -8192,6 +8271,7 @@ r.get('/customers-overview', async (req, res) => {
     const leads = (leadsRaw || []).filter((l) => crmLeadRowVisibleToRequestUser(l, uid, role));
     let quotesQ = supabase.from('quotations').select('id, customer_id, code, title, total, status, created_at, company_id');
     if (effectiveCompanyId) quotesQ = quotesQ.eq('company_id', effectiveCompanyId);
+    if (!userIsAdmin(req.user?.role) && uid) quotesQ = quotesQ.eq('created_by', uid);
     let ordersQ = supabase.from('orders').select('id, customer_id, code, title, total, status, paid_amount, created_at, company_id');
     if (effectiveCompanyId) ordersQ = ordersQ.eq('company_id', effectiveCompanyId);
     let invoicesQ = supabase.from('invoices').select('id, customer_id, code, title, total, paid_amount, payment_status, created_at, company_id');
@@ -8249,6 +8329,7 @@ r.get('/customers-overview/:id', async (req, res) => {
     const leads = (leadsRaw || []).filter((l) => crmLeadRowVisibleToRequestUser(l, uid, role));
     let quotesQ = supabase.from('quotations').select('id, customer_id, code, title, total, status, created_at').eq('customer_id', req.params.id).order('created_at', { ascending: false });
     if (effectiveCompanyId) quotesQ = quotesQ.eq('company_id', effectiveCompanyId);
+    if (!userIsAdmin(req.user?.role) && req.user?.userId) quotesQ = quotesQ.eq('created_by', req.user.userId);
     let ordersQ = supabase.from('orders').select('id, customer_id, code, title, total, status, paid_amount, created_at').eq('customer_id', req.params.id).order('created_at', { ascending: false });
     if (effectiveCompanyId) ordersQ = ordersQ.eq('company_id', effectiveCompanyId);
     let invoicesQ = supabase.from('invoices').select('id, customer_id, code, title, total, paid_amount, payment_status, created_at').eq('customer_id', req.params.id).order('created_at', { ascending: false });
@@ -8786,6 +8867,28 @@ function isExcelDepositOrRemainSummaryRow(name, stt, fullRowText) {
   return /\bCỌC\b/.test(u) || /\bCÒN\s*LẠI\b/.test(u);
 }
 
+/**
+ * Nhận diện ô/dòng Excel là thông tin liên hệ NVKD — KT… (không gán SĐT này vào khách hàng).
+ * Tránh nhầm khi mẫu có "SĐT" / "Số điện thoại" gắn với phụ trách.
+ */
+function excelHeaderTextIsStaffContactContext(upper) {
+  const u = String(upper || '').trim().toUpperCase();
+  if (!u) return false;
+  if (/KHÁCH\s*HÀNG|KHACH\s*HANG|SĐT\s*KH\b|SDT\s*KH\b|LIÊN\s*HỆ\s*KH|LIÊN\s*LẠC\s*KH/i.test(u)) return false;
+  if (u.includes('NVKD') || u.includes('NV KD') || u.includes('PHỤ TRÁCH KD')) return true;
+  if (u.includes('KT PHỤ TRÁCH') || u.includes('KỸ THUẬT PHỤ TRÁCH') || u.includes('KĨ THUẬT PHỤ TRÁCH')) return true;
+  if (u.includes('NGƯỜI PHỤ TRÁCH') || u.includes('NGUOI PHU TRACH')) return true;
+  if (u.includes('LIÊN HỆ NV') || u.includes('LIEN HE NV')) return true;
+  if (/^SĐT\s*(NVKD|NV|KD|KT)\b/i.test(u) || /^SDT\s*(NVKD|NV|KD|KT)\b/i.test(u)) return true;
+  if (/SỐ\s*ĐIỆN\s*THOẠI/i.test(u) && (u.includes('NVKD') || u.includes('PHỤ TRÁCH') || u.includes('KỸ THUẬT') || u.includes('KĨ THUẬT'))) return true;
+  return false;
+}
+
+function excelRowLooksLikeStaffPhoneContext(rowArr) {
+  const blob = (rowArr || []).map((c) => String(c ?? '').trim().toUpperCase()).filter(Boolean).join(' | ');
+  return excelHeaderTextIsStaffContactContext(blob);
+}
+
 const excelUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) => {
@@ -8926,12 +9029,23 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
           else kts_info = cell;
           continue;
         }
+        if (excelHeaderTextIsStaffContactContext(cellUpper)) {
+          const match = cell.match(/[:;\-]\s*(.+)/);
+          if (match) kts_info = match[1].replace(/[-–]\s*(0\d{8,10})/, ' - $1').trim();
+          else kts_info = cell;
+          continue;
+        }
 
         // Customer name — label "Khách hàng:" / "Tên khách hàng;" (Vạn Phú Thành dùng `;`)
         if (cellUpper.includes('KHÁCH HÀNG') || cellUpper.includes('KHACH HANG')) {
           const match = cell.match(/[:;\-]\s*(.+)/);
           if (match) {
             let namePart = match[1].trim();
+            // Bỏ đoạn NVKD / phụ trách / … (tránh lấy SĐT nhân viên làm SĐT khách)
+            namePart = namePart.replace(
+              /\s*(;|,|[-–])\s*(NVKD|NV\s*KD|PHỤ\s*TRÁCH\s*KD|PHỤ\s*TRÁCH\s*(NV|KINH\s*DOANH)|KT\s*(PHỤ\s*TRÁCH)?|KĨ?\s*THUẬT|NGƯỜI\s*PHỤ\s*TRÁCH|LIÊN\s*HỆ\s*NV)\s*[:;]?\s*.*$/i,
+              '',
+            ).trim();
             // Remove KT info if embedded
             namePart = namePart.replace(/\s*[-–]?\s*(Kĩ|Kỹ|KT)\s*(Thuật|thuật)?\s*(Phụ|phụ)\s*(Trách|trách)\s*[:]\s*.*/i, '').trim();
             // Extract phone from name
@@ -8958,20 +9072,32 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
           continue;
         }
 
-        // SĐT standalone cell (bao gồm cả "SĐT liên lạc:" của format Vạn Phú Thành)
+        // SĐT standalone cell — chỉ gán khách khi nhãn không phải SĐT NVKD / phụ trách…
         if (cellUpper.includes('SĐT') || cellUpper.includes('SDT') || cellUpper.includes('ĐT:')) {
           const phoneMatch = cell.match(/(0\d{8,10})/);
-          if (phoneMatch && !customer_phone) customer_phone = phoneMatch[1];
-          // Also check if kts phone
-          if (phoneMatch && customer_phone && phoneMatch[1] !== customer_phone && !kts_info.includes(phoneMatch[1])) {
-            if (kts_info) kts_info += ' - ' + phoneMatch[1];
+          if (phoneMatch) {
+            if (excelHeaderTextIsStaffContactContext(cellUpper)) {
+              const tail = cell.replace(/^\s*(SỐ\s*ĐIỆN\s*THOẠI|SĐT|SDT|ĐT)\s*[:;]?\s*/i, '').trim();
+              if (kts_info && !kts_info.includes(phoneMatch[1])) kts_info += ` — ${tail || phoneMatch[1]}`;
+              else if (!kts_info) kts_info = tail || phoneMatch[1];
+            } else if (!customer_phone) {
+              customer_phone = phoneMatch[1];
+            } else if (phoneMatch[1] !== customer_phone && !kts_info.includes(phoneMatch[1])) {
+              if (kts_info) kts_info += ` — ${phoneMatch[1]}`;
+              else kts_info = phoneMatch[1];
+            }
           }
           continue;
         }
 
-        // Phone in cell (not company phone)
-        if (!customer_phone && /^0\d{8,10}$/.test(cell)) {
-          customer_phone = cell;
+        // Phone in cell (not company phone) — nếu cùng dòng có nhãn NVKD/Phụ trách thì gắn vào KT/NVKD
+        if (/^0\d{8,10}$/.test(cell)) {
+          if (!customer_phone && excelRowLooksLikeStaffPhoneContext(rows[i])) {
+            if (kts_info && !kts_info.includes(cell)) kts_info += ` — ${cell}`;
+            else if (!kts_info) kts_info = cell;
+          } else if (!customer_phone) {
+            customer_phone = cell;
+          }
           continue;
         }
 
@@ -9564,6 +9690,9 @@ r.get('/quotations/:id/pdf', async (req, res) => {
       .select('*, customer:customers(id, full_name, phone, email, address, company, tax_code)')
       .eq('id', req.params.id).single();
     if (!quote) return res.status(404).json({ error: 'Khong tim thay bao gia' });
+    if (!userMayAccessQuotationRow(req, quote)) {
+      return res.status(403).json({ error: 'Khong co quyen xuat PDF bao gia nay' });
+    }
     const { data: items } = await supabase.from('quotation_items')
       .select('*, product:products(id, name, code)')
       .eq('quotation_id', req.params.id).order('item_order');
