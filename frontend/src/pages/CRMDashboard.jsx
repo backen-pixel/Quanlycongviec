@@ -1802,6 +1802,21 @@ export default function CRMDashboard() {
   const ledgerMapLead = dataLead?.ledger_net_by_lead || {};
   const ledgerMapDeal = dataDeal?.ledger_net_by_lead || {};
 
+  /**
+   * Tổng điểm KPI (tháng) trên lead/deal đang hiển thị — bằng Σ ô góc thẻ Kanban.
+   * Khớp bộ lọc «Phụ trách» + lọc client (tìm nhanh, cột, khu vực, …); tránh lệch với số tổng API khi chỉ một phần bản ghi có ledger.
+   */
+  const kpiLedgerMonthNetSumVisible = useMemo(() => {
+    const map = pipelineType === 'lead' ? ledgerMapLead : ledgerMapDeal;
+    const items = pipelineType === 'lead' ? leads : deals;
+    let s = 0;
+    for (const l of items) {
+      const v = map[String(l.id)];
+      if (typeof v === 'number' && !Number.isNaN(v)) s += Number(v);
+    }
+    return Math.round(s * 100) / 100;
+  }, [pipelineType, leads, deals, ledgerMapLead, ledgerMapDeal]);
+
   // Pipeline view: group leads/deals by stage
   const pipelineLead = useMemo(() => {
     if (!stagesLead.length) return [];
@@ -1859,10 +1874,10 @@ export default function CRMDashboard() {
       viewerUser: user,
       assigneeProfile,
       pipelineType,
-      kpis,
+      kpis: { ...kpis, kpi_ledger_month_net_sum: kpiLedgerMonthNetSumVisible },
       ledgerNetByLead: pipelineType === 'lead' ? ledgerMapLead : ledgerMapDeal,
     });
-  }, [kpis, filterAssignee, employeeFilterList, users, pipelineType, user, ledgerMapLead, ledgerMapDeal]);
+  }, [kpis, kpiLedgerMonthNetSumVisible, filterAssignee, employeeFilterList, users, pipelineType, user, ledgerMapLead, ledgerMapDeal]);
 
   useEffect(() => {
     saveCrmPipelineSnapshot({
@@ -2940,7 +2955,7 @@ export default function CRMDashboard() {
               iconBgColor="bg-indigo-100"
               iconColor="text-indigo-600"
               label="Điểm KPI (tháng)"
-              value={formatKpiLedgerNet(kpis.kpi_ledger_month_net_sum)}
+              value={formatKpiLedgerNet(kpiLedgerMonthNetSumVisible)}
               sublabel={kpis.kpi_ledger_period_start ? `Sổ cái · ${String(kpis.kpi_ledger_period_start).slice(0, 7)}` : 'Sổ cái CRM'}
               trend={null}
               hint={kpiLedgerMonthCardHint}
@@ -2996,7 +3011,7 @@ export default function CRMDashboard() {
               iconBgColor="bg-indigo-100"
               iconColor="text-indigo-600"
               label="Điểm KPI (tháng)"
-              value={formatKpiLedgerNet(kpis.kpi_ledger_month_net_sum)}
+              value={formatKpiLedgerNet(kpiLedgerMonthNetSumVisible)}
               sublabel={kpis.kpi_ledger_period_start ? `Sổ cái · ${String(kpis.kpi_ledger_period_start).slice(0, 7)}` : 'Sổ cái CRM'}
               trend={null}
               hint={kpiLedgerMonthCardHint}
