@@ -622,10 +622,12 @@ function defaultKpiLedgerMonthStartYmd() {
 /**
  * Tổng điểm ròng sổ cái KPI (crm_kpi_ledger) theo từng lead_id trong kỳ.
  * Gom theo chunk vì .in() và phân trang tránh trần PostgREST.
+ * @param {{ userId?: string|null }} [opts] — Khi có `userId`, chỉ cộng điểm của nhân viên đó (khớp bộ lọc NV trên dashboard).
  */
-async function sumCrmKpiLedgerNetByLeadIds(leadIds, periodStart, periodType = 'monthly') {
+async function sumCrmKpiLedgerNetByLeadIds(leadIds, periodStart, periodType = 'monthly', opts = {}) {
   const sums = Object.create(null);
   if (!leadIds?.length || !periodStart) return sums;
+  const userId = opts.userId && String(opts.userId).trim() ? String(opts.userId).trim() : null;
   const uniq = [...new Set(leadIds.map((x) => String(x)))];
   const CHUNK = 150;
   for (let i = 0; i < uniq.length; i += CHUNK) {
@@ -633,13 +635,14 @@ async function sumCrmKpiLedgerNetByLeadIds(leadIds, periodStart, periodType = 'm
     let from = 0;
     const PAGE = 1000;
     for (;;) {
-      const { data, error } = await supabase
+      let q = supabase
         .from('crm_kpi_ledger')
         .select('lead_id, points')
         .in('lead_id', part)
         .eq('period_type', periodType)
-        .eq('period_start', periodStart)
-        .range(from, from + PAGE - 1);
+        .eq('period_start', periodStart);
+      if (userId) q = q.eq('user_id', userId);
+      const { data, error } = await q.range(from, from + PAGE - 1);
       if (error) throw error;
       const rows = data || [];
       for (const r of rows) {
@@ -2007,7 +2010,9 @@ r.get('/dashboard', async (req, res) => {
     let ledgerNetByLead = {};
     try {
       if (leadIdsScope.length) {
-        ledgerNetByLead = await sumCrmKpiLedgerNetByLeadIds(leadIdsScope, ledgerPeriodStart, 'monthly');
+        ledgerNetByLead = await sumCrmKpiLedgerNetByLeadIds(leadIdsScope, ledgerPeriodStart, 'monthly', {
+          userId: assigned_to_only || null,
+        });
       }
     } catch (e) {
       console.warn('[crm/dashboard] kpi ledger sums:', e.message);
