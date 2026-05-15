@@ -3,9 +3,9 @@ import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { getSocket, connectSocket } from '../lib/socket';
-import { formatVND, formatDate } from '../lib/utils';
+import { formatVND, formatDate, formatDateTime } from '../lib/utils';
 import {
-  TrendingUp, Users, User, DollarSign, Target, Phone, Mail, MapPin,
+  Users, User, DollarSign, Target, Phone, Mail, MapPin,
   Plus, Search, Filter, X, ChevronLeft, ChevronRight, MoreHorizontal, Calendar,
   FileText, ShoppingCart, Receipt, ArrowRight, Eye, Percent, GripVertical,
   Zap, CheckCircle2, TrendingDown, AlertTriangle, Building2, Rocket, Pin,
@@ -72,12 +72,138 @@ function formatKpiLedgerNet(v) {
   return n > 0 ? `+${s}` : s;
 }
 
-/** Nhãn tháng cho API `by_month` (YYYY-MM). */
-function formatContractSignedMonthLabel(ym) {
-  if (!ym || typeof ym !== 'string') return '';
-  const m = ym.match(/^(\d{4})-(\d{2})$/);
-  if (!m) return ym;
-  return `Tháng ${Number(m[2])}/${m[1]}`;
+/** Ô điểm KPI góc thẻ Kanban: hover → chi tiết cộng/trừ theo crm_kpi_ledger (cùng kỳ với dashboard). */
+function KpiKanbanLedgerBadge({ leadId, net, periodStart, compact }) {
+  const [tipOpen, setTipOpen] = useState(false);
+  const leaveTimerRef = useRef(null);
+  const loadedSlotRef = useRef('');
+  const requestSeqRef = useRef(0);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+  const [rows, setRows] = useState(null);
+
+  const slot = `${leadId}|${String(periodStart || '').slice(0, 10)}`;
+
+  useEffect(() => {
+    loadedSlotRef.current = '';
+    requestSeqRef.current += 1;
+    setRows(null);
+    setErr(null);
+  }, [leadId, periodStart]);
+
+  useEffect(
+    () => () => {
+      if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
+    },
+    [],
+  );
+
+  const openTip = () => {
+    if (leaveTimerRef.current) {
+      clearTimeout(leaveTimerRef.current);
+      leaveTimerRef.current = null;
+    }
+    setTipOpen(true);
+    if (loadedSlotRef.current === slot) return;
+    const seq = ++requestSeqRef.current;
+    setLoading(true);
+    setErr(null);
+    const params = { period_type: 'monthly' };
+    if (periodStart) params.period_start = String(periodStart).slice(0, 10);
+    api
+      .get(`/kpi/lead-ledger/${leadId}`, { params })
+      .then(({ data }) => {
+        if (seq !== requestSeqRef.current) return;
+        loadedSlotRef.current = slot;
+        setRows(Array.isArray(data?.entries) ? data.entries : []);
+      })
+      .catch((e) => {
+        if (seq !== requestSeqRef.current) return;
+        loadedSlotRef.current = '';
+        setErr(String(e?.response?.data?.error || e?.message || 'Không tải được sổ cái'));
+        setRows(null);
+      })
+      .finally(() => {
+        if (seq === requestSeqRef.current) setLoading(false);
+      });
+  };
+
+  const closeTipSoon = () => {
+    if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
+    leaveTimerRef.current = setTimeout(() => {
+      setTipOpen(false);
+      leaveTimerRef.current = null;
+    }, 180);
+  };
+
+  const periodLabel = periodStart ? String(periodStart).slice(0, 7) : 'tháng hiện tại';
+
+  return (
+    <div
+      className="absolute top-1 right-1 z-[35] max-w-[min(calc(100vw-2rem),16rem)]"
+      onMouseEnter={openTip}
+      onMouseLeave={closeTipSoon}
+    >
+      <span
+        className={`block max-w-[4.25rem] cursor-help truncate rounded px-1 py-0.5 text-[9px] font-bold leading-tight shadow-sm ${
+          net > 0 ? 'bg-emerald-600/95 text-white' : net < 0 ? 'bg-red-600/95 text-white' : 'bg-slate-500/90 text-white'
+        }`}
+      >
+        {formatKpiLedgerNet(net)}
+      </span>
+      {tipOpen && (
+        <div
+          className={`absolute right-0 top-full z-[80] mt-0.5 min-w-[13rem] max-w-[min(calc(100vw-2rem),18rem)] rounded-lg border border-gray-700 bg-gray-900 p-2 text-left shadow-xl ${
+            compact ? 'text-[10px]' : 'text-[11px]'
+          } leading-snug text-white`}
+          onMouseEnter={openTip}
+          onMouseLeave={closeTipSoon}
+        >
+          <p className="mb-1.5 border-b border-white/10 pb-1 text-[10px] font-semibold uppercase tracking-wide text-white/75">
+            Sổ cái KPI · {periodLabel}
+          </p>
+          <p className="mb-1.5 text-[10px] text-white/85">
+            Ròng trên thẻ: <strong className="tabular-nums text-white">{formatKpiLedgerNet(net)}</strong>
+            <span className="text-white/55"> — tổng các dòng dưới (có thể khác nếu vừa cập nhật)</span>
+          </p>
+          {loading && <p className="text-white/70">Đang tải chi tiết…</p>}
+          {!loading && err && <p className="text-red-300">{err}</p>}
+          {!loading && !err && rows && rows.length === 0 && (
+            <p className="text-white/70">Chưa có dòng sổ cái trong kỳ này.</p>
+          )}
+          {!loading && !err && rows && rows.length > 0 && (
+            <ul className="max-h-[min(50vh,14rem)] space-y-1 overflow-y-auto pr-0.5">
+              {rows.slice(0, 40).map((r, idx) => {
+                const pts = Number(r.points || 0);
+                const code = r.source_kpi_code || r.event_type || '—';
+                const when = r.occurred_at ? formatDateTime(r.occurred_at) : '';
+                const reason = String(r.reason || '').trim();
+                return (
+                  <li key={r.id || `ledger-${idx}`} className="rounded border border-white/10 bg-white/5 px-1.5 py-1">
+                    <div className="flex items-start justify-between gap-1">
+                      <span
+                        className={`shrink-0 font-mono font-bold tabular-nums ${
+                          pts > 0 ? 'text-emerald-300' : pts < 0 ? 'text-red-300' : 'text-white/80'
+                        }`}
+                      >
+                        {formatKpiLedgerNet(pts)}
+                      </span>
+                      <span className="min-w-0 flex-1 text-right text-[10px] text-sky-200/95">{code}</span>
+                    </div>
+                    {when && <p className="text-[9px] text-white/50">{when}</p>}
+                    {reason && <p className="mt-0.5 text-[10px] text-white/85">{reason}</p>}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {!loading && !err && rows && rows.length > 40 && (
+            <p className="mt-1 text-[9px] text-white/55">Và {rows.length - 40} dòng khác — xem đủ trong chi tiết lead (tab Sổ cái KPI).</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** SLA cột pipeline: mặc định 7 ngày nếu chưa cấuỉnh sla_days — vàng ≤3 ngày còn, cam ≤24h, đỏ quá hạn */
@@ -266,8 +392,6 @@ export default function CRMDashboard() {
 
   const [dataLead, setDataLead] = useState(null);
   const [dataDeal, setDataDeal] = useState(null);
-  /** GET /crm/contract-signed-revenue — doanh thu ký HĐ theo tháng (theo bộ lọc thời gian + công ty + NV). */
-  const [contractSignedRevenue, setContractSignedRevenue] = useState(null);
   // leads & deals are computed via useMemo (client-side filter) - see below
   const [stagesLead, setStagesLead] = useState([]);
   const [stagesDeal, setStagesDeal] = useState([]);
@@ -321,7 +445,6 @@ export default function CRMDashboard() {
   const [wonAssigning, setWonAssigning] = useState(false);
   const [wonAssignError, setWonAssignError] = useState('');
   const [pinnedTab, setPinnedTab] = useState(() => P?.pinnedTab ?? (localStorage.getItem('crm_pinned_tab') || ''));
-  const [loading, setLoading] = useState(true);
   /** Trạng thái đồng bộ ngầm (silent refetch): hiển thị "Cập nhật lúc HH:mm" thay vì spinner */
   const [syncing, setSyncing] = useState(false);
   const [lastSyncAt, setLastSyncAt] = useState(null);
@@ -426,7 +549,7 @@ export default function CRMDashboard() {
       }
       setManualMergeIds([]);
       setBulkDeleteModalOpen(false);
-      await loadRef.current?.();
+      await loadRef.current?.({ silent: true });
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Lỗi xóa');
     }
@@ -480,7 +603,7 @@ export default function CRMDashboard() {
       });
       setAutoCreateResult(data);
       setAutoCreateStatus('success');
-      load();
+      load({ silent: true });
     } catch (e) {
       const msg = e.response?.data?.error || 'Lỗi tạo dự án';
       if (e.response?.data?.project_id) {
@@ -511,21 +634,6 @@ export default function CRMDashboard() {
       }
     }
   };
-
-  // ── Load company employees on mount ──
-  useEffect(() => {
-    const loadCompanyEmployees = async () => {
-      try {
-        const { data } = await api.get('/crm/employees-by-company');
-        setCompanyEmployees(data.users || []);
-        setCompanyDepts(data.departments || []);
-        setUserCompanyId(data.company_id || '');
-      } catch (e) {
-        console.warn('Load company employees failed:', e.message);
-      }
-    };
-    loadCompanyEmployees();
-  }, []);
 
   useEffect(() => {
     api.get('/companies', { params: { for_module: 'production' } })
@@ -591,7 +699,9 @@ export default function CRMDashboard() {
     }
   }, [user, P?.filterLeadType]);
 
-  useEffect(() => { load(); }, [filterPhone, customDateFrom, customDateTo, kanbanLoadLimit, filterAssignee, filterCompany, filterLeadType]);
+  useEffect(() => {
+    void load({ silent: true });
+  }, [filterPhone, customDateFrom, customDateTo, kanbanLoadLimit, filterAssignee, filterCompany, filterLeadType]);
 
   // Admin: công ty đang lọc không còn trong danh sách (sau giới hạn khối theo module CRM) → bỏ lọc
   useEffect(() => {
@@ -829,6 +939,31 @@ export default function CRMDashboard() {
     return '';
   }, [isCompanyScopedAdmin, isAdmin, user?.company_id, filterCompany]);
 
+  /** NV trong bộ lọc CRM: theo công ty đang xem + API trả crm_region_ids (user_company_regions). */
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      try {
+        const params = {};
+        if (dashboardScopeCompanyId) params.company_id = dashboardScopeCompanyId;
+        const { data } = await api.get('/crm/employees-by-company', { params });
+        if (cancel) return;
+        setCompanyEmployees(data.users || []);
+        setCompanyDepts(data.departments || []);
+        setUserCompanyId(data.company_id || '');
+      } catch (e) {
+        console.warn('Load company employees failed:', e.message);
+        if (!cancel) {
+          setCompanyEmployees([]);
+          setCompanyDepts([]);
+        }
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [dashboardScopeCompanyId]);
+
   useEffect(() => {
     crmLiveVersionRef.current = null;
   }, [dashboardScopeCompanyId, customDateFrom, customDateTo]);
@@ -938,13 +1073,6 @@ export default function CRMDashboard() {
         });
         if (type === 'lead') setDataLead(data);
         else setDataDeal(data);
-        if (type === 'deal') {
-          const revP = { ...dateParams };
-          if (dashboardScopeCompanyId) revP.company_id = dashboardScopeCompanyId;
-          if (filterAssignee) revP.assigned_to = filterAssignee;
-          const rev = await api.get('/crm/contract-signed-revenue', { params: revP }).catch(() => ({ data: null }));
-          setContractSignedRevenue(rev.data ?? null);
-        }
       } catch (e) {
         console.error('[refreshCrmDashboardSlice]', e);
       }
@@ -1081,7 +1209,6 @@ export default function CRMDashboard() {
 
   const load = async (opts) => {
     const silent = !!(opts && opts.silent);
-    if (!silent) setLoading(true);
     if (silent) setSyncing(true);
     try {
       let resolvedCompanyId = filterCompany;
@@ -1197,20 +1324,15 @@ export default function CRMDashboard() {
         return { rows, nextOffset, total };
       };
 
-      const revenueParams = { ...dateParams };
-      if (resolvedCompanyId) revenueParams.company_id = resolvedCompanyId;
-      if (filterAssignee) revenueParams.assigned_to = filterAssignee;
-
       const dashListParams = {
         ...dateParams,
         ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}),
         ...(filterAssignee ? { assigned_to: filterAssignee } : {}),
       };
 
-      const [dashLeadRes, dashDealRes, contractSignedRevRes, leadsRows, dealsRows, pipelinesRes, stagesLeadRes, stagesDealRes, sourcesRes, leadTypesRes, companiesRes, usersRes, lcHas, lcNo, lcAll, dcHas, dcNo, dcAll] = await Promise.all([
+      const [dashLeadRes, dashDealRes, leadsRows, dealsRows, pipelinesRes, stagesLeadRes, stagesDealRes, sourcesRes, leadTypesRes, companiesRes, usersRes, lcHas, lcNo, lcAll, dcHas, dcNo, dcAll] = await Promise.all([
         api.get('/crm/dashboard', { params: { type: 'lead', ...dashListParams } }).catch(() => ({ data: { pipeline: [], kpis: {}, ledger_net_by_lead: {}, recent_quotations: [], recent_orders: [] } })),
         api.get('/crm/dashboard', { params: { type: 'deal', ...dashListParams } }).catch(() => ({ data: { pipeline: [], kpis: {}, ledger_net_by_lead: {}, recent_quotations: [], recent_orders: [] } })),
-        api.get('/crm/contract-signed-revenue', { params: revenueParams }).catch(() => ({ data: null })),
         fetchKanbanRows('lead'),
         fetchKanbanRows('deal'),
         api.get('/crm/pipelines').catch(() => ({ data: [] })),
@@ -1241,7 +1363,6 @@ export default function CRMDashboard() {
       });
       setDataLead(dashLeadRes.data);
       setDataDeal(dashDealRes.data);
-      setContractSignedRevenue(contractSignedRevRes?.data ?? null);
       setPipelines(
         narrowPipelinesToDefaultForCompany(
           Array.isArray(pipelinesRes.data) ? pipelinesRes.data : [],
@@ -1286,7 +1407,6 @@ export default function CRMDashboard() {
     } catch {
       /* ignore */
     }
-    if (!silent) setLoading(false);
     if (silent) setSyncing(false);
     setLastSyncAt(new Date());
   };
@@ -1301,7 +1421,7 @@ export default function CRMDashboard() {
     }
     // Only reload when we have valid dates or clearing filter
     if (timePreset === 'custom' && (!customDateFrom || !customDateTo)) return;
-    load();
+    void load({ silent: true });
   }, [customDateFrom, customDateTo]);
 
   // ── Computed: label hiển thị cho time filter ──
@@ -1323,16 +1443,31 @@ export default function CRMDashboard() {
     return users;
   }, [companyEmployees, users]);
 
+  /** Danh sách NV trong dropdown: sau khi chọn khu vực (cùng biến filterRegion với Kanban). */
+  const employeeFilterListByRegion = useMemo(() => {
+    const list = employeeFilterList;
+    if (!filterRegion) return list;
+    const fromCompanyApi = companyEmployees.length > 0;
+    if (!fromCompanyApi && filterRegion && filterRegion !== '__none__') {
+      return list;
+    }
+    if (filterRegion === '__none__') {
+      return list.filter((u) => !(u.crm_region_ids && u.crm_region_ids.length));
+    }
+    const fr = String(filterRegion);
+    return list.filter((u) => (u.crm_region_ids || []).map(String).includes(fr));
+  }, [employeeFilterList, filterRegion, companyEmployees.length]);
+
   const employeeOptionsFiltered = useMemo(() => {
     const q = assigneeListSearch.trim().toLowerCase();
-    if (!q) return employeeFilterList;
-    return employeeFilterList.filter((u) => {
+    if (!q) return employeeFilterListByRegion;
+    return employeeFilterListByRegion.filter((u) => {
       const name = (u.full_name || '').toLowerCase();
       const email = (u.email || '').toLowerCase();
       const pos = (u.position || '').toLowerCase();
       return name.includes(q) || email.includes(q) || pos.includes(q);
     });
-  }, [employeeFilterList, assigneeListSearch]);
+  }, [employeeFilterListByRegion, assigneeListSearch]);
 
   /** Giữ option đang chọn trong select dù đã lọc tên (tránh select trống) */
   const employeeOptionsForSelect = useMemo(() => {
@@ -1341,12 +1476,25 @@ export default function CRMDashboard() {
       const fid = String(filterAssignee);
       const has = list.some((u) => String(u.id) === fid);
       if (!has) {
-        const found = employeeFilterList.find((u) => String(u.id) === fid) || users.find((u) => String(u.id) === fid);
+        const found =
+          employeeFilterListByRegion.find((u) => String(u.id) === fid) ||
+          employeeFilterList.find((u) => String(u.id) === fid) ||
+          users.find((u) => String(u.id) === fid);
         if (found) list = [found, ...list];
       }
     }
     return list;
-  }, [employeeOptionsFiltered, filterAssignee, employeeFilterList, users]);
+  }, [employeeOptionsFiltered, filterAssignee, employeeFilterListByRegion, employeeFilterList, users]);
+
+  useEffect(() => {
+    if (!filterAssignee) return;
+    const fid = String(filterAssignee);
+    const ok = employeeFilterListByRegion.some((u) => String(u.id) === fid);
+    if (!ok) {
+      setFilterAssignee('');
+      setFilterAssigneeName('');
+    }
+  }, [filterRegion, dashboardScopeCompanyId, employeeFilterListByRegion, filterAssignee]);
 
   // ── Computed: nguồn thông minh - non-FB giữ nguyên, FB → [FB] Tên Page ──
   const smartSources = useMemo(() => {
@@ -1652,7 +1800,7 @@ export default function CRMDashboard() {
   ]);
 
   useEffect(() => {
-    if (loading) return;
+    if (dataLead == null && dataDeal == null) return;
     const id = peekCrmPipelineCardFocus();
     if (!id) return;
     const pulse = (el) => {
@@ -1676,7 +1824,7 @@ export default function CRMDashboard() {
       if (!tryOnce()) clearCrmPipelineCardFocus();
     }, 500);
     return () => clearTimeout(t);
-  }, [loading, viewMode, pipelineType, currentPipeline]);
+  }, [dataLead, dataDeal, viewMode, pipelineType, currentPipeline]);
 
   const applyKanbanStageChange = useCallback(
     async (leadId, newStageId, extraData = {}, opts = {}) => {
@@ -1732,7 +1880,7 @@ export default function CRMDashboard() {
             tasks_created: data.project_auto_created.tasks_created,
           });
           setAutoCreateStatus('success');
-          load();
+          load({ silent: true });
         }
       } catch (e) {
         console.error(e);
@@ -1860,7 +2008,7 @@ export default function CRMDashboard() {
           }
           setManualMergeIds([]);
           setBulkStageTarget('');
-          await loadRef.current?.();
+          await loadRef.current?.({ silent: true });
         } catch (e) {
           window.alert(e.response?.data?.error || e.message || 'Lỗi chuyển giai đoạn');
         } finally {
@@ -1876,7 +2024,7 @@ export default function CRMDashboard() {
         }
         setManualMergeIds([]);
         setBulkStageTarget('');
-        await loadRef.current?.();
+        await loadRef.current?.({ silent: true });
       } catch (e) {
         window.alert(e.response?.data?.error || e.message || 'Lỗi chuyển giai đoạn');
       } finally {
@@ -1940,7 +2088,7 @@ export default function CRMDashboard() {
       saveCrmPipelineSnapshot({ ...(snap || {}), pipelineType: 'deal' });
       markCrmPipelineCardFocus(wonAssignLeadId);
       setPipelineType('deal');
-      load();
+      load({ silent: true });
     } catch (e) {
       setWonAssignError(e.response?.data?.error || 'Lỗi chuyển sang Deal');
     } finally {
@@ -1967,7 +2115,7 @@ export default function CRMDashboard() {
         status: 'planned',
       });
       setDealKanbanEventCtx(null);
-      load();
+      load({ silent: true });
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Lỗi cập nhật giai đoạn / tạo sự kiện');
     } finally {
@@ -1982,7 +2130,7 @@ export default function CRMDashboard() {
     try {
       await applyKanbanStageChange(ctx.leadId, ctx.newStageId, ctx.extraData, { throwOnError: true });
       setDealKanbanEventCtx(null);
-      load();
+      load({ silent: true });
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Lỗi cập nhật giai đoạn');
     } finally {
@@ -2052,8 +2200,6 @@ export default function CRMDashboard() {
     const weeks = Math.floor(days / 7);
     return weeks === 1 ? '1 tuần' : `${weeks} tuần`;
   };
-
-  if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full" /></div>;
 
   const compactLeadUi = pipelineType === 'lead';
   const ctrlH = compactLeadUi ? 'h-9' : 'h-10';
@@ -2358,7 +2504,7 @@ export default function CRMDashboard() {
           onChange={({ from, to }) => {
             setCustomDateFrom(from);
             setCustomDateTo(to);
-            if (from && to) window.setTimeout(() => load(), 0);
+            if (from && to) window.setTimeout(() => void load({ silent: true }), 0);
           }}
           onClose={() => setShowDateRangePicker(false)}
         />
@@ -2378,96 +2524,178 @@ export default function CRMDashboard() {
 
         {/* Advanced filters row */}
         {showAdvSearch && (
-          <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm space-y-3">
-            {/* Row 1: Nhân viên */}
-            <div className="flex flex-wrap items-end gap-2">
-              <span className="text-[10px] font-bold text-gray-400 uppercase self-center mr-1">NV</span>
-              <div className="flex flex-col gap-0.5">
-                <label className="text-[10px] text-gray-500 font-medium">Tìm NV</label>
-                <input
-                  type="search"
-                  value={assigneeListSearch}
-                  onChange={(e) => setAssigneeListSearch(e.target.value)}
-                  placeholder="Gõ tên, email…"
-                  className="h-8 w-36 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400"
-                />
+          <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm space-y-4">
+            {/* Bước 1–3: Công ty → Khu vực → Nhân viên */}
+            <div className="rounded-lg border border-slate-200 bg-slate-50/90 p-3 space-y-3">
+              <div className="text-[11px] font-bold text-slate-600 uppercase tracking-wide">
+                Lọc nhân viên (công ty → khu vực → NV)
               </div>
-              <div className="flex flex-col gap-0.5">
-                <label className="text-[10px] text-gray-500 font-medium">Chọn NV</label>
-                <select
-                  value={filterAssignee}
-                  onChange={(e) => setFilterAssignee(e.target.value)}
-                  disabled={!seesAllCrmDeals && pipelineType === 'deal'}
-                  title={!seesAllCrmDeals && pipelineType === 'deal' ? 'Deal: chỉ hiển thị deal do bạn phụ trách.' : undefined}
-                  className={`h-8 w-44 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 ${!seesAllCrmDeals && pipelineType === 'deal' ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'}`}
-                >
-                  <option value="">Tất cả nhân viên</option>
-                  {companyDepts.length > 0 ? (
-                    companyDepts.map((dept) => {
-                      const deptUsers = employeeOptionsForSelect.filter((u) => u.department_id === dept.id);
-                      if (!deptUsers.length) return null;
-                      return (
-                        <optgroup key={dept.id} label={`📁 ${dept.name}`}>
-                          {deptUsers.map((u) => (
-                            <option key={u.id} value={u.id}>{u.full_name}{u.position ? ` (${u.position})` : ''}</option>
-                          ))}
-                        </optgroup>
-                      );
-                    })
-                  ) : (
-                    employeeOptionsForSelect.map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)
-                  )}
-                </select>
-              </div>
-              <div className="flex flex-col gap-0.5">
-                <label className="text-[10px] text-gray-500 font-medium">Tên NV trên pipeline</label>
-                <input
-                  type="search"
-                  value={filterAssigneeName}
-                  onChange={(e) => setFilterAssigneeName(e.target.value)}
-                  disabled={!seesAllCrmDeals && pipelineType === 'deal'}
-                  placeholder="Tên người phụ trách…"
-                  title={!seesAllCrmDeals && pipelineType === 'deal' ? 'Deal: lọc NV đã cố định theo tài khoản của bạn.' : ''}
-                  className={`h-8 w-44 px-2 bg-amber-50/80 border border-amber-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 ${!seesAllCrmDeals && pipelineType === 'deal' ? 'opacity-70 cursor-not-allowed' : ''}`}
-                />
-              </div>
-              {companyDepts.length > 0 && (
-                <span className="text-[10px] text-green-600 bg-green-50 px-2 py-1 rounded-lg border border-green-100 self-end">
-                  {companyEmployees.length} NV
-                </span>
-              )}
-            </div>
-
-            {/* Row 2: Công ty · Nguồn · Giai đoạn · Khu vực · Loại · SĐT */}
-            <div className="flex flex-wrap items-end gap-2">
-              {/* Company */}
-              {isAdmin && !isCompanyScopedAdmin && companies.length > 0 && (
-                <div className="flex flex-col gap-0.5">
-                  <label className="text-[10px] text-gray-500 font-medium">Công ty</label>
-                  <select
-                    value={filterCompany}
-                    onChange={e => setFilterCompany(e.target.value)}
-                    className="h-8 w-40 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer"
+              <div className="flex flex-wrap items-end gap-3">
+                {/* 1. Công ty */}
+                {isAdmin && !isCompanyScopedAdmin && companies.length > 0 && (
+                  <div className="flex flex-col gap-0.5 min-w-[10rem]">
+                    <label className="text-[10px] text-slate-600 font-semibold">
+                      <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-slate-600 text-white text-[9px] mr-1">1</span>
+                      Công ty
+                    </label>
+                    <select
+                      value={filterCompany}
+                      onChange={(e) => {
+                        setFilterCompany(e.target.value);
+                        setFilterRegion('');
+                        setFilterAssignee('');
+                        setFilterAssigneeName('');
+                      }}
+                      className="h-9 w-44 px-2 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                    >
+                      <option value="">Tất cả công ty</option>
+                      {companies.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.short_name || c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {!isAdmin && userCompanyId && (
+                  <span className="h-9 inline-flex items-center px-2.5 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800 self-end">
+                    <span className="font-semibold text-[10px] text-blue-900 mr-1.5">1</span>
+                    🏢 Công ty của bạn
+                  </span>
+                )}
+                {isCompanyScopedAdmin && userCompanyId && (
+                  <span
+                    className="h-9 inline-flex items-center px-2.5 bg-indigo-50 border border-indigo-200 rounded-lg text-xs text-indigo-900 self-end"
+                    title="Admin phạm vi một công ty"
                   >
-                    <option value="">Tất cả công ty</option>
-                    {companies.map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}</option>)}
+                    <span className="font-semibold text-[10px] mr-1.5">1</span>
+                    🏢{' '}
+                    {companies.find((c) => String(c.id) === String(userCompanyId))?.short_name ||
+                      companies.find((c) => String(c.id) === String(userCompanyId))?.name ||
+                      'Công ty của bạn'}
+                  </span>
+                )}
+
+                {/* 2. Khu vực */}
+                <div className="flex flex-col gap-0.5 min-w-[10rem]">
+                  <label className="text-[10px] text-slate-600 font-semibold">
+                    <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-slate-600 text-white text-[9px] mr-1">2</span>
+                    Khu vực
+                  </label>
+                  <select
+                    value={filterRegion}
+                    onChange={(e) => {
+                      setFilterRegion(e.target.value);
+                      setFilterAssignee('');
+                      setFilterAssigneeName('');
+                    }}
+                    disabled={!dashboardScopeCompanyId}
+                    title={
+                      !dashboardScopeCompanyId
+                        ? 'Chọn công ty (bước 1) để lọc theo khu vực và thu hẹp danh sách NV'
+                        : 'Lọc Kanban + danh sách NV theo khu vực'
+                    }
+                    className={`h-9 w-44 px-2 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                      dashboardScopeCompanyId ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'
+                    }`}
+                  >
+                    <option value="">Tất cả khu vực</option>
+                    <option value="__none__">Chưa gán khu vực (NV & pipeline)</option>
+                    {companyRegions.map((reg) => (
+                      <option key={reg.id} value={reg.id}>
+                        {reg.is_active === false ? '· ' : ''}
+                        {reg.name}
+                        {reg.code ? ` (${reg.code})` : ''}
+                      </option>
+                    ))}
                   </select>
                 </div>
-              )}
-              {!isAdmin && userCompanyId && (
-                <span className="h-8 inline-flex items-center px-2.5 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700 self-end">
-                  🏢 Công ty của bạn
-                </span>
-              )}
-              {isCompanyScopedAdmin && userCompanyId && (
-                <span className="h-8 inline-flex items-center px-2.5 bg-indigo-50 border border-indigo-200 rounded-lg text-xs text-indigo-800 self-end" title="Admin phạm vi một công ty">
-                  🏢 {companies.find((c) => String(c.id) === String(userCompanyId))?.short_name
-                    || companies.find((c) => String(c.id) === String(userCompanyId))?.name
-                    || 'Công ty của bạn'}
-                </span>
-              )}
 
-              {/* Source */}
+                {/* 3. NV */}
+                <div className="flex flex-wrap items-end gap-2 border-t border-slate-200/80 pt-3 mt-1 w-full sm:border-t-0 sm:pt-0 sm:mt-0 sm:w-auto sm:border-l sm:pl-3 sm:ml-0">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase self-center mr-1 hidden sm:inline">3</span>
+                  <div className="flex flex-col gap-0.5">
+                    <label className="text-[10px] text-slate-600 font-semibold">Tìm NV</label>
+                    <input
+                      type="search"
+                      value={assigneeListSearch}
+                      onChange={(e) => setAssigneeListSearch(e.target.value)}
+                      placeholder="Tên, email…"
+                      className="h-9 w-36 px-2 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-0.5 min-w-[11rem] flex-1 sm:flex-initial sm:min-w-[12rem]">
+                    <label className="text-[10px] text-slate-600 font-semibold">Chọn NV</label>
+                    <select
+                      value={filterAssignee}
+                      onChange={(e) => setFilterAssignee(e.target.value)}
+                      disabled={!seesAllCrmDeals && pipelineType === 'deal'}
+                      title={
+                        !seesAllCrmDeals && pipelineType === 'deal'
+                          ? 'Deal: chỉ hiển thị deal do bạn phụ trách.'
+                          : 'Chỉ hiện NV thuộc công ty & khu vực đã chọn (khi có)'
+                      }
+                      className={`h-9 w-full min-w-0 px-2 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                        !seesAllCrmDeals && pipelineType === 'deal' ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'
+                      }`}
+                    >
+                      <option value="">Tất cả nhân viên</option>
+                      {companyDepts.length > 0 ? (
+                        companyDepts.map((dept) => {
+                          const deptUsers = employeeOptionsForSelect.filter((u) => u.department_id === dept.id);
+                          if (!deptUsers.length) return null;
+                          return (
+                            <optgroup key={dept.id} label={`📁 ${dept.name}`}>
+                              {deptUsers.map((u) => (
+                                <option key={u.id} value={u.id}>
+                                  {u.full_name}
+                                  {u.position ? ` (${u.position})` : ''}
+                                </option>
+                              ))}
+                            </optgroup>
+                          );
+                        })
+                      ) : (
+                        employeeOptionsForSelect.map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {u.full_name}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-0.5 min-w-[10rem]">
+                    <label className="text-[10px] text-slate-600 font-semibold">Tên trên pipeline</label>
+                    <input
+                      type="search"
+                      value={filterAssigneeName}
+                      onChange={(e) => setFilterAssigneeName(e.target.value)}
+                      disabled={!seesAllCrmDeals && pipelineType === 'deal'}
+                      placeholder="Tên người phụ trách…"
+                      title={
+                        !seesAllCrmDeals && pipelineType === 'deal'
+                          ? 'Deal: lọc NV đã cố định theo tài khoản của bạn.'
+                          : 'Lọc nhanh theo tên hiển thị trên thẻ (client)'
+                      }
+                      className={`h-9 w-40 px-2 bg-amber-50/90 border border-amber-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 ${
+                        !seesAllCrmDeals && pipelineType === 'deal' ? 'opacity-70 cursor-not-allowed' : ''
+                      }`}
+                    />
+                  </div>
+                  {companyEmployees.length > 0 && (
+                    <span
+                      className="text-[10px] text-emerald-800 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-100 self-end whitespace-nowrap"
+                      title="Số NV sau bước công ty + khu vực (trước ô tìm kiếm)"
+                    >
+                      {employeeFilterListByRegion.length} NV
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Nguồn · Giai đoạn · Loại · SĐT */}
+            <div className="flex flex-wrap items-end gap-2">
               {smartSources.length > 0 && (
                 <div className="flex flex-col gap-0.5">
                   <label className="text-[10px] text-gray-500 font-medium">Nguồn</label>
@@ -2486,28 +2714,6 @@ export default function CRMDashboard() {
                   className="h-8 w-40 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer">
                   <option value="">Tất cả giai đoạn</option>
                   {(pipelineType === 'lead' ? stagesLead : stagesDeal).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
-              </div>
-
-              {/* Region */}
-              <div className="flex flex-col gap-0.5">
-                <label className="text-[10px] text-gray-500 font-medium">Khu vực</label>
-                <select
-                  value={filterRegion}
-                  onChange={(e) => setFilterRegion(e.target.value)}
-                  disabled={!dashboardScopeCompanyId}
-                  title={!dashboardScopeCompanyId ? 'Chọn phạm vi công ty để lọc theo khu vực' : 'Lọc theo khu vực'}
-                  className={`h-8 w-40 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 ${
-                    dashboardScopeCompanyId ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'
-                  }`}
-                >
-                  <option value="">Tất cả khu vực</option>
-                  <option value="__none__">Chưa gán khu vực</option>
-                  {companyRegions.map((reg) => (
-                    <option key={reg.id} value={reg.id}>
-                      {reg.is_active === false ? '· ' : ''}{reg.name}{reg.code ? ` (${reg.code})` : ''}
-                    </option>
-                  ))}
                 </select>
               </div>
 
@@ -2675,63 +2881,6 @@ export default function CRMDashboard() {
         )}
       </div>
 
-      {pipelineType === 'deal' &&
-        contractSignedRevenue &&
-        (((contractSignedRevenue.by_month || []).length > 0) ||
-          (Number(contractSignedRevenue.total_value) > 0)) && (
-        <div
-          data-tour="crm-contract-signed-revenue"
-          className={`rounded-xl border border-slate-200 bg-gradient-to-b from-slate-50/90 to-white px-3 py-2.5 sm:px-4 sm:py-3 ${
-            compactLeadUi ? 'mb-2' : 'mb-3'
-          } shadow-sm`}
-        >
-          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-1 sm:gap-3 mb-2">
-            <div className="min-w-0">
-              <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
-                <TrendingUp className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
-                Doanh thu ký HĐ theo tháng
-              </h3>
-              <p className="text-[11px] text-slate-500 mt-0.5 leading-snug max-w-3xl">
-                Theo thời điểm deal vào giai đoạn «Ký HĐ» (lịch sử giai đoạn). Dùng chung bộ lọc thời gian phía trên
-                {timePreset === ''
-                  ? ' (mặc định «Tất cả»: tối đa 24 tháng gần nhất)'
-                  : timeFilterLabel
-                    ? ` · ${timeFilterLabel}`
-                    : ''}
-                . Khác Kanban (đang lọc theo ngày tạo deal).
-              </p>
-            </div>
-            <div className="text-left sm:text-right shrink-0">
-              <div className="text-[10px] uppercase tracking-wide text-slate-400 font-medium">Tổng kỳ</div>
-              <div className="text-base font-bold text-emerald-700 tabular-nums">
-                {formatVND(contractSignedRevenue.total_value ?? 0)}
-              </div>
-            </div>
-          </div>
-          {contractSignedRevenue.window_capped && (
-            <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1 mb-2">
-              Bộ lọc «Tất cả» chỉ tính các lần ký HĐ trong <strong>24 tháng</strong> gần nhất (giới hạn hiệu năng).
-            </p>
-          )}
-          {(contractSignedRevenue.by_month || []).length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {(contractSignedRevenue.by_month || []).map((row) => (
-                <div
-                  key={row.month}
-                  className="min-w-[7.5rem] rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 shadow-sm"
-                >
-                  <div className="text-[10px] font-medium text-slate-500">
-                    {formatContractSignedMonthLabel(row.month)}
-                  </div>
-                  <div className="text-sm font-semibold text-slate-900 tabular-nums">{formatVND(row.total ?? 0)}</div>
-                  <div className="text-[10px] text-slate-400">{row.deal_count ?? 0} deal</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
       {/* View Mode Toggle */}
       <div className={`flex items-center gap-1 ${compactLeadUi ? 'mb-2' : 'mb-3'}`}>
         {[
@@ -2855,6 +3004,7 @@ export default function CRMDashboard() {
               onToggleMergeSelect={toggleManualMergeSelect}
               onToggleSelectAllInColumn={toggleSelectAllInColumn}
               compact={pipelineType === 'lead'}
+              kpiLedgerPeriodStart={kpis?.kpi_ledger_period_start || null}
             />
             {/* Nút Tải thêm 1000 */}
             {kanbanLoadLimit !== 'all' && (() => {
@@ -3128,7 +3278,7 @@ export default function CRMDashboard() {
         users={users}
         onDone={() => {
           setBulkAssignModalOpen(false);
-          load();
+          load({ silent: true });
         }}
       />
       <ManualMergeLeadsModal
@@ -3140,7 +3290,7 @@ export default function CRMDashboard() {
         onMerged={() => {
           setManualMergeModalOpen(false);
           setManualMergeIds([]);
-          load();
+          load({ silent: true });
         }}
       />
 
@@ -3688,6 +3838,7 @@ function KanbanStageCard({
   onToggleMergeSelect,
   onToggleSelectAllInColumn,
   compact,
+  kpiLedgerPeriodStart,
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
@@ -3817,6 +3968,7 @@ function KanbanStageCard({
               mergeSelectedIds={mergeSelectedIds}
               onToggleMergeSelect={onToggleMergeSelect}
               compact={compact}
+              kpiLedgerPeriodStart={kpiLedgerPeriodStart}
             />
           ))
         )}
@@ -3826,7 +3978,7 @@ function KanbanStageCard({
 }
 
 // Kanban Item Card - MISA Style
-function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact }) {
+function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, kpiLedgerPeriodStart }) {
   const navigate = useNavigate();
   const openLeadDetail = () => {
     localStorage.setItem('crm_pinned_tab', pipelineType);
@@ -3880,18 +4032,12 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
       }}
     >
       {typeof item.kpi_ledger_month_net === 'number' && (
-        <span
-          className={`pointer-events-none absolute top-1 right-1 z-[25] max-w-[4.25rem] truncate rounded px-1 py-0.5 text-[9px] font-bold leading-tight shadow-sm ${
-            item.kpi_ledger_month_net > 0
-              ? 'bg-emerald-600/95 text-white'
-              : item.kpi_ledger_month_net < 0
-                ? 'bg-red-600/95 text-white'
-                : 'bg-slate-500/90 text-white'
-          }`}
-          title="Điểm ròng sổ cái KPI tháng (crm_kpi_ledger)"
-        >
-          {formatKpiLedgerNet(item.kpi_ledger_month_net)}
-        </span>
+        <KpiKanbanLedgerBadge
+          leadId={item.id}
+          net={item.kpi_ledger_month_net}
+          periodStart={kpiLedgerPeriodStart}
+          compact={compact}
+        />
       )}
       {splitPickZones && (
         <>
@@ -4150,6 +4296,7 @@ function KanbanView({
   onToggleMergeSelect,
   onToggleSelectAllInColumn,
   compact,
+  kpiLedgerPeriodStart,
 }) {
   const kanbanHScrollRef = useRef(null);
   const kanbanWrapRef = useRef(null);
@@ -4310,6 +4457,7 @@ function KanbanView({
               onToggleMergeSelect={onToggleMergeSelect}
               onToggleSelectAllInColumn={onToggleSelectAllInColumn}
               compact={compact}
+              kpiLedgerPeriodStart={kpiLedgerPeriodStart}
             />
           ))}
         </div>
