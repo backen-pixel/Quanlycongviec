@@ -187,24 +187,25 @@ export const KPI_DEFS = [
   {
     code: 'B1',
     group: 'B',
-    name: 'Tỷ lệ tiếp xúc thực sự',
+    name: 'Tỷ lệ minh chứng tiếp xúc',
     weight: 7,
     target: '≥ 70% lead',
-    targetNote: '70% lead của bạn phải có ít nhất 1 cuộc gọi/Zalo/gặp mặt có ghi nhận kết quả',
+    targetNote: '70% lead của bạn phải có ghi âm gắn lead trong tháng, hoặc hoàn thành đúng nhiệm vụ CRM được cấu hình (ghi chú KH / minh chứng liên hệ).',
     formula: 'increasing',
     applies: ['sales_admin'],
     icon: Phone,
     groupColor: 'green',
     isGating: false,
-    howMeasured: '% lead có ít nhất 1 activity loại call/zalo/meeting với outcome không null.',
+    howMeasured:
+      '% lead (type=lead) có ≥1 file ghi âm gắn lead trong kỳ HOẶC có ≥1 nhiệm vụ CRM trong kỳ được tick «Ghi chú KH» hoặc «Minh chứng liên hệ» đã hoàn thành đúng quy tắc (ghi chú / file).',
     actions: [
-      'Sau mỗi cuộc gọi → chọn đúng loại activity (Gọi điện / Zalo / Gặp mặt)',
-      'Bắt buộc điền kết quả (outcome) — chọn "Không bắt máy", "Hẹn lại", "Quan tâm"…',
-      'Note riêng trong phần ghi chú nếu cần thêm chi tiết',
+      'Upload/ghép ghi âm cuộc gọi với lead (tab Ghi âm CRM hoặc trang Cuộc gọi & ghi âm).',
+      'Hoặc: tại Cấu hình KPI → Bộ nhiệm vụ CRM, tick «Ghi chú khách hàng» và/hoặc «Minh chứng liên hệ» trên nhiệm vụ mẫu — khi NV hoàn thành đúng yêu cầu, lead được tính.',
+      'Không cần gõ activity call/zalo/outcome như trước.',
     ],
     mistakes: [
-      'Ghi activity loại "Ghi chú" hoặc "Khác" thay vì loại tiếp xúc thực tế',
-      'Gọi điện nhưng không ghi vào CRM vì nghĩ "sẽ ghi sau"',
+      'Không gắn ghi âm với lead, và không bật nhiệm vụ minh chứng trên mẫu — B1 sẽ thấp.',
+      'Bật «Minh chứng liên hệ» nhưng hoàn thành task không ghi chú / không đính kèm.',
     ],
   },
   {
@@ -384,7 +385,7 @@ const SCORING_RULES = [
 
 const DAILY = [
   { time: 'Đầu giờ sáng', icon: '🌅', items: ['Xem task hôm nay, sắp xếp theo deadline (A4)', 'Kiểm tra lead mới được phân về (A1)', 'Xem deal nào gần hết SLA (A5)'] },
-  { time: 'Trong ngày', icon: '⚡', items: ['Phản hồi lead mới trong 15 phút (A1)', 'Ghi activity + outcome sau mỗi tương tác (B1)', 'Cập nhật thông tin lead sau mỗi cuộc gọi (A3)'] },
+  { time: 'Trong ngày', icon: '⚡', items: ['Phản hồi lead mới trong 15 phút (A1)', 'Ghi âm hoặc hoàn thành NV có tick ghi chú/minh chứng (B1)', 'Cập nhật thông tin lead sau mỗi cuộc gọi (A3)'] },
   { time: 'Cuối ngày', icon: '🌙', items: ['Đánh dấu task hoàn thành trong CRM (A4)', 'Kiểm tra lead còn thiếu thông tin (A3)', 'Ghi chú kế hoạch ngày mai cho deal quan trọng'] },
 ];
 
