@@ -1,12 +1,12 @@
 /**
- * Nhắc hạn CRM bằng AI — chạy 2 lần/ngày (mặc định 8:30 & 13:30 giờ VN).
+ * Nhắc hạn CRM bằng AI — chạy 2 lần/ngày (mặc định 8:00 & 13:30 giờ VN).
  * Gom nhiệm vụ CRM (crm_tasks) đang mở, có deadline, giao cho assignee: sắp hạn trong 72h hoặc quá hạn (tối đa 14 ngày).
  * Gọi OpenAI (gpt-4o-mini) viết đoạn nhắc tiếng Việt → thông báo in-app + socket (type: ai_crm_deadline_digest).
  *
  * Tích hợp: require('./jobs/aiDeadlineReminder').start(io) trong server.js
  * Tắt: AI_DEADLINE_CRON_DISABLED=1
  * Cần OPENAI_API_KEY — không có key thì bỏ qua lượt chạy (không tạo TB).
- * Tuỳ chọn giờ chạy (VN): AI_DEADLINE_CRON_SLOTS_VN=8:30,13:30  (mặc định 8:30,13:30)
+ * Tuỳ chọn giờ chạy (VN): AI_DEADLINE_CRON_SLOTS_VN=8:00,13:30  (mặc định 8:00,13:30)
  * Tuỳ chọn nhận TB: cùng công tắc «crm_lead_deadlines» trong notification_preferences.
  */
 const { supabase } = require('../config/supabase');
@@ -16,7 +16,7 @@ const HOUR_MS = 3600 * 1000;
 const VN_TZ = 'Asia/Ho_Chi_Minh';
 
 const DEFAULT_RUN_SLOTS = [
-  { h: 8, m: 30 },
+  { h: 8, m: 0 },
   { h: 13, m: 30 },
 ];
 

@@ -8,6 +8,7 @@ import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanba
 import { formatDateTime, getInitials, avatarColor } from '../lib/utils';
 import NotificationToast from './NotificationToast';
 import NotificationSettings from './NotificationSettings';
+import { AI_DEADLINE_DIGEST_EVENT } from '../lib/aiDeadlineDigestEvent';
 
 const ICON_MAP = {
   task_assigned: CheckSquare,
@@ -333,6 +334,14 @@ export default function NotificationCenter({ socket }) {
       }
 
       setToastNotification(notif);
+
+      if (notif?.type === 'ai_crm_deadline_digest') {
+        try {
+          window.dispatchEvent(new CustomEvent(AI_DEADLINE_DIGEST_EVENT, { detail: notif }));
+        } catch {
+          /* ignore */
+        }
+      }
 
       const p = getNotificationPrefsCache();
       if (p.sound !== false) {

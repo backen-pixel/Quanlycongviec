@@ -247,7 +247,7 @@ server.listen(config.port, () => {
   // Cron CSKH: nhắc chăm lại lead lúc 8h30 & 13h30 VN (disable bằng CSKH_CRON_DISABLED=1)
   try { require('./jobs/cskhReminder').start(io); } catch (e) { console.warn('[cskh-cron] Failed to start:', e.message); }
 
-  // Cron AI nhắc hạn CRM (8:30 & 13:30 VN mặc định) — disable: AI_DEADLINE_CRON_DISABLED=1
+  // Cron AI nhắc hạn CRM (8:00 & 13:30 VN mặc định) — disable: AI_DEADLINE_CRON_DISABLED=1
   try {
     require('./jobs/aiDeadlineReminder').start(io);
   } catch (e) {
