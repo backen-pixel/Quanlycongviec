@@ -2,8 +2,7 @@
  * Gắn meta phân loại cho lead_documents khi đồng bộ từ crm_tasks (ghi chú / đính kèm).
  * - crm_stage_slug / crm_stage_group_label: "nhiệm vụ lớn" = giai đoạn pipeline (KD / Deal / SX).
  * - SX (slug bắt đầu sx_): bật chia sẻ xưởng + giới hạn module production/workshop.
- * - Deal/lead (không phải sx_): nếu deal đã gắn dự án (linkToProject) mặc định bật shared_to_workshop
- *   cho bản ghi mới; user có thể tắt («khóa») trên CRM — đồng bộ project_id không ghi đè cờ này.
+ * - Mặc định không chia sẻ xưởng — user bật «Hiện ở SX/VC» trên tab Tài liệu CRM.
  */
 
 const SX_PREFIX = 'sx_';
@@ -45,7 +44,6 @@ function getCrmStageGroupLabel(stageSlug) {
  * @returns {object} các cột gộp vào insert/update lead_documents
  */
 function getLeadDocumentFieldsFromCrmTask(taskRow, opts = {}) {
-  const linkToProject = !!opts.linkToProject;
   if (!taskRow || !taskRow.id) {
     return {
       source_crm_task_id: null,
@@ -57,13 +55,12 @@ function getLeadDocumentFieldsFromCrmTask(taskRow, opts = {}) {
   }
   const slug = taskRow.stage_slug || null;
   const sx = slug && String(slug).startsWith(SX_PREFIX);
-  const sharedToWorkshop = linkToProject || sx;
   return {
     source_crm_task_id: taskRow.id,
     crm_stage_slug: slug,
     crm_stage_group_label: getCrmStageGroupLabel(slug),
     allowed_share_modules: sx ? ['production', 'workshop'] : null,
-    shared_to_workshop: sharedToWorkshop,
+    shared_to_workshop: false,
   };
 }
 

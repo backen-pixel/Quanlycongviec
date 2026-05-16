@@ -427,6 +427,44 @@ export default function LeadDetail() {
       const { data } = await api.patch(`/crm/leads/${id}/stage`, { stage_id: stageId, ...extraData });
       if (data?.requires_conversion) setShowConvertModal(true);
       if (data?.deal_won) autoCreateProject(id, null);
+      if (data?.id) {
+        setLead((prev) =>
+          prev
+            ? {
+                ...prev,
+                ...data,
+                stage_id: data.stage_id ?? stageId,
+                project_id: data.project_id ?? prev.project_id,
+                sx_pipeline_stage:
+                  data.sx_pipeline_stage !== undefined ? data.sx_pipeline_stage : prev.sx_pipeline_stage,
+                vc_pipeline_stage:
+                  data.vc_pipeline_stage !== undefined ? data.vc_pipeline_stage : prev.vc_pipeline_stage,
+              }
+            : prev,
+        );
+        const pid = data.project_id || data.project_auto_created?.project_id;
+        if (pid && !data.sx_pipeline_stage && !data.vc_pipeline_stage) {
+          try {
+            const { data: badge } = await api.get(`/crm/leads/${id}/badge`);
+            setLead((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    sx_pipeline_stage: badge?.sx_pipeline_stage ?? null,
+                    vc_pipeline_stage: badge?.vc_pipeline_stage ?? null,
+                  }
+                : prev,
+            );
+          } catch {
+            /* ignore */
+          }
+        }
+        if (pid && typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('crm-project-badges-refresh', { detail: { projectId: pid } }),
+          );
+        }
+      }
       await loadRef.current?.({ silent: true });
       setCrmTasksRefreshKey((k) => k + 1);
       return data;

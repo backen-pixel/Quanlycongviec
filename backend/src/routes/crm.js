@@ -46,6 +46,10 @@ const {
 const { createFulfillmentChildDeal, applyProductionTemplateToFulfillmentLead } = require('../helpers/projectOrderFulfillment');
 const { isPostgresUniqueViolation, nextTbProjectCode } = require('../helpers/projectCode');
 const { validateProductionCompanyId } = require('../helpers/productionCompanyGate');
+const {
+  assignProductionCompanyDealResponsibility,
+  resolveProductionHandoverResponsibleUserId,
+} = require('../helpers/productionHandoverSettings');
 const { ensureDealLeadDocumentsForModuleTransition } = require('../helpers/ensureDealLeadDocumentsForModuleTransition');
 const { getLeadDocumentFieldsFromCrmTask } = require('../helpers/crmTaskLeadDocumentMeta');
 const { parseVietnameseMoney, parseVietnameseMeasure } = require('../helpers/excelVnNumbers');
@@ -757,7 +761,11 @@ const STAFF_LEAD_DEAL_REPORT_ROLES = new Set([
   'admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'region_admin',
 ]);
 
-const DEFAULT_PIPELINE_STAGE_SLA_DAYS = 7;
+const {
+  DEFAULT_PIPELINE_STAGE_SLA_DAYS,
+  normalizePipelineStageSlaDaysForDb,
+  effectivePipelineStageSlaDays,
+} = require('../helpers/crmPipelineSla');
 
 function endOfCalendarDayAfterEntered(startIso, slaDays) {
   const base = startIso ? new Date(startIso) : new Date();
@@ -864,7 +872,8 @@ r.get('/admin/sla-at-risk', async (req, res) => {
       const st = lead.stage_id ? stageMap[lead.stage_id] : null;
       if (st?.is_won || st?.is_lost) continue;
 
-      const slaDays = st?.sla_days != null && Number(st.sla_days) >= 1 ? Number(st.sla_days) : DEFAULT_PIPELINE_STAGE_SLA_DAYS;
+      const slaDays = effectivePipelineStageSlaDays(st?.sla_days);
+      if (slaDays == null) continue;
       const entered = lead.stage_entered_at || lead.created_at;
       const dueAt = endOfCalendarDayAfterEntered(entered, slaDays);
       const dueMs = dueAt.getTime();
@@ -1000,7 +1009,10 @@ r.post('/admin/sla-remind', async (req, res) => {
         .select('name, sla_days')
         .eq('id', lead.stage_id)
         .maybeSingle();
-      const slaDays = st?.sla_days != null && Number(st.sla_days) >= 1 ? Number(st.sla_days) : DEFAULT_PIPELINE_STAGE_SLA_DAYS;
+      const slaDays = effectivePipelineStageSlaDays(st?.sla_days);
+      if (slaDays == null) {
+        return res.status(400).json({ error: 'Cột pipeline này không áp dụng SLA (sla_days = 0)' });
+      }
       const dueAt = endOfCalendarDayAfterEntered(lead.stage_entered_at || lead.created_at, slaDays);
 
       const rawTargets = [...new Set([lead.assigned_to, lead.type === 'lead' ? lead.lead_owner_id : null].filter(Boolean))];
@@ -2569,11 +2581,8 @@ r.post('/pipeline-stages', async (req, res) => {
       b.description != null && String(b.description).trim() !== ''
         ? String(b.description).trim()
         : null;
-    let slaInsert = null;
-    if (b.sla_days !== undefined && b.sla_days !== null && b.sla_days !== '') {
-      const n = Number(b.sla_days);
-      if (Number.isFinite(n) && n >= 1) slaInsert = Math.round(n);
-    }
+    const slaInsert =
+      b.sla_days !== undefined ? normalizePipelineStageSlaDaysForDb(b.sla_days) : undefined;
     const { data, error } = await supabase.from('crm_pipeline_stages').insert({
       name: b.name, pipeline_type: b.pipeline_type, pipeline_id: b.pipeline_id || null,
       color: b.color || '#94A3B8', icon: b.icon || null, order_index: b.order_index ?? nextOrder,
@@ -2583,7 +2592,7 @@ r.post('/pipeline-stages', async (req, res) => {
       sync_role: b.sync_role || null,
       default_probability: defaultProbability,
       description: stageDesc,
-      ...(slaInsert != null ? { sla_days: slaInsert } : {}),
+      ...(slaInsert !== undefined ? { sla_days: slaInsert } : {}),
       ...(b.counts_as_won_revenue !== undefined
         ? { counts_as_won_revenue: b.counts_as_won_revenue == null ? null : !!b.counts_as_won_revenue }
         : {}),
@@ -2622,11 +2631,7 @@ r.put('/pipeline-stages/:id', async (req, res) => {
       update.counts_as_completed_revenue = b.counts_as_completed_revenue == null ? null : !!b.counts_as_completed_revenue;
     }
     if (b.sla_days !== undefined) {
-      if (b.sla_days === null || b.sla_days === '') update.sla_days = null;
-      else {
-        const n = Number(b.sla_days);
-        update.sla_days = Number.isFinite(n) && n >= 1 ? Math.round(n) : null;
-      }
+      update.sla_days = normalizePipelineStageSlaDaysForDb(b.sla_days);
     }
     if (b.description !== undefined) {
       update.description =
@@ -5180,18 +5185,24 @@ async function fetchCrmLeadDetailRow(leadId) {
   return { data: bare.data, error: bare.error || lastErr || lastPgrst116 };
 }
 
+/** Lead kèm embed badge SX/VC (dùng sau chuyển cột Thắng/SX). */
+async function fetchCrmLeadWithPipelineBadges(leadId) {
+  const patchVcJoin = _vcPipelineStageAvailable
+    ? ', vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)'
+    : '';
+  const { data, error } = await supabase
+    .from('crm_leads')
+    .select(`*, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug)${patchVcJoin}`)
+    .eq('id', leadId)
+    .single();
+  if (error) throw error;
+  return data;
+}
+
 /** Lightweight: chỉ trả về badge SX/VC pipeline stage — không có side effect */
 r.get('/leads/:id/badge', async (req, res) => {
   try {
-    const patchVcJoin = _vcPipelineStageAvailable
-      ? ', vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)'
-      : '';
-    const { data, error } = await supabase
-      .from('crm_leads')
-      .select(`id, stage_id, project_id, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug)${patchVcJoin}`)
-      .eq('id', req.params.id)
-      .single();
-    if (error) throw error;
+    const data = await fetchCrmLeadWithPipelineBadges(req.params.id);
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -6005,6 +6016,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
       .replace(/[\u0300-\u036f]/g, '');
     const isProductionStage = stageName.includes('san xuat');
     const requiresProductionPick = lead?.type === 'deal' && !lead?.project_id && (stage?.is_won || isProductionStage);
+    const hadProjectBeforeStage = !!lead?.project_id;
 
     let effectiveProductionCompanyId = null;
     if (requiresProductionPick) {
@@ -6059,6 +6071,18 @@ r.patch('/leads/:id/stage', async (req, res) => {
       updates.sx_handover_at = new Date().toISOString();
       if (effectiveProductionCompanyId) {
         updates.sx_template_company_id = effectiveProductionCompanyId;
+        const sxResponsibleId = await resolveProductionHandoverResponsibleUserId(effectiveProductionCompanyId);
+        if (sxResponsibleId) {
+          updates.assigned_to = sxResponsibleId;
+          updates.lead_owner_id = sxResponsibleId;
+        }
+      }
+    }
+    if (requiresProductionPick && effectiveProductionCompanyId) {
+      const sxResponsibleId = await resolveProductionHandoverResponsibleUserId(effectiveProductionCompanyId);
+      if (sxResponsibleId) {
+        updates.assigned_to = sxResponsibleId;
+        updates.lead_owner_id = sxResponsibleId;
       }
     }
     if (stage?.is_lost) {
@@ -6191,20 +6215,22 @@ r.patch('/leads/:id/stage', async (req, res) => {
           project_code: auto.project_code,
           tasks_created: auto.tasks_created,
         };
+        if (effectiveProductionCompanyId) {
+          try {
+            await assignProductionCompanyDealResponsibility({
+              dealId: req.params.id,
+              productionCompanyId: effectiveProductionCompanyId,
+              projectId: auto.project_id,
+            });
+          } catch (respErr) {
+            console.warn('[crm/stage] assign production company responsible:', respErr.message);
+          }
+        }
         try {
           await syncCrmLeadSxPipelineFromProject(auto.project_id);
         } catch (se) {
           console.warn('[crm/stage] sync sx_pipeline_stage_id:', se.message);
         }
-        const vcJoin2 = _vcPipelineStageAvailable
-          ? ', vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)'
-          : '';
-        const { data: refreshed } = await supabase
-          .from('crm_leads')
-          .select(`*, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug)${vcJoin2}`)
-          .eq('id', req.params.id)
-          .single();
-        if (refreshed) responseLead = refreshed;
       } else {
         const { data: flows } = await supabase.from('workflow_flows')
           .select('id, name, description, is_default').eq('is_active', true).order('is_default', { ascending: false });
@@ -6230,32 +6256,33 @@ r.patch('/leads/:id/stage', async (req, res) => {
 
     // Gắn bộ nhiệm vụ CRM sx_* theo workshop_task_templates của công ty xưởng phụ trách
     if (lead?.type === 'deal' && isProductionStage && effectiveProductionCompanyId) {
-      try {
-        const taskLeadId = await resolveCrmTaskWriteLeadId(req.params.id);
-        const assigneeForSx =
-          responseLead?.assigned_to ||
-          responseLead?.lead_owner_id ||
-          updatedLeadRow?.assigned_to ||
-          updatedLeadRow?.lead_owner_id ||
-          lead?.assigned_to ||
-          lead?.lead_owner_id ||
-          null;
-        const rSx = await applyProductionTemplateToFulfillmentLead({
-          leadId: taskLeadId,
-          createdBy: req.user.userId,
-          assigneeId: assigneeForSx,
-          force: false,
-          requireTemplateCompanyMatch: true,
-          dealCompanyId: null,
-          templateSourceCompanyId: effectiveProductionCompanyId,
-        });
-        if ((rSx?.created || 0) > 0) {
-          console.log(
-            `[crm/stage] SX CRM tasks +${rSx.created} lead=${taskLeadId} workshop_company=${effectiveProductionCompanyId}`,
-          );
+      if (hadProjectBeforeStage || !projectAutoCreated) {
+        try {
+          if (hadProjectBeforeStage && lead.project_id) {
+            await assignProductionCompanyDealResponsibility({
+              dealId: req.params.id,
+              productionCompanyId: effectiveProductionCompanyId,
+              projectId: lead.project_id,
+            });
+          }
+          const taskLeadId = await resolveCrmTaskWriteLeadId(req.params.id);
+          const rSx = await applyProductionTemplateToFulfillmentLead({
+            leadId: taskLeadId,
+            createdBy: req.user.userId,
+            assigneeId: null,
+            force: true,
+            requireTemplateCompanyMatch: true,
+            dealCompanyId: null,
+            templateSourceCompanyId: effectiveProductionCompanyId,
+          });
+          if ((rSx?.created || 0) > 0) {
+            console.log(
+              `[crm/stage] SX CRM tasks +${rSx.created} lead=${taskLeadId} workshop_company=${effectiveProductionCompanyId}`,
+            );
+          }
+        } catch (sxTplErr) {
+          console.warn('[crm/stage] apply SX CRM tasks:', sxTplErr.message);
         }
-      } catch (sxTplErr) {
-        console.warn('[crm/stage] apply SX CRM tasks:', sxTplErr.message);
       }
     }
 
@@ -6270,17 +6297,32 @@ r.patch('/leads/:id/stage', async (req, res) => {
 
     emitCrmDashboardChanged(req, { type: lead?.type, company_id: lead?.company_id, lead_id: req.params.id, action: 'stage_changed', stage_id });
 
-    // Emit badge_updated cho mọi deal có project_id để các tab CRM khác cập nhật tag SX/VC realtime.
-    try {
-      const pid = projectAutoCreated?.project_id || lead?.project_id || null;
+    // Cuối luồng: sync + refresh badge SX/VC (sau auto-create / gen sx_*) để response và socket không mất tag.
+    if (lead?.type === 'deal') {
+      const pid =
+        projectAutoCreated?.project_id ||
+        responseLead?.project_id ||
+        lead?.project_id ||
+        null;
       if (pid) {
-        const io = req.app.get('io');
-        if (io) {
-          await emitCrmBadgeUpdateForProject(pid, io);
+        try {
+          await syncCrmLeadSxPipelineFromProject(pid);
+        } catch (se) {
+          console.warn('[crm/stage] sync sx_pipeline_stage_id (final):', se.message);
+        }
+        try {
+          const freshBadges = await fetchCrmLeadWithPipelineBadges(req.params.id);
+          if (freshBadges) responseLead = freshBadges;
+        } catch (badgeFinalErr) {
+          console.warn('[crm/stage] refresh badges (final):', badgeFinalErr.message);
+        }
+        try {
+          const io = req.app.get('io');
+          if (io) await emitCrmBadgeUpdateForProject(pid, io);
+        } catch (emitErr) {
+          console.warn('[crm/stage] emitCrmBadgeUpdateForProject:', emitErr.message);
         }
       }
-    } catch (emitErr) {
-      console.warn('[crm/stage] emitCrmBadgeUpdateForProject:', emitErr.message);
     }
 
     res.json({ ...responseLead, deal_won: dealWonData, project_auto_created: projectAutoCreated });
@@ -10065,11 +10107,28 @@ r.post('/leads/:id/tasks/generate-production-template', async (req, res) => {
       if (vStored.ok) templateSourceCompanyId = vStored.company.id;
     }
 
+    if (templateSourceCompanyId) {
+      const { data: leadProj } = await supabase
+        .from('crm_leads')
+        .select('project_id')
+        .eq('id', targetLeadId)
+        .maybeSingle();
+      await assignProductionCompanyDealResponsibility({
+        dealId: targetLeadId,
+        productionCompanyId: templateSourceCompanyId,
+        projectId: leadProj?.project_id || null,
+      });
+      await supabase
+        .from('crm_leads')
+        .update({ sx_template_company_id: templateSourceCompanyId, updated_at: new Date().toISOString() })
+        .eq('id', targetLeadId);
+    }
+
     const r0 = await applyProductionTemplateToFulfillmentLead({
       leadId: targetLeadId,
       createdBy: req.user.userId,
-      assigneeId: lead.assigned_to || lead.lead_owner_id || null,
-      force,
+      assigneeId: null,
+      force: force || !!templateSourceCompanyId,
       requireTemplateCompanyMatch: true,
       dealCompanyId: lead.company_id || null,
       templateSourceCompanyId,
@@ -10864,7 +10923,8 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
     }
 
     const now = new Date().toISOString();
-    const { error: upLeadErr } = await supabase.from('crm_leads').update({
+    const sxResponsible = await resolveProductionHandoverResponsibleUserId(pcv.company.id);
+    const leadHandoverPatch = {
       sx_handover_at: now,
       sx_handover_confirmed_by: uid,
       sx_template_company_id: pcv.company.id,
@@ -10872,8 +10932,23 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
       expected_production_start_date: pStart,
       expected_production_end_date: pEnd,
       updated_at: now,
-    }).eq('id', leadId);
+    };
+    if (sxResponsible) {
+      leadHandoverPatch.assigned_to = sxResponsible;
+      leadHandoverPatch.lead_owner_id = sxResponsible;
+    }
+    const { error: upLeadErr } = await supabase.from('crm_leads').update(leadHandoverPatch).eq('id', leadId);
     if (upLeadErr) throw upLeadErr;
+
+    try {
+      await assignProductionCompanyDealResponsibility({
+        dealId: leadId,
+        productionCompanyId: pcv.company.id,
+        projectId: lead.project_id,
+      });
+    } catch (respErr) {
+      console.warn('[sx-handover] assign production responsible:', respErr.message);
+    }
 
     const projPatch = {
       construction_start_date: cStart,

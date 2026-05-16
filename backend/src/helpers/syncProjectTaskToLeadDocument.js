@@ -80,7 +80,7 @@ async function upsertLeadDocumentFromProjectTask(task, opts = {}) {
     name,
     doc_type: 'requirement',
     notes: body,
-    shared_to_workshop: true,
+    shared_to_workshop: false,
     allowed_share_modules: null,
   };
 

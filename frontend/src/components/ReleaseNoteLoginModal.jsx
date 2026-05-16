@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Megaphone, X, Loader2 } from 'lucide-react';
 import api from '../lib/api';
+import { builtinToNoteShape, getLatestUnreadBuiltinUpdate, markNoteRead } from '../lib/releaseNotesRead';
 
 const CATEGORIES = {
   feature: { label: 'Tính năng mới', icon: '✨', color: 'bg-blue-100 text-blue-700' },
@@ -48,9 +49,18 @@ export default function ReleaseNoteLoginModal() {
       setLoading(true);
       try {
         const { data } = await api.get('/release-notes/login-banner');
-        if (!cancelled) setNote(data.note || null);
+        if (cancelled) return;
+        if (data.note) {
+          setNote(data.note);
+        } else {
+          const builtin = getLatestUnreadBuiltinUpdate();
+          setNote(builtin ? builtinToNoteShape(builtin) : null);
+        }
       } catch {
-        if (!cancelled) setNote(null);
+        if (!cancelled) {
+          const builtin = getLatestUnreadBuiltinUpdate();
+          setNote(builtin ? builtinToNoteShape(builtin) : null);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -62,20 +72,30 @@ export default function ReleaseNoteLoginModal() {
     if (!note?.id || closing) return;
     setClosing(true);
     try {
-      await api.put(`/release-notes/${note.id}/mark-read`);
+      if (note.is_builtin) {
+        markNoteRead(note);
+      } else {
+        await api.put(`/release-notes/${note.id}/mark-read`);
+      }
     } catch { /* vẫn đóng để không kẹt UI */ }
     setNote(null);
     setClosing(false);
+    window.dispatchEvent(new StorageEvent('storage', { key: 'release_notes_read_builtin_ids' }));
   }, [note, closing]);
 
   const goToUpdates = useCallback(async () => {
     if (!note?.id || closing) return;
     setClosing(true);
     try {
-      await api.put(`/release-notes/${note.id}/mark-read`);
+      if (note.is_builtin) {
+        markNoteRead(note);
+      } else {
+        await api.put(`/release-notes/${note.id}/mark-read`);
+      }
     } catch { /* ignore */ }
     setNote(null);
     setClosing(false);
+    window.dispatchEvent(new StorageEvent('storage', { key: 'release_notes_read_builtin_ids' }));
     navigate('/updates');
   }, [note, closing, navigate]);
 

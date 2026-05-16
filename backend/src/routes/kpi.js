@@ -14,6 +14,10 @@ const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { computeAndStoreForUser, getDefinitions } = require('../services/kpiCalculator');
+const {
+  effectivePipelineStageSlaDays,
+  normalizePipelineStageSlaDaysForDb,
+} = require('../helpers/crmPipelineSla');
 const { KPI_RECOMPUTE_USER_ROLES_DEFAULT } = require('../services/kpiRoleApplies');
 
 const r = Router();
@@ -357,9 +361,11 @@ r.get('/dashboard/deal', async (req, res) => {
     const now = Date.now();
     const breaching = (dueDeals || []).filter((d) => {
       const s = d.stage;
-      if (!s || s.is_won || s.is_lost || s.sla_days == null || !d.stage_entered_at) return false;
+      if (!s || s.is_won || s.is_lost || !d.stage_entered_at) return false;
+      const slaDays = effectivePipelineStageSlaDays(s.sla_days);
+      if (slaDays == null) return false;
       const elapsed = now - new Date(d.stage_entered_at).getTime();
-      return elapsed > 0.7 * s.sla_days * 86400000;
+      return elapsed > 0.7 * slaDays * 86400000;
     });
 
     res.json({
@@ -940,7 +946,7 @@ r.patch('/pipeline-mapping/:stage_id', async (req, res) => {
       patch.canonical_slug = slug;
     }
     if (Object.hasOwn(req.body || {}, 'sla_days')) {
-      patch.sla_days = req.body.sla_days == null ? null : Number(req.body.sla_days);
+      patch.sla_days = normalizePipelineStageSlaDaysForDb(req.body.sla_days);
     }
     if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'Không có field hợp lệ' });
 
@@ -1149,8 +1155,11 @@ r.get('/company-overview', async (req, res) => {
         .or(`lead_owner_id.in.(${userIds.join(',')}),assigned_to.in.(${userIds.join(',')})`);
       const now = Date.now();
       leadsOverSla = (leads || []).filter((l) => {
-        const s = l.stage; if (!s || s.is_won || s.is_lost || s.sla_days == null || !l.stage_entered_at) return false;
-        return now - new Date(l.stage_entered_at).getTime() > s.sla_days * 86400000;
+        const s = l.stage;
+        if (!s || s.is_won || s.is_lost || !l.stage_entered_at) return false;
+        const slaDays = effectivePipelineStageSlaDays(s.sla_days);
+        if (slaDays == null) return false;
+        return now - new Date(l.stage_entered_at).getTime() > slaDays * 86400000;
       });
 
       const { data: tasks } = await supabase

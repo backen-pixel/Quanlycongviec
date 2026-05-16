@@ -33,6 +33,7 @@ import {
 } from '../lib/crmCompanyFilter';
 import { isCrmCompanyAdmin } from '../lib/crmAdminScope';
 import { buildKpiLedgerMonthTooltipHint } from '../lib/kpiPersonalLedgerHints';
+import { effectivePipelineStageSlaDays } from '../lib/crmPipelineSla';
 import DealStageEventModal from '../components/DealStageEventModal';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import { FbCrmCommentComposer } from '../components/crmFbCommentUi';
@@ -64,6 +65,37 @@ function formatRemainingMs(ms) {
   if (h > 0) return `${h} giờ`;
   const m = Math.floor(ms / 60000);
   return `${m} phút`;
+}
+
+/** Giữ badge SX/VC khi silent reload trả list thiếu embed (race sau chuyển cột Thắng/SX). */
+function preserveCrmKanbanPipelineBadges(prevRows, nextRows) {
+  const pmap = new Map((prevRows || []).map((r) => [String(r.id), r]));
+  return (nextRows || []).map((row) => {
+    if (!row?.project_id) return row;
+    const prev = pmap.get(String(row.id));
+    if (!prev) return row;
+    let out = row;
+    if (!row.sx_pipeline_stage && prev.sx_pipeline_stage) {
+      out = { ...out, sx_pipeline_stage: prev.sx_pipeline_stage };
+    }
+    if (!row.vc_pipeline_stage && prev.vc_pipeline_stage) {
+      out = { ...out, vc_pipeline_stage: prev.vc_pipeline_stage };
+    }
+    return out;
+  });
+}
+
+async function hydrateCrmLeadBadgeFields(apiClient, leadId, patch) {
+  const out = { ...patch };
+  if (!out.project_id) return out;
+  try {
+    const { data: badge } = await apiClient.get(`/crm/leads/${leadId}/badge`);
+    if (badge?.sx_pipeline_stage !== undefined) out.sx_pipeline_stage = badge.sx_pipeline_stage;
+    if (badge?.vc_pipeline_stage !== undefined) out.vc_pipeline_stage = badge.vc_pipeline_stage;
+  } catch {
+    /* ignore */
+  }
+  return out;
 }
 
 /** Hiển thị điểm ròng sổ cái KPI (tháng) trên thẻ / bảng */
@@ -208,11 +240,12 @@ function KpiKanbanLedgerBadge({ leadId, net, periodStart, compact }) {
   );
 }
 
-/** SLA cột pipeline: mặc định 7 ngày nếu chưa cấuỉnh sla_days — vàng ≤3 ngày còn, cam ≤24h, đỏ quá hạn */
+/** SLA cột pipeline: null DB → 7 ngày; sla_days=0 → không áp dụng SLA */
 function getPipelineStageSlaTone(stageEnteredAt, stage) {
   if (!stageEnteredAt || !stage) return { level: 'ok', remainingMs: null, deadlineTs: null };
   if (stage.is_won || stage.is_lost) return { level: 'ok', remainingMs: null, deadlineTs: null };
-  const slaDays = Number(stage.sla_days) > 0 ? Number(stage.sla_days) : 7;
+  const slaDays = effectivePipelineStageSlaDays(stage.sla_days);
+  if (slaDays == null) return { level: 'ok', remainingMs: null, deadlineTs: null };
   const deadlineTs = new Date(stageEnteredAt).getTime() + slaDays * 86400000;
   const remainingMs = deadlineTs - Date.now();
   if (remainingMs < 0) return { level: 'overdue', remainingMs, deadlineTs };
@@ -1526,7 +1559,12 @@ export default function CRMDashboard() {
       const leadsData = Array.isArray(leadsResult) ? leadsResult : leadsResult.rows;
       const dealsData = Array.isArray(dealsResult) ? dealsResult : dealsResult.rows;
       setAllLeads(dedupeCrmKanbanRows(mergeLeadSeenLocal(leadsData)));
-      setAllDeals(dedupeCrmKanbanRows(mergeLeadSeenLocal(dealsData)));
+      setAllDeals((prev) =>
+        preserveCrmKanbanPipelineBadges(
+          prev,
+          dedupeCrmKanbanRows(mergeLeadSeenLocal(dealsData)),
+        ),
+      );
       setLoadMoreState({
         leadOffset: Array.isArray(leadsResult) ? leadsData.length : (leadsResult.nextOffset ?? leadsData.length),
         dealOffset: Array.isArray(dealsResult) ? dealsData.length : (dealsResult.nextOffset ?? dealsData.length),
@@ -2056,17 +2094,26 @@ export default function CRMDashboard() {
 
         // Merge fresh badge fields từ response để không bị silent reload xóa tag SX/VC.
         if (data && data.id) {
-          const mergePatch = {};
+          let mergePatch = {};
           if (data.sx_pipeline_stage !== undefined) mergePatch.sx_pipeline_stage = data.sx_pipeline_stage;
           if (data.vc_pipeline_stage !== undefined) mergePatch.vc_pipeline_stage = data.vc_pipeline_stage;
           if (data.project_id !== undefined) mergePatch.project_id = data.project_id;
           if (data.stage_entered_at) mergePatch.stage_entered_at = data.stage_entered_at;
+          if (mergePatch.project_id) {
+            mergePatch = await hydrateCrmLeadBadgeFields(api, leadId, mergePatch);
+          }
           if (Object.keys(mergePatch).length > 0) {
             const setter = pipelineType === 'lead' ? setAllLeads : setAllDeals;
             setter((prev) =>
               dedupeCrmKanbanRows(
                 prev.map((x) => (String(x.id) === lid ? { ...x, ...mergePatch } : x)),
               ),
+            );
+          }
+          const pid = data.project_id || data.project_auto_created?.project_id;
+          if (pid && typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('crm-project-badges-refresh', { detail: { projectId: pid } }),
             );
           }
         }

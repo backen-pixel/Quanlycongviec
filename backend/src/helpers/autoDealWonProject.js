@@ -7,6 +7,10 @@ const { isPostgresUniqueViolation, nextTbProjectCode } = require('./projectCode'
 const { validateProductionCompanyId } = require('./productionCompanyGate');
 const { ensureDealLeadDocumentsForModuleTransition } = require('./ensureDealLeadDocumentsForModuleTransition');
 const { applyProductionTemplateToFulfillmentLead } = require('./projectOrderFulfillment');
+const {
+  assignProductionCompanyDealResponsibility,
+  resolveProductionHandoverResponsibleUserId,
+} = require('./productionHandoverSettings');
 
 /**
  * Tạo dự án xưởng từ deal thắng (luồng tự động — dùng chung cho POST auto-create và PATCH stage).
@@ -98,17 +102,23 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
   const projectId = project.id;
 
   try {
+    const responsibleUserId = await resolveProductionHandoverResponsibleUserId(coCheck.company.id);
     const { data: hop } = await supabase
       .from('production_handover_settings')
-      .select('responsible_user_id, default_production_team_id')
+      .select('default_production_team_id')
       .eq('production_company_id', coCheck.company.id)
       .maybeSingle();
     const patchHo = {};
-    if (hop?.responsible_user_id) patchHo.production_person_id = hop.responsible_user_id;
+    if (responsibleUserId) patchHo.production_person_id = responsibleUserId;
     if (hop?.default_production_team_id) patchHo.production_workshop_team_id = hop.default_production_team_id;
     if (Object.keys(patchHo).length) {
       await supabase.from('projects').update({ ...patchHo, updated_at: new Date().toISOString() }).eq('id', projectId);
     }
+    await assignProductionCompanyDealResponsibility({
+      dealId,
+      productionCompanyId: coCheck.company.id,
+      projectId,
+    });
   } catch (he) {
     console.warn('[auto-project] production_handover_settings:', he.message);
   }
@@ -215,9 +225,10 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
     await applyProductionTemplateToFulfillmentLead({
       leadId: dealId,
       createdBy: userId,
-      assigneeId: deal.assigned_to || deal.lead_owner_id || userId,
+      assigneeId: null,
+      force: true,
       requireTemplateCompanyMatch: true,
-      dealCompanyId: coCheck.company.id,
+      templateSourceCompanyId: coCheck.company.id,
     });
   } catch (e) {
     console.warn('[auto-project] applyProductionTemplateToFulfillmentLead:', e.message);

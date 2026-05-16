@@ -54,12 +54,21 @@ function canViewerSeeByCompanyAndDept(docOrAtt, user) {
   return false;
 }
 
+/** Chỉ hiện ở SX/VC/xưởng khi CRM bật «chia sẻ xưởng» — không dùng heuristic cột legacy. */
+function isLeadDocSharedToWorkshop(doc) {
+  return doc?.shared_to_workshop === true;
+}
+
 /**
  * @param {object} doc — lead_document
  * @param {'production'|'logistics'|'workshop'} moduleKey
  * @param {object} user — req.user shape
  */
 function leadDocVisibleForModuleAndUser(doc, moduleKey, user) {
+  const mod = String(moduleKey || '').toLowerCase().trim();
+  if (SHARE_MODULE_KEYS.has(mod) && !isLeadDocSharedToWorkshop(doc)) {
+    return false;
+  }
   return canViewerSeeByCompanyAndDept(doc, user) && isVisibleInShareModule(doc, moduleKey);
 }
 
@@ -77,6 +86,7 @@ module.exports = {
   parseJsonArray,
   normalizedShareModules,
   isVisibleInShareModule,
+  isLeadDocSharedToWorkshop,
   canViewerSeeByCompanyAndDept,
   leadDocVisibleForModuleAndUser,
   taskAttachmentVisibleForModuleAndUser,

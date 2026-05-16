@@ -16,10 +16,16 @@ export function parseShareModules(raw) {
   return null;
 }
 
-/** null / rỗng sau chuẩn hóa = hiển thị mọi module */
+/** Chỉ hiện ở SX/VC/xưởng khi CRM bật «chia sẻ xưởng». */
+export function isLeadDocSharedToWorkshop(doc) {
+  return doc?.shared_to_workshop === true;
+}
+
+/** null / rỗng sau chuẩn hóa = hiển thị mọi module (khi đã bật chia sẻ) */
 export function isLeadDocVisibleInModule(doc, moduleKey) {
   const mod = String(moduleKey || '').toLowerCase().trim();
   if (!SHARE_MODULE_KEYS.has(mod)) return true;
+  if (!isLeadDocSharedToWorkshop(doc)) return false;
   const arr = parseShareModules(doc?.allowed_share_modules);
   if (!arr?.length) return true;
   const cleaned = [...new Set(arr.map((x) => String(x).toLowerCase().trim()))].filter((x) =>

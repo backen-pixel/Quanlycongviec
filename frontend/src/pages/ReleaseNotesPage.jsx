@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import api from '../lib/api';
 import { BUILTIN_UPDATES } from '../content/builtinUpdates';
+import { markAllBuiltinUpdatesRead } from '../lib/releaseNotesRead';
+import { useReleaseNotesUnread } from '../hooks/useReleaseNotesUnread';
 import {
   Megaphone, Plus, Edit3, Trash2, Eye, EyeOff, Pin, Check, Sparkles, Bug,
   Zap, Bell, ChevronDown, ChevronUp, X, Send, Clock, Users, Loader2,
@@ -81,8 +83,14 @@ export default function ReleaseNotesPage() {
   const [editNote, setEditNote] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
   const [expandedBuiltinId, setExpandedBuiltinId] = useState(BUILTIN_UPDATES[0]?.id ?? null);
+  const { refresh: refreshUnread } = useReleaseNotesUnread();
   const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
   const isAdmin = currentUser.role === 'admin' || currentUser.role === 'manager';
+
+  useEffect(() => {
+    markAllBuiltinUpdatesRead();
+    refreshUnread();
+  }, [refreshUnread]);
 
   useEffect(() => { load(); }, [showAll]);
 
@@ -117,8 +125,11 @@ export default function ReleaseNotesPage() {
   };
 
   const handleMarkRead = async (id) => {
-    try { await api.put(`/release-notes/${id}/mark-read`); load(); }
-    catch (e) {}
+    try {
+      await api.put(`/release-notes/${id}/mark-read`);
+      load();
+      refreshUnread();
+    } catch (e) { /* ignore */ }
   };
 
   const toggleExpand = (id) => {

@@ -12,20 +12,7 @@ function filterProjectTasksByWorkArea(tasks, workArea) {
 }
 
 function isCrmDocSharedToWorkshop(doc) {
-  if (!doc) return false;
-  if (doc.shared_to_workshop === true) return true;
-  const notes = `${doc?.notes || ''} ${doc?.name || ''}`.toLowerCase();
-  return Boolean(
-    doc?.shared_to_production
-    || doc?.allow_workshop_view
-    || doc?.allow_production_view
-    || doc?.is_shared
-    || doc?.is_public
-    || notes.includes('cho phép chia sẻ')
-    || notes.includes('cho phep chia se')
-    || notes.includes('chia sẻ xưởng')
-    || notes.includes('chia se xuong'),
-  );
+  return !!doc && doc.shared_to_workshop === true;
 }
 
 function userNameById(users, id) {
