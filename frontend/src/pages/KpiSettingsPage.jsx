@@ -23,8 +23,14 @@ import {
   AlertCircle,
   Loader2,
   Paperclip,
+  UserCog,
 } from 'lucide-react';
 import KpiUserFilter from '../components/KpiUserFilter';
+import {
+  KPI_SETTINGS_ROLE_FILTER_OPTIONS,
+  definitionMatchesRoleFilter,
+  crmSettingsShowsDealTemplates,
+} from '../lib/kpiRoleApplies';
 
 const FORMULA_OPTIONS = [
   { v: 'increasing', l: 'Tăng dần (cao = tốt)' },
@@ -81,7 +87,7 @@ function crmTemplateVisibleForCompany(tpl, companyId) {
 // ═════════════════════════════════════════════════════════════════════════════
 // Tab 1: Definitions
 // ═════════════════════════════════════════════════════════════════════════════
-function DefinitionsTab({ companyId }) {
+function DefinitionsTab({ companyId, roleFilter }) {
   const [defs, setDefs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState(null);
@@ -113,6 +119,11 @@ function DefinitionsTab({ companyId }) {
     }, 0);
   }, [defs, edits]);
 
+  const defsFiltered = useMemo(
+    () => defs.filter((d) => definitionMatchesRoleFilter(d.applies_to, roleFilter)),
+    [defs, roleFilter],
+  );
+
   const setEdit = (id, field, value) => {
     setEdits((p) => ({ ...p, [id]: { ...(p[id] || {}), [field]: value } }));
   };
@@ -137,6 +148,12 @@ function DefinitionsTab({ companyId }) {
 
   return (
     <div className="space-y-3">
+      {roleFilter && (
+        <div className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          Đang <strong>lọc hiển thị</strong> theo vai trò <code className="bg-amber-100 px-1 rounded">{roleFilter}</code> — chỉ các KPI có cột «Áp dụng»
+          khớp vai trò này (cột <code className="bg-amber-100 px-1 rounded">applies_to</code> trong DB). Sửa vẫn ghi vào cấu hình chung; đổi «Áp dụng» trên từng KPI để điều chỉnh vai trò được chấm.
+        </div>
+      )}
       {companyId && (
         <div className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
           Đang lọc theo công ty trên thanh phía trên. <strong>Thông số 15 KPI</strong> là cấu hình <em>chung toàn hệ thống</em> (không tách theo công ty);
@@ -149,6 +166,11 @@ function DefinitionsTab({ companyId }) {
             Tổng trọng số đang kích hoạt: <strong className={totalWeight === 100 ? 'text-emerald-700' : 'text-red-600'}>{totalWeight}</strong>
             <span className="text-gray-500"> / 100</span>
           </span>
+          {roleFilter && (
+            <span className="text-xs text-gray-500">
+              · Hiển thị <strong>{defsFiltered.length}</strong> / {defs.length} KPI
+            </span>
+          )}
           {totalWeight !== 100 && (
             <span className="text-xs text-amber-700 flex items-center gap-1">
               <AlertTriangle className="w-3 h-3" /> Khuyến nghị giữ tổng = 100 để dễ chấm điểm.
@@ -184,7 +206,14 @@ function DefinitionsTab({ companyId }) {
               </tr>
             </thead>
             <tbody>
-              {defs.map((d) => {
+              {defsFiltered.length === 0 ? (
+                <tr>
+                  <td colSpan={11} className="text-center py-10 text-gray-500 text-sm">
+                    Không có KPI nào khớp vai trò đã chọn. Chọn «Tất cả vai trò» hoặc chỉnh cột «Áp dụng» (applies_to) trên từng KPI.
+                  </td>
+                </tr>
+              ) : (
+                defsFiltered.map((d) => {
                 const e = edits[d.id] || {};
                 const dirty = Object.keys(e).length > 0;
                 const v = (k) => (Object.hasOwn(e, k) ? e[k] : d[k]);
@@ -279,7 +308,8 @@ function DefinitionsTab({ companyId }) {
                     </td>
                   </tr>
                 );
-              })}
+              })
+              )}
             </tbody>
           </table>
         </div>
@@ -291,7 +321,7 @@ function DefinitionsTab({ companyId }) {
 // ═════════════════════════════════════════════════════════════════════════════
 // Tab 2: Targets
 // ═════════════════════════════════════════════════════════════════════════════
-function TargetsTab({ companyId }) {
+function TargetsTab({ companyId, roleFilter }) {
   const [periodStart, setPeriodStart] = useState(getDefaultPeriodStart());
   const [defs, setDefs] = useState([]);
   const [users, setUsers] = useState([]);
@@ -341,13 +371,14 @@ function TargetsTab({ companyId }) {
         ...(cid ? { company_id: cid } : {}),
         ...(filter.departmentId ? { department_id: filter.departmentId } : {}),
         ...(filter.q?.trim() ? { q: filter.q.trim() } : {}),
+        ...(roleFilter ? { roles: roleFilter } : {}),
       };
       api.get('/kpi/users', { params })
         .then((r) => setUsers(r.data?.users || []))
         .catch(() => setUsers([]));
     }, 300);
     return () => clearTimeout(t);
-  }, [companyId, filter.companyId, filter.departmentId, filter.q]);
+  }, [companyId, filter.companyId, filter.departmentId, filter.q, roleFilter]);
 
   const handleAdd = async () => {
     if (!form.kpi_definition_id || form.target_value === '') {
@@ -385,8 +416,29 @@ function TargetsTab({ companyId }) {
 
   const userMap = useMemo(() => Object.fromEntries(users.map((u) => [u.id, u])), [users]);
 
+  const defsForRole = useMemo(
+    () => defs.filter((d) => definitionMatchesRoleFilter(d.applies_to, roleFilter)),
+    [defs, roleFilter],
+  );
+
+  const targetsVisible = useMemo(() => {
+    return targets.filter((t) => {
+      const def = t.kpi_definition;
+      if (!definitionMatchesRoleFilter(def?.applies_to, roleFilter)) return false;
+      if (!roleFilter || !t.user_id) return true;
+      const ur = String(userMap[t.user_id]?.role || '').toLowerCase();
+      return ur === roleFilter;
+    });
+  }, [targets, roleFilter, userMap]);
+
   return (
     <div className="space-y-3">
+      {roleFilter && (
+        <div className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          Lọc theo vai trò <code className="bg-amber-100 px-1 rounded">{roleFilter}</code>: danh sách nhân viên gọi API với{' '}
+          <code className="bg-amber-100 px-1 rounded">roles</code> tương ứng; dropdown KPI và bảng target chỉ hiện mục khớp vai trò.
+        </div>
+      )}
       <div className="flex items-center gap-3 flex-wrap">
         <label className="text-sm text-gray-700 flex items-center gap-2">
           Tháng:
@@ -421,7 +473,7 @@ function TargetsTab({ companyId }) {
             className="px-2 py-1.5 border rounded text-sm"
           >
             <option value="">— Chọn KPI —</option>
-            {defs.map((d) => <option key={d.id} value={d.id}>{d.code} - {d.name}</option>)}
+            {defsForRole.map((d) => <option key={d.id} value={d.id}>{d.code} - {d.name}</option>)}
           </select>
           <select
             value={form.user_id}
@@ -475,9 +527,9 @@ function TargetsTab({ companyId }) {
               </tr>
             </thead>
             <tbody>
-              {targets.length === 0 ? (
-                <tr><td colSpan={6} className="text-center text-gray-400 py-6">Chưa có target tuỳ chỉnh cho tháng này.</td></tr>
-              ) : targets.map((t) => {
+              {targetsVisible.length === 0 ? (
+                <tr><td colSpan={6} className="text-center text-gray-400 py-6">Không có target khớp bộ lọc vai trò / tháng.</td></tr>
+              ) : targetsVisible.map((t) => {
                 const def = t.kpi_definition;
                 const isRevenue = def?.formula_type === 'revenue';
                 return (
@@ -891,7 +943,7 @@ function HolidaysPanel({ companyId }) {
   );
 }
 
-function LeavesPanel({ companyId }) {
+function LeavesPanel({ companyId, roleFilter }) {
   const [items, setItems] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -923,11 +975,12 @@ function LeavesPanel({ companyId }) {
         ...(cid ? { company_id: cid } : {}),
         ...(filter.departmentId ? { department_id: filter.departmentId } : {}),
         ...(filter.q?.trim() ? { q: filter.q.trim() } : {}),
+        ...(roleFilter ? { roles: roleFilter } : {}),
       };
       api.get('/kpi/users', { params }).then((r) => setUsers(r.data?.users || [])).catch(() => setUsers([]));
     }, 300);
     return () => clearTimeout(t);
-  }, [companyId, filter.companyId, filter.departmentId, filter.q]);
+  }, [companyId, filter.companyId, filter.departmentId, filter.q, roleFilter]);
 
   const userMap = useMemo(() => Object.fromEntries(users.map((u) => [u.id, u])), [users]);
 
@@ -1046,7 +1099,7 @@ function LeavesPanel({ companyId }) {
   );
 }
 
-function CalendarTab({ companyId }) {
+function CalendarTab({ companyId, roleFilter }) {
   const [section, setSection] = useState('hours');
   const subTabs = [
     { id: 'hours', label: 'Giờ hành chính', icon: Clock },
@@ -1070,7 +1123,7 @@ function CalendarTab({ companyId }) {
       </div>
       {section === 'hours' && <BusinessHoursPanel companyId={companyId} />}
       {section === 'holidays' && <HolidaysPanel companyId={companyId} />}
-      {section === 'leaves' && <LeavesPanel companyId={companyId} />}
+      {section === 'leaves' && <LeavesPanel companyId={companyId} roleFilter={roleFilter} />}
     </div>
   );
 }
@@ -1078,7 +1131,7 @@ function CalendarTab({ companyId }) {
 // ═════════════════════════════════════════════════════════════════════════════
 // Tab 5: Pipeline KPI — map từng stage của pipeline → canonical_slug
 // ═════════════════════════════════════════════════════════════════════════════
-function PipelineKpiTab({ companyId, companies }) {
+function PipelineKpiTab({ companyId, companies, roleFilter }) {
   const [typeFilter, setTypeFilter] = useState('all');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -1296,6 +1349,11 @@ function PipelineKpiTab({ companyId, companies }) {
 
   return (
     <div className="space-y-3">
+      {roleFilter === 'sales_admin' && (
+        <div className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          Đang lọc vai trò <strong>Sales Admin</strong>: map <strong>Lead</strong> quan trọng cho KPI nhóm A; map <strong>Deal</strong> chủ yếu cho NV kinh doanh (nhóm B) — vẫn có thể chỉnh tại đây.
+        </div>
+      )}
       <div className="bg-white border border-gray-100 rounded-xl p-3">
         <div className="flex items-center gap-3 flex-wrap">
           <Building2 className="w-4 h-4 text-blue-600 shrink-0" />
@@ -1367,8 +1425,9 @@ function PipelineKpiTab({ companyId, companies }) {
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Tab: Bộ NV CRM — bắt buộc minh chứng (file hoặc ghi chú) khi hoàn thành (tách Lead / Deal / Chung)
+// variant `sales_admin_group_a`: chỉ Lead + Chung — tập trung KPI nhóm A (A3 minh chứng, A4 follow-up)
 // ═════════════════════════════════════════════════════════════════════════════
-function CrmTaskBundleTab({ companyId }) {
+function CrmTaskBundleTab({ companyId, variant = 'full', roleFilter = '' }) {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
@@ -1406,8 +1465,11 @@ function CrmTaskBundleTab({ companyId }) {
     lead.sort(byTplOrder);
     deal.sort(byTplOrder);
     shared.sort(byTplOrder);
+    if (variant === 'sales_admin_group_a' || !crmSettingsShowsDealTemplates(roleFilter)) {
+      return { leadTemplates: lead, dealTemplates: [], sharedTemplates: shared };
+    }
     return { leadTemplates: lead, dealTemplates: deal, sharedTemplates: shared };
-  }, [templates, companyId]);
+  }, [templates, companyId, variant, roleFilter]);
 
   const patchCrmTemplateItem = async (templateId, item, patch) => {
     const key = `${templateId}:${item.id}`;
@@ -1449,6 +1511,12 @@ function CrmTaskBundleTab({ companyId }) {
     }
   };
 
+  const isSalesAdminA =
+    variant === 'sales_admin_group_a' || (variant === 'full' && String(roleFilter || '').toLowerCase() === 'sales_admin');
+  const completionColLabel = isSalesAdminA
+    ? 'Yêu cầu khi hoàn thành (KPI nhóm A — A3 minh chứng, A4 đúng hạn)'
+    : 'Yêu cầu khi hoàn thành (KPI B1 / A3)';
+
   const renderTemplateCard = (tpl) => (
     <div key={tpl.id} className="border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm">
       <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex flex-wrap items-center gap-2">
@@ -1474,7 +1542,7 @@ function CrmTaskBundleTab({ companyId }) {
           <thead>
             <tr className="text-left text-xs text-gray-500 border-b border-gray-100 bg-white">
               <th className="px-4 py-2 font-medium">Nhiệm vụ mẫu</th>
-              <th className="px-4 py-2 font-medium min-w-[220px]">Yêu cầu khi hoàn thành (KPI B1 / A3)</th>
+              <th className="px-4 py-2 font-medium min-w-[220px]">{completionColLabel}</th>
             </tr>
           </thead>
           <tbody>
@@ -1507,7 +1575,11 @@ function CrmTaskBundleTab({ companyId }) {
                           />
                           <span>
                             <span className="font-medium text-gray-800">Ghi chú khách hàng</span>
-                            <span className="block text-[10px] text-gray-500">Bắt buộc có nội dung ghi chú trên nhiệm vụ khi xong.</span>
+                            <span className="block text-[10px] text-gray-500">
+                              {isSalesAdminA
+                                ? 'Ghi chú trên task — phục vụ đủ thông tin & KPI A3.'
+                                : 'Bắt buộc có nội dung ghi chú trên nhiệm vụ khi xong.'}
+                            </span>
                           </span>
                         </label>
                         <label className="inline-flex items-start gap-2 cursor-pointer select-none">
@@ -1525,7 +1597,11 @@ function CrmTaskBundleTab({ companyId }) {
                           />
                           <span>
                             <span className="font-medium text-gray-800">Minh chứng liên hệ</span>
-                            <span className="block text-[10px] text-gray-500">Ghi chú hoặc file đính kèm khi hoàn thành (đếm KPI B1 nếu không có ghi âm).</span>
+                            <span className="block text-[10px] text-gray-500">
+                              {isSalesAdminA
+                                ? 'File/ghi chú đính kèm hoặc ghi chú task — liên quan A3 (minh chứng) và B1 khi không có log gọi.'
+                                : 'Ghi chú hoặc file đính kèm khi hoàn thành (đếm KPI B1 nếu không có ghi âm).'}
+                            </span>
                           </span>
                         </label>
                         {busy && <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />}
@@ -1564,19 +1640,41 @@ function CrmTaskBundleTab({ companyId }) {
       <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-sm text-slate-700">
         <p className="font-semibold text-slate-900 flex items-center gap-2">
           <Paperclip className="w-4 h-4 text-slate-500 shrink-0" />
-          Bộ nhiệm vụ CRM — tách theo Lead và Deal
+          {isSalesAdminA ? 'Sales Admin — KPI nhóm A (chỉ Lead & Chung)' : 'Bộ nhiệm vụ CRM — tách theo Lead và Deal'}
         </p>
         <p className="mt-1 text-slate-600">
-          {companyId && (
-            <span className="block mb-1 text-amber-900 bg-amber-50 border border-amber-100 rounded px-2 py-1 text-xs">
-              Đang lọc bộ mẫu áp dụng cho công ty đã chọn (theo <code className="text-[10px] bg-amber-100 px-1 rounded">default_allowed_companies</code> trên từng nhiệm vụ mẫu).
-            </span>
+          {isSalesAdminA ? (
+            <>
+              <span className="block mb-2">
+                Cấu hình này dành cho vai trò <strong>Sales Admin / telesales</strong>: chỉ hiển thị bộ mẫu{' '}
+                <code className="text-xs bg-slate-200 px-1 rounded">pipeline_type = lead</code> và{' '}
+                <code className="text-xs bg-slate-200 px-1 rounded">both</code>. Các chỉ số{' '}
+                <strong>A1–A6</strong> lấy từ lead + nhiệm vụ CRM giai đoạn đầu; <strong>không hiển thị bộ Deal</strong>{' '}
+                (nhóm B/C — cấu hình ở tab «Bộ NV CRM · Kinh doanh»).
+              </span>
+              {companyId && (
+                <span className="block mb-1 text-amber-900 bg-amber-50 border border-amber-100 rounded px-2 py-1 text-xs">
+                  Đang lọc bộ mẫu áp dụng cho công ty đã chọn (theo <code className="text-[10px] bg-amber-100 px-1 rounded">default_allowed_companies</code> trên từng nhiệm vụ mẫu).
+                </span>
+              )}
+              <span className="block text-xs text-slate-600">
+                A1/A2: phản hồi lead; A3: đủ field + task bắt buộc minh chứng; A4: hoàn thành task đúng hạn. Cùng một API với tab Kinh doanh — chỉ khác phần hiển thị.
+              </span>
+            </>
+          ) : (
+            <>
+              {companyId && (
+                <span className="block mb-1 text-amber-900 bg-amber-50 border border-amber-100 rounded px-2 py-1 text-xs">
+                  Đang lọc bộ mẫu áp dụng cho công ty đã chọn (theo <code className="text-[10px] bg-amber-100 px-1 rounded">default_allowed_companies</code> trên từng nhiệm vụ mẫu).
+                </span>
+              )}
+              Danh sách được <strong>phân nhóm theo trường pipeline_type</strong> trên mỗi bộ mẫu CRM (<code className="text-xs bg-slate-200 px-1 rounded">lead</code>,{' '}
+              <code className="text-xs bg-slate-200 px-1 rounded">deal</code>,{' '}
+              <code className="text-xs bg-slate-200 px-1 rounded">both</code>). Khi bật “bắt buộc file/ghi chú”, nhiệm vụ sinh ra
+              từ mẫu đó phải có ghi chú hoặc đính kèm trước khi hoàn thành. Dùng ô <strong>Loại pipeline</strong> trên từng bộ mẫu để
+              xếp vào nhóm Lead, Deal hoặc Chung.
+            </>
           )}
-          Danh sách được <strong>phân nhóm theo trường pipeline_type</strong> trên mỗi bộ mẫu CRM (<code className="text-xs bg-slate-200 px-1 rounded">lead</code>,{' '}
-          <code className="text-xs bg-slate-200 px-1 rounded">deal</code>,{' '}
-          <code className="text-xs bg-slate-200 px-1 rounded">both</code>). Khi bật “bắt buộc file/ghi chú”, nhiệm vụ sinh ra
-          từ mẫu đó phải có ghi chú hoặc đính kèm trước khi hoàn thành. Dùng ô <strong>Loại pipeline</strong> trên từng bộ mẫu để
-          xếp vào nhóm Lead, Deal hoặc Chung.
         </p>
       </div>
       {err && <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">{err}</div>}
@@ -1590,25 +1688,35 @@ function CrmTaskBundleTab({ companyId }) {
         <div className="space-y-10">
           {renderSection(
             'Nhiệm vụ Lead',
-            'Các bộ mẫu có pipeline_type = lead — dùng khi auto-gen / tạo từ mẫu trên lead.',
+            isSalesAdminA
+              ? 'Bộ mẫu pipeline_type = lead — trọng tâm KPI nhóm A trên pipeline lead.'
+              : 'Các bộ mẫu có pipeline_type = lead — dùng khi auto-gen / tạo từ mẫu trên lead.',
             'bg-emerald-50/80 border-emerald-200',
             leadTemplates,
           )}
-          {renderSection(
-            'Nhiệm vụ Deal',
-            'Các bộ mẫu có pipeline_type = deal — dùng cho deal (giai đoạn KD sau chuyển đổi).',
-            'bg-indigo-50/80 border-indigo-200',
-            dealTemplates,
-          )}
+          {!isSalesAdminA &&
+            renderSection(
+              'Nhiệm vụ Deal',
+              'Các bộ mẫu có pipeline_type = deal — dùng cho deal (giai đoạn KD sau chuyển đổi).',
+              'bg-indigo-50/80 border-indigo-200',
+              dealTemplates,
+            )}
           {renderSection(
             'Chung Lead & Deal',
-            'Bộ mẫu pipeline_type = both (hoặc chưa gán) — áp dụng cho cả lead và deal tùy cách gen nhiệm vụ.',
+            isSalesAdminA
+              ? 'Bộ mẫu pipeline_type = both — thường dùng cho nhiệm vụ đầu funnel lead; chỉnh cờ minh chứng nếu mẫu áp dụng cho telesales.'
+              : 'Bộ mẫu pipeline_type = both (hoặc chưa gán) — áp dụng cho cả lead và deal tùy cách gen nhiệm vụ.',
             'bg-amber-50/80 border-amber-200',
             sharedTemplates,
           )}
         </div>
       )}
       <p className="text-xs text-gray-500">
+        {isSalesAdminA && (
+          <span className="block mb-1">
+            Mẫu <strong>Deal</strong> (nhóm B/C) chỉnh ở tab <strong>«Bộ NV CRM · KD»</strong>.
+          </span>
+        )}
         Bộ nhiệm vụ theo <strong>đơn vị / dự án</strong> (quy trình xưởng, checklist từng dòng) chỉnh tại{' '}
         <a href="/template-sets" className="text-blue-600 underline">
           Bộ NV mẫu theo đơn vị
@@ -1628,6 +1736,7 @@ export default function KpiSettingsPage() {
   const [tab, setTab] = useState('definitions');
   const [companies, setCompanies] = useState([]);
   const [settingsCompanyId, setSettingsCompanyId] = useState('');
+  const [settingsRoleFilter, setSettingsRoleFilter] = useState('');
 
   useEffect(() => {
     api.get('/companies')
@@ -1651,7 +1760,8 @@ export default function KpiSettingsPage() {
     { id: 'periods', label: 'Kỳ KPI', desc: 'Khoá / đóng kỳ, recompute' },
     { id: 'calendar', label: 'Lịch làm việc', desc: 'Giờ hành chính, ngày lễ, ngày phép NV' },
     { id: 'pipeline', label: 'Pipeline KPI', desc: 'Map stage pipeline → canonical_slug cho KPI nhóm B' },
-    { id: 'crm_tasks', label: 'Bộ NV CRM', desc: 'Lead / Deal / Chung: bắt buộc file hoặc ghi chú khi hoàn thành' },
+    { id: 'crm_tasks', label: 'Bộ NV CRM · KD', desc: 'Lead / Deal / Chung: minh chứng khi hoàn thành (B1, A3…)' },
+    { id: 'crm_tasks_sa', label: 'Bộ NV CRM · Sales Admin (A)', desc: 'Chỉ Lead & Chung — tập trung KPI nhóm A (A3, A4)' },
   ];
 
   return (
@@ -1664,7 +1774,7 @@ export default function KpiSettingsPage() {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2.5">
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-gray-200 bg-white px-3 py-2.5">
         <Building2 className="w-4 h-4 text-gray-600 shrink-0" />
         <label className="text-sm text-gray-700 flex flex-wrap items-center gap-2">
           <span className="font-medium">Lọc theo công ty</span>
@@ -1679,8 +1789,22 @@ export default function KpiSettingsPage() {
             ))}
           </select>
         </label>
-        <span className="text-xs text-gray-500">
-          Áp dụng cho target, tính lại kỳ, lịch làm việc, pipeline CRM và danh sách bộ NV CRM (khi có giới hạn công ty trên mẫu).
+        <span className="hidden sm:inline h-6 w-px bg-gray-200 shrink-0" aria-hidden />
+        <UserCog className="w-4 h-4 text-gray-600 shrink-0" />
+        <label className="text-sm text-gray-700 flex flex-wrap items-center gap-2">
+          <span className="font-medium">Lọc theo vai trò</span>
+          <select
+            value={settingsRoleFilter}
+            onChange={(e) => setSettingsRoleFilter(e.target.value)}
+            className="min-w-[200px] max-w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm bg-white"
+          >
+            {KPI_SETTINGS_ROLE_FILTER_OPTIONS.map((o) => (
+              <option key={o.value || '_all'} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </label>
+        <span className="text-xs text-gray-500 w-full sm:w-auto sm:ml-auto">
+          Công ty: target, lịch, pipeline, mẫu CRM. Vai trò: danh sách KPI / NV / nhóm Deal trên tab tương ứng.
         </span>
       </div>
 
@@ -1699,12 +1823,13 @@ export default function KpiSettingsPage() {
         ))}
       </div>
 
-      {tab === 'definitions' && <DefinitionsTab companyId={settingsCompanyId} />}
-      {tab === 'targets' && <TargetsTab companyId={settingsCompanyId} />}
+      {tab === 'definitions' && <DefinitionsTab companyId={settingsCompanyId} roleFilter={settingsRoleFilter} />}
+      {tab === 'targets' && <TargetsTab companyId={settingsCompanyId} roleFilter={settingsRoleFilter} />}
       {tab === 'periods' && <PeriodsTab companyId={settingsCompanyId} />}
-      {tab === 'calendar' && <CalendarTab companyId={settingsCompanyId} />}
-      {tab === 'pipeline' && <PipelineKpiTab companyId={settingsCompanyId} companies={companies} />}
-      {tab === 'crm_tasks' && <CrmTaskBundleTab companyId={settingsCompanyId} />}
+      {tab === 'calendar' && <CalendarTab companyId={settingsCompanyId} roleFilter={settingsRoleFilter} />}
+      {tab === 'pipeline' && <PipelineKpiTab companyId={settingsCompanyId} companies={companies} roleFilter={settingsRoleFilter} />}
+      {tab === 'crm_tasks' && <CrmTaskBundleTab companyId={settingsCompanyId} variant="full" roleFilter={settingsRoleFilter} />}
+      {tab === 'crm_tasks_sa' && <CrmTaskBundleTab companyId={settingsCompanyId} variant="sales_admin_group_a" roleFilter={settingsRoleFilter} />}
     </div>
   );
 }

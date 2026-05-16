@@ -8,7 +8,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X, UsersRound,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
-  BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2,
+  BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock,
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { isCrmOnlyModuleAccess } from '../lib/moduleAccess';
@@ -130,13 +130,14 @@ const CRM_MENU_BOTTOM_GROUPS = [
       { to: '/crm/kpi/verify-b', icon: Activity, label: 'Verify KPI nhóm B', executiveOnly: true },
       { to: '/crm/kpi/guide', icon: BookOpen, label: 'Hướng dẫn KPI' },
       { to: '/crm/kpi/sales-admin', icon: Activity, label: 'KPI Sales Admin (Tủ bếp)' },
-      { to: '/crm/kpi/deal', icon: Target, label: 'KPI Deal (Tủ bếp)' },
+      { to: '/crm/kpi/deal', icon: Target, label: 'KPI Deal (Tủ bếp)', hideForRoles: ['sales_admin'] },
       { to: '/crm/kpi/scorecard', icon: ClipboardCheck, label: 'Scorecard KPI tháng', executiveOnly: true },
       { to: '/crm/kpi/settings', icon: Settings, label: 'Cấu hình KPI Tủ bếp', executiveOnly: true },
       { to: '/crm/reports', icon: BarChart3, label: 'Báo cáo', adminOnly: true },
       { to: '/crm/reports/staff-lead-deal', icon: Users, label: 'BC Lead/Deal theo NV', executiveOnly: true },
       { to: '/crm/admin/sla-watchlist', icon: Timer, label: 'SLA Lead/Deal (quản trị)', executiveOnly: true },
       { to: '/crm/settings/deal-stage-report', icon: LayoutGrid, label: 'Phân loại cột BC Deal', executiveOnly: true },
+      { to: '/crm/deadline-settings', icon: Clock, label: 'Cấu hình Deadline CRM', executiveOnly: true },
     ],
   },
   {
@@ -256,16 +257,19 @@ function SideLink({ to, icon: Icon, label, collapsed, end }) {
   );
 }
 
-function MenuGroup({ group, collapsed, isAdmin, isExecutive, canAccessModule }) {
+function MenuGroup({ group, collapsed, isAdmin, isExecutive, canAccessModule, userRole }) {
   const [open, setOpen] = useState(true);
 
   if (group.moduleKey && canAccessModule && !canAccessModule(group.moduleKey)) return null;
+
+  const r = String(userRole || '').trim().toLowerCase();
 
   // Filter items based on role + ecosystem module scope
   const items = group.items.filter((item) => {
     if (item.adminOnly && !isAdmin) return false;
     if (item.executiveOnly && !isExecutive) return false;
     if (item.moduleKey && canAccessModule && !canAccessModule(item.moduleKey)) return false;
+    if (item.hideForRoles?.length && r && item.hideForRoles.map((x) => String(x).toLowerCase()).includes(r)) return false;
     return true;
   });
   
@@ -546,6 +550,7 @@ export default function Sidebar() {
                 isAdmin={isAdmin}
                 isExecutive={isExecutive}
                 canAccessModule={canAccessModule}
+                userRole={user?.role}
               />
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto border-t border-white/10 mt-1 pt-2">
@@ -560,6 +565,7 @@ export default function Sidebar() {
                     isAdmin={isCrmMenuAdmin}
                     isExecutive={isExecutive}
                     canAccessModule={canAccessModule}
+                    userRole={user?.role}
                   />
                 );
               })}
@@ -576,6 +582,7 @@ export default function Sidebar() {
                 isAdmin={isAdmin}
                 isExecutive={isExecutive}
                 canAccessModule={canAccessModule}
+                userRole={user?.role}
               />
             );
           })

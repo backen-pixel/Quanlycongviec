@@ -103,6 +103,7 @@ import CRMReports from './pages/CRMReports';
 import CrmStaffLeadDealReport from './pages/CrmStaffLeadDealReport';
 import CrmSlaWatchlistPage from './pages/CrmSlaWatchlistPage';
 import CrmDealStageReportSettingsPage from './pages/CrmDealStageReportSettingsPage';
+import CrmDeadlineSettingsPage from './pages/CrmDeadlineSettingsPage';
 import ExecutiveKpiPage from './pages/ExecutiveKpiPage';
 import KpiSalesAdminDashboard from './pages/KpiSalesAdminDashboard';
 import KpiDealDashboard from './pages/KpiDealDashboard';
@@ -333,6 +334,7 @@ export default function App() {
             <Route path="/crm/reports/staff-lead-deal" element={<RequireExecutive><CrmStaffLeadDealReport /></RequireExecutive>} />
             <Route path="/crm/admin/sla-watchlist" element={<RequireExecutive><CrmSlaWatchlistPage /></RequireExecutive>} />
             <Route path="/crm/settings/deal-stage-report" element={<RequireExecutive><CrmDealStageReportSettingsPage /></RequireExecutive>} />
+            <Route path="/crm/deadline-settings" element={<RequireExecutive><CrmDeadlineSettingsPage /></RequireExecutive>} />
             <Route path="/crm/facebook" element={<RequireCrmElevated><FacebookPage /></RequireCrmElevated>} />
             <Route path="/crm/facebook/link-phone-cleanup" element={<RequireCrmElevated><FacebookLinkPhoneCleanupPage /></RequireCrmElevated>} />
             <Route path="/crm/pipeline-settings" element={<RequireCrmElevated><PipelineSettingsPage /></RequireCrmElevated>} />
