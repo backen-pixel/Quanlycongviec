@@ -95,6 +95,7 @@ import InvoiceDetail from './pages/InvoiceDetail';
 import OrderForm from './pages/OrderForm';
 import InvoiceForm from './pages/InvoiceForm';
 import EventsFeedPage from './pages/EventsFeedPage';
+import SocialFeedPage from './pages/SocialFeedPage';
 import ReleaseNotesPage from './pages/ReleaseNotesPage';
 import FacebookPage from './pages/FacebookPage';
 import FacebookLinkPhoneCleanupPage from './pages/FacebookLinkPhoneCleanupPage';
@@ -271,6 +272,7 @@ export default function App() {
           <Route element={<ProtectedLayout />}>
             <Route path="/" element={<DefaultRedirect />} />
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/social" element={<SocialFeedPage />} />
             <Route path="/dashboard/divisions" element={<DivisionDashboardPage />} />
             <Route path="/my-tasks" element={<MyTasks />} />
             <Route path="/projects" element={<Projects />} />

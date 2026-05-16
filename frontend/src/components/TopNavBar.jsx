@@ -152,10 +152,14 @@ export default function TopNavBar() {
             
             {/* User menu */}
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-gray-50 cursor-pointer">
-              <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold"
-                style={{ backgroundColor: avatarColor(user?.full_name || 'User') }}>
-                {getInitials(user?.full_name || 'U')}
-              </div>
+              {user?.avatar ? (
+                <img src={user.avatar} alt="" className="w-7 h-7 rounded-full object-cover border border-gray-200 shrink-0" />
+              ) : (
+                <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold"
+                  style={{ backgroundColor: avatarColor(user?.full_name || 'User') }}>
+                  {getInitials(user?.full_name || 'U')}
+                </div>
+              )}
               <span className="text-sm font-medium text-gray-700">{user?.full_name}</span>
             </div>
 

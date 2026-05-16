@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import api from '../lib/api';
+import { BUILTIN_UPDATES } from '../content/builtinUpdates';
 import {
   Megaphone, Plus, Edit3, Trash2, Eye, EyeOff, Pin, Check, Sparkles, Bug,
   Zap, Bell, ChevronDown, ChevronUp, X, Send, Clock, Users, Loader2,
@@ -17,6 +18,61 @@ function formatDateVN(iso) {
   return new Date(iso).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+function renderMarkdownLines(content) {
+  return content.split('\n').map((line, i) => {
+    if (line.startsWith('### ')) return <h4 key={i} className="text-sm font-bold text-gray-900 mt-3 mb-1">{line.slice(4)}</h4>;
+    if (line.startsWith('## ')) return <h3 key={i} className="text-base font-bold text-gray-900 mt-4 mb-1">{line.slice(3)}</h3>;
+    if (line.startsWith('# ')) return <h2 key={i} className="text-lg font-bold text-gray-900 mt-4 mb-2">{line.slice(2)}</h2>;
+    if (line.startsWith('- ')) return <li key={i} className="ml-4 text-sm list-disc">{line.slice(2)}</li>;
+    if (line.startsWith('* ')) return <li key={i} className="ml-4 text-sm list-disc">{line.slice(2)}</li>;
+    if (line.trim() === '') return <br key={i} />;
+    return <p key={i} className="text-sm leading-relaxed">{line}</p>;
+  });
+}
+
+function BuiltinUpdateCard({ item, isExpanded, onToggle }) {
+  const cat = CATEGORIES[item.category] || CATEGORIES.feature;
+  return (
+    <article className="bg-white rounded-xl border border-blue-200 shadow-sm ring-1 ring-blue-100">
+      <div
+        className="flex items-start gap-3 px-5 py-4 cursor-pointer"
+        onClick={onToggle}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onToggle(); }}
+      >
+        <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg shrink-0 ${cat.color}`}>
+          {cat.icon}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-blue-600 text-white">Mới trong app</span>
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${cat.color}`}>{cat.label}</span>
+            {item.version && (
+              <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-mono">{item.version}</span>
+            )}
+          </div>
+          <h3 className="text-base font-bold text-gray-900 mt-1">{item.title}</h3>
+          <p className="text-xs text-gray-400 mt-0.5">{formatDateVN(item.publishedAt)}</p>
+          {!isExpanded && (
+            <p className="text-sm text-gray-500 mt-1 line-clamp-2">
+              {item.content.replace(/[#*`\-_>]/g, '').slice(0, 160)}…
+            </p>
+          )}
+        </div>
+        {isExpanded ? <ChevronUp className="h-4 w-4 text-gray-400 shrink-0" /> : <ChevronDown className="h-4 w-4 text-gray-400 shrink-0" />}
+      </div>
+      {isExpanded && (
+        <div className="px-5 pb-4 border-t">
+          <div className="pt-4 prose prose-sm max-w-none text-gray-700">
+            {renderMarkdownLines(item.content)}
+          </div>
+        </div>
+      )}
+    </article>
+  );
+}
+
 export default function ReleaseNotesPage() {
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -24,6 +80,7 @@ export default function ReleaseNotesPage() {
   const [showEditor, setShowEditor] = useState(false);
   const [editNote, setEditNote] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
+  const [expandedBuiltinId, setExpandedBuiltinId] = useState(BUILTIN_UPDATES[0]?.id ?? null);
   const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
   const isAdmin = currentUser.role === 'admin' || currentUser.role === 'manager';
 
@@ -109,13 +166,31 @@ export default function ReleaseNotesPage() {
         </div>
       </div>
 
+      {BUILTIN_UPDATES.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-xs font-bold text-blue-600 uppercase tracking-wider flex items-center gap-2">
+            <Sparkles className="h-3.5 w-3.5" /> Cập nhật gần đây
+          </h2>
+          <div className="space-y-3">
+            {BUILTIN_UPDATES.map((item) => (
+              <BuiltinUpdateCard
+                key={item.id}
+                item={item}
+                isExpanded={expandedBuiltinId === item.id}
+                onToggle={() => setExpandedBuiltinId((cur) => (cur === item.id ? null : item.id))}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Notes list */}
       {loading ? (
         <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-blue-500" /></div>
       ) : notes.length === 0 ? (
         <div className="text-center py-16 text-gray-400">
           <Megaphone className="h-12 w-12 mx-auto mb-3 opacity-50" />
-          <p>Chưa có thông báo cập nhật nào</p>
+          <p>Chưa có thông báo từ quản trị — xem mục &quot;Cập nhật gần đây&quot; phía trên.</p>
         </div>
       ) : (
         Object.entries(grouped).map(([key, group]) => (
@@ -159,16 +234,8 @@ export default function ReleaseNotesPage() {
                     {/* Expanded content */}
                     {isExpanded && (
                       <div className="px-5 pb-4 border-t">
-                        <div className="pt-4 prose prose-sm max-w-none text-gray-700 whitespace-pre-wrap">
-                          {note.content.split('\n').map((line, i) => {
-                            if (line.startsWith('### ')) return <h4 key={i} className="text-sm font-bold text-gray-900 mt-3 mb-1">{line.slice(4)}</h4>;
-                            if (line.startsWith('## ')) return <h3 key={i} className="text-base font-bold text-gray-900 mt-4 mb-1">{line.slice(3)}</h3>;
-                            if (line.startsWith('# ')) return <h2 key={i} className="text-lg font-bold text-gray-900 mt-4 mb-2">{line.slice(2)}</h2>;
-                            if (line.startsWith('- ')) return <li key={i} className="ml-4 text-sm">{line.slice(2)}</li>;
-                            if (line.startsWith('* ')) return <li key={i} className="ml-4 text-sm">{line.slice(2)}</li>;
-                            if (line.trim() === '') return <br key={i} />;
-                            return <p key={i} className="text-sm leading-relaxed">{line}</p>;
-                          })}
+                        <div className="pt-4 prose prose-sm max-w-none text-gray-700">
+                          {renderMarkdownLines(note.content)}
                         </div>
 
                         {/* Admin actions */}

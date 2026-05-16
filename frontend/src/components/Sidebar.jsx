@@ -8,7 +8,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X, UsersRound,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
-  BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock,
+  BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2,
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { isCrmOnlyModuleAccess } from '../lib/moduleAccess';
@@ -21,6 +21,7 @@ const MENU_GROUPS = [
     emoji: '📊',
     items: [
       { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+      { to: '/social', icon: Share2, label: 'Bảng tin nội bộ' },
       { to: '/dashboard/divisions', icon: BarChart3, label: 'Dashboard Khối' },
       { to: '/my-tasks', icon: Inbox, label: 'Việc của tôi' },
       { to: '/settings/password', icon: Lock, label: 'Đổi mật khẩu' },
@@ -90,6 +91,7 @@ const CRM_MENU_TOP_GROUP = {
     { to: '/crm/dashboard', icon: LayoutDashboard, label: 'Dashboard CRM', end: true },
     { to: '/crm/events', icon: Calendar, label: 'Sự kiện' },
     { to: '/crm/messenger', icon: MessageCircle, label: 'Nhóm chat' },
+    { to: '/social', icon: Share2, label: 'Bảng tin nội bộ' },
     { to: '/tools/voice-recordings', icon: Mic, label: 'Cuộc gọi & ghi âm' },
   ],
 };
@@ -594,10 +596,14 @@ export default function Sidebar() {
         {!collapsed ? (
           <>
             <div className="flex items-center gap-3 px-2 py-1">
-              <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold"
-                style={{ backgroundColor: avatarColor(user?.full_name || 'User') }}>
-                {getInitials(user?.full_name || 'U')}
-              </div>
+              {user?.avatar ? (
+                <img src={user.avatar} alt="" className="w-8 h-8 rounded-full object-cover border border-white/20 shrink-0" />
+              ) : (
+                <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold"
+                  style={{ backgroundColor: avatarColor(user?.full_name || 'User') }}>
+                  {getInitials(user?.full_name || 'U')}
+                </div>
+              )}
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-medium text-white truncate">{user?.full_name}</p>
                 <p className="text-[10px] text-[var(--color-sidebar-text)] truncate">{user?.email}</p>

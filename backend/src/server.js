@@ -140,6 +140,7 @@ app.use('/api/crm', require('./routes/crm'));
 app.use('/api/trash', require('./routes/trash'));
 app.use('/api/messenger', require('./routes/messengerGroups'));
 app.use('/api/events', require('./routes/events'));
+app.use('/api/internal-social', require('./routes/internalSocial'));
 app.use('/api/release-notes', require('./routes/releaseNotes'));
 const facebookRouter = require('./routes/facebook');
 facebookRouter._ioRef = io;

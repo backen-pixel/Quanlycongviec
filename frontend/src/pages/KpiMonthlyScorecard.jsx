@@ -4,8 +4,9 @@ import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { formatVND } from '../lib/utils';
 import * as XLSX from 'xlsx';
-import { Download, RefreshCw, AlertTriangle, Trophy, Award, ChevronDown, ChevronUp, CheckCircle2, XCircle } from 'lucide-react';
+import { Download, RefreshCw, AlertTriangle, Trophy, Award, ChevronDown, ChevronUp, CheckCircle2, XCircle, Users } from 'lucide-react';
 import KpiUserFilter from '../components/KpiUserFilter';
+import { KPI_SETTINGS_ROLE_FILTER_OPTIONS } from '../lib/kpiRoleApplies';
 
 const EVENT_LABELS = {
   task_completed: 'Task hoàn thành',
@@ -150,9 +151,9 @@ function rowTone(scoreEntry) {
 
 export default function KpiMonthlyScorecard() {
   const { user } = useAuth();
-  const isManager = ['admin', 'manager', 'director', 'supervisor', 'superadmin'].includes(String(user?.role || '').toLowerCase());
+  const isManager = ['admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'administrator', 'region_admin'].includes(String(user?.role || '').toLowerCase());
   const [periodStart, setPeriodStart] = useState(getDefaultPeriodStart());
-  const [filter, setFilter] = useState({ companyId: '', departmentId: '', q: '' });
+  const [filter, setFilter] = useState({ companyId: '', departmentId: '', q: '', role: '' });
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState(null);
   const [defs, setDefs] = useState([]);
@@ -170,6 +171,7 @@ export default function KpiMonthlyScorecard() {
         ...(filter.companyId ? { company_id: filter.companyId } : {}),
         ...(filter.departmentId ? { department_id: filter.departmentId } : {}),
         ...(filter.q?.trim() ? { q: filter.q.trim() } : {}),
+        ...(filter.role ? { roles: filter.role } : {}),
       };
       const [{ data: d1 }, { data: d2 }] = await Promise.all([
         api.get('/kpi/scorecard', { params }),
@@ -266,6 +268,19 @@ export default function KpiMonthlyScorecard() {
           value={filter}
           onChange={setFilter}
         />
+        <div className="relative mt-2 max-w-md">
+          <Users className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+          <select
+            value={filter.role || ''}
+            onChange={(e) => setFilter((f) => ({ ...f, role: e.target.value }))}
+            className="w-full pl-8 pr-2 py-1.5 border rounded-lg text-sm bg-white"
+            aria-label="Lọc theo vai trò"
+          >
+            {KPI_SETTINGS_ROLE_FILTER_OPTIONS.map((o) => (
+              <option key={o.value || 'all'} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
         <div className="flex items-center justify-between gap-2 mt-3">
           <p className="text-xs text-gray-500">
             {data?.users ? `${data.users.length} nhân viên trong kết quả` : 'Lọc danh sách nhân viên hiển thị scorecard.'}

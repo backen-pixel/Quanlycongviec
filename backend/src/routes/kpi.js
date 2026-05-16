@@ -378,18 +378,20 @@ r.get('/dashboard/deal', async (req, res) => {
 
 // ─── GET /api/kpi/scorecard ──────────────────────────────────────────────────
 // Bảng 15 KPI × N nhân viên (cho cuộc họp giao ban). Manager+ only.
-// Filter: company_id, department_id, q (search tên/email), user_ids (CSV).
+// Filter: company_id, department_id, q (search tên/email), user_ids (CSV), roles (CSV — khớp GET /kpi/users).
 r.get('/scorecard', async (req, res) => {
   try {
     if (!isManager(req)) return res.status(403).json({ error: 'Chỉ manager+ xem được scorecard' });
     const { periodType, periodStart } = parsePeriod(req.query);
 
     const userIdsRaw = req.query.user_ids ? String(req.query.user_ids).split(',').filter(Boolean) : null;
+    const rolesRaw = req.query.roles ? String(req.query.roles).split(',').filter(Boolean) : null;
     const usersList = await resolveTargetUsers({
       userIds: userIdsRaw,
       companyId: req.query.company_id || null,
       departmentId: req.query.department_id || null,
       q: req.query.q || null,
+      roles: rolesRaw && rolesRaw.length ? rolesRaw : null,
     });
 
     const rows = [];
@@ -413,6 +415,7 @@ r.get('/scorecard', async (req, res) => {
         company_id: req.query.company_id || null,
         department_id: req.query.department_id || null,
         q: req.query.q || null,
+        roles: rolesRaw && rolesRaw.length ? rolesRaw : null,
       },
       users: rows.map((r) => ({
         user: r._user || { id: r.user_id },
