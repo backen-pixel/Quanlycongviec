@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { findDefaultAdminCrmCompanyPhucDat } from '../lib/crmCompanyFilter';
 import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
@@ -56,6 +57,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
   const [departments, setDepartments] = useState([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
   const [seedingNine, setSeedingNine] = useState(false);
+  const companyDefaultResolvedRef = useRef(false);
 
   const currentStages = activeTab === 'logistics' ? WORKSHOP_LOGISTICS_STAGES : WORKSHOP_PRODUCTION_STAGES;
 
@@ -79,8 +81,18 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
         api.get('/departments').catch(() => ({ data: [] })),
       ]);
       setTemplates(tplRes.data || []);
-      setCompanies(compRes.data?.companies || compRes.data || []);
+      const coList = compRes.data?.companies || compRes.data || [];
+      setCompanies(coList);
       setDepartments(deptRes.data?.departments || deptRes.data || []);
+      if (!companyDefaultResolvedRef.current) {
+        companyDefaultResolvedRef.current = true;
+        if (!selectedCompanyId) {
+          const fromUser = user?.company_id ? String(user.company_id) : '';
+          const phucDat = isAdmin ? findDefaultAdminCrmCompanyPhucDat(coList) : '';
+          const pick = fromUser || phucDat;
+          if (pick) setSelectedCompanyId(pick);
+        }
+      }
       const exp = {};
       (tplRes.data || []).forEach(t => { exp[t.id] = true; });
       setExpanded(exp);
@@ -394,7 +406,10 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
         <div>
           <h1 className="text-2xl font-bold text-gray-900">📋 Bộ nhiệm vụ mẫu xưởng</h1>
           <p className="text-sm text-gray-500">
-            {filteredTemplates.length} bộ mẫu {activeTab === 'logistics' ? 'VC & Lắp đặt' : 'Sản xuất'} — Kéo thả để sắp xếp
+            {filteredTemplates.length} bộ mẫu {activeTab === 'logistics' ? 'VC & Lắp đặt' : 'Sản xuất'} — Kéo thả để sắp xếp.
+            {activeTab === 'production' && (
+              <> Bộ này dùng khi CRM gen nhiệm vụ <code className="text-xs bg-gray-100 px-1 rounded">sx_*</code> theo công ty xưởng (vd. Phúc Đạt).</>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -520,6 +535,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
                         <TemplateCard
                           tpl={tpl} stage={stage} isDragging={isDragging}
                           dragHandleProps={dragHandleProps}
+                          fixedArea={fixedArea}
                           expanded={expanded[tpl.id]} onToggleExpand={() => setExpanded(p => ({ ...p, [tpl.id]: !p[tpl.id] }))}
                           editingTpl={editingTpl} setEditingTpl={setEditingTpl} updateTemplate={updateTemplate}
                           toggleDefault={toggleDefault} deleteTemplate={deleteTemplate}
@@ -561,7 +577,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
 
 // ═══ Template Card with drag-drop items ═══
 function TemplateCard({
-  tpl, stage, isDragging, dragHandleProps, expanded, onToggleExpand,
+  tpl, stage, isDragging, dragHandleProps, fixedArea = '', expanded, onToggleExpand,
   editingTpl, setEditingTpl, updateTemplate, toggleDefault, deleteTemplate,
   newItem, setNewItem, addItem, deleteItem,
   editingChecklist, setEditingChecklist, newCheckItem, setNewCheckItem,

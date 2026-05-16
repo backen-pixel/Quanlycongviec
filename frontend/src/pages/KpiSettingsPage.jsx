@@ -1273,9 +1273,12 @@ function PipelineKpiTab({ companyId, companies, roleFilter }) {
                 </td>
                 <td className="px-3 py-1.5 text-right">
                   <input type="number" min="0" step="1" defaultValue={s.sla_days ?? ''}
+                    title="0 = tắt SLA; trống = mặc định 7 ngày"
                     onBlur={(e) => {
-                      const v = e.target.value === '' ? null : Number(e.target.value);
-                      if (v !== s.sla_days) updateStage(s, { sla_days: v });
+                      const raw = e.target.value;
+                      const v = raw === '' ? null : Number(raw);
+                      const normalized = v === 0 ? 0 : (v == null || !Number.isFinite(v) ? null : v);
+                      if (normalized !== s.sla_days) updateStage(s, { sla_days: normalized });
                     }}
                     className="w-14 px-2 py-1 border rounded text-sm text-right" placeholder="—" />
                 </td>

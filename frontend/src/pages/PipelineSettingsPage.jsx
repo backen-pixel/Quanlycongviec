@@ -539,6 +539,7 @@ export default function PipelineSettingsPage() {
       const payload = { ...form, pipeline_type: adding, pipeline_id: selectedPipelineId };
       if (payload.default_probability === '') delete payload.default_probability;
       if (payload.sla_days === '' || payload.sla_days == null) delete payload.sla_days;
+      else payload.sla_days = Number(payload.sla_days);
       await api.post('/crm/pipeline-stages', payload);
       setAdding(null);
       load();
@@ -551,6 +552,7 @@ export default function PipelineSettingsPage() {
       const payload = { ...form };
       if (payload.default_probability === '') payload.default_probability = null;
       if (payload.sla_days === '' || payload.sla_days == null) payload.sla_days = null;
+      else payload.sla_days = Number(payload.sla_days);
       await api.put(`/crm/pipeline-stages/${editId}`, payload);
       setEditId(null);
       load();
@@ -1561,16 +1563,16 @@ function StageForm({ form, setForm, onSave, onCancel, pipelineType = 'lead', edi
           </label>
           <input
             type="number"
-            min={1}
+            min={0}
             max={365}
             value={form.sla_days ?? ''}
             onChange={(e) => setForm((f) => ({ ...f, sla_days: e.target.value }))}
             className="w-full max-w-[140px] h-8 px-3 border rounded-lg text-sm"
-            placeholder="Mặc định 7"
+            placeholder="7 hoặc 0"
           />
           <p className="text-[10px] text-gray-400 mt-1 leading-snug">
             Thời gian tối đa ở cột này, tính từ <code className="text-[9px] bg-gray-100 px-0.5 rounded">stage_entered_at</code>.
-            Ảnh hưởng màu SLA trên Kanban, trang SLA quản trị, KPI A5/A6, sổ điểm KPI. Để trống → hệ thống dùng <strong>7 ngày</strong>.
+            <strong>0</strong> = không áp dụng SLA (không màu hạn trên Kanban). Để trống → <strong>7 ngày</strong>. ≥1 = số ngày bạn nhập.
           </p>
         </div>
       )}

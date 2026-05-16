@@ -15,6 +15,7 @@
  */
 
 const { supabase } = require('../config/supabase');
+const { effectivePipelineStageSlaDays } = require('../helpers/crmPipelineSla');
 const { computeScore, SCORE_CAP_RATIO } = require('./kpiScoreFormula');
 const { responseMinutes, isUserOff } = require('./businessHours');
 const { buildProgressMap, CANONICAL_RANK } = require('./kpiPipelineRank');
@@ -266,11 +267,11 @@ async function calcA5_dealStageSlaRate({ userId, periodStart, periodEnd }) {
     .from('crm_pipeline_stages')
     .select('canonical_slug, sla_days')
     .not('canonical_slug', 'is', null)
-    .not('sla_days', 'is', null);
+    .gte('sla_days', 1);
   if (error) throw error;
   const slaMap = {};
   for (const s of stages || []) {
-    if (s.sla_days == null) continue;
+    if (s.sla_days == null || s.sla_days === 0) continue;
     if (slaMap[s.canonical_slug] == null || s.sla_days < slaMap[s.canonical_slug]) {
       slaMap[s.canonical_slug] = s.sla_days;
     }
@@ -299,10 +300,10 @@ async function calcA6_overSlaCount({ userId }) {
   const now = Date.now();
   const breaches = (leads || []).filter((l) => {
     const s = l.stage;
-    if (!s || s.is_won || s.is_lost) return false;
-    if (s.sla_days == null) return false;
-    if (!l.stage_entered_at) return false;
-    return now - new Date(l.stage_entered_at).getTime() > s.sla_days * 86400000;
+    if (!s || s.is_won || s.is_lost || !l.stage_entered_at) return false;
+    const slaDays = effectivePipelineStageSlaDays(s.sla_days);
+    if (slaDays == null) return false;
+    return now - new Date(l.stage_entered_at).getTime() > slaDays * 86400000;
   });
   return { actual: breaches.length, breakdown: { sample_count: breaches.length } };
 }

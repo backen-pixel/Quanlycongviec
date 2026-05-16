@@ -37,7 +37,10 @@ const {
   markPipelineProgressPercentColumnMissing,
   stripHandoverFields,
 } = require('../helpers/productionPipelineSchema');
-const { leadDocVisibleForModuleAndUser } = require('../helpers/documentShareScope');
+const {
+  leadDocVisibleForModuleAndUser,
+  isLeadDocSharedToWorkshop: isDocSharedToWorkshop,
+} = require('../helpers/documentShareScope');
 const { ensureDealLeadDocumentsForProjectId } = require('../helpers/ensureDealLeadDocumentsForModuleTransition');
 const { validateProductionCompanyId } = require('../helpers/productionCompanyGate');
 const { getRestrictedDivisionIdsForModule } = require('../helpers/ecosystemModuleScope');
@@ -299,28 +302,6 @@ async function loadCrmDealsSummaryForProductionProject(projectId) {
   const rank = new Map(idOrder.map((id, i) => [String(id), i]));
   rows.sort((a, b) => (rank.get(String(a.id)) ?? 999) - (rank.get(String(b.id)) ?? 999));
   return rows;
-}
-
-/**
- * Chỉ hiện tài liệu ở module xưởng khi CRM bật chia sẻ.
- * shared_to_workshop === false → đã khóa: không áp dụng heuristic/từ khóa hay cột legacy.
- * Chỉ khi cờ không phải false rõ ràng (dữ liệu cũ) mới fallback legacy.
- */
-function isDocSharedToWorkshop(doc) {
-  if (doc?.shared_to_workshop === false) return false;
-  if (doc?.shared_to_workshop === true) return true;
-  const notes = `${doc?.notes || ''} ${doc?.name || ''}`.toLowerCase();
-  return Boolean(
-    doc?.shared_to_production ||
-    doc?.allow_workshop_view ||
-    doc?.allow_production_view ||
-    doc?.is_shared ||
-    doc?.is_public ||
-    notes.includes('cho phép chia sẻ') ||
-    notes.includes('cho phep chia se') ||
-    notes.includes('chia sẻ xưởng') ||
-    notes.includes('chia se xuong')
-  );
 }
 
 const ALLOWED_WORKFLOW_STAGE_CACHE_MS = 45_000;

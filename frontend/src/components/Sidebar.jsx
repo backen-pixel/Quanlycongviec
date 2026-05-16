@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { isCrmOnlyModuleAccess } from '../lib/moduleAccess';
+import { useReleaseNotesUnread } from '../hooks/useReleaseNotesUnread';
 
 // Reorganized menu structure - 4 groups
 const MENU_GROUPS = [
@@ -210,7 +211,6 @@ const SX_MENU_GROUPS = [
       { to: '/sx/pipeline-settings', icon: Settings, label: 'Pipeline xưởng' },
       { to: '/sx/task-templates', icon: ListChecks, label: 'Bộ mẫu nhiệm vụ xưởng' },
       { to: '/sx/handover-settings', icon: UserCog, label: 'Bàn giao CRM → SX', adminOnly: true },
-      { to: '/vc/teams', icon: Users, label: 'Quản lý Đội VC' },
     ]
   },
 ];
@@ -240,7 +240,7 @@ const VC_MENU_GROUPS = [
   },
 ];
 
-function SideLink({ to, icon: Icon, label, collapsed, end }) {
+function SideLink({ to, icon: Icon, label, collapsed, end, badge }) {
   return (
     <NavLink
       to={to}
@@ -253,13 +253,29 @@ function SideLink({ to, icon: Icon, label, collapsed, end }) {
         }`
       }
     >
-      <Icon className="h-[18px] w-[18px] shrink-0" />
-      {!collapsed && <span>{label}</span>}
+      <span className="relative shrink-0">
+        <Icon className="h-[18px] w-[18px]" />
+        {badge > 0 && (
+          <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">
+            {badge > 9 ? '9+' : badge}
+          </span>
+        )}
+      </span>
+      {!collapsed && (
+        <span className="flex-1 flex items-center justify-between gap-2 min-w-0">
+          <span className="truncate">{label}</span>
+          {badge > 0 && (
+            <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+              {badge > 9 ? '9+' : badge}
+            </span>
+          )}
+        </span>
+      )}
     </NavLink>
   );
 }
 
-function MenuGroup({ group, collapsed, isAdmin, isExecutive, canAccessModule, userRole }) {
+function MenuGroup({ group, collapsed, isAdmin, isExecutive, canAccessModule, userRole, updatesUnread = 0 }) {
   const [open, setOpen] = useState(true);
 
   if (group.moduleKey && canAccessModule && !canAccessModule(group.moduleKey)) return null;
@@ -297,8 +313,13 @@ function MenuGroup({ group, collapsed, isAdmin, isExecutive, canAccessModule, us
       
       {open && (
         <nav className="space-y-0.5 px-2 mt-1">
-          {items.map(item => (
-            <SideLink key={`${group.id}-${item.to}-${item.label}`} {...item} collapsed={collapsed} />
+          {items.map((item) => (
+            <SideLink
+              key={`${group.id}-${item.to}-${item.label}`}
+              {...item}
+              collapsed={collapsed}
+              badge={item.to === '/updates' ? updatesUnread : 0}
+            />
           ))}
         </nav>
       )}
@@ -307,6 +328,7 @@ function MenuGroup({ group, collapsed, isAdmin, isExecutive, canAccessModule, us
 }
 
 export default function Sidebar() {
+  const { total: updatesUnread } = useReleaseNotesUnread();
   const [collapsed, setCollapsed] = useState(false);
   const [showAppSwitcher, setShowAppSwitcher] = useState(false);
   const [pinnedModule, setPinnedModule] = useState(() => localStorage.getItem('pinned_module') || '/crm');
@@ -553,6 +575,7 @@ export default function Sidebar() {
                 isExecutive={isExecutive}
                 canAccessModule={canAccessModule}
                 userRole={user?.role}
+                updatesUnread={updatesUnread}
               />
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto border-t border-white/10 mt-1 pt-2">
@@ -568,6 +591,7 @@ export default function Sidebar() {
                     isExecutive={isExecutive}
                     canAccessModule={canAccessModule}
                     userRole={user?.role}
+                    updatesUnread={updatesUnread}
                   />
                 );
               })}
@@ -585,6 +609,7 @@ export default function Sidebar() {
                 isExecutive={isExecutive}
                 canAccessModule={canAccessModule}
                 userRole={user?.role}
+                updatesUnread={updatesUnread}
               />
             );
           })
