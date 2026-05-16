@@ -8,6 +8,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { computeScore } = require('../src/services/kpiScoreFormula');
+const { filterDefinitionsForUserRole } = require('../src/services/kpiRoleApplies');
 
 test('increasing: actual đạt target → điểm bằng weight', () => {
   const r = computeScore({ formula_type: 'increasing', actual: 90, target: 90, weight: 15 });
@@ -93,4 +94,41 @@ test('tổng weight 15 KPI definitions = 100 (sanity)', () => {
   };
   const total = Object.values(weights).reduce((s, w) => s + w, 0);
   assert.equal(total, 100);
+});
+
+const MOCK_DEFS = [
+  { code: 'A1', applies_to: 'sales_all' },
+  { code: 'B2', applies_to: 'sales' },
+  { code: 'B1', applies_to: 'sales_admin' },
+  { code: 'B4', applies_to: 'deal' },
+  { code: 'C4', applies_to: 'all' },
+];
+
+test('filterDefinitionsForUserRole: sales_admin không gồm deal-only', () => {
+  const out = filterDefinitionsForUserRole(MOCK_DEFS, 'sales_admin');
+  const codes = new Set(out.map((d) => d.code));
+  assert.ok(codes.has('A1') && codes.has('B1') && codes.has('C4'));
+  assert.ok(!codes.has('B4') && !codes.has('B2'));
+});
+
+test('filterDefinitionsForUserRole: sales gồm sales + deal + sales_all + all', () => {
+  const out = filterDefinitionsForUserRole(MOCK_DEFS, 'sales');
+  const codes = new Set(out.map((d) => d.code));
+  assert.deepEqual([...codes].sort(), ['A1', 'B2', 'B4', 'C4']);
+});
+
+test('filterDefinitionsForUserRole: customer_care cùng bộ pipeline với sales', () => {
+  const out = filterDefinitionsForUserRole(MOCK_DEFS, 'customer_care');
+  const codes = new Set(out.map((d) => d.code));
+  assert.deepEqual([...codes].sort(), ['A1', 'B2', 'B4', 'C4']);
+});
+
+test('filterDefinitionsForUserRole: region_admin không lọc (đủ bộ)', () => {
+  const out = filterDefinitionsForUserRole(MOCK_DEFS, 'region_admin');
+  assert.equal(out.length, MOCK_DEFS.length);
+});
+
+test('filterDefinitionsForUserRole: admin không lọc', () => {
+  const out = filterDefinitionsForUserRole(MOCK_DEFS, 'admin');
+  assert.equal(out.length, MOCK_DEFS.length);
 });

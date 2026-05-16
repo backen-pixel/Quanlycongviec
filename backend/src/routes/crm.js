@@ -4147,20 +4147,21 @@ function parseCrmLeadsPageRpc(raw) {
 
 /**
  * Gắn `crm_next_open_task_deadline`: trong các nhiệm vụ CRM đang mở (pending/in_progress)
- * **có gán deadline** (`deadline` not null), lấy deadline **sớm nhất** — Kanban tô màu chỉ theo giá trị này khi có;
- * lead/deal không có NV như vậy thì frontend vẫn dùng SLA cột.
+ * **có gán deadline** (`deadline` not null), lấy deadline của nhiệm vụ **mới nhất** (theo `created_at`, hòa `id`);
+ * Kanban dùng hạn này thay SLA cột khi có; không có NV có hẹn thì frontend dùng SLA cột.
  */
 async function attachCrmNextOpenTaskDeadline(rows) {
   const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
   if (list.length === 0) return [];
-  const byLeadMinTs = new Map();
+  /** lead_id → { createdMs, idNum, deadlineTs } */
+  const byLeadBest = new Map();
   const chunkSize = 400;
   for (let i = 0; i < list.length; i += chunkSize) {
     const chunk = list.slice(i, i + chunkSize).map((r) => String(r.id)).filter(Boolean);
     if (chunk.length === 0) continue;
     const { data, error } = await supabase
       .from('crm_tasks')
-      .select('lead_id, deadline')
+      .select('id, lead_id, deadline, created_at')
       .in('lead_id', chunk)
       .in('status', ['pending', 'in_progress'])
       .not('deadline', 'is', null);
@@ -4170,14 +4171,22 @@ async function attachCrmNextOpenTaskDeadline(rows) {
     }
     for (const t of data || []) {
       const lid = String(t.lead_id);
-      const ts = new Date(t.deadline).getTime();
-      if (Number.isNaN(ts)) continue;
-      const prev = byLeadMinTs.get(lid);
-      if (prev == null || ts < prev) byLeadMinTs.set(lid, ts);
+      const deadlineTs = new Date(t.deadline).getTime();
+      if (Number.isNaN(deadlineTs)) continue;
+      const createdMs = new Date(t.created_at || 0).getTime();
+      const idNum = Number(t.id);
+      const safeId = Number.isFinite(idNum) ? idNum : 0;
+      const prev = byLeadBest.get(lid);
+      const newer =
+        !prev ||
+        createdMs > prev.createdMs ||
+        (createdMs === prev.createdMs && safeId > prev.idNum);
+      if (newer) byLeadBest.set(lid, { createdMs, idNum: safeId, deadlineTs });
     }
   }
   return list.map((row) => {
-    const ts = byLeadMinTs.get(String(row.id));
+    const best = byLeadBest.get(String(row.id));
+    const ts = best?.deadlineTs;
     return {
       ...row,
       crm_next_open_task_deadline: ts != null ? new Date(ts).toISOString() : null,
@@ -11606,6 +11615,669 @@ r.delete('/leads/:id/care-mark', async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     console.error('DELETE /crm/leads/:id/care-mark:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// CRM DEADLINE CONFIG (theo công ty) — phục vụ view "Deadline"
+// ════════════════════════════════════════════════════════════════════════════
+
+const DEFAULT_DEADLINE_BUCKETS = {
+  overdue:     { enabled: true, label: 'Quá hạn' },
+  today:       { enabled: true, label: 'Hôm nay' },
+  this_week:   { enabled: true, label: 'Tuần này' },
+  next_week:   { enabled: true, label: 'Tuần sau' },
+  in_2_weeks:  { enabled: true, label: 'Trong 2 tuần', days: 14 },
+  in_3_weeks:  { enabled: true, label: 'Trong 3 tuần', days: 21 },
+  in_4_weeks:  { enabled: true, label: 'Trong 4 tuần', days: 28 },
+  in_1_month:  { enabled: true, label: 'Trong 1 tháng', days: 30 },
+  next_month:  { enabled: true, label: 'Tháng sau' },
+  no_deadline: { enabled: true, label: 'Không hạn' },
+};
+
+const ALLOWED_DEADLINE_FIELDS = new Set(['expected_close_date', 'crm_next_open_task_deadline']);
+
+function buildDefaultDeadlineConfig(companyId) {
+  return {
+    company_id: companyId || null,
+    primary_field: 'crm_next_open_task_deadline',
+    fallback_field: 'expected_close_date',
+    buckets: { ...DEFAULT_DEADLINE_BUCKETS },
+    updated_at: null,
+  };
+}
+
+// GET /crm/settings/deadline-config?company_id=… → cấu hình deadline; trả mặc định nếu chưa có.
+r.get('/settings/deadline-config', async (req, res) => {
+  try {
+    const companyId = String(req.query.company_id || req.user?.company_id || '').trim();
+    if (!companyId) return res.json(buildDefaultDeadlineConfig(null));
+    const { data, error } = await supabase
+      .from('crm_company_deadline_config')
+      .select('*')
+      .eq('company_id', companyId)
+      .maybeSingle();
+    if (error && !String(error.message || '').toLowerCase().includes('crm_company_deadline_config')) {
+      throw error;
+    }
+    if (!data) return res.json(buildDefaultDeadlineConfig(companyId));
+    res.json({
+      company_id: data.company_id,
+      primary_field: data.primary_field,
+      fallback_field: data.fallback_field,
+      buckets: { ...DEFAULT_DEADLINE_BUCKETS, ...(data.buckets || {}) },
+      updated_at: data.updated_at,
+    });
+  } catch (e) {
+    console.error('GET /crm/settings/deadline-config:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+// PUT /crm/settings/deadline-config → upsert. Chỉ admin công ty hoặc system admin.
+r.put('/settings/deadline-config', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const body = req.body || {};
+    const companyId = String(body.company_id || req.user?.company_id || '').trim();
+    if (!companyId) return res.status(400).json({ error: 'company_id bắt buộc' });
+
+    const role = req.user?.role;
+    const isSysAdmin = isCrmSystemAdminUser(role);
+    const isCompanyAdmin = isCrmCompanyAdminUser(role);
+    if (!isSysAdmin && !(isCompanyAdmin && String(req.user?.company_id || '') === companyId)) {
+      return res.status(403).json({ error: 'Không có quyền chỉnh cấu hình công ty này' });
+    }
+
+    const primary = ALLOWED_DEADLINE_FIELDS.has(body.primary_field) ? body.primary_field : 'crm_next_open_task_deadline';
+    let fallback = body.fallback_field;
+    if (fallback === '' || fallback === undefined) fallback = null;
+    if (fallback != null && !ALLOWED_DEADLINE_FIELDS.has(fallback)) fallback = null;
+    if (fallback === primary) fallback = null;
+
+    const incomingBuckets = (body.buckets && typeof body.buckets === 'object') ? body.buckets : {};
+    const buckets = {};
+    Object.keys(DEFAULT_DEADLINE_BUCKETS).forEach((key) => {
+      const def = DEFAULT_DEADLINE_BUCKETS[key];
+      const cur = incomingBuckets[key] || {};
+      const cfg = {
+        enabled: cur.enabled != null ? !!cur.enabled : def.enabled,
+        label: typeof cur.label === 'string' && cur.label.trim() ? cur.label.trim() : def.label,
+      };
+      if (def.days != null) {
+        const d = Number(cur.days);
+        cfg.days = Number.isFinite(d) && d > 0 ? Math.round(d) : def.days;
+      }
+      buckets[key] = cfg;
+    });
+
+    const payload = {
+      company_id: companyId,
+      primary_field: primary,
+      fallback_field: fallback,
+      buckets,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase
+      .from('crm_company_deadline_config')
+      .upsert(payload, { onConflict: 'company_id' })
+      .select('*')
+      .single();
+    if (error) {
+      if (String(error.message || '').toLowerCase().includes('crm_company_deadline_config')) {
+        return res.status(500).json({
+          error: 'Bảng crm_company_deadline_config chưa được tạo. Hãy chạy migration database/169_crm_company_deadline_config.sql.',
+        });
+      }
+      throw error;
+    }
+    res.json({
+      company_id: data.company_id,
+      primary_field: data.primary_field,
+      fallback_field: data.fallback_field,
+      buckets: { ...DEFAULT_DEADLINE_BUCKETS, ...(data.buckets || {}) },
+      updated_at: data.updated_at,
+    });
+  } catch (e) {
+    console.error('PUT /crm/settings/deadline-config:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// CRM PLANNER CÁ NHÂN — user tự tạo cột & kéo-thả lead/deal vào
+// ════════════════════════════════════════════════════════════════════════════
+
+function plannerTableMissing(error) {
+  const msg = String(error?.message || '').toLowerCase();
+  return msg.includes('crm_user_planner_columns') || msg.includes('crm_user_planner_items');
+}
+
+// GET /crm/planner/me → toàn bộ columns + items của user hiện tại
+r.get('/planner/me', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { data: cols, error: colErr } = await supabase
+      .from('crm_user_planner_columns')
+      .select('*')
+      .eq('user_id', userId)
+      .order('position', { ascending: true })
+      .order('id', { ascending: true });
+    if (colErr) {
+      if (plannerTableMissing(colErr)) return res.json({ columns: [], items: [] });
+      throw colErr;
+    }
+
+    const columnIds = (cols || []).map((c) => c.id);
+    let items = [];
+    if (columnIds.length) {
+      const { data: itemRows, error: itemErr } = await supabase
+        .from('crm_user_planner_items')
+        .select('id, column_id, lead_id, position, added_at')
+        .in('column_id', columnIds)
+        .order('position', { ascending: true })
+        .order('id', { ascending: true });
+      if (itemErr && !plannerTableMissing(itemErr)) throw itemErr;
+      items = itemRows || [];
+    }
+
+    res.json({ columns: cols || [], items });
+  } catch (e) {
+    console.error('GET /crm/planner/me:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+// POST /crm/planner/columns → tạo cột mới
+r.post('/planner/columns', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const name = String(req.body?.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'Tên cột bắt buộc' });
+    const color = req.body?.color || null;
+    const companyId = (req.body?.company_id || req.user?.company_id || null) || null;
+
+    const { data: maxRow } = await supabase
+      .from('crm_user_planner_columns')
+      .select('position')
+      .eq('user_id', userId)
+      .order('position', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const nextPos = (maxRow?.position ?? -1) + 1;
+
+    const { data, error } = await supabase
+      .from('crm_user_planner_columns')
+      .insert({ user_id: userId, company_id: companyId, name, color, position: nextPos })
+      .select('*')
+      .single();
+    if (error) {
+      if (plannerTableMissing(error)) {
+        return res.status(500).json({
+          error: 'Bảng planner chưa được tạo. Hãy chạy migration database/170_crm_user_planner.sql.',
+        });
+      }
+      throw error;
+    }
+    res.json(data);
+  } catch (e) {
+    console.error('POST /crm/planner/columns:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+// PATCH /crm/planner/columns/:id → đổi tên / màu / vị trí
+r.patch('/planner/columns/:id', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const id = Number(req.params.id);
+    const patch = {};
+    if (typeof req.body?.name === 'string' && req.body.name.trim()) patch.name = req.body.name.trim();
+    if (req.body?.color !== undefined) patch.color = req.body.color || null;
+    if (req.body?.position !== undefined) patch.position = Number(req.body.position) || 0;
+    patch.updated_at = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('crm_user_planner_columns')
+      .update(patch)
+      .eq('id', id)
+      .eq('user_id', userId)
+      .select('*')
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('PATCH /crm/planner/columns/:id:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+// DELETE /crm/planner/columns/:id → xóa cột (cascade xóa items)
+r.delete('/planner/columns/:id', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const id = Number(req.params.id);
+    const { error } = await supabase
+      .from('crm_user_planner_columns')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', userId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('DELETE /crm/planner/columns/:id:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+// POST /crm/planner/columns/:id/items → thêm lead vào cột (id cuối)
+r.post('/planner/columns/:id/items', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const columnId = Number(req.params.id);
+    const leadIds = Array.isArray(req.body?.lead_ids)
+      ? req.body.lead_ids.map((v) => String(v || '').trim()).filter(Boolean)
+      : (req.body?.lead_id ? [String(req.body.lead_id).trim()] : []);
+    if (!leadIds.length) return res.status(400).json({ error: 'lead_id bắt buộc' });
+
+    const { data: col } = await supabase
+      .from('crm_user_planner_columns')
+      .select('id')
+      .eq('id', columnId)
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (!col) return res.status(404).json({ error: 'Không tìm thấy cột' });
+
+    const { data: maxRow } = await supabase
+      .from('crm_user_planner_items')
+      .select('position')
+      .eq('column_id', columnId)
+      .order('position', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    let nextPos = (maxRow?.position ?? -1) + 1;
+
+    const rows = leadIds.map((lid) => ({ column_id: columnId, lead_id: lid, position: nextPos++ }));
+    const { data, error } = await supabase
+      .from('crm_user_planner_items')
+      .upsert(rows, { onConflict: 'column_id,lead_id', ignoreDuplicates: true })
+      .select('*');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('POST /crm/planner/columns/:id/items:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+// POST /crm/planner/reorder → batch lưu thứ tự khi kéo-thả
+// body: { items: [{ id, column_id, position }, ...] }
+r.post('/planner/reorder', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    if (!items.length) return res.json({ ok: true });
+
+    const { data: myCols } = await supabase
+      .from('crm_user_planner_columns')
+      .select('id')
+      .eq('user_id', userId);
+    const allowed = new Set((myCols || []).map((c) => Number(c.id)));
+
+    for (const it of items) {
+      const id = Number(it.id);
+      const columnId = Number(it.column_id);
+      const position = Number(it.position) || 0;
+      if (!id || !columnId || !allowed.has(columnId)) continue;
+      await supabase
+        .from('crm_user_planner_items')
+        .update({ column_id: columnId, position })
+        .eq('id', id);
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('POST /crm/planner/reorder:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+// DELETE /crm/planner/items/:id → bỏ lead khỏi cột
+r.delete('/planner/items/:id', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const id = Number(req.params.id);
+    const { data: row } = await supabase
+      .from('crm_user_planner_items')
+      .select('id, column:crm_user_planner_columns!inner(user_id)')
+      .eq('id', id)
+      .maybeSingle();
+    if (!row || String(row.column?.user_id || '') !== String(userId || '')) {
+      return res.status(404).json({ error: 'Không tìm thấy' });
+    }
+    const { error } = await supabase
+      .from('crm_user_planner_items')
+      .delete()
+      .eq('id', id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('DELETE /crm/planner/items/:id:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// CRM LEAD COMMENTS — bình luận dùng chung cho lead/deal
+// ════════════════════════════════════════════════════════════════════════════
+
+function commentsTableMissing(error) {
+  return String(error?.message || '').toLowerCase().includes('crm_lead_comments');
+}
+
+function reactionsTableMissing(error) {
+  return String(error?.message || '').toLowerCase().includes('crm_lead_comment_reactions');
+}
+
+/** Emoji được phép (thả cảm xúc) — đồng bộ với frontend CRM_COMMENT_REACTION_PICKER */
+const CRM_COMMENT_ALLOWED_REACTION_EMOJI = new Set(['👍', '❤️', '😂', '😮', '😢', '🙏']);
+
+function aggregateCrmCommentReactions(rows, currentUserId) {
+  const counts = new Map();
+  let mine = null;
+  for (const r of rows || []) {
+    const em = r.emoji;
+    if (!CRM_COMMENT_ALLOWED_REACTION_EMOJI.has(em)) continue;
+    counts.set(em, (counts.get(em) || 0) + 1);
+    if (String(r.user_id) === String(currentUserId)) mine = em;
+  }
+  const summary = [...counts.entries()]
+    .map(([emoji, count]) => ({ emoji, count }))
+    .sort((a, b) => b.count - a.count || String(a.emoji).localeCompare(String(b.emoji)));
+  return { summary, mine };
+}
+
+async function fetchCrmCommentReactionsAggregate(supabase, commentIds, userId) {
+  if (!commentIds.length) return new Map();
+  const { data: rx, error: rxErr } = await supabase
+    .from('crm_lead_comment_reactions')
+    .select('comment_id, user_id, emoji')
+    .in('comment_id', commentIds);
+  if (rxErr) {
+    if (reactionsTableMissing(rxErr)) return null;
+    throw rxErr;
+  }
+  const byComment = new Map();
+  for (const row of rx || []) {
+    const k = row.comment_id;
+    if (!byComment.has(k)) byComment.set(k, []);
+    byComment.get(k).push(row);
+  }
+  const out = new Map();
+  for (const cid of commentIds) {
+    out.set(cid, aggregateCrmCommentReactions(byComment.get(cid) || [], userId));
+  }
+  return out;
+}
+
+// GET /crm/leads/:id/comments → list bình luận của một lead
+r.get('/leads/:id/comments', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const leadId = String(req.params.id || '').trim();
+    const { data, error } = await supabase
+      .from('crm_lead_comments')
+      .select('id, lead_id, user_id, parent_id, body, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
+      .eq('lead_id', leadId)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: true });
+    if (error) {
+      if (commentsTableMissing(error)) return res.json([]);
+      throw error;
+    }
+    const list = data || [];
+    if (!list.length) return res.json([]);
+    const ids = list.map((c) => c.id);
+    let rxMap = await fetchCrmCommentReactionsAggregate(supabase, ids, userId);
+    if (rxMap == null) {
+      rxMap = new Map();
+      for (const id of ids) rxMap.set(id, { summary: [], mine: null });
+    }
+    const out = list.map((c) => ({
+      ...c,
+      reactions: rxMap.get(c.id) || { summary: [], mine: null },
+    }));
+    res.json(out);
+  } catch (e) {
+    console.error('GET /crm/leads/:id/comments:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+// POST /crm/leads/:id/comments → thêm bình luận
+r.post('/leads/:id/comments', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const leadId = String(req.params.id || '').trim();
+    const body = String(req.body?.body || '').trim();
+    if (!body) return res.status(400).json({ error: 'Nội dung bắt buộc' });
+
+    let parentId = null;
+    const parentRaw = req.body?.parent_id;
+    if (parentRaw != null && parentRaw !== '') {
+      const n = Number(parentRaw);
+      if (!Number.isFinite(n) || n <= 0) return res.status(400).json({ error: 'parent_id không hợp lệ' });
+      const { data: parentRow, error: pErr } = await supabase
+        .from('crm_lead_comments')
+        .select('id, lead_id')
+        .eq('id', n)
+        .is('deleted_at', null)
+        .maybeSingle();
+      if (pErr) throw pErr;
+      if (!parentRow) return res.status(400).json({ error: 'Bình luận cần trả lời không tồn tại' });
+      if (String(parentRow.lead_id) !== leadId) return res.status(400).json({ error: 'Không trùng lead/deal' });
+      parentId = n;
+    }
+
+    const { data, error } = await supabase
+      .from('crm_lead_comments')
+      .insert({ lead_id: leadId, user_id: userId, body, parent_id: parentId })
+      .select('id, lead_id, user_id, parent_id, body, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
+      .single();
+    if (error) {
+      if (commentsTableMissing(error)) {
+        return res.status(500).json({
+          error: 'Bảng crm_lead_comments chưa được tạo. Hãy chạy migration database/171_crm_lead_comments.sql.',
+        });
+      }
+      throw error;
+    }
+    res.json({ ...data, reactions: { summary: [], mine: null } });
+  } catch (e) {
+    console.error('POST /crm/leads/:id/comments:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+// PATCH /crm/lead-comments/:cid → sửa bình luận (chỉ chủ sở hữu)
+r.patch('/lead-comments/:cid', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const cid = Number(req.params.cid);
+    const body = String(req.body?.body || '').trim();
+    if (!body) return res.status(400).json({ error: 'Nội dung bắt buộc' });
+    const { data, error } = await supabase
+      .from('crm_lead_comments')
+      .update({ body, updated_at: new Date().toISOString() })
+      .eq('id', cid)
+      .eq('user_id', userId)
+      .is('deleted_at', null)
+      .select('id, lead_id, user_id, parent_id, body, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
+      .single();
+    if (error) throw error;
+    const rxMap = await fetchCrmCommentReactionsAggregate(supabase, [cid], userId);
+    const reactions = rxMap == null ? { summary: [], mine: null } : rxMap.get(cid) || { summary: [], mine: null };
+    res.json({ ...data, reactions });
+  } catch (e) {
+    console.error('PATCH /crm/lead-comments/:cid:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+// PUT /crm/lead-comments/:cid/reaction → thả / đổi / bỏ cảm xúc (1 emoji / user / bình luận)
+r.put('/lead-comments/:cid/reaction', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const cid = Number(req.params.cid);
+    if (!Number.isFinite(cid) || cid <= 0) return res.status(400).json({ error: 'id bình luận không hợp lệ' });
+
+    const { data: com, error: cErr } = await supabase
+      .from('crm_lead_comments')
+      .select('id')
+      .eq('id', cid)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (cErr) throw cErr;
+    if (!com) return res.status(404).json({ error: 'Không tìm thấy bình luận' });
+
+    const raw = req.body?.emoji;
+    const emoji = raw == null || raw === '' ? null : String(raw).trim();
+
+    const delMine = async () => {
+      const { error: dErr } = await supabase
+        .from('crm_lead_comment_reactions')
+        .delete()
+        .eq('comment_id', cid)
+        .eq('user_id', userId);
+      if (dErr) {
+        if (reactionsTableMissing(dErr)) {
+          return res.status(503).json({
+            error: 'Bảng cảm xúc chưa có. Chạy migration database/173_crm_lead_comment_reactions.sql.',
+          });
+        }
+        throw dErr;
+      }
+    };
+
+    if (!emoji) {
+      await delMine();
+      const rxMap = await fetchCrmCommentReactionsAggregate(supabase, [cid], userId);
+      return res.json(rxMap == null ? { summary: [], mine: null } : rxMap.get(cid) || { summary: [], mine: null });
+    }
+    if (!CRM_COMMENT_ALLOWED_REACTION_EMOJI.has(emoji)) {
+      return res.status(400).json({ error: 'Cảm xúc không hợp lệ' });
+    }
+
+    const { data: existingRow, error: exErr } = await supabase
+      .from('crm_lead_comment_reactions')
+      .select('emoji')
+      .eq('comment_id', cid)
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (exErr) {
+      if (reactionsTableMissing(exErr)) {
+        return res.status(503).json({
+          error: 'Bảng cảm xúc chưa có. Chạy migration database/173_crm_lead_comment_reactions.sql.',
+        });
+      }
+      throw exErr;
+    }
+    if (existingRow && existingRow.emoji === emoji) {
+      await delMine();
+    } else {
+      const { error: upErr } = await supabase.from('crm_lead_comment_reactions').upsert(
+        { comment_id: cid, user_id: userId, emoji },
+        { onConflict: 'comment_id,user_id' },
+      );
+      if (upErr) {
+        if (reactionsTableMissing(upErr)) {
+          return res.status(503).json({
+            error: 'Bảng cảm xúc chưa có. Chạy migration database/173_crm_lead_comment_reactions.sql.',
+          });
+        }
+        throw upErr;
+      }
+    }
+
+    const rxMap = await fetchCrmCommentReactionsAggregate(supabase, [cid], userId);
+    if (rxMap == null) return res.json({ summary: [], mine: null });
+    res.json(rxMap.get(cid) || { summary: [], mine: null });
+  } catch (e) {
+    console.error('PUT /crm/lead-comments/:cid/reaction:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+// DELETE /crm/lead-comments/:cid → xóa mềm (chỉ chủ sở hữu hoặc admin)
+r.delete('/lead-comments/:cid', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const cid = Number(req.params.cid);
+    const isAdmin = isCrmSystemAdminUser(req.user?.role) || isCrmCompanyAdminUser(req.user?.role);
+    let q = supabase
+      .from('crm_lead_comments')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', cid);
+    if (!isAdmin) q = q.eq('user_id', userId);
+    const { error } = await q;
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('DELETE /crm/lead-comments/:cid:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+// GET /crm/lead-comments/index?lead_ids=… → Map { lead_id → {count,last_at,last_user_id} }
+r.get('/lead-comments/index', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const raw = String(req.query.lead_ids || '').trim();
+    let leadIds = raw
+      ? raw.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+    let q = supabase
+      .from('crm_lead_comments')
+      .select('lead_id, user_id, created_at')
+      .is('deleted_at', null);
+    if (leadIds.length) q = q.in('lead_id', leadIds);
+    // Bảo vệ: nếu không truyền lead_ids, giới hạn 5000 dòng gần nhất để tránh tải nặng.
+    if (!leadIds.length) q = q.order('created_at', { ascending: false }).limit(5000);
+    const { data, error } = await q;
+    if (error) {
+      if (commentsTableMissing(error)) return res.json({});
+      throw error;
+    }
+    const out = {};
+    (data || []).forEach((row) => {
+      const lid = String(row.lead_id);
+      const cur = out[lid] || { count: 0, last_at: null, last_user_id: null };
+      cur.count += 1;
+      const ts = row.created_at;
+      if (!cur.last_at || (ts && ts > cur.last_at)) {
+        cur.last_at = ts;
+        cur.last_user_id = row.user_id;
+      }
+      out[lid] = cur;
+    });
+    res.json(out);
+  } catch (e) {
+    console.error('GET /crm/lead-comments/index:', e);
     res.status(500).json({ error: e.message || 'Lỗi server' });
   }
 });

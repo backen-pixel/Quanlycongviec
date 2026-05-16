@@ -1,7 +1,7 @@
 /**
  * KPI nightly recompute: chạy mỗi 24h vào ~01:00 sáng giờ máy chủ.
  *
- *   - Recompute KPI tháng hiện tại cho mọi user có role sales/manager.
+ *   - Recompute KPI tháng hiện tại cho user có role trong KPI_RECOMPUTE_USER_ROLES_DEFAULT.
  *   - Trong 3 ngày đầu mỗi tháng, recompute thêm KPI tháng trước (cho phép chốt số trễ).
  *
  * Tích hợp vào server.js bằng require('./jobs/kpiNightly').start().
@@ -9,6 +9,7 @@
  */
 const { supabase } = require('../config/supabase');
 const { computeAndStoreForUser } = require('../services/kpiCalculator');
+const { KPI_RECOMPUTE_USER_ROLES_DEFAULT } = require('../services/kpiRoleApplies');
 
 const HOUR_MS = 3600 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -36,7 +37,7 @@ async function runOnce() {
     const { data: users, error } = await supabase
       .from('users')
       .select('id, role, company_id')
-      .in('role', ['sales', 'manager']);
+      .in('role', KPI_RECOMPUTE_USER_ROLES_DEFAULT);
     if (error) throw error;
 
     const now = new Date();

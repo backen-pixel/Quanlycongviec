@@ -10,8 +10,9 @@ import {
   FileText, ShoppingCart, Receipt, ArrowRight, Eye, Percent, GripVertical,
   Zap, CheckCircle2, TrendingDown, AlertTriangle, Building2, Rocket, Pin,
   Clock, List, LayoutGrid, GitMerge, UserCheck, Trash2, CheckSquare, BarChart3,
+  MessageSquare,
 } from 'lucide-react';
-import { ListView, PlannerView } from '../components/CRMViews';
+import { ListView, PlannerView, DeadlineView, CommentsView } from '../components/CRMViews';
 import EmployeePicker from '../components/EmployeePicker';
 import {
   loadCrmPipelineSnapshot,
@@ -34,6 +35,7 @@ import { isCrmCompanyAdmin } from '../lib/crmAdminScope';
 import { buildKpiLedgerMonthTooltipHint } from '../lib/kpiPersonalLedgerHints';
 import DealStageEventModal from '../components/DealStageEventModal';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
+import { FbCrmCommentComposer } from '../components/crmFbCommentUi';
 
 const LEAD_PRIORITY_COLORS = { high: 'bg-red-100 text-red-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-600' };
 
@@ -219,7 +221,7 @@ function getPipelineStageSlaTone(stageEnteredAt, stage) {
   return { level: 'ok', remainingMs, deadlineTs };
 }
 
-/** Nhiệm vụ CRM có deadline (API `crm_next_open_task_deadline`): ngưỡng màu giống SLA cột — đỏ / cam / vàng / trắng. */
+/** Deadline NV CRM mở mới nhất có hẹn (API `crm_next_open_task_deadline`) — ngưỡng màu giống SLA cột. */
 function getCrmOpenTaskDeadlineTone(deadlineIso) {
   if (deadlineIso == null || deadlineIso === '') return null;
   const deadlineTs = new Date(deadlineIso).getTime();
@@ -499,8 +501,12 @@ export default function CRMDashboard() {
   const [lastSyncAt, setLastSyncAt] = useState(null);
   const [viewMode, setViewMode] = useState(() => {
     const v = P?.viewMode;
-    return ['kanban', 'list', 'planner', 'calendar'].includes(v) ? v : 'kanban';
+    return ['kanban', 'list', 'planner', 'deadline', 'comments', 'calendar'].includes(v) ? v : 'kanban';
   });
+  /** Cấu hình deadline theo công ty (cho view "Deadline") */
+  const [deadlineConfig, setDeadlineConfig] = useState(null);
+  /** Map { lead_id → {count,last_at,last_user_id} } cho view "Bình luận" */
+  const [commentsIndex, setCommentsIndex] = useState({});
   /** Chọn thẻ Kanban để gộp thủ công (không dùng quét trùng) */
   const [manualMergeIds, setManualMergeIds] = useState([]);
   const [manualMergeModalOpen, setManualMergeModalOpen] = useState(false);
@@ -510,6 +516,10 @@ export default function CRMDashboard() {
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkDeleteModalOpen, setBulkDeleteModalOpen] = useState(false);
   const [bulkDeleteReason, setBulkDeleteReason] = useState('');
+  /** Bình luận nhanh từ thẻ Kanban */
+  const [kanbanCommentItem, setKanbanCommentItem] = useState(null);
+  const [kanbanCommentBody, setKanbanCommentBody] = useState('');
+  const [kanbanCommentPosting, setKanbanCommentPosting] = useState(false);
   /** Deal pipeline: mở popup chọn giờ rồi POST /events sau PATCH stage (bật theo từng pipeline tại Cài đặt pipeline) */
   const [dealKanbanEventCtx, setDealKanbanEventCtx] = useState(null);
   const [dealKanbanEventBusy, setDealKanbanEventBusy] = useState(false);
@@ -579,6 +589,29 @@ export default function CRMDashboard() {
     });
   }, []);
 
+  const submitKanbanQuickComment = useCallback(async () => {
+    const v = kanbanCommentBody.trim();
+    const it = kanbanCommentItem;
+    if (!v || !it) return;
+    setKanbanCommentPosting(true);
+    try {
+      await api.post(`/crm/leads/${it.id}/comments`, { body: v });
+      setKanbanCommentItem(null);
+      setKanbanCommentBody('');
+      setCommentsIndex((prev) => ({
+        ...prev,
+        [String(it.id)]: {
+          count: (prev[String(it.id)]?.count || 0) + 1,
+          last_at: new Date().toISOString(),
+          last_user_id: user?.id ?? null,
+        },
+      }));
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Lỗi gửi bình luận');
+    }
+    setKanbanCommentPosting(false);
+  }, [kanbanCommentBody, kanbanCommentItem, user?.id]);
+
   const bulkDeleteSelected = useCallback(() => {
     const ids = [...new Set((manualMergeIds || []).map((x) => String(x)).filter(Boolean))];
     if (!ids.length) return;
@@ -609,6 +642,13 @@ export default function CRMDashboard() {
     setManualMergeIds([]);
     setBulkStageTarget('');
   }, [pipelineType]);
+
+  useEffect(() => {
+    if (viewMode !== 'kanban' && viewMode !== 'deadline') {
+      setManualMergeIds([]);
+      setBulkStageTarget('');
+    }
+  }, [viewMode]);
 
   const itemsByIdForMerge = useMemo(() => {
     const m = {};
@@ -770,6 +810,32 @@ export default function CRMDashboard() {
   useEffect(() => {
     void load({ silent: true });
   }, [filterPhone, customDateFrom, customDateTo, kanbanLoadLimit, filterAssignee, filterCompany, filterLeadType]);
+
+  // Khi mở view "Bình luận": tải comments-index cho toàn bộ lead/deal đang hiển thị
+  useEffect(() => {
+    if (viewMode !== 'comments') return;
+    const all = pipelineType === 'lead' ? (allLeads || []) : (allDeals || []);
+    const ids = all.map(x => x.id).filter(Boolean);
+    if (!ids.length) { setCommentsIndex({}); return; }
+    let cancelled = false;
+    const chunk = ids.slice(0, 2000);
+    api.get(`/crm/lead-comments/index?lead_ids=${chunk.join(',')}`)
+      .then(r => { if (!cancelled) setCommentsIndex(r.data || {}); })
+      .catch(() => { if (!cancelled) setCommentsIndex({}); });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, pipelineType, allLeads, allDeals]);
+
+  // Cấu hình deadline theo công ty (cho view "Deadline")
+  useEffect(() => {
+    const companyId = filterCompany || user?.company_id;
+    if (!companyId) { setDeadlineConfig(null); return; }
+    let cancelled = false;
+    api.get(`/crm/settings/deadline-config?company_id=${companyId}`)
+      .then(r => { if (!cancelled) setDeadlineConfig(r.data || null); })
+      .catch(() => { if (!cancelled) setDeadlineConfig(null); });
+    return () => { cancelled = true; };
+  }, [filterCompany, user?.company_id]);
 
   // Admin: công ty đang lọc không còn trong danh sách (sau giới hạn khối theo module CRM) → bỏ lọc
   useEffect(() => {
@@ -1261,7 +1327,7 @@ export default function CRMDashboard() {
   const showNoPipelineMainViews = useMemo(
     () =>
       companyHasNoPipeline &&
-      (viewMode === 'kanban' || viewMode === 'list' || viewMode === 'planner'),
+      (viewMode === 'kanban' || viewMode === 'list' || viewMode === 'planner' || viewMode === 'deadline' || viewMode === 'comments'),
     [companyHasNoPipeline, viewMode],
   );
 
@@ -3026,6 +3092,8 @@ export default function CRMDashboard() {
           { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
           { id: 'list', icon: List, label: 'Danh sách' },
           { id: 'planner', icon: Users, label: 'Planner' },
+          { id: 'deadline', icon: Clock, label: 'Deadline' },
+          { id: 'comments', icon: MessageSquare, label: 'Bình luận' },
           { id: 'calendar', icon: Calendar, label: 'Lịch' },
         ].map(v => (
           <button key={v.id} onClick={() => setViewMode(v.id)}
@@ -3064,7 +3132,7 @@ export default function CRMDashboard() {
         </div>
       ) : (
         <>
-          {viewMode === 'kanban' && manualMergeIds.length > 0 && (
+          {(viewMode === 'kanban' || viewMode === 'deadline') && manualMergeIds.length > 0 && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mb-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm">
               <GitMerge className="h-4 w-4 text-amber-700 shrink-0" />
               <span className="text-amber-900">
@@ -3144,6 +3212,10 @@ export default function CRMDashboard() {
               onToggleSelectAllInColumn={toggleSelectAllInColumn}
               compact={pipelineType === 'lead'}
               kpiLedgerPeriodStart={kpis?.kpi_ledger_period_start || null}
+              onOpenKanbanComment={(it) => {
+                setKanbanCommentBody('');
+                setKanbanCommentItem(it);
+              }}
             />
             {/* Nút Tải thêm 1000 */}
             {kanbanLoadLimit !== 'all' && (() => {
@@ -3194,7 +3266,34 @@ export default function CRMDashboard() {
             <PlannerView
               pipeline={currentPipeline}
               pipelineType={pipelineType}
-              users={users}
+            />
+          )}
+
+          {/* Deadline View */}
+          {viewMode === 'deadline' && (
+            <DeadlineView
+              pipeline={currentPipeline}
+              pipelineType={pipelineType}
+              deadlineConfig={deadlineConfig}
+              onOpenSettings={isAdmin ? () => navigate('/crm/deadline-settings') : null}
+              mergeSelectedIds={manualMergeIds}
+              onToggleMergeSelect={toggleManualMergeSelect}
+              onToggleSelectAllInColumn={toggleSelectAllInColumn}
+            />
+          )}
+
+          {/* Comments View */}
+          {viewMode === 'comments' && (
+            <CommentsView
+              pipeline={currentPipeline}
+              pipelineType={pipelineType}
+              commentsIndex={commentsIndex}
+              onRefreshIndex={() => {
+                const ids = currentPipeline.flatMap(s => s.items.map(i => i.id));
+                if (!ids.length) return;
+                api.get(`/crm/lead-comments/index?lead_ids=${ids.join(',')}`)
+                  .then(r => setCommentsIndex(r.data || {})).catch(() => {});
+              }}
             />
           )}
         </>
@@ -3226,6 +3325,57 @@ export default function CRMDashboard() {
           defaultCompanyId={isAdmin ? (filterCompany || user?.company_id || '') : (user?.company_id ? String(user.company_id) : '')}
           currentUser={user}
         />
+      )}
+
+      {kanbanCommentItem && (
+        <div
+          className="fixed inset-0 z-[70] flex items-start justify-center bg-black/50 p-4 pt-[10vh]"
+          onClick={() => { if (!kanbanCommentPosting) { setKanbanCommentItem(null); setKanbanCommentBody(''); } }}
+        >
+          <div
+            className="w-full max-w-md overflow-hidden rounded-xl border border-[#e4e6eb] bg-[#f0f2f5] shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-[#e4e6eb] bg-white px-3 py-2.5">
+              <p className="text-[15px] font-bold text-[#050505]">Bình luận nhanh</p>
+              <button
+                type="button"
+                disabled={kanbanCommentPosting}
+                onClick={() => { setKanbanCommentItem(null); setKanbanCommentBody(''); }}
+                className="rounded-full p-1.5 text-[#65676b] hover:bg-[#f0f2f5] cursor-pointer disabled:opacity-50"
+                aria-label="Đóng"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="border-b border-[#e4e6eb] bg-white px-3 py-3">
+              <div className="flex gap-2.5">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#e4e6eb] text-[14px] font-bold text-[#65676b]">
+                  {(kanbanCommentItem.title || kanbanCommentItem.code || '?').trim().charAt(0).toUpperCase() || '?'}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[15px] font-semibold text-[#050505]">{kanbanCommentItem.title}</p>
+                  <p className="text-xs text-[#65676b]">
+                    {kanbanCommentItem.code}
+                    {pipelineType === 'deal' ? ' · Deal' : ' · Lead'}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-white">
+              <FbCrmCommentComposer
+                user={user}
+                value={kanbanCommentBody}
+                onChange={(e) => setKanbanCommentBody(e.target.value)}
+                onSubmit={submitKanbanQuickComment}
+                posting={kanbanCommentPosting}
+                placeholder="Viết bình luận công khai…"
+                autoFocus
+              />
+            </div>
+            <p className="px-3 py-2 text-center text-[11px] text-[#65676b]">Ctrl+Enter để gửi nhanh</p>
+          </div>
+        </div>
       )}
 
       {/* Modal chọn người phụ trách khi kéo Lead sang cột Thắng */}
@@ -3978,6 +4128,7 @@ function KanbanStageCard({
   onToggleSelectAllInColumn,
   compact,
   kpiLedgerPeriodStart,
+  onOpenKanbanComment,
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
@@ -4108,6 +4259,7 @@ function KanbanStageCard({
               onToggleMergeSelect={onToggleMergeSelect}
               compact={compact}
               kpiLedgerPeriodStart={kpiLedgerPeriodStart}
+              onOpenKanbanComment={onOpenKanbanComment}
             />
           ))
         )}
@@ -4117,7 +4269,7 @@ function KanbanStageCard({
 }
 
 // Kanban Item Card - MISA Style
-function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, kpiLedgerPeriodStart }) {
+function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, kpiLedgerPeriodStart, onOpenKanbanComment }) {
   const navigate = useNavigate();
   const openLeadDetail = () => {
     localStorage.setItem('crm_pinned_tab', pipelineType);
@@ -4126,7 +4278,7 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
   };
 
   const handleDragStart = (e) => {
-    if (e.target.closest?.('[data-kanban-select-zone]')) {
+    if (e.target.closest?.('[data-kanban-select-zone]') || e.target.closest?.('[data-kanban-comment-btn]')) {
       e.preventDefault();
       return;
     }
@@ -4146,9 +4298,10 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
   const splitPickZones = !!onToggleMergeSelect;
 
   const slaTone = getPipelineStageSlaTone(item.stage_entered_at, stage);
-  // Có NV có deadline → màu theo deadline; không → SLA cột
+  // Có NV mở mới nhất có hẹn → màu & dòng hạn theo NV; không → SLA cột
   const taskTone = getCrmOpenTaskDeadlineTone(item.crm_next_open_task_deadline);
   const cardToneLevel = taskTone ? taskTone.level : slaTone.level;
+  const scheduleTone = taskTone || slaTone;
   const cardSurface = pipelineCardToneClasses(cardToneLevel);
 
   return (
@@ -4177,6 +4330,20 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
           periodStart={kpiLedgerPeriodStart}
           compact={compact}
         />
+      )}
+      {typeof onOpenKanbanComment === 'function' && (
+        <button
+          type="button"
+          data-kanban-comment-btn
+          title="Bình luận nhanh"
+          onClick={(ev) => {
+            ev.stopPropagation();
+            onOpenKanbanComment(item);
+          }}
+          className="absolute bottom-2 right-2 z-[40] flex h-7 w-7 items-center justify-center rounded-full border border-gray-200/90 bg-white/95 text-slate-600 shadow-md transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600 cursor-pointer"
+        >
+          <MessageSquare className="h-3.5 w-3.5" strokeWidth={2.25} />
+        </button>
       )}
       {splitPickZones && (
         <>
@@ -4232,7 +4399,7 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
       <div className={`flex items-start justify-between ${compact ? 'mb-1' : 'mb-2'}`}>
         <p className={`font-semibold text-blue-600 flex items-center gap-1 min-w-0 ${compact ? 'text-[10px]' : 'text-xs'}`}>
           <span className="truncate">{item.code}</span>
-          {slaTone.level === 'overdue' && (
+          {cardToneLevel === 'overdue' && (
             <AlertTriangle className={`${compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} text-red-600 shrink-0`} aria-hidden />
           )}
         </p>
@@ -4300,18 +4467,19 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
           <span className="font-semibold text-gray-900">
             {item.stage_entered_at ? formatAgeDetailed(item.stage_entered_at) : '—'}
           </span>
-          {slaTone.deadlineTs != null && !stage?.is_won && !stage?.is_lost && (
+          {scheduleTone.deadlineTs != null && !stage?.is_won && !stage?.is_lost && (
             <span className="block mt-0.5 text-gray-500 font-normal">
-              Hạn SLA cột: {new Date(slaTone.deadlineTs).toLocaleString('vi-VN')}
-              {slaTone.remainingMs != null && slaTone.level !== 'ok' && (
+              {taskTone ? 'Hạn NV (mới nhất)' : 'Hạn SLA cột'}:{' '}
+              {new Date(scheduleTone.deadlineTs).toLocaleString('vi-VN')}
+              {scheduleTone.remainingMs != null && scheduleTone.level !== 'ok' && (
                 <>
                   {' · '}
-                  {slaTone.level === 'overdue' ? (
+                  {scheduleTone.level === 'overdue' ? (
                     <span className="text-red-600 font-semibold">
-                      Quá hạn {formatRemainingMs(Math.abs(slaTone.remainingMs))}
+                      Quá hạn {formatRemainingMs(Math.abs(scheduleTone.remainingMs))}
                     </span>
                   ) : (
-                    <span>Còn {formatRemainingMs(slaTone.remainingMs)}</span>
+                    <span>Còn {formatRemainingMs(scheduleTone.remainingMs)}</span>
                   )}
                 </>
               )}
@@ -4436,6 +4604,7 @@ function KanbanView({
   onToggleSelectAllInColumn,
   compact,
   kpiLedgerPeriodStart,
+  onOpenKanbanComment,
 }) {
   const kanbanHScrollRef = useRef(null);
   const kanbanWrapRef = useRef(null);
@@ -4445,7 +4614,11 @@ function KanbanView({
   const [isDraggingCard, setIsDraggingCard] = useState(false);
 
   useEffect(() => {
-    const isOurCard = (e) => !!e.target?.closest?.('[data-crm-pipeline-card]');
+    const isOurCard = (e) => {
+      const t = e.target;
+      if (t?.closest?.('[data-kanban-comment-btn]')) return false;
+      return !!t?.closest?.('[data-crm-pipeline-card]');
+    };
 
     const onDragStart = (e) => {
       if (isOurCard(e)) {
@@ -4597,6 +4770,7 @@ function KanbanView({
               onToggleSelectAllInColumn={onToggleSelectAllInColumn}
               compact={compact}
               kpiLedgerPeriodStart={kpiLedgerPeriodStart}
+              onOpenKanbanComment={onOpenKanbanComment}
             />
           ))}
         </div>
@@ -4759,8 +4933,8 @@ function NewDealModal({ onClose, onSuccess, leadTypes, companies, defaultCompany
   const leadTypeName = visibleLeadTypes.find((t) => String(t.id) === String(formData.lead_type_id))?.name || '';
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl flex overflow-hidden max-h-[92vh]" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl flex overflow-hidden max-h-[92vh]">
 
         {/* ── LEFT: Form ── */}
         <div className="flex-1 flex flex-col min-w-0 border-r border-gray-100">
@@ -5143,8 +5317,8 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
   const leadTypeName = visibleLeadTypes.find((t) => String(t.id) === String(formData.lead_type_id))?.name || '';
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl flex overflow-hidden max-h-[92vh]" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl flex overflow-hidden max-h-[92vh]">
 
         {/* ── LEFT: Form ── */}
         <div className="flex-1 flex flex-col min-w-0 border-r border-gray-100">

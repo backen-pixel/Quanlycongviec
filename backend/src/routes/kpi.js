@@ -14,6 +14,7 @@ const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { computeAndStoreForUser, getDefinitions } = require('../services/kpiCalculator');
+const { KPI_RECOMPUTE_USER_ROLES_DEFAULT } = require('../services/kpiRoleApplies');
 
 const r = Router();
 r.use(auth);
@@ -58,7 +59,7 @@ function parsePeriod(q) {
  *   - department_id ưu tiên cao nhất → lọc users.department_id = X
  *   - company_id → lọc qua departments.company_id (vì users có department_id)
  *   - q: tìm theo full_name, email
- *   - roles: mặc định ['sales','manager']
+ *   - roles: mặc định KPI_RECOMPUTE_USER_ROLES_DEFAULT (xem kpiRoleApplies.js)
  *   - explicit user_ids: bỏ qua các filter khác
  */
 async function resolveTargetUsers({ userIds = null, companyId = null, departmentId = null, q = null, roles = null }) {
@@ -89,7 +90,7 @@ async function resolveTargetUsers({ userIds = null, companyId = null, department
 
   if (deptIds) query = query.in('department_id', deptIds);
 
-  const roleList = Array.isArray(roles) && roles.length ? roles : ['sales', 'manager'];
+  const roleList = Array.isArray(roles) && roles.length ? roles : KPI_RECOMPUTE_USER_ROLES_DEFAULT;
   query = query.in('role', roleList);
 
   if (q && String(q).trim()) {
@@ -103,7 +104,7 @@ async function resolveTargetUsers({ userIds = null, companyId = null, department
 }
 
 // ─── GET /api/kpi/users — danh sách nhân viên có thể chấm KPI ────────────────
-// Filter: company_id, department_id, q (search). Mặc định trả role sales/manager.
+// Filter: company_id, department_id, q (search). Mặc định trả nhiều role CRM (sales, sales_admin, CSKH, designer, SX/VC…).
 r.get('/users', async (req, res) => {
   try {
     const list = await resolveTargetUsers({

@@ -1,8 +1,9 @@
 /**
  * KPI Calculator cho CRM Tủ Bếp.
  *
- * 15 hàm tính KPI dựa trên crm_leads, crm_lead_stage_history, crm_tasks, crm_activities.
- * Mỗi hàm trả về { actual, breakdown }.
+ * Các hàm calc* tính từ crm_leads, crm_lead_stage_history, crm_tasks, crm_activities.
+ * computeAndStoreForUser chỉ chấm các kpi_definitions có applies_to khớp vai trò tài khoản (users.role),
+ * trừ lãnh đạo/quản trị (admin, manager, …) vẫn tính đủ bộ để đối chiếu.
  *
  * Áp dụng công thức điểm theo file Excel KPI_CRM_SalesAdmin_Deal_TuBep.xlsx (sheet "Cong thuc tinh diem"):
  *   - increasing: min(actual / target, 1.2) * weight
@@ -18,6 +19,14 @@ const { computeScore, SCORE_CAP_RATIO } = require('./kpiScoreFormula');
 const { responseMinutes, isUserOff } = require('./businessHours');
 const { buildProgressMap, CANONICAL_RANK } = require('./kpiPipelineRank');
 const { crmTaskMeetsCompletionRequirements } = require('../helpers/crmTaskCompletionEvidence');
+const { filterDefinitionsForUserRole, allowedAppliesTagsForUserRole } = require('./kpiRoleApplies');
+
+async function fetchUserRoleForKpi(userId) {
+  if (!userId) return 'sales';
+  const { data, error } = await supabase.from('users').select('role').eq('id', userId).maybeSingle();
+  if (error) throw error;
+  return String(data?.role || 'sales').trim().toLowerCase() || 'sales';
+}
 
 function num(v) {
   const n = Number(v);
@@ -604,9 +613,11 @@ async function getTargetFor({ definition, userId, companyId, periodType, periodS
 }
 
 /**
- * Tính & lưu 15 KPI cho 1 user trong 1 period. Trả về array score + tổng điểm.
+ * Tính & lưu KPI áp dụng cho vai trò tài khoản (users.role) trong 1 period.
+ * Lọc theo kpi_definitions.applies_to; lãnh đạo (admin/manager/…) vẫn tính đủ bộ để đối chiếu.
+ * Trả về array score + tổng điểm (chỉ các KPI được áp dụng).
  */
-async function computeAndStoreForUser({ userId, companyId = null, periodType = 'monthly', periodStart }) {
+async function computeAndStoreForUser({ userId, companyId = null, periodType = 'monthly', periodStart, userRole = null }) {
   const period = await ensurePeriod({ periodType, periodStart });
   if (period.status === 'closed') {
     return { skipped: true, reason: 'period_closed' };
@@ -620,7 +631,9 @@ async function computeAndStoreForUser({ userId, companyId = null, periodType = '
   else endDate = new Date(startDate.getUTCFullYear() + 1, 0, 0);
   const end = isoDateOnly(endDate);
 
-  const defs = await getDefinitions();
+  const roleResolved = userRole != null ? String(userRole).trim().toLowerCase() : await fetchUserRoleForKpi(userId);
+  const defsAll = await getDefinitions();
+  const defs = filterDefinitionsForUserRole(defsAll, roleResolved);
   const results = [];
   let gatingTriggered = false;
   let gatingDef = null;
@@ -660,6 +673,13 @@ async function computeAndStoreForUser({ userId, companyId = null, periodType = '
     });
   }
 
+  const { error: delScoresErr } = await supabase
+    .from('kpi_scores')
+    .delete()
+    .eq('user_id', userId)
+    .eq('period_id', period.id);
+  if (delScoresErr) console.error('[kpiCalculator] delete old scores:', delScoresErr.message);
+
   // Upsert kpi_scores
   for (const r of results) {
     const { error } = await supabase
@@ -686,6 +706,7 @@ async function computeAndStoreForUser({ userId, companyId = null, periodType = '
 
   return {
     user_id: userId,
+    kpi_role: roleResolved,
     period: { id: period.id, period_type: periodType, period_start: start, period_end: end },
     scores: results,
     total_raw: Math.round(totalScore * 100) / 100,
@@ -700,6 +721,8 @@ module.exports = {
   computeScore,
   ensurePeriod,
   getDefinitions,
+  allowedAppliesTagsForUserRole,
+  filterDefinitionsForUserRole,
   CALC_REGISTRY,
   // Export individual calcs for unit tests
   calcA1_responseSlaRate,

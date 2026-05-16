@@ -229,9 +229,16 @@ export default function KpiDealDashboard() {
   }, [isManager, filter.companyId, filter.departmentId, filter.q]);
 
   useEffect(() => {
+    const rid = String(user?.role || '').toLowerCase();
+    if (rid === 'sales_admin' && !isManager) {
+      setLoading(false);
+      setData(null);
+      setDealScores(null);
+      return;
+    }
     if (user?.id) load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, periodStart, targetUserId]);
+  }, [user?.id, user?.role, isManager, periodStart, targetUserId]);
 
   const funnelData = useMemo(() => {
     if (!data?.funnel) return [];
@@ -240,6 +247,30 @@ export default function KpiDealDashboard() {
       count,
     }));
   }, [data]);
+
+  const dealDashboardNudgedAway =
+    String(user?.role || '').toLowerCase() === 'sales_admin' && !isManager;
+
+  if (dealDashboardNudgedAway) {
+    return (
+      <div className="p-4 md:p-6 max-w-2xl mx-auto space-y-4">
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-900">
+          <h1 className="text-lg font-semibold text-amber-950">KPI Deal (Tủ bếp)</h1>
+          <p className="mt-2 leading-relaxed">
+            Bộ chỉ số deal (báo giá → ký hợp đồng, doanh số, SLA stage…) được chấm cho vai trò{' '}
+            <strong>kinh doanh / phụ trách deal</strong>. Tài khoản <strong>Sales Admin</strong> dùng dashboard KPI riêng
+            (tiếp cận lead, chất lượng dữ liệu, B1…).
+          </p>
+          <Link
+            to="/crm/kpi/sales-admin"
+            className="inline-flex items-center gap-1 mt-4 text-indigo-700 font-medium hover:underline"
+          >
+            Mở KPI Sales Admin (Tủ bếp) →
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-4">
