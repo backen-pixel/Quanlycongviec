@@ -171,8 +171,12 @@ export default function CompaniesPage() {
                         const u = allUsers.find(x => x.id === uid);
                         return u ? (
                           <div key={uid} className="flex items-center gap-2 bg-blue-50 rounded-lg px-2 py-1.5">
-                            <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[7px] font-bold"
-                              style={{ backgroundColor: avatarColor(u.full_name) }}>{getInitials(u.full_name)}</div>
+                            {u.avatar ? (
+                              <img src={u.avatar} alt="" className="h-5 w-5 rounded-full object-cover border border-gray-200 shrink-0" />
+                            ) : (
+                              <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[7px] font-bold"
+                                style={{ backgroundColor: avatarColor(u.full_name) }}>{getInitials(u.full_name)}</div>
+                            )}
                             <span className="text-xs flex-1">{u.full_name}</span>
                             <span className="text-[10px] text-gray-400">{ROLE_LABELS[u.role] || u.role}</span>
                             <button onClick={() => setAddUserIds(prev => prev.filter(x => x !== uid))}
@@ -191,10 +195,14 @@ export default function CompaniesPage() {
                 <div className="space-y-1">
                   {companyDetail.members?.map(m => (
                     <div key={m.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 group">
-                      <div className="h-8 w-8 rounded-full flex items-center justify-center text-white text-[10px] font-bold"
-                        style={{ backgroundColor: avatarColor(m.full_name) }}>
-                        {getInitials(m.full_name)}
-                      </div>
+                      {m.avatar ? (
+                        <img src={m.avatar} alt="" className="h-8 w-8 rounded-full object-cover border border-gray-200 shrink-0" />
+                      ) : (
+                        <div className="h-8 w-8 rounded-full flex items-center justify-center text-white text-[10px] font-bold"
+                          style={{ backgroundColor: avatarColor(m.full_name) }}>
+                          {getInitials(m.full_name)}
+                        </div>
+                      )}
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-900">{m.full_name}</p>
                         <p className="text-xs text-gray-500">{ROLE_LABELS[m.role] || m.role} · {m.email}</p>

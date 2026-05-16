@@ -5,15 +5,40 @@ const fs = require('fs');
 const os = require('os');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
-const config = require('../config');
+
+const MB = 1024 * 1024;
+/** Giới hạn file gửi lên server (multer). Supabase Storage có giới hạn riêng — Dashboard → Storage. Mặc định 1024MB; env MAX_UPLOAD_VIDEO_MB (MB), tối đa 5120. */
+const MAX_DISK_UPLOAD_BYTES = (() => {
+  const raw = parseInt(process.env.MAX_UPLOAD_VIDEO_MB || '1024', 10);
+  const mb = Number.isFinite(raw) && raw > 0 ? raw : 1024;
+  return Math.min(mb * MB, 5120 * MB);
+})();
+/** Upload RAM: ảnh/file nhỏ; không dùng cho video lớn (frontend dùng internal-social-stream). */
+const MAX_MEMORY_UPLOAD_BYTES = Math.min(256 * MB, MAX_DISK_UPLOAD_BYTES);
+
+function isStorageSizeLimitError(err) {
+  const msg = String(err?.message || err || '');
+  return /exceeded the maximum allowed size|maximum allowed size|EntityTooLarge|maximum size exceeded|Payload too large|413/i.test(msg);
+}
+
+function mapUploadFailure(err) {
+  if (isStorageSizeLimitError(err)) {
+    return {
+      status: 413,
+      error:
+        'File vượt quá giới hạn trên Supabase Storage. Vào Supabase Dashboard → Project Settings → Storage và tăng giới hạn kích thước upload (global / bucket). Gói miễn phí thường ~50MB; video lớn cần nén, dùng URL video ngoài, hoặc nâng gói. Riêng giới hạn nhận file trên Node: biến môi trường MAX_UPLOAD_VIDEO_MB (MB).',
+    };
+  }
+  return { status: 500, error: String(err?.message || err || 'Lỗi upload') };
+}
 
 const r = Router();
 r.use(auth);
 
-// ── Memory upload (ảnh, PDF, file nhỏ < 20MB) ──
+// ── Memory upload (ảnh, PDF, file nhỏ) ──
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 100 * 1024 * 1024 },
+  limits: { fileSize: MAX_MEMORY_UPLOAD_BYTES },
   fileFilter: (req, file, cb) => {
     const allowed = /jpeg|jpg|png|gif|webp|pdf|doc|docx|xls|xlsx|dwg|dxf|zip|rar|mp4|mov|webm|ogg|mp3|wav|avi|mkv/;
     const ext = path.extname(file.originalname).toLowerCase();
@@ -25,13 +50,25 @@ const upload = multer({
   }
 });
 
+function memoryUploadSingle(req, res, next) {
+  upload.single('file')(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({
+        error: `File vượt quá ${Math.round(MAX_MEMORY_UPLOAD_BYTES / MB)}MB (upload RAM). Video/file lớn hãy dùng upload stream hoặc đặt MAX_UPLOAD_VIDEO_MB / giảm kích thước.`,
+      });
+    }
+    return res.status(400).json({ error: err.message || 'Lỗi upload' });
+  });
+}
+
 // ── Disk upload (video, file lớn) — ghi ra /tmp trước ──
 const diskUpload = multer({
   storage: multer.diskStorage({
     destination: os.tmpdir(),
     filename: (req, file, cb) => cb(null, `upload_${Date.now()}_${Math.random().toString(36).slice(2)}${path.extname(file.originalname)}`),
   }),
-  limits: { fileSize: 200 * 1024 * 1024 }, // 200MB cho video
+  limits: { fileSize: MAX_DISK_UPLOAD_BYTES },
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith('video/') || file.mimetype.startsWith('audio/') || file.mimetype.startsWith('image/') || file.mimetype.startsWith('application/')) {
       cb(null, true);
@@ -40,6 +77,18 @@ const diskUpload = multer({
     }
   }
 });
+
+function diskUploadSingle(req, res, next) {
+  diskUpload.single('file')(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({
+        error: `File vượt quá ${Math.round(MAX_DISK_UPLOAD_BYTES / MB)}MB (giới hạn server). Đặt biến môi trường MAX_UPLOAD_VIDEO_MB (đơn vị MB, tối đa 5120) rồi khởi động lại backend.`,
+      });
+    }
+    return res.status(400).json({ error: err.message || 'Lỗi upload' });
+  });
+}
 
 const BUCKET = 'attachments';
 
@@ -88,6 +137,9 @@ async function uploadOneFile(file, entityType, entityId) {
 
   if (uploadError) {
     console.error('Storage upload error:', uploadError);
+    if (isStorageSizeLimitError(uploadError)) {
+      throw Object.assign(new Error(uploadError.message), { code: 'STORAGE_SIZE_LIMIT' });
+    }
     // Fallback: base64 data URL
     const base64 = file.buffer.toString('base64');
     return {
@@ -127,7 +179,7 @@ async function uploadOneFileFromDisk(filePath, originalName, mimetype, fileSize,
 
   // Stream read từ disk → upload Supabase
   const fileStream = fs.createReadStream(filePath);
-  const { data: uploadData, error: uploadError } = await supabase.storage
+  const { error: uploadError } = await supabase.storage
     .from(BUCKET)
     .upload(storagePath, fileStream, {
       contentType: mimetype,
@@ -135,20 +187,54 @@ async function uploadOneFileFromDisk(filePath, originalName, mimetype, fileSize,
       upsert: false,
     });
 
-  // Xóa file tạm
-  fs.unlink(filePath, () => {});
+  if (!uploadError) {
+    fs.unlink(filePath, () => {});
+    const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(storagePath);
+    return {
+      file_name: fixedName,
+      file_url: urlData.publicUrl,
+      file_size: fileSize,
+      mime_type: mimetype,
+      storage_path: storagePath,
+    };
+  }
 
-  if (uploadError) {
-    console.error('Storage stream upload error:', uploadError);
-    // Fallback: đọc buffer rồi upload lại
-    try {
-      const buffer = fs.readFileSync(filePath);
-      const { error: retryErr } = await supabase.storage.from(BUCKET).upload(storagePath, buffer, { contentType: mimetype, upsert: false });
-      fs.unlink(filePath, () => {});
-      if (retryErr) throw retryErr;
-    } catch (e2) {
+  console.error('Storage stream upload error:', uploadError);
+  if (isStorageSizeLimitError(uploadError)) {
+    fs.unlink(filePath, () => {});
+    return {
+      file_name: fixedName,
+      file_url: null,
+      file_size: fileSize,
+      mime_type: mimetype,
+      storage_path: null,
+      error: uploadError.message,
+      code: 'STORAGE_SIZE_LIMIT',
+    };
+  }
+
+  // Fallback: đọc buffer rồi upload lại (một số lỗi stream)
+  try {
+    const buffer = fs.readFileSync(filePath);
+    const { error: retryErr } = await supabase.storage.from(BUCKET).upload(storagePath, buffer, { contentType: mimetype, upsert: false });
+    fs.unlink(filePath, () => {});
+    if (retryErr) {
+      if (isStorageSizeLimitError(retryErr)) {
+        return {
+          file_name: fixedName,
+          file_url: null,
+          file_size: fileSize,
+          mime_type: mimetype,
+          storage_path: null,
+          error: retryErr.message,
+          code: 'STORAGE_SIZE_LIMIT',
+        };
+      }
       return { file_name: fixedName, file_url: null, file_size: fileSize, mime_type: mimetype, storage_path: null, error: uploadError.message };
     }
+  } catch (e2) {
+    fs.unlink(filePath, () => {});
+    return { file_name: fixedName, file_url: null, file_size: fileSize, mime_type: mimetype, storage_path: null, error: uploadError.message };
   }
 
   const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(storagePath);
@@ -163,7 +249,7 @@ async function uploadOneFileFromDisk(filePath, originalName, mimetype, fileSize,
 
 // ═══ STREAM UPLOAD — Video/file lớn (disk → Supabase) ═══
 // Nhanh hơn memory upload vì không cần buffer toàn bộ vào RAM
-r.post('/stream', diskUpload.single('file'), async (req, res) => {
+r.post('/stream', diskUploadSingle, async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Không có file' });
     const result = await uploadOneFileFromDisk(
@@ -174,18 +260,27 @@ r.post('/stream', diskUpload.single('file'), async (req, res) => {
       req.body.entity_type || 'general',
       req.body.entity_id
     );
-    if (result.error) return res.status(500).json({ error: result.error });
+    if (result.error) {
+      const mapped = result.code === 'STORAGE_SIZE_LIMIT' || isStorageSizeLimitError(result.error)
+        ? mapUploadFailure(result.error)
+        : { status: 500, error: result.error };
+      return res.status(mapped.status).json({ error: mapped.error });
+    }
     res.status(201).json(result);
   } catch (e) {
     // Cleanup temp file
     if (req.file?.path) fs.unlink(req.file.path, () => {});
     console.error('Stream upload error:', e);
+    if (e?.code === 'STORAGE_SIZE_LIMIT' || isStorageSizeLimitError(e)) {
+      const m = mapUploadFailure(e);
+      return res.status(m.status).json({ error: m.error });
+    }
     res.status(500).json({ error: e.message || 'Lỗi upload' });
   }
 });
 
 // Upload single file (cho Facebook chat, etc.)
-r.post('/single', upload.single('file'), async (req, res) => {
+r.post('/single', memoryUploadSingle, async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Không có file' });
     const result = await uploadOneFile(req.file, req.body.entity_type || 'messenger', req.body.entity_id);
@@ -196,12 +291,67 @@ r.post('/single', upload.single('file'), async (req, res) => {
   }
 });
 
+/** Bảng tin nội bộ — upload RAM (theo MAX_MEMORY_UPLOAD_BYTES). Thư mục: internal_social/<userId>/ */
+r.post('/internal-social', memoryUploadSingle, async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Không có file' });
+    const uid = req.user.userId || req.user.id;
+    const result = await uploadOneFile(req.file, 'internal_social', uid);
+    res.status(201).json(result);
+  } catch (e) {
+    console.error('Upload internal-social error:', e);
+    if (e?.code === 'STORAGE_SIZE_LIMIT' || isStorageSizeLimitError(e)) {
+      const m = mapUploadFailure(e);
+      return res.status(m.status).json({ error: m.error });
+    }
+    res.status(500).json({ error: e.message || 'Lỗi upload' });
+  }
+});
+
+/** Bảng tin nội bộ — video/file lớn (ghi disk tạm → Storage). */
+r.post('/internal-social-stream', diskUploadSingle, async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Không có file' });
+    const uid = req.user.userId || req.user.id;
+    const result = await uploadOneFileFromDisk(
+      req.file.path,
+      req.file.originalname,
+      req.file.mimetype,
+      req.file.size,
+      'internal_social',
+      uid,
+    );
+    if (result.error) {
+      const mapped = result.code === 'STORAGE_SIZE_LIMIT' || isStorageSizeLimitError(result.error)
+        ? mapUploadFailure(result.error)
+        : { status: 500, error: result.error };
+      return res.status(mapped.status).json({ error: mapped.error });
+    }
+    res.status(201).json(result);
+  } catch (e) {
+    if (req.file?.path) fs.unlink(req.file.path, () => {});
+    console.error('Upload internal-social-stream error:', e);
+    if (e?.code === 'STORAGE_SIZE_LIMIT' || isStorageSizeLimitError(e)) {
+      const m = mapUploadFailure(e);
+      return res.status(m.status).json({ error: m.error });
+    }
+    res.status(500).json({ error: e.message || 'Lỗi upload' });
+  }
+});
+
 // Upload files → Supabase Storage (SONG SONG, batch 5)
 // Cũng nhận single field 'file' khi gọi từ /api/upload thay vì /api/upload/single
 const uploadFlexible = (req, res, next) => {
   // Thử array('files') trước, nếu không có thì thử single('file')
   upload.any()(req, res, (err) => {
-    if (err) return res.status(400).json({ error: err.message });
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({
+          error: `File vượt quá ${Math.round(MAX_MEMORY_UPLOAD_BYTES / MB)}MB. Video lớn dùng endpoint upload stream (disk) hoặc chia nhỏ file.`,
+        });
+      }
+      return res.status(400).json({ error: err.message });
+    }
     // normalize: nếu gửi field 'file' → req.files = [file]
     if (!req.files?.length && req.file) req.files = [req.file];
     next();

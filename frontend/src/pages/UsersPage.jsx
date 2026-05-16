@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../lib/api';
 import Modal from '../components/Modal';
 import UserRolesModal from '../components/UserRolesModal';
-import { Plus, Search, Mail, Phone, Trash2, Edit, Users as UsersIcon, MoreVertical, Building2, Layers, UsersRound, Shield, MapPin } from 'lucide-react';
+import { Plus, Search, Mail, Phone, Trash2, Edit, Users as UsersIcon, MoreVertical, Building2, Layers, UsersRound, Shield, MapPin, Camera } from 'lucide-react';
 import { formatDate, getInitials, avatarColor } from '../lib/utils';
 
 const ROLES = { admin: 'Admin', manager: 'Quản lý', region_admin: 'Admin khu vực', sales_admin: 'Sales Admin', sales: 'Kinh doanh (SAE)', designer: 'Thiết kế', production: 'Sản xuất', driver: 'Tài xế', installer: 'Lắp đặt', customer_care: 'CSKH', staff: 'Nhân viên' };
@@ -224,8 +224,12 @@ export default function UsersPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {users.map((u, i) => (
             <div key={u.id} className="bg-white rounded-xl border p-4 flex items-center gap-4 hover:shadow-md transition-all cursor-pointer group relative">
-              <div className="h-11 w-11 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0"
-                style={{ backgroundColor: avatarColor(u.full_name) }}>{getInitials(u.full_name)}</div>
+              {u.avatar ? (
+                <img src={u.avatar} alt="" className="h-11 w-11 rounded-full object-cover border border-gray-200 shrink-0" />
+              ) : (
+                <div className="h-11 w-11 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0"
+                  style={{ backgroundColor: avatarColor(u.full_name) }}>{getInitials(u.full_name)}</div>
+              )}
               <div className="flex-1 min-w-0" onClick={() => setShowDetail(u.id)}>
                 <div className="flex items-center gap-2 mb-0.5">
                   <h3 className="text-sm font-semibold text-gray-900 truncate">{u.full_name}</h3>
@@ -299,6 +303,8 @@ export function StaffFormModal({
 }) {
   const [form, setForm] = useState({});
   const [loading, setLoading] = useState(false);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const avatarInputRef = useRef(null);
 
   // Cascade data — Khối lấy level=1 (khớp bộ lọc trang); không phụ thuộc level.depth có trong payload hay không
   const [divisions, setDivisions] = useState([]);
@@ -480,6 +486,10 @@ export function StaffFormModal({
       payload.department_id = payload.department_id || null;
       payload.team_id = payload.team_id || null;
       payload.crm_region_ids = Array.isArray(form.crm_region_ids) ? form.crm_region_ids : [];
+      if (payload.avatar === undefined) delete payload.avatar;
+      else if (payload.avatar === null || payload.avatar === '') payload.avatar = null;
+      else if (typeof payload.avatar === 'string') payload.avatar = payload.avatar.trim() || null;
+      if (!editUser && payload.avatar == null) delete payload.avatar;
       if (editUser) await api.put(`/users/${editUser.id}`, payload);
       else await api.post('/users', payload);
       onSaved?.(); onClose();
@@ -493,6 +503,76 @@ export function StaffFormModal({
         {/* Hidden fields to trick browser autofill */}
         <input type="text" name="prevent_autofill" id="prevent_autofill" style={{ display: 'none' }} tabIndex={-1} autoComplete="off" />
         <input type="password" name="prevent_autofill_pass" id="prevent_autofill_pass" style={{ display: 'none' }} tabIndex={-1} autoComplete="off" />
+
+        <div className="flex items-start gap-4 pb-4 border-b border-gray-100">
+          <div className="relative shrink-0">
+            {form.avatar ? (
+              <img src={form.avatar} alt="" className="h-20 w-20 rounded-full object-cover border-2 border-gray-200 bg-gray-50" />
+            ) : (
+              <div
+                className="h-20 w-20 rounded-full flex items-center justify-center text-white text-xl font-bold"
+                style={{ backgroundColor: avatarColor(form.full_name || form.email || 'U') }}
+              >
+                {getInitials(form.full_name || form.email || '?')}
+              </div>
+            )}
+            {avatarBusy && (
+              <div className="absolute inset-0 rounded-full bg-black/35 flex items-center justify-center">
+                <span className="text-white text-xs font-medium">…</span>
+              </div>
+            )}
+          </div>
+          <div className="flex-1 min-w-0 space-y-2">
+            <p className="text-sm font-medium text-gray-900">Ảnh đại diện</p>
+            <p className="text-xs text-gray-500">JPG, PNG, WebP… Dùng ở bảng tin nội bộ, chọn nhân viên, hồ sơ.</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={avatarBusy}
+                onClick={() => avatarInputRef.current?.click()}
+                className="h-9 px-3 rounded-lg border border-gray-300 text-sm font-medium hover:bg-gray-50 flex items-center gap-2 disabled:opacity-50"
+              >
+                <Camera className="h-4 w-4 shrink-0" />
+                {form.avatar ? 'Đổi ảnh' : 'Tải ảnh lên'}
+              </button>
+              {form.avatar && (
+                <button type="button" onClick={() => set('avatar', null)} className="text-sm text-red-600 hover:underline">
+                  Gỡ ảnh
+                </button>
+              )}
+            </div>
+            <input
+              ref={avatarInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              className="hidden"
+              onChange={async (ev) => {
+                const file = ev.target.files?.[0];
+                ev.target.value = '';
+                if (!file) return;
+                if (!file.type.startsWith('image/')) {
+                  alert('Chỉ chọn file ảnh');
+                  return;
+                }
+                setAvatarBusy(true);
+                try {
+                  const fd = new FormData();
+                  fd.append('file', file);
+                  fd.append('entity_type', 'user_avatars');
+                  if (editUser?.id) fd.append('entity_id', editUser.id);
+                  const { data } = await api.post('/upload/single', fd, { timeout: 120000 });
+                  if (!data?.file_url) throw new Error('Không nhận được URL');
+                  set('avatar', data.file_url);
+                } catch (err) {
+                  alert(err.response?.data?.error || err.message || 'Lỗi upload');
+                } finally {
+                  setAvatarBusy(false);
+                }
+              }}
+            />
+          </div>
+        </div>
+
         <div className="grid grid-cols-2 gap-4">
           <div><label className="block text-sm font-medium mb-1">Họ tên *</label><input value={form.full_name || ''} onChange={e => set('full_name', e.target.value)} required className="input" autoComplete="off" /></div>
           <div><label className="block text-sm font-medium mb-1">Email *</label><input type="email" value={form.email || ''} onChange={e => set('email', e.target.value)} required className="input" disabled={!!editUser} autoComplete="off" readOnly={!!editUser} /></div>
@@ -694,10 +774,14 @@ function StaffDetailModal({ userId, open, onClose }) {
           <div className="space-y-5">
             {/* Header */}
             <div className="flex items-center gap-4">
-              <div className="h-16 w-16 rounded-full flex items-center justify-center text-white font-bold text-2xl" 
-                style={{ backgroundColor: avatarColor(user.full_name) }}>
-                {getInitials(user.full_name)}
-              </div>
+              {user.avatar ? (
+                <img src={user.avatar} alt="" className="h-16 w-16 rounded-full object-cover border-2 border-gray-200 shrink-0" />
+              ) : (
+                <div className="h-16 w-16 rounded-full flex items-center justify-center text-white font-bold text-2xl shrink-0"
+                  style={{ backgroundColor: avatarColor(user.full_name) }}>
+                  {getInitials(user.full_name)}
+                </div>
+              )}
               <div className="flex-1">
                 <h2 className="text-lg font-bold">{user.full_name}</h2>
                 <p className="text-sm text-gray-500">{user.position || ROLES[user.role]}</p>

@@ -543,6 +543,9 @@ r.post('/', async (req, res) => {
       department_id: b.department_id || null,
       team_id: b.team_id || null,
     };
+    if (b.avatar !== undefined && b.avatar != null && String(b.avatar).trim()) {
+      insertObj.avatar = String(b.avatar).trim();
+    }
     // Optional fields (need migration 06)
     ['position','date_of_birth','hire_date','address','emergency_contact','salary','notes','skills'].forEach(f => {
       if (b[f] !== undefined) insertObj[f] = b[f] || null;
@@ -570,10 +573,13 @@ r.post('/', async (req, res) => {
       if (error.code === '23505') return res.status(400).json({ error: 'Email đã tồn tại' });
       // If column doesn't exist, retry with basic fields
       if (error.message?.includes('column')) {
-        const { data: d2, error: e2 } = await supabase.from('users').insert({
+        const ins2 = {
           email: b.email, password: hash, full_name: b.full_name,
           phone: b.phone || null, role: b.role || 'staff', department_id: b.department_id || null,
-        }).select('id,email,full_name,phone,role,department_id,is_active,created_at').single();
+        };
+        if (insertObj.avatar) ins2.avatar = insertObj.avatar;
+        const { data: d2, error: e2 } = await supabase.from('users').insert(ins2)
+          .select('id,email,full_name,phone,role,department_id,is_active,created_at').single();
         if (e2) throw e2;
         if (d2?.id && b.crm_region_ids !== undefined && ['admin', 'manager'].includes(req.user.role)) {
           const ids = normalizeRegionIdList(b.crm_region_ids);
@@ -634,8 +640,11 @@ r.put('/:id', async (req, res) => {
       .eq('id', targetId)
       .maybeSingle();
     const update = { updated_at: new Date().toISOString() };
-    const fields = ['full_name','phone','role','position','department_id','team_id','date_of_birth','hire_date','address','emergency_contact','salary','notes','skills','is_active','avatar'];
+    const fields = ['full_name','phone','role','position','department_id','team_id','date_of_birth','hire_date','address','emergency_contact','salary','notes','skills','is_active'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
+    if (b.avatar !== undefined) {
+      update.avatar = (b.avatar && String(b.avatar).trim()) || null;
+    }
     
     // Password: hash and log who changed whose password
     if (b.password) {
@@ -649,7 +658,7 @@ r.put('/:id', async (req, res) => {
 
     // Try update, fallback to basic fields if columns don't exist
     let { data, error } = await supabase.from('users').update(update).eq('id', req.params.id)
-      .select('id,email,full_name,phone,role,department_id,is_active,created_at').single();
+      .select('id,email,full_name,phone,avatar,role,department_id,is_active,created_at').single();
     if (error && error.message?.includes('column')) {
       const safeUpdate = {};
       ['full_name','phone','role','department_id','is_active','avatar'].forEach(f => {
@@ -658,7 +667,7 @@ r.put('/:id', async (req, res) => {
       if (update.password) safeUpdate.password = update.password;
       safeUpdate.updated_at = update.updated_at;
       ({ data, error } = await supabase.from('users').update(safeUpdate).eq('id', req.params.id)
-        .select('id,email,full_name,phone,role,department_id,is_active,created_at').single());
+        .select('id,email,full_name,phone,avatar,role,department_id,is_active,created_at').single());
     }
     if (error) throw error;
 
