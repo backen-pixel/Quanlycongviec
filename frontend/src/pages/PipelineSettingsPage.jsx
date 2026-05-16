@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
-import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2, Calendar, CheckCircle2 } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2, Calendar, CheckCircle2, Clock } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { resolveDefaultCrmAdminCompanyId, setStoredCrmFilterCompanyId } from '../lib/crmCompanyFilter';
+import { isPipelineStageSlaDisabled } from '../lib/crmPipelineSla';
 
 /** Hai mẫu theo tài liệu Zalo / ví dụ template ngắn — ID chỉ để thử form; OA thật cần template_id của bạn */
 const ZALO_TEST_PRESETS = [
@@ -442,6 +443,20 @@ export default function PipelineSettingsPage() {
     }
   };
 
+  /** Bật/tắt SLA cột (sla_days=0): thẻ Kanban không tô màu theo thời gian ở cột; NV có hạn vẫn tô theo deadline. */
+  const toggleSlaColumn = async (stage) => {
+    if (stage.is_won || stage.is_lost) return;
+    const turningOff = !isPipelineStageSlaDisabled(stage.sla_days);
+    try {
+      await api.put(`/crm/pipeline-stages/${stage.id}`, {
+        sla_days: turningOff ? 0 : null,
+      });
+      load();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi');
+    }
+  };
+
   const toggleWonColumn = async (stage) => {
     if (stage.pipeline_type !== 'deal') return;
     const turningOn = !stage.is_won;
@@ -744,6 +759,16 @@ export default function PipelineSettingsPage() {
                 {s.default_probability != null && s.default_probability !== '' && (
                   <span className="text-violet-600 font-medium">◎ {s.default_probability}% mặc định</span>
                 )}
+                {!s.is_won && !s.is_lost && isPipelineStageSlaDisabled(s.sla_days) && (
+                  <span className="bg-gray-100 text-gray-600 border border-gray-200 px-1.5 py-0.5 rounded font-medium">
+                    ⏱ SLA tắt (Kanban)
+                  </span>
+                )}
+                {!s.is_won && !s.is_lost && !isPipelineStageSlaDisabled(s.sla_days) && (
+                  <span className="text-gray-500">
+                    SLA {s.sla_days != null && s.sla_days !== '' ? `${s.sla_days} ngày` : '7 ngày (mặc định)'}
+                  </span>
+                )}
                 {s.sync_role && (
                   <span className="bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 rounded font-medium">
                     {syncRoleLabels[s.sync_role] || s.sync_role}
@@ -762,6 +787,25 @@ export default function PipelineSettingsPage() {
               </div>
             </div>
             <div className="flex items-center gap-1 shrink-0">
+              {!s.is_won && !s.is_lost && (
+                <button
+                  type="button"
+                  onClick={() => toggleSlaColumn(s)}
+                  className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
+                    isPipelineStageSlaDisabled(s.sla_days)
+                      ? 'bg-gray-200 text-gray-700 border-gray-300'
+                      : 'bg-gray-50 text-gray-500 border-gray-200 hover:border-violet-300 hover:text-violet-700'
+                  }`}
+                  title={
+                    isPipelineStageSlaDisabled(s.sla_days)
+                      ? 'SLA cột đang tắt — thẻ Kanban không đổi màu theo thời gian ở cột. NV CRM có hạn vẫn hiện màu theo deadline. Nhấn để bật lại (mặc định 7 ngày).'
+                      : 'Tắt SLA cột — thẻ trở màu bình thường (trừ khi có NV mở có hạn). Nhấn để tắt.'
+                  }
+                >
+                  <Clock className="h-3 w-3" />
+                  {isPipelineStageSlaDisabled(s.sla_days) ? 'SLA tắt' : 'SLA'}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => toggleLostColumn(s)}
@@ -1558,21 +1602,42 @@ function StageForm({ form, setForm, onSave, onCancel, pipelineType = 'lead', edi
 
       {!form.is_won && !form.is_lost && (
         <div>
-          <label className="text-[10px] font-medium text-gray-500 block mb-1">
-            SLA giai đoạn (ngày)
-          </label>
+          <div className="flex flex-wrap items-center gap-2 mb-1">
+            <label className="text-[10px] font-medium text-gray-500">
+              SLA giai đoạn (ngày)
+            </label>
+            <button
+              type="button"
+              onClick={() =>
+                setForm((f) => ({
+                  ...f,
+                  sla_days: isPipelineStageSlaDisabled(f.sla_days) ? '' : '0',
+                }))
+              }
+              className={`h-7 px-2.5 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
+                isPipelineStageSlaDisabled(form.sla_days)
+                  ? 'bg-violet-100 text-violet-900 border-violet-300'
+                  : 'bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200'
+              }`}
+            >
+              <Clock className="h-3 w-3" />
+              {isPipelineStageSlaDisabled(form.sla_days) ? 'Đang tắt SLA cột' : 'Tắt SLA cột (Kanban)'}
+            </button>
+          </div>
           <input
             type="number"
-            min={0}
+            min={1}
             max={365}
-            value={form.sla_days ?? ''}
+            disabled={isPipelineStageSlaDisabled(form.sla_days)}
+            value={isPipelineStageSlaDisabled(form.sla_days) ? '' : (form.sla_days ?? '')}
             onChange={(e) => setForm((f) => ({ ...f, sla_days: e.target.value }))}
-            className="w-full max-w-[140px] h-8 px-3 border rounded-lg text-sm"
-            placeholder="7 hoặc 0"
+            className="w-full max-w-[140px] h-8 px-3 border rounded-lg text-sm disabled:bg-gray-100 disabled:text-gray-400"
+            placeholder={isPipelineStageSlaDisabled(form.sla_days) ? 'SLA tắt' : 'Trống = 7 ngày'}
           />
           <p className="text-[10px] text-gray-400 mt-1 leading-snug">
-            Thời gian tối đa ở cột này, tính từ <code className="text-[9px] bg-gray-100 px-0.5 rounded">stage_entered_at</code>.
-            <strong>0</strong> = không áp dụng SLA (không màu hạn trên Kanban). Để trống → <strong>7 ngày</strong>. ≥1 = số ngày bạn nhập.
+            Màu thẻ Kanban: ưu tiên <strong>hạn NV CRM mở</strong> (nếu có), không thì SLA cột từ{' '}
+            <code className="text-[9px] bg-gray-100 px-0.5 rounded">stage_entered_at</code>.
+            Nút «Tắt SLA» → thẻ bình thường (NV có hạn vẫn đổi màu). Để trống ô số → <strong>7 ngày</strong>.
           </p>
         </div>
       )}

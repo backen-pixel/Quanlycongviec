@@ -4345,8 +4345,8 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
   const splitPickZones = !!onToggleMergeSelect;
 
   const slaTone = getPipelineStageSlaTone(item.stage_entered_at, stage);
-  // Có NV mở mới nhất có hẹn → màu & dòng hạn theo NV; không → SLA cột
   const taskTone = getCrmOpenTaskDeadlineTone(item.crm_next_open_task_deadline);
+  // Ưu tiên hạn NV CRM mở (crm_next_open_task_deadline); chỉ dùng SLA cột khi không có NV hẹn
   const cardToneLevel = taskTone ? taskTone.level : slaTone.level;
   const scheduleTone = taskTone || slaTone;
   const cardSurface = pipelineCardToneClasses(cardToneLevel);
