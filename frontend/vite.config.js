@@ -34,15 +34,10 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (!id.includes('node_modules')) return undefined;
-          if (id.includes('recharts') || id.includes('d3-')) return 'vendor-charts';
+          // Chỉ tách các gói rất nặng; phần còn lại để Vite gom — tránh vòng vendor ↔ vendor-react (gây màn trắng prod).
           if (id.includes('xlsx')) return 'vendor-xlsx';
-          if (id.includes('socket.io-client') || id.includes('engine.io-client')) return 'vendor-socket';
-          if (id.includes('@dnd-kit') || id.includes('@hello-pangea/dnd') || id.includes('react-beautiful-dnd')) return 'vendor-dnd';
-          if (id.includes('lucide-react')) return 'vendor-icons';
-          if (id.includes('react-router')) return 'vendor-router';
-          if (id.includes('axios')) return 'vendor-http';
-          if (id.includes('react-dom') || id.match(/[\\/]react[\\/]/)) return 'vendor-react';
-          return 'vendor';
+          if (id.includes('recharts') || id.includes('d3-')) return 'vendor-charts';
+          return undefined;
         },
       },
     },
