@@ -143,8 +143,14 @@ r.patch('/definitions/:id', async (req, res) => {
     const allowed = [
       'name', 'description', 'group_code', 'formula_type', 'unit',
       'weight', 'target_default', 'target_max', 'min_threshold',
-      'is_gating', 'is_active', 'applies_to', 'data_source_note',
+      'is_gating', 'is_active', 'applies_to', 'data_source_note', 'calc_params',
     ];
+    if (Object.hasOwn(req.body || {}, 'calc_params')) {
+      const cp = req.body.calc_params;
+      if (cp !== null && (typeof cp !== 'object' || Array.isArray(cp))) {
+        return res.status(400).json({ error: 'calc_params phải là object JSON' });
+      }
+    }
     const patch = {};
     for (const k of allowed) {
       if (Object.hasOwn(req.body || {}, k)) patch[k] = req.body[k];

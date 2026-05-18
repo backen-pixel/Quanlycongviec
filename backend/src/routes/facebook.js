@@ -31,6 +31,11 @@ const {
   MAX_CONTACTS_LINK_CLEANUP_CAP,
 } = require('../helpers/facebookLinkOnlyPhoneTool');
 const { assertRegionBelongsToCompany } = require('../helpers/crmRegionScope');
+const {
+  attachTokenReminderToPage,
+  shouldBumpFacebookPageSettingsUpdatedAt,
+  computeFacebookPageTokenReminder,
+} = require('../helpers/facebookPageTokenReminder');
 
 function parseMaxContactsLinkCleanup(raw) {
   const n = parseInt(raw, 10);
@@ -2564,7 +2569,7 @@ r.get('/pages', authMiddleware, async (req, res) => {
   try {
     // Try with all columns first
     let { data, error } = await supabase.from('facebook_pages')
-      .select('id, page_id, page_name, is_active, auto_create_lead, auto_reply_message, default_stage_id, default_lead_owner_id, default_company_id, default_region_id, default_lead_type_id, created_at, webhook_verify_token')
+      .select('id, page_id, page_name, is_active, auto_create_lead, auto_reply_message, default_stage_id, default_lead_owner_id, default_company_id, default_region_id, default_lead_type_id, created_at, updated_at, settings_updated_at, webhook_verify_token')
       .order('created_at', { ascending: false });
 
     if (error && (error.message?.includes('default_region_id') || error.code === '42703')) {
@@ -2597,13 +2602,56 @@ r.get('/pages', authMiddleware, async (req, res) => {
       const set = new Set(scope.pageIds);
       rows = rows.filter((p) => set.has(p.page_id));
     }
-    res.json(rows);
+    res.json(rows.map(attachTokenReminderToPage));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.get('/pages/token-reminder-summary', authMiddleware, async (req, res) => {
+  try {
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
+    let { data, error } = await supabase.from('facebook_pages')
+      .select('id, page_id, page_name, settings_updated_at, updated_at, created_at, is_active')
+      .eq('is_active', true);
+    if (error?.message?.includes('settings_updated_at') || error?.code === '42703') {
+      ({ data, error } = await supabase.from('facebook_pages')
+        .select('id, page_id, page_name, updated_at, created_at, is_active')
+        .eq('is_active', true));
+    }
+    if (error) throw error;
+    let rows = data || [];
+    if (scope.mode === 'filter') {
+      const set = new Set(scope.pageIds);
+      rows = rows.filter((p) => set.has(p.page_id));
+    }
+    const pages = rows.map(attachTokenReminderToPage);
+    const due = pages.filter((p) => p.token_reminder?.status === 'due');
+    const warning = pages.filter((p) => p.token_reminder?.status === 'warning');
+    res.json({
+      reminder_days: computeFacebookPageTokenReminder(new Date().toISOString()).reminder_days,
+      due_count: due.length,
+      warning_count: warning.length,
+      alert_count: due.length + warning.length,
+      due_pages: due.map((p) => ({
+        id: p.id,
+        page_id: p.page_id,
+        page_name: p.page_name,
+        token_reminder: p.token_reminder,
+      })),
+      warning_pages: warning.map((p) => ({
+        id: p.id,
+        page_id: p.page_id,
+        page_name: p.page_name,
+        token_reminder: p.token_reminder,
+      })),
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 r.post('/pages', authMiddleware, async (req, res) => {
   try {
     const { page_id, page_name, access_token, webhook_verify_token, auto_create_lead, auto_reply_message, default_source_id, default_stage_id, default_company_id, default_region_id, default_lead_owner_id, default_lead_type_id } = req.body;
+    const now = new Date().toISOString();
     const insertData = {
       page_id, page_name, access_token,
       webhook_verify_token: webhook_verify_token || 'tubep_pro_verify_2024',
@@ -2612,6 +2660,8 @@ r.post('/pages', authMiddleware, async (req, res) => {
       default_source_id: default_source_id || null,
       default_stage_id: default_stage_id || null,
       created_by: req.user.userId,
+      settings_updated_at: now,
+      updated_at: now,
     };
     if (default_company_id) insertData.default_company_id = default_company_id;
     if (default_region_id && String(default_region_id).trim()) insertData.default_region_id = String(default_region_id).trim();
@@ -2627,8 +2677,12 @@ r.post('/pages', authMiddleware, async (req, res) => {
       delete insertData.default_lead_type_id;
       ({ data, error } = await supabase.from('facebook_pages').insert(insertData).select().single());
     }
+    if (error?.message?.includes('settings_updated_at')) {
+      delete insertData.settings_updated_at;
+      ({ data, error } = await supabase.from('facebook_pages').insert(insertData).select().single());
+    }
     if (error) throw error;
-    res.status(201).json(data);
+    res.status(201).json(attachTokenReminderToPage(data));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2643,7 +2697,11 @@ r.put('/pages/:id', authMiddleware, async (req, res) => {
       const rv = req.body.default_region_id;
       update.default_region_id = rv && String(rv).trim() ? String(rv).trim() : null;
     }
-    update.updated_at = new Date().toISOString();
+    const now = new Date().toISOString();
+    update.updated_at = now;
+    if (shouldBumpFacebookPageSettingsUpdatedAt(req.body, Object.keys(update))) {
+      update.settings_updated_at = now;
+    }
     let { data, error } = await supabase.from('facebook_pages').update(update).eq('id', req.params.id).select().single();
     if (error?.message?.includes('default_company_id') || error?.message?.includes('default_lead_owner_id') || error?.message?.includes('default_lead_type_id') || error?.message?.includes('default_region_id')) {
       delete update.default_company_id;
@@ -2652,8 +2710,12 @@ r.put('/pages/:id', authMiddleware, async (req, res) => {
       delete update.default_lead_type_id;
       ({ data, error } = await supabase.from('facebook_pages').update(update).eq('id', req.params.id).select().single());
     }
+    if (error?.message?.includes('settings_updated_at')) {
+      delete update.settings_updated_at;
+      ({ data, error } = await supabase.from('facebook_pages').update(update).eq('id', req.params.id).select().single());
+    }
     if (error) throw error;
-    res.json(data);
+    res.json(attachTokenReminderToPage(data));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
