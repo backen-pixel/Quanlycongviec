@@ -6,6 +6,12 @@ import {
   FolderOpen, ClipboardList, StickyNote, Image, FileSearch, ExternalLink, Download
 } from 'lucide-react';
 import { formatDateTime, getInitials, avatarColor } from '../lib/utils';
+import {
+  parseShareModules,
+  cleanShareModulesForApi,
+  shareModuleLabels,
+} from '../lib/documentShareScope';
+import DocumentShareModulePicker from './DocumentShareModulePicker';
 
 const ICON_NAME_TO_EMOJI = {
   MessageSquare: '💬', Palette: '🎨', Calculator: '💰', FileText: '📝',
@@ -123,7 +129,7 @@ export default function ProjectDocumentsTab({ projectId, project }) {
           </div>
           <div className="px-4 pb-4 space-y-2">
             {leadDocuments.map(doc => (
-              <LeadDocumentCard key={doc.id} doc={doc} />
+              <LeadDocumentCard key={doc.id} doc={doc} onVisibilitySaved={load} />
             ))}
           </div>
         </div>
@@ -307,8 +313,12 @@ const DOC_TYPE_MAP = {
   other: { label: 'Khác', icon: '📎', color: 'text-gray-600 bg-gray-50' },
 };
 
-function LeadDocumentCard({ doc }) {
+function LeadDocumentCard({ doc, onVisibilitySaved }) {
   const [expanded, setExpanded] = useState(false);
+  const [showVis, setShowVis] = useState(false);
+  const [sharedToWorkshop, setSharedToWorkshop] = useState(!!doc.shared_to_workshop);
+  const [allowedShareModules, setAllowedShareModules] = useState(() => parseShareModules(doc.allowed_share_modules) || []);
+  const [savingVis, setSavingVis] = useState(false);
   const typeInfo = DOC_TYPE_MAP[doc.doc_type] || DOC_TYPE_MAP.other;
   const fileHref = doc.file_url ? publicFileUrl(doc.file_url) : '';
   const fileOpenProps = fileHref ? getFileOpenAnchorProps(doc.file_url, { fileName: doc.file_name }) : null;
@@ -317,6 +327,24 @@ function LeadDocumentCard({ doc }) {
     /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(doc.file_url || doc.file_name || '');
   const hasNotes = doc.notes?.trim();
   const hasContent = hasNotes || isFile;
+
+  const saveVisibility = async () => {
+    if (!doc.id) return;
+    setSavingVis(true);
+    try {
+      await api.put(`/crm/documents/${doc.id}/visibility`, {
+        allowed_companies: doc.allowed_companies ?? null,
+        allowed_departments: doc.allowed_departments ?? null,
+        shared_to_workshop: !!sharedToWorkshop,
+        allowed_share_modules: sharedToWorkshop ? cleanShareModulesForApi(allowedShareModules) : null,
+      });
+      setShowVis(false);
+      onVisibilitySaved?.();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi lưu phân quyền');
+    }
+    setSavingVis(false);
+  };
 
   return (
     <div className="bg-white rounded-lg border border-amber-100 overflow-hidden hover:shadow-sm transition-shadow">
@@ -338,6 +366,11 @@ function LeadDocumentCard({ doc }) {
             {(doc.allowed_departments?.length > 0 || doc.allowed_companies?.length > 0) && (
               <span className="bg-red-50 text-red-600 px-1 py-0.5 rounded-full font-medium">🔒 Giới hạn</span>
             )}
+            {doc.shared_to_workshop && (
+              <span className="bg-teal-50 text-teal-700 px-1 py-0.5 rounded-full font-medium" title="Khối được xem">
+                🧩 {shareModuleLabels(doc.allowed_share_modules)}
+              </span>
+            )}
           </div>
         </div>
 
@@ -348,6 +381,16 @@ function LeadDocumentCard({ doc }) {
 
         {/* Action buttons */}
         <div className="flex items-center gap-1 shrink-0">
+          {doc.id && onVisibilitySaved && (
+            <button
+              type="button"
+              title="Chia sẻ khối SX / VC / CV"
+              onClick={(e) => { e.stopPropagation(); setShowVis((v) => !v); }}
+              className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg"
+            >
+              ⚙️
+            </button>
+          )}
           {isFile && fileOpenProps && (
             <a {...fileOpenProps}
               className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
@@ -360,6 +403,27 @@ function LeadDocumentCard({ doc }) {
           )}
         </div>
       </div>
+
+      {showVis && (
+        <div className="border-t border-amber-100 p-3 bg-white space-y-3" onClick={(e) => e.stopPropagation()}>
+          <p className="text-xs font-bold text-gray-700">🔐 Chia sẻ khối</p>
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={sharedToWorkshop} onChange={(e) => setSharedToWorkshop(e.target.checked)} />
+            Hiển thị ngoài CRM (SX / VC / Công việc dự án)
+          </label>
+          {sharedToWorkshop && (
+            <DocumentShareModulePicker value={allowedShareModules} onChange={setAllowedShareModules} />
+          )}
+          <button
+            type="button"
+            onClick={saveVisibility}
+            disabled={savingVis}
+            className="h-8 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold disabled:opacity-50"
+          >
+            {savingVis ? 'Đang lưu…' : 'Lưu'}
+          </button>
+        </div>
+      )}
 
       {/* Expanded content */}
       {expanded && (

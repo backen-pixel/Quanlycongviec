@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../lib/api';
 import { formatVND } from '../lib/utils';
-import * as XLSX from 'xlsx';
+import { loadXlsx } from '../lib/xlsxLoader';
 import {
   Download,
   RefreshCw,
@@ -347,10 +347,11 @@ export default function CrmStaffLeadDealReport() {
     }
   };
 
-  const exportDetailExcel = () => {
+  const exportDetailExcel = async () => {
     const list = detailData?.pipelines || [];
     const stages = detailData?.stage_breakdown || [];
     if (!list.length && !stages.length) return;
+    const XLSX = await loadXlsx();
     const wb = XLSX.utils.book_new();
     if (list.length) {
       const sheetData = list.map((p) => ({
@@ -405,7 +406,8 @@ export default function CrmStaffLeadDealReport() {
     XLSX.writeFile(wb, `crm-pipeline-${slug}_${detailData?.date_from}_${detailData?.date_to}.xlsx`);
   };
 
-  const exportExcel = () => {
+  const exportExcel = async () => {
+    const XLSX = await loadXlsx();
     const sheetData = rows.map((r) => ({
       'Nhân viên': r.full_name || '',
       Email: r.email || '',

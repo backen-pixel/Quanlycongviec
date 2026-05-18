@@ -15,18 +15,18 @@ const STAGE_LABELS = {
 
 const ATT_ICONS = { image: Image, drawing: FileText, task_note: MessageSquare, other: FileText };
 
-export default function SharedCRMNotes({ projectId }) {
+export default function SharedCRMNotes({ projectId, forModule = 'workshop' }) {
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(true);
 
   useEffect(() => {
     if (!projectId) return;
-    api.get(`/crm/project/${projectId}/shared-notes`)
+    api.get(`/crm/project/${projectId}/shared-notes`, { params: { for_module: forModule } })
       .then(r => setNotes(r.data || []))
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [projectId]);
+  }, [projectId, forModule]);
 
   if (loading) return null;
   if (!notes.length) return null;

@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
+const { lookupCache } = require('../helpers/ttlCache');
 const {
   isExpiryDeadlineNotificationType,
   EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST,
@@ -37,13 +38,13 @@ function isProjectModuleNotification(n) {
 
 r.get('/', async (req, res) => {
   try {
-    // Fetch tất cả TB chưa đọc của user (cap 1000), sau đó loại "module Quản lý công việc"
-    // và đếm phân loại trong memory. Giữ logic count chính xác cho từng tab.
     const { data: rows, error } = await supabase
       .from('notifications')
       .select('type, entity_type, metadata')
       .eq('user_id', req.user.userId)
       .eq('is_read', false)
+      .neq('entity_type', 'project')
+      .or("metadata->>ecosystem_module_key.is.null,metadata->>ecosystem_module_key.neq.projects")
       .limit(1000);
     if (error) return res.status(500).json({ error: error.message });
 
@@ -85,34 +86,37 @@ r.get('/notifications', async (req, res) => {
   try {
     const { unread, limit = 50, channel } = req.query;
     const lim = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100);
-    const fetchCap = Math.min(lim * 10, 500);
+    const ch = channel ? String(channel).toLowerCase() : '';
+    const fetchCap = Math.min(lim * 5, 300);
     let q = supabase
       .from('notifications')
       .select('*')
       .eq('user_id', req.user.userId)
+      .neq('entity_type', 'project')
+      .or("metadata->>ecosystem_module_key.is.null,metadata->>ecosystem_module_key.neq.projects")
       .order('created_at', { ascending: false })
       .limit(fetchCap);
 
     if (unread === 'true') q = q.eq('is_read', false);
 
+    if (ch === 'messages') {
+      q = q.in('type', CHAT_NOTIFICATION_TYPES);
+    } else if (ch === 'events') {
+      q = q.in('type', EVENT_NOTIFICATION_TYPES);
+    } else if (ch === 'activity') {
+      q = q.not('type', 'in', postgrestInTypesList([
+        ...EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST,
+        ...CHAT_NOTIFICATION_TYPES,
+        ...EVENT_NOTIFICATION_TYPES,
+      ]));
+    } else {
+      q = q.not('type', 'in', postgrestInTypesList(EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST));
+    }
+
     const { data, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
 
-    const ch = channel ? String(channel).toLowerCase() : '';
     let rows = (data || []).filter((n) => !isProjectModuleNotification(n));
-    if (ch === 'activity') {
-      rows = rows.filter(
-        (n) => !isExpiryDeadlineNotificationType(n.type)
-          && !CHAT_NOTIFICATION_TYPES.includes(n.type)
-          && !EVENT_NOTIFICATION_TYPES.includes(n.type),
-      );
-    } else if (ch === 'messages') {
-      rows = rows.filter((n) => CHAT_NOTIFICATION_TYPES.includes(n.type));
-    } else if (ch === 'events') {
-      rows = rows.filter((n) => EVENT_NOTIFICATION_TYPES.includes(n.type));
-    } else {
-      rows = rows.filter((n) => !isExpiryDeadlineNotificationType(n.type));
-    }
     res.json({ notifications: rows.slice(0, lim) });
   } catch (e) {
     console.error('Dashboard notifications error:', e);
@@ -125,12 +129,14 @@ r.get('/notifications/deadlines', async (req, res) => {
   try {
     const mod = String(req.query.module || 'all').toLowerCase();
     const lim = Math.min(Math.max(parseInt(req.query.limit, 10) || 80, 1), 200);
-    const fetchCap = Math.min(lim * 4, 600);
+    const fetchCap = Math.min(lim * 3, 400);
     const { data, error } = await supabase
       .from('notifications')
       .select('*')
       .eq('user_id', req.user.userId)
       .in('type', EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST)
+      .neq('entity_type', 'project')
+      .or("metadata->>ecosystem_module_key.is.null,metadata->>ecosystem_module_key.neq.projects")
       .order('created_at', { ascending: false })
       .limit(fetchCap);
     if (error) return res.status(500).json({ error: error.message });
@@ -221,25 +227,52 @@ r.get('/overview', async (req, res) => {
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-    // ── PROJECTS ──
-    const { count: totalProjects } = await supabase.from('projects').select('*', { count: 'exact', head: true });
-    const { count: activeProjects } = await supabase.from('projects').select('*', { count: 'exact', head: true }).in('status', ['consulting', 'designing', 'quoting', 'contract_signed', 'producing', 'shipping', 'installing']);
-    const { count: completedProjects } = await supabase.from('projects').select('*', { count: 'exact', head: true }).eq('status', 'warranty');
-    const { count: newProjects7d } = await supabase.from('projects').select('*', { count: 'exact', head: true }).gte('created_at', sevenDaysAgo.toISOString());
-    const { count: overdueProjects } = await supabase.from('projects').select('*', { count: 'exact', head: true }).lt('due_date', now.toISOString()).neq('status', 'warranty');
+    const firstDayThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const firstDayLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
 
-    // ── TASKS ──
-    const { count: totalTasks } = await supabase.from('tasks').select('*', { count: 'exact', head: true });
-    const { count: completedTasks } = await supabase.from('tasks').select('*', { count: 'exact', head: true }).eq('status', 'done');
-    const { count: overdueTasks } = await supabase.from('tasks').select('*', { count: 'exact', head: true }).lt('due_date', now.toISOString()).neq('status', 'done');
-    const { count: blockedTasks } = await supabase.from('tasks').select('*', { count: 'exact', head: true }).eq('status', 'blocked');
+    const [
+      totalProjectsRes, activeProjectsRes, completedProjectsRes, newProjects7dRes, overdueProjectsRes,
+      totalTasksRes, completedTasksRes, overdueTasksRes, blockedTasksRes,
+      totalCustomersRes, newCustomers7dRes,
+      customerProjectsRes,
+      projectValuesRes, thisMonthProjectsRes, lastMonthProjectsRes,
+      totalLeadsRes, totalDealsRes, newLeads30dRes, newDeals30dRes, wonDealsRes, dealValuesRes,
+    ] = await Promise.all([
+      supabase.from('projects').select('*', { count: 'exact', head: true }),
+      supabase.from('projects').select('*', { count: 'exact', head: true }).in('status', ['consulting', 'designing', 'quoting', 'contract_signed', 'producing', 'shipping', 'installing']),
+      supabase.from('projects').select('*', { count: 'exact', head: true }).eq('status', 'warranty'),
+      supabase.from('projects').select('*', { count: 'exact', head: true }).gte('created_at', sevenDaysAgo.toISOString()),
+      supabase.from('projects').select('*', { count: 'exact', head: true }).lt('due_date', now.toISOString()).neq('status', 'warranty'),
+      supabase.from('tasks').select('*', { count: 'exact', head: true }),
+      supabase.from('tasks').select('*', { count: 'exact', head: true }).eq('status', 'done'),
+      supabase.from('tasks').select('*', { count: 'exact', head: true }).lt('due_date', now.toISOString()).neq('status', 'done'),
+      supabase.from('tasks').select('*', { count: 'exact', head: true }).eq('status', 'blocked'),
+      supabase.from('customers').select('*', { count: 'exact', head: true }),
+      supabase.from('customers').select('*', { count: 'exact', head: true }).gte('created_at', sevenDaysAgo.toISOString()),
+      supabase.from('projects').select('customer_id').not('customer_id', 'is', null),
+      supabase.from('projects').select('estimated_value'),
+      supabase.from('projects').select('estimated_value').gte('created_at', firstDayThisMonth.toISOString()),
+      supabase.from('projects').select('estimated_value').gte('created_at', firstDayLastMonth.toISOString()).lt('created_at', firstDayThisMonth.toISOString()),
+      supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'lead'),
+      supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal'),
+      supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'lead').gte('created_at', thirtyDaysAgo.toISOString()),
+      supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal').gte('created_at', thirtyDaysAgo.toISOString()),
+      supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal').not('project_id', 'is', null),
+      supabase.from('crm_leads').select('budget').eq('type', 'deal').is('project_id', null),
+    ]);
 
-    // ── CUSTOMERS ──
-    const { count: totalCustomers } = await supabase.from('customers').select('*', { count: 'exact', head: true });
-    const { count: newCustomers7d } = await supabase.from('customers').select('*', { count: 'exact', head: true }).gte('created_at', sevenDaysAgo.toISOString());
-    
-    // VIP customers (>= 5 projects)
-    const { data: customerProjects } = await supabase.from('projects').select('customer_id').not('customer_id', 'is', null);
+    const totalProjects = totalProjectsRes.count;
+    const activeProjects = activeProjectsRes.count;
+    const completedProjects = completedProjectsRes.count;
+    const newProjects7d = newProjects7dRes.count;
+    const overdueProjects = overdueProjectsRes.count;
+    const totalTasks = totalTasksRes.count;
+    const completedTasks = completedTasksRes.count;
+    const overdueTasks = overdueTasksRes.count;
+    const blockedTasks = blockedTasksRes.count;
+    const totalCustomers = totalCustomersRes.count;
+    const newCustomers7d = newCustomers7dRes.count;
+    const customerProjects = customerProjectsRes.data;
     const customerProjectCount = {};
     (customerProjects || []).forEach(p => {
       customerProjectCount[p.customer_id] = (customerProjectCount[p.customer_id] || 0) + 1;
@@ -250,33 +283,26 @@ r.get('/overview', async (req, res) => {
     const returnCustomers = Object.values(customerProjectCount).filter(c => c > 1).length;
     const returnRate = totalCustomers > 0 ? ((returnCustomers / totalCustomers) * 100).toFixed(1) : 0;
 
-    // ── REVENUE ──
-    const { data: projectValues } = await supabase.from('projects').select('estimated_value');
+    const projectValues = projectValuesRes.data;
     const totalRevenue = (projectValues || []).reduce((sum, p) => sum + (p.estimated_value || 0), 0);
-    
-    // Growth: compare current month vs last month
-    const firstDayThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const firstDayLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const { data: thisMonthProjects } = await supabase.from('projects').select('estimated_value').gte('created_at', firstDayThisMonth.toISOString());
-    const { data: lastMonthProjects } = await supabase.from('projects').select('estimated_value').gte('created_at', firstDayLastMonth.toISOString()).lt('created_at', firstDayThisMonth.toISOString());
-    
+
+    const thisMonthProjects = thisMonthProjectsRes.data;
+    const lastMonthProjects = lastMonthProjectsRes.data;
     const thisMonthRevenue = (thisMonthProjects || []).reduce((sum, p) => sum + (p.estimated_value || 0), 0);
     const lastMonthRevenue = (lastMonthProjects || []).reduce((sum, p) => sum + (p.estimated_value || 0), 0);
     const revenueGrowth = lastMonthRevenue > 0 ? (((thisMonthRevenue - lastMonthRevenue) / lastMonthRevenue) * 100).toFixed(1) : 0;
 
     const avgProjectValue = totalProjects > 0 ? Math.round(totalRevenue / totalProjects) : 0;
 
-    // ── CRM: Leads & Deals ──
-    const { count: totalLeads } = await supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'lead');
-    const { count: totalDeals } = await supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal');
-    const { count: newLeads30d } = await supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'lead').gte('created_at', thirtyDaysAgo.toISOString());
-    const { count: newDeals30d } = await supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal').gte('created_at', thirtyDaysAgo.toISOString());
-    const { count: wonDeals } = await supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal').not('project_id', 'is', null);
+    const totalLeads = totalLeadsRes.count;
+    const totalDeals = totalDealsRes.count;
+    const newLeads30d = newLeads30dRes.count;
+    const newDeals30d = newDeals30dRes.count;
+    const wonDeals = wonDealsRes.count;
     const leadToDealRate = totalLeads > 0 ? ((totalDeals / totalLeads) * 100).toFixed(1) : 0;
     const dealToProjectRate = totalDeals > 0 ? (((wonDeals || 0) / totalDeals) * 100).toFixed(1) : 0;
 
-    // Deal pipeline value
-    const { data: dealValues } = await supabase.from('crm_leads').select('budget').eq('type', 'deal').is('project_id', null);
+    const dealValues = dealValuesRes.data;
     const dealPipelineValue = (dealValues || []).reduce((sum, d) => sum + (d.budget || 0), 0);
 
     res.json({
@@ -329,22 +355,24 @@ r.get('/overview', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/workload', async (req, res) => {
   try {
-    // Get SYSTEM workflow stages only (company_id IS NULL) — correct order
-    const { data: systemStages } = await supabase
-      .from('workflow_stages')
-      .select('id, name, slug, color, icon, order_index')
-      .is('company_id', null)
-      .eq('is_active', true)
-      .order('order_index');
+    const systemStages = await lookupCache.getOrFetch('workflow_stages:system', async () => {
+      const { data } = await supabase
+        .from('workflow_stages')
+        .select('id, name, slug, color, icon, order_index')
+        .is('company_id', null)
+        .eq('is_active', true)
+        .order('order_index');
+      return data || [];
+    });
 
     if (!systemStages?.length) {
       return res.json({ divisions: [] });
     }
 
-    // Get ALL stages (including per-company) for project counting
-    const { data: allStages } = await supabase
-      .from('workflow_stages')
-      .select('id, name');
+    const allStages = await lookupCache.getOrFetch('workflow_stages:all-id-name', async () => {
+      const { data } = await supabase.from('workflow_stages').select('id, name');
+      return data || [];
+    });
 
     // Map stage name → all stage_ids with that name (for counting)
     const nameToIds = {};
@@ -401,34 +429,36 @@ r.get('/timeline', async (req, res) => {
     if (period === '3m') months = 3;
     if (period === '12m') months = 12;
 
-    const projectTimeline = [];
-    const revenueTimeline = [];
-
+    const monthSpecs = [];
     for (let i = months - 1; i >= 0; i--) {
       const monthStart = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const monthEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 0, 23, 59, 59);
       const monthKey = `${monthStart.getFullYear()}-${String(monthStart.getMonth() + 1).padStart(2, '0')}`;
-
-      // Projects created
-      const { count: created } = await supabase.from('projects').select('*', { count: 'exact', head: true })
-        .gte('created_at', monthStart.toISOString())
-        .lte('created_at', monthEnd.toISOString());
-
-      // Projects completed (status = warranty)
-      const { count: completed } = await supabase.from('projects').select('*', { count: 'exact', head: true })
-        .eq('status', 'warranty')
-        .gte('updated_at', monthStart.toISOString())
-        .lte('updated_at', monthEnd.toISOString());
-
-      // Revenue
-      const { data: monthProjects } = await supabase.from('projects').select('estimated_value')
-        .gte('created_at', monthStart.toISOString())
-        .lte('created_at', monthEnd.toISOString());
-      const monthRevenue = (monthProjects || []).reduce((sum, p) => sum + (p.estimated_value || 0), 0);
-
-      projectTimeline.push({ month: monthKey, created: created || 0, completed: completed || 0 });
-      revenueTimeline.push({ month: monthKey, value: monthRevenue });
+      monthSpecs.push({ monthStart, monthEnd, monthKey });
     }
+
+    const monthResults = await Promise.all(monthSpecs.map(async ({ monthStart, monthEnd, monthKey }) => {
+      const [createdRes, completedRes, monthProjectsRes] = await Promise.all([
+        supabase.from('projects').select('*', { count: 'exact', head: true })
+          .gte('created_at', monthStart.toISOString())
+          .lte('created_at', monthEnd.toISOString()),
+        supabase.from('projects').select('*', { count: 'exact', head: true })
+          .eq('status', 'warranty')
+          .gte('updated_at', monthStart.toISOString())
+          .lte('updated_at', monthEnd.toISOString()),
+        supabase.from('projects').select('estimated_value')
+          .gte('created_at', monthStart.toISOString())
+          .lte('created_at', monthEnd.toISOString()),
+      ]);
+      const monthRevenue = (monthProjectsRes.data || []).reduce((sum, p) => sum + (p.estimated_value || 0), 0);
+      return {
+        project: { month: monthKey, created: createdRes.count || 0, completed: completedRes.count || 0 },
+        revenue: { month: monthKey, value: monthRevenue },
+      };
+    }));
+
+    const projectTimeline = monthResults.map((m) => m.project);
+    const revenueTimeline = monthResults.map((m) => m.revenue);
 
     res.json({ projects: projectTimeline, revenue: revenueTimeline });
   } catch (e) {
@@ -451,26 +481,34 @@ r.get('/team', async (req, res) => {
     // Get all users
     const { data: users } = await supabase.from('users').select('id, full_name, email, avatar');
 
+    const [tasksRes, projectsRes] = await Promise.all([
+      supabase.from('tasks').select('assignee_id')
+        .eq('status', 'done')
+        .gte('updated_at', startDate.toISOString())
+        .not('assignee_id', 'is', null),
+      supabase.from('projects').select('project_manager_id')
+        .not('project_manager_id', 'is', null),
+    ]);
+    const taskCountByUser = {};
+    (tasksRes.data || []).forEach((t) => {
+      taskCountByUser[t.assignee_id] = (taskCountByUser[t.assignee_id] || 0) + 1;
+    });
+    const projectCountByUser = {};
+    (projectsRes.data || []).forEach((p) => {
+      projectCountByUser[p.project_manager_id] = (projectCountByUser[p.project_manager_id] || 0) + 1;
+    });
     const performers = [];
     for (const user of users || []) {
-      // Tasks completed in period
-      const { count: tasksCompleted } = await supabase.from('tasks').select('*', { count: 'exact', head: true })
-        .eq('assignee_id', user.id)
-        .eq('status', 'done')
-        .gte('updated_at', startDate.toISOString());
-
-      // Projects owned
-      const { count: projectsOwned } = await supabase.from('projects').select('*', { count: 'exact', head: true })
-        .eq('project_manager_id', user.id);
-
+      const tasksCompleted = taskCountByUser[user.id] || 0;
+      const projectsOwned = projectCountByUser[user.id] || 0;
       if (tasksCompleted > 0 || projectsOwned > 0) {
         performers.push({
           user_id: user.id,
           name: user.full_name,
           email: user.email,
           avatar: user.avatar,
-          tasks_completed: tasksCompleted || 0,
-          projects_owned: projectsOwned || 0,
+          tasks_completed: tasksCompleted,
+          projects_owned: projectsOwned,
         });
       }
     }
@@ -616,9 +654,11 @@ r.get('/divisions', async (req, res) => {
 
     let divisionUnits = [];
 
-    // Get all levels to find depth=1
-    const { data: levels } = await supabase.from('ecosystem_levels')
-      .select('id, name, depth').eq('is_active', true).order('depth');
+    const levels = await lookupCache.getOrFetch('ecosystem_levels:active', async () => {
+      const { data } = await supabase.from('ecosystem_levels')
+        .select('id, name, depth').eq('is_active', true).order('depth');
+      return data || [];
+    });
     
     const depth1Level = (levels || []).find(l => l.depth === 1);
     
@@ -716,11 +756,13 @@ r.get('/division/:divisionId', async (req, res) => {
       .single();
     if (!division) return res.status(404).json({ error: 'Khối không tồn tại' });
 
-    // 2. Stage groups → division mapping (all at once, no N+1)
-    const { data: stageGroups } = await supabase
-      .from('workflow_stage_groups')
-      .select('id, slug, division_unit_id, order_index')
-      .order('order_index');
+    const stageGroups = await lookupCache.getOrFetch('workflow_stage_groups:list', async () => {
+      const { data } = await supabase
+        .from('workflow_stage_groups')
+        .select('id, slug, division_unit_id, order_index')
+        .order('order_index');
+      return data || [];
+    });
 
     // Map: division_unit_id → group order
     const divGroupOrder = {};
@@ -733,13 +775,15 @@ r.get('/division/:divisionId', async (req, res) => {
     const groupSlugOrder = {};
     (stageGroups || []).forEach(sg => { groupSlugOrder[sg.slug] = sg.order_index; });
 
-    // 3. System stages (company_id IS NULL)
-    const { data: stages } = await supabase
-      .from('workflow_stages')
-      .select('id, name, slug, order_index, color, icon')
-      .is('company_id', null)
-      .eq('is_active', true)
-      .order('order_index');
+    const stages = await lookupCache.getOrFetch('workflow_stages:system:slug-order', async () => {
+      const { data } = await supabase
+        .from('workflow_stages')
+        .select('id, name, slug, order_index, color, icon')
+        .is('company_id', null)
+        .eq('is_active', true)
+        .order('order_index');
+      return data || [];
+    });
 
     // Stage slug prefix → group slug
     const slugToGroup = {

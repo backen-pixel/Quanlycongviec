@@ -4,7 +4,14 @@ import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom'
 import api from '../lib/api';
 import { taskBelongsToWorkshopModule } from '../lib/workshopTaskScope';
 import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
-import { isLeadDocVisibleInModule, parseShareModules } from '../lib/documentShareScope';
+import {
+  isLeadDocVisibleInModule,
+  isCrmSharedArtifactVisibleInModule,
+  parseShareModules,
+  cleanShareModulesForApi,
+  shareModuleLabels,
+} from '../lib/documentShareScope';
+import DocumentShareModulePicker from '../components/DocumentShareModulePicker';
 import { useAuth } from '../lib/auth';
 import { formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
 import { publicFileUrl as pubUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
@@ -253,12 +260,6 @@ function getFileIcon(name) {
   return map[ext] || '📄';
 }
 
-const SHARE_MODULE_OPTIONS = [
-  { id: 'production', label: 'Sản xuất' },
-  { id: 'logistics', label: 'Vận chuyển & LĐ' },
-  { id: 'workshop', label: 'Công việc dự án' },
-];
-
 /** Row tài liệu — rich preview như CRM DocumentRow; crmVisibility = chia sẻ từ lead_documents */
 function DocRow({ doc, onDelete, workshopModule, onVisibilitySaved }) {
   const [expanded, setExpanded] = useState(false);
@@ -285,10 +286,6 @@ function DocRow({ doc, onDelete, workshopModule, onVisibilitySaved }) {
     setShowVis(true);
   };
 
-  const toggleMod = (id) => {
-    setAllowedMods((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-  };
-
   const saveVis = async () => {
     setSavingVis(true);
     try {
@@ -296,8 +293,7 @@ function DocRow({ doc, onDelete, workshopModule, onVisibilitySaved }) {
         allowed_companies: doc.allowed_companies ?? null,
         allowed_departments: doc.allowed_departments ?? null,
         shared_to_workshop: !!sharedToWorkshop,
-        allowed_share_modules:
-          sharedToWorkshop && allowedMods.length ? allowedMods : null,
+        allowed_share_modules: sharedToWorkshop ? cleanShareModulesForApi(allowedMods) : null,
       });
       setShowVis(false);
       onVisibilitySaved?.();
@@ -319,8 +315,8 @@ function DocRow({ doc, onDelete, workshopModule, onVisibilitySaved }) {
               {doc.file_size > 0 && <span className="text-[10px] text-gray-400">{doc.file_size > 1048576 ? `${(doc.file_size/1048576).toFixed(1)} MB` : `${(doc.file_size/1024).toFixed(1)} KB`}</span>}
               {doc.created_at && <span className="text-[10px] text-gray-400">{new Date(doc.created_at).toLocaleDateString('vi-VN')}</span>}
               {(doc.uploader?.full_name || doc.creator?.full_name) && <span className="text-[10px] text-gray-400">· {doc.uploader?.full_name || doc.creator?.full_name}</span>}
-              {crmShareUi && doc.shared_to_workshop && Array.isArray(doc.allowed_share_modules) && doc.allowed_share_modules.length > 0 && (
-                <span className="text-[9px] bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded-full font-medium">🧩 {doc.allowed_share_modules.join(', ')}</span>
+              {crmShareUi && doc.shared_to_workshop && (
+                <span className="text-[9px] bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded-full font-medium">🧩 {shareModuleLabels(doc.allowed_share_modules)}</span>
               )}
               {crmShareUi && workshopModule && !visibleHere && (
                 <span className="text-[9px] bg-rose-50 text-rose-700 px-1.5 py-0.5 rounded-full font-medium">Ẩn ở module này</span>
@@ -371,25 +367,13 @@ function DocRow({ doc, onDelete, workshopModule, onVisibilitySaved }) {
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4" onClick={() => !savingVis && setShowVis(false)}>
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
             <p className="text-sm font-semibold text-gray-900">Ai được xem tài liệu này?</p>
-            <p className="text-xs text-gray-500">Bật chia sẻ xưởng, rồi chọn module (để trống = mọi module SX / VC / CV đều xem).</p>
+            <p className="text-xs text-gray-500">Chọn khối được xem (vd. chỉ Sản xuất — VC/LĐ không thấy).</p>
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input type="checkbox" checked={sharedToWorkshop} onChange={(e) => setSharedToWorkshop(e.target.checked)} />
-              Chia sẻ sang xưởng (SX / VC)
+              Chia sẻ sang khối SX / VC / Công việc dự án
             </label>
             {sharedToWorkshop && (
-              <div className="space-y-1 pl-1">
-                <p className="text-[10px] font-medium text-gray-500 uppercase">Giới hạn module (tùy chọn)</p>
-                {SHARE_MODULE_OPTIONS.map((o) => (
-                  <label key={o.id} className="flex items-center gap-2 text-xs cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={allowedMods.includes(o.id)}
-                      onChange={() => toggleMod(o.id)}
-                    />
-                    {o.label}
-                  </label>
-                ))}
-              </div>
+              <DocumentShareModulePicker value={allowedMods} onChange={setAllowedMods} />
             )}
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 hover:bg-gray-50" onClick={() => setShowVis(false)} disabled={savingVis}>Hủy</button>
@@ -575,16 +559,19 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     [crmActivities],
   );
 
-  /** Chỉ hiện hoạt động đã được chia sẻ xưởng (shared_to_workshop = true) */
+  const workshopShareMod = moduleKey === 'vc' ? 'logistics' : 'production';
+
+  /** Chỉ hiện hoạt động đã chia sẻ và thuộc khối hiện tại */
   const sharedActivities = useMemo(
-    () => (crmActivities || []).filter((a) => a.shared_to_workshop === true),
-    [crmActivities],
+    () => (crmActivities || []).filter(
+      (a) => a.shared_to_workshop === true && isCrmSharedArtifactVisibleInModule(a, workshopShareMod),
+    ),
+    [crmActivities, workshopShareMod],
   );
 
-  /** Chỉ hiện ghi chú đã được chia sẻ xưởng */
   const sharedNotes = useMemo(
-    () => (crmActivities || []).filter((a) => a.type === 'note' && a.shared_to_workshop === true),
-    [crmActivities],
+    () => sharedActivities.filter((a) => a.type === 'note'),
+    [sharedActivities],
   );
 
   const refreshCrmActivities = useCallback(async () => {
@@ -1547,9 +1534,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                 <>
                   {/* Bản vẽ kỹ thuật nổi bật */}
                   {(() => {
-                    const crmForDrawings = project.sharedDocuments?.length
-                      ? project.sharedDocuments
-                      : (project.documents || []);
+                    const crmForDrawings = (project.sharedDocuments || []).filter(
+                      (d) => isLeadDocVisibleInModule(d, workshopShareMod),
+                    );
                     const allDocs = [...crmForDrawings, ...projectDocs];
                     const seen = new Set();
                     const drawings = allDocs.filter((d) => {

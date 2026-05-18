@@ -1,7 +1,12 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { markCrmPipelineCardFocus, notifyCrmLeadSeenByCurrentUser, saveCrmPipelineSnapshot, loadCrmPipelineSnapshot } from '../lib/crmPipelineStorage';
-import { parseShareModules } from '../lib/documentShareScope';
+import { markCrmPipelineCardFocus, notifyCrmLeadSeenByCurrentUser, saveCrmPipelineSnapshot, loadCrmPipelineSnapshot, persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
+import {
+  parseShareModules,
+  cleanShareModulesForApi,
+  shareModuleLabels,
+} from '../lib/documentShareScope';
+import DocumentShareModulePicker from '../components/DocumentShareModulePicker';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
 import { useAuth } from '../lib/auth';
 import api from '../lib/api';
@@ -413,10 +418,11 @@ export default function LeadDetail() {
   }, [id, isDealHoanThanhForZalo, load]);
 
   const navigateToCrmDealFocused = (dealId) => {
+    persistCrmPipelineUiNow();
     const snapshot = loadCrmPipelineSnapshot();
     saveCrmPipelineSnapshot({ ...(snapshot || {}), pipelineType: 'deal' });
     if (dealId) markCrmPipelineCardFocus(dealId);
-    navigate('/crm');
+    navigate('/crm/dashboard');
   };
 
   const patchLeadStage = async (stageId, extraData = {}) => {
@@ -830,7 +836,7 @@ export default function LeadDetail() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <button onClick={() => { if (lead?.type === 'deal') localStorage.setItem('crm_pinned_tab', 'deal'); markCrmPipelineCardFocus(id); navigate('/crm'); }} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
+          <button onClick={() => { persistCrmPipelineUiNow(); if (lead?.type === 'deal') localStorage.setItem('crm_pinned_tab', 'deal'); markCrmPipelineCardFocus(id); navigate('/crm/dashboard'); }} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
           <div>
             <div className="flex items-center gap-2">
               <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${lead.type === 'deal' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
@@ -1785,12 +1791,6 @@ const DOC_TYPES = [
   { value: 'other', label: 'Khác', icon: '📎' },
 ];
 
-const SHARE_MODULE_OPTIONS = [
-  { id: 'production', label: '🏭 Sản xuất (SX)' },
-  { id: 'logistics', label: '🚚 Vận chuyển (VC)' },
-  { id: 'workshop', label: '📁 Công việc dự án' },
-];
-
 function getFileIcon(name) {
   if (!name) return '📄';
   const ext = name.split('.').pop()?.toLowerCase();
@@ -1843,10 +1843,6 @@ function DocumentRow({ doc, onDelete }) {
     setAllowedDepts(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
-  const toggleShareModule = (id) => {
-    setAllowedShareModules((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-  };
-
   const saveVisibility = async () => {
     setSavingVis(true);
     try {
@@ -1854,7 +1850,9 @@ function DocumentRow({ doc, onDelete }) {
         allowed_companies: allowedCompanies.length ? allowedCompanies : null,
         allowed_departments: allowedDepts.length ? allowedDepts : null,
         shared_to_workshop: !!sharedToWorkshop,
-        allowed_share_modules: sharedToWorkshop && allowedShareModules.length ? allowedShareModules : null,
+        allowed_share_modules: sharedToWorkshop
+          ? cleanShareModulesForApi(allowedShareModules)
+          : null,
       });
       // reflect immediately in UI (LeadDetail keeps doc objects)
       doc.allowed_companies = data.allowed_companies;
@@ -1884,9 +1882,9 @@ function DocumentRow({ doc, onDelete }) {
               {(doc.allowed_departments?.length > 0 || doc.allowed_companies?.length > 0) && (
                 <span className="text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full font-medium" title="Nhãn phòng/công ty — không ẩn với team CRM trên trang này">🏷️ Nhãn PB/Cty</span>
               )}
-              {doc.shared_to_workshop && Array.isArray(doc.allowed_share_modules) && doc.allowed_share_modules.length > 0 && (
-                <span className="text-[9px] bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded-full font-medium" title="Chỉ hiện ở một số module xưởng">
-                  🧩 {doc.allowed_share_modules.join(', ')}
+              {doc.shared_to_workshop && (
+                <span className="text-[9px] bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded-full font-medium" title="Khối được xem ngoài CRM">
+                  🧩 {shareModuleLabels(doc.allowed_share_modules)}
                 </span>
               )}
             </div>
@@ -1948,32 +1946,14 @@ function DocumentRow({ doc, onDelete }) {
 
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={sharedToWorkshop} onChange={(e) => setSharedToWorkshop(e.target.checked)} />
-              <span>Chia sẻ sang xưởng (SX/VC)</span>
+              <span>Chia sẻ sang khối SX / VC / Công việc dự án</span>
             </label>
 
             {sharedToWorkshop && (
-              <div>
-                <p className="text-[10px] font-semibold text-gray-500 uppercase mb-1">🧩 Module được xem tài liệu</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {SHARE_MODULE_OPTIONS.map((m) => (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onClick={() => toggleShareModule(m.id)}
-                      className={`px-2.5 py-1 rounded-full text-xs font-medium cursor-pointer transition-all ${
-                        allowedShareModules.includes(m.id)
-                          ? 'bg-teal-600 text-white'
-                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                      }`}
-                    >
-                      {m.label}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-[10px] text-gray-400 mt-1">
-                  Không chọn = hiển thị ở cả SX, VC và trang Công việc dự án (như trước).
-                </p>
-              </div>
+              <DocumentShareModulePicker
+                value={allowedShareModules}
+                onChange={setAllowedShareModules}
+              />
             )}
 
             <div>

@@ -100,12 +100,13 @@ export default function WorkshopProjectTasksPanel({
       return undefined;
     }
     let c = true;
-    api.get(`/crm/project/${project.id}/shared-notes`).then((r) => {
+    const shareMod = workArea === 'logistics' ? 'logistics' : 'production';
+    api.get(`/crm/project/${project.id}/shared-notes`, { params: { for_module: shareMod } }).then((r) => {
       const rows = r.data;
       if (c) setCrmSharedTaskNotes(Array.isArray(rows) ? rows : []);
     }).catch(() => { if (c) setCrmSharedTaskNotes([]); });
     return () => { c = false; };
-  }, [project?.id]);
+  }, [project?.id, workArea]);
 
   const loadEmployees = async (unitId) => {
     if (!unitId || employeesByUnit[unitId]) return;

@@ -4,7 +4,7 @@ import { useAuth } from '../lib/auth';
 import Modal from '../components/Modal';
 import { Plus, Search, Package, Upload, Download, Trash2, Edit3, Save, X, Settings, ChevronDown, ChevronRight, Eye, FileSpreadsheet, Building2 } from 'lucide-react';
 import { formatVND } from '../lib/utils';
-import * as XLSX from 'xlsx';
+import { loadXlsx } from '../lib/xlsxLoader';
 
 const CODE_PART_ORDER = ['group','spec','standard','category','style','glass','type_standard','side','size'];
 const CODE_PART_VN = {
@@ -88,6 +88,7 @@ export default function ProductsPage() {
     try {
       const { data } = await api.get('/products/export', { params: listParams });
       if (!data.rows?.length) return alert('Không có sản phẩm để xuất');
+      const XLSX = await loadXlsx();
       const ws = XLSX.utils.json_to_sheet(data.rows);
       // Set column widths
       ws['!cols'] = [
@@ -105,8 +106,9 @@ export default function ProductsPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       try {
+        const XLSX = await loadXlsx();
         const wb = XLSX.read(ev.target.result, { type: 'binary' });
         const ws = wb.Sheets[wb.SheetNames[0]];
         
@@ -295,9 +297,10 @@ export default function ProductsPage() {
   };
 
   // ── Download template ──
-  const downloadTemplate = () => {
+  const downloadTemplate = async () => {
     const headers = ['STT','nhóm sp','mã quy cách','mã tiêu chuẩn','mã loại/ phân loại','mã hình thức','mã kính','mã chuẩn loại','mã hông','mã Kích thước quy ước','MÃ THÀNH PHẨM','TÊN THÀNH PHẨM','Ngang','Cao','Sâu','GIÁ BÁN GỒM VAT 10%','GIÁ BÁN CHƯA VAT 10%','đơn vị tính'];
     const sample = [1,'BEPTR','L','N','nhỏ','trên','4L','T','','380','BEPTR-L-N-4L-T-380','Tủ bếp trên nhỏ kính 4ly',700,380,320,5500000,5000000,'Md'];
+    const XLSX = await loadXlsx();
     const ws = XLSX.utils.aoa_to_sheet([headers, sample]);
     ws['!cols'] = headers.map((h) => ({wch: Math.max(h.length + 2, 12)}));
     const wb = XLSX.utils.book_new();

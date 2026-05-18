@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const compression = require('compression');
+const rateLimit = require('express-rate-limit');
 const http = require('http');
 const axios = require('axios');
 const jwt = require('jsonwebtoken');
@@ -45,9 +47,49 @@ app.use((req, res, next) => {
   }
   return corsMainApp(req, res, next);
 });
-app.use(morgan('dev'));
-app.use(express.json({ limit: '100mb' }));
-app.use(express.urlencoded({ extended: true, limit: '100mb' }));
+// Compression: gzip/br for JSON responses. Skip if explicitly disabled.
+app.use(compression({
+  threshold: 1024,
+  filter: (req, res) => {
+    if (req.headers['x-no-compression']) return false;
+    return compression.filter(req, res);
+  },
+}));
+
+const isProd = process.env.NODE_ENV === 'production';
+app.use(morgan(isProd ? 'tiny' : 'dev'));
+
+// Upload routes need large bodies; everything else stays small to bound memory.
+const UPLOAD_BODY_LIMIT = '256mb';
+const STANDARD_BODY_LIMIT = '2mb';
+const largeBodyRoutes = ['/api/upload', '/api/voice-recordings', '/api/external'];
+
+app.use((req, res, next) => {
+  const isLarge = largeBodyRoutes.some((p) => req.path.startsWith(p));
+  const limit = isLarge ? UPLOAD_BODY_LIMIT : STANDARD_BODY_LIMIT;
+  express.json({ limit })(req, res, (err) => {
+    if (err) return next(err);
+    express.urlencoded({ extended: true, limit })(req, res, next);
+  });
+});
+
+// Rate limiting — protect auth + external webhook endpoints from abuse.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Quá nhiều yêu cầu, vui lòng thử lại sau.' },
+});
+const externalLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Rate limit exceeded' },
+});
+app.use('/api/auth', authLimiter);
+app.use('/api/external', externalLimiter);
 
 // Friendly JSON parse error — đặc biệt cho /api/external/* (webhook bên thứ 3)
 app.use((err, req, res, next) => {

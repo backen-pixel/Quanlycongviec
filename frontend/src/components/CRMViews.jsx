@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { markCrmPipelineCardFocus } from '../lib/crmPipelineStorage';
+import { markCrmPipelineCardFocus, persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
 import { FbCrmAvatar, FbCrmCommentComposer, formatCrmFbRelativeTime } from './crmFbCommentUi';
 import {
   Plus, X, Trash2, MessageSquare, GripVertical, Search, Edit2, Settings as SettingsIcon,
@@ -128,6 +128,7 @@ export function ListView({ pipeline, pipelineType, calculateDays }) {
               <tr key={item.id}
                 data-crm-pipeline-card={item.id}
                 onClick={() => {
+                  persistCrmPipelineUiNow();
                   markCrmPipelineCardFocus(item.id);
                   navigate(`/crm/leads/${item.id}`);
                 }}
@@ -183,6 +184,7 @@ export function ListView({ pipeline, pipelineType, calculateDays }) {
 /** mergePick: bật vùng Chọn / Chi tiết giống Kanban (deadline…) */
 function renderItemCard(item, navigate, extras = null, mergePick = null) {
   const openDetail = () => {
+    persistCrmPipelineUiNow();
     markCrmPipelineCardFocus(item.id);
     navigate(`/crm/leads/${item.id}`);
   };
@@ -1378,7 +1380,7 @@ function CommentCard({ item, expanded, onToggle, onChanged, navigate }) {
           <div className="min-w-0 flex-1">
             <button
               type="button"
-              onClick={() => { markCrmPipelineCardFocus(item.id); navigate(`/crm/leads/${item.id}`); }}
+              onClick={() => { persistCrmPipelineUiNow(); markCrmPipelineCardFocus(item.id); navigate(`/crm/leads/${item.id}`); }}
               className="group/h w-full text-left"
             >
               <p className="truncate text-[15px] font-semibold text-[#050505] group-hover/h:underline">{item.title}</p>
