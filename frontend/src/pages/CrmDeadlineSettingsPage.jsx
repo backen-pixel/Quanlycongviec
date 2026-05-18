@@ -3,7 +3,7 @@ import api from '../lib/api';
 import { Clock, Save, RefreshCw, Building2 } from 'lucide-react';
 
 const FIELD_OPTIONS = [
-  { v: 'crm_next_open_task_deadline', l: 'Hạn nhiệm vụ CRM mở mới nhất (crm_next_open_task_deadline)' },
+  { v: 'crm_next_open_task_deadline', l: 'Ngày hẹn NV CRM mở mới nhất (theo cập nhật gần nhất)' },
   { v: 'expected_close_date', l: 'Ngày dự kiến đóng (expected_close_date)' },
 ];
 

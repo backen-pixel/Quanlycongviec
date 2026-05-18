@@ -568,15 +568,6 @@ r.post('/projects/:projectId/generate-from-template', async (req, res) => {
 
     const created = [];
     for (const t of tasks) {
-      // Calculate deadline if template has deadline_days/hours
-      let deadline = null;
-      if (t.deadline_days > 0 || t.deadline_hours > 0) {
-        const now = new Date();
-        if (t.deadline_days > 0) now.setDate(now.getDate() + t.deadline_days);
-        if (t.deadline_hours > 0) now.setHours(now.getHours() + t.deadline_hours);
-        deadline = now.toISOString();
-      }
-
       // Create task
       const { data: task, error } = await supabase.from('tasks')
         .insert({
@@ -587,7 +578,7 @@ r.post('/projects/:projectId/generate-from-template', async (req, res) => {
           assigned_to: t.default_assignee_id || null,
           priority: t.priority || 'medium',
           status: 'pending',
-          deadline: deadline,
+          deadline: null,
           order_index: t.order_index,
           created_by: req.user.userId,
         })

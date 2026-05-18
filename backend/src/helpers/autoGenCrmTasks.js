@@ -103,7 +103,7 @@ async function autoGenCrmTasks(leadId, type, userId) {
         priority: item.priority || 'medium',
         stage_slug: tplMap[item.template_id]?.stage_slug || null,
         order_index: item.order_index,
-        deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
+        deadline: null,
         created_by: userId,
         completion_requires_file_or_note: !!item.completion_requires_file_or_note,
         completion_requires_customer_note: !!item.completion_requires_customer_note,
@@ -121,7 +121,7 @@ async function autoGenCrmTasks(leadId, type, userId) {
       priority: item.priority || 'medium',
       stage_slug: item.stage_slug,
       order_index: item.order_index,
-      deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
+      deadline: null,
       created_by: userId,
     }));
     console.log(`[AUTO-TASK] No templates in DB, using ${inserts.length} fallback ${type} tasks`);

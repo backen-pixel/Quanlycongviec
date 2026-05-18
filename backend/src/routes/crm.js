@@ -43,6 +43,7 @@ const {
   FALLBACK_DEAL_TASKS,
   completeConsultingCrmTasksForLead,
 } = require('../helpers/autoGenCrmTasks');
+const { normalizeTimestamp } = require('../helpers/normalizeTimestamp');
 const { createFulfillmentChildDeal, applyProductionTemplateToFulfillmentLead } = require('../helpers/projectOrderFulfillment');
 const { isPostgresUniqueViolation, nextTbProjectCode } = require('../helpers/projectCode');
 const { validateProductionCompanyId } = require('../helpers/productionCompanyGate');
@@ -4230,47 +4231,52 @@ function parseCrmLeadsPageRpc(raw) {
 }
 
 /**
- * Gắn `crm_next_open_task_deadline`: trong các nhiệm vụ CRM đang mở (pending/in_progress)
- * **có gán deadline** (`deadline` not null), lấy deadline của nhiệm vụ **mới nhất** (theo `created_at`, hòa `id`);
- * Kanban dùng hạn này thay SLA cột khi có; không có NV có hẹn thì frontend dùng SLA cột.
+ * Gắn `crm_next_open_task_deadline`: ngày hẹn (`deadline`) của **một** NV CRM đang mở
+ * (pending/in_progress) **mới nhất** theo `updated_at` → `created_at` → `id`.
+ * Chỉ lấy hạn của NV đó (kể cả null); Kanban / view Deadline dùng khi có hẹn, không thì fallback SLA / expected_close_date.
  */
 async function attachCrmNextOpenTaskDeadline(rows) {
   const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
   if (list.length === 0) return [];
-  /** lead_id → { createdMs, idNum, deadlineTs } */
-  const byLeadBest = new Map();
+  /** lead_id → { updatedMs, createdMs, idNum, deadlineTs | null } */
+  const byLeadNewest = new Map();
   const chunkSize = 400;
   for (let i = 0; i < list.length; i += chunkSize) {
     const chunk = list.slice(i, i + chunkSize).map((r) => String(r.id)).filter(Boolean);
     if (chunk.length === 0) continue;
     const { data, error } = await supabase
       .from('crm_tasks')
-      .select('id, lead_id, deadline, created_at')
+      .select('id, lead_id, deadline, created_at, updated_at')
       .in('lead_id', chunk)
-      .in('status', ['pending', 'in_progress'])
-      .not('deadline', 'is', null);
+      .in('status', ['pending', 'in_progress']);
     if (error) {
       console.warn('[crm] attachCrmNextOpenTaskDeadline:', error.message);
       continue;
     }
     for (const t of data || []) {
       const lid = String(t.lead_id);
-      const deadlineTs = new Date(t.deadline).getTime();
-      if (Number.isNaN(deadlineTs)) continue;
+      const updatedMs = new Date(t.updated_at || t.created_at || 0).getTime();
       const createdMs = new Date(t.created_at || 0).getTime();
       const idNum = Number(t.id);
       const safeId = Number.isFinite(idNum) ? idNum : 0;
-      const prev = byLeadBest.get(lid);
+      const prev = byLeadNewest.get(lid);
       const newer =
         !prev ||
-        createdMs > prev.createdMs ||
-        (createdMs === prev.createdMs && safeId > prev.idNum);
-      if (newer) byLeadBest.set(lid, { createdMs, idNum: safeId, deadlineTs });
+        updatedMs > prev.updatedMs ||
+        (updatedMs === prev.updatedMs && createdMs > prev.createdMs) ||
+        (updatedMs === prev.updatedMs && createdMs === prev.createdMs && safeId > prev.idNum);
+      if (!newer) continue;
+      let deadlineTs = null;
+      if (t.deadline != null && t.deadline !== '') {
+        const d = new Date(t.deadline).getTime();
+        if (!Number.isNaN(d)) deadlineTs = d;
+      }
+      byLeadNewest.set(lid, { updatedMs, createdMs, idNum: safeId, deadlineTs });
     }
   }
   return list.map((row) => {
-    const best = byLeadBest.get(String(row.id));
-    const ts = best?.deadlineTs;
+    const newest = byLeadNewest.get(String(row.id));
+    const ts = newest?.deadlineTs;
     return {
       ...row,
       crm_next_open_task_deadline: ts != null ? new Date(ts).toISOString() : null,
@@ -6329,7 +6335,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
                 const inserts = items.map(item => ({
                   lead_id: req.params.id, title: item.title, description: item.description || null,
                   priority: item.priority || 'medium', stage_slug: stageSlug, order_index: item.order_index,
-                  deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
+                  deadline: null,
                   created_by: req.user.userId,
                   completion_requires_file_or_note: !!item.completion_requires_file_or_note,
                   completion_requires_customer_note: !!item.completion_requires_customer_note,
@@ -10286,7 +10292,7 @@ r.post('/leads/:id/tasks', async (req, res) => {
       order_index: b.order_index || 0,
       assignee_id: b.assignee_id || null,
       supervisor_id: b.supervisor_id || null,
-      deadline: b.deadline || null,
+      deadline: b.deadline ? normalizeTimestamp(b.deadline) : null,
       created_by: req.user.userId,
       completion_requires_file_or_note: !!b.completion_requires_file_or_note,
       completion_requires_customer_note: !!b.completion_requires_customer_note,
@@ -10342,7 +10348,7 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
       priority: item.priority || 'medium',
       stage_slug: tpl?.stage_slug || null,
       order_index: item.order_index,
-      deadline: item.deadline_days ? new Date(now.getTime() + item.deadline_days * 86400000).toISOString() : null,
+      deadline: null,
       created_by: req.user.userId,
       completion_requires_file_or_note: !!item.completion_requires_file_or_note,
       completion_requires_customer_note: !!item.completion_requires_customer_note,
@@ -10452,7 +10458,14 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
 
     const update = { updated_at: new Date().toISOString() };
     const fields = ['title','description','status','priority','stage_slug','order_index','assignee_id','supervisor_id','deadline','shared_to_project'];
-    fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
+    fields.forEach((f) => {
+      if (b[f] === undefined) return;
+      if (f === 'deadline' && b[f] != null && b[f] !== '') {
+        update[f] = normalizeTimestamp(b[f]);
+      } else {
+        update[f] = b[f];
+      }
+    });
     if (b.status === 'completed' && !b.completed_at) update.completed_at = new Date().toISOString();
     if (b.status && b.status !== 'completed') update.completed_at = null;
 

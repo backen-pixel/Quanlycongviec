@@ -293,7 +293,8 @@ export default function CRMTemplatesPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">📋 Bộ nhiệm vụ mẫu CRM</h1>
           <p className="text-sm text-gray-500">
-            {filteredTemplates.length} bộ mẫu {activeTab === 'deal' ? 'Deal' : 'Lead'} — Kéo thả để sắp xếp
+            {filteredTemplates.length} bộ mẫu {activeTab === 'deal' ? 'Deal' : 'Lead'} — Kéo thả để sắp xếp.
+            Ngày hẹn trên nhiệm vụ do nhân viên tự đặt (tab Công việc), không tự gen từ bộ mẫu.
           </p>
         </div>
         <button onClick={() => { setShowAddTpl(true); setNewTpl({ name: '', stage_slug: currentStages[0]?.slug || '' }); }}
@@ -460,7 +461,7 @@ function TemplateCard({
         title: itemEditForm.title.trim(),
         description: itemEditForm.description?.trim() || null,
         priority: itemEditForm.priority,
-        deadline_days: Math.max(0, parseInt(String(itemEditForm.deadline_days), 10) || 0),
+        deadline_days: 0,
       });
       setEditingItemId(null);
     } catch { /* alert trong updateTemplateItemFields */ }
@@ -531,7 +532,6 @@ function TemplateCard({
                           item.priority === 'urgent' ? 'bg-red-100 text-red-700' :
                           item.priority === 'medium' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
                         }`}>{item.priority === 'urgent' ? 'Gấp' : item.priority === 'high' ? 'Cao' : item.priority === 'medium' ? 'TB' : 'Thấp'}</span>
-                        {item.deadline_days > 0 && <span className="text-[10px] text-gray-400">+{item.deadline_days}d</span>}
                         {(item.default_allowed_companies?.length > 0 || item.default_allowed_departments?.length > 0) && (
                           <span className="text-[9px] bg-red-50 text-red-600 px-1 py-0.5 rounded-full">🔒</span>
                         )}
@@ -575,17 +575,6 @@ function TemplateCard({
                               <option value="high">Cao</option>
                               <option value="urgent">Gấp</option>
                             </select>
-                            <label className="flex items-center gap-1.5 text-[11px] text-gray-600">
-                              <span className="whitespace-nowrap">Hạn +N ngày</span>
-                              <input
-                                type="number"
-                                min={0}
-                                value={itemEditForm.deadline_days}
-                                onChange={e => setItemEditForm(f => ({ ...f, deadline_days: e.target.value }))}
-                                className="h-8 w-16 px-2 rounded border text-xs text-right"
-                                title="Số ngày từ khi gắn mẫu đến deadline mặc định"
-                              />
-                            </label>
                             <span className="flex-1" />
                             <button type="button" onClick={() => setEditingItemId(null)} className="h-8 px-3 rounded-lg text-xs font-medium bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 cursor-pointer">
                               Hủy
@@ -649,9 +638,6 @@ function TemplateCard({
               className="h-8 px-2 rounded border text-xs bg-white">
               <option value="low">Thấp</option><option value="medium">TB</option><option value="high">Cao</option><option value="urgent">Gấp</option>
             </select>
-            <input type="number" value={newItem[tpl.id]?.deadline_days || 0}
-              onChange={e => setNewItem(p => ({ ...p, [tpl.id]: { ...(p[tpl.id] || {}), deadline_days: parseInt(e.target.value) || 0 } }))}
-              className="h-8 w-16 px-2 rounded border text-xs text-right" placeholder="Ngày" title="Deadline (ngày)" />
             <button onClick={() => addItem(tpl.id)} className="h-8 px-3 bg-blue-600 text-white rounded text-xs cursor-pointer hover:bg-blue-700">
               <Plus className="h-3 w-3" /></button>
           </div>
