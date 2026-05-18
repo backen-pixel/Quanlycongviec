@@ -3,6 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { markCrmPipelineCardFocus, persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
+import {
+  CRM_DEADLINE_SOURCE_META,
+  isCrmPipelineStageLost,
+  pickDeadlineConfigValueWithSource,
+} from '../lib/crmLeadDeadlineDisplay';
 import { FbCrmAvatar, FbCrmCommentComposer, formatCrmFbRelativeTime } from './crmFbCommentUi';
 import {
   Plus, X, Trash2, MessageSquare, GripVertical, Search, Edit2, Settings as SettingsIcon,
@@ -101,6 +106,21 @@ function CrmCommentReactionCornerBadge({ comment }) {
 
 // ── LIST VIEW (cột cấu hình + lịch sử stage) ───────────────────────────────
 export { ListView } from './CrmListView';
+
+/** Badge nguồn hạn: nhiệm vụ / SLA cột / ngày chốt dự kiến */
+export function CrmDeadlineSourceBadge({ source, className = '' }) {
+  if (!source) return null;
+  const meta = CRM_DEADLINE_SOURCE_META[source];
+  if (!meta) return null;
+  return (
+    <span
+      className={`inline-flex items-center shrink-0 rounded border px-1.5 py-px text-[9px] font-semibold leading-tight ${meta.className} ${className}`}
+      title={`Hạn từ: ${meta.label}`}
+    >
+      {meta.label}
+    </span>
+  );
+}
 
 // ── Render thẻ chung dùng cho Planner / Deadline / Comments ────────────────
 /** mergePick: bật vùng Chọn / Chi tiết giống Kanban (deadline…) */
@@ -803,19 +823,6 @@ function targetDateForBucket(bucketKey, buckets) {
   }
 }
 
-function pickDeadlineValue(item, primary, fallback) {
-  const get = (field) => {
-    if (!field) return null;
-    const v = item[field];
-    return v ? new Date(v).getTime() : null;
-  };
-  const p = get(primary);
-  if (p != null && !Number.isNaN(p)) return p;
-  const f = get(fallback);
-  if (f != null && !Number.isNaN(f)) return f;
-  return null;
-}
-
 function resolveBucket(deadlineTs, buckets) {
   if (deadlineTs == null) return 'no_deadline';
   const now = new Date();
@@ -859,7 +866,10 @@ export function DeadlineView({
 }) {
   const navigate = useNavigate();
   const allItems = useMemo(
-    () => pipeline.flatMap(s => s.items.map(item => ({ ...item, _stage: s }))),
+    () => pipeline.flatMap((s) => {
+      if (isCrmPipelineStageLost(s)) return [];
+      return s.items.map((item) => ({ ...item, _stage: s }));
+    }),
     [pipeline],
   );
   const cfg = deadlineConfig || {
@@ -879,11 +889,14 @@ export function DeadlineView({
     allItems.forEach(it => {
       let bucket = localOverride[String(it.id)];
       let ts = null;
+      let source = null;
       if (!bucket) {
-        ts = pickDeadlineValue(it, cfg.primary_field, cfg.fallback_field);
+        const picked = pickDeadlineConfigValueWithSource(it, cfg.primary_field, cfg.fallback_field);
+        ts = picked.deadlineTs;
+        source = picked.source;
         bucket = resolveBucket(ts, cfg.buckets);
       }
-      const enriched = { ...it, _deadlineTs: ts, _bucket: bucket };
+      const enriched = { ...it, _deadlineTs: ts, _deadlineSource: source, _bucket: bucket };
       (out[bucket] || (out[bucket] = [])).push(enriched);
     });
     BUCKET_ORDER.forEach(k => {
@@ -931,6 +944,7 @@ export function DeadlineView({
         <p className="text-xs text-gray-500">
           Trường deadline: <strong>{cfg.primary_field || '—'}</strong>
           {cfg.fallback_field && <> (fallback: <strong>{cfg.fallback_field}</strong>)</>}
+          <span className="ml-2 text-gray-400">· Không hiển thị deal/lead ở cột Mất</span>
           {!canDrag && <span className="ml-2 text-amber-700">(Kéo-thả tắt: cấu hình chưa dùng expected_close_date)</span>}
           {canDrag && <span className="ml-2 text-emerald-700">Kéo-thả → cập nhật <code>expected_close_date</code></span>}
         </p>
@@ -993,9 +1007,12 @@ export function DeadlineView({
                   className={draggingId === it.id ? 'opacity-40' : ''}>
                   {renderItemCard(it, navigate, (
                     it._deadlineTs != null && (
-                      <p className="text-[10px] text-gray-500 mt-1">
-                        Hạn: {formatDate(new Date(it._deadlineTs).toISOString())}
-                      </p>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        <CrmDeadlineSourceBadge source={it._deadlineSource} />
+                        <p className="text-[10px] text-gray-600">
+                          Hạn: {formatDateTime(new Date(it._deadlineTs).toISOString())}
+                        </p>
+                      </div>
                     )
                   ), mergePick)}
                 </div>

@@ -457,7 +457,7 @@ function WorkshopTasksFallbackPanel({ tasks, moduleLabel, onToggleDone, onEnsure
                       )}
                       {task.metadata?.workshop_template_id && !task.due_date && !done && (
                         <p className="text-[10px] text-gray-500 mt-0.5">
-                          Hạn nối tiếp: chờ hoàn thành nhiệm vụ trước trong bộ mẫu (theo N ngày đã cấu hình).
+                          Chưa có ngày hẹn — nhân viên tự đặt trên nhiệm vụ.
                         </p>
                       )}
                     </div>

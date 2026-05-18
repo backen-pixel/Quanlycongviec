@@ -2,7 +2,6 @@ const { supabase } = require('../config/supabase');
 const { getCrmVcDeliveryStageId } = require('./workshopKanban');
 const { validateProductionCompanyId } = require('./productionCompanyGate');
 const { loadProductionHandoverMaps, resolveSxAssigneeForTemplateItem } = require('./productionHandoverSettings');
-
 const ORDER_PHASES = ['draft', 'confirmed', 'in_production', 'ready_logistics', 'in_logistics', 'completed'];
 
 async function nextDhCode() {
@@ -287,7 +286,7 @@ async function applyProductionTemplateToFulfillmentLead({
     const templateIds = templates.map((t) => t.id).filter(Boolean);
     const { data: items, error: itemErr } = await supabase
       .from('workshop_task_template_items')
-      .select('id, template_id, title, description, priority, order_index, checklist')
+      .select('id, template_id, title, description, priority, deadline_days, order_index, checklist')
       .in('template_id', templateIds)
       .order('template_id')
       .order('order_index');
@@ -464,7 +463,7 @@ async function applyProductionTemplateToFulfillmentLead({
   const templateIds = templates.map((t) => t.id).filter(Boolean);
   const { data: items, error: itemErr } = await supabase
     .from('workshop_task_template_items')
-    .select('id, template_id, title, description, priority, order_index, checklist')
+    .select('id, template_id, title, description, priority, deadline_days, order_index, checklist')
     .in('template_id', templateIds)
     .order('template_id')
     .order('order_index');
@@ -862,6 +861,11 @@ async function syncExistingCrmOrdersToProject({
   return { synced, touched };
 }
 
+/** Ngày hẹn do NV tự đặt — không gán khi hoàn thành nhiệm vụ SX trước. */
+async function scheduleNextSxCrmTaskAfterComplete() {
+  return { ok: true, skip: 'manual_deadline_policy' };
+}
+
 module.exports = {
   ORDER_PHASES,
   nextDhCode,
@@ -874,4 +878,5 @@ module.exports = {
   applyProductionTemplateToFulfillmentLead,
   migrateDealInternalsToFulfillmentLead,
   syncExistingCrmOrdersToProject,
+  scheduleNextSxCrmTaskAfterComplete,
 };

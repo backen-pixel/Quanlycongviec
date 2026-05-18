@@ -12,7 +12,8 @@ import {
   Clock, List, LayoutGrid, GitMerge, UserCheck, Trash2, CheckSquare, BarChart3,
   MessageSquare,
 } from 'lucide-react';
-import { ListView, PlannerView, DeadlineView, CommentsView } from '../components/CRMViews';
+import { ListView, PlannerView, DeadlineView, CommentsView, CrmDeadlineSourceBadge } from '../components/CRMViews';
+import { resolveCrmLeadKanbanScheduleSource } from '../lib/crmLeadDeadlineDisplay';
 import EmployeePicker from '../components/EmployeePicker';
 import {
   loadCrmPipelineSnapshot,
@@ -263,7 +264,7 @@ function getPipelineStageSlaTone(stageEnteredAt, stage) {
   return { level: 'ok', remainingMs, deadlineTs };
 }
 
-/** Deadline NV CRM mở mới nhất có hẹn (API `crm_next_open_task_deadline`) — ngưỡng màu giống SLA cột. */
+/** Ngày hẹn NV CRM mở mới nhất (API `crm_next_open_task_deadline`, theo updated_at) — ngưỡng màu giống SLA cột. */
 function getCrmOpenTaskDeadlineTone(deadlineIso) {
   if (deadlineIso == null || deadlineIso === '') return null;
   const deadlineTs = new Date(deadlineIso).getTime();
@@ -4647,6 +4648,7 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
 
   const slaTone = getPipelineStageSlaTone(item.stage_entered_at, stage);
   const taskTone = getCrmOpenTaskDeadlineTone(item.crm_next_open_task_deadline);
+  const scheduleResolved = resolveCrmLeadKanbanScheduleSource(item, stage);
   // Ưu tiên hạn NV CRM mở (crm_next_open_task_deadline); chỉ dùng SLA cột khi không có NV hẹn
   const cardToneLevel = taskTone ? taskTone.level : slaTone.level;
   const scheduleTone = taskTone || slaTone;
@@ -4822,8 +4824,12 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
           </span>
           {scheduleTone.deadlineTs != null && !stage?.is_won && !stage?.is_lost && (
             <span className="block mt-0.5 text-gray-500 font-normal">
-              {taskTone ? 'Hạn NV (mới nhất)' : 'Hạn SLA cột'}:{' '}
-              {new Date(scheduleTone.deadlineTs).toLocaleString('vi-VN')}
+              <span className="inline-flex flex-wrap items-center gap-1.5">
+                <CrmDeadlineSourceBadge source={scheduleResolved.source} />
+                <span>
+                  Hạn: {new Date(scheduleTone.deadlineTs).toLocaleString('vi-VN')}
+                </span>
+              </span>
               {scheduleTone.remainingMs != null && scheduleTone.level !== 'ok' && (
                 <>
                   {' · '}

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import api from '../lib/api';
-import { formatDate, formatVND } from '../lib/utils';
+import { formatDateTime, formatVND } from '../lib/utils';
+import { isoToDatetimeLocalValue, datetimeLocalValueToIso } from '../lib/datetimeLocal';
 import {
   Plus, CheckCircle2, Circle, Clock, User, Eye, Trash2, ChevronDown, ChevronRight,
   Calendar, List, Users, Target, AlertTriangle, X, Save, ListChecks, ClipboardList,
@@ -170,6 +171,7 @@ export default function CRMTasksTab({
     try {
       const { data } = await api.post(`/crm/leads/${leadId}/tasks`, {
         ...newTask,
+        deadline: newTask.deadline ? datetimeLocalValueToIso(newTask.deadline) : null,
         stage_slug: stageSlug,
         order_index: tasks.filter(t => t.stage_slug === stageSlug).length,
       });
@@ -351,7 +353,7 @@ export default function CRMTasksTab({
       title: task.title || '',
       description: task.description || '',
       priority: task.priority || 'medium',
-      deadline: task.deadline ? (task.deadline.includes('T') ? task.deadline.substring(0, 16) : task.deadline.substring(0, 10) + 'T08:00') : '',
+      deadline: task.deadline ? isoToDatetimeLocalValue(task.deadline) : '',
       assignee_id: task.assignee_id || '',
       supervisor_id: task.supervisor_id || '',
       stage_slug: task.stage_slug || '',
@@ -367,7 +369,7 @@ export default function CRMTasksTab({
         title: editForm.title,
         description: editForm.description,
         priority: editForm.priority,
-        deadline: editForm.deadline || null,
+        deadline: editForm.deadline ? datetimeLocalValueToIso(editForm.deadline) : null,
         assignee_id: editForm.assignee_id || null,
         supervisor_id: editForm.supervisor_id || null,
         stage_slug: editForm.stage_slug,
@@ -496,7 +498,7 @@ export default function CRMTasksTab({
     const map = {};
     uiTasks.forEach(t => {
       if (!t.deadline) return;
-      const key = t.deadline.substring(0, 10);
+      const key = isoToDatetimeLocalValue(t.deadline).slice(0, 10);
       if (!map[key]) map[key] = [];
       map[key].push(t);
     });
@@ -769,7 +771,7 @@ export default function CRMTasksTab({
                 <span onClick={(e) => { e.stopPropagation(); setEditingDeadline(task.id); }}
                   className={`text-[10px] flex items-center gap-0.5 cursor-pointer hover:bg-gray-100 px-1 py-0.5 rounded ${isOverdue ? 'text-red-600 font-bold' : 'text-gray-400'}`}
                   title="Click để đổi ngày giờ hẹn">
-                  <Calendar className="h-2.5 w-2.5" />{formatDate(task.deadline)}{task.deadline?.includes('T') ? ` ${new Date(task.deadline).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}` : ''}
+                  <Calendar className="h-2.5 w-2.5" />{formatDateTime(task.deadline)}
                 </span>
               )}
               {!task.deadline && editingDeadline !== task.id && (
@@ -782,10 +784,10 @@ export default function CRMTasksTab({
               {editingDeadline === task.id && (
                 <span className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
                   <input type="datetime-local" autoFocus
-                    defaultValue={task.deadline ? (task.deadline.includes('T') ? task.deadline.substring(0, 16) : task.deadline.substring(0, 10) + 'T08:00') : ''}
+                    defaultValue={task.deadline ? isoToDatetimeLocalValue(task.deadline) : ''}
                     onChange={e => {
                       const val = e.target.value;
-                      if (val) updateTask(task.id, { deadline: val });
+                      if (val) updateTask(task.id, { deadline: datetimeLocalValueToIso(val) });
                     }}
                     onBlur={() => setTimeout(() => setEditingDeadline(null), 300)}
                     className="text-[10px] px-1.5 py-0.5 border border-blue-300 rounded bg-blue-50 outline-none focus:ring-1 focus:ring-blue-400 w-[175px]"

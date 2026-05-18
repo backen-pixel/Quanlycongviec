@@ -443,7 +443,7 @@ export default function PipelineSettingsPage() {
     }
   };
 
-  /** Bật/tắt SLA cột (sla_days=0): thẻ Kanban không tô màu theo thời gian ở cột; NV có hạn vẫn tô theo deadline. */
+  /** Bật/tắt ghi nhận quá hạn khi lead/deal không chuyển tiếp khỏi cột (sla_days=0). */
   const toggleSlaColumn = async (stage) => {
     if (stage.is_won || stage.is_lost) return;
     const turningOff = !isPipelineStageSlaDisabled(stage.sla_days);
@@ -678,7 +678,9 @@ export default function PipelineSettingsPage() {
           </div>
           <div>
             <h2 className="text-sm font-bold text-gray-900">Pipeline {type === 'lead' ? 'Lead' : 'Deal'}</h2>
-            <p className="text-[10px] text-gray-500">{list.length} giai đoạn</p>
+            <p className="text-[10px] text-gray-500">
+              {list.length} giai đoạn — «Bỏ quá hạn» khi lead/deal đứng cột lâu không cần tính trễ SLA
+            </p>
           </div>
         </div>
         <button onClick={() => startAdd(type)}
@@ -761,7 +763,7 @@ export default function PipelineSettingsPage() {
                 )}
                 {!s.is_won && !s.is_lost && isPipelineStageSlaDisabled(s.sla_days) && (
                   <span className="bg-gray-100 text-gray-600 border border-gray-200 px-1.5 py-0.5 rounded font-medium">
-                    ⏱ SLA tắt (Kanban)
+                    ⏱ Bỏ quá hạn cột
                   </span>
                 )}
                 {!s.is_won && !s.is_lost && !isPipelineStageSlaDisabled(s.sla_days) && (
@@ -798,12 +800,12 @@ export default function PipelineSettingsPage() {
                   }`}
                   title={
                     isPipelineStageSlaDisabled(s.sla_days)
-                      ? 'SLA cột đang tắt — thẻ Kanban không đổi màu theo thời gian ở cột. NV CRM có hạn vẫn hiện màu theo deadline. Nhấn để bật lại (mặc định 7 ngày).'
-                      : 'Tắt SLA cột — thẻ trở màu bình thường (trừ khi có NV mở có hạn). Nhấn để tắt.'
+                      ? 'Đang bỏ ghi nhận quá hạn khi lead/deal không chuyển tiếp khỏi cột này (Kanban, SLA watchlist, KPI A6). NV có ngày hẹn riêng vẫn hiện trên Kanban. Nhấn để bật lại SLA (mặc định 7 ngày).'
+                      : 'Bỏ ghi nhận quá hạn nếu deal/lead đứng cột quá hạn mà không chuyển tiếp — dùng cho cột chờ KH, chờ duyệt… NV có hạn riêng vẫn tính.'
                   }
                 >
                   <Clock className="h-3 w-3" />
-                  {isPipelineStageSlaDisabled(s.sla_days) ? 'SLA tắt' : 'SLA'}
+                  {isPipelineStageSlaDisabled(s.sla_days) ? 'Đã bỏ QH' : 'Bỏ quá hạn'}
                 </button>
               )}
               <button
@@ -1621,7 +1623,7 @@ function StageForm({ form, setForm, onSave, onCancel, pipelineType = 'lead', edi
               }`}
             >
               <Clock className="h-3 w-3" />
-              {isPipelineStageSlaDisabled(form.sla_days) ? 'Đang tắt SLA cột' : 'Tắt SLA cột (Kanban)'}
+              {isPipelineStageSlaDisabled(form.sla_days) ? 'Đã bỏ quá hạn cột' : 'Bỏ quá hạn cột'}
             </button>
           </div>
           <input
@@ -1635,9 +1637,9 @@ function StageForm({ form, setForm, onSave, onCancel, pipelineType = 'lead', edi
             placeholder={isPipelineStageSlaDisabled(form.sla_days) ? 'SLA tắt' : 'Trống = 7 ngày'}
           />
           <p className="text-[10px] text-gray-400 mt-1 leading-snug">
-            Màu thẻ Kanban: ưu tiên <strong>hạn NV CRM mở</strong> (nếu có), không thì SLA cột từ{' '}
-            <code className="text-[9px] bg-gray-100 px-0.5 rounded">stage_entered_at</code>.
-            Nút «Tắt SLA» → thẻ bình thường (NV có hạn vẫn đổi màu). Để trống ô số → <strong>7 ngày</strong>.
+            Lead/deal không chuyển tiếp khỏi cột quá số ngày SLA → quá hạn (Kanban, watchlist SLA, KPI).
+            Ưu tiên <strong>ngày hẹn NV CRM mở mới nhất</strong> trên Kanban. Nút «Bỏ quá hạn cột» → không ghi trễ SLA cột.
+            Để trống ô số → <strong>7 ngày</strong> mặc định.
           </p>
         </div>
       )}

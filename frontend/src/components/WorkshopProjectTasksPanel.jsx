@@ -436,12 +436,9 @@ export default function WorkshopProjectTasksPanel({
                             </>
                           ) : (
                             <span className="text-teal-800/95">
-                              Chưa gán hạn — thường bắt đầu sau khi nhiệm vụ đứng trước trong bộ mẫu được hoàn thành (số ngày N lấy từ cấu hình bộ).
+                              Chưa có ngày hẹn — nhân viên tự đặt trên nhiệm vụ (hệ thống không tự gen từ bộ mẫu).
                             </span>
                           )}
-                        </p>
-                        <p className="text-[10px] text-teal-800/85 mt-1.5 leading-snug">
-                          Hạn được tính nối tiếp: khi nhiệm trước tích xong, hệ thống đặt deadline cho nhiệm này = thời điểm đó + N ngày đã nhập ở mục tương ứng trong bộ nhiệm vụ mẫu.
                         </p>
                       </div>
                     )}

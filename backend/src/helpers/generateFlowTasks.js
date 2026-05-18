@@ -89,14 +89,6 @@ async function generateStepTasks({ projectId, flowStepId, templateSetId, userId,
     const overrideAssignee = taskAssignments[t.id] || null;
     const finalAssignee = overrideAssignee || t.default_assignee_id || null;
 
-    let deadline = null;
-    if (t.deadline_days > 0 || t.deadline_hours > 0) {
-      const d = new Date();
-      if (t.deadline_days > 0) d.setDate(d.getDate() + t.deadline_days);
-      if (t.deadline_hours > 0) d.setHours(d.getHours() + t.deadline_hours);
-      deadline = d.toISOString();
-    }
-
     const { data: task, error: taskErr } = await supabase.from('tasks').insert({
       project_id: projectId,
       stage_id: t.stage_id,
@@ -107,7 +99,7 @@ async function generateStepTasks({ projectId, flowStepId, templateSetId, userId,
       status: 'pending',
       order_index: t.order_index,
       created_by_id: userId,
-      deadline,
+      deadline: null,
       task_type: 'project',
       metadata: { template_task_id: t.id, template_set_id: templateSetId, flow_step_id: flowStepId },
     }).select().single();
@@ -159,14 +151,6 @@ async function generateStepTasks({ projectId, flowStepId, templateSetId, userId,
         const taskKey = `process_task_${pt.id}`;
         const finalAssignee = taskAssignments[taskKey] || pt.default_assignee_id || null;
 
-        let deadline = null;
-        if (pt.deadline_days > 0 || pt.deadline_hours > 0) {
-          const d = new Date();
-          if (pt.deadline_days > 0) d.setDate(d.getDate() + pt.deadline_days);
-          if (pt.deadline_hours > 0) d.setHours(d.getHours() + pt.deadline_hours);
-          deadline = d.toISOString();
-        }
-
         const { data: task, error: taskErr } = await supabase.from('tasks').insert({
           project_id: projectId,
           stage_id: null,
@@ -177,7 +161,7 @@ async function generateStepTasks({ projectId, flowStepId, templateSetId, userId,
           status: 'pending',
           order_index: pt.order_index || 0,
           created_by_id: userId,
-          deadline,
+          deadline: null,
           task_type: 'project',
           metadata: { process_id: sp.process_id, process_task_id: pt.id, process_name: processName, flow_step_id: flowStepId },
         }).select().single();
