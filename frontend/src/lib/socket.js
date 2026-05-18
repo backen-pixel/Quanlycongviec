@@ -1,6 +1,7 @@
 import { io } from 'socket.io-client';
+import { resolveApiOrigin } from './apiOrigin';
 
-const API_URL = import.meta.env.VITE_API_URL || '';
+const API_URL = resolveApiOrigin();
 
 let socket = null;
 
