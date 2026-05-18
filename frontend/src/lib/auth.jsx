@@ -55,4 +55,10 @@ export function AuthProvider({ children }) {
   );
 }
 
-export const useAuth = () => useContext(AuthCtx);
+export function useAuth() {
+  const ctx = useContext(AuthCtx);
+  if (!ctx) {
+    throw new Error('useAuth phải dùng bên trong AuthProvider');
+  }
+  return ctx;
+}

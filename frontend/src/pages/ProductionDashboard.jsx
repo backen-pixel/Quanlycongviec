@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -10,11 +10,13 @@ import {
 import {
   Zap, CheckCircle2, AlertTriangle, Search, X, Calendar,
   Factory, Users, LayoutGrid, List, Plus,
-  CheckSquare, UserCheck, Loader2, Truck, Filter, Clock, Building2, Layers, Trash2,
+  CheckSquare, UserCheck, Loader2, Truck, Filter, Clock, Layers, Trash2,
 } from 'lucide-react';
 import { ProductionListView, ProductionPlannerView, ProductionCalendarView } from '../components/ProductionViews';
 import NewProductionProjectModal from '../components/NewProductionProjectModal';
 import WorkshopPipelineKanbanScroll from '../components/WorkshopPipelineKanbanScroll';
+import WorkshopStaffFilterPanel from '../components/WorkshopStaffFilterPanel';
+import { useWorkshopStaffFilter } from '../hooks/useWorkshopStaffFilter';
 import {
   peekWorkshopPipelineCardFocus, clearWorkshopPipelineCardFocus, markWorkshopPipelineCardFocus,
 } from '../lib/workshopPipelineStorage';
@@ -29,8 +31,11 @@ function readSxDashPersisted() {
   try {
     const raw = localStorage.getItem(LS_SX);
     if (!raw) return null;
-    return JSON.parse(raw);
+    const data = JSON.parse(raw);
+    if (!data || typeof data !== 'object') return null;
+    return data;
   } catch {
+    try { localStorage.removeItem(LS_SX); } catch { /* ignore */ }
     return null;
   }
 }
@@ -72,7 +77,6 @@ export default function ProductionDashboard() {
   const [customFrom, setCustomFrom] = useState(() => P0?.customFrom ?? '');
   const [customTo, setCustomTo] = useState(() => P0?.customTo ?? '');
   const [kanbanLoadKey, setKanbanLoadKey] = useState(() => P0?.kanbanLoadKey ?? '500');
-  const [filterPersonId, setFilterPersonId] = useState(() => P0?.filterPersonId ?? '');
   const [filterPhone, setFilterPhone] = useState(() => P0?.filterPhone ?? '');
   const [showAdvFilter, setShowAdvFilter] = useState(false);
   const [filterWorkTypeId, setFilterWorkTypeId] = useState(() => P0?.filterWorkTypeId ?? '');
@@ -99,6 +103,46 @@ export default function ProductionDashboard() {
   const [handoverSaving, setHandoverSaving] = useState(false);
 
   const navigate = useNavigate();
+
+  const staffFilter = useWorkshopStaffFilter({
+    user,
+    isAdmin,
+    companies,
+    filterCompany,
+    setFilterCompany,
+    forModule: 'production',
+    persisted: P0,
+  });
+
+  const {
+    isCompanyScopedAdmin,
+    userCompanyId,
+    dashboardScopeCompanyId,
+    filterRegion,
+    setFilterRegion,
+    filterPersonId,
+    setFilterPersonId,
+    filterPersonName,
+    setFilterPersonName,
+    companyRegions,
+    companyEmployees,
+    companyDepts,
+    employeeFilterListByRegion,
+    employeeOptionsForSelect,
+    assigneeListSearch,
+    setAssigneeListSearch,
+    onCompanyChange: onStaffFilterCompanyChange,
+    resetStaffFilters,
+    matchesProject,
+    staffFilterActiveCount,
+  } = staffFilter;
+
+  const deferredPersonName = useDeferredValue(filterPersonName);
+
+  const handleStaffFilterCompanyChange = useCallback((companyId) => {
+    onStaffFilterCompanyChange(companyId);
+    setFilterWorkTypeId('');
+  }, [onStaffFilterCompanyChange]);
 
   const companyParam = useMemo(() => {
     if (isAdmin) return filterCompany || undefined;
@@ -150,13 +194,13 @@ export default function ProductionDashboard() {
     try {
       localStorage.setItem(LS_SX, JSON.stringify({
         filterCompany, timePreset, customFrom, customTo, kanbanLoadKey,
-        filterPersonId, filterPhone, filterWorkTypeId,
+        filterPersonId, filterPersonName, filterRegion, filterPhone, filterWorkTypeId,
         searchQuery, priorityFilter, stageFilter, viewMode,
       }));
     } catch { /* ignore */ }
   }, [
-    filterCompany, timePreset, customFrom, customTo, kanbanLoadKey, filterPersonId, filterPhone,
-    filterWorkTypeId, searchQuery, priorityFilter, stageFilter, viewMode,
+    filterCompany, timePreset, customFrom, customTo, kanbanLoadKey, filterPersonId, filterPersonName,
+    filterRegion, filterPhone, filterWorkTypeId, searchQuery, priorityFilter, stageFilter, viewMode,
   ]);
 
   useEffect(() => {
@@ -189,15 +233,12 @@ export default function ProductionDashboard() {
     return projects.filter((p) => {
       const { from, to } = dateFromTo;
       if (from && to && !workshopCreatedInRange(p.created_at, from, to)) return false;
-      if (filterPersonId) {
-        const id = p.production_person?.id ?? p.production_person_id;
-        if (String(id) !== String(filterPersonId)) return false;
-      }
+      if (!matchesProject(p, { personNameQ: deferredPersonName })) return false;
       if (filterPhone === 'has' && !p.customer?.phone) return false;
       if (filterPhone === 'no' && p.customer?.phone) return false;
       return true;
     });
-  }, [projects, dateFromTo, filterPersonId, filterPhone]);
+  }, [projects, dateFromTo, matchesProject, deferredPersonName, filterPhone]);
 
   const toggleSelect = useCallback((id, e) => {
     e?.stopPropagation();
@@ -564,14 +605,14 @@ export default function ProductionDashboard() {
     (timePreset && timePreset !== 'custom') || (timePreset === 'custom' && customFrom && customTo),
   );
   const advFilterCount =
-    (filterPersonId ? 1 : 0) + (filterPhone ? 1 : 0) + (hasTimeFilter ? 1 : 0) + (isAdmin && filterCompany ? 1 : 0)
+    staffFilterActiveCount + (filterPhone ? 1 : 0) + (hasTimeFilter ? 1 : 0)
     + (filterWorkTypeId ? 1 : 0)
     + (String(searchQuery || '').trim() ? 1 : 0) + (priorityFilter ? 1 : 0) + (stageFilter ? 1 : 0)
     + (viewMode !== 'kanban' ? 1 : 0);
 
   const hasActiveFilter = !!(
     searchQuery || priorityFilter || stageFilter || hasTimeFilter
-    || filterPersonId || filterPhone || (isAdmin && filterCompany) || filterWorkTypeId
+    || filterPhone || filterWorkTypeId || staffFilterActiveCount
   );
 
   const clearAllFilters = useCallback(() => {
@@ -581,11 +622,10 @@ export default function ProductionDashboard() {
     setTimePreset('');
     setCustomFrom('');
     setCustomTo('');
-    setFilterPersonId('');
     setFilterPhone('');
     setFilterWorkTypeId('');
-    if (isAdmin) setFilterCompany('');
-  }, [isAdmin]);
+    resetStaffFilters();
+  }, [resetStaffFilters]);
 
   if (loading) {
     return (
@@ -677,26 +717,6 @@ export default function ProductionDashboard() {
               </span>
             )}
           </button>
-          {isAdmin && (
-            <div className="inline-flex items-center gap-1 h-9 px-2 border border-gray-200 rounded-lg bg-white shrink-0" title="Lọc dữ liệu dashboard theo công ty">
-              <Building2 className="h-3.5 w-3.5 text-gray-500 shrink-0" />
-              <select
-                value={filterCompany}
-                onChange={(e) => { setFilterCompany(e.target.value); setFilterWorkTypeId(''); }}
-                className="h-7 text-sm bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[10rem] sm:max-w-[14rem]"
-              >
-                <option value="">Mọi công ty</option>
-                {companies.map((c) => (
-                  <option key={c.id} value={c.id}>{c.short_name || c.name || c.id}</option>
-                ))}
-              </select>
-            </div>
-          )}
-          {!isAdmin && user?.company_id && (
-            <span className="text-[11px] text-gray-500 shrink-0 max-w-[10rem] truncate" title="Dữ liệu theo công ty tài khoản">
-              Công ty tài khoản
-            </span>
-          )}
           {hasActiveFilter && !showAdvFilter && (
             <button
               type="button"
@@ -768,18 +788,55 @@ export default function ProductionDashboard() {
               </div>
             </div>
 
+            <WorkshopStaffFilterPanel
+              isAdmin={isAdmin}
+              isCompanyScopedAdmin={isCompanyScopedAdmin}
+              userCompanyId={userCompanyId}
+              companies={companies}
+              filterCompany={filterCompany}
+              onCompanyChange={handleStaffFilterCompanyChange}
+              dashboardScopeCompanyId={dashboardScopeCompanyId}
+              companyRegions={companyRegions}
+              filterRegion={filterRegion}
+              setFilterRegion={setFilterRegion}
+              assigneeListSearch={assigneeListSearch}
+              setAssigneeListSearch={setAssigneeListSearch}
+              filterPersonId={filterPersonId}
+              setFilterPersonId={setFilterPersonId}
+              setFilterPersonName={setFilterPersonName}
+              employeeOptionsForSelect={employeeOptionsForSelect}
+              companyDepts={companyDepts}
+              filterPersonName={filterPersonName}
+              employeeFilterListByRegion={employeeFilterListByRegion}
+              companyEmployees={companyEmployees}
+              ringFocusClass="focus:ring-blue-500"
+            />
+
             <div className="flex flex-wrap items-end gap-2">
+              <div className="flex flex-col gap-0.5 min-w-[10rem]">
+                <label className="text-[10px] text-gray-500 font-medium">Giai đoạn</label>
+                <select
+                  value={stageFilter}
+                  onChange={(e) => setStageFilter(e.target.value)}
+                  className="h-8 w-40 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer"
+                >
+                  <option value="">Tất cả giai đoạn</option>
+                  {pipeline.map((stage) => (
+                    <option key={stage.id} value={stage.id}>{stage.icon || '•'} {stage.name}</option>
+                  ))}
+                </select>
+              </div>
               {companyForTypes && (
-                <div>
-                  <p className="text-[10px] font-semibold text-gray-500 mb-0.5">Loại dự án</p>
-                  <div className="inline-flex items-center gap-1 h-9 px-2 border border-gray-200 rounded-lg bg-white" title="Cấu hình tại Cài đặt pipeline">
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-[10px] text-gray-500 font-medium">Phân loại</label>
+                  <div className="inline-flex items-center gap-1 h-8 px-2 bg-gray-50 border border-gray-200 rounded-lg" title="Cấu hình tại Cài đặt pipeline">
                     <Layers className="h-3.5 w-3.5 text-slate-500 shrink-0" />
                     <select
                       value={filterWorkTypeId}
                       onChange={(e) => setFilterWorkTypeId(e.target.value)}
-                      className="h-7 text-sm bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[11rem]"
+                      className="h-7 text-xs bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[11rem]"
                     >
-                      <option value="">Mọi loại</option>
+                      <option value="">{workTypes.length === 0 ? 'Chưa cấu hình' : 'Tất cả loại'}</option>
                       {workTypes.map((wt) => (
                         <option key={wt.id} value={wt.id}>{wt.name}</option>
                       ))}
@@ -787,25 +844,12 @@ export default function ProductionDashboard() {
                   </div>
                 </div>
               )}
-              <div className="min-w-[140px]">
-                <p className="text-[10px] font-semibold text-gray-500 mb-0.5">Cột pipeline</p>
-                <select
-                  value={stageFilter}
-                  onChange={(e) => setStageFilter(e.target.value)}
-                  className="w-full h-9 px-2 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Tất cả cột</option>
-                  {pipeline.map((stage) => (
-                    <option key={stage.id} value={stage.id}>{stage.icon || '•'} {stage.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <p className="text-[10px] font-semibold text-gray-500 mb-0.5">Ưu tiên</p>
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[10px] text-gray-500 font-medium">Ưu tiên</label>
                 <select
                   value={priorityFilter}
                   onChange={(e) => setPriorityFilter(e.target.value)}
-                  className="h-9 px-2 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500"
+                  className="h-8 w-28 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer"
                 >
                   <option value="">Tất cả</option>
                   <option value="high">Cao</option>
@@ -813,23 +857,12 @@ export default function ProductionDashboard() {
                   <option value="low">Thấp</option>
                 </select>
               </div>
-              <div className="min-w-[160px]">
-                <p className="text-[10px] font-semibold text-gray-500 mb-0.5">Người phụ trách SX</p>
-                <select
-                  value={filterPersonId}
-                  onChange={(e) => setFilterPersonId(e.target.value)}
-                  className="w-full h-9 px-2 border border-gray-200 rounded-lg text-sm bg-white"
-                >
-                  <option value="">Mọi người</option>
-                  {allUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-                </select>
-              </div>
-              <div>
-                <p className="text-[10px] font-semibold text-gray-500 mb-0.5">SĐT khách</p>
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[10px] text-gray-500 font-medium">SĐT</label>
                 <select
                   value={filterPhone}
                   onChange={(e) => setFilterPhone(e.target.value)}
-                  className="h-9 px-2 border border-gray-200 rounded-lg text-sm bg-white"
+                  className="h-8 w-36 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer"
                 >
                   <option value="">Không lọc</option>
                   <option value="has">Có SĐT</option>
@@ -968,7 +1001,7 @@ export default function ProductionDashboard() {
               autoFocus
             >
               <option value="">— Chọn người phụ trách SX —</option>
-              {allUsers.map(u => (
+              {(employeeOptionsForSelect.length ? employeeOptionsForSelect : allUsers).map((u) => (
                 <option key={u.id} value={u.id}>{u.full_name}</option>
               ))}
             </select>
