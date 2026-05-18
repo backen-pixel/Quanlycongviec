@@ -13,6 +13,7 @@ import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
 import CRMTasksTab from '../components/CRMTasksTab';
 import ExcelQuotationImport from '../components/ExcelQuotationImport';
+import QuotationSourceExcelLink from '../components/QuotationSourceExcelLink';
 import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
 import EmployeePicker from '../components/EmployeePicker';
 import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
@@ -25,11 +26,16 @@ import DealCrossScoresPanel from '../components/DealCrossScoresPanel';
 import LeadKpiLedgerPanel from '../components/LeadKpiLedgerPanel';
 import { useCrmNotesFab } from '../context/CrmNotesFabContext';
 import PipelineStepper from '../components/PipelineStepper';
+import {
+  crmDealStageMoveBlockedMessage,
+  isDealCrmStageLocked,
+} from '../lib/crmDealStageGate';
+import { sortAndDedupePipelineStages } from '../lib/crmPipelineStages';
 import DealStageEventModal from '../components/DealStageEventModal';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, MessageCircle, Edit2, Trash2, X, Save, Building2, FolderKanban,
-  FileUp, FileText, Zap, ChevronDown, Send, RefreshCw, Users, ClipboardCheck, Loader2, Mic,
+  FileUp, FileText, Zap, ChevronDown, Send, RefreshCw, Users, ClipboardCheck, Loader2, Mic, RotateCcw,
 } from 'lucide-react';
 
 /** Khớp backend: chỉ cột deal có tên chứa «Hoàn thành» mới dùng gửi Zalo OA */
@@ -67,6 +73,7 @@ export default function LeadDetail() {
   const isAdminUser = user?.role === 'admin';
   const { setCrmNotesAnchor } = useCrmNotesFab();
   const loadRef = useRef(null);
+  const loadSeqRef = useRef(0);
   const navigate = useNavigate();
   const [lead, setLead] = useState(null);
   const [customer, setCustomer] = useState(null);
@@ -87,6 +94,8 @@ export default function LeadDetail() {
   const [activeTab, setActiveTab] = useState('tasks');
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [showExcelImport, setShowExcelImport] = useState(false);
+  /** Báo giá deal có file Excel gốc — mở lại từ header */
+  const [dealExcelQuotations, setDealExcelQuotations] = useState([]);
   // const [notesExpanded, setNotesExpanded] = useState(localStorage.getItem('crm_notes_default_open') === 'true'); // TBD
   const [showLostModal, setShowLostModal] = useState(false);
   const [lostReason, setLostReason] = useState('');
@@ -118,6 +127,7 @@ export default function LeadDetail() {
   const [deletingLead, setDeletingLead] = useState(false);
   /** Tăng khi cần tab Công việc refetch (ví dụ sau kéo giai đoạn) mà không «tải lại» cả trang. */
   const [crmTasksRefreshKey, setCrmTasksRefreshKey] = useState(0);
+  const [reopeningLost, setReopeningLost] = useState(false);
 
   // Auto-create project (chạy ngầm)
   const [autoCreateStatus, setAutoCreateStatus] = useState(null); // null | 'loading' | 'success' | 'error'
@@ -236,8 +246,25 @@ export default function LeadDetail() {
     setSearchParams(next, { replace: true });
   }, [id, searchParams, setSearchParams, lead]);
 
+  const loadDealExcelQuotations = useCallback(() => {
+    if (!id) return;
+    api
+      .get('/crm/quotations', { params: { lead_id: id, limit: 30 } })
+      .then((r) => {
+        const rows = Array.isArray(r.data) ? r.data : [];
+        setDealExcelQuotations(rows.filter((q) => q.source_excel_file_url).slice(0, 8));
+      })
+      .catch(() => setDealExcelQuotations([]));
+  }, [id]);
+
+  useEffect(() => {
+    if (lead?.type === 'deal') loadDealExcelQuotations();
+    else setDealExcelQuotations([]);
+  }, [lead?.type, lead?.id, loadDealExcelQuotations]);
+
   const load = async (opts = {}) => {
     const silent = !!opts.silent;
+    const seq = ++loadSeqRef.current;
     if (!silent) setLoading(true);
     try {
       const [leadRes, actRes, docRes, flowsRes, usersRes, taskDocRes] = await Promise.all([
@@ -255,18 +282,20 @@ export default function LeadDetail() {
         leadPipelineId
           ? { pipeline_id: leadPipelineId }
           : (leadCompanyId ? { company_id: leadCompanyId } : {});
+      const stageEnsure = leadRes?.stage_id ? { ensure_stage_id: leadRes.stage_id } : {};
       const [stagesLeadRes, stagesDealRes] = await Promise.all([
-        api.get('/crm/pipeline-stages', { params: { type: 'lead', ...stagesParamsBase } }).catch(() => ({ data: [] })),
-        api.get('/crm/pipeline-stages', { params: { type: 'deal', ...stagesParamsBase } }).catch(() => ({ data: [] })),
+        api.get('/crm/pipeline-stages', { params: { type: 'lead', ...stagesParamsBase, ...stageEnsure } }).catch(() => ({ data: [] })),
+        api.get('/crm/pipeline-stages', { params: { type: 'deal', ...stagesParamsBase, ...stageEnsure } }).catch(() => ({ data: [] })),
       ]);
+      if (seq !== loadSeqRef.current) return;
       setLead(leadRes);
       setLeadTitleDraft(leadRes?.title || '');
       setCustomer(leadRes?.customer);
       setActivities(actRes.data || []);
       setDocuments(docRes.data || []);
       setTaskDocuments(taskDocRes.data || taskDocRes || []);
-      setStagesLead(stagesLeadRes.data || []);
-      setStagesDeal(stagesDealRes.data || []);
+      setStagesLead(sortAndDedupePipelineStages(stagesLeadRes.data || []));
+      setStagesDeal(sortAndDedupePipelineStages(stagesDealRes.data || []));
       setFlows(flowsRes || []);
       setAllUsers(usersRes || []);
 
@@ -440,14 +469,39 @@ export default function LeadDetail() {
                 ...prev,
                 ...data,
                 stage_id: data.stage_id ?? stageId,
+                lost_reason: data.lost_reason ?? null,
+                actual_close_date: data.actual_close_date ?? null,
+                probability: data.probability ?? prev.probability,
+                stage_entered_at: data.stage_entered_at ?? prev.stage_entered_at,
                 project_id: data.project_id ?? prev.project_id,
                 sx_pipeline_stage:
-                  data.sx_pipeline_stage !== undefined ? data.sx_pipeline_stage : prev.sx_pipeline_stage,
+                  data.sx_pipeline_stage != null
+                    ? data.sx_pipeline_stage
+                    : prev.sx_pipeline_stage,
                 vc_pipeline_stage:
-                  data.vc_pipeline_stage !== undefined ? data.vc_pipeline_stage : prev.vc_pipeline_stage,
+                  data.vc_pipeline_stage != null
+                    ? data.vc_pipeline_stage
+                    : prev.vc_pipeline_stage,
               }
             : prev,
         );
+        if (data.stage_id) {
+          const pt = (data.type || lead?.type) === 'deal' ? 'deal' : 'lead';
+          const base = lead?.pipeline_id
+            ? { pipeline_id: lead.pipeline_id }
+            : (lead?.company_id ? { company_id: lead.company_id } : {});
+          api
+            .get('/crm/pipeline-stages', {
+              params: { type: pt, ...base, ensure_stage_id: data.stage_id },
+            })
+            .then((r) => {
+              const list = r.data || [];
+              const normalized = sortAndDedupePipelineStages(list);
+              if (pt === 'deal') setStagesDeal(normalized);
+              else setStagesLead(normalized);
+            })
+            .catch(() => {});
+        }
         const pid = data.project_id || data.project_auto_created?.project_id;
         if (pid && !data.sx_pipeline_stage && !data.vc_pipeline_stage) {
           try {
@@ -487,14 +541,52 @@ export default function LeadDetail() {
     }
   };
 
+  const reopenLostRecord = async () => {
+    if (!id || reopeningLost) return;
+    const isDeal = lead?.type === 'deal';
+    const noun = isDeal ? 'deal' : 'lead';
+    if (
+      !window.confirm(
+        `Hồi lại ${noun} này?\n\n• Xóa trạng thái thua/mất và lý do\n• Chuyển về giai đoạn trước khi đánh dấu thua (hoặc cột đầu pipeline)`,
+      )
+    ) {
+      return;
+    }
+    setReopeningLost(true);
+    try {
+      const { data } = await api.post(`/crm/leads/${id}/reopen`);
+      if (data?.id) {
+        setLead((prev) =>
+          prev
+            ? {
+                ...prev,
+                ...data,
+                lost_reason: data.lost_reason ?? null,
+                stage_id: data.stage_id ?? prev.stage_id,
+              }
+            : prev,
+        );
+      }
+      await loadRef.current?.({ silent: true });
+      setCrmTasksRefreshKey((k) => k + 1);
+    } catch (e) {
+      alert(e.response?.data?.error || 'Không hồi lại được');
+    } finally {
+      setReopeningLost(false);
+    }
+  };
+
   const moveStage = async (stageId, extraData = {}) => {
     const stages = lead?.type === 'deal' ? stagesDeal : stagesLead;
     const targetStage = stages.find(s => s.id === stageId);
-    const stageName = String(targetStage?.name || '')
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '');
-    const isProductionStage = stageName.includes('san xuat');
+
+    if (lead?.type === 'deal' && targetStage) {
+      const blocked = crmDealStageMoveBlockedMessage(lead, targetStage, 'deal');
+      if (blocked) {
+        alert(blocked);
+        return;
+      }
+    }
 
     // Nếu stage là Thua/Mất → hiện modal nhập lý do
     if (targetStage?.is_lost && !extraData.lost_reason) {
@@ -516,7 +608,7 @@ export default function LeadDetail() {
       return;
     }
 
-    if (lead?.type === 'deal' && (targetStage?.is_won || isProductionStage) && !lead?.project_id) {
+    if (lead?.type === 'deal' && targetStage?.is_won && !lead?.project_id) {
       setDealStageWonErr('');
       setDealStageWonCompanyId(
         lead.company_id
@@ -953,6 +1045,19 @@ export default function LeadDetail() {
           <button onClick={() => setShowExcelImport(true)} className="h-9 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer">
             📥 Import Excel
           </button>
+          {lead.type === 'deal' && dealExcelQuotations.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 max-w-full">
+              {dealExcelQuotations.map((q) => (
+                <QuotationSourceExcelLink
+                  key={q.id}
+                  fileUrl={q.source_excel_file_url}
+                  fileName={q.source_excel_file_name || q.code}
+                  compact
+                  className="max-w-[11rem]"
+                />
+              ))}
+            </div>
+          )}
           {lead.type === 'deal' && isDealHoanThanhForZalo && (
             <button
               type="button"
@@ -983,24 +1088,51 @@ export default function LeadDetail() {
       </div>
 
       {/* Lost Banner — hiển thị nổi bật khi deal/lead thua */}
-      {lead?.lost_reason && (
+      {(lead?.lost_reason || stages.find((s) => s.id === lead.stage_id)?.is_lost) && (
         <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
           <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center text-lg shrink-0">❌</div>
-          <div className="flex-1">
-            <div className="flex items-center gap-2 mb-1">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
               <span className="text-sm font-bold text-red-700">THUA / MẤT</span>
               <span className="text-xs text-red-500 bg-red-100 px-2 py-0.5 rounded-full">Đã kết thúc</span>
             </div>
-            <p className="text-sm text-red-800 font-medium">Lý do: {lead.lost_reason}</p>
+            {lead.lost_reason && (
+              <p className="text-sm text-red-800 font-medium">Lý do: {lead.lost_reason}</p>
+            )}
             {lead.lost_at && (
               <p className="text-xs text-red-400 mt-1">Vào lúc {new Date(lead.lost_at).toLocaleString('vi-VN')}</p>
+            )}
+            {lead.type === 'deal' && (
+              <button
+                type="button"
+                onClick={reopenLostRecord}
+                disabled={reopeningLost}
+                className="mt-3 inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg bg-white border border-emerald-300 text-emerald-800 text-sm font-semibold hover:bg-emerald-50 disabled:opacity-50 shadow-sm"
+              >
+                {reopeningLost ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-4 w-4" />
+                )}
+                {reopeningLost ? 'Đang hồi lại…' : 'Hồi lại deal'}
+              </button>
             )}
           </div>
         </div>
       )}
 
       {/* Pipeline Progress - MISA Style Stepper */}
-      <PipelineStepper stages={stages} currentStageId={lead.stage_id} onMoveToStage={moveStage} />
+      {lead?.type === 'deal' && isDealCrmStageLocked(lead) && (
+        <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
+          Deal đã có dự án — giai đoạn CRM giữ ở Thắng; badge SX/VC cập nhật từ module Sản xuất / Vận chuyển.
+        </p>
+      )}
+      <PipelineStepper
+        stages={stages}
+        currentStageId={lead.stage_id}
+        currentStageName={lead.stage?.name}
+        onMoveToStage={lead?.type === 'deal' && isDealCrmStageLocked(lead) ? undefined : moveStage}
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         {/* Left: Customer Info */}
@@ -1652,6 +1784,7 @@ export default function LeadDetail() {
           onImportDone={(data) => {
             setShowExcelImport(false);
             load({ silent: true });
+            loadDealExcelQuotations();
             if (data?.id) navigate(`/crm/quotations/${data.id}`);
           }}
           onClose={() => setShowExcelImport(false)}

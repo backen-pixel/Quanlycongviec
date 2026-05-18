@@ -6,11 +6,13 @@ import SaveToast from '../components/SaveToast';
 import CustomerSearchPicker from '../components/CustomerSearchPicker';
 import LeadDealPicker from '../components/LeadDealPicker';
 import { QUOTATION_EXCEL_DRAFT_KEY } from '../components/ExcelQuotationImport';
+import QuotationSourceExcelLink from '../components/QuotationSourceExcelLink';
 import { useAuth } from '../lib/auth';
 import { formatDateTime } from '../lib/utils';
 import { getDepositRemainingDisplay } from '../lib/quotationTermsDisplay';
 import ProductSearchPicker from '../components/ProductSearchPicker';
 import ProductAutocompleteCell from '../components/ProductAutocompleteCell';
+import { computeQuotationDocumentDiscounts } from '../lib/quotationTotals';
 
 // Override formatVND: 0 → "0đ" thay vì "—"
 const formatVND = (n) => {
@@ -106,6 +108,7 @@ export default function QuotationForm() {
     delivery_terms: '', notes: '', lead_id: '',
     company_id: '', region_id: '',
     discount_type: 'percent', discount_value: 0,
+    sale_discount_type: 'amount', sale_discount_value: 0,
     approved_by: '',
     deposit_amount: null,
     deposit_received: null,
@@ -134,6 +137,8 @@ export default function QuotationForm() {
   /** Xác nhận đã kiểm tra số liệu — chuyển từ modal Excel sang đây */
   const [excelReviewConfirmed, setExcelReviewConfirmed] = useState(false);
   const [excelImportMeta, setExcelImportMeta] = useState(null);
+  /** File Excel gốc (sau khi đã lưu báo giá) */
+  const [quoteSourceExcel, setQuoteSourceExcel] = useState(null);
   const [quotationHistory, setQuotationHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   /** Sau khi đổ dữ liệu từ Excel, không ghi đè bằng GET lead/detail (cùng effect chạy lại khi bỏ from_excel). */
@@ -152,6 +157,7 @@ export default function QuotationForm() {
           customer_phone: d.customer_phone || '', customer_address: d.customer_address || '',
           valid_until: d.valid_until || '', payment_terms: isPreset ? pt : 'Khác', delivery_terms: d.delivery_terms || '',
           notes: d.notes || '', discount_type: d.discount_type || 'percent', discount_value: d.discount_value || 0,
+          sale_discount_type: d.sale_discount_type || 'amount', sale_discount_value: d.sale_discount_value || 0,
           lead_id: d.lead_id, project_id: d.project_id, approved_by: d.approved_by || '',
           company_id: d.company_id || '', region_id: d.region_id || '',
           deposit_amount: d.deposit_amount != null && d.deposit_amount !== '' ? Number(d.deposit_amount) : null,
@@ -160,6 +166,14 @@ export default function QuotationForm() {
           remaining_amount: d.remaining_amount != null && d.remaining_amount !== '' ? Number(d.remaining_amount) : null,
           remaining_note: d.remaining_note || '',
         });
+        if (d.source_excel_file_url) {
+          setQuoteSourceExcel({
+            file_url: d.source_excel_file_url,
+            file_name: d.source_excel_file_name || 'File Excel',
+          });
+        } else {
+          setQuoteSourceExcel(null);
+        }
         // Snapshot deal info từ payload mới (backend trả về lead, company, region embedded)
         if (d.lead) {
           setSelectedDeal({
@@ -227,6 +241,8 @@ export default function QuotationForm() {
               lead_id: dform.lead_id || urlLead || '',
               discount_type: dform.discount_type || 'amount',
               discount_value: dform.discount_value ?? 0,
+              sale_discount_type: dform.sale_discount_type || 'amount',
+              sale_discount_value: dform.sale_discount_value ?? 0,
               payment_terms: presetPt ? pt : (pt ? 'Khác' : f.payment_terms),
               approved_by: dform.approved_by || f.approved_by || '',
             }));
@@ -260,13 +276,20 @@ export default function QuotationForm() {
               );
             }
             setExcelDraftHint(parsed.meta?.fileName ? `Đã nhập từ Excel: ${parsed.meta.fileName}` : 'Đã nhập từ Excel');
+            const srcUrl = parsed.meta?.sourceFile?.file_url || dform.source_excel_file_url || '';
+            const srcName = parsed.meta?.sourceFile?.file_name || dform.source_excel_file_name || parsed.meta?.fileName || '';
             if (parsed.meta?.requireReviewConfirm) {
-              setExcelImportMeta({ fileName: parsed.meta?.fileName || '', requireReviewConfirm: true });
+              setExcelImportMeta({
+                fileName: parsed.meta?.fileName || srcName || '',
+                fileUrl: srcUrl,
+                requireReviewConfirm: true,
+              });
               setExcelReviewConfirmed(false);
             } else {
-              setExcelImportMeta(null);
+              setExcelImportMeta(srcUrl ? { fileName: srcName, fileUrl: srcUrl, requireReviewConfirm: false } : null);
               setExcelReviewConfirmed(true);
             }
+            if (srcUrl) setQuoteSourceExcel({ file_url: srcUrl, file_name: srcName });
             skipLeadDetailPrefillRef.current = true;
             const cleanLead = dform.lead_id || urlLead || '';
             navigate(`/crm/quotations/new${cleanLead ? `?lead_id=${encodeURIComponent(cleanLead)}` : ''}`, { replace: true });
@@ -489,8 +512,18 @@ export default function QuotationForm() {
       return { ...i, amount, gross_amount: grossAmount, discount_amount: discountAmount, vat_rate: vatRate, vat_amount: vatAmount, tax_amount: vatAmount, total, actual_area: actualArea, area_ratio: areaRatio };
     });
     const subtotal = rows.reduce((s, r) => s + r.amount, 0);
-    const discountAmt = form.discount_type === 'percent' ? subtotal * (form.discount_value || 0) / 100 : (form.discount_value || 0);
-    const afterDiscount = subtotal - discountAmt;
+    const {
+      discountAmt,
+      afterRebate,
+      saleDiscountAmt,
+      afterAllDiscounts,
+    } = computeQuotationDocumentDiscounts(
+      subtotal,
+      form.discount_type,
+      form.discount_value,
+      form.sale_discount_type,
+      form.sale_discount_value,
+    );
     const totalVat = rows.reduce((s, r) => s + r.vat_amount, 0);
     // Group details: subtotal, discount, after-discount per group
     // Freebie items (unit_price=0, notes=HỖ TRỢ) excluded from discount calc
@@ -517,8 +550,21 @@ export default function QuotationForm() {
     // Also keep simple groupSubtotals for backward compat
     const groupSubtotals = {};
     Object.entries(groupDetails).forEach(([g, d]) => { groupSubtotals[g] = d.afterDiscount; });
-    return { rows, subtotal, discountAmt, afterDiscount, totalVat, total: afterDiscount + totalVat, groupSubtotals, groupDetails, groupOrder };
-  }, [items, form.discount_type, form.discount_value]);
+    return {
+      rows,
+      subtotal,
+      discountAmt,
+      afterRebate,
+      saleDiscountAmt,
+      afterAllDiscounts,
+      afterDiscount: afterAllDiscounts,
+      totalVat,
+      total: afterAllDiscounts + totalVat,
+      groupSubtotals,
+      groupDetails,
+      groupOrder,
+    };
+  }, [items, form.discount_type, form.discount_value, form.sale_discount_type, form.sale_discount_value]);
 
   const { depositShow, remainingShow } = useMemo(() => getDepositRemainingDisplay(form), [
     form.deposit_amount, form.deposit_received, form.deposit_label,
@@ -541,6 +587,18 @@ export default function QuotationForm() {
     try {
       const effectivePayment = isCustomPayment ? customPaymentTerms : form.payment_terms;
       const payload = { ...form, payment_terms: effectivePayment, items: calcs.rows };
+      const excelSrc = excelImportMeta?.fileUrl
+        ? {
+            source_excel_file_url: excelImportMeta.fileUrl,
+            source_excel_file_name: excelImportMeta.fileName || excelImportMeta.fileUrl,
+          }
+        : quoteSourceExcel?.file_url
+          ? {
+              source_excel_file_url: quoteSourceExcel.file_url,
+              source_excel_file_name: quoteSourceExcel.file_name || '',
+            }
+          : {};
+      Object.assign(payload, excelSrc);
       if (!isEdit && excelImportMeta) {
         payload.quotation_source = {
           from_excel: true,
@@ -662,6 +720,15 @@ export default function QuotationForm() {
               <p className="text-xs text-emerald-700 font-medium mt-1 rounded-lg bg-emerald-50 border border-emerald-100 px-2 py-1 inline-block">
                 {excelDraftHint} — chỉnh sửa bên dưới rồi bấm <strong>Lưu</strong> để tạo báo giá chính thức.
               </p>
+            )}
+            {(excelImportMeta?.fileUrl || quoteSourceExcel?.file_url) && (
+              <div className="mt-2">
+                <QuotationSourceExcelLink
+                  fileUrl={excelImportMeta?.fileUrl || quoteSourceExcel?.file_url}
+                  fileName={excelImportMeta?.fileName || quoteSourceExcel?.file_name}
+                  compact
+                />
+              </div>
             )}
           </div>
         </div>
@@ -1055,34 +1122,74 @@ export default function QuotationForm() {
             })}
             {calcs.groupOrder.length > 0 && <div className="border-t border-gray-200" />}
             <div className="flex justify-between text-sm"><span className="text-gray-500">Tổng tiền hàng:</span><span className="font-medium">{formatVND(calcs.subtotal)}</span></div>
-            <div className="flex items-center justify-between text-sm gap-2">
-              <span className="text-gray-500 font-medium">Tổng chiết khấu:</span>
-              <div className="flex items-center gap-1">
+            <div className="rounded-lg border border-red-200 bg-red-50/50 px-3 py-2.5 space-y-2">
+              <p className="text-xs font-bold text-gray-800 uppercase tracking-wide">Tổng chiết khấu</p>
+              <p className="text-[10px] text-gray-500 leading-snug">Áp trên tổng tiền hàng (sau chiết khấu theo dòng / nhóm)</p>
+              <div className="flex items-stretch gap-2">
                 <select
                   value={form.discount_type}
-                  onChange={e => setForm(f => ({ ...f, discount_type: e.target.value }))}
-                  className="h-8 px-1 border rounded text-xs bg-white"
-                  title="Loại chiết khấu áp lên TỔNG báo giá (sau khi đã trừ CK theo dòng/nhóm)"
+                  onChange={(e) => setForm((f) => ({ ...f, discount_type: e.target.value }))}
+                  className="h-10 w-[4.25rem] shrink-0 px-2 border border-gray-200 rounded-lg text-sm bg-white cursor-pointer"
+                  title="Loại chiết khấu tổng"
                 >
                   <option value="percent">%</option>
                   <option value="amount">VNĐ</option>
                 </select>
                 <NumericInput
-                  value={form.discount_value || ''}
-                  onChange={(v) => setForm(f => ({ ...f, discount_value: parseFloat(v) || 0 }))}
-                  placeholder="0"
+                  value={form.discount_value === 0 ? '' : form.discount_value}
+                  onChange={(v) => setForm((f) => ({ ...f, discount_value: v === '' ? 0 : parseFloat(v) || 0 }))}
+                  placeholder={form.discount_type === 'percent' ? 'VD: 5' : '0'}
                   allowEmpty
-                  title="Chiết khấu tổng — áp lên cộng tiền hàng sau CK dòng"
-                  className={`w-28 h-8 px-2 border rounded text-sm text-right outline-none ${
+                  title="Nhập tổng chiết khấu"
+                  className={`flex-1 min-w-0 h-10 px-3 border rounded-lg text-sm text-right font-medium outline-none focus:ring-2 focus:ring-red-300 ${
                     (form.discount_value || 0) > 0
-                      ? 'border-red-300 bg-red-50 text-red-700 font-semibold'
-                      : 'border-gray-200 bg-white'
+                      ? 'border-red-400 bg-white text-red-800'
+                      : 'border-gray-200 bg-white text-gray-900'
                   }`}
                 />
               </div>
-              <span className="font-medium text-red-600 tabular-nums">-{formatVND(calcs.discountAmt)}</span>
+              <div className="flex justify-between items-center text-sm pt-1 border-t border-red-100">
+                <span className="text-gray-600">Số tiền giảm</span>
+                <span className="font-bold text-red-600 tabular-nums">
+                  {(calcs.discountAmt || 0) > 0 ? `-${formatVND(calcs.discountAmt)}` : formatVND(0)}
+                </span>
+              </div>
             </div>
-            <div className="flex justify-between text-sm"><span className="text-gray-500">Cộng sau CK:</span><span className="font-medium">{formatVND(calcs.afterDiscount)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-gray-500">Cộng sau CK:</span><span className="font-medium">{formatVND(calcs.afterRebate)}</span></div>
+            <div className="rounded-lg border border-amber-200 bg-amber-50/50 px-3 py-2.5 space-y-2">
+              <p className="text-xs font-bold text-gray-800 uppercase tracking-wide">Giảm giá</p>
+              <p className="text-[10px] text-gray-500 leading-snug">Áp trên số tiền sau chiết khấu tổng (khác chiết khấu)</p>
+              <div className="flex items-stretch gap-2">
+                <select
+                  value={form.sale_discount_type}
+                  onChange={(e) => setForm((f) => ({ ...f, sale_discount_type: e.target.value }))}
+                  className="h-10 w-[4.25rem] shrink-0 px-2 border border-gray-200 rounded-lg text-sm bg-white cursor-pointer"
+                  title="Loại giảm giá tổng"
+                >
+                  <option value="percent">%</option>
+                  <option value="amount">VNĐ</option>
+                </select>
+                <NumericInput
+                  value={form.sale_discount_value === 0 ? '' : form.sale_discount_value}
+                  onChange={(v) => setForm((f) => ({ ...f, sale_discount_value: v === '' ? 0 : parseFloat(v) || 0 }))}
+                  placeholder={form.sale_discount_type === 'percent' ? 'VD: 3' : '0'}
+                  allowEmpty
+                  title="Nhập giảm giá"
+                  className={`flex-1 min-w-0 h-10 px-3 border rounded-lg text-sm text-right font-medium outline-none focus:ring-2 focus:ring-amber-300 ${
+                    (form.sale_discount_value || 0) > 0
+                      ? 'border-amber-400 bg-white text-amber-900'
+                      : 'border-gray-200 bg-white text-gray-900'
+                  }`}
+                />
+              </div>
+              <div className="flex justify-between items-center text-sm pt-1 border-t border-amber-100">
+                <span className="text-gray-600">Số tiền giảm</span>
+                <span className="font-bold text-amber-700 tabular-nums">
+                  {(calcs.saleDiscountAmt || 0) > 0 ? `-${formatVND(calcs.saleDiscountAmt)}` : formatVND(0)}
+                </span>
+              </div>
+            </div>
+            <div className="flex justify-between text-sm"><span className="text-gray-500">Cộng trước thuế:</span><span className="font-medium">{formatVND(calcs.afterAllDiscounts)}</span></div>
             <div className="flex justify-between text-sm"><span className="text-gray-500">Thuế GTGT:</span><span className="font-medium">{formatVND(calcs.totalVat)}</span></div>
             <div className="flex justify-between text-base font-bold border-t pt-2 mt-2">
               <span>TỔNG CỘNG:</span>

@@ -283,6 +283,10 @@ async function runOneBatch() {
         // Không ghi SĐT vào facebook_contacts — nguồn chuẩn là customers.phone
 
         // ── Bước 4: Tạo lead hoặc cập nhật ──
+        const { data: leadFresh } = await supabase.from('facebook_contacts')
+          .select('lead_id').eq('id', contact.id).maybeSingle();
+        if (leadFresh?.lead_id) contact.lead_id = leadFresh.lead_id;
+
         if (!contact.lead_id) {
           const lead = await createLeadFromFacebook(contact.page_id, contact, 'Auto Tool', {
             full_name: contact.fb_name || 'KH Facebook',

@@ -5,6 +5,7 @@ import { formatVND } from '../lib/utils';
 import { useAuth } from '../lib/auth';
 import { Upload, FileSpreadsheet, X, AlertTriangle, Loader2, Eye, ChevronDown, ChevronUp, FileEdit, Briefcase } from 'lucide-react';
 import LeadDealPicker from './LeadDealPicker';
+import QuotationSourceExcelLink, { uploadQuotationSourceExcel } from './QuotationSourceExcelLink';
 
 /** Dùng chung với QuotationForm (đọc draft khi from_excel=1) */
 export const QUOTATION_EXCEL_DRAFT_KEY = 'quotation_excel_draft_v1';
@@ -13,7 +14,7 @@ export const QUOTATION_EXCEL_DRAFT_KEY = 'quotation_excel_draft_v1';
  * Từ kết quả parse-excel → payload nội bộ (form + dòng hàng) để đổ vào trang sửa báo giá.
  * (Logic giữ đồng bộ với tính spec_factor / CK / freebie như bản tạo trực tiếp cũ.)
  */
-export function buildQuotationDraftFromPreview(preview, file, user, leadId) {
+export function buildQuotationDraftFromPreview(preview, file, user, leadId, sourceFile = null) {
   const itemsPayload = preview.items
     .filter((i) => !i.is_group)
     .map((i) => {
@@ -128,10 +129,13 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId) {
       deposit_label: sum?.deposit_label || '',
       remaining_amount: sum?.remaining_amount > 0 ? sum.remaining_amount : null,
       remaining_note: sum?.remaining_note || '',
+      source_excel_file_url: sourceFile?.file_url || '',
+      source_excel_file_name: sourceFile?.file_name || file?.name || '',
     },
     items: itemsPayload,
     meta: {
       fileName: file?.name || '',
+      sourceFile: sourceFile || null,
       importedAt: new Date().toISOString(),
       requireReviewConfirm: true,
     },
@@ -142,6 +146,8 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
   const navigate = useNavigate();
   const { user } = useAuth();
   const [file, setFile] = useState(null);
+  const [sourceFile, setSourceFile] = useState(null);
+  const [uploadingSource, setUploadingSource] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [preview, setPreview] = useState(null); // parsed data
   const [error, setError] = useState('');
@@ -218,6 +224,7 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
       return;
     }
     setFile(f);
+    setSourceFile(null);
     setError('');
     setParsing(true);
     setPreview(null);
@@ -229,6 +236,15 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       setPreview(data);
+      setUploadingSource(true);
+      try {
+        const uploaded = await uploadQuotationSourceExcel(f, effectiveLeadId || 'import');
+        setSourceFile(uploaded);
+      } catch (upErr) {
+        console.warn('[excel-import] upload source file:', upErr);
+      } finally {
+        setUploadingSource(false);
+      }
     } catch (e) {
       setError(e.response?.data?.error || 'Lỗi đọc file');
     }
@@ -241,7 +257,7 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
     setSaving(true);
     try {
       const resolvedLead = effectiveLeadId || '';
-      const draft = buildQuotationDraftFromPreview(preview, file, user, resolvedLead);
+      const draft = buildQuotationDraftFromPreview(preview, file, user, resolvedLead, sourceFile);
       sessionStorage.setItem(
         QUOTATION_EXCEL_DRAFT_KEY,
         JSON.stringify({ version: 1, ...draft }),
@@ -353,7 +369,9 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
               <Upload className="h-12 w-12 mx-auto text-gray-400 mb-3" />
               <p className="text-sm font-medium text-gray-700">Kéo thả hoặc click để chọn file Excel</p>
               <p className="text-xs text-gray-400 mt-1">Hỗ trợ .xlsx, .xls (tối đa 10MB)</p>
-              {file && <p className="text-xs text-blue-600 mt-2 font-medium">📄 {file.name}</p>}
+              {file && (
+                <p className="text-xs text-blue-600 mt-2 font-medium">📄 {file.name}</p>
+              )}
               <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFileSelect} className="hidden" />
             </div>
           )}
@@ -373,7 +391,7 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
               <div className="flex-1">
                 <p className="text-sm font-medium text-red-800">{error}</p>
               </div>
-              <button onClick={() => { setError(''); setFile(null); setPreview(null); }}
+              <button onClick={() => { setError(''); setFile(null); setPreview(null); setSourceFile(null); }}
                 className="text-xs text-red-600 hover:text-red-800 font-medium cursor-pointer">Thử lại</button>
             </div>
           )}
@@ -651,9 +669,25 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
                 </div>
               </div>
 
+              {/* File gốc — mở xem */}
+              <div className="flex flex-wrap items-center gap-2">
+                {uploadingSource && (
+                  <span className="text-[11px] text-gray-500 flex items-center gap-1">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang lưu file gốc…
+                  </span>
+                )}
+                <QuotationSourceExcelLink
+                  fileUrl={sourceFile?.file_url}
+                  fileName={sourceFile?.file_name || file?.name}
+                />
+                {!sourceFile?.file_url && file && !uploadingSource && (
+                  <span className="text-[10px] text-amber-700">Chưa lưu được bản sao file — vẫn có thể áp dụng số liệu vào báo giá.</span>
+                )}
+              </div>
+
               {/* File info */}
               <p className="text-[10px] text-gray-400">
-                📄 {file?.name} • Phát hiện header dòng {preview.header_row + 1} / {preview.total_rows} dòng • 
+                📄 {file?.name} • Phát hiện header dòng {preview.header_row + 1} / {preview.total_rows} dòng •
                 Cột: {Object.keys(preview.columns_detected || {}).join(', ')}
               </p>
 
@@ -679,7 +713,7 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
             </div>
             <div className="flex gap-2 flex-wrap justify-end">
               {preview && (
-                <button onClick={() => { setPreview(null); setFile(null); fileRef.current && (fileRef.current.value = ''); }}
+                <button onClick={() => { setPreview(null); setFile(null); setSourceFile(null); fileRef.current && (fileRef.current.value = ''); }}
                   className="h-9 px-4 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium cursor-pointer transition">
                   🔄 Chọn file khác
                 </button>

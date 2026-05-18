@@ -536,10 +536,9 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
       .eq('type', 'deal');
     await Promise.all(
       (leads || []).map((lead) => {
-        return supabase.from('crm_leads').update({
-          sx_pipeline_stage_id: stageUuid,
-          stage_id: currentRow.crm_target_stage_id,
-        }).eq('id', lead.id);
+        const patch = { stage_id: currentRow.crm_target_stage_id };
+        if (stageUuid) patch.sx_pipeline_stage_id = stageUuid;
+        return supabase.from('crm_leads').update(patch).eq('id', lead.id);
       }),
     );
     return;
@@ -572,7 +571,9 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
 
   await Promise.all(
     (leads || []).map((lead) => {
-      const update = { sx_pipeline_stage_id: stageUuid };
+      const update = {};
+      // Không ghi null — tránh xóa badge SX khi chưa map được cột pipeline.
+      if (stageUuid) update.sx_pipeline_stage_id = stageUuid;
 
       // Khi project di chuyển trên Kanban xưởng, CRM phải nhảy về cột đã map (Sản xuất/Thắng),
       // không phụ thuộc deal đang ở cột CRM nào trước đó.
@@ -582,6 +583,7 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
         update.stage_id = thangStageId;
       }
 
+      if (!Object.keys(update).length) return Promise.resolve();
       return supabase.from('crm_leads').update(update).eq('id', lead.id);
     }),
   );
@@ -638,13 +640,13 @@ async function emitCrmBadgeUpdateForProject(projectId, io) {
         .eq('type', 'deal');
       for (const lead of (leadsWithSx || [])) {
         const sx = Array.isArray(lead.sx_pipeline_stage) ? lead.sx_pipeline_stage[0] : lead.sx_pipeline_stage;
-        io.emit('crm:badge_updated', {
+        const payloadSx = {
           lead_id: String(lead.id),
           project_id: lead.project_id ? String(lead.project_id) : null,
           stage_id: lead.stage_id ? String(lead.stage_id) : null,
-          sx_pipeline_stage: sx || null,
-          // vc_pipeline_stage không có trong payload → frontend giữ nguyên
-        });
+        };
+        if (sx) payloadSx.sx_pipeline_stage = sx;
+        io.emit('crm:badge_updated', payloadSx);
       }
       return;
     }
@@ -652,13 +654,14 @@ async function emitCrmBadgeUpdateForProject(projectId, io) {
     for (const lead of (leadsWithBoth || [])) {
       const sx = Array.isArray(lead.sx_pipeline_stage) ? lead.sx_pipeline_stage[0] : lead.sx_pipeline_stage;
       const vc = Array.isArray(lead.vc_pipeline_stage) ? lead.vc_pipeline_stage[0] : lead.vc_pipeline_stage;
-      io.emit('crm:badge_updated', {
+      const payload = {
         lead_id: String(lead.id),
         project_id: lead.project_id ? String(lead.project_id) : null,
         stage_id: lead.stage_id ? String(lead.stage_id) : null,
-        sx_pipeline_stage: sx || null,
-        vc_pipeline_stage: vc || null,
-      });
+      };
+      if (sx) payload.sx_pipeline_stage = sx;
+      if (vc) payload.vc_pipeline_stage = vc;
+      io.emit('crm:badge_updated', payload);
     }
   } catch (e) {
     console.warn('[workshopKanban] emitCrmBadgeUpdateForProject:', e.message);
