@@ -46,6 +46,7 @@ const {
 const { createFulfillmentChildDeal, applyProductionTemplateToFulfillmentLead } = require('../helpers/projectOrderFulfillment');
 const { isPostgresUniqueViolation, nextTbProjectCode } = require('../helpers/projectCode');
 const { validateProductionCompanyId } = require('../helpers/productionCompanyGate');
+const { assertDealCrmManualStageChange } = require('../helpers/crmDealStageGate');
 const {
   assignProductionCompanyDealResponsibility,
   resolveProductionHandoverResponsibleUserId,
@@ -2480,12 +2481,33 @@ r.post('/pipelines/:id/copy', async (req, res) => {
   }
 });
 
+/** Dedupe + sort cột pipeline theo order_index (stepper/Kanban). */
+function normalizePipelineStagesList(rows) {
+  const seen = new Set();
+  const list = [];
+  for (const s of rows || []) {
+    const id = String(s?.id || '').trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    list.push(s);
+  }
+  list.sort((a, b) => {
+    const ai = Number(a?.order_index);
+    const bi = Number(b?.order_index);
+    const oa = Number.isFinite(ai) ? ai : 99999;
+    const ob = Number.isFinite(bi) ? bi : 99999;
+    if (oa !== ob) return oa - ob;
+    return String(a?.name || '').localeCompare(String(b?.name || ''), 'vi');
+  });
+  return list;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // PIPELINE STAGES (CRUD)
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/pipeline-stages', async (req, res) => {
   const { type, pipeline_id, company_id: companyIdQuery } = req.query;
-  let q = supabase.from('crm_pipeline_stages').select('*').order('pipeline_type').order('order_index');
+  let q = supabase.from('crm_pipeline_stages').select('*').order('order_index', { ascending: true });
   if (type) q = q.eq('pipeline_type', type);
   const sacSt = scopedAdminCompanyId(req);
   if (pipeline_id) {
@@ -2546,8 +2568,19 @@ r.get('/pipeline-stages', async (req, res) => {
     if (def?.id) q = q.eq('pipeline_id', def.id);
   }
   if (req.query.all !== 'true') q = q.eq('is_active', true);
-  const { data } = await q;
-  res.json(data || []);
+  let { data } = await q;
+  const ensureStageId = String(req.query.ensure_stage_id || '').trim();
+  if (ensureStageId && !(data || []).some((s) => String(s.id) === ensureStageId)) {
+    const { data: extra } = await supabase
+      .from('crm_pipeline_stages')
+      .select('*')
+      .eq('id', ensureStageId)
+      .maybeSingle();
+    if (extra) {
+      data = [...(data || []), extra];
+    }
+  }
+  res.json(normalizePipelineStagesList(data || []));
 });
 
 r.post('/pipeline-stages', async (req, res) => {
@@ -4054,6 +4087,52 @@ function mapLeadDisplayPhone(rows) {
 }
 
 /** Ưu tiên production_company_id client gửi; nếu trống → crm_lead_types.default_production_company_id của deal. */
+/** Giai đoạn đích khi hồi lại deal/lead đã thua — ưu tiên stage client gửi, rồi lịch sử, rồi cột đầu pipeline. */
+async function resolveReopenTargetStageId(lead, requestedStageId) {
+  const raw = String(requestedStageId || '').trim();
+  if (raw) {
+    const { data: st } = await supabase
+      .from('crm_pipeline_stages')
+      .select('id, is_lost, pipeline_type, is_active')
+      .eq('id', raw)
+      .maybeSingle();
+    if (!st || st.is_lost || st.pipeline_type !== lead.type) {
+      throw new Error('Giai đoạn đích không hợp lệ (phải thuộc pipeline và không phải cột Thua).');
+    }
+    if (st.is_active === false) {
+      throw new Error('Giai đoạn đích đã tắt.');
+    }
+    return raw;
+  }
+
+  const { data: histRows } = await supabase
+    .from('crm_lead_stage_history')
+    .select('to_stage_id, to_canonical_slug')
+    .eq('lead_id', lead.id)
+    .order('entered_at', { ascending: false })
+    .limit(40);
+
+  for (const h of histRows || []) {
+    const slug = String(h.to_canonical_slug || '').toLowerCase();
+    if (slug === 'lost' || slug === 'thua') continue;
+    if (h.to_stage_id) return String(h.to_stage_id);
+  }
+
+  let sq = supabase
+    .from('crm_pipeline_stages')
+    .select('id')
+    .eq('pipeline_type', lead.type)
+    .eq('is_lost', false)
+    .eq('is_active', true)
+    .order('order_index', { ascending: true })
+    .limit(1);
+  if (lead.pipeline_id) sq = sq.eq('pipeline_id', lead.pipeline_id);
+  else if (lead.company_id) sq = sq.eq('company_id', lead.company_id);
+  const { data: stages } = await sq;
+  if (stages?.[0]?.id) return String(stages[0].id);
+  throw new Error('Không tìm được giai đoạn để hồi lại.');
+}
+
 async function resolveProductionCompanyForDealStage(leadId, explicitProductionCompanyId) {
   const raw = String(explicitProductionCompanyId || '').trim();
   if (raw) {
@@ -4807,6 +4886,106 @@ r.patch('/company-regions/:id', async (req, res) => {
   }
 });
 
+/** POST /crm/leads/stage-history-summary — lịch sử stage theo batch (danh sách CRM) */
+r.post('/leads/stage-history-summary', async (req, res) => {
+  try {
+    const leadIds = [...new Set((req.body?.lead_ids || []).map((x) => String(x).trim()).filter(Boolean))].slice(0, 500);
+    if (!leadIds.length) return res.json({ by_lead: {}, parent_codes: {} });
+
+    const pipelineId = uuidQueryOrNull(req.body?.pipeline_id);
+    const companyId = uuidQueryOrNull(req.body?.company_id);
+    let allowedStageIds = [...new Set((req.body?.stage_ids || []).map((x) => String(x).trim()).filter(Boolean))];
+
+    if (!allowedStageIds.length && (pipelineId || companyId)) {
+      let sq = supabase.from('crm_pipeline_stages').select('id');
+      if (pipelineId) sq = sq.eq('pipeline_id', pipelineId);
+      else if (companyId) {
+        const { data: pipes, error: pe } = await supabase
+          .from('crm_pipelines')
+          .select('id')
+          .eq('company_id', companyId);
+        if (pe) throw pe;
+        const pipeIds = (pipes || []).map((p) => p.id).filter(Boolean);
+        if (!pipeIds.length) {
+          return res.json({ by_lead: {}, parent_codes: {}, stage_ids: [] });
+        }
+        sq = sq.in('pipeline_id', pipeIds);
+      }
+      const { data: stageRows, error: se } = await sq;
+      if (se) throw se;
+      allowedStageIds = (stageRows || []).map((s) => String(s.id)).filter(Boolean);
+    }
+
+    const allowedSet = new Set(allowedStageIds);
+
+    const PAGE = 1000;
+    const histRows = [];
+    for (let i = 0; i < leadIds.length; i += 200) {
+      const chunk = leadIds.slice(i, i + 200);
+      let from = 0;
+      for (;;) {
+        let hq = supabase
+          .from('crm_lead_stage_history')
+          .select('lead_id, to_stage_id, to_canonical_slug, entered_at, exited_at, duration_seconds')
+          .in('lead_id', chunk)
+          .order('entered_at', { ascending: true });
+        if (allowedSet.size) hq = hq.in('to_stage_id', [...allowedSet]);
+        const { data, error } = await hq.range(from, from + PAGE - 1);
+        if (error) throw error;
+        const batch = data || [];
+        histRows.push(...batch);
+        if (batch.length < PAGE) break;
+        from += PAGE;
+      }
+    }
+
+    const byLead = {};
+    for (const h of histRows) {
+      const lid = String(h.lead_id);
+      if (allowedSet.size && !allowedSet.has(String(h.to_stage_id || ''))) continue;
+      if (!byLead[lid]) byLead[lid] = [];
+      byLead[lid].push(h);
+    }
+
+    const parentCodes = {};
+    const parentIds = new Set();
+    for (let i = 0; i < leadIds.length; i += 200) {
+      const chunk = leadIds.slice(i, i + 200);
+      const { data: leadsChunk, error: le } = await supabase
+        .from('crm_leads')
+        .select('id, parent_lead_id')
+        .in('id', chunk);
+      if (le) throw le;
+      for (const row of leadsChunk || []) {
+        if (row.parent_lead_id) parentIds.add(String(row.parent_lead_id));
+      }
+    }
+    const parentIdList = [...parentIds];
+    for (let i = 0; i < parentIdList.length; i += 200) {
+      const chunk = parentIdList.slice(i, i + 200);
+      const { data: parents, error: pe } = await supabase
+        .from('crm_leads')
+        .select('id, code')
+        .in('id', chunk);
+      if (pe) throw pe;
+      for (const p of parents || []) {
+        if (p?.id) parentCodes[String(p.id)] = p.code || '';
+      }
+    }
+
+    res.json({
+      by_lead: byLead,
+      parent_codes: parentCodes,
+      stage_ids: allowedStageIds,
+      pipeline_id: pipelineId,
+      company_id: companyId,
+    });
+  } catch (e) {
+    console.error('POST /crm/leads/stage-history-summary:', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải lịch sử stage' });
+  }
+});
+
 r.post('/leads', async (req, res) => {
   try {
     const code = await nextCode('LEAD');
@@ -5251,7 +5430,7 @@ r.get('/leads/:id/detail', async (req, res) => {
 r.put('/leads/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { data: oldLead } = await supabase.from('crm_leads').select('assigned_to, lead_owner_id, title, type, company_id, region_id, stage_id').eq('id', id).single();
+    const { data: oldLead } = await supabase.from('crm_leads').select('assigned_to, lead_owner_id, title, type, company_id, region_id, stage_id, project_id, sx_handover_at').eq('id', id).single();
     const sacPut = scopedAdminCompanyId(req);
     if (sacPut) {
       if (!oldLead || String(oldLead.company_id || '') !== String(sacPut)) {
@@ -5320,6 +5499,22 @@ r.put('/leads/:id', async (req, res) => {
       && String(safeBody.stage_id || '') !== String(oldLead?.stage_id || '')
     ) {
       safeBody.stage_entered_at = new Date().toISOString();
+    }
+
+    if (
+      oldLead?.type === 'deal'
+      && Object.prototype.hasOwnProperty.call(safeBody, 'stage_id')
+      && String(safeBody.stage_id || '') !== String(oldLead?.stage_id || '')
+    ) {
+      const { data: targetStage } = await supabase
+        .from('crm_pipeline_stages')
+        .select('id, name, is_won, is_lost, sync_role')
+        .eq('id', safeBody.stage_id)
+        .maybeSingle();
+      const stageGatePut = assertDealCrmManualStageChange(oldLead, targetStage);
+      if (!stageGatePut.ok) {
+        return res.status(400).json({ error: stageGatePut.error, code: stageGatePut.code });
+      }
     }
 
     if (Object.prototype.hasOwnProperty.call(safeBody, 'lead_type_id')) {
@@ -5995,13 +6190,13 @@ r.patch('/leads/:id/stage', async (req, res) => {
     const { stage_id, lost_reason, production_company_id } = req.body;
     const { data: lead } = await supabase
       .from('crm_leads')
-      .select('type, project_id, company_id, assigned_to, lead_owner_id, lead_type_id, use_order_tasks, parent_lead_id, stage_id')
+      .select('type, project_id, company_id, assigned_to, lead_owner_id, lead_type_id, use_order_tasks, parent_lead_id, stage_id, sx_handover_at')
       .eq('id', req.params.id)
       .single();
     
     const { data: stage } = await supabase
       .from('crm_pipeline_stages')
-      .select('name, is_won, is_lost, pipeline_type, send_zalo_on_enter, default_probability')
+      .select('id, name, is_won, is_lost, pipeline_type, send_zalo_on_enter, default_probability, sync_role')
       .eq('id', stage_id)
       .single();
     
@@ -6010,13 +6205,12 @@ r.patch('/leads/:id/stage', async (req, res) => {
       return res.status(400).json({ error: `${lead?.type === 'lead' ? 'Lead' : 'Deal'} chỉ có thể di chuyển trong pipeline riêng của nó` });
     }
 
-    const stageName = String(stage?.name || '')
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '');
-    const isProductionStage = stageName.includes('san xuat');
-    const requiresProductionPick = lead?.type === 'deal' && !lead?.project_id && (stage?.is_won || isProductionStage);
-    const hadProjectBeforeStage = !!lead?.project_id;
+    const stageGate = assertDealCrmManualStageChange(lead, stage);
+    if (!stageGate.ok) {
+      return res.status(400).json({ error: stageGate.error, code: stageGate.code });
+    }
+
+    const requiresProductionPick = lead?.type === 'deal' && !lead?.project_id && !!stage?.is_won;
 
     let effectiveProductionCompanyId = null;
     if (requiresProductionPick) {
@@ -6024,23 +6218,6 @@ r.patch('/leads/:id/stage', async (req, res) => {
       const v = await validateProductionCompanyId(effectiveProductionCompanyId);
       if (!v.ok) {
         return res.status(400).json({ error: v.error, requires_production_company: true });
-      }
-    } else if (lead?.type === 'deal' && isProductionStage && lead?.project_id) {
-      let pc = await resolveProductionCompanyForDealStage(req.params.id, production_company_id);
-      if (!pc) {
-        const { data: proj } = await supabase
-          .from('projects')
-          .select('company_id')
-          .eq('id', lead.project_id)
-          .maybeSingle();
-        if (proj?.company_id) pc = proj.company_id;
-      }
-      if (pc) {
-        const v = await validateProductionCompanyId(pc);
-        if (!v.ok) {
-          return res.status(400).json({ error: v.error, requires_production_company: true });
-        }
-        effectiveProductionCompanyId = pc;
       }
     }
 
@@ -6065,19 +6242,6 @@ r.patch('/leads/:id/stage', async (req, res) => {
       }
     }
     if (stage?.is_won) updates.actual_close_date = new Date().toISOString().split('T')[0];
-    if (lead?.type === 'deal' && isProductionStage) {
-      // Chuyển thẳng vào cột Sản xuất cũng coi như đã bàn giao SX/đã chốt để Kanban SX nhận diện.
-      updates.actual_close_date = updates.actual_close_date || new Date().toISOString().split('T')[0];
-      updates.sx_handover_at = new Date().toISOString();
-      if (effectiveProductionCompanyId) {
-        updates.sx_template_company_id = effectiveProductionCompanyId;
-        const sxResponsibleId = await resolveProductionHandoverResponsibleUserId(effectiveProductionCompanyId);
-        if (sxResponsibleId) {
-          updates.assigned_to = sxResponsibleId;
-          updates.lead_owner_id = sxResponsibleId;
-        }
-      }
-    }
     if (requiresProductionPick && effectiveProductionCompanyId) {
       const sxResponsibleId = await resolveProductionHandoverResponsibleUserId(effectiveProductionCompanyId);
       if (sxResponsibleId) {
@@ -6088,6 +6252,12 @@ r.patch('/leads/:id/stage', async (req, res) => {
     if (stage?.is_lost) {
       updates.lost_reason = lost_reason || null;
       updates.actual_close_date = new Date().toISOString().split('T')[0];
+    } else {
+      if (lead?.lost_reason) updates.lost_reason = null;
+      // Rời cột Thắng / Thua → bỏ ngày chốt để UI & KPI không coi deal còn «đã kết thúc»
+      if (!stage?.is_won) {
+        updates.actual_close_date = null;
+      }
     }
     
     const { data: updatedLeadRow, error } = await supabase.from('crm_leads').update(updates).eq('id', req.params.id).select('*').single();
@@ -6177,7 +6347,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
     // Deal → Thắng: tự tạo dự án xưởng server-side; nếu lỗi / thiếu luồng → trả deal_won cho modal
     let dealWonData = null;
     let projectAutoCreated = null;
-    if (lead?.type === 'deal' && !lead?.project_id && (stage?.is_won || isProductionStage)) {
+    if (lead?.type === 'deal' && !lead?.project_id && stage?.is_won) {
       const { data: dealData } = await supabase.from('crm_leads')
         .select('*, customer:customers(id, full_name, phone, email, address)')
         .eq('id', req.params.id).single();
@@ -6254,38 +6424,6 @@ r.patch('/leads/:id/stage', async (req, res) => {
       }
     }
 
-    // Gắn bộ nhiệm vụ CRM sx_* theo workshop_task_templates của công ty xưởng phụ trách
-    if (lead?.type === 'deal' && isProductionStage && effectiveProductionCompanyId) {
-      if (hadProjectBeforeStage || !projectAutoCreated) {
-        try {
-          if (hadProjectBeforeStage && lead.project_id) {
-            await assignProductionCompanyDealResponsibility({
-              dealId: req.params.id,
-              productionCompanyId: effectiveProductionCompanyId,
-              projectId: lead.project_id,
-            });
-          }
-          const taskLeadId = await resolveCrmTaskWriteLeadId(req.params.id);
-          const rSx = await applyProductionTemplateToFulfillmentLead({
-            leadId: taskLeadId,
-            createdBy: req.user.userId,
-            assigneeId: null,
-            force: true,
-            requireTemplateCompanyMatch: true,
-            dealCompanyId: null,
-            templateSourceCompanyId: effectiveProductionCompanyId,
-          });
-          if ((rSx?.created || 0) > 0) {
-            console.log(
-              `[crm/stage] SX CRM tasks +${rSx.created} lead=${taskLeadId} workshop_company=${effectiveProductionCompanyId}`,
-            );
-          }
-        } catch (sxTplErr) {
-          console.warn('[crm/stage] apply SX CRM tasks:', sxTplErr.message);
-        }
-      }
-    }
-
     setImmediate(() => {
       maybeSendZaloOnDealStageEnter({
         leadId: req.params.id,
@@ -6328,6 +6466,96 @@ r.patch('/leads/:id/stage', async (req, res) => {
     res.json({ ...responseLead, deal_won: dealWonData, project_auto_created: projectAutoCreated });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+/** Hồi lại deal/lead đã đánh dấu thua — xóa lost_reason và chuyển về giai đoạn đang chạy. */
+r.post('/leads/:id/reopen', async (req, res) => {
+  try {
+    const leadId = String(req.params.id || '').trim();
+    const { data: lead } = await supabase
+      .from('crm_leads')
+      .select('id, type, stage_id, company_id, pipeline_id, lost_reason, title')
+      .eq('id', leadId)
+      .single();
+    if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead/deal' });
+
+    const sac = scopedAdminCompanyId(req);
+    if (sac && String(lead.company_id || '') !== String(sac)) {
+      return res.status(403).json({ error: 'Không có quyền thao tác lead/deal của công ty khác' });
+    }
+    const ar = assertLeadReadableByRegionScope(req, lead);
+    if (!ar.ok) return res.status(403).json({ error: ar.error });
+
+    const { data: curStage } = await supabase
+      .from('crm_pipeline_stages')
+      .select('is_lost')
+      .eq('id', lead.stage_id)
+      .maybeSingle();
+    const isClosedLost = !!lead.lost_reason || !!curStage?.is_lost;
+    if (!isClosedLost) {
+      return res.status(400).json({ error: 'Lead/deal chưa ở trạng thái thua hoặc đã hủy.' });
+    }
+
+    const targetStageId = await resolveReopenTargetStageId(lead, req.body?.stage_id);
+    const { data: targetStage } = await supabase
+      .from('crm_pipeline_stages')
+      .select('name, default_probability')
+      .eq('id', targetStageId)
+      .single();
+
+    const updates = {
+      stage_id: targetStageId,
+      lost_reason: null,
+      actual_close_date: null,
+      stage_entered_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    if (targetStage?.default_probability !== undefined && targetStage?.default_probability !== null && targetStage?.default_probability !== '') {
+      const p = Number(targetStage.default_probability);
+      if (Number.isFinite(p)) {
+        updates.probability = Math.max(0, Math.min(100, Math.round(p)));
+      }
+    }
+
+    const { data: updated, error } = await supabase
+      .from('crm_leads')
+      .update(updates)
+      .eq('id', leadId)
+      .select('*')
+      .single();
+    if (error) throw error;
+
+    try {
+      await supabase.from('crm_activities').insert({
+        lead_id: leadId,
+        type: 'note',
+        title: lead.type === 'deal' ? '↩️ Hồi lại deal' : '↩️ Hồi lại lead',
+        description: `Đã mở lại từ trạng thái thua/mất → ${targetStage?.name || 'giai đoạn mới'}`,
+        created_by: req.user?.userId,
+      });
+    } catch (_) { /* ignore */ }
+
+    emitCrmDashboardChanged(req, {
+      type: lead.type,
+      company_id: lead.company_id,
+      lead_id: leadId,
+      action: 'reopened',
+      stage_id: targetStageId,
+    });
+
+    let responseLead = updated;
+    try {
+      responseLead = await fetchCrmLeadWithPipelineBadges(leadId);
+    } catch (_) {
+      /* optional badges */
+    }
+
+    res.json(responseLead);
+  } catch (e) {
+    const msg = e.message || 'Lỗi hồi lại deal';
+    const status = /không tìm|không hợp lệ|chưa ở trạng thái/i.test(msg) ? 400 : 500;
+    res.status(status).json({ error: msg });
   }
 });
 
@@ -7004,6 +7232,10 @@ r.post('/quotations', async (req, res) => {
     }
     if (quoteData.deposit_label === '') quoteData.deposit_label = null;
     if (quoteData.remaining_note === '') quoteData.remaining_note = null;
+    if (quoteData.source_excel_file_url === '') quoteData.source_excel_file_url = null;
+    if (quoteData.source_excel_file_name === '') quoteData.source_excel_file_name = null;
+    if (quoteData.sale_discount_type === '') quoteData.sale_discount_type = 'amount';
+    if (quoteData.sale_discount_value === '') quoteData.sale_discount_value = 0;
 
     // ── Scope: kế thừa company_id + region_id từ deal (cho phép override; sẽ cảnh báo ở UI) ──
     let commercialCo = quoteData.company_id || null;
@@ -7086,13 +7318,17 @@ r.post('/quotations', async (req, res) => {
     const discountAmt = quoteData.discount_type === 'percent' 
       ? subtotal * (quoteData.discount_value || 0) / 100 
       : (quoteData.discount_value || 0);
-    const afterDiscount = subtotal - discountAmt;
+    const afterRebate = subtotal - discountAmt;
+    const saleDiscountAmt = quoteData.sale_discount_type === 'percent'
+      ? afterRebate * (quoteData.sale_discount_value || 0) / 100
+      : (quoteData.sale_discount_value || 0);
+    const afterAllDiscounts = Math.max(0, afterRebate - saleDiscountAmt);
     const taxAmt = processedItems.reduce((s, i) => s + (i.vat_amount || 0), 0);
     
     const { data: quote, error } = await supabase.from('quotations')
       .insert({
-        ...quoteData, code, subtotal, discount_amount: discountAmt,
-        tax_amount: taxAmt, total: afterDiscount + taxAmt,
+        ...quoteData, code, subtotal, discount_amount: discountAmt, sale_discount_amount: saleDiscountAmt,
+        tax_amount: taxAmt, total: afterAllDiscounts + taxAmt,
         created_by: req.user.userId,
       })
       .select('*').single();
@@ -7409,6 +7645,8 @@ r.put('/quotations/:id', async (req, res) => {
     }
     if (quoteData.deposit_label === '') quoteData.deposit_label = null;
     if (quoteData.remaining_note === '') quoteData.remaining_note = null;
+    if (quoteData.source_excel_file_url === '') quoteData.source_excel_file_url = null;
+    if (quoteData.source_excel_file_name === '') quoteData.source_excel_file_name = null;
 
     let rawItems = itemsBody;
     if (rawItems === undefined) {
@@ -7455,13 +7693,17 @@ r.put('/quotations/:id', async (req, res) => {
     const discountAmt = quoteData.discount_type === 'percent' 
       ? subtotal * (quoteData.discount_value || 0) / 100 
       : (quoteData.discount_value || 0);
-    const afterDiscount = subtotal - discountAmt;
+    const afterRebate = subtotal - discountAmt;
+    const saleDiscountAmt = quoteData.sale_discount_type === 'percent'
+      ? afterRebate * (quoteData.sale_discount_value || 0) / 100
+      : (quoteData.sale_discount_value || 0);
+    const afterAllDiscounts = Math.max(0, afterRebate - saleDiscountAmt);
     const taxAmt = processedItems.reduce((s, i) => s + (i.vat_amount || 0), 0);
 
     const { data, error } = await supabase.from('quotations')
       .update({
-        ...quoteData, subtotal, discount_amount: discountAmt,
-        tax_amount: taxAmt, total: afterDiscount + taxAmt,
+        ...quoteData, subtotal, discount_amount: discountAmt, sale_discount_amount: saleDiscountAmt,
+        tax_amount: taxAmt, total: afterAllDiscounts + taxAmt,
         updated_at: new Date().toISOString(),
       })
       .eq('id', req.params.id).select('*').single();
@@ -8849,12 +9091,18 @@ function generateDocPdf(res, doc, items, docType) {
   tableY += 8;
   const subtotal = (items || []).reduce((s, i) => s + (i.amount || ((i.quantity || 0) * (i.unit_price || 0) * (1 - (i.discount_percent || 0) / 100))), 0);
   const discountAmt = doc.discount_amount || 0;
-  const afterDiscount = subtotal - discountAmt;
+  const afterRebate = subtotal - discountAmt;
+  const saleDiscountAmt = doc.sale_discount_amount != null
+    ? Number(doc.sale_discount_amount) || 0
+    : (doc.sale_discount_type === 'percent'
+      ? afterRebate * (doc.sale_discount_value || 0) / 100
+      : (doc.sale_discount_value || 0));
+  const afterAllDiscounts = Math.max(0, afterRebate - saleDiscountAmt);
   const totalVat = (items || []).reduce((s, i) => {
     const amt = i.amount || ((i.quantity || 0) * (i.unit_price || 0) * (1 - (i.discount_percent || 0) / 100));
     return s + (i.vat_amount || (amt * (i.vat_rate || 0) / 100));
   }, 0);
-  const total = afterDiscount + totalVat;
+  const total = afterAllDiscounts + totalVat;
 
   const rightX = tableX + pageW - 220;
   const valX = rightX + 120;
@@ -8878,7 +9126,9 @@ function generateDocPdf(res, doc, items, docType) {
 
   drawTotal('Cộng tiền hàng:', formatVNDPdf(subtotal) + ' đ');
   if (discountAmt > 0) drawTotal('Chiết khấu:', '-' + formatVNDPdf(discountAmt) + ' đ');
-  if (discountAmt > 0) drawTotal('Sau chiết khấu:', formatVNDPdf(afterDiscount) + ' đ');
+  if (discountAmt > 0) drawTotal('Sau chiết khấu:', formatVNDPdf(afterRebate) + ' đ');
+  if (saleDiscountAmt > 0) drawTotal('Giảm giá:', '-' + formatVNDPdf(saleDiscountAmt) + ' đ');
+  if (saleDiscountAmt > 0) drawTotal('Cộng trước thuế:', formatVNDPdf(afterAllDiscounts) + ' đ');
   drawTotal('Thuế GTGT:', formatVNDPdf(totalVat) + ' đ');
   drawTotal('TỔNG CỘNG:', formatVNDPdf(total) + ' VNĐ', { bold: true, color: '#1D4ED8', underline: true });
 
@@ -9711,7 +9961,28 @@ r.post('/leads/:id/tasks/:taskId/import-quotation-excel', excelUpload.single('fi
       console.log('[TASK-IMPORT] Product link:', syncedProducts.length, 'items linked');
     } catch (e) { console.warn('[TASK-IMPORT] Product link error:', e.message); }
 
-    // 5. Create quotation via internal POST /crm/quotations
+    // 5. Lưu file Excel gốc lên storage (mở lại từ chi tiết deal / báo giá)
+    let sourceExcelFileUrl = null;
+    const sourceExcelFileName = req.file.originalname || 'bao-gia.xlsx';
+    try {
+      const FormData = require('form-data');
+      const fdUp = new FormData();
+      fdUp.append('files', req.file.buffer, {
+        filename: req.file.originalname,
+        contentType: req.file.mimetype,
+      });
+      const axiosUp = require('axios');
+      const portUp = process.env.PORT || 3000;
+      const upRes = await axiosUp.post(`http://localhost:${portUp}/api/upload`, fdUp, {
+        headers: { ...fdUp.getHeaders(), authorization: req.headers.authorization },
+        maxContentLength: 20 * 1024 * 1024,
+      });
+      sourceExcelFileUrl = upRes.data?.files?.[0]?.file_url || null;
+    } catch (upErr) {
+      console.warn('[TASK-IMPORT] Excel file upload:', upErr.message);
+    }
+
+    // 6. Create quotation via internal POST /crm/quotations
     const axios = require('axios');
     const port = process.env.PORT || 3000;
     const sumPost = parseRes.summary || {};
@@ -9735,9 +10006,11 @@ r.post('/leads/:id/tasks/:taskId/import-quotation-excel', excelUpload.single('fi
       deposit_label: sumPost.deposit_label || null,
       remaining_amount: sumPost.remaining_amount > 0 ? sumPost.remaining_amount : null,
       remaining_note: sumPost.remaining_note || null,
+      source_excel_file_url: sourceExcelFileUrl,
+      source_excel_file_name: sourceExcelFileName,
     }, { headers: { authorization: req.headers.authorization } });
 
-    // 6. Force-complete this specific task (in case auto-complete didn't match)
+    // 7. Force-complete this specific task (in case auto-complete didn't match)
     if (task.status !== 'completed') {
       await supabase.from('crm_tasks').update({
         status: 'completed',

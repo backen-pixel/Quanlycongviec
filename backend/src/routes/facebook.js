@@ -1229,6 +1229,38 @@ function acquireMidLock(mid) {
 
 // ── Helpers ──────────────────────────────────────────────────
 
+function supabaseErrMsg(error) {
+  if (!error) return '';
+  if (typeof error === 'string') return error;
+  return String(error.message || error.details || error.hint || error.code || '');
+}
+
+function isDuplicateKeyError(error) {
+  const msg = supabaseErrMsg(error);
+  return error?.code === '23505' || msg.includes('duplicate key') || msg.includes('unique constraint');
+}
+
+function isSupabaseUnavailableError(error) {
+  const msg = supabaseErrMsg(error);
+  return msg.includes('<!DOCTYPE') || msg.includes('522') || msg.includes('Connection timed out');
+}
+
+/** Hàng đợi promise theo key — xử lý tuần tự webhook / tạo lead cho cùng contact. */
+const _asyncLockTails = new Map();
+function withAsyncLock(key, fn) {
+  const prev = _asyncLockTails.get(key) || Promise.resolve();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const run = prev
+    .catch(() => {})
+    .then(() => fn())
+    .finally(() => release());
+  _asyncLockTails.set(key, gate);
+  return run.finally(() => {
+    if (_asyncLockTails.get(key) === gate) _asyncLockTails.delete(key);
+  });
+}
+
 const _pageConfigCache = {}; // pageId → { data, ts }
 async function getPageConfig(pageId) {
   const cached = _pageConfigCache[pageId];
@@ -1241,8 +1273,16 @@ async function getPageConfig(pageId) {
 
 async function getOrCreateContact(pageId, psid, name, _profilePic) {
   // Tìm contact đã có
-  let { data: contact } = await supabase.from('facebook_contacts')
-    .select('*').eq('page_id', pageId).eq('psid', psid).single();
+  let { data: contact, error: findErr } = await supabase.from('facebook_contacts')
+    .select('*').eq('page_id', pageId).eq('psid', psid).maybeSingle();
+
+  if (findErr && findErr.code !== 'PGRST116') {
+    if (isSupabaseUnavailableError(findErr)) {
+      console.error('[FB] Supabase unavailable (getOrCreateContact find):', supabaseErrMsg(findErr).slice(0, 120));
+      return null;
+    }
+    console.warn('[FB] getOrCreateContact find:', supabaseErrMsg(findErr));
+  }
 
   if (contact) {
     // Không tự fetch tên/avatar từ Facebook để giảm request ngoài.
@@ -1261,12 +1301,16 @@ async function getOrCreateContact(pageId, psid, name, _profilePic) {
     .insert({ page_id: pageId, psid, fb_name: name || 'Facebook User' })
     .select().single();
   if (error) {
-    if (error.message.includes('duplicate key') || error.code === '23505') {
+    if (isDuplicateKeyError(error)) {
       const { data: existing } = await supabase.from('facebook_contacts')
-        .select('*').eq('page_id', pageId).eq('psid', psid).single();
+        .select('*').eq('page_id', pageId).eq('psid', psid).maybeSingle();
       if (existing) return existing;
     }
-    console.error('[FB] Create contact error:', error.message);
+    if (isSupabaseUnavailableError(error)) {
+      console.error('[FB] Supabase unavailable (getOrCreateContact insert)');
+      return null;
+    }
+    console.error('[FB] Create contact error:', supabaseErrMsg(error) || '(unknown)');
     return null;
   }
 
@@ -1497,36 +1541,24 @@ async function resolveFacebookSourceId(page) {
   return created?.id || null;
 }
 
-// ── In-memory lock để chống race condition tạo lead trùng ──
-const _createLeadLocks = new Map();
+async function fetchContactLeadId(contactId) {
+  if (!contactId) return null;
+  const { data } = await supabase.from('facebook_contacts')
+    .select('lead_id').eq('id', contactId).maybeSingle();
+  return data?.lead_id || null;
+}
 
 async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
+  if (!contact?.id) return null;
+  return withAsyncLock(`fb-lead:${contact.id}`, () =>
+    createLeadFromFacebookInner(pageId, contact, source, extraData),
+  );
+}
+
+async function createLeadFromFacebookInner(pageId, contact, source, extraData = {}) {
   const page = await getPageConfig(pageId);
   if (!page) return null;
   const autoLeadCfg = await loadAutoLeadConfig();
-
-  // ── LOCK theo contact.id: chỉ 1 request được tạo lead cho 1 contact ──
-  const lockKey = contact.id;
-  if (_createLeadLocks.has(lockKey)) {
-    console.log(`[FB] 🔒 Lock active for contact ${lockKey}, waiting...`);
-    // Chờ lock giải phóng (tối đa 10s)
-    const start = Date.now();
-    while (_createLeadLocks.has(lockKey) && Date.now() - start < 10000) {
-      await new Promise(r => setTimeout(r, 100));
-    }
-    // Sau khi lock mở → re-check lead_id
-    const { data: recheck } = await supabase.from('facebook_contacts')
-      .select('lead_id').eq('id', contact.id).single();
-    if (recheck?.lead_id) {
-      console.log(`[FB] 🔒 Lock released, lead already created: ${recheck.lead_id}`);
-      return { id: recheck.lead_id };
-    }
-  }
-  _createLeadLocks.set(lockKey, Date.now());
-  // Auto-release lock sau 30s (safety)
-  setTimeout(() => _createLeadLocks.delete(lockKey), 30000);
-
-  try {
 
   // Công ty của page đích — dùng cho mọi bước «chống trùng» (không gộp lead giữa 2 công ty / 2 page)
   let companyId = null;
@@ -1624,6 +1656,11 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
     }
   }
 
+  const leadIdBeforeWrite = await fetchContactLeadId(contact.id);
+  if (leadIdBeforeWrite) {
+    return { id: leadIdBeforeWrite };
+  }
+
   // Tìm/tạo customer
   let customerId = contact.customer_id || freshContact?.customer_id;
   if (!customerId) {
@@ -1668,6 +1705,24 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
       await supabase.from('customers').update(custUpd).eq('id', customerId);
       console.log(`[FB] ✅ Customer updated:`, custUpd);
     }
+  }
+
+  if (customerId && companyId) {
+    const { data: leadForCust } = await supabase.from('crm_leads')
+      .select('id, code')
+      .eq('customer_id', customerId)
+      .eq('type', 'lead')
+      .eq('company_id', companyId)
+      .limit(1);
+    if (leadForCust?.length > 0) {
+      await supabase.from('facebook_contacts').update({ lead_id: leadForCust[0].id }).eq('id', contact.id);
+      return leadForCust[0];
+    }
+  }
+
+  const leadIdBeforeInsert = await fetchContactLeadId(contact.id);
+  if (leadIdBeforeInsert) {
+    return { id: leadIdBeforeInsert };
   }
 
   const resolvedSourceId = await resolveFacebookSourceId(page);
@@ -1840,11 +1895,6 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
   } catch (e) { console.warn('[FB] Notify error:', e.message); }
 
   return lead;
-
-  } finally {
-    // Release lock
-    _createLeadLocks.delete(lockKey);
-  }
 }
 
 async function sendMessengerReply(pageId, psid, text) {
@@ -1984,7 +2034,12 @@ function messengerPartnerPsid(pageId, event) {
 async function handleMessaging(pageId, event, io) {
   const partnerPsid = messengerPartnerPsid(pageId, event);
   if (!partnerPsid) return;
+  return withAsyncLock(`fb-msg:${pageId}:${partnerPsid}`, () =>
+    handleMessagingInner(pageId, event, io, partnerPsid),
+  );
+}
 
+async function handleMessagingInner(pageId, event, io, partnerPsid) {
   console.log(`\n[FB] 📨 Messenger event — partner PSID: ${partnerPsid}`);
 
   const sid = event.sender?.id != null ? String(event.sender.id).trim() : '';
@@ -2078,11 +2133,15 @@ async function handleMessaging(pageId, event, io) {
     
     if (insertErr) {
       // Nếu lỗi unique constraint → duplicate, skip
-      if (insertErr.code === '23505' || insertErr.message?.includes('duplicate')) {
+      if (isDuplicateKeyError(insertErr)) {
         console.log(`[FB] ⏭️  Duplicate insert blocked: ${msg.mid}`);
         return;
       }
-      console.error('[FB] Insert error:', insertErr.message);
+      if (isSupabaseUnavailableError(insertErr)) {
+        console.error('[FB] Supabase unavailable (message insert)');
+        return;
+      }
+      console.error('[FB] Insert error:', supabaseErrMsg(insertErr));
     }
     
     if (!savedMsg) {
@@ -2142,6 +2201,8 @@ async function handleMessaging(pageId, event, io) {
       // Auto-create lead nếu chưa có — theo cấu hình auto-lead-config (gồm công ty mặc định trong tab Setup)
       const autoLeadCfg = await loadAutoLeadConfig();
       let isFirstMessage = false;
+      const liveLeadId = await fetchContactLeadId(contact.id);
+      if (liveLeadId) contact.lead_id = liveLeadId;
       if (!contact.lead_id) {
         // Check: có lead cũ đã bị xóa không?
         const { data: oldMsgs } = await supabase.from('facebook_messages')

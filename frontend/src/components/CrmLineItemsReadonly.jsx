@@ -95,6 +95,16 @@ export default function CrmLineItemsReadonly({ items = [], document: doc, accent
   const discountLabel = doc?.discount_type === 'percent'
     ? `Chiết khấu (${doc.discount_value ?? 0}%)`
     : 'Chiết khấu';
+  const saleDiscountLabel = doc?.sale_discount_type === 'percent'
+    ? `Giảm giá (${doc.sale_discount_value ?? 0}%)`
+    : 'Giảm giá';
+  const docSubtotal = doc?.subtotal ?? calcs.subtotal;
+  const docDiscountAmt = doc?.discount_amount || 0;
+  const docAfterRebate = docSubtotal - docDiscountAmt;
+  const docSaleDiscountAmt = doc?.sale_discount_amount != null
+    ? Number(doc.sale_discount_amount) || 0
+    : 0;
+  const docAfterAll = Math.max(0, docAfterRebate - docSaleDiscountAmt);
 
   let itemNo = 0;
 
@@ -226,12 +236,22 @@ export default function CrmLineItemsReadonly({ items = [], document: doc, accent
           {doc != null && (
             <div className="flex justify-between text-sm">
               <span className="text-gray-500">{discountLabel}</span>
-              <span className="font-medium text-red-600">−{formatVND(doc.discount_amount || 0)}</span>
+              <span className="font-medium text-red-600">−{formatVND(docDiscountAmt)}</span>
             </div>
           )}
           <div className="flex justify-between text-sm">
             <span className="text-gray-500">Cộng sau CK</span>
-            <span className="font-medium">{formatVND((doc?.subtotal ?? calcs.subtotal) - (doc?.discount_amount || 0))}</span>
+            <span className="font-medium">{formatVND(docAfterRebate)}</span>
+          </div>
+          {doc != null && docSaleDiscountAmt > 0 && (
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-500">{saleDiscountLabel}</span>
+              <span className="font-medium text-amber-700">−{formatVND(docSaleDiscountAmt)}</span>
+            </div>
+          )}
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-500">Cộng trước thuế</span>
+            <span className="font-medium">{formatVND(doc != null ? docAfterAll : docAfterRebate)}</span>
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-gray-500">Thuế GTGT</span>
