@@ -168,11 +168,24 @@ function ProtectedLayout() {
   useEffect(() => {
     if (!user) {
       setModuleAccess(null);
-      return;
+      return undefined;
     }
+    let cancelled = false;
+    const fallback = { allowAll: true };
+    const timer = window.setTimeout(() => {
+      if (!cancelled) setModuleAccess((prev) => (prev === null ? fallback : prev));
+    }, 12_000);
     api.get('/ecosystem/my-module-access')
-      .then((r) => setModuleAccess(r.data))
-      .catch(() => setModuleAccess({ allowAll: true }));
+      .then((r) => {
+        if (!cancelled) setModuleAccess(r.data ?? fallback);
+      })
+      .catch(() => {
+        if (!cancelled) setModuleAccess(fallback);
+      });
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [user]);
 
   const crmOnly = useMemo(() => isCrmOnlyModuleAccess(moduleAccess), [moduleAccess]);
