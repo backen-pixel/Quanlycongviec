@@ -11,6 +11,8 @@ import {
 import AutoToolPanel from '../components/AutoToolPanel';
 import CrmAppChannelPrefsBanner from '../components/CrmAppChannelPrefsBanner';
 import AutoToolPanelInline from '../components/AutoToolPanel';
+import FacebookPageTokenReminderBanner, { FacebookPageTokenReminderRow } from '../components/FacebookPageTokenReminderBanner';
+import { computeFacebookPageTokenReminder, FB_PAGE_TOKEN_REMINDER_DAYS } from '../lib/facebookPageTokenReminder';
 
 const API = import.meta.env.VITE_API_URL || '';
 const hdr = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' });
@@ -84,8 +86,20 @@ export default function FacebookPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState(searchParams.get('tab') || 'inbox');
   const [stats, setStats] = useState(null);
+  const [fbTokenSummary, setFbTokenSummary] = useState(null);
 
   const fbCompanyQs = useMemo(() => (isAdmin && filterFbCompany ? `company_id=${encodeURIComponent(filterFbCompany)}` : ''), [isAdmin, filterFbCompany]);
+
+  const loadFbTokenSummary = useCallback(() => {
+    fetch(`${API}/api/facebook/pages/token-reminder-summary`, { headers: hdr() })
+      .then((r) => (r.ok ? r.json() : null))
+      .then(setFbTokenSummary)
+      .catch(() => setFbTokenSummary(null));
+  }, []);
+
+  useEffect(() => {
+    loadFbTokenSummary();
+  }, [loadFbTokenSummary, tab]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -146,8 +160,23 @@ export default function FacebookPage() {
     { id: 'lead-ads', label: 'Lead Ads', icon: FileText, badge: stats?.lead_ads_today },
     { id: 'comments', label: 'Bình luận', icon: MessageSquare, badge: stats?.comments_today },
     { id: 'auto-lead', label: 'Tự động', icon: UserPlus },
-    { id: 'settings', label: 'Cài đặt', icon: Settings },
+    {
+      id: 'settings',
+      label: 'Cài đặt',
+      icon: Settings,
+      badge: fbTokenSummary?.alert_count > 0 ? fbTokenSummary.alert_count : undefined,
+    },
   ];
+
+  const goSettingsTab = () => {
+    setTab('settings');
+    setSearchParams((prev) => {
+      const p = new URLSearchParams(prev);
+      p.set('tab', 'settings');
+      p.delete('contact');
+      return p;
+    });
+  };
 
   return (
     <div className="h-[calc(100vh-64px)] flex flex-col bg-gray-100">
@@ -184,6 +213,14 @@ export default function FacebookPage() {
 
       <CrmAppChannelPrefsBanner />
 
+      {tab !== 'settings' && (fbTokenSummary?.alert_count || 0) > 0 && (
+        <FacebookPageTokenReminderBanner
+          compact
+          summary={fbTokenSummary}
+          onGoSettings={goSettingsTab}
+        />
+      )}
+
       <div className="border-b bg-white px-6 flex gap-0.5 shrink-0">
         {tabs.map(t => (
           <button key={t.id} onClick={() => { setTab(t.id); setSearchParams(prev => { const p = new URLSearchParams(prev); p.set('tab', t.id); if (t.id !== 'inbox') p.delete('contact'); return p; }); }}
@@ -203,7 +240,7 @@ export default function FacebookPage() {
         {tab === 'analytics' && <AnalyticsTab />}
         {tab === 'lead-ads' && <LeadAdsTab />}
         {tab === 'comments' && <CommentsTab />}
-        {tab === 'settings' && <SettingsTab />}
+        {tab === 'settings' && <SettingsTab onPagesChanged={loadFbTokenSummary} />}
         {tab === 'auto-lead' && <AutoLeadTab />}
       </div>
     </div>
@@ -3986,7 +4023,7 @@ function RescanPhonesSchedulePanel() {
 // Disabled: không hiển thị/không gọi API logs nữa.
 function WebhookLogsTab() { return null; }
 
-function SettingsTab() {
+function SettingsTab({ onPagesChanged }) {
   const [pages, setPages] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [stages, setStages] = useState([]);
@@ -4001,7 +4038,15 @@ function SettingsTab() {
   const [formCompanyRegions, setFormCompanyRegions] = useState([]);
   const [regionsByCompanyId, setRegionsByCompanyId] = useState({});
 
-  const load = () => { fetch(`${API}/api/facebook/pages`, { headers: hdr() }).then(r => r.ok ? r.json() : []).then(setPages).catch(() => {}); };
+  const load = () => {
+    fetch(`${API}/api/facebook/pages`, { headers: hdr() })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows) => {
+        setPages(rows);
+        onPagesChanged?.();
+      })
+      .catch(() => {});
+  };
   useEffect(() => {
     load();
     api.get('/companies', { params: { for_module: 'crm' } })
@@ -4290,6 +4335,7 @@ function SettingsTab() {
   return (
     <div className="p-6 overflow-y-auto h-full max-w-4xl">
       <h2 className="text-lg font-bold mb-4">⚙ Cài đặt Facebook</h2>
+      <FacebookPageTokenReminderBanner pages={pages} />
       <div className="bg-white border border-amber-200 rounded-xl p-4 mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="font-semibold text-amber-900 text-sm">Dọn SĐT nghi từ link</p>
@@ -4373,6 +4419,7 @@ function SettingsTab() {
                   {p.default_lead_type_id && <span className="text-xs px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200">🏷️ Loại Lead</span>}
                   {p.default_lead_owner_id && <span className="text-xs px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200">👤 {users.find(u => u.id === p.default_lead_owner_id)?.full_name || 'Người phụ trách'}</span>}
                 </div>
+                <FacebookPageTokenReminderRow page={p} onEdit={() => startEdit(p)} />
               </div>
             )}
           </div>

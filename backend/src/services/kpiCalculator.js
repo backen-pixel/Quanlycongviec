@@ -16,6 +16,7 @@
 
 const { supabase } = require('../config/supabase');
 const { effectivePipelineStageSlaDays } = require('../helpers/crmPipelineSla');
+const { resolveCalcParams, positiveNumberParam } = require('../helpers/kpiCalcParams');
 const { computeScore, SCORE_CAP_RATIO } = require('./kpiScoreFormula');
 const { responseMinutes, isUserOff } = require('./businessHours');
 const { buildProgressMap, CANONICAL_RANK } = require('./kpiPipelineRank');
@@ -140,10 +141,11 @@ async function fetchHistoryForUser({ userId, periodStart, periodEnd }) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * A1: Tỷ lệ phản hồi lead đúng SLA 15 phút.
- * Mẫu số: lead user nhận trong kỳ. Tử số: first_touch_time - created_at <= 15p.
+ * A1: Tỷ lệ phản hồi lead đúng SLA (mặc định 15 phút, chỉnh qua kpi_definitions.calc_params.sla_minutes).
+ * Mẫu số: lead user nhận trong kỳ. Tử số: first_touch_time - created_at <= sla_minutes.
  */
-async function calcA1_responseSlaRate({ userId, periodStart, periodEnd, companyId = null }) {
+async function calcA1_responseSlaRate({ userId, periodStart, periodEnd, companyId = null, calcParams = {} }) {
+  const slaMinutes = positiveNumberParam(calcParams, 'sla_minutes', 15);
   const leads = await fetchLeadsByOwner({ userId, periodStart, periodEnd });
   // Loại lead tạo trong ngày NV nghỉ phép full-day (không công bằng nếu tính)
   const usable = [];
@@ -160,12 +162,18 @@ async function calcA1_responseSlaRate({ userId, periodStart, periodEnd, companyI
   for (const l of usable) {
     if (!l.first_touch_time || !l.created_at) continue;
     const diffMin = await responseMinutes(l.created_at, l.first_touch_time, { companyId, userId });
-    if (diffMin <= 15) within += 1;
+    if (diffMin <= slaMinutes) within += 1;
   }
 
   return {
     actual: (within / total) * 100,
-    breakdown: { numerator: within, denominator: total, skipped_on_leave: skipped, business_hours: true, sla_minutes: 15 },
+    breakdown: {
+      numerator: within,
+      denominator: total,
+      skipped_on_leave: skipped,
+      business_hours: true,
+      sla_minutes: slaMinutes,
+    },
   };
 }
 
@@ -584,13 +592,20 @@ async function ensurePeriod({ periodType = 'monthly', periodStart }) {
 }
 
 async function getDefinitions() {
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('kpi_definitions')
-    .select('id, code, name, group_code, formula_type, weight, target_default, target_max, min_threshold, is_gating, applies_to')
+    .select('id, code, name, group_code, formula_type, unit, weight, target_default, target_max, min_threshold, is_gating, applies_to, calc_params, description')
     .eq('is_active', true)
     .order('code');
+  if (error?.message?.includes('calc_params') || error?.code === '42703') {
+    ({ data, error } = await supabase
+      .from('kpi_definitions')
+      .select('id, code, name, group_code, formula_type, unit, weight, target_default, target_max, min_threshold, is_gating, applies_to, description')
+      .eq('is_active', true)
+      .order('code'));
+  }
   if (error) throw error;
-  return data || [];
+  return (data || []).map((row) => ({ ...row, calc_params: row.calc_params || {} }));
 }
 
 async function getTargetFor({ definition, userId, companyId, periodType, periodStart }) {
@@ -644,8 +659,9 @@ async function computeAndStoreForUser({ userId, companyId = null, periodType = '
     if (!calcFn) continue;
 
     let calc;
+    const calcParams = resolveCalcParams(def);
     try {
-      calc = await calcFn({ userId, periodStart: start, periodEnd: end, companyId });
+      calc = await calcFn({ userId, periodStart: start, periodEnd: end, companyId, calcParams });
     } catch (err) {
       console.error(`[kpiCalculator] ${def.code} for user ${userId}:`, err.message);
       calc = { actual: null, breakdown: { error: err.message } };

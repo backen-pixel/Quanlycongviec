@@ -84,6 +84,106 @@ function crmTemplateVisibleForCompany(tpl, companyId) {
   });
 }
 
+/** Nhóm A — thông số thời gian (SLA phút, mục tiêu phút, giờ HC…). */
+function GroupATimeParamsPanel({ defs, edits, setEdits, save, savingId }) {
+  const groupA = defs.filter((d) => d.group_code === 'A' && d.is_active !== false);
+  const a1 = groupA.find((d) => d.code === 'A1');
+  if (!groupA.length) return null;
+
+  const calcVal = (d, key, fallback) => {
+    const patch = edits[d.id]?.calc_params;
+    if (patch && patch[key] != null && patch[key] !== '') return patch[key];
+    const fromDb = d.calc_params?.[key];
+    if (fromDb != null && fromDb !== '') return fromDb;
+    return fallback;
+  };
+
+  const setCalcParam = (def, key, raw) => {
+    const n = raw === '' ? null : Number(raw);
+    setEdits((p) => {
+      const prev = p[def.id] || {};
+      const baseParams = { ...(def.calc_params || {}), ...(prev.calc_params || {}) };
+      if (n == null || !Number.isFinite(n)) delete baseParams[key];
+      else baseParams[key] = n;
+      return {
+        ...p,
+        [def.id]: { ...prev, calc_params: baseParams },
+      };
+    });
+  };
+
+  const targetVal = (d) => {
+    if (Object.hasOwn(edits[d.id] || {}, 'target_default')) return edits[d.id].target_default;
+    return d.target_default;
+  };
+
+  return (
+    <div className="bg-blue-50/80 border border-blue-200 rounded-xl p-4 space-y-3">
+      <div className="flex items-start gap-2">
+        <Clock className="w-5 h-5 text-blue-700 shrink-0 mt-0.5" />
+        <div>
+          <h3 className="font-semibold text-blue-900 text-sm">Nhóm A — thông số thời gian</h3>
+          <p className="text-xs text-blue-800 mt-0.5">
+            Giờ hành chính &amp; ngày lễ: tab <strong>Lịch làm việc</strong>. SLA cột deal (A5/A6): tab <strong>Pipeline KPI</strong> / Cài đặt pipeline CRM.
+          </p>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+        {a1 && (
+          <label className="bg-white border border-blue-100 rounded-lg px-3 py-2 block">
+            <span className="text-gray-700 font-medium">A1 — SLA phản hồi lead (phút)</span>
+            <p className="text-[10px] text-gray-500 mt-0.5">
+              Dùng khi đếm % lead chạm trong hạn. Mục tiêu % vẫn chỉnh ở cột «Mục tiêu» (vd. 90%).
+            </p>
+            <div className="flex items-center gap-2 mt-2">
+              <input
+                type="number"
+                min={1}
+                max={240}
+                step={1}
+                value={calcVal(a1, 'sla_minutes', 15)}
+                onChange={(e) => setCalcParam(a1, 'sla_minutes', e.target.value)}
+                className="w-24 px-2 py-1 border rounded text-right"
+              />
+              <span className="text-gray-500 text-xs">phút (mặc định 15)</span>
+              <button
+                type="button"
+                disabled={!edits[a1.id] || savingId === a1.id}
+                onClick={() => save(a1)}
+                className="ml-auto px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 disabled:opacity-40"
+              >
+                Lưu A1
+              </button>
+            </div>
+          </label>
+        )}
+        {groupA.filter((d) => d.code === 'A2').map((d) => (
+          <div key={d.id} className="bg-white border border-blue-100 rounded-lg px-3 py-2">
+            <span className="text-gray-700 font-medium">A2 — thời gian phản hồi TB (phút)</span>
+            <p className="text-[10px] text-gray-500 mt-0.5">
+              Ngưỡng chấm điểm = cột <strong>Mục tiêu mặc định</strong> hiện tại:{' '}
+              <strong>{targetVal(d) ?? '—'}</strong> phút (median giờ HC).
+            </p>
+          </div>
+        ))}
+        {groupA.filter((d) => d.code === 'A4').map((d) => (
+          <div key={d.id} className="bg-white border border-amber-100 rounded-lg px-3 py-2">
+            <span className="text-gray-700 font-medium">A4 — follow-up đúng hạn (gating)</span>
+            <p className="text-[10px] text-gray-500 mt-0.5">
+              Ngưỡng gating = cột <strong>Ngưỡng tối thiểu</strong> (vd. 80%). Deadline từng NV CRM trên lead/deal.
+            </p>
+          </div>
+        ))}
+        {groupA.filter((d) => ['A5', 'A6'].includes(d.code)).map((d) => (
+          <div key={d.id} className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-xs text-gray-600">
+            <span className="font-medium text-gray-800">{d.code}</span> — SLA theo <code className="bg-gray-100 px-1 rounded">sla_days</code> từng cột pipeline (CRM → Cài đặt pipeline).
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // Tab 1: Definitions
 // ═════════════════════════════════════════════════════════════════════════════
@@ -181,6 +281,15 @@ function DefinitionsTab({ companyId, roleFilter }) {
           <RefreshCw className="w-3.5 h-3.5" /> Tải lại
         </button>
       </div>
+
+      
+      <GroupATimeParamsPanel
+        defs={defs}
+        edits={edits}
+        setEdits={setEdits}
+        save={save}
+        savingId={savingId}
+      />
 
       {err && <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">{err}</div>}
       {msg && <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 text-sm text-emerald-700">{msg}</div>}
