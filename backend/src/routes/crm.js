@@ -10330,16 +10330,26 @@ r.delete('/leads/:leadId/tasks/:taskId', async (req, res) => {
 
 r.put('/leads/:leadId/tasks/:taskId/toggle-share', async (req, res) => {
   try {
-    // Get current value
+    const { cleanShareModulesInput } = require('../helpers/documentShareScope');
     const { data: task, error: fetchErr } = await supabase.from('crm_tasks')
       .select('id, shared_to_project').eq('id', req.params.taskId).single();
     if (fetchErr) throw fetchErr;
 
-    const newVal = !task.shared_to_project;
+    const newVal = req.body?.shared_to_project !== undefined
+      ? !!req.body.shared_to_project
+      : !task.shared_to_project;
+    const update = { shared_to_project: newVal, updated_at: new Date().toISOString() };
+    if (req.body?.allowed_share_modules !== undefined) {
+      update.allowed_share_modules = newVal
+        ? cleanShareModulesInput(req.body.allowed_share_modules)
+        : null;
+    } else if (!newVal) {
+      update.allowed_share_modules = null;
+    }
     const { data, error } = await supabase.from('crm_tasks')
-      .update({ shared_to_project: newVal, updated_at: new Date().toISOString() })
+      .update(update)
       .eq('id', req.params.taskId)
-      .select('id, title, shared_to_project').single();
+      .select('id, title, shared_to_project, allowed_share_modules').single();
     if (error) throw error;
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -10348,15 +10358,44 @@ r.put('/leads/:leadId/tasks/:taskId/toggle-share', async (req, res) => {
 // Toggle share cho từng attachment riêng lẻ
 r.put('/leads/:leadId/tasks/:taskId/attachments/:attId/toggle-share', async (req, res) => {
   try {
+    const { cleanShareModulesInput } = require('../helpers/documentShareScope');
     const { data: att, error: fetchErr } = await supabase.from('crm_task_attachments')
       .select('id, shared_to_project').eq('id', req.params.attId).single();
     if (fetchErr) throw fetchErr;
 
-    const newVal = !att.shared_to_project;
+    const newVal = req.body?.shared_to_project !== undefined
+      ? !!req.body.shared_to_project
+      : !att.shared_to_project;
+    const update = { shared_to_project: newVal };
+    if (req.body?.allowed_share_modules !== undefined) {
+      update.allowed_share_modules = newVal
+        ? cleanShareModulesInput(req.body.allowed_share_modules)
+        : null;
+    } else if (!newVal) {
+      update.allowed_share_modules = null;
+    }
     const { data, error } = await supabase.from('crm_task_attachments')
-      .update({ shared_to_project: newVal })
+      .update(update)
       .eq('id', req.params.attId)
-      .select('id, name, shared_to_project').single();
+      .select('id, name, shared_to_project, allowed_share_modules').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.put('/leads/:leadId/tasks/:taskId/attachments/:attId/share-scope', async (req, res) => {
+  try {
+    const { cleanShareModulesInput } = require('../helpers/documentShareScope');
+    const { allowed_share_modules, shared_to_project } = req.body;
+    const update = {};
+    if (shared_to_project !== undefined) update.shared_to_project = !!shared_to_project;
+    if (allowed_share_modules !== undefined) {
+      update.allowed_share_modules = cleanShareModulesInput(allowed_share_modules);
+    }
+    const { data, error } = await supabase.from('crm_task_attachments')
+      .update(update)
+      .eq('id', req.params.attId)
+      .select('id, name, shared_to_project, allowed_share_modules').single();
     if (error) throw error;
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -10365,37 +10404,47 @@ r.put('/leads/:leadId/tasks/:taskId/attachments/:attId/toggle-share', async (req
 // GET shared CRM task notes for a project (dùng từ ProjectDetail)
 r.get('/project/:projectId/shared-notes', async (req, res) => {
   try {
-    // Tìm lead/deal liên kết với project
+    const {
+      crmTaskVisibleForModuleAndUser,
+      crmAttachmentVisibleForModuleAndUser,
+    } = require('../helpers/documentShareScope');
+    const forModule = String(req.query.for_module || '').toLowerCase().trim();
+    const useMod = ['production', 'logistics', 'workshop'].includes(forModule) ? forModule : null;
+
     const { data: lead } = await supabase.from('crm_leads')
       .select('id').eq('project_id', req.params.projectId).single();
     if (!lead) return res.json([]);
 
-    // Lấy tasks có shared notes HOẶC có shared attachments
     const { data: allTasks } = await supabase.from('crm_tasks')
-      .select('id, title, notes, stage_slug, shared_to_project, assignee:users!crm_tasks_assignee_id_fkey(id,full_name), updated_at')
+      .select('id, title, notes, stage_slug, shared_to_project, allowed_share_modules, allowed_companies, allowed_departments, assignee:users!crm_tasks_assignee_id_fkey(id,full_name), updated_at')
       .eq('lead_id', lead.id)
       .order('order_index');
 
-    // Lấy tất cả shared attachments
     const taskIds = (allTasks || []).map(t => t.id);
     let sharedAtts = [];
     if (taskIds.length) {
       const { data: atts } = await supabase.from('crm_task_attachments')
-        .select('id, task_id, name, file_url, file_name, file_size, mime_type, notes, doc_type, created_by, shared_to_project')
+        .select('id, task_id, name, file_url, file_name, file_size, mime_type, notes, doc_type, created_by, shared_to_project, allowed_share_modules, allowed_companies, allowed_departments')
         .in('task_id', taskIds)
         .eq('shared_to_project', true);
-      sharedAtts = atts || [];
+      sharedAtts = (atts || []).filter((a) => (useMod
+        ? crmAttachmentVisibleForModuleAndUser(a, useMod, req.user)
+        : a.shared_to_project === true));
     }
 
-    // Filter: chỉ trả tasks có notes shared HOẶC có attachment shared
     const result = (allTasks || [])
-      .map(t => ({
-        ...t,
-        // Chỉ trả notes nếu task-level share bật
-        notes: t.shared_to_project ? t.notes : null,
-        attachments: sharedAtts.filter(a => a.task_id === t.id),
-      }))
-      .filter(t => t.notes || t.attachments.length > 0);
+      .map((t) => {
+        const taskShared = useMod
+          ? crmTaskVisibleForModuleAndUser(t, useMod, req.user)
+          : t.shared_to_project === true;
+        const attachments = sharedAtts.filter((a) => a.task_id === t.id);
+        return {
+          ...t,
+          notes: taskShared ? t.notes : null,
+          attachments,
+        };
+      })
+      .filter((t) => t.notes || t.attachments.length > 0);
 
     res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }

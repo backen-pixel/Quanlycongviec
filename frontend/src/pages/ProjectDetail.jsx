@@ -746,7 +746,7 @@ export default function ProjectDetail() {
           {totalTasks === 0 && <div className="text-center py-10 text-gray-400"><CheckSquare className="h-10 w-10 mx-auto mb-2 opacity-30" /><p className="text-sm">Chưa có công việc</p></div>}
           
           {/* Shared CRM Notes — ghi chú từ Khối Kinh doanh */}
-          <SharedCRMNotes projectId={id} />
+          <SharedCRMNotes projectId={id} forModule="workshop" />
         </div>
       )}
 

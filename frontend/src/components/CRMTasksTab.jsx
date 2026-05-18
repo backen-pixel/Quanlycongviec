@@ -8,6 +8,8 @@ import {
   FileSpreadsheet, Edit3,
 } from 'lucide-react';
 import ExcelQuotationImport from './ExcelQuotationImport';
+import CrmArtifactShareModal from './CrmArtifactShareModal';
+import { shareModuleLabels } from '../lib/documentShareScope';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
 
 const LEAD_STAGES = [
@@ -119,6 +121,7 @@ export default function CRMTasksTab({
   const [newTask, setNewTask] = useState({ title: '', priority: 'medium', deadline: '', assignee_id: '', supervisor_id: '' });
   const [editingTask, setEditingTask] = useState(null);
   const [editForm, setEditForm] = useState({});
+  const [shareModal, setShareModal] = useState(null);
   const [showTemplatePanel, setShowTemplatePanel] = useState(false);
   /** Task có thể thuộc deal con (fulfillment) khi deal gốc dùng đơn — API đính kèm/ghi chú cần đúng lead_id */
   const apiLeadIdForTaskId = (taskId) => {
@@ -374,11 +377,73 @@ export default function CRMTasksTab({
     } catch (e) { alert(e.response?.data?.error || 'Lỗi lưu'); }
   };
 
-  const toggleShare = async (taskId) => {
+  const openShareModal = (taskId, attachmentId = null) => {
+    const task = tasks.find((t) => t.id === taskId);
+    const att = attachmentId
+      ? (taskAttachments[taskId] || []).find((a) => a.id === attachmentId)
+      : null;
+    const target = att || task;
+    if (target?.shared_to_project) {
+      setShareModal({
+        taskId,
+        attachmentId,
+        title: attachmentId ? `Chia sẻ file: ${att?.name || 'Đính kèm'}` : `Chia sẻ ghi chú: ${task?.title || 'Nhiệm vụ'}`,
+        shared: true,
+        modules: target.allowed_share_modules,
+      });
+      return;
+    }
+    setShareModal({
+      taskId,
+      attachmentId,
+      title: attachmentId ? `Chia sẻ file sang khối khác` : `Chia sẻ ghi chú nhiệm vụ`,
+      shared: false,
+      modules: null,
+    });
+  };
+
+  const turnOffShare = async (taskId, attachmentId = null) => {
     try {
-      const { data } = await api.put(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/toggle-share`);
-      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, shared_to_project: data.shared_to_project } : t));
-    } catch (e) { alert('Lỗi kích hoạt chia sẻ'); }
+      const lid = apiLeadIdForTaskId(taskId);
+      const url = attachmentId
+        ? `/crm/leads/${lid}/tasks/${taskId}/attachments/${attachmentId}/toggle-share`
+        : `/crm/leads/${lid}/tasks/${taskId}/toggle-share`;
+      const { data } = await api.put(url, { shared_to_project: false });
+      if (attachmentId) {
+        setTaskAttachments((p) => ({
+          ...p,
+          [taskId]: (p[taskId] || []).map((a) => (a.id === attachmentId ? { ...a, ...data } : a)),
+        }));
+      } else {
+        setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, ...data } : t)));
+      }
+      notifyArtifactsSynced(taskId);
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi tắt chia sẻ');
+    }
+  };
+
+  const handleShareClick = (taskId, attachmentId = null) => {
+    const task = tasks.find((t) => t.id === taskId);
+    const att = attachmentId ? (taskAttachments[taskId] || []).find((a) => a.id === attachmentId) : null;
+    const shared = attachmentId ? att?.shared_to_project : task?.shared_to_project;
+    if (shared) turnOffShare(taskId, attachmentId);
+    else openShareModal(taskId, attachmentId);
+  };
+
+  const onShareModalSaved = (data) => {
+    if (!shareModal) return;
+    const { taskId, attachmentId } = shareModal;
+    if (attachmentId) {
+      setTaskAttachments((p) => ({
+        ...p,
+        [taskId]: (p[taskId] || []).map((a) => (a.id === attachmentId ? { ...a, ...data } : a)),
+      }));
+    } else {
+      setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, ...data } : t)));
+    }
+    notifyArtifactsSynced(taskId);
+    setShareModal(null);
   };
 
   // Stats
@@ -627,16 +692,6 @@ export default function CRMTasksTab({
     } catch (e) { alert('Lỗi'); }
   };
 
-  const toggleShareAttachment = async (taskId, attId) => {
-    try {
-      const { data } = await api.put(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/${attId}/toggle-share`);
-      setTaskAttachments(p => ({
-        ...p,
-        [taskId]: (p[taskId] || []).map(a => a.id === attId ? { ...a, shared_to_project: data.shared_to_project } : a)
-      }));
-      notifyArtifactsSynced(taskId);
-    } catch (e) { alert('Lỗi chia sẻ'); }
-  };
 
   const ATT_ICONS = { image: ImageIcon, video: Film, drawing: FileText, task_note: MessageSquare, other: FileText };
 
@@ -767,7 +822,7 @@ export default function CRMTasksTab({
                 </span>
               )}
               {task.shared_to_project && (
-                <span className="text-[10px] text-green-600 flex items-center gap-0.5">
+                <span className="text-[10px] text-green-600 flex items-center gap-0.5" title={shareModuleLabels(task.allowed_share_modules)}>
                   <Share2 className="h-2.5 w-2.5" />Đang chia sẻ
                 </span>
               )}
@@ -785,9 +840,10 @@ export default function CRMTasksTab({
           </div>
           <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${PRIORITY_COLORS[task.priority]}`}>{PRIORITY_LABELS[task.priority]}</span>
           <div className="flex items-center gap-0.5 shrink-0 border-l border-gray-100 pl-1.5 ml-0.5">
-            <button type="button" onClick={(e) => { e.stopPropagation(); toggleShare(task.id); }}
+            <button type="button" onClick={(e) => { e.stopPropagation(); handleShareClick(task.id); }}
+              onDoubleClick={(e) => { e.stopPropagation(); if (task.shared_to_project) openShareModal(task.id); }}
               className={`p-1.5 rounded-md cursor-pointer ${task.shared_to_project ? 'text-green-600 hover:bg-green-50' : 'text-gray-500 hover:bg-gray-100 hover:text-green-600'}`}
-              title={task.shared_to_project ? 'Đang hiển thị trên Dự án / Khối khác — click để tắt' : 'Bật hiển thị ghi chú & file trên Dự án / Khối khác (team CRM vẫn xem đủ tại đây)'}>
+              title={task.shared_to_project ? 'Click: tắt chia sẻ · Double-click: đổi khối được xem' : 'Chia sẻ ghi chú sang SX / VC / Công việc dự án'}>
               {task.shared_to_project ? <Share2 className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
             </button>
             <button type="button" onClick={(e) => { e.stopPropagation(); toggleExpand(task); }} className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer" title="Ghi chú & file">
@@ -814,13 +870,14 @@ export default function CRMTasksTab({
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-[10px] font-semibold text-gray-500 uppercase">📝 Ghi chú & Đính kèm ({atts.length})</label>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => toggleShare(task.id)}
+                  <button onClick={() => handleShareClick(task.id)}
+                    onDoubleClick={() => { if (task.shared_to_project) openShareModal(task.id); }}
                     className={`text-[10px] flex items-center gap-0.5 cursor-pointer px-1.5 py-0.5 rounded ${
                       task.shared_to_project
                         ? 'text-green-700 bg-green-50 hover:bg-green-100 border border-green-300'
                         : 'text-gray-500 hover:text-green-600 hover:bg-green-50'
                     }`}
-                    title={task.shared_to_project ? 'Đang đồng bộ lên Dự án — click để tắt' : 'Đồng bộ ghi chú lên tab Dự án / Khối khác (CRM luôn xem đủ)'}>
+                    title={task.shared_to_project ? 'Click: tắt · Double-click: đổi khối' : 'Chia sẻ ghi chú sang khối SX / VC / CV'}>
                     {task.shared_to_project ? <Share2 className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
                     {task.shared_to_project ? ' Ghi chú đang chia sẻ' : ' Chia sẻ ghi chú'}
                   </button>
@@ -901,9 +958,10 @@ export default function CRMTasksTab({
                             <span className="text-[9px] text-gray-400 ml-1">{att.creator?.full_name}</span>
                           </div>
                           <div className="opacity-0 group-hover/att:opacity-100 flex items-center gap-0.5 shrink-0">
-                            <button onClick={() => toggleShareAttachment(task.id, att.id)}
+                            <button onClick={() => handleShareClick(task.id, att.id)}
+                              onDoubleClick={() => { if (att.shared_to_project) openShareModal(task.id, att.id); }}
                               className={`p-0.5 cursor-pointer ${att.shared_to_project ? 'text-green-500 hover:text-green-700' : 'text-gray-400 hover:text-green-500'}`}
-                              title={att.shared_to_project ? 'File đang hiện trên Dự án — click để tắt' : 'Cho file hiện trên Dự án / Khối khác (CRM vẫn mở được)'}>
+                              title={att.shared_to_project ? 'Click: tắt · Double-click: đổi khối' : 'Chia sẻ file sang khối SX / VC / CV'}>
                               {att.shared_to_project ? <Share2 className="h-2.5 w-2.5" /> : <Lock className="h-2.5 w-2.5" />}
                             </button>
                             <button onClick={() => deleteAttachment(task.id, att.id)}
@@ -1450,6 +1508,18 @@ export default function CRMTasksTab({
           </button>
         </div>
       )}
+
+      <CrmArtifactShareModal
+        open={!!shareModal}
+        leadId={shareModal ? apiLeadIdForTaskId(shareModal.taskId) : leadId}
+        taskId={shareModal?.taskId}
+        attachmentId={shareModal?.attachmentId}
+        title={shareModal?.title}
+        initialShared={shareModal?.shared}
+        initialModules={shareModal?.modules}
+        onClose={() => setShareModal(null)}
+        onSaved={onShareModalSaved}
+      />
     </div>
   );
 }

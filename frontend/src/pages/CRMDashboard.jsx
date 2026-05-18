@@ -22,6 +22,9 @@ import {
   clearCrmPipelineCardFocus,
   getLocallyViewedLeadIdSet,
   getCurrentUserKeyForLeadSeen,
+  registerCrmPipelinePersistUi,
+  persistCrmPipelineUiNow,
+  snapshotHasProperty,
 } from '../lib/crmPipelineStorage';
 import { userSeesAllCrmDealsScoped } from '../lib/crmDealAccess';
 import {
@@ -473,6 +476,7 @@ export default function CRMDashboard() {
     persistedUiRef.current = typeof window !== 'undefined' ? loadCrmPipelineSnapshot() : null;
   }
   const P = persistedUiRef.current;
+  const hadSessionSnapshotRef = useRef(!!P);
 
   const [dataLead, setDataLead] = useState(null);
   const [dataDeal, setDataDeal] = useState(null);
@@ -488,7 +492,7 @@ export default function CRMDashboard() {
   const allDealsRef = useRef(allDeals);
   allDealsRef.current = allDeals;
   const [filterCompany, setFilterCompany] = useState(() => {
-    if (P?.filterCompany) return P.filterCompany;
+    if (snapshotHasProperty(P, 'filterCompany')) return P.filterCompany ?? '';
     const ls = getStoredCrmFilterCompanyId();
     return ls || '';
   });
@@ -511,8 +515,11 @@ export default function CRMDashboard() {
   const leadTypeFilterFromLsRef = useRef(false);
   // Mặc định luôn chỉ hiện lead đã có SĐT; không phục hồi giá trị '' (tất cả)
   const [filterPhone, setFilterPhone] = useState(() => {
-    const v = P?.filterPhone;
-    return v === 'no_phone' ? v : 'has_phone';
+    if (snapshotHasProperty(P, 'filterPhone')) {
+      const v = P.filterPhone;
+      if (v === 'no_phone' || v === 'has_phone') return v;
+    }
+    return 'has_phone';
   });
   const [showAdvSearch, setShowAdvSearch] = useState(() => !!P?.showAdvSearch);
   const [users, setUsers] = useState([]);
@@ -782,29 +789,24 @@ export default function CRMDashboard() {
     return () => { cancelled = true; };
   }, []);
 
-  // Phục hồi bộ lọc công ty (admin) + phân loại từ localStorage khi không có session snapshot
+  // Phục hồi bộ lọc công ty (admin) + phân loại từ localStorage chỉ khi KHÔNG có snapshot session (vừa quay từ chi tiết)
   useEffect(() => {
     if (user == null) return;
     if (companyFilterFromLsRef.current) return;
-    if (P?.filterCompany) {
-      companyFilterFromLsRef.current = true;
-      return;
-    }
-    if (!isAdmin || isCompanyScopedAdmin) {
-      companyFilterFromLsRef.current = true;
-      return;
-    }
     companyFilterFromLsRef.current = true;
+    if (hadSessionSnapshotRef.current && snapshotHasProperty(P, 'filterCompany')) return;
+    if (!isAdmin || isCompanyScopedAdmin) return;
     try {
       const s = getStoredCrmFilterCompanyId();
       if (s) setFilterCompany(s);
     } catch {
       // ignore
     }
-  }, [isAdmin, isCompanyScopedAdmin, user, P?.filterCompany]);
+  }, [isAdmin, isCompanyScopedAdmin, user, P]);
 
-  // Admin tổng: chưa có lọc công ty đã lưu → mặc định công ty đầu danh sách CRM
+  // Admin tổng: mặc định công ty đầu danh sách — chỉ lần đầu mở trang, không ghi đè snapshot «Tất cả công ty»
   useEffect(() => {
+    if (hadSessionSnapshotRef.current) return;
     if (isCompanyScopedAdmin) return;
     if (!isAdmin || !companies.length) return;
     try {
@@ -812,7 +814,6 @@ export default function CRMDashboard() {
     } catch {
       /* ignore */
     }
-    if (P?.filterCompany) return;
     if (filterCompany) return;
     const cid = resolveDefaultCrmAdminCompanyId(companies);
     if (!cid) return;
@@ -822,23 +823,20 @@ export default function CRMDashboard() {
     } catch {
       /* ignore */
     }
-  }, [isAdmin, isCompanyScopedAdmin, companies, filterCompany, P?.filterCompany]);
+  }, [isAdmin, isCompanyScopedAdmin, companies, filterCompany]);
 
   useEffect(() => {
     if (user == null) return;
     if (leadTypeFilterFromLsRef.current) return;
-    if (P?.filterLeadType) {
-      leadTypeFilterFromLsRef.current = true;
-      return;
-    }
     leadTypeFilterFromLsRef.current = true;
+    if (hadSessionSnapshotRef.current && snapshotHasProperty(P, 'filterLeadType')) return;
     try {
       const s = localStorage.getItem(LS_CRM_DASH_LEAD_TYPE);
       if (s) setFilterLeadType(s);
     } catch {
       // ignore
     }
-  }, [user, P?.filterLeadType]);
+  }, [user, P]);
 
   useEffect(() => {
     void load({ silent: true });
@@ -1983,39 +1981,27 @@ export default function CRMDashboard() {
     });
   }, [kpis, kpiLedgerMonthNetSumVisible, filterAssignee, employeeFilterList, users, pipelineType, user, ledgerMapLead, ledgerMapDeal]);
 
-  useEffect(() => {
-    saveCrmPipelineSnapshot({
-      filterCompany,
-      searchText,
-      filterAssignee,
-      assigneeListSearch,
-      filterAssigneeName,
-      filterSource,
-      filterStage,
-      filterRegion,
-      filterLeadType,
-      filterPhone,
-      showAdvSearch,
-      pipelineType,
-      pinnedTab,
-      timePreset,
-      customDateFrom,
-      customDateTo,
-      showCustomDate,
-      viewMode,
-      kanbanLoadLimit,
-    });
-    try {
-      if (isAdmin) {
-        setStoredCrmFilterCompanyId(filterCompany ? String(filterCompany) : '');
-      }
-      if (filterLeadType) localStorage.setItem(LS_CRM_DASH_LEAD_TYPE, String(filterLeadType));
-      else localStorage.removeItem(LS_CRM_DASH_LEAD_TYPE);
-    } catch {
-      // ignore
-    }
-  }, [
-    isAdmin,
+  const buildPipelineUiSnapshot = useCallback(() => ({
+    filterCompany,
+    searchText,
+    filterAssignee,
+    assigneeListSearch,
+    filterAssigneeName,
+    filterSource,
+    filterStage,
+    filterRegion,
+    filterLeadType,
+    filterPhone,
+    showAdvSearch,
+    pipelineType,
+    pinnedTab,
+    timePreset,
+    customDateFrom,
+    customDateTo,
+    showCustomDate,
+    viewMode,
+    kanbanLoadLimit,
+  }), [
     filterCompany,
     searchText,
     filterAssignee,
@@ -2036,6 +2022,25 @@ export default function CRMDashboard() {
     viewMode,
     kanbanLoadLimit,
   ]);
+
+  const persistPipelineUi = useCallback(() => {
+    saveCrmPipelineSnapshot(buildPipelineUiSnapshot());
+  }, [buildPipelineUiSnapshot]);
+
+  useEffect(() => registerCrmPipelinePersistUi(persistPipelineUi), [persistPipelineUi]);
+
+  useEffect(() => {
+    saveCrmPipelineSnapshot(buildPipelineUiSnapshot());
+    try {
+      if (isAdmin) {
+        setStoredCrmFilterCompanyId(filterCompany ? String(filterCompany) : '');
+      }
+      if (filterLeadType) localStorage.setItem(LS_CRM_DASH_LEAD_TYPE, String(filterLeadType));
+      else localStorage.removeItem(LS_CRM_DASH_LEAD_TYPE);
+    } catch {
+      // ignore
+    }
+  }, [buildPipelineUiSnapshot, isAdmin, filterCompany, filterLeadType]);
 
   useEffect(() => {
     if (dataLead == null && dataDeal == null) return;
@@ -2602,6 +2607,7 @@ export default function CRMDashboard() {
                     data-crm-pipeline-card={item.id}
                     onMouseDown={e => e.preventDefault()}
                     onClick={() => {
+                      persistCrmPipelineUiNow();
                       markCrmPipelineCardFocus(item.id);
                       setSearchText('');
                       setSearchFocused(false);
@@ -4319,6 +4325,7 @@ function KanbanStageCard({
 function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, kpiLedgerPeriodStart, onOpenKanbanComment }) {
   const navigate = useNavigate();
   const openLeadDetail = () => {
+    persistCrmPipelineUiNow();
     localStorage.setItem('crm_pinned_tab', pipelineType);
     markCrmPipelineCardFocus(item.id);
     navigate(`/crm/leads/${item.id}`);

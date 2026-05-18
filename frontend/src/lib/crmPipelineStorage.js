@@ -1,6 +1,28 @@
 const UI_KEY = 'crm_pipeline_ui_v1';
 const FOCUS_KEY = 'crm_focus_pipeline_card_id';
 
+/** Gọi ngay trước khi mở chi tiết lead/deal — đảm bảo snapshot mới nhất. */
+let persistUiHook = null;
+
+export function registerCrmPipelinePersistUi(fn) {
+  persistUiHook = typeof fn === 'function' ? fn : null;
+  return () => {
+    if (persistUiHook === fn) persistUiHook = null;
+  };
+}
+
+export function persistCrmPipelineUiNow() {
+  try {
+    persistUiHook?.();
+  } catch (_) {}
+}
+
+export function snapshotHasProperty(snapshot, key) {
+  return snapshot != null
+    && typeof snapshot === 'object'
+    && Object.prototype.hasOwnProperty.call(snapshot, key);
+}
+
 export function loadCrmPipelineSnapshot() {
   try {
     const s = sessionStorage.getItem(UI_KEY);

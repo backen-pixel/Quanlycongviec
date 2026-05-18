@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { formatVND } from '../lib/utils';
-import * as XLSX from 'xlsx';
+import { loadXlsx } from '../lib/xlsxLoader';
 import { Download, RefreshCw, AlertTriangle, Trophy, Award, ChevronDown, ChevronUp, CheckCircle2, XCircle, Users } from 'lucide-react';
 import KpiUserFilter from '../components/KpiUserFilter';
 import { KPI_SETTINGS_ROLE_FILTER_OPTIONS } from '../lib/kpiRoleApplies';
@@ -190,8 +190,9 @@ export default function KpiMonthlyScorecard() {
 
   const sortedDefs = useMemo(() => [...defs].sort((a, b) => a.code.localeCompare(b.code)), [defs]);
 
-  const handleExport = () => {
+  const handleExport = async () => {
     if (!data?.users) return;
+    const XLSX = await loadXlsx();
     const headers = ['Nhân viên', 'Email', 'Vai trò', 'Tổng điểm', 'Gating'];
     sortedDefs.forEach((d) => {
       headers.push(`${d.code} - ${d.name} (Thực tế)`);

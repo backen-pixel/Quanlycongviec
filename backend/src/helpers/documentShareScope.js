@@ -81,13 +81,52 @@ function taskAttachmentVisibleForModuleAndUser(att, moduleKey, user) {
   return canViewerSeeByCompanyAndDept(att, user) && isVisibleInShareModule(att, moduleKey);
 }
 
+/** CRM task attachment đã bật «chia sẻ dự án / khối khác» */
+function isCrmAttachmentSharedToProject(att) {
+  return att?.shared_to_project === true;
+}
+
+function crmAttachmentVisibleForModuleAndUser(att, moduleKey, user) {
+  if (!isCrmAttachmentSharedToProject(att)) return false;
+  return canViewerSeeByCompanyAndDept(att, user) && isVisibleInShareModule(att, moduleKey);
+}
+
+/** CRM task ghi chú (shared_to_project trên crm_tasks) */
+function isCrmTaskSharedToProject(task) {
+  return task?.shared_to_project === true;
+}
+
+function crmTaskVisibleForModuleAndUser(task, moduleKey, user) {
+  if (!isCrmTaskSharedToProject(task)) return false;
+  return canViewerSeeByCompanyAndDept(task, user) && isVisibleInShareModule(task, moduleKey);
+}
+
+function crmActivityVisibleForModuleAndUser(act, moduleKey, user) {
+  if (!isLeadDocSharedToWorkshop(act)) return false;
+  return canViewerSeeByCompanyAndDept(act, user) && isVisibleInShareModule(act, moduleKey);
+}
+
+function cleanShareModulesInput(raw) {
+  if (!Array.isArray(raw)) return null;
+  const cleaned = [...new Set(raw.map((x) => String(x).toLowerCase().trim()))].filter((x) =>
+    SHARE_MODULE_KEYS.has(x),
+  );
+  return cleaned.length ? cleaned : null;
+}
+
 module.exports = {
   SHARE_MODULE_KEYS,
   parseJsonArray,
   normalizedShareModules,
   isVisibleInShareModule,
   isLeadDocSharedToWorkshop,
+  isCrmAttachmentSharedToProject,
+  isCrmTaskSharedToProject,
   canViewerSeeByCompanyAndDept,
   leadDocVisibleForModuleAndUser,
   taskAttachmentVisibleForModuleAndUser,
+  crmAttachmentVisibleForModuleAndUser,
+  crmTaskVisibleForModuleAndUser,
+  crmActivityVisibleForModuleAndUser,
+  cleanShareModulesInput,
 };

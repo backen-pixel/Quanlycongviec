@@ -34,16 +34,26 @@ async function logActivity(userId, action, entityType, entityId, description, ol
   await supabase.from('activity_logs').insert({ user_id: userId, action, entity_type: entityType, entity_id: entityId, description, old_values: oldValues, new_values: newValues });
 }
 
+function parsePagination(req, defaultSize = 50, maxSize = 200) {
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const requested = parseInt(req.query.page_size || req.query.limit, 10) || defaultSize;
+  const pageSize = Math.max(1, Math.min(maxSize, requested));
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+  return { page, pageSize, from, to };
+}
+
 // ─── LIST TASKS (Kanban group_by=status / List / My tasks) ──
 r.get('/', async (req, res) => {
   try {
     const { project_id, status, assignee_id, priority, search, group_by, task_type } = req.query;
+    const { page, pageSize, from, to } = parsePagination(req, 50, 200);
     let q = supabase.from('tasks').select(`
       *, projects(id,code,name),
       assignee:users!tasks_assignee_id_fkey(id,full_name,avatar),
       creator:users!tasks_created_by_id_fkey(id,full_name),
       stage:workflow_stages(id,name,color)
-    `).order('order_index').order('created_at', { ascending: false });
+    `, { count: 'exact' }).order('order_index').order('created_at', { ascending: false });
 
     if (project_id) q = q.eq('project_id', project_id);
     if (status) q = q.eq('status', status);
@@ -52,8 +62,6 @@ r.get('/', async (req, res) => {
     if (search) q = q.ilike('title', `%${search}%`);
     if (task_type) q = q.eq('task_type', task_type);
 
-    // ── ROLE-BASED: non-admin sees all tasks in a stage/project (view-only enforced frontend) ──
-    // Only restrict to assignee if no stage_id and no project_id (e.g. general task list)
     const userRole = req.user.role;
     if (userRole && !['admin', 'manager'].includes(userRole)) {
       if (!req.query.project_id && !req.query.stage_id) {
@@ -61,40 +69,60 @@ r.get('/', async (req, res) => {
       }
     }
 
-    // Filter by stage_id (for StageView)
     if (req.query.stage_id) q = q.eq('stage_id', req.query.stage_id);
 
-    const { data, error } = await q;
+    // For kanban group_by=status we still need to cap rows to avoid huge payloads.
+    // Default cap kanban view to 500 latest rows; client can request more via page_size.
+    if (group_by === 'status') {
+      const kanbanCap = Math.min(parseInt(req.query.limit, 10) || 500, 1000);
+      q = q.range(0, kanbanCap - 1);
+    } else {
+      q = q.range(from, to);
+    }
+
+    const { data, error, count } = await q;
     if (error) throw error;
 
     if (group_by === 'status') {
       const cols = { pending: [], todo: [], in_progress: [], review: [], done: [], blocked: [], deferred: [] };
       data?.forEach(t => { if (cols[t.status]) cols[t.status].push(t); else if (cols.todo) cols.todo.push(t); });
-      return res.json({ columns: cols, total: data?.length });
+      return res.json({ columns: cols, total: count ?? data?.length });
     }
 
-    res.json({ tasks: data, total: data?.length });
+    res.json({ tasks: data, total: count ?? data?.length, page, page_size: pageSize });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
 // ─── MY TASKS ──
 r.get('/my', async (req, res) => {
   try {
-    const { data } = await supabase.from('tasks').select(`
+    const { page, pageSize, from, to } = parsePagination(req, 50, 200);
+    const { data, count, error } = await supabase.from('tasks').select(`
       *, projects(id,code,name), stage:workflow_stages(id,name,color)
-    `).eq('assignee_id', req.user.userId).neq('status', 'done').order('due_date');
-    res.json({ tasks: data });
+    `, { count: 'exact' })
+      .eq('assignee_id', req.user.userId)
+      .neq('status', 'done')
+      .order('due_date')
+      .range(from, to);
+    if (error) throw error;
+    res.json({ tasks: data, total: count ?? data?.length, page, page_size: pageSize });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
 
 // ─── OVERDUE TASKS ──
 r.get('/overdue', async (req, res) => {
   try {
-    const { data } = await supabase.from('tasks').select(`
+    const { page, pageSize, from, to } = parsePagination(req, 50, 200);
+    const { data, count, error } = await supabase.from('tasks').select(`
       *, projects(id,code,name),
       assignee:users!tasks_assignee_id_fkey(id,full_name)
-    `).lt('due_date', new Date().toISOString()).neq('status', 'done').order('due_date');
-    res.json({ tasks: data });
+    `, { count: 'exact' })
+      .lt('due_date', new Date().toISOString())
+      .neq('status', 'done')
+      .order('due_date')
+      .range(from, to);
+    if (error) throw error;
+    res.json({ tasks: data, total: count ?? data?.length, page, page_size: pageSize });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
 
@@ -109,24 +137,16 @@ r.get('/:id', async (req, res) => {
     `).eq('id', req.params.id).single();
     if (error) throw error;
 
-    // Load sub-resources (defensive — tables may not exist if migration 03 not run)
-    let participants = [], checklists = [], comments = [], timeLogs = [];
-    try {
-      const r1 = await supabase.from('task_participants').select('*, user:users(id,full_name,avatar)').eq('task_id', req.params.id).order('created_at');
-      participants = r1.data || [];
-    } catch { }
-    try {
-      const r2 = await supabase.from('task_checklists').select('*').eq('task_id', req.params.id).order('order_index');
-      checklists = r2.data || [];
-    } catch { }
-    try {
-      const r3 = await supabase.from('task_comments').select('*, user:users(id,full_name,avatar)').eq('task_id', req.params.id).order('created_at', { ascending: false });
-      comments = r3.data || [];
-    } catch { }
-    try {
-      const r4 = await supabase.from('task_time_logs').select('*, user:users(id,full_name)').eq('task_id', req.params.id).order('started_at', { ascending: false });
-      timeLogs = r4.data || [];
-    } catch { }
+    const [r1, r2, r3, r4] = await Promise.allSettled([
+      supabase.from('task_participants').select('*, user:users(id,full_name,avatar)').eq('task_id', req.params.id).order('created_at'),
+      supabase.from('task_checklists').select('*').eq('task_id', req.params.id).order('order_index'),
+      supabase.from('task_comments').select('*, user:users(id,full_name,avatar)').eq('task_id', req.params.id).order('created_at', { ascending: false }),
+      supabase.from('task_time_logs').select('*, user:users(id,full_name)').eq('task_id', req.params.id).order('started_at', { ascending: false }),
+    ]);
+    const participants = (r1.status === 'fulfilled' && r1.value.data) || [];
+    const checklists = (r2.status === 'fulfilled' && r2.value.data) || [];
+    const comments = (r3.status === 'fulfilled' && r3.value.data) || [];
+    const timeLogs = (r4.status === 'fulfilled' && r4.value.data) || [];
 
     res.json({
       task: {
