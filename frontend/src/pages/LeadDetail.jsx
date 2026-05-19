@@ -614,10 +614,20 @@ export default function LeadDetail() {
     const targetStage = stages.find(s => s.id === stageId);
 
     if (lead?.type === 'deal' && targetStage) {
-      const blocked = crmDealStageMoveBlockedMessage(lead, targetStage, 'deal');
-      if (blocked) {
-        alert(blocked);
-        return;
+      // Bỏ qua gate khi deal đang ở trạng thái «orphan» (chưa có giai đoạn hợp lệ trong pipeline,
+      // hoặc có project nhưng thiếu badge SX/VC) — cho phép chữa dữ liệu bằng cách kéo về cột thường.
+      const validStageIds = new Set((stages || []).map((s) => String(s.id)));
+      const sid = lead?.stage_id ? String(lead.stage_id) : '';
+      const isOrphanSource =
+        !sid ||
+        !validStageIds.has(sid) ||
+        (!!lead?.project_id && !lead?.sx_pipeline_stage?.id && !lead?.vc_pipeline_stage?.id);
+      if (!isOrphanSource) {
+        const blocked = crmDealStageMoveBlockedMessage(lead, targetStage, 'deal');
+        if (blocked) {
+          alert(blocked);
+          return;
+        }
       }
     }
 

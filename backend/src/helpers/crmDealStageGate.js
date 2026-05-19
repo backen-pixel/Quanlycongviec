@@ -1,7 +1,8 @@
 /**
  * Quy tắc kéo giai đoạn deal trên CRM.
- * Cột sau Thắng (Sản xuất, Vận chuyển…) do module xưởng/VC — không kéo thủ công trên CRM Kanban.
- * Deal đã có dự án vẫn được đổi lại các giai đoạn trước Thắng / Thắng / Thua.
+ * Mở khóa toàn bộ: CRM Kanban có thể kéo deal sang bất kỳ cột nào (kể cả Sản xuất / Vận chuyển).
+ * Module xưởng/VC vẫn tự sync tiến độ về `sx_pipeline_stage_id` / `vc_pipeline_stage_id` (badge),
+ * còn `stage_id` chính do user CRM tự quyết khi kéo tay.
  */
 
 const POST_WON_SYNC_ROLES = new Set([
@@ -43,20 +44,8 @@ function isDealCrmStageLocked(lead) {
 /**
  * @returns {{ ok: true } | { ok: false, error: string, code: string }}
  */
-function assertDealCrmManualStageChange(lead, targetStage) {
-  if (!lead || lead.type !== 'deal') return { ok: true };
-
-  if (targetStage?.is_lost) return { ok: true };
-
-  if (isCrmPostWonManagedStage(targetStage)) {
-    return {
-      ok: false,
-      code: 'crm_stage_locked_post_won',
-      error:
-        'Giai đoạn sau Thắng (Sản xuất, Vận chuyển…) do module xưởng/VC quản lý. Trên CRM chỉ kéo deal tới cột Thắng hoặc các giai đoạn trước đó.',
-    };
-  }
-
+function assertDealCrmManualStageChange(_lead, _targetStage) {
+  // Đã mở khóa: không chặn chuyển cột thủ công trên CRM nữa.
   return { ok: true };
 }
 

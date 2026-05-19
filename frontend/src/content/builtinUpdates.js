@@ -4,6 +4,44 @@
  */
 export const BUILTIN_UPDATES = [
   {
+    id: '2026-05-crm-pipeline-orphan-unlock',
+    version: '1.8.0',
+    category: 'feature',
+    publishedAt: '2026-05-19T05:00:00.000Z',
+    title: 'CRM Pipeline: giữ bộ lọc, mở khóa Kanban, cột «Chưa có giai đoạn» & gộp cột Thắng trùng',
+    content: `## Bộ lọc Pipeline & Khách hàng được nhớ
+- Bộ lọc Kanban CRM (công ty, khu vực, NV, nguồn, giai đoạn, phân loại, SĐT, tìm kiếm…) **giữ nguyên khi sang trang khác** (Khách hàng, KPI…) và khi mở lại trình duyệt.
+- Trang **Khách hàng** cũng nhớ ô tìm kiếm gần nhất.
+- Khi quay lại Pipeline, panel «Bộ lọc» tự bung nếu có filter đang áp dụng.
+
+## Kanban Deal — mở khóa toàn bộ
+- Có thể **kéo deal sang bất kỳ cột nào**, kể cả **Sản xuất / Vận chuyển / Hoàn thành** (trước đây bị khóa).
+- Stepper trong chi tiết Deal cũng cho đổi lại các giai đoạn trước Thắng (Báo giá, Đàm phán…).
+- Badge nhỏ **SX / VC** vẫn tự sync từ module Xưởng / Vận chuyển; \`stage_id\` chính trên CRM do người dùng tự quyết.
+
+## Cột «🗂️ Chưa có giai đoạn» (Kanban Deal)
+- Thêm checkbox **«Hiện deal chưa có giai đoạn»** trong bộ lọc — bật để hiện cột ảo ở cuối Kanban.
+- Gom các deal: stage rỗng / cột bị xoá / có project nhưng thiếu badge SX & VC.
+- Kéo deal từ cột này về cột thường **không bị chặn bất kỳ điều kiện nào** — dùng để chữa dữ liệu lệch.
+
+## Pipeline Stepper — dấu tick đúng lịch sử
+- Các giai đoạn **đã đi qua** (Báo giá, Khảo sát…) được tick dựa trên **lịch sử thật** (\`crm_lead_stage_history\`) thay vì chỉ theo \`order_index\`.
+- Deal đang ở Thắng không còn tick nhầm các cột sau Thắng.
+
+## Sửa lỗi cấu hình «2 cột Thắng» trên pipeline
+- Migration **\`188_dedupe_deal_won_stages.sql\`**: tự động gộp các cột tên *Thắng* trùng nhau trên cùng pipeline → chỉ giữ một cột chính, các deal liên quan được chuyển sang đúng cột, cột dư đổi tên *«… (trùng — đã gộp)»* và tắt.
+- Migration **\`189_repair_pipeline_crm_target_after_dedupe.sql\`**: đồng bộ lại các tham chiếu \`pipeline_crm_target\` sau khi gộp.
+
+## Placeholder badge «⏳ Chờ vào xưởng»
+- Deal đã Thắng có project nhưng SX/VC chưa cấp giai đoạn xưởng → hiển thị badge mờ *«Chờ vào xưởng»* để tránh cảm giác «mất tag».
+
+## Cài đặt kỹ thuật (admin)
+- Chạy migration Supabase mới:
+  - \`database/188_dedupe_deal_won_stages.sql\`
+  - \`database/189_repair_pipeline_crm_target_after_dedupe.sql\`
+- Sau khi chạy, mở **Cài đặt → Pipeline** kiểm tra: mỗi pipeline chỉ còn **1 cột Thắng** active.`,
+  },
+  {
     id: '2026-05-messenger-presence-kpi',
     version: '1.7.0',
     category: 'feature',

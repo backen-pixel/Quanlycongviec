@@ -363,6 +363,7 @@ function snapshotHasActiveFilters(snap) {
     || snap.filterRegion
     || snap.filterLeadType
     || snap.filterPhone === 'no_phone'
+    || snap.showOrphanDealColumn
     || snap.timePreset
   );
 }
@@ -623,6 +624,8 @@ export default function CRMDashboard() {
     }
     return 'has_phone';
   });
+  /** Hiện cột Kanban «Chưa có giai đoạn» ở cuối — chứa deal không thuộc bất kỳ cột nào của pipeline đang xem. */
+  const [showOrphanDealColumn, setShowOrphanDealColumn] = useState(() => !!P?.showOrphanDealColumn);
   const [showAdvSearch, setShowAdvSearch] = useState(() => {
     if (P?.showAdvSearch) return true;
     if (snapshotHasActiveFilters(P)) return true;
@@ -1809,6 +1812,7 @@ export default function CRMDashboard() {
       const v = snap.filterPhone;
       if (v === 'no_phone' || v === 'has_phone') setFilterPhone(v);
     }
+    if (snapshotHasProperty(snap, 'showOrphanDealColumn')) setShowOrphanDealColumn(!!snap.showOrphanDealColumn);
     if (snapshotHasProperty(snap, 'timePreset')) setTimePreset(typeof snap.timePreset === 'string' ? snap.timePreset : '');
     if (snapshotHasProperty(snap, 'customDateFrom')) setCustomDateFrom(snap.customDateFrom ?? '');
     if (snapshotHasProperty(snap, 'customDateTo')) setCustomDateTo(snap.customDateTo ?? '');
@@ -2139,6 +2143,49 @@ export default function CRMDashboard() {
   const currentData = pipelineType === 'lead' ? dataLead : dataDeal;
   const currentPipeline = pipelineType === 'lead' ? pipelineLead : pipelineDeal;
 
+  /**
+   * Cột ảo «Chưa có giai đoạn» — gom deal không nằm trong bất kỳ cột nào của pipeline hiện tại.
+   * Tiêu chí:
+   *   - stage_id rỗng/null, HOẶC
+   *   - stage_id không khớp với cột active nào trong stagesDeal (cột bị xoá/khác pipeline), HOẶC
+   *   - có project_id nhưng KHÔNG có badge SX & VC (dữ liệu lệch, không vào được module xưởng).
+   * Chỉ áp dụng cho pipeline Deal trên Kanban; ẩn mặc định, bật bằng checkbox trong bộ lọc.
+   */
+  const orphanDealColumn = useMemo(() => {
+    if (pipelineType !== 'deal') return null;
+    if (!showOrphanDealColumn) return null;
+    const validStageIds = new Set((stagesDeal || []).map((s) => String(s.id)));
+    const attachLedger = (l) => {
+      const raw = ledgerMapDeal[String(l.id)];
+      const kpi_ledger_month_net = raw !== undefined ? raw : null;
+      return { ...l, kpi_ledger_month_net };
+    };
+    const orphans = deals.filter((d) => {
+      const sid = d.stage_id ? String(d.stage_id) : '';
+      const stageMissing = !sid || !validStageIds.has(sid);
+      const hasProjectNoBadge =
+        !!d.project_id && !d?.sx_pipeline_stage?.id && !d?.vc_pipeline_stage?.id;
+      return stageMissing || hasProjectNoBadge;
+    });
+    return {
+      id: '__orphan_no_stage__',
+      __virtual: true,
+      name: 'Chưa có giai đoạn',
+      icon: '🗂️',
+      color: '#94a3b8',
+      description:
+        'Deal không thuộc cột nào của pipeline hiện tại — stage trống/không hợp lệ hoặc có project nhưng thiếu badge SX/VC.',
+      items: orphans.map(attachLedger),
+      totalValue: orphans.reduce((s, l) => s + (l.estimated_value || 0), 0),
+    };
+  }, [pipelineType, showOrphanDealColumn, stagesDeal, deals, ledgerMapDeal]);
+
+  /** Pipeline truyền cho Kanban — chèn cột ảo ở cuối nếu enabled. */
+  const kanbanPipeline = useMemo(() => {
+    if (orphanDealColumn) return [...currentPipeline, orphanDealColumn];
+    return currentPipeline;
+  }, [currentPipeline, orphanDealColumn]);
+
   const listViewPipelineId = useMemo(() => {
     if (!dashboardScopeCompanyId) return '';
     return resolvePipelineIdForCompany(dashboardScopeCompanyId) || '';
@@ -2227,6 +2274,7 @@ export default function CRMDashboard() {
     showCustomDate,
     viewMode,
     kanbanLoadLimit,
+    showOrphanDealColumn,
   }), [
     filterCompany,
     searchText,
@@ -2247,6 +2295,7 @@ export default function CRMDashboard() {
     showCustomDate,
     viewMode,
     kanbanLoadLimit,
+    showOrphanDealColumn,
   ]);
 
   const persistPipelineUi = useCallback(() => {
@@ -2396,16 +2445,28 @@ export default function CRMDashboard() {
 
       if (pipelineType === 'deal') {
         const deal = allDeals.find((d) => d.id === leadId);
-        const blocked = deal && targetStage
-          ? crmDealStageMoveBlockedMessage(deal, targetStage, 'deal')
-          : null;
-        if (blocked) {
-          window.alert(blocked);
-          return;
-        }
-        if (!canDropDealOnCrmKanbanStage(deal || {}, targetStage || {}, 'deal')) {
-          window.alert('Không thể chuyển deal sang giai đoạn này trên CRM.');
-          return;
+        // Bỏ qua gate nếu deal đang nằm ở cột ảo «Chưa có giai đoạn»:
+        //   stage_id rỗng / không thuộc stagesDeal hiện tại / có project_id nhưng thiếu badge SX & VC.
+        // Mục đích: cho phép thả tự do về bất kỳ cột thường nào để chữa dữ liệu lệch.
+        const validStageIds = new Set((stagesDeal || []).map((s) => String(s.id)));
+        const sid = deal?.stage_id ? String(deal.stage_id) : '';
+        const isOrphanSource =
+          !!deal &&
+          (!sid ||
+            !validStageIds.has(sid) ||
+            (!!deal.project_id && !deal?.sx_pipeline_stage?.id && !deal?.vc_pipeline_stage?.id));
+        if (!isOrphanSource) {
+          const blocked = deal && targetStage
+            ? crmDealStageMoveBlockedMessage(deal, targetStage, 'deal')
+            : null;
+          if (blocked) {
+            window.alert(blocked);
+            return;
+          }
+          if (!canDropDealOnCrmKanbanStage(deal || {}, targetStage || {}, 'deal')) {
+            window.alert('Không thể chuyển deal sang giai đoạn này trên CRM.');
+            return;
+          }
         }
       }
 
@@ -2931,7 +2992,7 @@ export default function CRMDashboard() {
             }`}>
             <Filter className="h-4 w-4" />
             Bộ lọc
-            {(filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterRegion || filterLeadType || filterPhone === 'no_phone') && (
+            {(filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterRegion || filterLeadType || filterPhone === 'no_phone' || showOrphanDealColumn) && (
               <span className="bg-blue-600 text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center font-bold">
                 {[filterAssignee, filterAssigneeName, filterCompany, filterSource, filterStage, filterRegion, filterLeadType, filterPhone === 'no_phone' ? filterPhone : ''].filter(Boolean).length}
               </span>
@@ -3269,6 +3330,28 @@ export default function CRMDashboard() {
                   <option value="no_phone">❌ Chưa có SĐT</option>
                 </select>
               </div>
+
+              {pipelineType === 'deal' && (
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-[10px] text-gray-500 font-medium">Cột phụ</label>
+                  <label
+                    className={`inline-flex items-center gap-1.5 h-8 px-2.5 border rounded-lg text-xs cursor-pointer transition-colors ${
+                      showOrphanDealColumn
+                        ? 'bg-slate-100 border-slate-400 text-slate-800'
+                        : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                    }`}
+                    title="Hiện cột ảo ở cuối Kanban — chứa deal không thuộc cột nào của pipeline (stage trống / cột bị xoá / có project nhưng thiếu badge SX/VC)."
+                  >
+                    <input
+                      type="checkbox"
+                      checked={showOrphanDealColumn}
+                      onChange={(e) => setShowOrphanDealColumn(e.target.checked)}
+                      className="h-3.5 w-3.5 cursor-pointer accent-slate-600"
+                    />
+                    <span>🗂️ Hiện deal chưa có giai đoạn</span>
+                  </label>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -3515,7 +3598,7 @@ export default function CRMDashboard() {
           {viewMode === 'kanban' && (
           <div data-tour="kanban-pipeline" className="rounded-xl overflow-hidden">
             <KanbanView
-              pipeline={currentPipeline}
+              pipeline={kanbanPipeline}
               onMoveStage={handleMoveStage}
               pipelineType={pipelineType}
               mergeSelectedIds={manualMergeIds}
@@ -4599,7 +4682,10 @@ function KanbanStageCard({
     columnItemIds.length > 0 &&
     columnItemIds.every((id) => (mergeSelectedIds || []).some((x) => String(x) === String(id)));
 
+  const isVirtualColumn = !!stage?.__virtual;
+
   const handleColumnDragOver = (e) => {
+    if (isVirtualColumn) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     setIsOverColumn(true);
@@ -4612,6 +4698,7 @@ function KanbanStageCard({
   };
 
   const handleColumnDrop = (e) => {
+    if (isVirtualColumn) return;
     e.preventDefault();
     setIsOverColumn(false);
     const leadId = e.dataTransfer.getData('leadId');

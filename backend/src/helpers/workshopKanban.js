@@ -13,6 +13,21 @@ const {
 } = require('./productionPipelineSchema');
 const { isCrmPostWonManagedStage } = require('./crmDealStageGate');
 
+/**
+ * Race-guard cho auto-sync stage CRM theo project SX/VC.
+ * Chỉ cho phép ghi đè `crm_leads.stage_id` khi cột hiện tại là cột do module
+ * xưởng/VC quản lý (post-Thắng) hoặc đang ở Thắng. Nếu Sale đã chủ động kéo
+ * deal về cột pre-Thắng (Đàm phán/Báo giá…) hay Thua, không được đè.
+ * Trường hợp chưa load được stage object → cho phép ghi (giữ hành vi cũ).
+ */
+function shouldAutoOverwriteCrmStage(stage) {
+  const s = Array.isArray(stage) ? stage[0] : stage;
+  if (!s) return true;
+  if (s.is_won) return true;
+  if (s.is_lost) return false;
+  return isCrmPostWonManagedStage(s);
+}
+
 const WORKSHOP_STAGE_SLUGS = ['production', 'delivery', 'customer-care'];
 /** Khớp enum project_status trong DB (không có 'delivering' — dùng shipping/installing). */
 const WORKSHOP_STATUSES = ['producing', 'shipping', 'installing', 'warranty', 'completed'];
@@ -439,12 +454,14 @@ async function syncCrmLeadFromLogisticsStage(projectId, crmSyncTypeOrStageRow) {
 
   const { data: leads } = await supabase
     .from('crm_leads')
-    .select('id, sx_handover_at')
+    .select('id, stage_id, sx_handover_at, stage:crm_pipeline_stages(id, name, sync_role, is_won, is_lost)')
     .eq('project_id', projectId)
     .eq('type', 'deal');
 
   for (const lead of leads || []) {
     if (!lead.sx_handover_at) continue;
+    if (String(lead.stage_id || '') === String(targetCrmStageId)) continue;
+    if (!shouldAutoOverwriteCrmStage(lead.stage)) continue; // Race-guard
     await supabase.from('crm_leads').update({ stage_id: targetCrmStageId }).eq('id', lead.id);
   }
 }
@@ -533,14 +550,25 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
   if (currentRow?.crm_target_stage_id) {
     const { data: leads } = await supabase
       .from('crm_leads')
-      .select('id, stage_id, sx_handover_at')
+      .select('id, stage_id, sx_handover_at, stage:crm_pipeline_stages(id, name, sync_role, is_won, is_lost)')
       .eq('project_id', projectId)
       .eq('type', 'deal');
     await Promise.all(
       (leads || []).map((lead) => {
         const patch = {};
-        if (lead.sx_handover_at) patch.stage_id = currentRow.crm_target_stage_id;
         if (stageUuid) patch.sx_pipeline_stage_id = stageUuid;
+        // Race-guard: chỉ tự đổi stage CRM khi:
+        //   1) đã có sx_handover_at
+        //   2) chưa ở target rồi
+        //   3) đang ở cột "auto-managed" (post-Thắng SX/VC) HOẶC đang ở Thắng
+        // → tránh ghi đè khi Sale vừa kéo deal về Đàm phán / Báo giá / Thua…
+        if (
+          lead.sx_handover_at
+          && String(lead.stage_id || '') !== String(currentRow.crm_target_stage_id)
+          && shouldAutoOverwriteCrmStage(lead.stage)
+        ) {
+          patch.stage_id = currentRow.crm_target_stage_id;
+        }
         if (!Object.keys(patch).length) return Promise.resolve();
         return supabase.from('crm_leads').update(patch).eq('id', lead.id);
       }),
@@ -569,7 +597,7 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
 
   const { data: leads } = await supabase
     .from('crm_leads')
-    .select('id, stage_id, sx_handover_at')
+    .select('id, stage_id, sx_handover_at, stage:crm_pipeline_stages(id, name, sync_role, is_won, is_lost)')
     .eq('project_id', projectId)
     .eq('type', 'deal');
 
@@ -580,11 +608,12 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
       if (stageUuid) update.sx_pipeline_stage_id = stageUuid;
 
       // Chỉ đổi cột CRM sau khi Sale đã bàn giao SX (sx_handover_at) — trước đó chỉ cập nhật badge.
-      if (lead.sx_handover_at) {
+      // Race-guard: bỏ qua nếu Sale đang để deal ở cột pre-Thắng (Đàm phán/Báo giá…) hoặc Thua.
+      if (lead.sx_handover_at && shouldAutoOverwriteCrmStage(lead.stage)) {
         if (isInCrmProductionTriggerStage && sanXuatStageId) {
-          update.stage_id = sanXuatStageId;
+          if (String(lead.stage_id || '') !== String(sanXuatStageId)) update.stage_id = sanXuatStageId;
         } else if (!isInCrmProductionTriggerStage && thangStageId) {
-          update.stage_id = thangStageId;
+          if (String(lead.stage_id || '') !== String(thangStageId)) update.stage_id = thangStageId;
         }
       }
 
@@ -739,6 +768,7 @@ module.exports = {
   getDbIntakeStageId,
   resolveSxPipelineStageUuidForProject,
   syncCrmLeadSxPipelineFromProject,
+  shouldAutoOverwriteCrmStage,
   repairCrmDealPipelineDisplay,
   syncVcPipelineStageToLead,
   syncCrmLeadFromLogisticsStage,
