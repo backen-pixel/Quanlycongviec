@@ -13,6 +13,12 @@ import {
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { isCrmOnlyModuleAccess } from '../lib/moduleAccess';
+import {
+  isCrmSidebarActive,
+  readStoredModule,
+  resolveActiveModule,
+  storeModule,
+} from '../lib/sidebarModuleContext';
 import { useReleaseNotesUnread } from '../hooks/useReleaseNotesUnread';
 import { useCrmAssignmentsUnread } from '../hooks/useCrmAssignmentsUnread';
 
@@ -109,8 +115,8 @@ const CRM_MENU_BOTTOM_GROUPS = [
     emoji: '🎯',
     items: [
       { to: '/crm/follow-up-care', icon: CalendarClock, label: 'CSKH theo hạn' },
-      { to: '/crm/tasks', icon: CheckSquare, label: 'Công việc CRM' },
-      { to: '/crm/assignments', icon: ClipboardList, label: 'Giao việc CRM' },
+      { to: '/crm/tasks', icon: CheckSquare, label: 'Công việc CRM', end: true },
+      { to: '/crm/assignments', icon: ClipboardList, label: 'Giao việc CRM', end: true },
       { to: '/crm/lead-journey', icon: ArrowRightLeft, label: 'Hành trình Lead' },
     ],
   },
@@ -244,17 +250,26 @@ const VC_MENU_GROUPS = [
   },
 ];
 
-function SideLink({ to, icon: Icon, label, collapsed, end, badge }) {
+function resolveGroupModuleContext(group) {
+  if (group.moduleKey === 'crm' || String(group.id || '').startsWith('crm')) return 'crm';
+  if (group.moduleKey === 'production' || String(group.id || '').startsWith('sx')) return 'sx';
+  if (group.moduleKey === 'logistics' || String(group.id || '').startsWith('vc')) return 'vc';
+  return 'work';
+}
+
+function SideLink({ to, icon: Icon, label, collapsed, end, badge, moduleContext }) {
   const location = useLocation();
   const onNavClick = () => {
     const p = location.pathname;
     if (p === '/crm/dashboard' || p === '/crm/pipeline') {
       persistCrmPipelineUiNow();
     }
+    if (moduleContext) storeModule(moduleContext);
   };
   return (
     <NavLink
       to={to}
+      state={moduleContext ? { moduleContext } : undefined}
       onClick={onNavClick}
       end={to === '/' || end}
       className={({ isActive }) =>
@@ -289,6 +304,7 @@ function SideLink({ to, icon: Icon, label, collapsed, end, badge }) {
 
 function MenuGroup({ group, collapsed, isAdmin, isExecutive, canAccessModule, userRole, updatesUnread = 0, assignmentsUnread = 0 }) {
   const [open, setOpen] = useState(true);
+  const moduleContext = resolveGroupModuleContext(group);
 
   if (group.moduleKey && canAccessModule && !canAccessModule(group.moduleKey)) return null;
 
@@ -329,6 +345,7 @@ function MenuGroup({ group, collapsed, isAdmin, isExecutive, canAccessModule, us
             <SideLink
               key={`${group.id}-${item.to}-${item.label}`}
               {...item}
+              moduleContext={moduleContext}
               collapsed={collapsed}
               badge={
                 item.to === '/updates' ? updatesUnread
@@ -382,13 +399,18 @@ export default function Sidebar() {
   /** Sidebar CRM: role `admin` (cả admin hệ thống và admin công ty) thấy đủ mục cài đặt CRM; dữ liệu admin công ty vẫn khóa theo API */
   const isCrmMenuAdmin = user?.role === 'admin';
   const isExecutive = ['admin', 'manager', 'director', 'supervisor'].includes(user?.role);
-  /** Ghi âm dùng route /tools/… nhưng vẫn dùng menu CRM khi đang xem trang đó. crmOnly: luôn sidebar CRM (kể cả /settings/theme). */
-  const isCRM =
-    crmOnly ||
-    location.pathname.startsWith('/crm') ||
-    location.pathname.startsWith('/tools/voice-recordings');
-  const isSX = location.pathname.startsWith('/sx');
-  const isVC = location.pathname.startsWith('/vc');
+  const [activeModule, setActiveModule] = useState(() => readStoredModule() || 'crm');
+
+  useEffect(() => {
+    const next = resolveActiveModule(location.pathname, location.state?.moduleContext);
+    setActiveModule(next);
+    storeModule(next);
+  }, [location.pathname, location.state?.moduleContext]);
+
+  /** Ghi âm dùng route /tools/… nhưng vẫn dùng menu CRM khi đang xem trang đó. crmOnly: luôn sidebar CRM. */
+  const isCRM = isCrmSidebarActive(location.pathname, activeModule, crmOnly);
+  const isSX = location.pathname.startsWith('/sx') || activeModule === 'sx';
+  const isVC = location.pathname.startsWith('/vc') || activeModule === 'vc';
   const activeMenuGroups = isVC ? VC_MENU_GROUPS : isSX ? SX_MENU_GROUPS : isCRM ? null : MENU_GROUPS;
 
   const pinModule = (path) => {
