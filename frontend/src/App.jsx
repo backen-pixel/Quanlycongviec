@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
-import { lazy, Suspense, Component, useMemo, useState, useEffect } from 'react';
+import { Suspense, Component, useMemo, useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './lib/auth';
+import { lazyWithRetry, clearChunkReloadFlag, isChunkLoadErrorMessage } from './lib/lazyWithRetry';
 
 class ErrorBoundary extends Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null, errorInfo: null }; }
@@ -18,7 +19,11 @@ class ErrorBoundary extends Component {
             <p className="text-4xl mb-4">😵</p>
             <h2 className="text-xl font-bold text-gray-900 mb-2">Đã xảy ra lỗi</h2>
             <p className="text-sm text-gray-500 mb-1">Trang: <code className="bg-gray-100 px-2 py-0.5 rounded">{currentPath}</code></p>
-            <p className="text-sm text-red-500 mb-4">{this.state.error?.message || 'Lỗi không xác định'}</p>
+            <p className="text-sm text-red-500 mb-4">
+              {isChunkLoadErrorMessage(this.state.error?.message)
+                ? 'Phiên bản trang đã cũ sau khi cập nhật hệ thống. Bấm «Tải lại trang» để tải bản mới.'
+                : (this.state.error?.message || 'Lỗi không xác định')}
+            </p>
             <pre className="text-xs text-left bg-gray-100 rounded-lg p-3 mb-2 max-h-32 overflow-auto text-red-600">
               {this.state.error?.stack?.split('\n').slice(0, 5).join('\n')}
             </pre>
@@ -47,99 +52,99 @@ class ErrorBoundary extends Component {
 import Sidebar from './components/Sidebar';
 import Login from './pages/Login';
 
-const Dashboard = lazy(() => import('./pages/DashboardNew'));
-const MyTasks = lazy(() => import('./pages/MyTasks'));
-const Projects = lazy(() => import('./pages/Projects'));
-const ProjectDetail = lazy(() => import('./pages/ProjectDetail'));
-const Tasks = lazy(() => import('./pages/Tasks'));
-const StageView = lazy(() => import('./pages/StageView'));
-const UsersPage = lazy(() => import('./pages/UsersPage'));
-const CustomersPage = lazy(() => import('./pages/CustomersPage'));
-const CustomerDetail = lazy(() => import('./pages/CustomerDetail'));
-const ProductsPage = lazy(() => import('./pages/ProductsPage'));
-const ProjectTemplatesPage = lazy(() => import('./pages/ProjectTemplatesPage'));
-const PersonalTasks = lazy(() => import('./pages/PersonalTasks'));
-const CompaniesPage = lazy(() => import('./pages/CompaniesPage'));
-const CompanyCrmRegionsPage = lazy(() => import('./pages/CompanyCrmRegionsPage'));
-const OrganizationQuickSetupPage = lazy(() => import('./pages/OrganizationQuickSetupPage'));
-const DepartmentsPage = lazy(() => import('./pages/DepartmentsPage'));
-const TeamsPage = lazy(() => import('./pages/TeamsPage'));
-const WorkflowSettings = lazy(() => import('./pages/WorkflowSettings'));
-const ApprovalRulesPage = lazy(() => import('./pages/ApprovalRulesPage'));
-const EcosystemPage = lazy(() => import('./pages/EcosystemPage'));
-const EcosystemModulesPage = lazy(() => import('./pages/EcosystemModulesPage'));
-const EcosystemLevelsPage = lazy(() => import('./pages/EcosystemLevelsPage'));
-const CRMDashboard = lazy(() => import('./pages/CRMDashboard'));
-const LeadJourneyPage = lazy(() => import('./pages/LeadJourneyPage'));
-const ProductionLayout = lazy(() => import('./layouts/ProductionLayout'));
-const ProductionDashboard = lazy(() => import('./pages/ProductionDashboard'));
-const ProductionDetail = lazy(() => import('./pages/ProductionDetail'));
-const ProductionApprovalsPage = lazy(() => import('./pages/ProductionApprovalsPage'));
-const ProductionPipelineSettingsPage = lazy(() => import('./pages/ProductionPipelineSettingsPage'));
-const WorkshopTaskTemplatesPage = lazy(() => import('./pages/WorkshopTaskTemplatesPage'));
-const ProductionHandoverSettingsPage = lazy(() => import('./pages/ProductionHandoverSettingsPage'));
-const LogisticsDashboard = lazy(() => import('./pages/LogisticsDashboard'));
-const LogisticsDetail = lazy(() => import('./pages/LogisticsDetail'));
-const LogisticsPipelineSettingsPage = lazy(() => import('./pages/LogisticsPipelineSettingsPage'));
-const LogisticsTaskTemplatesPage = lazy(() => import('./pages/LogisticsTaskTemplatesPage'));
-const WorkshopTeamsPage = lazy(() => import('./pages/WorkshopTeamsPage'));
-const QuotationsPage = lazy(() => import('./pages/QuotationsPage'));
-const QuotationForm = lazy(() => import('./pages/QuotationForm'));
-const OrdersPage = lazy(() => import('./pages/OrdersPage'));
-const OrderDetail = lazy(() => import('./pages/OrderDetail'));
-const InvoicesPage = lazy(() => import('./pages/InvoicesPage'));
-const InvoiceDetail = lazy(() => import('./pages/InvoiceDetail'));
-const OrderForm = lazy(() => import('./pages/OrderForm'));
-const InvoiceForm = lazy(() => import('./pages/InvoiceForm'));
-const EventsFeedPage = lazy(() => import('./pages/EventsFeedPage'));
-const SocialFeedPage = lazy(() => import('./pages/SocialFeedPage'));
-const ReleaseNotesPage = lazy(() => import('./pages/ReleaseNotesPage'));
-const FacebookPage = lazy(() => import('./pages/FacebookPage'));
-const FacebookLinkPhoneCleanupPage = lazy(() => import('./pages/FacebookLinkPhoneCleanupPage'));
-const LeadDetail = lazy(() => import('./pages/LeadDetail'));
-const CRMReports = lazy(() => import('./pages/CRMReports'));
-const CrmStaffLeadDealReport = lazy(() => import('./pages/CrmStaffLeadDealReport'));
-const CrmSlaWatchlistPage = lazy(() => import('./pages/CrmSlaWatchlistPage'));
-const CrmDealStageReportSettingsPage = lazy(() => import('./pages/CrmDealStageReportSettingsPage'));
-const CrmDeadlineSettingsPage = lazy(() => import('./pages/CrmDeadlineSettingsPage'));
-const ExecutiveKpiPage = lazy(() => import('./pages/ExecutiveKpiPage'));
-const KpiSalesAdminDashboard = lazy(() => import('./pages/KpiSalesAdminDashboard'));
-const KpiDealDashboard = lazy(() => import('./pages/KpiDealDashboard'));
-const KpiMonthlyScorecard = lazy(() => import('./pages/KpiMonthlyScorecard'));
-const KpiSettingsPage = lazy(() => import('./pages/KpiSettingsPage'));
-const KpiCompanyDashboard = lazy(() => import('./pages/KpiCompanyDashboard'));
-const KpiBVerifyPage = lazy(() => import('./pages/KpiBVerifyPage'));
-const KpiGuidePage = lazy(() => import('./pages/KpiGuidePage'));
-const PipelineSettingsPage = lazy(() => import('./pages/PipelineSettingsPage'));
-const CRMSourcesSettingsPage = lazy(() => import('./pages/CRMSourcesSettingsPage'));
-const CRMCustomersPage = lazy(() => import('./pages/CRMCustomersPage'));
-const CRMTasksPage = lazy(() => import('./pages/CRMTasksPage'));
-const CRMAssignmentsPage = lazy(() => import('./pages/CRMAssignmentsPage'));
-const CrmFollowUpCarePage = lazy(() => import('./pages/CrmFollowUpCarePage'));
-const CRMTemplatesPage = lazy(() => import('./pages/CRMTemplatesPage'));
-const AutoProjectConfigPage = lazy(() => import('./pages/AutoProjectConfigPage'));
-const StageGroupsPage = lazy(() => import('./pages/StageGroupsPage'));
-const TemplateSetDetailPage = lazy(() => import('./pages/TemplateSetDetailPage'));
-const DepartmentChat = lazy(() => import('./pages/DepartmentChat'));
-const PDFSettingsPage = lazy(() => import('./pages/PDFSettingsPage'));
-const MisaSettingsPage = lazy(() => import('./pages/MisaSettingsPage'));
-const ApiKeysSettingsPage = lazy(() => import('./pages/ApiKeysSettingsPage'));
-const CreateProject = lazy(() => import('./pages/CreateProject'));
-const PermissionsPage = lazy(() => import('./pages/PermissionsPage'));
-const EcosystemPermissionsPage = lazy(() => import('./pages/EcosystemPermissionsPage'));
-const WorkflowHubPage = lazy(() => import('./pages/WorkflowHubPage'));
-const ProjectWorkflowPage = lazy(() => import('./pages/ProjectWorkflowPage'));
-const DivisionDashboardPage = lazy(() => import('./pages/DivisionDashboardPage'));
-const GuidePage = lazy(() => import('./pages/GuidePage'));
-const CategoriesPage = lazy(() => import('./pages/CategoriesPage'));
-const PrivacyPage = lazy(() => import('./pages/PrivacyPage'));
-const VoiceRecordingsPage = lazy(() => import('./pages/VoiceRecordingsPage'));
-const MessengerHubPage = lazy(() => import('./pages/MessengerHubPage'));
-const ActiveUsersPage = lazy(() => import('./pages/ActiveUsersPage'));
-const RequestMonitorPage = lazy(() => import('./pages/RequestMonitorPage'));
-const TrashPage = lazy(() => import('./pages/TrashPage'));
-const ThemeSettingsPage = lazy(() => import('./pages/ThemeSettingsPage'));
-const PasswordSettingsPage = lazy(() => import('./pages/PasswordSettingsPage'));
+const Dashboard = lazyWithRetry(() => import('./pages/DashboardNew'));
+const MyTasks = lazyWithRetry(() => import('./pages/MyTasks'));
+const Projects = lazyWithRetry(() => import('./pages/Projects'));
+const ProjectDetail = lazyWithRetry(() => import('./pages/ProjectDetail'));
+const Tasks = lazyWithRetry(() => import('./pages/Tasks'));
+const StageView = lazyWithRetry(() => import('./pages/StageView'));
+const UsersPage = lazyWithRetry(() => import('./pages/UsersPage'));
+const CustomersPage = lazyWithRetry(() => import('./pages/CustomersPage'));
+const CustomerDetail = lazyWithRetry(() => import('./pages/CustomerDetail'));
+const ProductsPage = lazyWithRetry(() => import('./pages/ProductsPage'));
+const ProjectTemplatesPage = lazyWithRetry(() => import('./pages/ProjectTemplatesPage'));
+const PersonalTasks = lazyWithRetry(() => import('./pages/PersonalTasks'));
+const CompaniesPage = lazyWithRetry(() => import('./pages/CompaniesPage'));
+const CompanyCrmRegionsPage = lazyWithRetry(() => import('./pages/CompanyCrmRegionsPage'));
+const OrganizationQuickSetupPage = lazyWithRetry(() => import('./pages/OrganizationQuickSetupPage'));
+const DepartmentsPage = lazyWithRetry(() => import('./pages/DepartmentsPage'));
+const TeamsPage = lazyWithRetry(() => import('./pages/TeamsPage'));
+const WorkflowSettings = lazyWithRetry(() => import('./pages/WorkflowSettings'));
+const ApprovalRulesPage = lazyWithRetry(() => import('./pages/ApprovalRulesPage'));
+const EcosystemPage = lazyWithRetry(() => import('./pages/EcosystemPage'));
+const EcosystemModulesPage = lazyWithRetry(() => import('./pages/EcosystemModulesPage'));
+const EcosystemLevelsPage = lazyWithRetry(() => import('./pages/EcosystemLevelsPage'));
+const CRMDashboard = lazyWithRetry(() => import('./pages/CRMDashboard'));
+const LeadJourneyPage = lazyWithRetry(() => import('./pages/LeadJourneyPage'));
+const ProductionLayout = lazyWithRetry(() => import('./layouts/ProductionLayout'));
+const ProductionDashboard = lazyWithRetry(() => import('./pages/ProductionDashboard'));
+const ProductionDetail = lazyWithRetry(() => import('./pages/ProductionDetail'));
+const ProductionApprovalsPage = lazyWithRetry(() => import('./pages/ProductionApprovalsPage'));
+const ProductionPipelineSettingsPage = lazyWithRetry(() => import('./pages/ProductionPipelineSettingsPage'));
+const WorkshopTaskTemplatesPage = lazyWithRetry(() => import('./pages/WorkshopTaskTemplatesPage'));
+const ProductionHandoverSettingsPage = lazyWithRetry(() => import('./pages/ProductionHandoverSettingsPage'));
+const LogisticsDashboard = lazyWithRetry(() => import('./pages/LogisticsDashboard'));
+const LogisticsDetail = lazyWithRetry(() => import('./pages/LogisticsDetail'));
+const LogisticsPipelineSettingsPage = lazyWithRetry(() => import('./pages/LogisticsPipelineSettingsPage'));
+const LogisticsTaskTemplatesPage = lazyWithRetry(() => import('./pages/LogisticsTaskTemplatesPage'));
+const WorkshopTeamsPage = lazyWithRetry(() => import('./pages/WorkshopTeamsPage'));
+const QuotationsPage = lazyWithRetry(() => import('./pages/QuotationsPage'));
+const QuotationForm = lazyWithRetry(() => import('./pages/QuotationForm'));
+const OrdersPage = lazyWithRetry(() => import('./pages/OrdersPage'));
+const OrderDetail = lazyWithRetry(() => import('./pages/OrderDetail'));
+const InvoicesPage = lazyWithRetry(() => import('./pages/InvoicesPage'));
+const InvoiceDetail = lazyWithRetry(() => import('./pages/InvoiceDetail'));
+const OrderForm = lazyWithRetry(() => import('./pages/OrderForm'));
+const InvoiceForm = lazyWithRetry(() => import('./pages/InvoiceForm'));
+const EventsFeedPage = lazyWithRetry(() => import('./pages/EventsFeedPage'));
+const SocialFeedPage = lazyWithRetry(() => import('./pages/SocialFeedPage'));
+const ReleaseNotesPage = lazyWithRetry(() => import('./pages/ReleaseNotesPage'));
+const FacebookPage = lazyWithRetry(() => import('./pages/FacebookPage'));
+const FacebookLinkPhoneCleanupPage = lazyWithRetry(() => import('./pages/FacebookLinkPhoneCleanupPage'));
+const LeadDetail = lazyWithRetry(() => import('./pages/LeadDetail'));
+const CRMReports = lazyWithRetry(() => import('./pages/CRMReports'));
+const CrmStaffLeadDealReport = lazyWithRetry(() => import('./pages/CrmStaffLeadDealReport'));
+const CrmSlaWatchlistPage = lazyWithRetry(() => import('./pages/CrmSlaWatchlistPage'));
+const CrmDealStageReportSettingsPage = lazyWithRetry(() => import('./pages/CrmDealStageReportSettingsPage'));
+const CrmDeadlineSettingsPage = lazyWithRetry(() => import('./pages/CrmDeadlineSettingsPage'));
+const ExecutiveKpiPage = lazyWithRetry(() => import('./pages/ExecutiveKpiPage'));
+const KpiSalesAdminDashboard = lazyWithRetry(() => import('./pages/KpiSalesAdminDashboard'));
+const KpiDealDashboard = lazyWithRetry(() => import('./pages/KpiDealDashboard'));
+const KpiMonthlyScorecard = lazyWithRetry(() => import('./pages/KpiMonthlyScorecard'));
+const KpiSettingsPage = lazyWithRetry(() => import('./pages/KpiSettingsPage'));
+const KpiCompanyDashboard = lazyWithRetry(() => import('./pages/KpiCompanyDashboard'));
+const KpiBVerifyPage = lazyWithRetry(() => import('./pages/KpiBVerifyPage'));
+const KpiGuidePage = lazyWithRetry(() => import('./pages/KpiGuidePage'));
+const PipelineSettingsPage = lazyWithRetry(() => import('./pages/PipelineSettingsPage'));
+const CRMSourcesSettingsPage = lazyWithRetry(() => import('./pages/CRMSourcesSettingsPage'));
+const CRMCustomersPage = lazyWithRetry(() => import('./pages/CRMCustomersPage'));
+const CRMTasksPage = lazyWithRetry(() => import('./pages/CRMTasksPage'));
+const CRMAssignmentsPage = lazyWithRetry(() => import('./pages/CRMAssignmentsPage'));
+const CrmFollowUpCarePage = lazyWithRetry(() => import('./pages/CrmFollowUpCarePage'));
+const CRMTemplatesPage = lazyWithRetry(() => import('./pages/CRMTemplatesPage'));
+const AutoProjectConfigPage = lazyWithRetry(() => import('./pages/AutoProjectConfigPage'));
+const StageGroupsPage = lazyWithRetry(() => import('./pages/StageGroupsPage'));
+const TemplateSetDetailPage = lazyWithRetry(() => import('./pages/TemplateSetDetailPage'));
+const DepartmentChat = lazyWithRetry(() => import('./pages/DepartmentChat'));
+const PDFSettingsPage = lazyWithRetry(() => import('./pages/PDFSettingsPage'));
+const MisaSettingsPage = lazyWithRetry(() => import('./pages/MisaSettingsPage'));
+const ApiKeysSettingsPage = lazyWithRetry(() => import('./pages/ApiKeysSettingsPage'));
+const CreateProject = lazyWithRetry(() => import('./pages/CreateProject'));
+const PermissionsPage = lazyWithRetry(() => import('./pages/PermissionsPage'));
+const EcosystemPermissionsPage = lazyWithRetry(() => import('./pages/EcosystemPermissionsPage'));
+const WorkflowHubPage = lazyWithRetry(() => import('./pages/WorkflowHubPage'));
+const ProjectWorkflowPage = lazyWithRetry(() => import('./pages/ProjectWorkflowPage'));
+const DivisionDashboardPage = lazyWithRetry(() => import('./pages/DivisionDashboardPage'));
+const GuidePage = lazyWithRetry(() => import('./pages/GuidePage'));
+const CategoriesPage = lazyWithRetry(() => import('./pages/CategoriesPage'));
+const PrivacyPage = lazyWithRetry(() => import('./pages/PrivacyPage'));
+const VoiceRecordingsPage = lazyWithRetry(() => import('./pages/VoiceRecordingsPage'));
+const MessengerHubPage = lazyWithRetry(() => import('./pages/MessengerHubPage'));
+const ActiveUsersPage = lazyWithRetry(() => import('./pages/ActiveUsersPage'));
+const RequestMonitorPage = lazyWithRetry(() => import('./pages/RequestMonitorPage'));
+const TrashPage = lazyWithRetry(() => import('./pages/TrashPage'));
+const ThemeSettingsPage = lazyWithRetry(() => import('./pages/ThemeSettingsPage'));
+const PasswordSettingsPage = lazyWithRetry(() => import('./pages/PasswordSettingsPage'));
 
 import { Settings } from 'lucide-react';
 
@@ -279,11 +284,17 @@ function DefaultRedirect() {
   return <Navigate to={pinned} replace />;
 }
 
+function ChunkReloadInit() {
+  useEffect(() => { clearChunkReloadFlag(); }, []);
+  return null;
+}
+
 export default function App() {
   return (
     <ErrorBoundary>
     <AuthProvider>
       <BrowserRouter>
+        <ChunkReloadInit />
         <MessengerDockProvider>
         <ThemeProvider>
         
