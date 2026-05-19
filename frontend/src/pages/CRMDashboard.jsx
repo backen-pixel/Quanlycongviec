@@ -2763,7 +2763,8 @@ export default function CRMDashboard() {
     return weeks === 1 ? '1 tuần' : `${weeks} tuần`;
   };
 
-  const compactLeadUi = pipelineType === 'lead';
+  // UI compact dùng chung cho cả Lead lẫn Deal — kích thước header/control giống nhau giữa 2 tab.
+  const compactLeadUi = true;
   const ctrlH = compactLeadUi ? 'h-9' : 'h-10';
   const ctrlTxt = compactLeadUi ? 'text-xs' : 'text-sm';
 
@@ -2853,18 +2854,19 @@ export default function CRMDashboard() {
         </div>
       </div>
 
-      {/* Pill-style Tab Switcher + Pin */}
-      <div className={`flex items-center ${compactLeadUi ? 'gap-2' : 'gap-3'}`}>
-        <div data-tour="pipeline-tabs" className={`inline-flex gap-1 bg-gray-200 rounded-full ${compactLeadUi ? 'p-0.5' : 'p-1'}`}>
+      {/* Pill-style Tab Switcher + Pin — kích thước cố định, không nhảy cỡ theo tab đang active.
+          min-width để 2 nút Lead/Deal luôn cân nhau dù số lượng (Leads/Deals) lệch nhau. */}
+      <div className="flex items-center gap-2">
+        <div data-tour="pipeline-tabs" className="inline-flex gap-1 bg-gray-200 rounded-full p-0.5">
           <button
             onClick={() => switchTab('lead')}
-            className={`rounded-full font-medium transition-all duration-200 flex items-center gap-1.5 ${compactLeadUi ? 'px-3 py-1.5 text-xs' : 'px-6 py-2 text-sm'} ${pipelineType === 'lead' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+            className={`rounded-full font-medium transition-all duration-200 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs min-w-[7.5rem] ${pipelineType === 'lead' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
           >
             💼 Leads ({leads.length}) {pinnedTab === 'lead' && <Pin className="h-3.5 w-3.5 text-amber-500 rotate-45" />}
           </button>
           <button
             onClick={() => switchTab('deal')}
-            className={`rounded-full font-medium transition-all duration-200 flex items-center gap-1.5 ${compactLeadUi ? 'px-3 py-1.5 text-xs' : 'px-6 py-2 text-sm'} ${pipelineType === 'deal' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+            className={`rounded-full font-medium transition-all duration-200 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs min-w-[7.5rem] ${pipelineType === 'deal' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
           >
             🎯 Deals ({deals.length}) {pinnedTab === 'deal' && <Pin className="h-3.5 w-3.5 text-amber-500 rotate-45" />}
           </button>
@@ -3604,12 +3606,13 @@ export default function CRMDashboard() {
               mergeSelectedIds={manualMergeIds}
               onToggleMergeSelect={toggleManualMergeSelect}
               onToggleSelectAllInColumn={toggleSelectAllInColumn}
-              compact={pipelineType === 'lead'}
+              compact
               kpiLedgerPeriodStart={kpis?.kpi_ledger_period_start || null}
               onOpenKanbanComment={(it) => {
                 setKanbanCommentBody('');
                 setKanbanCommentItem(it);
               }}
+              remeasureToken={showAdvSearch ? 1 : 0}
             />
             {/* Nút Tải thêm 1000 */}
             {kanbanLoadLimit !== 'all' && (() => {
@@ -4659,22 +4662,6 @@ function KanbanStageCard({
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
-  const [columnMaxH, setColumnMaxH] = useState('70vh');
-
-  // Đo vị trí thực tế của container → tính maxHeight responsive
-  useEffect(() => {
-    const measure = () => {
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        // Chiều cao viewport trừ vị trí top của container, trừ padding bottom (40px)
-        const available = window.innerHeight - rect.top - 20;
-        setColumnMaxH(`${Math.max(260, available)}px`);
-      }
-    };
-    measure();
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, []);
 
   const stageColor = stage.color || '#e5e7eb';
   const columnItemIds = (items || []).map((i) => i.id);
@@ -4712,20 +4699,19 @@ function KanbanStageCard({
       onDragOver={handleColumnDragOver}
       onDragLeave={handleColumnDragLeave}
       onDrop={handleColumnDrop}
-      className={`flex-shrink-0 rounded-lg overflow-hidden transition-all duration-200 ${
+      className={`flex flex-col flex-shrink-0 rounded-lg transition-all duration-200 ${
         compact ? 'w-[17rem] max-[380px]:w-[15.5rem]' : 'w-80 max-[420px]:w-[17rem]'
       } ${isOverColumn ? 'ring-2 ring-blue-500 ring-dashed' : ''}`}
     >
-      {/* Colored Header Bar */}
-      <div
-        className="h-1.5 w-full"
-        style={{ backgroundColor: stageColor }}
-      />
-
-      {/* Stage Header */}
-      <div className={`bg-white border border-gray-200 border-t-0 transition-all ${
-        compact ? 'p-2.5' : 'p-4'
-      } ${isOverColumn ? 'bg-blue-50' : ''}`}>
+      {/* Sticky header: thanh màu + tên cột — luôn dính trên cùng khi kéo Kanban */}
+      <div className="sticky top-0 z-20 overflow-hidden rounded-t-lg">
+        <div
+          className="h-1.5 w-full"
+          style={{ backgroundColor: stageColor }}
+        />
+        <div className={`bg-white border border-gray-200 border-t-0 transition-all ${
+          compact ? 'p-2.5' : 'p-4'
+        } ${isOverColumn ? 'bg-blue-50' : ''}`}>
         <div className={`flex items-start justify-between gap-2 ${compact ? 'mb-1' : 'mb-2'}`}>
           <div className="flex flex-col gap-0.5 min-w-0 flex-1">
             <div className="flex items-center gap-1.5 min-w-0">
@@ -4762,15 +4748,17 @@ function KanbanStageCard({
         <p className={compact ? 'text-[10px] text-gray-500' : 'text-xs text-gray-500'}>
           Giá trị: {formatVND(items.reduce((sum, item) => sum + (item.estimated_value || 0), 0))}
         </p>
+        </div>
       </div>
 
-      {/* Cards Container - responsive height theo màn hình */}
+      {/* Cards Container — cột tự cao theo nội dung; cuộn dọc đồng bộ ở container Kanban cha.
+          flex-1 để khung cột vẫn trải dài tới đáy ngay cả khi không còn thẻ. */}
       <div
         ref={containerRef}
-        className={`bg-gray-50 border border-gray-200 border-t-0 overflow-y-auto transition-all ${
+        className={`flex-1 bg-gray-50 border border-gray-200 border-t-0 rounded-b-lg transition-all ${
           compact ? 'p-2 space-y-2' : 'p-3 space-y-3'
         } ${isOverColumn ? 'bg-blue-50' : ''}`}
-        style={{ maxHeight: columnMaxH, minHeight: compact ? '160px' : '180px' }}
+        style={{ minHeight: compact ? '160px' : '180px' }}
       >
         {items.length === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-400">
@@ -5161,6 +5149,7 @@ function KanbanView({
   compact,
   kpiLedgerPeriodStart,
   onOpenKanbanComment,
+  remeasureToken,
 }) {
   const kanbanHScrollRef = useRef(null);
   const kanbanWrapRef = useRef(null);
@@ -5168,6 +5157,27 @@ function KanbanView({
   const scrollRafRef = useRef(0);
   const lastPointerRef = useRef({ x: 0, y: 0 });
   const [isDraggingCard, setIsDraggingCard] = useState(false);
+  const [scrollMaxH, setScrollMaxH] = useState('70vh');
+
+  // Đo chiều cao khả dụng cho vùng cuộn Kanban (window - top - 12).
+  // Re-measure khi remeasureToken đổi (vd. ẩn/hiện bộ lọc nâng cao) để vùng cuộn tự co/giãn.
+  useEffect(() => {
+    const measure = () => {
+      const el = kanbanHScrollRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const avail = window.innerHeight - rect.top - 12;
+      setScrollMaxH(`${Math.max(360, avail)}px`);
+    };
+    const raf = requestAnimationFrame(measure);
+    const t = setTimeout(measure, 120);
+    window.addEventListener('resize', measure);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(t);
+      window.removeEventListener('resize', measure);
+    };
+  }, [remeasureToken]);
 
   useEffect(() => {
     const isOurCard = (e) => {
@@ -5312,8 +5322,12 @@ function KanbanView({
         onClick={() => nudge('right')}
       />
 
-      <div ref={kanbanHScrollRef} className="overflow-x-auto pb-4 [scrollbar-gutter:stable]">
-        <div className={`flex min-w-max ${compact ? 'gap-2' : 'gap-3'}`}>
+      <div
+        ref={kanbanHScrollRef}
+        className="overflow-auto pb-4 [scrollbar-gutter:stable]"
+        style={{ maxHeight: scrollMaxH }}
+      >
+        <div className={`flex min-w-max items-stretch ${compact ? 'gap-2' : 'gap-3'}`}>
           {pipeline.map((stage) => (
             <KanbanStageCard
               key={stage.id}

@@ -114,6 +114,7 @@ const PipelineSettingsPage = lazy(() => import('./pages/PipelineSettingsPage'));
 const CRMSourcesSettingsPage = lazy(() => import('./pages/CRMSourcesSettingsPage'));
 const CRMCustomersPage = lazy(() => import('./pages/CRMCustomersPage'));
 const CRMTasksPage = lazy(() => import('./pages/CRMTasksPage'));
+const CRMAssignmentsPage = lazy(() => import('./pages/CRMAssignmentsPage'));
 const CrmFollowUpCarePage = lazy(() => import('./pages/CrmFollowUpCarePage'));
 const CRMTemplatesPage = lazy(() => import('./pages/CRMTemplatesPage'));
 const AutoProjectConfigPage = lazy(() => import('./pages/AutoProjectConfigPage'));
@@ -372,6 +373,7 @@ export default function App() {
             <Route path="/admin/trash" element={<RequireCrmElevated><TrashPage /></RequireCrmElevated>} />
             <Route path="/crm/customers" element={<CRMCustomersPage />} />
             <Route path="/crm/tasks" element={<CRMTasksPage />} />
+            <Route path="/crm/assignments" element={<CRMAssignmentsPage />} />
             <Route path="/crm/follow-up-care" element={<CrmFollowUpCarePage />} />
             <Route path="/crm/task-templates" element={<RequireCrmElevated><CRMTemplatesPage /></RequireCrmElevated>} />
             <Route path="/crm/auto-project-config" element={<RequireCrmElevated><AutoProjectConfigPage /></RequireCrmElevated>} />

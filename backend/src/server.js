@@ -179,6 +179,7 @@ app.use('/api/permissions', require('./routes/permissions'));
 app.use('/api/crm/executive', require('./routes/executiveKpi'));
 app.use('/api/crm/deal-performance', require('./routes/dealScores'));
 app.use('/api/kpi', require('./routes/kpi'));
+app.use('/api/crm/assignments', require('./routes/crmAssignments'));
 app.use('/api/crm', require('./routes/crm'));
 app.use('/api/trash', require('./routes/trash'));
 app.use('/api/messenger', require('./routes/messengerGroups'));
@@ -311,6 +312,13 @@ server.listen(config.port, () => {
     require('./jobs/aiDeadlineReminder').start(io);
   } catch (e) {
     console.warn('[ai-deadline] Failed to start:', e.message);
+  }
+
+  // Cron nhắc hạn "Giao việc CRM" (mỗi 30') — disable: CRM_ASSIGNMENT_REMINDER_DISABLED=1
+  try {
+    require('./jobs/crmAssignmentDeadlineReminder').start(io);
+  } catch (e) {
+    console.warn('[crm-assignment-reminder] Failed to start:', e.message);
   }
 
   // ─── DEADLINE CHECKER — every hour (defer 60s to not impact startup) ──

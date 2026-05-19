@@ -14,6 +14,7 @@ import {
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { isCrmOnlyModuleAccess } from '../lib/moduleAccess';
 import { useReleaseNotesUnread } from '../hooks/useReleaseNotesUnread';
+import { useCrmAssignmentsUnread } from '../hooks/useCrmAssignmentsUnread';
 
 // Reorganized menu structure - 4 groups
 const MENU_GROUPS = [
@@ -109,6 +110,7 @@ const CRM_MENU_BOTTOM_GROUPS = [
     items: [
       { to: '/crm/follow-up-care', icon: CalendarClock, label: 'CSKH theo hạn' },
       { to: '/crm/tasks', icon: CheckSquare, label: 'Công việc CRM' },
+      { to: '/crm/assignments', icon: ClipboardList, label: 'Giao việc CRM' },
       { to: '/crm/lead-journey', icon: ArrowRightLeft, label: 'Hành trình Lead' },
     ],
   },
@@ -285,7 +287,7 @@ function SideLink({ to, icon: Icon, label, collapsed, end, badge }) {
   );
 }
 
-function MenuGroup({ group, collapsed, isAdmin, isExecutive, canAccessModule, userRole, updatesUnread = 0 }) {
+function MenuGroup({ group, collapsed, isAdmin, isExecutive, canAccessModule, userRole, updatesUnread = 0, assignmentsUnread = 0 }) {
   const [open, setOpen] = useState(true);
 
   if (group.moduleKey && canAccessModule && !canAccessModule(group.moduleKey)) return null;
@@ -328,7 +330,11 @@ function MenuGroup({ group, collapsed, isAdmin, isExecutive, canAccessModule, us
               key={`${group.id}-${item.to}-${item.label}`}
               {...item}
               collapsed={collapsed}
-              badge={item.to === '/updates' ? updatesUnread : 0}
+              badge={
+                item.to === '/updates' ? updatesUnread
+                : item.to === '/crm/assignments' ? assignmentsUnread
+                : 0
+              }
             />
           ))}
         </nav>
@@ -339,6 +345,7 @@ function MenuGroup({ group, collapsed, isAdmin, isExecutive, canAccessModule, us
 
 export default function Sidebar() {
   const { total: updatesUnread } = useReleaseNotesUnread();
+  const { unread: assignmentsUnread } = useCrmAssignmentsUnread();
   const [collapsed, setCollapsed] = useState(false);
   const [showAppSwitcher, setShowAppSwitcher] = useState(false);
   const [pinnedModule, setPinnedModule] = useState(() => localStorage.getItem('pinned_module') || '/crm');
@@ -586,6 +593,7 @@ export default function Sidebar() {
                 canAccessModule={canAccessModule}
                 userRole={user?.role}
                 updatesUnread={updatesUnread}
+                assignmentsUnread={assignmentsUnread}
               />
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto border-t border-white/10 mt-1 pt-2">
@@ -602,6 +610,7 @@ export default function Sidebar() {
                     canAccessModule={canAccessModule}
                     userRole={user?.role}
                     updatesUnread={updatesUnread}
+                    assignmentsUnread={assignmentsUnread}
                   />
                 );
               })}
@@ -620,6 +629,7 @@ export default function Sidebar() {
                 canAccessModule={canAccessModule}
                 userRole={user?.role}
                 updatesUnread={updatesUnread}
+                assignmentsUnread={assignmentsUnread}
               />
             );
           })

@@ -53,6 +53,10 @@ const ICON_MAP = {
   payment_received: CheckSquare,
   crm_task_assigned: CheckSquare,
   crm_task_completed: CheckSquare,
+  crm_assignment_assigned: CheckSquare,
+  crm_assignment_comment: MessageSquare,
+  crm_assignment_due_soon: Clock,
+  crm_assignment_overdue: AlertTriangle,
   document_uploaded: Paperclip,
   project_created: FolderKanban,
   workshop_new_deal: Factory,
@@ -429,6 +433,8 @@ export default function NotificationCenter({ socket }) {
             } else if (notif.entity_type === 'crm_task') {
               const lid = notif.metadata?.lead_id;
               navigate(lid ? `/crm/leads/${lid}?tab=tasks` : '/crm/tasks');
+            } else if (notif.entity_type === 'crm_assignment') {
+              navigate('/crm/assignments');
             } else if (notif.entity_type === 'event') {
               navigate(`/crm/events`);
             } else if (notif.entity_type === 'release_note') {
@@ -661,6 +667,8 @@ export default function NotificationCenter({ socket }) {
                       } else if (n.entity_type === 'crm_task') {
                         const lid = n.metadata?.lead_id;
                         navigate(lid ? `/crm/leads/${lid}?tab=tasks` : '/crm/tasks');
+                      } else if (n.entity_type === 'crm_assignment') {
+                        navigate('/crm/assignments');
                       } else if (n.entity_type === 'event') {
                         navigate(`/crm/events`);
                       } else if (n.entity_type === 'release_note') {
