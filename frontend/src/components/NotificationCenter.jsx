@@ -4,7 +4,7 @@ import api from '../lib/api';
 import { alertIncomingNotification, cancelNotificationSpeech } from '../lib/notificationAlert';
 import { setNotificationPrefsCache, getNotificationPrefsCache, isNotificationTypeEnabled } from '../lib/notificationPrefsCache';
 import { isExpiryDeadlineNotificationType } from '../lib/notificationOperationalFilter';
-import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw, Settings, Users, Factory, Calendar, CalendarClock, CheckCircle2, Sparkles } from 'lucide-react';
+import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw, Settings, Users, Factory, Calendar, CalendarClock, CheckCircle2, Sparkles, ClipboardList } from 'lucide-react';
 import { formatDateTime, getInitials, avatarColor } from '../lib/utils';
 import NotificationToast from './NotificationToast';
 import NotificationSettings from './NotificationSettings';
@@ -76,6 +76,18 @@ const ICON_MAP = {
 /** Khớp backend `dashboard.js` — chỉ tin nhắn CRM/Messenger, không trộn deadline/task */
 const CHAT_NOTIFICATION_TYPES = ['lead_chat', 'messenger_chat'];
 const EVENT_NOTIFICATION_TYPES = ['event_created', 'event_completed'];
+const ASSIGNMENT_NOTIFICATION_TYPES = [
+  'crm_assignment_assigned',
+  'crm_assignment_comment',
+  'crm_assignment_due_soon',
+  'crm_assignment_overdue',
+];
+
+function isAssignmentNotification(n) {
+  if (!n) return false;
+  if (n.entity_type === 'crm_assignment') return true;
+  return ASSIGNMENT_NOTIFICATION_TYPES.includes(String(n?.type || ''));
+}
 
 const COLOR_MAP = {
   task_assigned: 'bg-blue-100 text-blue-600',
@@ -118,6 +130,10 @@ const COLOR_MAP = {
   event_created: 'bg-violet-100 text-violet-600',
   event_completed: 'bg-emerald-100 text-emerald-600',
   ai_crm_deadline_digest: 'bg-fuchsia-100 text-fuchsia-700',
+  crm_assignment_assigned: 'bg-indigo-100 text-indigo-700',
+  crm_assignment_comment: 'bg-purple-100 text-purple-600',
+  crm_assignment_due_soon: 'bg-amber-100 text-amber-700',
+  crm_assignment_overdue: 'bg-red-100 text-red-600',
 };
 
 const MODULE_FILTER_OPTIONS = [
@@ -157,11 +173,15 @@ export default function NotificationCenter({ socket }) {
   const [unreadChat, setUnreadChat] = useState(0);
   const [unreadDeadlines, setUnreadDeadlines] = useState(0);
   const [unreadEvents, setUnreadEvents] = useState(0);
+  const [unreadAssignments, setUnreadAssignments] = useState(0);
   const [cskhNotifs, setCskhNotifs] = useState([]);
   const [cskhCount, setCskhCount] = useState(0);
   const [cskhLoading, setCskhLoading] = useState(false);
   const [dismissingKeys, setDismissingKeys] = useState(new Set());
-  const bellBadgeCount = useMemo(() => unreadActivity + unreadDeadlines + unreadEvents + cskhCount, [unreadActivity, unreadDeadlines, unreadEvents, cskhCount]);
+  const bellBadgeCount = useMemo(
+    () => unreadActivity + unreadDeadlines + unreadEvents + unreadAssignments + cskhCount,
+    [unreadActivity, unreadDeadlines, unreadEvents, unreadAssignments, cskhCount],
+  );
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState('activity');
   const [onlyUnread, setOnlyUnread] = useState(false);
@@ -242,7 +262,10 @@ export default function NotificationCenter({ socket }) {
         });
         setNotifications(data.notifications || []);
       } else {
-        const channel = tab === 'events' ? 'events' : tab === 'messages' ? 'messages' : 'activity';
+        const channel = tab === 'events' ? 'events'
+          : tab === 'messages' ? 'messages'
+            : tab === 'assignments' ? 'assignments'
+              : 'activity';
         const params = { channel, limit: 80 };
         if (onlyUnread) params.unread = 'true';
         const { data } = await api.get('/dashboard/notifications', { params });
@@ -259,10 +282,12 @@ export default function NotificationCenter({ socket }) {
       const c = data.stats?.unread_chat ?? 0;
       const d = data.stats?.unread_deadlines ?? 0;
       const ev = data.stats?.unread_events ?? 0;
+      const asn = data.stats?.unread_assignments ?? 0;
       setUnreadActivity(a);
       setUnreadChat(c);
       setUnreadDeadlines(d);
       setUnreadEvents(ev);
+      setUnreadAssignments(asn);
     } catch { }
     try {
       const { data: cskhData } = await api.get('/crm/followup-care/notifications');
@@ -326,12 +351,16 @@ export default function NotificationCenter({ socket }) {
 
       const isChat = CHAT_NOTIFICATION_TYPES.includes(notif?.type);
       const isEvent = EVENT_NOTIFICATION_TYPES.includes(notif?.type);
+      const isAssign = isAssignmentNotification(notif);
       if (isChat) {
         setUnreadChat((c) => c + 1);
         setNotifications((prev) => (tab === 'messages' ? [notif, ...prev] : prev));
       } else if (isEvent) {
         setUnreadEvents((c) => c + 1);
         setNotifications((prev) => (tab === 'events' ? [notif, ...prev] : prev));
+      } else if (isAssign) {
+        setUnreadAssignments((c) => c + 1);
+        setNotifications((prev) => (tab === 'assignments' ? [notif, ...prev] : prev));
       } else {
         setUnreadActivity((c) => c + 1);
         setNotifications((prev) => (tab === 'activity' ? [notif, ...prev] : prev));
@@ -370,7 +399,11 @@ export default function NotificationCenter({ socket }) {
 
   const markAllRead = async () => {
     try {
-      const channel = tab === 'deadlines' ? 'deadlines' : tab === 'events' ? 'events' : tab === 'messages' ? 'messages' : 'activity';
+      const channel = tab === 'deadlines' ? 'deadlines'
+        : tab === 'events' ? 'events'
+          : tab === 'messages' ? 'messages'
+            : tab === 'assignments' ? 'assignments'
+              : 'activity';
       await api.put('/dashboard/notifications/read-all', {}, { params: { channel } });
       await loadCount();
       setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
@@ -434,7 +467,7 @@ export default function NotificationCenter({ socket }) {
               const lid = notif.metadata?.lead_id;
               navigate(lid ? `/crm/leads/${lid}?tab=tasks` : '/crm/tasks');
             } else if (notif.entity_type === 'crm_assignment') {
-              navigate('/crm/assignments');
+              navigate(notif.entity_id ? `/crm/assignments?open=${notif.entity_id}` : '/crm/assignments');
             } else if (notif.entity_type === 'event') {
               navigate(`/crm/events`);
             } else if (notif.entity_type === 'release_note') {
@@ -467,7 +500,11 @@ export default function NotificationCenter({ socket }) {
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
             <h3 className="text-sm font-semibold text-gray-900">Thông báo</h3>
             <div className="flex items-center gap-2">
-              {(tab === 'activity' ? unreadActivity : tab === 'events' ? unreadEvents : tab === 'messages' ? unreadChat : unreadDeadlines) > 0 && (
+              {(tab === 'activity' ? unreadActivity
+                : tab === 'events' ? unreadEvents
+                  : tab === 'messages' ? unreadChat
+                    : tab === 'assignments' ? unreadAssignments
+                      : unreadDeadlines) > 0 && (
                 <button onClick={markAllRead} className="text-xs text-blue-600 hover:text-blue-700 font-medium cursor-pointer flex items-center gap-1">
                   <CheckCheck className="h-3.5 w-3.5" /> Đọc tất cả
                 </button>
@@ -485,30 +522,34 @@ export default function NotificationCenter({ socket }) {
             </div>
           </div>
 
-          <div className="flex border-b border-gray-100">
+          <div className="flex border-b border-gray-100 overflow-x-auto">
             <button type="button" onClick={() => { setTab('activity'); setDeadlinesModule('all'); }}
-              className={`flex-1 py-2 text-xs font-medium text-center cursor-pointer ${tab === 'activity' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
+              className={`shrink-0 px-2 py-2 text-[10px] font-medium text-center cursor-pointer whitespace-nowrap ${tab === 'activity' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
               Hoạt động{unreadActivity > 0 ? ` (${unreadActivity})` : ''}
             </button>
+            <button type="button" onClick={() => { setTab('assignments'); setDeadlinesModule('all'); }}
+              className={`shrink-0 px-2 py-2 text-[10px] font-medium text-center cursor-pointer whitespace-nowrap ${tab === 'assignments' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-500'}`}>
+              Giao việc{unreadAssignments > 0 ? ` (${unreadAssignments})` : ''}
+            </button>
             <button type="button" onClick={() => { setTab('events'); setDeadlinesModule('all'); }}
-              className={`flex-1 py-2 text-xs font-medium text-center cursor-pointer ${tab === 'events' ? 'text-violet-600 border-b-2 border-violet-600' : 'text-gray-500'}`}>
+              className={`shrink-0 px-2 py-2 text-[10px] font-medium text-center cursor-pointer whitespace-nowrap ${tab === 'events' ? 'text-violet-600 border-b-2 border-violet-600' : 'text-gray-500'}`}>
               Sự kiện{unreadEvents > 0 ? ` (${unreadEvents})` : ''}
             </button>
             <button type="button" onClick={() => { setTab('messages'); setDeadlinesModule('all'); }}
-              className={`flex-1 py-2 text-xs font-medium text-center cursor-pointer ${tab === 'messages' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
+              className={`shrink-0 px-2 py-2 text-[10px] font-medium text-center cursor-pointer whitespace-nowrap ${tab === 'messages' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
               Tin nhắn{unreadChat > 0 ? ` (${unreadChat})` : ''}
             </button>
             <button type="button" onClick={() => setTab('deadlines')}
-              className={`flex-1 py-2 text-xs font-medium text-center cursor-pointer ${tab === 'deadlines' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
+              className={`shrink-0 px-2 py-2 text-[10px] font-medium text-center cursor-pointer whitespace-nowrap ${tab === 'deadlines' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
               Nhắc hạn{unreadDeadlines > 0 ? ` (${unreadDeadlines})` : ''}
             </button>
             <button type="button" onClick={() => setTab('cskh')}
-              className={`flex-1 py-2 text-xs font-medium text-center cursor-pointer ${tab === 'cskh' ? 'text-emerald-600 border-b-2 border-emerald-600' : 'text-gray-500'}`}>
+              className={`shrink-0 px-2 py-2 text-[10px] font-medium text-center cursor-pointer whitespace-nowrap ${tab === 'cskh' ? 'text-emerald-600 border-b-2 border-emerald-600' : 'text-gray-500'}`}>
               CSKH{cskhCount > 0 ? ` (${cskhCount})` : ''}
             </button>
           </div>
 
-          {(tab === 'activity' || tab === 'events' || tab === 'messages') && (
+          {(tab === 'activity' || tab === 'events' || tab === 'messages' || tab === 'assignments') && (
             <div className="flex items-center gap-2 px-3 py-1.5 border-b border-gray-50 bg-gray-50/50">
               <label className="flex items-center gap-1.5 text-[11px] text-gray-600 cursor-pointer select-none">
                 <input
@@ -629,17 +670,20 @@ export default function NotificationCenter({ socket }) {
                     ? 'Không có tin nhắn'
                     : tab === 'events'
                       ? (onlyUnread ? 'Không có sự kiện chưa đọc' : 'Chưa có thông báo sự kiện')
-                      : tab === 'deadlines'
-                        ? 'Không có thông báo nhắc hạn'
-                        : onlyUnread
-                          ? 'Không có thông báo hoạt động chưa đọc'
-                          : 'Chưa có thông báo hoạt động'}
+                      : tab === 'assignments'
+                        ? (onlyUnread ? 'Không có giao việc chưa đọc' : 'Chưa có thông báo giao việc')
+                        : tab === 'deadlines'
+                          ? 'Không có thông báo nhắc hạn'
+                          : onlyUnread
+                            ? 'Không có thông báo hoạt động chưa đọc'
+                            : 'Chưa có thông báo hoạt động'}
                 </p>
               </div>
             ) : (
               notifications.map(n => {
                 const isApproval = n.metadata?.type === 'approval_request';
-                const Icon = isApproval ? FolderKanban : (ICON_MAP[n.type] || Bell);
+                const isAssignNotif = isAssignmentNotification(n);
+                const Icon = isApproval ? FolderKanban : (isAssignNotif ? ClipboardList : (ICON_MAP[n.type] || Bell));
                 const color = isApproval ? 'bg-orange-100 text-orange-600' : (COLOR_MAP[n.type] || 'bg-gray-100 text-gray-600');
                 const approvalStatus = n.metadata?.status; // pending | approved | rejected
 
@@ -668,7 +712,7 @@ export default function NotificationCenter({ socket }) {
                         const lid = n.metadata?.lead_id;
                         navigate(lid ? `/crm/leads/${lid}?tab=tasks` : '/crm/tasks');
                       } else if (n.entity_type === 'crm_assignment') {
-                        navigate('/crm/assignments');
+                        navigate(n.entity_id ? `/crm/assignments?open=${n.entity_id}` : '/crm/assignments');
                       } else if (n.entity_type === 'event') {
                         navigate(`/crm/events`);
                       } else if (n.entity_type === 'release_note') {
