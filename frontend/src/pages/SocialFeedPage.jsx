@@ -1248,6 +1248,15 @@ function PostCard({
           <MessageCircle className="w-5 h-5" />
           Bình luận
         </button>
+        <button
+          type="button"
+          onClick={() => onShare?.(post)}
+          className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-medium border-l border-gray-100 text-gray-600 hover:bg-gray-50"
+          title="Chia sẻ hoặc sao chép liên kết bài viết"
+        >
+          <Share2 className="w-5 h-5" />
+          Chia sẻ
+        </button>
       </div>
 
       {commentsOpen && (
@@ -1694,13 +1703,25 @@ export default function SocialFeedPage() {
     }
   };
 
-  const handleSharePost = (post) => {
+  const handleSharePost = async (post) => {
     const url = `${window.location.origin}/social?post=${post.id}`;
-    navigator.clipboard.writeText(url).then(() => {
+    const snippet = String(post.body || '').trim().slice(0, 120);
+    const shareTitle = snippet || 'Bài viết bảng tin nội bộ';
+    try {
+      if (typeof navigator.share === 'function') {
+        await navigator.share({ title: shareTitle, text: snippet || shareTitle, url });
+        setToast('Đã chia sẻ bài viết.');
+        return;
+      }
+    } catch (e) {
+      if (e?.name === 'AbortError') return;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
       setToast('Đã sao chép liên kết bài viết.');
-    }).catch(() => {
+    } catch {
       setToast(url);
-    });
+    }
   };
 
   const handleHideCompany = async (postId) => {
