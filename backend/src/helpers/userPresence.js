@@ -69,9 +69,74 @@ async function getPresenceForUserIds(userIds) {
   return presence;
 }
 
+/**
+ * Danh sách NV (theo công ty / phòng ban) kèm online + last_ping_at.
+ */
+async function listUsersWithActivity({ companyId, departmentId, search, onlineOnly } = {}) {
+  const userSelect =
+    'id, full_name, email, phone, avatar, role, position, department_id, department:departments!users_department_id_fkey(id,name,color)';
+
+  let users = [];
+
+  if (departmentId) {
+    let q = supabase.from('users').select(userSelect).eq('department_id', departmentId).neq('is_active', false);
+    if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
+    const { data, error } = await q.order('full_name').limit(500);
+    if (error) throw error;
+    users = data || [];
+  } else if (companyId) {
+    const { data: depts } = await supabase
+      .from('departments')
+      .select('id')
+      .eq('company_id', companyId)
+      .eq('is_active', true);
+    const deptIds = (depts || []).map((d) => d.id);
+    if (!deptIds.length) return { users: [], stats: { online: 0, total: 0 } };
+
+    let q = supabase.from('users').select(userSelect).in('department_id', deptIds).neq('is_active', false);
+    if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
+    const { data, error } = await q.order('full_name').limit(500);
+    if (error) throw error;
+    users = data || [];
+  } else {
+    let q = supabase.from('users').select(userSelect).neq('is_active', false);
+    if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
+    const { data, error } = await q.order('full_name').limit(500);
+    if (error) throw error;
+    users = data || [];
+  }
+
+  const presence = await getPresenceForUserIds(users.map((u) => u.id));
+  const enriched = users.map((u) => {
+    const id = String(u.id);
+    const pres = presence[id] || { online: false, last_ping_at: null };
+    return {
+      ...u,
+      online: !!pres.online,
+      last_ping_at: pres.last_ping_at,
+    };
+  });
+
+  const stats = {
+    online: enriched.filter((u) => u.online).length,
+    total: enriched.length,
+  };
+
+  let result = enriched;
+  if (onlineOnly) result = enriched.filter((u) => u.online);
+
+  result.sort((a, b) => {
+    if (a.online !== b.online) return a.online ? -1 : 1;
+    return String(a.full_name || a.email || '').localeCompare(String(b.full_name || b.email || ''), 'vi');
+  });
+
+  return { users: result, stats };
+}
+
 module.exports = {
   ONLINE_THRESHOLD_MS,
   MIGRATION_HINT,
   recordUserPing,
   getPresenceForUserIds,
+  listUsersWithActivity,
 };

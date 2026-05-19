@@ -5,7 +5,7 @@ const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { normalizeRegionIdList, assertRegionBelongsToCompany } = require('../helpers/crmRegionScope');
 const { syncUserOrgToEcosystem } = require('../helpers/ecosystemSync');
-const { recordUserPing, getPresenceForUserIds } = require('../helpers/userPresence');
+const { recordUserPing, getPresenceForUserIds, listUsersWithActivity, ONLINE_THRESHOLD_MS } = require('../helpers/userPresence');
 
 const r = Router();
 r.use(auth);
@@ -141,6 +141,37 @@ r.post('/ping', async (req, res) => {
   } catch (e) {
     console.warn('[users/ping]', e.message);
     res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/** Danh sách nhân viên + ai đang hoạt động (ping trong 2 phút) */
+r.get('/activity', async (req, res) => {
+  try {
+    let { company_id: companyId, department_id: departmentId, search, online_only: onlineOnly } = req.query;
+    const role = req.user.role;
+    const elevated = ['admin', 'manager', 'region_admin'].includes(role);
+    if (!elevated && req.user.company_id) {
+      companyId = companyId || req.user.company_id;
+    }
+    const { users, stats } = await listUsersWithActivity({
+      companyId: companyId || null,
+      departmentId: departmentId || null,
+      search: search ? String(search).trim() : '',
+      onlineOnly: onlineOnly === '1' || onlineOnly === 'true',
+    });
+    res.json({
+      users,
+      stats,
+      online_threshold_minutes: Math.round(ONLINE_THRESHOLD_MS / 60000),
+    });
+  } catch (e) {
+    const msg = String(e.message || e);
+    if (msg.includes('user_last_activity') || msg.includes('does not exist')) {
+      return res.status(503).json({
+        error: 'Bảng user_last_activity chưa có — chạy migration database/67_user_activity_and_messenger_pins.sql',
+      });
+    }
+    res.status(500).json({ error: msg });
   }
 });
 

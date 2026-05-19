@@ -209,6 +209,26 @@ export const KPI_DEFS = [
     ],
   },
   {
+    code: 'B6',
+    group: 'B',
+    name: 'Tỷ lệ Lead chuyển Deal',
+    weight: 6,
+    target: '≥ 50% lead trong kỳ',
+    targetNote: 'Nửa số lead bạn tạo trong tháng nên được chuyển thành Deal khi đủ điều kiện',
+    formula: 'increasing',
+    applies: ['sales_admin'],
+    icon: Target,
+    groupColor: 'green',
+    isGating: false,
+    howMeasured:
+      'Khi bấm «Chuyển sang Deal» thành công: +3 điểm sổ cái (mỗi lead một lần). KPI tháng B6 = % lead tạo trong kỳ đã có sự kiện lead_converted.',
+    actions: [
+      'Chỉ chuyển Deal khi lead đã có khách hàng và đủ thông tin tư vấn.',
+      'Dùng nút «Chuyển sang Deal» — không kéo cột Thắng trên pipeline Lead.',
+    ],
+    mistakes: ['Tạo lead ảo rồi chuyển Deal chỉ để lấy điểm — quản lý sẽ đối chiếu chất lượng deal.'],
+  },
+  {
     code: 'B2',
     group: 'B',
     name: 'Tỷ lệ lead → Đặt lịch khảo sát',

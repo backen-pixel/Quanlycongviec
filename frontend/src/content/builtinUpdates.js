@@ -4,6 +4,29 @@
  */
 export const BUILTIN_UPDATES = [
   {
+    id: '2026-05-messenger-presence-kpi',
+    version: '1.7.0',
+    category: 'feature',
+    publishedAt: '2026-05-19T00:00:00.000Z',
+    title: 'Messenger, trạng thái online, KPI chuyển Deal & trang Đang hoạt động',
+    content: `## Messenger & chat
+- **Tạo nhóm theo công ty**: chọn công ty → *Chọn tất cả NV* / *Thêm vào danh sách* khi tạo nhóm (menu Nhóm chat).
+- **Tin nhắn đến**: bong bóng chat (dock) tự mở đúng hội thoại + toast; thông báo trình duyệt khi tab ẩn.
+- **Trạng thái online**: chấm xanh / xám trên dock, tìm nhân viên, chat 1-1 (ping ~60 giây; coi offline sau ~2 phút không hoạt động).
+
+## Trang mới
+- Menu CRM → **Đang hoạt động** (\`/crm/activity\`): xem ai đang online, lọc công ty/phòng ban; **Nhắn tin** mở bong bóng chat với người đó.
+
+## KPI Sales Admin
+- **B6 — Tỷ lệ Lead chuyển Deal** trên dashboard KPI Sales Admin.
+- Khi **Chuyển sang Deal** thành công: **+3 điểm** sổ cái KPI (mỗi lead một lần; chỉnh trong rule \`lead_converted\`).
+
+## Cài đặt kỹ thuật (admin)
+- Chạy migration Supabase (nếu chưa có):
+  - \`database/67_user_activity_and_messenger_pins.sql\` — ping / online
+  - \`database/186_kpi_lead_converted_event.sql\` — điểm & KPI B6 chuyển Deal`,
+  },
+  {
     id: '2026-05-social-feed',
     version: '1.6.0',
     category: 'feature',

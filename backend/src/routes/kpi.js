@@ -260,7 +260,7 @@ r.get('/dashboard/sales-admin', async (req, res) => {
       periodStart,
     });
 
-    const focusCodes = ['A1', 'A2', 'A3', 'A4', 'B1', 'C3'];
+    const focusCodes = ['A1', 'A2', 'A3', 'A4', 'B1', 'B6', 'C3'];
     const focus = (result.scores || []).filter((s) => focusCodes.includes(s.kpi_code));
 
     // Funnel Lead: đếm history transition tới các canonical_slug
