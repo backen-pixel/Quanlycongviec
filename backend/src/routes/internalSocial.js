@@ -461,6 +461,122 @@ async function getPostForUser(req, postId) {
   return { ok: true, post };
 }
 
+async function getLastReadAt(userId, companyId) {
+  const { data, error } = await supabase
+    .from('internal_social_last_read')
+    .select('last_read_at')
+    .eq('user_id', userId)
+    .eq('company_id', companyId)
+    .maybeSingle();
+  if (error) {
+    const msg = String(error.message || '').toLowerCase();
+    if (error.code === '42P01' || (msg.includes('internal_social_last_read') && msg.includes('does not exist'))) {
+      return null;
+    }
+    throw error;
+  }
+  return data?.last_read_at || null;
+}
+
+async function countUnreadForCompany(userId, companyId, canModerate) {
+  const since = (await getLastReadAt(userId, companyId)) || '1970-01-01T00:00:00.000Z';
+  const { data, error } = await supabase.rpc('internal_social_unread_count', {
+    p_company_id: companyId,
+    p_user_id: userId,
+    p_can_moderate: !!canModerate,
+    p_since: since,
+  });
+  if (!error) return Number(data) || 0;
+  const msg = String(error.message || '').toLowerCase();
+  if (error.code !== '42883' && !msg.includes('internal_social_unread_count')) throw error;
+
+  let q = supabase
+    .from('internal_social_posts')
+    .select('id', { count: 'exact', head: true })
+    .eq('company_id', companyId)
+    .is('deleted_at', null)
+    .neq('author_id', userId)
+    .gt('created_at', since);
+  const { count, error: qErr } = await q;
+  if (qErr) throw qErr;
+  return Number(count) || 0;
+}
+
+async function upsertLastRead(userId, companyId) {
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from('internal_social_last_read')
+    .upsert(
+      { user_id: userId, company_id: companyId, last_read_at: now },
+      { onConflict: 'user_id,company_id' },
+    );
+  if (error) {
+    const msg = String(error.message || '').toLowerCase();
+    if (error.code === '42P01' || (msg.includes('internal_social_last_read') && msg.includes('does not exist'))) {
+      return { ok: false, hint: 'Chạy migration database/199_internal_social_last_read.sql' };
+    }
+    throw error;
+  }
+  return { ok: true };
+}
+
+/** GET /api/internal-social/unread-count — badge sidebar */
+r.get('/unread-count', async (req, res) => {
+  try {
+    const me = req.user.userId || req.user.id;
+    const canMod = canModerate(req);
+
+    if (isCrmSystemAdminUser(req.user)) {
+      const q = req.query.company_id && String(req.query.company_id).trim();
+      if (q) {
+        const unread = await countUnreadForCompany(me, q, true);
+        return res.json({ unread, company_id: q });
+      }
+      const { data: companies, error } = await supabase
+        .from('companies')
+        .select('id')
+        .eq('is_active', true);
+      if (error) throw error;
+      let unread = 0;
+      for (const c of companies || []) {
+        unread += await countUnreadForCompany(me, c.id, true);
+      }
+      return res.json({ unread });
+    }
+
+    const companyId = userCompanyId(req);
+    if (!companyId) return res.json({ unread: 0 });
+    const unread = await countUnreadForCompany(me, companyId, canMod);
+    res.json({ unread, company_id: companyId });
+  } catch (e) {
+    console.error('GET /internal-social/unread-count:', e);
+    res.status(500).json({ error: e.message || 'Lỗi đếm tin mới' });
+  }
+});
+
+/** POST /api/internal-social/mark-read — đánh dấu đã xem bảng tin (theo công ty) */
+r.post('/mark-read', async (req, res) => {
+  try {
+    const me = req.user.userId || req.user.id;
+    let companyId = null;
+    if (isCrmSystemAdminUser(req.user)) {
+      companyId = (req.body?.company_id || req.query?.company_id) && String(req.body?.company_id || req.query?.company_id).trim();
+      if (!companyId) {
+        return res.status(400).json({ error: 'Admin hệ thống: gửi company_id khi đánh dấu đã đọc.' });
+      }
+    } else {
+      companyId = userCompanyId(req);
+      if (!companyId) return res.status(400).json({ error: 'Tài khoản chưa gắn công ty.' });
+    }
+    const result = await upsertLastRead(me, companyId);
+    if (!result.ok) return res.status(503).json({ error: result.hint });
+    res.json({ ok: true, company_id: companyId });
+  } catch (e) {
+    console.error('POST /internal-social/mark-read:', e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
 /** GET /api/internal-social/posts */
 r.get('/posts', async (req, res) => {
   try {

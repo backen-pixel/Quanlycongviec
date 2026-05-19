@@ -40,10 +40,16 @@ const COLUMN_COLORS = ['#3B82F6', '#8B5CF6', '#F59E0B', '#10B981', '#EF4444', '#
 
 const LS_COMPANY = 'crm_assignments_company_id';
 
+function isAssignmentCreator(task, userId) {
+  return String(task?.created_by_id || '') === String(userId || '');
+}
+
 export default function CRMAssignmentsPage() {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const isAdmin = ['admin', 'manager', 'sales_admin'].includes(user?.role);
+  const uid = String(user?.id || '');
+  const canManageTask = useCallback((t) => isAssignmentCreator(t, uid), [uid]);
 
   const [view, setView] = useState('kanban');
   const [columns, setColumns] = useState([]);
@@ -54,6 +60,7 @@ export default function CRMAssignmentsPage() {
 
   const [search, setSearch] = useState('');
   const [filterAssignee, setFilterAssignee] = useState('');
+  const assigneeDefaultSet = useRef(false);
   const [filterPriority, setFilterPriority] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterCompanyId, setFilterCompanyId] = useState(() => {
@@ -64,6 +71,13 @@ export default function CRMAssignmentsPage() {
   const [showItemModal, setShowItemModal] = useState(false);
   const [viewingItem, setViewingItem] = useState(null);
   const [showColumnModal, setShowColumnModal] = useState(null); // null | { id?, name, color, is_done_column }
+
+  // NV thường: mặc định lọc "việc giao cho tôi" để thấy nhiệm vụ được chỉ định
+  useEffect(() => {
+    if (assigneeDefaultSet.current || isAdmin || !user?.id) return;
+    assigneeDefaultSet.current = true;
+    setFilterAssignee(String(user.id));
+  }, [isAdmin, user?.id]);
 
   // ─── Persist company filter ──
   useEffect(() => {
@@ -94,7 +108,7 @@ export default function CRMAssignmentsPage() {
       if (search) params.q = search;
 
       const [colRes, itRes, usrRes] = await Promise.all([
-        api.get('/crm/assignments/columns', { params: isAdmin && filterCompanyId ? { company_id: filterCompanyId } : {} }),
+        api.get('/crm/assignments/columns'),
         api.get('/crm/assignments', { params }),
         api.get('/users').then((r) => r.data?.users || []),
       ]);
@@ -107,21 +121,52 @@ export default function CRMAssignmentsPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  // Mở modal từ thông báo (?open=id)
+  // Mở chi tiết từ thông báo / liên kết (?open=id)
   const openHandledRef = useRef(null);
+  const pendingOpenId = searchParams.get('open');
+
   useEffect(() => {
-    const openId = searchParams.get('open');
-    if (!openId || loading) return;
-    if (openHandledRef.current === openId) return;
-    const found = items.find((t) => String(t.id) === String(openId));
-    if (found) {
-      openHandledRef.current = openId;
-      setViewingItem(found);
-      const next = new URLSearchParams(searchParams);
-      next.delete('open');
-      setSearchParams(next, { replace: true });
-    }
-  }, [items, loading, searchParams, setSearchParams]);
+    if (!pendingOpenId) openHandledRef.current = null;
+  }, [pendingOpenId]);
+
+  useEffect(() => {
+    if (!pendingOpenId) return;
+    if (openHandledRef.current === pendingOpenId) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        let assignment = items.find((t) => String(t.id) === String(pendingOpenId));
+        if (!assignment) {
+          const { data } = await api.get(`/crm/assignments/${pendingOpenId}`);
+          assignment = data?.assignment;
+        }
+        if (cancelled || !assignment) {
+          if (!cancelled && !assignment) alert('Không tìm thấy nhiệm vụ này.');
+          return;
+        }
+
+        openHandledRef.current = pendingOpenId;
+        setView('kanban');
+        setViewingItem(assignment);
+        setItems((prev) => (
+          prev.some((t) => String(t.id) === String(assignment.id)) ? prev : [assignment, ...prev]
+        ));
+
+        if (isAdmin && assignment.company_id) {
+          setFilterCompanyId(String(assignment.company_id));
+        }
+
+        const next = new URLSearchParams(searchParams);
+        next.delete('open');
+        setSearchParams(next, { replace: true });
+      } catch (e) {
+        if (!cancelled) alert(e.response?.data?.error || e.message || 'Không mở được nhiệm vụ');
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [pendingOpenId, items, isAdmin, searchParams, setSearchParams]);
 
   // ─── Stats ──
   const stats = useMemo(() => {
@@ -217,10 +262,20 @@ export default function CRMAssignmentsPage() {
   };
   const removeItem = async (id) => {
     if (!confirm('Xoá nhiệm vụ này?')) return;
-    try { await api.delete(`/crm/assignments/${id}`); void load(); } catch {}
+    try {
+      await api.delete(`/crm/assignments/${id}`);
+      void load();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Không xóa được nhiệm vụ');
+    }
   };
   const updateItem = async (id, patch) => {
-    try { await api.put(`/crm/assignments/${id}`, patch); void load(); } catch {}
+    try {
+      await api.put(`/crm/assignments/${id}`, patch);
+      void load();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Không cập nhật được nhiệm vụ');
+    }
   };
   const moveItem = async (id, column_id, position) => {
     try { await api.post(`/crm/assignments/${id}/move`, { column_id, position }); void load(); } catch {}
@@ -228,8 +283,7 @@ export default function CRMAssignmentsPage() {
 
   const upsertColumn = async (payload) => {
     try {
-      const body = { ...payload };
-      if (isAdmin && filterCompanyId) body.company_id = filterCompanyId;
+      const { company_id: _drop, ...body } = payload;
       if (payload.id) await api.put(`/crm/assignments/columns/${payload.id}`, body);
       else await api.post('/crm/assignments/columns', body);
       setShowColumnModal(null);
@@ -277,7 +331,7 @@ export default function CRMAssignmentsPage() {
             {stats.total} nhiệm vụ — {stats.completed} hoàn thành — {stats.inProgress} đang làm
           </p>
           <p className="text-[11px] text-gray-400 mt-0.5">
-            Module độc lập với "Công việc" và "Công việc CRM (lead/deal)".
+            Cột Kanban dùng chung toàn hệ thống; bộ lọc công ty chỉ áp dụng cho nhiệm vụ.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -379,9 +433,10 @@ export default function CRMAssignmentsPage() {
           onDeleteColumn={removeColumn}
           onAddCard={(colId) => { setEditingItem({ column_id: colId }); setShowItemModal(true); }}
           onOpenCard={(t) => setViewingItem(t)}
-          onEditCard={(t) => { setEditingItem(t); setShowItemModal(true); }}
+          onEditCard={(t) => { if (!canManageTask(t)) return; setEditingItem(t); setShowItemModal(true); }}
           onDeleteCard={removeItem}
           onUpdateCard={updateItem}
+          canManageTask={canManageTask}
           onDragStart={onDragStart}
           onDropCol={onDropCol}
           allowDrop={allowDrop}
@@ -392,19 +447,20 @@ export default function CRMAssignmentsPage() {
         <ListView
           items={items}
           onOpen={(t) => setViewingItem(t)}
-          onEdit={(t) => { setEditingItem(t); setShowItemModal(true); }}
+          onEdit={(t) => { if (!canManageTask(t)) return; setEditingItem(t); setShowItemModal(true); }}
           onDelete={removeItem}
           onUpdate={updateItem}
           columns={columns}
+          canManageTask={canManageTask}
         />
       )}
 
       {view === 'planner' && (
-        <PlannerView groups={plannerGroups} onOpen={(t) => setViewingItem(t)} onEdit={(t) => { setEditingItem(t); setShowItemModal(true); }} onDelete={removeItem} onUpdate={updateItem} columns={columns} />
+        <PlannerView groups={plannerGroups} onOpen={(t) => setViewingItem(t)} onEdit={(t) => { if (!canManageTask(t)) return; setEditingItem(t); setShowItemModal(true); }} onDelete={removeItem} onUpdate={updateItem} columns={columns} canManageTask={canManageTask} />
       )}
 
       {view === 'deadline' && (
-        <DeadlineView groups={deadlineGroups} onOpen={(t) => setViewingItem(t)} onEdit={(t) => { setEditingItem(t); setShowItemModal(true); }} onDelete={removeItem} onUpdate={updateItem} columns={columns} />
+        <DeadlineView groups={deadlineGroups} onOpen={(t) => setViewingItem(t)} onEdit={(t) => { if (!canManageTask(t)) return; setEditingItem(t); setShowItemModal(true); }} onDelete={removeItem} onUpdate={updateItem} columns={columns} canManageTask={canManageTask} />
       )}
 
       {showItemModal && (
@@ -431,7 +487,7 @@ export default function CRMAssignmentsPage() {
           item={viewingItem}
           columns={columns}
           onClose={() => setViewingItem(null)}
-          onEdit={(t) => { setViewingItem(null); setEditingItem(t); setShowItemModal(true); }}
+          onEdit={(t) => { if (!canManageTask(t)) return; setViewingItem(null); setEditingItem(t); setShowItemModal(true); }}
           onUpdate={updateItem}
           onDelete={(id) => { removeItem(id); setViewingItem(null); }}
         />
@@ -444,6 +500,7 @@ export default function CRMAssignmentsPage() {
 function KanbanView({
   columns, itemsByColumn, users: _users, onAddColumn, onEditColumn, onDeleteColumn,
   onAddCard, onOpenCard, onEditCard, onDeleteCard, onUpdateCard, onDragStart, onDropCol, allowDrop,
+  canManageTask,
 }) {
   const noneList = itemsByColumn.get('__none__') || [];
   return (
@@ -468,7 +525,7 @@ function KanbanView({
             </div>
             <div className="flex-1 p-2 space-y-2 min-h-[80px]">
               {list.map((t) => (
-                <Card key={t.id} task={t} onDragStart={onDragStart} onOpen={onOpenCard} onEdit={onEditCard} onDelete={onDeleteCard} onUpdate={onUpdateCard} />
+                <Card key={t.id} task={t} canManage={canManageTask(t)} onDragStart={onDragStart} onOpen={onOpenCard} onEdit={onEditCard} onDelete={onDeleteCard} onUpdate={onUpdateCard} />
               ))}
               <button
                 onClick={() => onAddCard(col.id)}
@@ -488,7 +545,7 @@ function KanbanView({
           </div>
           <div className="p-2 space-y-2">
             {noneList.map((t) => (
-              <Card key={t.id} task={t} onDragStart={onDragStart} onOpen={onOpenCard} onEdit={onEditCard} onDelete={onDeleteCard} onUpdate={onUpdateCard} />
+              <Card key={t.id} task={t} canManage={canManageTask(t)} onDragStart={onDragStart} onOpen={onOpenCard} onEdit={onEditCard} onDelete={onDeleteCard} onUpdate={onUpdateCard} />
             ))}
           </div>
         </div>
@@ -504,7 +561,7 @@ function KanbanView({
   );
 }
 
-function Card({ task, onDragStart, onOpen, onEdit, onDelete, onUpdate }) {
+function Card({ task, canManage, onDragStart, onOpen, onEdit, onDelete, onUpdate }) {
   const pri = PRIORITY_MAP[task.priority] || PRIORITY_MAP.medium;
   const overdue = task.deadline && new Date(task.deadline) < new Date() && task.status !== 'completed';
   return (
@@ -548,10 +605,12 @@ function Card({ task, onDragStart, onOpen, onEdit, onDelete, onUpdate }) {
             <AssigneeStack assignees={task.assignees} fallback={task.assignee} />
           </div>
         </div>
-        <div className="opacity-0 group-hover:opacity-100 flex flex-col gap-0.5">
-          <button onClick={(e) => { e.stopPropagation(); onEdit(task); }} className="text-gray-400 hover:text-blue-600 cursor-pointer"><Pencil className="h-3 w-3" /></button>
-          <button onClick={(e) => { e.stopPropagation(); onDelete(task.id); }} className="text-gray-400 hover:text-red-500 cursor-pointer"><Trash2 className="h-3 w-3" /></button>
-        </div>
+        {canManage && (
+          <div className="opacity-0 group-hover:opacity-100 flex flex-col gap-0.5">
+            <button onClick={(e) => { e.stopPropagation(); onEdit(task); }} className="text-gray-400 hover:text-blue-600 cursor-pointer"><Pencil className="h-3 w-3" /></button>
+            <button onClick={(e) => { e.stopPropagation(); onDelete(task.id); }} className="text-gray-400 hover:text-red-500 cursor-pointer"><Trash2 className="h-3 w-3" /></button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -593,7 +652,7 @@ function AssigneeStack({ assignees, fallback, compact }) {
 }
 
 // ─── LIST / PLANNER / DEADLINE — shared row ──────────────────────────────────
-function TaskRow({ task, onOpen, onEdit, onDelete, onUpdate, columns }) {
+function TaskRow({ task, canManage, onOpen, onEdit, onDelete, onUpdate, columns }) {
   const pri = PRIORITY_MAP[task.priority] || PRIORITY_MAP.medium;
   const overdue = task.deadline && new Date(task.deadline) < new Date() && task.status !== 'completed';
   const col = columns.find((c) => c.id === task.column_id);
@@ -628,22 +687,26 @@ function TaskRow({ task, onOpen, onEdit, onDelete, onUpdate, columns }) {
         </div>
       </div>
       <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${pri.color}`}>{pri.label}</span>
-      <button onClick={() => onEdit(task)} className="text-gray-400 hover:text-blue-600 cursor-pointer"><Pencil className="h-3.5 w-3.5" /></button>
-      <button onClick={() => onDelete(task.id)} className="text-gray-400 hover:text-red-500 cursor-pointer"><Trash2 className="h-3.5 w-3.5" /></button>
+      {canManage && (
+        <>
+          <button onClick={() => onEdit(task)} className="text-gray-400 hover:text-blue-600 cursor-pointer"><Pencil className="h-3.5 w-3.5" /></button>
+          <button onClick={() => onDelete(task.id)} className="text-gray-400 hover:text-red-500 cursor-pointer"><Trash2 className="h-3.5 w-3.5" /></button>
+        </>
+      )}
     </div>
   );
 }
 
-function ListView({ items, columns, onOpen, onEdit, onDelete, onUpdate }) {
+function ListView({ items, columns, onOpen, onEdit, onDelete, onUpdate, canManageTask }) {
   if (!items.length) return <p className="text-center text-sm text-gray-400 py-12">Chưa có nhiệm vụ nào</p>;
   return (
     <div className="bg-white rounded-xl border divide-y">
-      {items.map((t) => <TaskRow key={t.id} task={t} columns={columns} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onUpdate={onUpdate} />)}
+      {items.map((t) => <TaskRow key={t.id} task={t} canManage={canManageTask(t)} columns={columns} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onUpdate={onUpdate} />)}
     </div>
   );
 }
 
-function PlannerView({ groups, onOpen, onEdit, onDelete, onUpdate, columns }) {
+function PlannerView({ groups, onOpen, onEdit, onDelete, onUpdate, columns, canManageTask }) {
   if (!groups.assignees.length && !groups.unassigned.length) {
     return <p className="text-center text-sm text-gray-400 py-12">Không có nhiệm vụ đang mở</p>;
   }
@@ -659,7 +722,7 @@ function PlannerView({ groups, onOpen, onEdit, onDelete, onUpdate, columns }) {
             <span className="text-xs text-gray-400">({g.tasks.length} việc)</span>
           </div>
           <div className="bg-white rounded-b-xl divide-y">
-            {g.tasks.map((t) => <TaskRow key={t.id} task={t} columns={columns} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onUpdate={onUpdate} />)}
+            {g.tasks.map((t) => <TaskRow key={t.id} task={t} canManage={canManageTask(t)} columns={columns} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onUpdate={onUpdate} />)}
           </div>
         </div>
       ))}
@@ -667,7 +730,7 @@ function PlannerView({ groups, onOpen, onEdit, onDelete, onUpdate, columns }) {
         <div className="border rounded-xl border-dashed">
           <div className="px-4 py-3 bg-gray-50 rounded-t-xl text-sm font-semibold text-gray-500">Chưa giao ({groups.unassigned.length})</div>
           <div className="bg-white rounded-b-xl divide-y">
-            {groups.unassigned.map((t) => <TaskRow key={t.id} task={t} columns={columns} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onUpdate={onUpdate} />)}
+            {groups.unassigned.map((t) => <TaskRow key={t.id} task={t} canManage={canManageTask(t)} columns={columns} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onUpdate={onUpdate} />)}
           </div>
         </div>
       )}
@@ -675,7 +738,7 @@ function PlannerView({ groups, onOpen, onEdit, onDelete, onUpdate, columns }) {
   );
 }
 
-function DeadlineView({ groups, onOpen, onEdit, onDelete, onUpdate, columns }) {
+function DeadlineView({ groups, onOpen, onEdit, onDelete, onUpdate, columns, canManageTask }) {
   const order = [
     { key: 'overdue',    label: '🔴 Quá hạn',     color: 'border-red-300 bg-red-50' },
     { key: 'today',      label: '🟡 Hôm nay',     color: 'border-amber-300 bg-amber-50' },
@@ -693,7 +756,7 @@ function DeadlineView({ groups, onOpen, onEdit, onDelete, onUpdate, columns }) {
             {g.label} <span className="text-gray-400 font-normal">({groups[g.key].length})</span>
           </div>
           <div className="bg-white rounded-b-xl divide-y">
-            {groups[g.key].map((t) => <TaskRow key={t.id} task={t} columns={columns} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onUpdate={onUpdate} />)}
+            {groups[g.key].map((t) => <TaskRow key={t.id} task={t} canManage={canManageTask(t)} columns={columns} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onUpdate={onUpdate} />)}
           </div>
         </div>
       ))}
@@ -1109,9 +1172,8 @@ function ColumnModal({ column, onClose, onSave }) {
 // ─── DETAIL MODAL (chỉ XEM khi bấm vào thẻ) ──────────────────────────────────
 function DetailModal({ item, columns, onClose, onEdit, onUpdate, onDelete }) {
   const { user } = useAuth();
-  const isAdmin = ['admin', 'manager', 'sales_admin'].includes(user?.role);
   const uid = String(user?.id || '');
-  const isCreator = String(item.created_by_id || '') === uid || isAdmin;
+  const isCreator = String(item.created_by_id || '') === uid;
   const assigneeList = (item.assignees && item.assignees.length) ? item.assignees : (item.assignee ? [item.assignee] : []);
   const isAssignee = assigneeList.some((a) => String(a.id) === uid);
 
