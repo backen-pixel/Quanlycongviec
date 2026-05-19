@@ -351,6 +351,22 @@ const KANBAN_LOAD_OPTIONS = ['500', '1000', '2000', 'all'];
 /** Phân loại lead/deal trên dashboard (localStorage; khác key với công ty) */
 const LS_CRM_DASH_LEAD_TYPE = 'crm_dash_filter_lead_type_id';
 
+/** Có bộ lọc / tìm kiếm đang bật (không tính công ty mặc định). */
+function snapshotHasActiveFilters(snap) {
+  if (!snap) return false;
+  return !!(
+    (snap.searchText && String(snap.searchText).trim())
+    || snap.filterAssignee
+    || snap.filterAssigneeName
+    || snap.filterSource
+    || snap.filterStage
+    || snap.filterRegion
+    || snap.filterLeadType
+    || snap.filterPhone === 'no_phone'
+    || snap.timePreset
+  );
+}
+
 /** Lead/Deal đang trên pipeline (chưa cột Thắng / Thua) — dùng stage từ API, không dùng is_won ở root. */
 function isActiveCrmPipelineItem(item) {
   const st = item?.stage;
@@ -554,6 +570,11 @@ export default function CRMDashboard() {
   }
   const P = persistedUiRef.current;
   const hadSessionSnapshotRef = useRef(!!P);
+  /** Snapshot gốc khi mở lại trang — dùng khôi phục sau khi API/stages/NV đã tải. */
+  const frozenUiSnapshotRef = useRef(P);
+  /** Chưa prune bộ lọc và chưa ghi đè storage (tránh xóa lọc khi danh mục chưa load). */
+  const deferFilterPruneRef = useRef(!!P);
+  const suppressSnapshotOverwriteRef = useRef(!!P);
 
   const [dataLead, setDataLead] = useState(null);
   const [dataDeal, setDataDeal] = useState(null);
@@ -602,7 +623,11 @@ export default function CRMDashboard() {
     }
     return 'has_phone';
   });
-  const [showAdvSearch, setShowAdvSearch] = useState(() => !!P?.showAdvSearch);
+  const [showAdvSearch, setShowAdvSearch] = useState(() => {
+    if (P?.showAdvSearch) return true;
+    if (snapshotHasActiveFilters(P)) return true;
+    return false;
+  });
   const [users, setUsers] = useState([]);
   const [pipelineType, setPipelineType] = useState(() => {
     const t = P?.pipelineType;
@@ -987,6 +1012,7 @@ export default function CRMDashboard() {
 
   // Admin: công ty đang lọc không còn trong danh sách (sau giới hạn khối theo module CRM) → bỏ lọc
   useEffect(() => {
+    if (deferFilterPruneRef.current) return;
     if (!isAdmin || !filterCompany || !companies?.length) return;
     if (!companies.some((c) => String(c.id) === String(filterCompany))) {
       setFilterCompany('');
@@ -996,14 +1022,17 @@ export default function CRMDashboard() {
 
   // Reset stage filter if it doesn't exist in current company pipeline stages
   useEffect(() => {
+    if (deferFilterPruneRef.current) return;
     if (!filterStage) return;
     const list = pipelineType === 'lead' ? stagesLead : stagesDeal;
-    const ok = (list || []).some((s) => String(s.id) === String(filterStage));
+    if (!(list || []).length) return;
+    const ok = list.some((s) => String(s.id) === String(filterStage));
     if (!ok) setFilterStage('');
   }, [filterStage, pipelineType, stagesLead, stagesDeal]);
 
   // Reset phân loại nếu không còn trong lead types (đúng công ty + lead/deal tab)
   useEffect(() => {
+    if (deferFilterPruneRef.current) return;
     if (!filterLeadType || !leadTypes.length) return;
     const list = leadTypes.filter((t) => t.applies_to === 'both' || t.applies_to === pipelineType);
     const ok = list.some((t) => String(t.id) === String(filterLeadType));
@@ -1421,6 +1450,7 @@ export default function CRMDashboard() {
 
   /** Đổi công ty / danh sách khu vực → bỏ chọn uuid không còn trong danh mục (chỉ khi đã có danh mục tải về) */
   useEffect(() => {
+    if (deferFilterPruneRef.current) return;
     if (!filterRegion || filterRegion === '__none__') return;
     if (companyRegions.length === 0) return;
     const ok = companyRegions.some((reg) => String(reg.id) === String(filterRegion));
@@ -1733,7 +1763,9 @@ export default function CRMDashboard() {
   }, [employeeOptionsFiltered, filterAssignee, employeeFilterListByRegion, employeeFilterList, users]);
 
   useEffect(() => {
+    if (deferFilterPruneRef.current) return;
     if (!filterAssignee) return;
+    if (!employeeFilterListByRegion.length) return;
     const fid = String(filterAssignee);
     const ok = employeeFilterListByRegion.some((u) => String(u.id) === fid);
     if (!ok) {
@@ -1741,6 +1773,54 @@ export default function CRMDashboard() {
       setFilterAssigneeName('');
     }
   }, [filterRegion, dashboardScopeCompanyId, employeeFilterListByRegion, filterAssignee]);
+
+  /** Khôi phục đầy đủ snapshot sau khi stages / NV / khu vực đã tải (tránh prune/lưu rỗng). */
+  useEffect(() => {
+    if (!suppressSnapshotOverwriteRef.current) return;
+    if (!crmDashboardDataReady) return;
+
+    const snap = frozenUiSnapshotRef.current;
+    if (!snap) {
+      suppressSnapshotOverwriteRef.current = false;
+      deferFilterPruneRef.current = false;
+      return;
+    }
+
+    const stagesList = pipelineType === 'lead' ? stagesLead : stagesDeal;
+    if (snap.filterStage && !(stagesList || []).length) return;
+    if (snap.filterAssignee && !employeeFilterListByRegion.length && !users.length) return;
+    if (snap.filterRegion && snap.filterRegion !== '__none__' && !companyRegions.length) return;
+
+    if (snapshotHasProperty(snap, 'searchText')) setSearchText(snap.searchText ?? '');
+    if (snapshotHasProperty(snap, 'filterAssignee')) setFilterAssignee(snap.filterAssignee ?? '');
+    if (snapshotHasProperty(snap, 'assigneeListSearch')) setAssigneeListSearch(snap.assigneeListSearch ?? '');
+    if (snapshotHasProperty(snap, 'filterAssigneeName')) setFilterAssigneeName(snap.filterAssigneeName ?? '');
+    if (snapshotHasProperty(snap, 'filterCompany')) setFilterCompany(snap.filterCompany ?? '');
+    if (snapshotHasProperty(snap, 'filterSource')) setFilterSource(snap.filterSource ?? '');
+    if (snapshotHasProperty(snap, 'filterStage')) setFilterStage(snap.filterStage ?? '');
+    if (snapshotHasProperty(snap, 'filterRegion')) setFilterRegion(snap.filterRegion ?? '');
+    if (snapshotHasProperty(snap, 'filterLeadType')) setFilterLeadType(snap.filterLeadType ?? '');
+    if (snapshotHasProperty(snap, 'filterPhone')) {
+      const v = snap.filterPhone;
+      if (v === 'no_phone' || v === 'has_phone') setFilterPhone(v);
+    }
+    if (snapshotHasProperty(snap, 'timePreset')) setTimePreset(typeof snap.timePreset === 'string' ? snap.timePreset : '');
+    if (snapshotHasProperty(snap, 'customDateFrom')) setCustomDateFrom(snap.customDateFrom ?? '');
+    if (snapshotHasProperty(snap, 'customDateTo')) setCustomDateTo(snap.customDateTo ?? '');
+    if (snapshotHasProperty(snap, 'showCustomDate')) setShowCustomDate(!!snap.showCustomDate);
+    if (snap.showAdvSearch || snapshotHasActiveFilters(snap)) setShowAdvSearch(true);
+
+    suppressSnapshotOverwriteRef.current = false;
+    deferFilterPruneRef.current = false;
+  }, [
+    crmDashboardDataReady,
+    stagesLead,
+    stagesDeal,
+    pipelineType,
+    users.length,
+    employeeFilterListByRegion.length,
+    companyRegions.length,
+  ]);
 
   // ── Computed: nguồn thông minh - non-FB giữ nguyên, FB → [FB] Tên Page ──
   const smartSources = useMemo(() => {
@@ -2178,6 +2258,7 @@ export default function CRMDashboard() {
   }, [buildPipelineUiSnapshot]);
 
   useEffect(() => {
+    if (suppressSnapshotOverwriteRef.current) return;
     saveCrmPipelineSnapshot(buildPipelineUiSnapshot());
     try {
       if (isAdmin) {
@@ -2855,6 +2936,9 @@ export default function CRMDashboard() {
           {/* Clear all filters */}
           {(searchText || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterRegion || filterLeadType || filterPhone !== 'has_phone' || timePreset) && (
             <button onClick={() => {
+              frozenUiSnapshotRef.current = null;
+              deferFilterPruneRef.current = false;
+              suppressSnapshotOverwriteRef.current = false;
               setSearchText('');
               setFilterAssignee('');
               setAssigneeListSearch('');
