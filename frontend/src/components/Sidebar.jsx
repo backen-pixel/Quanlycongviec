@@ -21,6 +21,7 @@ import {
 } from '../lib/sidebarModuleContext';
 import { useReleaseNotesUnread } from '../hooks/useReleaseNotesUnread';
 import { useCrmAssignmentsUnread } from '../hooks/useCrmAssignmentsUnread';
+import { useInternalSocialUnread } from '../hooks/useInternalSocialUnread';
 
 // Reorganized menu structure - 4 groups
 const MENU_GROUPS = [
@@ -302,7 +303,7 @@ function SideLink({ to, icon: Icon, label, collapsed, end, badge, moduleContext 
   );
 }
 
-function MenuGroup({ group, collapsed, isAdmin, isExecutive, canAccessModule, userRole, updatesUnread = 0, assignmentsUnread = 0 }) {
+function MenuGroup({ group, collapsed, isAdmin, isExecutive, canAccessModule, userRole, updatesUnread = 0, assignmentsUnread = 0, socialUnread = 0 }) {
   const [open, setOpen] = useState(true);
   const moduleContext = resolveGroupModuleContext(group);
 
@@ -350,6 +351,7 @@ function MenuGroup({ group, collapsed, isAdmin, isExecutive, canAccessModule, us
               badge={
                 item.to === '/updates' ? updatesUnread
                 : item.to === '/crm/assignments' ? assignmentsUnread
+                : item.to === '/social' ? socialUnread
                 : 0
               }
             />
@@ -363,6 +365,7 @@ function MenuGroup({ group, collapsed, isAdmin, isExecutive, canAccessModule, us
 export default function Sidebar() {
   const { total: updatesUnread } = useReleaseNotesUnread();
   const { unread: assignmentsUnread } = useCrmAssignmentsUnread();
+  const { unread: socialUnread } = useInternalSocialUnread();
   const [collapsed, setCollapsed] = useState(false);
   const [showAppSwitcher, setShowAppSwitcher] = useState(false);
   const [pinnedModule, setPinnedModule] = useState(() => localStorage.getItem('pinned_module') || '/crm');
@@ -616,6 +619,7 @@ export default function Sidebar() {
                 userRole={user?.role}
                 updatesUnread={updatesUnread}
                 assignmentsUnread={assignmentsUnread}
+                socialUnread={socialUnread}
               />
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto border-t border-white/10 mt-1 pt-2">
@@ -633,6 +637,7 @@ export default function Sidebar() {
                     userRole={user?.role}
                     updatesUnread={updatesUnread}
                     assignmentsUnread={assignmentsUnread}
+                socialUnread={socialUnread}
                   />
                 );
               })}
@@ -652,6 +657,7 @@ export default function Sidebar() {
                 userRole={user?.role}
                 updatesUnread={updatesUnread}
                 assignmentsUnread={assignmentsUnread}
+                socialUnread={socialUnread}
               />
             );
           })

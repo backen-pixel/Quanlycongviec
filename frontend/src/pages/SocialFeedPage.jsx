@@ -1418,6 +1418,26 @@ export default function SocialFeedPage() {
     }
   }, [effectiveCompanyId, isSystemAdmin]);
 
+  const markFeedRead = useCallback(async () => {
+    if (!effectiveCompanyId) return;
+    try {
+      await api.post('/internal-social/mark-read', { company_id: effectiveCompanyId });
+      window.dispatchEvent(new Event('internal-social-read'));
+    } catch { /* ignore */ }
+  }, [effectiveCompanyId]);
+
+  const readMarkedCompanyRef = useRef(null);
+  useEffect(() => {
+    if (loading || err || !effectiveCompanyId) return;
+    if (readMarkedCompanyRef.current === effectiveCompanyId) return;
+    readMarkedCompanyRef.current = effectiveCompanyId;
+    void markFeedRead();
+  }, [loading, err, effectiveCompanyId, markFeedRead]);
+
+  useEffect(() => {
+    readMarkedCompanyRef.current = null;
+  }, [effectiveCompanyId]);
+
   useEffect(() => {
     offsetRef.current = 0;
     setPosts([]);

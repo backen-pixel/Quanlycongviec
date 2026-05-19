@@ -64,6 +64,126 @@ r.use(auth);
 const ADMIN_ROLES = new Set(['admin', 'manager', 'sales_admin']);
 const isAdmin = (req) => ADMIN_ROLES.has(String(req.user?.role || '').toLowerCase());
 
+/** Cột Kanban dùng chung toàn hệ thống — không theo company_id. */
+const SHARED_COLUMN_DEFAULTS = [
+  { name: 'Chưa làm', color: '#94A3B8', position: 0, is_done_column: false },
+  { name: 'Đang làm', color: '#3B82F6', position: 1, is_done_column: false },
+  { name: 'Hoàn thành', color: '#10B981', position: 2, is_done_column: true },
+];
+
+async function ensureSharedAssignmentColumns(userId) {
+  const { count, error: countErr } = await supabase
+    .from('crm_assignment_columns')
+    .select('id', { count: 'exact', head: true })
+    .is('company_id', null);
+  if (countErr) throw countErr;
+  if ((count ?? 0) > 0) return;
+  const rows = SHARED_COLUMN_DEFAULTS.map((d) => ({
+    ...d,
+    company_id: null,
+    created_by_id: userId || null,
+  }));
+  const { error } = await supabase.from('crm_assignment_columns').insert(rows);
+  if (error) throw error;
+}
+
+function sharedColumnsQuery() {
+  return supabase
+    .from('crm_assignment_columns')
+    .select('*')
+    .is('company_id', null)
+    .order('position', { ascending: true })
+    .order('id', { ascending: true });
+}
+
+/** Id nhiệm vụ user được giao / tạo (bảng assignees + assignee_id + created_by). */
+async function getUserInvolvedAssignmentIds(uid) {
+  if (!uid) return [];
+  const ids = new Set();
+  const { data: junction } = await supabase
+    .from('crm_assignment_assignees')
+    .select('assignment_id')
+    .eq('user_id', uid);
+  (junction || []).forEach((r) => ids.add(r.assignment_id));
+
+  const { data: direct } = await supabase
+    .from('crm_assignments')
+    .select('id')
+    .or(`assignee_id.eq.${uid},created_by_id.eq.${uid}`);
+  (direct || []).forEach((r) => ids.add(r.id));
+  return [...ids];
+}
+
+function isAssignmentCreator(req, row) {
+  return row && String(row.created_by_id || '') === String(req.user?.userId || '');
+}
+
+async function isAssignmentAssignee(req, assignmentId) {
+  const uid = req.user?.userId;
+  if (!uid || !assignmentId) return false;
+  const { data: row } = await supabase
+    .from('crm_assignments')
+    .select('assignee_id')
+    .eq('id', assignmentId)
+    .maybeSingle();
+  if (row?.assignee_id && String(row.assignee_id) === String(uid)) return true;
+  const { data: asn } = await supabase
+    .from('crm_assignment_assignees')
+    .select('user_id')
+    .eq('assignment_id', assignmentId)
+    .eq('user_id', uid)
+    .limit(1);
+  return (asn || []).length > 0;
+}
+
+const ASSIGNMENT_STRUCTURAL_FIELDS = [
+  'title', 'description', 'assignee_id', 'assignee_ids',
+  'department_ids', 'region_ids', 'company_id', 'priority', 'deadline',
+];
+
+function bodyHasStructuralAssignmentChange(body) {
+  if (!body || typeof body !== 'object') return false;
+  return ASSIGNMENT_STRUCTURAL_FIELDS.some((f) => body[f] !== undefined);
+}
+
+async function userCanAccessAssignment(req, row) {
+  if (!row) return false;
+  if (isAdmin(req)) return true;
+  const uid = String(req.user?.userId || '');
+  if (!uid) return false;
+  if (row.created_by_id && String(row.created_by_id) === uid) return true;
+  if (row.assignee_id && String(row.assignee_id) === uid) return true;
+  const { data: asn } = await supabase
+    .from('crm_assignment_assignees')
+    .select('user_id')
+    .eq('assignment_id', row.id)
+    .eq('user_id', req.user.userId)
+    .limit(1);
+  if ((asn || []).length) return true;
+  const cid = req.user?.company_id;
+  if (cid && row.company_id && String(row.company_id) === String(cid)) return true;
+  return false;
+}
+
+/** Id nhiệm vụ NV được xem: công ty + việc được giao (tránh .or() + UUID làm vỡ query Supabase). */
+async function getVisibleAssignmentIdsForNonAdmin(req) {
+  const uid = req.user?.userId;
+  const companyId = req.user?.company_id || null;
+  const involvedIds = await getUserInvolvedAssignmentIds(uid);
+  const idSet = new Set(involvedIds);
+
+  if (companyId) {
+    const { data: companyRows, error } = await supabase
+      .from('crm_assignments')
+      .select('id')
+      .eq('company_id', companyId);
+    if (error) throw error;
+    (companyRows || []).forEach((r) => idSet.add(r.id));
+  }
+
+  return [...idSet];
+}
+
 const ASSIGNMENT_SELECT = `
   id, company_id, column_id, title, description,
   assignee_id, created_by_id, priority, status, deadline,
@@ -94,8 +214,8 @@ async function attachAssigneesToAssignments(list) {
  * giới hạn theo company nếu được cung cấp.
  */
 async function expandAssigneeIds({ assignee_ids, department_ids, region_ids, company_id }) {
-  const set = new Set();
-  (assignee_ids || []).filter(Boolean).forEach((id) => set.add(String(id)));
+  const explicit = (assignee_ids || []).filter(Boolean).map(String);
+  const set = new Set(explicit);
 
   const deptIds = (department_ids || []).filter(Boolean);
   if (deptIds.length) {
@@ -129,10 +249,11 @@ async function expandAssigneeIds({ assignee_ids, department_ids, region_ids, com
       .from('users')
       .select('id, department_id, company_id')
       .in('id', ids);
-    ids = (usrs || []).filter((u) => {
+    const filtered = (usrs || []).filter((u) => {
       if (String(u.company_id || '') === String(company_id)) return true;
       return u.department_id && allowDeptIds.has(String(u.department_id));
     }).map((u) => String(u.id));
+    ids = [...new Set([...filtered, ...explicit])];
   }
 
   return ids;
@@ -165,39 +286,26 @@ async function persistNotification(userId, payload) {
 }
 
 // ─── COLUMNS ──────────────────────────────────────────────────────────────────
-// GET /api/crm/assignments/columns?company_id=...
+// GET /api/crm/assignments/columns — bộ cột Kanban dùng chung (company_id NULL)
 r.get('/columns', async (req, res) => {
   try {
-    let q = supabase
-      .from('crm_assignment_columns')
-      .select('*')
-      .order('position', { ascending: true })
-      .order('id', { ascending: true });
-
-    const companyId = req.query.company_id || (!isAdmin(req) ? req.user?.company_id : null);
-    if (companyId) q = q.eq('company_id', companyId);
-    else if (req.query.company_id === '') q = q.is('company_id', null);
-
-    const { data, error } = await q;
+    await ensureSharedAssignmentColumns(req.user?.userId);
+    const { data, error } = await sharedColumnsQuery();
     if (error) throw error;
-    res.json({ columns: data || [] });
+    res.json({ columns: data || [], shared: true });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi tải cột' }); }
 });
 
 // POST /api/crm/assignments/columns
 r.post('/columns', async (req, res) => {
   try {
-    const { name, color, company_id, is_done_column } = req.body || {};
+    const { name, color, is_done_column } = req.body || {};
     if (!name || !name.trim()) return res.status(400).json({ error: 'Cần tên cột' });
-
-    const effectiveCompany = isAdmin(req)
-      ? (company_id || req.user?.company_id || null)
-      : (req.user?.company_id || null);
 
     const { data: maxRow } = await supabase
       .from('crm_assignment_columns')
       .select('position')
-      .eq('company_id', effectiveCompany)
+      .is('company_id', null)
       .order('position', { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -208,7 +316,7 @@ r.post('/columns', async (req, res) => {
       .insert({
         name: name.trim(),
         color: color || '#3B82F6',
-        company_id: effectiveCompany,
+        company_id: null,
         is_done_column: !!is_done_column,
         position: nextPos,
         created_by_id: req.user.userId,
@@ -224,7 +332,7 @@ r.post('/columns', async (req, res) => {
 r.put('/columns/:id', async (req, res) => {
   try {
     const update = { updated_at: new Date().toISOString() };
-    ['name', 'color', 'position', 'is_done_column', 'company_id'].forEach((f) => {
+    ['name', 'color', 'position', 'is_done_column'].forEach((f) => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
     const { data, error } = await supabase
@@ -278,16 +386,28 @@ r.get('/', async (req, res) => {
   try {
     let q = supabase.from('crm_assignments').select(ASSIGNMENT_SELECT);
 
-    const companyId = req.query.company_id || (!isAdmin(req) ? req.user?.company_id : null);
-    if (companyId) q = q.eq('company_id', companyId);
+    let scopeIds = null;
+    if (isAdmin(req)) {
+      const companyId = req.query.company_id || null;
+      if (companyId) q = q.eq('company_id', companyId);
+    } else {
+      scopeIds = await getVisibleAssignmentIdsForNonAdmin(req);
+      if (!scopeIds.length) return res.json({ assignments: [] });
+      q = q.in('id', scopeIds);
+    }
 
     if (req.query.assignee_id) {
       const { data: rows } = await supabase
         .from('crm_assignment_assignees')
         .select('assignment_id')
         .eq('user_id', req.query.assignee_id);
-      const ids = [...new Set((rows || []).map((r) => r.assignment_id))];
+      let ids = [...new Set((rows || []).map((r) => r.assignment_id))];
       if (!ids.length) return res.json({ assignments: [] });
+      if (scopeIds) {
+        const allowed = new Set(scopeIds);
+        ids = ids.filter((id) => allowed.has(id));
+        if (!ids.length) return res.json({ assignments: [] });
+      }
       q = q.in('id', ids);
     }
     if (req.query.status) q = q.eq('status', req.query.status);
@@ -385,23 +505,45 @@ r.post('/', async (req, res) => {
 // PUT /api/crm/assignments/:id
 r.put('/:id', async (req, res) => {
   try {
-    const update = { updated_at: new Date().toISOString() };
-    [
-      'title', 'description', 'column_id',
-      'priority', 'status', 'deadline', 'position', 'company_id',
-    ].forEach((f) => { if (req.body[f] !== undefined) update[f] = req.body[f]; });
-
     const { data: before } = await supabase
       .from('crm_assignments')
-      .select('id, assignee_id, status, company_id')
+      .select('id, assignee_id, status, company_id, created_by_id')
       .eq('id', req.params.id)
       .maybeSingle();
+    if (!before) return res.status(404).json({ error: 'Không tìm thấy nhiệm vụ' });
 
-    // Multi-assignees: nếu client gửi assignee_ids/department_ids/region_ids → thay toàn bộ
-    let newAssignees = null;
+    const creator = isAssignmentCreator(req, before);
     const rawIds = req.body.assignee_ids;
     const rawDept = req.body.department_ids;
     const rawReg = req.body.region_ids;
+    const structuralChange = bodyHasStructuralAssignmentChange(req.body)
+      || rawIds !== undefined || rawDept !== undefined || rawReg !== undefined;
+
+    if (!creator) {
+      if (structuralChange) {
+        return res.status(403).json({ error: 'Chỉ người tạo nhiệm vụ mới được sửa hoặc xóa' });
+      }
+      const progressKeys = ['status', 'column_id', 'position'];
+      const touched = progressKeys.filter((k) => req.body[k] !== undefined);
+      if (!touched.length || !(await isAssignmentAssignee(req, before.id))) {
+        return res.status(403).json({ error: 'Chỉ người tạo nhiệm vụ mới được sửa hoặc xóa' });
+      }
+    }
+
+    const update = { updated_at: new Date().toISOString() };
+    if (creator) {
+      [
+        'title', 'description', 'column_id',
+        'priority', 'status', 'deadline', 'position', 'company_id',
+      ].forEach((f) => { if (req.body[f] !== undefined) update[f] = req.body[f]; });
+    } else {
+      ['status', 'column_id', 'position'].forEach((f) => {
+        if (req.body[f] !== undefined) update[f] = req.body[f];
+      });
+    }
+
+    // Multi-assignees: nếu client gửi assignee_ids/department_ids/region_ids → thay toàn bộ
+    let newAssignees = null;
     if (rawIds !== undefined || rawDept !== undefined || rawReg !== undefined) {
       newAssignees = await expandAssigneeIds({
         assignee_ids: rawIds || [],
@@ -458,6 +600,17 @@ r.put('/:id', async (req, res) => {
 // POST /api/crm/assignments/:id/move  { column_id, position }
 r.post('/:id/move', async (req, res) => {
   try {
+    const { data: row } = await supabase
+      .from('crm_assignments')
+      .select('id, created_by_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!row) return res.status(404).json({ error: 'Không tìm thấy nhiệm vụ' });
+    const creator = isAssignmentCreator(req, row);
+    if (!creator && !(await isAssignmentAssignee(req, row.id))) {
+      return res.status(403).json({ error: 'Chỉ người tạo nhiệm vụ mới được sửa hoặc xóa' });
+    }
+
     const { column_id, position } = req.body || {};
     const update = { updated_at: new Date().toISOString() };
     if (column_id !== undefined) update.column_id = column_id;
@@ -491,6 +644,16 @@ r.post('/:id/move', async (req, res) => {
 // DELETE /api/crm/assignments/:id
 r.delete('/:id', async (req, res) => {
   try {
+    const { data: row } = await supabase
+      .from('crm_assignments')
+      .select('id, created_by_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!row) return res.status(404).json({ error: 'Không tìm thấy nhiệm vụ' });
+    if (!isAssignmentCreator(req, row)) {
+      return res.status(403).json({ error: 'Chỉ người tạo nhiệm vụ mới được sửa hoặc xóa' });
+    }
+
     const { error } = await supabase.from('crm_assignments').delete().eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
@@ -503,11 +666,7 @@ r.delete('/:id', async (req, res) => {
 r.get('/unread-count', async (req, res) => {
   try {
     const uid = req.user.userId;
-    const { data: rows } = await supabase
-      .from('crm_assignment_assignees')
-      .select('assignment_id')
-      .eq('user_id', uid);
-    const ids = (rows || []).map((r) => r.assignment_id);
+    const ids = await getUserInvolvedAssignmentIds(uid);
     if (!ids.length) return res.json({ unread: 0, overdue: 0, dueSoon: 0, pending: 0 });
 
     const now = new Date();
@@ -886,6 +1045,25 @@ r.get('/lookups', async (req, res) => {
 
     res.json({ departments, regions, users });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi tải dữ liệu lọc' }); }
+});
+
+// GET /api/crm/assignments/:id — đặt cuối file; chỉ id số (Express 5 không dùng /:id([0-9]+))
+r.get('/:id', async (req, res, next) => {
+  if (!/^\d+$/.test(String(req.params.id))) return next();
+  try {
+    const { data, error } = await supabase
+      .from('crm_assignments')
+      .select(ASSIGNMENT_SELECT)
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Không tìm thấy nhiệm vụ' });
+    if (!(await userCanAccessAssignment(req, data))) {
+      return res.status(403).json({ error: 'Không có quyền xem nhiệm vụ này' });
+    }
+    await attachAssigneesToAssignments([data]);
+    res.json({ assignment: data });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi tải nhiệm vụ' }); }
 });
 
 module.exports = r;
