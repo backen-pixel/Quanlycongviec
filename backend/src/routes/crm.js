@@ -6177,6 +6177,19 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 
     // Không bootstrap Đơn 1 — chuyển Lead→Deal giữ một deal duy nhất, task trên deal đó.
 
+    try {
+      const { recordLeadConvertedKpi } = require('../helpers/kpiLedger');
+      const kpiOwner = ownerId || updatedLead?.lead_owner_id || updatedLead?.assigned_to;
+      await recordLeadConvertedKpi({
+        leadId: req.params.id,
+        userId: kpiOwner,
+        companyId: updatedLead?.company_id || companyId,
+        createdBy: req.user.userId,
+      });
+    } catch (kpiErr) {
+      console.warn('[convert-to-deal] KPI lead_converted:', kpiErr.message);
+    }
+
     emitCrmDashboardChanged(req, { type: 'deal', company_id: updatedLead?.company_id, lead_id: req.params.id, action: 'converted_to_deal' });
     res.status(200).json({
       lead: updatedLead,

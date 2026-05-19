@@ -523,6 +523,36 @@ async function calcC3_leadCount({ userId, periodStart, periodEnd }) {
   return { actual: leads.length, breakdown: { count: leads.length } };
 }
 
+/**
+ * B6: Tỷ lệ Lead chuyển Deal trong kỳ.
+ * Mẫu số: lead tạo trong kỳ (owner); tử số: có sự kiện lead_converted trong sổ cái.
+ */
+async function calcB6_leadToDealRate({ userId, periodStart, periodEnd }) {
+  const { startISO, endISO } = rangeFor(periodStart, periodEnd);
+  const leads = await fetchLeadsByOwner({ userId, periodStart, periodEnd });
+  if (!leads.length) return { actual: null, breakdown: { numerator: 0, denominator: 0 } };
+
+  const { data: rows, error } = await supabase
+    .from('crm_kpi_ledger')
+    .select('lead_id')
+    .eq('user_id', userId)
+    .eq('event_type', 'lead_converted')
+    .gte('occurred_at', startISO)
+    .lte('occurred_at', endISO);
+  if (error) throw error;
+
+  const converted = new Set((rows || []).map((r) => r.lead_id).filter(Boolean));
+  let numer = 0;
+  for (const l of leads) {
+    if (converted.has(l.id)) numer += 1;
+  }
+  const denom = leads.length;
+  return {
+    actual: (numer / denom) * 100,
+    breakdown: { numerator: numer, denominator: denom, rule: 'lead_created_in_period_with_lead_converted_ledger' },
+  };
+}
+
 /** C4: Tỷ lệ lost (lead/deal). */
 async function calcC4_lostRate({ userId, periodStart, periodEnd }) {
   const history = await fetchHistoryForUser({ userId, periodStart, periodEnd });
@@ -551,6 +581,7 @@ const CALC_REGISTRY = {
   B3: calcB3_surveyToQuoteRate,
   B4: calcB4_quoteToContractRate,
   B5: calcB5_surveyToQuoteDays,
+  B6: calcB6_leadToDealRate,
   C1: calcC1_revenue,
   C2: calcC2_avgContractValue,
   C3: calcC3_leadCount,
@@ -753,6 +784,7 @@ module.exports = {
   calcB3_surveyToQuoteRate,
   calcB4_quoteToContractRate,
   calcB5_surveyToQuoteDays,
+  calcB6_leadToDealRate,
   calcC1_revenue,
   calcC2_avgContractValue,
   calcC3_leadCount,

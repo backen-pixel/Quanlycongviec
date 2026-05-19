@@ -92,6 +92,7 @@ const CRM_MENU_TOP_GROUP = {
     { to: '/crm/dashboard', icon: LayoutDashboard, label: 'Dashboard CRM', end: true },
     { to: '/crm/events', icon: Calendar, label: 'Sự kiện' },
     { to: '/crm/messenger', icon: MessageCircle, label: 'Nhóm chat' },
+    { to: '/crm/activity', icon: Activity, label: 'Đang hoạt động' },
     { to: '/social', icon: Share2, label: 'Bảng tin nội bộ' },
     { to: '/tools/voice-recordings', icon: Mic, label: 'Cuộc gọi & ghi âm' },
   ],

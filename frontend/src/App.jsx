@@ -134,6 +134,7 @@ const CategoriesPage = lazy(() => import('./pages/CategoriesPage'));
 const PrivacyPage = lazy(() => import('./pages/PrivacyPage'));
 const VoiceRecordingsPage = lazy(() => import('./pages/VoiceRecordingsPage'));
 const MessengerHubPage = lazy(() => import('./pages/MessengerHubPage'));
+const ActiveUsersPage = lazy(() => import('./pages/ActiveUsersPage'));
 const RequestMonitorPage = lazy(() => import('./pages/RequestMonitorPage'));
 const TrashPage = lazy(() => import('./pages/TrashPage'));
 const ThemeSettingsPage = lazy(() => import('./pages/ThemeSettingsPage'));
@@ -329,6 +330,7 @@ export default function App() {
             <Route path="/crm/lead-journey" element={<LeadJourneyPage />} />
             <Route path="/crm/events" element={<EventsFeedPage />} />
             <Route path="/crm/messenger" element={<MessengerHubPage />} />
+            <Route path="/crm/activity" element={<ActiveUsersPage />} />
             <Route path="/crm/dashboard" element={<CRMDashboard />} />
             <Route path="/crm/executive-kpi" element={<RequireExecutive><ExecutiveKpiPage /></RequireExecutive>} />
             <Route path="/crm/kpi/sales-admin" element={<KpiSalesAdminDashboard />} />
