@@ -1473,7 +1473,12 @@ export default function CRMDashboard() {
         resolvedCompanyId = String(user.company_id);
       } else if (!isAdmin && user?.company_id) {
         resolvedCompanyId = resolvedCompanyId || String(user.company_id);
-      } else if (isAdmin && !isCompanyScopedAdmin && !resolvedCompanyId) {
+      } else if (
+        isAdmin
+        && !isCompanyScopedAdmin
+        && !resolvedCompanyId
+        && !(hadSessionSnapshotRef.current && snapshotHasProperty(P, 'filterCompany'))
+      ) {
         let fromLs = '';
         try {
           fromLs = getStoredCrmFilterCompanyId();
@@ -2164,6 +2169,13 @@ export default function CRMDashboard() {
   }, [buildPipelineUiSnapshot]);
 
   useEffect(() => registerCrmPipelinePersistUi(persistPipelineUi), [persistPipelineUi]);
+
+  /** Rời Pipeline (vd. sang Khách hàng) — lưu bộ lọc trước khi unmount. */
+  useEffect(() => {
+    return () => {
+      saveCrmPipelineSnapshot(buildPipelineUiSnapshot());
+    };
+  }, [buildPipelineUiSnapshot]);
 
   useEffect(() => {
     saveCrmPipelineSnapshot(buildPipelineUiSnapshot());
