@@ -6,6 +6,8 @@ import { useMessengerDock } from '../context/MessengerDockContext';
 import { LeadChatTab, MessengerGroupChatTab } from './LeadChatTabs';
 import { MessageCircle, X, Minus, Maximize2, Search, Users, Loader2, ChevronRight } from 'lucide-react';
 import api from '../lib/api';
+import OnlineStatusDot, { isUserOnline } from './OnlineStatusDot';
+import { useUserPresence } from '../hooks/useUserPresence';
 
 export const MESSENGER_DOCK_W = 52;
 const BUBBLE_W = 340;
@@ -84,9 +86,9 @@ export default function MessengerDock() {
   }, []);
 
   useEffect(() => {
-    if (!launcherOpen) return;
+    if (!launcherOpen && !windows.some((w) => w.chatType === 'messenger_group')) return;
     void loadGroups();
-  }, [launcherOpen, loadGroups]);
+  }, [launcherOpen, loadGroups, windows]);
 
   const expanded = useMemo(() => windows.filter((w) => !w.minimized), [windows]);
 
@@ -131,11 +133,48 @@ export default function MessengerDock() {
 
   const uid = user?.userId || user?.id;
 
+  const groupPeerById = useMemo(() => {
+    const m = new Map();
+    for (const g of groups) {
+      if (g?.id && g.is_direct && g.peer_id) m.set(String(g.id), String(g.peer_id));
+    }
+    return m;
+  }, [groups]);
+
+  const presenceUserIds = useMemo(() => {
+    const ids = new Set();
+    staffRows.forEach((u) => {
+      if (u?.id) ids.add(String(u.id));
+    });
+    groups.forEach((g) => {
+      if (g.is_direct && g.peer_id) ids.add(String(g.peer_id));
+    });
+    windows.forEach((w) => {
+      if (w.peerUserId) ids.add(String(w.peerUserId));
+      else if (w.groupId && groupPeerById.has(String(w.groupId))) {
+        ids.add(groupPeerById.get(String(w.groupId)));
+      }
+    });
+    (chatToasts || []).forEach((t) => {
+      if (t.sender?.id) ids.add(String(t.sender.id));
+    });
+    return [...ids];
+  }, [staffRows, groups, windows, chatToasts, groupPeerById]);
+
+  const presenceByUser = useUserPresence(presenceUserIds, { enabled: !!uid });
+
   const onPickStaff = async (u) => {
     if (!u?.id || String(u.id) === String(uid)) return;
     try {
       const { data } = await api.post('/messenger/direct', { peer_user_id: u.id });
-      if (data?.id) openMessengerGroupChat({ id: data.id, name: data.name || data.display_name || u.full_name });
+      if (data?.id) {
+        openMessengerGroupChat({
+          id: data.id,
+          name: data.name || data.display_name || u.full_name,
+          is_direct: true,
+          peer_id: u.id,
+        });
+      }
       setLauncherOpen(false);
       setStaffQ('');
       setStaffRows([]);
@@ -146,7 +185,12 @@ export default function MessengerDock() {
 
   const onPickGroup = (g) => {
     if (!g?.id) return;
-    openMessengerGroupChat({ id: g.id, name: g.name || g.raw_name });
+    openMessengerGroupChat({
+      id: g.id,
+      name: g.name || g.raw_name,
+      is_direct: !!g.is_direct,
+      peer_id: g.peer_id || null,
+    });
     setLauncherOpen(false);
   };
 
@@ -171,14 +215,43 @@ export default function MessengerDock() {
           }}
         >
           <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 bg-gradient-to-r from-sky-500 to-cyan-600 text-white">
-            <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-xs font-bold">
+            <div className="relative w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-xs font-bold shrink-0">
               {(w.code || w.title || '?').slice(0, 1)}
+              {(w.isDirect || w.peerUserId || (w.groupId && groupPeerById.has(String(w.groupId)))) ? (
+                <OnlineStatusDot
+                  online={isUserOnline(
+                    presenceByUser,
+                    w.peerUserId || groupPeerById.get(String(w.groupId)),
+                  )}
+                  size="md"
+                  className="absolute -bottom-0.5 -right-0.5"
+                />
+              ) : null}
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-xs font-semibold truncate">{w.title}</p>
               {w.chatType === 'lead' && w.code ? <p className="text-[10px] text-sky-100 truncate">{w.code}</p> : null}
               {w.chatType === 'messenger_group' ? (
-                <p className="text-[10px] text-sky-100 truncate">Nhóm chat nội bộ</p>
+                <p className="text-[10px] text-sky-100 truncate flex items-center gap-1">
+                  {w.isDirect || w.peerUserId || groupPeerById.has(String(w.groupId)) ? (
+                    <>
+                      <OnlineStatusDot
+                        online={isUserOnline(
+                          presenceByUser,
+                          w.peerUserId || groupPeerById.get(String(w.groupId)),
+                        )}
+                      />
+                      {isUserOnline(
+                        presenceByUser,
+                        w.peerUserId || groupPeerById.get(String(w.groupId)),
+                      )
+                        ? 'Đang online'
+                        : 'Offline'}
+                    </>
+                  ) : (
+                    'Nhóm chat nội bộ'
+                  )}
+                </p>
               ) : null}
             </div>
             <button
@@ -280,15 +353,21 @@ export default function MessengerDock() {
                 </div>
               ) : staffRows.length ? (
                 <ul className="mt-1.5 space-y-0.5 border border-slate-100 rounded-lg divide-y divide-slate-50 max-h-40 overflow-y-auto">
-                  {staffRows.map((u) => (
+                  {staffRows.map((u) => {
+                    const online = isUserOnline(presenceByUser, u.id);
+                    return (
                     <li key={u.id}>
                       <button
                         type="button"
                         onClick={() => void onPickStaff(u)}
                         disabled={String(u.id) === String(uid)}
-                        className="w-full text-left px-2 py-1.5 text-xs hover:bg-sky-50 disabled:opacity-40 flex items-center justify-between gap-2"
+                        className="w-full text-left px-2 py-1.5 text-xs hover:bg-sky-50 disabled:opacity-40 flex items-center gap-2"
                       >
-                        <span className="truncate">
+                        <span className="relative shrink-0 w-7 h-7 rounded-full bg-gradient-to-br from-slate-300 to-slate-400 text-white flex items-center justify-center text-[10px] font-bold">
+                          {(u.full_name || u.email || '?')[0].toUpperCase()}
+                          <OnlineStatusDot online={online} className="absolute bottom-0 right-0" />
+                        </span>
+                        <span className="truncate flex-1 min-w-0">
                           <span className="font-medium text-slate-800">{u.full_name || u.email}</span>
                           {u.email && u.full_name ? (
                             <span className="block text-[10px] text-slate-500 truncate">{u.email}</span>
@@ -297,7 +376,8 @@ export default function MessengerDock() {
                         <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                       </button>
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               ) : staffQ.trim() ? (
                 <p className="text-[11px] text-slate-400 py-1">Không có kết quả</p>
@@ -323,6 +403,7 @@ export default function MessengerDock() {
                 <ul className="space-y-0.5 border border-slate-100 rounded-lg divide-y divide-slate-50 max-h-48 overflow-y-auto">
                   {filteredGroups.map((g) => {
                     const n = unreadByGroupId[g.id] || 0;
+                    const peerOnline = g.is_direct && g.peer_id ? isUserOnline(presenceByUser, g.peer_id) : false;
                     return (
                       <li key={g.id}>
                         <button
@@ -330,7 +411,12 @@ export default function MessengerDock() {
                           onClick={() => onPickGroup(g)}
                           className="w-full text-left px-2 py-1.5 text-xs hover:bg-cyan-50 flex items-center justify-between gap-2"
                         >
-                          <span className="truncate font-medium text-slate-800">{g.name || 'Nhóm'}</span>
+                          <span className="flex items-center gap-1.5 min-w-0 flex-1">
+                            {g.is_direct && g.peer_id ? (
+                              <OnlineStatusDot online={peerOnline} size="md" />
+                            ) : null}
+                            <span className="truncate font-medium text-slate-800">{g.name || 'Nhóm'}</span>
+                          </span>
                           {n > 0 ? (
                             <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">
                               {n > 99 ? '…' : n}
@@ -394,7 +480,11 @@ export default function MessengerDock() {
                     {initialsOf(t.sender?.name)}
                   </div>
                 )}
-                <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-white" />
+                <OnlineStatusDot
+                  online={isUserOnline(presenceByUser, t.sender?.id)}
+                  size="lg"
+                  className="absolute -bottom-0.5 -right-0.5"
+                />
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-1">
@@ -450,6 +540,9 @@ export default function MessengerDock() {
               : w.leadId
                 ? unreadByLeadId[w.leadId] || 0
                 : 0;
+          const peerId =
+            w.peerUserId || (w.groupId ? groupPeerById.get(String(w.groupId)) : null);
+          const showPeerDot = !!(w.isDirect || peerId);
           return (
             <button
               key={w.windowKey}
@@ -461,6 +554,13 @@ export default function MessengerDock() {
               }`}
             >
               {(w.code || w.title || '?').slice(0, 2)}
+              {showPeerDot ? (
+                <OnlineStatusDot
+                  online={isUserOnline(presenceByUser, peerId)}
+                  size="md"
+                  className="absolute -bottom-0.5 -right-0.5"
+                />
+              ) : null}
               {n > 0 && (
                 <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-0.5 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center border border-white">
                   {n > 99 ? '…' : n}

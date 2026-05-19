@@ -4,7 +4,7 @@ import api from '../lib/api';
 const PING_MS = 2 * 60 * 1000;
 
 /** Báo hoạt động lên server; client khác dùng POST /users/presence để biết online/offline (ngưỡng 2 phút). */
-const PING_ENABLED = false; // tạm tắt để giảm egress
+const PING_ENABLED = true;
 
 export function useActivityPing(enabled) {
   useEffect(() => {
