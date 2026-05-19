@@ -1,5 +1,17 @@
 const UI_KEY = 'crm_pipeline_ui_v1';
+/** Backup: giữ bộ lọc khi đổi trang CRM (Khách hàng, KPI…) hoặc mở tab mới trong phiên. */
+const UI_LS_KEY = 'crm_pipeline_ui_ls_v1';
 const FOCUS_KEY = 'crm_focus_pipeline_card_id';
+
+function parseSnapshotJson(raw) {
+  if (!raw) return null;
+  try {
+    const o = JSON.parse(raw);
+    return o && typeof o === 'object' ? o : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Gọi ngay trước khi mở chi tiết lead/deal — đảm bảo snapshot mới nhất. */
 let persistUiHook = null;
@@ -25,18 +37,27 @@ export function snapshotHasProperty(snapshot, key) {
 
 export function loadCrmPipelineSnapshot() {
   try {
-    const s = sessionStorage.getItem(UI_KEY);
-    if (!s) return null;
-    const o = JSON.parse(s);
-    return o && typeof o === 'object' ? o : null;
+    const fromSession = parseSnapshotJson(sessionStorage.getItem(UI_KEY));
+    if (fromSession) return fromSession;
+    return parseSnapshotJson(localStorage.getItem(UI_LS_KEY));
   } catch {
     return null;
   }
 }
 
 export function saveCrmPipelineSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return;
+  let serialized;
   try {
-    sessionStorage.setItem(UI_KEY, JSON.stringify(snapshot));
+    serialized = JSON.stringify(snapshot);
+  } catch {
+    return;
+  }
+  try {
+    sessionStorage.setItem(UI_KEY, serialized);
+  } catch (_) {}
+  try {
+    localStorage.setItem(UI_LS_KEY, serialized);
   } catch (_) {}
 }
 

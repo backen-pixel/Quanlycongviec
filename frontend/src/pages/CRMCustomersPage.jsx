@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 
 const LS_CRM_CUSTOMERS_COMPANY = 'crm_customers_filter_company_id';
+const LS_CRM_CUSTOMERS_SEARCH = 'crm_customers_search_v1';
 
 export default function CRMCustomersPage() {
   const { user } = useAuth();
@@ -26,7 +27,14 @@ export default function CRMCustomersPage() {
     }
   });
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    try {
+      return localStorage.getItem(LS_CRM_CUSTOMERS_SEARCH) || '';
+    } catch {
+      return '';
+    }
+  });
   const [expandedId, setExpandedId] = useState(null);
   const [detail, setDetail] = useState(null);
   const navigate = useNavigate();
@@ -65,6 +73,16 @@ export default function CRMCustomersPage() {
       /* ignore */
     }
   }, [isAdmin, filterCompanyId]);
+
+  useEffect(() => {
+    try {
+      const q = (search || '').trim();
+      if (q) localStorage.setItem(LS_CRM_CUSTOMERS_SEARCH, q);
+      else localStorage.removeItem(LS_CRM_CUSTOMERS_SEARCH);
+    } catch {
+      /* ignore */
+    }
+  }, [search]);
 
   const loadDetail = async (id) => {
     if (expandedId === id) {

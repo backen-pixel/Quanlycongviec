@@ -1,4 +1,5 @@
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
 import { useAuth } from '../lib/auth';
 import api from '../lib/api';
 import NotificationCenter from './NotificationCenter';
@@ -242,9 +243,17 @@ const VC_MENU_GROUPS = [
 ];
 
 function SideLink({ to, icon: Icon, label, collapsed, end, badge }) {
+  const location = useLocation();
+  const onNavClick = () => {
+    const p = location.pathname;
+    if (p === '/crm/dashboard' || p === '/crm/pipeline') {
+      persistCrmPipelineUiNow();
+    }
+  };
   return (
     <NavLink
       to={to}
+      onClick={onNavClick}
       end={to === '/' || end}
       className={({ isActive }) =>
         `flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-all ${
