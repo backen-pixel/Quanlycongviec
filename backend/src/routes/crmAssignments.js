@@ -6,6 +6,10 @@ const path = require('path');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { sanitizeStorageFilename, isInvalidStorageKeyError } = require('../helpers/storageFilename');
+const {
+  persistAssignmentNotification,
+  buildAssignmentNotificationInsert,
+} = require('../helpers/crmAssignmentNotifications');
 
 const STORAGE_BUCKET = 'attachments';
 const uploadMw = multer({
@@ -151,19 +155,13 @@ function pushNotif(req, userId, payload) {
 }
 
 async function persistNotification(userId, payload) {
-  if (!userId) return null;
-  try {
-    const { data } = await supabase.from('notifications').insert({
-      user_id: userId,
-      type: payload.type,
-      title: payload.title,
-      message: payload.message,
-      entity_type: 'crm_assignment',
-      entity_id: payload.entity_id,
-      metadata: payload.metadata || { module_key: 'crm', ecosystem_module_key: 'crm' },
-    }).select().single();
-    return data || null;
-  } catch { return null; }
+  return persistAssignmentNotification(supabase, userId, {
+    type: payload.type,
+    title: payload.title,
+    message: payload.message,
+    assignmentId: payload.entity_id ?? payload.assignment_id,
+    metadata: payload.metadata,
+  });
 }
 
 // ─── COLUMNS ──────────────────────────────────────────────────────────────────
@@ -371,13 +369,12 @@ r.post('/', async (req, res) => {
         message: `"${data.title}"${data.deadline ? ' — hạn ' + new Date(data.deadline).toLocaleString('vi-VN') : ''}`,
         entity_id: data.id,
       });
-      pushNotif(req, uid, notif || {
+      pushNotif(req, uid, notif || buildAssignmentNotificationInsert(uid, {
         type: 'crm_assignment_assigned',
         title: '📋 Bạn vừa được giao nhiệm vụ CRM',
-        message: data.title,
-        entity_type: 'crm_assignment',
-        entity_id: data.id,
-      });
+        message: `"${data.title}"${data.deadline ? ' — hạn ' + new Date(data.deadline).toLocaleString('vi-VN') : ''}`,
+        assignmentId: data.id,
+      }));
     }
 
     await attachAssigneesToAssignments([data]);

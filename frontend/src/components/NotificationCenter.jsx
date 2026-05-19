@@ -144,8 +144,22 @@ const MODULE_FILTER_OPTIONS = [
   { id: 'project', label: 'Dự án' },
 ];
 
-function navigateCrmAssignment(navigate, entityId) {
-  navigate(entityId ? `/crm/assignments?open=${entityId}` : '/crm/assignments', { state: { moduleContext: 'crm' } });
+function resolveAssignmentEntityId(n) {
+  const meta = n?.metadata && typeof n.metadata === 'object' ? n.metadata : null;
+  if (meta?.assignment_id != null && String(meta.assignment_id).trim() !== '') {
+    return String(meta.assignment_id).trim();
+  }
+  if (n?.entity_id != null && String(n.entity_id).trim() !== '') {
+    return String(n.entity_id).trim();
+  }
+  return null;
+}
+
+function navigateCrmAssignment(navigate, nOrEntityId) {
+  const id = typeof nOrEntityId === 'object' && nOrEntityId !== null
+    ? resolveAssignmentEntityId(nOrEntityId)
+    : (nOrEntityId != null ? String(nOrEntityId) : null);
+  navigate(id ? `/crm/assignments?open=${id}` : '/crm/assignments', { state: { moduleContext: 'crm' } });
 }
 
 function inferNotificationModuleKey(n) {
@@ -472,7 +486,7 @@ export default function NotificationCenter({ socket }) {
               const lid = notif.metadata?.lead_id;
               navigate(lid ? `/crm/leads/${lid}?tab=tasks` : '/crm/tasks');
             } else if (isAssignmentNotification(notif)) {
-              navigateCrmAssignment(navigate, notif.entity_id);
+              navigateCrmAssignment(navigate, notif);
             } else if (notif.entity_type === 'event') {
               navigate(`/crm/events`);
             } else if (notif.entity_type === 'release_note') {
@@ -703,7 +717,7 @@ export default function NotificationCenter({ socket }) {
                       if (pid) {
                         navigate(navTab ? `/projects/${pid}?tab=${navTab}` : `/projects/${pid}`);
                       } else if (isAssignmentNotification(n)) {
-                        navigateCrmAssignment(navigate, n.entity_id);
+                        navigateCrmAssignment(navigate, n);
                       } else if (n.entity_type === 'task' && n.entity_id) {
                         navigate(`/tasks?task=${n.entity_id}`);
                       } else if (n.entity_type === 'crm_lead' || n.entity_type === 'crm_deal' || n.entity_type === 'lead') {
