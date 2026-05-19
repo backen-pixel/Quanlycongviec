@@ -1,5 +1,5 @@
 /** @typedef {{ id?: string, name?: string, is_won?: boolean, is_lost?: boolean, sync_role?: string|null }} CrmStageLike */
-/** @typedef {{ type?: string, project_id?: string|null, sx_handover_at?: string|null, stage_id?: string|null }} CrmLeadLike */
+/** @typedef {{ type?: string, project_id?: string|null, sx_handover_at?: string|null, stage_id?: string|null, stage?: CrmStageLike|null }} CrmLeadLike */
 
 const POST_WON_SYNC_ROLES = new Set([
   'sx_production',
@@ -29,10 +29,12 @@ export function isCrmPostWonManagedStage(stage) {
   return false;
 }
 
-/** @param {CrmLeadLike|null|undefined} item */
+/** Khóa kéo khi thẻ đang ở cột SX/VC trên CRM (không khóa chỉ vì có dự án). */
 export function isDealCrmStageLocked(item) {
   if (!item || item.type !== 'deal') return false;
-  return !!(item.project_id || item.sx_handover_at);
+  const st = item.stage;
+  if (st && isCrmPostWonManagedStage(st)) return true;
+  return false;
 }
 
 /** Không cho kéo thẻ deal trên Kanban CRM. */
@@ -48,9 +50,8 @@ export function isDealCrmKanbanDragLocked(item, pipelineType) {
 export function canDropDealOnCrmKanbanStage(item, targetStage, pipelineType) {
   if (pipelineType !== 'deal') return true;
   if (targetStage?.is_lost) return true;
-  if (isDealCrmStageLocked(item)) return false;
   if (isCrmPostWonManagedStage(targetStage)) return false;
-  if (targetStage?.is_won) return true;
+  if (isDealCrmStageLocked(item) && isCrmPostWonManagedStage(targetStage)) return false;
   return true;
 }
 
@@ -59,11 +60,11 @@ export function canDropDealOnCrmKanbanStage(item, targetStage, pipelineType) {
  */
 export function crmDealStageMoveBlockedMessage(item, targetStage, pipelineType) {
   if (pipelineType !== 'deal') return null;
-  if (isDealCrmStageLocked(item)) {
-    return 'Deal đã có dự án — giai đoạn CRM cố định ở Thắng; badge SX/VC cập nhật từ module Sản xuất / Vận chuyển.';
-  }
   if (isCrmPostWonManagedStage(targetStage)) {
-    return 'Không kéo deal sang cột này trên CRM. Chỉ kéo tới cột Thắng; phần sau do module xưởng/VC quản lý.';
+    return 'Không kéo deal sang cột Sản xuất / Vận chuyển trên CRM. Cập nhật tiến độ ở module xưởng/VC; trên CRM chỉ đổi giai đoạn trước Thắng hoặc Thắng / Thua.';
+  }
+  if (isDealCrmStageLocked(item)) {
+    return 'Deal đang ở cột do module Sản xuất/Vận chuyển quản lý — kéo về Thắng hoặc giai đoạn trước đó, hoặc đổi ở chi tiết deal.';
   }
   return null;
 }

@@ -5,14 +5,17 @@
  *   currentStageId – id of the currently active stage
  *   onMoveToStage  – (stageId) => void  called when a step circle is clicked
  *   currentStageName – tên stage khi stage_id không có trong `stages` (orphan)
+ *   visitedStageIds – Set<string> các stage_id đã từng vào (lịch sử CRM)
  */
 import { sortAndDedupePipelineStages, pipelineStageSortKey } from '../lib/crmPipelineStages';
+import { isCrmPostWonManagedStage } from '../lib/crmDealStageGate';
 
 export default function PipelineStepper({
   stages = [],
   currentStageId,
   currentStageName,
   onMoveToStage,
+  visitedStageIds = null,
 }) {
   const sortedStages = sortAndDedupePipelineStages(stages);
   const curId = currentStageId != null ? String(currentStageId) : '';
@@ -22,19 +25,28 @@ export default function PipelineStepper({
     currentStageIdx >= 0
       ? pipelineStageSortKey(currentStage, currentStageIdx)
       : null;
+  const visited = visitedStageIds instanceof Set ? visitedStageIds : null;
+
+  const stageIsPast = (s, i) => {
+    const isCurrent = String(s.id) === curId;
+    if (isCurrent) return false;
+    const sortKey = pipelineStageSortKey(s, i);
+    // Không tích các cột đứng sau cột hiện tại trên pipeline (tránh sync cũ làm ✓ Đàm phán/SX sau Thắng).
+    if (curSortKey != null && sortKey > curSortKey) return false;
+    if (isCrmPostWonManagedStage(s)) return false;
+    if (visited?.has(String(s.id))) return true;
+    return curSortKey != null && sortKey < curSortKey;
+  };
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
       <div className="flex items-start justify-between overflow-x-auto pb-1">
         {sortedStages.map((s, i) => {
           const isCurrent = String(s.id) === curId;
-          const sortKey = pipelineStageSortKey(s, i);
-          const isPast =
-            curSortKey != null && !isCurrent && sortKey < curSortKey;
+          const isPast = stageIsPast(s, i);
           const connectorPast =
-            curSortKey != null &&
             i < sortedStages.length - 1 &&
-            pipelineStageSortKey(sortedStages[i + 1], i + 1) <= curSortKey;
+            stageIsPast(sortedStages[i + 1], i + 1);
 
           return (
             <div key={s.id} className="flex items-start flex-1 min-w-0">
@@ -42,7 +54,10 @@ export default function PipelineStepper({
                 <button
                   type="button"
                   onClick={() => onMoveToStage?.(s.id)}
-                  className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold transition-all duration-200 cursor-pointer ${
+                  disabled={!onMoveToStage}
+                  className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold transition-all duration-200 ${
+                    onMoveToStage ? 'cursor-pointer' : 'cursor-default'
+                  } ${
                     isPast
                       ? 'bg-emerald-500 text-white shadow-sm'
                       : isCurrent

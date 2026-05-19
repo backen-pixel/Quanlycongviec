@@ -1,6 +1,7 @@
 /**
- * Quy tắc kéo giai đoạn deal trên CRM: chỉ tới cột Thắng (is_won).
- * Sau khi có dự án / bàn giao SX — giai đoạn & badge SX/VC do module xưởng/VC đồng bộ.
+ * Quy tắc kéo giai đoạn deal trên CRM.
+ * Cột sau Thắng (Sản xuất, Vận chuyển…) do module xưởng/VC — không kéo thủ công trên CRM Kanban.
+ * Deal đã có dự án vẫn được đổi lại các giai đoạn trước Thắng / Thắng / Thua.
  */
 
 const POST_WON_SYNC_ROLES = new Set([
@@ -31,10 +32,12 @@ function isCrmPostWonManagedStage(stage) {
   return false;
 }
 
-/** Deal đã có dự án / đã bàn giao — khóa đổi stage trên CRM (trừ Thua + endpoint reopen). */
+/** Chỉ khóa kéo thẻ khi đang ở cột do SX/VC quản lý (không khóa vì có project_id). */
 function isDealCrmStageLocked(lead) {
   if (!lead || lead.type !== 'deal') return false;
-  return !!(lead.project_id || lead.sx_handover_at);
+  const st = lead.stage;
+  if (st && isCrmPostWonManagedStage(st)) return true;
+  return false;
 }
 
 /**
@@ -50,27 +53,9 @@ function assertDealCrmManualStageChange(lead, targetStage) {
       ok: false,
       code: 'crm_stage_locked_post_won',
       error:
-        'Giai đoạn sau Thắng (Sản xuất, Vận chuyển…) do module xưởng/VC quản lý. Trên CRM chỉ kéo deal tới cột Thắng.',
+        'Giai đoạn sau Thắng (Sản xuất, Vận chuyển…) do module xưởng/VC quản lý. Trên CRM chỉ kéo deal tới cột Thắng hoặc các giai đoạn trước đó.',
     };
   }
-
-  if (isDealCrmStageLocked(lead)) {
-    if (targetStage?.is_won && String(lead.stage_id || '') === String(targetStage.id || '')) {
-      return { ok: true };
-    }
-    return {
-      ok: false,
-      code: 'crm_stage_locked_has_project',
-      error:
-        'Deal đã có dự án — không đổi giai đoạn trên CRM. Cập nhật tiến độ qua Kanban Sản xuất / Vận chuyển.',
-    };
-  }
-
-  if (!targetStage?.is_won && !targetStage?.is_lost) {
-    return { ok: true };
-  }
-
-  if (targetStage?.is_won) return { ok: true };
 
   return { ok: true };
 }

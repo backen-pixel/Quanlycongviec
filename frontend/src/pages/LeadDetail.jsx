@@ -82,6 +82,8 @@ export default function LeadDetail() {
   const [taskDocuments, setTaskDocuments] = useState([]);
   const [stagesLead, setStagesLead] = useState([]);
   const [stagesDeal, setStagesDeal] = useState([]);
+  /** Các giai đoạn deal đã từng vào — stepper tích ✓ theo lịch sử (không chỉ order_index). */
+  const [visitedStageIds, setVisitedStageIds] = useState(() => new Set());
   const [headerLeadTypes, setHeaderLeadTypes] = useState([]);
   const [flows, setFlows] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
@@ -296,12 +298,38 @@ export default function LeadDetail() {
       setTaskDocuments(taskDocRes.data || taskDocRes || []);
       setStagesLead(sortAndDedupePipelineStages(stagesLeadRes.data || []));
       setStagesDeal(sortAndDedupePipelineStages(stagesDealRes.data || []));
+      const visited = new Set();
+      try {
+        const histBody = { lead_ids: [id] };
+        if (leadPipelineId) histBody.pipeline_id = leadPipelineId;
+        else if (leadCompanyId) histBody.company_id = leadCompanyId;
+        const { data: histRes } = await api.post('/crm/leads/stage-history-summary', histBody);
+        const rows = histRes?.by_lead?.[id] || histRes?.by_lead?.[String(id)] || [];
+        for (const h of rows) {
+          if (h?.to_stage_id) visited.add(String(h.to_stage_id));
+        }
+      } catch {
+        /* ignore */
+      }
+      if (leadRes?.stage_id) visited.add(String(leadRes.stage_id));
+      setVisitedStageIds(visited);
       setFlows(flowsRes || []);
       setAllUsers(usersRes || []);
 
       notifyCrmLeadSeenByCurrentUser(id, user?.id || user?.userId);
 
       if (leadRes?.project_id) projectCompanyPickRef.current = false;
+      if (leadRes?.type === 'deal' && leadRes?.project_id) {
+        api.post(`/crm/leads/${id}/repair-pipeline-display`).then((r) => {
+          if (seq !== loadSeqRef.current) return;
+          const patched = r.data?.lead;
+          if (patched?.id) {
+            setLead((prev) => (prev ? { ...prev, ...patched } : patched));
+          } else if (r.data?.stage_reset_to_won) {
+            void load({ silent: true });
+          }
+        }).catch(() => {});
+      }
       // Deal thắng + chưa có dự án → bắt buộc chọn công ty SX rồi mới tạo dự án
       if (leadRes?.type === 'deal' && !leadRes?.project_id) {
         const dealStages = stagesDealRes.data || [];
@@ -486,6 +514,11 @@ export default function LeadDetail() {
             : prev,
         );
         if (data.stage_id) {
+          setVisitedStageIds((prev) => {
+            const next = new Set(prev);
+            next.add(String(data.stage_id));
+            return next;
+          });
           const pt = (data.type || lead?.type) === 'deal' ? 'deal' : 'lead';
           const base = lead?.pipeline_id
             ? { pipeline_id: lead.pipeline_id }
@@ -1122,16 +1155,22 @@ export default function LeadDetail() {
       )}
 
       {/* Pipeline Progress - MISA Style Stepper */}
+      {lead?.type === 'deal' && lead?.project_id && !isDealCrmStageLocked(lead) && (
+        <p className="text-xs text-sky-800 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2 mb-2">
+          Deal đã có dự án — bạn có thể đổi lại giai đoạn trước Thắng / Thắng / Thua trên thanh bước. Tiến độ xưởng và vận chuyển hiển thị qua badge SX/VC (không kéo cột Sản xuất/Vận chuyển trên Kanban CRM).
+        </p>
+      )}
       {lead?.type === 'deal' && isDealCrmStageLocked(lead) && (
         <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
-          Deal đã có dự án — giai đoạn CRM giữ ở Thắng; badge SX/VC cập nhật từ module Sản xuất / Vận chuyển.
+          Deal đang ở cột do module Sản xuất/Vận chuyển quản lý — chọn lại Thắng hoặc giai đoạn trước đó trên thanh bước, hoặc cập nhật tiến độ tại Kanban xưởng/VC.
         </p>
       )}
       <PipelineStepper
         stages={stages}
         currentStageId={lead.stage_id}
         currentStageName={lead.stage?.name}
-        onMoveToStage={lead?.type === 'deal' && isDealCrmStageLocked(lead) ? undefined : moveStage}
+        onMoveToStage={moveStage}
+        visitedStageIds={visitedStageIds}
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
