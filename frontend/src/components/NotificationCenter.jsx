@@ -144,9 +144,14 @@ const MODULE_FILTER_OPTIONS = [
   { id: 'project', label: 'Dự án' },
 ];
 
+function navigateCrmAssignment(navigate, entityId) {
+  navigate(entityId ? `/crm/assignments?open=${entityId}` : '/crm/assignments', { state: { moduleContext: 'crm' } });
+}
+
 function inferNotificationModuleKey(n) {
   const mk = n?.metadata && typeof n.metadata === 'object' ? String(n.metadata.module_key || '').trim() : '';
   if (mk) return mk;
+  if (isAssignmentNotification(n)) return 'crm';
   const ty = String(n?.type || '');
   if (ty === 'lead_stage_sla_reminder' || ty === 'cskh_followup_reminder') return 'crm';
   if (ty.startsWith('crm_deadline') || ty === 'invoice_overdue') return 'crm';
@@ -466,8 +471,8 @@ export default function NotificationCenter({ socket }) {
             } else if (notif.entity_type === 'crm_task') {
               const lid = notif.metadata?.lead_id;
               navigate(lid ? `/crm/leads/${lid}?tab=tasks` : '/crm/tasks');
-            } else if (notif.entity_type === 'crm_assignment') {
-              navigate(notif.entity_id ? `/crm/assignments?open=${notif.entity_id}` : '/crm/assignments');
+            } else if (isAssignmentNotification(notif)) {
+              navigateCrmAssignment(navigate, notif.entity_id);
             } else if (notif.entity_type === 'event') {
               navigate(`/crm/events`);
             } else if (notif.entity_type === 'release_note') {
@@ -697,6 +702,8 @@ export default function NotificationCenter({ socket }) {
                       const navTab = n.metadata?.nav_tab;
                       if (pid) {
                         navigate(navTab ? `/projects/${pid}?tab=${navTab}` : `/projects/${pid}`);
+                      } else if (isAssignmentNotification(n)) {
+                        navigateCrmAssignment(navigate, n.entity_id);
                       } else if (n.entity_type === 'task' && n.entity_id) {
                         navigate(`/tasks?task=${n.entity_id}`);
                       } else if (n.entity_type === 'crm_lead' || n.entity_type === 'crm_deal' || n.entity_type === 'lead') {
@@ -711,8 +718,6 @@ export default function NotificationCenter({ socket }) {
                       } else if (n.entity_type === 'crm_task') {
                         const lid = n.metadata?.lead_id;
                         navigate(lid ? `/crm/leads/${lid}?tab=tasks` : '/crm/tasks');
-                      } else if (n.entity_type === 'crm_assignment') {
-                        navigate(n.entity_id ? `/crm/assignments?open=${n.entity_id}` : '/crm/assignments');
                       } else if (n.entity_type === 'event') {
                         navigate(`/crm/events`);
                       } else if (n.entity_type === 'release_note') {
