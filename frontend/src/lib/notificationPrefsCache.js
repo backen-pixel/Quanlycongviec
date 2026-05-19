@@ -29,6 +29,10 @@ const NOTIFICATION_TYPE_PREF_MAP = {
   task_completed: 'task_completed',
   crm_task_assigned: 'task_assigned',
   crm_task_completed: 'task_completed',
+  crm_assignment_assigned: 'task_assigned',
+  crm_assignment_comment: 'comment_added',
+  crm_assignment_due_soon: 'deadline_warning',
+  crm_assignment_overdue: 'deadline_warning',
 
   comment_added: 'comment_added',
 

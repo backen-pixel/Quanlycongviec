@@ -9,6 +9,7 @@
  * Tích hợp: require('./jobs/crmAssignmentDeadlineReminder').start(io)
  */
 const { supabase } = require('../config/supabase');
+const { buildAssignmentNotificationInsert } = require('../helpers/crmAssignmentNotifications');
 
 const RUN_INTERVAL_MS = 30 * 60 * 1000;
 const DEDUP_WINDOW_MS = 4 * 60 * 60 * 1000;
@@ -73,15 +74,12 @@ async function runOnce(io) {
         for (const uid of targets) {
           const key = `${type}:${t.id}:${uid}`;
           if (seen.has(key)) continue;
-          notifs.push({
-            user_id: uid,
+          notifs.push(buildAssignmentNotificationInsert(uid, {
             type,
             title: titlePrefix,
             message: msgFn(t),
-            entity_type: 'crm_assignment',
-            entity_id: t.id,
-            metadata: { module_key: 'crm', ecosystem_module_key: 'crm' },
-          });
+            assignmentId: t.id,
+          }));
           seen.add(key);
         }
       }
