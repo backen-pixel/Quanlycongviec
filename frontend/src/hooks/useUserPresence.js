@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import api from '../lib/api';
 
-const DEFAULT_POLL_MS = 120 * 1000;
+/** Poll presence thường xuyên hơn ngưỡng online 2 phút để UI cập nhật kịp */
+const DEFAULT_POLL_MS = 45 * 1000;
 
 /**
  * Lấy trạng thái online theo user_ids (ngưỡng 2 phút kể từ last ping).
@@ -22,10 +23,9 @@ export function useUserPresence(userIds, { enabled = true, pollMs = DEFAULT_POLL
     let cancelled = false;
 
     const tick = async () => {
-      if (document.hidden) return;
       try {
         const { data } = await api.post('/users/presence', { user_ids: ids });
-        if (!cancelled) setPresenceByUser(data?.presence || {});
+        if (!cancelled) setPresenceByUser(normalizePresenceMap(data?.presence || {}));
       } catch {
         if (!cancelled) setPresenceByUser({});
       }
@@ -42,4 +42,13 @@ export function useUserPresence(userIds, { enabled = true, pollMs = DEFAULT_POLL
   }, [enabled, idsKey, pollMs]);
 
   return presenceByUser;
+}
+
+/** Chuẩn hóa key UUID → string để khớp user.id từ API */
+function normalizePresenceMap(raw) {
+  const out = {};
+  for (const [k, v] of Object.entries(raw || {})) {
+    out[String(k)] = v;
+  }
+  return out;
 }

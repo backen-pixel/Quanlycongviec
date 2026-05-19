@@ -5,6 +5,7 @@ const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { normalizeRegionIdList, assertRegionBelongsToCompany } = require('../helpers/crmRegionScope');
 const { syncUserOrgToEcosystem } = require('../helpers/ecosystemSync');
+const { recordUserPing, getPresenceForUserIds } = require('../helpers/userPresence');
 
 const r = Router();
 r.use(auth);
@@ -123,24 +124,23 @@ r.get('/departments', async (req, res) => {
   } catch { res.status(500).json({ error: 'Lỗi' }); }
 });
 
-/** Client gọi định kỳ (~2 phút) để báo còn hoạt động; quá 2 phút không ping → coi offline */
+/** Client gọi định kỳ (~60s) để báo còn hoạt động; quá 2 phút không ping → coi offline */
 r.post('/ping', async (req, res) => {
   try {
     const uid = req.user.userId || req.user.id;
     if (!uid) return res.status(401).json({ error: 'Token không có user id' });
-    const { error } = await supabase.from('user_last_activity').upsert(
-      { user_id: uid, last_ping_at: new Date().toISOString() },
-      { onConflict: 'user_id' },
-    );
-    if (error) {
-      console.warn('[users/ping] Supabase:', error.message, '- chạy migration database/67_user_activity_and_messenger_pins.sql');
-      // Không chặn UI: thiếu bảng / lỗi DB vẫn trả 200
-      return res.json({ ok: true, skipped: true });
+    const result = await recordUserPing(uid);
+    if (!result.persisted) {
+      return res.status(503).json({
+        ok: false,
+        persisted: false,
+        error: result.error || 'Không ghi được ping — chạy migration database/67_user_activity_and_messenger_pins.sql',
+      });
     }
-    res.json({ ok: true });
+    res.json({ ok: true, persisted: true, last_ping_at: result.last_ping_at });
   } catch (e) {
     console.warn('[users/ping]', e.message);
-    res.json({ ok: true, skipped: true });
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 
@@ -149,31 +149,16 @@ r.post('/presence', async (req, res) => {
   try {
     const raw = req.body?.user_ids;
     const ids = Array.isArray(raw) ? raw : [];
-    const seen = new Set();
-    const filtered = [];
-    for (const id of ids) {
-      const s = String(id || '');
-      if (!s || seen.has(s)) continue;
-      seen.add(s);
-      filtered.push(s);
-      if (filtered.length >= 200) break;
-    }
-    if (!filtered.length) return res.json({ presence: {} });
-    const { data, error } = await supabase.from('user_last_activity').select('user_id, last_ping_at').in('user_id', filtered);
-    if (error) throw error;
-    const threshold = Date.now() - 2 * 60 * 1000;
-    const presence = {};
-    for (const id of filtered) presence[id] = { online: false, last_ping_at: null };
-    for (const row of data || []) {
-      const ts = row.last_ping_at ? new Date(row.last_ping_at).getTime() : 0;
-      presence[row.user_id] = {
-        online: ts > threshold,
-        last_ping_at: row.last_ping_at,
-      };
-    }
+    const presence = await getPresenceForUserIds(ids);
     res.json({ presence });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    const msg = String(e.message || e);
+    if (msg.includes('user_last_activity') || msg.includes('does not exist')) {
+      return res.status(503).json({
+        error: 'Bảng user_last_activity chưa có — chạy migration database/67_user_activity_and_messenger_pins.sql',
+      });
+    }
+    res.status(500).json({ error: msg });
   }
 });
 
