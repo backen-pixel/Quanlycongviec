@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { formatDate } from '../lib/utils';
@@ -41,6 +42,7 @@ const LS_COMPANY = 'crm_assignments_company_id';
 
 export default function CRMAssignmentsPage() {
   const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const isAdmin = ['admin', 'manager', 'sales_admin'].includes(user?.role);
 
   const [view, setView] = useState('kanban');
@@ -104,6 +106,22 @@ export default function CRMAssignmentsPage() {
   }, [isAdmin, filterCompanyId, filterAssignee, filterStatus, filterPriority, search]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Mở modal từ thông báo (?open=id)
+  const openHandledRef = useRef(null);
+  useEffect(() => {
+    const openId = searchParams.get('open');
+    if (!openId || loading) return;
+    if (openHandledRef.current === openId) return;
+    const found = items.find((t) => String(t.id) === String(openId));
+    if (found) {
+      openHandledRef.current = openId;
+      setViewingItem(found);
+      const next = new URLSearchParams(searchParams);
+      next.delete('open');
+      setSearchParams(next, { replace: true });
+    }
+  }, [items, loading, searchParams, setSearchParams]);
 
   // ─── Stats ──
   const stats = useMemo(() => {

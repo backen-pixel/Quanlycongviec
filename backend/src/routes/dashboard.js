@@ -24,6 +24,20 @@ const CHAT_NOTIFICATION_TYPES = ['lead_chat', 'messenger_chat'];
 /** Sự kiện CRM — tab riêng trong NotificationCenter */
 const EVENT_NOTIFICATION_TYPES = ['event_created', 'event_completed'];
 
+/** Giao việc CRM — tab «Giao việc» trong NotificationCenter */
+const ASSIGNMENT_NOTIFICATION_TYPES = [
+  'crm_assignment_assigned',
+  'crm_assignment_comment',
+  'crm_assignment_due_soon',
+  'crm_assignment_overdue',
+];
+
+function isAssignmentNotification(n) {
+  if (!n) return false;
+  if (n.entity_type === 'crm_assignment') return true;
+  return ASSIGNMENT_NOTIFICATION_TYPES.includes(String(n.type || ''));
+}
+
 const { preferenceKeyForNotificationType } = require('../helpers/notificationPrefTypes');
 /** True nếu thông báo thuộc module Quản lý công việc (Dự án) — đã tắt cứng. */
 function isProjectModuleNotification(n) {
@@ -50,17 +64,19 @@ r.get('/', async (req, res) => {
 
     const filtered = (rows || []).filter((n) => !isProjectModuleNotification(n));
 
-    let unread = 0, unreadChat = 0, unreadActivity = 0, unreadDeadlines = 0, unreadEvents = 0;
+    let unread = 0, unreadChat = 0, unreadActivity = 0, unreadDeadlines = 0, unreadEvents = 0, unreadAssignments = 0;
     for (const n of filtered) {
       const t = n.type;
       const isExp = isExpiryDeadlineNotificationType(t);
       const isChat = CHAT_NOTIFICATION_TYPES.includes(t);
       const isEvt = EVENT_NOTIFICATION_TYPES.includes(t);
+      const isAssign = isAssignmentNotification(n);
       if (isExp) unreadDeadlines += 1;
       if (isChat) unreadChat += 1;
       if (isEvt) unreadEvents += 1;
+      if (isAssign) unreadAssignments += 1;
       if (!isExp) unread += 1;
-      if (!isExp && !isChat && !isEvt) unreadActivity += 1;
+      if (!isExp && !isChat && !isEvt && !isAssign) unreadActivity += 1;
     }
 
     res.json({
@@ -71,6 +87,7 @@ r.get('/', async (req, res) => {
         unread_activity: unreadActivity,
         unread_deadlines: unreadDeadlines,
         unread_events: unreadEvents,
+        unread_assignments: unreadAssignments,
       },
     });
   } catch (e) {
@@ -103,11 +120,14 @@ r.get('/notifications', async (req, res) => {
       q = q.in('type', CHAT_NOTIFICATION_TYPES);
     } else if (ch === 'events') {
       q = q.in('type', EVENT_NOTIFICATION_TYPES);
+    } else if (ch === 'assignments') {
+      q = q.in('type', ASSIGNMENT_NOTIFICATION_TYPES);
     } else if (ch === 'activity') {
       q = q.not('type', 'in', postgrestInTypesList([
         ...EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST,
         ...CHAT_NOTIFICATION_TYPES,
         ...EVENT_NOTIFICATION_TYPES,
+        ...ASSIGNMENT_NOTIFICATION_TYPES,
       ]));
     } else {
       q = q.not('type', 'in', postgrestInTypesList(EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST));
@@ -180,12 +200,16 @@ r.put('/notifications/read-all', async (req, res) => {
 
     const notEvent = postgrestInTypesList(EVENT_NOTIFICATION_TYPES);
 
+    const notAssign = postgrestInTypesList(ASSIGNMENT_NOTIFICATION_TYPES);
+
     if (channel === 'activity') {
-      q = q.not('type', 'in', notInDeadlines).not('type', 'in', notChat).not('type', 'in', notEvent);
+      q = q.not('type', 'in', notInDeadlines).not('type', 'in', notChat).not('type', 'in', notEvent).not('type', 'in', notAssign);
     } else if (channel === 'messages') {
       q = q.in('type', CHAT_NOTIFICATION_TYPES);
     } else if (channel === 'events') {
       q = q.in('type', EVENT_NOTIFICATION_TYPES);
+    } else if (channel === 'assignments') {
+      q = q.in('type', ASSIGNMENT_NOTIFICATION_TYPES);
     } else if (channel === 'deadlines') {
       q = q.in('type', EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST);
     }
