@@ -4,6 +4,37 @@
  */
 export const BUILTIN_UPDATES = [
   {
+    id: '2026-05-crm-assignments',
+    version: '1.9.0',
+    category: 'feature',
+    publishedAt: '2026-05-19T12:00:00.000Z',
+    title: 'Giao việc CRM — giao việc độc lập, file yêu cầu/nộp, bình luận & nhắc hạn',
+    content: `## Trang mới: Giao việc CRM
+- Menu sidebar **Giao việc CRM** (\`/crm/assignments\`) — **tách khỏi** module Công việc chung và task gắn Lead/Deal.
+- **4 chế độ xem**: Kanban (tự quản lý cột), Danh sách, Planner (theo nhân viên), Deadline.
+- **Lọc theo công ty** (admin chọn công ty; nhân viên chỉ thấy việc công ty mình).
+- Giao **nhiều NV** cùng lúc: lọc theo công ty → khu vực → phòng ban → chọn NV / chọn tất cả.
+
+## File yêu cầu & nộp bài
+- **File yêu cầu** (người giao): gallery ảnh / video / link với mũi tên trái–phải; thêm **file** hoặc **URL**; PDF/Office chỉ nút **Tải file về**.
+- **Nộp công việc** (NV được giao): danh sách file đã nộp + nút nộp thêm; tải/xóa file của mình.
+- Upload tên file tiếng Việt được chuẩn hóa cho Storage (tránh lỗi Invalid key).
+
+## Ghi chú & thông báo
+- **Bình luận có trả lời** (thread lồng nhau).
+- Badge sidebar + **Notification Center**: bình luận mới, sắp đến hạn, quá hạn.
+- Cron nhắc deadline mỗi 30 phút.
+
+## Cài đặt kỹ thuật (admin)
+- Chạy migration Supabase (theo thứ tự):
+  - \`database/191_crm_assignments.sql\`
+  - \`database/192_crm_assignment_assignees.sql\`
+  - \`database/193_crm_assignment_comments.sql\`
+  - \`database/194_crm_assignment_files.sql\`
+  - \`database/195_crm_assignment_comments_parent_id.sql\`
+- Restart backend sau khi chạy migration.`,
+  },
+  {
     id: '2026-05-crm-pipeline-orphan-unlock',
     version: '1.8.0',
     category: 'feature',
