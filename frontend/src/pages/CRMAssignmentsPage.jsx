@@ -44,12 +44,26 @@ function isAssignmentCreator(task, userId) {
   return String(task?.created_by_id || '') === String(userId || '');
 }
 
+function isAssignmentAssignee(task, userId) {
+  if (!userId) return false;
+  const list = (task?.assignees?.length) ? task.assignees : (task?.assignee ? [task.assignee] : []);
+  if (list.some((a) => String(a.id) === String(userId))) return true;
+  if (task?.assignee_id && String(task.assignee_id) === String(userId)) return true;
+  return false;
+}
+
+/** Kéo cột / đổi trạng thái: người tạo hoặc người được giao (chung một cột cho cả nhóm). */
+function canMoveAssignment(task, userId) {
+  return isAssignmentCreator(task, userId) || isAssignmentAssignee(task, userId);
+}
+
 export default function CRMAssignmentsPage() {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const isAdmin = ['admin', 'manager', 'sales_admin'].includes(user?.role);
   const uid = String(user?.id || '');
   const canManageTask = useCallback((t) => isAssignmentCreator(t, uid), [uid]);
+  const canMoveTask = useCallback((t) => canMoveAssignment(t, uid), [uid]);
 
   const [view, setView] = useState('kanban');
   const [columns, setColumns] = useState([]);
@@ -270,6 +284,12 @@ export default function CRMAssignmentsPage() {
     }
   };
   const updateItem = async (id, patch) => {
+    const task = items.find((t) => String(t.id) === String(id));
+    const progressOnly = patch && Object.keys(patch).every((k) => k === 'status');
+    if (progressOnly && task && !canMoveTask(task)) {
+      alert('Chỉ người tạo hoặc người được giao mới được cập nhật tiến độ công việc này.');
+      return;
+    }
     try {
       await api.put(`/crm/assignments/${id}`, patch);
       void load();
@@ -278,7 +298,17 @@ export default function CRMAssignmentsPage() {
     }
   };
   const moveItem = async (id, column_id, position) => {
-    try { await api.post(`/crm/assignments/${id}/move`, { column_id, position }); void load(); } catch {}
+    const task = items.find((t) => String(t.id) === String(id));
+    if (task && !canMoveTask(task)) {
+      alert('Chỉ người tạo hoặc người được giao mới được di chuyển công việc này.');
+      return;
+    }
+    try {
+      await api.post(`/crm/assignments/${id}/move`, { column_id, position });
+      void load();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Không di chuyển được nhiệm vụ');
+    }
   };
 
   const upsertColumn = async (payload) => {
@@ -437,6 +467,7 @@ export default function CRMAssignmentsPage() {
           onDeleteCard={removeItem}
           onUpdateCard={updateItem}
           canManageTask={canManageTask}
+          canMoveTask={canMoveTask}
           onDragStart={onDragStart}
           onDropCol={onDropCol}
           allowDrop={allowDrop}
@@ -452,15 +483,16 @@ export default function CRMAssignmentsPage() {
           onUpdate={updateItem}
           columns={columns}
           canManageTask={canManageTask}
+          canMoveTask={canMoveTask}
         />
       )}
 
       {view === 'planner' && (
-        <PlannerView groups={plannerGroups} onOpen={(t) => setViewingItem(t)} onEdit={(t) => { if (!canManageTask(t)) return; setEditingItem(t); setShowItemModal(true); }} onDelete={removeItem} onUpdate={updateItem} columns={columns} canManageTask={canManageTask} />
+        <PlannerView groups={plannerGroups} onOpen={(t) => setViewingItem(t)} onEdit={(t) => { if (!canManageTask(t)) return; setEditingItem(t); setShowItemModal(true); }} onDelete={removeItem} onUpdate={updateItem} columns={columns} canManageTask={canManageTask} canMoveTask={canMoveTask} />
       )}
 
       {view === 'deadline' && (
-        <DeadlineView groups={deadlineGroups} onOpen={(t) => setViewingItem(t)} onEdit={(t) => { if (!canManageTask(t)) return; setEditingItem(t); setShowItemModal(true); }} onDelete={removeItem} onUpdate={updateItem} columns={columns} canManageTask={canManageTask} />
+        <DeadlineView groups={deadlineGroups} onOpen={(t) => setViewingItem(t)} onEdit={(t) => { if (!canManageTask(t)) return; setEditingItem(t); setShowItemModal(true); }} onDelete={removeItem} onUpdate={updateItem} columns={columns} canManageTask={canManageTask} canMoveTask={canMoveTask} />
       )}
 
       {showItemModal && (
@@ -500,7 +532,7 @@ export default function CRMAssignmentsPage() {
 function KanbanView({
   columns, itemsByColumn, users: _users, onAddColumn, onEditColumn, onDeleteColumn,
   onAddCard, onOpenCard, onEditCard, onDeleteCard, onUpdateCard, onDragStart, onDropCol, allowDrop,
-  canManageTask,
+  canManageTask, canMoveTask,
 }) {
   const noneList = itemsByColumn.get('__none__') || [];
   return (
@@ -525,7 +557,7 @@ function KanbanView({
             </div>
             <div className="flex-1 p-2 space-y-2 min-h-[80px]">
               {list.map((t) => (
-                <Card key={t.id} task={t} canManage={canManageTask(t)} onDragStart={onDragStart} onOpen={onOpenCard} onEdit={onEditCard} onDelete={onDeleteCard} onUpdate={onUpdateCard} />
+                <Card key={t.id} task={t} canManage={canManageTask(t)} canMove={canMoveTask(t)} onDragStart={onDragStart} onOpen={onOpenCard} onEdit={onEditCard} onDelete={onDeleteCard} onUpdate={onUpdateCard} />
               ))}
               <button
                 onClick={() => onAddCard(col.id)}
@@ -545,7 +577,7 @@ function KanbanView({
           </div>
           <div className="p-2 space-y-2">
             {noneList.map((t) => (
-              <Card key={t.id} task={t} canManage={canManageTask(t)} onDragStart={onDragStart} onOpen={onOpenCard} onEdit={onEditCard} onDelete={onDeleteCard} onUpdate={onUpdateCard} />
+              <Card key={t.id} task={t} canManage={canManageTask(t)} canMove={canMoveTask(t)} onDragStart={onDragStart} onOpen={onOpenCard} onEdit={onEditCard} onDelete={onDeleteCard} onUpdate={onUpdateCard} />
             ))}
           </div>
         </div>
@@ -561,18 +593,19 @@ function KanbanView({
   );
 }
 
-function Card({ task, canManage, onDragStart, onOpen, onEdit, onDelete, onUpdate }) {
+function Card({ task, canManage, canMove, onDragStart, onOpen, onEdit, onDelete, onUpdate }) {
   const pri = PRIORITY_MAP[task.priority] || PRIORITY_MAP.medium;
   const overdue = task.deadline && new Date(task.deadline) < new Date() && task.status !== 'completed';
   return (
     <div
-      draggable
-      onDragStart={onDragStart(task.id)}
+      draggable={!!canMove}
+      onDragStart={canMove ? onDragStart(task.id) : undefined}
       onClick={() => onOpen?.(task)}
       className="bg-white rounded-lg border p-2.5 shadow-sm hover:shadow-md cursor-pointer group"
-      title="Click để xem chi tiết — kéo để chuyển cột"
+      title={canMove ? 'Click xem chi tiết — kéo để chuyển cột' : 'Click xem chi tiết (chỉ người tạo / người được giao mới kéo được)'}
     >
       <div className="flex items-start gap-1.5">
+        {canMove ? (
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -590,6 +623,17 @@ function Card({ task, canManage, onDragStart, onOpen, onEdit, onDelete, onUpdate
             <Circle className="h-4 w-4 text-gray-300" />
           )}
         </button>
+        ) : (
+          <span className="mt-0.5 shrink-0" title="Chỉ người tạo / người được giao đổi trạng thái">
+            {task.status === 'completed' ? (
+              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+            ) : task.status === 'in_progress' ? (
+              <Clock className="h-4 w-4 text-blue-500" />
+            ) : (
+              <Circle className="h-4 w-4 text-gray-300" />
+            )}
+          </span>
+        )}
         <div className="flex-1 min-w-0">
           <p className={`text-sm leading-snug ${task.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}>
             {task.title}
@@ -652,12 +696,13 @@ function AssigneeStack({ assignees, fallback, compact }) {
 }
 
 // ─── LIST / PLANNER / DEADLINE — shared row ──────────────────────────────────
-function TaskRow({ task, canManage, onOpen, onEdit, onDelete, onUpdate, columns }) {
+function TaskRow({ task, canManage, canMove, onOpen, onEdit, onDelete, onUpdate, columns }) {
   const pri = PRIORITY_MAP[task.priority] || PRIORITY_MAP.medium;
   const overdue = task.deadline && new Date(task.deadline) < new Date() && task.status !== 'completed';
   const col = columns.find((c) => c.id === task.column_id);
   return (
     <div className="flex items-center gap-2 py-2 px-3 hover:bg-gray-50 border-b last:border-0">
+      {canMove ? (
       <button
         onClick={() => {
           const next = task.status === 'completed' ? 'pending' : (task.status === 'pending' ? 'in_progress' : 'completed');
@@ -669,6 +714,13 @@ function TaskRow({ task, canManage, onOpen, onEdit, onDelete, onUpdate, columns 
           : task.status === 'in_progress' ? <Clock className="h-4 w-4 text-blue-500" />
           : <Circle className="h-4 w-4 text-gray-300" />}
       </button>
+      ) : (
+        <span className="shrink-0">
+          {task.status === 'completed' ? <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+            : task.status === 'in_progress' ? <Clock className="h-4 w-4 text-blue-500" />
+            : <Circle className="h-4 w-4 text-gray-300" />}
+        </span>
+      )}
       <div className="flex-1 min-w-0 cursor-pointer" onClick={() => (onOpen || onEdit)?.(task)}>
         <p className={`text-sm hover:text-blue-700 ${task.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}>{task.title}</p>
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
@@ -697,16 +749,16 @@ function TaskRow({ task, canManage, onOpen, onEdit, onDelete, onUpdate, columns 
   );
 }
 
-function ListView({ items, columns, onOpen, onEdit, onDelete, onUpdate, canManageTask }) {
+function ListView({ items, columns, onOpen, onEdit, onDelete, onUpdate, canManageTask, canMoveTask }) {
   if (!items.length) return <p className="text-center text-sm text-gray-400 py-12">Chưa có nhiệm vụ nào</p>;
   return (
     <div className="bg-white rounded-xl border divide-y">
-      {items.map((t) => <TaskRow key={t.id} task={t} canManage={canManageTask(t)} columns={columns} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onUpdate={onUpdate} />)}
+      {items.map((t) => <TaskRow key={t.id} task={t} canManage={canManageTask(t)} canMove={canMoveTask(t)} columns={columns} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onUpdate={onUpdate} />)}
     </div>
   );
 }
 
-function PlannerView({ groups, onOpen, onEdit, onDelete, onUpdate, columns, canManageTask }) {
+function PlannerView({ groups, onOpen, onEdit, onDelete, onUpdate, columns, canManageTask, canMoveTask }) {
   if (!groups.assignees.length && !groups.unassigned.length) {
     return <p className="text-center text-sm text-gray-400 py-12">Không có nhiệm vụ đang mở</p>;
   }
@@ -722,7 +774,7 @@ function PlannerView({ groups, onOpen, onEdit, onDelete, onUpdate, columns, canM
             <span className="text-xs text-gray-400">({g.tasks.length} việc)</span>
           </div>
           <div className="bg-white rounded-b-xl divide-y">
-            {g.tasks.map((t) => <TaskRow key={t.id} task={t} canManage={canManageTask(t)} columns={columns} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onUpdate={onUpdate} />)}
+            {g.tasks.map((t) => <TaskRow key={t.id} task={t} canManage={canManageTask(t)} canMove={canMoveTask(t)} columns={columns} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onUpdate={onUpdate} />)}
           </div>
         </div>
       ))}
@@ -730,7 +782,7 @@ function PlannerView({ groups, onOpen, onEdit, onDelete, onUpdate, columns, canM
         <div className="border rounded-xl border-dashed">
           <div className="px-4 py-3 bg-gray-50 rounded-t-xl text-sm font-semibold text-gray-500">Chưa giao ({groups.unassigned.length})</div>
           <div className="bg-white rounded-b-xl divide-y">
-            {groups.unassigned.map((t) => <TaskRow key={t.id} task={t} canManage={canManageTask(t)} columns={columns} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onUpdate={onUpdate} />)}
+            {groups.unassigned.map((t) => <TaskRow key={t.id} task={t} canManage={canManageTask(t)} canMove={canMoveTask(t)} columns={columns} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onUpdate={onUpdate} />)}
           </div>
         </div>
       )}
@@ -738,7 +790,7 @@ function PlannerView({ groups, onOpen, onEdit, onDelete, onUpdate, columns, canM
   );
 }
 
-function DeadlineView({ groups, onOpen, onEdit, onDelete, onUpdate, columns, canManageTask }) {
+function DeadlineView({ groups, onOpen, onEdit, onDelete, onUpdate, columns, canManageTask, canMoveTask }) {
   const order = [
     { key: 'overdue',    label: '🔴 Quá hạn',     color: 'border-red-300 bg-red-50' },
     { key: 'today',      label: '🟡 Hôm nay',     color: 'border-amber-300 bg-amber-50' },
@@ -756,7 +808,7 @@ function DeadlineView({ groups, onOpen, onEdit, onDelete, onUpdate, columns, can
             {g.label} <span className="text-gray-400 font-normal">({groups[g.key].length})</span>
           </div>
           <div className="bg-white rounded-b-xl divide-y">
-            {groups[g.key].map((t) => <TaskRow key={t.id} task={t} canManage={canManageTask(t)} columns={columns} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onUpdate={onUpdate} />)}
+            {groups[g.key].map((t) => <TaskRow key={t.id} task={t} canManage={canManageTask(t)} canMove={canMoveTask(t)} columns={columns} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onUpdate={onUpdate} />)}
           </div>
         </div>
       ))}
@@ -1176,6 +1228,7 @@ function DetailModal({ item, columns, onClose, onEdit, onUpdate, onDelete }) {
   const isCreator = String(item.created_by_id || '') === uid;
   const assigneeList = (item.assignees && item.assignees.length) ? item.assignees : (item.assignee ? [item.assignee] : []);
   const isAssignee = assigneeList.some((a) => String(a.id) === uid);
+  const canMove = isCreator || isAssignee;
 
   const pri = PRIORITY_MAP[item.priority] || PRIORITY_MAP.medium;
   const status = STATUS_MAP[item.status] || STATUS_MAP.pending;
@@ -1211,9 +1264,11 @@ function DetailModal({ item, columns, onClose, onEdit, onUpdate, onDelete }) {
             <h2 className={`text-xl font-bold ${item.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}>{item.title}</h2>
           </div>
           <div className="flex items-center gap-1 shrink-0">
+            {canMove && (
             <button onClick={toggleStatus} className="h-8 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium cursor-pointer">
               {item.status === 'completed' ? 'Mở lại' : 'Đánh dấu xong'}
             </button>
+            )}
             {isCreator && (
               <>
                 <button onClick={() => onEdit(item)} title="Sửa" className="h-8 w-8 rounded-lg border hover:bg-gray-50 flex items-center justify-center cursor-pointer">
