@@ -1052,8 +1052,13 @@ export default function CRMDashboard() {
       if (!payload?.lead_id) return;
       const lid = String(payload.lead_id);
       const patch = {};
-      if (payload.sx_pipeline_stage) patch.sx_pipeline_stage = payload.sx_pipeline_stage;
-      if (payload.vc_pipeline_stage) patch.vc_pipeline_stage = payload.vc_pipeline_stage;
+      // Chấp nhận null để xoá rõ ràng; chỉ bỏ qua khi field không có trong payload.
+      if (Object.prototype.hasOwnProperty.call(payload, 'sx_pipeline_stage')) {
+        patch.sx_pipeline_stage = payload.sx_pipeline_stage || null;
+      }
+      if (Object.prototype.hasOwnProperty.call(payload, 'vc_pipeline_stage')) {
+        patch.vc_pipeline_stage = payload.vc_pipeline_stage || null;
+      }
       if (payload.stage_id !== undefined) patch.stage_id = payload.stage_id;
       if (Object.keys(patch).length === 0) return;
 
@@ -4755,7 +4760,7 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
       data-crm-pipeline-card={item.id}
       draggable={!dealDragLocked}
       onDragStart={handleDragStart}
-      title={dealDragLocked ? 'Deal đã có dự án — giai đoạn CRM do module Sản xuất/Vận chuyển cập nhật' : undefined}
+      title={dealDragLocked ? 'Cột Sản xuất/Vận chuyển trên CRM — kéo về Thắng hoặc giai đoạn trước; tiến độ xưởng/VC qua badge' : undefined}
       onClick={
         splitPickZones
           ? undefined
@@ -4984,14 +4989,19 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
         </div>
       )}
 
-      {/* Badge trạng thái module — ưu tiên VC nếu đã bàn giao, còn lại hiện SX */}
-      {(item.sx_pipeline_stage || item.vc_pipeline_stage) && (() => {
+      {/* Badge trạng thái module — ưu tiên VC nếu đã bàn giao, còn lại hiện SX.
+          Deal đã Thắng / có dự án mà chưa có badge SX (sync chậm hoặc pipeline xưởng thiếu cột intake) → hiển thị placeholder "Chờ vào xưởng" để KHÔNG bị "mất tag". */}
+      {(() => {
         const vcStage = item.vc_pipeline_stage;
         const sxStage = item.sx_pipeline_stage;
+        const hasProject = !!item.project_id;
+        const stageIsWon = item.stage?.is_won;
+        const fallbackForWon = !vcStage && !sxStage && (hasProject || stageIsWon) && item.type === 'deal'
+          ? { id: null, name: 'Chờ vào xưởng', color: '#0369a1', icon: '⏳', bucket_slug: 'won_pending' }
+          : null;
+        const activeStage = vcStage || sxStage || fallbackForWon;
+        if (!activeStage) return null;
 
-        // Ưu tiên: nếu deal đã sang VC → chỉ hiện VC (sản xuất đã xong)
-        // Nếu chưa sang VC → chỉ hiện SX
-        const activeStage = vcStage || sxStage;
         const isVC = !!vcStage;
         const icon = activeStage?.icon
           || (isVC
@@ -5002,12 +5012,16 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
         const label = isVC ? 'VC' : 'SX';
         const defaultColor = isVC ? '#ea580c' : '#0369a1';
 
+        const isPlaceholder = !vcStage && !sxStage;
         return (
           <div className={`${compact ? 'mt-1' : 'mt-2'}`}>
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg"
+            <div
+              className={`flex items-center gap-1.5 px-2 py-1 rounded-lg ${isPlaceholder ? 'border-dashed' : ''}`}
+              title={isPlaceholder ? 'Chưa có giai đoạn xưởng — chờ bàn giao Sản xuất hoặc cấu hình pipeline xưởng' : undefined}
               style={{
                 backgroundColor: activeStage.color ? `${activeStage.color}12` : (isVC ? '#fff7ed' : '#f0f9ff'),
-                border: `1px solid ${activeStage.color ? `${activeStage.color}50` : (isVC ? '#fed7aa' : '#bae6fd')}`,
+                border: `1px ${isPlaceholder ? 'dashed' : 'solid'} ${activeStage.color ? `${activeStage.color}50` : (isVC ? '#fed7aa' : '#bae6fd')}`,
+                opacity: isPlaceholder ? 0.85 : 1,
               }}>
               <span className="text-[11px] shrink-0">{icon}</span>
               <span className="text-[10px] font-bold uppercase tracking-wide shrink-0"

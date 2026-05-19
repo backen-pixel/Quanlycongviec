@@ -11,6 +11,7 @@ const {
   markCrmTargetStageJoinMissing,
   markProductionCompanyIdColumnMissing,
 } = require('./productionPipelineSchema');
+const { isCrmPostWonManagedStage } = require('./crmDealStageGate');
 
 const WORKSHOP_STAGE_SLUGS = ['production', 'delivery', 'customer-care'];
 /** Khớp enum project_status trong DB (không có 'delivering' — dùng shipping/installing). */
@@ -438,11 +439,12 @@ async function syncCrmLeadFromLogisticsStage(projectId, crmSyncTypeOrStageRow) {
 
   const { data: leads } = await supabase
     .from('crm_leads')
-    .select('id')
+    .select('id, sx_handover_at')
     .eq('project_id', projectId)
     .eq('type', 'deal');
 
   for (const lead of leads || []) {
+    if (!lead.sx_handover_at) continue;
     await supabase.from('crm_leads').update({ stage_id: targetCrmStageId }).eq('id', lead.id);
   }
 }
@@ -531,13 +533,15 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
   if (currentRow?.crm_target_stage_id) {
     const { data: leads } = await supabase
       .from('crm_leads')
-      .select('id, stage_id')
+      .select('id, stage_id, sx_handover_at')
       .eq('project_id', projectId)
       .eq('type', 'deal');
     await Promise.all(
       (leads || []).map((lead) => {
-        const patch = { stage_id: currentRow.crm_target_stage_id };
+        const patch = {};
+        if (lead.sx_handover_at) patch.stage_id = currentRow.crm_target_stage_id;
         if (stageUuid) patch.sx_pipeline_stage_id = stageUuid;
+        if (!Object.keys(patch).length) return Promise.resolve();
         return supabase.from('crm_leads').update(patch).eq('id', lead.id);
       }),
     );
@@ -565,7 +569,7 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
 
   const { data: leads } = await supabase
     .from('crm_leads')
-    .select('id, stage_id')
+    .select('id, stage_id, sx_handover_at')
     .eq('project_id', projectId)
     .eq('type', 'deal');
 
@@ -575,12 +579,13 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
       // Không ghi null — tránh xóa badge SX khi chưa map được cột pipeline.
       if (stageUuid) update.sx_pipeline_stage_id = stageUuid;
 
-      // Khi project di chuyển trên Kanban xưởng, CRM phải nhảy về cột đã map (Sản xuất/Thắng),
-      // không phụ thuộc deal đang ở cột CRM nào trước đó.
-      if (isInCrmProductionTriggerStage && sanXuatStageId) {
-        update.stage_id = sanXuatStageId;
-      } else if (!isInCrmProductionTriggerStage && thangStageId) {
-        update.stage_id = thangStageId;
+      // Chỉ đổi cột CRM sau khi Sale đã bàn giao SX (sx_handover_at) — trước đó chỉ cập nhật badge.
+      if (lead.sx_handover_at) {
+        if (isInCrmProductionTriggerStage && sanXuatStageId) {
+          update.stage_id = sanXuatStageId;
+        } else if (!isInCrmProductionTriggerStage && thangStageId) {
+          update.stage_id = thangStageId;
+        }
       }
 
       if (!Object.keys(update).length) return Promise.resolve();
@@ -668,6 +673,56 @@ async function emitCrmBadgeUpdateForProject(projectId, io) {
   }
 }
 
+/**
+ * Sửa deal cũ: làm mới badge SX/VC; nếu chưa bàn giao SX mà đang kẹt cột Sản xuất/VC trên CRM → đưa về Thắng.
+ */
+async function repairCrmDealPipelineDisplay(leadId) {
+  const lid = String(leadId || '').trim();
+  if (!lid) return { ok: false, error: 'Thiếu lead id' };
+
+  const { data: lead, error: le } = await supabase
+    .from('crm_leads')
+    .select('id, type, project_id, pipeline_id, company_id, stage_id, sx_handover_at')
+    .eq('id', lid)
+    .maybeSingle();
+  if (le) throw le;
+  if (!lead || lead.type !== 'deal') return { ok: false, error: 'Không phải deal' };
+  if (!lead.project_id) return { ok: false, error: 'Deal chưa có dự án' };
+
+  await syncCrmLeadSxPipelineFromProject(lead.project_id);
+
+  let stageReset = false;
+  if (!lead.sx_handover_at && lead.stage_id) {
+    const { data: st } = await supabase
+      .from('crm_pipeline_stages')
+      .select('id, name, is_won, is_lost, sync_role')
+      .eq('id', lead.stage_id)
+      .maybeSingle();
+    if (st && isCrmPostWonManagedStage(st)) {
+      let sq = supabase
+        .from('crm_pipeline_stages')
+        .select('id')
+        .eq('pipeline_type', 'deal')
+        .eq('is_won', true)
+        .eq('is_active', true)
+        .order('order_index', { ascending: true })
+        .limit(1);
+      if (lead.pipeline_id) sq = sq.eq('pipeline_id', lead.pipeline_id);
+      else if (lead.company_id) sq = sq.eq('company_id', lead.company_id);
+      const { data: won } = await sq.maybeSingle();
+      if (won?.id && String(won.id) !== String(lead.stage_id)) {
+        await supabase
+          .from('crm_leads')
+          .update({ stage_id: won.id, updated_at: new Date().toISOString() })
+          .eq('id', lid);
+        stageReset = true;
+      }
+    }
+  }
+
+  return { ok: true, stage_reset_to_won: stageReset, project_id: lead.project_id };
+}
+
 module.exports = {
   WORKSHOP_STAGE_SLUGS,
   WORKSHOP_STATUSES,
@@ -684,6 +739,7 @@ module.exports = {
   getDbIntakeStageId,
   resolveSxPipelineStageUuidForProject,
   syncCrmLeadSxPipelineFromProject,
+  repairCrmDealPipelineDisplay,
   syncVcPipelineStageToLead,
   syncCrmLeadFromLogisticsStage,
   // Generic helpers (dùng sync_role — không phụ thuộc tên cột)

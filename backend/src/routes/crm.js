@@ -9,7 +9,11 @@ const { createNotification: createNotif, notifyMultiple: notifyMultipleShared } 
 const { DEFAULT_CHECKLISTS } = require('../helpers/defaultChecklists');
 const { generateFlowTasks, generateStepTasks } = require('../helpers/generateFlowTasks');
 const { autoCreateProjectFromWonDeal } = require('../helpers/autoDealWonProject');
-const { syncCrmLeadSxPipelineFromProject, emitCrmBadgeUpdateForProject } = require('../helpers/workshopKanban');
+const {
+  syncCrmLeadSxPipelineFromProject,
+  emitCrmBadgeUpdateForProject,
+  repairCrmDealPipelineDisplay,
+} = require('../helpers/workshopKanban');
 const {
   userSeesAllCrmDeals,
   userSeesAllCrmLeads,
@@ -269,6 +273,47 @@ function respondIfCrmPipelinesTableMissing(res, err) {
       'Database chưa có bảng public.crm_pipelines (Supabase: Could not find the table in the schema cache). Mở Supabase → SQL Editor, chạy nội dung file database/21_crm_pipelines.sql trong repo. Sau đó chạy database/60_crm_pipelines_zalo_template.sql nếu cần cột Zalo theo pipeline. Trên Supabase: Settings → API → bấm Reload schema (hoặc đợi vài phút) rồi tải lại trang.',
   });
   return true;
+}
+
+const QUOTATIONS_SOURCE_EXCEL_COLS = ['source_excel_file_url', 'source_excel_file_name'];
+
+function isQuotationsSourceExcelColumnMissingError(err) {
+  const t = crmRouteErrorText(err).toLowerCase();
+  if (!t.includes('schema cache') && !t.includes('could not find')) return false;
+  return QUOTATIONS_SOURCE_EXCEL_COLS.some((c) => t.includes(c));
+}
+
+function stripQuotationsSourceExcelFields(row) {
+  const out = { ...row };
+  for (const c of QUOTATIONS_SOURCE_EXCEL_COLS) delete out[c];
+  return out;
+}
+
+async function insertQuotationRow(row) {
+  let result = await supabase.from('quotations').insert(row).select('*').single();
+  if (result.error && isQuotationsSourceExcelColumnMissingError(result.error)) {
+    console.warn(
+      '[crm] quotations.source_excel_* chưa có trên DB — lưu không kèm file Excel. Chạy database/169_quotations_source_excel_file.sql rồi Reload schema (Supabase → Settings → API).',
+    );
+    result = await supabase.from('quotations').insert(stripQuotationsSourceExcelFields(row)).select('*').single();
+  }
+  return result;
+}
+
+async function updateQuotationRow(id, row) {
+  let result = await supabase.from('quotations').update(row).eq('id', id).select('*').single();
+  if (result.error && isQuotationsSourceExcelColumnMissingError(result.error)) {
+    console.warn(
+      '[crm] quotations.source_excel_* chưa có trên DB — cập nhật không kèm file Excel. Chạy database/169_quotations_source_excel_file.sql rồi Reload schema (Supabase → Settings → API).',
+    );
+    result = await supabase
+      .from('quotations')
+      .update(stripQuotationsSourceExcelFields(row))
+      .eq('id', id)
+      .select('*')
+      .single();
+  }
+  return result;
 }
 
 /** Zalo: template/merge riêng theo crm_pipelines (deal có pipeline_id). */
@@ -3982,7 +4027,7 @@ r.get('/leads-by-fb-page', async (req, res) => {
 const CRM_LEAD_LIST_SELECT_EXTRA = ', linked_project:projects!crm_leads_project_id_fkey(id, production_deadline, production_note)';
 const CRM_LEAD_REGION_EMBED = ', crm_region:company_regions!crm_leads_region_id_fkey(id, name, code)';
 const CRM_LEAD_LIST_SELECT_BASE =
-  `*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies!crm_leads_company_id_fkey(id, name, short_name)${CRM_LEAD_REGION_EMBED}, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug), vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)`;
+  `*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type, sync_role, order_index), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies!crm_leads_company_id_fkey(id, name, short_name)${CRM_LEAD_REGION_EMBED}, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug), vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)`;
 let CRM_LEAD_LIST_SELECT = CRM_LEAD_LIST_SELECT_BASE + CRM_LEAD_LIST_SELECT_EXTRA;
 let _crmLeadSelectMigrationChecked = false;
 let _vcPipelineStageAvailable = true; // migration 81
@@ -5391,6 +5436,42 @@ r.get('/leads/:id/badge', async (req, res) => {
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+/** Deal cũ: làm mới badge SX/VC; chưa bàn giao SX thì đưa cột CRM về Thắng nếu đang kẹt Sản xuất/VC. */
+r.post('/leads/:id/repair-pipeline-display', async (req, res) => {
+  try {
+    const leadId = String(req.params.id || '').trim();
+    const { data: lead } = await supabase
+      .from('crm_leads')
+      .select('id, type, company_id')
+      .eq('id', leadId)
+      .maybeSingle();
+    if (!lead) return res.status(404).json({ error: 'Không tìm thấy deal' });
+    const sac = scopedAdminCompanyId(req);
+    if (sac && String(lead.company_id || '') !== String(sac)) {
+      return res.status(403).json({ error: 'Không có quyền' });
+    }
+    const ar = assertLeadReadableByRegionScope(req, lead);
+    if (!ar.ok) return res.status(403).json({ error: ar.error });
+
+    const result = await repairCrmDealPipelineDisplay(leadId);
+    if (!result.ok) return res.status(400).json(result);
+
+    let refreshed = null;
+    try {
+      refreshed = await fetchCrmLeadWithPipelineBadges(leadId);
+    } catch (_) {
+      /* optional */
+    }
+    const io = req.app.get('io');
+    if (io && result.project_id) {
+      await emitCrmBadgeUpdateForProject(result.project_id, io);
+    }
+    res.json({ ...result, lead: refreshed });
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'Lỗi sửa hiển thị pipeline' });
   }
 });
 
@@ -7344,13 +7425,11 @@ r.post('/quotations', async (req, res) => {
     const afterAllDiscounts = Math.max(0, afterRebate - saleDiscountAmt);
     const taxAmt = processedItems.reduce((s, i) => s + (i.vat_amount || 0), 0);
     
-    const { data: quote, error } = await supabase.from('quotations')
-      .insert({
-        ...quoteData, code, subtotal, discount_amount: discountAmt, sale_discount_amount: saleDiscountAmt,
-        tax_amount: taxAmt, total: afterAllDiscounts + taxAmt,
-        created_by: req.user.userId,
-      })
-      .select('*').single();
+    const { data: quote, error } = await insertQuotationRow({
+      ...quoteData, code, subtotal, discount_amount: discountAmt, sale_discount_amount: saleDiscountAmt,
+      tax_amount: taxAmt, total: afterAllDiscounts + taxAmt,
+      created_by: req.user.userId,
+    });
     if (error) throw error;
 
     // Insert items with vat_rate and vat_amount
@@ -7719,13 +7798,11 @@ r.put('/quotations/:id', async (req, res) => {
     const afterAllDiscounts = Math.max(0, afterRebate - saleDiscountAmt);
     const taxAmt = processedItems.reduce((s, i) => s + (i.vat_amount || 0), 0);
 
-    const { data, error } = await supabase.from('quotations')
-      .update({
-        ...quoteData, subtotal, discount_amount: discountAmt, sale_discount_amount: saleDiscountAmt,
-        tax_amount: taxAmt, total: afterAllDiscounts + taxAmt,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', req.params.id).select('*').single();
+    const { data, error } = await updateQuotationRow(req.params.id, {
+      ...quoteData, subtotal, discount_amount: discountAmt, sale_discount_amount: saleDiscountAmt,
+      tax_amount: taxAmt, total: afterAllDiscounts + taxAmt,
+      updated_at: new Date().toISOString(),
+    });
     if (error) throw error;
 
     // Replace items with vat_rate and vat_amount
