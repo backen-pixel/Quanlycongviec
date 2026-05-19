@@ -15,6 +15,7 @@ const {
   enrichProjectsForSx,
   buildPipelineSummary,
   syncCrmLeadSxPipelineFromProject,
+  shouldAutoOverwriteCrmStage,
   syncVcPipelineStageToLead,
   getCrmVcDeliveryStageId,
   emitCrmBadgeUpdateForProject,
@@ -1367,13 +1368,23 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
               if (vcDeliveryStageId) {
                 const { data: leads } = await supabase
                   .from('crm_leads')
-                  .select('id')
+                  .select('id, stage_id, stage:crm_pipeline_stages(id, name, sync_role, is_won, is_lost)')
                   .eq('project_id', projectId)
                   .eq('type', 'deal');
                 await Promise.all(
-                  (leads || []).map((lead) =>
-                    supabase.from('crm_leads').update({ stage_id: vcDeliveryStageId, vc_pipeline_stage_id: autoVcStageId }).eq('id', lead.id),
-                  ),
+                  (leads || []).map((lead) => {
+                    const patch = {};
+                    if (autoVcStageId) patch.vc_pipeline_stage_id = autoVcStageId;
+                    // Race-guard: chỉ ghi stage_id khi deal đang ở cột auto-managed hoặc Thắng.
+                    if (
+                      String(lead.stage_id || '') !== String(vcDeliveryStageId)
+                      && shouldAutoOverwriteCrmStage(lead.stage)
+                    ) {
+                      patch.stage_id = vcDeliveryStageId;
+                    }
+                    if (!Object.keys(patch).length) return Promise.resolve();
+                    return supabase.from('crm_leads').update(patch).eq('id', lead.id);
+                  }),
                 );
               }
             } catch (crmErr) {

@@ -47,24 +47,18 @@ export function isDealCrmKanbanDragLocked(item, pipelineType) {
  * @param {CrmStageLike} targetStage
  * @param {'lead'|'deal'} pipelineType
  */
-export function canDropDealOnCrmKanbanStage(item, targetStage, pipelineType) {
+export function canDropDealOnCrmKanbanStage(_item, _targetStage, pipelineType) {
   if (pipelineType !== 'deal') return true;
-  if (targetStage?.is_lost) return true;
-  if (isCrmPostWonManagedStage(targetStage)) return false;
-  if (isDealCrmStageLocked(item) && isCrmPostWonManagedStage(targetStage)) return false;
+  // Mở khóa toàn bộ: CRM Kanban có thể thả deal vào bất kỳ cột nào (kể cả Sản xuất / Vận chuyển).
   return true;
 }
 
 /**
  * @returns {string|null} Thông báo nếu không được thả / đổi cột
+ *   Hiện tại: không chặn bất kỳ chiều di chuyển nào trên CRM Kanban.
+ *   Đồng bộ tiến độ SX/VC vẫn do module xưởng/VC quản — chuyển tay từ CRM chỉ đổi `stage_id` và badge.
  */
-export function crmDealStageMoveBlockedMessage(item, targetStage, pipelineType) {
+export function crmDealStageMoveBlockedMessage(_item, _targetStage, pipelineType) {
   if (pipelineType !== 'deal') return null;
-  if (isCrmPostWonManagedStage(targetStage)) {
-    return 'Không kéo deal sang cột Sản xuất / Vận chuyển trên CRM. Cập nhật tiến độ ở module xưởng/VC; trên CRM chỉ đổi giai đoạn trước Thắng hoặc Thắng / Thua.';
-  }
-  if (isDealCrmStageLocked(item)) {
-    return 'Deal đang ở cột do module Sản xuất/Vận chuyển quản lý — kéo về Thắng hoặc giai đoạn trước đó, hoặc đổi ở chi tiết deal.';
-  }
   return null;
 }
