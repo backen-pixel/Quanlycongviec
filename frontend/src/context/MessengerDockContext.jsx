@@ -1,7 +1,24 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../lib/auth';
 import { messengerThreadKey, messengerUnreadKey, messengerUnreadGroupKey } from '../lib/messengerHubStorage';
+import { alertIncomingNotification } from '../lib/notificationAlert';
+import { isNotificationTypeEnabled } from '../lib/notificationPrefsCache';
 import api from '../lib/api';
+
+function showBrowserChatNotification({ title, body, tag }) {
+  if (typeof window === 'undefined' || typeof Notification === 'undefined') return;
+  if (Notification.permission !== 'granted') return;
+  if (!document.hidden) return;
+  try {
+    const n = new Notification(title, { body, tag, silent: true });
+    n.onclick = () => {
+      window.focus();
+      n.close();
+    };
+  } catch {
+    /* ignore */
+  }
+}
 
 const MessengerDockContext = createContext(null);
 
@@ -265,12 +282,21 @@ export function MessengerDockProvider({ children }) {
     (g) => {
       if (!g?.id) return;
       markGroupRead(g.id);
+      const peerUserId = g.peer_id || g.peerUserId || null;
       const wk = winKeyGroup(g.id);
       setWindows((w) => {
         const exists = w.some((x) => x.windowKey === wk);
         if (exists) {
           return w.map((x) =>
-            x.windowKey === wk ? { ...x, minimized: false, title: g.name || g.title || x.title } : x,
+            x.windowKey === wk
+              ? {
+                  ...x,
+                  minimized: false,
+                  title: g.name || g.title || x.title,
+                  peerUserId: peerUserId || x.peerUserId || null,
+                  isDirect: g.is_direct ?? x.isDirect ?? false,
+                }
+              : x,
           );
         }
         return [
@@ -284,6 +310,8 @@ export function MessengerDockProvider({ children }) {
             code: '',
             type: 'group',
             minimized: false,
+            peerUserId,
+            isDirect: !!g.is_direct,
           },
         ];
       });
@@ -345,7 +373,16 @@ export function MessengerDockProvider({ children }) {
         markLeadRead(leadId);
         return;
       }
-      setUnreadByLeadId((u) => ({ ...u, [leadId]: (u[leadId] || 0) + 1 }));
+      const leadTitle = msg.lead?.title || msg.lead_title || msg.lead_name || 'Lead/Deal';
+      const preview =
+        msg.content || (Array.isArray(msg.attachments) && msg.attachments.length ? '[Tệp đính kèm]' : '');
+      const senderName = msg.user?.full_name || 'Ai đó';
+      openLeadChat({
+        id: leadId,
+        title: leadTitle,
+        code: msg.lead?.code || msg.lead_code || '',
+        type: msg.lead?.type || 'lead',
+      });
       pushChatToast({
         id: `lead-${leadId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         kind: 'lead',
@@ -353,12 +390,20 @@ export function MessengerDockProvider({ children }) {
         groupId: null,
         sender: {
           id: msg.user?.id || msg.user_id,
-          name: msg.user?.full_name || 'Ai đó',
+          name: senderName,
           avatar: msg.user?.avatar || null,
         },
-        title: msg.lead?.title || msg.lead_title || msg.lead_name || 'Lead/Deal',
-        preview: msg.content || (Array.isArray(msg.attachments) && msg.attachments.length ? '[Tệp đính kèm]' : ''),
+        title: leadTitle,
+        preview,
         ts: msg.created_at || new Date().toISOString(),
+      });
+      if (isNotificationTypeEnabled('lead_chat', 'lead')) {
+        void alertIncomingNotification({ type: 'lead_chat', entityType: 'lead' });
+      }
+      showBrowserChatNotification({
+        title: senderName,
+        body: `${leadTitle}: ${preview || 'Tin nhắn mới'}`,
+        tag: `lead-chat-${leadId}`,
       });
     };
     const onGroupChat = (msg) => {
@@ -383,7 +428,11 @@ export function MessengerDockProvider({ children }) {
         markGroupRead(gid);
         return;
       }
-      setUnreadByGroupId((u) => ({ ...u, [gid]: (u[gid] || 0) + 1 }));
+      const groupTitle = msg.group?.name || msg.group_name || 'Nhóm chat';
+      const preview =
+        msg.content || (Array.isArray(msg.attachments) && msg.attachments.length ? '[Tệp đính kèm]' : '');
+      const senderName = msg.user?.full_name || 'Ai đó';
+      openMessengerGroupChat({ id: gid, name: groupTitle, title: groupTitle });
       pushChatToast({
         id: `grp-${gid}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         kind: 'group',
@@ -391,12 +440,20 @@ export function MessengerDockProvider({ children }) {
         groupId: gid,
         sender: {
           id: msg.user?.id || msg.user_id,
-          name: msg.user?.full_name || 'Ai đó',
+          name: senderName,
           avatar: msg.user?.avatar || null,
         },
-        title: msg.group?.name || msg.group_name || 'Nhóm chat',
-        preview: msg.content || (Array.isArray(msg.attachments) && msg.attachments.length ? '[Tệp đính kèm]' : ''),
+        title: groupTitle,
+        preview,
         ts: msg.created_at || new Date().toISOString(),
+      });
+      if (isNotificationTypeEnabled('messenger_chat', 'messenger_group')) {
+        void alertIncomingNotification({ type: 'messenger_chat', entityType: 'messenger_group' });
+      }
+      showBrowserChatNotification({
+        title: groupTitle,
+        body: `${senderName}: ${preview || 'Tin nhắn mới'}`,
+        tag: `messenger-group-${gid}`,
       });
     };
     socket.on('lead:chat', onLeadChat);
@@ -405,7 +462,7 @@ export function MessengerDockProvider({ children }) {
       socket.off('lead:chat', onLeadChat);
       socket.off('messenger_group:chat', onGroupChat);
     };
-  }, [socket, uid, markLeadRead, markGroupRead, pushChatToast]);
+  }, [socket, uid, markLeadRead, markGroupRead, pushChatToast, openLeadChat, openMessengerGroupChat]);
 
   const value = useMemo(
     () => ({

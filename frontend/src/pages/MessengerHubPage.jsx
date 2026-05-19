@@ -11,6 +11,8 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   UserPlus,
+  Building2,
+  UsersRound,
   Image as ImageIcon,
   FileText,
   Link2,
@@ -156,6 +158,8 @@ export default function MessengerHubPage() {
   const [rightSection, setRightSection] = useState('media');
   const [createOpen, setCreateOpen] = useState(false);
   const [groupName, setGroupName] = useState('');
+  const [createCompanyId, setCreateCompanyId] = useState('');
+  const [selectingCompanyMembers, setSelectingCompanyMembers] = useState(false);
   const [allUsers, setAllUsers] = useState([]);
   const [userPickQ, setUserPickQ] = useState('');
   const [picks, setPicks] = useState([]);
@@ -271,13 +275,13 @@ export default function MessengerHubPage() {
   }, []);
 
   useEffect(() => {
-    if (!staffPanelOpen) return;
+    if (!createOpen && !staffPanelOpen) return;
     api.get('/companies').then((r) => setCompanies(r.data?.companies || [])).catch(() => setCompanies([]));
     api
       .get('/users/departments/list')
       .then((r) => setDepartmentsList(r.data?.departments || []))
       .catch(() => setDepartmentsList([]));
-  }, [staffPanelOpen]);
+  }, [createOpen, staffPanelOpen]);
 
   const departmentsForCompany = useMemo(() => {
     if (!staffCompanyId) return departmentsList;
@@ -440,6 +444,63 @@ export default function MessengerHubPage() {
     setPicks((p) => [...p, { user_id: id, role: 'member', name: u.full_name || u.email }]);
   };
 
+  const closeCreateModal = () => {
+    if (creating || selectingCompanyMembers) return;
+    setCreateOpen(false);
+    setGroupName('');
+    setPicks([]);
+    setUserPickQ('');
+    setCreateCompanyId('');
+  };
+
+  /** Lấy toàn bộ NV active của công ty vào danh sách mời (merge hoặc thay thế). */
+  const selectAllCompanyEmployees = async ({ replace = false } = {}) => {
+    if (!createCompanyId) {
+      alert('Chọn công ty trước.');
+      return;
+    }
+    setSelectingCompanyMembers(true);
+    try {
+      const { data } = await api.get('/users', { params: { company_id: createCompanyId } });
+      const users = (data?.users || []).filter((u) => {
+        const id = u.id || u.user_id;
+        return id && String(id) !== String(uid);
+      });
+      if (!users.length) {
+        alert('Công ty này chưa có nhân viên active trong hệ thống.');
+        return;
+      }
+      const fromCompany = users.map((u) => ({
+        user_id: u.id || u.user_id,
+        role: 'member',
+        name: u.full_name || u.email || u.id,
+      }));
+      if (replace) {
+        setPicks(fromCompany);
+      } else {
+        setPicks((prev) => {
+          const seen = new Set(prev.map((p) => String(p.user_id)));
+          const merged = [...prev];
+          for (const row of fromCompany) {
+            if (!seen.has(String(row.user_id))) {
+              seen.add(String(row.user_id));
+              merged.push(row);
+            }
+          }
+          return merged;
+        });
+      }
+      const co = companies.find((c) => String(c.id) === String(createCompanyId));
+      if (!groupName.trim() && co) {
+        setGroupName(`Nhóm ${co.short_name || co.name}`);
+      }
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Không tải được danh sách nhân viên');
+    } finally {
+      setSelectingCompanyMembers(false);
+    }
+  };
+
   const createChatGroup = async () => {
     const name = groupName.trim();
     if (!name) {
@@ -452,10 +513,7 @@ export default function MessengerHubPage() {
         .filter((p) => String(p.user_id) !== String(uid))
         .map((p) => ({ user_id: p.user_id, role: p.role || 'member' }));
       const { data: group } = await api.post('/messenger/groups', { name, members });
-      setCreateOpen(false);
-      setGroupName('');
-      setPicks([]);
-      setUserPickQ('');
+      closeCreateModal();
       await reloadMessengerThreads();
       if (group?.id) {
         markGroupRead(group.id);
@@ -936,11 +994,56 @@ export default function MessengerHubPage() {
                 <Users className="h-4 w-4 text-sky-600" />
                 Tạo nhóm chat
               </h2>
-              <button type="button" className="text-slate-500 text-lg leading-none px-1" onClick={() => !creating && setCreateOpen(false)}>
+              <button type="button" className="text-slate-500 text-lg leading-none px-1" onClick={closeCreateModal}>
                 ×
               </button>
             </div>
             <div className="p-4 space-y-3 max-h-[70vh] overflow-y-auto">
+              <div className="rounded-xl border border-sky-100 bg-sky-50/80 p-3 space-y-2">
+                <p className="text-xs font-bold text-sky-900 flex items-center gap-1.5">
+                  <Building2 className="h-3.5 w-3.5" />
+                  Nhóm chat theo công ty
+                </p>
+                <p className="text-[11px] text-sky-800/90 leading-relaxed">
+                  Chọn công ty rồi bấm <strong>Chọn tất cả NV</strong> để mời mọi nhân viên đang active của công ty đó.
+                </p>
+                <select
+                  value={createCompanyId}
+                  onChange={(e) => setCreateCompanyId(e.target.value)}
+                  disabled={creating || selectingCompanyMembers}
+                  className="w-full h-9 px-2 rounded-lg border border-sky-200 bg-white text-sm"
+                >
+                  <option value="">— Chọn công ty —</option>
+                  {companies.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.short_name || c.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    disabled={creating || selectingCompanyMembers || !createCompanyId}
+                    onClick={() => void selectAllCompanyEmployees({ replace: true })}
+                    className="h-8 px-2.5 rounded-lg bg-sky-600 text-white text-[11px] font-semibold hover:bg-sky-700 disabled:opacity-50 inline-flex items-center gap-1"
+                  >
+                    {selectingCompanyMembers ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <UsersRound className="h-3.5 w-3.5" />
+                    )}
+                    Chọn tất cả NV
+                  </button>
+                  <button
+                    type="button"
+                    disabled={creating || selectingCompanyMembers || !createCompanyId}
+                    onClick={() => void selectAllCompanyEmployees({ replace: false })}
+                    className="h-8 px-2.5 rounded-lg border border-sky-300 bg-white text-sky-800 text-[11px] font-semibold hover:bg-sky-50 disabled:opacity-50"
+                  >
+                    Thêm vào danh sách
+                  </button>
+                </div>
+              </div>
               <div>
                 <label className="text-xs font-semibold text-slate-600">Tên nhóm</label>
                 <input
@@ -957,7 +1060,9 @@ export default function MessengerHubPage() {
                 vào nhóm; vai trò phó / thành viên áp dụng cho họ.
               </p>
               <div>
-                <label className="text-xs font-semibold text-slate-600">Thêm người</label>
+                <label className="text-xs font-semibold text-slate-600">
+                  Thêm người{picks.length > 0 ? ` (${picks.length} đã chọn)` : ''}
+                </label>
                 <input
                   value={userPickQ}
                   onChange={(e) => setUserPickQ(e.target.value)}
@@ -1007,7 +1112,7 @@ export default function MessengerHubPage() {
               )}
             </div>
             <div className="px-4 py-3 border-t border-slate-100 flex justify-end gap-2 bg-slate-50">
-              <button type="button" className="h-9 px-4 rounded-lg border border-slate-200 text-sm" disabled={creating} onClick={() => setCreateOpen(false)}>
+              <button type="button" className="h-9 px-4 rounded-lg border border-slate-200 text-sm" disabled={creating} onClick={closeCreateModal}>
                 Hủy
               </button>
               <button
