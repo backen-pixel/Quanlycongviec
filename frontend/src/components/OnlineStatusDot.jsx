@@ -15,6 +15,7 @@ export default function OnlineStatusDot({ online, size = 'sm', className = '', t
 
 export function isUserOnline(presenceByUser, userId) {
   if (!userId || !presenceByUser) return false;
-  const pres = presenceByUser[userId] ?? presenceByUser[String(userId)];
+  const key = String(userId);
+  const pres = presenceByUser[key] ?? presenceByUser[userId];
   return !!pres?.online;
 }

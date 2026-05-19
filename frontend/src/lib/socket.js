@@ -1,5 +1,6 @@
 import { io } from 'socket.io-client';
 import { resolveApiOrigin } from './apiOrigin';
+import api from './api';
 
 const API_URL = resolveApiOrigin();
 
@@ -21,7 +22,8 @@ export function connectSocket() {
 
   socket.on('connect', () => {
     console.log('🔌 Socket connected:', socket.id);
-    // Join personal room
+    api.post('/users/ping').catch(() => {});
+    socket.emit('presence:ping');
     const user = JSON.parse(localStorage.getItem('user') || '{}');
     if (user.id) socket.emit('join:user', user.id);
   });

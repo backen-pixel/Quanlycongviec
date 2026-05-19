@@ -331,7 +331,7 @@ export default function MessengerHubPage() {
       if (document.hidden) return;
       api.post('/users/presence', { user_ids: ids }).then((r) => setPresenceByUser(r.data?.presence || {})).catch(() => {});
     };
-    const id = setInterval(tick, 120 * 1000);
+    const id = setInterval(tick, 45 * 1000);
     document.addEventListener('visibilitychange', tick);
     return () => { clearInterval(id); document.removeEventListener('visibilitychange', tick); };
   }, [staffPanelOpen, staffListLoaded, staffRows]);

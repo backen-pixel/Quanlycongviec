@@ -10,6 +10,7 @@ const jwt = require('jsonwebtoken');
 const { Server } = require('socket.io');
 require('dotenv').config();
 const config = require('./config');
+const { recordUserPing } = require('./helpers/userPresence');
 
 const app = express();
 const server = http.createServer(app);
@@ -222,11 +223,21 @@ io.use((socket, next) => {
 });
 
 io.on('connection', (socket) => {
-  const userId = socket.user?.userId;
+  const userId = socket.user?.userId || socket.user?.id;
   console.log('🔌 Connected:', socket.id, '| User:', socket.user?.fullName);
 
   // Join personal room for targeted notifications
   if (userId) socket.join(`user:${userId}`);
+
+  // Presence: ping ngay khi kết nối socket (bổ sung HTTP POST /users/ping)
+  if (userId) {
+    void recordUserPing(userId).catch(() => {});
+  }
+  socket.on('presence:ping', () => {
+    const uid = socket.user?.userId || socket.user?.id;
+    if (!uid) return;
+    void recordUserPing(uid).catch(() => {});
+  });
 
   socket.on('join:project', (id) => socket.join(`project:${id}`));
   socket.on('join:lead', (id) => socket.join(`lead:${id}`));
