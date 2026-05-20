@@ -4917,24 +4917,10 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
           compact={compact}
         />
       )}
-      {typeof onOpenKanbanComment === 'function' && (
-        <button
-          type="button"
-          data-kanban-comment-btn
-          title="Bình luận nhanh"
-          onClick={(ev) => {
-            ev.stopPropagation();
-            onOpenKanbanComment(item);
-          }}
-          className="absolute bottom-2 right-2 z-[40] flex h-7 w-7 items-center justify-center rounded-full border border-gray-200/90 bg-white/95 text-slate-600 shadow-md transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600 cursor-pointer"
-        >
-          <MessageSquare className="h-3.5 w-3.5" strokeWidth={2.25} />
-        </button>
-      )}
-      {/* Per-user flags: ghim (Pin) + đã tương tác (CheckCircle2 xanh). Đặt bottom-left,
+      {/* Cụm nút bottom-right: ghim → tích xanh → bình luận. Đặt cùng 1 hàng,
           z-index cao hơn lớp splitPickZones (z-20) để vẫn click được. */}
-      {(typeof onTogglePin === 'function' || typeof onToggleInteracted === 'function') && (
-        <div className="absolute bottom-2 left-2 z-[40] flex items-center gap-1" data-kanban-flag-btns>
+      {(typeof onTogglePin === 'function' || typeof onToggleInteracted === 'function' || typeof onOpenKanbanComment === 'function') && (
+        <div className="absolute bottom-2 right-2 z-[40] flex items-center gap-1">
           {typeof onTogglePin === 'function' && (
             <button
               type="button"
@@ -4969,6 +4955,20 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
               }`}
             >
               <CheckCircle2 className={`h-3.5 w-3.5 ${item.is_interacted ? 'fill-blue-500 text-white' : ''}`} strokeWidth={2.25} />
+            </button>
+          )}
+          {typeof onOpenKanbanComment === 'function' && (
+            <button
+              type="button"
+              data-kanban-comment-btn
+              title="Bình luận nhanh"
+              onClick={(ev) => {
+                ev.stopPropagation();
+                onOpenKanbanComment(item);
+              }}
+              className="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200/90 bg-white/95 text-slate-600 shadow-md transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600 cursor-pointer"
+            >
+              <MessageSquare className="h-3.5 w-3.5" strokeWidth={2.25} />
             </button>
           )}
         </div>
