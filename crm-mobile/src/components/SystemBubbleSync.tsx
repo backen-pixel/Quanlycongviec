@@ -113,6 +113,13 @@ export default function SystemBubbleSync() {
     };
 
     sync();
+    // Khi app rời foreground (kéo về home / vuốt khỏi Recents), gọi startOverlay lại để
+    // re-attach bubble — quan trọng cho trường hợp user đã ẩn bubble (kéo xuống đáy) hoặc
+    // service mới được Android restart sau khi swipe app khỏi Recents.
+    const sub = AppState.addEventListener('change', (s: AppStateStatus) => {
+      if (s === 'background' || s === 'inactive') sync();
+    });
+    return () => sub.remove();
   }, [token, user, prefs, badge]);
 
   useEffect(() => {

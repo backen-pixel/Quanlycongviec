@@ -7,6 +7,7 @@ const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { sendMobilePush } = require('../services/pushSender');
+const { recordUserPing } = require('../helpers/userPresence');
 
 const r = Router();
 r.use(auth);
@@ -80,6 +81,19 @@ r.post('/ping', async (req, res) => {
       if (tableMissing(error)) return migrationHint(res);
       throw error;
     }
+
+    // Đồng bộ user-level presence: trang web Active Users dùng bảng `user_last_activity`
+    // để đếm "Đang hoạt động". Mobile chỉ ping /devices/ping nên cũng ghi sang đây để
+    // user dùng Android hiển thị online đúng (không cần ping riêng /users/ping).
+    try {
+      await recordUserPing(uid);
+    } catch (e) {
+      // Không vỡ luồng nếu bảng user_last_activity chưa có migration.
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('[devices/ping] recordUserPing:', e?.message || e);
+      }
+    }
+
     res.json({ ok: true, device: data });
   } catch (e) {
     console.error('POST /devices/ping:', e);
