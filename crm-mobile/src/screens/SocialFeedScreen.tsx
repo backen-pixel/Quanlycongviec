@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,7 @@ import {
   Modal,
   Pressable,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect } from '@react-navigation/native';
@@ -29,6 +30,16 @@ import { fileAttachmentsFromPost } from '../lib/socialMedia';
 type Props = NativeStackScreenProps<MoreStackParamList, 'SocialFeed'>;
 
 const PAGE_LIMIT = 12;
+const ADMIN_COMPANY_STORAGE_KEY = 'internal_social_filter_company_id';
+
+type CompanyOption = { id: string; name?: string | null; short_name?: string | null };
+
+function isSystemAdminUser(u: { role?: string; company_id?: string | null } | null | undefined): boolean {
+  if (!u) return false;
+  if (String(u.role || '').toLowerCase() !== 'admin') return false;
+  const cid = u.company_id == null ? '' : String(u.company_id).trim();
+  return cid.length === 0;
+}
 
 function timeAgo(iso?: string | null): string {
   if (!iso) return '';
@@ -186,6 +197,8 @@ function PostCard({
 
 export default function SocialFeedScreen({ navigation }: Props) {
   const { user } = useAuth();
+  const isSystemAdmin = useMemo(() => isSystemAdminUser(user), [user]);
+
   const [posts, setPosts] = useState<SocialPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -199,34 +212,102 @@ export default function SocialFeedScreen({ navigation }: Props) {
   const [composeImage, setComposeImage] = useState<{ uri: string; name?: string; mime?: string } | null>(null);
   const [composeBusy, setComposeBusy] = useState(false);
 
-  const loadPosts = useCallback(async (reset: boolean) => {
-    setError('');
-    if (reset) {
-      setRefreshing(true);
-      nextOffsetRef.current = 0;
-    } else {
-      setLoadingMore(true);
+  // Admin hệ thống: chọn công ty xem bảng tin (lưu AsyncStorage, đồng bộ web localStorage key)
+  const [companies, setCompanies] = useState<CompanyOption[]>([]);
+  const [adminCompanyId, setAdminCompanyId] = useState<string | null>(null);
+  const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
+
+  // Khi admin: load danh sách công ty + đọc lựa chọn đã lưu.
+  useEffect(() => {
+    if (!isSystemAdmin) {
+      setCompanies([]);
+      setAdminCompanyId(null);
+      return;
     }
-    try {
-      const offset = reset ? 0 : nextOffsetRef.current ?? 0;
-      const { data } = await api.get<SocialFeedResponse>('/internal-social/posts', {
-        params: { limit: PAGE_LIMIT, offset },
-      });
-      const page = Array.isArray(data?.posts) ? data.posts : [];
-      setPosts((prev) => (reset ? page : [...prev, ...page]));
-      nextOffsetRef.current = typeof data?.next_offset === 'number' ? data.next_offset : null;
-      setHasMore(!!data?.has_more);
-    } catch (e: unknown) {
-      setError(formatApiError(e) || 'Không tải được bảng tin');
-    } finally {
-      if (reset) {
-        setLoading(false);
-        setRefreshing(false);
-      } else {
-        setLoadingMore(false);
+    let cancelled = false;
+    (async () => {
+      try {
+        const stored = await AsyncStorage.getItem(ADMIN_COMPANY_STORAGE_KEY);
+        if (!cancelled && stored && stored.trim()) setAdminCompanyId(stored.trim());
+      } catch {
+        /* ignore */
       }
+      try {
+        const { data } = await api.get<{ companies?: CompanyOption[] }>('/companies', {
+          params: { for_module: 'crm' },
+        });
+        if (!cancelled) setCompanies(Array.isArray(data?.companies) ? data.companies : []);
+      } catch {
+        if (!cancelled) setCompanies([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isSystemAdmin]);
+
+  const persistAdminCompany = useCallback(async (id: string | null) => {
+    try {
+      if (id) await AsyncStorage.setItem(ADMIN_COMPANY_STORAGE_KEY, id);
+      else await AsyncStorage.removeItem(ADMIN_COMPANY_STORAGE_KEY);
+    } catch {
+      /* ignore */
     }
   }, []);
+
+  /** Công ty đang xem (admin: do chọn; NV: gắn theo user — backend tự suy ra). */
+  const effectiveCompanyId = useMemo(() => {
+    if (isSystemAdmin) return adminCompanyId || null;
+    return user?.company_id ? String(user.company_id) : null;
+  }, [isSystemAdmin, adminCompanyId, user?.company_id]);
+
+  const selectedCompanyName = useMemo(() => {
+    if (!isSystemAdmin || !adminCompanyId) return null;
+    const found = companies.find((c) => String(c.id) === String(adminCompanyId));
+    return found?.short_name || found?.name || null;
+  }, [isSystemAdmin, adminCompanyId, companies]);
+
+  const loadPosts = useCallback(
+    async (reset: boolean) => {
+      setError('');
+      // Admin chưa chọn công ty → không gọi API (server sẽ trả 400). Hiện hướng dẫn chọn.
+      if (isSystemAdmin && !adminCompanyId) {
+        setPosts([]);
+        nextOffsetRef.current = null;
+        setHasMore(false);
+        setLoading(false);
+        setRefreshing(false);
+        setLoadingMore(false);
+        return;
+      }
+      if (reset) {
+        setRefreshing(true);
+        nextOffsetRef.current = 0;
+      } else {
+        setLoadingMore(true);
+      }
+      try {
+        const offset = reset ? 0 : nextOffsetRef.current ?? 0;
+        const params: Record<string, string | number> = { limit: PAGE_LIMIT, offset };
+        if (isSystemAdmin && adminCompanyId) params.company_id = adminCompanyId;
+        const { data } = await api.get<SocialFeedResponse>('/internal-social/posts', { params });
+        const page = Array.isArray(data?.posts) ? data.posts : [];
+        setPosts((prev) => (reset ? page : [...prev, ...page]));
+        nextOffsetRef.current = typeof data?.next_offset === 'number' ? data.next_offset : null;
+        setHasMore(!!data?.has_more);
+      } catch (e: unknown) {
+        setError(formatApiError(e) || 'Không tải được bảng tin');
+      } finally {
+        if (reset) {
+          setLoading(false);
+          setRefreshing(false);
+        } else {
+          setLoadingMore(false);
+        }
+      }
+    },
+    [isSystemAdmin, adminCompanyId],
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -235,6 +316,14 @@ export default function SocialFeedScreen({ navigation }: Props) {
       return () => undefined;
     }, [loadPosts]),
   );
+
+  // Khi admin đổi công ty: tải lại danh sách bài.
+  useEffect(() => {
+    if (!isSystemAdmin) return;
+    void loadPosts(true);
+    // loadPosts đã phụ thuộc adminCompanyId; effect chạy lại khi id đổi.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminCompanyId, isSystemAdmin]);
 
   const onLoadMore = () => {
     if (loadingMore || refreshing || !hasMore) return;
@@ -287,6 +376,10 @@ export default function SocialFeedScreen({ navigation }: Props) {
       Alert.alert('Bảng tin', 'Nhập nội dung hoặc chọn ảnh trước khi đăng');
       return;
     }
+    if (isSystemAdmin && !adminCompanyId) {
+      Alert.alert('Chọn công ty', 'Bạn là admin hệ thống — vui lòng chọn công ty trước khi đăng bài.');
+      return;
+    }
     setComposeBusy(true);
     try {
       let image_url: string | null = null;
@@ -300,11 +393,13 @@ export default function SocialFeedScreen({ navigation }: Props) {
         );
         image_url = data?.file_url || data?.url || null;
       }
-      const { data: created } = await api.post<{ post: SocialPost }>('/internal-social/posts', {
+      const payload: Record<string, unknown> = {
         body: body || '',
         image_url: image_url || undefined,
         visibility: 'company',
-      });
+      };
+      if (isSystemAdmin && adminCompanyId) payload.company_id = adminCompanyId;
+      const { data: created } = await api.post<{ post: SocialPost }>('/internal-social/posts', payload);
       if (created?.post) {
         setPosts((prev) => [created.post, ...prev]);
       }
@@ -320,17 +415,40 @@ export default function SocialFeedScreen({ navigation }: Props) {
 
   const headerInline = useMemo(
     () => (
-      <TouchableOpacity
-        style={[styles.composeBox, CrmShadow.sm]}
-        onPress={() => setComposeOpen(true)}
-        activeOpacity={0.9}
-      >
-        <Avatar uri={user?.avatar} name={user?.full_name || user?.fullName} size={36} />
-        <Text style={styles.composePlaceholder}>Chia sẻ điều gì đó với nội bộ…</Text>
-        <Text style={styles.composeIcon}>📸</Text>
-      </TouchableOpacity>
+      <View>
+        {isSystemAdmin ? (
+          <TouchableOpacity
+            style={[styles.companyPickerBtn, CrmShadow.sm]}
+            onPress={() => setCompanyPickerOpen(true)}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.companyPickerLabel}>Công ty bảng tin</Text>
+            <View style={styles.companyPickerValueRow}>
+              <Text
+                style={[
+                  styles.companyPickerValue,
+                  !selectedCompanyName && styles.companyPickerValueMuted,
+                ]}
+                numberOfLines={1}
+              >
+                {selectedCompanyName || 'Chọn công ty để xem bảng tin…'}
+              </Text>
+              <Text style={styles.companyPickerCaret}>▾</Text>
+            </View>
+          </TouchableOpacity>
+        ) : null}
+        <TouchableOpacity
+          style={[styles.composeBox, CrmShadow.sm]}
+          onPress={() => setComposeOpen(true)}
+          activeOpacity={0.9}
+        >
+          <Avatar uri={user?.avatar} name={user?.full_name || user?.fullName} size={36} />
+          <Text style={styles.composePlaceholder}>Chia sẻ điều gì đó với nội bộ…</Text>
+          <Text style={styles.composeIcon}>📸</Text>
+        </TouchableOpacity>
+      </View>
     ),
-    [user?.avatar, user?.full_name, user?.fullName],
+    [isSystemAdmin, selectedCompanyName, user?.avatar, user?.full_name, user?.fullName],
   );
 
   if (loading) {
@@ -379,6 +497,18 @@ export default function SocialFeedScreen({ navigation }: Props) {
                 <Text style={styles.retryTxt}>Thử lại</Text>
               </TouchableOpacity>
             </View>
+          ) : isSystemAdmin && !adminCompanyId ? (
+            <View style={styles.errBox}>
+              <Text style={styles.empty}>
+                Bạn là admin hệ thống — chọn công ty để xem bảng tin.
+              </Text>
+              <TouchableOpacity
+                style={styles.retryBtn}
+                onPress={() => setCompanyPickerOpen(true)}
+              >
+                <Text style={styles.retryTxt}>Chọn công ty</Text>
+              </TouchableOpacity>
+            </View>
           ) : (
             <Text style={styles.empty}>Chưa có bài đăng nào.</Text>
           )
@@ -389,6 +519,62 @@ export default function SocialFeedScreen({ navigation }: Props) {
           ) : null
         }
       />
+
+      <Modal
+        visible={companyPickerOpen}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setCompanyPickerOpen(false)}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={() => setCompanyPickerOpen(false)}>
+          <Pressable style={styles.modalSheet} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.modalTitle}>Chọn công ty bảng tin</Text>
+            <Text style={styles.modalSub}>
+              Admin hệ thống cần chọn 1 công ty để xem & đăng bài.
+            </Text>
+            {companies.length === 0 ? (
+              <Text style={styles.empty}>Đang tải danh sách công ty…</Text>
+            ) : (
+              <FlatList
+                data={companies}
+                keyExtractor={(c) => String(c.id)}
+                style={{ maxHeight: 360 }}
+                renderItem={({ item }) => {
+                  const selected = String(item.id) === String(adminCompanyId || '');
+                  return (
+                    <TouchableOpacity
+                      style={[styles.companyRow, selected && styles.companyRowOn]}
+                      onPress={() => {
+                        const next = String(item.id);
+                        setAdminCompanyId(next);
+                        void persistAdminCompany(next);
+                        setCompanyPickerOpen(false);
+                      }}
+                    >
+                      <Text
+                        style={[styles.companyRowName, selected && styles.companyRowNameOn]}
+                        numberOfLines={2}
+                      >
+                        {item.short_name || item.name || `Công ty ${item.id}`}
+                      </Text>
+                      {selected ? <Text style={styles.companyRowCheck}>✓</Text> : null}
+                    </TouchableOpacity>
+                  );
+                }}
+              />
+            )}
+            <View style={styles.modalActions}>
+              <View style={{ flex: 1 }} />
+              <TouchableOpacity
+                style={styles.btnGhost}
+                onPress={() => setCompanyPickerOpen(false)}
+              >
+                <Text style={styles.btnGhostTxt}>Đóng</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       <Modal
         visible={composeOpen}
@@ -464,6 +650,45 @@ const styles = StyleSheet.create({
   },
   composePlaceholder: { flex: 1, fontSize: 14, color: CrmColors.gray500 },
   composeIcon: { fontSize: 20 },
+  companyPickerBtn: {
+    backgroundColor: CrmColors.white,
+    borderRadius: CrmRadii.lg,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: CrmColors.gray200,
+  },
+  companyPickerLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: CrmColors.gray500,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  companyPickerValueRow: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  companyPickerValue: { flex: 1, fontSize: 15, fontWeight: '700', color: CrmColors.gray900 },
+  companyPickerValueMuted: { color: CrmColors.gray400, fontWeight: '600' },
+  companyPickerCaret: { fontSize: 14, color: CrmColors.gray500 },
+  companyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderRadius: CrmRadii.md,
+    borderWidth: 1,
+    borderColor: CrmColors.gray100,
+    marginBottom: 6,
+  },
+  companyRowOn: { borderColor: CrmColors.blue600, backgroundColor: '#eff6ff' },
+  companyRowName: { flex: 1, fontSize: 14, fontWeight: '600', color: CrmColors.gray800 },
+  companyRowNameOn: { color: CrmColors.blue700, fontWeight: '700' },
+  companyRowCheck: { fontSize: 16, color: CrmColors.blue600, fontWeight: '800' },
   card: {
     backgroundColor: CrmColors.white,
     borderRadius: CrmRadii.lg,
