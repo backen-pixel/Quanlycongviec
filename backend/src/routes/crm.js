@@ -5769,13 +5769,63 @@ r.delete('/leads/:id', async (req, res) => {
 /** SĐT đã chặn — không tự tạo lead Facebook / quét SĐT (createLeadFromFacebook, lead scan). */
 r.get('/auto-lead-blocked-phones', async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 50, 1), 500);
+    const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+    const q = String(req.query.q || '').trim();
+    let query = supabase
+      .from('crm_auto_lead_blocked_phones')
+      .select('id, phone_last9, phone_display, note, created_at, created_by, creator:users!crm_auto_lead_blocked_phones_created_by_fkey(id, full_name)', { count: 'exact' })
+      .order('created_at', { ascending: false });
+    if (q) {
+      const digits = q.replace(/\D/g, '');
+      if (digits) {
+        // Khớp theo 9 số cuối nếu user gõ số; fallback ILIKE display.
+        query = query.or(`phone_last9.ilike.%${digits.slice(-9)}%,phone_display.ilike.%${digits}%,note.ilike.%${q}%`);
+      } else {
+        query = query.ilike('note', `%${q}%`);
+      }
+    }
+    query = query.range(offset, offset + limit - 1);
+    const { data, error, count } = await query;
+    if (error) {
+      // Fallback nếu FK alias không có tên (DB cũ).
+      if (/crm_auto_lead_blocked_phones_created_by_fkey/.test(error.message || '')) {
+        const fb = await supabase
+          .from('crm_auto_lead_blocked_phones')
+          .select('id, phone_last9, phone_display, note, created_at, created_by', { count: 'exact' })
+          .order('created_at', { ascending: false })
+          .range(offset, offset + limit - 1);
+        if (fb.error) throw fb.error;
+        return res.json({ items: fb.data || [], total: fb.count || 0, limit, offset });
+      }
+      throw error;
+    }
+    res.json({ items: data || [], total: count || 0, limit, offset });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.post('/auto-lead-blocked-phones', async (req, res) => {
+  try {
+    const { phone, note } = req.body || {};
+    if (!phone || !String(phone).trim()) return res.status(400).json({ error: 'Thiếu số điện thoại' });
+    const { addPhoneToAutoLeadBlocklist } = require('../helpers/crmAutoLeadPhoneBlocklist');
+    const result = await addPhoneToAutoLeadBlocklist(supabase, String(phone).trim(), {
+      note: note ? String(note).trim() : null,
+      userId: req.user?.userId || null,
+      display: String(phone).trim(),
+    });
+    if (!result.ok) {
+      if (result.error === 'invalid_phone') return res.status(400).json({ error: 'Số điện thoại không hợp lệ (cần đủ 9 số cuối)' });
+      return res.status(500).json({ error: result.error });
+    }
+    const { data } = await supabase
       .from('crm_auto_lead_blocked_phones')
       .select('id, phone_last9, phone_display, note, created_at, created_by')
-      .order('created_at', { ascending: false })
-      .limit(500);
-    if (error) throw error;
-    res.json({ items: data || [] });
+      .eq('phone_last9', result.last9)
+      .maybeSingle();
+    res.json({ success: true, item: data });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

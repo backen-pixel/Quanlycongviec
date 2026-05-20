@@ -782,7 +782,8 @@ export default function LeadDetail() {
   };
 
   const deleteLead = () => {
-    setBlockPhoneOnDeleteLead(!!(customer?.phone && String(customer.phone).trim()));
+    // Mặc định KHÔNG tick chặn — user phải chủ động tick nếu muốn chặn SĐT
+    setBlockPhoneOnDeleteLead(false);
     setDeleteReason('');
     setShowDeleteLeadModal(true);
   };

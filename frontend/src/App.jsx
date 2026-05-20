@@ -102,6 +102,7 @@ const SocialProfilePage = lazyWithRetry(() => import('./pages/SocialProfilePage'
 const ReleaseNotesPage = lazyWithRetry(() => import('./pages/ReleaseNotesPage'));
 const FacebookPage = lazyWithRetry(() => import('./pages/FacebookPage'));
 const FacebookLinkPhoneCleanupPage = lazyWithRetry(() => import('./pages/FacebookLinkPhoneCleanupPage'));
+const CrmBlockedPhonesPage = lazyWithRetry(() => import('./pages/CrmBlockedPhonesPage'));
 const LeadDetail = lazyWithRetry(() => import('./pages/LeadDetail'));
 const CRMReports = lazyWithRetry(() => import('./pages/CRMReports'));
 const CrmStaffLeadDealReport = lazyWithRetry(() => import('./pages/CrmStaffLeadDealReport'));
@@ -374,6 +375,7 @@ export default function App() {
             <Route path="/crm/deadline-settings" element={<RequireExecutive><CrmDeadlineSettingsPage /></RequireExecutive>} />
             <Route path="/crm/facebook" element={<RequireCrmElevated><FacebookPage /></RequireCrmElevated>} />
             <Route path="/crm/facebook/link-phone-cleanup" element={<RequireCrmElevated><FacebookLinkPhoneCleanupPage /></RequireCrmElevated>} />
+            <Route path="/crm/blocked-phones" element={<RequireCrmElevated><CrmBlockedPhonesPage /></RequireCrmElevated>} />
             <Route path="/crm/pipeline-settings" element={<RequireCrmElevated><PipelineSettingsPage /></RequireCrmElevated>} />
             <Route path="/crm/sources-settings" element={<RequireCrmElevated><CRMSourcesSettingsPage /></RequireCrmElevated>} />
             <Route path="/crm/categories" element={<CategoriesPage />} />
