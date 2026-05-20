@@ -29,6 +29,14 @@ import CategoryListScreen from '../screens/CategoryListScreen';
 import CrmPipelineListScreen from '../screens/CrmPipelineListScreen';
 import CrmPipelineDetailScreen from '../screens/CrmPipelineDetailScreen';
 import CrmEmbeddedWebScreen from '../screens/CrmEmbeddedWebScreen';
+import SocialFeedScreen from '../screens/SocialFeedScreen';
+import SocialPostScreen from '../screens/SocialPostScreen';
+import SocialProfileScreen from '../screens/SocialProfileScreen';
+import BubblePermissionOnboardScreen from '../screens/BubblePermissionOnboardScreen';
+import MyDevicesScreen from '../screens/MyDevicesScreen';
+import WorkTaskListScreen from '../screens/WorkTaskListScreen';
+import WorkTaskDetailScreen from '../screens/WorkTaskDetailScreen';
+import WorkTaskFormScreen from '../screens/WorkTaskFormScreen';
 import type { MoreStackParamList } from './types';
 import { CrmColors } from '../theme/crmTheme';
 
@@ -86,6 +94,36 @@ export default function MoreStackNavigator() {
         name="CrmEmbeddedWeb"
         component={CrmEmbeddedWebScreen}
         options={({ route }) => ({ title: route.params.title || 'Xem trên web' })}
+      />
+      <Stack.Screen name="SocialFeed" component={SocialFeedScreen} options={{ title: 'Bảng tin nội bộ' }} />
+      <Stack.Screen name="SocialPost" component={SocialPostScreen} options={{ title: 'Bài viết' }} />
+      <Stack.Screen name="SocialProfile" component={SocialProfileScreen} options={{ title: 'Trang cá nhân' }} />
+      <Stack.Screen
+        name="BubblePermissionOnboard"
+        component={BubblePermissionOnboardScreen}
+        options={{ title: 'Thiết lập bong bóng' }}
+      />
+      <Stack.Screen
+        name="MyDevices"
+        component={MyDevicesScreen}
+        options={{ title: 'Thiết bị đăng nhập' }}
+      />
+      <Stack.Screen
+        name="WorkTaskList"
+        component={WorkTaskListScreen}
+        options={{ title: 'Giao công việc' }}
+      />
+      <Stack.Screen
+        name="WorkTaskDetail"
+        component={WorkTaskDetailScreen}
+        options={{ title: 'Công việc' }}
+      />
+      <Stack.Screen
+        name="WorkTaskForm"
+        component={WorkTaskFormScreen}
+        options={({ route }) => ({
+          title: route.params.mode === 'edit' ? 'Sửa công việc' : 'Giao công việc',
+        })}
       />
     </Stack.Navigator>
   );

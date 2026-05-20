@@ -1,6 +1,8 @@
 const { supabase } = require('../config/supabase');
 const { isNotificationAllowedForUser } = require('./notificationPrefsUser');
 const { isExpiryDeadlineNotificationType } = require('./notificationOperationalFilter');
+// Lưu ý: KHÔNG gọi sendMobilePush trực tiếp ở đây — đã có server.js pushNotification gọi
+// (qua app.set('pushNotification')). Tránh gửi push trùng.
 
 /**
  * Create a single notification with Socket.IO push
@@ -43,7 +45,7 @@ async function createNotification(req, userId, type, title, message, entityType,
     return null;
   }
 
-  // Push via Socket.IO if available
+  // Socket.IO + mobile push (helper server.js cũng đã gọi sendMobilePush)
   const pushFn = req.app?.get('pushNotification');
   if (pushFn && data) {
     pushFn(userId, data);

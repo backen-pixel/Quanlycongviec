@@ -147,6 +147,7 @@ const RequestMonitorPage = lazyWithRetry(() => import('./pages/RequestMonitorPag
 const TrashPage = lazyWithRetry(() => import('./pages/TrashPage'));
 const ThemeSettingsPage = lazyWithRetry(() => import('./pages/ThemeSettingsPage'));
 const PasswordSettingsPage = lazyWithRetry(() => import('./pages/PasswordSettingsPage'));
+const MyDevicesPage = lazyWithRetry(() => import('./pages/MyDevicesPage'));
 
 import { Settings } from 'lucide-react';
 
@@ -239,6 +240,7 @@ function ProtectedLayout() {
       path.startsWith('/tools/voice-recordings') ||
       path.startsWith('/settings/theme') ||
       path.startsWith('/settings/password') ||
+      path.startsWith('/settings/devices') ||
       path.startsWith('/updates');
     if (!allowed) {
       return <Navigate to="/crm/dashboard" replace />;
@@ -381,6 +383,7 @@ export default function App() {
             <Route path="/crm/categories" element={<CategoriesPage />} />
             <Route path="/settings/pdf" element={<PDFSettingsPage />} />
             <Route path="/settings/password" element={<PasswordSettingsPage />} />
+            <Route path="/settings/devices" element={<MyDevicesPage />} />
             <Route path="/settings/theme" element={<ThemeSettingsPage />} />
             <Route path="/settings/misa" element={<RequireCrmElevated><MisaSettingsPage /></RequireCrmElevated>} />
             <Route path="/settings/api-keys" element={<RequireCrmElevated><ApiKeysSettingsPage /></RequireCrmElevated>} />

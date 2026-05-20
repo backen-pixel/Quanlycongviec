@@ -4,12 +4,13 @@ import { useAuth } from '../lib/auth';
 import api from '../lib/api';
 import NotificationCenter from './NotificationCenter';
 import { getInitials, avatarColor } from '../lib/utils';
+import { publicFileUrl } from '../lib/publicFileUrl';
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut, Lock,
   ChevronLeft, ChevronRight, ChevronDown, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X, UsersRound,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
-  BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff,
+  BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone,
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { isCrmOnlyModuleAccess } from '../lib/moduleAccess';
@@ -35,6 +36,7 @@ const MENU_GROUPS = [
       { to: '/dashboard/divisions', icon: BarChart3, label: 'Dashboard Khối' },
       { to: '/my-tasks', icon: Inbox, label: 'Việc của tôi' },
       { to: '/settings/password', icon: Lock, label: 'Đổi mật khẩu' },
+      { to: '/settings/devices', icon: Smartphone, label: 'Thiết bị đăng nhập' },
       { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },
       { to: '/tools/voice-recordings', icon: Mic, label: 'Cuộc gọi & ghi âm' },
       { to: '/project-workflow', icon: GitBranch, label: 'Công việc dự án' },
@@ -196,6 +198,7 @@ const CRM_MENU_BOTTOM_GROUPS = [
     emoji: '🛠️',
     items: [
       { to: '/settings/password', icon: Lock, label: 'Đổi mật khẩu' },
+      { to: '/settings/devices', icon: Smartphone, label: 'Thiết bị đăng nhập' },
       { to: '/guide', icon: BookOpen, label: 'Hướng dẫn sử dụng', adminOnly: true },
       { to: '/settings/api-keys', icon: Key, label: 'API Key tích hợp', adminOnly: true },
     ],
@@ -671,13 +674,22 @@ export default function Sidebar() {
           <>
             <div className="flex items-center gap-3 px-2 py-1">
               {user?.avatar ? (
-                <img src={user.avatar} alt="" className="w-8 h-8 rounded-full object-cover border border-white/20 shrink-0" />
-              ) : (
-                <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold"
-                  style={{ backgroundColor: avatarColor(user?.full_name || 'User') }}>
-                  {getInitials(user?.full_name || 'U')}
-                </div>
-              )}
+                <img
+                  src={publicFileUrl(user.avatar)}
+                  alt=""
+                  className="w-8 h-8 rounded-full object-cover border border-white/20 shrink-0"
+                  onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextSibling && (e.currentTarget.nextSibling.style.display = 'flex'); }}
+                />
+              ) : null}
+              <div
+                className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
+                style={{
+                  backgroundColor: avatarColor(user?.full_name || 'User'),
+                  display: user?.avatar ? 'none' : 'flex',
+                }}
+              >
+                {getInitials(user?.full_name || 'U')}
+              </div>
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-medium text-white truncate">{user?.full_name}</p>
                 <p className="text-[10px] text-[var(--color-sidebar-text)] truncate">{user?.email}</p>

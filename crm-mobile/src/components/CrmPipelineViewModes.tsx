@@ -66,16 +66,20 @@ type KanbanProps = {
   tabLabel: string;
   pipelineKind: 'lead' | 'deal';
   onMoveToStage: (leadId: string, stageId: string) => Promise<void>;
+  /** Bật long-press → mở menu Ghim / Đã tương tác (LeadListScreen quản lý state). */
+  onLongPressItem?: (item: CrmLeadListItem) => void;
 };
 
 function KanbanLeadCard({
   item,
   onOpen,
   onRequestMove,
+  onLongPress,
 }: {
   item: CrmLeadListItem;
   onOpen: () => void;
   onRequestMove: () => void;
+  onLongPress?: () => void;
 }) {
   const stColor = item.stage?.color || '#94a3b8';
   const days = calculateDays(item.created_at);
@@ -84,15 +88,19 @@ function KanbanLeadCard({
 
   return (
     <TouchableOpacity
-      style={styles.kanCard}
+      style={[styles.kanCard, item.is_pinned ? styles.kanCardPinned : null]}
       onPress={onOpen}
-      onLongPress={onRequestMove}
+      onLongPress={onLongPress || onRequestMove}
       delayLongPress={380}
       activeOpacity={0.88}
     >
       <View style={styles.kanCardTop}>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={styles.kanCardCode}>{item.code || '—'}</Text>
+          <View style={styles.kanCodeRow}>
+            <Text style={styles.kanCardCode}>{item.code || '—'}</Text>
+            {item.is_pinned ? <Text style={styles.kanPinIcon}>📌</Text> : null}
+            {item.is_interacted ? <Text style={styles.kanInteractedIcon}>✅</Text> : null}
+          </View>
           <View style={styles.kanTitleRow}>
             <Text style={styles.kanCardTitle} numberOfLines={2}>
               {item.title || '—'}
@@ -152,6 +160,7 @@ export function CrmPipelineKanbanView({
   tabLabel,
   pipelineKind,
   onMoveToStage,
+  onLongPressItem,
 }: KanbanProps) {
   const [moveItem, setMoveItem] = useState<CrmLeadListItem | null>(null);
   const [moving, setMoving] = useState(false);
@@ -214,6 +223,7 @@ export function CrmPipelineKanbanView({
                     item={item}
                     onOpen={() => navigation.navigate('LeadDetail', { id: item.id })}
                     onRequestMove={() => setMoveItem(item)}
+                    onLongPress={onLongPressItem ? () => onLongPressItem(item) : undefined}
                   />
                 ))}
                 {col.length === 0 ? <Text style={styles.kanEmpty}>Trống</Text> : null}
@@ -301,12 +311,16 @@ export function CrmPipelinePlannerView({ items, navigation }: PlannerProps) {
     return (
       <TouchableOpacity
         key={item.id}
-        style={[styles.planCard, CrmShadow.sm]}
+        style={[styles.planCard, CrmShadow.sm, item.is_pinned ? styles.planCardPinned : null]}
         onPress={() => navigation.navigate('LeadDetail', { id: item.id })}
         activeOpacity={0.85}
       >
         <View style={styles.planCardTop}>
-          <Text style={styles.planCardCode}>{item.code || '—'}</Text>
+          <View style={styles.planCardCodeRow}>
+            <Text style={styles.planCardCode}>{item.code || '—'}</Text>
+            {item.is_pinned ? <Text style={styles.kanPinIcon}>📌</Text> : null}
+            {item.is_interacted ? <Text style={styles.kanInteractedIcon}>✅</Text> : null}
+          </View>
           {item.stage?.name ? (
             <View style={[styles.planStage, { backgroundColor: stageTintBg(stColor) }]}>
               <Text style={[styles.planStageTxt, { color: stColor }]} numberOfLines={1}>
@@ -523,7 +537,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: CrmColors.gray200,
   },
+  kanCardPinned: {
+    backgroundColor: '#fffbeb',
+    borderColor: '#f59e0b',
+  },
   kanCardTop: { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
+  kanCodeRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  kanPinIcon: { fontSize: 12 },
+  kanInteractedIcon: { fontSize: 12 },
   kanTitleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 4 },
   kanCardCode: { fontSize: 11, fontWeight: '700', color: CrmColors.blue600 },
   kanCardTitle: { flex: 1, fontSize: 13, fontWeight: '600', color: CrmColors.gray900 },
@@ -596,7 +617,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: CrmColors.gray200,
   },
+  planCardPinned: {
+    backgroundColor: '#fffbeb',
+    borderColor: '#f59e0b',
+  },
   planCardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 },
+  planCardCodeRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   planCardCode: { fontSize: 10, fontWeight: '700', color: CrmColors.blue600 },
   planStage: { maxWidth: 90, paddingHorizontal: 6, paddingVertical: 2, borderRadius: CrmRadii.full },
   planStageTxt: { fontSize: 9, fontWeight: '700' },

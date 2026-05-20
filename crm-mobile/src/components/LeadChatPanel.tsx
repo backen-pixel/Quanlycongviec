@@ -11,11 +11,11 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
-  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Pressable,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { io, type Socket } from 'socket.io-client';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -66,7 +66,7 @@ export default function LeadChatPanel({ leadId }: Props) {
   const [filter, setFilter] = useState<ChatFilter>('all');
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugText, setDebugText] = useState('');
-  const [kbInset, setKbInset] = useState(0);
+  const insets = useSafeAreaInsets();
   const socketRef = useRef<Socket | null>(null);
   const listRef = useRef<ScrollView>(null);
 
@@ -90,15 +90,6 @@ export default function LeadChatPanel({ leadId }: Props) {
     };
     update();
     return chatDebugSubscribe(update);
-  }, []);
-
-  useEffect(() => {
-    const show = Keyboard.addListener('keyboardDidShow', (e) => setKbInset(e.endCoordinates.height));
-    const hide = Keyboard.addListener('keyboardDidHide', () => setKbInset(0));
-    return () => {
-      show.remove();
-      hide.remove();
-    };
   }, []);
 
   const loadChat = useCallback(async () => {
@@ -334,12 +325,21 @@ export default function LeadChatPanel({ leadId }: Props) {
     );
   };
 
+  // Android: app.json softwareKeyboardLayoutMode=resize — cửa sổ tự co, không thêm padding bàn phím thủ công.
+  const composerPadBottom =
+    Platform.OS === 'ios' ? Math.max(insets.bottom, 8) : Math.max(insets.bottom, 4);
+
+  const Root = Platform.OS === 'ios' ? KeyboardAvoidingView : View;
+  const rootProps =
+    Platform.OS === 'ios'
+      ? ({
+          behavior: 'padding' as const,
+          keyboardVerticalOffset: 88,
+        } as const)
+      : {};
+
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
-      style={styles.root}
-    >
+    <Root {...rootProps} style={styles.root}>
       <Modal visible={debugOpen} transparent animationType="fade" onRequestClose={() => setDebugOpen(false)}>
         <Pressable style={styles.debugBackdrop} onPress={() => setDebugOpen(false)}>
           <Pressable style={[styles.debugSheet, CrmShadow.card]} onPress={(e) => e.stopPropagation()}>
@@ -428,7 +428,7 @@ export default function LeadChatPanel({ leadId }: Props) {
           <Text style={styles.iconBtnTxt}>📎</Text>
         </TouchableOpacity>
       </View>
-      <View style={[styles.inputRow, Platform.OS === 'android' && { paddingBottom: kbInset }]}>
+      <View style={[styles.inputRow, { paddingBottom: composerPadBottom }]}>
         <TextInput
           style={styles.input}
           placeholder="Nhập tin nhắn…"
@@ -446,12 +446,12 @@ export default function LeadChatPanel({ leadId }: Props) {
           <Text style={styles.sendTxt}>{sending ? '…' : 'Gửi'}</Text>
         </TouchableOpacity>
       </View>
-    </KeyboardAvoidingView>
+    </Root>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flexGrow: 1, minHeight: 280 },
+  root: { flexGrow: 1, minHeight: 320 },
   toolbar: { marginBottom: 8 },
   webBtn: {
     alignSelf: 'flex-start',

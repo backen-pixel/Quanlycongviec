@@ -26,6 +26,7 @@ import type { CrmStackParamList } from '../navigation/types';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { formatDate, formatDateTime, formatVND } from '../lib/formatUtils';
 import { openWebPath } from '../lib/openWeb';
+import { setLeadPin, setLeadInteracted } from '../lib/crmLeadFlags';
 import CrmTasksPanel from '../components/CrmTasksPanel';
 import CrmVoiceRecordingsPanel from '../components/CrmVoiceRecordingsPanel';
 import LeadChatPanel from '../components/LeadChatPanel';
@@ -120,6 +121,7 @@ export default function LeadDetailScreen() {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const [savingTitle, setSavingTitle] = useState(false);
+  const [flagsBusy, setFlagsBusy] = useState(false);
   const [cust, setCust] = useState<CustForm>(emptyCust);
   const [savingCust, setSavingCust] = useState(false);
   const [converting, setConverting] = useState(false);
@@ -413,6 +415,42 @@ export default function LeadDetailScreen() {
       return;
     }
     void applyStage(pendingWonStageId, { production_company_id: wonProdCompanyId.trim() });
+  };
+
+  const togglePin = async () => {
+    if (!lead || flagsBusy) return;
+    const next = !lead.is_pinned;
+    setLead({ ...lead, is_pinned: next });
+    setFlagsBusy(true);
+    try {
+      await setLeadPin(lead.id, next);
+    } catch (e: unknown) {
+      setLead((p) => (p ? { ...p, is_pinned: !next } : p));
+      Alert.alert(
+        'Lỗi',
+        (e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Không cập nhật được ghim',
+      );
+    } finally {
+      setFlagsBusy(false);
+    }
+  };
+
+  const toggleInteracted = async () => {
+    if (!lead || flagsBusy) return;
+    const next = !lead.is_interacted;
+    setLead({ ...lead, is_interacted: next });
+    setFlagsBusy(true);
+    try {
+      await setLeadInteracted(lead.id, next);
+    } catch (e: unknown) {
+      setLead((p) => (p ? { ...p, is_interacted: !next } : p));
+      Alert.alert(
+        'Lỗi',
+        (e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Không cập nhật được trạng thái tương tác',
+      );
+    } finally {
+      setFlagsBusy(false);
+    }
   };
 
   const saveTitle = async () => {
@@ -709,6 +747,26 @@ export default function LeadDetailScreen() {
             >
               {lead.code}
             </Text>
+            <View style={styles.flagBtnGroup}>
+              <TouchableOpacity
+                style={[styles.flagBtn, lead.is_pinned && styles.flagBtnPinned]}
+                onPress={() => void togglePin()}
+                disabled={flagsBusy}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Text style={styles.flagBtnIcon}>📌</Text>
+                <Text style={styles.flagBtnTxt}>{lead.is_pinned ? 'Đã ghim' : 'Ghim'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.flagBtn, lead.is_interacted && styles.flagBtnInteracted]}
+                onPress={() => void toggleInteracted()}
+                disabled={flagsBusy}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Text style={styles.flagBtnIcon}>{lead.is_interacted ? '✅' : '☑️'}</Text>
+                <Text style={styles.flagBtnTxt}>{lead.is_interacted ? 'Đã tương tác' : 'Tương tác'}</Text>
+              </TouchableOpacity>
+            </View>
           </View>
           {editingTitle ? (
             <View style={styles.titleEditRow}>
@@ -1575,6 +1633,22 @@ const styles = StyleSheet.create({
   typeLeadTxt: { color: CrmColors.blue700 },
   typeDealTxt: { color: CrmColors.purple700 },
   codeMono: { fontSize: 12, color: CrmColors.gray500 },
+  flagBtnGroup: { flexDirection: 'row', gap: 6, marginLeft: 'auto' },
+  flagBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: CrmRadii.full,
+    backgroundColor: CrmColors.white,
+    borderWidth: 1,
+    borderColor: CrmColors.gray200,
+  },
+  flagBtnPinned: { backgroundColor: '#fffbeb', borderColor: '#f59e0b' },
+  flagBtnInteracted: { backgroundColor: '#eff6ff', borderColor: CrmColors.blue600 },
+  flagBtnIcon: { fontSize: 12 },
+  flagBtnTxt: { fontSize: 11, fontWeight: '700', color: CrmColors.gray700 },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
   heroTitle: { flex: 1, fontSize: 22, fontWeight: '700', color: CrmColors.gray900 },
   editHint: { fontSize: 18, color: CrmColors.blue600 },

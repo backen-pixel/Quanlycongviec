@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { MoreStackParamList } from '../navigation/types';
 import {
   View,
   Text,
@@ -37,6 +39,7 @@ import { guessAudioMimeFromFileName } from '../lib/guessAudioMime';
 import { clearFloatingBubbleHidden } from '../lib/floatingChatBubbleStorage';
 
 export default function AccountScreen() {
+  const navigation = useNavigation<NativeStackNavigationProp<MoreStackParamList>>();
   const { user, logout } = useAuth();
   const name = user?.full_name || user?.fullName || '—';
   const email = user?.email || '—';
@@ -216,7 +219,14 @@ export default function AccountScreen() {
         <Text style={styles.kicker}>TuBep Pro · CRM Mobile</Text>
         <Text style={styles.h1}>Tài khoản</Text>
 
-        <View style={[styles.card, CrmShadow.card]}>
+        <TouchableOpacity
+          style={[styles.card, CrmShadow.card]}
+          activeOpacity={0.9}
+          onPress={() => {
+            const uid = String(user?.id || user?.userId || '');
+            if (uid) navigation.navigate('SocialProfile', { userId: uid });
+          }}
+        >
           <View style={styles.avatar}>
             <Text style={styles.avatarTxt}>{name.charAt(0).toUpperCase()}</Text>
           </View>
@@ -227,7 +237,8 @@ export default function AccountScreen() {
               <Text style={styles.roleTxt}>{user.role}</Text>
             </View>
           ) : null}
-        </View>
+          <Text style={styles.viewProfileTxt}>👤 Mở trang cá nhân</Text>
+        </TouchableOpacity>
 
         {prefs ? (
           <>
@@ -319,7 +330,40 @@ export default function AccountScreen() {
               </View>
             </View>
 
+            <Text style={styles.sectionH}>Công việc & nhiệm vụ</Text>
+            <TouchableOpacity
+              style={[styles.onboardBubbleBtn, CrmShadow.card]}
+              onPress={() => navigation.navigate('WorkTaskList')}
+            >
+              <Text style={styles.onboardBubbleTitle}>Giao việc · Việc dự án</Text>
+              <Text style={styles.onboardBubbleSub}>
+                Xem việc được giao, tạo nhanh, đổi trạng thái, bình luận như trên web.
+              </Text>
+            </TouchableOpacity>
+
+            <Text style={styles.sectionH}>Bảo mật & thiết bị</Text>
+            <TouchableOpacity
+              style={[styles.onboardBubbleBtn, CrmShadow.card]}
+              onPress={() => navigation.navigate('MyDevices')}
+            >
+              <Text style={styles.onboardBubbleTitle}>Thiết bị đang đăng nhập</Text>
+              <Text style={styles.onboardBubbleSub}>
+                Xem các thiết bị tài khoản đang online và đăng xuất từ xa.
+              </Text>
+            </TouchableOpacity>
+
             <Text style={styles.sectionH}>Bong bóng chat nổi</Text>
+            {Platform.OS === 'android' ? (
+              <TouchableOpacity
+                style={[styles.onboardBubbleBtn, CrmShadow.card]}
+                onPress={() => navigation.navigate('BubblePermissionOnboard')}
+              >
+                <Text style={styles.onboardBubbleTitle}>Thiết lập bong bóng & thông báo</Text>
+                <Text style={styles.onboardBubbleSub}>
+                  Quyền thông báo, hiển thị trên app khác và tối ưu pin — giống Messenger/Zalo.
+                </Text>
+              </TouchableOpacity>
+            ) : null}
             <View style={[styles.cardRow, CrmShadow.card]}>
               <RowSwitch
                 label="Hiển thị bong bóng chat"
@@ -589,6 +633,16 @@ const styles = StyleSheet.create({
     width: '100%',
     marginBottom: 16,
   },
+  onboardBubbleBtn: {
+    backgroundColor: CrmColors.blue50,
+    borderRadius: CrmRadii.lg,
+    borderWidth: 1,
+    borderColor: CrmColors.blue100,
+    padding: 14,
+    marginBottom: 10,
+  },
+  onboardBubbleTitle: { fontSize: 15, fontWeight: '700', color: CrmColors.blue800 },
+  onboardBubbleSub: { fontSize: 12, color: CrmColors.gray600, marginTop: 4, lineHeight: 17 },
   showBubbleBtn: {
     marginTop: 12,
     paddingVertical: 12,
@@ -649,6 +703,7 @@ const styles = StyleSheet.create({
   avatarTxt: { fontSize: 28, fontWeight: '800', color: CrmColors.blue700 },
   name: { fontSize: 18, fontWeight: '700', color: CrmColors.gray900, textAlign: 'center' },
   email: { fontSize: 14, color: CrmColors.gray500, marginTop: 6, textAlign: 'center' },
+  viewProfileTxt: { marginTop: 10, fontSize: 13, fontWeight: '700', color: CrmColors.blue700, textAlign: 'center' },
   rolePill: {
     marginTop: 12,
     paddingHorizontal: 12,

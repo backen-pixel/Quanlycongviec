@@ -33,8 +33,14 @@ const sections: Section[] = [
     title: 'Bán hàng',
     rows: [
       {
+        key: 'work_tasks',
+        title: 'Giao việc · Công việc dự án',
+        emoji: '🧰',
+        onPress: (n) => n.navigate('WorkTaskList'),
+      },
+      {
         key: 'tasks',
-        title: 'Công việc CRM',
+        title: 'Công việc CRM (theo lead)',
         emoji: '✅',
         onPress: (n) => n.navigate('CrmTasksOverview'),
       },
@@ -80,6 +86,12 @@ const sections: Section[] = [
     key: 's4',
     title: 'Công cụ',
     rows: [
+      {
+        key: 'social',
+        title: 'Bảng tin nội bộ',
+        emoji: '📰',
+        onPress: (n) => n.navigate('SocialFeed'),
+      },
       {
         key: 'messenger',
         title: 'Chat nhóm nội bộ',

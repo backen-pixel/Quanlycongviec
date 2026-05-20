@@ -2,6 +2,8 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api, getStoredToken, setStoredToken, setUnauthorizedHandler } from '../api/client';
 import { stopVoiceForegroundSyncLogout } from '../lib/voiceBackgroundSync';
+import { registerPushToken, unregisterPushToken } from '../lib/pushRegistration';
+import { startDeviceHeartbeat, stopDeviceHeartbeat } from '../lib/deviceHeartbeat';
 
 const USER_KEY = 'crm_user_json';
 
@@ -13,6 +15,8 @@ export type AuthUser = {
   fullName?: string;
   role?: string;
   company_id?: string | null;
+  avatar?: string | null;
+  phone?: string | null;
 };
 
 type AuthCtx = {
@@ -37,6 +41,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (t && u) {
           setToken(t);
           setUser(JSON.parse(u));
+          void registerPushToken();
+          startDeviceHeartbeat();
         }
       } catch {
         /* ignore */
@@ -46,15 +52,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
+  // Sau khi khôi phục từ AsyncStorage, gọi /auth/me để cập nhật avatar/profile mới —
+  // tránh phải đăng xuất/đăng nhập lại khi đổi avatar trên web.
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get<{ user?: AuthUser }>('/auth/me');
+        if (cancelled || !data?.user) return;
+        const merged: AuthUser = { ...(user || {}), ...data.user };
+        await AsyncStorage.setItem(USER_KEY, JSON.stringify(merged));
+        setUser(merged);
+      } catch {
+        /* token hết hạn / offline → giữ cache cũ */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Chỉ chạy 1 lần khi token sẵn sàng — bỏ qua `user` để tránh loop khi merge.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
   const login = useCallback(async (email: string, password: string) => {
     const { data } = await api.post('/auth/login', { email: email.trim(), password });
     await setStoredToken(data.token);
     await AsyncStorage.setItem(USER_KEY, JSON.stringify(data.user));
     setToken(data.token);
     setUser(data.user);
+    void registerPushToken();
+    startDeviceHeartbeat();
   }, []);
 
   const logout = useCallback(async () => {
+    stopDeviceHeartbeat();
+    await unregisterPushToken();
     await stopVoiceForegroundSyncLogout();
     await setStoredToken(null);
     await AsyncStorage.removeItem(USER_KEY);
@@ -65,6 +98,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setUnauthorizedHandler(() => {
       void (async () => {
+        stopDeviceHeartbeat();
+        await unregisterPushToken();
         await stopVoiceForegroundSyncLogout();
         await AsyncStorage.removeItem(USER_KEY);
         setToken(null);

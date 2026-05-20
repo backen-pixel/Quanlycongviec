@@ -171,7 +171,12 @@ export function filterPipelineItemsWebLike(
     });
   }
 
-  result.sort((a, b) => Number(hasPhoneNumber(b)) - Number(hasPhoneNumber(a)));
+  result.sort((a, b) => {
+    const pa = a.is_pinned ? 1 : 0;
+    const pb = b.is_pinned ? 1 : 0;
+    if (pa !== pb) return pb - pa;
+    return Number(hasPhoneNumber(b)) - Number(hasPhoneNumber(a));
+  });
   return result;
 }
 

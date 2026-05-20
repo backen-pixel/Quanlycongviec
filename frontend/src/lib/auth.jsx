@@ -2,11 +2,13 @@ import { createContext, useContext, useState, useEffect } from 'react';
 import api from '../lib/api';
 import { connectSocket, disconnectSocket } from '../lib/socket';
 import { useActivityPing } from '../hooks/useActivityPing';
+import { useDeviceHeartbeat } from '../hooks/useDeviceHeartbeat';
 
 const AuthCtx = createContext(null);
 
 function ActivityPingGate({ user, children }) {
   useActivityPing(!!user);
+  useDeviceHeartbeat(!!user);
   return children;
 }
 
@@ -26,6 +28,18 @@ export function AuthProvider({ children }) {
         const s = connectSocket();
         setSocket(s);
       } catch {}
+      // Refresh user info (avatar, profile…) — cache localStorage có thể đã cũ
+      // (avatar mới upload sau khi login → tránh phải đăng xuất rồi đăng nhập lại).
+      (async () => {
+        try {
+          const { data } = await api.get('/auth/me');
+          if (data?.user) {
+            const merged = { ...JSON.parse(u || '{}'), ...data.user };
+            localStorage.setItem('user', JSON.stringify(merged));
+            setUser(merged);
+          }
+        } catch (_) { /* token hết hạn / mạng lỗi — bỏ qua, giữ cache cũ */ }
+      })();
     }
     setLoading(false);
   }, []);
