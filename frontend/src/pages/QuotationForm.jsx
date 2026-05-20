@@ -1037,7 +1037,33 @@ export default function QuotationForm() {
                     <td className="py-1 px-1"><NumericInput value={item.spec_factor || ''} onChange={v => updateItem(idx, 'spec_factor', v)} placeholder="0" title="Hệ số quy cách" allowEmpty className={`w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right ${parseFloat(item.spec_factor) > 0 ? 'text-indigo-700 font-semibold' : ''}`} /></td>
                     <td className="py-1 px-1"><NumericInput value={item.quantity} onChange={v => updateItem(idx, 'quantity', v)} placeholder="1" className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1"><NumericInput value={item.unit_price} onChange={v => updateItem(idx, 'unit_price', v)} placeholder="0" className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right" /></td>
-                    <td className="py-1 px-1 text-right text-xs font-medium whitespace-nowrap text-gray-900">{item.is_freebie || item.notes === 'HỖ TRỢ' ? <span className="text-green-600 font-bold">HỖ TRỢ</span> : formatVND(row.gross_amount || 0)}</td>
+                    <td className="py-1 px-1 text-right text-xs font-medium whitespace-nowrap text-gray-900">
+                      {item.is_freebie || item.notes === 'HỖ TRỢ' ? (
+                        <span className="text-green-600 font-bold">HỖ TRỢ</span>
+                      ) : (
+                        <NumericInput
+                          value={Math.round((item.lock_amount && typeof item.imported_amount === 'number' ? item.imported_amount : row.gross_amount) || 0) || ''}
+                          onChange={(v) => {
+                            const amt = v === '' || v === null ? null : (parseFloat(v) || 0);
+                            if (amt === null) {
+                              setItems(prev => prev.map((it, i) => i === idx ? { ...it, lock_amount: false, imported_amount: undefined } : it));
+                              return;
+                            }
+                            // Khoá thành tiền sản phẩm: calcs sẽ dùng imported_amount thay cho công thức,
+                            // tự tính ngược discount_amount = max(0, gross - amount).
+                            setItems(prev => prev.map((it, i) => i === idx ? {
+                              ...it,
+                              lock_amount: true,
+                              imported_amount: amt,
+                            } : it));
+                          }}
+                          placeholder="0"
+                          allowEmpty
+                          title={item.lock_amount ? 'Thành tiền đã khoá (sửa qty/đơn giá/CK sẽ tự gỡ khoá)' : 'Sửa số để khoá Thành tiền theo giá trị mong muốn'}
+                          className={`w-full px-1.5 py-1 border ${item.lock_amount ? 'border-emerald-400 text-emerald-700 font-semibold' : 'border-gray-200 hover:border-gray-400'} focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right`}
+                        />
+                      )}
+                    </td>
                     <td className="py-1 px-1"><NumericInput value={item.discount_percent || 0} onChange={v => updateItem(idx, 'discount_percent', v)} className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1">
                       {item.is_freebie || item.notes === 'HỖ TRỢ' ? (

@@ -9472,6 +9472,38 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
     if (headerIdx < 0) return res.status(400).json({ error: 'Không tìm thấy dòng tiêu đề (cần có STT + HẠNG MỤC)' });
     console.log('[parse-excel] sheet:', parsedSheetName, 'headerIdx:', headerIdx, 'colMap:', JSON.stringify(colMap));
 
+    // ── Fill merged cells trong cột DIỄN GIẢI / GHI CHÚ ──
+    // Excel cho phép 1 ô mô tả gộp nhiều dòng sản phẩm. `sheet_to_json` chỉ giữ
+    // giá trị ô đầu, các ô dưới rỗng → fan-out giá trị xuống các dòng con để mỗi
+    // sản phẩm đều mang theo mô tả/ghi chú chung.
+    const wsMerges = Array.isArray(ws['!merges']) ? ws['!merges'] : [];
+    if (wsMerges.length && (colMap.description !== undefined || colMap.notes !== undefined)) {
+      let filledDesc = 0;
+      for (const m of wsMerges) {
+        if (!m || !m.s || !m.e) continue;
+        if (m.s.r === m.e.r) continue; // chỉ xử lý merge dọc
+        if (m.e.r <= headerIdx) continue; // bỏ qua merge ở vùng header/khách hàng
+        const col = m.s.c;
+        const targets = [];
+        if (colMap.description !== undefined && col === colMap.description) targets.push('description');
+        if (colMap.notes !== undefined && col === colMap.notes) targets.push('notes');
+        if (!targets.length) continue;
+        const topRow = rows[m.s.r];
+        if (!topRow) continue;
+        const val = topRow[col];
+        if (val === undefined || val === null || String(val).trim() === '') continue;
+        for (let rr = Math.max(m.s.r + 1, headerIdx + 1); rr <= m.e.r; rr++) {
+          if (!rows[rr]) continue;
+          const cur = rows[rr][col];
+          if (cur === undefined || cur === null || String(cur).trim() === '') {
+            rows[rr][col] = val;
+            filledDesc += 1;
+          }
+        }
+      }
+      if (filledDesc > 0) console.log('[parse-excel] merged-cell fan-out:', filledDesc, 'cell(s)');
+    }
+
     // ── 2. Extract customer info — parse each cell separately ──
     let customer_name = '', customer_phone = '', customer_address = '', kts_info = '', title = '';
     for (let i = 0; i < headerIdx; i++) {
