@@ -86,6 +86,30 @@ async function assertEventCompanyAccess(req, res, eventId) {
   return false;
 }
 
+/**
+ * Cho phép hủy/xóa sự kiện: chỉ người tạo (`created_by`) hoặc admin.
+ * Gọi sau `assertEventCompanyAccess` để đã đảm bảo cùng công ty.
+ */
+async function assertEventDeletable(req, res, eventId) {
+  if (req.user?.role === 'admin') return true;
+  const { data: row, error } = await supabase
+    .from('crm_events')
+    .select('created_by')
+    .eq('id', eventId)
+    .maybeSingle();
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return false;
+  }
+  if (!row) {
+    res.status(404).json({ error: 'Không tìm thấy sự kiện' });
+    return false;
+  }
+  if (String(row.created_by || '') === String(req.user?.userId || '')) return true;
+  res.status(403).json({ error: 'Chỉ người tạo hoặc admin mới được hủy/xóa sự kiện' });
+  return false;
+}
+
 async function resolveLeadCompanyId(leadId) {
   if (!leadId) return null;
   const { data: lr } = await supabase.from('crm_leads').select('company_id').eq('id', leadId).maybeSingle();
@@ -390,10 +414,15 @@ r.put('/:id', async (req, res) => {
     const ok = await assertEventCompanyAccess(req, res, req.params.id);
     if (!ok) return;
     const b = req.body;
+    // Hủy sự kiện (status='cancelled') chỉ cho phép người tạo / admin.
+    if (b && b.status === 'cancelled') {
+      const canCancel = await assertEventDeletable(req, res, req.params.id);
+      if (!canCancel) return;
+    }
     const update = { updated_at: new Date().toISOString() };
     const fields = ['title', 'description', 'location', 'start_time', 'end_time',
       'all_day', 'status', 'result', 'event_type', 'event_type_id',
-      'lead_id', 'customer_id', 'project_id', 'assignee_id'];
+      'lead_id', 'customer_id', 'project_id', 'assignee_id', 'cancel_reason'];
     fields.forEach((f) => {
       if (b[f] === undefined) return;
       if (b[f] === '') {
@@ -431,6 +460,10 @@ r.put('/:id', async (req, res) => {
 
     // If completed, set result
     if (b.status === 'completed' && b.result) update.result = b.result;
+    // Khi chuyển status khác cancelled → xóa lý do hủy cũ (nếu user gỡ hủy).
+    if (b.status && b.status !== 'cancelled' && b.cancel_reason === undefined) {
+      update.cancel_reason = null;
+    }
 
     const { data, error } = await supabase.from('crm_events')
       .update(update).eq('id', req.params.id).select(EVENT_SELECT).single();
@@ -522,6 +555,8 @@ r.delete('/:id', async (req, res) => {
   try {
     const ok = await assertEventCompanyAccess(req, res, req.params.id);
     if (!ok) return;
+    const canDelete = await assertEventDeletable(req, res, req.params.id);
+    if (!canDelete) return;
     const { error } = await supabase.from('crm_events').delete().eq('id', req.params.id);
     if (error) throw error;
     res.json({ success: true });
