@@ -149,6 +149,9 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
   const [sourceFile, setSourceFile] = useState(null);
   const [uploadingSource, setUploadingSource] = useState(false);
   const [parsing, setParsing] = useState(false);
+  const [loadingSheets, setLoadingSheets] = useState(false);
+  const [sheets, setSheets] = useState([]); // { name, rowCount, isQuotation }[]
+  const [selectedSheet, setSelectedSheet] = useState('');
   const [preview, setPreview] = useState(null); // parsed data
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -216,6 +219,48 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
   /** Cảnh báo: user đã đổi sang deal khác với context (vd. khác deal của task đang import) */
   const dealChangedFromContext = contextLeadId && pickedDeal && pickedDeal.id !== contextLeadId;
 
+  const resetExcelImport = () => {
+    setError('');
+    setFile(null);
+    setPreview(null);
+    setSourceFile(null);
+    setSheets([]);
+    setSelectedSheet('');
+    setParsing(false);
+    setLoadingSheets(false);
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
+  const doParseSheet = async (f, sheetName) => {
+    if (!f) return;
+    setParsing(true);
+    setPreview(null);
+    setError('');
+    try {
+      const fd = new FormData();
+      fd.append('file', f);
+      if (sheetName) fd.append('sheet_name', sheetName);
+      const { data } = await api.post('/crm/quotations/parse-excel', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setPreview(data);
+      if (!sourceFile) {
+        setUploadingSource(true);
+        try {
+          const uploaded = await uploadQuotationSourceExcel(f, effectiveLeadId || 'import');
+          setSourceFile(uploaded);
+        } catch (upErr) {
+          console.warn('[excel-import] upload source file:', upErr);
+        } finally {
+          setUploadingSource(false);
+        }
+      }
+    } catch (err) {
+      setError(err.response?.data?.error || 'Lỗi đọc file');
+    }
+    setParsing(false);
+  };
+
   const handleFileSelect = async (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
@@ -226,29 +271,29 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
     setFile(f);
     setSourceFile(null);
     setError('');
-    setParsing(true);
     setPreview(null);
+    setSheets([]);
+    setSelectedSheet('');
+    setLoadingSheets(true);
 
     try {
-      const formData = new FormData();
-      formData.append('file', f);
-      const { data } = await api.post('/crm/quotations/parse-excel', formData, {
+      const fd = new FormData();
+      fd.append('file', f);
+      const { data } = await api.post('/crm/quotations/excel-sheets', fd, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
-      setPreview(data);
-      setUploadingSource(true);
-      try {
-        const uploaded = await uploadQuotationSourceExcel(f, effectiveLeadId || 'import');
-        setSourceFile(uploaded);
-      } catch (upErr) {
-        console.warn('[excel-import] upload source file:', upErr);
-      } finally {
-        setUploadingSource(false);
+      const list = data.sheets || [];
+      setSheets(list);
+      if ((data.totalSheets || list.length) <= 1) {
+        const name = list[0]?.name || data.defaultSheet;
+        if (name) await doParseSheet(f, name);
+      } else {
+        setSelectedSheet(data.defaultSheet || list[0]?.name || '');
       }
-    } catch (e) {
-      setError(e.response?.data?.error || 'Lỗi đọc file');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Lỗi đọc file');
     }
-    setParsing(false);
+    setLoadingSheets(false);
   };
 
   /** Đưa dữ liệu sang trang «Tạo báo giá» để chỉnh sửa; chỉ khi bấm Lưu ở đó mới tạo báo giá & liên kết deal/task. */
@@ -361,7 +406,7 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
           )}
 
           {/* Upload area */}
-          {!preview && !parsing && (
+          {!preview && !parsing && !loadingSheets && sheets.length <= 1 && (
             <div
               onClick={() => fileRef.current?.click()}
               className="border-2 border-dashed border-gray-300 rounded-xl p-10 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/50 transition-all"
@@ -376,11 +421,75 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
             </div>
           )}
 
+          {/* Đang liệt kê sheet */}
+          {loadingSheets && (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 className="h-8 w-8 animate-spin text-blue-500 mr-3" />
+              <p className="text-sm text-gray-600">Đang đọc danh sách sheet…</p>
+            </div>
+          )}
+
+          {/* Chọn sheet (file có nhiều sheet) */}
+          {!preview && sheets.length > 1 && !parsing && !loadingSheets && (
+            <div className="border border-gray-200 rounded-xl p-4 space-y-2">
+              <p className="text-sm font-semibold text-gray-800">
+                File có {sheets.length} sheet — chọn sheet làm báo giá:
+              </p>
+              {file && (
+                <p className="text-xs text-gray-500">📄 {file.name}</p>
+              )}
+              <div className="max-h-60 overflow-auto space-y-1">
+                {sheets.map((s) => (
+                  <label
+                    key={s.name}
+                    className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer border ${
+                      selectedSheet === s.name
+                        ? 'bg-blue-50 border-blue-300'
+                        : 'border-transparent hover:bg-gray-50'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="excel-sheet"
+                      checked={selectedSheet === s.name}
+                      onChange={() => setSelectedSheet(s.name)}
+                      className="shrink-0"
+                    />
+                    <span className="flex-1 text-sm font-medium text-gray-900">{s.name}</span>
+                    <span className="text-xs text-gray-500 tabular-nums">{s.rowCount} dòng</span>
+                    {s.isQuotation && (
+                      <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full shrink-0">
+                        Có vẻ là báo giá
+                      </span>
+                    )}
+                  </label>
+                ))}
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={resetExcelImport}
+                  className="h-9 px-4 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="button"
+                  disabled={!selectedSheet || parsing}
+                  onClick={() => void doParseSheet(file, selectedSheet)}
+                  className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  Đọc sheet này
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Parsing */}
           {parsing && (
             <div className="flex items-center justify-center py-16">
               <Loader2 className="h-8 w-8 animate-spin text-blue-500 mr-3" />
-              <p className="text-sm text-gray-600">Đang đọc file Excel...</p>
+              <p className="text-sm text-gray-600">Đang đọc sheet Excel…</p>
             </div>
           )}
 
@@ -391,8 +500,13 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
               <div className="flex-1">
                 <p className="text-sm font-medium text-red-800">{error}</p>
               </div>
-              <button onClick={() => { setError(''); setFile(null); setPreview(null); setSourceFile(null); }}
-                className="text-xs text-red-600 hover:text-red-800 font-medium cursor-pointer">Thử lại</button>
+              <button
+                type="button"
+                onClick={resetExcelImport}
+                className="text-xs text-red-600 hover:text-red-800 font-medium cursor-pointer"
+              >
+                Thử lại
+              </button>
             </div>
           )}
 
@@ -712,9 +826,21 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
                 : '✅ Sau khi áp dụng, tick xác nhận đã kiểm tra số liệu trên trang chỉnh sửa báo giá rồi mới Lưu'}
             </div>
             <div className="flex gap-2 flex-wrap justify-end">
+              {preview && sheets.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setPreview(null)}
+                  className="h-9 px-4 border border-gray-300 hover:bg-gray-50 rounded-lg text-sm font-medium cursor-pointer transition"
+                >
+                  Đổi sheet khác
+                </button>
+              )}
               {preview && (
-                <button onClick={() => { setPreview(null); setFile(null); setSourceFile(null); fileRef.current && (fileRef.current.value = ''); }}
-                  className="h-9 px-4 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium cursor-pointer transition">
+                <button
+                  type="button"
+                  onClick={resetExcelImport}
+                  className="h-9 px-4 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium cursor-pointer transition"
+                >
                   🔄 Chọn file khác
                 </button>
               )}

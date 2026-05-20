@@ -9322,7 +9322,50 @@ function excelRowLooksLikeStaffPhoneContext(rowArr) {
   return excelHeaderTextIsStaffContactContext(blob);
 }
 
+/** Row có giống header báo giá (STT + HẠNG MỤC / TÊN HÀNG) — dùng cho excel-sheets + parse-excel. */
+function excelLooksLikeHeaderRow(rowArr) {
+  const upper = (rowArr || []).map((c) => String(c || '').trim().toUpperCase());
+  const hasStt = upper.some((c) => c === 'STT' || c === 'TT');
+  const hasName = upper.some(
+    (c) =>
+      (c.includes('HẠNG MỤC') || c.includes('TÊN HÀNG') || c.includes('TÊN SẢN PHẨM') ||
+        c.includes('NỘI DUNG') || c.includes('MÃ HÀNG'))
+      && !c.includes('DIỄN GIẢI'),
+  );
+  return hasStt && hasName;
+}
+
+function resolveExcelWorksheet(wb, sheetName) {
+  const names = wb.SheetNames || [];
+  if (!names.length) return { sheetName: null, ws: null };
+  const requested = String(sheetName || '').trim();
+  const resolved = requested && names.includes(requested) ? requested : names[0];
+  return { sheetName: resolved, ws: wb.Sheets[resolved] };
+}
+
 const excelUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+/** Liệt kê sheet trong file Excel + gợi ý sheet giống báo giá (heuristic header). */
+r.post('/quotations/excel-sheets', excelUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Chưa chọn file' });
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellFormula: false });
+    const names = wb.SheetNames || [];
+    if (!names.length) return res.status(400).json({ error: 'File không có sheet' });
+    const sheets = names.map((name) => {
+      const ws = wb.Sheets[name];
+      const rows = ws ? XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true }) : [];
+      const rowCount = rows.length;
+      const isQuotation = rows.slice(0, 30).some((r) => excelLooksLikeHeaderRow(r || []));
+      return { name, rowCount, isQuotation };
+    });
+    const defaultSheet = sheets.find((s) => s.isQuotation)?.name || sheets[0]?.name || null;
+    res.json({ sheets, defaultSheet, totalSheets: sheets.length });
+  } catch (e) {
+    console.error('[excel-sheets]', e);
+    res.status(500).json({ error: e.message || 'Lỗi đọc file' });
+  }
+});
 
 r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) => {
   try {
@@ -9330,7 +9373,8 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
 
     // cellFormula:false → chỉ đọc cached value, không parse/tính lại công thức Excel
     const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellFormula: false });
-    const ws = wb.Sheets[wb.SheetNames[0]];
+    const { sheetName: parsedSheetName, ws } = resolveExcelWorksheet(wb, req.body?.sheet_name);
+    if (!ws) return res.status(400).json({ error: 'File không có sheet' });
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
 
     if (!rows.length) return res.status(400).json({ error: 'File rỗng' });
@@ -9416,29 +9460,17 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
       return { cm, subAdvance };
     }
 
-    // Helper: row có giống "header" không (để re-detect khi gặp mini-header giữa file).
-    function looksLikeHeaderRow(rowArr) {
-      const upper = rowArr.map(c => String(c || '').trim().toUpperCase());
-      const hasStt = upper.some(c => c === 'STT' || c === 'TT');
-      const hasName = upper.some(c =>
-        (c.includes('HẠNG MỤC') || c.includes('TÊN HÀNG') || c.includes('TÊN SẢN PHẨM') ||
-         c.includes('NỘI DUNG') || c.includes('MÃ HÀNG'))
-        && !c.includes('DIỄN GIẢI')
-      );
-      return hasStt && hasName;
-    }
-
     let headerIdx = -1;
     let colMap = {};
     for (let i = 0; i < Math.min(rows.length, 30); i++) {
-      if (!looksLikeHeaderRow(rows[i] || [])) continue;
+      if (!excelLooksLikeHeaderRow(rows[i] || [])) continue;
       const { cm, subAdvance } = buildColMap(rows[i], rows[i + 1] || []);
       colMap = cm;
       headerIdx = subAdvance ? i + 1 : i;
       break;
     }
     if (headerIdx < 0) return res.status(400).json({ error: 'Không tìm thấy dòng tiêu đề (cần có STT + HẠNG MỤC)' });
-    console.log('[parse-excel] headerIdx:', headerIdx, 'colMap:', JSON.stringify(colMap));
+    console.log('[parse-excel] sheet:', parsedSheetName, 'headerIdx:', headerIdx, 'colMap:', JSON.stringify(colMap));
 
     // ── 2. Extract customer info — parse each cell separately ──
     let customer_name = '', customer_phone = '', customer_address = '', kts_info = '', title = '';
@@ -9559,7 +9591,7 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
       //   1) override các role trong newCm,
       //   2) clear bất kỳ role cũ nào đang trỏ vào col index đã được newCm gán role khác
       //      (vd. section III col E = "Số Lượng" → role length cũ ở col 4 phải bị xoá).
-      if (looksLikeHeaderRow(row)) {
+      if (excelLooksLikeHeaderRow(row)) {
         const { cm: newCm, subAdvance: newSub } = buildColMap(row, rows[i + 1] || []);
         const merged = { ...colMap, ...newCm };
         const newColsByIdx = {};
