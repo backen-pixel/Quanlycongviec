@@ -8,7 +8,7 @@ import { isoToDatetimeLocalValue, datetimeLocalValueToIso } from '../lib/datetim
 import {
   Calendar, List, Plus, Search, Filter, MapPin, Clock, Users, MessageSquare,
   Check, X, ChevronLeft, ChevronRight, Settings, Trash2, Edit3, Send, CheckCircle2,
-  XCircle, AlertCircle, Loader2, Building2,
+  XCircle, AlertCircle, Loader2, Building2, Ban,
 } from 'lucide-react';
 
 const LS_EVENTS_COMPANY = 'crm_events_filter_company_id';
@@ -208,11 +208,21 @@ export default function EventsFeedPage() {
   };
 
   const handleDelete = async (id) => {
-    if (!confirm('Xóa sự kiện này?')) return;
+    if (!confirm('Xóa sự kiện này? (Hành động không thể hoàn tác)')) return;
     try {
       await api.delete(`/events/${id}`);
       refreshEventsData();
     } catch (e) { alert('Lỗi xóa'); }
+  };
+
+  /** Hủy sự kiện (mềm) — đổi status='cancelled' + lưu lý do (không xóa khỏi DB). */
+  const handleCancel = async (id, reason) => {
+    const r = String(reason || '').trim();
+    if (!r) { alert('Vui lòng nhập lý do hủy'); return; }
+    try {
+      await api.put(`/events/${id}`, { status: 'cancelled', cancel_reason: r });
+      refreshEventsData();
+    } catch (e) { alert(e?.response?.data?.error || 'Lỗi hủy sự kiện'); }
   };
 
   const handleStatusChange = async (id, status) => {
@@ -403,7 +413,8 @@ export default function EventsFeedPage() {
                   </div>
                 ) : events.map(ev => (
                   <EventCard key={ev.id} event={ev} eventTypes={eventTypes} currentUser={currentUser}
-                    onRespond={handleRespond} onDelete={handleDelete} onStatusChange={handleStatusChange}
+                    onRespond={handleRespond} onDelete={handleDelete} onCancel={handleCancel}
+                    onStatusChange={handleStatusChange}
                     onEdit={() => { setEditEvent(ev); setShowCreate(true); }} />
                 ))}
               </div>
@@ -435,11 +446,16 @@ export default function EventsFeedPage() {
 // ═══════════════════════════════════════════════════════════════
 // EVENT CARD — Bitrix24-style Feed Card
 // ═══════════════════════════════════════════════════════════════
-function EventCard({ event: ev, eventTypes, currentUser, onRespond, onDelete, onStatusChange, onEdit }) {
+function EventCard({ event: ev, eventTypes, currentUser, onRespond, onDelete, onCancel, onStatusChange, onEdit }) {
   const [comment, setComment] = useState('');
   const [comments, setComments] = useState([]);
   const [showComments, setShowComments] = useState(false);
   const [sending, setSending] = useState(false);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  /** Quyền hủy/xóa: chỉ người tạo (`created_by`) hoặc admin. */
+  const canManage = currentUser?.role === 'admin'
+    || String(ev.created_by || '') === String(currentUser?.id || '');
 
   const typeInfo = eventTypes.find(t => t.slug === ev.event_type) || ev.event_type_ref || { icon: '📋', name: ev.event_type, color: '#6B7280' };
   const statusInfo = STATUS_MAP[ev.status] || STATUS_MAP.planned;
@@ -486,10 +502,65 @@ function EventCard({ event: ev, eventTypes, currentUser, onRespond, onDelete, on
         </div>
         <div className="flex items-center gap-1">
           <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${statusInfo.color}`}>{statusInfo.label}</span>
-          <button onClick={onEdit} className="p-1 text-gray-400 hover:text-blue-600 rounded cursor-pointer"><Edit3 className="h-3.5 w-3.5" /></button>
-          <button onClick={() => onDelete(ev.id)} className="p-1 text-gray-400 hover:text-red-500 rounded cursor-pointer"><Trash2 className="h-3.5 w-3.5" /></button>
+          <button onClick={onEdit} title="Sửa" className="p-1 text-gray-400 hover:text-blue-600 rounded cursor-pointer"><Edit3 className="h-3.5 w-3.5" /></button>
+          {canManage && ev.status !== 'cancelled' && ev.status !== 'completed' && typeof onCancel === 'function' && (
+            <button
+              onClick={() => { setCancelReason(ev.cancel_reason || ''); setShowCancelModal(true); }}
+              title="Hủy sự kiện (kèm lý do)"
+              className="p-1 text-gray-400 hover:text-amber-600 rounded cursor-pointer"
+            >
+              <Ban className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {canManage && (
+            <button onClick={() => onDelete(ev.id)} title="Xóa sự kiện" className="p-1 text-gray-400 hover:text-red-500 rounded cursor-pointer"><Trash2 className="h-3.5 w-3.5" /></button>
+          )}
         </div>
       </div>
+      {/* Lý do hủy — hiển thị khi đã cancel */}
+      {ev.status === 'cancelled' && ev.cancel_reason && (
+        <div className="mx-5 mb-2 -mt-1 rounded-lg border border-red-200 bg-red-50/70 px-3 py-1.5 text-xs text-red-700">
+          <span className="font-semibold">Lý do hủy:</span> {ev.cancel_reason}
+        </div>
+      )}
+      {showCancelModal && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setShowCancelModal(false)}>
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+              <Ban className="h-4 w-4 text-amber-600" /> Hủy sự kiện
+            </h3>
+            <p className="text-xs text-gray-500">Sự kiện sẽ chuyển sang trạng thái «Đã hủy» và lưu lý do — không bị xóa khỏi hệ thống.</p>
+            <textarea
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              rows={4}
+              autoFocus
+              placeholder="Nhập lý do hủy (bắt buộc)…"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-amber-500 focus:ring-1 focus:ring-amber-400 outline-none"
+            />
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowCancelModal(false)}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 cursor-pointer"
+              >
+                Đóng
+              </button>
+              <button
+                type="button"
+                disabled={!cancelReason.trim()}
+                onClick={async () => {
+                  await onCancel(ev.id, cancelReason);
+                  setShowCancelModal(false);
+                }}
+                className="px-3 py-1.5 text-sm bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              >
+                Xác nhận hủy
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Event label */}
       <div className="px-5 pb-1">
