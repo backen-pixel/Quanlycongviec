@@ -98,6 +98,7 @@ const OrderForm = lazyWithRetry(() => import('./pages/OrderForm'));
 const InvoiceForm = lazyWithRetry(() => import('./pages/InvoiceForm'));
 const EventsFeedPage = lazyWithRetry(() => import('./pages/EventsFeedPage'));
 const SocialFeedPage = lazyWithRetry(() => import('./pages/SocialFeedPage'));
+const SocialProfilePage = lazyWithRetry(() => import('./pages/SocialProfilePage'));
 const ReleaseNotesPage = lazyWithRetry(() => import('./pages/ReleaseNotesPage'));
 const FacebookPage = lazyWithRetry(() => import('./pages/FacebookPage'));
 const FacebookLinkPhoneCleanupPage = lazyWithRetry(() => import('./pages/FacebookLinkPhoneCleanupPage'));
@@ -305,6 +306,7 @@ export default function App() {
             <Route path="/" element={<DefaultRedirect />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/social" element={<SocialFeedPage />} />
+            <Route path="/social/u/:userId" element={<SocialProfilePage />} />
             <Route path="/dashboard/divisions" element={<DivisionDashboardPage />} />
             <Route path="/my-tasks" element={<MyTasks />} />
             <Route path="/projects" element={<Projects />} />

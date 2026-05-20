@@ -48,6 +48,24 @@ const {
   completeConsultingCrmTasksForLead,
 } = require('../helpers/autoGenCrmTasks');
 const { normalizeTimestamp } = require('../helpers/normalizeTimestamp');
+const {
+  invalidatePipelinesAndStages,
+  invalidateSources,
+  invalidateRegions,
+  getPipelinesList,
+  getPipelineZaloSlice,
+  getDefaultPipelineIdForCompany,
+  getStagesByPipelineId,
+  getCrmSourcesList,
+  getCrmSourceCategoriesList,
+  getCrmLeadTypesList,
+  getCompanyRegionsList,
+} = require('../helpers/crmTaxonomyCache');
+const { getAppSettingValue, invalidateAppSettingKey } = require('../helpers/appSettingsCache');
+const {
+  attachLeadUserFlagsForList,
+  setLeadFlag,
+} = require('../helpers/crmLeadUserFlags');
 const { createFulfillmentChildDeal, applyProductionTemplateToFulfillmentLead } = require('../helpers/projectOrderFulfillment');
 const { isPostgresUniqueViolation, nextTbProjectCode } = require('../helpers/projectCode');
 const { validateProductionCompanyId } = require('../helpers/productionCompanyGate');
@@ -142,8 +160,7 @@ async function assertCategoryFitsSource(sb, categoryId, sourceCompanyId) {
 }
 
 async function getZaloNotifySettings() {
-  const { data } = await supabase.from('app_settings').select('value').eq('key', ZALO_APP_SETTING_KEY).maybeSingle();
-  const v = data?.value;
+  const v = await getAppSettingValue(ZALO_APP_SETTING_KEY, null);
   if (!v || typeof v !== 'object') {
     return {
       enabled: false,
@@ -173,6 +190,7 @@ async function upsertZaloNotifySettings(nextVal) {
     { onConflict: 'key' },
   );
   if (error) throw error;
+  invalidateAppSettingKey(ZALO_APP_SETTING_KEY);
 }
 
 function maskZaloAccessTokenPreview(token) {
@@ -318,32 +336,7 @@ async function updateQuotationRow(id, row) {
 
 /** Zalo: template/merge riêng theo crm_pipelines (deal có pipeline_id). */
 async function fetchCrmPipelineZaloSlice(pipelineId) {
-  if (!pipelineId) return { pipeline: null, zalo_template_id: null, zalo_merge_template_data: {} };
-  const { data, error } = await supabase
-    .from('crm_pipelines')
-    .select('id, name, zalo_template_id, zalo_merge_template_data')
-    .eq('id', pipelineId)
-    .maybeSingle();
-  if (error) {
-    console.warn('[Zalo pipeline] fetchCrmPipelineZaloSlice:', error.message);
-    return { pipeline: null, zalo_template_id: null, zalo_merge_template_data: {} };
-  }
-  if (!data) return { pipeline: null, zalo_template_id: null, zalo_merge_template_data: {} };
-  const tid =
-    data.zalo_template_id != null && String(data.zalo_template_id).trim() !== ''
-      ? String(data.zalo_template_id).trim()
-      : null;
-  const merge =
-    data.zalo_merge_template_data != null &&
-    typeof data.zalo_merge_template_data === 'object' &&
-    !Array.isArray(data.zalo_merge_template_data)
-      ? data.zalo_merge_template_data
-      : {};
-  return {
-    pipeline: { id: data.id, name: data.name },
-    zalo_template_id: tid,
-    zalo_merge_template_data: merge,
-  };
+  return getPipelineZaloSlice(pipelineId);
 }
 
 /**
@@ -2298,19 +2291,18 @@ r.get('/contract-signed-revenue', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/pipelines', async (req, res) => {
   try {
-    let q = supabase.from('crm_pipelines').select('*, company:companies(id, name)').order('is_default', { ascending: false }).order('name');
-    if (req.query.active !== 'false') q = q.eq('is_active', true);
+    const activeOnly = req.query.active !== 'false';
+    let companyFilter = null;
     const sacPl = scopedAdminCompanyId(req);
     if (sacPl) {
-      q = q.eq('company_id', sacPl);
+      companyFilter = sacPl;
     } else if (!userIsAdmin(req.user?.role)) {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
-      q = q.eq('company_id', cid);
+      companyFilter = cid;
     }
-    const { data, error } = await q;
-    if (error) throw error;
-    res.json(data || []);
+    const data = await getPipelinesList({ companyFilter, activeOnly });
+    res.json(data);
   } catch (e) {
     if (respondIfCrmPipelinesTableMissing(res, e)) return;
     res.status(500).json({ error: crmRouteErrorText(e) || 'Lỗi server' });
@@ -2383,6 +2375,7 @@ r.post('/pipelines', async (req, res) => {
     ];
     await supabase.from('crm_pipeline_stages').insert(stages);
 
+    invalidatePipelinesAndStages();
     res.status(201).json(data);
   } catch (e) {
     if (respondIfCrmPipelinesTableMissing(res, e)) return;
@@ -2428,6 +2421,7 @@ r.put('/pipelines/:id', async (req, res) => {
     const { data, error } = await supabase.from('crm_pipelines').update(update)
       .eq('id', req.params.id).select('*, company:companies(id, name)').single();
     if (error) throw error;
+    invalidatePipelinesAndStages();
     res.json(data);
   } catch (e) {
     if (respondIfCrmPipelinesTableMissing(res, e)) return;
@@ -2456,6 +2450,7 @@ r.delete('/pipelines/:id', async (req, res) => {
     // Delete stages first, then pipeline
     await supabase.from('crm_pipeline_stages').delete().eq('pipeline_id', req.params.id);
     await supabase.from('crm_pipelines').delete().eq('id', req.params.id);
+    invalidatePipelinesAndStages();
     res.json({ message: 'Đã xóa pipeline' });
   } catch (e) {
     if (respondIfCrmPipelinesTableMissing(res, e)) return;
@@ -2520,6 +2515,7 @@ r.post('/pipelines/:id/copy', async (req, res) => {
       await supabase.from('crm_pipeline_stages').insert(inserts);
     }
 
+    invalidatePipelinesAndStages();
     res.status(201).json({ pipeline: created, stages_copied: stages.length });
   } catch (e) {
     if (respondIfCrmPipelinesTableMissing(res, e)) return;
@@ -2553,10 +2549,13 @@ function normalizePipelineStagesList(rows) {
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/pipeline-stages', async (req, res) => {
   const { type, pipeline_id, company_id: companyIdQuery } = req.query;
-  let q = supabase.from('crm_pipeline_stages').select('*').order('order_index', { ascending: true });
-  if (type) q = q.eq('pipeline_type', type);
   const sacSt = scopedAdminCompanyId(req);
+  const activeOnly = req.query.all !== 'true';
+
+  let effectivePipelineId = pipeline_id || null;
+
   if (pipeline_id) {
+    // Permission check theo pipeline đang truy vấn (single-row lookup, không cache)
     if (sacSt) {
       const { data: pl } = await supabase.from('crm_pipelines').select('id, company_id').eq('id', pipeline_id).maybeSingle();
       if (!pl) return res.json([]);
@@ -2568,9 +2567,7 @@ r.get('/pipeline-stages', async (req, res) => {
       if (!pl) return res.json([]);
       if (String(pl.company_id || '') !== String(cid)) return res.status(403).json({ error: 'Không có quyền xem stage của pipeline công ty khác' });
     }
-    q = q.eq('pipeline_id', pipeline_id);
   } else if (companyIdQuery) {
-    // Explicit company pipeline (default) — used by LeadDetail to show correct company stages.
     const companyId = String(companyIdQuery || '').trim();
     if (!companyId) return res.json([]);
     if (sacSt) {
@@ -2580,53 +2577,37 @@ r.get('/pipeline-stages', async (req, res) => {
       if (!cid) return;
       if (String(companyId) !== String(cid)) return res.status(403).json({ error: 'Không có quyền xem stage pipeline công ty khác' });
     }
-    const { data: def } = await supabase.from('crm_pipelines')
-      .select('id')
-      .eq('company_id', companyId)
-      .eq('is_active', true)
-      .order('is_default', { ascending: false })
-      .order('created_at')
-      .limit(1)
-      .maybeSingle();
-    if (def?.id) q = q.eq('pipeline_id', def.id);
+    effectivePipelineId = await getDefaultPipelineIdForCompany(companyId);
   } else if (sacSt) {
-    const { data: def } = await supabase.from('crm_pipelines')
-      .select('id')
-      .eq('company_id', sacSt)
-      .eq('is_active', true)
-      .order('is_default', { ascending: false })
-      .order('created_at')
-      .limit(1)
-      .maybeSingle();
-    if (def?.id) q = q.eq('pipeline_id', def.id);
+    effectivePipelineId = await getDefaultPipelineIdForCompany(sacSt);
   } else if (!userIsAdmin(req.user?.role)) {
-    // Backward-compat for existing UI: default pipeline of user's company
     const cid = requireUserCompanyId(req, res);
     if (!cid) return;
-    const { data: def } = await supabase.from('crm_pipelines')
-      .select('id')
-      .eq('company_id', cid)
-      .eq('is_active', true)
-      .order('is_default', { ascending: false })
-      .order('created_at')
-      .limit(1)
-      .maybeSingle();
-    if (def?.id) q = q.eq('pipeline_id', def.id);
+    effectivePipelineId = await getDefaultPipelineIdForCompany(cid);
   }
-  if (req.query.all !== 'true') q = q.eq('is_active', true);
-  let { data } = await q;
+
+  let data;
+  if (effectivePipelineId) {
+    data = await getStagesByPipelineId(effectivePipelineId, { type: type || null, activeOnly });
+  } else {
+    // Admin xem toàn bộ (không filter pipeline_id) — không cache nhánh hiếm này.
+    let q = supabase.from('crm_pipeline_stages').select('*').order('order_index', { ascending: true });
+    if (type) q = q.eq('pipeline_type', type);
+    if (activeOnly) q = q.eq('is_active', true);
+    const { data: rows } = await q;
+    data = rows || [];
+  }
+
   const ensureStageId = String(req.query.ensure_stage_id || '').trim();
-  if (ensureStageId && !(data || []).some((s) => String(s.id) === ensureStageId)) {
+  if (ensureStageId && !data.some((s) => String(s.id) === ensureStageId)) {
     const { data: extra } = await supabase
       .from('crm_pipeline_stages')
       .select('*')
       .eq('id', ensureStageId)
       .maybeSingle();
-    if (extra) {
-      data = [...(data || []), extra];
-    }
+    if (extra) data = [...data, extra];
   }
-  res.json(normalizePipelineStagesList(data || []));
+  res.json(normalizePipelineStagesList(data));
 });
 
 r.post('/pipeline-stages', async (req, res) => {
@@ -2680,6 +2661,7 @@ r.post('/pipeline-stages', async (req, res) => {
         : {}),
     }).select().single();
     if (error) throw error;
+    invalidatePipelinesAndStages();
     res.status(201).json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2729,6 +2711,7 @@ r.put('/pipeline-stages/:id', async (req, res) => {
     const { data, error } = await supabase.from('crm_pipeline_stages').update(update)
       .eq('id', req.params.id).select().single();
     if (error) throw error;
+    invalidatePipelinesAndStages();
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2752,6 +2735,7 @@ r.delete('/pipeline-stages/:id', async (req, res) => {
       .eq('stage_id', req.params.id);
     if (count > 0) return res.status(400).json({ error: `Không thể xóa — ${count} lead/deal đang dùng giai đoạn này` });
     await supabase.from('crm_pipeline_stages').delete().eq('id', req.params.id);
+    invalidatePipelinesAndStages();
     res.json({ message: 'Đã xóa' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2774,14 +2758,11 @@ r.get('/lead-types', async (req, res) => {
     }
     const cidFinal = companyId || (req.user?.company_id || null);
     if (!cidFinal) return res.json([]);
-    let q = supabase.from('crm_lead_types')
-      .select('*')
-      .eq('company_id', cidFinal)
-      .order('order_index');
-    if (req.query.all !== 'true') q = q.eq('is_active', true);
-    const { data, error } = await q;
-    if (error) throw error;
-    res.json(data || []);
+    const data = await getCrmLeadTypesList({
+      companyId: cidFinal,
+      activeOnly: req.query.all !== 'true',
+    });
+    res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -2825,6 +2806,7 @@ r.post('/lead-types', async (req, res) => {
       updated_at: new Date().toISOString(),
     }).select('*').single();
     if (error) throw error;
+    invalidateSources();
     res.status(201).json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2862,6 +2844,7 @@ r.put('/lead-types/:id', async (req, res) => {
     update.updated_at = new Date().toISOString();
     const { data, error } = await supabase.from('crm_lead_types').update(update).eq('id', req.params.id).select('*').single();
     if (error) throw error;
+    invalidateSources();
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2885,6 +2868,7 @@ r.delete('/lead-types/:id', async (req, res) => {
 
     const { error } = await supabase.from('crm_lead_types').delete().eq('id', req.params.id);
     if (error) throw error;
+    invalidateSources();
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2898,6 +2882,7 @@ r.put('/pipeline-stages-reorder', async (req, res) => {
     for (const s of stages || []) {
       await supabase.from('crm_pipeline_stages').update({ order_index: s.order_index }).eq('id', s.id);
     }
+    invalidatePipelinesAndStages();
     res.json({ message: 'Đã sắp xếp lại' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3265,16 +3250,7 @@ r.get('/sources', async (req, res) => {
     }
 
     const includeInactive = userIsAdmin(req.user?.role) && String(req.query.include_inactive) === '1';
-    let srcQ = supabase
-      .from('crm_sources')
-      .select('*, category:crm_source_categories(id, name, icon, color, company_id)')
-      .order('name');
-    if (!includeInactive) srcQ = srcQ.eq('is_active', true);
-    if (filterCo) {
-      srcQ = srcQ.or(`company_id.is.null,company_id.eq.${filterCo}`);
-    }
-    const { data, error: srcErr } = await srcQ;
-    if (srcErr) throw srcErr;
+    const data = await getCrmSourcesList({ filterCo, includeInactive });
 
     let pagesQ = supabase
       .from('facebook_pages')
@@ -3321,14 +3297,8 @@ r.get('/source-categories', async (req, res) => {
       filterCo = cid;
     }
     const includeInactive = userIsAdmin(req.user?.role) && String(req.query.include_inactive) === '1';
-    let q = supabase.from('crm_source_categories').select('*').order('order_index', { ascending: true });
-    if (!includeInactive) q = q.eq('is_active', true);
-    if (filterCo) {
-      q = q.or(`company_id.is.null,company_id.eq.${filterCo}`);
-    }
-    const { data, error } = await q;
-    if (error) throw error;
-    res.json(data || []);
+    const data = await getCrmSourceCategoriesList({ filterCo, includeInactive });
+    res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -3362,6 +3332,7 @@ r.post('/source-categories', async (req, res) => {
       .select('*')
       .single();
     if (error) throw error;
+    invalidateSources();
     res.status(201).json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -3396,6 +3367,7 @@ r.put('/source-categories/:id', async (req, res) => {
       .select('*')
       .single();
     if (error) throw error;
+    invalidateSources();
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -3414,6 +3386,7 @@ r.delete('/source-categories/:id', async (req, res) => {
     }
     const { error } = await supabase.from('crm_source_categories').delete().eq('id', req.params.id);
     if (error) throw error;
+    invalidateSources();
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -3446,6 +3419,7 @@ r.post('/sources', async (req, res) => {
       .select('*, category:crm_source_categories(id, name, icon, color, company_id)')
       .single();
     if (error) throw error;
+    invalidateSources();
     res.status(201).json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -3490,6 +3464,7 @@ r.put('/sources/:id', async (req, res) => {
       .select('*, category:crm_source_categories(id, name, icon, color, company_id)')
       .single();
     if (error) throw error;
+    invalidateSources();
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -4511,8 +4486,10 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
   const total = result.length;
   const page = result.slice(parsedOffset, parsedOffset + parsedLimit);
   const pageWithDeadline = await attachCrmNextOpenTaskDeadline(page);
+  const withNewFlag = attachLeadNewFlagForList(pageWithDeadline, viewerUserId);
+  const withUserFlags = await attachLeadUserFlagsForList(withNewFlag, viewerUserId);
   return {
-    data: attachLeadNewFlagForList(pageWithDeadline, viewerUserId),
+    data: withUserFlags,
     total,
     offset: parsedOffset,
     limit: parsedLimit,
@@ -4701,11 +4678,12 @@ r.get('/leads', async (req, res) => {
       const hydrated = await fetchCrmLeadsByIdsOrdered(ids);
       const rows = await attachCrmNextOpenTaskDeadline(hydrated);
       const page = attachLeadNewFlagForList(rows, req.user?.userId);
+      const pageWithUserFlags = await attachLeadUserFlagsForList(page, req.user?.userId);
       // Phân trang theo cửa sổ RPC (ids), không theo page.length — nếu hydrate thiếu dòng,
       // dùng page.length sẽ lệch nextOffset và vòng "Tải tất cả" dừng sớm / bỏ sót.
       const windowLen = Array.isArray(ids) ? ids.length : page.length;
       return res.json({
-        data: page,
+        data: pageWithUserFlags,
         total,
         offset: parsedOffset,
         limit: parsedLimit,
@@ -4837,20 +4815,8 @@ r.get('/company-regions', async (req, res) => {
       } catch { /* ignore */ }
     }
 
-    let q = supabase
-      .from('company_regions')
-      .select('*, division:ecosystem_units(id, name, short_name)')
-      .in('company_id', allowedIds)
-      .order('order_index');
-    if (div) {
-      q = q.eq('division_unit_id', div);
-    } else if (moduleDivIds && moduleDivIds.length) {
-      // Cho phép cả khu vực thuộc khối module HOẶC chưa gán khối
-      q = q.or(`division_unit_id.in.(${moduleDivIds.join(',')}),division_unit_id.is.null`);
-    }
-    const { data, error } = await q;
-    if (error) throw error;
-    res.json(data || []);
+    const data = await getCompanyRegionsList({ allowedIds, div: div || null, moduleDivIds });
+    res.json(data);
   } catch (e) {
     if (String(e.message || '').includes('company_regions')) {
       return res.json([]);
@@ -4905,6 +4871,7 @@ r.post('/company-regions', async (req, res) => {
       .select()
       .single();
     if (error) throw error;
+    invalidateRegions();
     res.status(201).json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -4931,6 +4898,7 @@ r.patch('/company-regions/:id', async (req, res) => {
     }
     const { data, error } = await supabase.from('company_regions').update(patch).eq('id', id).select().single();
     if (error) throw error;
+    invalidateRegions();
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -5508,6 +5476,21 @@ r.get('/leads/:id/detail', async (req, res) => {
       }
     }
     delete data.lead_seen_by;
+    // Per-user flags (ghim / đã tương tác) cho user hiện tại.
+    try {
+      const flags = await require('../helpers/crmLeadUserFlags').fetchFlagsByLeadIds(uid, [canonicalId]);
+      const f = flags.get(String(canonicalId));
+      data.is_pinned = !!f?.is_pinned;
+      data.pinned_at = f?.pinned_at || null;
+      data.is_interacted = !!f?.is_interacted;
+      data.interacted_at = f?.interacted_at || null;
+    } catch (e) {
+      // BC: bảng chưa migrate → mặc định false.
+      data.is_pinned = false;
+      data.pinned_at = null;
+      data.is_interacted = false;
+      data.interacted_at = null;
+    }
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -12115,6 +12098,96 @@ r.delete('/leads/:id/care-mark', async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     console.error('DELETE /crm/leads/:id/care-mark:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// PER-USER FLAGS: GHIM thẻ + tick XANH "đã tương tác" (crm_lead_user_flags)
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Helper: kiểm tra user có quyền xem lead trước khi flag (region scope). */
+async function assertCanFlagLead(req, leadId) {
+  const { data: lead, error } = await supabase
+    .from('crm_leads')
+    .select('id, region_id, company_id')
+    .eq('id', leadId)
+    .maybeSingle();
+  if (error) return { ok: false, status: 500, error: error.message };
+  if (!lead) return { ok: false, status: 404, error: 'Không tìm thấy lead/deal' };
+  const guard = assertLeadReadableByRegionScope(req, lead);
+  if (!guard.ok) return { ok: false, status: 403, error: guard.error };
+  return { ok: true };
+}
+
+/** POST /crm/leads/:id/pin — ghim thẻ lên đầu (per-user). */
+r.post('/leads/:id/pin', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const chk = await assertCanFlagLead(req, req.params.id);
+    if (!chk.ok) return res.status(chk.status).json({ error: chk.error });
+    const row = await setLeadFlag(userId, req.params.id, { is_pinned: true });
+    res.json({ ok: true, flag: row });
+  } catch (e) {
+    if (/crm_lead_user_flags/.test(e.message || '')) {
+      return res.status(503).json({ error: 'Bảng crm_lead_user_flags chưa được tạo. Chạy database/202_crm_lead_user_flags.sql.' });
+    }
+    console.error('POST /crm/leads/:id/pin:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+/** DELETE /crm/leads/:id/pin — bỏ ghim. */
+r.delete('/leads/:id/pin', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const chk = await assertCanFlagLead(req, req.params.id);
+    if (!chk.ok) return res.status(chk.status).json({ error: chk.error });
+    const row = await setLeadFlag(userId, req.params.id, { is_pinned: false });
+    res.json({ ok: true, flag: row });
+  } catch (e) {
+    if (/crm_lead_user_flags/.test(e.message || '')) {
+      return res.status(503).json({ error: 'Bảng crm_lead_user_flags chưa được tạo. Chạy database/202_crm_lead_user_flags.sql.' });
+    }
+    console.error('DELETE /crm/leads/:id/pin:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+/** POST /crm/leads/:id/interacted — bật tick xanh "đã tương tác". */
+r.post('/leads/:id/interacted', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const chk = await assertCanFlagLead(req, req.params.id);
+    if (!chk.ok) return res.status(chk.status).json({ error: chk.error });
+    const row = await setLeadFlag(userId, req.params.id, { is_interacted: true });
+    res.json({ ok: true, flag: row });
+  } catch (e) {
+    if (/crm_lead_user_flags/.test(e.message || '')) {
+      return res.status(503).json({ error: 'Bảng crm_lead_user_flags chưa được tạo. Chạy database/202_crm_lead_user_flags.sql.' });
+    }
+    console.error('POST /crm/leads/:id/interacted:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+/** DELETE /crm/leads/:id/interacted — tắt tick xanh. */
+r.delete('/leads/:id/interacted', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const chk = await assertCanFlagLead(req, req.params.id);
+    if (!chk.ok) return res.status(chk.status).json({ error: chk.error });
+    const row = await setLeadFlag(userId, req.params.id, { is_interacted: false });
+    res.json({ ok: true, flag: row });
+  } catch (e) {
+    if (/crm_lead_user_flags/.test(e.message || '')) {
+      return res.status(503).json({ error: 'Bảng crm_lead_user_flags chưa được tạo. Chạy database/202_crm_lead_user_flags.sql.' });
+    }
+    console.error('DELETE /crm/leads/:id/interacted:', e);
     res.status(500).json({ error: e.message || 'Lỗi server' });
   }
 });

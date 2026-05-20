@@ -18,6 +18,15 @@ let globalTotal = 0;
 let globalErrors = 0;
 let startedAt = Date.now();
 
+/** Cache counters (L1 in-process + L2 Redis). Reset cùng resetMetrics(). */
+const cacheCounters = { l1_hit: 0, l2_hit: 0, miss: 0, l2_error: 0 };
+
+function incCacheCounter(name) {
+  if (Object.prototype.hasOwnProperty.call(cacheCounters, name)) {
+    cacheCounters[name] += 1;
+  }
+}
+
 function getBucketKey(now = Date.now()) {
   return Math.floor(now / BUCKET_MS) * BUCKET_MS;
 }
@@ -126,6 +135,7 @@ function getSnapshot() {
     errorRateGlobal: globalTotal > 0 ? +((globalErrors / globalTotal) * 100).toFixed(1) : 0,
     timeBuckets: filled,
     topEndpoints,
+    cache: { ...cacheCounters },
     generatedAt: now,
   };
 }
@@ -137,6 +147,7 @@ function resetMetrics() {
   globalTotal = 0;
   globalErrors = 0;
   startedAt = Date.now();
+  for (const k of Object.keys(cacheCounters)) cacheCounters[k] = 0;
 }
 
-module.exports = { metricsMiddleware, getSnapshot, resetMetrics };
+module.exports = { metricsMiddleware, getSnapshot, resetMetrics, incCacheCounter };

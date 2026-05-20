@@ -2,7 +2,7 @@ const { Router } = require('express');
 const { requirePermission } = require('../middleware/newPermission');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
-const { KNOWN_MODULE_KEYS, buildMyModuleAccessMap } = require('../helpers/ecosystemModuleScope');
+const { KNOWN_MODULE_KEYS, buildMyModuleAccessMap, invalidateEcosystemModuleScopeCache } = require('../helpers/ecosystemModuleScope');
 
 const r = Router();
 r.use(auth);
@@ -876,6 +876,7 @@ r.put('/module-scopes/:moduleKey', async (req, res) => {
       const { error: insErr } = await supabase.from('ecosystem_module_scopes').insert(rows);
       if (insErr) throw insErr;
     }
+    invalidateEcosystemModuleScopeCache(moduleKey);
     res.json({ ok: true, module_key: moduleKey, division_count: ids.length });
   } catch (e) {
     console.error('PUT /ecosystem/module-scopes', e);

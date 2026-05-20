@@ -10,6 +10,17 @@ const {
   persistAssignmentNotification,
   buildAssignmentNotificationInsert,
 } = require('../helpers/crmAssignmentNotifications');
+const { createTTLCache } = require('../helpers/ttlCache');
+
+const assignColsCache = createTTLCache({
+  ttlMs: 90_000,
+  maxEntries: 10,
+  redisTtlMs: 10 * 60_000,
+  redisPrefix: 'crm:assign-cols:',
+});
+function invalidateAssignColumns() {
+  assignColsCache.invalidateRemote(null).catch(() => {});
+}
 
 const STORAGE_BUCKET = 'attachments';
 const uploadMw = multer({
@@ -94,6 +105,15 @@ function sharedColumnsQuery() {
     .is('company_id', null)
     .order('position', { ascending: true })
     .order('id', { ascending: true });
+}
+
+/** Cached version of sharedColumnsQuery — returns just `data` array (taxonomy chậm đổi). */
+async function getSharedColumnsCached() {
+  return assignColsCache.getOrFetch('cols', async () => {
+    const { data, error } = await sharedColumnsQuery();
+    if (error) throw error;
+    return data || [];
+  });
 }
 
 /** Id nhiệm vụ user được giao / tạo (bảng assignees + assignee_id + created_by). */
@@ -290,9 +310,8 @@ async function persistNotification(userId, payload) {
 r.get('/columns', async (req, res) => {
   try {
     await ensureSharedAssignmentColumns(req.user?.userId);
-    const { data, error } = await sharedColumnsQuery();
-    if (error) throw error;
-    res.json({ columns: data || [], shared: true });
+    const data = await getSharedColumnsCached();
+    res.json({ columns: data, shared: true });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi tải cột' }); }
 });
 
@@ -324,6 +343,7 @@ r.post('/columns', async (req, res) => {
       .select()
       .single();
     if (error) throw error;
+    invalidateAssignColumns();
     res.status(201).json({ column: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi tạo cột' }); }
 });
@@ -342,6 +362,7 @@ r.put('/columns/:id', async (req, res) => {
       .select()
       .single();
     if (error) throw error;
+    invalidateAssignColumns();
     res.json({ column: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi cập nhật cột' }); }
 });
@@ -362,6 +383,7 @@ r.delete('/columns/:id', async (req, res) => {
       .delete()
       .eq('id', req.params.id);
     if (error) throw error;
+    invalidateAssignColumns();
     res.json({ ok: true });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi xóa cột' }); }
 });
@@ -376,6 +398,7 @@ r.post('/columns/reorder', async (req, res) => {
         .update({ position: i, updated_at: new Date().toISOString() })
         .eq('id', ids[i]);
     }
+    invalidateAssignColumns();
     res.json({ ok: true });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi sắp xếp cột' }); }
 });
