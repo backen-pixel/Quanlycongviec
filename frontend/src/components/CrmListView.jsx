@@ -13,7 +13,8 @@ import {
   isoWeekAndParts,
   MILESTONE_SLUG_GROUPS,
 } from '../lib/crmListViewColumns';
-import { Columns3, X, Check, Pin, CheckCircle2 } from 'lucide-react';
+import { Columns3, X, Check, Pin, CheckCircle2, FileSpreadsheet } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 function formatDate(d) {
   if (!d) return '';
@@ -421,6 +422,87 @@ export function ListView({
     }
   }, [historyByLead, parentCodes, calculateDays, allowedStageIds]);
 
+  /**
+   * Build dòng Excel theo mẫu cố định 28 cột do khách yêu cầu.
+   * Số (estimated_value/probability/expected_revenue) → trả number để Excel format được;
+   * ngày → chuỗi dd/mm/yyyy; ô trống → '' thay vì '—'.
+   */
+  const buildExcelRow = useCallback((item) => {
+    const stage = item._stage;
+    const hist = historyByLead[String(item.id)] || [];
+    const created = item.created_at;
+    const { year, month, week } = isoWeekAndParts(created);
+    const isDeal = (item.type || pipelineType) === 'deal';
+    const dealCode = isDeal ? (item.code || '') : '';
+    const leadCode = isDeal
+      ? (item.parent_lead_id ? (parentCodes[String(item.parent_lead_id)] || '') : '')
+      : (item.code || '');
+    const fmt = (d) => (d ? formatDate(d) : '');
+    const surveyDate = firstEnteredBySlugs(hist, MILESTONE_SLUG_GROUPS.survey_date, allowedStageIds);
+    const designDate = firstEnteredBySlugs(hist, MILESTONE_SLUG_GROUPS.design_date, allowedStageIds);
+    const quoteDate = firstEnteredBySlugs(hist, MILESTONE_SLUG_GROUPS.quote_date, allowedStageIds);
+    const negotiateDate = firstEnteredBySlugs(hist, MILESTONE_SLUG_GROUPS.close_date, allowedStageIds);
+    const contractDate = firstEnteredBySlugs(hist, MILESTONE_SLUG_GROUPS.contract_date, allowedStageIds);
+    const est = Number(item.estimated_value) || 0;
+    const probRaw = item.probability;
+    const prob = (probRaw === null || probRaw === undefined || probRaw === '')
+      ? null
+      : Number(probRaw);
+    const expectedRev = est > 0 && prob !== null ? Math.round(est * prob / 100) : '';
+    return {
+      'Mã_Deal': dealCode,
+      'Mã_Lead': leadCode,
+      'Ngày_nhận_deal': fmt(created),
+      'Năm': year || '',
+      'Tháng': month || '',
+      'Tuần': week || '',
+      'Họ_tên_KH': item.customer?.full_name || '',
+      'SĐT': item.phone || item.customer?.phone || '',
+      'Khu_vực': item.crm_region?.name || item.region?.name || '',
+      'Nguồn_chính': item.source?.category?.name || item.source_category?.name || item.source?.name || '',
+      'Nguồn_phụ': item.source?.name || '',
+      'Nhu_cầu': item.title || item.description || '',
+      'Sale_Admin_nguồn': item.lead_owner?.full_name || '',
+      'Sale_Kỹ_Thuật': item.assignee?.full_name || item.lead_owner?.full_name || '',
+      'Trạng_thái_Deal': stage ? `${stage.icon || ''} ${stage.name}`.trim() : '',
+      'Ngày_khảo_sát': fmt(surveyDate),
+      'Ngày_thiết_kế': fmt(designDate),
+      'Ngày_báo_giá': fmt(quoteDate),
+      'Ngày_đàm_phán': fmt(negotiateDate),
+      'Ngày_ký_hợp_đồng': fmt(contractDate),
+      'Kết_quả_cuối': closeResultLabel(item, stage),
+      'Lý_do_thất_bại': item.lost_reason || '',
+      'Giá_trị_dự_kiến': est > 0 ? est : '',
+      'Xác_suất_chốt': prob !== null && Number.isFinite(prob) ? prob : '',
+      'Doanh_thu_kỳ_vọng': expectedRev,
+      'Kế_hoạch_tuần': item.expected_construction_time || item.linked_project?.production_note || '',
+      'Kế_hoạch_tháng': fmt(item.linked_project?.production_deadline || item.expected_close_date),
+      'Ghi_chú': item.description || '',
+    };
+  }, [historyByLead, parentCodes, allowedStageIds, pipelineType]);
+
+  const handleExportExcel = useCallback(() => {
+    if (!allItems.length) return;
+    const rows = allItems.map(buildExcelRow);
+    const ws = XLSX.utils.json_to_sheet(rows, { cellDates: false });
+    // Set column widths ~ phỏng theo nội dung trung bình
+    const headers = Object.keys(rows[0] || {});
+    ws['!cols'] = headers.map((h) => {
+      if (h.startsWith('Ngày_')) return { wch: 14 };
+      if (h === 'Họ_tên_KH' || h === 'Nhu_cầu' || h === 'Ghi_chú') return { wch: 28 };
+      if (h.startsWith('Sale_')) return { wch: 20 };
+      if (h.includes('Giá_trị') || h.includes('Doanh_thu')) return { wch: 16 };
+      return { wch: 14 };
+    });
+    const wb = XLSX.utils.book_new();
+    const sheetName = pipelineType === 'deal' ? 'Deals' : 'Leads';
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    const today = new Date();
+    const stamp = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`;
+    const co = companyName ? `_${String(companyName).replace(/[^\p{L}\d_-]+/gu, '_')}` : '';
+    XLSX.writeFile(wb, `crm_${sheetName.toLowerCase()}${co}_${stamp}.xlsx`);
+  }, [allItems, buildExcelRow, pipelineType, companyName]);
+
   const applyVisibility = (draft) => {
     setVisibility(draft);
     writeListColumnVisibility(pipelineType, pipelineId, companyId, draft);
@@ -440,14 +522,26 @@ export function ListView({
           {pipelineStages.length > 0 ? ` · ${pipelineStages.length} cột pipeline` : companyId ? ' · chưa có cột pipeline công ty' : ' · chọn công ty để xem TG từng cột'}
           {historyLoading && needsHistory ? ' · Đang tải lịch sử stage…' : ''}
         </p>
-        <button
-          type="button"
-          onClick={() => setPickerOpen(true)}
-          className="h-8 px-3 inline-flex items-center gap-1.5 text-xs font-medium border border-gray-200 rounded-lg bg-white hover:bg-gray-50 shadow-sm"
-        >
-          <Columns3 className="h-3.5 w-3.5 text-blue-600" />
-          Cột hiển thị ({visibleColumns.length}/{allColumns.length})
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleExportExcel}
+            disabled={!allItems.length || historyLoading}
+            title="Xuất Excel theo mẫu cố định 28 cột"
+            className="h-8 px-3 inline-flex items-center gap-1.5 text-xs font-medium border border-emerald-300 text-emerald-700 rounded-lg bg-white hover:bg-emerald-50 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <FileSpreadsheet className="h-3.5 w-3.5" />
+            Xuất Excel ({allItems.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setPickerOpen(true)}
+            className="h-8 px-3 inline-flex items-center gap-1.5 text-xs font-medium border border-gray-200 rounded-lg bg-white hover:bg-gray-50 shadow-sm"
+          >
+            <Columns3 className="h-3.5 w-3.5 text-blue-600" />
+            Cột hiển thị ({visibleColumns.length}/{allColumns.length})
+          </button>
+        </div>
       </div>
 
       <div className="bg-white rounded-xl border overflow-x-auto">
