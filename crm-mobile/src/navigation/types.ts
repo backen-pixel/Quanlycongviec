@@ -42,6 +42,20 @@ export type MoreStackParamList = {
   CrmPipelineList: undefined;
   CrmPipelineDetail: { id: string };
   CrmEmbeddedWeb: { path: string; title?: string };
+  SocialFeed: undefined;
+  SocialPost: { id: string };
+  /** Trang cá nhân bảng tin nội bộ — tap avatar/tên tác giả để mở */
+  SocialProfile: { userId: string };
+  /** Hướng dẫn quyền thông báo + overlay + pin nền cho bong bóng Messenger */
+  BubblePermissionOnboard: undefined;
+  /** Liệt kê / đăng xuất từ xa các thiết bị đang đăng nhập */
+  MyDevices: undefined;
+  /** Giao việc — danh sách / lọc / tạo nhanh */
+  WorkTaskList: undefined;
+  /** Chi tiết công việc — đổi trạng thái, bình luận, người hỗ trợ */
+  WorkTaskDetail: { id: string };
+  /** Tạo / sửa công việc */
+  WorkTaskForm: { mode: 'create' | 'edit'; id?: string };
 };
 
 export type MainTabParamList = {

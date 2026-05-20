@@ -15,6 +15,7 @@ import {
   Linking,
 } from 'react-native';
 import { Video, ResizeMode, Audio } from 'expo-av';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { api } from '../api/client';
 import type { MoreStackParamList } from '../navigation/types';
@@ -37,6 +38,7 @@ type MediaViewer = { uri: string; kind: 'image' | 'video' | 'audio' };
 
 export default function FacebookChatScreen({ route, navigation }: Props) {
   const { contactId } = route.params;
+  const insets = useSafeAreaInsets();
   const [messages, setMessages] = useState<Msg[]>([]);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState('');
@@ -164,12 +166,16 @@ export default function FacebookChatScreen({ route, navigation }: Props) {
     );
   };
 
+  const composerPadBottom =
+    Platform.OS === 'ios' ? Math.max(insets.bottom, 8) : Math.max(insets.bottom, 4);
+  const ChatRoot = Platform.OS === 'ios' ? KeyboardAvoidingView : View;
+  const chatRootProps =
+    Platform.OS === 'ios'
+      ? ({ behavior: 'padding' as const, keyboardVerticalOffset: 88 } as const)
+      : {};
+
   return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={88}
-    >
+    <ChatRoot style={styles.flex} {...chatRootProps}>
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator color={CrmColors.blue600} />
@@ -202,7 +208,7 @@ export default function FacebookChatScreen({ route, navigation }: Props) {
           }}
         />
       )}
-      <View style={[styles.composer, CrmShadow.card]}>
+      <View style={[styles.composer, CrmShadow.card, { paddingBottom: composerPadBottom }]}>
         <TextInput
           style={styles.composerInp}
           placeholder="Nhập tin nhắn…"
@@ -255,7 +261,7 @@ export default function FacebookChatScreen({ route, navigation }: Props) {
           </Pressable>
         </Pressable>
       </Modal>
-    </KeyboardAvoidingView>
+    </ChatRoot>
   );
 }
 

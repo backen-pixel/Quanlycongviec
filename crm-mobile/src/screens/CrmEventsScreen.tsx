@@ -31,6 +31,8 @@ type CrmEventRow = {
   status?: string | null;
   location?: string | null;
   event_type?: string | null;
+  created_by?: string | null;
+  cancel_reason?: string | null;
 };
 
 function pad2(n: number) {
@@ -93,7 +95,17 @@ export default function CrmEventsScreen({ route }: Props) {
   const [createHour, setCreateHour] = useState('09');
   const [createMin, setCreateMin] = useState('00');
   const [saving, setSaving] = useState(false);
+  const [cancelTarget, setCancelTarget] = useState<CrmEventRow | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelBusy, setCancelBusy] = useState(false);
   const handledInitialDate = useRef<string | null>(null);
+
+  const myUserId = String(user?.id || user?.userId || '');
+  const isAdmin = user?.role === 'admin';
+  const canManageEvent = useCallback(
+    (e: CrmEventRow) => isAdmin || (!!e.created_by && String(e.created_by) === myUserId),
+    [isAdmin, myUserId],
+  );
 
   const loadList = useCallback(async () => {
     try {
@@ -170,6 +182,62 @@ export default function CrmEventsScreen({ route }: Props) {
     return m;
   }, [calEvents]);
 
+  const openCancelModal = (e: CrmEventRow) => {
+    setCancelTarget(e);
+    setCancelReason('');
+  };
+
+  const submitCancel = async () => {
+    if (!cancelTarget) return;
+    const reason = cancelReason.trim();
+    if (!reason) {
+      Alert.alert('Thiếu lý do', 'Vui lòng nhập lý do hủy sự kiện.');
+      return;
+    }
+    setCancelBusy(true);
+    try {
+      await api.put(`/events/${cancelTarget.id}`, {
+        status: 'cancelled',
+        cancel_reason: reason,
+      });
+      setCancelTarget(null);
+      setCancelReason('');
+      await loadAll();
+    } catch (e: unknown) {
+      Alert.alert(
+        'Hủy sự kiện',
+        (e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Không hủy được sự kiện',
+      );
+    } finally {
+      setCancelBusy(false);
+    }
+  };
+
+  const confirmDelete = (e: CrmEventRow) => {
+    Alert.alert(
+      'Xóa sự kiện',
+      `Xóa "${e.title || 'sự kiện'}"? Thao tác này không thể hoàn tác.`,
+      [
+        { text: 'Hủy', style: 'cancel' },
+        {
+          text: 'Xóa',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await api.delete(`/events/${e.id}`);
+              await loadAll();
+            } catch (err: unknown) {
+              Alert.alert(
+                'Lỗi',
+                (err as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Không xóa được sự kiện',
+              );
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const saveEvent = async () => {
     const title = createTitle.trim();
     if (!title || !createDay || saving) return;
@@ -245,15 +313,36 @@ export default function CrmEventsScreen({ route }: Props) {
               </TouchableOpacity>
             }
             ListEmptyComponent={<Text style={styles.empty}>Chưa có sự kiện.</Text>}
-            renderItem={({ item: e }) => (
-              <View style={[styles.card, CrmShadow.card]}>
-                <Text style={styles.cardTitle}>{e.title || '—'}</Text>
-                <Text style={styles.cardMeta}>
-                  {e.start_time ? new Date(e.start_time).toLocaleString('vi-VN') : '—'} · {e.status || 'planned'}
-                </Text>
-                {e.location ? <Text style={styles.cardLoc}>{e.location}</Text> : null}
-              </View>
-            )}
+            renderItem={({ item: e }) => {
+              const cancelled = e.status === 'cancelled';
+              const canMgr = canManageEvent(e);
+              return (
+                <View style={[styles.card, CrmShadow.card, cancelled && styles.cardCancelled]}>
+                  <Text style={[styles.cardTitle, cancelled && styles.cardTitleCancelled]}>
+                    {e.title || '—'}
+                  </Text>
+                  <Text style={styles.cardMeta}>
+                    {e.start_time ? new Date(e.start_time).toLocaleString('vi-VN') : '—'} · {e.status || 'planned'}
+                  </Text>
+                  {e.location ? <Text style={styles.cardLoc}>{e.location}</Text> : null}
+                  {cancelled && e.cancel_reason ? (
+                    <Text style={styles.cardCancelReason}>Lý do hủy: {e.cancel_reason}</Text>
+                  ) : null}
+                  {canMgr ? (
+                    <View style={styles.cardActions}>
+                      {!cancelled ? (
+                        <TouchableOpacity style={styles.btnCancel} onPress={() => openCancelModal(e)}>
+                          <Text style={styles.btnCancelTxt}>🚫 Hủy</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                      <TouchableOpacity style={styles.btnDelete} onPress={() => confirmDelete(e)}>
+                        <Text style={styles.btnDeleteTxt}>🗑 Xóa</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
+                </View>
+              );
+            }}
           />
         )
       ) : (
@@ -364,6 +453,50 @@ export default function CrmEventsScreen({ route }: Props) {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <Modal
+        visible={!!cancelTarget}
+        animationType="slide"
+        transparent
+        onRequestClose={() => !cancelBusy && setCancelTarget(null)}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={() => !cancelBusy && setCancelTarget(null)}>
+          <Pressable style={styles.modalSheet} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.modalTitle}>Hủy sự kiện</Text>
+            <Text style={styles.modalSub} numberOfLines={2}>
+              {cancelTarget?.title || '—'}
+            </Text>
+            <Text style={styles.lbl}>Lý do hủy *</Text>
+            <TextInput
+              style={[styles.inp, { minHeight: 80, textAlignVertical: 'top' }]}
+              multiline
+              numberOfLines={4}
+              placeholder="Nhập lý do hủy sự kiện…"
+              placeholderTextColor={CrmColors.gray400}
+              value={cancelReason}
+              onChangeText={setCancelReason}
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.btnGhost}
+                onPress={() => !cancelBusy && setCancelTarget(null)}
+                disabled={cancelBusy}
+              >
+                <Text style={styles.btnGhostTxt}>Quay lại</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.btnPrimary, { backgroundColor: '#dc2626' }]}
+                onPress={() => void submitCancel()}
+                disabled={cancelBusy}
+              >
+                <Text style={styles.btnPrimaryTxt}>
+                  {cancelBusy ? 'Đang hủy…' : 'Xác nhận hủy'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -401,9 +534,31 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 10,
   },
+  cardCancelled: { opacity: 0.85, backgroundColor: '#fef2f2', borderColor: '#fecaca' },
   cardTitle: { fontSize: 16, fontWeight: '700', color: CrmColors.gray900 },
+  cardTitleCancelled: { textDecorationLine: 'line-through', color: CrmColors.gray500 },
   cardMeta: { fontSize: 12, color: CrmColors.gray500, marginTop: 6 },
   cardLoc: { fontSize: 12, color: CrmColors.gray600, marginTop: 4 },
+  cardCancelReason: { fontSize: 12, color: '#dc2626', marginTop: 6, fontStyle: 'italic' },
+  cardActions: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  btnCancel: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: CrmRadii.md,
+    backgroundColor: '#fef3c7',
+    borderWidth: 1,
+    borderColor: '#f59e0b',
+  },
+  btnCancelTxt: { fontSize: 12, fontWeight: '700', color: '#b45309' },
+  btnDelete: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: CrmRadii.md,
+    backgroundColor: '#fee2e2',
+    borderWidth: 1,
+    borderColor: '#fca5a5',
+  },
+  btnDeleteTxt: { fontSize: 12, fontWeight: '700', color: '#b91c1c' },
   empty: { textAlign: 'center', color: CrmColors.gray400, marginTop: 32 },
   calPad: { padding: 16, paddingBottom: 40 },
   calNav: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },

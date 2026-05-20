@@ -230,5 +230,66 @@ async function sendWebPush(userId, notification) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /push/device-token — Đăng ký token Expo/FCM/APNs (mobile)
+// ═══════════════════════════════════════════════════════════════════════════
+r.post('/device-token', async (req, res) => {
+  try {
+    const uid = currentUserId(req);
+    if (!uid) return res.status(401).json({ error: 'Token không có user id' });
+
+    const token = String(req.body?.token || '').trim();
+    const platform = String(req.body?.platform || 'expo').trim().toLowerCase();
+    const deviceId = req.body?.device_id != null ? String(req.body.device_id).trim() : null;
+
+    if (!token) return res.status(400).json({ error: 'Thiếu token' });
+    if (!['expo', 'fcm', 'apns'].includes(platform)) {
+      return res.status(400).json({ error: 'platform phải là expo, fcm hoặc apns' });
+    }
+
+    const { data, error } = await supabase.from('push_device_tokens').upsert(
+      {
+        user_id: uid,
+        token,
+        platform,
+        device_id: deviceId || null,
+        last_seen_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id,token' },
+    ).select('id, platform, last_seen_at').single();
+
+    if (error) {
+      if (error.code === '42P01' || String(error.message || '').includes('push_device_tokens')) {
+        return res.status(503).json({
+          error: 'Chạy migration database/204_push_device_tokens.sql',
+        });
+      }
+      throw error;
+    }
+    res.json({ ok: true, registration: data });
+  } catch (e) {
+    console.error('POST /push/device-token:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DELETE /push/device-token — Gỡ token khi logout
+// ═══════════════════════════════════════════════════════════════════════════
+r.delete('/device-token', async (req, res) => {
+  try {
+    const uid = currentUserId(req);
+    if (!uid) return res.status(401).json({ error: 'Token không có user id' });
+    const token = String(req.body?.token || req.query?.token || '').trim();
+    if (!token) return res.status(400).json({ error: 'Thiếu token' });
+
+    await supabase.from('push_device_tokens').delete().eq('user_id', uid).eq('token', token);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('DELETE /push/device-token:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = r;
 module.exports.sendWebPush = sendWebPush;

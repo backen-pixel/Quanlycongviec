@@ -12,6 +12,32 @@ function meta(n: AppNotification): Record<string, unknown> {
 export function navigateFromAppNotification(n: AppNotification): void {
   if (!navigationRef.isReady()) return;
   const m = meta(n);
+
+  if (n.type === 'messenger_chat' && n.entity_id) {
+    const groupName = typeof m.group_name === 'string' ? m.group_name : n.title;
+    navigationRef.navigate('Main', {
+      screen: 'MoreTab',
+      params: {
+        screen: 'MessengerGroupChat',
+        params: {
+          groupId: n.entity_id,
+          title: groupName,
+          isDirect: m.is_direct === true,
+        },
+      } as never,
+    });
+    return;
+  }
+  if (n.type === 'lead_chat' && n.entity_id) {
+    navigationRef.navigate('Main', {
+      screen: 'CrmTab',
+      params: {
+        screen: 'LeadDetail',
+        params: { id: n.entity_id, openLeadChat: true },
+      },
+    });
+    return;
+  }
   const pid =
     (typeof m.project_id === 'string' && m.project_id) ||
     (n.entity_type === 'project' && n.entity_id ? n.entity_id : null);

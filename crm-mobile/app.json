@@ -24,6 +24,7 @@
     "android": {
       "package": "vn.tubeppro.crmobile",
       "versionCode": 1,
+      "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
@@ -35,6 +36,7 @@
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.READ_MEDIA_AUDIO",
         "android.permission.POST_NOTIFICATIONS",
+        "android.permission.SYSTEM_ALERT_WINDOW",
         "android.permission.CAMERA",
         "android.permission.READ_MEDIA_IMAGES"
       ],
@@ -49,6 +51,22 @@
     },
     "web": {
       "favicon": "./assets/app-icon.jpg"
-    }
+    },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/app-icon.jpg",
+          "color": "#2563EB",
+          "sounds": []
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
+      }
+    },
+    "owner": "tubeppro"
   }
 }

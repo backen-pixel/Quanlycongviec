@@ -204,6 +204,7 @@ app.use('/api/workshop-teams', require('./routes/workshopTeams'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/external', require('./routes/external'));
 try { app.use('/api/push', require('./routes/push')); } catch (e) { console.warn('⚠️ Push route failed to load:', e.message); }
+try { app.use('/api/devices', require('./routes/devices')); } catch (e) { console.warn('⚠️ Devices route failed to load:', e.message); }
 try { app.use('/api/assistant', require('./routes/assistant')); } catch (e) { console.warn('⚠️ Assistant route failed to load:', e.message); }
 try { app.use('/api/integrations/stringee', require('./routes/stringee')); } catch (e) { console.warn('⚠️ Stringee route failed to load:', e.message); }
 
@@ -301,6 +302,10 @@ app.set('pushNotification', async (userId, notification) => {
     );
     if (!allowed) return;
     io.to(`user:${userId}`).emit('notification', notification);
+    try {
+      const { sendMobilePush } = require('./services/pushSender');
+      void sendMobilePush(userId, notification);
+    } catch (_) { /* ignore */ }
   } catch (e) {
     // không để lỗi pref làm hỏng push: nếu chỉ chặn được kiểu hết hạn thì vẫn cho qua
     if (!isExpiryNotifType(notification?.type) && !isProjectModuleNotification(notification)) {

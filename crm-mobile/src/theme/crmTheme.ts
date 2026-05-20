@@ -29,7 +29,9 @@ export const CrmColors = {
   blue800: '#133E99',
   blue900: '#0F2F6D',
 
+  emerald50: '#ECFDF5',
   emerald100: '#D1FAE5',
+  emerald200: '#A7F3D0',
   emerald500: '#10B981',
   emerald600: '#059669',
   emerald700: '#047857',
@@ -43,6 +45,7 @@ export const CrmColors = {
   red800: '#991B1B',
   amber50: '#FFFBEB',
   amber100: '#FEF3C7',
+  amber200: '#FDE68A',
   amber500: '#F59E0B',
   amber600: '#D97706',
   teal100: '#CCFBF1',

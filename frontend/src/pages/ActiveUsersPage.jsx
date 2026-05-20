@@ -4,7 +4,7 @@ import { useAuth } from '../lib/auth';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import OnlineStatusDot from '../components/OnlineStatusDot';
 import { getInitials, avatarColor } from '../lib/utils';
-import { Activity, Building2, Loader2, MessageCircle, RefreshCw, Search, Users } from 'lucide-react';
+import { Activity, Building2, Laptop, Loader2, MessageCircle, Monitor, RefreshCw, Search, Smartphone, Users } from 'lucide-react';
 
 const ROLE_LABELS = {
   admin: 'Admin',
@@ -26,6 +26,41 @@ function formatRelativeTime(iso) {
   if (diff < 3600_000) return `${Math.floor(diff / 60_000)} phút trước`;
   if (diff < 86400_000) return `${Math.floor(diff / 3600_000)} giờ trước`;
   return new Date(iso).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+const PLATFORM_META = {
+  android: { Icon: Smartphone, label: 'Android', color: 'text-emerald-600 bg-emerald-50 border-emerald-200' },
+  ios: { Icon: Smartphone, label: 'iOS', color: 'text-slate-700 bg-slate-50 border-slate-200' },
+  web: { Icon: Monitor, label: 'Web', color: 'text-sky-700 bg-sky-50 border-sky-200' },
+  desktop: { Icon: Laptop, label: 'Desktop', color: 'text-indigo-700 bg-indigo-50 border-indigo-200' },
+};
+
+function platformInfo(p) {
+  return PLATFORM_META[p] || { Icon: Monitor, label: p || 'Khác', color: 'text-slate-600 bg-slate-50 border-slate-200' };
+}
+
+function DeviceBadge({ device }) {
+  const { Icon, label, color } = platformInfo(device.platform);
+  const tooltip = [
+    device.device_name || label,
+    device.os_version ? `${device.os_name || ''} ${device.os_version}` : device.os_name,
+    device.app_version ? `App v${device.app_version}` : null,
+    `Ping: ${formatRelativeTime(device.last_ping_at)}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+  return (
+    <span
+      title={tooltip}
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border ${color} ${
+        device.online ? '' : 'opacity-60'
+      }`}
+    >
+      <Icon className="h-3 w-3" />
+      <span className="truncate max-w-[80px]">{device.device_name || label}</span>
+      {device.online ? <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> : null}
+    </span>
+  );
 }
 
 export default function ActiveUsersPage() {
@@ -289,6 +324,18 @@ export default function ActiveUsersPage() {
                     <p className={`text-[11px] mt-1.5 font-medium ${u.online ? 'text-emerald-700' : 'text-slate-400'}`}>
                       {u.online ? 'Đang hoạt động' : `Offline · ${formatRelativeTime(u.last_ping_at)}`}
                     </p>
+                    {Array.isArray(u.devices) && u.devices.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {u.devices.slice(0, 4).map((d, idx) => (
+                          <DeviceBadge key={`${d.platform}-${idx}`} device={d} />
+                        ))}
+                        {u.devices.length > 4 ? (
+                          <span className="text-[10px] text-slate-400 font-semibold self-center">
+                            +{u.devices.length - 4}
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
                 <div className="mt-3 pt-3 border-t border-slate-100 flex justify-end">

@@ -22,6 +22,7 @@ import type { CrmStackParamList } from '../navigation/types';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { formatVND, formatDate, calculateDays, stageTintBg } from '../lib/formatUtils';
 import CreateCrmEntityModal from '../components/CreateCrmEntityModal';
+import { setLeadPin, setLeadInteracted } from '../lib/crmLeadFlags';
 import {
   loadCrmMobilePipelineSnapshot,
   saveCrmMobilePipelineSnapshot,
@@ -102,9 +103,11 @@ async function fetchAllCrmLeadsChunked(
 function LeadCard({
   item,
   onPress,
+  onLongPress,
 }: {
   item: CrmLeadListItem;
   onPress: () => void;
+  onLongPress?: () => void;
 }) {
   const stageColor = item.stage?.color || '#94a3b8';
   const days = calculateDays(item.created_at);
@@ -114,13 +117,19 @@ function LeadCard({
 
   return (
     <TouchableOpacity
-      style={[styles.card, CrmShadow.card]}
+      style={[styles.card, CrmShadow.card, item.is_pinned ? styles.cardPinned : null]}
       onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={350}
       activeOpacity={0.7}
     >
       <View style={styles.cardTop}>
         <View style={styles.cardLeft}>
-          <Text style={styles.cardCode}>{item.code || '—'}</Text>
+          <View style={styles.codeRow}>
+            <Text style={styles.cardCode}>{item.code || '—'}</Text>
+            {item.is_pinned ? <Text style={styles.pinIcon}>📌</Text> : null}
+            {item.is_interacted ? <Text style={styles.interactedIcon}>✅</Text> : null}
+          </View>
           <View style={styles.titleRow}>
             <Text style={styles.cardTitle} numberOfLines={2}>
               {item.title || '—'}
@@ -188,6 +197,8 @@ export default function LeadListScreen({ navigation }: Props) {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [advOpen, setAdvOpen] = useState(false);
+  const [flagItem, setFlagItem] = useState<CrmLeadListItem | null>(null);
+  const [flagBusy, setFlagBusy] = useState(false);
   const [assigneeModal, setAssigneeModal] = useState(false);
   const [pickerUsers, setPickerUsers] = useState<PickerUser[]>([]);
   const [pickerLoading, setPickerLoading] = useState(false);
@@ -373,6 +384,56 @@ export default function LeadListScreen({ navigation }: Props) {
       setRefreshing(false);
     }
   }, [loadMeta]);
+
+  /** Cập nhật optimistic cờ ghim / tương tác trong cả rawLead & rawDeal — đỡ phải refetch. */
+  const patchLeadFlagsLocal = useCallback(
+    (id: string, patch: Partial<Pick<CrmLeadListItem, 'is_pinned' | 'is_interacted'>>) => {
+      const apply = (arr: CrmLeadListItem[]) =>
+        arr.map((it) => (it.id === id ? { ...it, ...patch } : it));
+      setRawLead((arr) => apply(arr));
+      setRawDeal((arr) => apply(arr));
+    },
+    [],
+  );
+
+  const togglePin = useCallback(
+    async (it: CrmLeadListItem) => {
+      const next = !it.is_pinned;
+      setFlagBusy(true);
+      patchLeadFlagsLocal(it.id, { is_pinned: next });
+      try {
+        await setLeadPin(it.id, next);
+      } catch (e: unknown) {
+        patchLeadFlagsLocal(it.id, { is_pinned: !next });
+        Alert.alert('Lỗi', (e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Không cập nhật được ghim');
+      } finally {
+        setFlagBusy(false);
+        setFlagItem(null);
+      }
+    },
+    [patchLeadFlagsLocal],
+  );
+
+  const toggleInteracted = useCallback(
+    async (it: CrmLeadListItem) => {
+      const next = !it.is_interacted;
+      setFlagBusy(true);
+      patchLeadFlagsLocal(it.id, { is_interacted: next });
+      try {
+        await setLeadInteracted(it.id, next);
+      } catch (e: unknown) {
+        patchLeadFlagsLocal(it.id, { is_interacted: !next });
+        Alert.alert(
+          'Lỗi',
+          (e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Không cập nhật được trạng thái tương tác',
+        );
+      } finally {
+        setFlagBusy(false);
+        setFlagItem(null);
+      }
+    },
+    [patchLeadFlagsLocal],
+  );
 
   const handleKanbanMove = useCallback(async (itemId: string, stageId: string) => {
     try {
@@ -616,7 +677,11 @@ export default function LeadListScreen({ navigation }: Props) {
         keyExtractor={(it) => it.id}
         ListHeaderComponent={listHeader}
         renderItem={({ item }) => (
-          <LeadCard item={item} onPress={() => navigation.navigate('LeadDetail', { id: item.id })} />
+          <LeadCard
+            item={item}
+            onPress={() => navigation.navigate('LeadDetail', { id: item.id })}
+            onLongPress={() => setFlagItem(item)}
+          />
         )}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={CrmColors.blue600} />
@@ -653,6 +718,7 @@ export default function LeadListScreen({ navigation }: Props) {
             tabLabel={tab === 'lead' ? 'Lead' : 'Deal'}
             pipelineKind={tab}
             onMoveToStage={handleKanbanMove}
+            onLongPressItem={(it) => setFlagItem(it)}
           />
         ) : snapshot.viewMode === 'planner' ? (
           <CrmPipelinePlannerView items={items} navigation={navigation} />
@@ -714,6 +780,44 @@ export default function LeadListScreen({ navigation }: Props) {
           <ActivityIndicator size="large" color={CrmColors.blue600} />
         </View>
       ) : null}
+
+      <Modal
+        visible={!!flagItem}
+        animationType="fade"
+        transparent
+        onRequestClose={() => !flagBusy && setFlagItem(null)}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={() => !flagBusy && setFlagItem(null)}>
+          <Pressable style={styles.modalSheet} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.modalTitle}>Thao tác nhanh</Text>
+            <Text style={styles.modalSub} numberOfLines={2}>
+              {flagItem?.code || '—'} · {flagItem?.title || '—'}
+            </Text>
+            <TouchableOpacity
+              style={styles.modalRow}
+              disabled={flagBusy || !flagItem}
+              onPress={() => flagItem && void togglePin(flagItem)}
+            >
+              <Text style={styles.modalRowTxt}>
+                {flagItem?.is_pinned ? '📌 Bỏ ghim' : '📌 Ghim thẻ lên đầu'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.modalRow}
+              disabled={flagBusy || !flagItem}
+              onPress={() => flagItem && void toggleInteracted(flagItem)}
+            >
+              <Text style={styles.modalRowTxt}>
+                {flagItem?.is_interacted ? '✅ Bỏ tick tương tác' : '✅ Đánh dấu đã tương tác'}
+              </Text>
+            </TouchableOpacity>
+            {flagBusy ? <ActivityIndicator style={{ marginVertical: 12 }} color={CrmColors.blue600} /> : null}
+            <TouchableOpacity style={styles.modalClose} onPress={() => !flagBusy && setFlagItem(null)}>
+              <Text style={styles.modalCloseTxt}>Đóng</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       <Modal visible={assigneeModal} animationType="slide" transparent onRequestClose={() => setAssigneeModal(false)}>
         <Pressable style={styles.modalBackdrop} onPress={() => setAssigneeModal(false)}>
@@ -945,6 +1049,13 @@ const styles = StyleSheet.create({
   cardTop: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
   cardLeft: { flex: 1, minWidth: 0 },
   cardCode: { fontSize: 12, fontWeight: '600', color: CrmColors.blue600 },
+  codeRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  pinIcon: { fontSize: 13 },
+  interactedIcon: { fontSize: 13 },
+  cardPinned: {
+    borderColor: '#f59e0b',
+    backgroundColor: '#fffbeb',
+  },
   titleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 2 },
   cardTitle: { flex: 1, fontSize: 14, fontWeight: '600', color: CrmColors.gray900 },
   newBadge: {

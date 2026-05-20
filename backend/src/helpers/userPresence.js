@@ -2,6 +2,51 @@ const { supabase } = require('../config/supabase');
 
 /** Ngưỡng coi online: có ping trong 2 phút gần nhất */
 const ONLINE_THRESHOLD_MS = 2 * 60 * 1000;
+/** Ngưỡng coi device đang online: ping trong 90 giây gần nhất */
+const DEVICE_ONLINE_THRESHOLD_MS = 90 * 1000;
+
+async function getDevicesForUserIds(userIds) {
+  const seen = new Set();
+  const ids = [];
+  for (const id of userIds || []) {
+    const s = String(id || '');
+    if (!s || seen.has(s)) continue;
+    seen.add(s);
+    ids.push(s);
+    if (ids.length >= 200) break;
+  }
+  const out = {};
+  for (const id of ids) out[id] = [];
+  if (!ids.length) return out;
+
+  const { data, error } = await supabase
+    .from('user_devices')
+    .select('user_id, platform, device_name, os_name, os_version, app_version, last_ping_at, last_login_at')
+    .in('user_id', ids)
+    .order('last_ping_at', { ascending: false });
+  if (error) {
+    if (error.code === '42P01' || String(error.message || '').includes('user_devices')) {
+      return out;
+    }
+    throw error;
+  }
+  const threshold = Date.now() - DEVICE_ONLINE_THRESHOLD_MS;
+  for (const row of data || []) {
+    const uid = String(row.user_id);
+    if (!out[uid]) out[uid] = [];
+    out[uid].push({
+      platform: row.platform,
+      device_name: row.device_name,
+      os_name: row.os_name,
+      os_version: row.os_version,
+      app_version: row.app_version,
+      last_ping_at: row.last_ping_at,
+      last_login_at: row.last_login_at,
+      online: row.last_ping_at ? new Date(row.last_ping_at).getTime() >= threshold : false,
+    });
+  }
+  return out;
+}
 
 const MIGRATION_HINT = 'database/67_user_activity_and_messenger_pins.sql';
 
@@ -106,14 +151,21 @@ async function listUsersWithActivity({ companyId, departmentId, search, onlineOn
     users = data || [];
   }
 
-  const presence = await getPresenceForUserIds(users.map((u) => u.id));
+  const userIds = users.map((u) => u.id);
+  const [presence, deviceMap] = await Promise.all([
+    getPresenceForUserIds(userIds),
+    getDevicesForUserIds(userIds),
+  ]);
   const enriched = users.map((u) => {
     const id = String(u.id);
     const pres = presence[id] || { online: false, last_ping_at: null };
+    const devices = deviceMap[id] || [];
     return {
       ...u,
       online: !!pres.online,
       last_ping_at: pres.last_ping_at,
+      devices,
+      online_devices: devices.filter((d) => d.online).length,
     };
   });
 
@@ -135,8 +187,10 @@ async function listUsersWithActivity({ companyId, departmentId, search, onlineOn
 
 module.exports = {
   ONLINE_THRESHOLD_MS,
+  DEVICE_ONLINE_THRESHOLD_MS,
   MIGRATION_HINT,
   recordUserPing,
   getPresenceForUserIds,
+  getDevicesForUserIds,
   listUsersWithActivity,
 };

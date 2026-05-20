@@ -5,7 +5,6 @@ import {
   FlatList,
   Image,
   KeyboardAvoidingView,
-  Keyboard,
   Linking,
   Modal,
   NativeModules,
@@ -204,7 +203,6 @@ export default function MessengerGroupChatScreen({
   const myId = String(user?.id || user?.userId || '');
   const insets = useSafeAreaInsets();
   const { refreshUnread } = useNotifications();
-  const [kbInset, setKbInset] = useState(0);
 
   const { groupId, title: titleParam, isDirect: isDirectParam, fromBubble } = params;
 
@@ -244,13 +242,6 @@ export default function MessengerGroupChatScreen({
     };
     upd();
     return chatDebugSubscribe(upd);
-  }, []);
-
-  /* ── keyboard ──────────────────────────────────────── */
-  useEffect(() => {
-    const show = Keyboard.addListener('keyboardDidShow', (e) => setKbInset(e.endCoordinates.height));
-    const hide = Keyboard.addListener('keyboardDidHide', () => setKbInset(0));
-    return () => { show.remove(); hide.remove(); };
   }, []);
 
   /* ── bubble target ─────────────────────────────────── */
@@ -618,14 +609,18 @@ export default function MessengerGroupChatScreen({
     return <View style={s.center}><ActivityIndicator color={BUBBLE_ME} size="large" /></View>;
   }
 
-  const composerPadBot = Math.max(insets.bottom, 8) + (Platform.OS === 'android' ? kbInset : 0);
+  // Android: app.json softwareKeyboardLayoutMode=resize — cửa sổ tự co, không bọc KAV / không padding bàn phím thủ công.
+  const composerPadBottom =
+    Platform.OS === 'ios' ? Math.max(insets.bottom, 8) : Math.max(insets.bottom, 4);
+
+  const ChatRoot = Platform.OS === 'ios' ? KeyboardAvoidingView : View;
+  const chatRootProps =
+    Platform.OS === 'ios'
+      ? ({ behavior: 'padding' as const, keyboardVerticalOffset: 88 } as const)
+      : {};
 
   return (
-    <KeyboardAvoidingView
-      style={s.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
-    >
+    <ChatRoot style={s.flex} {...chatRootProps}>
       {/* Header info bar */}
       <TouchableOpacity
         style={s.headerBar}
@@ -727,7 +722,7 @@ export default function MessengerGroupChatScreen({
 
       {/* Composer */}
       {recState === 'idle' ? (
-        <View style={[s.composer, { paddingBottom: composerPadBot }]}>
+        <View style={[s.composer, { paddingBottom: composerPadBottom }]}>
           <TouchableOpacity
             style={s.composerIcon}
             onPress={() => setMediaOpen((v) => !v)}
@@ -763,7 +758,7 @@ export default function MessengerGroupChatScreen({
 
       {/* Media panel */}
       {mediaOpen && recState === 'idle' ? (
-        <View style={[s.mediaPanel, { paddingBottom: composerPadBot }]}>
+        <View style={[s.mediaPanel, { paddingBottom: composerPadBottom }]}>
           <TouchableOpacity style={s.mediaBtn} onPress={() => void pickGallery()}>
             <View style={[s.mediaIconWrap, { backgroundColor: '#0068FF' }]}>
               <Text style={s.mediaIcon}>🖼</Text>
@@ -943,7 +938,7 @@ export default function MessengerGroupChatScreen({
           </Pressable>
         </Pressable>
       </Modal>
-    </KeyboardAvoidingView>
+    </ChatRoot>
   );
 }
 
