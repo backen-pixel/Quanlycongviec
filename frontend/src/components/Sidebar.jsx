@@ -9,7 +9,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X, UsersRound,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
-  BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2,
+  BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff,
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { isCrmOnlyModuleAccess } from '../lib/moduleAccess';
@@ -181,6 +181,7 @@ const CRM_MENU_BOTTOM_GROUPS = [
     items: [
       { to: '/crm/facebook', icon: MessageCircle, label: 'Facebook', adminOnly: true },
       { to: '/crm/facebook/link-phone-cleanup', icon: Phone, label: 'Dọn SĐT từ link', adminOnly: true },
+      { to: '/crm/blocked-phones', icon: ShieldOff, label: 'Chặn KH (SĐT)', adminOnly: true },
       { to: '/crm/pipeline-settings', icon: Settings, label: 'Pipeline', adminOnly: true },
       { to: '/crm/sources-settings', icon: Tags, label: 'Nguồn & phân loại', adminOnly: true },
       { to: '/crm/task-templates', icon: ListChecks, label: 'Bộ mẫu CRM', adminOnly: true },

@@ -20,7 +20,7 @@ export default function CustomersPage() {
   const [showDupScanner, setShowDupScanner] = useState(false);
   const [custDeleteModal, setCustDeleteModal] = useState(null); // { id, name, phone }
   const [custDeleteForce, setCustDeleteForce] = useState(false);
-  const [custDeleteBlockPhone, setCustDeleteBlockPhone] = useState(true);
+  const [custDeleteBlockPhone, setCustDeleteBlockPhone] = useState(false);
   const [custDeleteErr, setCustDeleteErr] = useState('');
   const [custDeleteBusy, setCustDeleteBusy] = useState(false);
 
@@ -45,7 +45,8 @@ export default function CustomersPage() {
     e.stopPropagation();
     e.preventDefault();
     setCustDeleteForce(false);
-    setCustDeleteBlockPhone(!!(c.phone && String(c.phone).trim()));
+    // Mặc định KHÔNG tick chặn — user phải chủ động tick nếu muốn chặn SĐT
+    setCustDeleteBlockPhone(false);
     setCustDeleteErr('');
     setCustDeleteModal({ id: c.id, name: c.full_name, phone: c.phone });
   };
