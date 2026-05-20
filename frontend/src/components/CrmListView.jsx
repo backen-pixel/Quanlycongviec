@@ -13,7 +13,7 @@ import {
   isoWeekAndParts,
   MILESTONE_SLUG_GROUPS,
 } from '../lib/crmListViewColumns';
-import { Columns3, X, Check } from 'lucide-react';
+import { Columns3, X, Check, Pin, CheckCircle2 } from 'lucide-react';
 
 function formatDate(d) {
   if (!d) return '';
@@ -156,10 +156,48 @@ export function ListView({
   companyPipelineStages,
 }) {
   const navigate = useNavigate();
-  const allItems = useMemo(
-    () => pipeline.flatMap((s) => s.items.map((item) => ({ ...item, _stage: s }))),
-    [pipeline],
-  );
+  const allItems = useMemo(() => {
+    const arr = pipeline.flatMap((s) => s.items.map((item) => ({ ...item, _stage: s })));
+    // Ưu tiên thẻ ghim (per-user) lên đầu list.
+    arr.sort((a, b) => {
+      const ap = a?.is_pinned ? 1 : 0;
+      const bp = b?.is_pinned ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      return 0;
+    });
+    return arr;
+  }, [pipeline]);
+
+  // Optimistic toggle ghim / đã tương tác per-user (rollback nếu API fail).
+  // Khác với Kanban (state ở dashboard), list view không nắm setter — patch trực tiếp
+  // vào item (mutate) rồi force update qua key change là không sạch. Đơn giản nhất:
+  // gọi API, không update state local — refresh sẽ kéo lại. Đổi lại: thẻ chưa đổi UI
+  // ngay; chấp nhận trade-off vì list ít dùng so với Kanban.
+  const handleTogglePin = useCallback(async (item, ev) => {
+    ev?.stopPropagation?.();
+    const next = !item.is_pinned;
+    try {
+      if (next) await api.post(`/crm/leads/${item.id}/pin`);
+      else await api.delete(`/crm/leads/${item.id}/pin`);
+      item.is_pinned = next;
+      item.pinned_at = next ? new Date().toISOString() : null;
+    } catch (e) {
+      console.error('list togglePin failed:', e?.message || e);
+    }
+  }, []);
+
+  const handleToggleInteracted = useCallback(async (item, ev) => {
+    ev?.stopPropagation?.();
+    const next = !item.is_interacted;
+    try {
+      if (next) await api.post(`/crm/leads/${item.id}/interacted`);
+      else await api.delete(`/crm/leads/${item.id}/interacted`);
+      item.is_interacted = next;
+      item.interacted_at = next ? new Date().toISOString() : null;
+    } catch (e) {
+      console.error('list toggleInteracted failed:', e?.message || e);
+    }
+  }, []);
 
   const pipelineStages = useMemo(() => {
     const fromProp = Array.isArray(companyPipelineStages) ? companyPipelineStages : [];
@@ -462,7 +500,31 @@ export function ListView({
                         }`}
                         title={typeof raw === 'string' ? raw : undefined}
                       >
-                        {isStage && item._stage ? (
+                        {col.key === 'code' ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              title={item.is_pinned ? 'Bỏ ghim' : 'Ghim thẻ lên đầu'}
+                              onClick={(ev) => handleTogglePin(item, ev)}
+                              className={`inline-flex h-4 w-4 items-center justify-center rounded ${
+                                item.is_pinned ? 'text-amber-500' : 'text-gray-300 hover:text-amber-500'
+                              }`}
+                            >
+                              <Pin className={`h-3.5 w-3.5 ${item.is_pinned ? 'rotate-45 fill-amber-500' : ''}`} strokeWidth={2.25} />
+                            </button>
+                            <button
+                              type="button"
+                              title={item.is_interacted ? 'Bỏ đã tương tác' : 'Đánh dấu đã tương tác'}
+                              onClick={(ev) => handleToggleInteracted(item, ev)}
+                              className={`inline-flex h-4 w-4 items-center justify-center rounded ${
+                                item.is_interacted ? 'text-blue-500' : 'text-gray-300 hover:text-blue-500'
+                              }`}
+                            >
+                              <CheckCircle2 className={`h-3.5 w-3.5 ${item.is_interacted ? 'fill-blue-500 text-white' : ''}`} strokeWidth={2.25} />
+                            </button>
+                            <span>{raw}</span>
+                          </span>
+                        ) : isStage && item._stage ? (
                           <span
                             className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium"
                             style={{

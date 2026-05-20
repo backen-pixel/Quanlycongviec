@@ -117,7 +117,14 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Root + Health
 app.get('/', (_, res) => res.json({ app: 'TuBep Pro API', status: 'ok' }));
-app.get('/api/health', (_, res) => res.json({ status: 'ok', time: new Date().toISOString(), uptime: process.uptime() }));
+const { getStatus: getRedisStatus, getRedis: _initRedis } = require('./config/redis');
+_initRedis(); // khởi tạo kết nối nền nếu có REDIS_URL
+app.get('/api/health', (_, res) => res.json({
+  status: 'ok',
+  time: new Date().toISOString(),
+  uptime: process.uptime(),
+  redis: getRedisStatus(),
+}));
 
 // ─── Request Metrics (admin only) ───────────────────────────────────────────
 const jwt_verify = require('jsonwebtoken');

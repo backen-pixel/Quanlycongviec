@@ -1,8 +1,6 @@
 const { supabase } = require('../config/supabase');
 const { isNotificationTypeAllowed } = require('./notificationPrefTypes');
-
-const TTL_MS = 45_000;
-const cache = new Map(); // userId -> { prefs, at }
+const { createTTLCache } = require('./ttlCache');
 
 const DEFAULT_PREFS = {
   browser_push: true,
@@ -27,6 +25,15 @@ const DEFAULT_PREFS = {
   project_notifications: false,
 };
 
+// L1 TTL ngắn (45s) — chống burst trong cùng instance.
+// L2 (Redis) TTL 10 phút — chia sẻ giữa các instance, giảm read Supabase trên đường nóng (notification fan-out).
+const cache = createTTLCache({
+  ttlMs: 45_000,
+  maxEntries: 5000,
+  redisTtlMs: 10 * 60_000,
+  redisPrefix: 'notifprefs:',
+});
+
 function mergePrefs(row) {
   if (!row || typeof row !== 'object') return { ...DEFAULT_PREFS };
   return { ...DEFAULT_PREFS, ...row };
@@ -48,16 +55,21 @@ async function getMergedPrefsForUser(userId) {
 
 async function getCachedPrefsForUser(userId) {
   if (!userId) return { ...DEFAULT_PREFS };
-  const hit = cache.get(String(userId));
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.prefs;
-  const prefs = await getMergedPrefsForUser(userId);
-  cache.set(String(userId), { prefs, at: Date.now() });
-  return prefs;
+  const key = String(userId);
+  return cache.getOrFetch(key, () => getMergedPrefsForUser(userId));
 }
 
+/**
+ * Sync chữ ký để giữ tương thích với callsite (routes/push.js gọi không await).
+ * L2 (Redis) được xoá nền — không block caller.
+ */
 function invalidateNotificationPrefsCache(userId) {
-  if (userId != null) cache.delete(String(userId));
-  else cache.clear();
+  if (userId == null) {
+    cache.invalidateRemote(null).catch(() => {});
+    return;
+  }
+  const key = String(userId);
+  cache.invalidateRemote(key).catch(() => {});
 }
 
 /**

@@ -161,7 +161,9 @@ function normalizeAttachments(raw) {
 
 function parseVisibility(v) {
   const s = String(v ?? 'company').toLowerCase().trim();
-  return s === 'selected_users' ? 'selected_users' : 'company';
+  if (s === 'selected_users') return 'selected_users';
+  if (s === 'selected_companies') return 'selected_companies';
+  return 'company';
 }
 
 function parseAudienceUserIds(body) {
@@ -177,6 +179,38 @@ function parseAudienceUserIds(body) {
     out.push(id);
   }
   return out;
+}
+
+function parseAudienceCompanyIds(body) {
+  const raw = body?.audience_company_ids ?? body?.audienceCompanyIds;
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const x of raw) {
+    const id = x != null ? String(x).trim() : '';
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    if (out.length >= 200) break;
+    out.push(id);
+  }
+  return out;
+}
+
+async function validateCompanyIds(companyIds) {
+  const uniq = [...new Set((companyIds || []).map(String).filter(Boolean))];
+  if (!uniq.length) return { ok: false, error: 'Chọn ít nhất một công ty được xem bài.' };
+  const { data, error } = await supabase
+    .from('companies')
+    .select('id, is_active')
+    .in('id', uniq);
+  if (error) throw error;
+  const byId = new Map((data || []).map((c) => [String(c.id), c]));
+  for (const id of uniq) {
+    const c = byId.get(String(id));
+    if (!c) return { ok: false, error: 'Một số công ty không tồn tại.' };
+    if (c.is_active === false) return { ok: false, error: 'Một số công ty đã ngừng hoạt động.' };
+  }
+  return { ok: true, ids: uniq };
 }
 
 /** Tạo bài: null/omit → đăng ngay (now). Sửa bài: undefined = không đổi. */
@@ -279,13 +313,69 @@ async function fetchAudienceByPostIds(postIds) {
   return by;
 }
 
+async function fetchPostExtraCompanyIds(postId) {
+  const { data, error } = await supabase
+    .from('internal_social_post_companies')
+    .select('company_id')
+    .eq('post_id', postId);
+  if (error) {
+    const msg = String(error.message || '').toLowerCase();
+    if (error.code === '42P01' || (msg.includes('internal_social_post_companies') && msg.includes('does not exist'))) {
+      return [];
+    }
+    throw error;
+  }
+  return (data || []).map((r) => r.company_id);
+}
+
+async function fetchAudienceCompaniesByPostIds(postIds) {
+  if (!postIds.length) return {};
+  const { data, error } = await supabase
+    .from('internal_social_post_companies')
+    .select('post_id, company_id')
+    .in('post_id', postIds);
+  if (error) {
+    const msg = String(error.message || '').toLowerCase();
+    if (error.code === '42P01' || (msg.includes('internal_social_post_companies') && msg.includes('does not exist'))) {
+      return {};
+    }
+    throw error;
+  }
+  const by = {};
+  for (const row of data || []) {
+    if (!by[row.post_id]) by[row.post_id] = [];
+    by[row.post_id].push(row.company_id);
+  }
+  return by;
+}
+
+async function replacePostCompanies(postId, visibility, companyIds, primaryCompanyId) {
+  const { error: delErr } = await supabase.from('internal_social_post_companies').delete().eq('post_id', postId);
+  if (delErr) {
+    const msg = String(delErr.message || '').toLowerCase();
+    if (delErr.code === '42P01' || (msg.includes('internal_social_post_companies') && msg.includes('does not exist'))) {
+      return { hint: 'Chạy migration database/200_internal_social_post_companies.sql' };
+    }
+    throw delErr;
+  }
+  if (visibility !== 'selected_companies') return null;
+  const set = new Set((companyIds || []).map(String).filter(Boolean));
+  set.delete(String(primaryCompanyId));
+  if (!set.size) return null;
+  const rows = [...set].map((company_id) => ({ post_id: postId, company_id }));
+  const { error: insErr } = await supabase.from('internal_social_post_companies').insert(rows);
+  if (insErr) throw insErr;
+  return null;
+}
+
 async function hydratePostsToResponse(page, me) {
   const authorMap = await fetchUsersByIds(page.map((p) => p.author_id));
   const ids = page.map((p) => p.id);
-  const [likesByPost, { data: commentsRows, error: commentsErr }, audBy] = await Promise.all([
+  const [likesByPost, { data: commentsRows, error: commentsErr }, audBy, compBy] = await Promise.all([
     fetchLikesForPosts(ids),
     supabase.from('internal_social_comments').select('post_id').in('post_id', ids),
     fetchAudienceByPostIds(ids),
+    fetchAudienceCompaniesByPostIds(ids),
   ]);
   if (commentsErr) throw commentsErr;
   const commentCount = {};
@@ -302,6 +392,19 @@ async function hydratePostsToResponse(page, me) {
   }
   const allAudIds = [...new Set(Object.values(audBy).flat().map(String))];
   const audUserMap = allAudIds.length ? await fetchUsersByIds(allAudIds) : new Map();
+
+  const allCompanyIds = new Set();
+  for (const p of page) allCompanyIds.add(String(p.company_id));
+  for (const arr of Object.values(compBy)) for (const cid of arr) allCompanyIds.add(String(cid));
+  let companyMap = new Map();
+  if (allCompanyIds.size) {
+    const { data: cmps } = await supabase
+      .from('companies')
+      .select('id, name, short_name')
+      .in('id', [...allCompanyIds]);
+    companyMap = new Map((cmps || []).map((c) => [String(c.id), c]));
+  }
+
   return page.map((p) => {
     const rx = reactionsFromRows(likesByPost[p.id], me);
     const vis = p.visibility || 'company';
@@ -309,6 +412,17 @@ async function hydratePostsToResponse(page, me) {
     const audience_users = vis === 'selected_users'
       ? audIds.map((id) => audUserMap.get(id) || { id, full_name: null, email: null, role: null })
       : [];
+    let audience_companies = [];
+    if (vis === 'selected_companies') {
+      const extras = compBy[p.id] || [];
+      const all = [String(p.company_id), ...extras.map(String)];
+      const seen = new Set();
+      for (const cid of all) {
+        if (seen.has(cid)) continue;
+        seen.add(cid);
+        audience_companies.push(companyMap.get(cid) || { id: cid, name: null, short_name: null });
+      }
+    }
     return {
       ...p,
       author: authorMap.get(p.author_id) || { id: p.author_id, full_name: null, email: null, role: null },
@@ -319,6 +433,7 @@ async function hydratePostsToResponse(page, me) {
       reaction_counts: rx.reaction_counts,
       attachments: attByPost[p.id] || [],
       audience_users,
+      audience_companies,
     };
   });
 }
@@ -451,7 +566,14 @@ async function getPostForUser(req, postId) {
   if (!post || post.deleted_at) return { ok: false, status: 404, error: 'Không tìm thấy bài viết' };
   if (!isCrmSystemAdminUser(req.user)) {
     const my = userCompanyId(req);
-    if (!my || String(post.company_id) !== String(my)) {
+    let allowed = !!my && String(post.company_id) === String(my);
+    if (!allowed && my && post.visibility === 'selected_companies') {
+      try {
+        const extras = await fetchPostExtraCompanyIds(post.id);
+        if (extras.some((cid) => String(cid) === String(my))) allowed = true;
+      } catch { /* ignore */ }
+    }
+    if (!allowed) {
       return { ok: false, status: 403, error: 'Không có quyền với bài viết này' };
     }
   }
@@ -574,6 +696,390 @@ r.post('/mark-read', async (req, res) => {
   } catch (e) {
     console.error('POST /internal-social/mark-read:', e);
     res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
+/** GET /api/internal-social/users/search?q=... — tìm thành viên để mở trang cá nhân */
+r.get('/users/search', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 1) return res.json({ users: [] });
+    const escaped = q.replace(/[%_]/g, (m) => `\\${m}`);
+
+    let scopeDeptIds = null;
+    const my = userCompanyId(req);
+    if (!isCrmSystemAdminUser(req.user)) {
+      if (!my) return res.json({ users: [] });
+      const { data: depts } = await supabase
+        .from('departments')
+        .select('id')
+        .eq('company_id', my);
+      scopeDeptIds = (depts || []).map((d) => d.id);
+    }
+
+    let query = supabase
+      .from('users')
+      .select('id, full_name, email, avatar, role, position, department_id, company_id')
+      .neq('is_active', false)
+      .or(`full_name.ilike.%${escaped}%,email.ilike.%${escaped}%`)
+      .order('full_name', { ascending: true })
+      .limit(20);
+    if (scopeDeptIds !== null) {
+      const parts = [`company_id.eq.${my}`];
+      if (scopeDeptIds.length) parts.push(`department_id.in.(${scopeDeptIds.join(',')})`);
+      query = query.or(parts.join(','));
+    }
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json({ users: data || [] });
+  } catch (e) {
+    console.error('GET /internal-social/users/search:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** GET /api/internal-social/profile/:userId — thông tin trang cá nhân */
+r.get('/profile/:userId', async (req, res) => {
+  try {
+    const uid = req.params.userId;
+    let user = null;
+    const tryFull = await supabase
+      .from('users')
+      .select('id, full_name, email, phone, role, position, avatar, cover_url, bio, company_id, department_id, created_at')
+      .eq('id', uid)
+      .maybeSingle();
+    if (tryFull.error) {
+      const msg = String(tryFull.error.message || '').toLowerCase();
+      if (msg.includes('cover_url') || msg.includes('bio')) {
+        const fb = await supabase
+          .from('users')
+          .select('id, full_name, email, phone, role, position, avatar, company_id, department_id, created_at')
+          .eq('id', uid)
+          .maybeSingle();
+        if (fb.error) throw fb.error;
+        user = fb.data ? { ...fb.data, cover_url: null, bio: null } : null;
+      } else throw tryFull.error;
+    } else {
+      user = tryFull.data;
+    }
+    if (!user) return res.status(404).json({ error: 'Không tìm thấy người dùng' });
+
+    let company = null;
+    let department = null;
+    if (user.department_id) {
+      const { data: d } = await supabase
+        .from('departments')
+        .select('id, name, color, company_id')
+        .eq('id', user.department_id)
+        .maybeSingle();
+      if (d) department = d;
+    }
+    const primaryCompanyId = user.company_id || department?.company_id || null;
+    if (primaryCompanyId) {
+      const { data: c } = await supabase
+        .from('companies')
+        .select('id, name, short_name')
+        .eq('id', primaryCompanyId)
+        .maybeSingle();
+      if (c) company = c;
+    }
+
+    let postCount = 0;
+    try {
+      const { count } = await supabase
+        .from('internal_social_posts')
+        .select('id', { head: true, count: 'exact' })
+        .eq('author_id', uid)
+        .is('deleted_at', null);
+      postCount = Number(count) || 0;
+    } catch { /* ignore */ }
+
+    res.json({
+      profile: {
+        id: user.id,
+        full_name: user.full_name,
+        email: user.email,
+        phone: user.phone || null,
+        role: user.role || null,
+        position: user.position || null,
+        avatar: user.avatar || null,
+        cover_url: user.cover_url || null,
+        bio: user.bio || null,
+        company,
+        department,
+        post_count: postCount,
+        created_at: user.created_at || null,
+      },
+    });
+  } catch (e) {
+    console.error('GET /internal-social/profile/:userId:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** PATCH /api/internal-social/profile/me — đổi avatar / ảnh bìa / tiểu sử */
+r.patch('/profile/me', async (req, res) => {
+  try {
+    const me = req.user.userId || req.user.id;
+    const update = {};
+    if (req.body?.avatar !== undefined) {
+      const v = req.body.avatar == null ? '' : String(req.body.avatar).trim();
+      update.avatar = v || null;
+    }
+    if (req.body?.cover_url !== undefined) {
+      const v = req.body.cover_url == null ? '' : String(req.body.cover_url).trim();
+      update.cover_url = v || null;
+    }
+    if (req.body?.bio !== undefined) {
+      const raw = req.body.bio == null ? '' : String(req.body.bio).trim();
+      update.bio = raw ? raw.slice(0, 500) : null;
+    }
+    if (!Object.keys(update).length) {
+      return res.status(400).json({ error: 'Không có thay đổi.' });
+    }
+    update.updated_at = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('users')
+      .update(update)
+      .eq('id', me)
+      .select('id, full_name, email, avatar, cover_url, bio')
+      .single();
+    if (error) {
+      const msg = String(error.message || '').toLowerCase();
+      if (msg.includes('cover_url') || msg.includes('bio')) {
+        return res.status(503).json({ error: 'Chạy migration 201_users_social_profile.sql để cập nhật ảnh bìa / tiểu sử.' });
+      }
+      throw error;
+    }
+    res.json({ profile: data });
+  } catch (e) {
+    console.error('PATCH /internal-social/profile/me:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** GET /api/internal-social/profile/:userId/media — ảnh & video xuất hiện trong bài của người dùng */
+r.get('/profile/:userId/media', async (req, res) => {
+  try {
+    const authorId = req.params.userId;
+    const me = req.user.userId || req.user.id;
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 60, 1), 200);
+    const offset = Math.min(Math.max(parseInt(req.query.offset, 10) || 0, 0), 5000);
+    const kindFilter = (() => {
+      const k = String(req.query.kind || 'all').toLowerCase();
+      return k === 'image' || k === 'video' ? k : 'all';
+    })();
+    const postBatch = 30;
+
+    const isYoutubeUrl = (url) => {
+      try {
+        const u = new URL(String(url).trim());
+        const h = u.hostname.replace(/^www\./, '');
+        return h === 'youtu.be' || h.endsWith('youtube.com') || h.endsWith('youtube-nocookie.com');
+      } catch { return false; }
+    };
+    const isVimeoUrl = (url) => {
+      try {
+        const u = new URL(String(url).trim());
+        return u.hostname.replace(/^www\./, '').endsWith('vimeo.com');
+      } catch { return false; }
+    };
+    const inferKind = (url) => {
+      const u = String(url || '').toLowerCase();
+      if (isYoutubeUrl(url) || isVimeoUrl(url)) return 'video';
+      if (/\.(jpe?g|png|gif|webp|avif|bmp|svg)(\?|#|$)/.test(u)) return 'image';
+      if (/\.(mp4|webm|ogg|mov|m4v|avi|mkv)(\?|#|$)/.test(u)) return 'video';
+      return null;
+    };
+
+    const items = [];
+    const seen = new Set();
+    const pushItem = (rawUrl, post, kindHint) => {
+      const url = String(rawUrl || '').trim();
+      if (!url || seen.has(url)) return false;
+      const kind = kindHint === 'video' || kindHint === 'image'
+        ? kindHint
+        : (inferKind(url) || 'image');
+      if (kindFilter !== 'all' && kind !== kindFilter) return false;
+      seen.add(url);
+      items.push({
+        url,
+        kind,
+        post_id: post.id,
+        created_at: post.created_at,
+      });
+      return true;
+    };
+
+    let cursor = offset;
+    let exhausted = false;
+    let scanned = 0;
+    const MAX_SCAN = 1200;
+
+    while (items.length < limit && !exhausted && scanned < MAX_SCAN) {
+      const { data: rows, error } = await supabase
+        .from('internal_social_posts')
+        .select('id, company_id, author_id, body, link_url, link_title, image_url, video_url, created_at, updated_at, deleted_at, published_at, visibility, hidden_at')
+        .eq('author_id', authorId)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .range(cursor, cursor + postBatch - 1);
+      if (error) {
+        const msg = String(error.message || '').toLowerCase();
+        if (msg.includes('visibility') || msg.includes('hidden_at') || msg.includes('published_at')) {
+          return res.status(503).json({ error: 'Chạy migration 180_internal_social_schedule_visibility_hide_share.sql' });
+        }
+        throw error;
+      }
+      const batch = rows || [];
+      if (!batch.length) { exhausted = true; break; }
+      scanned += batch.length;
+      cursor += batch.length;
+
+      const allowedIds = [];
+      for (const post of batch) {
+        let allow = isCrmSystemAdminUser(req.user);
+        if (!allow) {
+          const my = userCompanyId(req);
+          if (my) {
+            let companyOk = String(post.company_id) === String(my);
+            if (!companyOk && post.visibility === 'selected_companies') {
+              try {
+                const extras = await fetchPostExtraCompanyIds(post.id);
+                companyOk = extras.some((cid) => String(cid) === String(my));
+              } catch { /* ignore */ }
+            }
+            if (companyOk) {
+              const access = await assertUserCanAccessPostContent(req, post, me);
+              if (access.ok) {
+                const { count: hideCount } = await supabase
+                  .from('internal_social_post_user_hides')
+                  .select('user_id', { head: true, count: 'exact' })
+                  .eq('post_id', post.id)
+                  .eq('user_id', me);
+                if (!Number(hideCount)) allow = true;
+              }
+            }
+          }
+        }
+        if (allow) allowedIds.push(post.id);
+      }
+
+      let attByPost = {};
+      if (allowedIds.length) {
+        try {
+          attByPost = await fetchAttachmentsByPostIds(allowedIds);
+        } catch (attErr) {
+          if (String(attErr.message || '').includes('internal_social_attachments') || attErr.code === '42P01') {
+            attByPost = {};
+          } else throw attErr;
+        }
+      }
+
+      for (const post of batch) {
+        if (!allowedIds.includes(post.id)) continue;
+        if (post.image_url) pushItem(post.image_url, post, 'image');
+        if (post.video_url) pushItem(post.video_url, post, inferKind(post.video_url) || 'video');
+        if (post.link_url && (isYoutubeUrl(post.link_url) || isVimeoUrl(post.link_url))) {
+          pushItem(post.link_url, post, 'video');
+        }
+        const bodyTrim = String(post.body || '').trim();
+        if (bodyTrim && !/\s/.test(bodyTrim) && /^https?:\/\//i.test(bodyTrim)) {
+          const bodyKind = inferKind(bodyTrim);
+          if (bodyKind) pushItem(bodyTrim, post, bodyKind);
+        }
+        const atts = attByPost[post.id] || [];
+        for (const a of atts) {
+          const mt = String(a.mime_type || '').toLowerCase();
+          let k = null;
+          if (mt.startsWith('image/')) k = 'image';
+          else if (mt.startsWith('video/')) k = 'video';
+          else k = inferKind(a.file_url);
+          if (k === 'image' || k === 'video') pushItem(a.file_url, post, k);
+        }
+        if (items.length >= limit) break;
+      }
+
+      if (batch.length < postBatch) exhausted = true;
+    }
+
+    const hasMore = !exhausted && items.length >= limit;
+    res.json({
+      items: items.slice(0, limit),
+      has_more: hasMore,
+      next_offset: hasMore ? cursor : null,
+    });
+  } catch (e) {
+    console.error('GET /internal-social/profile/:userId/media:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** GET /api/internal-social/profile/:userId/posts — bài của một thành viên (đã lọc theo quyền) */
+r.get('/profile/:userId/posts', async (req, res) => {
+  try {
+    const authorId = req.params.userId;
+    const me = req.user.userId || req.user.id;
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || DEFAULT_LIMIT, 1), MAX_LIMIT);
+    const offset = Math.min(Math.max(parseInt(req.query.offset, 10) || 0, 0), MAX_OFFSET);
+    const overfetch = limit + 30;
+
+    const { data: rows, error } = await supabase
+      .from('internal_social_posts')
+      .select('id, company_id, author_id, body, link_url, link_title, image_url, video_url, created_at, updated_at, deleted_at, published_at, visibility, hidden_at')
+      .eq('author_id', authorId)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + overfetch);
+    if (error) {
+      const msg = String(error.message || '').toLowerCase();
+      if (msg.includes('visibility') || msg.includes('hidden_at') || msg.includes('published_at')) {
+        return res.status(503).json({ error: 'Chạy migration 180_internal_social_schedule_visibility_hide_share.sql' });
+      }
+      throw error;
+    }
+
+    const all = rows || [];
+    const visible = [];
+    for (const post of all) {
+      let allow = isCrmSystemAdminUser(req.user);
+      if (!allow) {
+        const my = userCompanyId(req);
+        if (my) {
+          let companyOk = String(post.company_id) === String(my);
+          if (!companyOk && post.visibility === 'selected_companies') {
+            try {
+              const extras = await fetchPostExtraCompanyIds(post.id);
+              companyOk = extras.some((cid) => String(cid) === String(my));
+            } catch { /* ignore */ }
+          }
+          if (companyOk) {
+            const access = await assertUserCanAccessPostContent(req, post, me);
+            if (access.ok) {
+              const { count: hideCount } = await supabase
+                .from('internal_social_post_user_hides')
+                .select('user_id', { head: true, count: 'exact' })
+                .eq('post_id', post.id)
+                .eq('user_id', me);
+              if (!Number(hideCount)) allow = true;
+            }
+          }
+        }
+      }
+      if (allow) visible.push(post);
+      if (visible.length > limit) break;
+    }
+    const hasMore = visible.length > limit || all.length > overfetch;
+    const page = hasMore ? visible.slice(0, limit) : visible;
+    const posts = page.length ? await hydratePostsToResponse(page, me) : [];
+    res.json({
+      posts,
+      has_more: hasMore,
+      next_offset: hasMore ? offset + overfetch : null,
+    });
+  } catch (e) {
+    console.error('GET /internal-social/profile/:userId/posts:', e);
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -755,6 +1261,20 @@ r.post('/posts', async (req, res) => {
       if (!v.ok) return res.status(400).json({ error: v.error });
     }
 
+    let audienceCompanyIdsRaw = [];
+    if (visibility === 'selected_companies') {
+      if (!canModerate(req) && !isCrmSystemAdminUser(req.user)) {
+        return res.status(403).json({ error: 'Chỉ quản lý hoặc admin mới được chia sẻ bài cho nhiều công ty.' });
+      }
+      audienceCompanyIdsRaw = parseAudienceCompanyIds(req.body)
+        .filter((cid) => String(cid) !== String(companyId));
+      if (!audienceCompanyIdsRaw.length) {
+        return res.status(400).json({ error: 'Chọn ít nhất một công ty (ngoài công ty gốc) để chia sẻ bài.' });
+      }
+      const cv = await validateCompanyIds(audienceCompanyIdsRaw);
+      if (!cv.ok) return res.status(400).json({ error: cv.error });
+    }
+
     const publishedAt = parsePublishedAtForCreate(req.body);
 
     const insertPayload = {
@@ -777,6 +1297,10 @@ r.post('/posts', async (req, res) => {
     if (error) throw error;
 
     await replacePostAudience(data.id, visibility, audienceIdsRaw, authorId);
+    const compHint = await replacePostCompanies(data.id, visibility, audienceCompanyIdsRaw, companyId);
+    if (compHint?.hint) {
+      return res.status(503).json({ error: compHint.hint });
+    }
 
     let savedAttachments = [];
     if (atts.length) {
@@ -819,6 +1343,9 @@ r.post('/posts', async (req, res) => {
     }
     if (msg.includes('published_at') || msg.includes('visibility') || msg.includes('hidden_at')) {
       return res.status(503).json({ error: 'Chạy migration 180_internal_social_schedule_visibility_hide_share.sql để dùng lịch đăng và phạm vi hiển thị.' });
+    }
+    if (msg.includes('internal_social_posts_visibility_chk') || msg.includes('selected_companies')) {
+      return res.status(503).json({ error: 'Chạy migration 200_internal_social_post_companies.sql để chia sẻ bài cho nhiều công ty.' });
     }
     res.status(500).json({ error: e.message });
   }
@@ -868,12 +1395,16 @@ r.put('/posts/:id', async (req, res) => {
       .single();
     if (error) throw error;
 
-    if (req.body?.visibility !== undefined || Array.isArray(req.body?.audience_user_ids)) {
+    if (
+      req.body?.visibility !== undefined
+      || Array.isArray(req.body?.audience_user_ids)
+      || Array.isArray(req.body?.audience_company_ids)
+    ) {
       const vis = row.visibility || 'company';
-      const list = Array.isArray(req.body?.audience_user_ids)
-        ? parseAudienceUserIds(req.body)
-        : await fetchAudienceUserIds(postId);
       if (vis === 'selected_users') {
+        const list = Array.isArray(req.body?.audience_user_ids)
+          ? parseAudienceUserIds(req.body)
+          : await fetchAudienceUserIds(postId);
         if (!list.length) {
           return res.status(400).json({ error: 'Chọn ít nhất một nhân viên được xem bài.' });
         }
@@ -881,8 +1412,26 @@ r.put('/posts/:id', async (req, res) => {
         const v = await validateUsersInCompany(merged, row.company_id);
         if (!v.ok) return res.status(400).json({ error: v.error });
         await replacePostAudience(postId, vis, list, row.author_id);
+        await replacePostCompanies(postId, vis, [], row.company_id);
+      } else if (vis === 'selected_companies') {
+        if (!canModerate(req) && !isCrmSystemAdminUser(req.user)) {
+          return res.status(403).json({ error: 'Chỉ quản lý hoặc admin mới được chia sẻ bài cho nhiều công ty.' });
+        }
+        const list = (Array.isArray(req.body?.audience_company_ids)
+          ? parseAudienceCompanyIds(req.body)
+          : await fetchPostExtraCompanyIds(postId))
+          .filter((cid) => String(cid) !== String(row.company_id));
+        if (!list.length) {
+          return res.status(400).json({ error: 'Chọn ít nhất một công ty (ngoài công ty gốc) để chia sẻ bài.' });
+        }
+        const cv = await validateCompanyIds(list);
+        if (!cv.ok) return res.status(400).json({ error: cv.error });
+        await replacePostAudience(postId, vis, [], row.author_id);
+        const compHint = await replacePostCompanies(postId, vis, list, row.company_id);
+        if (compHint?.hint) return res.status(503).json({ error: compHint.hint });
       } else {
         await replacePostAudience(postId, 'company', [], row.author_id);
+        await replacePostCompanies(postId, 'company', [], row.company_id);
       }
     }
 
@@ -915,6 +1464,9 @@ r.put('/posts/:id', async (req, res) => {
     const msg = e.message || '';
     if (msg.includes('video_url') || (String(e.message || '').includes('column') && msg.includes('video_url'))) {
       return res.status(503).json({ error: 'Chạy migration 179_internal_social_posts_video_url.sql để dùng URL video.' });
+    }
+    if (msg.includes('internal_social_posts_visibility_chk') || msg.includes('selected_companies')) {
+      return res.status(503).json({ error: 'Chạy migration 200_internal_social_post_companies.sql để chia sẻ bài cho nhiều công ty.' });
     }
     res.status(500).json({ error: e.message });
   }

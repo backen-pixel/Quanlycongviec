@@ -623,20 +623,8 @@ async function ensurePeriod({ periodType = 'monthly', periodStart }) {
 }
 
 async function getDefinitions() {
-  let { data, error } = await supabase
-    .from('kpi_definitions')
-    .select('id, code, name, group_code, formula_type, unit, weight, target_default, target_max, min_threshold, is_gating, applies_to, calc_params, description')
-    .eq('is_active', true)
-    .order('code');
-  if (error?.message?.includes('calc_params') || error?.code === '42703') {
-    ({ data, error } = await supabase
-      .from('kpi_definitions')
-      .select('id, code, name, group_code, formula_type, unit, weight, target_default, target_max, min_threshold, is_gating, applies_to, description')
-      .eq('is_active', true)
-      .order('code'));
-  }
-  if (error) throw error;
-  return (data || []).map((row) => ({ ...row, calc_params: row.calc_params || {} }));
+  const { getKpiDefinitionsCached } = require('../helpers/kpiLookupCache');
+  return getKpiDefinitionsCached();
 }
 
 async function getTargetFor({ definition, userId, companyId, periodType, periodStart }) {

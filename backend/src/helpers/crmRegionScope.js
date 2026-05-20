@@ -68,14 +68,12 @@ async function fetchUserCrmRegionIds(supabase, userId) {
   return normalizeRegionIdList((data || []).map((r) => r.region_id));
 }
 
-async function assertRegionBelongsToCompany(supabase, companyId, regionId) {
+async function assertRegionBelongsToCompany(_supabase, companyId, regionId) {
   if (!companyId || !regionId) return { ok: false, error: 'Thiếu khu vực hoặc công ty' };
-  const { data, error } = await supabase
-    .from('company_regions')
-    .select('id, company_id, is_active')
-    .eq('id', regionId)
-    .maybeSingle();
-  if (error) return { ok: false, error: error.message };
+  // Cache L1+L2 cho region metadata (slow-changing taxonomy).
+  // Lưu ý: tham số `supabase` cũ giữ lại để không phá callsite; helper dùng client mặc định.
+  const { getRegionMetaById } = require('./crmTaxonomyCache');
+  const data = await getRegionMetaById(regionId);
   if (!data) return { ok: false, error: 'Khu vực không tồn tại' };
   if (data.is_active === false) return { ok: false, error: 'Khu vực đã tắt' };
   if (String(data.company_id) !== String(companyId)) return { ok: false, error: 'Khu vực không thuộc công ty đã chọn' };

@@ -15,6 +15,14 @@ const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { computeAndStoreForUser, getDefinitions } = require('../services/kpiCalculator');
 const {
+  getBusinessHoursConfigCached,
+  getHolidaysCached,
+  getCompanyDepartmentIdsCached,
+  invalidateKpiDefinitions,
+  invalidateKpiBusinessHours,
+  invalidateKpiHolidays,
+} = require('../helpers/kpiLookupCache');
+const {
   effectivePipelineStageSlaDays,
   normalizePipelineStageSlaDaysForDb,
 } = require('../helpers/crmPipelineSla');
@@ -80,10 +88,7 @@ async function resolveTargetUsers({ userIds = null, companyId = null, department
   if (departmentId) {
     deptIds = [departmentId];
   } else if (companyId) {
-    const { data: depts, error: de } = await supabase
-      .from('departments').select('id').eq('company_id', companyId);
-    if (de) throw de;
-    deptIds = (depts || []).map((d) => d.id);
+    deptIds = await getCompanyDepartmentIdsCached(companyId);
     if (!deptIds.length) return [];
   }
 
@@ -163,6 +168,7 @@ r.patch('/definitions/:id', async (req, res) => {
       .update(patch).eq('id', req.params.id)
       .select().single();
     if (error) throw error;
+    invalidateKpiDefinitions();
 
     // Cảnh báo tổng weight khác 100
     const { data: actives } = await supabase
@@ -1267,17 +1273,7 @@ const { clearCache: clearBizCache } = require('../services/businessHours');
 r.get('/business-hours', async (req, res) => {
   try {
     const cid = req.query.company_id || null;
-    let row = null;
-    if (cid) {
-      const { data } = await supabase.from('kpi_business_hours_config')
-        .select('*').eq('company_id', cid).maybeSingle();
-      row = data;
-    }
-    if (!row) {
-      const { data } = await supabase.from('kpi_business_hours_config')
-        .select('*').is('company_id', null).maybeSingle();
-      row = data;
-    }
+    const row = await getBusinessHoursConfigCached(cid);
     res.json({ config: row });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1326,6 +1322,7 @@ r.put('/business-hours', async (req, res) => {
       row = data;
     }
     clearBizCache();
+    invalidateKpiBusinessHours();
     res.json({ config: row });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1334,13 +1331,8 @@ r.put('/business-hours', async (req, res) => {
 r.get('/holidays', async (req, res) => {
   try {
     const cid = req.query.company_id || null;
-    let q = supabase.from('kpi_holidays')
-      .select('id, company_id, holiday_date, name, repeat_yearly, is_half_day, notes, created_at')
-      .order('holiday_date', { ascending: true });
-    if (cid) q = q.or(`company_id.eq.${cid},company_id.is.null`);
-    const { data, error } = await q;
-    if (error) throw error;
-    res.json({ holidays: data || [] });
+    const data = await getHolidaysCached(cid);
+    res.json({ holidays: data });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1360,6 +1352,7 @@ r.post('/holidays', async (req, res) => {
     }).select().single();
     if (error) throw error;
     clearBizCache();
+    invalidateKpiHolidays();
     res.json({ holiday: data });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1370,6 +1363,7 @@ r.delete('/holidays/:id', async (req, res) => {
     const { error } = await supabase.from('kpi_holidays').delete().eq('id', req.params.id);
     if (error) throw error;
     clearBizCache();
+    invalidateKpiHolidays();
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

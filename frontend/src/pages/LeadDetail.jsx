@@ -36,6 +36,7 @@ import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, MessageCircle, Edit2, Trash2, X, Save, Building2, FolderKanban,
   FileUp, FileText, Zap, ChevronDown, Send, RefreshCw, Users, ClipboardCheck, Loader2, Mic, RotateCcw,
+  Pin, CheckCircle2,
 } from 'lucide-react';
 
 /** Khớp backend: chỉ cột deal có tên chứa «Hoàn thành» mới dùng gửi Zalo OA */
@@ -972,6 +973,51 @@ export default function LeadDetail() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button onClick={() => { persistCrmPipelineUiNow(); if (lead?.type === 'deal') localStorage.setItem('crm_pinned_tab', 'deal'); markCrmPipelineCardFocus(id); navigate('/crm/dashboard'); }} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
+          {/* Per-user flags: ghim + đã tương tác (manual toggle) */}
+          <button
+            type="button"
+            title={lead?.is_pinned ? 'Bỏ ghim' : 'Ghim lead/deal lên đầu Kanban'}
+            onClick={async () => {
+              const next = !lead?.is_pinned;
+              setLead((prev) => prev ? { ...prev, is_pinned: next, pinned_at: next ? new Date().toISOString() : null } : prev);
+              try {
+                if (next) await api.post(`/crm/leads/${id}/pin`);
+                else await api.delete(`/crm/leads/${id}/pin`);
+              } catch (e) {
+                setLead((prev) => prev ? { ...prev, is_pinned: !next } : prev);
+                alert(e?.response?.data?.error || 'Lỗi cập nhật ghim');
+              }
+            }}
+            className={`p-2 rounded-lg cursor-pointer border ${
+              lead?.is_pinned
+                ? 'bg-amber-50 border-amber-300 text-amber-600 hover:bg-amber-100'
+                : 'border-gray-200 text-gray-500 hover:bg-gray-100 hover:text-amber-600'
+            }`}
+          >
+            <Pin className={`h-5 w-5 ${lead?.is_pinned ? 'rotate-45 fill-amber-500' : ''}`} strokeWidth={2.25} />
+          </button>
+          <button
+            type="button"
+            title={lead?.is_interacted ? 'Bỏ đã tương tác' : 'Đánh dấu đã tương tác với khách'}
+            onClick={async () => {
+              const next = !lead?.is_interacted;
+              setLead((prev) => prev ? { ...prev, is_interacted: next, interacted_at: next ? new Date().toISOString() : null } : prev);
+              try {
+                if (next) await api.post(`/crm/leads/${id}/interacted`);
+                else await api.delete(`/crm/leads/${id}/interacted`);
+              } catch (e) {
+                setLead((prev) => prev ? { ...prev, is_interacted: !next } : prev);
+                alert(e?.response?.data?.error || 'Lỗi cập nhật trạng thái tương tác');
+              }
+            }}
+            className={`p-2 rounded-lg cursor-pointer border ${
+              lead?.is_interacted
+                ? 'bg-blue-50 border-blue-300 text-blue-600 hover:bg-blue-100'
+                : 'border-gray-200 text-gray-500 hover:bg-gray-100 hover:text-blue-600'
+            }`}
+          >
+            <CheckCircle2 className={`h-5 w-5 ${lead?.is_interacted ? 'fill-blue-500 text-white' : ''}`} strokeWidth={2.25} />
+          </button>
           <div>
             <div className="flex items-center gap-2">
               <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${lead.type === 'deal' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>

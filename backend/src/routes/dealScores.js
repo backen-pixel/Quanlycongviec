@@ -4,6 +4,8 @@
 const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
+const { getCrmStageById } = require('../helpers/crmTaxonomyCache');
+const { getAppSettingValue, invalidateAppSettingKey } = require('../helpers/appSettingsCache');
 
 const r = Router();
 r.use(auth);
@@ -44,11 +46,7 @@ function isCrmDealStageHoanThanhName(name) {
 
 async function dealStageIsHoanThanh(leadRow) {
   if (!leadRow?.stage_id) return false;
-  const { data: st } = await supabase
-    .from('crm_pipeline_stages')
-    .select('name')
-    .eq('id', leadRow.stage_id)
-    .maybeSingle();
+  const st = await getCrmStageById(leadRow.stage_id);
   return !!(st?.name && isCrmDealStageHoanThanhName(st.name));
 }
 
@@ -64,8 +62,8 @@ function avg(arr) {
 }
 
 async function loadAppJson(key, fallback) {
-  const { data } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
-  if (data?.value != null) return data.value;
+  const v = await getAppSettingValue(key, undefined);
+  if (v != null) return v;
   return fallback;
 }
 
@@ -178,6 +176,7 @@ r.put('/settings', async (req, res) => {
         { onConflict: 'key' }
       );
       if (error) throw error;
+      invalidateAppSettingKey('deal_performance_weights');
     }
     if (bonus_penalty_rules) {
       const { error } = await supabase.from('app_settings').upsert(
@@ -189,6 +188,7 @@ r.put('/settings', async (req, res) => {
         { onConflict: 'key' }
       );
       if (error) throw error;
+      invalidateAppSettingKey('deal_bonus_penalty_rules');
     }
     res.json({ ok: true });
   } catch (e) {

@@ -1076,6 +1076,47 @@ export default function CRMDashboard() {
   }, []);
 
   /**
+   * Toggle ghim/tương tác per-user (optimistic update + rollback nếu API fail).
+   * `item.type === 'deal'` → cập nhật setAllDeals; ngược lại setAllLeads.
+   * Lưu ý: dùng cả 2 setter nếu chưa biết kiểu (an toàn — chỉ map id khớp).
+   */
+  const togglePinFlag = useCallback(async (item, next) => {
+    if (!item?.id) return;
+    const id = item.id;
+    const patch = { is_pinned: !!next, pinned_at: next ? new Date().toISOString() : null };
+    const updater = (arr) => arr.map((x) => (String(x.id) === String(id) ? { ...x, ...patch } : x));
+    setAllLeads(updater);
+    setAllDeals(updater);
+    try {
+      if (next) await api.post(`/crm/leads/${id}/pin`);
+      else await api.delete(`/crm/leads/${id}/pin`);
+    } catch (e) {
+      const rollback = (arr) => arr.map((x) => (String(x.id) === String(id) ? { ...x, is_pinned: !next, pinned_at: next ? null : x.pinned_at } : x));
+      setAllLeads(rollback);
+      setAllDeals(rollback);
+      console.error('togglePinFlag failed:', e?.message || e);
+    }
+  }, []);
+
+  const toggleInteractedFlag = useCallback(async (item, next) => {
+    if (!item?.id) return;
+    const id = item.id;
+    const patch = { is_interacted: !!next, interacted_at: next ? new Date().toISOString() : null };
+    const updater = (arr) => arr.map((x) => (String(x.id) === String(id) ? { ...x, ...patch } : x));
+    setAllLeads(updater);
+    setAllDeals(updater);
+    try {
+      if (next) await api.post(`/crm/leads/${id}/interacted`);
+      else await api.delete(`/crm/leads/${id}/interacted`);
+    } catch (e) {
+      const rollback = (arr) => arr.map((x) => (String(x.id) === String(id) ? { ...x, is_interacted: !next } : x));
+      setAllLeads(rollback);
+      setAllDeals(rollback);
+      console.error('toggleInteractedFlag failed:', e?.message || e);
+    }
+  }, []);
+
+  /**
    * Realtime: backend emit 'crm:dashboard_changed' khi lead/deal thay đổi
    * (create/update/stage/convert/bulk/merge/delete). Debounce 800ms để gom burst
    * (vd bulk-assign 50 lead) chỉ refetch 1 lần.
@@ -1977,15 +2018,19 @@ export default function CRMDashboard() {
       });
     }
 
-    // Ưu tiên đẩy lead/deal có số điện thoại lên đầu — phân hoạch O(N) thay cho sort O(N log N).
+    // Ưu tiên: (1) thẻ ghim per-user lên đầu, (2) còn lại đẩy lead/deal có SĐT lên trên.
     if (result.length > 1) {
+      const pinned = [];
       const withPhone = [];
       const noPhone = [];
       for (const it of result) {
-        if (hasPhoneNumber(it)) withPhone.push(it);
+        if (it?.is_pinned) pinned.push(it);
+        else if (hasPhoneNumber(it)) withPhone.push(it);
         else noPhone.push(it);
       }
-      result = withPhone.length && noPhone.length ? withPhone.concat(noPhone) : result;
+      if (pinned.length || (withPhone.length && noPhone.length)) {
+        result = pinned.concat(withPhone, noPhone);
+      }
     }
     return result;
   }, [
@@ -3612,6 +3657,8 @@ export default function CRMDashboard() {
                 setKanbanCommentBody('');
                 setKanbanCommentItem(it);
               }}
+              onTogglePin={togglePinFlag}
+              onToggleInteracted={toggleInteractedFlag}
               remeasureToken={showAdvSearch ? 1 : 0}
             />
             {/* Nút Tải thêm 1000 */}
@@ -4659,6 +4706,8 @@ function KanbanStageCard({
   compact,
   kpiLedgerPeriodStart,
   onOpenKanbanComment,
+  onTogglePin,
+  onToggleInteracted,
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
@@ -4779,6 +4828,8 @@ function KanbanStageCard({
               compact={compact}
               kpiLedgerPeriodStart={kpiLedgerPeriodStart}
               onOpenKanbanComment={onOpenKanbanComment}
+              onTogglePin={onTogglePin}
+              onToggleInteracted={onToggleInteracted}
             />
           ))
         )}
@@ -4788,7 +4839,7 @@ function KanbanStageCard({
 }
 
 // Kanban Item Card - MISA Style
-function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, kpiLedgerPeriodStart, onOpenKanbanComment }) {
+function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted }) {
   const navigate = useNavigate();
   const dealDragLocked = isDealCrmKanbanDragLocked(item, pipelineType);
   const openLeadDetail = () => {
@@ -4803,7 +4854,11 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
       e.preventDefault();
       return;
     }
-    if (e.target.closest?.('[data-kanban-select-zone]') || e.target.closest?.('[data-kanban-comment-btn]')) {
+    if (
+      e.target.closest?.('[data-kanban-select-zone]') ||
+      e.target.closest?.('[data-kanban-comment-btn]') ||
+      e.target.closest?.('[data-kanban-flag-btn]')
+    ) {
       e.preventDefault();
       return;
     }
@@ -4875,6 +4930,48 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
         >
           <MessageSquare className="h-3.5 w-3.5" strokeWidth={2.25} />
         </button>
+      )}
+      {/* Per-user flags: ghim (Pin) + đã tương tác (CheckCircle2 xanh). Đặt bottom-left,
+          z-index cao hơn lớp splitPickZones (z-20) để vẫn click được. */}
+      {(typeof onTogglePin === 'function' || typeof onToggleInteracted === 'function') && (
+        <div className="absolute bottom-2 left-2 z-[40] flex items-center gap-1" data-kanban-flag-btns>
+          {typeof onTogglePin === 'function' && (
+            <button
+              type="button"
+              data-kanban-flag-btn
+              title={item.is_pinned ? 'Bỏ ghim thẻ' : 'Ghim thẻ lên đầu'}
+              onClick={(ev) => {
+                ev.stopPropagation();
+                onTogglePin(item, !item.is_pinned);
+              }}
+              className={`flex h-7 w-7 items-center justify-center rounded-full border bg-white/95 shadow-md transition-colors cursor-pointer ${
+                item.is_pinned
+                  ? 'border-amber-300 text-amber-600 hover:bg-amber-50'
+                  : 'border-gray-200/90 text-slate-500 hover:border-amber-300 hover:text-amber-600 hover:bg-amber-50'
+              }`}
+            >
+              <Pin className={`h-3.5 w-3.5 ${item.is_pinned ? 'rotate-45 fill-amber-500' : ''}`} strokeWidth={2.25} />
+            </button>
+          )}
+          {typeof onToggleInteracted === 'function' && (
+            <button
+              type="button"
+              data-kanban-flag-btn
+              title={item.is_interacted ? 'Bỏ đánh dấu đã tương tác' : 'Đánh dấu đã tương tác với khách'}
+              onClick={(ev) => {
+                ev.stopPropagation();
+                onToggleInteracted(item, !item.is_interacted);
+              }}
+              className={`flex h-7 w-7 items-center justify-center rounded-full border bg-white/95 shadow-md transition-colors cursor-pointer ${
+                item.is_interacted
+                  ? 'border-blue-300 text-blue-600 hover:bg-blue-50'
+                  : 'border-gray-200/90 text-slate-500 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50'
+              }`}
+            >
+              <CheckCircle2 className={`h-3.5 w-3.5 ${item.is_interacted ? 'fill-blue-500 text-white' : ''}`} strokeWidth={2.25} />
+            </button>
+          )}
+        </div>
       )}
       {splitPickZones && (
         <>
@@ -5149,6 +5246,8 @@ function KanbanView({
   compact,
   kpiLedgerPeriodStart,
   onOpenKanbanComment,
+  onTogglePin,
+  onToggleInteracted,
   remeasureToken,
 }) {
   const kanbanHScrollRef = useRef(null);
@@ -5341,6 +5440,8 @@ function KanbanView({
               compact={compact}
               kpiLedgerPeriodStart={kpiLedgerPeriodStart}
               onOpenKanbanComment={onOpenKanbanComment}
+              onTogglePin={onTogglePin}
+              onToggleInteracted={onToggleInteracted}
             />
           ))}
         </div>

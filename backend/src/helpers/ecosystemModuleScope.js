@@ -1,7 +1,26 @@
 const { supabase } = require('../config/supabase');
+const { createTTLCache } = require('./ttlCache');
 
 /** Khớp module_key dùng trong ecosystem_module_scopes và Sidebar */
 const KNOWN_MODULE_KEYS = ['crm', 'production', 'logistics', 'projects', 'tasks', 'customers'];
+
+// Set<string> không JSON-serializable → cache `string[] | null`, convert sang Set khi trả về.
+const scopeCache = createTTLCache({
+  ttlMs: 60_000,
+  maxEntries: 50,
+  redisTtlMs: 10 * 60_000,
+  redisPrefix: 'ecoscope:',
+});
+
+async function _loadRestrictedArrayForModule(moduleKey) {
+  const { data, error } = await supabase
+    .from('ecosystem_module_scopes')
+    .select('division_unit_id')
+    .eq('module_key', moduleKey);
+  if (error) return null;
+  if (!data?.length) return null;
+  return data.map((r) => String(r.division_unit_id));
+}
 
 /**
  * @param {string} moduleKey
@@ -9,15 +28,23 @@ const KNOWN_MODULE_KEYS = ['crm', 'production', 'logistics', 'projects', 'tasks'
  */
 async function getRestrictedDivisionIdsForModule(moduleKey) {
   try {
-    const { data, error } = await supabase
-      .from('ecosystem_module_scopes')
-      .select('division_unit_id')
-      .eq('module_key', moduleKey);
-    if (error) return null;
-    if (!data?.length) return null;
-    return new Set(data.map((r) => String(r.division_unit_id)));
+    const arr = await scopeCache.getOrFetch(
+      `module:${moduleKey}`,
+      () => _loadRestrictedArrayForModule(moduleKey),
+    );
+    if (arr == null) return null;
+    return new Set(arr);
   } catch {
     return null;
+  }
+}
+
+/** Gọi khi ecosystem_module_scopes thay đổi (admin sửa). */
+function invalidateEcosystemModuleScopeCache(moduleKey) {
+  if (moduleKey) {
+    scopeCache.invalidateRemote(`module:${moduleKey}`).catch(() => {});
+  } else {
+    scopeCache.invalidateRemote(null).catch(() => {});
   }
 }
 
@@ -66,6 +93,7 @@ async function buildMyModuleAccessMap(user) {
 module.exports = {
   KNOWN_MODULE_KEYS,
   getRestrictedDivisionIdsForModule,
+  invalidateEcosystemModuleScopeCache,
   userHasEcosystemModuleAccess,
   buildMyModuleAccessMap,
 };

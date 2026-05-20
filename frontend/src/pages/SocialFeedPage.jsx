@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { getInitials } from '../lib/utils';
@@ -8,7 +8,7 @@ import {
   ThumbsUp, MessageCircle,   Trash2, Send, Loader2, Building2,
   Image as ImageIcon, Link2, RefreshCw, Heart, FileText, X,
   Video, Smile, MapPin, ImagePlus, Globe, MoreHorizontal,
-  ChevronLeft, ChevronRight, Maximize2, Pencil, Share2, EyeOff,
+  ChevronLeft, ChevronRight, Maximize2, Pencil, Share2, EyeOff, Search, User,
 } from 'lucide-react';
 
 const LS_SOCIAL_COMPANY = 'internal_social_filter_company_id';
@@ -110,10 +110,13 @@ function normalizeSocialPost(p) {
     liked_by_me: !!p.liked_by_me,
     my_reaction: typeof p.my_reaction === 'string' ? p.my_reaction : null,
     video_url: typeof p.video_url === 'string' ? p.video_url : (p.video_url || null),
-    visibility: p.visibility === 'selected_users' ? 'selected_users' : 'company',
+    visibility: p.visibility === 'selected_users'
+      ? 'selected_users'
+      : (p.visibility === 'selected_companies' ? 'selected_companies' : 'company'),
     published_at: p.published_at || null,
     hidden_at: p.hidden_at || null,
     audience_users: Array.isArray(p.audience_users) ? p.audience_users : [],
+    audience_companies: Array.isArray(p.audience_companies) ? p.audience_companies : [],
   };
 }
 
@@ -141,6 +144,7 @@ function emptyComposerFields() {
     scheduledAt: '',
     visibility: 'company',
     audienceUserIds: [],
+    audienceCompanyIds: [],
   };
 }
 
@@ -173,6 +177,20 @@ function timeAgo(iso) {
 function canModerate(role) {
   const r = String(role || '').toLowerCase();
   return ['admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'administrator', 'region_admin'].includes(r);
+}
+
+function AuthorProfileLink({ user, className = '', children }) {
+  const id = user?.id;
+  const label = children ?? (user?.full_name || user?.email || 'Thành viên');
+  if (!id) return <span className={className}>{label}</span>;
+  return (
+    <Link
+      to={`/social/u/${id}`}
+      className={`hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded ${className}`}
+    >
+      {label}
+    </Link>
+  );
 }
 
 function Avatar({ user }) {
@@ -614,14 +632,20 @@ function SocialCommentItem({
   return (
     <div className="flex gap-2 text-sm">
       <div className="shrink-0 scale-90 origin-top-left">
-        <Avatar user={c.author} />
+        {c.author?.id ? (
+          <Link to={`/social/u/${c.author.id}`} className="block rounded-full hover:opacity-90" title="Xem trang cá nhân">
+            <Avatar user={c.author} />
+          </Link>
+        ) : (
+          <Avatar user={c.author} />
+        )}
       </div>
       <div className="flex-1 min-w-0">
         <div className="relative inline-block max-w-full align-top">
           <div
             className={`rounded-2xl border border-gray-100 bg-gray-50 px-3 pt-2 ${totalRx > 0 ? 'pb-5' : 'pb-2'}`}
           >
-            <p className="font-semibold text-gray-900 text-xs">{c.author?.full_name || c.author?.email}</p>
+            <AuthorProfileLink user={c.author} className="font-semibold text-gray-900 text-xs" />
           {looksLikeSingleImageUrl(c.body) ? (
             <button
               type="button"
@@ -937,13 +961,20 @@ function PostCard({
   return (
     <article id={`social-post-${post.id}`} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden scroll-mt-20">
       <div className="px-4 pt-3 pb-2 flex items-start gap-3">
-        <Avatar user={author} />
+        {author.id ? (
+          <Link to={`/social/u/${author.id}`} className="shrink-0 rounded-full hover:opacity-90 transition-opacity" title="Xem trang cá nhân">
+            <Avatar user={author} />
+          </Link>
+        ) : (
+          <Avatar user={author} />
+        )}
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <p className="font-semibold text-gray-900 text-[15px] leading-tight">
-                {author.full_name || author.email || 'Thành viên'}
-              </p>
+              <AuthorProfileLink
+                user={author}
+                className="font-semibold text-gray-900 text-[15px] leading-tight"
+              />
               <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1">
                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" title="Nội bộ" />
                 {timeAgo(post.created_at)}
@@ -1046,7 +1077,7 @@ function PostCard({
         </div>
       </div>
 
-      {(isScheduledPost(post) || post.visibility === 'selected_users' || post.hidden_at) && (
+      {(isScheduledPost(post) || post.visibility === 'selected_users' || post.visibility === 'selected_companies' || post.hidden_at) && (
         <div className="px-4 pb-1 flex flex-wrap gap-1.5">
           {isScheduledPost(post) && (
             <span className="text-[11px] font-medium rounded-full bg-amber-100 text-amber-900 px-2 py-0.5">
@@ -1056,6 +1087,14 @@ function PostCard({
           {post.visibility === 'selected_users' && (
             <span className="text-[11px] font-medium rounded-full bg-indigo-100 text-indigo-900 px-2 py-0.5">
               Chỉ người được chọn ({post.audience_users?.length || 0})
+            </span>
+          )}
+          {post.visibility === 'selected_companies' && (
+            <span
+              className="text-[11px] font-medium rounded-full bg-emerald-100 text-emerald-900 px-2 py-0.5"
+              title={(post.audience_companies || []).map((c) => c?.name || c?.short_name).filter(Boolean).join(', ') || undefined}
+            >
+              Chia sẻ {post.audience_companies?.length || 0} công ty
             </span>
           )}
           {post.hidden_at && (
@@ -1370,6 +1409,10 @@ export default function SocialFeedPage() {
   const [userSuggest, setUserSuggest] = useState([]);
   const [toast, setToast] = useState(null);
   const audienceSearchTimer = useRef(null);
+  const [memberSearchQ, setMemberSearchQ] = useState('');
+  const [memberSearchHits, setMemberSearchHits] = useState([]);
+  const [memberSearchOpen, setMemberSearchOpen] = useState(false);
+  const memberSearchTimer = useRef(null);
   const fileInputRef = useRef(null);
   const videoInputRef = useRef(null);
 
@@ -1498,6 +1541,31 @@ export default function SocialFeedPage() {
   }, [searchParams, effectiveCompanyId, isSystemAdmin, setSearchParams]);
 
   useEffect(() => {
+    const editId = searchParams.get('edit');
+    if (!editId) return;
+    if (!isSystemAdmin && !effectiveCompanyId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get(`/internal-social/posts/${editId}`);
+        if (cancelled || !data?.post) return;
+        const n = normalizeSocialPost(data.post);
+        beginEditPost(n);
+      } catch {
+        /* ignore */
+      } finally {
+        setSearchParams((sp) => {
+          const next = new URLSearchParams(sp);
+          next.delete('edit');
+          return next;
+        }, { replace: true });
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, effectiveCompanyId, isSystemAdmin]);
+
+  useEffect(() => {
     if (!composerOpen || composer.visibility !== 'selected_users' || !effectiveCompanyId) {
       setUserSuggest([]);
       return;
@@ -1520,6 +1588,27 @@ export default function SocialFeedPage() {
     };
   }, [composerOpen, composer.visibility, effectiveCompanyId, audienceSearch]);
 
+  useEffect(() => {
+    const q = memberSearchQ.trim();
+    if (q.length < 2) {
+      setMemberSearchHits([]);
+      return undefined;
+    }
+    if (memberSearchTimer.current) clearTimeout(memberSearchTimer.current);
+    memberSearchTimer.current = setTimeout(async () => {
+      try {
+        const { data } = await api.get('/internal-social/users/search', { params: { q } });
+        setMemberSearchHits(Array.isArray(data?.users) ? data.users : []);
+        setMemberSearchOpen(true);
+      } catch {
+        setMemberSearchHits([]);
+      }
+    }, 300);
+    return () => {
+      if (memberSearchTimer.current) clearTimeout(memberSearchTimer.current);
+    };
+  }, [memberSearchQ]);
+
   const handlePost = async () => {
     if (posting || attachSlots.some((s) => s.uploading)) return;
     const body = (composer.body ?? '').trim();
@@ -1539,9 +1628,18 @@ export default function SocialFeedPage() {
     const hasImgUrl = !!imageUrl;
     const hasVideoUrl = !!videoUrl;
     if (!body && !attachments.length && !hasLink && !hasImgUrl && !hasVideoUrl) return;
-    const visibility = composer.visibility === 'selected_users' ? 'selected_users' : 'company';
+    const visibility = composer.visibility === 'selected_users'
+      ? 'selected_users'
+      : (composer.visibility === 'selected_companies' ? 'selected_companies' : 'company');
     if (visibility === 'selected_users' && !(composer.audienceUserIds || []).length) {
       setErr('Chọn ít nhất một nhân viên khi giới hạn người xem bài.');
+      return;
+    }
+    const extraCompanyIds = (composer.audienceCompanyIds || [])
+      .map(String)
+      .filter((cid) => cid && cid !== String(effectiveCompanyId));
+    if (visibility === 'selected_companies' && !extraCompanyIds.length) {
+      setErr('Chọn ít nhất một công ty (ngoài công ty gốc) để chia sẻ bài.');
       return;
     }
     if (composer.publishMode === 'scheduled' && !(composer.scheduledAt || '').trim()) {
@@ -1565,6 +1663,7 @@ export default function SocialFeedPage() {
           attachments,
           visibility,
           audience_user_ids: visibility === 'selected_users' ? composer.audienceUserIds : [],
+          audience_company_ids: visibility === 'selected_companies' ? extraCompanyIds : [],
           published_at: composer.publishMode === 'scheduled' && (composer.scheduledAt || '').trim()
             ? new Date(composer.scheduledAt).toISOString()
             : new Date().toISOString(),
@@ -1582,6 +1681,9 @@ export default function SocialFeedPage() {
           ...(attachments.length ? { attachments } : {}),
           visibility,
           audience_user_ids: visibility === 'selected_users' ? composer.audienceUserIds : [],
+          ...(visibility === 'selected_companies' && extraCompanyIds.length
+            ? { audience_company_ids: extraCompanyIds }
+            : {}),
           ...(composer.publishMode === 'scheduled' && (composer.scheduledAt || '').trim()
             ? { published_at: new Date(composer.scheduledAt).toISOString() }
             : {}),
@@ -1905,8 +2007,13 @@ export default function SocialFeedPage() {
       video_url: post.video_url || '',
       publishMode: isScheduledPost(post) ? 'scheduled' : 'now',
       scheduledAt: post.published_at ? isoToDatetimeLocalValue(post.published_at) : '',
-      visibility: post.visibility === 'selected_users' ? 'selected_users' : 'company',
+      visibility: post.visibility === 'selected_users'
+        ? 'selected_users'
+        : (post.visibility === 'selected_companies' ? 'selected_companies' : 'company'),
       audienceUserIds: (post.audience_users || []).map((u) => String(u.id)).filter(Boolean),
+      audienceCompanyIds: (post.audience_companies || [])
+        .map((c) => String(c?.id || ''))
+        .filter((cid) => cid && cid !== String(post.company_id)),
     });
     setAudienceSearch('');
     setAttachSlots(
@@ -1953,6 +2060,47 @@ export default function SocialFeedPage() {
           </button>
         </header>
 
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
+          <input
+            type="search"
+            value={memberSearchQ}
+            onChange={(e) => {
+              setMemberSearchQ(e.target.value);
+              if (!e.target.value.trim()) setMemberSearchOpen(false);
+            }}
+            onFocus={() => { if (memberSearchHits.length) setMemberSearchOpen(true); }}
+            onBlur={() => { setTimeout(() => setMemberSearchOpen(false), 180); }}
+            placeholder="Tìm thành viên (tên, email)…"
+            className="w-full rounded-xl border border-gray-200 bg-white py-2.5 pl-9 pr-3 text-sm shadow-sm focus:border-blue-400 focus:outline-none"
+          />
+          {memberSearchOpen && memberSearchHits.length > 0 && (
+            <ul className="absolute z-40 mt-1 w-full max-h-64 overflow-y-auto rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
+              {memberSearchHits.map((u) => (
+                <li key={u.id}>
+                  <Link
+                    to={`/social/u/${u.id}`}
+                    className="flex items-center gap-2 px-3 py-2 hover:bg-gray-50"
+                    onMouseDown={(e) => e.preventDefault()}
+                  >
+                    <Avatar user={u} />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-gray-900 truncate">{u.full_name || u.email}</p>
+                      <p className="text-xs text-gray-500 truncate">{u.email}</p>
+                    </div>
+                    <User className="h-4 w-4 text-gray-400 shrink-0" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+          {memberSearchOpen && memberSearchQ.trim().length >= 2 && !memberSearchHits.length && (
+            <p className="absolute z-40 mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-500 shadow-lg">
+              Không tìm thấy thành viên.
+            </p>
+          )}
+        </div>
+
         {isSystemAdmin && (
           <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-sm">
             <Building2 className="w-4 h-4 text-amber-700 shrink-0" />
@@ -1980,7 +2128,13 @@ export default function SocialFeedPage() {
         {effectiveCompanyId && (
           <>
             <div className="flex items-center gap-3 bg-white rounded-xl shadow-sm border border-gray-200 p-3">
-              <Avatar user={user} />
+              {user?.id ? (
+                <Link to={`/social/u/${user.id}`} className="shrink-0 rounded-full hover:opacity-90" title="Trang cá nhân của bạn">
+                  <Avatar user={user} />
+                </Link>
+              ) : (
+                <Avatar user={user} />
+              )}
               <button
                 type="button"
                 onClick={openComposerModal}
@@ -2221,16 +2375,90 @@ export default function SocialFeedPage() {
                           <p className="text-xs font-semibold text-gray-600 mb-1.5">Ai được xem</p>
                           <select
                             value={composer.visibility}
-                            onChange={(e) => setComposer((c) => ({
-                              ...c,
-                              visibility: e.target.value === 'selected_users' ? 'selected_users' : 'company',
-                              audienceUserIds: e.target.value === 'selected_users' ? c.audienceUserIds : [],
-                            }))}
+                            onChange={(e) => {
+                              const v = e.target.value === 'selected_users'
+                                ? 'selected_users'
+                                : (e.target.value === 'selected_companies' ? 'selected_companies' : 'company');
+                              setComposer((c) => ({
+                                ...c,
+                                visibility: v,
+                                audienceUserIds: v === 'selected_users' ? c.audienceUserIds : [],
+                                audienceCompanyIds: v === 'selected_companies' ? c.audienceCompanyIds : [],
+                              }));
+                            }}
                             className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm"
                           >
                             <option value="company">Cả công ty</option>
                             <option value="selected_users">Chỉ nhân viên được chọn</option>
+                            {isSystemAdmin && (
+                              <option value="selected_companies">Nhiều công ty</option>
+                            )}
                           </select>
+                          {composer.visibility === 'selected_companies' && (
+                            <div className="mt-2 space-y-2">
+                              <p className="text-[11px] text-gray-500">
+                                Công ty gốc (
+                                {(companies.find((c) => String(c.id) === String(effectiveCompanyId))?.name)
+                                  || 'chưa chọn'}
+                                ) sẽ luôn được xem bài. Chọn thêm công ty khác bên dưới.
+                              </p>
+                              {(composer.audienceCompanyIds || []).length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  {(composer.audienceCompanyIds || []).map((id) => {
+                                    const c = companies.find((x) => String(x.id) === String(id));
+                                    const label = c?.name || c?.short_name || `${String(id).slice(0, 8)}…`;
+                                    return (
+                                      <span
+                                        key={id}
+                                        className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-900 max-w-[220px]"
+                                      >
+                                        <span className="truncate">{label}</span>
+                                        <button
+                                          type="button"
+                                          className="shrink-0 text-emerald-700 hover:text-emerald-950"
+                                          onClick={() => setComposer((cur) => ({
+                                            ...cur,
+                                            audienceCompanyIds: (cur.audienceCompanyIds || []).filter((x) => x !== id),
+                                          }))}
+                                          aria-label="Bỏ"
+                                        >
+                                          ×
+                                        </button>
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                              <ul className="max-h-40 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50 text-sm">
+                                {companies
+                                  .filter((c) => String(c.id) !== String(effectiveCompanyId))
+                                  .map((c) => {
+                                    const id = String(c.id);
+                                    const picked = (composer.audienceCompanyIds || []).includes(id);
+                                    return (
+                                      <li key={id}>
+                                        <label className="flex w-full items-center gap-2 px-2 py-1.5 hover:bg-white cursor-pointer">
+                                          <input
+                                            type="checkbox"
+                                            checked={picked}
+                                            onChange={() => setComposer((cur) => ({
+                                              ...cur,
+                                              audienceCompanyIds: picked
+                                                ? (cur.audienceCompanyIds || []).filter((x) => x !== id)
+                                                : [...(cur.audienceCompanyIds || []), id],
+                                            }))}
+                                          />
+                                          <span className="truncate">{c.name || c.short_name || id}</span>
+                                        </label>
+                                      </li>
+                                    );
+                                  })}
+                                {companies.filter((c) => String(c.id) !== String(effectiveCompanyId)).length === 0 && (
+                                  <li className="px-2 py-2 text-xs text-gray-500">Không còn công ty nào để chia sẻ.</li>
+                                )}
+                              </ul>
+                            </div>
+                          )}
                           {composer.visibility === 'selected_users' && (
                             <div className="mt-2 space-y-2">
                               <input
@@ -2318,6 +2546,8 @@ export default function SocialFeedPage() {
                             && !(composer.image_url ?? '').trim()
                             && !(composer.video_url ?? '').trim())
                           || (composer.visibility === 'selected_users' && !(composer.audienceUserIds || []).length)
+                          || (composer.visibility === 'selected_companies'
+                            && !((composer.audienceCompanyIds || []).filter((cid) => cid && cid !== String(effectiveCompanyId)).length))
                           || (composer.publishMode === 'scheduled' && !(composer.scheduledAt || '').trim())
                         }
                         onClick={handlePost}
