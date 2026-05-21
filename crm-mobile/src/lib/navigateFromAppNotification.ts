@@ -48,7 +48,14 @@ export function navigateFromAppNotification(n: AppNotification): void {
     return;
   }
   if (n.entity_type === 'task' && n.entity_id) {
-    openWebPath(`/tasks?task=${encodeURIComponent(n.entity_id)}`);
+    // Mở native WorkTaskDetail (giao việc) thay vì mở web /tasks.
+    navigationRef.navigate('Main', {
+      screen: 'MoreTab',
+      params: {
+        screen: 'WorkTaskDetail',
+        params: { id: n.entity_id },
+      } as never,
+    });
     return;
   }
   if (n.entity_type === 'messenger_group' && n.entity_id) {
@@ -86,6 +93,10 @@ export function navigateFromAppNotification(n: AppNotification): void {
   }
   if (n.entity_type === 'crm_task') {
     openWebPath('/crm/tasks');
+    return;
+  }
+  if (n.entity_type === 'crm_assignment' && n.entity_id) {
+    openWebPath(`/crm/assignments?assignment=${encodeURIComponent(n.entity_id)}`);
     return;
   }
   if (n.entity_type === 'event') {
