@@ -52,14 +52,12 @@ export async function getAppPermissionGaps(): Promise<AppPermissionGap[]> {
     /* ignore */
   }
 
-  if (Platform.OS === 'android' && OverlayModule?.canDrawOverlays) {
-    try {
-      const ok = await OverlayModule.canDrawOverlays();
-      if (!ok) gaps.push('systemOverlay');
-    } catch {
-      /* ignore */
-    }
-  }
+  // KHÔNG đưa `systemOverlay` (bong bóng nổi trên app khác) vào danh sách
+  // gap chặn đăng nhập. Quyền này phải bật toggle thủ công ở Settings, không
+  // có dialog hệ thống → nếu để trong gap thì modal "Cấp quyền cần thiết" sẽ
+  // luôn bám lại sau khi user quay về từ Settings, khiến user không vào được
+  // app. Đã có `BubblePermissionOnboardScreen` riêng để dẫn user bật khi vào
+  // màn bong bóng.
 
   return gaps;
 }
@@ -117,13 +115,9 @@ export async function grantAllPermissionsQuick(): Promise<void> {
     ImagePicker.requestCameraPermissionsAsync().catch(() => {}),
     Notifications.requestPermissionsAsync().catch(() => {}),
   ]);
-  // SYSTEM_ALERT_WINDOW: mở Settings nếu chưa có (Android hiển thị toggle, user tự bật).
-  if (Platform.OS === 'android' && OverlayModule?.canDrawOverlays) {
-    try {
-      const ok = await OverlayModule.canDrawOverlays();
-      if (!ok) OverlayModule.openOverlaySettings?.();
-    } catch { /* ignore */ }
-  }
+  // KHÔNG tự mở Overlay Settings ở flow login — chỉ làm khi user vào màn
+  // Bong bóng (BubblePermissionOnboardScreen). Tránh đẩy user ra khỏi app
+  // ngay sau đăng nhập gây cảm giác "vào không được".
 }
 
 export async function silentlyRequestMissingPermissions(): Promise<AppPermissionGap[]> {
