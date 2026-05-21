@@ -12,6 +12,7 @@ import { API_ORIGIN, WEB_APP_ORIGIN } from '../config';
 import { toBubbleStorageKey, parseBubbleStorageKey } from '../lib/bubbleNativeEvents';
 import { markLeadChatRead, markMessengerGroupRead } from '../lib/markChatRead';
 import type { AppNotification } from '../types/notifications';
+import { api } from '../api/client';
 
 const Overlay = NativeModules.FloatingBubbleOverlay as
   | {
@@ -40,6 +41,7 @@ const Overlay = NativeModules.FloatingBubbleOverlay as
         senderName: string,
         message: string,
       ) => void;
+      seedConversationMessages?: (bubbleKey: string, msgsJson: string) => void;
       consumePendingGroup?: () => Promise<string | null>;
       minimizeApp?: () => void;
       // Phase 3: Android Bubbles API
@@ -220,6 +222,23 @@ export default function SystemBubbleSync() {
     Overlay.setBadgeCount(badge);
   }, [badge]);
 
+  /**
+   * Khi user tap bong bóng → native phát "BubblePanelOpened" → ta fetch lịch sử
+   * chat của conversation đó rồi seed vào panel native.
+   */
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !Overlay?.seedConversationMessages) return;
+    const sub = DeviceEventEmitter.addListener(
+      'BubblePanelOpened',
+      (p: { key?: string } | null) => {
+        const key = p?.key;
+        if (!key) return;
+        void seedBubbleHistory(key);
+      },
+    );
+    return () => sub.remove();
+  }, []);
+
   useEffect(() => {
     if (Platform.OS !== 'android' || !Overlay) return;
     const unsub = subscribeIncoming((n) => {
@@ -367,4 +386,42 @@ export default function SystemBubbleSync() {
   }, [refreshUnread]);
 
   return null;
+}
+
+type ChatRow = {
+  content?: string | null;
+  created_at?: string | null;
+  is_system?: boolean;
+  user?: { full_name?: string | null; avatar?: string | null } | null;
+};
+
+async function seedBubbleHistory(bubbleKey: string) {
+  try {
+    const parsed = parseBubbleStorageKey(bubbleKey);
+    let rows: ChatRow[] = [];
+    if (parsed.kind === 'messenger') {
+      const { data } = await api.get<ChatRow[]>(`/messenger/groups/${parsed.entityId}/chat`);
+      rows = Array.isArray(data) ? data : [];
+    } else if (parsed.kind === 'lead') {
+      const { data } = await api.get<ChatRow[]>(`/crm/leads/${parsed.entityId}/chat`);
+      rows = Array.isArray(data) ? data : [];
+    }
+    const last = rows.slice(-30);
+    const mapped = last.map((m) => {
+      const sender = m.is_system
+        ? 'Hệ thống'
+        : m.user?.full_name?.trim() || 'Người dùng';
+      const avatarRel = m.user?.avatar?.trim() || '';
+      const avatarAbs = avatarRel
+        ? avatarRel.startsWith('http')
+          ? avatarRel
+          : `${(API_ORIGIN || '').replace(/\/$/, '')}/${avatarRel.replace(/^\//, '')}`
+        : '';
+      const ts = m.created_at ? new Date(m.created_at).getTime() : Date.now();
+      return { sender, text: m.content || '', avatar: avatarAbs, ts };
+    });
+    Overlay?.seedConversationMessages?.(bubbleKey, JSON.stringify(mapped));
+  } catch {
+    /* ignore */
+  }
 }

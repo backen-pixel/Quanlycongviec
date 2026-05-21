@@ -320,6 +320,39 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
     OverlayBubbleService.hide(appCtx, bubbleKey)
   }
 
+  /**
+   * JS seed danh sách tin nhắn cho 1 conversation (gọi sau khi panel mở).
+   * `msgsJson` = JSON array các object {sender, text, avatar, ts}.
+   * Lấy service instance qua service connection nhẹ — đơn giản bằng cách
+   * lưu vào ConversationCache rồi gửi action refresh cho service.
+   */
+  @ReactMethod
+  fun seedConversationMessages(bubbleKey: String, msgsJson: String) {
+    try {
+      val arr = org.json.JSONArray(msgsJson)
+      ConversationCache.clear(appCtx, bubbleKey)
+      for (i in 0 until arr.length()) {
+        val o = arr.getJSONObject(i)
+        ConversationCache.append(
+          appCtx,
+          bubbleKey,
+          ConversationCache.Msg(
+            sender = o.optString("sender", ""),
+            text = o.optString("text", ""),
+            avatar = o.optString("avatar", "").takeIf { it.isNotBlank() },
+            ts = o.optLong("ts", System.currentTimeMillis()),
+          ),
+        )
+      }
+      // Bảo service refresh panel (qua action expand cùng key — idempotent)
+      val intent = android.content.Intent(appCtx, OverlayBubbleService::class.java).apply {
+        action = OverlayBubbleService.ACTION_REFRESH_PANEL
+        putExtra(OverlayBubbleService.EXTRA_KEY, bubbleKey)
+      }
+      androidx.core.content.ContextCompat.startForegroundService(appCtx, intent)
+    } catch (_: Throwable) {}
+  }
+
   companion object {
     const val NAME = "FloatingBubbleOverlay"
 
