@@ -27,7 +27,23 @@ api.interceptors.response.use(
   async (error) => {
     const status = error?.response?.status;
     const url = String(error?.config?.url || '');
-    if (status === 401 && !url.includes('/auth/login')) {
+    // Auto-logout chỉ áp dụng cho các API "thực sự" — bỏ qua:
+    //  - /auth/login: 401 ở đây là sai mật khẩu, không liên quan token.
+    //  - /auth/me:    đây là background check; nếu fail có thể do token cũ
+    //                 còn lại từ install trước, hoặc đang trong race với
+    //                 login mới. AuthContext tự xử trong catch.
+    //  - /push/device-token, /devices/ping, /push/preferences: background
+    //                 housekeeping; không nên đá user ra chỉ vì các call này
+    //                 thất bại (vd. token cũ chưa kịp xoá).
+    const SKIP_AUTO_LOGOUT = [
+      '/auth/login',
+      '/auth/me',
+      '/push/device-token',
+      '/push/preferences',
+      '/devices/ping',
+    ];
+    const skip = SKIP_AUTO_LOGOUT.some((p) => url.includes(p));
+    if (status === 401 && !skip) {
       await setStoredToken(null);
       try {
         await AsyncStorage.removeItem('crm_user_json');
