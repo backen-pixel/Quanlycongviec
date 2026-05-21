@@ -41,6 +41,9 @@ api.interceptors.response.use(
       '/push/device-token',
       '/push/preferences',
       '/devices/ping',
+      // bubble realtime: fetch danh sách nhóm để join socket — không nên đá
+      // user ra nếu fail; lần connect kế tiếp sẽ thử lại.
+      '/messenger/groups',
     ];
     const skip = SKIP_AUTO_LOGOUT.some((p) => url.includes(p));
     if (status === 401 && !skip) {

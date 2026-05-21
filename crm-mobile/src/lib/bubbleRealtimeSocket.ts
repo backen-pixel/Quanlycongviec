@@ -97,16 +97,23 @@ function buildMsgPayload(
 }
 
 async function joinAllGroups() {
+  if (!socket) return;
   try {
     const { data } = await api.get<{ id: string; name?: string | null }[]>('/messenger/groups');
     const list = Array.isArray(data) ? data : [];
     for (const g of list) {
       if (!g?.id || joinedGroups.has(g.id)) continue;
-      socket?.emit('join:messenger_group', g.id);
-      joinedGroups.add(g.id);
+      try {
+        socket.emit('join:messenger_group', g.id);
+        joinedGroups.add(g.id);
+      } catch {
+        /* */
+      }
     }
   } catch {
-    /* */
+    // 401 đã được api/client interceptor xử (SKIP_AUTO_LOGOUT có cover);
+    // mọi lỗi khác (mạng, 5xx) đều bỏ qua — socket vẫn sống, lần connect
+    // kế tiếp sẽ join lại.
   }
 }
 
@@ -117,28 +124,48 @@ async function joinAllGroups() {
 export async function startBubbleRealtime(userId: string) {
   if (Platform.OS !== 'android') return;
   if (started) return;
-  started = true;
-  currentUserId = String(userId || '');
-  const token = await getStoredToken();
-  if (!token) {
+  try {
+    started = true;
+    currentUserId = String(userId || '');
+    const token = await getStoredToken();
+    if (!token) {
+      started = false;
+      return;
+    }
+
+    socket = io(API_ORIGIN, {
+      auth: { token },
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionDelay: 1500,
+    });
+
+    // Catch mọi socket error để không bubble lên JS làm crash app.
+    socket.on('connect_error', (err: { message?: string }) => {
+      // eslint-disable-next-line no-console
+      console.warn('[bubbleRealtime] connect_error:', err?.message || err);
+    });
+    socket.on('error', (err: unknown) => {
+      // eslint-disable-next-line no-console
+      console.warn('[bubbleRealtime] socket error:', err);
+    });
+
+    socket.on('connect', () => {
+      void joinAllGroups();
+    });
+    if (socket.connected) void joinAllGroups();
+
+    bindSocketHandlers(socket);
+  } catch (e) {
     started = false;
-    return;
+    // eslint-disable-next-line no-console
+    console.warn('[bubbleRealtime] start failed:', (e as Error)?.message || e);
   }
+}
 
-  socket = io(API_ORIGIN, {
-    auth: { token },
-    transports: ['websocket', 'polling'],
-    reconnection: true,
-    reconnectionDelay: 1500,
-  });
-
-  socket.on('connect', () => {
-    void joinAllGroups();
-  });
-  if (socket.connected) void joinAllGroups();
-
+function bindSocketHandlers(s: Socket) {
   // Messenger group: tin nhắn mới
-  socket.on('messenger_group:chat', (m: IncomingMessage) => {
+  s.on('messenger_group:chat', (m: IncomingMessage) => {
     if (!m?.id || !m.group_id) return;
     // Bỏ qua nếu screen chat đang focus đúng group (in-app socket khác sẽ xử lý)
     if (foregroundGroupId && String(foregroundGroupId) === String(m.group_id)) return;
@@ -161,7 +188,7 @@ export async function startBubbleRealtime(userId: string) {
     }
   });
 
-  socket.on(
+  s.on(
     'messenger_group:reactions',
     (p: { message_id: string; reactions: { user_id: string; emoji: string }[]; group_id?: string }) => {
       if (!p?.message_id || !p.group_id) return;
@@ -174,7 +201,7 @@ export async function startBubbleRealtime(userId: string) {
   );
 
   // Lead chat realtime (cùng cơ chế) — socket dùng event `lead:chat`
-  socket.on('lead:chat', (m: IncomingMessage) => {
+  s.on('lead:chat', (m: IncomingMessage) => {
     if (!m?.id || !m.lead_id) return;
     const leadKey = `lead:${m.lead_id}`;
     if (foregroundLeadId && String(foregroundLeadId) === String(m.lead_id)) return;
