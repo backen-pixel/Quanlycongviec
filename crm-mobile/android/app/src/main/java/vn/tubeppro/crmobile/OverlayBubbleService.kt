@@ -85,6 +85,12 @@ class OverlayBubbleService : Service() {
         val key = intent.getStringExtra(EXTRA_KEY) ?: return START_STICKY
         expand(key)
       }
+      ACTION_REFRESH_PANEL -> {
+        val key = intent.getStringExtra(EXTRA_KEY) ?: return START_STICKY
+        if (expandedPanel.isShowing() && expandedPanel.currentKey() == key) {
+          expandedPanel.onIncoming(key)
+        }
+      }
       ACTION_COLLAPSE -> collapsePanel()
       ACTION_HIDE_BUBBLE -> {
         val key = intent.getStringExtra(EXTRA_KEY)
@@ -413,15 +419,13 @@ class OverlayBubbleService : Service() {
 
   private fun isOverDropTarget(rawX: Float, rawY: Float, sizePx: Int): Boolean {
     val realH = getRealScreenHeightPx()
-    val realW = resources.displayMetrics.widthPixels
     val key = draggingKey ?: return false
     val mb = managed[key] ?: return false
     val bubbleCy = mb.params.y + sizePx / 2f
-    val bubbleCx = mb.params.x + sizePx / 2f
-    val yThresh = realH * 0.75f
-    val xMid = realW / 2f
-    return (bubbleCy >= yThresh || rawY >= yThresh) &&
-      kotlin.math.abs(bubbleCx - xMid) <= realW * 0.30f
+    // Vùng ăn rộng: chỉ cần bubble hoặc ngón tay nằm trong 30% phía dưới
+    // (không ràng buộc trục X — kéo xuống đáy bất kỳ vị trí nào đều xóa).
+    val yThresh = realH * 0.70f
+    return bubbleCy >= yThresh || rawY >= yThresh
   }
 
   // ---- Avatar ----
@@ -486,6 +490,31 @@ class OverlayBubbleService : Service() {
     // Ẩn các bong bóng vật lý — UI bubble row hiện thị bên trong panel
     for (mb in managed.values) mb.view.visibility = View.INVISIBLE
     hideDropTarget()
+    notifyPanelOpened(key)
+  }
+
+  /** Gửi event qua React để JS fetch messages và seed cache. */
+  private fun notifyPanelOpened(key: String) {
+    try {
+      val app = applicationContext as? MainApplication ?: return
+      val rim = app.reactNativeHost.reactInstanceManager
+      val ctx = rim.currentReactContext ?: return
+      val params = com.facebook.react.bridge.Arguments.createMap().apply {
+        putString("key", key)
+      }
+      ctx.getJSModule(
+        com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java,
+      ).emit("BubblePanelOpened", params)
+    } catch (_: Throwable) {}
+  }
+
+  /** JS gọi để nạp/cập nhật danh sách tin nhắn cho 1 conversation. */
+  fun seedMessages(key: String, msgs: List<ConversationCache.Msg>) {
+    ConversationCache.clear(this, key)
+    for (m in msgs) ConversationCache.append(this, key, m)
+    if (expandedPanel.isShowing() && expandedPanel.currentKey() == key) {
+      expandedPanel.onIncoming(key)
+    }
   }
 
   fun collapsePanel() {
@@ -566,6 +595,7 @@ class OverlayBubbleService : Service() {
     const val ACTION_RESTORE_STACK = "vn.tubeppro.crmobile.bubble.RESTORE"
     const val ACTION_EXPAND = "vn.tubeppro.crmobile.bubble.EXPAND"
     const val ACTION_COLLAPSE = "vn.tubeppro.crmobile.bubble.COLLAPSE"
+    const val ACTION_REFRESH_PANEL = "vn.tubeppro.crmobile.bubble.REFRESH_PANEL"
     const val ACTION_STOP = "vn.tubeppro.crmobile.bubble.STOP"
 
     const val EXTRA_KEY = "key"
