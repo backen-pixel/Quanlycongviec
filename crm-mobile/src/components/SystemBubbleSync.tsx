@@ -42,6 +42,7 @@ const Overlay = NativeModules.FloatingBubbleOverlay as
         message: string,
       ) => void;
       seedConversationMessages?: (bubbleKey: string, msgsJson: string) => void;
+      saveApiOrigin?: (origin: string) => void;
       consumePendingGroup?: () => Promise<string | null>;
       minimizeApp?: () => void;
       // Phase 3: Android Bubbles API
@@ -175,6 +176,7 @@ export default function SystemBubbleSync() {
       // làm fallback khi user chưa set EXPO_PUBLIC_WEB_APP_URL.
       const webOrigin = WEB_APP_ORIGIN || API_ORIGIN;
       if (webOrigin) Overlay.saveWebOrigin?.(webOrigin);
+      if (API_ORIGIN) Overlay.saveApiOrigin?.(API_ORIGIN);
     }
   }, [token, user]);
 
