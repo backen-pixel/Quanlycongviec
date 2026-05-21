@@ -28,6 +28,12 @@ export type CrmMobilePrefs = {
   floatingChatBubbleCompact: boolean;
   /** Android: bong bóng SYSTEM overlay trên app khác (TYPE_APPLICATION_OVERLAY). */
   floatingChatBubbleSystemOverlay: boolean;
+  /**
+   * Android 11+: ưu tiên dùng Android Bubbles API (chuẩn hệ thống, không cần quyền overlay)
+   * thay vì overlay tự vẽ. Khi user cấm Bubbles trong cài đặt hệ thống → tự fallback overlay.
+   * Đối ứng feature flag `change_chat_head_permission_for_bubbles` của Messenger.
+   */
+  useAndroidBubblesWhenAvailable: boolean;
 };
 
 /** Bật tối đa mọi tùy chọn bool (cài mới; nút «Bật tất cả» trong Tài khoản). */
@@ -45,6 +51,7 @@ export function createAllEnabledCrmMobilePrefs(): CrmMobilePrefs {
     floatingChatBubbleOnlyWhenUnread: false,
     floatingChatBubbleCompact: false,
     floatingChatBubbleSystemOverlay: true,
+    useAndroidBubblesWhenAvailable: true,
   };
 }
 
@@ -62,6 +69,7 @@ const SERVER_KEYS: (keyof CrmMobilePrefs)[] = [
   'floatingChatBubbleOnlyWhenUnread',
   'floatingChatBubbleCompact',
   'floatingChatBubbleSystemOverlay',
+  'useAndroidBubblesWhenAvailable',
 ];
 
 export async function loadCrmMobilePrefs(): Promise<CrmMobilePrefs> {

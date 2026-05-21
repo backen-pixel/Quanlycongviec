@@ -24,30 +24,118 @@ const Overlay = NativeModules.FloatingBubbleOverlay as
       saveWebOrigin?: (origin: string) => void;
       showConvBubble?: (groupId: string, title: string, avatarLetter: string) => void;
       hideConvBubble?: (groupId: string) => void;
-      showPeek?: (sender: string, message: string) => void;
+      showPeek?: (sender: string, message: string, bubbleKey: string | null) => void;
       noteConv?: (groupId: string, title: string, avatarLetter: string) => void;
+      noteConvWithAvatar?: (
+        groupId: string,
+        title: string,
+        avatarLetter: string,
+        avatarUrl: string,
+      ) => void;
+      pushIncomingMessage?: (
+        bubbleKey: string,
+        title: string,
+        avatarLetter: string,
+        avatarUrl: string,
+        senderName: string,
+        message: string,
+      ) => void;
       consumePendingGroup?: () => Promise<string | null>;
       minimizeApp?: () => void;
+      // Phase 3: Android Bubbles API
+      areBubblesSupported?: () => Promise<boolean>;
+      postBubbleNotification?: (
+        bubbleKey: string,
+        title: string,
+        senderName: string,
+        message: string,
+        avatarLetter: string,
+        autoExpand: boolean,
+      ) => void;
+      cancelBubbleNotification?: (bubbleKey: string) => void;
+      isBubbleExpanded?: (bubbleKey: string) => Promise<boolean>;
+      saveUserAvatarUrl?: (url: string) => void;
+      showConvBubbleWithAvatar?: (
+        groupId: string,
+        title: string,
+        avatarLetter: string,
+        avatarUrl: string,
+      ) => void;
     }
   | undefined;
 
-function displayTitleForChat(n: AppNotification): { bubbleKey: string; title: string; letter: string } {
-  const meta = (n.metadata && typeof n.metadata === 'object')
+function absoluteAvatarUrl(raw: unknown): string {
+  if (typeof raw !== 'string' || !raw.trim()) return '';
+  const u = raw.trim();
+  if (u.startsWith('http://') || u.startsWith('https://')) return u;
+  const base = (API_ORIGIN || '').replace(/\/$/, '');
+  return base ? `${base}/${u.replace(/^\//, '')}` : u;
+}
+
+function metaRecord(n: AppNotification): Record<string, unknown> {
+  return n.metadata && typeof n.metadata === 'object'
     ? (n.metadata as Record<string, unknown>)
     : {};
+}
+
+function displayTitleForChat(n: AppNotification): {
+  bubbleKey: string;
+  title: string;
+  letter: string;
+  senderName: string;
+  senderLetter: string;
+  senderAvatarUrl: string;
+} {
+  const meta = metaRecord(n);
   const entityId = String(n.entity_id || '');
   const bubbleKey = toBubbleStorageKey(n.type, entityId);
+  const senderName =
+    typeof meta.sender_name === 'string'
+      ? meta.sender_name
+      : typeof meta.sender === 'string'
+        ? meta.sender
+        : 'Tin nhắn mới';
+  const senderLetter = senderName.trim()[0]?.toUpperCase() ?? '?';
+  const senderAvatarUrl = absoluteAvatarUrl(meta.sender_avatar);
 
   if (n.type === 'lead_chat') {
     const leadTitle = n.title || 'Lead';
     const display = `🤝 ${leadTitle}`;
     const letter = display.trim()[0]?.toUpperCase() ?? 'L';
-    return { bubbleKey, title: display, letter };
+    return { bubbleKey, title: display, letter, senderName, senderLetter, senderAvatarUrl };
   }
 
   const groupName = typeof meta.group_name === 'string' ? meta.group_name : (n.title ?? entityId);
   const letter = String(groupName).trim()[0]?.toUpperCase() ?? '?';
-  return { bubbleKey, title: groupName, letter };
+  return { bubbleKey, title: groupName, letter, senderName, senderLetter, senderAvatarUrl };
+}
+
+function pushOverlayBubble(
+  bubbleKey: string,
+  title: string,
+  avatarLetter: string,
+  senderAvatarUrl: string,
+) {
+  if (!Overlay) return;
+  if (senderAvatarUrl && Overlay.showConvBubbleWithAvatar) {
+    Overlay.showConvBubbleWithAvatar(bubbleKey, title, avatarLetter, senderAvatarUrl);
+  } else {
+    Overlay.showConvBubble?.(bubbleKey, title, avatarLetter);
+  }
+}
+
+function noteOverlayConv(
+  bubbleKey: string,
+  title: string,
+  avatarLetter: string,
+  senderAvatarUrl: string,
+) {
+  if (!Overlay) return;
+  if (senderAvatarUrl && Overlay.noteConvWithAvatar) {
+    Overlay.noteConvWithAvatar(bubbleKey, title, avatarLetter, senderAvatarUrl);
+  } else {
+    Overlay.noteConv?.(bubbleKey, title, avatarLetter);
+  }
 }
 
 /**
@@ -86,7 +174,7 @@ export default function SystemBubbleSync() {
       const webOrigin = WEB_APP_ORIGIN || API_ORIGIN;
       if (webOrigin) Overlay.saveWebOrigin?.(webOrigin);
     }
-  }, [token]);
+  }, [token, user]);
 
   useEffect(() => {
     if (Platform.OS !== 'android' || !Overlay) return;
@@ -136,29 +224,63 @@ export default function SystemBubbleSync() {
     if (Platform.OS !== 'android' || !Overlay) return;
     const unsub = subscribeIncoming((n) => {
       if (!isChatNotification(n)) return;
-      const { bubbleKey, title, letter } = displayTitleForChat(n);
+      const { bubbleKey, title, letter, senderName, senderLetter, senderAvatarUrl } =
+        displayTitleForChat(n);
       if (!bubbleKey) return;
 
-      const senderName = typeof (n.metadata as Record<string, unknown>)?.sender_name === 'string'
-        ? (n.metadata as Record<string, unknown>).sender_name as string
-        : typeof (n.metadata as Record<string, unknown>)?.sender === 'string'
-          ? (n.metadata as Record<string, unknown>).sender as string
-          : 'Tin nhắn mới';
       const msgContent = n.message ?? '';
+      // Avatar bong bóng = người gửi tin (giống Messenger), không phải avatar user đăng nhập.
+      const bubbleAvatarLetter = senderLetter || letter;
 
       const isActive = AppState.currentState === 'active';
       if (isActive) {
-        // Trong app: chỉ track im lặng để native nhớ chat mới nhất cho lần tap bubble
-        // sau khi rời app. Không show bubble / peek (đã có toast in-app từ NotificationContext).
-        Overlay.noteConv?.(bubbleKey, title, letter);
+        noteOverlayConv(bubbleKey, title, bubbleAvatarLetter, senderAvatarUrl);
         return;
       }
 
-      Overlay.showConvBubble?.(bubbleKey, title, letter);
-      Overlay.showPeek?.(senderName, msgContent);
+      // Ngoài app — quyết định bubble strategy theo prefs:
+      // 1) Ưu tiên Android Bubbles API (Android 11+, user không cấm) nếu prefs bật.
+      // 2) Fallback overlay tự vẽ (cần SYSTEM_ALERT_WINDOW).
+      void (async () => {
+        const preferBubbles =
+          prefs?.useAndroidBubblesWhenAvailable === true &&
+          Overlay.areBubblesSupported &&
+          Overlay.postBubbleNotification;
+        if (preferBubbles) {
+          try {
+            const supported = await Overlay.areBubblesSupported!();
+            if (supported) {
+              Overlay.postBubbleNotification!(
+                bubbleKey,
+                title,
+                senderName,
+                msgContent,
+                letter,
+                false,
+              );
+              return;
+            }
+          } catch {
+            /* rơi xuống overlay */
+          }
+        }
+        if (Overlay.pushIncomingMessage) {
+          Overlay.pushIncomingMessage(
+            bubbleKey,
+            title,
+            bubbleAvatarLetter,
+            senderAvatarUrl,
+            senderName,
+            msgContent,
+          );
+        } else {
+          pushOverlayBubble(bubbleKey, title, bubbleAvatarLetter, senderAvatarUrl);
+          Overlay.showPeek?.(senderName, msgContent, bubbleKey);
+        }
+      })();
     });
     return unsub;
-  }, [subscribeIncoming]);
+  }, [subscribeIncoming, prefs]);
 
   useEffect(() => {
     if (Platform.OS !== 'android' || !Overlay) return;

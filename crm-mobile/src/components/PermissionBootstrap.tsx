@@ -20,10 +20,11 @@ import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 
 const PERM_LABEL: Record<AppPermissionGap, string> = {
   microphone: '🎙 Micro',
-  notifications: '🔔 Thông báo',
   photos: '🖼 Ảnh / Thư viện',
   camera: '📷 Camera',
-  overlay_android: '💬 Bong bóng chat',
+  location: '📍 Vị trí',
+  notification: '🔔 Thông báo',
+  systemOverlay: '💬 Bong bóng nổi trên app khác',
 };
 
 export default function PermissionBootstrap() {
@@ -61,9 +62,7 @@ export default function PermissionBootstrap() {
       setTimeout(async () => {
         const remaining = await getAppPermissionGaps();
         setGaps(remaining);
-        if (remaining.length === 0 || (remaining.length === 1 && remaining[0] === 'overlay_android')) {
-          setVisible(false);
-        }
+        if (remaining.length === 0) setVisible(false);
         setBusy(false);
       }, 1500);
     } catch {
@@ -78,8 +77,6 @@ export default function PermissionBootstrap() {
   }, []);
 
   if (!visible || gaps.length === 0 || Platform.OS !== 'android') return null;
-
-  const hasOverlay = gaps.includes('overlay_android');
 
   return (
     <Modal visible animationType="fade" transparent statusBarTranslucent onRequestClose={handleSkip}>
@@ -96,12 +93,6 @@ export default function PermissionBootstrap() {
               </View>
             ))}
           </View>
-
-          {hasOverlay && (
-            <Text style={styles.overlayNote}>
-              💡 Bong bóng chat: nhấn «Cấp quyền» → bật công tắc trong Cài đặt hệ thống.
-            </Text>
-          )}
 
           <TouchableOpacity
             style={[styles.btn, busy && styles.btnDisabled]}

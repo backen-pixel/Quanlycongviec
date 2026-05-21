@@ -14,7 +14,6 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as Notifications from 'expo-notifications';
 import type { MoreStackParamList } from '../navigation/types';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
-import { ensureAndroidPostNotificationsPermission } from '../lib/appPermissions';
 import { registerPushToken } from '../lib/pushRegistration';
 
 type Props = NativeStackScreenProps<MoreStackParamList, 'BubblePermissionOnboard'>;
@@ -48,14 +47,11 @@ export default function BubblePermissionOnboardScreen({ navigation }: Props) {
   }, [refresh]);
 
   const stepNotif = async () => {
-    const ok = await ensureAndroidPostNotificationsPermission();
-    if (!ok) {
-      const { status } = await Notifications.requestPermissionsAsync();
-      setNotifOk(status === 'granted');
-      return;
+    const { status } = await Notifications.requestPermissionsAsync();
+    setNotifOk(status === 'granted');
+    if (status === 'granted') {
+      await registerPushToken();
     }
-    setNotifOk(true);
-    await registerPushToken();
   };
 
   const stepOverlay = () => {

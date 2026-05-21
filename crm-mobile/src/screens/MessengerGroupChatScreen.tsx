@@ -1,13 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  BackHandler,
   Dimensions,
   FlatList,
   Image,
   KeyboardAvoidingView,
   Linking,
   Modal,
-  NativeModules,
   Platform,
   Pressable,
   ScrollView,
@@ -34,7 +32,6 @@ import type { MessengerGroupDetail, MessengerMessage } from '../types/messenger'
 import { CrmColors, CrmRadii } from '../theme/crmTheme';
 import { formatDateTime } from '../lib/formatUtils';
 import { chatDebugClear, chatDebugLog, chatDebugSnapshot, chatDebugSubscribe } from '../lib/chatDebug';
-import { setMessengerBubbleTarget } from '../lib/messengerBubbleTarget';
 import { useNotifications } from '../context/NotificationContext';
 
 const { width: SW } = Dimensions.get('window');
@@ -185,6 +182,7 @@ type RecState = 'idle' | 'recording' | 'done';
 interface Props {
   overrideGroupId?: string;
   overrideTitle?: string;
+  /** Đánh dấu screen được mở từ bong bóng (Bubbles/overlay) — Back sẽ moveTaskToBack thay vì pop. */
   overrideFromBubble?: boolean;
 }
 
@@ -192,11 +190,10 @@ interface Props {
 export default function MessengerGroupChatScreen({
   overrideGroupId,
   overrideTitle,
-  overrideFromBubble,
 }: Props = {}) {
   const routeResult = useRoute<R>();
   const params = overrideGroupId
-    ? { groupId: overrideGroupId, title: overrideTitle, isDirect: false, fromBubble: overrideFromBubble }
+    ? { groupId: overrideGroupId, title: overrideTitle, isDirect: false }
     : routeResult.params;
   const navigation = useNavigation<Nav>();
   const { user } = useAuth();
@@ -204,7 +201,7 @@ export default function MessengerGroupChatScreen({
   const insets = useSafeAreaInsets();
   const { refreshUnread } = useNotifications();
 
-  const { groupId, title: titleParam, isDirect: isDirectParam, fromBubble } = params;
+  const { groupId, title: titleParam, isDirect: isDirectParam } = params;
 
   const [group, setGroup] = useState<MessengerGroupDetail | null>(null);
   const [messages, setMessages] = useState<MessengerMessage[]>([]);
@@ -244,18 +241,6 @@ export default function MessengerGroupChatScreen({
     return chatDebugSubscribe(upd);
   }, []);
 
-  /* ── bubble target ─────────────────────────────────── */
-  useEffect(() => { void setMessengerBubbleTarget(groupId, displayTitle); }, [groupId, displayTitle]);
-
-  /* ── back (bubble) ─────────────────────────────────── */
-  useEffect(() => {
-    if (!fromBubble || Platform.OS !== 'android') return;
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      NativeModules.FloatingBubbleOverlay?.minimizeApp?.();
-      return true;
-    });
-    return () => sub.remove();
-  }, [fromBubble]);
 
   /* ── load ──────────────────────────────────────────── */
   const loadAll = useCallback(async () => {

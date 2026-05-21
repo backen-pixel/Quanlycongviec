@@ -1,5 +1,5 @@
-import { registerRootComponent } from 'expo';
 import { AppRegistry } from 'react-native';
+import { registerRootComponent } from 'expo';
 
 import App from './App';
 import BubbleChatApp from './src/screens/BubbleChatApp';
@@ -9,5 +9,6 @@ import BubbleChatApp from './src/screens/BubbleChatApp';
 // the environment is set up appropriately
 registerRootComponent(App);
 
-// Component riêng cho BubbleChatActivity (Android Bubbles floating window)
+// Component riêng cho BubbleChatActivity (Android Bubbles API).
+// Activity native gọi getMainComponentName() = "BubbleChatApp".
 AppRegistry.registerComponent('BubbleChatApp', () => BubbleChatApp);

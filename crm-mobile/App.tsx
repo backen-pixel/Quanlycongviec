@@ -14,10 +14,6 @@ import FloatingChatBubble from './src/components/FloatingChatBubble';
 import SystemBubbleSync from './src/components/SystemBubbleSync';
 import { CrmColors } from './src/theme/crmTheme';
 import { useCrmAndroidSystemUi } from './src/lib/useCrmAndroidSystemUi';
-import { setupNotificationChannels } from './src/lib/appPermissions';
-
-// Khởi tạo channels ngay khi module load (trước khi App render)
-void setupNotificationChannels();
 
 const NavTheme = {
   ...DefaultTheme,
