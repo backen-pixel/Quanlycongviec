@@ -27,6 +27,7 @@ import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { formatDateTime } from '../lib/formatUtils';
 import { openWebPath } from '../lib/openWeb';
 import { chatDebugClear, chatDebugLog, chatDebugSnapshot, chatDebugSubscribe } from '../lib/chatDebug';
+import { setForegroundLead } from '../lib/bubbleRealtimeSocket';
 
 type Props = { leadId: string };
 
@@ -108,6 +109,12 @@ export default function LeadChatPanel({ leadId }: Props) {
   useEffect(() => {
     void loadChat();
   }, [loadChat]);
+
+  useEffect(() => {
+    if (!leadId) return;
+    setForegroundLead(leadId);
+    return () => setForegroundLead(null);
+  }, [leadId]);
 
   useEffect(() => {
     if (!token || !leadId) return;

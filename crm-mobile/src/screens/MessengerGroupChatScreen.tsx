@@ -33,6 +33,7 @@ import { CrmColors, CrmRadii } from '../theme/crmTheme';
 import { formatDateTime } from '../lib/formatUtils';
 import { chatDebugClear, chatDebugLog, chatDebugSnapshot, chatDebugSubscribe } from '../lib/chatDebug';
 import { useNotifications } from '../context/NotificationContext';
+import { setForegroundGroup } from '../lib/bubbleRealtimeSocket';
 
 const { width: SW } = Dimensions.get('window');
 const CHAT_BG = '#EAE6DF';
@@ -363,6 +364,8 @@ export default function MessengerGroupChatScreen({
       void refreshUnread();
       void loadAll();
       void api.patch(`/messenger/groups/${groupId}/read`).catch(() => {});
+      setForegroundGroup(groupId);
+      return () => setForegroundGroup(null);
     }, [refreshUnread, loadAll, groupId]),
   );
 

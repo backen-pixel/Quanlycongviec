@@ -360,6 +360,71 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
   }
 
   /**
+   * Realtime — JS push 1 tin nhắn mới vào cache + refresh panel nếu đang mở.
+   * `msgJson` = JSON object 1 tin (id, sender, senderId, text, avatar, ts,
+   * messageType, attachmentUrl, attachmentMime, reactions[]).
+   */
+  @ReactMethod
+  fun appendMessage(bubbleKey: String, msgJson: String) {
+    try {
+      val o = org.json.JSONObject(msgJson)
+      val currentUid = appCtx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .getString(KEY_CURRENT_USER_ID, null) ?: ""
+      val rxArr = o.optJSONArray("reactions")
+      val rx = if (rxArr != null) {
+        List(rxArr.length()) { idx ->
+          val r = rxArr.getJSONObject(idx)
+          ConversationCache.Reaction(
+            emoji = r.optString("emoji", ""),
+            userId = r.optString("user_id", ""),
+          )
+        }.filter { it.emoji.isNotBlank() }
+      } else emptyList()
+      val senderId = o.optString("senderId", "")
+      val msg = ConversationCache.Msg(
+        id = o.optString("id", ""),
+        sender = o.optString("sender", ""),
+        senderId = senderId,
+        text = o.optString("text", ""),
+        avatar = o.optString("avatar", "").takeIf { it.isNotBlank() },
+        ts = o.optLong("ts", System.currentTimeMillis()),
+        messageType = o.optString("messageType", "text").ifBlank { "text" },
+        attachmentUrl = o.optString("attachmentUrl", "").takeIf { it.isNotBlank() },
+        attachmentMime = o.optString("attachmentMime", "").takeIf { it.isNotBlank() },
+        reactions = rx,
+        mine = currentUid.isNotBlank() && senderId == currentUid,
+      )
+      ConversationCache.append(appCtx, bubbleKey, msg)
+      val intent = android.content.Intent(appCtx, OverlayBubbleService::class.java).apply {
+        action = OverlayBubbleService.ACTION_REFRESH_PANEL
+        putExtra(OverlayBubbleService.EXTRA_KEY, bubbleKey)
+      }
+      try { androidx.core.content.ContextCompat.startForegroundService(appCtx, intent) } catch (_: Throwable) {}
+    } catch (_: Throwable) {}
+  }
+
+  /** Realtime — JS push reactions mới (sau khi nhận socket `group:reactions`). */
+  @ReactMethod
+  fun updateMessageReactions(bubbleKey: String, messageId: String, reactionsJson: String) {
+    try {
+      val arr = org.json.JSONArray(reactionsJson)
+      val rx = List(arr.length()) { i ->
+        val r = arr.getJSONObject(i)
+        ConversationCache.Reaction(
+          emoji = r.optString("emoji", ""),
+          userId = r.optString("user_id", ""),
+        )
+      }.filter { it.emoji.isNotBlank() }
+      ConversationCache.updateReactions(appCtx, bubbleKey, messageId, rx)
+      val intent = android.content.Intent(appCtx, OverlayBubbleService::class.java).apply {
+        action = OverlayBubbleService.ACTION_REFRESH_PANEL
+        putExtra(OverlayBubbleService.EXTRA_KEY, bubbleKey)
+      }
+      try { androidx.core.content.ContextCompat.startForegroundService(appCtx, intent) } catch (_: Throwable) {}
+    } catch (_: Throwable) {}
+  }
+
+  /**
    * JS seed danh sách tin nhắn cho 1 conversation (gọi sau khi panel mở).
    * `msgsJson` = JSON array các object {sender, text, avatar, ts}.
    * Lấy service instance qua service connection nhẹ — đơn giản bằng cách

@@ -792,6 +792,7 @@ r.post('/groups/:id/chat/:msgId/react', async (req, res) => {
     const io = req.app.get('io');
     if (io) {
       io.to(`messenger_group:${req.params.id}`).emit('messenger_group:reactions', {
+        group_id: req.params.id,
         message_id: req.params.msgId,
         reactions: reactions || [],
       });
