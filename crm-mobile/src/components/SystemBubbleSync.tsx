@@ -13,6 +13,7 @@ import { toBubbleStorageKey, parseBubbleStorageKey } from '../lib/bubbleNativeEv
 import { markLeadChatRead, markMessengerGroupRead } from '../lib/markChatRead';
 import type { AppNotification } from '../types/notifications';
 import { api } from '../api/client';
+import { startBubbleRealtime, stopBubbleRealtime } from '../lib/bubbleRealtimeSocket';
 
 const Overlay = NativeModules.FloatingBubbleOverlay as
   | {
@@ -180,6 +181,19 @@ export default function SystemBubbleSync() {
     }
   }, [token, user]);
 
+  // Realtime: 1 socket join mọi nhóm — bong bóng cập nhật ngay khi có tin mới
+  // (không phụ thuộc Expo Push, vốn có 1-3s latency).
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const uid = user?.id || user?.userId || '';
+    if (token && uid) {
+      void startBubbleRealtime(String(uid));
+    }
+    return () => {
+      if (!token) stopBubbleRealtime();
+    };
+  }, [token, user]);
+
   useEffect(() => {
     if (Platform.OS !== 'android' || !Overlay) return;
 
@@ -255,20 +269,7 @@ export default function SystemBubbleSync() {
 
       const isActive = AppState.currentState === 'active';
       if (isActive) {
-        // App foreground: vẫn forward vào native cache để khung chat nổi
-        // (nếu user đang mở) cập nhật tức thời, không phải chờ poll 3s.
-        if (Overlay.pushIncomingMessage) {
-          Overlay.pushIncomingMessage(
-            bubbleKey,
-            title,
-            bubbleAvatarLetter,
-            senderAvatarUrl,
-            senderName,
-            msgContent,
-          );
-        } else {
-          noteOverlayConv(bubbleKey, title, bubbleAvatarLetter, senderAvatarUrl);
-        }
+        noteOverlayConv(bubbleKey, title, bubbleAvatarLetter, senderAvatarUrl);
         return;
       }
 
