@@ -23,6 +23,7 @@ const Overlay = NativeModules.FloatingBubbleOverlay as
       consumeOpenMessenger?: () => Promise<boolean>;
       saveAuthToken?: (token: string) => void;
       saveWebOrigin?: (origin: string) => void;
+      saveCurrentUserId?: (id: string) => void;
       showConvBubble?: (groupId: string, title: string, avatarLetter: string) => void;
       hideConvBubble?: (groupId: string) => void;
       showPeek?: (sender: string, message: string, bubbleKey: string | null) => void;
@@ -171,12 +172,11 @@ export default function SystemBubbleSync() {
     if (token && token !== lastTokenRef.current) {
       lastTokenRef.current = token;
       Overlay.saveAuthToken?.(token);
-      // Web origin để overlay WebView mở /crm/messenger?openGroup=...
-      // Backend của TuBep cũng phục vụ frontend SPA cùng host, nên dùng API_ORIGIN
-      // làm fallback khi user chưa set EXPO_PUBLIC_WEB_APP_URL.
       const webOrigin = WEB_APP_ORIGIN || API_ORIGIN;
       if (webOrigin) Overlay.saveWebOrigin?.(webOrigin);
       if (API_ORIGIN) Overlay.saveApiOrigin?.(API_ORIGIN);
+      const uid = user?.id || user?.userId || '';
+      if (uid) Overlay.saveCurrentUserId?.(String(uid));
     }
   }, [token, user]);
 
@@ -255,7 +255,20 @@ export default function SystemBubbleSync() {
 
       const isActive = AppState.currentState === 'active';
       if (isActive) {
-        noteOverlayConv(bubbleKey, title, bubbleAvatarLetter, senderAvatarUrl);
+        // App foreground: vẫn forward vào native cache để khung chat nổi
+        // (nếu user đang mở) cập nhật tức thời, không phải chờ poll 3s.
+        if (Overlay.pushIncomingMessage) {
+          Overlay.pushIncomingMessage(
+            bubbleKey,
+            title,
+            bubbleAvatarLetter,
+            senderAvatarUrl,
+            senderName,
+            msgContent,
+          );
+        } else {
+          noteOverlayConv(bubbleKey, title, bubbleAvatarLetter, senderAvatarUrl);
+        }
         return;
       }
 

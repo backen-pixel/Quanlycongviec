@@ -31,8 +31,15 @@ class OverlayBubbleService : Service() {
   /** key → bubble đang gắn trên WindowManager */
   private val managed = LinkedHashMap<String, ManagedBubble>()
   private var dropTargetView: View? = null
+  private var dropZoneScrim: View? = null
   private var draggingKey: String? = null
   private var globalBadge = 0
+  private var lastBubbleScale: Float = 1f
+  // Fling-down detect: dấu thời gian + Y mới nhất khi drag, để tính vận tốc thả xuống
+  private var dragStartTs: Long = 0L
+  private var dragStartY: Float = 0f
+  private var dragLastY: Float = 0f
+  private var dragLastTs: Long = 0L
 
   private var peekView: View? = null
   private var peekForKey: String? = null
@@ -41,6 +48,11 @@ class OverlayBubbleService : Service() {
 
   /** Khung chat mở rộng (native overlay, không React). */
   private val expandedPanel by lazy { ExpandedChatPanel(this, this) }
+
+  // ---- Realtime polling (panel mở) ----
+  private val pollHandler = android.os.Handler(android.os.Looper.getMainLooper())
+  private var pollRunnable: Runnable? = null
+  private val POLL_INTERVAL_MS = 3000L
 
   private data class ManagedBubble(
     val key: String,
@@ -70,7 +82,19 @@ class OverlayBubbleService : Service() {
         if (!sender.isNullOrBlank() && !message.isNullOrBlank()) {
           ConversationCache.append(
             this, key,
-            ConversationCache.Msg(sender, message, avatarUrl, System.currentTimeMillis()),
+            ConversationCache.Msg(
+              id = "",
+              sender = sender,
+              senderId = "",
+              text = message,
+              avatar = avatarUrl,
+              ts = System.currentTimeMillis(),
+              messageType = "text",
+              attachmentUrl = null,
+              attachmentMime = null,
+              reactions = emptyList(),
+              mine = false,
+            ),
           )
           // Nếu panel đang mở cho conversation này → refresh ngay
           if (expandedPanel.isShowing()) expandedPanel.onIncoming(key)
@@ -119,6 +143,7 @@ class OverlayBubbleService : Service() {
   }
 
   override fun onDestroy() {
+    stopRealtimePolling()
     clearAllBubbles()
     super.onDestroy()
   }
@@ -209,14 +234,35 @@ class OverlayBubbleService : Service() {
       override fun onLongPress() = handleLongPress(entry.key)
       override fun onDragStart() {
         draggingKey = entry.key
+        dragStartTs = System.currentTimeMillis()
+        dragStartY = 0f
+        dragLastY = 0f
+        dragLastTs = dragStartTs
         bringToFront(entry.key)
         showDropTarget()
       }
-      override fun onDragMove(rawX: Float, rawY: Float) = moveBubble(entry.key, rawX, rawY, sizePx)
+      override fun onDragMove(rawX: Float, rawY: Float) {
+        if (dragStartY == 0f) dragStartY = rawY
+        dragLastY = rawY
+        dragLastTs = System.currentTimeMillis()
+        moveBubble(entry.key, rawX, rawY, sizePx)
+        // Phóng to + rung nhẹ khi vào vùng drop
+        val over = isOverDropTarget(rawX, rawY, sizePx)
+        val mb = managed[entry.key] ?: return
+        val targetScale = if (over) 1.15f else 1f
+        if (targetScale != lastBubbleScale) {
+          lastBubbleScale = targetScale
+          mb.view.animate().scaleX(targetScale).scaleY(targetScale).setDuration(120).start()
+          if (over) mb.view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+          highlightDropTarget(over)
+        }
+      }
       override fun onDragEnd(rawX: Float, rawY: Float, droppedToDismiss: Boolean) {
-        // QUAN TRỌNG: kiểm tra drop trước khi reset draggingKey,
-        // vì isOverDropTarget cần draggingKey để xác định vị trí bubble.
-        val dropped = isOverDropTarget(rawX, rawY, sizePx)
+        // QUAN TRỌNG: kiểm tra drop trước khi reset draggingKey.
+        val dropped = isOverDropTarget(rawX, rawY, sizePx) || isFlingDown(rawY)
+        // Reset scale
+        managed[entry.key]?.view?.animate()?.scaleX(1f)?.scaleY(1f)?.setDuration(120)?.start()
+        lastBubbleScale = 1f
         draggingKey = null
         hideDropTarget()
         if (dropped) {
@@ -381,19 +427,55 @@ class OverlayBubbleService : Service() {
 
   private fun showDropTarget() {
     if (dropTargetView != null) return
-    val sizePx = dp(72f).toInt()
+    val metrics = resources.displayMetrics
+    // 1) Vùng gradient ĐỎ chiếm 30% chiều cao dưới — visual rõ hơn
+    val zoneH = (metrics.heightPixels * 0.30f).toInt()
+    val scrim = View(this).apply {
+      background = android.graphics.drawable.GradientDrawable(
+        android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+        intArrayOf(0x00EF4444, 0x55EF4444, 0x99DC2626.toInt()),
+      )
+    }
+    val scrimParams = WindowManager.LayoutParams(
+      WindowManager.LayoutParams.MATCH_PARENT, zoneH, 0, 0,
+      overlayWindowType(),
+      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+      PixelFormat.TRANSLUCENT,
+    ).apply { gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL }
+    try {
+      wm.addView(scrim, scrimParams)
+      dropZoneScrim = scrim
+    } catch (_: Throwable) {}
+
+    // 2) Icon thùng rác + nhãn ở giữa
+    val sizePx = dp(96f).toInt()
     val container = FrameLayout(this).apply {
       background = android.graphics.drawable.GradientDrawable().apply {
         shape = android.graphics.drawable.GradientDrawable.OVAL
-        setColor(android.graphics.Color.parseColor("#33EF4444"))
-        setStroke(dp(2f).toInt(), android.graphics.Color.parseColor("#A0EF4444"))
+        setColor(android.graphics.Color.parseColor("#EFEF4444"))
+        setStroke(dp(3f).toInt(), android.graphics.Color.WHITE)
       }
-      addView(android.widget.TextView(this@OverlayBubbleService).apply {
-        text = "×"
-        setTextColor(android.graphics.Color.parseColor("#DC2626"))
+      val col = android.widget.LinearLayout(this@OverlayBubbleService).apply {
+        orientation = android.widget.LinearLayout.VERTICAL
+        gravity = Gravity.CENTER
+      }
+      col.addView(android.widget.TextView(this@OverlayBubbleService).apply {
+        text = "🗑"
+        setTextColor(android.graphics.Color.WHITE)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
         gravity = Gravity.CENTER
-      }, FrameLayout.LayoutParams(
+      })
+      col.addView(android.widget.TextView(this@OverlayBubbleService).apply {
+        text = "Thả để xoá"
+        setTextColor(android.graphics.Color.WHITE)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+        gravity = Gravity.CENTER
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+      })
+      addView(col, FrameLayout.LayoutParams(
         FrameLayout.LayoutParams.MATCH_PARENT,
         FrameLayout.LayoutParams.MATCH_PARENT,
       ))
@@ -410,13 +492,34 @@ class OverlayBubbleService : Service() {
     try {
       wm.addView(container, params)
       dropTargetView = container
+      container.scaleX = 1f; container.scaleY = 1f
     } catch (_: Throwable) {}
   }
 
-  private fun hideDropTarget() {
+  private fun highlightDropTarget(active: Boolean) {
     val v = dropTargetView ?: return
-    try { wm.removeView(v) } catch (_: Throwable) {}
+    val target = if (active) 1.18f else 1f
+    v.animate().scaleX(target).scaleY(target).setDuration(120).start()
+  }
+
+  private fun hideDropTarget() {
+    dropTargetView?.let { v -> try { wm.removeView(v) } catch (_: Throwable) {} }
     dropTargetView = null
+    dropZoneScrim?.let { v -> try { wm.removeView(v) } catch (_: Throwable) {} }
+    dropZoneScrim = null
+  }
+
+  /**
+   * Fling-down guard: nếu user vẫy ngón tay xuống đáy rất nhanh
+   * (>800px / 300ms), tự động xoá bubble — giúp user vứt nhanh
+   * mà không cần kéo đúng vùng drop.
+   */
+  private fun isFlingDown(rawY: Float): Boolean {
+    if (dragStartY == 0f) return false
+    val dt = (dragLastTs - dragStartTs).coerceAtLeast(1)
+    val dy = dragLastY - dragStartY
+    if (dt > 300) return false
+    return dy > dp(800f / resources.displayMetrics.density)
   }
 
   private fun isOverDropTarget(rawX: Float, rawY: Float, sizePx: Int): Boolean {
@@ -432,18 +535,21 @@ class OverlayBubbleService : Service() {
 
   // ---- Avatar ----
 
-  private val loadedAvatars = java.util.concurrent.ConcurrentHashMap<String, android.graphics.Bitmap>()
   private val ioExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
   private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
   private fun loadAvatarAsync(url: String, target: BubbleOverlayView) {
-    loadedAvatars[url]?.let {
+    AvatarCache.get(url)?.let {
       target.setAvatarBitmap(it)
       return
     }
     ioExecutor.execute {
-      val bmp = fetchBitmap(url) ?: return@execute
-      loadedAvatars[url] = bmp
+      val bmp = fetchBitmap(url)
+      if (bmp == null) {
+        android.util.Log.w("OverlayBubble", "avatar fetch failed: $url")
+        return@execute
+      }
+      AvatarCache.put(url, bmp)
       mainHandler.post { target.setAvatarBitmap(bmp) }
     }
   }
@@ -498,8 +604,38 @@ class OverlayBubbleService : Service() {
         expandedPanel.onIncoming(key)
       }
     }
+    // Bắt đầu polling realtime cho conversation đang mở
+    startRealtimePolling()
     // Vẫn phát event để app đang chạy có thể seed thêm / mark read.
     notifyPanelOpened(key)
+  }
+
+  /**
+   * Realtime: trong khi panel mở, lặp fetch lịch sử mỗi 3s.
+   * Đây là cơ chế FALLBACK — luôn chạy bất kể React còn sống hay không.
+   * Khi JS sống thêm, JS có thể gọi seedConversationMessages trực tiếp (nhanh hơn).
+   */
+  private fun startRealtimePolling() {
+    stopRealtimePolling()
+    val r = object : Runnable {
+      override fun run() {
+        val key = expandedPanel.currentKey()
+        if (!expandedPanel.isShowing() || key == null) return
+        ChatHistoryFetcher.seedAsync(this@OverlayBubbleService, key) { count ->
+          if (count > 0 && expandedPanel.isShowing() && expandedPanel.currentKey() == key) {
+            expandedPanel.onIncoming(key)
+          }
+        }
+        pollHandler.postDelayed(this, POLL_INTERVAL_MS)
+      }
+    }
+    pollRunnable = r
+    pollHandler.postDelayed(r, POLL_INTERVAL_MS)
+  }
+
+  private fun stopRealtimePolling() {
+    pollRunnable?.let { pollHandler.removeCallbacks(it) }
+    pollRunnable = null
   }
 
   /** Gửi event qua React để JS fetch messages và seed cache. */
@@ -519,8 +655,7 @@ class OverlayBubbleService : Service() {
 
   /** JS gọi để nạp/cập nhật danh sách tin nhắn cho 1 conversation. */
   fun seedMessages(key: String, msgs: List<ConversationCache.Msg>) {
-    ConversationCache.clear(this, key)
-    for (m in msgs) ConversationCache.append(this, key, m)
+    ConversationCache.replaceAll(this, key, msgs)
     if (expandedPanel.isShowing() && expandedPanel.currentKey() == key) {
       expandedPanel.onIncoming(key)
     }
@@ -528,6 +663,7 @@ class OverlayBubbleService : Service() {
 
   fun collapsePanel() {
     if (!expandedPanel.isShowing()) return
+    stopRealtimePolling()
     expandedPanel.hide(wm)
     for (mb in managed.values) mb.view.visibility = View.VISIBLE
     layoutStackPositions()
@@ -535,6 +671,13 @@ class OverlayBubbleService : Service() {
 
   fun switchPanelTo(key: String) {
     expandedPanel.switchTo(key)
+    // Re-trigger polling cho conversation mới + fetch lịch sử ngay
+    ChatHistoryFetcher.seedAsync(this, key) { count ->
+      if (count > 0 && expandedPanel.isShowing() && expandedPanel.currentKey() == key) {
+        expandedPanel.onIncoming(key)
+      }
+    }
+    startRealtimePolling()
   }
 
   fun dismissBubbleAndPanel(key: String) {

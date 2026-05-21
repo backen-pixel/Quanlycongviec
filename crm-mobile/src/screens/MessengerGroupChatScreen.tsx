@@ -173,6 +173,99 @@ function AudioPlayer({ url, mine }: { url: string; mine: boolean }) {
   );
 }
 
+/* ─── Reactions UI ───────────────────────────────────────────────
+ * 6 emoji giống Messenger / Lead chat: ❤️ 👍 😆 😮 😢 🙏.
+ * Hiển thị badge nhỏ dưới bubble, gom theo emoji + đếm số lượng,
+ * highlight nếu user hiện tại đã thả emoji đó (tap → toggle).
+ */
+const REACTION_EMOJIS = ['❤️', '👍', '😆', '😮', '😢', '🙏'];
+
+function ReactionsBadge({
+  reactions,
+  myId,
+  mine,
+  onToggle,
+}: {
+  reactions: { user_id: string; emoji: string }[];
+  myId: string;
+  mine: boolean;
+  onToggle: (emoji: string) => void;
+}) {
+  if (!reactions || reactions.length === 0) return null;
+  const counts = new Map<string, number>();
+  const minePicked = new Set<string>();
+  for (const r of reactions) {
+    counts.set(r.emoji, (counts.get(r.emoji) || 0) + 1);
+    if (r.user_id === myId) minePicked.add(r.emoji);
+  }
+  return (
+    <View style={[reactBadgeStyles.row, mine ? { alignSelf: 'flex-end' } : { alignSelf: 'flex-start' }]}>
+      {Array.from(counts.entries()).map(([emo, n]) => {
+        const isMine = minePicked.has(emo);
+        return (
+          <TouchableOpacity
+            key={emo}
+            onPress={() => onToggle(emo)}
+            style={[reactBadgeStyles.chip, isMine && reactBadgeStyles.chipMine]}
+          >
+            <Text style={reactBadgeStyles.emoji}>{emo}</Text>
+            {n > 1 ? (
+              <Text style={[reactBadgeStyles.count, isMine && reactBadgeStyles.countMine]}>{n}</Text>
+            ) : null}
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
+
+const reactBadgeStyles = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    marginTop: -8,
+    marginHorizontal: 4,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 14,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+  },
+  chip: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4 },
+  chipMine: {},
+  emoji: { fontSize: 14 },
+  count: { fontSize: 11, color: '#374151', marginLeft: 2 },
+  countMine: { color: BUBBLE_ME, fontWeight: '700' },
+});
+
+const reactPickerStyles = StyleSheet.create({
+  sheet: {
+    marginHorizontal: 24,
+    marginTop: 'auto',
+    marginBottom: 'auto',
+    backgroundColor: '#fff',
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  title: { fontWeight: '700', fontSize: 15, color: '#0F172A', marginBottom: 10 },
+  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  btn: { padding: 6 },
+  emoji: { fontSize: 30 },
+  reply: {
+    marginTop: 14,
+    paddingVertical: 10,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  replyTxt: { color: '#374151', fontWeight: '600' },
+});
+
 /* ─── types ────────────────────────────────────────────────────── */
 type R = RouteProp<MoreStackParamList, 'MessengerGroupChat'>;
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'MessengerGroupChat'>;
@@ -215,6 +308,8 @@ export default function MessengerGroupChatScreen({
   const [mediaOpen, setMediaOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugText, setDebugText] = useState('');
+  // Reactions: nhấn giữ bubble → hiện popup 6 emoji
+  const [reactPickerFor, setReactPickerFor] = useState<MessengerMessage | null>(null);
 
   // Voice recording
   const [recState, setRecState] = useState<RecState>('idle');
@@ -300,6 +395,19 @@ export default function MessengerGroupChatScreen({
         });
       });
       socket.on('messenger_group:members', () => void loadAll());
+      socket.on(
+        'messenger_group:reactions',
+        (payload: { message_id: string; reactions: { user_id: string; emoji: string }[] }) => {
+          if (!payload?.message_id) return;
+          setMessages((prev) =>
+            prev.map((m) =>
+              String(m.id) === String(payload.message_id)
+                ? { ...m, reactions: payload.reactions || [] }
+                : m,
+            ),
+          );
+        },
+      );
     })();
     return () => {
       cancelled = true;
@@ -525,7 +633,7 @@ export default function MessengerGroupChatScreen({
               ) : null}
               <Pressable
                 style={[s.bubble, mine ? s.bubbleMine : s.bubbleOther]}
-                onLongPress={() => setReplyTo(item)}
+                onLongPress={() => setReactPickerFor(item)}
               >
                 {item.reply_to ? (
                   <View style={[s.replyBar, mine && s.replyBarMine]}>
@@ -577,12 +685,48 @@ export default function MessengerGroupChatScreen({
                   {formatDateTime(item.created_at)}
                 </Text>
               </Pressable>
+              <ReactionsBadge
+                reactions={item.reactions || []}
+                myId={myId}
+                mine={mine}
+                onToggle={(emo) => void toggleReaction(String(item.id), emo)}
+              />
             </View>
           </View>
         </View>
       );
     },
     [myId, isDirectChat, messages],
+  );
+
+  // Toggle 1 emoji reaction — optimistic update + gọi API.
+  const toggleReaction = useCallback(
+    async (messageId: string, emoji: string) => {
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (String(m.id) !== messageId) return m;
+          const rx = Array.isArray(m.reactions) ? m.reactions.slice() : [];
+          const idx = rx.findIndex((r) => r.user_id === myId && r.emoji === emoji);
+          if (idx >= 0) rx.splice(idx, 1);
+          else rx.push({ user_id: myId, emoji });
+          return { ...m, reactions: rx };
+        }),
+      );
+      try {
+        const res = await api.post<{ reactions: { user_id: string; emoji: string }[] }>(
+          `/messenger/groups/${groupId}/chat/${messageId}/react`,
+          { emoji },
+        );
+        const rx = res.data?.reactions || [];
+        setMessages((prev) =>
+          prev.map((m) => (String(m.id) === messageId ? { ...m, reactions: rx } : m)),
+        );
+      } catch {
+        // Rollback đơn giản: reload lại từ server
+        void loadAll();
+      }
+    },
+    [groupId, myId, loadAll],
   );
 
   const replyLabel = useMemo(() => {
@@ -770,6 +914,48 @@ export default function MessengerGroupChatScreen({
           </TouchableOpacity>
         </View>
       ) : null}
+
+      {/* ── Reactions Picker (bottom sheet) ── */}
+      <Modal
+        visible={!!reactPickerFor}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setReactPickerFor(null)}
+      >
+        <Pressable style={s.modalBg} onPress={() => setReactPickerFor(null)}>
+          <Pressable
+            style={reactPickerStyles.sheet}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <Text style={reactPickerStyles.title}>Thả cảm xúc</Text>
+            <View style={reactPickerStyles.row}>
+              {REACTION_EMOJIS.map((emo) => (
+                <TouchableOpacity
+                  key={emo}
+                  style={reactPickerStyles.btn}
+                  onPress={() => {
+                    const target = reactPickerFor;
+                    setReactPickerFor(null);
+                    if (target) void toggleReaction(String(target.id), emo);
+                  }}
+                >
+                  <Text style={reactPickerStyles.emoji}>{emo}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TouchableOpacity
+              style={reactPickerStyles.reply}
+              onPress={() => {
+                const target = reactPickerFor;
+                setReactPickerFor(null);
+                if (target) setReplyTo(target);
+              }}
+            >
+              <Text style={reactPickerStyles.replyTxt}>↩ Trả lời tin nhắn này</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* ── Group Info Modal ── */}
       <Modal visible={infoOpen} transparent animationType="slide" onRequestClose={() => setInfoOpen(false)}>
