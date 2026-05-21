@@ -141,7 +141,12 @@ async function notifyMessengerGroupChatRecipients(req, groupId, senderId, msgRow
     `${senderName}: ${preview}`,
     'messenger_group',
     groupId,
-    { group_name: groupName || null },
+    {
+      group_name: groupName || null,
+      sender_name: senderName,
+      sender_avatar: msgRow.user?.avatar || null,
+      group_avatar: null,
+    },
   );
 }
 
@@ -729,7 +734,69 @@ r.get('/groups/:id/chat', async (req, res) => {
         return { ...m, user: um.get(String(m.user_id)) || null };
       });
     }
+    // Gắn reactions (nếu bảng có)
+    try {
+      const msgIds = rows.map((m) => m.id).filter(Boolean);
+      if (msgIds.length) {
+        const { data: rx } = await supabase
+          .from('messenger_message_reactions')
+          .select('message_id, user_id, emoji')
+          .in('message_id', msgIds);
+        if (Array.isArray(rx) && rx.length) {
+          const grouped = new Map();
+          for (const r of rx) {
+            const arr = grouped.get(r.message_id) || [];
+            arr.push(r);
+            grouped.set(r.message_id, arr);
+          }
+          rows = rows.map((m) => ({ ...m, reactions: grouped.get(m.id) || [] }));
+        }
+      }
+    } catch (_) {
+      /* bảng chưa migrate — bỏ qua */
+    }
     res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /messenger/groups/:id/chat/:msgId/react — toggle 1 emoji
+r.post('/groups/:id/chat/:msgId/react', async (req, res) => {
+  try {
+    const ok = await assertGroupMember(req.params.id, req.authUserId);
+    if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
+    const emoji = String(req.body?.emoji || '').trim();
+    if (!emoji) return res.status(400).json({ error: 'Thiếu emoji' });
+
+    const { data: existing } = await supabase
+      .from('messenger_message_reactions')
+      .select('id')
+      .eq('message_id', req.params.msgId)
+      .eq('user_id', req.authUserId)
+      .eq('emoji', emoji)
+      .maybeSingle();
+    if (existing) {
+      await supabase.from('messenger_message_reactions').delete().eq('id', existing.id);
+    } else {
+      await supabase.from('messenger_message_reactions').insert({
+        message_id: req.params.msgId,
+        user_id: req.authUserId,
+        emoji,
+      });
+    }
+    const { data: reactions } = await supabase
+      .from('messenger_message_reactions')
+      .select('user_id, emoji, created_at')
+      .eq('message_id', req.params.msgId);
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`messenger_group:${req.params.id}`).emit('messenger_group:reactions', {
+        message_id: req.params.msgId,
+        reactions: reactions || [],
+      });
+    }
+    res.json({ reactions: reactions || [] });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

@@ -258,6 +258,39 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
     prefs.edit().putString(KEY_API_ORIGIN, origin.trimEnd('/')).apply()
   }
 
+  /** Lưu user id hiện tại — overlay panel cần để biết tin nào là "của mình". */
+  @ReactMethod
+  fun saveCurrentUserId(userId: String) {
+    prefs.edit().putString(KEY_CURRENT_USER_ID, userId).apply()
+  }
+
+  /**
+   * Lấy FCM token (Firebase Messaging) để JS đăng ký với backend platform=fcm.
+   * Trả null nếu Firebase chưa init (không có google-services.json) hoặc lỗi.
+   */
+  @ReactMethod
+  fun getFcmToken(promise: Promise) {
+    try {
+      val cached = prefs.getString(KEY_PENDING_FCM_TOKEN, null)
+      val fm = com.google.firebase.messaging.FirebaseMessaging.getInstance()
+      fm.token.addOnCompleteListener { task ->
+        if (task.isSuccessful) {
+          val t = task.result
+          if (!t.isNullOrBlank()) {
+            prefs.edit().putString(KEY_PENDING_FCM_TOKEN, t).apply()
+            promise.resolve(t)
+          } else {
+            promise.resolve(cached)
+          }
+        } else {
+          promise.resolve(cached)
+        }
+      }
+    } catch (_: Throwable) {
+      promise.resolve(null)
+    }
+  }
+
   // ---------- Routing khi user tap bubble từ ngoài app ----------
 
   /**
@@ -336,20 +369,39 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
   fun seedConversationMessages(bubbleKey: String, msgsJson: String) {
     try {
       val arr = org.json.JSONArray(msgsJson)
-      ConversationCache.clear(appCtx, bubbleKey)
+      val msgs = ArrayList<ConversationCache.Msg>(arr.length())
+      val currentUid = appCtx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .getString(KEY_CURRENT_USER_ID, null) ?: ""
       for (i in 0 until arr.length()) {
         val o = arr.getJSONObject(i)
-        ConversationCache.append(
-          appCtx,
-          bubbleKey,
+        val rxArr = o.optJSONArray("reactions")
+        val rx = if (rxArr != null) {
+          List(rxArr.length()) { idx ->
+            val r = rxArr.getJSONObject(idx)
+            ConversationCache.Reaction(
+              emoji = r.optString("emoji", ""),
+              userId = r.optString("user_id", ""),
+            )
+          }.filter { it.emoji.isNotBlank() }
+        } else emptyList()
+        val senderId = o.optString("senderId", "")
+        msgs.add(
           ConversationCache.Msg(
+            id = o.optString("id", ""),
             sender = o.optString("sender", ""),
+            senderId = senderId,
             text = o.optString("text", ""),
             avatar = o.optString("avatar", "").takeIf { it.isNotBlank() },
             ts = o.optLong("ts", System.currentTimeMillis()),
+            messageType = o.optString("messageType", "text").ifBlank { "text" },
+            attachmentUrl = o.optString("attachmentUrl", "").takeIf { it.isNotBlank() },
+            attachmentMime = o.optString("attachmentMime", "").takeIf { it.isNotBlank() },
+            reactions = rx,
+            mine = currentUid.isNotBlank() && senderId == currentUid,
           ),
         )
       }
+      ConversationCache.replaceAll(appCtx, bubbleKey, msgs)
       // Bảo service refresh panel (qua action expand cùng key — idempotent)
       val intent = android.content.Intent(appCtx, OverlayBubbleService::class.java).apply {
         action = OverlayBubbleService.ACTION_REFRESH_PANEL
@@ -365,6 +417,8 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
     private const val PREFS = "crm_floating_bubble_prefs"
     internal const val KEY_AUTH_TOKEN = "auth_token"
     internal const val KEY_API_ORIGIN = "api_origin"
+    internal const val KEY_CURRENT_USER_ID = "current_user_id"
+    internal const val KEY_PENDING_FCM_TOKEN = CrmFirebaseMessagingService.KEY_PENDING_FCM_TOKEN
     private const val KEY_WEB_ORIGIN = "web_origin"
     internal const val KEY_PENDING_GROUP = "pending_group"
     internal const val KEY_PENDING_OPEN_MESSENGER = "pending_open_messenger"

@@ -68,11 +68,15 @@ async function fetchUserTokens(userId) {
     .eq('user_id', userId);
   if (error) {
     if (error.code === '42P01' || String(error.message || '').includes('push_device_tokens')) {
-      return [];
+      return { expo: [], fcm: [] };
     }
     throw error;
   }
-  return (data || []).filter((r) => r.platform === 'expo' && r.token);
+  const all = data || [];
+  return {
+    expo: all.filter((r) => r.platform === 'expo' && r.token).map((r) => r.token),
+    fcm: all.filter((r) => r.platform === 'fcm' && r.token).map((r) => r.token),
+  };
 }
 
 async function sendExpoChunk(messages) {
@@ -106,6 +110,71 @@ async function sendExpoChunk(messages) {
 }
 
 /**
+ * FCM HTTP Legacy API (server key). Gửi data-only payload — Android native
+ * (CrmFirebaseMessagingService) tự tạo bong bóng + tray notification, không
+ * để FCM tự hiện tray để tránh trùng với Expo Push.
+ *
+ * Cần env FCM_SERVER_KEY (Firebase Console → Project Settings → Cloud Messaging).
+ * Nếu không có FCM_SERVER_KEY thì im lặng bỏ qua (Expo Push vẫn chạy).
+ */
+async function sendFcmDataOnly(notification, fcmTokens) {
+  const serverKey = process.env.FCM_SERVER_KEY;
+  if (!serverKey || !Array.isArray(fcmTokens) || !fcmTokens.length) return;
+
+  const payload = buildPushPayload(notification);
+  // FCM data string-only requirement.
+  const dataStr = {};
+  for (const [k, v] of Object.entries(payload.data || {})) {
+    if (v == null) continue;
+    dataStr[k] = typeof v === 'string' ? v : JSON.stringify(v);
+  }
+  dataStr.title = payload.title;
+  dataStr.body = payload.body;
+  if (payload.channelId) dataStr.channelId = payload.channelId;
+
+  // FCM giới hạn 1000 tokens / request
+  const CHUNK = 500;
+  for (let i = 0; i < fcmTokens.length; i += CHUNK) {
+    const slice = fcmTokens.slice(i, i + CHUNK);
+    try {
+      const res = await fetch('https://fcm.googleapis.com/fcm/send', {
+        method: 'POST',
+        headers: {
+          Authorization: `key=${serverKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          registration_ids: slice,
+          priority: 'high',
+          data: dataStr,
+          android: { priority: 'high', ttl: '86400s' },
+        }),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        console.warn('[pushSender] FCM error:', res.status, txt.slice(0, 200));
+        continue;
+      }
+      const json = await res.json().catch(() => ({}));
+      const results = json?.results;
+      if (Array.isArray(results)) {
+        for (let k = 0; k < results.length; k++) {
+          const r = results[k];
+          if (r?.error === 'NotRegistered' || r?.error === 'InvalidRegistration') {
+            const bad = slice[k];
+            if (bad) {
+              await supabase.from('push_device_tokens').delete().eq('token', bad).catch(() => {});
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[pushSender] FCM exception:', e.message || e);
+    }
+  }
+}
+
+/**
  * Gửi push mobile cho user (chủ yếu chat khi app kill).
  * @param {string} userId
  * @param {object} notification — row notifications
@@ -123,26 +192,34 @@ async function sendMobilePush(userId, notification) {
     );
     if (!allowed) return;
 
-    const rows = await fetchUserTokens(userId);
-    if (!rows.length) return;
+    const tokens = await fetchUserTokens(userId);
+    if (!tokens.expo.length && !tokens.fcm.length) return;
 
     const payload = buildPushPayload(notification);
-    const messages = rows.map((r) => ({
-      to: r.token,
-      title: payload.title,
-      body: payload.body,
-      data: payload.data,
-      channelId: payload.channelId,
-      priority: payload.priority,
-      sound: payload.sound,
-      _displayInForeground: payload._displayInForeground,
-      badge: payload.badge,
-      ttl: payload.ttl,
-      ...(payload.interruptionLevel ? { _interruptionLevel: payload.interruptionLevel } : {}),
-    }));
 
-    for (let i = 0; i < messages.length; i += CHUNK_SIZE) {
-      await sendExpoChunk(messages.slice(i, i + CHUNK_SIZE));
+    // 1) Expo Push — tray notification cho mọi platform
+    if (tokens.expo.length) {
+      const messages = tokens.expo.map((tok) => ({
+        to: tok,
+        title: payload.title,
+        body: payload.body,
+        data: payload.data,
+        channelId: payload.channelId,
+        priority: payload.priority,
+        sound: payload.sound,
+        _displayInForeground: payload._displayInForeground,
+        badge: payload.badge,
+        ttl: payload.ttl,
+        ...(payload.interruptionLevel ? { _interruptionLevel: payload.interruptionLevel } : {}),
+      }));
+      for (let i = 0; i < messages.length; i += CHUNK_SIZE) {
+        await sendExpoChunk(messages.slice(i, i + CHUNK_SIZE));
+      }
+    }
+
+    // 2) FCM data-only — Android native trigger overlay bubble khi app killed
+    if (tokens.fcm.length) {
+      await sendFcmDataOnly(notification, tokens.fcm);
     }
   } catch (e) {
     console.warn('[pushSender]', e.message || e);
@@ -151,5 +228,6 @@ async function sendMobilePush(userId, notification) {
 
 module.exports = {
   sendMobilePush,
+  sendFcmDataOnly,
   buildPushPayload,
 };
