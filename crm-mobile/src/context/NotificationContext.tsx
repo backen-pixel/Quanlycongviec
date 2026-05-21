@@ -273,22 +273,17 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
       const decideToastOrTray = () => {
         const state = AppState.currentState;
-        const isChat = isChatNotification(n);
-        // Android: chat notification ngoài app → KHÔNG đẩy tray/rung (đã có bong bóng chat
-        // hiện sẵn ở màn hình ngoài, tránh rung 2 lần). Các loại còn lại (deal, task,
-        // hệ thống) vẫn đẩy tray + rung như cũ để user thấy ngay khi tắt app.
+        // Yêu cầu user: ngoài app phải hiện thông báo cho mọi loại — hoạt động,
+        // nhắn tin (kèm bong bóng) và giao việc. Trong app: toast + tray cùng lúc
+        // để user nghe rung dù đang ở màn hình khác bên trong app.
         if (Platform.OS === 'android') {
-          if (state === 'active') {
-            void postLocalNotification(n);
-            setToast(n);
-          } else if (!isChat) {
-            void postLocalNotification(n);
-          }
+          void postLocalNotification(n);
+          if (state === 'active') setToast(n);
           return;
         }
         if (state === 'active') {
           setToast(n);
-        } else if (!isChat) {
+        } else {
           void postLocalNotification(n);
         }
       };
