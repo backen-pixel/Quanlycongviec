@@ -10,16 +10,20 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -27,13 +31,8 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
 /**
- * Khung chat NỔI vẽ bằng native View, gắn vào WindowManager (TYPE_APPLICATION_OVERLAY).
- *
- *  - Hở viền trên + dưới → thấy launcher / màn hình trước
- *  - Nền dim 0.5 → cảm giác Messenger
- *  - Hàng bong bóng nhỏ ở đỉnh khung (avatar người gửi) → tap để switch
- *  - Tap vùng ngoài card → gọi [OverlayBubbleService.collapsePanel] để gọn lại
- *    thành bong bóng (bubble stack vẫn nguyên vẹn)
+ * Khung chat NỔI vẽ bằng native View.
+ * Bao gồm: hàng bubble nhỏ → header → list tin → quick reactions → input + media + send.
  */
 class ExpandedChatPanel(
   private val ctx: Context,
@@ -45,10 +44,13 @@ class ExpandedChatPanel(
   private var headerAvatar: ImageView? = null
   private var headerTitle: TextView? = null
   private var bubbleRow: LinearLayout? = null
+  private var input: EditText? = null
   private var currentKey: String? = null
   private val cachedBitmaps = ConcurrentHashMap<String, Bitmap>()
   private val io = Executors.newSingleThreadExecutor()
   private val main = Handler(Looper.getMainLooper())
+
+  private val quickEmojis = listOf("❤️", "👍", "😆", "😮", "😢", "🙏")
 
   fun isShowing(): Boolean = root != null
   fun currentKey(): String? = currentKey
@@ -68,13 +70,16 @@ class ExpandedChatPanel(
       WindowManager.LayoutParams.MATCH_PARENT,
       0, 0,
       overlayType(),
-      // FLAG_DIM_BEHIND → dim toàn màn; cho phép focus để bàn phím sau này hoạt động
+      // KHÔNG dùng FLAG_NOT_FOCUSABLE → EditText có thể nhận bàn phím.
       WindowManager.LayoutParams.FLAG_DIM_BEHIND or
-        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+        WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
       PixelFormat.TRANSLUCENT,
     ).apply {
       dimAmount = 0.55f
       gravity = Gravity.TOP or Gravity.START
+      softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
+        WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN
     }
     try {
       wm.addView(v, params)
@@ -95,6 +100,7 @@ class ExpandedChatPanel(
     headerAvatar = null
     headerTitle = null
     bubbleRow = null
+    input = null
     currentKey = null
   }
 
@@ -107,7 +113,6 @@ class ExpandedChatPanel(
     renderMessages()
   }
 
-  /** Gọi khi service nhận thêm tin → nếu key đang xem, append vào UI ngay. */
   fun onIncoming(key: String) {
     if (key == currentKey) renderMessages(scrollToBottom = true)
     refreshBubbleRow()
@@ -138,25 +143,28 @@ class ExpandedChatPanel(
   // ---------- Builders ----------
 
   private fun build(entry: BubbleStackStore.Entry): View {
-    val scrim = FrameLayout(ctx).apply {
+    val scrim = object : FrameLayout(ctx) {
+      override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
+        if (event.action == android.view.MotionEvent.ACTION_OUTSIDE) {
+          service.collapsePanel()
+          return true
+        }
+        return super.onTouchEvent(event)
+      }
+    }.apply {
       setOnClickListener { service.collapsePanel() }
       isClickable = true
-      isFocusable = true
     }
 
     val column = LinearLayout(ctx).apply {
       orientation = LinearLayout.VERTICAL
       val topInset = statusBarHeight()
-      setPadding(dp(8), topInset + dp(8), dp(8), dp(20))
+      setPadding(dp(8), topInset + dp(8), dp(8), dp(8))
     }
 
     // Bubble row (avatar nhỏ — biết ai đã nhắn tới)
-    val rowScroll = HorizontalScrollView(ctx).apply {
-      isHorizontalScrollBarEnabled = false
-    }
-    val row = LinearLayout(ctx).apply {
-      orientation = LinearLayout.HORIZONTAL
-    }
+    val rowScroll = HorizontalScrollView(ctx).apply { isHorizontalScrollBarEnabled = false }
+    val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
     rowScroll.addView(row, FrameLayout.LayoutParams(
       FrameLayout.LayoutParams.WRAP_CONTENT,
       FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -175,7 +183,7 @@ class ExpandedChatPanel(
         cornerRadius = dp(20).toFloat()
       }
       elevation = dp(10).toFloat()
-      isClickable = true // chặn click xuyên xuống scrim
+      isClickable = true
       clipToOutline = true
     }
     card.addView(buildHeader(entry))
@@ -197,7 +205,8 @@ class ExpandedChatPanel(
       LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f,
     ))
 
-    card.addView(buildFooter(entry))
+    card.addView(buildQuickReactions())
+    card.addView(buildInputBar(entry))
 
     column.addView(card, LinearLayout.LayoutParams(
       LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f,
@@ -218,18 +227,15 @@ class ExpandedChatPanel(
       gravity = Gravity.CENTER_VERTICAL
     }
     val av = ImageView(ctx).apply {
-      val ring = GradientDrawable().apply {
+      background = GradientDrawable().apply {
         shape = GradientDrawable.OVAL
         setColor(Color.parseColor("#0068FF"))
       }
-      background = ring
       scaleType = ImageView.ScaleType.CENTER_CROP
       clipToOutline = true
     }
     val avSize = dp(36)
-    row.addView(av, LinearLayout.LayoutParams(avSize, avSize).apply {
-      rightMargin = dp(10)
-    })
+    row.addView(av, LinearLayout.LayoutParams(avSize, avSize).apply { rightMargin = dp(10) })
     headerAvatar = av
     loadAvatar(av, entry.avatarUrl, entry.letter)
 
@@ -244,45 +250,11 @@ class ExpandedChatPanel(
       LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
     headerTitle = title
 
-    // Nút "−" (thu nhỏ)
     row.addView(circleBtn("−", 0xFF374151.toInt()) { service.collapsePanel() })
-    // Nút "×" (đóng bong bóng này)
     row.addView(circleBtn("×", 0xFFEF4444.toInt()) {
       val k = currentKey ?: return@circleBtn
       service.dismissBubbleAndPanel(k)
     })
-    return row
-  }
-
-  private fun buildFooter(entry: BubbleStackStore.Entry): View {
-    val row = LinearLayout(ctx).apply {
-      orientation = LinearLayout.HORIZONTAL
-      setPadding(dp(12), dp(8), dp(12), dp(12))
-      gravity = Gravity.CENTER_VERTICAL
-      setBackgroundColor(Color.WHITE)
-    }
-    val hint = TextView(ctx).apply {
-      text = "Mở chat đầy đủ"
-      setTextColor(Color.parseColor("#6B7280"))
-      setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-    }
-    row.addView(hint, LinearLayout.LayoutParams(0,
-      LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-    val openBtn = TextView(ctx).apply {
-      text = "Mở trong app"
-      setTextColor(Color.WHITE)
-      setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-      typeface = Typeface.DEFAULT_BOLD
-      setPadding(dp(14), dp(8), dp(14), dp(8))
-      background = GradientDrawable().apply {
-        setColor(Color.parseColor("#0068FF"))
-        cornerRadius = dp(18).toFloat()
-      }
-      setOnClickListener {
-        service.openInAppAndCollapse(entry.key)
-      }
-    }
-    row.addView(openBtn)
     return row
   }
 
@@ -291,6 +263,116 @@ class ExpandedChatPanel(
     layoutParams = LinearLayout.LayoutParams(
       LinearLayout.LayoutParams.MATCH_PARENT, 1,
     )
+  }
+
+  private fun buildQuickReactions(): View {
+    val row = LinearLayout(ctx).apply {
+      orientation = LinearLayout.HORIZONTAL
+      setPadding(dp(8), dp(6), dp(8), dp(6))
+      setBackgroundColor(Color.parseColor("#F9FAFB"))
+      gravity = Gravity.CENTER_VERTICAL
+    }
+    for (emo in quickEmojis) {
+      row.addView(TextView(ctx).apply {
+        text = emo
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+        setPadding(dp(8), dp(2), dp(8), dp(2))
+        setOnClickListener { sendCurrent(emo) }
+      })
+    }
+    return row
+  }
+
+  private fun buildInputBar(entry: BubbleStackStore.Entry): View {
+    val row = LinearLayout(ctx).apply {
+      orientation = LinearLayout.HORIZONTAL
+      setPadding(dp(8), dp(8), dp(8), dp(10))
+      setBackgroundColor(Color.WHITE)
+      gravity = Gravity.CENTER_VERTICAL
+    }
+
+    // Nhóm icon media (mở app để xử lý upload)
+    row.addView(mediaIconBtn("📷") { service.openInAppAndCollapse(entry.key) })
+    row.addView(mediaIconBtn("🖼") { service.openInAppAndCollapse(entry.key) })
+    row.addView(mediaIconBtn("🎙") { service.openInAppAndCollapse(entry.key) })
+
+    val edit = EditText(ctx).apply {
+      hint = "Trả lời…"
+      setTextColor(Color.parseColor("#111827"))
+      setHintTextColor(Color.parseColor("#9CA3AF"))
+      setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+      background = GradientDrawable().apply {
+        setColor(Color.parseColor("#F3F4F6"))
+        cornerRadius = dp(20).toFloat()
+      }
+      inputType = InputType.TYPE_CLASS_TEXT or
+        InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+        InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+      maxLines = 4
+      setPadding(dp(12), dp(8), dp(12), dp(8))
+      imeOptions = EditorInfo.IME_ACTION_SEND
+      setOnEditorActionListener { _, actionId, _ ->
+        if (actionId == EditorInfo.IME_ACTION_SEND) {
+          sendCurrent(text.toString())
+          true
+        } else false
+      }
+    }
+    input = edit
+    val editLp = LinearLayout.LayoutParams(0,
+      LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+      leftMargin = dp(4); rightMargin = dp(4)
+    }
+    row.addView(edit, editLp)
+
+    val send = TextView(ctx).apply {
+      text = "➤"
+      setTextColor(Color.WHITE)
+      setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+      typeface = Typeface.DEFAULT_BOLD
+      gravity = Gravity.CENTER
+      background = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(Color.parseColor("#0068FF"))
+      }
+      val size = dp(40)
+      layoutParams = LinearLayout.LayoutParams(size, size)
+      setOnClickListener { sendCurrent(edit.text.toString()) }
+    }
+    row.addView(send)
+    return row
+  }
+
+  private fun sendCurrent(text: String) {
+    val key = currentKey ?: return
+    val content = text.trim()
+    if (content.isEmpty()) return
+    // Optimistic: hiện ngay
+    ConversationCache.append(
+      ctx, key,
+      ConversationCache.Msg(
+        sender = "Bạn",
+        text = content,
+        avatar = null,
+        ts = System.currentTimeMillis(),
+      ),
+    )
+    onIncoming(key)
+    input?.setText("")
+    MessageSender.sendText(ctx, key, content) { ok ->
+      if (!ok) {
+        Toast.makeText(ctx, "Không gửi được tin", Toast.LENGTH_SHORT).show()
+      }
+    }
+  }
+
+  private fun mediaIconBtn(label: String, onClick: () -> Unit): View {
+    return TextView(ctx).apply {
+      text = label
+      setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+      setPadding(dp(8), dp(8), dp(8), dp(8))
+      setOnClickListener { onClick() }
+    }
   }
 
   private fun buildMessageRow(m: ConversationCache.Msg): View {
@@ -308,21 +390,17 @@ class ExpandedChatPanel(
       scaleType = ImageView.ScaleType.CENTER_CROP
       clipToOutline = true
     }
-    row.addView(av, LinearLayout.LayoutParams(avatarSize, avatarSize).apply {
-      rightMargin = dp(8)
-    })
+    row.addView(av, LinearLayout.LayoutParams(avatarSize, avatarSize).apply { rightMargin = dp(8) })
     loadAvatar(av, m.avatar, m.sender.take(1))
 
-    val col = LinearLayout(ctx).apply {
-      orientation = LinearLayout.VERTICAL
-    }
-    val name = TextView(ctx).apply {
+    val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+    col.addView(TextView(ctx).apply {
       text = m.sender
       setTextColor(Color.parseColor("#111827"))
       setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
       typeface = Typeface.DEFAULT_BOLD
-    }
-    val bubble = TextView(ctx).apply {
+    })
+    col.addView(TextView(ctx).apply {
       text = m.text
       setTextColor(Color.parseColor("#1F2937"))
       setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
@@ -332,18 +410,15 @@ class ExpandedChatPanel(
         cornerRadius = dp(14).toFloat()
         setStroke(1, Color.parseColor("#E5E7EB"))
       }
-    }
-    val ts = TextView(ctx).apply {
-      text = formatTs(m.ts)
-      setTextColor(Color.parseColor("#9CA3AF"))
-      setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
-    }
-    col.addView(name)
-    col.addView(bubble, LinearLayout.LayoutParams(
+    }, LinearLayout.LayoutParams(
       LinearLayout.LayoutParams.WRAP_CONTENT,
       LinearLayout.LayoutParams.WRAP_CONTENT,
     ).apply { topMargin = dp(2) })
-    col.addView(ts, LinearLayout.LayoutParams(
+    col.addView(TextView(ctx).apply {
+      text = formatTs(m.ts)
+      setTextColor(Color.parseColor("#9CA3AF"))
+      setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+    }, LinearLayout.LayoutParams(
       LinearLayout.LayoutParams.WRAP_CONTENT,
       LinearLayout.LayoutParams.WRAP_CONTENT,
     ).apply { topMargin = dp(2) })
@@ -364,7 +439,7 @@ class ExpandedChatPanel(
     val size = dp(44)
     val active = entry.key == currentKey
     val container = FrameLayout(ctx).apply {
-      val ring = GradientDrawable().apply {
+      background = GradientDrawable().apply {
         shape = GradientDrawable.OVAL
         setColor(Color.parseColor("#0068FF"))
         setStroke(
@@ -372,7 +447,6 @@ class ExpandedChatPanel(
           if (active) Color.parseColor("#FFD400") else Color.WHITE,
         )
       }
-      background = ring
       setOnClickListener { service.switchPanelTo(entry.key) }
     }
     val img = ImageView(ctx).apply {
@@ -387,9 +461,7 @@ class ExpandedChatPanel(
       setMargins(pad, pad, pad, pad)
     })
     loadAvatar(img, entry.avatarUrl, entry.letter)
-    row.addView(container, LinearLayout.LayoutParams(size, size).apply {
-      rightMargin = dp(6)
-    })
+    row.addView(container, LinearLayout.LayoutParams(size, size).apply { rightMargin = dp(6) })
   }
 
   private fun circleBtn(label: String, color: Int, onClick: () -> Unit): View {
@@ -404,8 +476,7 @@ class ExpandedChatPanel(
         shape = GradientDrawable.OVAL
         setColor(color)
       }
-      val lp = LinearLayout.LayoutParams(size, size).apply { leftMargin = dp(6) }
-      layoutParams = lp
+      layoutParams = LinearLayout.LayoutParams(size, size).apply { leftMargin = dp(6) }
       setOnClickListener { onClick() }
     }
   }
@@ -422,9 +493,7 @@ class ExpandedChatPanel(
     io.execute {
       val bmp = fetchBitmap(url) ?: return@execute
       cachedBitmaps[url] = bmp
-      main.post {
-        if (target.tag != "dead") target.setImageBitmap(bmp)
-      }
+      main.post { target.setImageBitmap(bmp) }
     }
   }
 
@@ -461,7 +530,7 @@ class ExpandedChatPanel(
       override fun setAlpha(a: Int) {}
       override fun setColorFilter(cf: android.graphics.ColorFilter?) {}
       @Suppress("DEPRECATION")
-      override fun getOpacity(): Int = android.graphics.PixelFormat.OPAQUE
+      override fun getOpacity(): Int = PixelFormat.OPAQUE
     }
   }
 
