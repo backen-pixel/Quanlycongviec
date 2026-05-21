@@ -41,6 +41,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (t && u) {
           setToken(t);
           setUser(JSON.parse(u));
+          // #region agent log
+          fetch('http://127.0.0.1:7754/ingest/c6417520-0159-4c13-a5f9-ac15886b2276',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'3b09d7'},body:JSON.stringify({sessionId:'3b09d7',runId:'pre-fix',hypothesisId:'H1',location:'AuthContext.tsx:bootstrap',message:'auth restored from storage',data:{tokenLength:t.length,hasUserJson:!!u},timestamp:Date.now()})}).catch(()=>{});
+          // #endregion
           void registerPushToken();
           startDeviceHeartbeat();
         }
@@ -56,20 +59,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // tránh phải đăng xuất/đăng nhập lại khi đổi avatar trên web.
   useEffect(() => {
     if (!token) return;
+    // #region agent log
+    console.warn('[DBG3b09d7] H8 auth-token-ready', { tokenLen: token.length, hasUser: !!user });
+    // #endregion
+    const controller = new AbortController();
     let cancelled = false;
+    const tokenAtStart = token;
     (async () => {
       try {
-        const { data } = await api.get<{ user?: AuthUser }>('/auth/me');
+        const { data } = await api.get<{ user?: AuthUser }>('/auth/me', {
+          signal: controller.signal,
+        });
         if (cancelled || !data?.user) return;
+        // Nếu token đã đổi giữa chừng (vd. user vừa login lại) → bỏ qua kết
+        // quả của request cũ, tránh ghi đè user mới bằng dữ liệu cũ.
+        if (tokenAtStart !== token) return;
         const merged: AuthUser = { ...(user || {}), ...data.user };
         await AsyncStorage.setItem(USER_KEY, JSON.stringify(merged));
         setUser(merged);
       } catch {
-        /* token hết hạn / offline → giữ cache cũ */
+        /* token hết hạn / offline → giữ cache cũ; interceptor đã được
+           cấu hình BỎ QUA /auth/me cho auto-logout. */
       }
     })();
     return () => {
       cancelled = true;
+      try { controller.abort(); } catch { /* */ }
     };
     // Chỉ chạy 1 lần khi token sẵn sàng — bỏ qua `user` để tránh loop khi merge.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -81,6 +96,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await AsyncStorage.setItem(USER_KEY, JSON.stringify(data.user));
     setToken(data.token);
     setUser(data.user);
+    // #region agent log
+    fetch('http://127.0.0.1:7754/ingest/c6417520-0159-4c13-a5f9-ac15886b2276',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'3b09d7'},body:JSON.stringify({sessionId:'3b09d7',runId:'pre-fix',hypothesisId:'H1',location:'AuthContext.tsx:login',message:'login persisted token+user',data:{tokenLength:data.token?.length??0,userId:data.user?.id??data.user?.userId??null},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     void registerPushToken();
     startDeviceHeartbeat();
   }, []);
