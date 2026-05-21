@@ -8,7 +8,7 @@ import {
   loadCrmMobilePrefs,
   type CrmMobilePrefs,
 } from '../lib/crmMobilePrefs';
-import { WEB_APP_ORIGIN } from '../config';
+import { API_ORIGIN, WEB_APP_ORIGIN } from '../config';
 import { toBubbleStorageKey, parseBubbleStorageKey } from '../lib/bubbleNativeEvents';
 import { markLeadChatRead, markMessengerGroupRead } from '../lib/markChatRead';
 import type { AppNotification } from '../types/notifications';
@@ -25,6 +25,7 @@ const Overlay = NativeModules.FloatingBubbleOverlay as
       showConvBubble?: (groupId: string, title: string, avatarLetter: string) => void;
       hideConvBubble?: (groupId: string) => void;
       showPeek?: (sender: string, message: string) => void;
+      noteConv?: (groupId: string, title: string, avatarLetter: string) => void;
       consumePendingGroup?: () => Promise<string | null>;
       minimizeApp?: () => void;
     }
@@ -79,7 +80,11 @@ export default function SystemBubbleSync() {
     if (token && token !== lastTokenRef.current) {
       lastTokenRef.current = token;
       Overlay.saveAuthToken?.(token);
-      if (WEB_APP_ORIGIN) Overlay.saveWebOrigin?.(WEB_APP_ORIGIN);
+      // Web origin để overlay WebView mở /crm/messenger?openGroup=...
+      // Backend của TuBep cũng phục vụ frontend SPA cùng host, nên dùng API_ORIGIN
+      // làm fallback khi user chưa set EXPO_PUBLIC_WEB_APP_URL.
+      const webOrigin = WEB_APP_ORIGIN || API_ORIGIN;
+      if (webOrigin) Overlay.saveWebOrigin?.(webOrigin);
     }
   }, [token]);
 
@@ -142,7 +147,12 @@ export default function SystemBubbleSync() {
       const msgContent = n.message ?? '';
 
       const isActive = AppState.currentState === 'active';
-      if (isActive) return;
+      if (isActive) {
+        // Trong app: chỉ track im lặng để native nhớ chat mới nhất cho lần tap bubble
+        // sau khi rời app. Không show bubble / peek (đã có toast in-app từ NotificationContext).
+        Overlay.noteConv?.(bubbleKey, title, letter);
+        return;
+      }
 
       Overlay.showConvBubble?.(bubbleKey, title, letter);
       Overlay.showPeek?.(senderName, msgContent);
