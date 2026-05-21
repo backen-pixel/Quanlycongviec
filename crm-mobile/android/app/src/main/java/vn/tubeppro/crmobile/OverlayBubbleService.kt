@@ -214,8 +214,10 @@ class OverlayBubbleService : Service() {
       }
       override fun onDragMove(rawX: Float, rawY: Float) = moveBubble(entry.key, rawX, rawY, sizePx)
       override fun onDragEnd(rawX: Float, rawY: Float, droppedToDismiss: Boolean) {
-        draggingKey = null
+        // QUAN TRỌNG: kiểm tra drop trước khi reset draggingKey,
+        // vì isOverDropTarget cần draggingKey để xác định vị trí bubble.
         val dropped = isOverDropTarget(rawX, rawY, sizePx)
+        draggingKey = null
         hideDropTarget()
         if (dropped) {
           removeBubble(entry.key)
@@ -419,13 +421,13 @@ class OverlayBubbleService : Service() {
 
   private fun isOverDropTarget(rawX: Float, rawY: Float, sizePx: Int): Boolean {
     val realH = getRealScreenHeightPx()
-    val key = draggingKey ?: return false
-    val mb = managed[key] ?: return false
-    val bubbleCy = mb.params.y + sizePx / 2f
-    // Vùng ăn rộng: chỉ cần bubble hoặc ngón tay nằm trong 30% phía dưới
-    // (không ràng buộc trục X — kéo xuống đáy bất kỳ vị trí nào đều xóa).
-    val yThresh = realH * 0.70f
-    return bubbleCy >= yThresh || rawY >= yThresh
+    val displayH = resources.displayMetrics.heightPixels
+    val yThresh = (minOf(realH, displayH)) * 0.65f
+    // Chỉ cần ngón tay HOẶC tâm bubble nằm trong 35% dưới màn là xóa.
+    val key = draggingKey
+    val mb = key?.let { managed[it] }
+    val bubbleCy = mb?.let { it.params.y + sizePx / 2f } ?: rawY
+    return rawY >= yThresh || bubbleCy >= yThresh
   }
 
   // ---- Avatar ----
@@ -490,6 +492,13 @@ class OverlayBubbleService : Service() {
     // Ẩn các bong bóng vật lý — UI bubble row hiện thị bên trong panel
     for (mb in managed.values) mb.view.visibility = View.INVISIBLE
     hideDropTarget()
+    // Native tự fetch lịch sử — không phụ thuộc React (kể cả khi app đã tắt).
+    ChatHistoryFetcher.seedAsync(this, key) { count ->
+      if (count > 0 && expandedPanel.isShowing() && expandedPanel.currentKey() == key) {
+        expandedPanel.onIncoming(key)
+      }
+    }
+    // Vẫn phát event để app đang chạy có thể seed thêm / mark read.
     notifyPanelOpened(key)
   }
 

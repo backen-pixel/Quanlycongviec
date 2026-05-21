@@ -252,6 +252,12 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
     prefs.edit().putString(KEY_WEB_ORIGIN, origin).apply()
   }
 
+  /** Lưu API gốc (không có /api) để native tự fetch lịch sử chat khi React off. */
+  @ReactMethod
+  fun saveApiOrigin(origin: String) {
+    prefs.edit().putString(KEY_API_ORIGIN, origin.trimEnd('/')).apply()
+  }
+
   // ---------- Routing khi user tap bubble từ ngoài app ----------
 
   /**
@@ -358,6 +364,7 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
 
     private const val PREFS = "crm_floating_bubble_prefs"
     internal const val KEY_AUTH_TOKEN = "auth_token"
+    internal const val KEY_API_ORIGIN = "api_origin"
     private const val KEY_WEB_ORIGIN = "web_origin"
     internal const val KEY_PENDING_GROUP = "pending_group"
     internal const val KEY_PENDING_OPEN_MESSENGER = "pending_open_messenger"
