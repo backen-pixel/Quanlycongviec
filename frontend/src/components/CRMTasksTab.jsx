@@ -214,24 +214,10 @@ export default function CRMTasksTab({
         setPipelineStages([]);
       }
 
-      let displayTasks = tasksRes.data || [];
-
-      // Lead: tự dọn nhiệm vụ legacy còn sót (không hiển thị nhóm "Khác")
-      if (leadType === 'lead' && pid) {
-        const orphans = displayTasks.filter(
-          (t) => !t.pipeline_stage_id && !String(t.stage_slug || '').startsWith('sx_'),
-        );
-        if (orphans.length) {
-          try {
-            await api.post(`/crm/leads/${leadId}/tasks/resync-pipeline`);
-            const { data: fresh } = await api.get(`/crm/leads/${leadId}/tasks`, { params: { task_scope: taskScope } });
-            displayTasks = fresh || [];
-          } catch { /* UI vẫn lọc ẩn orphan qua uiTasks */ }
-        }
-      }
+      const displayTasks = tasksRes.data || [];
       setTasks(displayTasks);
 
-      // Auto-expand stages that have tasks (ưu tiên pipeline_stage_id, fallback stage_slug)
+      // Auto-expand stages that have tasks (backend GET đã tự resync nếu lệch bộ mẫu)
       const stagesExp = {};
       displayTasks.forEach((t) => {
         const k = t.pipeline_stage_id || t.stage_slug;

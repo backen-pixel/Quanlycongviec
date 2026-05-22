@@ -399,10 +399,9 @@ export default function CRMTemplatesPage() {
     const ok = window.confirm(
       `Áp dụng bộ mẫu ${typeLabel} từ pipeline «${pipelineName}» cho toàn bộ ${regionLabel}?\n\n`
       + 'Hệ thống sẽ:\n'
-      + '• Gán pipeline mặc định cho lead/deal chưa có pipeline\n'
-      + '• Xóa nhiệm vụ CRM cũ (legacy, chưa gắn giai đoạn pipeline) và gen lại theo bộ mẫu đã setup\n'
-      + '• Tạo nhiệm vụ mới cho lead/deal chưa có nhiệm vụ CRM\n\n'
-      + 'Lead/deal đã có nhiệm vụ gắn pipeline_stage_id sẽ được BỎ QUA (tránh ghi đè dữ liệu đang làm).\n\n'
+      + '• Xóa nhiệm vụ cũ / legacy và gen lại đúng bộ mẫu pipeline cho TẤT CẢ lead/deal (kể cả đã có task)\n'
+      + '• Giai đoạn hiện tại của mỗi lead/deal được đồng bộ theo template mới\n\n'
+      + 'Lead/deal đang làm dở ở giai đoạn hiện tại sẽ bị thay bằng bộ mẫu mới.\n'
       + 'Tiếp tục?',
     );
     if (!ok) return;
@@ -418,11 +417,10 @@ export default function CRMTemplatesPage() {
       setApplyRegionsResult(data);
       const msg = [
         `Đã quét ${data.scanned} ${typeLabel}.`,
-        data.regenerated ? `Gen lại ${data.regenerated} (${data.tasks_created} nhiệm vụ mới).` : null,
+        data.resynced ? `Đồng bộ ${data.resynced} lead/deal.` : null,
+        data.tasks_created ? `Tạo ${data.tasks_created} nhiệm vụ mới.` : null,
+        data.tasks_removed ? `Xóa ${data.tasks_removed} nhiệm vụ cũ/thừa.` : null,
         data.pipeline_backfilled ? `Gán pipeline cho ${data.pipeline_backfilled} lead/deal.` : null,
-        data.skipped_has_pipeline_tasks ? `Bỏ qua ${data.skipped_has_pipeline_tasks} (đã đúng pipeline, không orphan).` : null,
-        data.orphans_purged ? `Xóa ${data.orphans_purged} nhiệm vụ orphan.` : null,
-        data.purged_only ? `Dọn orphan tại ${data.purged_only} lead/deal (giữ task pipeline).` : null,
         data.skipped_other_pipeline ? `Bỏ qua ${data.skipped_other_pipeline} (pipeline khác).` : null,
         data.errors?.length ? `Lỗi: ${data.errors.length} bản ghi.` : null,
       ].filter(Boolean).join('\n');
@@ -805,12 +803,10 @@ export default function CRMTemplatesPage() {
       {applyRegionsResult && (
         <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-xs text-violet-900 space-y-1">
           <p className="font-semibold">Kết quả áp dụng bộ mẫu</p>
-          <p>Đã quét: <b>{applyRegionsResult.scanned}</b> lead/deal · Gen lại: <b>{applyRegionsResult.regenerated}</b> · Nhiệm vụ mới: <b>{applyRegionsResult.tasks_created}</b></p>
-          {(applyRegionsResult.orphans_purged > 0 || applyRegionsResult.purged_only > 0 || applyRegionsResult.skipped_has_pipeline_tasks > 0) && (
+          <p>Đã quét: <b>{applyRegionsResult.scanned}</b> lead/deal · Đồng bộ: <b>{applyRegionsResult.resynced}</b> · Nhiệm vụ mới: <b>{applyRegionsResult.tasks_created}</b></p>
+          {(applyRegionsResult.tasks_removed > 0 || applyRegionsResult.skipped_other_pipeline > 0) && (
             <p className="text-violet-700">
-              {applyRegionsResult.orphans_purged > 0 && <>Xóa orphan: {applyRegionsResult.orphans_purged}. </>}
-              {applyRegionsResult.purged_only > 0 && <>Dọn mixed: {applyRegionsResult.purged_only}. </>}
-              {applyRegionsResult.skipped_has_pipeline_tasks > 0 && <>Đã đúng: {applyRegionsResult.skipped_has_pipeline_tasks}. </>}
+              {applyRegionsResult.tasks_removed > 0 && <>Đã xóa {applyRegionsResult.tasks_removed} nhiệm vụ cũ. </>}
               {applyRegionsResult.skipped_other_pipeline > 0 && <>Pipeline khác: {applyRegionsResult.skipped_other_pipeline}.</>}
             </p>
           )}
