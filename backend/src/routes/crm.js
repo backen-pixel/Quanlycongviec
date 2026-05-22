@@ -45,8 +45,8 @@ const {
 const {
   autoGenCrmTasks,
   applyCrmTaskTemplatesToCompanyRegions,
-  healOrphanCrmTasksForLead,
   resyncCrmPipelineTasksForLead,
+  leadCurrentStageNeedsTemplateResync,
   FALLBACK_LEAD_TASKS,
   FALLBACK_DEAL_TASKS,
   completeConsultingCrmTasksForLead,
@@ -10757,17 +10757,26 @@ r.get('/leads/:id/tasks', async (req, res) => {
 
     data = await appendFulfillmentChildTasksForMasterDeal(req.params.id, data || [], lead);
 
-    // ── SELF-HEAL: dọn task orphan (pipeline_stage_id = null) khi lead/deal đã có pipeline + bộ mẫu.
-    // Xóa orphan ngay cả khi đã có task pipeline (mixed) — chỉ giữ task gắn pipeline_stage_id.
-    if (lead?.pipeline_id && Array.isArray(data) && data.length > 0) {
-      const sxAware = (t) => !String(t.stage_slug || '').startsWith('sx_');
-      const hasOrphan = data.some((t) => sxAware(t) && !t.pipeline_stage_id);
-      if (hasOrphan) {
-        const heal = await healOrphanCrmTasksForLead(
+    // ── SELF-HEAL / RESYNC: đồng bộ task theo bộ mẫu pipeline (orphan hoặc lệch template giai đoạn hiện tại)
+    if (lead?.pipeline_id) {
+      let shouldResync = false;
+      if (Array.isArray(data) && data.length > 0) {
+        const sxAware = (t) => !String(t.stage_slug || '').startsWith('sx_');
+        if (data.some((t) => sxAware(t) && !t.pipeline_stage_id)) shouldResync = true;
+      }
+      if (!shouldResync) {
+        try {
+          shouldResync = await leadCurrentStageNeedsTemplateResync(req.params.id);
+        } catch (e) {
+          console.warn('[SELF-HEAL] needsTemplateResync check:', e.message);
+        }
+      }
+      if (shouldResync) {
+        const sync = await resyncCrmPipelineTasksForLead(
           req.params.id,
           req.user?.userId || lead.created_by,
         );
-        if (heal.didHeal) {
+        if (sync.ok) {
           const { data: newData } = await supabase.from('crm_tasks')
             .select(CRM_TASK_SELECT)
             .eq('lead_id', req.params.id)
