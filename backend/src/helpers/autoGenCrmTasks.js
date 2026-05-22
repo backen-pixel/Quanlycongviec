@@ -285,9 +285,103 @@ async function pipelineHasActiveCrmTemplates(pipelineId) {
 }
 
 /**
+ * Lead/deal cũ: đã có ít nhất một nhiệm vụ CRM không gắn pipeline_stage_id (legacy slug).
+ * Lead/deal mới (chưa có task) → false → dùng bộ mẫu pipeline.
+ */
+async function leadUsesLegacyCrmTaskSet(leadId) {
+  const { data: tasks, error } = await supabase
+    .from('crm_tasks')
+    .select('id, stage_slug, pipeline_stage_id')
+    .eq('lead_id', leadId);
+  if (error) throw error;
+  const crmTasks = (tasks || []).filter((t) => !isSxCrmTaskRow(t));
+  if (!crmTasks.length) return false;
+  return crmTasks.some((t) => !t.pipeline_stage_id);
+}
+
+/**
+ * Khi lead/deal legacy chuyển giai đoạn: gen task từ bộ mẫu Global theo stage_slug (canonical_slug).
+ * Không gắn pipeline_stage_id — giữ tương thích bộ nhiệm vụ cũ.
+ */
+async function applyLegacyGlobalTemplatesForStage(leadId, stageSlug, userId, type = 'lead') {
+  const slug = String(stageSlug || '').trim();
+  if (!leadId || !slug) return { created: 0, skipped: true };
+
+  const { data: exists } = await supabase
+    .from('crm_tasks')
+    .select('id')
+    .eq('lead_id', leadId)
+    .eq('stage_slug', slug)
+    .limit(1);
+  if (exists?.length) return { created: 0, skipped: true, reason: 'already_has_tasks' };
+
+  const pipelineFilter = type === 'deal'
+    ? 'pipeline_type.eq.deal,pipeline_type.eq.both,pipeline_type.is.null'
+    : 'pipeline_type.eq.lead,pipeline_type.eq.both,pipeline_type.is.null';
+
+  let { data: tpls } = await supabase
+    .from('crm_task_templates')
+    .select('id, stage_slug, pipeline_type')
+    .is('pipeline_stage_id', null)
+    .eq('is_active', true)
+    .eq('stage_slug', slug)
+    .or(pipelineFilter)
+    .order('order_index');
+
+  if (!tpls?.length) {
+    ({ data: tpls } = await supabase
+      .from('crm_task_templates')
+      .select('id, stage_slug, pipeline_type')
+      .is('pipeline_stage_id', null)
+      .eq('is_active', true)
+      .eq('is_default', true)
+      .eq('stage_slug', slug)
+      .or(pipelineFilter)
+      .order('order_index'));
+  }
+
+  tpls = (tpls || []).filter((t) => {
+    const isDealSlug = t.stage_slug?.startsWith('deal_');
+    return type === 'deal' ? true : !isDealSlug;
+  });
+  if (!tpls.length) return { created: 0, skipped: true, reason: 'no_template' };
+
+  const tplIds = tpls.map((t) => t.id);
+  const { data: allItems, error: itemErr } = await supabase
+    .from('crm_task_template_items')
+    .select('*')
+    .in('template_id', tplIds)
+    .order('order_index');
+  if (itemErr) throw itemErr;
+  if (!allItems?.length) return { created: 0, skipped: true, reason: 'empty_template' };
+
+  const tplMap = {};
+  tpls.forEach((t) => { tplMap[t.id] = t; });
+  const inserts = allItems.map((item) => ({
+    lead_id: leadId,
+    title: item.title,
+    description: item.description || null,
+    priority: item.priority || 'medium',
+    stage_slug: tplMap[item.template_id]?.stage_slug || slug,
+    pipeline_stage_id: null,
+    order_index: item.order_index,
+    deadline: null,
+    created_by: userId,
+    completion_requires_file_or_note: !!item.completion_requires_file_or_note,
+    completion_requires_customer_note: !!item.completion_requires_customer_note,
+    completion_requires_customer_contact: !!item.completion_requires_customer_contact,
+    blocks_stage_advance: !!item.blocks_stage_advance,
+  }));
+  const { error: insErr } = await supabase.from('crm_tasks').insert(inserts);
+  if (insErr) throw insErr;
+  return { created: inserts.length, skipped: false };
+}
+
+/**
  * Dọn task CRM orphan (pipeline_stage_id = null) khi lead/deal đã có pipeline + bộ mẫu setup.
  * - Có task pipeline + orphan lẫn lộn → chỉ xóa orphan, giữ task pipeline.
  * - Chỉ orphan → xóa rồi autoGenCrmTasks.
+ * @deprecated Không gọi tự động — lead/deal legacy giữ nguyên bộ nhiệm vụ cũ.
  */
 async function healOrphanCrmTasksForLead(leadId, userId) {
   const { data: lead } = await supabase
@@ -557,8 +651,9 @@ async function resyncCrmPipelineTasksForLead(leadId, userId) {
 }
 
 /**
- * Đồng bộ bộ mẫu CRM cho mọi lead/deal thuộc các khu vực của công ty.
- * Luôn gọi resyncCrmPipelineTasksForLead (kể cả lead đã có task pipeline cũ).
+ * Áp bộ mẫu pipeline cho lead/deal CHƯA CÓ nhiệm vụ CRM (tạo mới / rỗng).
+ * Lead/deal cũ đã có task → bỏ qua (giữ bộ nhiệm vụ legacy).
+ * Muốn chuyển lead/deal cũ sang bộ mới → dùng POST /leads/:id/tasks/resync-pipeline (thủ công).
  */
 async function applyCrmTaskTemplatesToCompanyRegions({
   companyId,
@@ -614,10 +709,10 @@ async function applyCrmTaskTemplatesToCompanyRegions({
     pipeline_id: pipelineIdResolved,
     regions_targeted: normRegions?.length || null,
     scanned: 0,
-    resynced: 0,
+    applied: 0,
     tasks_created: 0,
-    tasks_removed: 0,
     pipeline_backfilled: 0,
+    skipped_has_tasks: 0,
     skipped_other_pipeline: 0,
     errors: [],
   };
@@ -630,6 +725,16 @@ async function applyCrmTaskTemplatesToCompanyRegions({
         continue;
       }
 
+      const { count: taskCount, error: cntErr } = await supabase
+        .from('crm_tasks')
+        .select('id', { count: 'exact', head: true })
+        .eq('lead_id', lead.id);
+      if (cntErr) throw cntErr;
+      if ((taskCount || 0) > 0) {
+        stats.skipped_has_tasks += 1;
+        continue;
+      }
+
       if (!lead.pipeline_id) {
         const { error: bfErr } = await supabase
           .from('crm_leads')
@@ -639,17 +744,15 @@ async function applyCrmTaskTemplatesToCompanyRegions({
         stats.pipeline_backfilled += 1;
       }
 
-      const result = await resyncCrmPipelineTasksForLead(
+      const created = await autoGenCrmTasks(
         lead.id,
+        lead.type || 'lead',
         userId || lead.created_by,
       );
-      if (!result.ok) {
-        stats.errors.push({ lead_id: lead.id, error: result.error || 'resync failed' });
-        continue;
+      if (created > 0) {
+        stats.applied += 1;
+        stats.tasks_created += created;
       }
-      stats.resynced += 1;
-      stats.tasks_created += result.tasks_created || 0;
-      stats.tasks_removed += (result.deleted_extra || 0) + (result.stage_tasks_deleted || 0);
     } catch (e) {
       stats.errors.push({ lead_id: lead.id, error: e.message });
     }
@@ -664,6 +767,8 @@ module.exports = {
   healOrphanCrmTasksForLead,
   resyncCrmPipelineTasksForLead,
   leadCurrentStageNeedsTemplateResync,
+  leadUsesLegacyCrmTaskSet,
+  applyLegacyGlobalTemplatesForStage,
   applyPipelineTemplatesForStage,
   FALLBACK_LEAD_TASKS,
   FALLBACK_DEAL_TASKS,

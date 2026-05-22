@@ -399,9 +399,9 @@ export default function CRMTemplatesPage() {
     const ok = window.confirm(
       `Áp dụng bộ mẫu ${typeLabel} từ pipeline «${pipelineName}» cho toàn bộ ${regionLabel}?\n\n`
       + 'Hệ thống sẽ:\n'
-      + '• Xóa nhiệm vụ cũ / legacy và gen lại đúng bộ mẫu pipeline cho TẤT CẢ lead/deal (kể cả đã có task)\n'
-      + '• Giai đoạn hiện tại của mỗi lead/deal được đồng bộ theo template mới\n\n'
-      + 'Lead/deal đang làm dở ở giai đoạn hiện tại sẽ bị thay bằng bộ mẫu mới.\n'
+      + '• Chỉ gen nhiệm vụ cho lead/deal CHƯA CÓ nhiệm vụ CRM (mới tạo / tab Công việc rỗng)\n'
+      + '• Lead/deal cũ đã có nhiệm vụ → giữ nguyên bộ cũ (bỏ qua)\n\n'
+      + 'Muốn chuyển một lead/deal cũ sang bộ mới: mở tab Công việc → 「Gen lại đúng bộ mẫu」.\n'
       + 'Tiếp tục?',
     );
     if (!ok) return;
@@ -417,9 +417,9 @@ export default function CRMTemplatesPage() {
       setApplyRegionsResult(data);
       const msg = [
         `Đã quét ${data.scanned} ${typeLabel}.`,
-        data.resynced ? `Đồng bộ ${data.resynced} lead/deal.` : null,
-        data.tasks_created ? `Tạo ${data.tasks_created} nhiệm vụ mới.` : null,
-        data.tasks_removed ? `Xóa ${data.tasks_removed} nhiệm vụ cũ/thừa.` : null,
+        data.applied ? `Gen mới cho ${data.applied} lead/deal (chưa có nhiệm vụ).` : null,
+        data.tasks_created ? `Tạo ${data.tasks_created} nhiệm vụ.` : null,
+        data.skipped_has_tasks ? `Bỏ qua ${data.skipped_has_tasks} (đã có nhiệm vụ — giữ bộ cũ).` : null,
         data.pipeline_backfilled ? `Gán pipeline cho ${data.pipeline_backfilled} lead/deal.` : null,
         data.skipped_other_pipeline ? `Bỏ qua ${data.skipped_other_pipeline} (pipeline khác).` : null,
         data.errors?.length ? `Lỗi: ${data.errors.length} bản ghi.` : null,
@@ -803,10 +803,10 @@ export default function CRMTemplatesPage() {
       {applyRegionsResult && (
         <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-xs text-violet-900 space-y-1">
           <p className="font-semibold">Kết quả áp dụng bộ mẫu</p>
-          <p>Đã quét: <b>{applyRegionsResult.scanned}</b> lead/deal · Đồng bộ: <b>{applyRegionsResult.resynced}</b> · Nhiệm vụ mới: <b>{applyRegionsResult.tasks_created}</b></p>
-          {(applyRegionsResult.tasks_removed > 0 || applyRegionsResult.skipped_other_pipeline > 0) && (
+          <p>Đã quét: <b>{applyRegionsResult.scanned}</b> · Gen mới: <b>{applyRegionsResult.applied ?? applyRegionsResult.resynced ?? 0}</b> · Nhiệm vụ tạo: <b>{applyRegionsResult.tasks_created}</b></p>
+          {(applyRegionsResult.skipped_has_tasks > 0 || applyRegionsResult.skipped_other_pipeline > 0) && (
             <p className="text-violet-700">
-              {applyRegionsResult.tasks_removed > 0 && <>Đã xóa {applyRegionsResult.tasks_removed} nhiệm vụ cũ. </>}
+              {applyRegionsResult.skipped_has_tasks > 0 && <>Giữ bộ cũ: {applyRegionsResult.skipped_has_tasks} lead/deal đã có nhiệm vụ. </>}
               {applyRegionsResult.skipped_other_pipeline > 0 && <>Pipeline khác: {applyRegionsResult.skipped_other_pipeline}.</>}
             </p>
           )}
