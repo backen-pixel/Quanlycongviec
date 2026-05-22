@@ -82,6 +82,7 @@ object BubbleNotifBuilder {
     // Suppress notification nếu bubble cho chính conv này đang được mở rộng
     // — giống "suppress notification due to user in same thread, call, or bubble" của Messenger.
     if (BubbleChatActivity.expandedKey == bubbleKey) return
+    if (OverlayBubbleService.activeExpandedKey == bubbleKey) return
 
     ensureChannel(ctx)
 

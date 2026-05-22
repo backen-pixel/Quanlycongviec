@@ -2,9 +2,11 @@
  * Heartbeat: gửi ping định kỳ tới /devices/ping để server biết thiết bị nào đang online.
  * Bật khi đã có token, tắt khi logout.
  */
-import { AppState, type AppStateStatus, NativeModules, Platform } from 'react-native';
+import { AppState, type AppStateStatus, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
+import * as Location from 'expo-location';
+import NetInfo from '@react-native-community/netinfo';
 import { api } from '../api/client';
 
 const DEVICE_ID_KEY = 'crm_device_id_v1';
@@ -14,6 +16,9 @@ let timer: ReturnType<typeof setInterval> | null = null;
 let appStateSub: { remove: () => void } | null = null;
 let started = false;
 let cachedDeviceId: string | null = null;
+let cachedGeo: { lat: number; lng: number; at: number; address?: string } | null = null;
+
+NetInfo.configure({ shouldFetchWiFiSSID: true });
 
 function randomId(): string {
   return (
@@ -68,10 +73,80 @@ async function getPushToken(): Promise<string | null> {
   }
 }
 
+async function getNetworkMeta(): Promise<{
+  network_type?: string;
+  network_name?: string;
+}> {
+  try {
+    const state = await NetInfo.fetch();
+    const details = (state as { details?: Record<string, unknown> }).details || {};
+    const type = state.type && state.type !== 'unknown' ? String(state.type) : undefined;
+    const ssid = typeof details.ssid === 'string' ? details.ssid.trim() : '';
+    return {
+      network_type: type,
+      network_name: ssid || undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function isValidCoord(lat: number, lng: number): boolean {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return false;
+  if (Math.abs(lat) < 0.0001 && Math.abs(lng) < 0.0001) return false;
+  return true;
+}
+
+async function getGeoMeta(isLogin: boolean): Promise<{
+  geo_lat?: number;
+  geo_lng?: number;
+  geo_address?: string;
+}> {
+  try {
+    if (!isLogin && cachedGeo && Date.now() - cachedGeo.at < 10 * 60 * 1000) {
+      if (isValidCoord(cachedGeo.lat, cachedGeo.lng)) {
+        return { geo_lat: cachedGeo.lat, geo_lng: cachedGeo.lng, geo_address: cachedGeo.address };
+      }
+      cachedGeo = null;
+    }
+    let perm = await Location.getForegroundPermissionsAsync();
+    if (perm.status !== 'granted' && isLogin && perm.canAskAgain) {
+      perm = await Location.requestForegroundPermissionsAsync();
+    }
+    if (perm.status !== 'granted') return {};
+    const last = await Location.getLastKnownPositionAsync();
+    const fresh = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+    const chosen = fresh || last;
+    const lat = chosen?.coords?.latitude;
+    const lng = chosen?.coords?.longitude;
+    if (!isValidCoord(lat as number, lng as number)) return {};
+    let address: string | undefined;
+    try {
+      const geos = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
+      const g = geos?.[0];
+      const parts = [g?.name, g?.street, g?.district, g?.city, g?.region]
+        .map((x) => String(x || '').trim())
+        .filter(Boolean);
+      if (parts.length) address = parts.join(', ');
+    } catch {
+      // ignore reverse geocode failures
+    }
+    cachedGeo = { lat, lng, at: Date.now(), address };
+    return { geo_lat: lat, geo_lng: lng, geo_address: address };
+  } catch {
+    return {};
+  }
+}
+
 async function ping(isLogin = false): Promise<void> {
   try {
     const deviceId = await getOrCreateDeviceId();
     const pushToken = await getPushToken();
+    const [networkMeta, geoMeta] = await Promise.all([
+      getNetworkMeta(),
+      getGeoMeta(isLogin),
+    ]);
     await api.post('/devices/ping', {
       device_id: deviceId,
       platform: Platform.OS === 'android' || Platform.OS === 'ios' ? Platform.OS : 'web',
@@ -80,6 +155,11 @@ async function ping(isLogin = false): Promise<void> {
       os_version: String((Platform as { Version?: string | number }).Version ?? ''),
       app_version: getAppVersion(),
       push_token: pushToken || undefined,
+      network_type: networkMeta.network_type,
+      network_name: networkMeta.network_name,
+      geo_lat: geoMeta.geo_lat,
+      geo_lng: geoMeta.geo_lng,
+      geo_address: geoMeta.geo_address,
       is_login: isLogin,
     });
   } catch {
@@ -100,12 +180,6 @@ export function startDeviceHeartbeat(): void {
   appStateSub = AppState.addEventListener('change', (s: AppStateStatus) => {
     if (s === 'active') void ping(false);
   });
-
-  if (Platform.OS === 'android') {
-    const overlay = (NativeModules as { FloatingBubbleOverlay?: { setHeartbeatActive?: (b: boolean) => void } })
-      .FloatingBubbleOverlay;
-    overlay?.setHeartbeatActive?.(true);
-  }
 }
 
 /** Buộc ping ngay (cho MyDevicesScreen — đảm bảo thiết bị hiện tại có trong danh sách). */

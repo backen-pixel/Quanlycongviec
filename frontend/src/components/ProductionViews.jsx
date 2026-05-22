@@ -1,5 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import api from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
 
 function formatVND(v) {
@@ -298,6 +300,228 @@ export function ProductionPlannerView({ pipeline }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+export function ProductionCommentsView({ pipeline, commentsIndex, onRefreshIndex }) {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const [expandedId, setExpandedId] = useState(null);
+  const [search, setSearch] = useState('');
+  const [onlyMine, setOnlyMine] = useState(false);
+  const allItems = useMemo(
+    () => pipeline.flatMap((s) => s.items.map((item) => ({ ...item, _stage: s }))),
+    [pipeline],
+  );
+
+  const filtered = useMemo(() => {
+    const idx = commentsIndex || {};
+    const q = search.trim().toLowerCase();
+    return allItems
+      .map((it) => {
+        const meta = idx[String(it.id)];
+        return meta && meta.count > 0 ? { ...it, _comments: meta } : null;
+      })
+      .filter(Boolean)
+      .filter((it) => {
+        if (onlyMine && String(it._comments.last_user_id || '') !== String(user?.id || '')) return false;
+        if (!q) return true;
+        return (it.name || '').toLowerCase().includes(q)
+          || (it.code || '').toLowerCase().includes(q)
+          || (it.customer?.full_name || '').toLowerCase().includes(q);
+      })
+      .sort((a, b) => String(b._comments.last_at || '').localeCompare(String(a._comments.last_at || '')));
+  }, [allItems, commentsIndex, search, onlyMine, user?.id]);
+
+  return (
+    <div className="space-y-3 rounded-xl bg-[#f0f2f5] p-3 sm:p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 min-w-[200px] max-w-md">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Tìm trong các dự án đã bình luận…"
+            className="w-full h-9 px-3 text-sm border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <label className="inline-flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
+          <input type="checkbox" checked={onlyMine} onChange={(e) => setOnlyMine(e.target.checked)} />
+          Bình luận cuối là của tôi
+        </label>
+        <span className="text-xs text-gray-500 ml-auto">
+          {filtered.length} / {allItems.length} dự án có bình luận
+        </span>
+      </div>
+      {filtered.length === 0 ? (
+        <p className="text-center text-gray-400 py-12 text-sm">Chưa có dự án nào có bình luận.</p>
+      ) : (
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 lg:gap-4">
+          {filtered.map((it) => (
+            <ProductionCommentCard
+              key={it.id}
+              item={it}
+              expanded={expandedId === it.id}
+              onToggle={() => setExpandedId((prev) => (prev === it.id ? null : it.id))}
+              onChanged={onRefreshIndex}
+              navigate={navigate}
+              user={user}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, user }) {
+  const [comments, setComments] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [body, setBody] = useState('');
+  const [posting, setPosting] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      setLoading(true);
+      const r = await api.get(`/projects/${item.id}/comments`);
+      setComments(Array.isArray(r.data?.comments) ? r.data.comments : []);
+    } catch {
+      setComments([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [item.id]);
+
+  useEffect(() => {
+    if (expanded && comments == null) load();
+  }, [expanded, comments, load]);
+
+  const submit = async () => {
+    const text = body.trim();
+    if (!text) return;
+    try {
+      setPosting(true);
+      const r = await api.post(`/projects/${item.id}/comments`, { content: text });
+      const row = r.data?.comment || r.data;
+      if (row?.id) {
+        setComments((prev) => [row, ...(prev || [])]);
+      } else {
+        await load();
+      }
+      setBody('');
+      onChanged?.();
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Lỗi gửi bình luận');
+    } finally {
+      setPosting(false);
+    }
+  };
+
+  const removeComment = async (commentId) => {
+    if (!window.confirm('Xóa bình luận này?')) return;
+    try {
+      setDeletingId(commentId);
+      await api.delete(`/projects/${item.id}/comments/${commentId}`);
+      setComments((prev) => (prev || []).filter((c) => String(c.id) !== String(commentId)));
+      onChanged?.();
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Lỗi xóa bình luận');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  return (
+    <div className="flex flex-col overflow-hidden rounded-lg border border-[#e4e6eb] bg-white shadow-sm">
+      <div className="px-3 pt-3 pb-2">
+        <button
+          type="button"
+          onClick={() => {
+            markWorkshopPipelineCardFocus(item.id, 'sx');
+            navigate(`/sx/projects/${item.id}?tab=chat`);
+          }}
+          className="w-full text-left"
+        >
+          <p className="truncate text-[15px] font-semibold text-[#050505] hover:underline">{item.name}</p>
+          <p className="mt-0.5 text-xs text-[#65676b]">
+            {item.code}
+            {item.customer?.full_name ? ` · ${item.customer.full_name}` : ''}
+          </p>
+        </button>
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#65676b]">
+          {item._stage && (
+            <span
+              className="inline-flex max-w-full items-center gap-1 truncate rounded-full px-2 py-0.5 font-medium"
+              style={{ backgroundColor: `${item._stage.color || '#0ea5e9'}18`, color: item._stage.color || '#0369a1' }}
+            >
+              {item._stage.icon || '🏭'} {item._stage.name}
+            </span>
+          )}
+          <span className="font-medium">
+            {item._comments.count} bình luận
+            {item._comments.last_at ? ` · ${formatDate(item._comments.last_at)}` : ''}
+          </span>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={onToggle}
+        className="mx-3 mb-2 rounded-md px-2 py-1.5 text-left text-[13px] font-semibold text-[#65676b] transition-colors hover:bg-[#f0f2f5]"
+      >
+        {expanded ? 'Ẩn bình luận' : `Xem ${item._comments.count} bình luận trước`}
+      </button>
+
+      {expanded && (
+        <div className="max-h-[min(360px,55vh)] overflow-y-auto border-t border-[#e4e6eb] bg-[#f0f2f5] px-2 py-2 space-y-2">
+          {loading && <p className="py-6 text-center text-sm text-[#65676b]">Đang tải…</p>}
+          {!loading && (comments || []).length === 0 && (
+            <p className="py-6 text-center text-sm text-[#65676b]">Chưa có bình luận nào.</p>
+          )}
+          {!loading && (comments || []).map((c) => (
+            <div key={c.id} className="rounded-lg bg-white border border-[#e4e6eb] px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-[#050505] truncate">{c.user?.full_name || 'Thành viên'}</p>
+                  <p className="text-[11px] text-[#65676b]">{formatDate(c.created_at)}</p>
+                </div>
+                {String(c.user_id || '') === String(user?.id || '') && (
+                  <button
+                    type="button"
+                    disabled={deletingId === c.id}
+                    onClick={() => removeComment(c.id)}
+                    className="text-[11px] font-semibold text-rose-600 hover:underline disabled:opacity-60"
+                  >
+                    {deletingId === c.id ? 'Đang xóa…' : 'Xóa'}
+                  </button>
+                )}
+              </div>
+              <p className="mt-1.5 text-sm text-[#050505] whitespace-pre-wrap break-words">{c.content || ''}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="border-t border-[#e4e6eb] bg-white px-3 py-2">
+        <div className="flex items-end gap-2">
+          <textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            rows={2}
+            placeholder={`Bình luận với tư cách ${user?.full_name || user?.email || 'bạn'}…`}
+            className="w-full resize-y rounded-xl border border-[#e4e6eb] bg-[#f0f2f5] px-3 py-2 text-sm text-[#050505] focus:border-[#1877f2]/40 focus:outline-none focus:ring-1 focus:ring-[#1877f2]/30"
+          />
+          <button
+            type="button"
+            disabled={posting || !body.trim()}
+            onClick={submit}
+            className="h-9 px-3 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 disabled:opacity-50 cursor-pointer"
+          >
+            {posting ? 'Đang gửi…' : 'Gửi'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -4,6 +4,7 @@ import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { getSocket } from '../lib/socket';
 import { getInitials, avatarColor, ROLE_LABELS } from '../lib/utils';
+import { useMessengerDock } from '../context/MessengerDockContext';
 import {
   Send, ArrowLeft, Pin, Reply, Trash2, Edit, MoreVertical, Paperclip, X,
   Users, Building, Image, File, Plus, Video, UserPlus, Smile
@@ -13,6 +14,7 @@ export default function DepartmentChat() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { registerDepartmentChatPresence, markDeptRead } = useMessengerDock();
   const [dept, setDept] = useState(null);
   const [members, setMembers] = useState([]);
   const [messages, setMessages] = useState([]);
@@ -47,12 +49,20 @@ export default function DepartmentChat() {
     }).catch(() => {}).finally(() => setLoading(false));
   }, [id]);
 
+  // Đăng ký presence để khi đang ở trang này, tin nhắn mới KHÔNG bật bong bóng
+  // (chỉ stack vào danh sách messages). Đồng thời reset badge unread.
+  useEffect(() => {
+    if (!id) return undefined;
+    markDeptRead(id);
+    return registerDepartmentChatPresence(id);
+  }, [id, registerDepartmentChatPresence, markDeptRead]);
+
   // Socket.IO realtime
   useEffect(() => {
     const socket = getSocket();
     if (!socket || !id) return;
 
-    // Join department room
+    // Join department room (idempotent — MessengerDockProvider cũng giữ join cho bong bóng)
     socket.emit('join:dept', id);
 
     const msgHandler = (data) => {
@@ -74,7 +84,8 @@ export default function DepartmentChat() {
     socket.on('department_message', msgHandler);
     socket.on('department_reaction', reactionHandler);
     return () => {
-      socket.emit('leave:dept', id);
+      // KHÔNG emit 'leave:dept' khi unmount: MessengerDockProvider đang quản lý
+      // việc join room cho phòng ban của user, nếu rời sẽ mất bong bóng tin nhắn.
       socket.off('department_message', msgHandler);
       socket.off('department_reaction', reactionHandler);
     };

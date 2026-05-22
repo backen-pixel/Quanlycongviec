@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import api from '../lib/api';
 import { resolveMediaUrl, BROKEN_MEDIA_PLACEHOLDER } from '../lib/mediaUrl';
-import { Trash2, Send, Users, Crown, Shield, Building2, Eye, Paperclip, X, Mic } from 'lucide-react';
+import { Trash2, Send, Users, Crown, Shield, Building2, Eye, Paperclip, X, Mic, Reply, CornerDownRight } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import EmployeePicker from './EmployeePicker';
@@ -35,6 +35,68 @@ const formatTime = (d) => {
   if (isToday) return time;
   return date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }) + ' ' + time;
 };
+
+function previewOfMessage(parent) {
+  if (!parent) return '';
+  const txt = String(parent.content || '').trim();
+  if (txt) return txt.length > 120 ? txt.slice(0, 120) + '…' : txt;
+  const type = parent.message_type;
+  if (type === 'image') return '🖼️ Hình ảnh';
+  if (type === 'video') return '🎬 Video';
+  if (type === 'audio') return '🎙️ Ghi âm';
+  if (parent.attachment_url || parent.attachment_name) return `📎 ${parent.attachment_name || 'Tệp đính kèm'}`;
+  return '[tin nhắn]';
+}
+
+/**
+ * Khối trích dẫn tin nhắn được trả lời — hiển thị bên trong bong bóng chat của
+ * tin nhắn con. Click để cuộn về tin gốc trong khung message list.
+ */
+function ReplyQuoteInBubble({ parent, isMe, onJump }) {
+  if (!parent) return null;
+  const author = parent.user?.full_name || parent.user?.email || 'Thành viên';
+  return (
+    <button
+      type="button"
+      onClick={() => onJump?.(parent.id)}
+      className={`w-full text-left mb-1.5 rounded-md px-2 py-1.5 border-l-2 transition-colors ${
+        isMe
+          ? 'bg-blue-700/30 border-blue-200 hover:bg-blue-700/40 text-blue-50'
+          : 'bg-slate-100 border-blue-400 hover:bg-slate-200 text-slate-700'
+      }`}
+    >
+      <p className={`text-[10px] font-semibold truncate ${isMe ? 'text-blue-100' : 'text-blue-700'}`}>
+        ↩ {author}
+      </p>
+      <p className={`text-[11px] truncate ${isMe ? 'text-blue-50/90' : 'text-slate-600'}`}>
+        {previewOfMessage(parent)}
+      </p>
+    </button>
+  );
+}
+
+/** Thanh preview phía trên ô nhập khi đang trả lời 1 tin. */
+function ReplyComposerBar({ replyTo, onCancel }) {
+  if (!replyTo) return null;
+  const author = replyTo.user?.full_name || replyTo.user?.email || 'Thành viên';
+  return (
+    <div className="mb-2 flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5">
+      <CornerDownRight className="h-3.5 w-3.5 mt-0.5 text-blue-600 shrink-0" />
+      <div className="flex-1 min-w-0">
+        <p className="text-[10px] font-semibold text-blue-700">Đang trả lời {author}</p>
+        <p className="text-[11px] text-slate-700 truncate">{previewOfMessage(replyTo)}</p>
+      </div>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="text-slate-400 hover:text-rose-500 shrink-0"
+        title="Hủy trả lời"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
 
 // ═══════════════════════════════════════════════════════════════
 // Tab Thành viên — dùng EmployeePicker lọc theo Công ty + Phòng ban
@@ -213,9 +275,12 @@ export function LeadChatTab({ leadId, socket, fillParent, onMessagesChange }) {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [mediaPreview, setMediaPreview] = useState(null);
+  const [replyTo, setReplyTo] = useState(null);
+  const [highlightId, setHighlightId] = useState(null);
   const fileInputRef = useRef(null);
   const audioInputRef = useRef(null);
   const messagesEndRef = useRef(null);
+  const messageRefs = useRef(new Map());
   const { user } = useAuth();
   const { registerLeadChatPresence } = useMessengerDock();
   const onMessagesChangeRef = useRef(onMessagesChange);
@@ -266,25 +331,39 @@ export function LeadChatTab({ leadId, socket, fillParent, onMessagesChange }) {
     const pickedFiles = files ? Array.from(files).filter(Boolean) : [];
     if ((!text.trim() && pickedFiles.length === 0) || sending) return;
     setSending(true);
+    const replyId = replyTo?.id || null;
     try {
       if (pickedFiles.length > 0) {
-        // Upload từng file qua endpoint riêng để backend lưu attachment_url/attachment_mime đúng format
         for (let i = 0; i < pickedFiles.length; i++) {
           const fd = new FormData();
           fd.append('file', pickedFiles[i]);
-          if (i === 0 && text.trim()) fd.append('content', text); // chỉ file đầu tiên mang theo text
+          if (i === 0 && text.trim()) fd.append('content', text);
+          if (i === 0 && replyId) fd.append('reply_to', replyId);
           await api.post(`/crm/leads/${leadId}/chat/upload`, fd, {
             headers: { 'Content-Type': 'multipart/form-data' },
           });
         }
       } else {
-        await api.post(`/crm/leads/${leadId}/chat`, { content: text.trim() });
+        await api.post(`/crm/leads/${leadId}/chat`, {
+          content: text.trim(),
+          reply_to: replyId,
+        });
       }
       setText('');
+      setReplyTo(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (e) { alert(e.response?.data?.error || 'Lỗi gửi tin nhắn'); }
     setSending(false);
   };
+
+  const jumpToMessage = useCallback((id) => {
+    if (!id) return;
+    const el = messageRefs.current.get(String(id));
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setHighlightId(String(id));
+    setTimeout(() => setHighlightId(null), 1600);
+  }, []);
 
   const renderAttachments = (message) => {
     const items = Array.isArray(message.attachments) && message.attachments.length
@@ -372,16 +451,52 @@ export function LeadChatTab({ leadId, socket, fillParent, onMessagesChange }) {
               </div>
             );
           }
+          const parent = m.reply || m.reply_to_message || null;
+          const isHighlight = String(highlightId || '') === String(m.id);
           return (
-            <div key={m.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'} gap-2`}>
+            <div
+              key={m.id}
+              ref={(el) => {
+                if (el) messageRefs.current.set(String(m.id), el);
+                else messageRefs.current.delete(String(m.id));
+              }}
+              className={`group/msg flex ${isMe ? 'justify-end' : 'justify-start'} gap-2 transition-colors rounded-lg ${
+                isHighlight ? 'ring-2 ring-amber-300 bg-amber-50/60' : ''
+              }`}
+            >
               {!isMe && <Avatar name={m.user?.full_name} url={m.user?.avatar} size={7} />}
-              <div className={`max-w-[70%] rounded-2xl px-3.5 py-2 shadow-sm ${
-                isMe ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-br-md' : 'bg-white text-gray-800 rounded-bl-md border border-gray-100'
-              }`}>
-                {!isMe && <p className={`text-[10px] font-medium mb-0.5 ${isMe ? 'text-blue-200' : 'text-blue-600'}`}>{m.user?.full_name}</p>}
-                <p className="text-[13px] leading-relaxed whitespace-pre-wrap break-words">{m.content}</p>
-                {renderAttachments(m)}
-                <p className={`text-[9px] mt-1 ${isMe ? 'text-blue-200' : 'text-gray-400'}`}>{formatTime(m.created_at)}</p>
+              <div className="flex items-center gap-1 max-w-[78%]">
+                {isMe && (
+                  <button
+                    type="button"
+                    onClick={() => setReplyTo(m)}
+                    className="shrink-0 opacity-70 hover:opacity-100 transition-all text-slate-500 hover:text-blue-600 hover:bg-slate-100 p-1.5 rounded-full"
+                    title="Trả lời tin nhắn"
+                    aria-label="Trả lời"
+                  >
+                    <Reply className="h-4 w-4" />
+                  </button>
+                )}
+                <div className={`rounded-2xl px-3.5 py-2 shadow-sm ${
+                  isMe ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-br-md' : 'bg-white text-gray-800 rounded-bl-md border border-gray-100'
+                }`}>
+                  {!isMe && <p className={`text-[10px] font-medium mb-0.5 ${isMe ? 'text-blue-200' : 'text-blue-600'}`}>{m.user?.full_name}</p>}
+                  {parent && <ReplyQuoteInBubble parent={parent} isMe={isMe} onJump={jumpToMessage} />}
+                  <p className="text-[13px] leading-relaxed whitespace-pre-wrap break-words">{m.content}</p>
+                  {renderAttachments(m)}
+                  <p className={`text-[9px] mt-1 ${isMe ? 'text-blue-200' : 'text-gray-400'}`}>{formatTime(m.created_at)}</p>
+                </div>
+                {!isMe && (
+                  <button
+                    type="button"
+                    onClick={() => setReplyTo(m)}
+                    className="shrink-0 opacity-70 hover:opacity-100 transition-all text-slate-500 hover:text-blue-600 hover:bg-slate-100 p-1.5 rounded-full"
+                    title="Trả lời tin nhắn"
+                    aria-label="Trả lời"
+                  >
+                    <Reply className="h-4 w-4" />
+                  </button>
+                )}
               </div>
             </div>
           );
@@ -390,32 +505,35 @@ export function LeadChatTab({ leadId, socket, fillParent, onMessagesChange }) {
       </div>
 
       {/* Input */}
-      <div className="p-3 border-t bg-white rounded-b-xl flex gap-2 shrink-0">
-        <input type="file" multiple className="hidden" ref={fileInputRef} onChange={e => send(e.target.files)} />
-        <input
-          type="file"
-          accept="audio/*"
-          className="hidden"
-          ref={audioInputRef}
-          onChange={(e) => {
-            send(e.target.files);
-            e.target.value = '';
-          }}
-        />
-        <button type="button" onClick={() => fileInputRef.current?.click()} className="text-gray-400 hover:text-blue-500 cursor-pointer p-2" title="Đính kèm">
-          <Paperclip size={18} />
-        </button>
-        <button type="button" onClick={() => audioInputRef.current?.click()} className="text-gray-400 hover:text-violet-600 cursor-pointer p-2" title="Ghi âm / file âm thanh">
-          <Mic size={18} />
-        </button>
-        <input value={text} onChange={e => setText(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && !e.shiftKey && send()}
-          placeholder="Nhập tin nhắn..."
-          className="flex-1 px-4 py-2.5 border border-gray-200 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50" />
-        <button type="button" onClick={() => send()} disabled={sending || (!text.trim())}
-          className="bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl w-10 h-10 flex items-center justify-center hover:from-blue-600 hover:to-blue-700 disabled:opacity-40 cursor-pointer transition shadow-sm">
-          <Send size={16} />
-        </button>
+      <div className="p-3 border-t bg-white rounded-b-xl shrink-0">
+        <ReplyComposerBar replyTo={replyTo} onCancel={() => setReplyTo(null)} />
+        <div className="flex gap-2">
+          <input type="file" multiple className="hidden" ref={fileInputRef} onChange={e => send(e.target.files)} />
+          <input
+            type="file"
+            accept="audio/*"
+            className="hidden"
+            ref={audioInputRef}
+            onChange={(e) => {
+              send(e.target.files);
+              e.target.value = '';
+            }}
+          />
+          <button type="button" onClick={() => fileInputRef.current?.click()} className="text-gray-400 hover:text-blue-500 cursor-pointer p-2" title="Đính kèm">
+            <Paperclip size={18} />
+          </button>
+          <button type="button" onClick={() => audioInputRef.current?.click()} className="text-gray-400 hover:text-violet-600 cursor-pointer p-2" title="Ghi âm / file âm thanh">
+            <Mic size={18} />
+          </button>
+          <input value={text} onChange={e => setText(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && send()}
+            placeholder={replyTo ? 'Trả lời tin nhắn…' : 'Nhập tin nhắn...'}
+            className="flex-1 px-4 py-2.5 border border-gray-200 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50" />
+          <button type="button" onClick={() => send()} disabled={sending || (!text.trim())}
+            className="bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl w-10 h-10 flex items-center justify-center hover:from-blue-600 hover:to-blue-700 disabled:opacity-40 cursor-pointer transition shadow-sm">
+            <Send size={16} />
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -499,10 +617,13 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionStart, setMentionStart] = useState(0);
   const [mentionPickIdx, setMentionPickIdx] = useState(0);
+  const [replyTo, setReplyTo] = useState(null);
+  const [highlightId, setHighlightId] = useState(null);
   const fileInputRef = useRef(null);
   const audioInputRef = useRef(null);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
+  const messageRefs = useRef(new Map());
   const { user } = useAuth();
   const { registerMessengerGroupPresence } = useMessengerDock();
   const onMessagesChangeRef = useRef(onMessagesChange);
@@ -642,6 +763,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
     setSending(true);
     const members = groupMeta?.members || [];
     const mentionIds = resolveMentionIdsFromContent(text.trim(), members);
+    const replyId = replyTo?.id || null;
     try {
       if (pickedFiles.length > 0) {
         for (let i = 0; i < pickedFiles.length; i++) {
@@ -651,20 +773,35 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
             fd.append('content', text.trim());
             if (mentionIds.length) fd.append('mention_user_ids', JSON.stringify(mentionIds));
           }
+          if (i === 0 && replyId) fd.append('reply_to', replyId);
           await api.post(`/messenger/groups/${groupId}/chat/upload`, fd, {
             headers: { 'Content-Type': 'multipart/form-data' },
           });
         }
       } else {
-        await api.post(`/messenger/groups/${groupId}/chat`, { content: text.trim(), mention_user_ids: mentionIds });
+        await api.post(`/messenger/groups/${groupId}/chat`, {
+          content: text.trim(),
+          mention_user_ids: mentionIds,
+          reply_to: replyId,
+        });
       }
       setText('');
+      setReplyTo(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi gửi tin nhắn');
     }
     setSending(false);
   };
+
+  const jumpToMessage = useCallback((id) => {
+    if (!id) return;
+    const el = messageRefs.current.get(String(id));
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setHighlightId(String(id));
+    setTimeout(() => setHighlightId(null), 1600);
+  }, []);
 
   const renderAttachmentsGrouped = (message) => {
     const items = collectMessengerAttachments(message);
@@ -773,27 +910,63 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
             );
           }
           const senderName = m.user?.full_name || m.user?.email || 'Thành viên';
+          const parent = m.reply_to_message || m.reply || null;
+          const isHighlight = String(highlightId || '') === String(m.id);
           return (
-            <div key={m.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'} gap-2`}>
+            <div
+              key={m.id}
+              ref={(el) => {
+                if (el) messageRefs.current.set(String(m.id), el);
+                else messageRefs.current.delete(String(m.id));
+              }}
+              className={`group/msg flex ${isMe ? 'justify-end' : 'justify-start'} gap-2 transition-colors rounded-lg ${
+                isHighlight ? 'ring-2 ring-amber-300 bg-amber-50/60' : ''
+              }`}
+            >
               {!isMe && <Avatar name={senderName} url={m.user?.avatar} size={7} />}
-              <div
-                className={`max-w-[70%] rounded-2xl px-3.5 py-2 shadow-sm ${
-                  isMe
-                    ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-br-md'
-                    : 'bg-white text-gray-800 rounded-bl-md border border-gray-100'
-                }`}
-              >
-                {!isMe && <p className="text-[10px] font-medium mb-0.5 text-blue-600">{senderName}</p>}
-                {mentioned && (
-                  <p className="text-[9px] font-semibold mb-1 text-amber-700 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5 inline-block">
-                    Bạn được nhắc (@)
-                  </p>
+              <div className="flex items-center gap-1 max-w-[78%]">
+                {isMe && (
+                  <button
+                    type="button"
+                    onClick={() => setReplyTo(m)}
+                    className="shrink-0 opacity-70 hover:opacity-100 transition-all text-slate-500 hover:text-blue-600 hover:bg-slate-100 p-1.5 rounded-full"
+                    title="Trả lời tin nhắn"
+                    aria-label="Trả lời"
+                  >
+                    <Reply className="h-4 w-4" />
+                  </button>
                 )}
-                <div className="text-[13px] leading-relaxed whitespace-pre-wrap break-words">
-                  {renderMessengerTextContent(m.content, isMe)}
+                <div
+                  className={`rounded-2xl px-3.5 py-2 shadow-sm ${
+                    isMe
+                      ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-br-md'
+                      : 'bg-white text-gray-800 rounded-bl-md border border-gray-100'
+                  }`}
+                >
+                  {!isMe && <p className="text-[10px] font-medium mb-0.5 text-blue-600">{senderName}</p>}
+                  {mentioned && (
+                    <p className="text-[9px] font-semibold mb-1 text-amber-700 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5 inline-block">
+                      Bạn được nhắc (@)
+                    </p>
+                  )}
+                  {parent && <ReplyQuoteInBubble parent={parent} isMe={isMe} onJump={jumpToMessage} />}
+                  <div className="text-[13px] leading-relaxed whitespace-pre-wrap break-words">
+                    {renderMessengerTextContent(m.content, isMe)}
+                  </div>
+                  {renderAttachmentsGrouped(m)}
+                  <p className={`text-[9px] mt-1 ${isMe ? 'text-blue-200' : 'text-gray-400'}`}>{formatTime(m.created_at)}</p>
                 </div>
-                {renderAttachmentsGrouped(m)}
-                <p className={`text-[9px] mt-1 ${isMe ? 'text-blue-200' : 'text-gray-400'}`}>{formatTime(m.created_at)}</p>
+                {!isMe && (
+                  <button
+                    type="button"
+                    onClick={() => setReplyTo(m)}
+                    className="shrink-0 opacity-70 hover:opacity-100 transition-all text-slate-500 hover:text-blue-600 hover:bg-slate-100 p-1.5 rounded-full"
+                    title="Trả lời tin nhắn"
+                    aria-label="Trả lời"
+                  >
+                    <Reply className="h-4 w-4" />
+                  </button>
+                )}
               </div>
             </div>
           );
@@ -802,6 +975,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
       </div>
 
       <div className="p-3 border-t bg-white rounded-b-xl shrink-0 relative">
+        <ReplyComposerBar replyTo={replyTo} onCancel={() => setReplyTo(null)} />
         {mentionOpen && mentionCandidates.length > 0 && (
           <ul className="absolute bottom-full left-3 right-14 mb-1 max-h-36 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg text-xs z-10">
             {mentionCandidates.map((mem, idx) => (

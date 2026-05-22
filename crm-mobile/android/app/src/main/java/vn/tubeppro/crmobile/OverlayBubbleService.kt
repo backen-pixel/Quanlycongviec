@@ -1,5 +1,6 @@
 package vn.tubeppro.crmobile
 
+import android.animation.ValueAnimator
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -11,12 +12,21 @@ import android.content.SharedPreferences
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.core.app.NotificationCompat
+import androidx.dynamicanimation.animation.DynamicAnimation
+import androidx.dynamicanimation.animation.FlingAnimation
+import androidx.dynamicanimation.animation.FloatValueHolder
+import androidx.dynamicanimation.animation.SpringAnimation
+import androidx.dynamicanimation.animation.SpringForce
+import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 
@@ -31,15 +41,8 @@ class OverlayBubbleService : Service() {
   /** key → bubble đang gắn trên WindowManager */
   private val managed = LinkedHashMap<String, ManagedBubble>()
   private var dropTargetView: View? = null
-  private var dropZoneScrim: View? = null
   private var draggingKey: String? = null
   private var globalBadge = 0
-  private var lastBubbleScale: Float = 1f
-  // Fling-down detect: dấu thời gian + Y mới nhất khi drag, để tính vận tốc thả xuống
-  private var dragStartTs: Long = 0L
-  private var dragStartY: Float = 0f
-  private var dragLastY: Float = 0f
-  private var dragLastTs: Long = 0L
 
   private var peekView: View? = null
   private var peekForKey: String? = null
@@ -49,15 +52,14 @@ class OverlayBubbleService : Service() {
   /** Khung chat mở rộng (native overlay, không React). */
   private val expandedPanel by lazy { ExpandedChatPanel(this, this) }
 
-  // ---- Realtime polling (panel mở) ----
-  private val pollHandler = android.os.Handler(android.os.Looper.getMainLooper())
-  private var pollRunnable: Runnable? = null
-  private val POLL_INTERVAL_MS = 3000L
-
-  private data class ManagedBubble(
+  private class ManagedBubble(
     val key: String,
     val view: BubbleOverlayView,
     var params: WindowManager.LayoutParams,
+    var springX: SpringAnimation? = null,
+    var springY: SpringAnimation? = null,
+    var flingX: FlingAnimation? = null,
+    var flingY: FlingAnimation? = null,
   )
 
   override fun onBind(intent: Intent?): IBinder? = null
@@ -79,31 +81,29 @@ class OverlayBubbleService : Service() {
         val avatarUrl = intent.getStringExtra(EXTRA_AVATAR_URL)?.takeIf { it.isNotBlank() }
         val sender = intent.getStringExtra(EXTRA_PEEK_SENDER)
         val message = intent.getStringExtra(EXTRA_PEEK_MESSAGE)
+        val shouldIncUnread = intent.getBooleanExtra(EXTRA_INC_UNREAD, false)
         if (!sender.isNullOrBlank() && !message.isNullOrBlank()) {
           ConversationCache.append(
             this, key,
             ConversationCache.Msg(
-              id = "",
-              sender = sender,
-              senderId = "",
-              text = message,
-              avatar = avatarUrl,
-              ts = System.currentTimeMillis(),
-              messageType = "text",
-              attachmentUrl = null,
-              attachmentMime = null,
-              reactions = emptyList(),
-              mine = false,
+              sender = sender, text = message,
+              avatar = avatarUrl, ts = System.currentTimeMillis(),
             ),
           )
-          // Nếu panel đang mở cho conversation này → refresh ngay
           if (expandedPanel.isShowing()) expandedPanel.onIncoming(key)
         }
-        val entries = BubbleStackStore.upsert(
+        // Bước 1: upsert entry (giữ unread cũ nếu đã tồn tại, =0 nếu mới)
+        BubbleStackStore.upsert(
           this,
-          BubbleStackStore.Entry(key, title, letter, avatarUrl),
+          BubbleStackStore.Entry(key, title, letter, avatarUrl, unreadCount = 0),
         )
+        // Bước 2: nếu user không đang xem panel của conv này → +1 unread
+        if (shouldIncUnread && activeExpandedKey != key) {
+          BubbleStackStore.incrementUnread(this, key)
+        }
+        val entries = BubbleStackStore.load(this)
         renderStack(entries, loadAvatarForKey = key, loadAvatarUrl = avatarUrl)
+        applyUnreadBadges()
       }
       ACTION_EXPAND -> {
         val key = intent.getStringExtra(EXTRA_KEY) ?: return START_STICKY
@@ -128,7 +128,12 @@ class OverlayBubbleService : Service() {
         val sender = intent.getStringExtra(EXTRA_PEEK_SENDER) ?: return START_STICKY
         val message = intent.getStringExtra(EXTRA_PEEK_MESSAGE) ?: ""
         val key = intent.getStringExtra(EXTRA_KEY)
-        showPeek(sender, message, key)
+        // Suppress nếu panel đang mở cho chính conv này.
+        if (key != null && activeExpandedKey == key) {
+          // skip peek
+        } else {
+          showPeek(sender, message, key)
+        }
       }
       ACTION_RESTORE_STACK -> {
         renderStack(BubbleStackStore.load(this))
@@ -138,12 +143,41 @@ class OverlayBubbleService : Service() {
         BubbleStackStore.clear(this)
         stopSelf()
       }
+      ACTION_KEEP_ALIVE -> {
+        // Không làm gì — chỉ giữ service alive (đã startForeground ở onCreate)
+        // để Android 12+ không chặn `startForegroundService` khi FCM tới sau này.
+      }
+      ACTION_HIDE_FOR_EXTERNAL -> hideOverlayTemporarily()
+      ACTION_SHOW_AFTER_EXTERNAL -> showOverlayBack()
     }
     return START_STICKY
   }
 
+  override fun onTaskRemoved(rootIntent: Intent?) {
+    super.onTaskRemoved(rootIntent)
+    // Khi user swipe-kill app từ recents → schedule restart service qua AlarmManager
+    // (OEM Trung Quốc hay kill cả foreground service nếu task bị remove).
+    try {
+      val restart = Intent(applicationContext, OverlayBubbleService::class.java).apply {
+        action = ACTION_KEEP_ALIVE
+      }
+      val pi = PendingIntent.getForegroundService(
+        applicationContext,
+        0,
+        restart,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+      )
+      val am = getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+      val triggerAt = System.currentTimeMillis() + 2_000L
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        am.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, triggerAt, pi)
+      } else {
+        am.setExact(android.app.AlarmManager.RTC_WAKEUP, triggerAt, pi)
+      }
+    } catch (_: Throwable) {}
+  }
+
   override fun onDestroy() {
-    stopRealtimePolling()
     clearAllBubbles()
     super.onDestroy()
   }
@@ -193,7 +227,8 @@ class OverlayBubbleService : Service() {
     loadAvatarUrl: String? = null,
   ) {
     if (!canDrawOverlays()) {
-      stopSelf()
+      // Không có quyền overlay → vẫn để service alive ở keep-alive mode để có thể nhận FCM.
+      // Không show bubble, chỉ skip render.
       return
     }
     val sizePx = bubbleSizePx()
@@ -203,28 +238,33 @@ class OverlayBubbleService : Service() {
     for (k in toRemove) removeBubbleView(k)
 
     val metrics = resources.displayMetrics
-    val edgeX = metrics.widthPixels - sizePx - dp(10f).toInt()
-    val baseY = (metrics.heightPixels * 0.55f).toInt()
+    // Khôi phục vị trí top bubble đã lưu (Phase 6)
+    val savedX = prefs.getInt(KEY_TOP_X, Int.MIN_VALUE)
+    val savedY = prefs.getInt(KEY_TOP_Y, Int.MIN_VALUE)
+    val defaultX = metrics.widthPixels - sizePx - dp(10f).toInt()
+    val defaultY = (metrics.heightPixels * 0.55f).toInt()
+    val topX = if (savedX != Int.MIN_VALUE) savedX.coerceIn(0, metrics.widthPixels - sizePx) else defaultX
+    val topY = if (savedY != Int.MIN_VALUE) savedY.coerceIn(0, metrics.heightPixels - sizePx) else defaultY
 
     entries.forEachIndexed { index, entry ->
-      val y = (baseY - index * stackOverlapPx()).coerceAtLeast(dp(48f).toInt())
+      val isTop = index == entries.lastIndex
+      val y = if (isTop) topY else (topY - (entries.lastIndex - index) * stackOverlapPx()).coerceAtLeast(dp(48f).toInt())
+      val x = topX
       val mb = managed[entry.key]
       if (mb != null) {
         mb.view.setAvatarLetter(entry.letter)
-        mb.params.x = edgeX
-        mb.params.y = y
-        try { wm.updateViewLayout(mb.view, mb.params) } catch (_: Throwable) {}
-        if (globalBadge > 0 && index == entries.lastIndex) mb.view.setBadge(globalBadge)
-        else if (index != entries.lastIndex) mb.view.setBadge(0)
+        animateTo(mb, x, y)
+        // Badge per-bubble: mỗi bubble hiện count riêng (theo entry.unreadCount).
+        mb.view.setBadge(entry.unreadCount)
         if (!entry.avatarUrl.isNullOrBlank()) loadAvatarAsync(entry.avatarUrl, mb.view)
       } else {
-        attachBubble(entry, edgeX, y, sizePx, isTop = index == entries.lastIndex)
+        attachBubble(entry, x, y, sizePx, isTop = isTop)
       }
       if (entry.key == loadAvatarForKey && !loadAvatarUrl.isNullOrBlank()) {
         managed[entry.key]?.let { loadAvatarAsync(loadAvatarUrl, it.view) }
       }
     }
-    applyBadgeToTop()
+    applyUnreadBadges()
     if (peekForKey != null && peekForKey !in managed) hidePeek()
   }
 
@@ -234,47 +274,30 @@ class OverlayBubbleService : Service() {
       override fun onLongPress() = handleLongPress(entry.key)
       override fun onDragStart() {
         draggingKey = entry.key
-        dragStartTs = System.currentTimeMillis()
-        dragStartY = 0f
-        dragLastY = 0f
-        dragLastTs = dragStartTs
         bringToFront(entry.key)
+        cancelAnimations(entry.key)
         showDropTarget()
       }
       override fun onDragMove(rawX: Float, rawY: Float) {
-        if (dragStartY == 0f) dragStartY = rawY
-        dragLastY = rawY
-        dragLastTs = System.currentTimeMillis()
         moveBubble(entry.key, rawX, rawY, sizePx)
-        // Phóng to + rung nhẹ khi vào vùng drop
-        val over = isOverDropTarget(rawX, rawY, sizePx)
-        val mb = managed[entry.key] ?: return
-        val targetScale = if (over) 1.15f else 1f
-        if (targetScale != lastBubbleScale) {
-          lastBubbleScale = targetScale
-          mb.view.animate().scaleX(targetScale).scaleY(targetScale).setDuration(120).start()
-          if (over) mb.view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-          highlightDropTarget(over)
-        }
+        // Magnetic: khi gần drop → vibrate nhẹ + scale ring drop
+        val dropDist = distanceToDropCenter(rawX, rawY)
+        magneticFeedback(dropDist)
       }
-      override fun onDragEnd(rawX: Float, rawY: Float, droppedToDismiss: Boolean) {
-        // QUAN TRỌNG: kiểm tra drop trước khi reset draggingKey.
-        val dropped = isOverDropTarget(rawX, rawY, sizePx) || isFlingDown(rawY)
-        // Reset scale
-        managed[entry.key]?.view?.animate()?.scaleX(1f)?.scaleY(1f)?.setDuration(120)?.start()
-        lastBubbleScale = 1f
+      override fun onDragEnd(rawX: Float, rawY: Float, droppedToDismiss: Boolean, vx: Float, vy: Float) {
+        val dropped = isOverDropTarget(rawX, rawY, sizePx)
         draggingKey = null
         hideDropTarget()
         if (dropped) {
           removeBubble(entry.key)
         } else {
-          snapBubbleToEdge(entry.key, sizePx)
-          layoutStackPositions()
+          settleBubble(entry.key, sizePx, vx, vy)
         }
       }
     }).apply {
       setAvatarLetter(entry.letter)
-      if (isTop && globalBadge > 0) setBadge(globalBadge)
+      // Badge per-bubble = entry.unreadCount (đúng số tin chưa đọc của RIÊNG conv này).
+      setBadge(entry.unreadCount)
     }
     val params = BubbleOverlayView.makeLayoutParams(sizePx, x, y)
     try {
@@ -291,13 +314,16 @@ class OverlayBubbleService : Service() {
     val entries = BubbleStackStore.load(this)
     val sizePx = bubbleSizePx()
     val metrics = resources.displayMetrics
-    val edgeX = metrics.widthPixels - sizePx - dp(10f).toInt()
-    val baseY = (metrics.heightPixels * 0.55f).toInt()
+    val topKey = entries.lastOrNull()?.key
+    val topMb = topKey?.let { managed[it] }
+    val topX = topMb?.params?.x ?: (metrics.widthPixels - sizePx - dp(10f).toInt())
+    val topY = topMb?.params?.y ?: (metrics.heightPixels * 0.55f).toInt()
     entries.forEachIndexed { index, entry ->
       val mb = managed[entry.key] ?: return@forEachIndexed
-      mb.params.x = edgeX
-      mb.params.y = (baseY - index * stackOverlapPx()).coerceAtLeast(dp(48f).toInt())
-      try { wm.updateViewLayout(mb.view, mb.params) } catch (_: Throwable) {}
+      val isTop = index == entries.lastIndex
+      val targetX = topX
+      val targetY = if (isTop) topY else (topY - (entries.lastIndex - index) * stackOverlapPx()).coerceAtLeast(dp(48f).toInt())
+      animateTo(mb, targetX, targetY)
     }
   }
 
@@ -312,8 +338,10 @@ class OverlayBubbleService : Service() {
   private fun removeBubble(key: String) {
     BubbleStackStore.remove(this, key)
     removeBubbleView(key)
+    ConversationCache.clear(this, key)
+    cancelNotifFor(key)
     layoutStackPositions()
-    if (managed.isEmpty()) stopSelf()
+    // Không stopSelf — giữ service alive để nhận FCM tiếp theo (Phase 3 keep-alive).
   }
 
   private fun removeBubbleView(key: String) {
@@ -328,12 +356,25 @@ class OverlayBubbleService : Service() {
     hidePeek()
   }
 
-  private fun applyBadgeToTop() {
-    val topKey = BubbleStackStore.load(this).lastOrNull()?.key
+  /**
+   * Đồng bộ badge từ [BubbleStackStore] vào UI (1 badge/bubble = unreadCount của
+   * entry tương ứng). Gọi sau mọi thao tác có thể đổi unread:
+   *  - FCM tới (incrementUnread)
+   *  - User expand panel (clearUnread)
+   *  - upsert/remove bubble
+   */
+  private fun applyUnreadBadges() {
+    val entries = BubbleStackStore.load(this)
+    val byKey = entries.associateBy { it.key }
     for ((k, mb) in managed) {
-      mb.view.setBadge(if (k == topKey && globalBadge > 0) globalBadge else 0)
+      val n = byKey[k]?.unreadCount ?: 0
+      mb.view.setBadge(n)
     }
   }
+
+  /** Compat alias — JS-side setBadgeCount cũ ghi vào globalBadge (không còn áp UI nữa). */
+  @Suppress("unused")
+  private fun applyBadgeToTop() = applyUnreadBadges()
 
   // ---- Peek ----
 
@@ -416,69 +457,126 @@ class OverlayBubbleService : Service() {
     try { wm.updateViewLayout(mb.view, mb.params) } catch (_: Throwable) {}
   }
 
-  private fun snapBubbleToEdge(key: String, sizePx: Int) {
+  /**
+   * Đỗ bubble sau khi user thả tay:
+   *  - Nếu velocity đủ lớn → FlingAnimation rồi snap mép gần nhất.
+   *  - Nếu velocity nhỏ → SpringAnimation snap thẳng tới mép gần nhất.
+   *  - Cuối cùng persist XY + reflow stack.
+   */
+  private fun settleBubble(key: String, sizePx: Int, vx: Float, vy: Float) {
     val mb = managed[key] ?: return
     val metrics = resources.displayMetrics
     val edge = dp(8f).toInt()
+    val maxX = (metrics.widthPixels - sizePx - edge).toFloat()
+    val maxY = (metrics.heightPixels - sizePx - dp(80f).toInt()).toFloat()
+    val minY = dp(48f).toFloat()
+    cancelAnimations(key)
+
+    val speed = hypot(vx.toDouble(), vy.toDouble()).toFloat()
+    if (speed > dp(800f)) {
+      // Fling X & Y với friction; sau khi friction xong → snap mép gần nhất
+      val finX = FloatValueHolder(mb.params.x.toFloat())
+      val finY = FloatValueHolder(mb.params.y.toFloat())
+      val flingX = FlingAnimation(finX).apply {
+        setStartVelocity(vx)
+        friction = 1.1f
+        setMinValue(edge.toFloat()); setMaxValue(maxX)
+        addUpdateListener { _, value, _ ->
+          mb.params.x = value.toInt(); safeUpdate(mb)
+        }
+        addEndListener { _, _, _, _ -> snapToEdgeSpring(mb, sizePx) }
+      }
+      val flingY = FlingAnimation(finY).apply {
+        setStartVelocity(vy)
+        friction = 1.1f
+        setMinValue(minY); setMaxValue(maxY)
+        addUpdateListener { _, value, _ ->
+          mb.params.y = value.toInt(); safeUpdate(mb)
+        }
+      }
+      mb.flingX = flingX; mb.flingY = flingY
+      flingX.start(); flingY.start()
+    } else {
+      snapToEdgeSpring(mb, sizePx)
+      // Spring Y về vị trí gần nhất hợp lệ
+      animateTo(mb, mb.params.x, mb.params.y.coerceIn(minY.toInt(), maxY.toInt()))
+    }
+    persistTopPos()
+    layoutStackPositions()
+  }
+
+  private fun snapToEdgeSpring(mb: ManagedBubble, sizePx: Int) {
+    val metrics = resources.displayMetrics
+    val edge = dp(8f).toInt()
     val mid = metrics.widthPixels / 2
-    mb.params.x = if (mb.params.x + sizePx / 2 < mid) edge else metrics.widthPixels - sizePx - edge
+    val targetX = if (mb.params.x + sizePx / 2 < mid) edge else metrics.widthPixels - sizePx - edge
+    animateTo(mb, targetX, mb.params.y)
+    persistTopPos()
+  }
+
+  private fun animateTo(mb: ManagedBubble, x: Int, y: Int) {
+    cancelAnimations(mb.key)
+    val sxHolder = FloatValueHolder(mb.params.x.toFloat())
+    val syHolder = FloatValueHolder(mb.params.y.toFloat())
+    val sx = SpringAnimation(sxHolder).apply {
+      spring = SpringForce(x.toFloat()).apply {
+        stiffness = SpringForce.STIFFNESS_LOW
+        dampingRatio = SpringForce.DAMPING_RATIO_LOW_BOUNCY
+      }
+      addUpdateListener { _, value, _ -> mb.params.x = value.toInt(); safeUpdate(mb) }
+    }
+    val sy = SpringAnimation(syHolder).apply {
+      spring = SpringForce(y.toFloat()).apply {
+        stiffness = SpringForce.STIFFNESS_LOW
+        dampingRatio = SpringForce.DAMPING_RATIO_LOW_BOUNCY
+      }
+      addUpdateListener { _, value, _ -> mb.params.y = value.toInt(); safeUpdate(mb) }
+    }
+    mb.springX = sx; mb.springY = sy
+    sx.start(); sy.start()
+  }
+
+  private fun cancelAnimations(key: String) {
+    val mb = managed[key] ?: return
+    mb.springX?.cancel(); mb.springX = null
+    mb.springY?.cancel(); mb.springY = null
+    mb.flingX?.cancel(); mb.flingX = null
+    mb.flingY?.cancel(); mb.flingY = null
+  }
+
+  private fun safeUpdate(mb: ManagedBubble) {
     try { wm.updateViewLayout(mb.view, mb.params) } catch (_: Throwable) {}
+  }
+
+  private fun persistTopPos() {
+    val topKey = BubbleStackStore.load(this).lastOrNull()?.key ?: return
+    val mb = managed[topKey] ?: return
+    prefs.edit()
+      .putInt(KEY_TOP_X, mb.params.x)
+      .putInt(KEY_TOP_Y, mb.params.y)
+      .apply()
   }
 
   private fun showDropTarget() {
     if (dropTargetView != null) return
-    val metrics = resources.displayMetrics
-    // 1) Vùng gradient ĐỎ chiếm 30% chiều cao dưới — visual rõ hơn
-    val zoneH = (metrics.heightPixels * 0.30f).toInt()
-    val scrim = View(this).apply {
-      background = android.graphics.drawable.GradientDrawable(
-        android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
-        intArrayOf(0x00EF4444, 0x55EF4444, 0x99DC2626.toInt()),
-      )
-    }
-    val scrimParams = WindowManager.LayoutParams(
-      WindowManager.LayoutParams.MATCH_PARENT, zoneH, 0, 0,
-      overlayWindowType(),
-      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-      PixelFormat.TRANSLUCENT,
-    ).apply { gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL }
-    try {
-      wm.addView(scrim, scrimParams)
-      dropZoneScrim = scrim
-    } catch (_: Throwable) {}
-
-    // 2) Icon thùng rác + nhãn ở giữa
-    val sizePx = dp(96f).toInt()
+    val sizePx = dp(72f).toInt()
     val container = FrameLayout(this).apply {
       background = android.graphics.drawable.GradientDrawable().apply {
         shape = android.graphics.drawable.GradientDrawable.OVAL
-        setColor(android.graphics.Color.parseColor("#EFEF4444"))
-        setStroke(dp(3f).toInt(), android.graphics.Color.WHITE)
+        setColor(android.graphics.Color.parseColor("#33EF4444"))
+        setStroke(dp(2f).toInt(), android.graphics.Color.parseColor("#A0EF4444"))
       }
-      val col = android.widget.LinearLayout(this@OverlayBubbleService).apply {
-        orientation = android.widget.LinearLayout.VERTICAL
-        gravity = Gravity.CENTER
-      }
-      col.addView(android.widget.TextView(this@OverlayBubbleService).apply {
-        text = "🗑"
-        setTextColor(android.graphics.Color.WHITE)
+      addView(android.widget.TextView(this@OverlayBubbleService).apply {
+        text = "×"
+        setTextColor(android.graphics.Color.parseColor("#DC2626"))
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
         gravity = Gravity.CENTER
-      })
-      col.addView(android.widget.TextView(this@OverlayBubbleService).apply {
-        text = "Thả để xoá"
-        setTextColor(android.graphics.Color.WHITE)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-        gravity = Gravity.CENTER
-        typeface = android.graphics.Typeface.DEFAULT_BOLD
-      })
-      addView(col, FrameLayout.LayoutParams(
+      }, FrameLayout.LayoutParams(
         FrameLayout.LayoutParams.MATCH_PARENT,
         FrameLayout.LayoutParams.MATCH_PARENT,
       ))
+      scaleX = 0.6f; scaleY = 0.6f; alpha = 0f
+      animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(180).start()
     }
     val params = WindowManager.LayoutParams(
       sizePx, sizePx, 0, dp(80f).toInt(),
@@ -492,34 +590,57 @@ class OverlayBubbleService : Service() {
     try {
       wm.addView(container, params)
       dropTargetView = container
-      container.scaleX = 1f; container.scaleY = 1f
     } catch (_: Throwable) {}
   }
 
-  private fun highlightDropTarget(active: Boolean) {
-    val v = dropTargetView ?: return
-    val target = if (active) 1.18f else 1f
-    v.animate().scaleX(target).scaleY(target).setDuration(120).start()
+  /** Tâm drop target trên màn (raw screen coords) — dùng cho hit-test & magnetic. */
+  private fun dropCenter(): Pair<Float, Float> {
+    val metrics = resources.displayMetrics
+    val realH = getRealScreenHeightPx()
+    val w = metrics.widthPixels
+    val centerX = w / 2f
+    val centerY = realH - dp(80f) - dp(36f)
+    return centerX to centerY
+  }
+
+  private fun distanceToDropCenter(rawX: Float, rawY: Float): Float {
+    val (cx, cy) = dropCenter()
+    return hypot((rawX - cx).toDouble(), (rawY - cy).toDouble()).toFloat()
+  }
+
+  private var lastVibrateAt = 0L
+  private fun magneticFeedback(distance: Float) {
+    val threshold = dp(120f)
+    val container = dropTargetView ?: return
+    if (distance < threshold) {
+      // Scale ring up (magnetic effect)
+      val factor = (1.0f + (1.0f - (distance / threshold)) * 0.3f).coerceIn(1f, 1.3f)
+      container.animate().scaleX(factor).scaleY(factor).setDuration(60).start()
+      val now = System.currentTimeMillis()
+      if (now - lastVibrateAt > 220 && distance < dp(80f)) {
+        lastVibrateAt = now
+        vibrateLight()
+      }
+    } else {
+      container.animate().scaleX(1f).scaleY(1f).setDuration(80).start()
+    }
+  }
+
+  private fun vibrateLight() {
+    try {
+      val vib = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator ?: return
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        vib.vibrate(VibrationEffect.createOneShot(20, VibrationEffect.DEFAULT_AMPLITUDE))
+      } else {
+        @Suppress("DEPRECATION") vib.vibrate(20)
+      }
+    } catch (_: Throwable) {}
   }
 
   private fun hideDropTarget() {
-    dropTargetView?.let { v -> try { wm.removeView(v) } catch (_: Throwable) {} }
+    val v = dropTargetView ?: return
+    try { wm.removeView(v) } catch (_: Throwable) {}
     dropTargetView = null
-    dropZoneScrim?.let { v -> try { wm.removeView(v) } catch (_: Throwable) {} }
-    dropZoneScrim = null
-  }
-
-  /**
-   * Fling-down guard: nếu user vẫy ngón tay xuống đáy rất nhanh
-   * (>800px / 300ms), tự động xoá bubble — giúp user vứt nhanh
-   * mà không cần kéo đúng vùng drop.
-   */
-  private fun isFlingDown(rawY: Float): Boolean {
-    if (dragStartY == 0f) return false
-    val dt = (dragLastTs - dragStartTs).coerceAtLeast(1)
-    val dy = dragLastY - dragStartY
-    if (dt > 300) return false
-    return dy > dp(800f / resources.displayMetrics.density)
   }
 
   private fun isOverDropTarget(rawX: Float, rawY: Float, sizePx: Int): Boolean {
@@ -535,21 +656,18 @@ class OverlayBubbleService : Service() {
 
   // ---- Avatar ----
 
+  private val loadedAvatars = java.util.concurrent.ConcurrentHashMap<String, android.graphics.Bitmap>()
   private val ioExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
   private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
   private fun loadAvatarAsync(url: String, target: BubbleOverlayView) {
-    AvatarCache.get(url)?.let {
+    loadedAvatars[url]?.let {
       target.setAvatarBitmap(it)
       return
     }
     ioExecutor.execute {
-      val bmp = fetchBitmap(url)
-      if (bmp == null) {
-        android.util.Log.w("OverlayBubble", "avatar fetch failed: $url")
-        return@execute
-      }
-      AvatarCache.put(url, bmp)
+      val bmp = fetchBitmap(url) ?: return@execute
+      loadedAvatars[url] = bmp
       mainHandler.post { target.setAvatarBitmap(bmp) }
     }
   }
@@ -595,6 +713,7 @@ class OverlayBubbleService : Service() {
   fun expand(key: String) {
     hidePeek()
     expandedPanel.show(wm, key)
+    activeExpandedKey = key
     // Ẩn các bong bóng vật lý — UI bubble row hiện thị bên trong panel
     for (mb in managed.values) mb.view.visibility = View.INVISIBLE
     hideDropTarget()
@@ -604,38 +723,46 @@ class OverlayBubbleService : Service() {
         expandedPanel.onIncoming(key)
       }
     }
-    // Bắt đầu polling realtime cho conversation đang mở
-    startRealtimePolling()
-    // Vẫn phát event để app đang chạy có thể seed thêm / mark read.
+    cancelNotifFor(key)
+    markConversationRead(key)
+    // Badge per-bubble: reset chỉ RIÊNG conv đang mở về 0 (các bubble khác giữ
+    // nguyên unread của họ). Sau đó refresh UI ngay.
+    BubbleStackStore.clearUnread(this, key)
+    applyUnreadBadges()
     notifyPanelOpened(key)
   }
 
-  /**
-   * Realtime: trong khi panel mở, lặp fetch lịch sử mỗi 3s.
-   * Đây là cơ chế FALLBACK — luôn chạy bất kể React còn sống hay không.
-   * Khi JS sống thêm, JS có thể gọi seedConversationMessages trực tiếp (nhanh hơn).
-   */
-  private fun startRealtimePolling() {
-    stopRealtimePolling()
-    val r = object : Runnable {
-      override fun run() {
-        val key = expandedPanel.currentKey()
-        if (!expandedPanel.isShowing() || key == null) return
-        ChatHistoryFetcher.seedAsync(this@OverlayBubbleService, key) { count ->
-          if (count > 0 && expandedPanel.isShowing() && expandedPanel.currentKey() == key) {
-            expandedPanel.onIncoming(key)
-          }
-        }
-        pollHandler.postDelayed(this, POLL_INTERVAL_MS)
-      }
-    }
-    pollRunnable = r
-    pollHandler.postDelayed(r, POLL_INTERVAL_MS)
+  private fun cancelNotifFor(key: String) {
+    try {
+      val notifId = 0x42_00_00_00 or (key.hashCode() and 0xFFFFFF)
+      androidx.core.app.NotificationManagerCompat.from(this).cancel(notifId)
+    } catch (_: Throwable) {}
   }
 
-  private fun stopRealtimePolling() {
-    pollRunnable?.let { pollHandler.removeCallbacks(it) }
-    pollRunnable = null
+  private val readMarkExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+  private fun markConversationRead(key: String) {
+    val token = prefs.getString(FloatingBubbleModule.KEY_AUTH_TOKEN, null) ?: return
+    val origin = prefs.getString(FloatingBubbleModule.KEY_API_ORIGIN, null)?.trimEnd('/') ?: return
+    val path = if (key.startsWith("lead:")) {
+      // Lead chat dùng PATCH /api/crm/leads/:id/read (nếu có; tránh fail bằng try)
+      "/api/crm/leads/${key.removePrefix("lead:")}/read"
+    } else {
+      "/api/messenger/groups/$key/read"
+    }
+    readMarkExecutor.execute {
+      try {
+        val conn = java.net.URL("$origin$path").openConnection() as java.net.HttpURLConnection
+        conn.requestMethod = "PATCH"
+        conn.connectTimeout = 8000
+        conn.readTimeout = 10000
+        conn.doOutput = false
+        conn.setRequestProperty("Authorization", "Bearer $token")
+        conn.setRequestProperty("Accept", "application/json")
+        conn.responseCode // trigger
+      } catch (_: Throwable) {
+        // Một số endpoint chưa có → bỏ qua im lặng
+      }
+    }
   }
 
   /** Gửi event qua React để JS fetch messages và seed cache. */
@@ -655,7 +782,8 @@ class OverlayBubbleService : Service() {
 
   /** JS gọi để nạp/cập nhật danh sách tin nhắn cho 1 conversation. */
   fun seedMessages(key: String, msgs: List<ConversationCache.Msg>) {
-    ConversationCache.replaceAll(this, key, msgs)
+    ConversationCache.clear(this, key)
+    for (m in msgs) ConversationCache.append(this, key, m)
     if (expandedPanel.isShowing() && expandedPanel.currentKey() == key) {
       expandedPanel.onIncoming(key)
     }
@@ -663,21 +791,47 @@ class OverlayBubbleService : Service() {
 
   fun collapsePanel() {
     if (!expandedPanel.isShowing()) return
-    stopRealtimePolling()
     expandedPanel.hide(wm)
+    activeExpandedKey = null
     for (mb in managed.values) mb.view.visibility = View.VISIBLE
     layoutStackPositions()
   }
 
+  /**
+   * Ẩn TẠM panel + tất cả bong bóng overlay để Activity bên ngoài (camera, file
+   * picker, gallery) có thể hiển thị mà không bị che (overlay window luôn nằm
+   * trên Activity).
+   *
+   * State được giữ — gọi [showOverlayBack] để khôi phục đúng những gì đang mở.
+   */
+  private var hiddenPanelKey: String? = null
+  private var overlayHiddenForExternal = false
+
+  fun hideOverlayTemporarily() {
+    if (overlayHiddenForExternal) return
+    overlayHiddenForExternal = true
+    hiddenPanelKey = if (expandedPanel.isShowing()) expandedPanel.currentKey() else null
+    if (expandedPanel.isShowing()) {
+      try { expandedPanel.hide(wm) } catch (_: Throwable) {}
+    }
+    for (mb in managed.values) mb.view.visibility = View.INVISIBLE
+    hideDropTarget()
+    hidePeek()
+  }
+
+  fun showOverlayBack() {
+    if (!overlayHiddenForExternal) return
+    overlayHiddenForExternal = false
+    for (mb in managed.values) mb.view.visibility = View.VISIBLE
+    val key = hiddenPanelKey
+    hiddenPanelKey = null
+    if (key != null) {
+      try { expand(key) } catch (_: Throwable) {}
+    }
+  }
+
   fun switchPanelTo(key: String) {
     expandedPanel.switchTo(key)
-    // Re-trigger polling cho conversation mới + fetch lịch sử ngay
-    ChatHistoryFetcher.seedAsync(this, key) { count ->
-      if (count > 0 && expandedPanel.isShowing() && expandedPanel.currentKey() == key) {
-        expandedPanel.onIncoming(key)
-      }
-    }
-    startRealtimePolling()
   }
 
   fun dismissBubbleAndPanel(key: String) {
@@ -699,7 +853,50 @@ class OverlayBubbleService : Service() {
     launchMainActivity()
   }
 
-  private fun handleLongPress(@Suppress("UNUSED_PARAMETER") key: String) {}
+  /**
+   * Long-press bubble → menu:
+   *  - Đóng tin (xoá khỏi stack)
+   *  - Mở trong app (full chat)
+   *  - Tắt toàn bộ bong bóng
+   */
+  private fun handleLongPress(key: String) {
+    val mb = managed[key] ?: return
+    val popupRoot = android.widget.LinearLayout(this).apply {
+      orientation = android.widget.LinearLayout.VERTICAL
+      background = android.graphics.drawable.GradientDrawable().apply {
+        setColor(android.graphics.Color.WHITE)
+        cornerRadius = dp(10f)
+        setStroke(1, android.graphics.Color.parseColor("#E5E7EB"))
+      }
+      elevation = dp(8f)
+    }
+    val popup = android.widget.PopupWindow(
+      popupRoot,
+      android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+      android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+      true,
+    )
+    popup.isOutsideTouchable = true
+    popup.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+
+    fun item(label: String, onClick: () -> Unit) = android.widget.TextView(this).apply {
+      text = label
+      setTextColor(android.graphics.Color.parseColor("#0F172A"))
+      setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+      setPadding(dp(14f).toInt(), dp(10f).toInt(), dp(14f).toInt(), dp(10f).toInt())
+      setOnClickListener { onClick(); popup.dismiss() }
+    }
+    popupRoot.addView(item("Mở chat") { handleTap(key) })
+    popupRoot.addView(item("Mở trong app") { openInAppAndCollapse(key) })
+    popupRoot.addView(item("Đóng bong bóng này") { removeBubble(key) })
+    popupRoot.addView(item("Tắt toàn bộ") { clearAllBubbles(); BubbleStackStore.clear(this); stopSelf() })
+
+    val loc = IntArray(2)
+    mb.view.getLocationOnScreen(loc)
+    try {
+      popup.showAtLocation(mb.view, Gravity.NO_GRAVITY, loc[0] - dp(120f).toInt(), loc[1])
+    } catch (_: Throwable) {}
+  }
 
   private fun launchMainActivity() {
     val intent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
@@ -739,6 +936,8 @@ class OverlayBubbleService : Service() {
     const val PREFS = "crm_floating_bubble_prefs"
     const val KEY_PENDING_GROUP = "pending_group"
     const val KEY_LAST_BUBBLE_KEY = "last_bubble_key"
+    const val KEY_TOP_X = "bubble_pos_x"
+    const val KEY_TOP_Y = "bubble_pos_y"
 
     const val ACTION_SHOW_BUBBLE = "vn.tubeppro.crmobile.bubble.SHOW"
     const val ACTION_HIDE_BUBBLE = "vn.tubeppro.crmobile.bubble.HIDE"
@@ -749,6 +948,9 @@ class OverlayBubbleService : Service() {
     const val ACTION_COLLAPSE = "vn.tubeppro.crmobile.bubble.COLLAPSE"
     const val ACTION_REFRESH_PANEL = "vn.tubeppro.crmobile.bubble.REFRESH_PANEL"
     const val ACTION_STOP = "vn.tubeppro.crmobile.bubble.STOP"
+    const val ACTION_KEEP_ALIVE = "vn.tubeppro.crmobile.bubble.KEEP_ALIVE"
+    const val ACTION_HIDE_FOR_EXTERNAL = "vn.tubeppro.crmobile.bubble.HIDE_FOR_EXTERNAL"
+    const val ACTION_SHOW_AFTER_EXTERNAL = "vn.tubeppro.crmobile.bubble.SHOW_AFTER_EXTERNAL"
 
     const val EXTRA_KEY = "key"
     const val EXTRA_TITLE = "title"
@@ -757,8 +959,12 @@ class OverlayBubbleService : Service() {
     const val EXTRA_BADGE = "badge"
     const val EXTRA_PEEK_SENDER = "peek_sender"
     const val EXTRA_PEEK_MESSAGE = "peek_message"
+    const val EXTRA_INC_UNREAD = "inc_unread"
 
     const val PEEK_AUTO_HIDE_MS = 4500L
+
+    /** Bubble key đang được mở rộng (panel native overlay) — null nếu không. */
+    @Volatile var activeExpandedKey: String? = null
 
     fun startWithBubble(
       ctx: Context,
@@ -768,6 +974,8 @@ class OverlayBubbleService : Service() {
       avatarUrl: String? = null,
       sender: String? = null,
       message: String? = null,
+      /** true → +1 unread cho bubble (chỉ khi user không đang xem panel của conv này). */
+      incrementUnread: Boolean = false,
     ) {
       val i = Intent(ctx, OverlayBubbleService::class.java).apply {
         action = ACTION_SHOW_BUBBLE
@@ -777,6 +985,7 @@ class OverlayBubbleService : Service() {
         if (!avatarUrl.isNullOrBlank()) putExtra(EXTRA_AVATAR_URL, avatarUrl)
         if (!sender.isNullOrBlank()) putExtra(EXTRA_PEEK_SENDER, sender)
         if (!message.isNullOrBlank()) putExtra(EXTRA_PEEK_MESSAGE, message)
+        putExtra(EXTRA_INC_UNREAD, incrementUnread)
       }
       androidx.core.content.ContextCompat.startForegroundService(ctx, i)
     }
@@ -784,6 +993,40 @@ class OverlayBubbleService : Service() {
     fun restoreStack(ctx: Context) {
       val i = Intent(ctx, OverlayBubbleService::class.java).apply { action = ACTION_RESTORE_STACK }
       androidx.core.content.ContextCompat.startForegroundService(ctx, i)
+    }
+
+    /**
+     * Khởi động service ở chế độ chỉ keep-alive (không show bubble).
+     * Gọi từ MainApplication.onCreate / Boot receiver / FCM onNewToken.
+     * Mục đích: trên Android 12+ service phải đã alive khi FCM tới, nếu không
+     * BackgroundServiceStartNotAllowedException sẽ chặn `startForegroundService`.
+     */
+    /**
+     * Ẩn TẠM mọi UI overlay (panel + bubbles + peek) để Activity bên ngoài
+     * (camera, file picker) hiển thị mà không bị che. Gọi `requestShowOverlay`
+     * sau khi Activity kết thúc.
+     */
+    fun requestHideOverlay(ctx: Context) {
+      val i = Intent(ctx, OverlayBubbleService::class.java).apply {
+        action = ACTION_HIDE_FOR_EXTERNAL
+      }
+      try { androidx.core.content.ContextCompat.startForegroundService(ctx, i) } catch (_: Throwable) {}
+    }
+
+    fun requestShowOverlay(ctx: Context) {
+      val i = Intent(ctx, OverlayBubbleService::class.java).apply {
+        action = ACTION_SHOW_AFTER_EXTERNAL
+      }
+      try { androidx.core.content.ContextCompat.startForegroundService(ctx, i) } catch (_: Throwable) {}
+    }
+
+    fun startKeepAlive(ctx: Context) {
+      // Chỉ start nếu user đã grant overlay (nếu chưa thì service vẫn lên nhưng
+      // sẽ stopSelf khi cố addView — không sao, chỉ phí 1 vài ms).
+      try {
+        val i = Intent(ctx, OverlayBubbleService::class.java).apply { action = ACTION_KEEP_ALIVE }
+        androidx.core.content.ContextCompat.startForegroundService(ctx, i)
+      } catch (_: Throwable) { /* ignore */ }
     }
 
     fun hide(ctx: Context, key: String?) {
@@ -816,6 +1059,33 @@ class OverlayBubbleService : Service() {
       val i = Intent(ctx, OverlayBubbleService::class.java).apply { action = ACTION_STOP }
       try { ctx.startService(i) } catch (_: Throwable) {
         ctx.stopService(Intent(ctx, OverlayBubbleService::class.java))
+      }
+    }
+
+    /**
+     * Mark-read một conversation (lead hoặc messenger group) — gọi được từ
+     * BroadcastReceiver / FCM service mà không cần instance.
+     */
+    private val staticReadExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    fun markConversationReadAsync(ctx: Context, bubbleKey: String) {
+      val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+      val token = prefs.getString(FloatingBubbleModule.KEY_AUTH_TOKEN, null) ?: return
+      val origin = prefs.getString(FloatingBubbleModule.KEY_API_ORIGIN, null)?.trimEnd('/') ?: return
+      val path = if (bubbleKey.startsWith("lead:")) {
+        "/api/crm/leads/${bubbleKey.removePrefix("lead:")}/read"
+      } else {
+        "/api/messenger/groups/$bubbleKey/read"
+      }
+      staticReadExecutor.execute {
+        try {
+          val conn = java.net.URL("$origin$path").openConnection() as java.net.HttpURLConnection
+          conn.requestMethod = "PATCH"
+          conn.connectTimeout = 8000
+          conn.readTimeout = 10000
+          conn.setRequestProperty("Authorization", "Bearer $token")
+          conn.setRequestProperty("Accept", "application/json")
+          conn.responseCode
+        } catch (_: Throwable) { /* ignore */ }
       }
     }
   }

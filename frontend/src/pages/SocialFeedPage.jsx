@@ -1430,11 +1430,11 @@ export default function SocialFeedPage() {
     if (!effectiveCompanyId && isSystemAdmin) {
       setPosts([]);
       setLoading(false);
-      setErr(null);
+      setErr('Bạn đang là admin hệ thống. Chọn công ty ở bộ lọc để xem bảng tin nội bộ.');
       return;
     }
     if (!effectiveCompanyId) {
-      setErr('Tài khoản chưa gắn công ty.');
+      setErr('Tài khoản chưa gắn công ty nên chưa xem được bảng tin nội bộ. Vui lòng liên hệ quản trị để gắn công ty.');
       setLoading(false);
       return;
     }

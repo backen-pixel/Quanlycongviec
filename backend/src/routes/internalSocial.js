@@ -467,14 +467,14 @@ function resolveListCompanyId(req, res) {
     const q = req.query.company_id;
     const id = q && String(q).trim() ? String(q).trim() : null;
     if (!id) {
-      res.status(400).json({ error: 'Chọn công ty (company_id) để xem bảng tin.' });
+      res.status(400).json({ error: 'Admin hệ thống: chọn company_id để xem bảng tin nội bộ.' });
       return null;
     }
     return id;
   }
   const cid = userCompanyId(req);
   if (!cid) {
-    res.status(400).json({ error: 'Tài khoản chưa gắn công ty — không dùng được bảng tin nội bộ.' });
+    res.status(400).json({ error: 'Tài khoản chưa gắn công ty — vui lòng liên hệ quản trị để cấp quyền xem bảng tin nội bộ.' });
     return null;
   }
   return cid;

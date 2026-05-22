@@ -5,7 +5,6 @@ const { lookupCache } = require('../helpers/ttlCache');
 const {
   isExpiryDeadlineNotificationType,
   EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST,
-  postgrestNotInTypesForDeadlines,
 } = require('../helpers/notificationOperationalFilter');
 
 function postgrestInTypesList(types) {
@@ -32,10 +31,26 @@ const ASSIGNMENT_NOTIFICATION_TYPES = [
   'crm_assignment_overdue',
 ];
 
+/** Hoạt động chỉ giữ thông báo Deal */
+const DEAL_ACTIVITY_NOTIFICATION_TYPES = [
+  'deal_assigned',
+  'deal_created',
+  'deal_won',
+  'workshop_new_deal',
+  'crm_deal',
+];
+
 function isAssignmentNotification(n) {
   if (!n) return false;
   if (n.entity_type === 'crm_assignment') return true;
   return ASSIGNMENT_NOTIFICATION_TYPES.includes(String(n.type || ''));
+}
+
+function isDealActivityNotification(n) {
+  if (!n) return false;
+  const type = String(n.type || '');
+  if (DEAL_ACTIVITY_NOTIFICATION_TYPES.includes(type)) return true;
+  return String(n.entity_type || '') === 'crm_deal';
 }
 
 const { preferenceKeyForNotificationType } = require('../helpers/notificationPrefTypes');
@@ -76,7 +91,7 @@ r.get('/', async (req, res) => {
       if (isEvt) unreadEvents += 1;
       if (isAssign) unreadAssignments += 1;
       if (!isExp) unread += 1;
-      if (!isExp && !isChat && !isEvt && !isAssign) unreadActivity += 1;
+      if (!isExp && !isChat && !isEvt && !isAssign && isDealActivityNotification(n)) unreadActivity += 1;
     }
 
     res.json({
@@ -101,7 +116,7 @@ r.get('/', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/notifications', async (req, res) => {
   try {
-    const { unread, limit = 50, channel } = req.query;
+    const { unread, limit = 50, channel, from_date: fromDate, to_date: toDate } = req.query;
     const lim = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100);
     const ch = channel ? String(channel).toLowerCase() : '';
     const fetchCap = Math.min(lim * 5, 300);
@@ -115,6 +130,14 @@ r.get('/notifications', async (req, res) => {
       .limit(fetchCap);
 
     if (unread === 'true') q = q.eq('is_read', false);
+    if (fromDate) {
+      const fromTs = new Date(`${String(fromDate)}T00:00:00.000Z`);
+      if (!Number.isNaN(fromTs.getTime())) q = q.gte('created_at', fromTs.toISOString());
+    }
+    if (toDate) {
+      const toTs = new Date(`${String(toDate)}T23:59:59.999Z`);
+      if (!Number.isNaN(toTs.getTime())) q = q.lte('created_at', toTs.toISOString());
+    }
 
     if (ch === 'messages') {
       q = q.in('type', CHAT_NOTIFICATION_TYPES);
@@ -137,6 +160,9 @@ r.get('/notifications', async (req, res) => {
     if (error) return res.status(500).json({ error: error.message });
 
     let rows = (data || []).filter((n) => !isProjectModuleNotification(n));
+    if (ch === 'activity') {
+      rows = rows.filter((n) => isDealActivityNotification(n));
+    }
     res.json({ notifications: rows.slice(0, lim) });
   } catch (e) {
     console.error('Dashboard notifications error:', e);
@@ -189,8 +215,6 @@ r.get('/notifications/deadlines', async (req, res) => {
 r.put('/notifications/read-all', async (req, res) => {
   try {
     const channel = req.query.channel ? String(req.query.channel).toLowerCase() : '';
-    const notInDeadlines = postgrestNotInTypesForDeadlines();
-    const notChat = postgrestInTypesList(CHAT_NOTIFICATION_TYPES);
 
     let q = supabase
       .from('notifications')
@@ -198,12 +222,17 @@ r.put('/notifications/read-all', async (req, res) => {
       .eq('user_id', req.user.userId)
       .eq('is_read', false);
 
-    const notEvent = postgrestInTypesList(EVENT_NOTIFICATION_TYPES);
-
-    const notAssign = postgrestInTypesList(ASSIGNMENT_NOTIFICATION_TYPES);
-
     if (channel === 'activity') {
-      q = q.not('type', 'in', notInDeadlines).not('type', 'in', notChat).not('type', 'in', notEvent).not('type', 'in', notAssign);
+      const { data: unreadRows, error: readFilterErr } = await supabase
+        .from('notifications')
+        .select('id, type, entity_type, metadata')
+        .eq('user_id', req.user.userId)
+        .eq('is_read', false)
+        .limit(2000);
+      if (readFilterErr) return res.status(500).json({ error: readFilterErr.message });
+      const ids = (unreadRows || []).filter((n) => !isProjectModuleNotification(n) && isDealActivityNotification(n)).map((n) => n.id);
+      if (!ids.length) return res.json({ ok: true });
+      q = q.in('id', ids);
     } else if (channel === 'messages') {
       q = q.in('type', CHAT_NOTIFICATION_TYPES);
     } else if (channel === 'events') {

@@ -133,6 +133,8 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
       appCtx, bubbleKey, title, avatarLetter, url,
       sender = senderName.ifBlank { null },
       message = message.ifBlank { null },
+      // JS chỉ gọi khi có tin mới và user không đang xem → luôn +1 unread.
+      incrementUnread = true,
     )
   }
 
@@ -247,6 +249,53 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
     prefs.edit().putString(KEY_AUTH_TOKEN, token).apply()
   }
 
+  /** Lấy FCM token đã lưu bởi [BubbleFcmService.onNewToken]. JS upsert lên backend. */
+  @ReactMethod
+  fun consumeFcmToken(promise: Promise) {
+    try {
+      val token = prefs.getString(BubbleFcmService.KEY_FCM_TOKEN, null)
+      if (token.isNullOrBlank()) {
+        promise.resolve(null)
+      } else {
+        promise.resolve(token)
+      }
+    } catch (_: Throwable) {
+      promise.resolve(null)
+    }
+  }
+
+  /** Lưu user id hiện tại — native dùng để xác định `mine` khi parse chat history. */
+  @ReactMethod
+  fun saveUserId(userId: String) {
+    prefs.edit().putString(KEY_USER_ID, userId).apply()
+  }
+
+  /**
+   * JS gọi khi socket emit `lead:reactions` — cập nhật cache + refresh panel.
+   * `reactionsJson` = JSON array `[{emoji, user_id, user_name}, ...]`
+   */
+  @ReactMethod
+  fun applyReactions(bubbleKey: String, messageId: String, reactionsJson: String) {
+    try {
+      val arr = org.json.JSONArray(reactionsJson)
+      val list = mutableListOf<ConversationCache.Reaction>()
+      for (i in 0 until arr.length()) {
+        val o = arr.getJSONObject(i)
+        list += ConversationCache.Reaction(
+          emoji = o.optString("emoji", ""),
+          userId = o.optString("user_id", o.optString("userId", "")),
+          userName = o.optString("user_name", o.optString("userName", "")),
+        )
+      }
+      ConversationCache.updateReactions(appCtx, bubbleKey, messageId, list)
+      val intent = Intent(appCtx, OverlayBubbleService::class.java).apply {
+        action = OverlayBubbleService.ACTION_REFRESH_PANEL
+        putExtra(OverlayBubbleService.EXTRA_KEY, bubbleKey)
+      }
+      androidx.core.content.ContextCompat.startForegroundService(appCtx, intent)
+    } catch (_: Throwable) {}
+  }
+
   @ReactMethod
   fun saveWebOrigin(origin: String) {
     prefs.edit().putString(KEY_WEB_ORIGIN, origin).apply()
@@ -256,39 +305,6 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
   @ReactMethod
   fun saveApiOrigin(origin: String) {
     prefs.edit().putString(KEY_API_ORIGIN, origin.trimEnd('/')).apply()
-  }
-
-  /** Lưu user id hiện tại — overlay panel cần để biết tin nào là "của mình". */
-  @ReactMethod
-  fun saveCurrentUserId(userId: String) {
-    prefs.edit().putString(KEY_CURRENT_USER_ID, userId).apply()
-  }
-
-  /**
-   * Lấy FCM token (Firebase Messaging) để JS đăng ký với backend platform=fcm.
-   * Trả null nếu Firebase chưa init (không có google-services.json) hoặc lỗi.
-   */
-  @ReactMethod
-  fun getFcmToken(promise: Promise) {
-    try {
-      val cached = prefs.getString(KEY_PENDING_FCM_TOKEN, null)
-      val fm = com.google.firebase.messaging.FirebaseMessaging.getInstance()
-      fm.token.addOnCompleteListener { task ->
-        if (task.isSuccessful) {
-          val t = task.result
-          if (!t.isNullOrBlank()) {
-            prefs.edit().putString(KEY_PENDING_FCM_TOKEN, t).apply()
-            promise.resolve(t)
-          } else {
-            promise.resolve(cached)
-          }
-        } else {
-          promise.resolve(cached)
-        }
-      }
-    } catch (_: Throwable) {
-      promise.resolve(null)
-    }
   }
 
   // ---------- Routing khi user tap bubble từ ngoài app ----------
@@ -360,115 +376,92 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
   }
 
   /**
-   * Realtime — JS push 1 tin nhắn mới vào cache + refresh panel nếu đang mở.
-   * `msgJson` = JSON object 1 tin (id, sender, senderId, text, avatar, ts,
-   * messageType, attachmentUrl, attachmentMime, reactions[]).
-   */
-  @ReactMethod
-  fun appendMessage(bubbleKey: String, msgJson: String) {
-    try {
-      val o = org.json.JSONObject(msgJson)
-      val currentUid = appCtx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        .getString(KEY_CURRENT_USER_ID, null) ?: ""
-      val rxArr = o.optJSONArray("reactions")
-      val rx = if (rxArr != null) {
-        List(rxArr.length()) { idx ->
-          val r = rxArr.getJSONObject(idx)
-          ConversationCache.Reaction(
-            emoji = r.optString("emoji", ""),
-            userId = r.optString("user_id", ""),
-          )
-        }.filter { it.emoji.isNotBlank() }
-      } else emptyList()
-      val senderId = o.optString("senderId", "")
-      val msg = ConversationCache.Msg(
-        id = o.optString("id", ""),
-        sender = o.optString("sender", ""),
-        senderId = senderId,
-        text = o.optString("text", ""),
-        avatar = o.optString("avatar", "").takeIf { it.isNotBlank() },
-        ts = o.optLong("ts", System.currentTimeMillis()),
-        messageType = o.optString("messageType", "text").ifBlank { "text" },
-        attachmentUrl = o.optString("attachmentUrl", "").takeIf { it.isNotBlank() },
-        attachmentMime = o.optString("attachmentMime", "").takeIf { it.isNotBlank() },
-        reactions = rx,
-        mine = currentUid.isNotBlank() && senderId == currentUid,
-      )
-      ConversationCache.append(appCtx, bubbleKey, msg)
-      val intent = android.content.Intent(appCtx, OverlayBubbleService::class.java).apply {
-        action = OverlayBubbleService.ACTION_REFRESH_PANEL
-        putExtra(OverlayBubbleService.EXTRA_KEY, bubbleKey)
-      }
-      try { androidx.core.content.ContextCompat.startForegroundService(appCtx, intent) } catch (_: Throwable) {}
-    } catch (_: Throwable) {}
-  }
-
-  /** Realtime — JS push reactions mới (sau khi nhận socket `group:reactions`). */
-  @ReactMethod
-  fun updateMessageReactions(bubbleKey: String, messageId: String, reactionsJson: String) {
-    try {
-      val arr = org.json.JSONArray(reactionsJson)
-      val rx = List(arr.length()) { i ->
-        val r = arr.getJSONObject(i)
-        ConversationCache.Reaction(
-          emoji = r.optString("emoji", ""),
-          userId = r.optString("user_id", ""),
-        )
-      }.filter { it.emoji.isNotBlank() }
-      ConversationCache.updateReactions(appCtx, bubbleKey, messageId, rx)
-      val intent = android.content.Intent(appCtx, OverlayBubbleService::class.java).apply {
-        action = OverlayBubbleService.ACTION_REFRESH_PANEL
-        putExtra(OverlayBubbleService.EXTRA_KEY, bubbleKey)
-      }
-      try { androidx.core.content.ContextCompat.startForegroundService(appCtx, intent) } catch (_: Throwable) {}
-    } catch (_: Throwable) {}
-  }
-
-  /**
    * JS seed danh sách tin nhắn cho 1 conversation (gọi sau khi panel mở).
    * `msgsJson` = JSON array các object {sender, text, avatar, ts}.
    * Lấy service instance qua service connection nhẹ — đơn giản bằng cách
    * lưu vào ConversationCache rồi gửi action refresh cho service.
    */
+  /**
+   * Phase 4: JS gọi khi nhận socket realtime message (app đang foreground) —
+   * FCM không deliver khi app foreground nên cần fallback local notif này.
+   *
+   * Idempotent theo `messageId` (cùng dedupe set với FCM path).
+   */
+  @ReactMethod
+  fun postChatNotification(
+    bubbleKey: String,
+    title: String,
+    sender: String,
+    avatar: String?,
+    message: String,
+    messageId: String?,
+    messageType: String?,
+  ) {
+    try {
+      val preview = when (messageType) {
+        "image" -> "📷 Đã gửi 1 ảnh"
+        "video" -> "🎬 Đã gửi 1 video"
+        "audio" -> "🎙 Tin thoại"
+        "file" -> "📎 Đã gửi 1 tệp"
+        else -> message
+      }
+      ChatHeadsUpNotifier.post(
+        appCtx,
+        bubbleKey = bubbleKey,
+        conversationTitle = title.ifBlank { sender },
+        senderName = sender.ifBlank { title },
+        senderAvatarUrl = avatar?.takeIf { it.isNotBlank() },
+        message = message.ifBlank { preview },
+        messageId = messageId?.takeIf { it.isNotBlank() },
+        contentPreview = preview,
+      )
+    } catch (_: Throwable) {}
+  }
+
+  /**
+   * Phase 6: JS gọi để cancel notification của 1 conversation
+   * (khi user mở chat trong app → đã đọc).
+   */
+  @ReactMethod
+  fun cancelChatNotification(bubbleKey: String) {
+    try { ChatHeadsUpNotifier.cancel(appCtx, bubbleKey) } catch (_: Throwable) {}
+  }
+
   @ReactMethod
   fun seedConversationMessages(bubbleKey: String, msgsJson: String) {
     try {
       val arr = org.json.JSONArray(msgsJson)
-      val msgs = ArrayList<ConversationCache.Msg>(arr.length())
-      val currentUid = appCtx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        .getString(KEY_CURRENT_USER_ID, null) ?: ""
+      val out = ArrayList<ConversationCache.Msg>(arr.length())
       for (i in 0 until arr.length()) {
         val o = arr.getJSONObject(i)
         val rxArr = o.optJSONArray("reactions")
-        val rx = if (rxArr != null) {
-          List(rxArr.length()) { idx ->
-            val r = rxArr.getJSONObject(idx)
-            ConversationCache.Reaction(
-              emoji = r.optString("emoji", ""),
-              userId = r.optString("user_id", ""),
-            )
-          }.filter { it.emoji.isNotBlank() }
-        } else emptyList()
-        val senderId = o.optString("senderId", "")
-        msgs.add(
+        val rx = if (rxArr == null) emptyList<ConversationCache.Reaction>() else (0 until rxArr.length()).mapNotNull { j ->
+          val r = rxArr.optJSONObject(j) ?: return@mapNotNull null
+          val emo = ChatHistoryFetcher.safeStr(r, "emoji")
+          if (emo.isBlank()) return@mapNotNull null
+          ConversationCache.Reaction(
+            emoji = emo,
+            userId = ChatHistoryFetcher.safeStr(r, "user_id").ifBlank { ChatHistoryFetcher.safeStr(r, "userId") },
+            userName = ChatHistoryFetcher.safeStr(r, "user_name").ifBlank { ChatHistoryFetcher.safeStr(r, "userName") },
+          )
+        }
+        out.add(
           ConversationCache.Msg(
-            id = o.optString("id", ""),
-            sender = o.optString("sender", ""),
-            senderId = senderId,
-            text = o.optString("text", ""),
-            avatar = o.optString("avatar", "").takeIf { it.isNotBlank() },
+            id = ChatHistoryFetcher.safeStr(o, "id").ifBlank { null },
+            userId = ChatHistoryFetcher.safeStr(o, "user_id").ifBlank { ChatHistoryFetcher.safeStr(o, "userId") }.ifBlank { null },
+            sender = ChatHistoryFetcher.safeStr(o, "sender"),
+            text = ChatHistoryFetcher.safeStr(o, "text"),
+            avatar = ChatHistoryFetcher.safeStr(o, "avatar").ifBlank { null },
             ts = o.optLong("ts", System.currentTimeMillis()),
-            messageType = o.optString("messageType", "text").ifBlank { "text" },
-            attachmentUrl = o.optString("attachmentUrl", "").takeIf { it.isNotBlank() },
-            attachmentMime = o.optString("attachmentMime", "").takeIf { it.isNotBlank() },
+            replyToText = ChatHistoryFetcher.safeStr(o, "reply_to_text").ifBlank { ChatHistoryFetcher.safeStr(o, "replyToText") }.ifBlank { null },
+            attachmentUrl = ChatHistoryFetcher.safeStr(o, "attachment_url").ifBlank { ChatHistoryFetcher.safeStr(o, "attachmentUrl") }.ifBlank { null },
+            messageType = ChatHistoryFetcher.safeStr(o, "message_type").ifBlank { ChatHistoryFetcher.safeStr(o, "messageType") }.ifBlank { null },
             reactions = rx,
-            mine = currentUid.isNotBlank() && senderId == currentUid,
           ),
         )
       }
-      ConversationCache.replaceAll(appCtx, bubbleKey, msgs)
-      // Bảo service refresh panel (qua action expand cùng key — idempotent)
-      val intent = android.content.Intent(appCtx, OverlayBubbleService::class.java).apply {
+      ConversationCache.replaceAll(appCtx, bubbleKey, out)
+      val intent = Intent(appCtx, OverlayBubbleService::class.java).apply {
         action = OverlayBubbleService.ACTION_REFRESH_PANEL
         putExtra(OverlayBubbleService.EXTRA_KEY, bubbleKey)
       }
@@ -482,8 +475,7 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
     private const val PREFS = "crm_floating_bubble_prefs"
     internal const val KEY_AUTH_TOKEN = "auth_token"
     internal const val KEY_API_ORIGIN = "api_origin"
-    internal const val KEY_CURRENT_USER_ID = "current_user_id"
-    internal const val KEY_PENDING_FCM_TOKEN = CrmFirebaseMessagingService.KEY_PENDING_FCM_TOKEN
+    internal const val KEY_USER_ID = "user_id"
     private const val KEY_WEB_ORIGIN = "web_origin"
     internal const val KEY_PENDING_GROUP = "pending_group"
     internal const val KEY_PENDING_OPEN_MESSENGER = "pending_open_messenger"

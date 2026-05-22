@@ -1,4 +1,3 @@
-import { Alert } from 'react-native';
 import { navigationRef } from '../navigation/navigationRef';
 import { openWebPath } from './openWeb';
 import type { AppNotification } from '../types/notifications';
@@ -107,7 +106,8 @@ export function navigateFromAppNotification(n: AppNotification): void {
     openWebPath('/updates');
     return;
   }
-  Alert.alert('Thông báo', 'Không có liên kết mở cho loại thông báo này.');
+  // Không có route phù hợp → bỏ qua im lặng để tránh dialog gây nhiễu UX
+  // (đặc biệt khi notification từ Android Bubbles không có deep-link app).
 }
 
 export function navigateToNotificationsTab(): void {

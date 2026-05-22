@@ -8,6 +8,9 @@ const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { sendMobilePush } = require('../services/pushSender');
 const { recordUserPing } = require('../helpers/userPresence');
+const { reverseGeocodeWithTimeout } = require('../helpers/reverseGeocode');
+const { upsertUserCurrentLocation } = require('../helpers/userCurrentLocation');
+const { inVietnam } = require('../helpers/geoBounds');
 
 const r = Router();
 r.use(auth);
@@ -26,6 +29,39 @@ function clientIp(req) {
 
 const ONLINE_WINDOW_MS = 90 * 1000;
 const ALLOWED_PLATFORMS = ['android', 'ios', 'web', 'desktop'];
+
+function safeText(v, maxLen = 160) {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  return s.slice(0, maxLen);
+}
+
+function safeFloat(v) {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Chỉ ghi nhận vị trí nằm trong phạm vi Việt Nam (đất liền + Trường Sa + Hoàng Sa).
+ * Mọi toạ độ ngoài VN (do trình duyệt dùng IP/VPN fallback, GPS sai, v.v.) sẽ bị
+ * loại bỏ — tránh đẩy marker ra biển hoặc nước khác trên bản đồ Activity.
+ */
+function isValidCoord(lat, lng) {
+  return inVietnam(lat, lng);
+}
+
+function missingExtendedColumns(error) {
+  const msg = String(error?.message || '').toLowerCase();
+  return (
+    msg.includes('network_name')
+    || msg.includes('network_type')
+    || msg.includes('geo_lat')
+    || msg.includes('geo_lng')
+    || msg.includes('geo_address')
+  );
+}
 
 function tableMissing(error) {
   if (!error) return false;
@@ -54,28 +90,48 @@ r.post('/ping', async (req, res) => {
     const platform = ALLOWED_PLATFORMS.includes(platformRaw) ? platformRaw : 'web';
 
     const now = new Date().toISOString();
-    const payload = {
+    const basePayload = {
       user_id: uid,
       device_id: deviceId,
       platform,
-      device_name: req.body?.device_name ? String(req.body.device_name).slice(0, 160) : null,
-      os_name: req.body?.os_name ? String(req.body.os_name).slice(0, 60) : null,
-      os_version: req.body?.os_version ? String(req.body.os_version).slice(0, 60) : null,
-      app_version: req.body?.app_version ? String(req.body.app_version).slice(0, 60) : null,
+      device_name: safeText(req.body?.device_name, 160),
+      os_name: safeText(req.body?.os_name, 60),
+      os_version: safeText(req.body?.os_version, 60),
+      app_version: safeText(req.body?.app_version, 60),
       user_agent: req.headers['user-agent'] ? String(req.headers['user-agent']).slice(0, 500) : null,
       ip: clientIp(req),
-      push_token: req.body?.push_token ? String(req.body.push_token).slice(0, 500) : null,
+      push_token: safeText(req.body?.push_token, 500),
       last_ping_at: now,
     };
+    const rawLat = safeFloat(req.body?.geo_lat);
+    const rawLng = safeFloat(req.body?.geo_lng);
+    const validGeo = isValidCoord(rawLat, rawLng);
+    const extraPayload = {
+      network_name: safeText(req.body?.network_name, 120),
+      network_type: safeText(req.body?.network_type, 40),
+      geo_lat: validGeo ? rawLat : null,
+      geo_lng: validGeo ? rawLng : null,
+      geo_address: validGeo ? safeText(req.body?.geo_address, 240) : null,
+    };
+    const payload = { ...basePayload, ...extraPayload };
 
     const isLogin = req.body?.is_login === true;
     if (isLogin) payload.last_login_at = now;
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('user_devices')
       .upsert(payload, { onConflict: 'user_id,device_id' })
-      .select('id, last_ping_at, last_login_at')
+      .select('id, last_ping_at, last_login_at, network_name, network_type, geo_lat, geo_lng, geo_address')
       .single();
+    if (error && missingExtendedColumns(error)) {
+      const fallbackPayload = { ...basePayload };
+      if (isLogin) fallbackPayload.last_login_at = now;
+      ({ data, error } = await supabase
+        .from('user_devices')
+        .upsert(fallbackPayload, { onConflict: 'user_id,device_id' })
+        .select('id, last_ping_at, last_login_at')
+        .single());
+    }
 
     if (error) {
       if (tableMissing(error)) return migrationHint(res);
@@ -94,7 +150,45 @@ r.post('/ping', async (req, res) => {
       }
     }
 
-    res.json({ ok: true, device: data });
+    let currentLocation = null;
+    if (validGeo) {
+      let geoAddress = safeText(req.body?.geo_address, 240);
+      if (!geoAddress) {
+        const geocoded = await reverseGeocodeWithTimeout(rawLat, rawLng, 1500);
+        if (geocoded?.address) {
+          geoAddress = geocoded.address;
+          if (data && !data.geo_address) {
+            try {
+              await supabase
+                .from('user_devices')
+                .update({ geo_address: geoAddress })
+                .eq('user_id', uid)
+                .eq('device_id', deviceId);
+              data = { ...data, geo_address: geoAddress };
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+      }
+      try {
+        const snap = await upsertUserCurrentLocation(uid, {
+          lat: rawLat,
+          lng: rawLng,
+          address: geoAddress,
+          accuracy_m: safeFloat(req.body?.geo_accuracy_m ?? req.body?.accuracy_m),
+          source: platform,
+          device_id: deviceId,
+        });
+        if (snap.ok) currentLocation = snap.location;
+      } catch (e) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn('[devices/ping] upsertUserCurrentLocation:', e?.message || e);
+        }
+      }
+    }
+
+    res.json({ ok: true, device: data, current_location: currentLocation });
   } catch (e) {
     console.error('POST /devices/ping:', e);
     res.status(500).json({ error: e.message });
@@ -107,11 +201,20 @@ r.get('/me', async (req, res) => {
     const uid = currentUserId(req);
     if (!uid) return res.status(401).json({ error: 'Token không có user id' });
 
-    const { data, error } = await supabase
+    const runExt = () => supabase
+      .from('user_devices')
+      .select('id, device_id, platform, device_name, os_name, os_version, app_version, ip, network_name, network_type, geo_lat, geo_lng, geo_address, last_ping_at, last_login_at, first_seen_at')
+      .eq('user_id', uid)
+      .order('last_ping_at', { ascending: false });
+    const runFallback = () => supabase
       .from('user_devices')
       .select('id, device_id, platform, device_name, os_name, os_version, app_version, ip, last_ping_at, last_login_at, first_seen_at')
       .eq('user_id', uid)
       .order('last_ping_at', { ascending: false });
+    let { data, error } = await runExt();
+    if (error && missingExtendedColumns(error)) {
+      ({ data, error } = await runFallback());
+    }
 
     if (error) {
       if (tableMissing(error)) return migrationHint(res);

@@ -1,8 +1,21 @@
+import { useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { KeyboardAvoidingView, Platform, View } from 'react-native';
+import * as Notifications from 'expo-notifications';
 import { AuthProvider } from './src/context/AuthContext';
+import { setupNotificationChannels } from './src/lib/notificationChannels';
+
+// Hiện notification ngay cả khi app foreground (kể cả tin chat).
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+});
 import { CrmCompanyFilterProvider } from './src/context/CrmCompanyFilterContext';
 import { NotificationProvider } from './src/context/NotificationContext';
 import PermissionBootstrap from './src/components/PermissionBootstrap';
@@ -29,6 +42,9 @@ const NavTheme = {
 
 export default function App() {
   useCrmAndroidSystemUi();
+  useEffect(() => {
+    void setupNotificationChannels();
+  }, []);
 
   return (
     <SafeAreaProvider>

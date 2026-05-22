@@ -82,11 +82,19 @@ const ASSIGNMENT_NOTIFICATION_TYPES = [
   'crm_assignment_due_soon',
   'crm_assignment_overdue',
 ];
+const DEAL_ACTIVITY_NOTIFICATION_TYPES = ['deal_assigned', 'deal_created', 'deal_won', 'workshop_new_deal', 'crm_deal'];
 
 function isAssignmentNotification(n) {
   if (!n) return false;
   if (n.entity_type === 'crm_assignment') return true;
   return ASSIGNMENT_NOTIFICATION_TYPES.includes(String(n?.type || ''));
+}
+
+function isDealActivityNotification(n) {
+  if (!n) return false;
+  const type = String(n?.type || '');
+  if (DEAL_ACTIVITY_NOTIFICATION_TYPES.includes(type)) return true;
+  return String(n?.entity_type || '') === 'crm_deal';
 }
 
 const COLOR_MAP = {
@@ -204,6 +212,7 @@ export default function NotificationCenter({ socket }) {
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState('activity');
   const [onlyUnread, setOnlyUnread] = useState(false);
+  const [activityDate, setActivityDate] = useState('');
   const [deadlinesModule, setDeadlinesModule] = useState('all');
   const [toastNotification, setToastNotification] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -287,6 +296,10 @@ export default function NotificationCenter({ socket }) {
               : 'activity';
         const params = { channel, limit: 80 };
         if (onlyUnread) params.unread = 'true';
+        if (tab === 'activity' && activityDate) {
+          params.from_date = activityDate;
+          params.to_date = activityDate;
+        }
         const { data } = await api.get('/dashboard/notifications', { params });
         setNotifications(data.notifications || []);
       }
@@ -380,7 +393,7 @@ export default function NotificationCenter({ socket }) {
       } else if (isAssign) {
         setUnreadAssignments((c) => c + 1);
         setNotifications((prev) => (tab === 'assignments' ? [notif, ...prev] : prev));
-      } else {
+      } else if (isDealActivityNotification(notif)) {
         setUnreadActivity((c) => c + 1);
         setNotifications((prev) => (tab === 'activity' ? [notif, ...prev] : prev));
       }
@@ -406,7 +419,7 @@ export default function NotificationCenter({ socket }) {
 
   useEffect(() => {
     if (open) load();
-  }, [open, tab, deadlinesModule, onlyUnread]);
+  }, [open, tab, deadlinesModule, onlyUnread, activityDate]);
 
   useEffect(() => {
     const handler = (e) => {
@@ -570,6 +583,28 @@ export default function NotificationCenter({ socket }) {
 
           {(tab === 'activity' || tab === 'events' || tab === 'messages' || tab === 'assignments') && (
             <div className="flex items-center gap-2 px-3 py-1.5 border-b border-gray-50 bg-gray-50/50">
+              {tab === 'activity' && (
+                <>
+                  <label className="flex items-center gap-1 text-[11px] text-gray-600">
+                    <Calendar className="h-3.5 w-3.5" />
+                    <input
+                      type="date"
+                      value={activityDate}
+                      onChange={(e) => setActivityDate(e.target.value)}
+                      className="h-7 px-2 rounded border border-gray-200 bg-white text-[11px]"
+                    />
+                  </label>
+                  {activityDate && (
+                    <button
+                      type="button"
+                      onClick={() => setActivityDate('')}
+                      className="h-7 px-2 rounded border border-gray-200 bg-white text-[11px] text-gray-600 hover:bg-gray-50"
+                    >
+                      Tất cả ngày
+                    </button>
+                  )}
+                </>
+              )}
               <label className="flex items-center gap-1.5 text-[11px] text-gray-600 cursor-pointer select-none">
                 <input
                   type="checkbox"

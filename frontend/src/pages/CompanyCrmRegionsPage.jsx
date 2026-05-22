@@ -3,7 +3,7 @@ import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import Modal from '../components/Modal';
 import { isCrmSystemAdmin, isCrmCompanyAdmin } from '../lib/crmAdminScope';
-import { MapPin, Plus, Pencil, Building2, RefreshCw } from 'lucide-react';
+import { MapPin, Plus, Pencil, Building2, RefreshCw, ExternalLink } from 'lucide-react';
 
 /**
  * Quản lý khu vực CRM theo công ty — CRUD qua /api/crm/company-regions.
@@ -26,7 +26,7 @@ export default function CompanyCrmRegionsPage() {
   const [showModal, setShowModal] = useState(false);
   const [editRow, setEditRow] = useState(null);
 
-  const [form, setForm] = useState({ name: '', code: '', order_index: 0, division_unit_id: '' });
+  const [form, setForm] = useState({ name: '', code: '', order_index: 0, division_unit_id: '', address: '', map_url: '' });
 
   const effectiveCompanyId = useMemo(() => {
     if (companyAdmin && user?.company_id) return String(user.company_id);
@@ -117,7 +117,14 @@ export default function CompanyCrmRegionsPage() {
 
   const openCreate = () => {
     setEditRow(null);
-    setForm({ name: '', code: '', order_index: (regions?.length || 0) * 10, division_unit_id: filterDivision || '' });
+    setForm({
+      name: '',
+      code: '',
+      order_index: (regions?.length || 0) * 10,
+      division_unit_id: filterDivision || '',
+      address: '',
+      map_url: '',
+    });
     setShowModal(true);
   };
 
@@ -128,6 +135,8 @@ export default function CompanyCrmRegionsPage() {
       code: row.code || '',
       order_index: row.order_index ?? 0,
       division_unit_id: row.division_unit_id || '',
+      address: row.address || '',
+      map_url: row.map_url || '',
     });
     setShowModal(true);
   };
@@ -145,6 +154,8 @@ export default function CompanyCrmRegionsPage() {
           code: form.code?.trim() || null,
           order_index: Number(form.order_index) || 0,
           division_unit_id: form.division_unit_id || null,
+          address: form.address?.trim() || null,
+          map_url: form.map_url?.trim() || null,
         });
       } else {
         await api.post('/crm/company-regions', {
@@ -153,6 +164,8 @@ export default function CompanyCrmRegionsPage() {
           code: form.code?.trim() || null,
           order_index: Number(form.order_index) || 0,
           division_unit_id: form.division_unit_id || null,
+          address: form.address?.trim() || null,
+          map_url: form.map_url?.trim() || null,
         });
       }
       setShowModal(false);
@@ -280,7 +293,8 @@ export default function CompanyCrmRegionsPage() {
                 <thead>
                   <tr className="bg-gray-50 border-b text-left text-xs font-semibold text-gray-600 uppercase">
                     <th className="py-3 px-4">Tên</th>
-                    <th className="py-3 px-4 w-28">Mã</th>
+                    <th className="py-3 px-4 w-24">Mã</th>
+                    <th className="py-3 px-4">Địa chỉ chi nhánh</th>
                     <th className="py-3 px-4 w-24">Thứ tự</th>
                     <th className="py-3 px-4 w-28">Trạng thái</th>
                     <th className="py-3 px-4 w-40 text-right">Thao tác</th>
@@ -291,6 +305,21 @@ export default function CompanyCrmRegionsPage() {
                     <tr key={r.id} className="border-b border-gray-100 hover:bg-gray-50/80">
                       <td className="py-3 px-4 font-medium text-gray-900">{r.name}</td>
                       <td className="py-3 px-4 text-gray-600">{r.code || '—'}</td>
+                      <td className="py-3 px-4 text-gray-600">
+                        <div className="min-w-[220px] max-w-[420px]">
+                          <p className="truncate">{r.address || '—'}</p>
+                          {r.map_url ? (
+                            <a
+                              href={r.map_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-blue-600 hover:text-blue-800"
+                            >
+                              <ExternalLink className="h-3 w-3" /> Mở bản đồ
+                            </a>
+                          ) : null}
+                        </div>
+                      </td>
                       <td className="py-3 px-4 text-gray-600">{r.order_index ?? 0}</td>
                       <td className="py-3 px-4">
                         <span
@@ -356,6 +385,24 @@ export default function CompanyCrmRegionsPage() {
               onChange={(e) => setForm((f) => ({ ...f, code: e.target.value }))}
               className="w-full h-10 px-3 border border-gray-300 rounded-lg text-sm"
               placeholder="VD: HN"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Địa chỉ chi nhánh</label>
+            <input
+              value={form.address}
+              onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
+              className="w-full h-10 px-3 border border-gray-300 rounded-lg text-sm"
+              placeholder="VD: 123 Nguyễn Văn Linh, Q.7, TP.HCM"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Link bản đồ (tùy chọn)</label>
+            <input
+              value={form.map_url}
+              onChange={(e) => setForm((f) => ({ ...f, map_url: e.target.value }))}
+              className="w-full h-10 px-3 border border-gray-300 rounded-lg text-sm"
+              placeholder="https://maps.google.com/?q=..."
             />
           </div>
           <div>

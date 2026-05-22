@@ -18,6 +18,8 @@ object BubbleStackStore {
     val title: String,
     val letter: String,
     val avatarUrl: String?,
+    /** Số tin chưa đọc của RIÊNG conversation này (badge per-bubble). */
+    val unreadCount: Int = 0,
   )
 
   fun load(ctx: Context): MutableList<Entry> {
@@ -33,7 +35,8 @@ object BubbleStackStore {
             key = o.getString("key"),
             title = o.optString("title", ""),
             letter = o.optString("letter", "?"),
-            avatarUrl = o.optString("avatar_url", null).takeIf { !it.isNullOrBlank() },
+            avatarUrl = o.optString("avatar_url", "").takeIf { it.isNotBlank() },
+            unreadCount = o.optInt("unread", 0),
           ),
         )
       }
@@ -51,7 +54,8 @@ object BubbleStackStore {
           .put("key", e.key)
           .put("title", e.title)
           .put("letter", e.letter)
-          .put("avatar_url", e.avatarUrl ?: ""),
+          .put("avatar_url", e.avatarUrl ?: "")
+          .put("unread", e.unreadCount),
       )
     }
     ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -60,14 +64,42 @@ object BubbleStackStore {
       .apply()
   }
 
-  /** Thêm hoặc đưa conversation lên đầu stack (cuối list). */
+  /**
+   * Thêm hoặc đưa conversation lên đầu stack (cuối list).
+   *
+   * - Nếu entry đã tồn tại: giữ `unreadCount` cũ, update title/letter/avatar mới.
+   * - Nếu entry mới: dùng `unreadCount` từ tham số (mặc định 0).
+   */
   fun upsert(ctx: Context, entry: Entry): List<Entry> {
     val list = load(ctx)
+    val existing = list.find { it.key == entry.key }
     list.removeAll { it.key == entry.key }
-    list.add(entry)
+    val merged = if (existing != null) entry.copy(unreadCount = existing.unreadCount) else entry
+    list.add(merged)
     while (list.size > MAX_BUBBLES) list.removeAt(0)
     save(ctx, list)
     return list
+  }
+
+  /** +1 unread cho 1 conv, trả về giá trị mới (0 nếu không tìm thấy). */
+  fun incrementUnread(ctx: Context, key: String): Int {
+    val list = load(ctx)
+    val idx = list.indexOfFirst { it.key == key }
+    if (idx < 0) return 0
+    val newCount = list[idx].unreadCount + 1
+    list[idx] = list[idx].copy(unreadCount = newCount)
+    save(ctx, list)
+    return newCount
+  }
+
+  /** Reset unread count về 0 cho 1 conv (gọi khi user mở panel xem). */
+  fun clearUnread(ctx: Context, key: String) {
+    val list = load(ctx)
+    val idx = list.indexOfFirst { it.key == key }
+    if (idx < 0) return
+    if (list[idx].unreadCount == 0) return
+    list[idx] = list[idx].copy(unreadCount = 0)
+    save(ctx, list)
   }
 
   fun remove(ctx: Context, key: String): List<Entry> {

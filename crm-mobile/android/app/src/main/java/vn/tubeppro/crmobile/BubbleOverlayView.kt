@@ -10,6 +10,7 @@ import android.graphics.Typeface
 import android.os.SystemClock
 import android.util.TypedValue
 import android.view.MotionEvent
+import android.view.VelocityTracker
 import android.view.View
 import android.view.WindowManager
 import kotlin.math.abs
@@ -36,7 +37,7 @@ class BubbleOverlayView(
     fun onLongPress()
     fun onDragStart()
     fun onDragMove(rawX: Float, rawY: Float)
-    fun onDragEnd(rawX: Float, rawY: Float, droppedToDismiss: Boolean)
+    fun onDragEnd(rawX: Float, rawY: Float, droppedToDismiss: Boolean, vx: Float, vy: Float)
   }
 
   // ---------------- State ----------------
@@ -173,6 +174,8 @@ class BubbleOverlayView(
 
   // ---------------- Touch handling ----------------
 
+  private var velocityTracker: VelocityTracker? = null
+
   override fun onTouchEvent(event: MotionEvent): Boolean {
     when (event.action) {
       MotionEvent.ACTION_DOWN -> {
@@ -180,10 +183,13 @@ class BubbleOverlayView(
         touchDownY = event.rawY
         touchDownTimeMs = SystemClock.uptimeMillis()
         didDrag = false
+        velocityTracker?.recycle()
+        velocityTracker = VelocityTracker.obtain().also { it.addMovement(event) }
         postDelayed(longPressRunnable, longPressMs)
         return true
       }
       MotionEvent.ACTION_MOVE -> {
+        velocityTracker?.addMovement(event)
         val dx = event.rawX - touchDownX
         val dy = event.rawY - touchDownY
         if (!didDrag && hypot(dx.toDouble(), dy.toDouble()) > tapSlopPx) {
@@ -199,10 +205,19 @@ class BubbleOverlayView(
       }
       MotionEvent.ACTION_UP -> {
         removeCallbacks(longPressRunnable)
+        val tracker = velocityTracker
+        var vx = 0f; var vy = 0f
+        if (tracker != null) {
+          tracker.addMovement(event)
+          tracker.computeCurrentVelocity(1000)
+          vx = tracker.xVelocity
+          vy = tracker.yVelocity
+          tracker.recycle()
+          velocityTracker = null
+        }
         if (dragging) {
           dragging = false
-          val dropped = false // computed by BubbleWindowManager when it knows drop bounds
-          callback.onDragEnd(event.rawX, event.rawY, dropped)
+          callback.onDragEnd(event.rawX, event.rawY, false, vx, vy)
         } else if (!didDrag) {
           val elapsed = SystemClock.uptimeMillis() - touchDownTimeMs
           if (elapsed < longPressMs) callback.onTap()
@@ -211,9 +226,11 @@ class BubbleOverlayView(
       }
       MotionEvent.ACTION_CANCEL -> {
         removeCallbacks(longPressRunnable)
+        velocityTracker?.recycle()
+        velocityTracker = null
         if (dragging) {
           dragging = false
-          callback.onDragEnd(event.rawX, event.rawY, false)
+          callback.onDragEnd(event.rawX, event.rawY, false, 0f, 0f)
         }
         return true
       }

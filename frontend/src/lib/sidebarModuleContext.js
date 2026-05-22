@@ -6,6 +6,7 @@ export const CRM_SHARED_PATHS = [
   '/updates',
   '/guide',
   '/settings/password',
+  '/settings/location',
   '/settings/devices',
   '/settings/misa',
   '/settings/api-keys',

@@ -68,14 +68,14 @@ async function fetchUserTokens(userId) {
     .eq('user_id', userId);
   if (error) {
     if (error.code === '42P01' || String(error.message || '').includes('push_device_tokens')) {
-      return { expo: [], fcm: [] };
+      return [];
     }
     throw error;
   }
-  const all = data || [];
+  const rows = (data || []).filter((r) => r.token);
   return {
-    expo: all.filter((r) => r.platform === 'expo' && r.token).map((r) => r.token),
-    fcm: all.filter((r) => r.platform === 'fcm' && r.token).map((r) => r.token),
+    expo: rows.filter((r) => r.platform === 'expo'),
+    fcm: rows.filter((r) => r.platform === 'fcm'),
   };
 }
 
@@ -110,66 +110,143 @@ async function sendExpoChunk(messages) {
 }
 
 /**
- * FCM HTTP Legacy API (server key). Gửi data-only payload — Android native
- * (CrmFirebaseMessagingService) tự tạo bong bóng + tray notification, không
- * để FCM tự hiện tray để tránh trùng với Expo Push.
+ * FCM HTTP v1 — gửi data-only push để wake `OverlayBubbleService` trên Android
+ * kể cả khi app đã kill. Yêu cầu env:
+ *  - `FCM_SA_JSON`  : JSON service-account (Firebase project) một dòng
+ *  - hoặc `FCM_PROJECT_ID` + `FCM_PRIVATE_KEY` + `FCM_CLIENT_EMAIL` để build từ rời rạc.
  *
- * Cần env FCM_SERVER_KEY (Firebase Console → Project Settings → Cloud Messaging).
- * Nếu không có FCM_SERVER_KEY thì im lặng bỏ qua (Expo Push vẫn chạy).
+ * Không bắt buộc — nếu thiếu env thì hàm này im lặng return (Expo nhánh vẫn chạy).
  */
-async function sendFcmDataOnly(notification, fcmTokens) {
-  const serverKey = process.env.FCM_SERVER_KEY;
-  if (!serverKey || !Array.isArray(fcmTokens) || !fcmTokens.length) return;
+let cachedFcmAuth = null; // { accessToken, exp, projectId }
 
-  const payload = buildPushPayload(notification);
-  // FCM data string-only requirement.
-  const dataStr = {};
-  for (const [k, v] of Object.entries(payload.data || {})) {
-    if (v == null) continue;
-    dataStr[k] = typeof v === 'string' ? v : JSON.stringify(v);
-  }
-  dataStr.title = payload.title;
-  dataStr.body = payload.body;
-  if (payload.channelId) dataStr.channelId = payload.channelId;
-
-  // FCM giới hạn 1000 tokens / request
-  const CHUNK = 500;
-  for (let i = 0; i < fcmTokens.length; i += CHUNK) {
-    const slice = fcmTokens.slice(i, i + CHUNK);
+function loadFcmCredentials() {
+  if (process.env.FCM_SA_JSON) {
     try {
-      const res = await fetch('https://fcm.googleapis.com/fcm/send', {
+      const sa = JSON.parse(process.env.FCM_SA_JSON);
+      return {
+        projectId: sa.project_id,
+        clientEmail: sa.client_email,
+        privateKey: sa.private_key,
+      };
+    } catch {
+      return null;
+    }
+  }
+  const projectId = process.env.FCM_PROJECT_ID;
+  const clientEmail = process.env.FCM_CLIENT_EMAIL;
+  const privateKey = (process.env.FCM_PRIVATE_KEY || '').replace(/\\n/g, '\n');
+  if (!projectId || !clientEmail || !privateKey) return null;
+  return { projectId, clientEmail, privateKey };
+}
+
+async function getFcmAccessToken() {
+  if (cachedFcmAuth && cachedFcmAuth.exp - Date.now() > 60000) return cachedFcmAuth;
+  const creds = loadFcmCredentials();
+  if (!creds) return null;
+  // Lazy-require: chỉ load khi cần FCM, tránh bắt buộc dependency
+  let jwt;
+  try { jwt = require('jsonwebtoken'); }
+  catch { console.warn('[pushSender] FCM cần "jsonwebtoken" — npm i jsonwebtoken'); return null; }
+
+  const now = Math.floor(Date.now() / 1000);
+  const token = jwt.sign(
+    {
+      iss: creds.clientEmail,
+      scope: 'https://www.googleapis.com/auth/firebase.messaging',
+      aud: 'https://oauth2.googleapis.com/token',
+      iat: now,
+      exp: now + 3600,
+    },
+    creds.privateKey,
+    { algorithm: 'RS256' },
+  );
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${token}`,
+  });
+  if (!res.ok) {
+    console.warn('[pushSender] FCM OAuth error:', res.status);
+    return null;
+  }
+  const json = await res.json();
+  cachedFcmAuth = {
+    accessToken: json.access_token,
+    exp: Date.now() + (json.expires_in - 60) * 1000,
+    projectId: creds.projectId,
+  };
+  return cachedFcmAuth;
+}
+
+function buildFcmDataPayload(notification) {
+  const meta = (notification.metadata && typeof notification.metadata === 'object')
+    ? notification.metadata
+    : {};
+  const chat = isChatType(notification.type);
+  const senderName = String(meta.sender_name || '');
+  const senderAvatar = String(meta.sender_avatar || '');
+  const groupName = String(meta.group_name || notification.title || '');
+  const bubbleKey = String(meta.bubble_key || (notification.entity_id ? `${notification.entity_type || 'lead'}:${notification.entity_id}` : ''));
+  const messageId = String(meta.message_id || notification.message_id || '');
+  const senderId = String(meta.sender_id || meta.user_id || '');
+  const messageType = String(meta.message_type || '');
+  return {
+    bubble_wake: chat ? '1' : '0',
+    type: String(notification.type || ''),
+    bubble_key: bubbleKey,
+    title: groupName,
+    sender_name: senderName,
+    sender_avatar: senderAvatar,
+    message: String(notification.message || '').slice(0, 500),
+    message_id: messageId,
+    sender_id: senderId,
+    message_type: messageType,
+    notif_id: String(notification.id || ''),
+    entity_type: String(notification.entity_type || ''),
+    entity_id: String(notification.entity_id || ''),
+  };
+}
+
+async function sendFcmDataOnly(tokens, notification) {
+  if (!tokens.length) return;
+  const auth = await getFcmAccessToken();
+  if (!auth) return;
+  const data = buildFcmDataPayload(notification);
+  const url = `https://fcm.googleapis.com/v1/projects/${auth.projectId}/messages:send`;
+  for (const row of tokens) {
+    try {
+      const body = {
+        message: {
+          token: row.token,
+          data,
+          android: {
+            priority: 'HIGH',
+            ttl: '60s',
+            // collapseKey: FCM dedupe pending message per-conversation khi máy offline lâu.
+            // Khi reconnect chỉ deliver message cuối cùng của mỗi conversation.
+            ...(data.bubble_key ? { collapse_key: `chat_${data.bubble_key}` } : {}),
+          },
+        },
+      };
+      const r = await fetch(url, {
         method: 'POST',
         headers: {
-          Authorization: `key=${serverKey}`,
+          Authorization: `Bearer ${auth.accessToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          registration_ids: slice,
-          priority: 'high',
-          data: dataStr,
-          android: { priority: 'high', ttl: '86400s' },
-        }),
+        body: JSON.stringify(body),
       });
-      if (!res.ok) {
-        const txt = await res.text().catch(() => '');
-        console.warn('[pushSender] FCM error:', res.status, txt.slice(0, 200));
-        continue;
-      }
-      const json = await res.json().catch(() => ({}));
-      const results = json?.results;
-      if (Array.isArray(results)) {
-        for (let k = 0; k < results.length; k++) {
-          const r = results[k];
-          if (r?.error === 'NotRegistered' || r?.error === 'InvalidRegistration') {
-            const bad = slice[k];
-            if (bad) {
-              await supabase.from('push_device_tokens').delete().eq('token', bad).catch(() => {});
-            }
-          }
+      if (!r.ok) {
+        const txt = await r.text().catch(() => '');
+        const status = r.status;
+        if (status === 404 || /UNREGISTERED|NOT_FOUND/i.test(txt)) {
+          await supabase.from('push_device_tokens').delete().eq('token', row.token).catch(() => {});
+        } else {
+          console.warn('[pushSender] FCM error:', status, txt.slice(0, 200));
         }
       }
     } catch (e) {
-      console.warn('[pushSender] FCM exception:', e.message || e);
+      console.warn('[pushSender] FCM send error:', e.message || e);
     }
   }
 }
@@ -192,34 +269,33 @@ async function sendMobilePush(userId, notification) {
     );
     if (!allowed) return;
 
-    const tokens = await fetchUserTokens(userId);
-    if (!tokens.expo.length && !tokens.fcm.length) return;
+    const rows = await fetchUserTokens(userId);
+    const expoRows = rows.expo;
+    const fcmRows = rows.fcm;
+    if (!expoRows.length && !fcmRows.length) return;
 
     const payload = buildPushPayload(notification);
+    const messages = expoRows.map((r) => ({
+      to: r.token,
+      title: payload.title,
+      body: payload.body,
+      data: payload.data,
+      channelId: payload.channelId,
+      priority: payload.priority,
+      sound: payload.sound,
+      _displayInForeground: payload._displayInForeground,
+      badge: payload.badge,
+      ttl: payload.ttl,
+      ...(payload.interruptionLevel ? { _interruptionLevel: payload.interruptionLevel } : {}),
+    }));
 
-    // 1) Expo Push — tray notification cho mọi platform
-    if (tokens.expo.length) {
-      const messages = tokens.expo.map((tok) => ({
-        to: tok,
-        title: payload.title,
-        body: payload.body,
-        data: payload.data,
-        channelId: payload.channelId,
-        priority: payload.priority,
-        sound: payload.sound,
-        _displayInForeground: payload._displayInForeground,
-        badge: payload.badge,
-        ttl: payload.ttl,
-        ...(payload.interruptionLevel ? { _interruptionLevel: payload.interruptionLevel } : {}),
-      }));
-      for (let i = 0; i < messages.length; i += CHUNK_SIZE) {
-        await sendExpoChunk(messages.slice(i, i + CHUNK_SIZE));
-      }
+    for (let i = 0; i < messages.length; i += CHUNK_SIZE) {
+      await sendExpoChunk(messages.slice(i, i + CHUNK_SIZE));
     }
 
-    // 2) FCM data-only — Android native trigger overlay bubble khi app killed
-    if (tokens.fcm.length) {
-      await sendFcmDataOnly(notification, tokens.fcm);
+    // Song song: FCM data-only để wake bubble overlay (Android)
+    if (fcmRows.length && isChatType(notification.type)) {
+      await sendFcmDataOnly(fcmRows, notification);
     }
   } catch (e) {
     console.warn('[pushSender]', e.message || e);
@@ -228,6 +304,6 @@ async function sendMobilePush(userId, notification) {
 
 module.exports = {
   sendMobilePush,
-  sendFcmDataOnly,
   buildPushPayload,
+  sendFcmDataOnly,
 };

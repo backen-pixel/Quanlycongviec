@@ -1,16 +1,10 @@
 apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
-
-// FCM google-services plugin: chỉ apply nếu file google-services.json tồn tại.
-// Tránh build fail khi dev chưa add file từ Firebase Console.
-def googleServicesJson = file('google-services.json')
-def fcmEnabled = googleServicesJson.exists()
-if (fcmEnabled) {
-    apply plugin: 'com.google.gms.google-services'
-    println "[bubble] FCM enabled (google-services.json found)"
-} else {
-    println "[bubble] FCM disabled - google-services.json NOT found. Push s\u1ebd kh\u00f4ng ho\u1ea1t \u0111\u1ed9ng cho FCM. Expo Push v\u1eabn ch\u1ea1y."
+// Chỉ apply google-services plugin nếu file google-services.json tồn tại
+// (cho phép build local mà chưa có Firebase project).
+if (file("google-services.json").exists()) {
+    apply plugin: "com.google.gms.google-services"
 }
 
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
@@ -167,11 +161,11 @@ dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-
-    // Firebase Cloud Messaging — luôn link để compile CrmFirebaseMessagingService;
-    // chỉ thực sự nhận message khi google-services.json tồn tại (init phía Firebase).
-    implementation platform('com.google.firebase:firebase-bom:33.5.1')
-    implementation 'com.google.firebase:firebase-messaging-ktx'
+    implementation("androidx.dynamicanimation:dynamicanimation:1.0.0")
+    // Firebase Cloud Messaging — wake bubble overlay khi app killed.
+    // BoM tự đồng bộ phiên bản các artifact firebase-* khác.
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    implementation("com.google.firebase:firebase-messaging-ktx")
 
     def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";
     def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true";

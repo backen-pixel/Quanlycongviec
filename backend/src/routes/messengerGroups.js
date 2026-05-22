@@ -146,16 +146,59 @@ async function notifyMessengerGroupChatRecipients(req, groupId, senderId, msgRow
       sender_name: senderName,
       sender_avatar: msgRow.user?.avatar || null,
       group_avatar: null,
+      // Phase 1 (mobile): cho native FCM build heads-up notif + bubble wake
+      bubble_key: String(groupId),
+      bubble_wake: true,
+      message_id: msgRow?.id ? String(msgRow.id) : '',
+      sender_id: sid,
+      message_type: msgRow?.message_type || 'text',
     },
   );
 }
 
 const MSG_USER_SELECT = '*, user:users!messenger_group_messages_user_id_fkey(id, full_name, avatar)';
 
+/**
+ * Hydrate parent message (cho tin nhắn reply). Dùng query riêng thay vì
+ * join FK self-reference vì Supabase đôi khi không nhận diện được constraint
+ * name của self-FK (`messenger_group_messages_reply_to_fkey`), khiến cả query
+ * fail và rơi xuống fallback không có `reply_to_message`.
+ *
+ * @param {Array<object>} rows  Danh sách message đã có `reply_to`.
+ * @returns {Promise<Array<object>>}
+ */
+async function attachReplyParents(rows) {
+  if (!Array.isArray(rows) || !rows.length) return rows;
+  const ids = [...new Set(
+    rows.map((m) => m?.reply_to).filter(Boolean).map((x) => String(x))
+  )];
+  if (!ids.length) return rows;
+  const { data: parents, error } = await supabase
+    .from('messenger_group_messages')
+    .select('id, content, message_type, attachment_name, attachment_url, user_id')
+    .in('id', ids);
+  if (error || !parents?.length) return rows;
+  const userIds = [...new Set(parents.map((p) => p.user_id).filter(Boolean).map(String))];
+  let userMap = new Map();
+  if (userIds.length) {
+    const users = await fetchUsersByIdsForMessenger(userIds);
+    userMap = new Map(users.map((u) => [String(u.id), u]));
+  }
+  const parentMap = new Map(
+    parents.map((p) => [String(p.id), { ...p, user: userMap.get(String(p.user_id)) || null }])
+  );
+  return rows.map((m) => {
+    if (!m?.reply_to) return m;
+    const parent = parentMap.get(String(m.reply_to)) || null;
+    return parent ? { ...m, reply_to_message: parent } : m;
+  });
+}
+
 async function fetchMessengerMessageById(id) {
   const { data, error } = await supabase.from('messenger_group_messages').select(MSG_USER_SELECT).eq('id', id).single();
-  if (error) return null;
-  return data;
+  if (error || !data) return null;
+  const [hydrated] = await attachReplyParents([data]);
+  return hydrated || data;
 }
 
 /** .in('id', …) + map UUID — tránh lệch khóa string/UUID khi join profile */
@@ -734,70 +777,8 @@ r.get('/groups/:id/chat', async (req, res) => {
         return { ...m, user: um.get(String(m.user_id)) || null };
       });
     }
-    // Gắn reactions (nếu bảng có)
-    try {
-      const msgIds = rows.map((m) => m.id).filter(Boolean);
-      if (msgIds.length) {
-        const { data: rx } = await supabase
-          .from('messenger_message_reactions')
-          .select('message_id, user_id, emoji')
-          .in('message_id', msgIds);
-        if (Array.isArray(rx) && rx.length) {
-          const grouped = new Map();
-          for (const r of rx) {
-            const arr = grouped.get(r.message_id) || [];
-            arr.push(r);
-            grouped.set(r.message_id, arr);
-          }
-          rows = rows.map((m) => ({ ...m, reactions: grouped.get(m.id) || [] }));
-        }
-      }
-    } catch (_) {
-      /* bảng chưa migrate — bỏ qua */
-    }
+    rows = await attachReplyParents(rows);
     res.json(rows);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// POST /messenger/groups/:id/chat/:msgId/react — toggle 1 emoji
-r.post('/groups/:id/chat/:msgId/react', async (req, res) => {
-  try {
-    const ok = await assertGroupMember(req.params.id, req.authUserId);
-    if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
-    const emoji = String(req.body?.emoji || '').trim();
-    if (!emoji) return res.status(400).json({ error: 'Thiếu emoji' });
-
-    const { data: existing } = await supabase
-      .from('messenger_message_reactions')
-      .select('id')
-      .eq('message_id', req.params.msgId)
-      .eq('user_id', req.authUserId)
-      .eq('emoji', emoji)
-      .maybeSingle();
-    if (existing) {
-      await supabase.from('messenger_message_reactions').delete().eq('id', existing.id);
-    } else {
-      await supabase.from('messenger_message_reactions').insert({
-        message_id: req.params.msgId,
-        user_id: req.authUserId,
-        emoji,
-      });
-    }
-    const { data: reactions } = await supabase
-      .from('messenger_message_reactions')
-      .select('user_id, emoji, created_at')
-      .eq('message_id', req.params.msgId);
-    const io = req.app.get('io');
-    if (io) {
-      io.to(`messenger_group:${req.params.id}`).emit('messenger_group:reactions', {
-        group_id: req.params.id,
-        message_id: req.params.msgId,
-        reactions: reactions || [],
-      });
-    }
-    res.json({ reactions: reactions || [] });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -830,12 +811,13 @@ r.post('/groups/:id/chat', messengerChatJsonOrMultipart, async (req, res) => {
       reply_to: reply_to || null,
     };
     if (mentionIds.length) insertRow.mention_user_ids = mentionIds;
-    const { data, error } = await supabase
+    const { data: inserted, error } = await supabase
       .from('messenger_group_messages')
       .insert(insertRow)
-      .select('*, user:users!messenger_group_messages_user_id_fkey(id, full_name, avatar)')
+      .select('id')
       .single();
     if (error) return res.status(400).json({ error: error.message });
+    const data = (await fetchMessengerMessageById(inserted.id)) || inserted;
     const io = req.app.get('io');
     if (io) io.to(`messenger_group:${req.params.id}`).emit('messenger_group:chat', data);
     const { data: grpRow } = await supabase.from('messenger_groups').select('name').eq('id', req.params.id).maybeSingle();
@@ -871,12 +853,13 @@ r.post('/groups/:id/chat/upload', messengerMemoryUpload.single('file'), async (r
       reply_to: req.body.reply_to || null,
     };
     if (mentionIds.length) insertRow.mention_user_ids = mentionIds;
-    const { data, error } = await supabase
+    const { data: inserted, error } = await supabase
       .from('messenger_group_messages')
       .insert(insertRow)
-      .select('*, user:users!messenger_group_messages_user_id_fkey(id, full_name, avatar)')
+      .select('id')
       .single();
     if (error) return res.status(400).json({ error: error.message });
+    const data = (await fetchMessengerMessageById(inserted.id)) || inserted;
     const io = req.app.get('io');
     if (io) io.to(`messenger_group:${req.params.id}`).emit('messenger_group:chat', data);
     const { data: grpRow } = await supabase.from('messenger_groups').select('name').eq('id', req.params.id).maybeSingle();

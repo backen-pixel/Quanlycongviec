@@ -4,7 +4,8 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import { LeadChatTab, MessengerGroupChatTab } from './LeadChatTabs';
-import { MessageCircle, X, Minus, Maximize2, Search, Users, Loader2, ChevronRight } from 'lucide-react';
+import DepartmentChatBubble from './DepartmentChatBubble';
+import { MessageCircle, X, Minus, Maximize2, Search, Users, Loader2, ChevronRight, Building2 } from 'lucide-react';
 import api from '../lib/api';
 import OnlineStatusDot, { isUserOnline } from './OnlineStatusDot';
 import { useUserPresence } from '../hooks/useUserPresence';
@@ -46,8 +47,10 @@ export default function MessengerDock() {
     toggleMinimize,
     unreadByLeadId,
     unreadByGroupId,
+    unreadByDeptId,
     openMessengerGroupChat,
     openLeadChat,
+    openDepartmentChat,
     chatToasts,
     dismissChatToast,
   } = useMessengerDock();
@@ -198,7 +201,8 @@ export default function MessengerDock() {
 
   const totalUnread =
     Object.values(unreadByLeadId || {}).reduce((a, b) => a + (Number(b) || 0), 0) +
-    Object.values(unreadByGroupId || {}).reduce((a, b) => a + (Number(b) || 0), 0);
+    Object.values(unreadByGroupId || {}).reduce((a, b) => a + (Number(b) || 0), 0) +
+    Object.values(unreadByDeptId || {}).reduce((a, b) => a + (Number(b) || 0), 0);
 
   const ui = (
     <>
@@ -214,10 +218,21 @@ export default function MessengerDock() {
             bottom: 16,
           }}
         >
-          <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 bg-gradient-to-r from-sky-500 to-cyan-600 text-white">
+          <div
+            className="shrink-0 flex items-center gap-2 px-3 py-2.5 text-white"
+            style={
+              w.chatType === 'department' && w.color
+                ? { background: `linear-gradient(135deg, ${w.color}, ${w.color}cc)` }
+                : { background: 'linear-gradient(to right, #0ea5e9, #0891b2)' }
+            }
+          >
             <div className="relative w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-xs font-bold shrink-0">
-              {(w.code || w.title || '?').slice(0, 1)}
-              {(w.isDirect || w.peerUserId || (w.groupId && groupPeerById.has(String(w.groupId)))) ? (
+              {w.chatType === 'department' ? (
+                <Building2 className="h-4 w-4" />
+              ) : (
+                (w.code || w.title || '?').slice(0, 1)
+              )}
+              {w.chatType !== 'department' && (w.isDirect || w.peerUserId || (w.groupId && groupPeerById.has(String(w.groupId)))) ? (
                 <OnlineStatusDot
                   online={isUserOnline(
                     presenceByUser,
@@ -231,6 +246,9 @@ export default function MessengerDock() {
             <div className="flex-1 min-w-0">
               <p className="text-xs font-semibold truncate">{w.title}</p>
               {w.chatType === 'lead' && w.code ? <p className="text-[10px] text-sky-100 truncate">{w.code}</p> : null}
+              {w.chatType === 'department' ? (
+                <p className="text-[10px] text-white/80 truncate">Chat phòng ban</p>
+              ) : null}
               {w.chatType === 'messenger_group' ? (
                 <p className="text-[10px] text-sky-100 truncate flex items-center gap-1">
                   {w.isDirect || w.peerUserId || groupPeerById.has(String(w.groupId)) ? (
@@ -270,6 +288,14 @@ export default function MessengerDock() {
               >
                 <Maximize2 className="h-4 w-4" />
               </Link>
+            ) : w.chatType === 'department' && w.deptId ? (
+              <Link
+                to={`/departments/${w.deptId}/chat`}
+                className="p-1.5 rounded-lg hover:bg-white/15"
+                title="Mở trang Chat phòng ban"
+              >
+                <Maximize2 className="h-4 w-4" />
+              </Link>
             ) : (
               <Link
                 to="/crm/messenger"
@@ -291,6 +317,8 @@ export default function MessengerDock() {
           <div className="flex-1 min-h-0 flex flex-col bg-slate-50">
             {w.chatType === 'messenger_group' && w.groupId ? (
               <MessengerGroupChatTab groupId={w.groupId} socket={socket} fillParent />
+            ) : w.chatType === 'department' && w.deptId ? (
+              <DepartmentChatBubble deptId={w.deptId} socket={socket} fillParent />
             ) : w.leadId ? (
               <LeadChatTab leadId={w.leadId} socket={socket} fillParent />
             ) : null}
@@ -454,6 +482,8 @@ export default function MessengerDock() {
               openMessengerGroupChat({ id: t.groupId, name: t.title });
             } else if (t.kind === 'lead' && t.leadId) {
               openLeadChat({ id: t.leadId, title: t.title });
+            } else if (t.kind === 'department' && t.deptId) {
+              openDepartmentChat({ id: t.deptId, name: t.title });
             }
             dismissChatToast(t.id);
           };
@@ -492,7 +522,10 @@ export default function MessengerDock() {
                   <span className="text-[10px] text-slate-400 shrink-0">vừa xong</span>
                 </div>
                 {t.title ? (
-                  <p className="text-[10px] text-slate-500 truncate">{t.kind === 'group' ? 'Nhóm: ' : ''}{t.title}</p>
+                  <p className="text-[10px] text-slate-500 truncate">
+                    {t.kind === 'group' ? 'Nhóm: ' : t.kind === 'department' ? 'Phòng ban: ' : ''}
+                    {t.title}
+                  </p>
                 ) : null}
                 <p className="text-xs text-slate-700 line-clamp-2 mt-0.5 break-words">{t.preview || '(tin nhắn mới)'}</p>
               </div>
@@ -537,12 +570,15 @@ export default function MessengerDock() {
           const n =
             w.chatType === 'messenger_group' && w.groupId
               ? unreadByGroupId[w.groupId] || 0
-              : w.leadId
-                ? unreadByLeadId[w.leadId] || 0
-                : 0;
+              : w.chatType === 'department' && w.deptId
+                ? unreadByDeptId[w.deptId] || 0
+                : w.leadId
+                  ? unreadByLeadId[w.leadId] || 0
+                  : 0;
           const peerId =
             w.peerUserId || (w.groupId ? groupPeerById.get(String(w.groupId)) : null);
-          const showPeerDot = !!(w.isDirect || peerId);
+          const showPeerDot = !!(w.isDirect || peerId) && w.chatType !== 'department';
+          const isDept = w.chatType === 'department';
           return (
             <button
               key={w.windowKey}
@@ -550,10 +586,19 @@ export default function MessengerDock() {
               title={w.title}
               onClick={() => toggleMinimize(w.windowKey)}
               className={`relative w-10 h-10 rounded-full border-2 flex items-center justify-center text-[11px] font-bold transition ${
-                w.minimized ? 'border-slate-200 bg-slate-100 text-slate-600' : 'border-cyan-500 bg-cyan-50 text-cyan-800'
+                w.minimized
+                  ? 'border-slate-200 bg-slate-100 text-slate-600'
+                  : isDept
+                    ? 'border-white text-white'
+                    : 'border-cyan-500 bg-cyan-50 text-cyan-800'
               }`}
+              style={isDept && !w.minimized && w.color ? { backgroundColor: w.color } : undefined}
             >
-              {(w.code || w.title || '?').slice(0, 2)}
+              {isDept ? (
+                <Building2 className="h-4 w-4" />
+              ) : (
+                (w.code || w.title || '?').slice(0, 2)
+              )}
               {showPeerDot ? (
                 <OnlineStatusDot
                   online={isUserOnline(presenceByUser, peerId)}

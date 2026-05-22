@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import api from '../lib/api';
+import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
 import { formatDateTime, formatVND } from '../lib/utils';
 import { isoToDatetimeLocalValue, datetimeLocalValueToIso } from '../lib/datetimeLocal';
 import {
@@ -103,14 +104,37 @@ export default function CRMTasksTab({
     if (leadType !== 'deal') return false;
     return showSxTasksInUi;
   }, [leadType, showSxTasksInUi]);
+
+  // ── Stages thật của lead/deal theo pipeline_id ──
+  // pipelineStages[i] = { id, name, icon, color, pipeline_type, order_index }
+  // Khi có pipelineStages (lead đã gắn pipeline) → group task theo pipeline_stage_id.
+  // Khi không có (lead/deal cũ) → fallback hardcoded LEAD_STAGES/DEAL_STAGES theo stage_slug.
+  const [pipelineStages, setPipelineStages] = useState([]);
+  const [leadPipelineId, setLeadPipelineId] = useState(null);
+  const isPipelineMode = pipelineStages.length > 0 && !isSxOrderTaskFlow;
+
+  /** Map pipeline_stages → cấu trúc {slug, label, icon, color} để tận dụng lại UI cũ.
+   *  Khi pipeline mode: dùng stage.id làm "slug" (key) để groupBy + xử lý add/save.
+   */
+  const pipelineStagesAsUiStages = useMemo(() => pipelineStages.map((s, i) => ({
+    slug: s.id,                          // dùng UUID làm key
+    label: s.name || 'Giai đoạn',
+    icon: s.icon || '📌',
+    color: s.color || '#3B82F6',
+    isPipelineStage: true,
+    pipelineStageId: s.id,
+    order_index: s.order_index ?? i,
+  })), [pipelineStages]);
+
   const STAGES = useMemo(() => {
-    if (leadType !== 'deal') return LEAD_STAGES;
-    return isSxOrderTaskFlow ? SX_ORDER_STAGES : DEAL_STAGES;
-  }, [leadType, isSxOrderTaskFlow]);
-  const STAGE_OPTIONS = useMemo(
-    () => (leadType === 'deal' ? [...DEAL_STAGES, ...SX_ORDER_STAGES] : LEAD_STAGES),
-    [leadType],
-  );
+    if (isSxOrderTaskFlow) return SX_ORDER_STAGES;
+    if (isPipelineMode) return pipelineStagesAsUiStages;
+    return leadType === 'deal' ? DEAL_STAGES : LEAD_STAGES;
+  }, [isSxOrderTaskFlow, isPipelineMode, pipelineStagesAsUiStages, leadType]);
+  const STAGE_OPTIONS = useMemo(() => {
+    if (isPipelineMode) return [...pipelineStagesAsUiStages, ...SX_ORDER_STAGES];
+    return leadType === 'deal' ? [...DEAL_STAGES, ...SX_ORDER_STAGES] : LEAD_STAGES;
+  }, [leadType, isPipelineMode, pipelineStagesAsUiStages]);
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [generatingDefaults, setGeneratingDefaults] = useState(false);
@@ -143,16 +167,57 @@ export default function CRMTasksTab({
     const silent = !!opts.silent;
     if (!silent) setLoading(true);
     try {
-      const [tasksRes, tplRes] = await Promise.all([
+      const [tasksRes, tplRes, leadRes] = await Promise.all([
         api.get(`/crm/leads/${leadId}/tasks`, { params: { task_scope: taskScope } }),
         isProductionScope ? Promise.resolve({ data: [] }) : api.get('/crm/task-templates'),
+        api.get(`/crm/leads/${leadId}`).catch(() => ({ data: null })),
       ]);
       setTasks(tasksRes.data || []);
       setTemplates(tplRes.data || []);
-      // Auto-expand stages that have tasks
-      const stages = {};
-      (tasksRes.data || []).forEach(t => { if (t.stage_slug) stages[t.stage_slug] = true; });
-      setExpandedStages(stages);
+
+      // Lấy pipeline_id của lead → load pipeline_stages thật
+      // Một số task đã được auto-gen với pipeline_stage_id thuộc pipeline khác (deal cũ
+      // nhảy giữa pipeline) → suy ra pipeline_id từ task đầu tiên có pipeline_stage_id.
+      let pid = leadRes?.data?.pipeline_id || null;
+      if (!pid) {
+        const firstTaskWithStage = (tasksRes.data || []).find((t) => t.pipeline_stage_id);
+        if (firstTaskWithStage?.pipeline_stage_id) {
+          try {
+            const r = await api.get('/crm/pipeline-stages', {
+              params: { ensure_stage_id: firstTaskWithStage.pipeline_stage_id, all: 'true' },
+            });
+            const st = (r.data || []).find((x) => String(x.id) === String(firstTaskWithStage.pipeline_stage_id));
+            if (st?.pipeline_id) pid = st.pipeline_id;
+          } catch { /* ignore */ }
+        }
+      }
+      setLeadPipelineId(pid);
+      if (pid) {
+        try {
+          const { stages } = await fetchPipelineStagesById(pid);
+          const filtered = stages.filter((s) => {
+            if (!s.pipeline_type) return true;
+            if (s.pipeline_type === 'both') return true;
+            return s.pipeline_type === (leadType === 'deal' ? 'deal' : 'lead');
+          });
+          setPipelineStages(filtered);
+        } catch {
+          setPipelineStages([]);
+        }
+      } else {
+        setPipelineStages([]);
+      }
+
+      // Auto-expand stages that have tasks (ưu tiên pipeline_stage_id, fallback stage_slug)
+      const stagesExp = {};
+      (tasksRes.data || []).forEach((t) => {
+        const k = t.pipeline_stage_id || t.stage_slug;
+        if (k) stagesExp[k] = true;
+      });
+      // Mở mặc định bucket "Khác" nếu có task chưa khớp pipeline stage
+      const hasOrphan = (tasksRes.data || []).some((t) => !!pid && !t.pipeline_stage_id);
+      if (hasOrphan) stagesExp.__other__ = true;
+      setExpandedStages(stagesExp);
     } catch (e) { console.error(e); }
     finally {
       setLoading(false);
@@ -166,20 +231,33 @@ export default function CRMTasksTab({
     loadTasks({ silent });
   }, [leadId, taskScope, isProductionScope, refreshKey]);
 
-  const addTask = async (stageSlug) => {
+  const addTask = async (stageKey) => {
     if (!newTask.title.trim()) return;
     try {
-      const { data } = await api.post(`/crm/leads/${leadId}/tasks`, {
+      // Pipeline mode: stageKey = pipeline_stage_id (UUID).
+      // Non-pipeline: stageKey = stage_slug (string).
+      const stageMeta = isPipelineMode ? STAGES.find((s) => s.slug === stageKey) : null;
+      const payload = {
         ...newTask,
         deadline: newTask.deadline ? datetimeLocalValueToIso(newTask.deadline) : null,
-        stage_slug: stageSlug,
-        order_index: tasks.filter(t => t.stage_slug === stageSlug).length,
-      });
+        ...(isPipelineMode
+          ? {
+              pipeline_stage_id: stageKey,
+              stage_slug: stageMeta?.label || null, // gửi tên stage để hiển thị (không bắt buộc)
+              order_index: tasks.filter((t) => t.pipeline_stage_id === stageKey).length,
+            }
+          : {
+              stage_slug: stageKey,
+              order_index: tasks.filter((t) => t.stage_slug === stageKey).length,
+            }),
+      };
+      const { data } = await api.post(`/crm/leads/${leadId}/tasks`, payload);
       setNewTask({ title: '', priority: 'medium', deadline: '', assignee_id: '', supervisor_id: '' });
       setShowAdd(null);
       if (data?.id) {
         setTasks((prev) => [...prev, data]);
-        if (data.stage_slug) setExpandedStages((s) => ({ ...s, [data.stage_slug]: true }));
+        const expKey = data.pipeline_stage_id || data.stage_slug;
+        if (expKey) setExpandedStages((s) => ({ ...s, [expKey]: true }));
       } else loadTasks();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
@@ -309,6 +387,49 @@ export default function CRMTasksTab({
     updateTask(task.id, { status: next });
   };
 
+  /**
+   * Xóa toàn bộ nhiệm vụ "Khác" (chưa gắn pipeline_stage_id).
+   * Sau khi xóa, nếu deal không còn task nào thì GET /tasks sẽ tự gọi autoGenCrmTasks
+   * và sinh lại đúng task theo template đã setup cho pipeline của công ty.
+   */
+  const deleteOrphanTasksBulk = async () => {
+    const orphan = tasks.filter((t) => !t.pipeline_stage_id);
+    if (!orphan.length) return;
+    const hasOtherTasks = tasks.some((t) => t.pipeline_stage_id);
+    const willAutoRegen = !hasOtherTasks; // chỉ regen khi xóa hết task của deal
+    const confirmMsg = willAutoRegen
+      ? `Xóa ${orphan.length} nhiệm vụ cũ (legacy) và TỰ ĐỘNG GEN LẠI theo bộ mẫu pipeline đã setup?\n\n`
+        + `Hệ thống sẽ sinh nhiệm vụ mới từ template gắn vào pipeline của công ty.\n`
+        + `KHÔNG thể hoàn tác.`
+      : `Xóa ${orphan.length} nhiệm vụ chưa gắn giai đoạn pipeline?\n\n`
+        + `Deal vẫn còn nhiệm vụ khác đã gắn pipeline → KHÔNG tự gen lại.\n`
+        + `KHÔNG thể hoàn tác.`;
+    if (!window.confirm(confirmMsg)) return;
+    setBulkCompleting(true);
+    const prev = tasks;
+    const ids = new Set(orphan.map((t) => t.id));
+    setTasks((p) => p.filter((t) => !ids.has(t.id)));
+    try {
+      await Promise.all(orphan.map((t) => {
+        const lid = apiLeadIdForTaskId(t.id);
+        return api.delete(`/crm/leads/${lid}/tasks/${t.id}`).catch(() => null);
+      }));
+    } catch (e) {
+      setTasks(prev);
+      alert(e.response?.data?.error || 'Lỗi xóa nhiệm vụ');
+    } finally {
+      setBulkCompleting(false);
+      try { await loadTasks({ silent: true }); } catch (_) { /* ignore */ }
+      if (willAutoRegen) {
+        // Nhỏ giọt nhắc để user biết hệ thống đã regen
+        try {
+          // Đợi 1 chút rồi reload lần nữa — đảm bảo nhận task mới gen
+          setTimeout(() => loadTasks({ silent: true }).catch(() => {}), 300);
+        } catch (_) { /* ignore */ }
+      }
+    }
+  };
+
   const completeTasksBulk = async (taskList, confirmMessage) => {
     const toComplete = taskList.filter((t) => t.status !== 'completed');
     if (!toComplete.length) return;
@@ -357,6 +478,7 @@ export default function CRMTasksTab({
       assignee_id: task.assignee_id || '',
       supervisor_id: task.supervisor_id || '',
       stage_slug: task.stage_slug || '',
+      blocks_stage_advance: !!task.blocks_stage_advance,
     });
   };
 
@@ -373,6 +495,7 @@ export default function CRMTasksTab({
         assignee_id: editForm.assignee_id || null,
         supervisor_id: editForm.supervisor_id || null,
         stage_slug: editForm.stage_slug,
+        blocks_stage_advance: !!editForm.blocks_stage_advance,
       });
       setEditingTask(null);
       setTasks((p) => p.map((t) => (t.id === taskId ? { ...t, ...data } : t)));
@@ -458,12 +581,29 @@ export default function CRMTasksTab({
   }, [uiTasks]);
 
   // Group tasks by stage
+  //  - isPipelineMode: key = pipeline_stage_id (UUID), fallback theo stage_slug → stage tương ứng
+  //    không tìm thấy thì bỏ vào "Khác"
+  //  - non-pipeline: key = stage_slug như cũ
   const tasksByStage = useMemo(() => {
     const map = {};
     STAGES.forEach(s => { map[s.slug] = []; });
+    if (isPipelineMode) {
+      // Map ngược stage_slug → pipeline_stage để fallback cho task cũ không có pipeline_stage_id
+      const otherKey = '__other__';
+      map[otherKey] = [];
+      uiTasks.forEach((t) => {
+        let key = t.pipeline_stage_id || null;
+        if (key && map[key] !== undefined) {
+          map[key].push(t);
+        } else {
+          map[otherKey].push(t);
+        }
+      });
+      return map;
+    }
     uiTasks.forEach(t => { const key = t.stage_slug || 'other'; if (!map[key]) map[key] = []; map[key].push(t); });
     return map;
-  }, [uiTasks, STAGES]);
+  }, [uiTasks, STAGES, isPipelineMode]);
 
   // Deadline view groups
   const deadlineGroups = useMemo(() => {
@@ -828,6 +968,22 @@ export default function CRMTasksTab({
                   <Share2 className="h-2.5 w-2.5" />Đang chia sẻ
                 </span>
               )}
+              {task.blocks_stage_advance && task.status !== 'completed' && task.status !== 'cancelled' && (
+                <span
+                  className="text-[10px] text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-medium border border-amber-200"
+                  title="Phải hoàn thành nhiệm vụ này trước khi chuyển giai đoạn (trừ Thắng/Thua)"
+                >
+                  <Lock className="h-2.5 w-2.5" />Chặn chuyển giai đoạn
+                </span>
+              )}
+              {task.blocks_stage_advance && task.status === 'completed' && (
+                <span
+                  className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-medium"
+                  title="Đã hoàn thành nhiệm vụ chặn giai đoạn"
+                >
+                  <Lock className="h-2.5 w-2.5" />Đã mở khóa
+                </span>
+              )}
               {/* Nút Upload Excel Báo giá — chỉ hiện cho task báo giá trong Deal, chưa hoàn thành */}
               {leadType === 'deal' && (task.stage_slug === 'deal_quote_contract' || task.stage_slug === 'quotation') && task.status !== 'completed' && (
                 <button
@@ -1160,11 +1316,27 @@ export default function CRMTasksTab({
       {/* LIST VIEW */}
       {viewMode === 'list' && (
         <div className="space-y-3">
-          {STAGES.map(stage => {
+          {(() => {
+            // Trong pipeline mode, append "Khác" bucket cho task không khớp pipeline stage nào
+            const stagesToRender = [...STAGES];
+            if (isPipelineMode && (tasksByStage['__other__']?.length || 0) > 0) {
+              stagesToRender.push({
+                slug: '__other__',
+                label: 'Khác (chưa gắn giai đoạn pipeline)',
+                icon: '📂',
+                color: '#94A3B8',
+                isPipelineStage: false,
+              });
+            }
+            return stagesToRender;
+          })().map(stage => {
             const stageTasks = tasksByStage[stage.slug] || [];
             const completed = stageTasks.filter(t => t.status === 'completed').length;
             const expanded = expandedStages[stage.slug] !== false;
-            const tpl = templates.find(t => t.stage_slug === stage.slug);
+            // Pipeline mode: match template theo pipeline_stage_id (UUID = stage.slug).
+            const tpl = isPipelineMode
+              ? templates.find((t) => t.pipeline_stage_id === stage.slug)
+              : templates.find((t) => t.stage_slug === stage.slug);
             return (
               <div key={stage.slug} className="border rounded-lg overflow-hidden">
                 <div className="flex items-stretch gap-1 px-2 py-1.5 bg-gray-50 border-b border-gray-100">
@@ -1213,7 +1385,29 @@ export default function CRMTasksTab({
                 {expanded && (
                   <div className="px-2 py-1">
                     {stageTasks.map(t => renderTaskRow(t))}
-                    {showAdd === stage.slug ? (
+                    {stage.slug === '__other__' ? (
+                      <div className="flex items-start justify-between gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded mt-1">
+                        <div className="flex-1">
+                          <p className="text-[11px] font-semibold text-amber-900">
+                            ⚠️ Vì sao có "Khác"?
+                          </p>
+                          <p className="text-[10px] text-amber-800 mt-0.5 leading-snug">
+                            {stageTasks.length} nhiệm vụ được sinh ra TRƯỚC khi bộ mẫu được gắn vào pipeline thật của công ty,
+                            nên không khớp giai đoạn nào ở trên. Hệ thống <b>không tự ghi đè</b>. <br />
+                            👉 Bấm nút bên cạnh để <b>xóa và tự gen lại</b> theo bộ mẫu pipeline đã setup.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={bulkCompleting}
+                          onClick={(e) => { e.stopPropagation(); void deleteOrphanTasksBulk(); }}
+                          className="shrink-0 text-[10px] font-semibold text-red-700 bg-white border border-red-300 hover:bg-red-100 px-2 py-1.5 rounded cursor-pointer flex items-center gap-1 disabled:opacity-50 whitespace-nowrap"
+                          title="Xóa toàn bộ nhiệm vụ orphan và gen lại theo template pipeline (nếu deal còn rỗng)"
+                        >
+                          <Trash2 className="h-3 w-3" /> Xóa & Gen lại
+                        </button>
+                      </div>
+                    ) : showAdd === stage.slug ? (
                       <AddTaskForm stageSlug={stage.slug} />
                     ) : (
                       <div className="flex items-center gap-2 py-1 px-3">
@@ -1486,6 +1680,25 @@ export default function CRMTasksTab({
                     </button>
                   ))}
                 </div>
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold text-gray-500 uppercase">Điều kiện chuyển giai đoạn</label>
+                <label className="mt-1 flex items-start gap-2 p-2.5 border border-amber-200 bg-amber-50 rounded-lg cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={!!editForm.blocks_stage_advance}
+                    onChange={(e) => setEditForm((f) => ({ ...f, blocks_stage_advance: e.target.checked }))}
+                    className="mt-0.5 accent-amber-600"
+                  />
+                  <span className="flex-1">
+                    <span className="text-xs font-semibold text-amber-800 flex items-center gap-1">
+                      <Lock className="h-3 w-3" /> Chặn chuyển giai đoạn khi chưa hoàn thành
+                    </span>
+                    <span className="block text-[10px] text-amber-700 mt-0.5">
+                      Khi bật, {leadType === 'deal' ? 'deal' : 'lead'} không thể được kéo sang giai đoạn khác cho tới khi nhiệm vụ này hoàn thành (không áp dụng khi kéo Thắng/Thua).
+                    </span>
+                  </span>
+                </label>
               </div>
             </div>
             <div className="px-5 py-4 border-t bg-gray-50 rounded-b-2xl flex items-center justify-end gap-2">
