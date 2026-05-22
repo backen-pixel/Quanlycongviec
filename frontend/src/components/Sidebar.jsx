@@ -36,6 +36,7 @@ const MENU_GROUPS = [
       { to: '/dashboard/divisions', icon: BarChart3, label: 'Dashboard Khối' },
       { to: '/my-tasks', icon: Inbox, label: 'Việc của tôi' },
       { to: '/settings/password', icon: Lock, label: 'Đổi mật khẩu' },
+      { to: '/settings/location', icon: MapPin, label: 'Vị trí làm việc' },
       { to: '/settings/devices', icon: Smartphone, label: 'Thiết bị đăng nhập' },
       { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },
       { to: '/tools/voice-recordings', icon: Mic, label: 'Cuộc gọi & ghi âm' },
@@ -198,6 +199,7 @@ const CRM_MENU_BOTTOM_GROUPS = [
     emoji: '🛠️',
     items: [
       { to: '/settings/password', icon: Lock, label: 'Đổi mật khẩu' },
+      { to: '/settings/location', icon: MapPin, label: 'Vị trí làm việc' },
       { to: '/settings/devices', icon: Smartphone, label: 'Thiết bị đăng nhập' },
       { to: '/guide', icon: BookOpen, label: 'Hướng dẫn sử dụng', adminOnly: true },
       { to: '/settings/api-keys', icon: Key, label: 'API Key tích hợp', adminOnly: true },

@@ -28,6 +28,14 @@ function winKeyLead(leadId) {
 function winKeyGroup(groupId) {
   return `g:${groupId}`;
 }
+function winKeyDept(deptId) {
+  return `d:${deptId}`;
+}
+
+const DEPT_UNREAD_KEY_PREFIX = 'messenger:dept-unread:';
+function deptUnreadKey(uid) {
+  return `${DEPT_UNREAD_KEY_PREFIX}${uid}`;
+}
 
 export function MessengerDockProvider({ children }) {
   const { user, socket } = useAuth();
@@ -38,14 +46,21 @@ export function MessengerDockProvider({ children }) {
   const [hubMessengerGroupIds, setHubMessengerGroupIds] = useState([]);
   const [unreadByLeadId, setUnreadByLeadId] = useState({});
   const [unreadByGroupId, setUnreadByGroupId] = useState({});
+  const [unreadByDeptId, setUnreadByDeptId] = useState({});
+  /** Danh sách id phòng ban mà user là thành viên — dùng để join socket room nghe tin nhắn */
+  const [myDepartmentIds, setMyDepartmentIds] = useState([]);
+  /** Cache metadata phòng ban (name, color) để bật bong bóng với tiêu đề đúng */
+  const [deptMetaMap, setDeptMetaMap] = useState({});
   /** Toast tin nhắn đến (avatar + người gửi + preview) — auto ẩn sau ~7s */
   const [chatToasts, setChatToasts] = useState([]);
   const toastTimersRef = useRef(new Map());
   const unreadLeadHydratedRef = useRef(false);
   const unreadGroupHydratedRef = useRef(false);
+  const unreadDeptHydratedRef = useRef(false);
 
   const presenceLeadRef = useRef(new Map());
   const presenceGroupRef = useRef(new Map());
+  const presenceDeptRef = useRef(new Map());
   const windowsRef = useRef(windows);
   windowsRef.current = windows;
 
@@ -125,6 +140,76 @@ export function MessengerDockProvider({ children }) {
     }
   }, [unreadByGroupId, uid]);
 
+  // ── Unread phòng ban (department chat) ───────────────────────────────
+  useEffect(() => {
+    unreadDeptHydratedRef.current = false;
+    if (!uid) {
+      setUnreadByDeptId({});
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(deptUnreadKey(uid));
+      if (!raw) {
+        setUnreadByDeptId({});
+        unreadDeptHydratedRef.current = true;
+        return;
+      }
+      const p = JSON.parse(raw);
+      const next = {};
+      if (p && typeof p === 'object') {
+        Object.entries(p).forEach(([k, v]) => {
+          const n = Number(v);
+          if (!Number.isNaN(n) && n > 0) next[k] = n;
+        });
+      }
+      setUnreadByDeptId(next);
+    } catch {
+      setUnreadByDeptId({});
+    }
+    unreadDeptHydratedRef.current = true;
+  }, [uid]);
+
+  useEffect(() => {
+    if (!uid || !unreadDeptHydratedRef.current) return;
+    try {
+      const toSave = Object.fromEntries(Object.entries(unreadByDeptId).filter(([, v]) => Number(v) > 0));
+      localStorage.setItem(deptUnreadKey(uid), JSON.stringify(toSave));
+    } catch {
+      /* ignore */
+    }
+  }, [unreadByDeptId, uid]);
+
+  // Lấy danh sách phòng ban của tôi (để join socket room nghe tin nhắn realtime)
+  useEffect(() => {
+    if (!uid) {
+      setMyDepartmentIds([]);
+      setDeptMetaMap({});
+      return;
+    }
+    let cancelled = false;
+    const fetchDepts = async () => {
+      try {
+        const { data } = await api.get('/departments/my/list');
+        const list = Array.isArray(data?.departments) ? data.departments : [];
+        if (cancelled) return;
+        setMyDepartmentIds(list.map((d) => d.id).filter(Boolean));
+        setDeptMetaMap((prev) => {
+          const next = { ...prev };
+          for (const d of list) {
+            if (d?.id) next[d.id] = { id: d.id, name: d.name || 'Phòng ban', color: d.color || '#6366F1' };
+          }
+          return next;
+        });
+      } catch {
+        /* ignore */
+      }
+    };
+    void fetchDepts();
+    return () => {
+      cancelled = true;
+    };
+  }, [uid]);
+
   // Hydrate unread group counts từ server khi đăng nhập / mở app — đảm bảo badge
   // hiển thị tin nhắn mới đã đến lúc user offline (không chỉ dựa socket realtime).
   useEffect(() => {
@@ -196,6 +281,11 @@ export function MessengerDockProvider({ children }) {
     api.patch(`/messenger/groups/${groupId}/read`).catch(() => { /* ignore */ });
   }, []);
 
+  const markDeptRead = useCallback((deptId) => {
+    if (!deptId) return;
+    setUnreadByDeptId((prev) => ({ ...prev, [deptId]: 0 }));
+  }, []);
+
   const registerLeadChatPresence = useCallback((leadId) => {
     if (!leadId) return () => {};
     const m = presenceLeadRef.current;
@@ -215,6 +305,17 @@ export function MessengerDockProvider({ children }) {
       const c = (m.get(groupId) || 1) - 1;
       if (c <= 0) m.delete(groupId);
       else m.set(groupId, c);
+    };
+  }, []);
+
+  const registerDepartmentChatPresence = useCallback((deptId) => {
+    if (!deptId) return () => {};
+    const m = presenceDeptRef.current;
+    m.set(deptId, (m.get(deptId) || 0) + 1);
+    return () => {
+      const c = (m.get(deptId) || 1) - 1;
+      if (c <= 0) m.delete(deptId);
+      else m.set(deptId, c);
     };
   }, []);
 
@@ -319,6 +420,49 @@ export function MessengerDockProvider({ children }) {
     [markGroupRead],
   );
 
+  const openDepartmentChat = useCallback(
+    (d) => {
+      if (!d?.id) return;
+      markDeptRead(d.id);
+      const wk = winKeyDept(d.id);
+      const meta = deptMetaMap[d.id];
+      const title = d.name || d.title || meta?.name || 'Phòng ban';
+      const color = d.color || meta?.color || '#6366F1';
+      setDeptMetaMap((prev) => ({ ...prev, [d.id]: { id: d.id, name: title, color } }));
+      setWindows((w) => {
+        const exists = w.some((x) => x.windowKey === wk);
+        if (exists) {
+          return w.map((x) =>
+            x.windowKey === wk
+              ? {
+                  ...x,
+                  minimized: false,
+                  title,
+                  color,
+                }
+              : x,
+          );
+        }
+        return [
+          ...w,
+          {
+            windowKey: wk,
+            chatType: 'department',
+            leadId: null,
+            groupId: null,
+            deptId: d.id,
+            title,
+            code: '',
+            type: 'department',
+            color,
+            minimized: false,
+          },
+        ];
+      });
+    },
+    [markDeptRead, deptMetaMap],
+  );
+
   const closeWindow = useCallback((windowKey) => {
     setWindows((w) => w.filter((x) => x.windowKey !== windowKey));
   }, []);
@@ -331,25 +475,34 @@ export function MessengerDockProvider({ children }) {
         const next = w.map((x) => (x.windowKey === windowKey ? { ...x, minimized: nextMin } : x));
         if (hit && !nextMin) {
           if (hit.chatType === 'messenger_group' && hit.groupId) markGroupRead(hit.groupId);
+          else if (hit.chatType === 'department' && hit.deptId) markDeptRead(hit.deptId);
           else if (hit.leadId) markLeadRead(hit.leadId);
         }
         return next;
       });
     },
-    [markLeadRead, markGroupRead],
+    [markLeadRead, markGroupRead, markDeptRead],
   );
 
   useEffect(() => {
     if (!socket || !uid) return;
     const leadJoin = [...new Set([...windows.filter((w) => w.chatType === 'lead').map((w) => w.leadId), ...hubThreadLeadIds])].filter(Boolean);
     const grpJoin = [...new Set([...windows.filter((w) => w.chatType === 'messenger_group').map((w) => w.groupId), ...hubMessengerGroupIds])].filter(Boolean);
+    // Auto-join tất cả phòng ban user thuộc về để có thể nhận tin nhắn realtime
+    // bất cứ nơi đâu trên web (không chỉ khi đang mở trang DepartmentChat).
+    const deptJoin = [...new Set([
+      ...myDepartmentIds,
+      ...windows.filter((w) => w.chatType === 'department').map((w) => w.deptId),
+    ])].filter(Boolean);
     leadJoin.forEach((id) => socket.emit('join:lead', id));
     grpJoin.forEach((id) => socket.emit('join:messenger_group', id));
+    deptJoin.forEach((id) => socket.emit('join:dept', id));
     return () => {
       leadJoin.forEach((id) => socket.emit('leave:lead', id));
       grpJoin.forEach((id) => socket.emit('leave:messenger_group', id));
+      deptJoin.forEach((id) => socket.emit('leave:dept', id));
     };
-  }, [socket, uid, windows, hubThreadLeadIds, hubMessengerGroupIds]);
+  }, [socket, uid, windows, hubThreadLeadIds, hubMessengerGroupIds, myDepartmentIds]);
 
   useEffect(() => {
     if (!socket || !uid) return;
@@ -456,29 +609,93 @@ export function MessengerDockProvider({ children }) {
         tag: `messenger-group-${gid}`,
       });
     };
+    const onDeptChat = (payload) => {
+      const deptId = payload?.department_id;
+      const msg = payload?.message;
+      if (!deptId || !msg) return;
+      const isSelf = String(msg.sender_id) === String(uid);
+      if (isSelf) {
+        markDeptRead(deptId);
+        return;
+      }
+      // Đếm tin chưa đọc cho phòng ban (badge ở dock)
+      setUnreadByDeptId((prev) => ({ ...prev, [deptId]: (Number(prev[deptId]) || 0) + 1 }));
+      // Nếu user đang xem trang DepartmentChat của phòng ban này → không bật bong bóng
+      if ((presenceDeptRef.current.get(deptId) || 0) > 0) {
+        markDeptRead(deptId);
+        return;
+      }
+      // Nếu đã có bong bóng dept mở (không thu nhỏ) → bỏ qua bật mới
+      const expandedDock = windowsRef.current.some(
+        (w) => w.chatType === 'department' && String(w.deptId) === String(deptId) && !w.minimized,
+      );
+      if (expandedDock) {
+        markDeptRead(deptId);
+        return;
+      }
+      const meta = deptMetaMap[deptId] || {};
+      const deptName = meta.name || 'Phòng ban';
+      const deptColor = meta.color || '#6366F1';
+      const senderName = msg.sender?.full_name || 'Ai đó';
+      const preview =
+        msg.content ||
+        (Array.isArray(msg.attachments) && msg.attachments.length ? '[Tệp đính kèm]' : 'Tin nhắn mới');
+      // Tự mở bong bóng chat phòng ban (giống Lead/Group hiện tại)
+      openDepartmentChat({ id: deptId, name: deptName, color: deptColor });
+      pushChatToast({
+        id: `dept-${deptId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        kind: 'department',
+        leadId: null,
+        groupId: null,
+        deptId,
+        sender: {
+          id: msg.sender?.id || msg.sender_id,
+          name: senderName,
+          avatar: msg.sender?.avatar || null,
+        },
+        title: deptName,
+        preview,
+        ts: msg.created_at || new Date().toISOString(),
+      });
+      if (isNotificationTypeEnabled('department_chat', 'department')) {
+        void alertIncomingNotification({ type: 'department_chat', entityType: 'department' });
+      }
+      showBrowserChatNotification({
+        title: deptName,
+        body: `${senderName}: ${preview}`,
+        tag: `dept-chat-${deptId}`,
+      });
+    };
     socket.on('lead:chat', onLeadChat);
     socket.on('messenger_group:chat', onGroupChat);
+    socket.on('department_message', onDeptChat);
     return () => {
       socket.off('lead:chat', onLeadChat);
       socket.off('messenger_group:chat', onGroupChat);
+      socket.off('department_message', onDeptChat);
     };
-  }, [socket, uid, markLeadRead, markGroupRead, pushChatToast, openLeadChat, openMessengerGroupChat]);
+  }, [socket, uid, markLeadRead, markGroupRead, markDeptRead, pushChatToast, openLeadChat, openMessengerGroupChat, openDepartmentChat, deptMetaMap]);
 
   const value = useMemo(
     () => ({
       windows,
       unreadByLeadId,
       unreadByGroupId,
+      unreadByDeptId,
+      deptMetaMap,
       chatToasts,
       dismissChatToast,
       openLeadChat,
       openMessengerGroupChat,
+      openDepartmentChat,
       closeWindow,
       toggleMinimize,
       markLeadRead,
       markGroupRead,
+      markDeptRead,
       registerLeadChatPresence,
       registerMessengerGroupPresence,
+      registerDepartmentChatPresence,
       syncHubThreadLeadIds,
       syncHubMessengerGroupIds,
     }),
@@ -486,16 +703,21 @@ export function MessengerDockProvider({ children }) {
       windows,
       unreadByLeadId,
       unreadByGroupId,
+      unreadByDeptId,
+      deptMetaMap,
       chatToasts,
       dismissChatToast,
       openLeadChat,
       openMessengerGroupChat,
+      openDepartmentChat,
       closeWindow,
       toggleMinimize,
       markLeadRead,
       markGroupRead,
+      markDeptRead,
       registerLeadChatPresence,
       registerMessengerGroupPresence,
+      registerDepartmentChatPresence,
       syncHubThreadLeadIds,
       syncHubMessengerGroupIds,
     ],

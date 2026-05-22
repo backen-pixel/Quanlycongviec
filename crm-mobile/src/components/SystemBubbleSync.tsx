@@ -13,7 +13,8 @@ import { toBubbleStorageKey, parseBubbleStorageKey } from '../lib/bubbleNativeEv
 import { markLeadChatRead, markMessengerGroupRead } from '../lib/markChatRead';
 import type { AppNotification } from '../types/notifications';
 import { api } from '../api/client';
-import { startBubbleRealtime, stopBubbleRealtime } from '../lib/bubbleRealtimeSocket';
+import { io, type Socket } from 'socket.io-client';
+import { getForegroundLead } from '../lib/bubbleRealtimeSocket';
 
 const Overlay = NativeModules.FloatingBubbleOverlay as
   | {
@@ -24,7 +25,6 @@ const Overlay = NativeModules.FloatingBubbleOverlay as
       consumeOpenMessenger?: () => Promise<boolean>;
       saveAuthToken?: (token: string) => void;
       saveWebOrigin?: (origin: string) => void;
-      saveCurrentUserId?: (id: string) => void;
       showConvBubble?: (groupId: string, title: string, avatarLetter: string) => void;
       hideConvBubble?: (groupId: string) => void;
       showPeek?: (sender: string, message: string, bubbleKey: string | null) => void;
@@ -66,6 +66,21 @@ const Overlay = NativeModules.FloatingBubbleOverlay as
         avatarLetter: string,
         avatarUrl: string,
       ) => void;
+      // Phase 2+5: native bridges cho FCM & reactions
+      consumeFcmToken?: () => Promise<string | null>;
+      saveUserId?: (userId: string) => void;
+      applyReactions?: (bubbleKey: string, messageId: string, reactionsJson: string) => void;
+      // Phase 4 (notif): local heads-up notification khi app foreground
+      postChatNotification?: (
+        bubbleKey: string,
+        title: string,
+        sender: string,
+        avatar: string | null,
+        message: string,
+        messageId: string | null,
+        messageType: string | null,
+      ) => void;
+      cancelChatNotification?: (bubbleKey: string) => void;
     }
   | undefined;
 
@@ -176,22 +191,10 @@ export default function SystemBubbleSync() {
       const webOrigin = WEB_APP_ORIGIN || API_ORIGIN;
       if (webOrigin) Overlay.saveWebOrigin?.(webOrigin);
       if (API_ORIGIN) Overlay.saveApiOrigin?.(API_ORIGIN);
-      const uid = user?.id || user?.userId || '';
-      if (uid) Overlay.saveCurrentUserId?.(String(uid));
+      const uid = (user as unknown as { id?: string; userId?: string } | null)?.id
+        || (user as unknown as { id?: string; userId?: string } | null)?.userId;
+      if (uid) Overlay.saveUserId?.(String(uid));
     }
-  }, [token, user]);
-
-  // Realtime: 1 socket join mọi nhóm — bong bóng cập nhật ngay khi có tin mới
-  // (không phụ thuộc Expo Push, vốn có 1-3s latency).
-  useEffect(() => {
-    if (Platform.OS !== 'android') return;
-    const uid = user?.id || user?.userId || '';
-    if (token && uid) {
-      void startBubbleRealtime(String(uid));
-    }
-    return () => {
-      if (!token) stopBubbleRealtime();
-    };
   }, [token, user]);
 
   useEffect(() => {
@@ -239,6 +242,99 @@ export default function SystemBubbleSync() {
   }, [badge]);
 
   /**
+   * Realtime reaction cho LEAD chat:
+   * Tạo 1 socket riêng (chỉ join các lead room có bubble đang hiển thị) để forward
+   * `lead:reactions` → `Overlay.applyReactions` (refresh panel native).
+   *
+   * Socket chỉ tồn tại khi:
+   *  - đăng nhập (token + user)
+   *  - có ít nhất 1 lead bubble trong stack
+   */
+  const joinedLeadsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !Overlay?.applyReactions) return;
+    if (!token) return;
+
+    let socket: Socket | null = null;
+    let cancelled = false;
+
+    const refresh = async () => {
+      try {
+        if (!Overlay?.applyReactions) return;
+        // Lấy stack hiện tại từ native (giữ "đồng bộ" với những gì bubble đang hiển thị)
+        const stack = await ((NativeModules.FloatingBubbleOverlay as unknown) as {
+          getBubbleStack?: () => Promise<Array<{ key: string }>>;
+        })?.getBubbleStack?.();
+        const leadIds = (Array.isArray(stack) ? stack : [])
+          .map((e) => e.key)
+          .filter((k) => k.startsWith('lead:'))
+          .map((k) => k.slice('lead:'.length));
+        if (cancelled) return;
+        if (leadIds.length === 0) {
+          if (socket) {
+            socket.disconnect();
+            socket = null;
+            joinedLeadsRef.current.clear();
+          }
+          return;
+        }
+        if (!socket) {
+          socket = io(API_ORIGIN, {
+            auth: { token },
+            transports: ['websocket', 'polling'],
+            reconnection: true,
+            reconnectionDelay: 2000,
+          });
+          socket.on('connect', () => {
+            for (const id of joinedLeadsRef.current) socket?.emit('join:lead', id);
+          });
+          socket.on('lead:reactions', (p: { message_id?: string; reactions?: unknown[] }) => {
+            const msgId = p?.message_id;
+            const rxs = Array.isArray(p?.reactions) ? p.reactions : [];
+            if (!msgId) return;
+            // Tin nhắn có thể thuộc 1 trong các lead bubble đang stack → broadcast cho tất cả.
+            for (const id of joinedLeadsRef.current) {
+              Overlay?.applyReactions?.(`lead:${id}`, String(msgId), JSON.stringify(rxs));
+            }
+          });
+        }
+        const cur = joinedLeadsRef.current;
+        for (const id of leadIds) {
+          if (!cur.has(id)) {
+            cur.add(id);
+            socket?.emit('join:lead', id);
+          }
+        }
+        for (const id of Array.from(cur)) {
+          if (!leadIds.includes(id)) {
+            cur.delete(id);
+            socket?.emit('leave:lead', id);
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+
+    void refresh();
+    // Refresh khi panel mở (key mới) hoặc khi bubble stack thay đổi
+    const sub1 = DeviceEventEmitter.addListener('BubblePanelOpened', () => void refresh());
+    const sub2 = AppState.addEventListener('change', (s) => {
+      if (s === 'active') void refresh();
+    });
+    const interval = setInterval(refresh, 30000);
+
+    return () => {
+      cancelled = true;
+      sub1.remove();
+      sub2.remove();
+      clearInterval(interval);
+      socket?.disconnect();
+      joinedLeadsRef.current.clear();
+    };
+  }, [token]);
+
+  /**
    * Khi user tap bong bóng → native phát "BubblePanelOpened" → ta fetch lịch sử
    * chat của conversation đó rồi seed vào panel native.
    */
@@ -250,10 +346,19 @@ export default function SystemBubbleSync() {
         const key = p?.key;
         if (!key) return;
         void seedBubbleHistory(key);
+        // Native panel mở = user đã đọc → mark read + refresh badge để giảm số trên bubble.
+        void (async () => {
+          try {
+            const parsed = parseBubbleStorageKey(key);
+            if (parsed.kind === 'lead') await markLeadChatRead(parsed.entityId);
+            else if (parsed.kind === 'messenger') await markMessengerGroupRead(parsed.entityId);
+          } catch { /* ignore */ }
+          void refreshUnread();
+        })();
       },
     );
     return () => sub.remove();
-  }, []);
+  }, [refreshUnread]);
 
   useEffect(() => {
     if (Platform.OS !== 'android' || !Overlay) return;
@@ -268,8 +373,35 @@ export default function SystemBubbleSync() {
       const bubbleAvatarLetter = senderLetter || letter;
 
       const isActive = AppState.currentState === 'active';
+      const fgLead = getForegroundLead();
+      const meta = metaRecord(n);
+      const messageId =
+        typeof meta.message_id === 'string'
+          ? meta.message_id
+          : typeof n.id === 'string' || typeof n.id === 'number'
+            ? String(n.id)
+            : null;
+      const messageType = typeof meta.message_type === 'string' ? meta.message_type : null;
       if (isActive) {
+        const isLeadFg = fgLead && bubbleKey === `lead:${fgLead}`;
+        if (isLeadFg) {
+          // User đang xem → cancel notif cũ nếu có
+          try { Overlay.cancelChatNotification?.(bubbleKey); } catch { /* */ }
+          return;
+        }
         noteOverlayConv(bubbleKey, title, bubbleAvatarLetter, senderAvatarUrl);
+        // Phase 4: FCM không deliver khi app foreground → tự post local heads-up
+        try {
+          Overlay.postChatNotification?.(
+            bubbleKey,
+            title,
+            senderName,
+            senderAvatarUrl || null,
+            msgContent,
+            messageId,
+            messageType,
+          );
+        } catch { /* ignore */ }
         return;
       }
 
@@ -404,12 +536,34 @@ export default function SystemBubbleSync() {
   return null;
 }
 
+type ChatAttachmentRow = { url?: string | null };
+type ChatReactionRow = {
+  emoji?: string | null;
+  user_id?: string | null;
+  user?: { id?: string | null; full_name?: string | null } | null;
+};
 type ChatRow = {
+  id?: string | null;
   content?: string | null;
   created_at?: string | null;
   is_system?: boolean;
-  user?: { full_name?: string | null; avatar?: string | null } | null;
+  message_type?: string | null;
+  attachment_url?: string | null;
+  attachments?: ChatAttachmentRow[] | null;
+  reply?: { content?: string | null } | null;
+  reply_to?: { content?: string | null } | string | null;
+  user?: { id?: string | null; full_name?: string | null; avatar?: string | null } | null;
+  reactions?: ChatReactionRow[] | null;
 };
+
+function absolutize(rel: string | null | undefined): string {
+  if (!rel) return '';
+  const u = String(rel).trim();
+  if (!u) return '';
+  if (u.startsWith('http://') || u.startsWith('https://')) return u;
+  const base = (API_ORIGIN || '').replace(/\/$/, '');
+  return base ? `${base}/${u.replace(/^\//, '')}` : u;
+}
 
 async function seedBubbleHistory(bubbleKey: string) {
   try {
@@ -422,19 +576,41 @@ async function seedBubbleHistory(bubbleKey: string) {
       const { data } = await api.get<ChatRow[]>(`/crm/leads/${parsed.entityId}/chat`);
       rows = Array.isArray(data) ? data : [];
     }
-    const last = rows.slice(-30);
+    const last = rows.slice(-50);
     const mapped = last.map((m) => {
       const sender = m.is_system
         ? 'Hệ thống'
         : m.user?.full_name?.trim() || 'Người dùng';
-      const avatarRel = m.user?.avatar?.trim() || '';
-      const avatarAbs = avatarRel
-        ? avatarRel.startsWith('http')
-          ? avatarRel
-          : `${(API_ORIGIN || '').replace(/\/$/, '')}/${avatarRel.replace(/^\//, '')}`
-        : '';
+      const avatarAbs = absolutize(m.user?.avatar);
       const ts = m.created_at ? new Date(m.created_at).getTime() : Date.now();
-      return { sender, text: m.content || '', avatar: avatarAbs, ts };
+      const attachmentUrl =
+        absolutize(m.attachment_url) ||
+        absolutize(Array.isArray(m.attachments) ? m.attachments?.[0]?.url : null);
+      const replyToText =
+        (typeof m.reply === 'object' && m.reply?.content) ||
+        (typeof m.reply_to === 'object' && m.reply_to ? m.reply_to.content : '') ||
+        '';
+      const reactions = Array.isArray(m.reactions)
+        ? m.reactions
+            .map((r) => ({
+              emoji: r.emoji || '',
+              user_id: r.user_id || r.user?.id || '',
+              user_name: r.user?.full_name || '',
+            }))
+            .filter((r) => r.emoji && r.user_id)
+        : [];
+      return {
+        id: m.id ? String(m.id) : '',
+        user_id: m.user?.id ? String(m.user.id) : '',
+        sender,
+        text: m.content || '',
+        avatar: avatarAbs,
+        ts,
+        reply_to_text: replyToText || '',
+        attachment_url: attachmentUrl,
+        message_type: m.message_type || '',
+        reactions,
+      };
     });
     Overlay?.seedConversationMessages?.(bubbleKey, JSON.stringify(mapped));
   } catch {

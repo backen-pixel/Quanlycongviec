@@ -4,14 +4,41 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 /**
  * Vùng mép hai bên (mũi tên) + tự cuộn ngang khi kéo thẻ tới sát mép / bấm để nudge — cùng ý tưởng CRMDashboard Kanban.
  * @param {string} cardSelector — selector cho `Element.closest` khi bắt drag (vd: '[data-sx-kanban-card]')
+ * @param {boolean} enableViewportScroll — bật chế độ cuộn dọc toàn Kanban như CRM
+ * @param {number|string} remeasureToken — token đổi khi cần đo lại chiều cao vùng cuộn
  */
-export default function WorkshopPipelineKanbanScroll({ cardSelector, children }) {
+export default function WorkshopPipelineKanbanScroll({
+  cardSelector,
+  children,
+  enableViewportScroll = false,
+  remeasureToken,
+}) {
   const kanbanHScrollRef = useRef(null);
   const kanbanWrapRef = useRef(null);
   const pipelineDraggingRef = useRef(false);
   const scrollRafRef = useRef(0);
   const lastPointerRef = useRef({ x: 0, y: 0 });
   const [isDraggingCard, setIsDraggingCard] = useState(false);
+  const [scrollMaxH, setScrollMaxH] = useState('70vh');
+
+  useEffect(() => {
+    if (!enableViewportScroll) return undefined;
+    const measure = () => {
+      const el = kanbanHScrollRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const avail = window.innerHeight - rect.top - 12;
+      setScrollMaxH(`${Math.max(360, avail)}px`);
+    };
+    const raf = requestAnimationFrame(measure);
+    const t = setTimeout(measure, 120);
+    window.addEventListener('resize', measure);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(t);
+      window.removeEventListener('resize', measure);
+    };
+  }, [enableViewportScroll, remeasureToken]);
 
   useEffect(() => {
     const isOurCard = (e) => {
@@ -158,7 +185,11 @@ export default function WorkshopPipelineKanbanScroll({ cardSelector, children })
         title="Kéo thẻ tới mép này để tự cuộn cột bên phải — hoặc bấm (khi không kéo) để cuộn nhanh"
         onClick={() => nudge('right')}
       />
-      <div ref={kanbanHScrollRef} className="overflow-x-auto pb-4 [scrollbar-gutter:stable]">
+      <div
+        ref={kanbanHScrollRef}
+        className={`${enableViewportScroll ? 'overflow-auto' : 'overflow-x-auto'} pb-4 [scrollbar-gutter:stable]`}
+        style={enableViewportScroll ? { maxHeight: scrollMaxH } : undefined}
+      >
         {children}
       </div>
     </div>

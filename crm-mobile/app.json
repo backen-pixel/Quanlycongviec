@@ -2,7 +2,7 @@
   "expo": {
     "name": "TuBep CRM",
     "slug": "crm-mobile",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/app-icon.jpg",
     "userInterfaceStyle": "light",
@@ -18,13 +18,12 @@
         "NSMicrophoneUsageDescription": "Ứng dụng cần micro để ghi âm tư vấn và lưu vào lead/deal trên CRM.",
         "NSCameraUsageDescription": "Ứng dụng cần camera để chụp ảnh gửi trong chat nhóm CRM.",
         "NSPhotoLibraryUsageDescription": "Ứng dụng cần truy cập thư viện ảnh để đính kèm trong chat nhóm CRM.",
-        "NSUserNotificationUsageDescription": "Ứng dụng cần gửi thông báo khi có tin nhắn CRM, Messenger và nhắc việc."
+        "NSLocationWhenInUseUsageDescription": "Ứng dụng cần vị trí khi đang dùng để hiển thị địa chỉ đăng nhập thiết bị trong trang Đang hoạt động."
       }
     },
     "android": {
       "package": "vn.tubeppro.crmobile",
-      "versionCode": 1,
-      "googleServicesFile": "./google-services.json",
+      "versionCode": 5,
       "permissions": [
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
@@ -35,10 +34,17 @@
         "android.permission.READ_CALL_LOG",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.CAMERA",
+        "android.permission.READ_MEDIA_IMAGES",
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.SYSTEM_ALERT_WINDOW",
-        "android.permission.CAMERA",
-        "android.permission.READ_MEDIA_IMAGES"
+        "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+        "android.permission.SCHEDULE_EXACT_ALARM",
+        "android.permission.USE_EXACT_ALARM",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_WIFI_STATE",
+        "android.permission.NEARBY_WIFI_DEVICES"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/app-icon.jpg",
@@ -56,9 +62,8 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/app-icon.jpg",
-          "color": "#2563EB",
-          "sounds": []
+          "color": "#0068FF",
+          "defaultChannel": "crm_chat"
         }
       ]
     ],

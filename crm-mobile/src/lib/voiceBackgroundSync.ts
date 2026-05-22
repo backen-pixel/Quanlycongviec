@@ -3,7 +3,6 @@ import { Platform } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 import { getStoredToken } from '../api/client';
 import { API_ORIGIN } from '../config';
-import { ensureAndroidPostNotificationsPermission } from './appPermissions';
 import {
   isVoiceDataSyncAvailable,
   voiceDataSyncGetDebugState,
@@ -83,7 +82,6 @@ export async function syncVoiceBackgroundTaskWithPrefs(): Promise<void> {
     return;
   }
 
-  await ensureAndroidPostNotificationsPermission();
   const lastSync = await getLastSyncMs();
   await voiceDataSyncStart(`${API_ORIGIN}/api`, token, lastSync);
 }

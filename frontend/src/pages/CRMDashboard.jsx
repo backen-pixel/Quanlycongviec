@@ -45,6 +45,7 @@ import {
   isDealCrmKanbanDragLocked,
 } from '../lib/crmDealStageGate';
 import DealStageEventModal from '../components/DealStageEventModal';
+import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import { FbCrmCommentComposer } from '../components/crmFbCommentUi';
 
@@ -699,6 +700,9 @@ export default function CRMDashboard() {
 
   /** Tổng số lead/deal theo SĐT từ API (limit=1, chỉ đọc `total`) — không phụ thuộc mức tải Kanban; theo NV + ngày trên server */
   const [pipelinePhoneTotals, setPipelinePhoneTotals] = useState({ lead: null, deal: null });
+
+  // Modal cảnh báo khi không thể chuyển giai đoạn (còn nhiệm vụ chưa hoàn thành)
+  const [blockingModal, setBlockingModal] = useState(null); // { currentStageName, targetStageName, remainingTasks, leadId }
   /** Trạng thái "Tải thêm": offset đang dừng, total server, và đang loading */
   const [loadMoreState, setLoadMoreState] = useState({ leadOffset: 0, dealOffset: 0, leadTotal: null, dealTotal: null, loading: false });
 
@@ -2470,10 +2474,21 @@ export default function CRMDashboard() {
         console.error(e);
         if (pipelineType === 'lead') setAllLeads(prevLeads);
         else setAllDeals(prevDeals);
+        if (e?.response?.data?.code === 'CRM_BLOCKING_TASKS_INCOMPLETE') {
+          const stagesArr = pipelineType === 'lead' ? stagesLead : stagesDeal;
+          const curStg = stagesArr.find((s) => String(s.id) === String(e.response.data.current_stage_id));
+          const tgtStg = stagesArr.find((s) => String(s.id) === String(e.response.data.target_stage_id));
+          setBlockingModal({
+            leadId,
+            currentStageName: curStg?.name || '',
+            targetStageName: tgtStg?.name || '',
+            remainingTasks: e.response.data.remaining_tasks || [],
+          });
+        }
         if (throwOnError) throw e;
       }
     },
-    [pipelineType, allLeads, allDeals, load],
+    [pipelineType, allLeads, allDeals, load, stagesLead, stagesDeal],
   );
 
   const handleMoveStage = useCallback(
@@ -4005,6 +4020,19 @@ export default function CRMDashboard() {
         onConfirm={confirmDealKanbanEvent}
         onMoveWithoutEvent={skipDealKanbanEvent}
         submitting={dealKanbanEventBusy}
+      />
+
+      <BlockingTasksAlertModal
+        open={!!blockingModal}
+        onClose={() => setBlockingModal(null)}
+        currentStageName={blockingModal?.currentStageName}
+        targetStageName={blockingModal?.targetStageName}
+        remainingTasks={blockingModal?.remainingTasks || []}
+        onGoToTasks={() => {
+          if (blockingModal?.leadId) {
+            window.open(`/crm/leads/${blockingModal.leadId}?tab=tasks`, '_blank');
+          }
+        }}
       />
 
       <BulkAssignLeadsModal

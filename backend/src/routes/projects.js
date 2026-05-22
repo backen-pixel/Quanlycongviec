@@ -2290,6 +2290,36 @@ r.post('/:id/check-advance', async (req, res) => {
 });
 
 // ─── PROJECT COMMENTS ──
+r.get('/comments/index', async (req, res) => {
+  try {
+    const raw = String(req.query.project_ids || '').trim();
+    const ids = raw.split(',').map((s) => String(s).trim()).filter(Boolean);
+    if (!ids.length) return res.json({});
+    const { data, error } = await supabase
+      .from('project_comments')
+      .select('project_id, created_at, user_id')
+      .in('project_id', ids)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    const out = {};
+    for (const row of (data || [])) {
+      const k = String(row.project_id || '');
+      if (!k) continue;
+      if (!out[k]) {
+        out[k] = {
+          count: 0,
+          last_at: row.created_at || null,
+          last_user_id: row.user_id || null,
+        };
+      }
+      out[k].count += 1;
+    }
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'Lỗi tải chỉ mục bình luận dự án' });
+  }
+});
+
 r.get('/:id/comments', async (req, res) => {
   try {
     const { data } = await supabase.from('project_comments').select('*, user:users(id,full_name,avatar)').eq('project_id', req.params.id).order('created_at', { ascending: false });

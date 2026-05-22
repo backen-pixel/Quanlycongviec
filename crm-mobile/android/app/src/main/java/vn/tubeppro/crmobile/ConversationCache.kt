@@ -9,26 +9,36 @@ import org.json.JSONObject
  * khi user tap bong bóng có thể hiển thị ngay nội dung — không cần fetch
  * API hoặc render React.
  *
- * Format JSON tối ưu (key 1-2 ký tự):
- *  id, s=sender, sid=senderId, t=text, a=avatar, ts=createdAt,
- *  mt=messageType, au=attachmentUrl, am=attachmentMime,
- *  rx=[{e=emoji, u=userId}], mine=bool
+ * Schema mở rộng (Phase 4):
+ *  - id          : message id (server) — null nếu native peek append local
+ *  - userId      : sender user id — null cho system message
+ *  - replyToText : nội dung tin reply (đã rút gọn) — null nếu không reply
+ *  - attachmentUrl : URL ảnh/file/audio (absolute) — null nếu text-only
+ *  - messageType : "text"|"image"|"video"|"audio"|"file"|null
+ *  - reactions   : list [(emoji, userId, userName)]
+ *
+ * JSON keys ngắn để tiết kiệm SharedPreferences:
+ *   id, uid, s (sender name), t (text), a (avatar), ts,
+ *   rt (replyToText), au (attachmentUrl), mt (messageType), rx (reactions)
  */
 object ConversationCache {
-  data class Reaction(val emoji: String, val userId: String)
+  data class Reaction(
+    val emoji: String,
+    val userId: String,
+    val userName: String,
+  )
 
   data class Msg(
-    val id: String,
+    val id: String? = null,
+    val userId: String? = null,
     val sender: String,
-    val senderId: String,
     val text: String,
     val avatar: String?,
     val ts: Long,
-    val messageType: String,
-    val attachmentUrl: String?,
-    val attachmentMime: String?,
-    val reactions: List<Reaction>,
-    val mine: Boolean,
+    val replyToText: String? = null,
+    val attachmentUrl: String? = null,
+    val messageType: String? = null,
+    val reactions: List<Reaction> = emptyList(),
   )
 
   private const val PREFS = "crm_floating_bubble_prefs"
@@ -37,33 +47,17 @@ object ConversationCache {
 
   fun append(ctx: Context, key: String, msg: Msg) {
     val cur = list(ctx, key).toMutableList()
-    // Dedupe theo id (nếu có)
-    if (msg.id.isNotBlank()) {
-      val idx = cur.indexOfFirst { it.id == msg.id }
-      if (idx >= 0) {
-        cur[idx] = msg
-      } else {
-        cur.add(msg)
-      }
-    } else {
-      cur.add(msg)
-    }
+    // Nếu id trùng (duplicate từ realtime + history) → overwrite chứ không append
+    val existingIdx = if (msg.id != null) cur.indexOfFirst { it.id == msg.id } else -1
+    if (existingIdx >= 0) cur[existingIdx] = msg
+    else cur.add(msg)
     while (cur.size > MAX) cur.removeAt(0)
     persist(ctx, key, cur)
   }
 
   fun replaceAll(ctx: Context, key: String, msgs: List<Msg>) {
-    val trimmed = if (msgs.size > MAX) msgs.takeLast(MAX) else msgs
-    persist(ctx, key, trimmed)
-  }
-
-  fun updateReactions(ctx: Context, key: String, messageId: String, reactions: List<Reaction>) {
-    if (messageId.isBlank()) return
-    val cur = list(ctx, key).toMutableList()
-    val idx = cur.indexOfFirst { it.id == messageId }
-    if (idx < 0) return
-    cur[idx] = cur[idx].copy(reactions = reactions)
-    persist(ctx, key, cur)
+    val limited = if (msgs.size > MAX) msgs.subList(msgs.size - MAX, msgs.size) else msgs
+    persist(ctx, key, limited)
   }
 
   fun list(ctx: Context, key: String): List<Msg> {
@@ -75,6 +69,19 @@ object ConversationCache {
     } catch (_: Throwable) {
       emptyList()
     }
+  }
+
+  fun updateReactions(
+    ctx: Context,
+    key: String,
+    messageId: String,
+    reactions: List<Reaction>,
+  ) {
+    val cur = list(ctx, key).toMutableList()
+    val idx = cur.indexOfFirst { it.id == messageId }
+    if (idx < 0) return
+    cur[idx] = cur[idx].copy(reactions = reactions)
+    persist(ctx, key, cur)
   }
 
   fun clear(ctx: Context, key: String) {
@@ -95,46 +102,51 @@ object ConversationCache {
 
   private fun toJson(m: Msg): JSONObject {
     val o = JSONObject()
-      .put("id", m.id)
       .put("s", m.sender)
-      .put("sid", m.senderId)
       .put("t", m.text)
       .put("a", m.avatar ?: "")
       .put("ts", m.ts)
-      .put("mt", m.messageType)
-      .put("au", m.attachmentUrl ?: "")
-      .put("am", m.attachmentMime ?: "")
-      .put("mine", m.mine)
+    if (m.id != null) o.put("id", m.id)
+    if (m.userId != null) o.put("uid", m.userId)
+    if (m.replyToText != null) o.put("rt", m.replyToText)
+    if (m.attachmentUrl != null) o.put("au", m.attachmentUrl)
+    if (m.messageType != null) o.put("mt", m.messageType)
     if (m.reactions.isNotEmpty()) {
-      val rxArr = JSONArray()
+      val rx = JSONArray()
       for (r in m.reactions) {
-        rxArr.put(JSONObject().put("e", r.emoji).put("u", r.userId))
+        rx.put(
+          JSONObject()
+            .put("e", r.emoji)
+            .put("u", r.userId)
+            .put("n", r.userName),
+        )
       }
-      o.put("rx", rxArr)
+      o.put("rx", rx)
     }
     return o
   }
 
   private fun fromJson(o: JSONObject): Msg {
     val rxArr = o.optJSONArray("rx")
-    val rx = if (rxArr != null) {
-      List(rxArr.length()) { i ->
-        val r = rxArr.getJSONObject(i)
-        Reaction(r.optString("e", ""), r.optString("u", ""))
-      }
-    } else emptyList()
+    val reactions = if (rxArr == null) emptyList<Reaction>() else List(rxArr.length()) { i ->
+      val r = rxArr.optJSONObject(i) ?: JSONObject()
+      Reaction(
+        emoji = r.optString("e", ""),
+        userId = r.optString("u", ""),
+        userName = r.optString("n", ""),
+      )
+    }
     return Msg(
-      id = o.optString("id", ""),
+      id = o.optString("id", "").takeIf { it.isNotBlank() },
+      userId = o.optString("uid", "").takeIf { it.isNotBlank() },
       sender = o.optString("s", ""),
-      senderId = o.optString("sid", ""),
       text = o.optString("t", ""),
       avatar = o.optString("a", "").takeIf { it.isNotBlank() },
       ts = o.optLong("ts", 0L),
-      messageType = o.optString("mt", "text").ifBlank { "text" },
+      replyToText = o.optString("rt", "").takeIf { it.isNotBlank() },
       attachmentUrl = o.optString("au", "").takeIf { it.isNotBlank() },
-      attachmentMime = o.optString("am", "").takeIf { it.isNotBlank() },
-      reactions = rx,
-      mine = o.optBoolean("mine", false),
+      messageType = o.optString("mt", "").takeIf { it.isNotBlank() },
+      reactions = reactions,
     )
   }
 }

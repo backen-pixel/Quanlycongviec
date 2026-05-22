@@ -12,6 +12,7 @@ import { useAuth } from '../lib/auth';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
 import CRMTasksTab from '../components/CRMTasksTab';
+import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
 import ExcelQuotationImport from '../components/ExcelQuotationImport';
 import QuotationSourceExcelLink from '../components/QuotationSourceExcelLink';
 import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
@@ -113,6 +114,7 @@ export default function LeadDetail() {
   const [approvalForm, setApprovalForm] = useState({ type: 'drawing', title: '', note: '' });
   const [zaloQuickSendLoading, setZaloQuickSendLoading] = useState(false);
   const [movingStage, setMovingStage] = useState(false);
+  const [blockingModal, setBlockingModal] = useState(null);
   const [dealDetailEventCtx, setDealDetailEventCtx] = useState(null);
   const [dealDetailEventBusy, setDealDetailEventBusy] = useState(false);
   /** Kéo deal Thắng chưa có dự án: chọn công ty SX */
@@ -565,6 +567,17 @@ export default function LeadDetail() {
     } catch (e) {
       if (e.response?.data?.requires_conversion) {
         setShowConvertModal(true);
+      } else if (e.response?.data?.code === 'CRM_BLOCKING_TASKS_INCOMPLETE') {
+        const stagesArr = (lead?.type === 'deal') ? stagesDeal : stagesLead;
+        const curStg = stagesArr.find((s) => String(s.id) === String(e.response.data.current_stage_id));
+        const tgtStg = stagesArr.find((s) => String(s.id) === String(e.response.data.target_stage_id));
+        setBlockingModal({
+          leadId: id,
+          currentStageName: curStg?.name || '',
+          targetStageName: tgtStg?.name || '',
+          remainingTasks: e.response.data.remaining_tasks || [],
+        });
+        await loadRef.current?.({ silent: true });
       } else {
         await loadRef.current?.({ silent: true });
         alert(e.response?.data?.error || 'Lỗi');
@@ -2006,6 +2019,23 @@ export default function LeadDetail() {
           </div>
         </div>
       )}
+
+      <BlockingTasksAlertModal
+        open={!!blockingModal}
+        onClose={() => setBlockingModal(null)}
+        currentStageName={blockingModal?.currentStageName}
+        targetStageName={blockingModal?.targetStageName}
+        remainingTasks={blockingModal?.remainingTasks || []}
+        onGoToTasks={() => {
+          setActiveTab('tasks');
+          setBlockingModal(null);
+          try {
+            setTimeout(() => {
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }, 100);
+          } catch (_) { /* ignore */ }
+        }}
+      />
 
     </div>
   );

@@ -7,7 +7,10 @@ import com.facebook.react.uimanager.ViewManager
 
 class FloatingBubblePackage : ReactPackage {
   override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> =
-    listOf(FloatingBubbleModule(reactContext))
+    listOf(
+      FloatingBubbleModule(reactContext),
+      BatteryOptimizationModule(reactContext),
+    )
 
   override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> =
     emptyList()

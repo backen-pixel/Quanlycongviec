@@ -10,42 +10,50 @@ import java.util.concurrent.Executors
 /**
  * Gửi tin nhắn / reaction từ overlay native, không cần React.
  *
- * Bubble key:
- *  - lead chat:       "lead:<leadId>"
- *  - messenger group: "<groupId>"
+ * Endpoint:
+ *  - POST /api/crm/leads/:id/chat              { content, reply_to? }
+ *  - POST /api/messenger/groups/:id/chat       { content, reply_to? }
+ *  - POST /api/crm/leads/:id/chat/:msgId/react { emoji } → trả { reactions: [...] }
  */
 object MessageSender {
   private val executor = Executors.newSingleThreadExecutor()
   private const val PREFS = "crm_floating_bubble_prefs"
 
-  fun sendText(ctx: Context, bubbleKey: String, content: String, onDone: (ok: Boolean) -> Unit) {
+  fun sendText(
+    ctx: Context,
+    bubbleKey: String,
+    content: String,
+    replyToId: String? = null,
+    onDone: (ok: Boolean) -> Unit,
+  ) {
     if (content.isBlank()) {
       onDone(false); return
     }
     executor.execute {
-      val ok = doSendText(ctx, bubbleKey, content)
+      val ok = doSend(ctx, bubbleKey, content, replyToId)
       android.os.Handler(android.os.Looper.getMainLooper()).post { onDone(ok) }
     }
   }
 
-  /** Toggle 1 emoji reaction trên message — trả về list reactions mới (hoặc null nếu lỗi). */
-  fun react(
+  fun sendReaction(
     ctx: Context,
-    bubbleKey: String,
-    messageId: String,
+    leadId: String,
+    msgId: String,
     emoji: String,
     onDone: (reactions: List<ConversationCache.Reaction>?) -> Unit,
   ) {
-    if (messageId.isBlank() || emoji.isBlank()) {
-      onDone(null); return
-    }
     executor.execute {
-      val rx = doReact(ctx, bubbleKey, messageId, emoji)
-      android.os.Handler(android.os.Looper.getMainLooper()).post { onDone(rx) }
+      val res = doReaction(ctx, leadId, msgId, emoji)
+      onDone(res)
     }
   }
 
-  private fun doSendText(ctx: Context, bubbleKey: String, content: String): Boolean {
+  private fun doSend(
+    ctx: Context,
+    bubbleKey: String,
+    content: String,
+    replyToId: String?,
+  ): Boolean {
     val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     val token = prefs.getString(FloatingBubbleModule.KEY_AUTH_TOKEN, null) ?: return false
     val origin = prefs.getString(FloatingBubbleModule.KEY_API_ORIGIN, null)?.trimEnd('/')
@@ -66,7 +74,9 @@ object MessageSender {
       conn.setRequestProperty("Authorization", "Bearer $token")
       conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
       conn.setRequestProperty("Accept", "application/json")
-      val body = JSONObject().put("content", content).toString()
+      val body = JSONObject().put("content", content).apply {
+        if (!replyToId.isNullOrBlank()) put("reply_to", replyToId)
+      }.toString()
       conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
       val code = conn.responseCode
       code in 200..299
@@ -75,25 +85,19 @@ object MessageSender {
     }
   }
 
-  private fun doReact(
+  private fun doReaction(
     ctx: Context,
-    bubbleKey: String,
-    messageId: String,
+    leadId: String,
+    msgId: String,
     emoji: String,
   ): List<ConversationCache.Reaction>? {
     val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     val token = prefs.getString(FloatingBubbleModule.KEY_AUTH_TOKEN, null) ?: return null
     val origin = prefs.getString(FloatingBubbleModule.KEY_API_ORIGIN, null)?.trimEnd('/')
       ?: return null
-
-    val path = if (bubbleKey.startsWith("lead:")) {
-      "/api/crm/leads/${bubbleKey.removePrefix("lead:")}/chat/$messageId/react"
-    } else {
-      "/api/messenger/groups/$bubbleKey/chat/$messageId/react"
-    }
-
+    val url = "$origin/api/crm/leads/$leadId/chat/$msgId/react"
     return try {
-      val conn = URL("$origin$path").openConnection() as HttpURLConnection
+      val conn = URL(url).openConnection() as HttpURLConnection
       conn.requestMethod = "POST"
       conn.connectTimeout = 10000
       conn.readTimeout = 12000
@@ -106,17 +110,29 @@ object MessageSender {
       val code = conn.responseCode
       if (code !in 200..299) return null
       val resp = conn.inputStream.bufferedReader().use { it.readText() }
-      val json = JSONObject(resp)
-      val arr = json.optJSONArray("reactions") ?: JSONArray()
-      List(arr.length()) { i ->
-        val r = arr.getJSONObject(i)
-        ConversationCache.Reaction(
-          emoji = r.optString("emoji", ""),
-          userId = r.optString("user_id", ""),
-        )
-      }.filter { it.emoji.isNotBlank() }
+      parseReactionResponse(resp)
     } catch (_: Throwable) {
       null
+    }
+  }
+
+  private fun parseReactionResponse(body: String): List<ConversationCache.Reaction> {
+    return try {
+      val o = JSONObject(body)
+      val arr = o.optJSONArray("reactions") ?: JSONArray()
+      (0 until arr.length()).mapNotNull { i ->
+        val r = arr.optJSONObject(i) ?: return@mapNotNull null
+        val u = r.optJSONObject("user")
+        val emoji = ChatHistoryFetcher.safeStr(r, "emoji")
+        if (emoji.isBlank()) return@mapNotNull null
+        ConversationCache.Reaction(
+          emoji = emoji,
+          userId = ChatHistoryFetcher.safeStr(r, "user_id").ifBlank { u?.let { ChatHistoryFetcher.safeStr(it, "id") } ?: "" },
+          userName = u?.let { ChatHistoryFetcher.safeStr(it, "full_name") } ?: "",
+        )
+      }
+    } catch (_: Throwable) {
+      emptyList()
     }
   }
 }

@@ -10,9 +10,9 @@ import {
 import {
   Zap, CheckCircle2, AlertTriangle, Search, X, Calendar,
   Factory, Users, LayoutGrid, List, Plus,
-  CheckSquare, UserCheck, Loader2, Truck, Filter, Clock, Layers, Trash2,
+  CheckSquare, UserCheck, Loader2, Truck, Filter, Clock, Layers, Trash2, MessageSquare, Pin,
 } from 'lucide-react';
-import { ProductionListView, ProductionPlannerView, ProductionCalendarView } from '../components/ProductionViews';
+import { ProductionListView, ProductionPlannerView, ProductionCalendarView, ProductionCommentsView } from '../components/ProductionViews';
 import NewProductionProjectModal from '../components/NewProductionProjectModal';
 import WorkshopPipelineKanbanScroll from '../components/WorkshopPipelineKanbanScroll';
 import WorkshopStaffFilterPanel from '../components/WorkshopStaffFilterPanel';
@@ -23,7 +23,7 @@ import {
 
 const INTAKE_BUCKET = 'won_pending';
 
-const WS_DASH_VIEW_MODES = ['kanban', 'list', 'planner', 'calendar'];
+const WS_DASH_VIEW_MODES = ['kanban', 'list', 'planner', 'calendar', 'comments'];
 
 const LS_SX = 'sx_dash_filters_v1';
 function readSxDashPersisted() {
@@ -53,6 +53,32 @@ const PRIORITY_COLORS = {
   medium: 'bg-amber-100 text-amber-700',
   low: 'bg-gray-100 text-gray-600',
 };
+
+function formatAgeDetailed(fromIso) {
+  if (!fromIso) return '—';
+  const ms = Date.now() - new Date(fromIso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return 'Vừa xong';
+  const totalMin = Math.floor(ms / 60000);
+  if (totalMin < 1) return 'Vừa xong';
+  const days = Math.floor(totalMin / (60 * 24));
+  const hours = Math.floor((totalMin % (60 * 24)) / 60);
+  const mins = totalMin % 60;
+  if (days > 0) return `${days} ngày ${hours} giờ`;
+  if (hours > 0) return `${hours} giờ ${mins} phút`;
+  return `${mins} phút`;
+}
+
+function formatRemainingMs(ms) {
+  if (!Number.isFinite(ms)) return '—';
+  const abs = Math.max(0, Math.floor(Math.abs(ms)));
+  const totalMin = Math.floor(abs / 60000);
+  const days = Math.floor(totalMin / (60 * 24));
+  const hours = Math.floor((totalMin % (60 * 24)) / 60);
+  const mins = totalMin % 60;
+  if (days > 0) return `${days} ngày ${hours} giờ`;
+  if (hours > 0) return `${hours} giờ ${mins} phút`;
+  return `${mins} phút`;
+}
 
 export default function ProductionDashboard() {
   const P0 = useMemo(() => readSxDashPersisted(), []);
@@ -101,6 +127,7 @@ export default function ProductionDashboard() {
   const [handoverInstallationTeams, setHandoverInstallationTeams] = useState([]);
   const [handoverErr, setHandoverErr] = useState('');
   const [handoverSaving, setHandoverSaving] = useState(false);
+  const [commentsIndex, setCommentsIndex] = useState({});
 
   const navigate = useNavigate();
 
@@ -364,6 +391,36 @@ export default function ProductionDashboard() {
     () => filteredKanbanPipeline.reduce((n, s) => n + s.items.length, 0),
     [filteredKanbanPipeline],
   );
+
+  const allVisibleProjectIds = useMemo(
+    () => filteredKanbanPipeline.flatMap((s) => (s.items || []).map((x) => x.id)).filter(Boolean),
+    [filteredKanbanPipeline],
+  );
+
+  const refreshProjectCommentsIndex = useCallback(async (ids = allVisibleProjectIds) => {
+    const uniqIds = [...new Set((ids || []).map((x) => String(x || '').trim()).filter(Boolean))];
+    if (!uniqIds.length) {
+      setCommentsIndex({});
+      return;
+    }
+    try {
+      const chunks = [];
+      for (let i = 0; i < uniqIds.length; i += 200) chunks.push(uniqIds.slice(i, i + 200));
+      const maps = await Promise.all(
+        chunks.map((chunk) => api.get(`/projects/comments/index?project_ids=${chunk.join(',')}`).then((r) => r.data || {}).catch(() => ({}))),
+      );
+      const merged = {};
+      maps.forEach((m) => Object.assign(merged, m || {}));
+      setCommentsIndex(merged);
+    } catch {
+      setCommentsIndex({});
+    }
+  }, [allVisibleProjectIds]);
+
+  useEffect(() => {
+    if (viewMode !== 'comments') return;
+    refreshProjectCommentsIndex();
+  }, [viewMode, refreshProjectCommentsIndex]);
 
   /** Từ chi tiết: cuộn tới thẻ vừa xem (cần đặt sau filteredKanbanPipeline) */
   useEffect(() => {
@@ -878,6 +935,7 @@ export default function ProductionDashboard() {
                 { id: 'list', icon: List, label: 'Danh sách' },
                 { id: 'planner', icon: Users, label: 'Planner' },
                 { id: 'calendar', icon: Calendar, label: 'Lịch' },
+                { id: 'comments', icon: MessageSquare, label: 'Bảng tin' },
               ].map((v) => (
                 <button
                   key={v.id}
@@ -937,7 +995,8 @@ export default function ProductionDashboard() {
 
       {viewMode === 'kanban' && (
         <KanbanView pipeline={filteredKanbanPipeline} onMoveStage={handleMoveStage} calculateDays={calculateDays}
-          selectedIds={selectedIds} onToggleSelect={toggleSelect} onSelectColumn={selectColumn} onHandoverVC={openHandoverModal} />
+          selectedIds={selectedIds} onToggleSelect={toggleSelect} onSelectColumn={selectColumn}
+          onHandoverVC={openHandoverModal} remeasureToken={showAdvFilter ? 'adv-on' : 'adv-off'} />
       )}
 
       {viewMode === 'list' && <ProductionListView pipeline={filteredKanbanPipeline} calculateDays={calculateDays} />}
@@ -945,6 +1004,14 @@ export default function ProductionDashboard() {
       {viewMode === 'planner' && <ProductionPlannerView pipeline={filteredKanbanPipeline} />}
 
       {viewMode === 'calendar' && <ProductionCalendarView pipeline={filteredKanbanPipeline} />}
+
+      {viewMode === 'comments' && (
+        <ProductionCommentsView
+          pipeline={filteredKanbanPipeline}
+          commentsIndex={commentsIndex}
+          onRefreshIndex={() => refreshProjectCommentsIndex()}
+        />
+      )}
 
       {showNewProject && (
         <NewProductionProjectModal
@@ -1091,21 +1158,6 @@ function KPICard({ icon, iconBgColor, iconColor, label, value }) {
 // ── KANBAN STAGE CARD (y hệt CRM KanbanStageCard) ──────────────────────────
 function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
-  const containerRef = useRef(null);
-  const [columnMaxH, setColumnMaxH] = useState('70vh');
-
-  useEffect(() => {
-    const measure = () => {
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        const available = window.innerHeight - rect.top - 40;
-        setColumnMaxH(`${Math.max(300, available)}px`);
-      }
-    };
-    measure();
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, []);
 
   const stageColor = stage.color || '#e5e7eb';
 
@@ -1129,7 +1181,7 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
       onDragOver={handleColumnDragOver}
       onDragLeave={handleColumnDragLeave}
       onDrop={handleColumnDrop}
-      className={`flex-shrink-0 w-80 rounded-lg overflow-hidden transition-all duration-200 ${
+      className={`flex flex-col flex-shrink-0 w-80 rounded-lg overflow-hidden transition-all duration-200 ${
         isOverColumn ? 'ring-2 ring-blue-500 ring-dashed' : ''
       }`}
     >
@@ -1167,9 +1219,8 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
 
       {/* Cards container */}
       <div
-        ref={containerRef}
-        className={`bg-gray-50 border border-gray-200 border-t-0 p-3 space-y-3 overflow-y-auto transition-all ${isOverColumn ? 'bg-blue-50' : ''}`}
-        style={{ maxHeight: columnMaxH, minHeight: '200px' }}
+        className={`flex-1 bg-gray-50 border border-gray-200 border-t-0 p-3 space-y-3 transition-all ${isOverColumn ? 'bg-blue-50' : ''}`}
+        style={{ minHeight: '200px' }}
       >
         {items.length === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-400">
@@ -1193,9 +1244,20 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
 function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, onHandoverVC }) {
   const navigate = useNavigate();
   const [handingOver, setHandingOver] = useState(false);
+  const [localPinned, setLocalPinned] = useState(!!item.is_pinned);
+  const [localInteracted, setLocalInteracted] = useState(!!item.is_interacted);
+
+  useEffect(() => {
+    setLocalPinned(!!item.is_pinned);
+    setLocalInteracted(!!item.is_interacted);
+  }, [item.is_pinned, item.is_interacted]);
 
   const handleDragStart = (e) => {
     if (e.target.closest?.('[data-workshop-bulk-checkbox]')) {
+      e.preventDefault();
+      return;
+    }
+    if (e.target.closest?.('[data-sx-quick-btn]')) {
       e.preventDefault();
       return;
     }
@@ -1205,6 +1267,20 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
 
   const stageColor = stage.color || '#e5e7eb';
   const assignee = item.production_person || item.assignee;
+  const deals = Array.isArray(item.crm_deals) ? item.crm_deals : [];
+  const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
+  const leadCreatedAt = primaryDeal?.created_at || item.created_at || null;
+  const stageEnteredAt = item.stage_entered_at || item.updated_at || item.created_at || null;
+  const companyName = item.company?.short_name || item.company?.name || null;
+  const slaDeadlineTs = (() => {
+    const raw = item.deadline || item.production_deadline || null;
+    if (!raw) return null;
+    const ts = new Date(raw).getTime();
+    return Number.isFinite(ts) ? ts : null;
+  })();
+  const nowTs = Date.now();
+  const slaRemainingMs = slaDeadlineTs == null ? null : slaDeadlineTs - nowTs;
+  const slaOverdue = slaRemainingMs != null && slaRemainingMs < 0;
 
   const getInitials = (name) => {
     if (!name) return '?';
@@ -1216,7 +1292,6 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
   const lockedInVc = ['shipping', 'installing', 'warranty', 'completed'].includes(String(item.status || ''));
   const crmRegionName = (() => {
     try {
-      const deals = Array.isArray(item.crm_deals) ? item.crm_deals : [];
       const deal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0];
       return deal?.crm_region?.name || null;
     } catch {
@@ -1231,6 +1306,7 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
       onDragStart={handleDragStart}
       onClick={(e) => {
         if (e.target.closest?.('[data-workshop-bulk-checkbox]')) return;
+        if (e.target.closest?.('[data-sx-quick-btn]')) return;
         markWorkshopPipelineCardFocus(item.id, 'sx');
         navigate(`/sx/projects/${item.id}`);
       }}
@@ -1283,11 +1359,19 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
         </p>
       )}
 
-      {/* Khu vực CRM — hiển thị giống CRM */} 
-      {crmRegionName && (
-        <p className="text-[11px] text-slate-600 mb-2 truncate" title={crmRegionName}>
-          📍 {crmRegionName}
-        </p>
+      {(companyName || crmRegionName) && (
+        <div className="flex flex-wrap gap-1 mb-2">
+          {companyName && (
+            <span className="max-w-full truncate rounded px-1.5 py-0.5 text-[10px] font-medium bg-slate-100 text-slate-700">
+              🏢 {companyName}
+            </span>
+          )}
+          {crmRegionName && (
+            <span className="max-w-full truncate rounded px-1.5 py-0.5 text-[10px] font-medium bg-teal-50 text-teal-800">
+              📍 {crmRegionName}
+            </span>
+          )}
+        </div>
       )}
 
       {/* Customer name + phone */}
@@ -1301,6 +1385,40 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
           )}
         </div>
       )}
+
+      <div className="space-y-0.5 border-t border-gray-200/70 mt-2 pt-2 mb-2">
+        <p className="font-bold text-gray-500 uppercase tracking-wide text-[9px]">Liên kế hoạch thực hiện</p>
+        <p className="text-[11px] text-gray-600 leading-snug">
+          <span className="text-gray-500">Tạo lead:</span>{' '}
+          {leadCreatedAt ? (
+            <>
+              {formatDate(leadCreatedAt)}
+              <span className="text-gray-400"> · {formatAgeDetailed(leadCreatedAt)}</span>
+            </>
+          ) : '—'}
+        </p>
+        <p className="text-[11px] text-gray-800 leading-snug">
+          <span className="text-gray-500">Tại cột:</span>{' '}
+          <span className="font-semibold text-gray-900">{stageEnteredAt ? formatAgeDetailed(stageEnteredAt) : '—'}</span>
+        </p>
+        {slaDeadlineTs != null && (
+          <div className="mt-0.5">
+            <span className={`inline-flex flex-wrap items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+              slaOverdue ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'
+            }`}>
+              <span>SLA cột</span>
+              <span className="font-medium">
+                Hạn: {new Date(slaDeadlineTs).toLocaleString('vi-VN')}
+              </span>
+              {slaRemainingMs != null && (
+                <span className={slaOverdue ? 'text-red-700' : 'text-amber-800'}>
+                  · {slaOverdue ? `Quá hạn ${formatRemainingMs(slaRemainingMs)}` : `Còn ${formatRemainingMs(slaRemainingMs)}`}
+                </span>
+              )}
+            </span>
+          </div>
+        )}
+      </div>
 
       {/* Assignee + time badge */}
       <div className="flex items-start justify-between gap-2">
@@ -1400,6 +1518,53 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
         </div>
       )}
 
+      <div className="absolute bottom-2 right-2 z-[35] flex items-center gap-1">
+        <button
+          type="button"
+          data-sx-quick-btn
+          title={localPinned ? 'Bỏ ghim thẻ' : 'Ghim thẻ'}
+          onClick={(e) => {
+            e.stopPropagation();
+            setLocalPinned((v) => !v);
+          }}
+          className={`flex h-7 w-7 items-center justify-center rounded-full border bg-white/95 shadow-md transition-colors cursor-pointer ${
+            localPinned
+              ? 'border-amber-300 text-amber-600 hover:bg-amber-50'
+              : 'border-gray-200/90 text-slate-500 hover:border-amber-300 hover:text-amber-600 hover:bg-amber-50'
+          }`}
+        >
+          <Pin className={`h-3.5 w-3.5 ${localPinned ? 'rotate-45 fill-amber-500' : ''}`} strokeWidth={2.25} />
+        </button>
+        <button
+          type="button"
+          data-sx-quick-btn
+          title={localInteracted ? 'Bỏ đánh dấu đã tương tác' : 'Đánh dấu đã tương tác'}
+          onClick={(e) => {
+            e.stopPropagation();
+            setLocalInteracted((v) => !v);
+          }}
+          className={`flex h-7 w-7 items-center justify-center rounded-full border bg-white/95 shadow-md transition-colors cursor-pointer ${
+            localInteracted
+              ? 'border-blue-300 text-blue-600 hover:bg-blue-50'
+              : 'border-gray-200/90 text-slate-500 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50'
+          }`}
+        >
+          <CheckCircle2 className={`h-3.5 w-3.5 ${localInteracted ? 'fill-blue-500 text-white' : ''}`} strokeWidth={2.25} />
+        </button>
+        <button
+          type="button"
+          data-sx-quick-btn
+          title="Mở trao đổi"
+          onClick={(e) => {
+            e.stopPropagation();
+            navigate(`/sx/projects/${item.id}?tab=chat`);
+          }}
+          className="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200/90 bg-white/95 text-slate-600 shadow-md transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600 cursor-pointer"
+        >
+          <MessageSquare className="h-3.5 w-3.5" strokeWidth={2.25} />
+        </button>
+      </div>
+
       {/* Nút Bàn giao VC: chỉ hiện ở cột được đánh dấu is_handover_to_logistics */}
       {onHandoverVC && stage?.is_handover_to_logistics === true && item.status !== 'shipping' && item.status !== 'installing' && item.status !== 'warranty' && item.status !== 'completed' && (
         <button
@@ -1426,10 +1591,14 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
 }
 
 // ── KANBAN VIEW CONTAINER (y hệt CRM KanbanView) ─────────────────────────────
-function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC }) {
+function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC, remeasureToken }) {
   return (
-    <WorkshopPipelineKanbanScroll cardSelector="[data-sx-kanban-card]">
-      <div className="flex gap-0 min-w-max">
+    <WorkshopPipelineKanbanScroll
+      cardSelector="[data-sx-kanban-card]"
+      enableViewportScroll
+      remeasureToken={remeasureToken}
+    >
+      <div className="flex min-w-max items-stretch gap-3">
         {pipeline.map((stage) => (
           <KanbanStageCard
             key={stage.id || stage.slug}

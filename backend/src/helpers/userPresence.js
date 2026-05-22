@@ -1,9 +1,60 @@
 const { supabase } = require('../config/supabase');
+const { getCurrentLocationsForUserIds } = require('./userCurrentLocation');
 
 /** Ngưỡng coi online: có ping trong 2 phút gần nhất */
 const ONLINE_THRESHOLD_MS = 2 * 60 * 1000;
 /** Ngưỡng coi device đang online: ping trong 90 giây gần nhất */
 const DEVICE_ONLINE_THRESHOLD_MS = 90 * 1000;
+
+function normalizeDeviceName(name) {
+  return String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function parseIpKind(ip) {
+  const v = String(ip || '').trim();
+  if (!v) return null;
+  const ipv4 = v.replace(/^::ffff:/, '');
+  const isLocalhost = ipv4 === '127.0.0.1' || ipv4 === '::1';
+  if (isLocalhost) return 'localhost';
+  if (/^10\./.test(ipv4)) return 'private';
+  if (/^192\.168\./.test(ipv4)) return 'private';
+  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(ipv4)) return 'private';
+  return 'public';
+}
+
+function isMissingDeviceColumn(error) {
+  const msg = String(error?.message || '').toLowerCase();
+  return (
+    msg.includes('network_name')
+    || msg.includes('network_type')
+    || msg.includes('geo_lat')
+    || msg.includes('geo_lng')
+    || msg.includes('geo_address')
+  );
+}
+
+/** Loại bỏ vị trí (0,0) — thiết bị mô phỏng hoặc không lấy được vị trí thật. */
+function isValidGeo(lat, lng) {
+  const la = Number(lat);
+  const ln = Number(lng);
+  if (!Number.isFinite(la) || !Number.isFinite(ln)) return false;
+  if (la < -90 || la > 90 || ln < -180 || ln > 180) return false;
+  if (Math.abs(la) < 0.0001 && Math.abs(ln) < 0.0001) return false;
+  return true;
+}
+
+function deviceDedupKey(row) {
+  const platform = String(row?.platform || '').trim().toLowerCase();
+  const name = normalizeDeviceName(row?.device_name);
+  if (name) return `${platform}|${name}`;
+  const osName = normalizeDeviceName(row?.os_name);
+  const osVersion = normalizeDeviceName(row?.os_version);
+  const appVersion = normalizeDeviceName(row?.app_version);
+  return `${platform}|${osName}|${osVersion}|${appVersion}`;
+}
 
 async function getDevicesForUserIds(userIds) {
   const seen = new Set();
@@ -19,11 +70,20 @@ async function getDevicesForUserIds(userIds) {
   for (const id of ids) out[id] = [];
   if (!ids.length) return out;
 
-  const { data, error } = await supabase
+  const queryLatest = () => supabase
     .from('user_devices')
-    .select('user_id, platform, device_name, os_name, os_version, app_version, last_ping_at, last_login_at')
+    .select('user_id, platform, device_name, os_name, os_version, app_version, ip, network_name, network_type, geo_lat, geo_lng, geo_address, last_ping_at, last_login_at')
     .in('user_id', ids)
     .order('last_ping_at', { ascending: false });
+  const queryFallback = () => supabase
+    .from('user_devices')
+    .select('user_id, platform, device_name, os_name, os_version, app_version, ip, last_ping_at, last_login_at')
+    .in('user_id', ids)
+    .order('last_ping_at', { ascending: false });
+  let { data, error } = await queryLatest();
+  if (error && isMissingDeviceColumn(error)) {
+    ({ data, error } = await queryFallback());
+  }
   if (error) {
     if (error.code === '42P01' || String(error.message || '').includes('user_devices')) {
       return out;
@@ -31,19 +91,56 @@ async function getDevicesForUserIds(userIds) {
     throw error;
   }
   const threshold = Date.now() - DEVICE_ONLINE_THRESHOLD_MS;
+  const dedupMap = {};
   for (const row of data || []) {
     const uid = String(row.user_id);
     if (!out[uid]) out[uid] = [];
-    out[uid].push({
+    if (!dedupMap[uid]) dedupMap[uid] = new Map();
+    const key = deviceDedupKey(row);
+    const prev = dedupMap[uid].get(key);
+    const ipKind = parseIpKind(row.ip);
+    const next = {
       platform: row.platform,
       device_name: row.device_name,
       os_name: row.os_name,
       os_version: row.os_version,
       app_version: row.app_version,
+      ip: row.ip || null,
+      network_name: row.network_name || null,
+      network_type: row.network_type || (ipKind === 'private' || ipKind === 'localhost' ? 'wifi' : (ipKind === 'public' ? 'internet' : null)),
+      geo_lat: isValidGeo(row.geo_lat, row.geo_lng) ? row.geo_lat : null,
+      geo_lng: isValidGeo(row.geo_lat, row.geo_lng) ? row.geo_lng : null,
+      geo_address: isValidGeo(row.geo_lat, row.geo_lng) ? (row.geo_address || null) : null,
+      network_label: ipKind === 'private' || ipKind === 'localhost' ? 'Nội bộ / WiFi' : (ipKind === 'public' ? 'Internet / di động' : null),
       last_ping_at: row.last_ping_at,
       last_login_at: row.last_login_at,
       online: row.last_ping_at ? new Date(row.last_ping_at).getTime() >= threshold : false,
-    });
+      duplicate_count: 1,
+    };
+    if (!prev) {
+      dedupMap[uid].set(key, next);
+      out[uid].push(next);
+      continue;
+    }
+    prev.duplicate_count += 1;
+    const prevTs = prev.last_ping_at ? new Date(prev.last_ping_at).getTime() : 0;
+    const nextTs = next.last_ping_at ? new Date(next.last_ping_at).getTime() : 0;
+    if (nextTs > prevTs) {
+      prev.device_name = next.device_name;
+      prev.os_name = next.os_name;
+      prev.os_version = next.os_version;
+      prev.app_version = next.app_version;
+      prev.ip = next.ip;
+      prev.network_name = next.network_name;
+      prev.network_type = next.network_type;
+      prev.network_label = next.network_label;
+      prev.geo_lat = next.geo_lat;
+      prev.geo_lng = next.geo_lng;
+      prev.geo_address = next.geo_address;
+      prev.last_ping_at = next.last_ping_at;
+      prev.last_login_at = next.last_login_at;
+      prev.online = next.online;
+    }
   }
   return out;
 }
@@ -119,7 +216,7 @@ async function getPresenceForUserIds(userIds) {
  */
 async function listUsersWithActivity({ companyId, departmentId, search, onlineOnly } = {}) {
   const userSelect =
-    'id, full_name, email, phone, avatar, role, position, department_id, department:departments!users_department_id_fkey(id,name,color)';
+    'id, full_name, email, phone, avatar, role, position, address, department_id, department:departments!users_department_id_fkey(id,name,color)';
 
   let users = [];
 
@@ -152,9 +249,10 @@ async function listUsersWithActivity({ companyId, departmentId, search, onlineOn
   }
 
   const userIds = users.map((u) => u.id);
-  const [presence, deviceMap] = await Promise.all([
+  const [presence, deviceMap, locationMap] = await Promise.all([
     getPresenceForUserIds(userIds),
     getDevicesForUserIds(userIds),
+    getCurrentLocationsForUserIds(userIds),
   ]);
   const enriched = users.map((u) => {
     const id = String(u.id);
@@ -166,6 +264,7 @@ async function listUsersWithActivity({ companyId, departmentId, search, onlineOn
       last_ping_at: pres.last_ping_at,
       devices,
       online_devices: devices.filter((d) => d.online).length,
+      current_location: locationMap[id] || null,
     };
   });
 

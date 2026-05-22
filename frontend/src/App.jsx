@@ -147,6 +147,7 @@ const RequestMonitorPage = lazyWithRetry(() => import('./pages/RequestMonitorPag
 const TrashPage = lazyWithRetry(() => import('./pages/TrashPage'));
 const ThemeSettingsPage = lazyWithRetry(() => import('./pages/ThemeSettingsPage'));
 const PasswordSettingsPage = lazyWithRetry(() => import('./pages/PasswordSettingsPage'));
+const LocationSettingsPage = lazyWithRetry(() => import('./pages/LocationSettingsPage'));
 const MyDevicesPage = lazyWithRetry(() => import('./pages/MyDevicesPage'));
 
 import { Settings } from 'lucide-react';
@@ -160,6 +161,7 @@ import AIAssistantChat from './components/AIAssistantChat';
 import { RequireCrmElevated, RequireExecutive } from './components/RequireRole';
 import api from './lib/api';
 import { isCrmOnlyModuleAccess } from './lib/moduleAccess';
+import { isCrmSharedPath } from './lib/sidebarModuleContext';
 import ReleaseNoteLoginModal from './components/ReleaseNoteLoginModal';
 
 function PageLoader() {
@@ -237,9 +239,11 @@ function ProtectedLayout() {
     const path = location.pathname;
     const allowed =
       /^\/crm(\/|$)/.test(path) ||
+      isCrmSharedPath(path) ||
       path.startsWith('/tools/voice-recordings') ||
       path.startsWith('/settings/theme') ||
       path.startsWith('/settings/password') ||
+      path.startsWith('/settings/location') ||
       path.startsWith('/settings/devices') ||
       path.startsWith('/updates');
     if (!allowed) {
@@ -383,6 +387,7 @@ export default function App() {
             <Route path="/crm/categories" element={<CategoriesPage />} />
             <Route path="/settings/pdf" element={<PDFSettingsPage />} />
             <Route path="/settings/password" element={<PasswordSettingsPage />} />
+            <Route path="/settings/location" element={<LocationSettingsPage />} />
             <Route path="/settings/devices" element={<MyDevicesPage />} />
             <Route path="/settings/theme" element={<ThemeSettingsPage />} />
             <Route path="/settings/misa" element={<RequireCrmElevated><MisaSettingsPage /></RequireCrmElevated>} />

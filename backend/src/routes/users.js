@@ -6,6 +6,7 @@ const { auth } = require('../middleware/auth');
 const { normalizeRegionIdList, assertRegionBelongsToCompany } = require('../helpers/crmRegionScope');
 const { syncUserOrgToEcosystem } = require('../helpers/ecosystemSync');
 const { recordUserPing, getPresenceForUserIds, listUsersWithActivity, ONLINE_THRESHOLD_MS } = require('../helpers/userPresence');
+const { getCurrentLocationForUser } = require('../helpers/userCurrentLocation');
 
 const r = Router();
 r.use(auth);
@@ -141,6 +142,76 @@ r.post('/ping', async (req, res) => {
   } catch (e) {
     console.warn('[users/ping]', e.message);
     res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/** Vị trí hiện tại của user đang đăng nhập */
+r.get('/me/location', async (req, res) => {
+  try {
+    const uid = req.user.userId || req.user.id;
+    if (!uid) return res.status(401).json({ error: 'Token không có user id' });
+    const location = await getCurrentLocationForUser(uid);
+    res.json({ location });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Xóa vị trí ghi nhận của user hiện tại — dùng khi vị trí cũ sai, để ping kế tiếp ghi lại. */
+r.delete('/me/location', async (req, res) => {
+  try {
+    const uid = req.user.userId || req.user.id;
+    if (!uid) return res.status(401).json({ error: 'Token không có user id' });
+    const { supabase } = require('../config/supabase');
+    try {
+      await supabase.from('user_current_location').delete().eq('user_id', uid);
+    } catch (e) {
+      if (e?.code !== '42P01') throw e;
+    }
+    try {
+      await supabase
+        .from('user_devices')
+        .update({ geo_lat: null, geo_lng: null, geo_address: null })
+        .eq('user_id', uid);
+    } catch { /* ignore */ }
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Danh sách vị trí nhân viên (cho bản đồ admin) */
+r.get('/locations', async (req, res) => {
+  try {
+    let { company_id: companyId, department_id: departmentId, search } = req.query;
+    const role = req.user.role;
+    const elevated = ['admin', 'manager', 'region_admin'].includes(role);
+    if (!elevated && req.user.company_id) {
+      companyId = companyId || req.user.company_id;
+    }
+    const { users } = await listUsersWithActivity({
+      companyId: companyId || null,
+      departmentId: departmentId || null,
+      search: search ? String(search).trim() : '',
+      onlineOnly: false,
+    });
+    const items = (users || []).map((u) => ({
+      user_id: u.id,
+      full_name: u.full_name,
+      email: u.email,
+      online: !!u.online,
+      current_location: u.current_location || null,
+    }));
+    res.json({
+      items,
+      stats: {
+        total: items.length,
+        with_location: items.filter((x) => x.current_location?.lat != null).length,
+        online: items.filter((x) => x.online).length,
+      },
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 

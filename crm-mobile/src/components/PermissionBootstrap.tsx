@@ -40,11 +40,9 @@ export default function PermissionBootstrap() {
     if (!force && now - lastCheckMs.current < 2000) return;
     lastCheckMs.current = now;
     const g = await getAppPermissionGaps();
-    // Bỏ `systemOverlay` để KHÔNG chặn login — nó được handle riêng ở màn bong bóng.
-    const blocking = g.filter((k) => k !== 'systemOverlay');
-    setGaps(blocking);
-    if (blocking.length > 0 && !sessionSkipped.current) setVisible(true);
-    else if (blocking.length === 0) setVisible(false);
+    setGaps(g);
+    if (g.length > 0 && !sessionSkipped.current) setVisible(true);
+    else if (g.length === 0) setVisible(false);
   }, []);
 
   useEffect(() => {
@@ -62,12 +60,9 @@ export default function PermissionBootstrap() {
       await grantAllPermissionsQuick();
       void syncVoiceBackgroundTaskWithPrefs();
       setTimeout(async () => {
-        const remaining = (await getAppPermissionGaps()).filter((k) => k !== 'systemOverlay');
+        const remaining = await getAppPermissionGaps();
         setGaps(remaining);
-        // Dù còn quyền thiếu cũng đóng modal — tránh kẹt vĩnh viễn khi user
-        // không muốn cấp 1 quyền nào đó. Có thể bật lại trong cài đặt.
-        setVisible(false);
-        sessionSkipped.current = true;
+        if (remaining.length === 0) setVisible(false);
         setBusy(false);
       }, 1500);
     } catch {

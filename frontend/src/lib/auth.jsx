@@ -3,13 +3,19 @@ import api from '../lib/api';
 import { connectSocket, disconnectSocket } from '../lib/socket';
 import { useActivityPing } from '../hooks/useActivityPing';
 import { useDeviceHeartbeat } from '../hooks/useDeviceHeartbeat';
+import GeoConsentBanner from '../components/GeoConsentBanner';
 
 const AuthCtx = createContext(null);
 
 function ActivityPingGate({ user, children }) {
   useActivityPing(!!user);
   useDeviceHeartbeat(!!user);
-  return children;
+  return (
+    <>
+      {children}
+      <GeoConsentBanner enabled={!!user} />
+    </>
+  );
 }
 
 export function AuthProvider({ children }) {

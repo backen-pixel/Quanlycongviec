@@ -15,7 +15,6 @@ import {
   Platform,
   TextInput,
   ActivityIndicator,
-  NativeModules,
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -36,7 +35,6 @@ import { ensureVoiceBackgroundSyncPermissions, getVoiceBackgroundSyncDebugInfo, 
 import { api, postMultipart } from '../api/client';
 import type { CrmVoiceRecording } from '../types/crm';
 import { guessAudioMimeFromFileName } from '../lib/guessAudioMime';
-import { clearFloatingBubbleHidden } from '../lib/floatingChatBubbleStorage';
 
 export default function AccountScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<MoreStackParamList>>();
@@ -351,78 +349,6 @@ export default function AccountScreen() {
                 Xem các thiết bị tài khoản đang online và đăng xuất từ xa.
               </Text>
             </TouchableOpacity>
-
-            <Text style={styles.sectionH}>Bong bóng chat nổi</Text>
-            {Platform.OS === 'android' ? (
-              <TouchableOpacity
-                style={[styles.onboardBubbleBtn, CrmShadow.card]}
-                onPress={() => navigation.navigate('BubblePermissionOnboard')}
-              >
-                <Text style={styles.onboardBubbleTitle}>Thiết lập bong bóng & thông báo</Text>
-                <Text style={styles.onboardBubbleSub}>
-                  Quyền thông báo, hiển thị trên app khác và tối ưu pin — giống Messenger/Zalo.
-                </Text>
-              </TouchableOpacity>
-            ) : null}
-            <View style={[styles.cardRow, CrmShadow.card]}>
-              <RowSwitch
-                label="Hiển thị bong bóng chat"
-                sub="Kiểu Zalo: avatar tròn · chạm mở Messenger · giữ để menu · kéo dính mép hoặc thả đáy để ẩn · badge đỏ = tin CRM chưa đọc."
-                value={prefs.floatingChatBubbleEnabled}
-                onValueChange={(v) => void updatePrefs({ ...prefs, floatingChatBubbleEnabled: v })}
-              />
-              <View style={styles.divider} />
-              <RowSwitch
-                label="Chỉ hiện khi có tin chưa đọc"
-                sub="Giống tùy chỉnh Zalo: ẩn bubble khi không có số đếm đỏ (tin chat CRM)."
-                value={prefs.floatingChatBubbleOnlyWhenUnread}
-                onValueChange={(v) => void updatePrefs({ ...prefs, floatingChatBubbleOnlyWhenUnread: v })}
-                disabled={!prefs.floatingChatBubbleEnabled}
-              />
-              <View style={styles.divider} />
-              <RowSwitch
-                label="Bong bóng nhỏ gọn"
-                sub="Thu nhỏ nút tròn (như cỡ nhỏ trên một số máy)."
-                value={prefs.floatingChatBubbleCompact}
-                onValueChange={(v) => void updatePrefs({ ...prefs, floatingChatBubbleCompact: v })}
-                disabled={!prefs.floatingChatBubbleEnabled}
-              />
-              {Platform.OS === 'android' ? (
-                <>
-                  <View style={styles.divider} />
-                  <RowSwitch
-                    label="Bong bóng trên app khác (Android)"
-                    sub="Giống Zalo: vẫn thấy khi thoát CRM — cần quyền «Hiển thị trên các ứng dụng khác». Có thông báo chạy nền hợp lệ."
-                    value={prefs.floatingChatBubbleSystemOverlay}
-                    onValueChange={(v) => void updatePrefs({ ...prefs, floatingChatBubbleSystemOverlay: v })}
-                    disabled={!prefs.floatingChatBubbleEnabled}
-                  />
-                  <TouchableOpacity
-                    style={[
-                      styles.showBubbleBtn,
-                      (!prefs.floatingChatBubbleEnabled || !prefs.floatingChatBubbleSystemOverlay) && styles.permRowOff,
-                    ]}
-                    onPress={() =>
-                      (
-                        NativeModules as {
-                          FloatingBubbleOverlay?: { openOverlaySettings?: () => void };
-                        }
-                      ).FloatingBubbleOverlay?.openOverlaySettings?.()
-                    }
-                    disabled={!prefs.floatingChatBubbleEnabled || !prefs.floatingChatBubbleSystemOverlay}
-                  >
-                    <Text style={styles.showBubbleBtnTxt}>Cấp quyền hiển thị trên app khác</Text>
-                  </TouchableOpacity>
-                </>
-              ) : null}
-              <TouchableOpacity
-                style={[styles.showBubbleBtn, !prefs.floatingChatBubbleEnabled && styles.permRowOff]}
-                onPress={() => void clearFloatingBubbleHidden()}
-                disabled={!prefs.floatingChatBubbleEnabled}
-              >
-                <Text style={styles.showBubbleBtnTxt}>Hiện lại bong bóng chat (sau khi ẩn)</Text>
-              </TouchableOpacity>
-            </View>
 
             {Platform.OS === 'android' && prefs.voiceCaptureEnabled ? (
               <>

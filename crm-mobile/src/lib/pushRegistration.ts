@@ -1,119 +1,152 @@
 /**
- * Đăng ký push device token với backend.
+ * Đăng ký push token mobile.
  *
- * Hai kênh song song:
- *  1) Expo Push token  → POST /push/device-token platform=expo
- *     - Tray notification, đa nền tảng (Android + iOS), latency thấp.
- *  2) FCM token (Android) → POST /push/device-token platform=fcm
- *     - Data-only payload, để CrmFirebaseMessagingService tự tạo bong bóng
- *       overlay + tray notification kể cả khi app đã bị tắt hoàn toàn.
+ * Hỗ trợ song song 2 nhánh:
+ *  - **Expo Push** (`platform: 'expo'`) — hiển thị notification status-bar
+ *    cho cả app trạng thái killed (Expo dùng FCM bên dưới trên Android).
+ *  - **FCM token native** (`platform: 'fcm'`) — dùng cho data-only push
+ *    wake `OverlayBubbleService` (xem `BubbleFcmService.kt`). Token được
+ *    `FloatingBubbleModule.consumeFcmToken()` đẩy lên khi service nhận.
  *
- * Backend sẽ gửi qua CẢ hai kênh trong pushSender.sendMobilePush.
+ * Token được upsert vào backend `POST /api/push/device-token`.
  */
-
 import { NativeModules, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '../api/client';
+import Constants from 'expo-constants';
 
-type FloatingModule = {
-  getFcmToken?: () => Promise<string | null>;
+const EXPO_TOKEN_KEY = 'crm_expo_push_token_v1';
+const FCM_TOKEN_KEY = 'crm_fcm_push_token_v1';
+
+type FloatingBubbleOverlayModule = {
+  consumeFcmToken?: () => Promise<string | null>;
 };
 
-const Overlay: FloatingModule | undefined = NativeModules.FloatingBubbleOverlay;
+const Overlay = NativeModules.FloatingBubbleOverlay as FloatingBubbleOverlayModule | undefined;
 
-let expoRegistered = false;
-let fcmRegistered = false;
+function getProjectId(): string | null {
+  const fromExpo = (Constants?.expoConfig?.extra as { eas?: { projectId?: string } } | undefined)
+    ?.eas?.projectId;
+  if (fromExpo && fromExpo !== 'REPLACE_WITH_EAS_PROJECT_ID') return fromExpo;
+  const fromManifest = (Constants?.easConfig as { projectId?: string } | undefined)?.projectId;
+  return fromManifest || null;
+}
 
+async function ensurePermission(): Promise<boolean> {
+  try {
+    const cur = await Notifications.getPermissionsAsync();
+    if (cur.status === 'granted') return true;
+    const req = await Notifications.requestPermissionsAsync();
+    return req.status === 'granted';
+  } catch {
+    return false;
+  }
+}
+
+async function postDeviceToken(token: string, platform: 'expo' | 'fcm'): Promise<void> {
+  try {
+    await api.post('/push/device-token', { token, platform });
+  } catch {
+    /* offline / 401 → sẽ thử lại lần sau */
+  }
+}
+
+/**
+ * Gọi sau login + bootstrap. Idempotent — token cũ không gửi lại.
+ */
 export async function registerPushToken(): Promise<void> {
-  // 1) Expo push token (cần permission + projectId từ app.json)
-  if (!expoRegistered) {
-    try {
-      const perm = await Notifications.getPermissionsAsync();
-      let status = perm.status;
-      if (status !== 'granted') {
-        const r = await Notifications.requestPermissionsAsync();
-        status = r.status;
-      }
-      if (status === 'granted') {
-        const tok = await Notifications.getExpoPushTokenAsync().catch(() => null);
-        const token = tok?.data || '';
-        if (token) {
-          await api.post('/push/device-token', {
-            token,
-            platform: 'expo',
-            device_id: Platform.OS,
-          });
-          expoRegistered = true;
+  if (Platform.OS === 'web') return;
+  if (!Device.isDevice) return;
+
+  // 1) Expo push token (notification hiển thị)
+  try {
+    const granted = await ensurePermission();
+    if (granted) {
+      const projectId = getProjectId();
+      const tokenRes = projectId
+        ? await Notifications.getExpoPushTokenAsync({ projectId })
+        : await Notifications.getExpoPushTokenAsync();
+      const expoToken = tokenRes?.data;
+      if (expoToken) {
+        const prev = await AsyncStorage.getItem(EXPO_TOKEN_KEY);
+        if (prev !== expoToken) {
+          await AsyncStorage.setItem(EXPO_TOKEN_KEY, expoToken);
+          await postDeviceToken(expoToken, 'expo');
+        } else {
+          // Vẫn ping nhẹ để backend cập nhật last_seen_at (mỗi 24h là đủ)
+          await postDeviceToken(expoToken, 'expo');
         }
       }
-    } catch {
-      /* ignore */
     }
+  } catch {
+    /* ignore */
   }
 
-  // 2) FCM token (Android only) — chỉ chạy khi native bridge có sẵn
-  if (Platform.OS === 'android' && !fcmRegistered && Overlay?.getFcmToken) {
-    try {
-      const fcmToken = await Overlay.getFcmToken();
-      if (fcmToken) {
-        await api.post('/push/device-token', {
-          token: fcmToken,
-          platform: 'fcm',
-          device_id: 'android',
-        });
-        fcmRegistered = true;
+  // 2) FCM native token (cho BubbleFcmService wake overlay)
+  try {
+    const fcmToken = await Overlay?.consumeFcmToken?.();
+    if (fcmToken) {
+      const prev = await AsyncStorage.getItem(FCM_TOKEN_KEY);
+      if (prev !== fcmToken) {
+        await AsyncStorage.setItem(FCM_TOKEN_KEY, fcmToken);
+        await postDeviceToken(fcmToken, 'fcm');
+      } else {
+        await postDeviceToken(fcmToken, 'fcm');
       }
-    } catch {
-      /* google-services.json chưa add → bỏ qua */
     }
+  } catch {
+    /* ignore */
   }
 }
 
 export type PushSetupStatus = {
   notificationPermission: 'granted' | 'denied' | 'undetermined';
-  hasExpoToken: boolean;
-  hasFcmToken: boolean;
-  hasPushToken: boolean;
   hasProjectId: boolean;
+  hasPushToken: boolean;
+  hasFcmToken: boolean;
   hint?: string;
 };
 
 export async function getPushSetupStatus(): Promise<PushSetupStatus> {
   let perm: 'granted' | 'denied' | 'undetermined' = 'undetermined';
   try {
-    const p = await Notifications.getPermissionsAsync();
-    perm = (p.status as 'granted' | 'denied' | 'undetermined') ?? 'undetermined';
+    const r = await Notifications.getPermissionsAsync();
+    if (r.status === 'granted') perm = 'granted';
+    else if (r.status === 'denied') perm = 'denied';
   } catch {
     /* */
   }
-  let hasFcm = false;
-  if (Platform.OS === 'android' && Overlay?.getFcmToken) {
-    try {
-      const t = await Overlay.getFcmToken();
-      hasFcm = !!t;
-    } catch {
-      /* */
-    }
-  }
+  const expoToken = await AsyncStorage.getItem(EXPO_TOKEN_KEY);
+  const fcmToken = await AsyncStorage.getItem(FCM_TOKEN_KEY);
+  const hasProject = !!getProjectId();
+  let hint: string | undefined;
+  if (perm !== 'granted') hint = 'Chưa cấp quyền thông báo';
+  else if (!hasProject) hint = 'Thiếu EAS projectId trong app.json';
+  else if (!expoToken && !fcmToken) hint = 'Chưa đăng ký token';
   return {
     notificationPermission: perm,
-    hasExpoToken: expoRegistered,
-    hasFcmToken: hasFcm,
-    hasPushToken: expoRegistered || hasFcm,
-    hasProjectId: true,
-    hint:
-      perm !== 'granted'
-        ? 'Hãy cấp quyền Thông báo để nhận tin khi app tắt.'
-        : undefined,
+    hasProjectId: hasProject,
+    hasPushToken: !!expoToken,
+    hasFcmToken: !!fcmToken,
+    hint,
   };
 }
 
 export async function unregisterPushToken(): Promise<void> {
   try {
-    await api.delete('/push/device-token').catch(() => {});
+    const expoToken = await AsyncStorage.getItem(EXPO_TOKEN_KEY);
+    if (expoToken) await api.delete('/push/device-token', { data: { token: expoToken } });
+    await AsyncStorage.removeItem(EXPO_TOKEN_KEY);
   } catch {
     /* */
   }
-  expoRegistered = false;
-  fcmRegistered = false;
+  try {
+    const fcmToken = await AsyncStorage.getItem(FCM_TOKEN_KEY);
+    if (fcmToken) await api.delete('/push/device-token', { data: { token: fcmToken } });
+    await AsyncStorage.removeItem(FCM_TOKEN_KEY);
+  } catch {
+    /* */
+  }
 }

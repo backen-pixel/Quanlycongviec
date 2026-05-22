@@ -47,12 +47,4 @@ export type MessengerMessage = {
   attachment_mime?: string | null;
   reply_to?: string | null;
   user?: { id?: string; full_name?: string | null; avatar?: string | null } | null;
-  reactions?: MessengerReaction[] | null;
-};
-
-export type MessengerReaction = {
-  message_id?: string;
-  user_id: string;
-  emoji: string;
-  created_at?: string | null;
 };
