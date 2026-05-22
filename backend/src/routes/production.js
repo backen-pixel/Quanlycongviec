@@ -3,6 +3,7 @@ const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/newPermission');
 const { effectiveWorkshopCompanyId, normalizeWorkshopCompanyId } = require('../helpers/workshopCompanyScope');
+const { isSystemAdmin } = require('../helpers/adminRole');
 const {
   WORKSHOP_STAGE_SLUGS,
   WORKSHOP_STATUSES,
@@ -2136,10 +2137,7 @@ r.patch('/projects/:projectId/incidents/:incidentId', requirePermission('project
 function userCanAccessProductionHandover(req, productionCompanyId) {
   const pid = String(productionCompanyId || '').trim();
   if (!pid) return false;
-  const role = String(req.user?.role || '').toLowerCase();
-  const lockedCo =
-    req.user?.company_id != null && String(req.user.company_id).trim() !== '';
-  if (role === 'admin' && !lockedCo) return true;
+  if (isSystemAdmin(req.user)) return true;
   if (String(req.user?.company_id || '') === pid) return true;
   return false;
 }

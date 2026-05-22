@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue } f
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import { formatVND, formatDate } from '../lib/utils';
 import {
   getWorkshopDateRange, WS_TIME_PRESETS, WS_KANBAN_LOAD_OPTIONS,
@@ -83,7 +84,7 @@ function formatRemainingMs(ms) {
 export default function ProductionDashboard() {
   const P0 = useMemo(() => readSxDashPersisted(), []);
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminLike(user);
 
   const [kpis, setKpis] = useState(null);
   const [projects, setProjects] = useState([]);

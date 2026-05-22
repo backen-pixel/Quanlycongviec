@@ -13,6 +13,7 @@ import {
 } from '../lib/documentShareScope';
 import DocumentShareModulePicker from '../components/DocumentShareModulePicker';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import { formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
 import { publicFileUrl as pubUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
 import {
@@ -1752,7 +1753,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     notes={sharedNotes}
                     onPosted={refreshCrmActivities}
                     currentUserId={user?.id || user?.userId}
-                    canEditAnyNote={user?.role === 'admin' || user?.role === 'manager'}
+                    canEditAnyNote={isAdminLike(user) || user?.role === 'manager'}
                     includeVoiceTimeline
                     contextLine={
                       primaryCrmDeal

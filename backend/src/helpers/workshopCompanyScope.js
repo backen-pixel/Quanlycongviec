@@ -1,3 +1,5 @@
+const { isSystemAdmin } = require('./adminRole');
+
 /** Chuẩn hóa UUID công ty cho query pipeline (chuỗi rỗng → null). */
 function normalizeWorkshopCompanyId(companyId) {
   if (companyId == null) return null;
@@ -7,8 +9,8 @@ function normalizeWorkshopCompanyId(companyId) {
 
 /**
  * Phạm vi công ty cho module Xưởng (SX / VC).
- * Admin: có thể truyền company_id trên query (rỗng = xem mọi công ty).
- * User thường: luôn khóa theo company_id của tài khoản (bỏ qua query lạ).
+ * Admin hệ thống (không gắn company_id): có thể truyền company_id query (rỗng = xem mọi công ty).
+ * User thường + admin công ty + sales_admin: luôn khóa theo company_id của tài khoản.
  */
 function effectiveWorkshopCompanyId(req, queryCompanyId) {
   const q =
@@ -19,7 +21,7 @@ function effectiveWorkshopCompanyId(req, queryCompanyId) {
     req.user?.company_id != null && String(req.user.company_id).trim() !== ''
       ? String(req.user.company_id).trim()
       : '';
-  if (req.user?.role === 'admin') {
+  if (isSystemAdmin(req.user)) {
     return q || null;
   }
   return userCid || null;

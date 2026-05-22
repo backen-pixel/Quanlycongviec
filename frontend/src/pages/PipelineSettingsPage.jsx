@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
 import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2, Calendar, CheckCircle2, Clock } from 'lucide-react';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import { resolveDefaultCrmAdminCompanyId, setStoredCrmFilterCompanyId } from '../lib/crmCompanyFilter';
 import { isPipelineStageSlaDisabled } from '../lib/crmPipelineSla';
 
@@ -87,7 +88,7 @@ export default function PipelineSettingsPage() {
     sync_role: '',
     default_probability: '',
   });
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminLike(user);
   const [companies, setCompanies] = useState([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
   const [selectedPipelineId, setSelectedPipelineId] = useState('');
@@ -1429,7 +1430,7 @@ export default function PipelineSettingsPage() {
         )}
       </div>
 
-      {user?.role === 'admin' && (
+      {isAdminLike(user) && (
         <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 shadow-sm">
           <h2 className="text-sm font-bold text-gray-900 flex items-center gap-2">
             <Settings className="h-4 w-4 text-emerald-600" />

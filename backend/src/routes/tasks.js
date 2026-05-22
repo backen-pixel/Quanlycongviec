@@ -8,6 +8,7 @@ const {
   taskAttachmentVisibleForModuleAndUser,
   canViewerSeeByCompanyAndDept,
 } = require('../helpers/documentShareScope');
+const { isAdminLike } = require('../helpers/adminRole');
 
 const r = Router();
 r.use(auth);
@@ -699,7 +700,7 @@ r.delete('/:taskId/participants/:userId', async (req, res) => {
 r.get('/planner/board', async (req, res) => {
   try {
     const userId = req.user.userId;
-    const isAdmin = req.user.role === 'admin';
+    const isAdmin = isAdminLike(req.user);
     const { company_id, division_id } = req.query;
 
     // Get tasks with assignees (project tasks)

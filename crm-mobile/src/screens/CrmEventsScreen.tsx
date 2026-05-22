@@ -17,6 +17,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { isAdminLike } from '../lib/adminRole';
 import { useCrmCompanyFilter } from '../context/CrmCompanyFilterContext';
 import CrmCompanyPickerBar from '../components/CrmCompanyPickerBar';
 import type { MoreStackParamList } from '../navigation/types';
@@ -101,7 +102,7 @@ export default function CrmEventsScreen({ route }: Props) {
   const handledInitialDate = useRef<string | null>(null);
 
   const myUserId = String(user?.id || user?.userId || '');
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminLike(user);
   const canManageEvent = useCallback(
     (e: CrmEventRow) => isAdmin || (!!e.created_by && String(e.created_by) === myUserId),
     [isAdmin, myUserId],

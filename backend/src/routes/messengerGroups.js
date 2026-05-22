@@ -7,6 +7,7 @@ const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const config = require('../config');
 const { notifyMultiple } = require('../helpers/notifications');
+const { isAdminLike } = require('../helpers/adminRole');
 
 /** Bucket Supabase Storage (mặc định giống upload CRM). */
 const MESSENGER_STORAGE_BUCKET = process.env.SUPABASE_MESSENGER_BUCKET || 'attachments';
@@ -269,7 +270,7 @@ async function userCanEnsureLeadMessenger(uid, leadId) {
   const { data: lm } = await supabase.from('lead_members').select('id').eq('lead_id', leadId).eq('user_id', uid).limit(1).maybeSingle();
   if (lm) return true;
   const { data: usr } = await supabase.from('users').select('role').eq('id', uid).maybeSingle();
-  return String(usr?.role || '') === 'admin';
+  return isAdminLike(usr);
 }
 
 /** Một nhóm chat nội bộ gắn lead/deal (get-or-create); thêm thành viên theo team lead. */

@@ -2,6 +2,8 @@
  * Phân quyền xem tài liệu/đính kèm chia sẻ theo công ty & module (SX / VC / Công việc).
  */
 
+const { isAdminLike } = require('./adminRole');
+
 const SHARE_MODULE_KEYS = new Set(['production', 'logistics', 'workshop']);
 
 function parseJsonArray(raw) {
@@ -42,8 +44,7 @@ function isVisibleInShareModule(docOrAtt, moduleKey) {
 
 function canViewerSeeByCompanyAndDept(docOrAtt, user) {
   if (!user) return true;
-  const role = String(user.role || '').toLowerCase();
-  if (role === 'admin') return true;
+  if (isAdminLike(user)) return true;
   const uc = user.company_id || null;
   const ud = user.department_id || null;
   const ac = parseJsonArray(docOrAtt?.allowed_companies);

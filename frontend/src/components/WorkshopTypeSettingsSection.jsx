@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import { Layers, Loader2, Plus, Trash2, Save, Building2 } from 'lucide-react';
 
 /**
@@ -10,7 +11,7 @@ import { Layers, Loader2, Plus, Trash2, Save, Building2 } from 'lucide-react';
  */
 export default function WorkshopTypeSettingsSection({ moduleContext, accent = 'teal', companyId: companyIdProp, onCompanyIdChange }) {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminLike(user);
   const isCompanyControlled = typeof onCompanyIdChange === 'function';
   const [companies, setCompanies] = useState([]);
   const [companyId, setCompanyId] = useState('');

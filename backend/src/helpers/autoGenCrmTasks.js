@@ -255,8 +255,373 @@ async function completeConsultingCrmTasksForLead(leadId) {
   return { ok: true };
 }
 
+function isSxCrmTaskRow(t) {
+  return String(t?.stage_slug || '').startsWith('sx_');
+}
+
+async function pipelineHasActiveCrmTemplates(pipelineId) {
+  if (!pipelineId) return false;
+  const { data: stages } = await supabase
+    .from('crm_pipeline_stages')
+    .select('id')
+    .eq('pipeline_id', pipelineId);
+  const stageIds = (stages || []).map((s) => s.id);
+  if (!stageIds.length) return false;
+  const { count, error } = await supabase
+    .from('crm_task_templates')
+    .select('id', { count: 'exact', head: true })
+    .eq('is_active', true)
+    .in('pipeline_stage_id', stageIds);
+  if (error) throw error;
+  return (count || 0) > 0;
+}
+
+/**
+ * Dọn task CRM orphan (pipeline_stage_id = null) khi lead/deal đã có pipeline + bộ mẫu setup.
+ * - Có task pipeline + orphan lẫn lộn → chỉ xóa orphan, giữ task pipeline.
+ * - Chỉ orphan → xóa rồi autoGenCrmTasks.
+ */
+async function healOrphanCrmTasksForLead(leadId, userId) {
+  const { data: lead } = await supabase
+    .from('crm_leads')
+    .select('type, pipeline_id, created_by')
+    .eq('id', leadId)
+    .maybeSingle();
+  if (!lead?.pipeline_id) return { deleted: 0, created: 0, didHeal: false };
+
+  const hasTemplates = await pipelineHasActiveCrmTemplates(lead.pipeline_id);
+  if (!hasTemplates) return { deleted: 0, created: 0, didHeal: false };
+
+  const { data: tasks, error: taskErr } = await supabase
+    .from('crm_tasks')
+    .select('id, stage_slug, pipeline_stage_id')
+    .eq('lead_id', leadId);
+  if (taskErr) throw taskErr;
+
+  const crmTasks = (tasks || []).filter((t) => !isSxCrmTaskRow(t));
+  const orphanCrm = crmTasks.filter((t) => !t.pipeline_stage_id);
+  if (!orphanCrm.length) return { deleted: 0, created: 0, didHeal: false };
+
+  const nonOrphanCrm = crmTasks.filter((t) => t.pipeline_stage_id);
+  const orphanIds = orphanCrm.map((t) => t.id);
+  const { error: delErr } = await supabase.from('crm_tasks').delete().in('id', orphanIds);
+  if (delErr) throw delErr;
+
+  let created = 0;
+  if (nonOrphanCrm.length === 0) {
+    created = await autoGenCrmTasks(leadId, lead.type || 'lead', userId || lead.created_by);
+  }
+
+  console.log(
+    `[SELF-HEAL] lead=${leadId}: purged ${orphanIds.length} orphan task(s)`
+    + (nonOrphanCrm.length ? ` (kept ${nonOrphanCrm.length} pipeline task(s))` : '')
+    + (created ? `, regenerated ${created}` : ''),
+  );
+
+  return { deleted: orphanIds.length, created, didHeal: true };
+}
+
+/**
+ * Áp bộ mẫu CRM cho một giai đoạn pipeline (pipeline_stage_id).
+ * force=true: xóa task CRM hiện có của giai đoạn rồi tạo lại từ template.
+ */
+async function applyPipelineTemplatesForStage(leadId, stageId, userId, { force = false } = {}) {
+  if (!leadId || !stageId) return { deleted: 0, created: 0, skipped: true };
+
+  const { data: pipelineTpls } = await supabase
+    .from('crm_task_templates')
+    .select('id, stage_slug')
+    .eq('pipeline_stage_id', stageId)
+    .eq('is_active', true)
+    .order('order_index');
+  if (!pipelineTpls?.length) return { deleted: 0, created: 0, skipped: true, reason: 'no_template' };
+
+  let deleted = 0;
+  if (force) {
+    const { data: existing } = await supabase
+      .from('crm_tasks')
+      .select('id, stage_slug')
+      .eq('lead_id', leadId)
+      .eq('pipeline_stage_id', stageId);
+    const ids = (existing || []).filter((t) => !isSxCrmTaskRow(t)).map((t) => t.id);
+    if (ids.length) {
+      const { error: delErr } = await supabase.from('crm_tasks').delete().in('id', ids);
+      if (delErr) throw delErr;
+      deleted = ids.length;
+    }
+  } else {
+    const { data: existsForStage } = await supabase
+      .from('crm_tasks')
+      .select('id')
+      .eq('lead_id', leadId)
+      .eq('pipeline_stage_id', stageId)
+      .limit(1);
+    if (existsForStage?.length) return { deleted: 0, created: 0, skipped: true, reason: 'already_has_tasks' };
+  }
+
+  const tplIds = pipelineTpls.map((t) => t.id);
+  const { data: allItems, error: itemErr } = await supabase
+    .from('crm_task_template_items')
+    .select('*')
+    .in('template_id', tplIds)
+    .order('order_index');
+  if (itemErr) throw itemErr;
+  if (!allItems?.length) return { deleted, created: 0, skipped: true, reason: 'empty_template' };
+
+  const tplMap = {};
+  pipelineTpls.forEach((t) => { tplMap[t.id] = t; });
+  const inserts = allItems.map((item) => ({
+    lead_id: leadId,
+    title: item.title,
+    description: item.description || null,
+    priority: item.priority || 'medium',
+    stage_slug: tplMap[item.template_id]?.stage_slug || null,
+    pipeline_stage_id: stageId,
+    order_index: item.order_index,
+    deadline: null,
+    created_by: userId,
+    completion_requires_file_or_note: !!item.completion_requires_file_or_note,
+    completion_requires_customer_note: !!item.completion_requires_customer_note,
+    completion_requires_customer_contact: !!item.completion_requires_customer_contact,
+    blocks_stage_advance: !!item.blocks_stage_advance,
+  }));
+  const { error: insErr } = await supabase.from('crm_tasks').insert(inserts);
+  if (insErr) throw insErr;
+
+  return { deleted, created: inserts.length, skipped: false };
+}
+
+/**
+ * Gen lại nhiệm vụ CRM theo bộ mẫu pipeline (nút thủ công trên tab Công việc):
+ * - Xóa orphan + task giai đoạn pipeline không hợp lệ
+ * - Xóa task giai đoạn khác (chưa bắt đầu / pending) — bỏ nhiệm vụ thừa từ auto-gen cũ
+ * - Giữ task đang làm / đã xong ở giai đoạn khác
+ * - Giai đoạn hiện tại: xóa & tạo lại đúng theo template
+ */
+async function resyncCrmPipelineTasksForLead(leadId, userId) {
+  const { data: lead } = await supabase
+    .from('crm_leads')
+    .select('type, pipeline_id, stage_id, company_id, created_by')
+    .eq('id', leadId)
+    .maybeSingle();
+  if (!lead) return { ok: false, error: 'Lead/deal không tồn tại' };
+
+  let pipelineId = lead.pipeline_id;
+  if (!pipelineId && lead.company_id) {
+    pipelineId = await getDefaultPipelineIdForCompany(lead.company_id);
+    if (pipelineId) {
+      await supabase.from('crm_leads').update({ pipeline_id: pipelineId }).eq('id', leadId);
+    }
+  }
+  if (!pipelineId) return { ok: false, error: 'Lead/deal chưa có pipeline CRM' };
+
+  const hasTemplates = await pipelineHasActiveCrmTemplates(pipelineId);
+  if (!hasTemplates) {
+    return { ok: false, error: 'Pipeline chưa có bộ mẫu nhiệm vụ. Vào Bộ mẫu CRM để cấu hình.' };
+  }
+
+  const { data: stages, error: stErr } = await supabase
+    .from('crm_pipeline_stages')
+    .select('id')
+    .eq('pipeline_id', pipelineId);
+  if (stErr) throw stErr;
+  const validStageIds = new Set((stages || []).map((s) => String(s.id)));
+
+  const { data: tasks, error: taskErr } = await supabase
+    .from('crm_tasks')
+    .select('id, stage_slug, pipeline_stage_id, status')
+    .eq('lead_id', leadId);
+  if (taskErr) throw taskErr;
+
+  const crmTasks = (tasks || []).filter((t) => !isSxCrmTaskRow(t));
+  const currentStageId = lead.stage_id ? String(lead.stage_id) : null;
+  const toDelete = [];
+
+  for (const t of crmTasks) {
+    const pid = t.pipeline_stage_id ? String(t.pipeline_stage_id) : null;
+    if (!pid) {
+      toDelete.push(t.id);
+      continue;
+    }
+    if (!validStageIds.has(pid)) {
+      toDelete.push(t.id);
+      continue;
+    }
+    if (currentStageId && pid !== currentStageId && t.status === 'pending') {
+      toDelete.push(t.id);
+    }
+  }
+
+  if (toDelete.length) {
+    const { error: delErr } = await supabase.from('crm_tasks').delete().in('id', toDelete);
+    if (delErr) throw delErr;
+  }
+
+  let stageCreated = 0;
+  let stageDeleted = 0;
+  if (currentStageId) {
+    const applied = await applyPipelineTemplatesForStage(
+      leadId,
+      currentStageId,
+      userId || lead.created_by,
+      { force: true },
+    );
+    stageCreated = applied.created || 0;
+    stageDeleted = applied.deleted || 0;
+  } else {
+    const created = await autoGenCrmTasks(leadId, lead.type || 'lead', userId || lead.created_by);
+    stageCreated = created;
+  }
+
+  console.log(
+    `[RESYNC-CRM] lead=${leadId}: removed ${toDelete.length} extra task(s)`
+    + (stageDeleted ? `, refreshed current stage (removed ${stageDeleted})` : '')
+    + (stageCreated ? `, created ${stageCreated} from template` : ''),
+  );
+
+  return {
+    ok: true,
+    deleted_extra: toDelete.length,
+    current_stage_resynced: !!currentStageId,
+    stage_tasks_deleted: stageDeleted,
+    tasks_created: stageCreated,
+    current_stage_id: currentStageId,
+  };
+}
+
+/**
+ * Đồng bộ bộ mẫu CRM (theo pipeline) cho mọi lead/deal thuộc các khu vực của công ty.
+ * Chỉ regen khi an toàn (giống SELF-HEAL trên GET /leads/:id/tasks):
+ * - Có task pipeline + orphan lẫn lộn → chỉ xóa orphan.
+ * - Chỉ orphan hoặc không có task → xóa orphan (nếu có) rồi gen lại.
+ * - Đã có task pipeline, không orphan → bỏ qua.
+ */
+async function applyCrmTaskTemplatesToCompanyRegions({
+  companyId,
+  pipelineId = null,
+  leadType = 'both',
+  regionIds = null,
+  userId,
+}) {
+  if (!companyId) return { ok: false, error: 'Thiếu company_id' };
+
+  const pipelineIdResolved = pipelineId || await getDefaultPipelineIdForCompany(companyId);
+  if (!pipelineIdResolved) {
+    return { ok: false, error: 'Công ty chưa có pipeline CRM mặc định' };
+  }
+
+  const { data: stages, error: stErr } = await supabase
+    .from('crm_pipeline_stages')
+    .select('id')
+    .eq('pipeline_id', pipelineIdResolved);
+  if (stErr) throw stErr;
+  const stageIds = (stages || []).map((s) => s.id);
+  if (!stageIds.length) {
+    return { ok: false, error: 'Pipeline chưa có giai đoạn nào' };
+  }
+
+  const { count: tplCount, error: tplErr } = await supabase
+    .from('crm_task_templates')
+    .select('id', { count: 'exact', head: true })
+    .eq('is_active', true)
+    .in('pipeline_stage_id', stageIds);
+  if (tplErr) throw tplErr;
+  if (!(tplCount > 0)) {
+    return { ok: false, error: 'Pipeline chưa có bộ mẫu nhiệm vụ (gắn pipeline_stage_id)' };
+  }
+
+  let q = supabase
+    .from('crm_leads')
+    .select('id, type, pipeline_id, company_id, created_by, region_id')
+    .eq('company_id', companyId);
+
+  const lt = String(leadType || 'both').toLowerCase();
+  if (lt === 'lead' || lt === 'deal') q = q.eq('type', lt);
+
+  const normRegions = Array.isArray(regionIds) ? regionIds.filter(Boolean) : null;
+  if (normRegions?.length) q = q.in('region_id', normRegions);
+
+  const { data: leads, error: leadErr } = await q;
+  if (leadErr) throw leadErr;
+
+  const stats = {
+    ok: true,
+    company_id: companyId,
+    pipeline_id: pipelineIdResolved,
+    regions_targeted: normRegions?.length || null,
+    scanned: 0,
+    regenerated: 0,
+    tasks_created: 0,
+    pipeline_backfilled: 0,
+    orphans_purged: 0,
+    purged_only: 0,
+    skipped_has_pipeline_tasks: 0,
+    skipped_other_pipeline: 0,
+    errors: [],
+  };
+
+  for (const lead of leads || []) {
+    stats.scanned += 1;
+    try {
+      if (lead.pipeline_id && String(lead.pipeline_id) !== String(pipelineIdResolved)) {
+        stats.skipped_other_pipeline += 1;
+        continue;
+      }
+
+      const { data: tasks, error: taskErr } = await supabase
+        .from('crm_tasks')
+        .select('id, stage_slug, pipeline_stage_id')
+        .eq('lead_id', lead.id);
+      if (taskErr) throw taskErr;
+
+      const crmTasks = (tasks || []).filter((t) => !isSxCrmTaskRow(t));
+      const orphanCrm = crmTasks.filter((t) => !t.pipeline_stage_id);
+      const nonOrphanCrm = crmTasks.filter((t) => t.pipeline_stage_id);
+
+      if (nonOrphanCrm.length > 0 && orphanCrm.length === 0) {
+        stats.skipped_has_pipeline_tasks += 1;
+        continue;
+      }
+
+      if (!lead.pipeline_id) {
+        const { error: bfErr } = await supabase
+          .from('crm_leads')
+          .update({ pipeline_id: pipelineIdResolved })
+          .eq('id', lead.id);
+        if (bfErr) throw bfErr;
+        stats.pipeline_backfilled += 1;
+      }
+
+      if (orphanCrm.length > 0) {
+        const orphanIds = orphanCrm.map((t) => t.id);
+        const { error: delErr } = await supabase.from('crm_tasks').delete().in('id', orphanIds);
+        if (delErr) throw delErr;
+        stats.orphans_purged += orphanIds.length;
+      }
+
+      if (nonOrphanCrm.length === 0) {
+        const created = await autoGenCrmTasks(lead.id, lead.type || 'lead', userId || lead.created_by);
+        if (created > 0) {
+          stats.regenerated += 1;
+          stats.tasks_created += created;
+        }
+      } else {
+        stats.purged_only += 1;
+      }
+    } catch (e) {
+      stats.errors.push({ lead_id: lead.id, error: e.message });
+    }
+  }
+
+  return stats;
+}
+
 module.exports = {
   autoGenCrmTasks,
+  applyCrmTaskTemplatesToCompanyRegions,
+  healOrphanCrmTasksForLead,
+  resyncCrmPipelineTasksForLead,
+  applyPipelineTemplatesForStage,
   FALLBACK_LEAD_TASKS,
   FALLBACK_DEAL_TASKS,
   completeConsultingCrmTasksForLead,

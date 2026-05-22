@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue } f
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import { getSocket, connectSocket } from '../lib/socket';
 import { formatVND, formatDate, formatDateTime } from '../lib/utils';
 import {
@@ -562,7 +563,7 @@ function dedupeCrmKanbanRows(rows) {
 export default function CRMDashboard() {
   const { user } = useAuth();
   const seesAllCrmDeals = userSeesAllCrmDealsScoped(user);
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminLike(user);
   /** Admin công ty (khác admin hệ thống): backend khóa API + GET /companies chỉ trả một công ty. */
   const isCompanyScopedAdmin = isCrmCompanyAdmin(user);
 
@@ -5480,7 +5481,7 @@ function KanbanView({
 
 // ── NEW DEAL MODAL ─────────────────────────────────────────────────────────
 function NewDealModal({ onClose, onSuccess, leadTypes, companies, defaultCompanyId, currentUser }) {
-  const isAdmin = currentUser?.role === 'admin';
+  const isAdmin = isAdminLike(currentUser);
   const [formData, setFormData] = useState({
     title: '',
     customer_name: '',
@@ -5860,7 +5861,7 @@ function NewDealModal({ onClose, onSuccess, leadTypes, companies, defaultCompany
 
 // New Lead Modal - Auto create customer
 function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultCompanyId, currentUser }) {
-  const isAdmin = currentUser?.role === 'admin';
+  const isAdmin = isAdminLike(currentUser);
   const [formData, setFormData] = useState({
     title: '',
     customer_name: '',

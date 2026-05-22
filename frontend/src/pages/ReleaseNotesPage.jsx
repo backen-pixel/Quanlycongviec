@@ -85,7 +85,7 @@ export default function ReleaseNotesPage() {
   const [expandedBuiltinId, setExpandedBuiltinId] = useState(BUILTIN_UPDATES[0]?.id ?? null);
   const { refresh: refreshUnread } = useReleaseNotesUnread();
   const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
-  const isAdmin = currentUser.role === 'admin' || currentUser.role === 'manager';
+  const isAdmin = ['admin', 'sales_admin', 'manager'].includes(currentUser.role);
 
   useEffect(() => {
     markAllBuiltinUpdatesRead();

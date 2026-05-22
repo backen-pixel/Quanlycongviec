@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Bell, RefreshCw, GitBranch, LayoutGrid, Filter, Building2 } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import { isCrmCompanyAdmin } from '../lib/crmAdminScope';
 import { resolveDefaultCrmAdminCompanyId, setStoredCrmFilterCompanyId } from '../lib/crmCompanyFilter';
 
@@ -723,7 +724,7 @@ function CrmFunnelSvg({ stages, accent }) {
 // ─────────────────────────────────────────────────────────────────────────────
 function LeadDealFunnelPanel() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminLike(user);
   const companyScopedAdmin = isCrmCompanyAdmin(user);
 
   const [companies, setCompanies] = useState([]);

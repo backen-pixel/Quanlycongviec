@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
 
 const CrmNotesFabContext = createContext(null);
@@ -41,7 +42,7 @@ export function GlobalCrmChatNotesFab() {
       notes={anchor?.notes ?? []}
       onPosted={anchor?.onPosted}
       currentUserId={user?.id || user?.userId}
-      canEditAnyNote={user?.role === 'admin' || user?.role === 'manager'}
+      canEditAnyNote={isAdminLike(user) || user?.role === 'manager'}
       contextLine={anchor?.contextLine ?? ''}
       contextBadge={anchor?.contextBadge ?? ''}
       includeVoiceTimeline={anchor?.includeVoiceTimeline === true}

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import Modal from '../components/Modal';
 import { Plus, Search, Package, Upload, Download, Trash2, Edit3, Save, X, Settings, ChevronDown, ChevronRight, Eye, FileSpreadsheet, Building2 } from 'lucide-react';
 import { formatVND } from '../lib/utils';
@@ -16,7 +17,7 @@ const LS_PRODUCTS_COMPANY = 'products_page_filter_company_id';
 
 export default function ProductsPage() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminLike(user);
   const [companies, setCompanies] = useState([]);
   const [filterCompanyId, setFilterCompanyId] = useState(() => {
     if (typeof window === 'undefined') return '';

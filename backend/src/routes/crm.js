@@ -24,6 +24,7 @@ const {
   isCrmRegionAdminUser,
   isCrmSystemAdminUser,
 } = require('../helpers/crmAccessRoles');
+const { isAdminLike, isSystemAdmin } = require('../helpers/adminRole');
 const {
   getCrmLeadRegionConstraint,
   applyCrmLeadRegionFilterToQuery,
@@ -43,6 +44,9 @@ const {
 } = require('../helpers/workshopApplyTemplates');
 const {
   autoGenCrmTasks,
+  applyCrmTaskTemplatesToCompanyRegions,
+  healOrphanCrmTasksForLead,
+  resyncCrmPipelineTasksForLead,
   FALLBACK_LEAD_TASKS,
   FALLBACK_DEAL_TASKS,
   completeConsultingCrmTasksForLead,
@@ -6148,8 +6152,7 @@ function parseUuidArrayJsonb(raw) {
 }
 
 function canUserViewDocByAllowlist(user, doc) {
-  const role = normalizeCrmUserRole(user?.role);
-  if (role === 'admin') return true;
+  if (isAdminLike(user)) return true;
   const uc = user?.company_id || user?.companyId || null;
   const ud = user?.department_id || null;
   const allowedCompanies = parseUuidArrayJsonb(doc?.allowed_companies);
@@ -9047,7 +9050,7 @@ function crmLeadRowVisibleToRequestUser(row, userId, role) {
 r.get('/customers-overview', async (req, res) => {
   try {
     let effectiveCompanyId = null;
-    if (req.user?.role !== 'admin') {
+    if (!isSystemAdmin(req.user)) {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
       effectiveCompanyId = cid;
@@ -9103,7 +9106,7 @@ r.get('/customers-overview', async (req, res) => {
 r.get('/customers-overview/:id', async (req, res) => {
   try {
     let effectiveCompanyId = null;
-    if (req.user?.role !== 'admin') {
+    if (!isSystemAdmin(req.user)) {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
       effectiveCompanyId = cid;
@@ -10754,49 +10757,22 @@ r.get('/leads/:id/tasks', async (req, res) => {
 
     data = await appendFulfillmentChildTasksForMasterDeal(req.params.id, data || [], lead);
 
-    // ── SELF-HEAL: dọn task "orphan" (không có pipeline_stage_id) khi deal đã có pipeline
-    //               + pipeline đã có template setup → xóa & gen lại tự động.
-    // Mục đích: nếu trước đây deal được tạo với FALLBACK hardcoded (pipeline_stage_id=null),
-    // sau khi user setup template gắn pipeline_stage_id, lần kế tiếp mở tab Nhiệm vụ sẽ tự đồng bộ.
+    // ── SELF-HEAL: dọn task orphan (pipeline_stage_id = null) khi lead/deal đã có pipeline + bộ mẫu.
+    // Xóa orphan ngay cả khi đã có task pipeline (mixed) — chỉ giữ task gắn pipeline_stage_id.
     if (lead?.pipeline_id && Array.isArray(data) && data.length > 0) {
       const sxAware = (t) => !String(t.stage_slug || '').startsWith('sx_');
-      const orphanCrm = data.filter((t) => sxAware(t) && !t.pipeline_stage_id);
-      const nonOrphanCrm = data.filter((t) => sxAware(t) && t.pipeline_stage_id);
-
-      if (orphanCrm.length > 0 && nonOrphanCrm.length === 0) {
-        // Kiểm tra pipeline có template gắn pipeline_stage_id không
-        const { data: stagesOfPl } = await supabase
-          .from('crm_pipeline_stages')
-          .select('id')
-          .eq('pipeline_id', lead.pipeline_id);
-        const stageIds = (stagesOfPl || []).map((s) => s.id);
-        let hasTemplates = false;
-        if (stageIds.length) {
-          const { count } = await supabase
-            .from('crm_task_templates')
-            .select('id', { count: 'exact', head: true })
-            .eq('is_active', true)
-            .in('pipeline_stage_id', stageIds);
-          hasTemplates = (count || 0) > 0;
-        }
-
-        if (hasTemplates) {
-          // Xóa orphan tasks (chỉ CRM, không đụng SX tasks)
-          const orphanIds = orphanCrm.map((t) => t.id);
-          await supabase.from('crm_tasks').delete().in('id', orphanIds);
-          console.log(`[SELF-HEAL] deal=${req.params.id}: deleted ${orphanIds.length} orphan tasks (no pipeline_stage_id), regenerating from setup templates...`);
-
-          // Gen lại theo template setup
-          const type = lead.type || 'lead';
-          const created = await autoGenCrmTasks(req.params.id, type, lead.created_by || req.user.userId);
-          if (created > 0) {
-            const { data: newData } = await supabase.from('crm_tasks')
-              .select(CRM_TASK_SELECT)
-              .eq('lead_id', req.params.id)
-              .order('stage_slug').order('order_index');
-            data = await appendFulfillmentChildTasksForMasterDeal(req.params.id, newData || [], lead);
-            console.log(`[SELF-HEAL] deal=${req.params.id}: regenerated ${created} tasks from pipeline templates.`);
-          }
+      const hasOrphan = data.some((t) => sxAware(t) && !t.pipeline_stage_id);
+      if (hasOrphan) {
+        const heal = await healOrphanCrmTasksForLead(
+          req.params.id,
+          req.user?.userId || lead.created_by,
+        );
+        if (heal.didHeal) {
+          const { data: newData } = await supabase.from('crm_tasks')
+            .select(CRM_TASK_SELECT)
+            .eq('lead_id', req.params.id)
+            .order('stage_slug').order('order_index');
+          data = await appendFulfillmentChildTasksForMasterDeal(req.params.id, newData || [], lead);
         }
       }
     }
@@ -10837,6 +10813,27 @@ r.get('/leads/:id/tasks', async (req, res) => {
 
     res.json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Gen lại nhiệm vụ CRM theo bộ mẫu pipeline (xóa thừa + đồng bộ giai đoạn hiện tại).
+r.post('/leads/:id/tasks/resync-pipeline', async (req, res) => {
+  try {
+    const { data: leadRow } = await supabase
+      .from('crm_leads')
+      .select('id, company_id, region_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!leadRow) return res.status(404).json({ error: 'Lead/deal không tồn tại' });
+
+    const regionCheck = assertLeadReadableByRegionScope(req, leadRow);
+    if (!regionCheck.ok) return res.status(403).json({ error: regionCheck.error });
+
+    const result = await resyncCrmPipelineTasksForLead(req.params.id, req.user?.userId);
+    if (!result.ok) return res.status(400).json(result);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // CREATE task
@@ -11540,7 +11537,7 @@ r.get('/leads/:id/task-attachments', async (req, res) => {
 r.get('/tasks/overview', async (req, res) => {
   try {
     let effectiveCompanyId = null;
-    if (req.user?.role !== 'admin') {
+    if (!isSystemAdmin(req.user)) {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
       effectiveCompanyId = cid;
@@ -11577,7 +11574,7 @@ r.get('/tasks/overview', async (req, res) => {
 r.get('/tasks/planner', async (req, res) => {
   try {
     let effectiveCompanyId = null;
-    if (req.user?.role !== 'admin') {
+    if (!isSystemAdmin(req.user)) {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
       effectiveCompanyId = cid;
@@ -11759,6 +11756,67 @@ r.delete('/task-templates/:id', async (req, res) => {
     if (error) throw error;
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Áp dụng bộ mẫu CRM cho toàn bộ lead/deal thuộc mọi khu vực của công ty (theo pipeline).
+r.post('/task-templates/apply-to-company-regions', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const companyId = b.company_id && String(b.company_id).trim();
+    if (!companyId) return res.status(400).json({ error: 'Thiếu company_id' });
+
+    const sac = scopedAdminCompanyId(req);
+    if (!isCrmSystemAdminUser(req.user) && !isAdminLike(req.user)) {
+      if (!sac || String(sac) !== String(companyId)) {
+        return res.status(403).json({ error: 'Chỉ admin công ty hoặc admin hệ thống mới áp dụng bộ mẫu cho toàn công ty' });
+      }
+    }
+
+    let pipelineId = b.pipeline_id && String(b.pipeline_id).trim();
+    if (pipelineId) {
+      const { data: pl } = await supabase
+        .from('crm_pipelines')
+        .select('id, company_id')
+        .eq('id', pipelineId)
+        .maybeSingle();
+      if (!pl) return res.status(400).json({ error: 'Pipeline không tồn tại' });
+      if (pl.company_id && String(pl.company_id) !== String(companyId)) {
+        return res.status(400).json({ error: 'Pipeline không thuộc công ty đã chọn' });
+      }
+    } else {
+      pipelineId = await getDefaultPipelineIdForCompany(companyId);
+    }
+    if (!pipelineId) {
+      return res.status(400).json({ error: 'Công ty chưa có pipeline CRM (chọn pipeline hoặc tạo pipeline mặc định)' });
+    }
+
+    const regionIds = normalizeRegionIdList(b.region_ids);
+    if (regionIds.length) {
+      for (const rid of regionIds) {
+        const chk = await assertRegionBelongsToCompany(supabase, companyId, rid);
+        if (!chk.ok) return res.status(400).json({ error: chk.error || 'Khu vực không hợp lệ' });
+      }
+    }
+
+    const leadTypeRaw = String(b.lead_type || 'both').toLowerCase();
+    const leadType = ['lead', 'deal', 'both'].includes(leadTypeRaw) ? leadTypeRaw : 'both';
+
+    const result = await applyCrmTaskTemplatesToCompanyRegions({
+      companyId,
+      pipelineId,
+      leadType,
+      regionIds: regionIds.length ? regionIds : null,
+      userId: req.user?.userId,
+    });
+
+    if (!result.ok) {
+      return res.status(400).json(result);
+    }
+
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Template items CRUD

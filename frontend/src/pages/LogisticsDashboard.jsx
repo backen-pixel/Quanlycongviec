@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue } f
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import { getSocket } from '../lib/socket';
 import { formatVND, formatDate } from '../lib/utils';
 import {
@@ -51,7 +52,7 @@ const PRIORITY_COLORS = {
 export default function LogisticsDashboard() {
   const P0 = useMemo(() => readVcDashPersisted(), []);
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminLike(user);
 
   const [kpis, setKpis] = useState(null);
   const [projects, setProjects] = useState([]);

@@ -1,6 +1,7 @@
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import api from '../lib/api';
 import NotificationCenter from './NotificationCenter';
 import { getInitials, avatarColor } from '../lib/utils';
@@ -404,10 +405,10 @@ export default function Sidebar() {
     if (isQuotationForm && !collapsed) setCollapsed(true);
   }, [location.pathname]);
 
-  const isAdmin = user?.role === 'admin' || user?.role === 'manager';
-  /** Sidebar CRM: role `admin` (cả admin hệ thống và admin công ty) thấy đủ mục cài đặt CRM; dữ liệu admin công ty vẫn khóa theo API */
-  const isCrmMenuAdmin = user?.role === 'admin';
-  const isExecutive = ['admin', 'manager', 'director', 'supervisor'].includes(user?.role);
+  const isAdmin = isAdminLike(user) || user?.role === 'manager';
+  /** Sidebar CRM: role admin/sales_admin (admin hệ thống, admin công ty, sales_admin) thấy đủ mục cài đặt CRM; dữ liệu vẫn khóa theo API. */
+  const isCrmMenuAdmin = isAdminLike(user);
+  const isExecutive = ['admin', 'manager', 'director', 'supervisor', 'sales_admin'].includes(user?.role);
   const [activeModule, setActiveModule] = useState(() => readStoredModule() || 'crm');
 
   useEffect(() => {

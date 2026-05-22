@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import { formatDate } from '../lib/utils';
 import {
   List, Calendar, Users, AlertTriangle, Search, CheckCircle2, Circle, Clock,
@@ -22,7 +23,7 @@ const STATUS_ICONS = { pending: Circle, in_progress: Clock, completed: CheckCirc
 
 export default function CRMTasksPage() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminLike(user);
 
   const [tasks, setTasks] = useState([]);
   const [users, setUsers] = useState([]);

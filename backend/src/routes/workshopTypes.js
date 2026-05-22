@@ -5,12 +5,13 @@ const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/newPermission');
+const { isSystemAdmin } = require('../helpers/adminRole');
 
 const r = Router();
 r.use(auth);
 
-function userIsAdmin(role) {
-  return role === 'admin';
+function userIsAdmin(user) {
+  return isSystemAdmin(user);
 }
 
 function requireUserCompanyId(req, res) {
@@ -32,7 +33,7 @@ r.get('/project-types', requirePermission('projects', 'view'), async (req, res) 
   try {
     const { company_id, module, all: allParam } = req.query;
     let companyId = company_id || null;
-    if (!userIsAdmin(req.user?.role)) {
+    if (!userIsAdmin(req.user)) {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
       if (companyId && String(companyId) !== String(cid)) {
@@ -66,7 +67,7 @@ r.post('/project-types', requirePermission('projects', 'edit'), async (req, res)
     const b = req.body || {};
     if (!b.name?.trim()) return res.status(400).json({ error: 'Thiếu tên loại' });
     let company_id = b.company_id || null;
-    if (!userIsAdmin(req.user?.role)) {
+    if (!userIsAdmin(req.user)) {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
       company_id = cid;
@@ -109,7 +110,7 @@ r.put('/project-types/:id', requirePermission('projects', 'edit'), async (req, r
       .eq('id', req.params.id)
       .single();
     if (exErr) throw exErr;
-    if (!userIsAdmin(req.user?.role)) {
+    if (!userIsAdmin(req.user)) {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
       if (String(existing.company_id || '') !== String(cid)) {
@@ -146,7 +147,7 @@ r.delete('/project-types/:id', requirePermission('projects', 'edit'), async (req
       .eq('id', req.params.id)
       .single();
     if (exErr) throw exErr;
-    if (!userIsAdmin(req.user?.role)) {
+    if (!userIsAdmin(req.user)) {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
       if (String(existing.company_id || '') !== String(cid)) {

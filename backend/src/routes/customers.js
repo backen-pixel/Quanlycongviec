@@ -3,6 +3,7 @@ const { requirePermission } = require('../middleware/newPermission');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { addPhoneToAutoLeadBlocklist } = require('../helpers/crmAutoLeadPhoneBlocklist');
+const { isSystemAdmin } = require('../helpers/adminRole');
 
 const r = Router();
 r.use(auth);
@@ -67,8 +68,8 @@ r.get('/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
 
-function customerAdmin(role) {
-  return role === 'admin';
+function customerAdmin(user) {
+  return isSystemAdmin(user);
 }
 
 // ─── CREATE CUSTOMER ──
@@ -77,7 +78,7 @@ r.post('/', async (req, res) => {
     const b = req.body;
     if (!b.full_name) return res.status(400).json({ error: 'Thiếu tên khách hàng' });
     let commercialCompanyId = null;
-    if (customerAdmin(req.user?.role)) {
+    if (customerAdmin(req.user)) {
       commercialCompanyId = b.company_id && String(b.company_id).trim() ? String(b.company_id).trim() : null;
     } else {
       commercialCompanyId = req.user?.company_id ? String(req.user.company_id) : null;

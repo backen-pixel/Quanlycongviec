@@ -129,6 +129,8 @@ async function fetchCrmLeadsForCustomerScoped(supabase, customerId, userId, role
     .slice(0, limit);
 }
 
+const { isAdminLike, isSystemAdmin, isCompanyScopedAdmin } = require('./adminRole');
+
 module.exports = {
   userSeesAllCrmDeals,
   userSeesAllCrmLeads,
@@ -140,4 +142,7 @@ module.exports = {
   isCrmSalesAdminUser,
   userSeesAllCrmLeadsForScope,
   userSeesAllCrmDealsForScope,
+  isAdminLike,
+  isSystemAdmin,
+  isCompanyScopedAdmin,
 };

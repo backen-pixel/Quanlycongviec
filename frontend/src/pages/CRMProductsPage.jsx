@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import { formatVND } from '../lib/utils';
 import { Package, Search, Plus, Edit3, X, Save, Boxes, Tag, FolderTree, Building2 } from 'lucide-react';
 
@@ -11,7 +12,7 @@ const LS_CRM_PRODUCTS_COMPANY = 'crm_products_filter_company_id';
 
 export default function CRMProductsPage() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminLike(user);
   const [companies, setCompanies] = useState([]);
   const [filterCompanyId, setFilterCompanyId] = useState(() => {
     if (typeof window === 'undefined') return '';

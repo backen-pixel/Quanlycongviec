@@ -6,6 +6,7 @@
  * Disable bằng env CSKH_CRON_DISABLED=1
  */
 const { supabase } = require('../config/supabase');
+const { isAdminLike } = require('../helpers/adminRole');
 
 const HOUR_MS = 3600 * 1000;
 const VN_OFFSET_MS = 7 * HOUR_MS;
@@ -159,7 +160,7 @@ async function runOnce(io) {
       }
     }
 
-    const adminUsers = (activeUsers || []).filter((u) => u.role === 'admin');
+    const adminUsers = (activeUsers || []).filter((u) => isAdminLike(u));
     for (const admin of adminUsers) {
       const cid = admin.company_id || null;
       const adminCared = caredByUser[admin.id];

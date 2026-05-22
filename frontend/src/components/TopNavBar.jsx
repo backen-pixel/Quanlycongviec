@@ -1,5 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import NotificationCenter from './NotificationCenter';
 import { getInitials, avatarColor } from '../lib/utils';
 import {
@@ -117,7 +118,7 @@ function DropdownMenu({ menu, isAdmin }) {
 export default function TopNavBar() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const isAdmin = user?.role === 'admin' || user?.role === 'manager';
+  const isAdmin = isAdminLike(user) || user?.role === 'manager';
 
   const doLogout = () => {
     logout();

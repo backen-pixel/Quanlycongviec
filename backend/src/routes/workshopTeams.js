@@ -253,7 +253,7 @@ r.get('/users', requirePermission('projects', 'view'), async (req, res) => {
     const { data } = await supabase
       .from('users')
       .select('id, full_name, email, role, avatar')
-      .in('role', ['logistics', 'installer', 'production', 'manager', 'admin'])
+      .in('role', ['logistics', 'installer', 'production', 'manager', 'admin', 'sales_admin'])
       .eq('is_active', true)
       .order('full_name');
     res.json(data || []);

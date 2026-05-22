@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import api from '../lib/api';
 import {
@@ -78,7 +79,7 @@ const LS_FB_COMPANY_INIT = 'facebook_filter_company_initialized';
 
 export default function FacebookPage() {
   const { socket, user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminLike(user);
   const [companies, setCompanies] = useState([]);
   const [filterFbCompany, setFilterFbCompany] = useState(() => {
     try { return localStorage.getItem(LS_FB_COMPANY) || ''; } catch { return ''; }
@@ -3241,7 +3242,7 @@ function AutoLeadTab() {
 
   // Load companies list for admin setup
   useEffect(() => {
-    if (user?.role !== 'admin') return;
+    if (!isAdminLike(user)) return;
     fetch(`${API}/api/companies`, { headers: hdr() })
       .then(r => r.ok ? r.json() : null)
       .then((d) => {
@@ -3408,7 +3409,7 @@ function AutoLeadTab() {
           <span className="w-6 h-6 bg-indigo-100 rounded-lg flex items-center justify-center text-xs">4</span>
           Công ty & loại Lead mặc định
         </h3>
-        {user?.role !== 'admin' ? (
+        {!isAdminLike(user) ? (
           <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
             Chỉ Admin được cấu hình công ty/loại mặc định cho auto tạo lead từ Facebook.
           </div>
@@ -4324,7 +4325,7 @@ function SettingsTab({ onPagesChanged }) {
         <select value={form.default_lead_owner_id} onChange={e => setForm({...form, default_lead_owner_id: e.target.value})}
           className="w-full px-3 py-2 text-sm border rounded cursor-pointer">
           <option value="">-- Người tạo Page (mặc định) --</option>
-          {users.map(u => <option key={u.id} value={u.id}>{u.full_name || u.email} {u.role === 'admin' ? '(Admin)' : ''}</option>)}
+          {users.map(u => <option key={u.id} value={u.id}>{u.full_name || u.email} {(u.role === 'admin' || u.role === 'sales_admin') ? '(Admin)' : ''}</option>)}
         </select>
         <p className="text-[10px] text-gray-400 mt-1">Khi có lead mới từ Facebook, người này sẽ được gán làm chủ lead + người phụ trách</p>
       </div>

@@ -11,6 +11,7 @@ const { Server } = require('socket.io');
 require('dotenv').config();
 const config = require('./config');
 const { recordUserPing } = require('./helpers/userPresence');
+const { isAdminLike } = require('./helpers/adminRole');
 
 const app = express();
 const server = http.createServer(app);
@@ -141,7 +142,7 @@ app.post('/api/metrics/reset', (req, res) => {
   try {
     const token = (req.headers.authorization || '').replace('Bearer ', '');
     const decoded = jwt_verify.verify(token, config.jwtSecret);
-    if (decoded?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+    if (!isAdminLike(decoded)) return res.status(403).json({ error: 'Forbidden' });
     resetMetrics();
     res.json({ ok: true });
   } catch { res.status(401).json({ error: 'Invalid token' }); }

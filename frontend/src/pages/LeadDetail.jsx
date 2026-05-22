@@ -9,6 +9,7 @@ import {
 import DocumentShareModulePicker from '../components/DocumentShareModulePicker';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
 import CRMTasksTab from '../components/CRMTasksTab';
@@ -72,7 +73,7 @@ export default function LeadDetail() {
   const { id } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const { socket, user } = useAuth();
-  const isAdminUser = user?.role === 'admin';
+  const isAdminUser = isAdminLike(user);
   const { setCrmNotesAnchor } = useCrmNotesFab();
   const loadRef = useRef(null);
   const loadSeqRef = useRef(0);
@@ -1685,7 +1686,7 @@ export default function LeadDetail() {
                   notes={noteActivities}
                   onPosted={() => load({ silent: true })}
                   currentUserId={user?.id || user?.userId}
-                  canEditAnyNote={user?.role === 'admin' || user?.role === 'manager'}
+                  canEditAnyNote={isAdminLike(user) || user?.role === 'manager'}
                   includeVoiceTimeline
                   contextLine={
                     lead

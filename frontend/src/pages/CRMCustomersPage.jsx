@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import { formatVND, formatDate } from '../lib/utils';
 import {
   Users, Search, Phone, Mail, Building2, Target,
@@ -13,7 +14,7 @@ const LS_CRM_CUSTOMERS_SEARCH = 'crm_customers_search_v1';
 
 export default function CRMCustomersPage() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminLike(user);
   const userCompanyId = user?.company_id ? String(user.company_id) : '';
 
   const [customers, setCustomers] = useState([]);
