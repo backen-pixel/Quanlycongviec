@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import { formatDate } from '../lib/utils';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import {
@@ -88,7 +89,7 @@ const TIME_PRESETS = [
 
 export default function CrmFollowUpCarePage() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminLike(user);
   const isCompanyScopedAdmin = isCrmCompanyAdmin(user);
   const [searchParams, setSearchParams] = useSearchParams();
 

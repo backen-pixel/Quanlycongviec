@@ -1,12 +1,14 @@
+import { isSystemAdmin, isCompanyScopedAdmin } from './adminRole';
+
 /**
- * Phân loại admin CRM (cùng role `admin` trong DB):
- * - Admin hệ thống: không gắn công ty → lọc/xem được mọi công ty (theo UI & query).
- * - Admin công ty: có `user.company_id` → API & dashboard khóa theo một công ty.
+ * Phân loại admin CRM:
+ * - Admin hệ thống: role `admin` và không gắn công ty → xem/lọc mọi công ty.
+ * - Admin công ty:  role `admin` hoặc `sales_admin` và có `company_id` → khoá theo một công ty.
  */
 export function isCrmSystemAdmin(user) {
-  return user?.role === 'admin' && !user?.company_id;
+  return isSystemAdmin(user);
 }
 
 export function isCrmCompanyAdmin(user) {
-  return user?.role === 'admin' && !!user?.company_id;
+  return isCompanyScopedAdmin(user);
 }

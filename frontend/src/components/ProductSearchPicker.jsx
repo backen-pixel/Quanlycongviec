@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import { formatVND } from '../lib/utils';
 import { Search, Package, X, Plus, ChevronDown, ChevronRight, Boxes, Tag } from 'lucide-react';
 
@@ -19,9 +20,9 @@ export default function ProductSearchPicker({ onSelect, onClose, multiSelect = f
   const { user } = useAuth();
   const companyParams = useMemo(() => {
     if (companyIdProp) return { company_id: companyIdProp };
-    if (user?.role !== 'admin' && user?.company_id) return { company_id: user.company_id };
+    if (!isAdminLike(user) && user?.company_id) return { company_id: user.company_id };
     return {};
-  }, [companyIdProp, user?.role, user?.company_id]);
+  }, [companyIdProp, user]);
 
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -339,9 +340,9 @@ export function ProductSearchInline({ onSelect, className = '', companyId: compa
   const { user } = useAuth();
   const companyParams = useMemo(() => {
     if (companyIdProp) return { company_id: companyIdProp };
-    if (user?.role !== 'admin' && user?.company_id) return { company_id: user.company_id };
+    if (!isAdminLike(user) && user?.company_id) return { company_id: user.company_id };
     return {};
-  }, [companyIdProp, user?.role, user?.company_id]);
+  }, [companyIdProp, user]);
 
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);

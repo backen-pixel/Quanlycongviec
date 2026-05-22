@@ -1,8 +1,9 @@
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 
-/** Giám đốc / quản lý / admin KV xem KPI & báo cáo nhân viên — khớp backend CRM report */
-const EXEC_ROLES = ['admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'region_admin'];
+/** Giám đốc / quản lý / admin KV / sales_admin xem KPI & báo cáo nhân viên — khớp backend CRM report */
+const EXEC_ROLES = ['admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'region_admin', 'sales_admin'];
 
 /**
  * Trang KPI Giám đốc và báo cáo cấp cao
@@ -38,6 +39,6 @@ export function RequireCrmElevated({ children }) {
     );
   }
   if (!user) return <Navigate to="/login" state={{ from: location }} replace />;
-  if (user.role !== 'admin') return <Navigate to="/crm/dashboard" replace />;
+  if (!isAdminLike(user)) return <Navigate to="/crm/dashboard" replace />;
   return children;
 }

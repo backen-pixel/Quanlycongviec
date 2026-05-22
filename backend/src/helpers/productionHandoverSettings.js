@@ -1,12 +1,12 @@
 const { supabase } = require('../config/supabase');
 
-/** Admin công ty xưởng (role admin + company_id khớp). */
+/** Admin công ty xưởng (role admin/sales_admin + company_id khớp). */
 async function resolveProductionCompanyAdminUserId(productionCompanyId) {
   if (!productionCompanyId) return null;
   const { data: admins, error } = await supabase
     .from('users')
     .select('id')
-    .eq('role', 'admin')
+    .in('role', ['admin', 'sales_admin'])
     .eq('company_id', productionCompanyId)
     .eq('is_active', true)
     .order('created_at', { ascending: true })

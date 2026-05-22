@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import Modal from '../components/Modal';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import { isCrmSystemAdmin, isCrmCompanyAdmin } from '../lib/crmAdminScope';
 import {
   Building2,
@@ -83,7 +84,7 @@ export default function OrganizationQuickSetupPage() {
   const { user } = useAuth();
   const systemAdmin = isCrmSystemAdmin(user);
   const companyAdmin = isCrmCompanyAdmin(user);
-  const canRegions = user?.role === 'admin';
+  const canRegions = isAdminLike(user);
 
   const [divisions, setDivisions] = useState([]);
   const [companies, setCompanies] = useState([]);

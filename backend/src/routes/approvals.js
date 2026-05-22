@@ -372,7 +372,7 @@ r.post('/project/:projectId/request', async (req, res) => {
         const { data: projFullAuto } = await supabase.from('projects')
           .select('project_manager_id,sales_person_id').eq('id', projectId).single();
         const { data: adminsAuto } = await supabase.from('users')
-          .select('id').in('role', ['admin', 'manager']).eq('is_active', true);
+          .select('id').in('role', ['admin', 'sales_admin', 'manager']).eq('is_active', true);
         const notifyIdsAuto = new Set([
           ...(adminsAuto || []).map(a => a.id),
           projFullAuto?.project_manager_id,
@@ -441,7 +441,7 @@ r.post('/project/:projectId/request', async (req, res) => {
 
     // Notify all admin/managers
     const { data: admins } = await supabase.from('users')
-      .select('id').in('role', ['admin', 'manager']).eq('is_active', true);
+      .select('id').in('role', ['admin', 'sales_admin', 'manager']).eq('is_active', true);
     if (admins?.length) {
       const adminIds = admins.map(a => a.id).filter(id => id && id !== approverId && id !== req.user.userId);
       for (const uid of adminIds) {
@@ -656,7 +656,7 @@ r.post('/:approvalId/re-request', async (req, res) => {
 
     // Notify all admin/managers
     const { data: adminsRe } = await supabase.from('users')
-      .select('id').in('role', ['admin', 'manager']).eq('is_active', true);
+      .select('id').in('role', ['admin', 'sales_admin', 'manager']).eq('is_active', true);
     if (adminsRe?.length) {
       for (const a of adminsRe) {
         if (a.id === approverId || a.id === req.user.userId) continue;

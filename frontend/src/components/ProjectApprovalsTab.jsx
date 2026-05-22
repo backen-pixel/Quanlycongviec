@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import { FileUploadButton, FilePreview } from './FileUpload';
 import {
   Shield, ShieldCheck, ShieldAlert, Clock, CheckCircle2, XCircle, RotateCcw,
@@ -39,7 +40,7 @@ export default function ProjectApprovalsTab({ projectId, project, onUpdated, aut
   const [showRequest, setShowRequest] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
 
-  const isAdmin = user?.role === 'admin' || user?.role === 'manager';
+  const isAdmin = isAdminLike(user) || user?.role === 'manager';
 
   // Auto-show request form when triggered from header button
   useEffect(() => {

@@ -2,12 +2,13 @@ const { Router } = require('express');
 const { requirePermission } = require('../middleware/newPermission');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
+const { isSystemAdmin } = require('../helpers/adminRole');
 
 const r = Router();
 r.use(auth);
 
 function adminProducts(req) {
-  return req.user?.role === 'admin';
+  return isSystemAdmin(req.user);
 }
 
 /** Admin: company_id query optional (null = all). Khác admin: bắt buộc company user. */

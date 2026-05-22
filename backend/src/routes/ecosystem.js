@@ -3,6 +3,7 @@ const { requirePermission } = require('../middleware/newPermission');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { KNOWN_MODULE_KEYS, buildMyModuleAccessMap, invalidateEcosystemModuleScopeCache } = require('../helpers/ecosystemModuleScope');
+const { isAdminLike } = require('../helpers/adminRole');
 
 const r = Router();
 r.use(auth);
@@ -848,7 +849,7 @@ r.get('/my-module-access', async (req, res) => {
 
 r.get('/module-scopes', async (req, res) => {
   try {
-    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Chỉ admin' });
+    if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Chỉ admin' });
     const { data, error } = await supabase.from('ecosystem_module_scopes').select('*');
     if (error) throw error;
     res.json({ scopes: data || [] });
@@ -860,7 +861,7 @@ r.get('/module-scopes', async (req, res) => {
 
 r.put('/module-scopes/:moduleKey', async (req, res) => {
   try {
-    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Chỉ admin' });
+    if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Chỉ admin' });
     const moduleKey = String(req.params.moduleKey || '').trim();
     if (!KNOWN_MODULE_KEYS.includes(moduleKey)) {
       return res.status(400).json({ error: `module_key phải là một trong: ${KNOWN_MODULE_KEYS.join(', ')}` });

@@ -1,13 +1,14 @@
 import { useState, useEffect, useMemo } from 'react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import { FolderTree, Plus, Edit3, Trash2, X, Save, ChevronRight, ChevronDown, GripVertical, Eye, EyeOff, ArrowUp, ArrowDown, Package, Building2 } from 'lucide-react';
 
 const LS_CATEGORIES_COMPANY = 'categories_page_filter_company_id';
 
 export default function CategoriesPage() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminLike(user);
   const [companies, setCompanies] = useState([]);
   const [filterCompanyId, setFilterCompanyId] = useState(() => {
     if (typeof window === 'undefined') return '';

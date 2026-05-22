@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isSystemAdmin } from '../lib/adminRole';
 import { Factory, Users, Save, Loader2, Plus, UserCircle } from 'lucide-react';
 
 export default function ProductionHandoverSettingsPage() {
   const { user } = useAuth();
-  const isGlobalAdmin = user?.role === 'admin' && !user?.company_id;
+  const isGlobalAdmin = isSystemAdmin(user);
   const lockedCo = user?.company_id ? String(user.company_id) : '';
 
   const [companies, setCompanies] = useState([]);

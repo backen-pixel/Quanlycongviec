@@ -4,6 +4,7 @@ const config = require('../config');
 const r = express.Router();
 const { supabase } = require('../config/supabase');
 const axios = require('axios');
+const { isAdminLike, isSystemAdmin } = require('../helpers/adminRole');
 const {
   activityTimestampMs,
   sortFacebookContactsNewestFirst,
@@ -2566,7 +2567,7 @@ async function resolveFacebookPageScope(req, res, opts = {}) {
   const { data: pages, error } = await supabase.from('facebook_pages').select('page_id, default_company_id');
   if (error) { res.status(500).json({ error: error.message }); return null; }
   const rows = pages || [];
-  if (req.user?.role === 'admin') {
+  if (isSystemAdmin(req.user)) {
     if (forcedLeadCompanyId) {
       return {
         mode: 'filter',
@@ -7333,7 +7334,7 @@ r.post('/canned-replies/import', authMiddleware, async (req, res) => {
 /** Admin: quét SĐT không khớp tin inbound (sau strip URL) trong khoảng có hoạt động tin nhắn — preview / xóa + chặn */
 r.post('/tools/link-only-phones/preview', authMiddleware, async (req, res) => {
   try {
-    if (req.user?.role !== 'admin') {
+    if (!isAdminLike(req.user)) {
       return res.status(403).json({ error: 'Chỉ admin dùng tool này' });
     }
     const { date_from, date_to, company_id = null, stream: streamBody, max_contacts } = req.body || {};
@@ -7381,7 +7382,7 @@ r.post('/tools/link-only-phones/preview', authMiddleware, async (req, res) => {
 
 r.post('/tools/link-only-phones/execute', authMiddleware, async (req, res) => {
   try {
-    if (req.user?.role !== 'admin') {
+    if (!isAdminLike(req.user)) {
       return res.status(403).json({ error: 'Chỉ admin dùng tool này' });
     }
     const { items, date_from, date_to } = req.body || {};

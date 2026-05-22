@@ -26,6 +26,7 @@ import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { resolveAttachmentUrl } from '../lib/resolveMediaUrl';
 import SocialPostMedia from '../components/SocialPostMedia';
 import { fileAttachmentsFromPost } from '../lib/socialMedia';
+import { isSystemAdmin as checkSystemAdmin } from '../lib/adminRole';
 
 type Props = NativeStackScreenProps<MoreStackParamList, 'SocialFeed'>;
 
@@ -35,10 +36,7 @@ const ADMIN_COMPANY_STORAGE_KEY = 'internal_social_filter_company_id';
 type CompanyOption = { id: string; name?: string | null; short_name?: string | null };
 
 function isSystemAdminUser(u: { role?: string; company_id?: string | null } | null | undefined): boolean {
-  if (!u) return false;
-  if (String(u.role || '').toLowerCase() !== 'admin') return false;
-  const cid = u.company_id == null ? '' : String(u.company_id).trim();
-  return cid.length === 0;
+  return checkSystemAdmin(u as never);
 }
 
 function timeAgo(iso?: string | null): string {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isSystemAdmin as checkSystemAdmin } from '../lib/adminRole';
 
 const LS_SOCIAL_COMPANY = 'internal_social_filter_company_id';
 
@@ -12,8 +13,7 @@ export function useInternalSocialUnread() {
   const { user } = useAuth();
   const [unread, setUnread] = useState(0);
 
-  const isSystemAdmin = user?.role === 'admin'
-    && !(user?.company_id != null && String(user.company_id).trim() !== '');
+  const isSystemAdmin = checkSystemAdmin(user);
 
   const refresh = useCallback(async () => {
     try {

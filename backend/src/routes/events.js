@@ -3,6 +3,7 @@ const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { notifyMultiple } = require('../helpers/notifications');
 const { isCrmSystemAdminUser, isCrmCompanyAdminUser } = require('../helpers/crmAccessRoles');
+const { isAdminLike } = require('../helpers/adminRole');
 const r = Router();
 
 r.use(auth);
@@ -91,7 +92,7 @@ async function assertEventCompanyAccess(req, res, eventId) {
  * Gọi sau `assertEventCompanyAccess` để đã đảm bảo cùng công ty.
  */
 async function assertEventDeletable(req, res, eventId) {
-  if (req.user?.role === 'admin') return true;
+  if (isAdminLike(req.user)) return true;
   const { data: row, error } = await supabase
     .from('crm_events')
     .select('created_by')

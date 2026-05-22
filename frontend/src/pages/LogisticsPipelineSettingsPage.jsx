@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import { Settings, Plus, Trash2, Save, ChevronRight, Loader2, Truck, Building2 } from 'lucide-react';
 import WorkshopTypeSettingsSection from '../components/WorkshopTypeSettingsSection';
 
@@ -12,7 +13,7 @@ const ICONS = ['🚚', '📦', '🔧', '🤝', '⏳', '📋', '✅', '🎯', '�
 
 export default function LogisticsPipelineSettingsPage() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminLike(user);
   const [companies, setCompanies] = useState([]);
   const [settingsCompanyId, setSettingsCompanyId] = useState('');
   const [stages, setStages] = useState([]);

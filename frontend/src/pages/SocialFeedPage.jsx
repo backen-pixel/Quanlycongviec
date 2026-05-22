@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isSystemAdmin as checkSystemAdmin } from '../lib/adminRole';
 import { getInitials } from '../lib/utils';
 import {
   ThumbsUp, MessageCircle,   Trash2, Send, Loader2, Building2,
@@ -1355,7 +1356,7 @@ function PostCard({
 export default function SocialFeedPage() {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const isSystemAdmin = user?.role === 'admin' && !(user?.company_id != null && String(user.company_id).trim() !== '');
+  const isSystemAdmin = checkSystemAdmin(user);
 
   const [companies, setCompanies] = useState([]);
   const [filterCompanyId, setFilterCompanyId] = useState(() => {

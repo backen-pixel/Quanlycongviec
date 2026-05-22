@@ -12,6 +12,7 @@ const {
   digitsOnly,
 } = require('../helpers/phoneCrmLink');
 const { nextCrmCode } = require('../helpers/crmNextCode');
+const { isAdminLike } = require('../helpers/adminRole');
 const {
   uploadVoiceFromTempFile,
   removeVoiceObject,
@@ -1021,7 +1022,7 @@ r.patch('/:id', async (req, res) => {
         }
       }
 
-      if (lead_id && req.user.role !== 'admin') {
+      if (lead_id && !isAdminLike(req.user)) {
         const { data: ld, error: lde } = await supabase
           .from('crm_leads')
           .select('id, assigned_to, lead_owner_id')

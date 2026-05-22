@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import { Network, Building2, Save, Loader2, ArrowLeft, Layers } from 'lucide-react';
 
 const MODULE_ROWS = [
@@ -15,7 +16,7 @@ const MODULE_ROWS = [
 
 export default function EcosystemModulesPage() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminLike(user);
   const [units, setUnits] = useState([]);
   const [local, setLocal] = useState({}); // moduleKey -> Set of division id
   const [loading, setLoading] = useState(true);

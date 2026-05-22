@@ -2,7 +2,8 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import api from '../lib/api';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
 import { useAuth } from '../lib/auth';
-import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Lock, Building2, Workflow, Globe } from 'lucide-react';
+import { isAdminLike } from '../lib/adminRole';
+import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Lock, Building2, Workflow, Globe, MapPin, RefreshCw } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -45,7 +46,7 @@ function SortableItem({ id, children }) {
 
 export default function CRMTemplatesPage() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+  const isAdmin = isAdminLike(user) || user?.role === 'super_admin';
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState({});
@@ -89,6 +90,9 @@ export default function CRMTemplatesPage() {
 
   // Banner cảnh báo khi DB thiếu bảng crm_pipelines (chưa chạy migration 21)
   const [pipelinesTableMissing, setPipelinesTableMissing] = useState(false);
+  const [companyRegions, setCompanyRegions] = useState([]);
+  const [applyingToRegions, setApplyingToRegions] = useState(false);
+  const [applyRegionsResult, setApplyRegionsResult] = useState(null);
 
   // Ref để bỏ qua việc save vào localStorage ở lần render đầu tiên
   // (tránh đè saved=null bằng saved="" làm mất khả năng auto-pick)
@@ -204,6 +208,19 @@ export default function CRMTemplatesPage() {
     setLoading(false);
   };
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selectedPipelineId]);
+
+  // Khu vực CRM của công ty đang chọn (để áp dụng bộ mẫu toàn công ty)
+  useEffect(() => {
+    let active = true;
+    if (!selectedCompanyId) {
+      setCompanyRegions([]);
+      return undefined;
+    }
+    api.get('/crm/company-regions', { params: { company_id: selectedCompanyId, for_module: 'crm' } })
+      .then((r) => { if (active) setCompanyRegions(Array.isArray(r.data) ? r.data : []); })
+      .catch(() => { if (active) setCompanyRegions([]); });
+    return () => { active = false; };
+  }, [selectedCompanyId]);
 
   // ── Load pipelines theo công ty đã chọn (+ auto-pick pipeline mặc định) ──
   useEffect(() => {
@@ -353,6 +370,68 @@ export default function CRMTemplatesPage() {
   const deleteTemplate = async (id) => {
     if (!confirm('Xóa bộ mẫu này?')) return;
     try { await api.delete(`/crm/task-templates/${id}`); load(); } catch { alert('Lỗi'); }
+  };
+
+  /** Áp dụng bộ mẫu pipeline hiện tại cho mọi lead/deal thuộc tất cả khu vực của công ty. */
+  const applyTemplatesToAllRegions = async () => {
+    if (!selectedCompanyId) {
+      alert('Chọn công ty trước');
+      return;
+    }
+    const pipelineId = effectivePipelineIdForStageEdit;
+    if (!pipelineId) {
+      alert('Công ty chưa có pipeline CRM. Tạo pipeline hoặc chọn pipeline ở picker phía trên.');
+      return;
+    }
+    if (!filteredTemplates.length) {
+      alert('Chưa có bộ mẫu nào cho pipeline/tab đang xem. Tạo bộ mẫu trước khi áp dụng.');
+      return;
+    }
+
+    const pipelineName = pipelines.find((p) => p.id === pipelineId)?.name
+      || fallbackCompanyPipeline?.name
+      || 'pipeline';
+    const regionLabel = companyRegions.length
+      ? `${companyRegions.length} khu vực (${companyRegions.map((r) => r.name).join(', ')})`
+      : 'mọi khu vực của công ty';
+
+    const typeLabel = activeTab === 'deal' ? 'Deal' : 'Lead';
+    const ok = window.confirm(
+      `Áp dụng bộ mẫu ${typeLabel} từ pipeline «${pipelineName}» cho toàn bộ ${regionLabel}?\n\n`
+      + 'Hệ thống sẽ:\n'
+      + '• Gán pipeline mặc định cho lead/deal chưa có pipeline\n'
+      + '• Xóa nhiệm vụ CRM cũ (legacy, chưa gắn giai đoạn pipeline) và gen lại theo bộ mẫu đã setup\n'
+      + '• Tạo nhiệm vụ mới cho lead/deal chưa có nhiệm vụ CRM\n\n'
+      + 'Lead/deal đã có nhiệm vụ gắn pipeline_stage_id sẽ được BỎ QUA (tránh ghi đè dữ liệu đang làm).\n\n'
+      + 'Tiếp tục?',
+    );
+    if (!ok) return;
+
+    setApplyingToRegions(true);
+    setApplyRegionsResult(null);
+    try {
+      const { data } = await api.post('/crm/task-templates/apply-to-company-regions', {
+        company_id: selectedCompanyId,
+        pipeline_id: pipelineId,
+        lead_type: activeTab,
+      });
+      setApplyRegionsResult(data);
+      const msg = [
+        `Đã quét ${data.scanned} ${typeLabel}.`,
+        data.regenerated ? `Gen lại ${data.regenerated} (${data.tasks_created} nhiệm vụ mới).` : null,
+        data.pipeline_backfilled ? `Gán pipeline cho ${data.pipeline_backfilled} lead/deal.` : null,
+        data.skipped_has_pipeline_tasks ? `Bỏ qua ${data.skipped_has_pipeline_tasks} (đã đúng pipeline, không orphan).` : null,
+        data.orphans_purged ? `Xóa ${data.orphans_purged} nhiệm vụ orphan.` : null,
+        data.purged_only ? `Dọn orphan tại ${data.purged_only} lead/deal (giữ task pipeline).` : null,
+        data.skipped_other_pipeline ? `Bỏ qua ${data.skipped_other_pipeline} (pipeline khác).` : null,
+        data.errors?.length ? `Lỗi: ${data.errors.length} bản ghi.` : null,
+      ].filter(Boolean).join('\n');
+      alert(msg || 'Hoàn tất');
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi áp dụng bộ mẫu');
+    } finally {
+      setApplyingToRegions(false);
+    }
   };
 
   // Pipeline ID hiệu lực cho các thao tác CRUD stage:
@@ -698,14 +777,55 @@ export default function CRMTemplatesPage() {
         </select>
         {isPipelineMode ? (
           <span className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-full flex items-center gap-1">
-            <Workflow className="h-3 w-3" /> Gắn vào pipeline — chỉ áp dụng cho lead/deal của pipeline này
+            <Workflow className="h-3 w-3" /> Pipeline này — áp dụng cho mọi khu vực của công ty
+          </span>
+        ) : selectedCompanyId ? (
+          <span className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-full flex items-center gap-1">
+            <MapPin className="h-3 w-3" /> Theo pipeline mặc định — áp dụng cho toàn bộ khu vực công ty
           </span>
         ) : (
           <span className="text-[11px] text-sky-700 bg-sky-50 border border-sky-200 px-2 py-1 rounded-full flex items-center gap-1">
             <Globe className="h-3 w-3" /> Bộ mẫu chung — áp dụng tất cả công ty (fallback khi pipeline không có mẫu riêng)
           </span>
         )}
+        {selectedCompanyId && effectivePipelineIdForStageEdit && (
+          <button
+            type="button"
+            disabled={applyingToRegions || !filteredTemplates.length}
+            onClick={() => void applyTemplatesToAllRegions()}
+            className="h-9 px-3 rounded-lg text-sm font-medium border border-violet-300 bg-violet-50 text-violet-800 hover:bg-violet-100 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center gap-2"
+            title="Đồng bộ nhiệm vụ CRM cho mọi lead/deal thuộc tất cả khu vực của công ty (theo bộ mẫu pipeline đang xem)"
+          >
+            <RefreshCw className={`h-4 w-4 ${applyingToRegions ? 'animate-spin' : ''}`} />
+            {applyingToRegions ? 'Đang áp dụng...' : 'Áp dụng cho toàn bộ khu vực'}
+          </button>
+        )}
       </div>
+
+      {applyRegionsResult && (
+        <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-xs text-violet-900 space-y-1">
+          <p className="font-semibold">Kết quả áp dụng bộ mẫu</p>
+          <p>Đã quét: <b>{applyRegionsResult.scanned}</b> lead/deal · Gen lại: <b>{applyRegionsResult.regenerated}</b> · Nhiệm vụ mới: <b>{applyRegionsResult.tasks_created}</b></p>
+          {(applyRegionsResult.orphans_purged > 0 || applyRegionsResult.purged_only > 0 || applyRegionsResult.skipped_has_pipeline_tasks > 0) && (
+            <p className="text-violet-700">
+              {applyRegionsResult.orphans_purged > 0 && <>Xóa orphan: {applyRegionsResult.orphans_purged}. </>}
+              {applyRegionsResult.purged_only > 0 && <>Dọn mixed: {applyRegionsResult.purged_only}. </>}
+              {applyRegionsResult.skipped_has_pipeline_tasks > 0 && <>Đã đúng: {applyRegionsResult.skipped_has_pipeline_tasks}. </>}
+              {applyRegionsResult.skipped_other_pipeline > 0 && <>Pipeline khác: {applyRegionsResult.skipped_other_pipeline}.</>}
+            </p>
+          )}
+        </div>
+      )}
+
+      {selectedCompanyId && companyRegions.length > 0 && (
+        <p className="text-[11px] text-gray-500 flex items-center gap-1 flex-wrap">
+          <MapPin className="h-3 w-3" />
+          Khu vực áp dụng ({companyRegions.length}):
+          {companyRegions.map((r) => (
+            <span key={r.id} className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-700">{r.name}</span>
+          ))}
+        </p>
+      )}
 
       {/* Cảnh báo DB chưa có bảng crm_pipelines */}
       {pipelinesTableMissing && (

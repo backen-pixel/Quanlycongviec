@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isSystemAdmin as checkSystemAdmin } from '../lib/adminRole';
 import KpiUserFilter from '../components/KpiUserFilter';
 import { RefreshCw, Bell, AlertTriangle, Clock, ExternalLink, MapPin, CheckCircle2 } from 'lucide-react';
 
@@ -18,7 +19,7 @@ export default function CrmSlaWatchlistPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   /** Admin hệ thống (không gắn company) — được «Tất cả công ty» / chọn công ty */
-  const isSystemAdmin = user?.role === 'admin' && !(user?.company_id != null && String(user.company_id).trim() !== '');
+  const isSystemAdmin = checkSystemAdmin(user);
   const [filter, setFilter] = useState({ companyId: '', departmentId: '', regionId: '', q: '' });
   const [regions, setRegions] = useState([]);
   const [type, setType] = useState('all');

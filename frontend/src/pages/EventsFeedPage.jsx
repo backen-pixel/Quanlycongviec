@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isAdminLike, isSystemAdmin as checkSystemAdmin } from '../lib/adminRole';
 import { formatDate } from '../lib/utils';
 import { isoToDatetimeLocalValue, datetimeLocalValueToIso } from '../lib/datetimeLocal';
 import {
@@ -50,9 +51,9 @@ function isToday(isoStr) { return isSameDay(isoStr, new Date()); }
 // ═══════════════════════════════════════════════════════════════
 export default function EventsFeedPage() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminLike(user);
   /** Admin hệ thống (không gắn company) — mới được lọc «tất cả công ty» / chọn công ty khác */
-  const isSystemAdmin = isAdmin && !(user?.company_id != null && String(user.company_id).trim() !== '');
+  const isSystemAdmin = checkSystemAdmin(user);
   const [companies, setCompanies] = useState([]);
   const [filterCompanyId, setFilterCompanyId] = useState(() => {
     try { return localStorage.getItem(LS_EVENTS_COMPANY) || ''; } catch { return ''; }
@@ -454,7 +455,7 @@ function EventCard({ event: ev, eventTypes, currentUser, onRespond, onDelete, on
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   /** Quyền hủy/xóa: chỉ người tạo (`created_by`) hoặc admin. */
-  const canManage = currentUser?.role === 'admin'
+  const canManage = isAdminLike(currentUser)
     || String(ev.created_by || '') === String(currentUser?.id || '');
 
   const typeInfo = eventTypes.find(t => t.slug === ev.event_type) || ev.event_type_ref || { icon: '📋', name: ev.event_type, color: '#6B7280' };

@@ -16,6 +16,7 @@ import {
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { api, formatApiError } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { isAdminLike } from '../lib/adminRole';
 import type { MoreStackParamList } from '../navigation/types';
 import type { SocialPost, SocialComment } from '../types/internalSocial';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
@@ -75,7 +76,7 @@ export default function SocialPostScreen({ route, navigation }: Props) {
   const { id } = route.params;
   const { user } = useAuth();
   const myId = String(user?.id || user?.userId || '');
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminLike(user);
 
   const [post, setPost] = useState<SocialPost | null>(null);
   const [comments, setComments] = useState<SocialComment[]>([]);

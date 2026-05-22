@@ -34,6 +34,7 @@ import {
 } from '../types/workTask';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { useAuth } from '../context/AuthContext';
+import { isAdminLike } from '../lib/adminRole';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'WorkTaskDetail'>;
 type R = RouteProp<MoreStackParamList, 'WorkTaskDetail'>;
@@ -192,7 +193,7 @@ export default function WorkTaskDetailScreen({
       uid &&
       (uid === String(task.created_by_id || '') ||
         uid === String(task.assignee_id || '') ||
-        user.role === 'admin' ||
+        isAdminLike(user) ||
         user.role === 'manager')
     );
   }, [task, user]);

@@ -12,6 +12,7 @@ const {
   isCrmRegionAdminUser,
 } = require('./crmAccessRoles');
 const { normalizeRegionIdList } = require('./crmRegionScope');
+const { isAdminLike } = require('./adminRole');
 
 /**
  * @param {string|null|undefined} projectStatus - projects.status
@@ -78,7 +79,7 @@ const SKIP_PROJECT_STATUSES_FOR_TASK_DEADLINE = new Set(['completed', 'cancelled
  */
 function userRowMatchesCompanyModuleDivision(userRow, companyToDivisions, restrictedSet) {
   if (!userRow?.id) return false;
-  if (userRow.role === 'admin') return true;
+  if (isAdminLike(userRow)) return true;
   if (restrictedSet == null) return true;
   const coId = userRow.company_id ? String(userRow.company_id) : '';
   if (!coId) return false;

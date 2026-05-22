@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import Modal from '../components/Modal';
 import { isCrmSystemAdmin, isCrmCompanyAdmin } from '../lib/crmAdminScope';
 import { MapPin, Plus, Pencil, Building2, RefreshCw, ExternalLink } from 'lucide-react';
@@ -13,7 +14,7 @@ export default function CompanyCrmRegionsPage() {
   const { user } = useAuth();
   const systemAdmin = isCrmSystemAdmin(user);
   const companyAdmin = isCrmCompanyAdmin(user);
-  const canMutate = user?.role === 'admin';
+  const canMutate = isAdminLike(user);
 
   const [companies, setCompanies] = useState([]);
   const [divisions, setDivisions] = useState([]);
