@@ -5,6 +5,77 @@
 const { supabase } = require('../config/supabase');
 const { getDefaultPipelineIdForCompany } = require('./crmTaxonomyCache');
 
+/**
+ * Khử trùng item bộ mẫu trước khi insert vào crm_tasks.
+ *
+ * Lý do: một pipeline_stage có thể (do dữ liệu) đang gắn nhiều bản template
+ * cùng tên / cùng nội dung (lỗi copy hoặc người dùng tạo trùng trên trang Bộ mẫu CRM).
+ * Khi gộp items từ N template trùng → mỗi mục bị nhân lên N lần
+ * (ví dụ stage "Mới" có 3 bản → "Tư vấn lần 1/2/3" hiện thành 9 nhiệm vụ).
+ *
+ * Quy tắc khử trùng:
+ * - Khoá = (stage_slug || '', pipeline_stage_id || '', order_index || 0, title chuẩn hoá)
+ * - Giữ lại bản gặp ĐẦU TIÊN (items đã được order theo order_index ở query gọi hàm).
+ * - Nếu dữ liệu xấu (title trùng nhưng khác order) vẫn được phát hiện và log
+ *   để admin biết mà dọn template trùng trên UI.
+ */
+function dedupeTemplateItemsForInsert(items, tplMap, fallbackStageId, logTag) {
+  if (!Array.isArray(items) || !items.length) return [];
+  const seen = new Map();
+  const dropped = [];
+  for (const item of items) {
+    const tpl = tplMap?.[item.template_id] || {};
+    const stageSlug = tpl.stage_slug || '';
+    const pipelineStageId = tpl.pipeline_stage_id || fallbackStageId || '';
+    const titleKey = String(item.title || '').trim().toLowerCase();
+    if (!titleKey) continue;
+    const key = `${stageSlug}|${pipelineStageId}|${item.order_index || 0}|${titleKey}`;
+    if (seen.has(key)) {
+      dropped.push({
+        title: item.title,
+        stage_slug: stageSlug,
+        pipeline_stage_id: pipelineStageId,
+        kept_template_id: seen.get(key).template_id,
+        dropped_template_id: item.template_id,
+      });
+      continue;
+    }
+    seen.set(key, item);
+  }
+  if (dropped.length) {
+    console.warn(
+      `[AUTO-TASK] ${logTag || ''} dedupe: bỏ ${dropped.length} item trùng từ template trùng. `
+      + `Vào trang Bộ mẫu CRM để xoá template thừa cho cùng pipeline_stage. `
+      + `Mẫu dropped: ${JSON.stringify(dropped.slice(0, 3))}`,
+    );
+  }
+  return Array.from(seen.values());
+}
+
+/**
+ * Cảnh báo (không chặn) khi 1 pipeline_stage_id đang có nhiều hơn 1 template active.
+ * Triết lý: 1 stage = 1 bộ mẫu nhiệm vụ. Nhiều bộ mẫu cho cùng stage thường là dữ liệu lỗi.
+ */
+function warnDuplicateTemplatesPerStage(templates, logTag) {
+  if (!Array.isArray(templates) || templates.length < 2) return;
+  const byStage = new Map();
+  for (const t of templates) {
+    const sid = t.pipeline_stage_id || null;
+    if (!sid) continue;
+    if (!byStage.has(sid)) byStage.set(sid, []);
+    byStage.get(sid).push(t);
+  }
+  for (const [sid, list] of byStage) {
+    if (list.length > 1) {
+      console.warn(
+        `[AUTO-TASK] ${logTag || ''} pipeline_stage_id=${sid} đang có ${list.length} template active `
+        + `(${list.map((t) => `${t.name || t.id}`).join(' | ')}). `
+        + `Hệ thống sẽ dedupe theo title, nhưng nên vào Bộ mẫu CRM xoá bản thừa.`,
+      );
+    }
+  }
+}
+
 const FALLBACK_LEAD_TASKS = [
   { title: 'Tiếp nhận yêu cầu khách hàng', description: 'Ghi nhận thông tin KH, nhu cầu sử dụng', priority: 'high', stage_slug: 'consulting', order_index: 1, deadline_days: 0 },
   { title: 'Tư vấn sản phẩm & vật liệu', description: 'Tư vấn chất liệu, phụ kiện phù hợp', priority: 'high', stage_slug: 'consulting', order_index: 2, deadline_days: 1 },
@@ -181,6 +252,8 @@ async function autoGenCrmTasks(leadId, type, userId) {
   let inserts = [];
 
   if (templates?.length) {
+    warnDuplicateTemplatesPerStage(templates, `${type} ${leadId}`);
+
     const tplIds = templates.map(t => t.id);
     const { data: allItems, error: itemErr } = await supabase
       .from('crm_task_template_items')
@@ -194,7 +267,14 @@ async function autoGenCrmTasks(leadId, type, userId) {
       const tplMap = {};
       templates.forEach(t => { tplMap[t.id] = t; });
 
-      inserts = allItems.map(item => {
+      const dedupedItems = dedupeTemplateItemsForInsert(
+        allItems,
+        tplMap,
+        leadStageId,
+        `${type} ${leadId}`,
+      );
+
+      inserts = dedupedItems.map(item => {
         const tpl = tplMap[item.template_id] || {};
         return {
           lead_id: leadId,
@@ -357,7 +437,15 @@ async function applyLegacyGlobalTemplatesForStage(leadId, stageSlug, userId, typ
 
   const tplMap = {};
   tpls.forEach((t) => { tplMap[t.id] = t; });
-  const inserts = allItems.map((item) => ({
+
+  const dedupedItems = dedupeTemplateItemsForInsert(
+    allItems,
+    tplMap,
+    null,
+    `legacy slug=${slug} lead=${leadId}`,
+  );
+
+  const inserts = dedupedItems.map((item) => ({
     lead_id: leadId,
     title: item.title,
     description: item.description || null,
@@ -461,6 +549,11 @@ async function applyPipelineTemplatesForStage(leadId, stageId, userId, { force =
     if (existsForStage?.length) return { deleted: 0, created: 0, skipped: true, reason: 'already_has_tasks' };
   }
 
+  warnDuplicateTemplatesPerStage(
+    pipelineTpls.map((t) => ({ ...t, pipeline_stage_id: stageId })),
+    `apply stage=${stageId} lead=${leadId}`,
+  );
+
   const tplIds = pipelineTpls.map((t) => t.id);
   const { data: allItems, error: itemErr } = await supabase
     .from('crm_task_template_items')
@@ -472,7 +565,15 @@ async function applyPipelineTemplatesForStage(leadId, stageId, userId, { force =
 
   const tplMap = {};
   pipelineTpls.forEach((t) => { tplMap[t.id] = t; });
-  const inserts = allItems.map((item) => ({
+
+  const dedupedItems = dedupeTemplateItemsForInsert(
+    allItems,
+    tplMap,
+    stageId,
+    `apply stage=${stageId} lead=${leadId}`,
+  );
+
+  const inserts = dedupedItems.map((item) => ({
     lead_id: leadId,
     title: item.title,
     description: item.description || null,
@@ -510,7 +611,19 @@ async function getExpectedTemplateTitlesForStage(stageId) {
     .in('template_id', tplIds)
     .order('order_index');
   if (error) throw error;
-  const titles = (items || []).map((i) => String(i.title || '').trim()).filter(Boolean);
+  // Dedupe: cùng (order_index, title) chỉ tính 1 lần.
+  // Khớp với hành vi dedupe ở dedupeTemplateItemsForInsert — tránh false-positive "cần resync"
+  // khi 1 pipeline_stage lỡ có nhiều template trùng nội dung.
+  const seen = new Set();
+  const titles = [];
+  for (const i of (items || [])) {
+    const t = String(i.title || '').trim();
+    if (!t) continue;
+    const k = `${i.order_index || 0}|${t.toLowerCase()}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    titles.push(t);
+  }
   return titles.length ? titles : null;
 }
 

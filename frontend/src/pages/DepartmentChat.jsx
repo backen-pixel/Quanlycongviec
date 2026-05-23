@@ -7,7 +7,7 @@ import { getInitials, avatarColor, ROLE_LABELS } from '../lib/utils';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import {
   Send, ArrowLeft, Pin, Reply, Trash2, Edit, MoreVertical, Paperclip, X,
-  Users, Building, Image, File, Plus, Video, UserPlus, Smile
+  Users, Building, Image, File, Plus, Video, UserPlus, Smile, Bot
 } from 'lucide-react';
 
 export default function DepartmentChat() {
@@ -311,6 +311,7 @@ export default function DepartmentChat() {
                   </div>
                   {msgs.map((msg, i) => {
                     const isMe = msg.sender_id === user?.userId;
+                    const isBot = !!msg.sender?.is_bot || msg.is_system === true;
                     const showAvatar = i === 0 || msgs[i - 1]?.sender_id !== msg.sender_id;
                     return (
                       <div key={msg.id}
@@ -319,18 +320,31 @@ export default function DepartmentChat() {
                         {/* Avatar */}
                         <div className="w-8 shrink-0">
                           {showAvatar && (
-                            <div className="h-8 w-8 rounded-full flex items-center justify-center text-white text-[10px] font-bold"
-                              style={{ backgroundColor: avatarColor(msg.sender?.full_name || '') }}>
-                              {getInitials(msg.sender?.full_name || '')}
-                            </div>
+                            isBot ? (
+                              <div className="h-8 w-8 rounded-full flex items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-600 shadow-md ring-2 ring-white">
+                                <Bot className="h-4 w-4 text-white" />
+                              </div>
+                            ) : (
+                              <div className="h-8 w-8 rounded-full flex items-center justify-center text-white text-[10px] font-bold"
+                                style={{ backgroundColor: avatarColor(msg.sender?.full_name || '') }}>
+                                {getInitials(msg.sender?.full_name || '')}
+                              </div>
+                            )
                           )}
                         </div>
 
                         {/* Bubble */}
                         <div className={`max-w-[70%] ${isMe ? 'items-end' : 'items-start'}`}>
                           {showAvatar && (
-                            <p className={`text-[10px] font-medium mb-0.5 ${isMe ? 'text-right text-blue-600' : 'text-gray-500'}`}>
+                            <p className={`text-[10px] font-medium mb-0.5 flex items-center gap-1 ${
+                              isBot ? 'text-indigo-600' : isMe ? 'text-right text-blue-600 justify-end' : 'text-gray-500'
+                            }`}>
                               {msg.sender?.full_name}
+                              {isBot && (
+                                <span className="px-1.5 py-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-[8px] font-bold">
+                                  BOT
+                                </span>
+                              )}
                             </p>
                           )}
 
@@ -343,7 +357,9 @@ export default function DepartmentChat() {
                           )}
 
                           <div className={`relative rounded-2xl px-3.5 py-2 text-sm ${
-                            isMe ? 'bg-blue-600 text-white rounded-tr-md' : 'bg-gray-100 text-gray-900 rounded-tl-md'
+                            isBot
+                              ? 'bg-gradient-to-br from-indigo-50 to-purple-50 text-gray-900 rounded-tl-md border border-indigo-200'
+                              : isMe ? 'bg-blue-600 text-white rounded-tr-md' : 'bg-gray-100 text-gray-900 rounded-tl-md'
                           } ${msg.is_pinned ? 'ring-1 ring-amber-400' : ''}`}>
                             {msg.is_pinned && <Pin className="absolute -top-1 -right-1 h-3 w-3 text-amber-500" />}
                             <p className="whitespace-pre-wrap break-words">{msg.content}</p>
@@ -387,7 +403,9 @@ export default function DepartmentChat() {
                               </div>
                             )}
 
-                            <div className={`flex items-center gap-1 mt-0.5 text-[9px] ${isMe ? 'text-blue-200 justify-end' : 'text-gray-400'}`}>
+                            <div className={`flex items-center gap-1 mt-0.5 text-[9px] ${
+                              isBot ? 'text-indigo-400' : isMe ? 'text-blue-200 justify-end' : 'text-gray-400'
+                            }`}>
                               <span>{new Date(msg.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</span>
                               {msg.is_edited && <span>(đã sửa)</span>}
                             </div>

@@ -131,6 +131,7 @@ const DepartmentChat = lazyWithRetry(() => import('./pages/DepartmentChat'));
 const PDFSettingsPage = lazyWithRetry(() => import('./pages/PDFSettingsPage'));
 const MisaSettingsPage = lazyWithRetry(() => import('./pages/MisaSettingsPage'));
 const ApiKeysSettingsPage = lazyWithRetry(() => import('./pages/ApiKeysSettingsPage'));
+const AiChatBotSettingsPage = lazyWithRetry(() => import('./pages/AiChatBotSettingsPage'));
 const CreateProject = lazyWithRetry(() => import('./pages/CreateProject'));
 const PermissionsPage = lazyWithRetry(() => import('./pages/PermissionsPage'));
 const EcosystemPermissionsPage = lazyWithRetry(() => import('./pages/EcosystemPermissionsPage'));
@@ -138,6 +139,12 @@ const WorkflowHubPage = lazyWithRetry(() => import('./pages/WorkflowHubPage'));
 const ProjectWorkflowPage = lazyWithRetry(() => import('./pages/ProjectWorkflowPage'));
 const DivisionDashboardPage = lazyWithRetry(() => import('./pages/DivisionDashboardPage'));
 const GuidePage = lazyWithRetry(() => import('./pages/GuidePage'));
+const KnowledgeLibraryPage = lazyWithRetry(() => import('./pages/KnowledgeLibraryPage'));
+const KnowledgeLessonPage = lazyWithRetry(() => import('./pages/KnowledgeLessonPage'));
+const KnowledgeExercisePage = lazyWithRetry(() => import('./pages/KnowledgeExercisePage'));
+const KnowledgeMyHistoryPage = lazyWithRetry(() => import('./pages/KnowledgeMyHistoryPage'));
+const KnowledgeAdminPage = lazyWithRetry(() => import('./pages/KnowledgeAdminPage'));
+const KnowledgeScoreboardPage = lazyWithRetry(() => import('./pages/KnowledgeScoreboardPage'));
 const CategoriesPage = lazyWithRetry(() => import('./pages/CategoriesPage'));
 const PrivacyPage = lazyWithRetry(() => import('./pages/PrivacyPage'));
 const VoiceRecordingsPage = lazyWithRetry(() => import('./pages/VoiceRecordingsPage'));
@@ -245,7 +252,8 @@ function ProtectedLayout() {
       path.startsWith('/settings/password') ||
       path.startsWith('/settings/location') ||
       path.startsWith('/settings/devices') ||
-      path.startsWith('/updates');
+      path.startsWith('/updates') ||
+      path.startsWith('/knowledge');
     if (!allowed) {
       return <Navigate to="/crm/dashboard" replace />;
     }
@@ -392,6 +400,7 @@ export default function App() {
             <Route path="/settings/theme" element={<ThemeSettingsPage />} />
             <Route path="/settings/misa" element={<RequireCrmElevated><MisaSettingsPage /></RequireCrmElevated>} />
             <Route path="/settings/api-keys" element={<RequireCrmElevated><ApiKeysSettingsPage /></RequireCrmElevated>} />
+            <Route path="/settings/ai-chat-bot" element={<RequireCrmElevated><AiChatBotSettingsPage /></RequireCrmElevated>} />
             <Route path="/settings/request-monitor" element={<RequestMonitorPage />} />
             <Route path="/admin/trash" element={<RequireCrmElevated><TrashPage /></RequireCrmElevated>} />
             <Route path="/crm/customers" element={<CRMCustomersPage />} />
@@ -421,6 +430,12 @@ export default function App() {
             </Route>
             <Route path="/ecosystem-permissions" element={<EcosystemPermissionsPage />} />
             <Route path="/guide" element={<GuidePage />} />
+            <Route path="/knowledge" element={<KnowledgeLibraryPage />} />
+            <Route path="/knowledge/lessons/:id" element={<KnowledgeLessonPage />} />
+            <Route path="/knowledge/exercises/:id" element={<KnowledgeExercisePage />} />
+            <Route path="/knowledge/my-history" element={<KnowledgeMyHistoryPage />} />
+            <Route path="/knowledge/admin" element={<KnowledgeAdminPage />} />
+            <Route path="/knowledge/scoreboard" element={<KnowledgeScoreboardPage />} />
             <Route path="/updates" element={<ReleaseNotesPage />} />
             <Route path="/settings" element={
               <div className="flex items-center justify-center h-64 text-gray-400">

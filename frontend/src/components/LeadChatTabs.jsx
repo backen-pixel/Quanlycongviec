@@ -897,9 +897,11 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
       <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-2 bg-gray-50 rounded-t-xl">
         {messages.map((m) => {
           const isMe = String(m.user_id) === String(uid);
+          const isBot = !!m.user?.is_bot;
           const mentioned =
             Array.isArray(m.mention_user_ids) && m.mention_user_ids.map(String).includes(String(uid));
-          if (m.is_system) {
+          // System join/leave/etc — bot AI có is_system=true nhưng KHÔNG dùng message_type='system'.
+          if (m.is_system && !isBot && m.message_type === 'system') {
             return (
               <div key={m.id} className="flex justify-center my-2">
                 <span className="text-[10px] text-violet-700 bg-violet-50 px-3 py-1.5 rounded-full shadow-sm border border-violet-100 max-w-[95%] text-center leading-snug">
@@ -923,7 +925,15 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
                 isHighlight ? 'ring-2 ring-amber-300 bg-amber-50/60' : ''
               }`}
             >
-              {!isMe && <Avatar name={senderName} url={m.user?.avatar} size={7} />}
+              {!isMe && (
+                isBot ? (
+                  <div className="h-7 w-7 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-md ring-2 ring-white shrink-0">
+                    <span className="text-white text-sm">🤖</span>
+                  </div>
+                ) : (
+                  <Avatar name={senderName} url={m.user?.avatar} size={7} />
+                )
+              )}
               <div className="flex items-center gap-1 max-w-[78%]">
                 {isMe && (
                   <button
@@ -938,12 +948,23 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
                 )}
                 <div
                   className={`rounded-2xl px-3.5 py-2 shadow-sm ${
-                    isMe
-                      ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-br-md'
-                      : 'bg-white text-gray-800 rounded-bl-md border border-gray-100'
+                    isBot
+                      ? 'bg-gradient-to-br from-indigo-50 to-purple-50 text-gray-900 rounded-bl-md border border-indigo-200'
+                      : isMe
+                        ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-br-md'
+                        : 'bg-white text-gray-800 rounded-bl-md border border-gray-100'
                   }`}
                 >
-                  {!isMe && <p className="text-[10px] font-medium mb-0.5 text-blue-600">{senderName}</p>}
+                  {!isMe && (
+                    <p className={`text-[10px] font-medium mb-0.5 flex items-center gap-1 ${isBot ? 'text-indigo-600' : 'text-blue-600'}`}>
+                      {senderName}
+                      {isBot && (
+                        <span className="px-1.5 py-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-[8px] font-bold">
+                          BOT
+                        </span>
+                      )}
+                    </p>
+                  )}
                   {mentioned && (
                     <p className="text-[9px] font-semibold mb-1 text-amber-700 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5 inline-block">
                       Bạn được nhắc (@)
@@ -954,7 +975,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
                     {renderMessengerTextContent(m.content, isMe)}
                   </div>
                   {renderAttachmentsGrouped(m)}
-                  <p className={`text-[9px] mt-1 ${isMe ? 'text-blue-200' : 'text-gray-400'}`}>{formatTime(m.created_at)}</p>
+                  <p className={`text-[9px] mt-1 ${isBot ? 'text-indigo-400' : isMe ? 'text-blue-200' : 'text-gray-400'}`}>{formatTime(m.created_at)}</p>
                 </div>
                 {!isMe && (
                   <button

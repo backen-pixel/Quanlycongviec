@@ -157,7 +157,7 @@ async function notifyMessengerGroupChatRecipients(req, groupId, senderId, msgRow
   );
 }
 
-const MSG_USER_SELECT = '*, user:users!messenger_group_messages_user_id_fkey(id, full_name, avatar)';
+const MSG_USER_SELECT = '*, user:users!messenger_group_messages_user_id_fkey(id, full_name, avatar, is_bot)';
 
 /**
  * Hydrate parent message (cho tin nhắn reply). Dùng query riêng thay vì
@@ -209,7 +209,7 @@ async function fetchUsersByIdsForMessenger(idList) {
   const BATCH = 200;
   for (let i = 0; i < ids.length; i += BATCH) {
     const slice = ids.slice(i, i + BATCH);
-    const { data, error } = await supabase.from('users').select('id, full_name, email, avatar').in('id', slice);
+    const { data, error } = await supabase.from('users').select('id, full_name, email, avatar, is_bot').in('id', slice);
     if (error) throw error;
     rows.push(...(data || []));
   }
@@ -698,11 +698,181 @@ r.post('/groups', async (req, res) => {
   }
 });
 
-/** Thêm thành viên (mọi thành viên hiện tại đều được thêm — có thể siết leader sau) */
-r.post('/groups/:id/members', async (req, res) => {
+/**
+ * Kiểm tra user có vai trò leader/deputy trong nhóm không (để cho phép quản trị nhóm).
+ * Admin hệ thống (admin / sales_admin) cũng được tính như leader.
+ */
+async function assertGroupLeader(groupId, userId) {
+  const { data: u } = await supabase.from('users').select('role').eq('id', userId).maybeSingle();
+  if (isAdminLike(u)) return true;
+  const { data } = await supabase
+    .from('messenger_group_members')
+    .select('role')
+    .eq('group_id', groupId)
+    .eq('user_id', userId)
+    .maybeSingle();
+  return !!data && (data.role === 'leader' || data.role === 'deputy');
+}
+
+/** Danh sách thành viên + thông tin user của 1 nhóm (mọi thành viên xem được). */
+r.get('/groups/:id/members', async (req, res) => {
   try {
     const ok = await assertGroupMember(req.params.id, req.authUserId);
     if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
+    const { data: memberRows } = await supabase
+      .from('messenger_group_members')
+      .select('id, group_id, user_id, role, added_by, created_at')
+      .eq('group_id', req.params.id)
+      .order('created_at');
+    const uids = [...new Set((memberRows || []).map((m) => m.user_id).filter(Boolean))];
+    let userMap = new Map();
+    if (uids.length) {
+      const users = await fetchUsersByIdsForMessenger(uids);
+      userMap = new Map(users.map((u) => [String(u.id), u]));
+    }
+    const members = (memberRows || []).map((m) => ({ ...m, user: userMap.get(String(m.user_id)) || null }));
+    res.json({ members });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Xoá thành viên khỏi nhóm — chỉ leader/deputy hoặc admin hệ thống.
+ * Không cho xoá chính creator của nhóm (giữ cấu trúc).
+ */
+r.delete('/groups/:id/members/:userId', async (req, res) => {
+  try {
+    const gid = req.params.id;
+    const targetId = req.params.userId;
+    const isLeader = await assertGroupLeader(gid, req.authUserId);
+    if (!isLeader) return res.status(403).json({ error: 'Chỉ leader/deputy mới được xoá thành viên' });
+
+    // Không cho xoá creator nhóm
+    const { data: grp } = await supabase
+      .from('messenger_groups')
+      .select('id, is_direct, created_by')
+      .eq('id', gid)
+      .maybeSingle();
+    if (!grp) return res.status(404).json({ error: 'Nhóm không tồn tại' });
+    if (grp.is_direct) return res.status(400).json({ error: 'Không quản lý thành viên cho chat trực tiếp' });
+    if (String(grp.created_by) === String(targetId)) {
+      return res.status(400).json({ error: 'Không thể xoá người tạo nhóm' });
+    }
+
+    const { data: target } = await supabase.from('users').select('full_name').eq('id', targetId).single();
+    const { data: actor } = await supabase.from('users').select('full_name').eq('id', req.authUserId).single();
+
+    const { error } = await supabase
+      .from('messenger_group_members')
+      .delete()
+      .eq('group_id', gid)
+      .eq('user_id', targetId);
+    if (error) return res.status(400).json({ error: error.message });
+
+    const io = req.app.get('io');
+    const { data: ins } = await supabase
+      .from('messenger_group_messages')
+      .insert({
+        group_id: gid,
+        user_id: req.authUserId,
+        content: `${actor?.full_name || 'Quản trị viên'} đã xoá ${target?.full_name || 'thành viên'} khỏi nhóm`,
+        message_type: 'system',
+        is_system: true,
+      })
+      .select('id')
+      .single();
+    if (io && ins?.id) {
+      const full = await fetchMessengerMessageById(ins.id);
+      if (full) io.to(`messenger_group:${gid}`).emit('messenger_group:chat', full);
+      io.to(`messenger_group:${gid}`).emit('messenger_group:members', { group_id: gid });
+    }
+
+    // Push mobile + socket notification cho user bị xoá
+    try {
+      const { data: grpInfo } = await supabase
+        .from('messenger_groups')
+        .select('name')
+        .eq('id', gid)
+        .maybeSingle();
+      const grpName = grpInfo?.name || 'Nhóm chat';
+      await notifyMultiple(
+        req,
+        [targetId],
+        'messenger_chat',
+        'Bạn đã bị xoá khỏi nhóm',
+        `${actor?.full_name || 'Quản trị viên'} đã xoá bạn khỏi nhóm «${grpName}»`,
+        'messenger_group',
+        gid,
+        {
+          group_name: grpName,
+          sender_name: actor?.full_name || 'Quản trị viên',
+          sender_id: req.authUserId,
+          bubble_key: String(gid),
+          message_type: 'system',
+          event: 'member_removed',
+        },
+      );
+    } catch (e) {
+      console.warn('[messengerGroups] notify remove-member lỗi:', e.message || e);
+    }
+
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Đổi vai trò thành viên (member ↔ deputy). Không cho gán/huỷ leader để tránh tranh chấp;
+ * leader cố định = người tạo nhóm.
+ */
+r.patch('/groups/:id/members/:userId/role', async (req, res) => {
+  try {
+    const gid = req.params.id;
+    const targetId = req.params.userId;
+    const isLeader = await assertGroupLeader(gid, req.authUserId);
+    if (!isLeader) return res.status(403).json({ error: 'Chỉ leader/deputy mới được đổi vai trò' });
+
+    let role = mapIncomingRole(req.body?.role);
+    if (role === 'leader') role = 'deputy'; // không cho promote leader
+
+    const { data: grp } = await supabase
+      .from('messenger_groups')
+      .select('id, created_by')
+      .eq('id', gid)
+      .maybeSingle();
+    if (!grp) return res.status(404).json({ error: 'Nhóm không tồn tại' });
+    if (String(grp.created_by) === String(targetId)) {
+      return res.status(400).json({ error: 'Người tạo nhóm luôn là leader' });
+    }
+
+    const { data, error } = await supabase
+      .from('messenger_group_members')
+      .update({ role })
+      .eq('group_id', gid)
+      .eq('user_id', targetId)
+      .select('id, group_id, user_id, role')
+      .single();
+    if (error) return res.status(400).json({ error: error.message });
+
+    const io = req.app.get('io');
+    if (io) io.to(`messenger_group:${gid}`).emit('messenger_group:members', { group_id: gid });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Thêm thành viên — leader/deputy hoặc admin hệ thống. Nhiều thành viên cùng lúc qua members[]. */
+r.post('/groups/:id/members', async (req, res) => {
+  try {
+    const isLeader = await assertGroupLeader(req.params.id, req.authUserId);
+    if (!isLeader) {
+      // Fallback: vẫn cho member thường thêm (giữ tương thích với UI cũ)
+      const ok = await assertGroupMember(req.params.id, req.authUserId);
+      if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
+    }
     const batch = Array.isArray(req.body.members) ? req.body.members : [];
     const user_id = req.body.user_id;
     const toAdd = batch.length ? batch : user_id ? [{ user_id, role: req.body.role || 'member' }] : [];
@@ -745,6 +915,36 @@ r.post('/groups/:id/members', async (req, res) => {
         if (!msgErr && ins?.id) {
           const full = await fetchMessengerMessageById(ins.id);
           if (io && full) io.to(`messenger_group:${gid}`).emit('messenger_group:chat', full);
+        }
+
+        // Push mobile + socket notification cho user vừa được thêm
+        try {
+          const { data: grpInfo } = await supabase
+            .from('messenger_groups')
+            .select('name')
+            .eq('id', gid)
+            .maybeSingle();
+          const grpName = grpInfo?.name || 'Nhóm chat';
+          await notifyMultiple(
+            req,
+            [item.user_id],
+            'messenger_chat',
+            `Bạn đã được thêm vào nhóm`,
+            `${adder?.full_name || 'Ai đó'} đã thêm bạn vào «${grpName}»`,
+            'messenger_group',
+            gid,
+            {
+              group_name: grpName,
+              sender_name: adder?.full_name || 'Quản trị viên',
+              sender_id: req.authUserId,
+              bubble_key: String(gid),
+              bubble_wake: true,
+              message_type: 'system',
+              event: 'member_added',
+            },
+          );
+        } catch (e) {
+          console.warn('[messengerGroups] notify add-member lỗi:', e.message || e);
         }
       }
     }

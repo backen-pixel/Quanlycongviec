@@ -10891,6 +10891,8 @@ r.post('/leads/:id/tasks', async (req, res) => {
 });
 
 // BULK CREATE from template
+// Idempotent: chỉ tạo task cho item chưa tồn tại trong cùng (lead, stage) (so theo title).
+// Tránh trường hợp user bấm "Gắn mẫu" 2-3 lần → nhân tasks.
 r.post('/leads/:id/tasks/from-template', async (req, res) => {
   try {
     const { template_id } = req.body;
@@ -10910,7 +10912,57 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
       .maybeSingle();
     const stageForTasks = tpl?.pipeline_stage_id || leadRow?.stage_id || null;
 
-    const inserts = items.map(item => ({
+    // 1) Dedupe trong chính items của template (chống item bị thêm trùng do user)
+    const seenItemKeys = new Set();
+    const dedupItems = [];
+    for (const item of items) {
+      const k = String(item.title || '').trim().toLowerCase();
+      if (!k || seenItemKeys.has(k)) continue;
+      seenItemKeys.add(k);
+      dedupItems.push(item);
+    }
+
+    // 2) Lấy danh sách title đã tồn tại trên lead này trong cùng stage → bỏ qua khi insert
+    let existingTitleKeys = new Set();
+    {
+      let q = supabase
+        .from('crm_tasks')
+        .select('title, stage_slug, pipeline_stage_id')
+        .eq('lead_id', targetLeadId);
+      // Khoá stage giống lúc insert: ưu tiên pipeline_stage_id, fallback stage_slug
+      if (stageForTasks) {
+        q = q.eq('pipeline_stage_id', stageForTasks);
+      } else if (tpl?.stage_slug) {
+        q = q.is('pipeline_stage_id', null).eq('stage_slug', tpl.stage_slug);
+      }
+      const { data: existingRows } = await q;
+      existingTitleKeys = new Set(
+        (existingRows || []).map((t) => String(t.title || '').trim().toLowerCase()).filter(Boolean),
+      );
+    }
+
+    const toInsert = dedupItems.filter(
+      (item) => !existingTitleKeys.has(String(item.title || '').trim().toLowerCase()),
+    );
+
+    const skipped = dedupItems.length - toInsert.length;
+    if (skipped > 0) {
+      console.log(
+        `[from-template] lead=${targetLeadId} stage=${stageForTasks || tpl?.stage_slug || '?'} `
+        + `tpl=${template_id}: bỏ qua ${skipped}/${dedupItems.length} item đã tồn tại.`,
+      );
+    }
+
+    if (!toInsert.length) {
+      return res.status(200).json({
+        tasks: [],
+        count: 0,
+        skipped,
+        message: 'Bộ mẫu đã được áp trước đó — không có nhiệm vụ mới nào được thêm.',
+      });
+    }
+
+    const inserts = toInsert.map((item) => ({
       lead_id: targetLeadId,
       title: item.title,
       description: item.description || null,
@@ -10929,7 +10981,7 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
     const { data, error } = await supabase.from('crm_tasks').insert(inserts)
       .select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)');
     if (error) throw error;
-    res.status(201).json({ tasks: data, count: data.length });
+    res.status(201).json({ tasks: data, count: data.length, skipped });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

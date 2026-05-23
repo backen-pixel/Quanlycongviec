@@ -1,0 +1,514 @@
+import { useState, useEffect, useRef } from 'react';
+import { Link, useParams, useNavigate } from 'react-router-dom';
+import api from '../lib/api';
+import KnowledgeMediaGallery from '../components/KnowledgeMediaGallery';
+import { youtubeEmbedUrl } from '../lib/knowledgeMarkdown';
+import {
+  ChevronLeft, ChevronRight, CheckCircle2, Clock, Award, Loader2,
+  PartyPopper, RotateCcw, BookOpen, ListChecks, ArrowRight,
+} from 'lucide-react';
+
+function ExerciseMediaHeader({ exercise }) {
+  const hasImage = !!exercise.image_url;
+  const hasVideo = !!exercise.video_url;
+  if (!hasImage && !hasVideo) return null;
+  const embed = exercise.video_type === 'youtube' || (exercise.video_url || '').match(/(youtu\.be|youtube\.com)/)
+    ? youtubeEmbedUrl(exercise.video_url)
+    : null;
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+      {hasImage && (
+        <img src={exercise.image_url} alt="" className="w-full aspect-video object-cover rounded-xl border border-gray-200" />
+      )}
+      {hasVideo && (
+        <div className="aspect-video rounded-xl overflow-hidden bg-black border border-gray-200">
+          {embed ? (
+            <iframe src={embed} title="Video" className="w-full h-full" allowFullScreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" />
+          ) : (
+            <video controls className="w-full h-full"><source src={exercise.video_url} /></video>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatTimer(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function QuizPlayer({ exercise, onSubmit, submitting, onAnswersChange }) {
+  const items = exercise.questions?.items || [];
+  const [answers, setAnswers] = useState({});
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const current = items[currentIdx];
+
+  useEffect(() => { onAnswersChange?.(answers); }, [answers, onAnswersChange]);
+
+  const answered = useMemo(
+    () => items.filter((q) => {
+      const a = answers[q.id];
+      if (q.type === 'multiple') return Array.isArray(a) && a.length > 0;
+      return a !== undefined && a !== null;
+    }).length,
+    [answers, items],
+  );
+
+  const setAnswer = (qId, value) => setAnswers((prev) => ({ ...prev, [qId]: value }));
+
+  const toggleMultiple = (qId, optionIdx) => {
+    const prev = answers[qId] || [];
+    const next = prev.includes(optionIdx) ? prev.filter((x) => x !== optionIdx) : [...prev, optionIdx];
+    setAnswer(qId, next);
+  };
+
+  if (!items.length) {
+    return <div className="text-center text-gray-500 py-12">Bài tập này chưa có câu hỏi.</div>;
+  }
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px] gap-6">
+      <div className="bg-white rounded-2xl border border-gray-200 p-6 lg:p-8">
+        <div className="flex items-center justify-between mb-4">
+          <span className="text-sm font-medium text-gray-500">
+            Câu {currentIdx + 1} / {items.length}
+          </span>
+          <span className="text-xs text-gray-400">{answered} / {items.length} đã trả lời</span>
+        </div>
+
+        <h3 className="text-lg font-semibold text-gray-900 mb-4 leading-relaxed">{current.question}</h3>
+
+        {current.image_url && (
+          <img src={current.image_url} alt="Minh họa câu hỏi" className="w-full max-h-80 object-contain rounded-lg border bg-gray-50 mb-4" />
+        )}
+
+        <div className="space-y-2">
+          {(current.options || []).map((opt, oi) => {
+            const isSelected = current.type === 'multiple'
+              ? (answers[current.id] || []).includes(oi)
+              : answers[current.id] === oi;
+            return (
+              <label
+                key={oi}
+                className={`flex items-start gap-3 p-3 rounded-xl cursor-pointer border-2 transition-all ${
+                  isSelected ? 'border-blue-500 bg-blue-50' : 'border-gray-100 hover:border-gray-300 bg-gray-50'
+                }`}
+              >
+                <input
+                  type={current.type === 'multiple' ? 'checkbox' : 'radio'}
+                  name={current.id}
+                  checked={isSelected}
+                  onChange={() => current.type === 'multiple' ? toggleMultiple(current.id, oi) : setAnswer(current.id, oi)}
+                  className="mt-0.5"
+                />
+                <span className="text-sm text-gray-800">{opt}</span>
+              </label>
+            );
+          })}
+        </div>
+
+        <div className="flex items-center justify-between mt-6 pt-4 border-t">
+          <button
+            type="button"
+            disabled={currentIdx === 0}
+            onClick={() => setCurrentIdx((i) => Math.max(0, i - 1))}
+            className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 disabled:opacity-40 flex items-center gap-1"
+          >
+            <ChevronLeft className="h-4 w-4" /> Câu trước
+          </button>
+          {currentIdx < items.length - 1 ? (
+            <button
+              type="button"
+              onClick={() => setCurrentIdx((i) => i + 1)}
+              className="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center gap-1"
+            >
+              Câu tiếp <ChevronRight className="h-4 w-4" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => onSubmit(answers)}
+              className="px-5 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50 flex items-center gap-1"
+            >
+              {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              Nộp bài
+            </button>
+          )}
+        </div>
+      </div>
+
+      <aside className="bg-white rounded-2xl border border-gray-200 p-4 h-fit lg:sticky lg:top-4">
+        <p className="text-xs font-semibold text-gray-400 uppercase mb-3">Danh sách câu hỏi</p>
+        <div className="grid grid-cols-6 lg:grid-cols-4 gap-2">
+          {items.map((q, idx) => {
+            const a = answers[q.id];
+            const isAnswered = q.type === 'multiple' ? Array.isArray(a) && a.length > 0 : a !== undefined && a !== null;
+            const isCurrent = idx === currentIdx;
+            return (
+              <button
+                key={q.id}
+                type="button"
+                onClick={() => setCurrentIdx(idx)}
+                className={`h-9 rounded-lg text-sm font-medium border transition-all ${
+                  isCurrent
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : isAnswered
+                    ? 'bg-blue-50 text-blue-700 border-blue-200'
+                    : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400'
+                }`}
+              >
+                {idx + 1}
+              </button>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          disabled={submitting}
+          onClick={() => onSubmit(answers)}
+          className="mt-4 w-full px-3 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50"
+        >
+          {submitting ? 'Đang chấm...' : 'Nộp bài ngay'}
+        </button>
+      </aside>
+    </div>
+  );
+}
+
+function ChecklistPlayer({ exercise, onSubmit, submitting }) {
+  const items = exercise.questions?.items || [];
+  const [answers, setAnswers] = useState({});
+  const done = items.filter((it) => answers[it.id]).length;
+  const pct = items.length ? Math.round((done / items.length) * 100) : 0;
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 p-6 lg:p-8">
+      <div className="mb-4">
+        <div className="flex justify-between text-sm mb-2">
+          <span className="text-gray-500">Tiến độ checklist</span>
+          <span className="font-semibold text-blue-600">{done}/{items.length}</span>
+        </div>
+        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+          <div className="h-full bg-blue-600 transition-all" style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+      <div className="space-y-2">
+        {items.map((it) => (
+          <label
+            key={it.id}
+            className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer border-2 transition-all ${
+              answers[it.id] ? 'border-green-500 bg-green-50' : 'border-gray-100 hover:border-gray-300 bg-gray-50'
+            }`}
+          >
+            <input
+              type="checkbox"
+              checked={!!answers[it.id]}
+              onChange={(e) => setAnswers((prev) => ({ ...prev, [it.id]: e.target.checked }))}
+            />
+            <span className={`text-sm ${answers[it.id] ? 'line-through text-gray-500' : 'text-gray-800'}`}>
+              {it.text}
+            </span>
+          </label>
+        ))}
+      </div>
+      <button
+        type="button"
+        disabled={submitting || done === 0}
+        onClick={() => onSubmit(answers)}
+        className="mt-6 w-full px-5 py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
+      >
+        {submitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
+        Xác nhận hoàn thành ({done}/{items.length})
+      </button>
+    </div>
+  );
+}
+
+function EssayPlayer({ exercise, onSubmit, submitting }) {
+  const [text, setText] = useState('');
+  const prompt = exercise.questions?.prompt || exercise.instructions;
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 p-6 lg:p-8">
+      <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg mb-4 text-sm text-amber-900">
+        <p className="font-medium mb-1">Đề bài</p>
+        <p>{prompt || 'Trình bày suy nghĩ của bạn về chủ đề bài học.'}</p>
+      </div>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={10}
+        className="w-full border border-gray-200 rounded-xl p-4 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+        placeholder="Nhập bài làm của bạn..."
+      />
+      <p className="text-xs text-gray-400 mt-1">{text.length} ký tự · {text.split(/\s+/).filter(Boolean).length} từ</p>
+      <button
+        type="button"
+        disabled={submitting || !text.trim()}
+        onClick={() => onSubmit({ essay: text })}
+        className="mt-4 px-6 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+      >
+        {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Nộp bài'}
+      </button>
+    </div>
+  );
+}
+
+function ResultScreen({ result, exercise, onRetry, onBack }) {
+  const passed = result.status === 'passed';
+  const score = result.score ?? 0;
+  const items = exercise.questions?.items || [];
+
+  return (
+    <div className="max-w-3xl mx-auto">
+      <div className={`bg-white rounded-2xl border-2 ${passed ? 'border-green-300' : 'border-amber-300'} p-8 text-center mb-6`}>
+        <div className={`mx-auto w-20 h-20 rounded-full flex items-center justify-center mb-4 ${passed ? 'bg-green-100' : 'bg-amber-100'}`}>
+          {passed ? <PartyPopper className="h-10 w-10 text-green-600" /> : <Award className="h-10 w-10 text-amber-600" />}
+        </div>
+        <h2 className="text-2xl font-bold text-gray-900">
+          {passed ? 'Chúc mừng! Bạn đã đạt.' : 'Chưa đạt — hãy thử lại nhé!'}
+        </h2>
+        {exercise.type !== 'essay' && (
+          <>
+            <p className="text-5xl font-bold mt-4 mb-2 text-gray-900">{score}%</p>
+            <p className="text-sm text-gray-500">
+              Yêu cầu tối thiểu: <strong>{exercise.passing_score ?? 70}%</strong>
+            </p>
+          </>
+        )}
+        {exercise.type === 'essay' && (
+          <p className="text-gray-600 mt-2">Bài đã được gửi tới quản trị viên để chấm điểm.</p>
+        )}
+      </div>
+
+      {exercise.type === 'quiz' && items.length > 0 && (
+        <div className="bg-white rounded-2xl border border-gray-200 p-6">
+          <h3 className="font-semibold mb-4 flex items-center gap-2">
+            <ListChecks className="h-5 w-5 text-blue-600" /> Chi tiết bài làm
+          </h3>
+          <ul className="space-y-3">
+            {items.map((q, idx) => {
+              const userAns = result.answers?.[q.id];
+              const userText = q.type === 'multiple'
+                ? (Array.isArray(userAns) ? userAns.map((i) => q.options?.[i]).filter(Boolean).join(', ') : '—')
+                : (typeof userAns === 'number' ? q.options?.[userAns] : '—');
+              return (
+                <li key={q.id} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+                  <span className="text-sm font-medium text-gray-500 mt-0.5">{idx + 1}.</span>
+                  <div className="flex-1">
+                    <p className="text-sm text-gray-900 font-medium">{q.question}</p>
+                    <p className="text-xs text-gray-600 mt-1">Bạn chọn: <span className="font-medium">{userText || '—'}</span></p>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      <div className="flex flex-col sm:flex-row gap-3 mt-6">
+        <button
+          type="button"
+          onClick={onBack}
+          className="flex-1 px-5 py-2.5 bg-gray-100 text-gray-700 rounded-lg font-medium hover:bg-gray-200 flex items-center justify-center gap-2"
+        >
+          <BookOpen className="h-4 w-4" /> Quay lại bài học
+        </button>
+        {!passed && exercise.type !== 'essay' && (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="flex-1 px-5 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 flex items-center justify-center gap-2"
+          >
+            <RotateCcw className="h-4 w-4" /> Làm lại
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default function KnowledgeExercisePage() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const [exercise, setExercise] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState(null);
+  const [elapsed, setElapsed] = useState(0);
+  const [started, setStarted] = useState(false);
+  const [autoSubmitting, setAutoSubmitting] = useState(false);
+  const timerRef = useRef(null);
+  const answersRef = useRef({});
+
+  const timeLimitSec = (exercise?.time_limit_minutes || 0) * 60;
+  const remaining = timeLimitSec ? Math.max(0, timeLimitSec - elapsed) : null;
+
+  useEffect(() => {
+    load();
+  }, [id]);
+
+  useEffect(() => {
+    if (!started || result) return undefined;
+    timerRef.current = setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(timerRef.current);
+  }, [started, result]);
+
+  useEffect(() => {
+    if (!timeLimitSec || result || !started) return;
+    if (remaining === 0 && !autoSubmitting) {
+      setAutoSubmitting(true);
+      submit(answersRef.current || {});
+    }
+  }, [remaining, timeLimitSec, result, started]);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get(`/knowledge/exercises/${id}`);
+      setExercise(data);
+    } catch (e) {
+      alert(e.response?.data?.error || 'Không tìm thấy bài tập');
+      navigate('/knowledge');
+    }
+    setLoading(false);
+  };
+
+  const submit = async (answers) => {
+    setSubmitting(true);
+    try {
+      const { data } = await api.post(`/knowledge/exercises/${id}/submit`, { answers });
+      setResult({ ...data, answers });
+      clearInterval(timerRef.current);
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi nộp bài');
+    }
+    setSubmitting(false);
+  };
+
+  const retry = () => {
+    setResult(null);
+    setElapsed(0);
+    setStarted(true);
+  };
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-20">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+      </div>
+    );
+  }
+
+  if (!exercise) return null;
+
+  const lessonId = exercise.lesson_id || exercise.lesson?.id;
+  const backUrl = lessonId ? `/knowledge/lessons/${lessonId}` : '/knowledge';
+
+  if (result) {
+    return (
+      <div className="max-w-5xl mx-auto py-6">
+        <ResultScreen result={result} exercise={exercise} onRetry={retry} onBack={() => navigate(backUrl)} />
+      </div>
+    );
+  }
+
+  if (!started) {
+    const items = exercise.questions?.items || [];
+    const itemCount = exercise.type === 'essay' ? 1 : items.length;
+    const typeLabel = exercise.type === 'quiz' ? 'Trắc nghiệm' : exercise.type === 'checklist' ? 'Checklist thực hành' : 'Tự luận';
+
+    return (
+      <div className="max-w-2xl mx-auto py-12">
+        <Link to={backUrl} className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-blue-600 mb-6">
+          <ChevronLeft className="h-4 w-4" /> Quay lại bài học
+        </Link>
+        <div className="bg-white rounded-2xl border border-gray-200 p-8 text-center">
+          <div className="w-20 h-20 mx-auto rounded-full bg-purple-100 flex items-center justify-center mb-4">
+            <ListChecks className="h-10 w-10 text-purple-600" />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">{exercise.title}</h1>
+          {exercise.instructions && <p className="text-gray-600 mt-3">{exercise.instructions}</p>}
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6 text-left">
+            <div className="p-3 bg-gray-50 rounded-lg">
+              <p className="text-xs text-gray-500">Loại</p>
+              <p className="text-sm font-semibold">{typeLabel}</p>
+            </div>
+            <div className="p-3 bg-gray-50 rounded-lg">
+              <p className="text-xs text-gray-500">Số câu</p>
+              <p className="text-sm font-semibold">{itemCount}</p>
+            </div>
+            <div className="p-3 bg-gray-50 rounded-lg">
+              <p className="text-xs text-gray-500">Điểm đạt</p>
+              <p className="text-sm font-semibold">{exercise.passing_score ?? 70}%</p>
+            </div>
+            <div className={`p-3 rounded-lg ${exercise.time_limit_minutes ? 'bg-red-50' : 'bg-gray-50'}`}>
+              <p className={`text-xs ${exercise.time_limit_minutes ? 'text-red-600' : 'text-gray-500'}`}>Thời gian</p>
+              <p className="text-sm font-semibold">{exercise.time_limit_minutes ? `${exercise.time_limit_minutes} phút` : 'Không giới hạn'}</p>
+            </div>
+          </div>
+
+          {exercise.time_limit_minutes && (
+            <p className="text-xs text-red-600 mt-3 bg-red-50 border border-red-200 rounded-lg p-2">
+              ⏱️ Bài này có giới hạn thời gian — hết giờ sẽ tự động nộp bài.
+            </p>
+          )}
+
+          {exercise.max_attempts && (
+            <p className="text-xs text-amber-600 mt-3">
+              Bạn đã làm <strong>{exercise.attempt_count || 0}</strong> / {exercise.max_attempts} lượt cho phép.
+            </p>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setStarted(true)}
+            disabled={exercise.max_attempts && exercise.attempt_count >= exercise.max_attempts}
+            className="mt-6 px-8 py-3 bg-purple-600 text-white rounded-xl font-semibold hover:bg-purple-700 disabled:opacity-50 inline-flex items-center gap-2"
+          >
+            Bắt đầu làm bài <ArrowRight className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-5xl mx-auto py-4">
+      <div className="flex items-center justify-between mb-6">
+        <Link to={backUrl} className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-blue-600">
+          <ChevronLeft className="h-4 w-4" /> Bài học
+        </Link>
+        <div className="flex items-center gap-3 text-sm">
+          {timeLimitSec ? (
+            <span className={`flex items-center gap-1 px-3 py-1.5 rounded-lg border font-mono font-semibold ${
+              remaining <= 60 ? 'bg-red-50 border-red-300 text-red-700 animate-pulse' :
+              remaining <= 180 ? 'bg-amber-50 border-amber-300 text-amber-700' :
+              'bg-white border-gray-200 text-gray-700'
+            }`}>
+              <Clock className="h-4 w-4" /> Còn lại {formatTimer(remaining)}
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 text-gray-600 bg-white px-3 py-1.5 rounded-lg border">
+              <Clock className="h-4 w-4" /> {formatTimer(elapsed)}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <h1 className="text-xl font-bold text-gray-900 mb-4">{exercise.title}</h1>
+
+      <ExerciseMediaHeader exercise={exercise} />
+
+      {exercise.type === 'quiz' && <QuizPlayer exercise={exercise} onSubmit={submit} submitting={submitting} onAnswersChange={(a) => { answersRef.current = a; }} />}
+      {exercise.type === 'checklist' && <ChecklistPlayer exercise={exercise} onSubmit={submit} submitting={submitting} />}
+      {exercise.type === 'essay' && <EssayPlayer exercise={exercise} onSubmit={submit} submitting={submitting} />}
+
+      <KnowledgeMediaGallery items={exercise.attachments} title="Tài liệu tham khảo" />
+    </div>
+  );
+}
