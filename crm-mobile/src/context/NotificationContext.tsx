@@ -22,7 +22,7 @@ type Listener = (n: AppNotification) => void;
 /** Thông báo tin nhắn (lead chat + Messenger nhóm/1–1) — không gồm task/deadline/hệ thống */
 export function isChatNotification(n: { type?: string } | null | undefined): boolean {
   const t = n?.type;
-  return t === 'lead_chat' || t === 'messenger_chat';
+  return t === 'lead_chat' || t === 'messenger_chat' || t === 'department_chat';
 }
 
 type Ctx = {

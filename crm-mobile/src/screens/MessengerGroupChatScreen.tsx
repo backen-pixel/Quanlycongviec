@@ -499,6 +499,7 @@ export default function MessengerGroupChatScreen({
       }
 
       const name = item.user?.full_name || '?';
+      const isBot = !!item.user?.is_bot;
       const atts = Array.isArray(item.attachments) ? item.attachments : [];
       const imgUrl = item.attachment_url ? mediaUrl(item.attachment_url) : null;
       const isImg =
@@ -512,19 +513,28 @@ export default function MessengerGroupChatScreen({
           <View style={[s.row, mine && s.rowMine]}>
             {/* Avatar — chỉ với người khác */}
             {!mine ? (
-              <View style={[s.avatar, { backgroundColor: avatarColor(name) }]}>
-                <Text style={s.avatarTxt}>{initials(name)}</Text>
-              </View>
+              isBot ? (
+                <View style={[s.avatar, s.avatarBot]}>
+                  <Text style={s.avatarTxt}>🤖</Text>
+                </View>
+              ) : (
+                <View style={[s.avatar, { backgroundColor: avatarColor(name) }]}>
+                  <Text style={s.avatarTxt}>{initials(name)}</Text>
+                </View>
+              )
             ) : (
               <View style={s.avatarSpace} />
             )}
 
             <View style={{ maxWidth: SW * 0.72, alignItems: mine ? 'flex-end' : 'flex-start' }}>
-              {!mine && !isDirectChat ? (
-                <Text style={s.msgName}>{name}</Text>
+              {!mine && (!isDirectChat || isBot) ? (
+                <Text style={s.msgName}>
+                  {name}
+                  {isBot ? '  · BOT' : ''}
+                </Text>
               ) : null}
               <Pressable
-                style={[s.bubble, mine ? s.bubbleMine : s.bubbleOther]}
+                style={[s.bubble, mine ? s.bubbleMine : isBot ? s.bubbleBot : s.bubbleOther]}
                 onLongPress={() => setReplyTo(item)}
               >
                 {item.reply_to ? (
@@ -990,6 +1000,7 @@ const s = StyleSheet.create({
 
   // Avatar
   avatar: { width: 30, height: 30, borderRadius: 15, justifyContent: 'center', alignItems: 'center', marginHorizontal: 4, flexShrink: 0 },
+  avatarBot: { backgroundColor: '#6366F1' },
   avatarTxt: { fontSize: 11, fontWeight: '700', color: '#fff' },
   avatarSpace: { width: 30, marginHorizontal: 4 },
 
@@ -998,6 +1009,7 @@ const s = StyleSheet.create({
   // Bubbles
   bubble: { borderRadius: 18, paddingHorizontal: 12, paddingVertical: 8, maxWidth: '100%' },
   bubbleOther: { backgroundColor: BUBBLE_OTHER, borderBottomLeftRadius: 4 },
+  bubbleBot: { backgroundColor: '#EEF2FF', borderBottomLeftRadius: 4, borderWidth: 1, borderColor: '#C7D2FE' },
   bubbleMine: { backgroundColor: BUBBLE_ME, borderBottomRightRadius: 4 },
   bubbleTxt: { fontSize: 15, color: '#1A1A2E', lineHeight: 22 },
   bubbleTxtMine: { color: '#FFFFFF' },

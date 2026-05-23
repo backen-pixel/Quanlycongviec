@@ -46,5 +46,5 @@ export type MessengerMessage = {
   attachment_name?: string | null;
   attachment_mime?: string | null;
   reply_to?: string | null;
-  user?: { id?: string; full_name?: string | null; avatar?: string | null } | null;
+  user?: { id?: string; full_name?: string | null; avatar?: string | null; is_bot?: boolean | null } | null;
 };
