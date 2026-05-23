@@ -194,6 +194,7 @@ app.use('/api/messenger', require('./routes/messengerGroups'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/internal-social', require('./routes/internalSocial'));
 app.use('/api/release-notes', require('./routes/releaseNotes'));
+app.use('/api/knowledge', require('./routes/knowledge'));
 const facebookRouter = require('./routes/facebook');
 facebookRouter._ioRef = io;
 app.use('/api/facebook', facebookRouter);
@@ -207,6 +208,7 @@ app.use('/api/external', require('./routes/external'));
 try { app.use('/api/push', require('./routes/push')); } catch (e) { console.warn('⚠️ Push route failed to load:', e.message); }
 try { app.use('/api/devices', require('./routes/devices')); } catch (e) { console.warn('⚠️ Devices route failed to load:', e.message); }
 try { app.use('/api/assistant', require('./routes/assistant')); } catch (e) { console.warn('⚠️ Assistant route failed to load:', e.message); }
+try { app.use('/api/ai-chat-bot', require('./routes/aiChatBot')); } catch (e) { console.warn('⚠️ AI Chat Bot route failed to load:', e.message); }
 try { app.use('/api/integrations/stringee', require('./routes/stringee')); } catch (e) { console.warn('⚠️ Stringee route failed to load:', e.message); }
 
 // ─── Serve Frontend (SPA) in production ──
@@ -341,6 +343,14 @@ server.listen(config.port, () => {
     require('./jobs/crmAssignmentDeadlineReminder').start(io);
   } catch (e) {
     console.warn('[crm-assignment-reminder] Failed to start:', e.message);
+  }
+
+  // Cron AI Chat Bot — tick mỗi phút, gửi tin AI vào chat phòng ban/nhóm theo lịch admin cấu hình.
+  // Disable: AI_CHAT_BOT_CRON_DISABLED=1
+  try {
+    require('./jobs/aiChatBotRunner').start(io);
+  } catch (e) {
+    console.warn('[ai-bot-cron] Failed to start:', e.message);
   }
 
   // ─── DEADLINE CHECKER — every hour (defer 60s to not impact startup) ──

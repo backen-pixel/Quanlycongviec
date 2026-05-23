@@ -20,6 +20,10 @@ import {
   Video,
   ExternalLink,
   Loader2,
+  Crown,
+  Shield,
+  X,
+  Check,
 } from 'lucide-react';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import { MessengerGroupChatTab } from '../components/LeadChatTabs';
@@ -177,6 +181,14 @@ export default function MessengerHubPage() {
   const [companies, setCompanies] = useState([]);
   const [departmentsList, setDepartmentsList] = useState([]);
   const [presenceByUser, setPresenceByUser] = useState({});
+
+  /* ── Quản lý thành viên nhóm (right panel tab) ── */
+  const [groupDetail, setGroupDetail] = useState(null);     // { id, created_by, is_direct, ... }
+  const [groupMembers, setGroupMembers] = useState([]);     // [{ user_id, role, user: {full_name, avatar} }]
+  const [addMemberOpen, setAddMemberOpen] = useState(false);
+  const [addMemberPicks, setAddMemberPicks] = useState([]); // [{ user_id, role }]
+  const [addMemberQ, setAddMemberQ] = useState('');
+  const [busyMember, setBusyMember] = useState(null);       // user_id đang xử lý
 
   const reloadMessengerThreads = useCallback(() => {
     let lsMessenger = [];
@@ -364,6 +376,60 @@ export default function MessengerHubPage() {
     [threads, selectedGroupId],
   );
 
+  /* ── Load group detail + members khi đổi group đang xem ── */
+  const reloadGroupMembers = useCallback(async (gid) => {
+    if (!gid) {
+      setGroupDetail(null);
+      setGroupMembers([]);
+      return;
+    }
+    try {
+      const { data: g } = await api.get(`/messenger/groups/${gid}`);
+      setGroupDetail(g || null);
+      setGroupMembers(Array.isArray(g?.members) ? g.members : []);
+    } catch {
+      setGroupDetail(null);
+      setGroupMembers([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void reloadGroupMembers(selectedGroupId);
+  }, [selectedGroupId, reloadGroupMembers]);
+
+  // Đổi sang chat trực tiếp mà đang ở tab 'members' → fallback về 'media'
+  useEffect(() => {
+    if (selected?.is_direct && rightSection === 'members') {
+      setRightSection('media');
+    }
+  }, [selected?.is_direct, rightSection]);
+
+  // Realtime: ai đó thêm/xóa thành viên → reload
+  useEffect(() => {
+    if (!socket || !selectedGroupId) return undefined;
+    const onMembers = (payload) => {
+      if (payload?.group_id && String(payload.group_id) === String(selectedGroupId)) {
+        void reloadGroupMembers(selectedGroupId);
+      }
+    };
+    socket.on('messenger_group:members', onMembers);
+    return () => {
+      socket.off('messenger_group:members', onMembers);
+    };
+  }, [socket, selectedGroupId, reloadGroupMembers]);
+
+  /* Quyền quản trị nhóm: leader/deputy hoặc admin hệ thống */
+  const myMember = useMemo(
+    () => groupMembers.find((m) => String(m.user_id) === String(uid)) || null,
+    [groupMembers, uid],
+  );
+  const canManageGroup = useMemo(() => {
+    if (!groupDetail || groupDetail.is_direct) return false;
+    const role = String(user?.role || '').toLowerCase();
+    if (role === 'admin' || role === 'sales_admin') return true;
+    return myMember && (myMember.role === 'leader' || myMember.role === 'deputy');
+  }, [groupDetail, myMember, user?.role]);
+
   const filteredThreads = useMemo(() => {
     const f = threadFilter.trim().toLowerCase();
     let list = threads;
@@ -437,6 +503,64 @@ export default function MessengerHubPage() {
       })
       .slice(0, 40);
   }, [allUsers, userPickQ, uid]);
+
+  /* ── Member management actions ── */
+  const onAddMembers = async () => {
+    if (!selectedGroupId || !addMemberPicks.length) return;
+    try {
+      await api.post(`/messenger/groups/${selectedGroupId}/members`, {
+        members: addMemberPicks.map((p) => ({ user_id: p.user_id, role: p.role || 'member' })),
+      });
+      setAddMemberOpen(false);
+      setAddMemberPicks([]);
+      setAddMemberQ('');
+      void reloadGroupMembers(selectedGroupId);
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không thêm được thành viên');
+    }
+  };
+
+  const onRemoveMember = async (member) => {
+    if (!selectedGroupId) return;
+    const name = member.user?.full_name || 'thành viên này';
+    if (!confirm(`Xoá ${name} khỏi nhóm?`)) return;
+    try {
+      setBusyMember(member.user_id);
+      await api.delete(`/messenger/groups/${selectedGroupId}/members/${member.user_id}`);
+      void reloadGroupMembers(selectedGroupId);
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không xoá được');
+    } finally {
+      setBusyMember(null);
+    }
+  };
+
+  const onChangeMemberRole = async (member, role) => {
+    if (!selectedGroupId) return;
+    try {
+      setBusyMember(member.user_id);
+      await api.patch(`/messenger/groups/${selectedGroupId}/members/${member.user_id}/role`, { role });
+      void reloadGroupMembers(selectedGroupId);
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không đổi được vai trò');
+    } finally {
+      setBusyMember(null);
+    }
+  };
+
+  const filteredAddCandidates = useMemo(() => {
+    const memberIdSet = new Set(groupMembers.map((m) => String(m.user_id)));
+    const q = addMemberQ.trim().toLowerCase();
+    return (allUsers || [])
+      .filter((u) => !memberIdSet.has(String(u.id || u.user_id)))
+      .filter((u) => {
+        if (!q) return true;
+        const name = (u.full_name || '').toLowerCase();
+        const mail = (u.email || '').toLowerCase();
+        return name.includes(q) || mail.includes(q);
+      })
+      .slice(0, 30);
+  }, [allUsers, addMemberQ, groupMembers]);
 
   const addPick = (u) => {
     const id = u.id || u.user_id;
@@ -850,6 +974,25 @@ export default function MessengerHubPage() {
                 >
                   {rightOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
                 </button>
+                {!selected?.is_direct && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRightOpen(true);
+                      setRightSection('members');
+                    }}
+                    className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 inline-flex items-center gap-1.5"
+                    title="Quản lý thành viên"
+                  >
+                    <Users className="h-3.5 w-3.5" />
+                    Thành viên
+                    {groupMembers.length > 0 && (
+                      <span className="ml-0.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-sky-100 px-1 text-[10px] font-bold text-sky-700">
+                        {groupMembers.length}
+                      </span>
+                    )}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() =>
@@ -886,10 +1029,15 @@ export default function MessengerHubPage() {
                     <p className="text-[10px] font-bold text-slate-500 uppercase px-3 py-1.5 bg-slate-50 border-y border-slate-100">Thông tin hội thoại</p>
                     <div className="flex border-b border-slate-100 text-[11px] font-semibold">
                       {[
+                        !selected?.is_direct && {
+                          id: 'members',
+                          label: `Thành viên${groupMembers.length ? ` (${groupMembers.length})` : ''}`,
+                          Icon: Users,
+                        },
                         { id: 'media', label: 'Ảnh/Video', Icon: ImageIcon },
                         { id: 'files', label: 'Tệp', Icon: FileText },
                         { id: 'links', label: 'Link', Icon: Link2 },
-                      ].map(({ id, label, Icon }) => (
+                      ].filter(Boolean).map(({ id, label, Icon }) => (
                         <button
                           key={id}
                           type="button"
@@ -904,6 +1052,86 @@ export default function MessengerHubPage() {
                       ))}
                     </div>
                     <div className="flex-1 overflow-y-auto p-2 text-xs">
+                      {rightSection === 'members' && !selected?.is_direct && (
+                        <div className="space-y-2">
+                          {canManageGroup && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAddMemberOpen(true);
+                                setAddMemberPicks([]);
+                                setAddMemberQ('');
+                              }}
+                              className="w-full h-9 inline-flex items-center justify-center gap-2 rounded-lg bg-sky-600 text-white text-[12px] font-semibold hover:bg-sky-700"
+                            >
+                              <UserPlus className="h-3.5 w-3.5" />
+                              Thêm thành viên
+                            </button>
+                          )}
+                          <ul className="space-y-1">
+                            {groupMembers.map((m) => {
+                              const u = m.user || {};
+                              const isCreator =
+                                groupDetail?.created_by && String(groupDetail.created_by) === String(m.user_id);
+                              const isLeader = m.role === 'leader' || isCreator;
+                              const isDeputy = m.role === 'deputy';
+                              const isMe = String(m.user_id) === String(uid);
+                              const busy = busyMember === m.user_id;
+                              return (
+                                <li
+                                  key={m.user_id}
+                                  className="flex items-center gap-2 rounded-lg border border-slate-100 p-2 bg-white"
+                                >
+                                  <div className="h-8 w-8 shrink-0 rounded-full bg-gradient-to-br from-sky-400 to-cyan-600 text-white flex items-center justify-center text-[11px] font-bold">
+                                    {(u.full_name || '?').slice(0, 1)}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-[12px] font-semibold text-slate-800 truncate flex items-center gap-1">
+                                      {u.full_name || 'Người dùng'}
+                                      {isMe && <span className="text-[9px] text-slate-400">(bạn)</span>}
+                                    </p>
+                                    <p className="text-[10px] text-slate-500 truncate flex items-center gap-1">
+                                      {isLeader && <Crown className="h-3 w-3 text-amber-500" />}
+                                      {isDeputy && <Shield className="h-3 w-3 text-indigo-500" />}
+                                      {isLeader
+                                        ? 'Trưởng nhóm'
+                                        : isDeputy
+                                        ? 'Phó nhóm'
+                                        : 'Thành viên'}
+                                    </p>
+                                  </div>
+                                  {canManageGroup && !isCreator && !isMe && (
+                                    <div className="flex items-center gap-1">
+                                      <select
+                                        disabled={busy}
+                                        value={isDeputy ? 'deputy' : 'member'}
+                                        onChange={(e) => onChangeMemberRole(m, e.target.value)}
+                                        className="h-7 px-1 rounded border border-slate-200 text-[10px] bg-white"
+                                        title="Đổi vai trò"
+                                      >
+                                        <option value="member">Thành viên</option>
+                                        <option value="deputy">Phó nhóm</option>
+                                      </select>
+                                      <button
+                                        type="button"
+                                        disabled={busy}
+                                        onClick={() => onRemoveMember(m)}
+                                        title="Xoá khỏi nhóm"
+                                        className="h-7 w-7 inline-flex items-center justify-center rounded-md text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+                                      >
+                                        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+                                      </button>
+                                    </div>
+                                  )}
+                                </li>
+                              );
+                            })}
+                            {groupMembers.length === 0 && (
+                              <li className="text-slate-400 text-center py-6">Chưa có thành viên</li>
+                            )}
+                          </ul>
+                        </div>
+                      )}
                       {rightSection === 'media' && (
                         <div className="space-y-2">
                           <p className="text-[10px] text-slate-400 px-1">Ảnh & video đã gửi trong hội thoại</p>
@@ -1123,6 +1351,122 @@ export default function MessengerHubPage() {
               >
                 {creating && <Loader2 className="h-4 w-4 animate-spin" />}
                 Tạo nhóm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal thêm thành viên */}
+      {addMemberOpen && (
+        <div className="fixed inset-0 z-[230] flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-xl border border-slate-200 overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                <UserPlus className="h-4 w-4 text-sky-600" />
+                Thêm thành viên vào nhóm
+              </h2>
+              <button
+                type="button"
+                className="text-slate-500 text-lg leading-none px-1"
+                onClick={() => setAddMemberOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="p-4 space-y-3 max-h-[70vh] overflow-y-auto">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                <input
+                  value={addMemberQ}
+                  onChange={(e) => setAddMemberQ(e.target.value)}
+                  placeholder="Tìm nhân viên theo tên / email…"
+                  className="w-full h-9 pl-8 pr-2 rounded-lg bg-slate-100 border-0 text-sm placeholder:text-slate-400 focus:ring-2 focus:ring-sky-400"
+                />
+              </div>
+              {addMemberPicks.length > 0 && (
+                <div className="rounded-lg border border-sky-100 bg-sky-50/60 p-2">
+                  <p className="text-[10px] font-bold text-sky-900 uppercase mb-1">
+                    Đã chọn ({addMemberPicks.length})
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {addMemberPicks.map((p) => {
+                      const u = (allUsers || []).find((x) => String(x.id) === String(p.user_id));
+                      return (
+                        <span
+                          key={p.user_id}
+                          className="inline-flex items-center gap-1 rounded-full bg-white border border-sky-200 px-2 py-0.5 text-[11px] text-sky-800"
+                        >
+                          {u?.full_name || 'NV'}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setAddMemberPicks((prev) => prev.filter((x) => x.user_id !== p.user_id))
+                            }
+                            className="text-sky-700 hover:text-rose-600"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              <ul className="space-y-1">
+                {filteredAddCandidates.map((u) => {
+                  const id = u.id || u.user_id;
+                  const picked = addMemberPicks.some((p) => String(p.user_id) === String(id));
+                  return (
+                    <li key={id}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (picked) {
+                            setAddMemberPicks((prev) => prev.filter((x) => String(x.user_id) !== String(id)));
+                          } else {
+                            setAddMemberPicks((prev) => [...prev, { user_id: id, role: 'member' }]);
+                          }
+                        }}
+                        className={`w-full flex items-center gap-2 p-2 rounded-lg border text-left ${
+                          picked
+                            ? 'border-sky-300 bg-sky-50'
+                            : 'border-slate-100 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="h-8 w-8 shrink-0 rounded-full bg-gradient-to-br from-sky-400 to-cyan-600 text-white flex items-center justify-center text-[11px] font-bold">
+                          {(u.full_name || '?').slice(0, 1)}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[12px] font-semibold text-slate-800 truncate">{u.full_name}</p>
+                          <p className="text-[10px] text-slate-500 truncate">{u.email}</p>
+                        </div>
+                        {picked && <Check className="h-4 w-4 text-sky-600 shrink-0" />}
+                      </button>
+                    </li>
+                  );
+                })}
+                {filteredAddCandidates.length === 0 && (
+                  <li className="text-slate-400 text-center py-6 text-xs">Không còn ai để mời</li>
+                )}
+              </ul>
+            </div>
+            <div className="px-4 py-3 border-t border-slate-100 flex justify-end gap-2 bg-slate-50">
+              <button
+                type="button"
+                className="h-9 px-4 rounded-lg border border-slate-200 text-sm"
+                onClick={() => setAddMemberOpen(false)}
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                disabled={!addMemberPicks.length}
+                className="h-9 px-4 rounded-lg bg-sky-600 text-white text-sm font-medium hover:bg-sky-700 disabled:opacity-50 inline-flex items-center gap-2"
+                onClick={() => void onAddMembers()}
+              >
+                <UserPlus className="h-4 w-4" />
+                Thêm vào nhóm
               </button>
             </div>
           </div>

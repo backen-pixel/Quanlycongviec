@@ -11,7 +11,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X, UsersRound,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
-  BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone,
+  BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot,
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { isCrmOnlyModuleAccess } from '../lib/moduleAccess';
@@ -86,7 +86,9 @@ const MENU_GROUPS = [
       { to: '/settings/theme', icon: Settings, label: 'Giao diện & Hình nền' },
       { to: '/settings/misa', icon: FileCheck, label: 'MISA meInvoice' },
       { to: '/settings/api-keys', icon: Key, label: 'API Key tích hợp' },
+      { to: '/settings/ai-chat-bot', icon: Bot, label: 'AI Bot trong chat' },
       { to: '/settings/request-monitor', icon: Activity, label: 'Theo dõi Request' },
+      { to: '/knowledge', icon: GraduationCap, label: 'Kiến thức' },
       { to: '/guide', icon: BookOpen, label: 'Hướng dẫn sử dụng' },
       { to: '/updates', icon: Megaphone, label: 'Có gì mới?' },
       // { to: '/templates', icon: ClipboardList, label: 'Dự án mẫu' },
@@ -174,7 +176,10 @@ const CRM_MENU_BOTTOM_GROUPS = [
     moduleKey: 'crm',
     title: 'Thông báo',
     emoji: '🔔',
-    items: [{ to: '/updates', icon: Megaphone, label: 'Có gì mới?' }],
+    items: [
+      { to: '/knowledge', icon: GraduationCap, label: 'Kiến thức' },
+      { to: '/updates', icon: Megaphone, label: 'Có gì mới?' },
+    ],
   },
   {
     id: 'crm-admin',
@@ -202,6 +207,7 @@ const CRM_MENU_BOTTOM_GROUPS = [
       { to: '/settings/password', icon: Lock, label: 'Đổi mật khẩu' },
       { to: '/settings/location', icon: MapPin, label: 'Vị trí làm việc' },
       { to: '/settings/devices', icon: Smartphone, label: 'Thiết bị đăng nhập' },
+      { to: '/knowledge', icon: GraduationCap, label: 'Kiến thức' },
       { to: '/guide', icon: BookOpen, label: 'Hướng dẫn sử dụng', adminOnly: true },
       { to: '/settings/api-keys', icon: Key, label: 'API Key tích hợp', adminOnly: true },
     ],
@@ -230,6 +236,29 @@ const SX_MENU_GROUPS = [
       { to: '/sx/task-templates', icon: ListChecks, label: 'Bộ mẫu nhiệm vụ xưởng' },
       { to: '/sx/handover-settings', icon: UserCog, label: 'Bàn giao CRM → SX', adminOnly: true },
     ]
+  },
+];
+
+// KNOWLEDGE (KIẾN THỨC) menu structure
+const KNOWLEDGE_MENU_GROUPS = [
+  {
+    id: 'knowledge-learn',
+    title: '1. Học tập',
+    emoji: '🎓',
+    items: [
+      { to: '/knowledge', icon: GraduationCap, label: 'Thư viện kiến thức', end: true },
+      { to: '/knowledge/my-history', icon: ClipboardCheck, label: 'Lịch sử bài làm' },
+    ],
+  },
+  {
+    id: 'knowledge-admin',
+    title: '2. Quản lý nội dung',
+    emoji: '⚙️',
+    adminOnly: true,
+    items: [
+      { to: '/knowledge/admin', icon: Settings, label: 'Quản trị kiến thức', adminOnly: true },
+      { to: '/knowledge/scoreboard', icon: ClipboardCheck, label: 'Bảng điểm công ty', adminOnly: true },
+    ],
   },
 ];
 
@@ -262,6 +291,7 @@ function resolveGroupModuleContext(group) {
   if (group.moduleKey === 'crm' || String(group.id || '').startsWith('crm')) return 'crm';
   if (group.moduleKey === 'production' || String(group.id || '').startsWith('sx')) return 'sx';
   if (group.moduleKey === 'logistics' || String(group.id || '').startsWith('vc')) return 'vc';
+  if (String(group.id || '').startsWith('knowledge')) return 'knowledge';
   return 'work';
 }
 
@@ -418,10 +448,11 @@ export default function Sidebar() {
   }, [location.pathname, location.state?.moduleContext]);
 
   /** Ghi âm dùng route /tools/… nhưng vẫn dùng menu CRM khi đang xem trang đó. crmOnly: luôn sidebar CRM. */
-  const isCRM = isCrmSidebarActive(location.pathname, activeModule, crmOnly);
-  const isSX = location.pathname.startsWith('/sx') || activeModule === 'sx';
-  const isVC = location.pathname.startsWith('/vc') || activeModule === 'vc';
-  const activeMenuGroups = isVC ? VC_MENU_GROUPS : isSX ? SX_MENU_GROUPS : isCRM ? null : MENU_GROUPS;
+  const isKnowledge = location.pathname.startsWith('/knowledge') || activeModule === 'knowledge';
+  const isCRM = !isKnowledge && isCrmSidebarActive(location.pathname, activeModule, crmOnly);
+  const isSX = !isKnowledge && (location.pathname.startsWith('/sx') || activeModule === 'sx');
+  const isVC = !isKnowledge && (location.pathname.startsWith('/vc') || activeModule === 'vc');
+  const activeMenuGroups = isKnowledge ? KNOWLEDGE_MENU_GROUPS : isVC ? VC_MENU_GROUPS : isSX ? SX_MENU_GROUPS : isCRM ? null : MENU_GROUPS;
 
   const pinModule = (path) => {
     localStorage.setItem('pinned_module', path);
@@ -547,6 +578,27 @@ export default function Sidebar() {
                 </div>
               </div>
               )}
+              {/* Kiến thức — mọi user đều dùng được */}
+              <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${isKnowledge ? 'bg-violet-50 border-violet-200' : 'bg-gray-50 border-gray-200 hover:border-violet-400 hover:bg-violet-50'}`}>
+                <button onClick={() => { setShowAppSwitcher(false); navigate('/knowledge'); }}
+                  className="flex items-center gap-4 flex-1 cursor-pointer">
+                  <div className="w-12 h-12 rounded-xl bg-violet-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                    <GraduationCap className="h-6 w-6 text-white" />
+                  </div>
+                  <div className="text-left">
+                    <h3 className="text-sm font-bold text-gray-900">Kiến thức</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Bài học, video và bài tập theo chủ đề</p>
+                  </div>
+                </button>
+                <div className="flex flex-col items-center gap-1 ml-auto">
+                  {isKnowledge && <span className="text-[10px] px-2 py-0.5 bg-violet-600 text-white rounded-full font-bold">Đang dùng</span>}
+                  <button onClick={(e) => { e.stopPropagation(); pinModule('/knowledge'); }}
+                    title={pinnedModule === '/knowledge' ? 'Đã ghim — bấm để bỏ ghim' : 'Ghim — đăng nhập vào thẳng module này'}
+                    className={`p-1.5 rounded-lg cursor-pointer transition-all ${pinnedModule === '/knowledge' ? 'bg-amber-100 text-amber-600 hover:bg-amber-200' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}>
+                    <Pin className={`h-4 w-4 ${pinnedModule === '/knowledge' ? 'rotate-45' : ''}`} />
+                  </button>
+                </div>
+              </div>
             </div>
             <div className="px-5 py-3 border-t border-gray-100">
               <p className="text-[10px] text-gray-400 text-center">TuBep Pro © 2026</p>
@@ -577,12 +629,13 @@ export default function Sidebar() {
             { key: 'crm', mod: 'crm', label: 'CRM', emoji: '💼', path: '/crm', color: 'bg-emerald-500/20 hover:bg-emerald-500/30', dot: 'bg-emerald-500/40' },
             { key: 'sx', mod: 'production', label: 'Xưởng SX', emoji: '🏭', path: '/sx', color: 'bg-orange-500/20 hover:bg-orange-500/30', dot: 'bg-orange-500/40' },
             { key: 'vc', mod: 'logistics', label: 'Vận chuyển', emoji: '🚚', path: '/vc', color: 'bg-amber-500/20 hover:bg-amber-500/30', dot: 'bg-amber-500/40' },
+            { key: 'knowledge', mod: null, label: 'Kiến thức', emoji: '🎓', path: '/knowledge', color: 'bg-violet-500/20 hover:bg-violet-500/30', dot: 'bg-violet-500/40' },
           ].filter((m) => {
-            if (crmOnly) return m.key === 'crm';
+            if (crmOnly) return m.key === 'crm' || m.key === 'knowledge';
             return !m.mod || canAccessModule(m.mod);
           });
           if (!modList.length) return null;
-          const activeKey = isVC ? 'vc' : isSX ? 'sx' : isCRM ? 'crm' : 'work';
+          const activeKey = isKnowledge ? 'knowledge' : isVC ? 'vc' : isSX ? 'sx' : isCRM ? 'crm' : 'work';
           let curIdx = modList.findIndex((m) => m.key === activeKey);
           if (curIdx < 0) curIdx = 0;
           const cur = modList[curIdx];

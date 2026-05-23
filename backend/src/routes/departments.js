@@ -294,8 +294,8 @@ r.get('/:id/messages', async (req, res) => {
     let q = supabase.from('department_messages')
       .select(`
         *,
-        sender:users!department_messages_sender_id_fkey(id,full_name,avatar,role),
-        reply_to:department_messages!department_messages_reply_to_id_fkey(id,content,sender:users!department_messages_sender_id_fkey(id,full_name))
+        sender:users!department_messages_sender_id_fkey(id,full_name,avatar,role,is_bot),
+        reply_to:department_messages!department_messages_reply_to_id_fkey(id,content,sender:users!department_messages_sender_id_fkey(id,full_name,is_bot))
       `)
       .eq('department_id', req.params.id)
       .order('created_at', { ascending: false })
@@ -347,7 +347,7 @@ r.post('/:id/messages', async (req, res) => {
       attachments: attachments || [],
     }).select(`
       *,
-      sender:users!department_messages_sender_id_fkey(id,full_name,avatar,role)
+      sender:users!department_messages_sender_id_fkey(id,full_name,avatar,role,is_bot)
     `).single();
     if (error) throw error;
 
