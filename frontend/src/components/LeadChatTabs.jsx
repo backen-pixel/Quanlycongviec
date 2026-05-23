@@ -900,7 +900,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
           const isBot = !!m.user?.is_bot;
           const mentioned =
             Array.isArray(m.mention_user_ids) && m.mention_user_ids.map(String).includes(String(uid));
-          // System join/leave/etc — bot AI có is_system=true nhưng KHÔNG dùng message_type='system'.
+          // System join/leave/etc — bot AI hiển thị như tin nhân viên (is_system=false, is_bot=true).
           if (m.is_system && !isBot && m.message_type === 'system') {
             return (
               <div key={m.id} className="flex justify-center my-2">

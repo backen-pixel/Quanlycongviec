@@ -15,7 +15,7 @@ const CHANNEL_CHAT = 'crm_chat';
 const CHANNEL_SYSTEM = 'crm_system_tray_v3';
 
 function isChatType(type) {
-  return type === 'messenger_chat' || type === 'lead_chat';
+  return type === 'messenger_chat' || type === 'lead_chat' || type === 'department_chat';
 }
 
 function buildPushPayload(notification) {
@@ -34,6 +34,12 @@ function buildPushPayload(notification) {
   } else if (notification.type === 'lead_chat') {
     const sender = typeof meta.sender_name === 'string' ? meta.sender_name : '';
     title = title || 'Lead chat';
+    body = sender ? `${sender}: ${body}` : body;
+  } else if (notification.type === 'department_chat') {
+    const sender = typeof meta.sender_name === 'string' ? meta.sender_name : '';
+    const dept = typeof meta.dept_name === 'string' ? meta.dept_name
+      : (typeof meta.group_name === 'string' ? meta.group_name : title);
+    title = dept || 'Chat phòng ban';
     body = sender ? `${sender}: ${body}` : body;
   }
 

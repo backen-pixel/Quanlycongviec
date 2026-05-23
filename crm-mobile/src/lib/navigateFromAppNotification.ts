@@ -37,6 +37,11 @@ export function navigateFromAppNotification(n: AppNotification): void {
     });
     return;
   }
+  if (n.type === 'department_chat' && n.entity_id) {
+    // Mobile chưa có native DepartmentChat → mở web theo route đã có.
+    openWebPath(`/departments/${n.entity_id}/chat`);
+    return;
+  }
   const pid =
     (typeof m.project_id === 'string' && m.project_id) ||
     (n.entity_type === 'project' && n.entity_id ? n.entity_id : null);

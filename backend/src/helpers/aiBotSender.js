@@ -482,13 +482,17 @@ async function resolvePlaybookForSchedule(schedule) {
 /* ════════════════════ INSERT MESSAGE + EMIT SOCKET ════════════════════ */
 
 async function insertDepartmentBotMessage(departmentId, content, io, channelInfo) {
+  // Lưu ý: KHÔNG đặt is_system=true. Bot xuất hiện như một "nhân viên" bình thường,
+  // chỉ khác ở cờ users.is_bot=true để FE web/mobile tô badge 🤖. Nhờ vậy:
+  //   - Tin nhắn không bị FE render thành "system pill" nhỏ giữa.
+  //   - Hỗ trợ reply / pin / reaction / push như tin nhân viên thật.
   const { data, error } = await supabase
     .from('department_messages')
     .insert({
       department_id: departmentId,
       sender_id: AI_BOT_USER_ID,
       content,
-      is_system: true,
+      is_system: false,
     })
     .select(`
       *,
@@ -518,6 +522,8 @@ async function insertDepartmentBotMessage(departmentId, content, io, channelInfo
 
 async function insertGroupBotMessage(groupId, content, io, channelInfo) {
   // Bot không cần là thành viên — emit thẳng vào room (mọi thành viên đã join sẽ nhận).
+  // is_system=false để FE hiển thị giống tin nhắn nhân viên (không phải pill hệ thống).
+  // Vẫn nhận biết là bot qua users.is_bot=true → FE tô badge 🤖 + avatar gradient.
   const { data, error } = await supabase
     .from('messenger_group_messages')
     .insert({
@@ -525,7 +531,7 @@ async function insertGroupBotMessage(groupId, content, io, channelInfo) {
       user_id: AI_BOT_USER_ID,
       content,
       message_type: 'text',
-      is_system: true,
+      is_system: false,
     })
     .select('*, user:users!messenger_group_messages_user_id_fkey(id, full_name, avatar, is_bot)')
     .single();
