@@ -3,18 +3,16 @@
  *
  * Quy tắc:
  *  - Mỗi crm_tasks có cờ `blocks_stage_advance` (kế thừa từ crm_task_template_items).
- *  - Trước khi cho phép lead/deal chuyển sang giai đoạn khác (kéo Kanban / PATCH stage),
- *    nếu giai đoạn hiện tại còn tồn tại bất kỳ task nào:
- *      blocks_stage_advance = true AND status NOT IN ('completed','cancelled')
- *    → chặn và trả về danh sách công việc tồn đọng.
+ *  - CHỈ chặn khi giai đoạn hiện tại còn tồn tại task thỏa MỌI điều kiện:
+ *      blocks_stage_advance = true
+ *      AND status NOT IN ('completed','cancelled')
+ *  - Task KHÔNG tick blocks_stage_advance → KHÔNG chặn, dù chưa hoàn thành.
  *  - KHÔNG chặn khi giai đoạn đích là Thắng (is_won) hoặc Thua (is_lost).
  *  - KHÔNG chặn khi giai đoạn đích "lùi lại" (order_index <= current order_index).
  *  - KHÔNG chặn khi không xác định được template-slug cho giai đoạn hiện tại
  *    (vì pipeline có thể không có nhiệm vụ mẫu mapping).
  *
- * Áp dụng cho cả Lead và Deal — task của lead dùng slug `consulting`, deal có
- * `deal_new / deal_quote_contract / deal_ordering / deal_schedule / deal_shipping
- * / deal_notes` (hoặc các slug cũ `design / quotation / contract`).
+ * Áp dụng cho cả Lead và Deal.
  */
 
 const { supabase } = require('../config/supabase');
@@ -84,14 +82,9 @@ function shouldSkipGate(currentStage, targetStage) {
 
 /**
  * @returns {Promise<{ ok: true } | { ok: false, error: string, code: string, remaining_tasks: Array }>}
- */
-/**
- * Triết lý mới: BẮT BUỘC hoàn thành mọi nhiệm vụ CRM của giai đoạn hiện tại
- * trước khi chuyển sang giai đoạn mới (trừ trường hợp shouldSkipGate: lùi/Thắng/Thua/Hủy).
  *
- * Không cần tick cờ "blocks_stage_advance" trên từng task nữa — mặc định CHẶN tất cả.
- * (Cờ blocks_stage_advance vẫn dùng để đánh dấu task ưu tiên cao, nhưng mọi task chưa
- *  hoàn thành đều chặn.)
+ * CHỈ CHẶN khi còn task tick `blocks_stage_advance = true` ở giai đoạn hiện tại
+ * chưa hoàn thành/hủy. Task không tick cờ → cho qua tự do.
  */
 async function assertCrmStageAdvanceAllowed({ leadId, leadType, currentStage, targetStage }) {
   try {
@@ -104,8 +97,9 @@ async function assertCrmStageAdvanceAllowed({ leadId, leadType, currentStage, ta
         code: 'CRM_BLOCKING_TASKS_INCOMPLETE',
         error:
           `⛔ Không thể chuyển sang "${targetStage?.name || 'giai đoạn mới'}"\n\n`
-          + `Còn ${tasks.length} nhiệm vụ chưa hoàn thành ở giai đoạn "${currentStage?.name || ''}":\n${names}\n\n`
-          + `👉 Hãy hoàn thành các nhiệm vụ trên (hoặc đánh dấu hủy) rồi chuyển giai đoạn lại.`,
+          + `Còn ${tasks.length} nhiệm vụ chặn chuyển giai đoạn chưa hoàn thành ở "${currentStage?.name || ''}":\n${names}\n\n`
+          + `👉 Hãy hoàn thành (hoặc đánh dấu hủy) các nhiệm vụ trên rồi chuyển giai đoạn lại.\n`
+          + `Mẹo: nhiệm vụ không tick "Chặn chuyển giai đoạn" có thể bỏ qua, không cản trở.`,
         remaining_tasks: tasks,
         current_stage_id: currentStage?.id || null,
         target_stage_id: targetStage?.id || null,
@@ -113,13 +107,14 @@ async function assertCrmStageAdvanceAllowed({ leadId, leadType, currentStage, ta
     };
 
     // (1) Ưu tiên match theo pipeline_stage_id (chính xác).
-    //     CHẶN tất cả task chưa completed/cancelled — không lọc theo blocks_stage_advance.
+    //     CHỈ tính task có blocks_stage_advance = true.
     if (currentStage?.id) {
       const { data: byStageId, error: errStageId } = await supabase
         .from('crm_tasks')
         .select('id, title, status, blocks_stage_advance')
         .eq('lead_id', leadId)
         .eq('pipeline_stage_id', currentStage.id)
+        .eq('blocks_stage_advance', true)
         .not('status', 'in', '(completed,cancelled)')
         .limit(50);
       if (errStageId) {
@@ -129,7 +124,7 @@ async function assertCrmStageAdvanceAllowed({ leadId, leadType, currentStage, ta
       } else if (byStageId?.length) {
         return buildBlockResponse(byStageId);
       } else {
-        // Có check theo pipeline_stage_id và rỗng → cho phép qua, không cần fallback slug
+        // Có check theo pipeline_stage_id và rỗng → cho phép qua, không cần fallback slug.
         return { ok: true };
       }
     }
@@ -142,6 +137,7 @@ async function assertCrmStageAdvanceAllowed({ leadId, leadType, currentStage, ta
       .select('id, title, status, blocks_stage_advance')
       .eq('lead_id', leadId)
       .eq('stage_slug', slug)
+      .eq('blocks_stage_advance', true)
       .not('status', 'in', '(completed,cancelled)')
       .limit(50);
     if (error) {

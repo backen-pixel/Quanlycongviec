@@ -181,7 +181,6 @@ export default function CRMTasksTab({
   }, [leadType, usePipelineTaskUi, pipelineStagesAsUiStages]);
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [generatingDefaults, setGeneratingDefaults] = useState(false);
   const [generatingProduction, setGeneratingProduction] = useState(false);
   const [resyncingPipeline, setResyncingPipeline] = useState(false);
   const [viewMode, setViewMode] = useState('list'); // list, deadline, planner, calendar
@@ -321,24 +320,16 @@ export default function CRMTasksTab({
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
-  /** Gen lại đúng bộ mẫu pipeline: xóa nhiệm vụ thừa + đồng bộ giai đoạn hiện tại. */
+  /** Xóa nhiệm vụ CRM theo loại lead/deal rồi tạo lại từ bộ mẫu pipeline của công ty. */
   const resyncPipelineTasks = async () => {
     if (resyncingPipeline) return;
-    const stageLabel = pipelineStages.find((s) => String(s.id) === String(leadCurrentStageId))?.name
-      || STAGES.find((s) => String(s.slug) === String(leadCurrentStageId))?.label
-      || 'giai đoạn hiện tại';
-    const orphanCount = uiTasks.filter((t) => !t.pipeline_stage_id).length;
-    const extraHint = orphanCount > 0
-      ? `\n• Gom ${orphanCount} nhiệm vụ legacy vào bộ mẫu pipeline mới`
-      : '';
 
     const ok = window.confirm(
-      `Gen lại nhiệm vụ CRM theo bộ mẫu pipeline?\n\n`
-      + `Hệ thống sẽ:${extraHint}\n`
-      + '• Xóa nhiệm vụ thừa ở giai đoạn khác (chưa bắt đầu)\n'
-      + `• Tạo lại đúng bộ mẫu cho «${stageLabel}»\n`
-      + '• Ẩn các giai đoạn trống\n\n'
-      + 'Nhiệm vụ đang làm / đã hoàn thành ở giai đoạn khác sẽ được giữ.\n'
+      'Tạo lại nhiệm vụ CRM theo bộ mẫu của công ty?\n\n'
+      + '• Xóa các nhiệm vụ CRM đang gắn pipeline (cùng loại Lead/Deal)\n'
+      + '• Tạo lại từ template đã cấu hình cho từng giai đoạn\n'
+      + '• Giai đoạn chưa có bộ mẫu sẽ không có nhiệm vụ\n\n'
+      + 'Nhiệm vụ Sản xuất (sx_*) không bị xóa.\n'
       + 'KHÔNG thể hoàn tác.',
     );
     if (!ok) return;
@@ -347,67 +338,15 @@ export default function CRMTasksTab({
     try {
       const { data } = await api.post(`/crm/leads/${leadId}/tasks/resync-pipeline`);
       const parts = [
-        data.deleted_extra > 0 ? `Đã xóa ${data.deleted_extra} nhiệm vụ thừa` : null,
-        data.tasks_created > 0 ? `Tạo ${data.tasks_created} nhiệm vụ đúng bộ mẫu` : null,
-        data.current_stage_resynced ? 'Đã đồng bộ giai đoạn hiện tại' : null,
+        data.deleted > 0 ? `Đã xóa ${data.deleted} nhiệm vụ cũ` : null,
+        data.tasks_created > 0 ? `Tạo ${data.tasks_created} nhiệm vụ từ bộ mẫu` : null,
       ].filter(Boolean);
-      alert(parts.length ? parts.join('.\n') : 'Đã đồng bộ — không có thay đổi.');
+      alert(parts.length ? parts.join('.\n') : 'Đã đồng bộ — không có thay đổi (có thể chưa cấu hình bộ mẫu).');
       await loadTasks();
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Lỗi gen lại nhiệm vụ');
     } finally {
       setResyncingPipeline(false);
-    }
-  };
-
-  const hasOrphanCrmTasks = useMemo(
-    () => usePipelineTaskUi && tasks.some((t) => !t.pipeline_stage_id && !isSxStageSlug(t.stage_slug)),
-    [usePipelineTaskUi, tasks, isSxStageSlug],
-  );
-
-  const generateDefaultTasks = async () => {
-    if (generatingDefaults) return;
-    setGeneratingDefaults(true);
-    try {
-      // Tạo theo các bộ mẫu được đánh dấu is_default, khớp stage_slug của pipeline hiện tại.
-      const defaults = (templates || []).filter((t) => t?.is_default && t?.is_active !== false);
-      const byStage = new Map();
-      defaults.forEach((t) => {
-        if (!t?.stage_slug) return;
-        if (!byStage.has(t.stage_slug)) byStage.set(t.stage_slug, t);
-      });
-
-      const stageSlugs = (STAGES || []).map((s) => s.slug).filter(Boolean);
-      const tplIds = stageSlugs
-        .map((slug) => byStage.get(slug)?.id)
-        .filter(Boolean);
-
-      if (!tplIds.length) {
-        alert('Chưa có bộ mẫu mặc định (is_default) cho các cột nhiệm vụ này. Vào Cài đặt → Bộ mẫu CRM để cấu hình.');
-        return;
-      }
-
-      let created = 0;
-      const allCreated = [];
-      for (const tid of tplIds) {
-        const { data } = await api.post(`/crm/leads/${leadId}/tasks/from-template`, { template_id: tid });
-        created += data?.count || 0;
-        if (Array.isArray(data?.tasks) && data.tasks.length) allCreated.push(...data.tasks);
-      }
-
-      if (allCreated.length) {
-        setTasks((prev) => [...prev, ...allCreated]);
-        const stages = {};
-        allCreated.forEach((t) => { if (t.stage_slug) stages[t.stage_slug] = true; });
-        setExpandedStages((s) => ({ ...s, ...stages }));
-      } else {
-        await loadTasks();
-      }
-      alert(created > 0 ? `Đã gen ${created} nhiệm vụ mặc định` : 'Không tạo thêm nhiệm vụ (có thể bộ mẫu trống hoặc đã tồn tại)');
-    } catch (e) {
-      alert(e.response?.data?.error || e.message || 'Lỗi gen nhiệm vụ');
-    } finally {
-      setGeneratingDefaults(false);
     }
   };
 
@@ -474,49 +413,6 @@ export default function CRMTasksTab({
   const toggleStatus = (task) => {
     const next = task.status === 'completed' ? 'pending' : task.status === 'pending' ? 'in_progress' : 'completed';
     updateTask(task.id, { status: next });
-  };
-
-  /**
-   * Xóa toàn bộ nhiệm vụ "Khác" (chưa gắn pipeline_stage_id).
-   * Sau khi xóa, nếu deal không còn task nào thì GET /tasks sẽ tự gọi autoGenCrmTasks
-   * và sinh lại đúng task theo template đã setup cho pipeline của công ty.
-   */
-  const deleteOrphanTasksBulk = async () => {
-    const orphan = tasks.filter((t) => !t.pipeline_stage_id);
-    if (!orphan.length) return;
-    const hasOtherTasks = tasks.some((t) => t.pipeline_stage_id);
-    const willAutoRegen = !hasOtherTasks; // chỉ regen khi xóa hết task của deal
-    const confirmMsg = willAutoRegen
-      ? `Xóa ${orphan.length} nhiệm vụ cũ (legacy) và TỰ ĐỘNG GEN LẠI theo bộ mẫu pipeline đã setup?\n\n`
-        + `Hệ thống sẽ sinh nhiệm vụ mới từ template gắn vào pipeline của công ty.\n`
-        + `KHÔNG thể hoàn tác.`
-      : `Xóa ${orphan.length} nhiệm vụ chưa gắn giai đoạn pipeline?\n\n`
-        + `Deal vẫn còn nhiệm vụ khác đã gắn pipeline → KHÔNG tự gen lại.\n`
-        + `KHÔNG thể hoàn tác.`;
-    if (!window.confirm(confirmMsg)) return;
-    setBulkCompleting(true);
-    const prev = tasks;
-    const ids = new Set(orphan.map((t) => t.id));
-    setTasks((p) => p.filter((t) => !ids.has(t.id)));
-    try {
-      await Promise.all(orphan.map((t) => {
-        const lid = apiLeadIdForTaskId(t.id);
-        return api.delete(`/crm/leads/${lid}/tasks/${t.id}`).catch(() => null);
-      }));
-    } catch (e) {
-      setTasks(prev);
-      alert(e.response?.data?.error || 'Lỗi xóa nhiệm vụ');
-    } finally {
-      setBulkCompleting(false);
-      try { await loadTasks({ silent: true }); } catch (_) { /* ignore */ }
-      if (willAutoRegen) {
-        // Nhỏ giọt nhắc để user biết hệ thống đã regen
-        try {
-          // Đợi 1 chút rồi reload lần nữa — đảm bảo nhận task mới gen
-          setTimeout(() => loadTasks({ silent: true }).catch(() => {}), 300);
-        } catch (_) { /* ignore */ }
-      }
-    }
   };
 
   const completeTasksBulk = async (taskList, confirmMessage) => {
@@ -1339,28 +1235,13 @@ export default function CRMTasksTab({
               type="button"
               onClick={() => void resyncPipelineTasks()}
               disabled={resyncingPipeline}
-              className={`h-7 px-2.5 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors disabled:opacity-60 ${
-                hasOrphanCrmTasks
-                  ? 'bg-violet-600 text-white hover:bg-violet-700 ring-2 ring-violet-300'
-                  : 'bg-violet-50 text-violet-800 border border-violet-300 hover:bg-violet-100'
-              }`}
-              title="Xóa nhiệm vụ thừa/legacy và gen lại đúng bộ mẫu pipeline cho giai đoạn hiện tại"
+              className="h-7 px-2.5 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors disabled:opacity-60 bg-violet-50 text-violet-800 border border-violet-300 hover:bg-violet-100"
+              title="Xóa nhiệm vụ CRM theo loại Lead/Deal và tạo lại từ bộ mẫu pipeline của công ty"
             >
               {resyncingPipeline
                 ? <span className="animate-spin h-3 w-3 border-2 border-current border-t-transparent rounded-full" />
                 : <RefreshCw className="h-3 w-3" />}
               Gen lại đúng bộ mẫu
-            </button>
-          )}
-          {showCrmTemplatesUi && templates.length > 0 && uiTasks.length === 0 && !showTemplatePanel && (
-            <button
-              onClick={generateDefaultTasks}
-              disabled={generatingDefaults}
-              className="h-7 px-2.5 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
-              title="Tạo nhanh theo các bộ mẫu được đánh dấu ⭐ (is_default)"
-            >
-              {generatingDefaults ? <span className="animate-spin h-3 w-3 border-2 border-white/80 border-t-transparent rounded-full" /> : <ListChecks className="h-3 w-3" />}
-              Gen nhiệm vụ (CRM)
             </button>
           )}
           {showCrmTemplatesUi && templates.length > 0 && (

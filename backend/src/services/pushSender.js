@@ -191,7 +191,7 @@ function buildFcmDataPayload(notification) {
   const chat = isChatType(notification.type);
   const senderName = String(meta.sender_name || '');
   const senderAvatar = String(meta.sender_avatar || '');
-  const groupName = String(meta.group_name || notification.title || '');
+  const groupName = String(meta.group_name || meta.dept_name || notification.title || '');
   const bubbleKey = String(meta.bubble_key || (notification.entity_id ? `${notification.entity_type || 'lead'}:${notification.entity_id}` : ''));
   const messageId = String(meta.message_id || notification.message_id || '');
   const senderId = String(meta.sender_id || meta.user_id || '');

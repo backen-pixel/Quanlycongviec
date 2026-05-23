@@ -34,6 +34,7 @@ import {
   FileText,
   Lock,
   Settings as SettingsIcon,
+  User as UserIcon,
 } from 'lucide-react';
 
 const DATA_SOURCES = [
@@ -105,19 +106,23 @@ export default function AiChatBotSettingsPage() {
     setTimeout(() => setToast(null), 3500);
   }, []);
 
+  const [channelFilters, setChannelFilters] = useState({ divisions: [], companies: [], regions: [] });
+
   const reload = useCallback(async () => {
     try {
       setLoading(true);
-      const [botRes, chRes, schRes, pbRes] = await Promise.all([
+      const [botRes, chRes, schRes, pbRes, filRes] = await Promise.all([
         api.get('/ai-chat-bot/bot'),
         api.get('/ai-chat-bot/channels'),
         api.get('/ai-chat-bot/schedules'),
         api.get('/ai-chat-bot/playbooks'),
+        api.get('/ai-chat-bot/channel-filters').catch(() => ({ data: { divisions: [], companies: [], regions: [] } })),
       ]);
       setBot(botRes.data);
       setChannels(chRes.data || { departments: [], groups: [] });
       setSchedules(schRes.data?.schedules || []);
       setPlaybooks(pbRes.data?.playbooks || []);
+      setChannelFilters(filRes.data || { divisions: [], companies: [], regions: [] });
     } catch (e) {
       showToast(e?.response?.data?.error || 'Không tải được dữ liệu', 'err');
     } finally {
@@ -199,6 +204,7 @@ export default function AiChatBotSettingsPage() {
           schedules={schedules}
           playbooks={playbooks}
           channels={channels}
+          channelFilters={channelFilters}
           busyId={busyId}
           setBusyId={setBusyId}
           onReload={reload}
@@ -243,19 +249,9 @@ export default function AiChatBotSettingsPage() {
    ════════════════════════════════════════════════════════ */
 
 function SchedulesTab({
-  schedules, playbooks, channels, busyId, setBusyId, onReload, showToast, editing, setEditing, setRunsModal, setTab,
+  schedules, playbooks, channels, channelFilters, busyId, setBusyId, onReload, showToast, editing, setEditing, setRunsModal, setTab,
 }) {
   const enabledPlaybooks = useMemo(() => playbooks.filter((p) => p.enabled), [playbooks]);
-
-  const channelOptions = useMemo(() => {
-    if (editing?.channel_type === 'group') {
-      return channels.groups.map((g) => ({
-        id: g.id,
-        label: g.is_lead_group ? `🎯 ${g.name}` : g.name,
-      }));
-    }
-    return channels.departments.map((d) => ({ id: d.id, label: d.name }));
-  }, [editing?.channel_type, channels]);
 
   const onCreate = () => {
     if (!enabledPlaybooks.length) {
@@ -278,12 +274,29 @@ function SchedulesTab({
   const onSave = async () => {
     if (!editing) return;
     if (!editing.title?.trim()) return showToast('Nhập tên gợi nhớ cho lịch', 'err');
-    if (!editing.channel_id) return showToast('Chọn kênh chat', 'err');
     if (!editing.playbook_id) return showToast('Chọn mẫu nội dung AI', 'err');
 
-    const payload = {
-      channel_type: editing.channel_type,
-      channel_id: editing.channel_id,
+    const isUserMode = editing.channel_type === 'user' && !editing.id;
+
+    // Mode "DM nhân viên": cần ensure direct group với bot cho từng user.
+    let targetIds = [];
+    let storedType = editing.channel_type;
+    if (isUserMode) {
+      const userIds = Array.isArray(editing.user_ids) ? editing.user_ids : [];
+      if (!userIds.length) return showToast('Chọn ít nhất 1 nhân viên', 'err');
+      storedType = 'group';
+    } else {
+      targetIds = editing.id
+        ? [editing.channel_id]
+        : (Array.isArray(editing.channel_ids) && editing.channel_ids.length
+            ? editing.channel_ids
+            : (editing.channel_id ? [editing.channel_id] : []));
+      if (!targetIds.length) return showToast('Chọn ít nhất 1 kênh chat', 'err');
+    }
+
+    const buildPayload = (cid) => ({
+      channel_type: storedType,
+      channel_id: cid,
       playbook_id: editing.playbook_id,
       custom_prompt: editing.custom_prompt?.trim() || null,
       title: editing.title.trim(),
@@ -292,15 +305,43 @@ function SchedulesTab({
       max_runs_per_day: editing.max_runs_per_day,
       weekdays: editing.weekdays?.length ? editing.weekdays : null,
       enabled: editing.enabled,
-    };
+    });
+
     try {
       setBusyId('save');
       if (editing.id) {
-        await api.put(`/ai-chat-bot/schedules/${editing.id}`, payload);
+        await api.put(`/ai-chat-bot/schedules/${editing.id}`, buildPayload(editing.channel_id));
         showToast('Đã cập nhật lịch');
+      } else if (isUserMode) {
+        const userIds = editing.user_ids;
+        let ok = 0;
+        let fail = 0;
+        for (const uid of userIds) {
+          try {
+            const ensureRes = await api.post('/ai-chat-bot/ensure-direct-with-bot', { user_id: uid });
+            const gid = ensureRes?.data?.group_id;
+            if (!gid) throw new Error('Không có group_id');
+            await api.post('/ai-chat-bot/schedules', buildPayload(gid));
+            ok += 1;
+          } catch {
+            fail += 1;
+          }
+        }
+        if (fail === 0) showToast(`Đã tạo ${ok} lịch DM ✓`);
+        else showToast(`Tạo được ${ok}/${userIds.length} lịch DM (${fail} lỗi)`, fail ? 'err' : 'ok');
       } else {
-        await api.post('/ai-chat-bot/schedules', payload);
-        showToast('Đã tạo lịch');
+        let ok = 0;
+        let fail = 0;
+        for (const cid of targetIds) {
+          try {
+            await api.post('/ai-chat-bot/schedules', buildPayload(cid));
+            ok += 1;
+          } catch {
+            fail += 1;
+          }
+        }
+        if (fail === 0) showToast(`Đã tạo ${ok} lịch ✓`);
+        else showToast(`Tạo được ${ok}/${targetIds.length} lịch (${fail} lỗi)`, fail ? 'err' : 'ok');
       }
       setEditing(null);
       onReload();
@@ -399,7 +440,8 @@ function SchedulesTab({
         <ScheduleEditorModal
           value={editing}
           onChange={setEditing}
-          channelOptions={channelOptions}
+          channels={channels}
+          channelFilters={channelFilters}
           playbooks={enabledPlaybooks}
           onClose={() => setEditing(null)}
           onSave={onSave}
@@ -524,8 +566,113 @@ function ScheduleCard({ sch, busy, onEdit, onDelete, onToggle, onRunNow, onViewR
   );
 }
 
-function ScheduleEditorModal({ value, onChange, channelOptions, playbooks, onClose, onSave, saving }) {
+function ScheduleEditorModal({ value, onChange, channels, channelFilters, playbooks, onClose, onSave, saving }) {
   const update = (patch) => onChange({ ...value, ...patch });
+
+  // ── State filter (lưu trong giá trị editing để không bị reset khi rerender)
+  const isEditingExisting = !!value.id;
+  const f = value._filter || {};
+  const setFilter = (patch) => update({ _filter: { ...f, ...patch } });
+
+  // ── Mode DM: tải danh sách nhân viên theo filter
+  const [userList, setUserList] = useState([]);
+  const [userLoading, setUserLoading] = useState(false);
+  const [userQuery, setUserQuery] = useState('');
+
+  useEffect(() => {
+    if (value.channel_type !== 'user' || isEditingExisting) return;
+    let cancelled = false;
+    setUserLoading(true);
+    const params = new URLSearchParams();
+    if (f.division_id) params.set('division_id', f.division_id);
+    if (f.company_id) params.set('company_id', f.company_id);
+    if (f.region_id) params.set('region_id', f.region_id);
+    if (f.department_id) params.set('department_id', f.department_id);
+    api
+      .get(`/ai-chat-bot/users?${params.toString()}`)
+      .then((r) => {
+        if (!cancelled) setUserList(r.data?.users || []);
+      })
+      .catch(() => {
+        if (!cancelled) setUserList([]);
+      })
+      .finally(() => {
+        if (!cancelled) setUserLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [value.channel_type, isEditingExisting, f.division_id, f.company_id, f.region_id, f.department_id]);
+
+  const filteredUsers = useMemo(() => {
+    const q = userQuery.trim().toLowerCase();
+    if (!q) return userList;
+    return userList.filter((u) =>
+      (u.full_name || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q),
+    );
+  }, [userList, userQuery]);
+
+  const selectedUserIds = Array.isArray(value.user_ids) ? value.user_ids : [];
+  const toggleUser = (id) => {
+    const set = new Set(selectedUserIds.map(String));
+    if (set.has(String(id))) set.delete(String(id));
+    else set.add(String(id));
+    update({ user_ids: [...set] });
+  };
+  const selectAllUsers = () => update({ user_ids: filteredUsers.map((u) => u.id) });
+  const clearUsers = () => update({ user_ids: [] });
+
+  // Danh sách phòng ban sau khi áp filter
+  const filteredDepartments = useMemo(() => {
+    const list = channels?.departments || [];
+    return list.filter((d) => {
+      if (f.division_id && String(d.division_unit_id || '') !== String(f.division_id)) return false;
+      if (f.company_id && String(d.company_id || '') !== String(f.company_id)) return false;
+      if (f.region_id) {
+        const rids = (d.region_ids || []).map(String);
+        if (!rids.includes(String(f.region_id))) return false;
+      }
+      return true;
+    });
+  }, [channels?.departments, f.division_id, f.company_id, f.region_id]);
+
+  // Khi đổi khối/công ty: reset company_id/region_id nếu không còn phù hợp
+  const filteredCompanies = useMemo(() => {
+    const list = channelFilters?.companies || [];
+    if (!f.division_id) return list;
+    return list.filter((c) => String(c.division_unit_id || '') === String(f.division_id));
+  }, [channelFilters?.companies, f.division_id]);
+
+  const filteredRegions = useMemo(() => {
+    const list = channelFilters?.regions || [];
+    if (!f.company_id) return list;
+    return list.filter((r2) => String(r2.company_id) === String(f.company_id));
+  }, [channelFilters?.regions, f.company_id]);
+
+  // Multi-select dept ids (chỉ dùng khi TẠO MỚI). Sửa lịch: dropdown đơn.
+  const selectedDeptIds = Array.isArray(value.channel_ids) ? value.channel_ids : [];
+  const toggleDept = (id) => {
+    const set = new Set(selectedDeptIds.map(String));
+    if (set.has(String(id))) set.delete(String(id));
+    else set.add(String(id));
+    update({ channel_ids: [...set], channel_id: set.size === 1 ? [...set][0] : '' });
+  };
+  const selectAllDepts = () => {
+    const ids = filteredDepartments.map((d) => d.id);
+    update({ channel_ids: ids, channel_id: ids.length === 1 ? ids[0] : '' });
+  };
+  const clearDepts = () => update({ channel_ids: [], channel_id: '' });
+
+  // Channel options cho mode "Nhóm chat" hoặc khi sửa lịch (đơn select)
+  const singleChannelOptions = useMemo(() => {
+    if (value.channel_type === 'group') {
+      return (channels?.groups || []).map((g) => ({
+        id: g.id,
+        label: g.is_lead_group ? `🎯 ${g.name}` : g.name,
+      }));
+    }
+    return filteredDepartments.map((d) => ({ id: d.id, label: d.name + (d.company_name ? ` — ${d.company_name}` : '') }));
+  }, [value.channel_type, channels?.groups, filteredDepartments]);
 
   const addSlot = () => update({ run_slots: [...(value.run_slots || []), { h: 9, m: 0 }] });
   const removeSlot = (i) => update({ run_slots: value.run_slots.filter((_, idx) => idx !== i) });
@@ -579,29 +726,252 @@ function ScheduleEditorModal({ value, onChange, channelOptions, playbooks, onClo
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Kênh chat *</label>
             <div className="flex gap-2 mb-2">
-              <button type="button" onClick={() => update({ channel_type: 'department', channel_id: '' })}
+              <button type="button" onClick={() => update({ channel_type: 'department', channel_id: '', channel_ids: [] })}
                 className={`h-9 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer ${
                   value.channel_type === 'department' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                 }`}>
                 <Building2 className="h-3.5 w-3.5" /> Phòng ban
               </button>
-              <button type="button" onClick={() => update({ channel_type: 'group', channel_id: '' })}
+              <button type="button" onClick={() => update({ channel_type: 'group', channel_id: '', channel_ids: [] })}
                 className={`h-9 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer ${
                   value.channel_type === 'group' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                 }`}>
                 <UsersRound className="h-3.5 w-3.5" /> Nhóm chat
               </button>
+              {!isEditingExisting && (
+                <button type="button" onClick={() => update({ channel_type: 'user', channel_id: '', channel_ids: [], user_ids: [] })}
+                  className={`h-9 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer ${
+                    value.channel_type === 'user' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}>
+                  <UserIcon className="h-3.5 w-3.5" /> Nhân viên (DM)
+                </button>
+              )}
             </div>
-            <select
-              value={value.channel_id || ''}
-              onChange={(e) => update({ channel_id: e.target.value })}
-              className="w-full h-10 px-3 rounded-xl border border-gray-200 outline-none focus:ring-2 focus:ring-indigo-500 text-sm bg-white"
-            >
-              <option value="">— Chọn {value.channel_type === 'department' ? 'phòng ban' : 'nhóm chat'} —</option>
-              {channelOptions.map((opt) => (
-                <option key={opt.id} value={opt.id}>{opt.label}</option>
-              ))}
-            </select>
+
+            {/* Bộ lọc Khối/Công ty/Khu vực (+ Phòng ban khi mode 'user') */}
+            {(value.channel_type === 'department' || value.channel_type === 'user') && (
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2 mb-2">
+                <p className="text-[11px] font-semibold text-gray-600 uppercase">
+                  {value.channel_type === 'department' ? 'Lọc phòng ban' : 'Lọc nhân viên'}
+                </p>
+                <div className={`grid gap-2 ${value.channel_type === 'user' ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-3'}`}>
+                  <select
+                    value={f.division_id || ''}
+                    onChange={(e) => setFilter({ division_id: e.target.value, company_id: '', region_id: '' })}
+                    className="h-9 px-2 rounded-lg border border-gray-200 bg-white text-xs"
+                  >
+                    <option value="">— Khối —</option>
+                    {(channelFilters?.divisions || []).map((d) => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={f.company_id || ''}
+                    onChange={(e) => setFilter({ company_id: e.target.value, region_id: '' })}
+                    className="h-9 px-2 rounded-lg border border-gray-200 bg-white text-xs"
+                  >
+                    <option value="">— Công ty —</option>
+                    {filteredCompanies.map((c) => (
+                      <option key={c.id} value={c.id}>{c.short_name}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={f.region_id || ''}
+                    onChange={(e) => setFilter({ region_id: e.target.value })}
+                    disabled={!f.company_id}
+                    className="h-9 px-2 rounded-lg border border-gray-200 bg-white text-xs disabled:opacity-50"
+                  >
+                    <option value="">— Khu vực —</option>
+                    {filteredRegions.map((r2) => (
+                      <option key={r2.id} value={r2.id}>{r2.name}</option>
+                    ))}
+                  </select>
+                  {value.channel_type === 'user' && (
+                    <select
+                      value={f.department_id || ''}
+                      onChange={(e) => setFilter({ department_id: e.target.value })}
+                      className="h-9 px-2 rounded-lg border border-gray-200 bg-white text-xs"
+                    >
+                      <option value="">— Phòng ban —</option>
+                      {filteredDepartments.map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.name}{d.company_name ? ` — ${d.company_name}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+                {(f.division_id || f.company_id || f.region_id || f.department_id) && (
+                  <button
+                    type="button"
+                    onClick={() => setFilter({ division_id: '', company_id: '', region_id: '', department_id: '' })}
+                    className="text-[11px] text-indigo-600 hover:underline"
+                  >
+                    Xoá bộ lọc
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* MULTI-SELECT nhân viên (DM) — luôn là tạo mới */}
+            {value.channel_type === 'user' && !isEditingExisting && (
+              <div className="rounded-xl border border-gray-200 bg-white">
+                <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-gray-100 bg-gray-50">
+                  <span className="text-[11px] font-semibold text-gray-600">
+                    {userLoading ? 'Đang tải…' : `${filteredUsers.length} nhân viên`}
+                    {selectedUserIds.length > 0 && (
+                      <span className="ml-2 px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                        đã chọn {selectedUserIds.length}
+                      </span>
+                    )}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <input
+                      value={userQuery}
+                      onChange={(e) => setUserQuery(e.target.value)}
+                      placeholder="Tìm tên / email…"
+                      className="h-7 px-2 text-[11px] rounded border border-gray-200 w-40"
+                    />
+                    <button
+                      type="button"
+                      onClick={selectAllUsers}
+                      className="text-[11px] px-2 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-700"
+                    >
+                      Chọn tất cả
+                    </button>
+                    {selectedUserIds.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={clearUsers}
+                        className="text-[11px] px-2 py-1 rounded bg-gray-200 text-gray-700 hover:bg-gray-300"
+                      >
+                        Bỏ chọn
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="max-h-56 overflow-y-auto">
+                  {filteredUsers.length === 0 ? (
+                    <p className="text-xs text-gray-400 italic text-center py-4">
+                      {userLoading ? 'Đang tải danh sách…' : 'Không có nhân viên phù hợp'}
+                    </p>
+                  ) : (
+                    filteredUsers.map((u) => {
+                      const checked = selectedUserIds.map(String).includes(String(u.id));
+                      return (
+                        <label
+                          key={u.id}
+                          className={`flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-indigo-50 ${
+                            checked ? 'bg-indigo-50' : ''
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleUser(u.id)}
+                            className="rounded"
+                          />
+                          <span className="flex-1 truncate">
+                            <span className="font-medium">{u.full_name || u.email}</span>
+                            {u.department_name && (
+                              <span className="text-gray-400"> — {u.department_name}</span>
+                            )}
+                            {u.company_name && (
+                              <span className="text-gray-400"> · {u.company_name}</span>
+                            )}
+                          </span>
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+                {selectedUserIds.length > 1 && (
+                  <p className="px-3 py-1.5 text-[10px] text-indigo-700 bg-indigo-50 border-t border-indigo-100">
+                    Sẽ tạo {selectedUserIds.length} lịch DM riêng (mỗi nhân viên 1 lịch — cùng nội dung & giờ chạy).
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* MULTI-SELECT phòng ban khi tạo mới; SỬA thì single-select */}
+            {value.channel_type === 'department' && !isEditingExisting ? (
+              <div className="rounded-xl border border-gray-200 bg-white">
+                <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-gray-50">
+                  <span className="text-[11px] font-semibold text-gray-600">
+                    {filteredDepartments.length} phòng ban
+                    {selectedDeptIds.length > 0 && (
+                      <span className="ml-2 px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                        đã chọn {selectedDeptIds.length}
+                      </span>
+                    )}
+                  </span>
+                  <div className="flex gap-1">
+                    <button
+                      type="button"
+                      onClick={selectAllDepts}
+                      className="text-[11px] px-2 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-700"
+                    >
+                      Chọn tất cả
+                    </button>
+                    {selectedDeptIds.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={clearDepts}
+                        className="text-[11px] px-2 py-1 rounded bg-gray-200 text-gray-700 hover:bg-gray-300"
+                      >
+                        Bỏ chọn
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="max-h-44 overflow-y-auto">
+                  {filteredDepartments.length === 0 ? (
+                    <p className="text-xs text-gray-400 italic text-center py-4">Không có phòng ban phù hợp bộ lọc</p>
+                  ) : (
+                    filteredDepartments.map((d) => {
+                      const checked = selectedDeptIds.map(String).includes(String(d.id));
+                      return (
+                        <label
+                          key={d.id}
+                          className={`flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-indigo-50 ${
+                            checked ? 'bg-indigo-50' : ''
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleDept(d.id)}
+                            className="rounded"
+                          />
+                          <span className="flex-1 truncate">
+                            {d.name}
+                            {d.company_name && (
+                              <span className="text-gray-400"> — {d.company_name}</span>
+                            )}
+                          </span>
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+                {selectedDeptIds.length > 1 && (
+                  <p className="px-3 py-1.5 text-[10px] text-indigo-700 bg-indigo-50 border-t border-indigo-100">
+                    Sẽ tạo {selectedDeptIds.length} lịch riêng (mỗi phòng ban 1 lịch — cùng nội dung & giờ chạy).
+                  </p>
+                )}
+              </div>
+            ) : value.channel_type !== 'user' ? (
+              <select
+                value={value.channel_id || ''}
+                onChange={(e) => update({ channel_id: e.target.value, channel_ids: e.target.value ? [e.target.value] : [] })}
+                className="w-full h-10 px-3 rounded-xl border border-gray-200 outline-none focus:ring-2 focus:ring-indigo-500 text-sm bg-white"
+              >
+                <option value="">— Chọn {value.channel_type === 'department' ? 'phòng ban' : 'nhóm chat'} —</option>
+                {singleChannelOptions.map((opt) => (
+                  <option key={opt.id} value={opt.id}>{opt.label}</option>
+                ))}
+              </select>
+            ) : null}
           </div>
 
           {/* Playbook */}
