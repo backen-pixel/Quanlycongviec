@@ -43,14 +43,10 @@ const {
   applyAllActiveWorkshopTemplatesForArea,
 } = require('../helpers/workshopApplyTemplates');
 const {
-  autoGenCrmTasks,
+  autoGenCrmTasksForNewLead,
   applyCrmTaskTemplatesToCompanyRegions,
   resyncCrmPipelineTasksForLead,
-  leadUsesLegacyCrmTaskSet,
-  applyLegacyGlobalTemplatesForStage,
-  FALLBACK_LEAD_TASKS,
-  FALLBACK_DEAL_TASKS,
-  completeConsultingCrmTasksForLead,
+  filterCrmTasksForLeadType,
 } = require('../helpers/autoGenCrmTasks');
 const { normalizeTimestamp } = require('../helpers/normalizeTimestamp');
 const {
@@ -692,7 +688,7 @@ async function createNotification(req, userId, type, title, message, entityType,
   return await createNotif(req, userId, type, title, message, entityType, entityId, metadata || null);
 }
 
-// ─── autoGenCrmTasks + FALLBACK_*_TASKS: imported from helpers/autoGenCrmTasks.js ──
+// ─── autoGenCrmTasksForNewLead: imported from helpers/autoGenCrmTasks.js ──
 
 async function notifyMultiple(req, userIds, type, title, message, entityType, entityId, metadata) {
   return await notifyMultipleShared(req, userIds, type, title, message, entityType, entityId, metadata || null);
@@ -5351,11 +5347,7 @@ r.post('/leads', async (req, res) => {
     } catch (ne) { console.warn('[NOTIFY] lead_created:', ne.message); }
 
     try {
-      const { data: existingTasks } = await supabase.from('crm_tasks')
-        .select('id').eq('lead_id', data.id).limit(1);
-      if (!existingTasks?.length) {
-        await autoGenCrmTasks(data.id, 'lead', req.user.userId);
-      }
+      await autoGenCrmTasksForNewLead(data.id, req.user.userId);
     } catch (autoErr) { console.error('Auto-create tasks error:', autoErr.message); }
 
     // Lead: toàn bộ nhiệm vụ trên chính lead (không Đơn 1 / deal con).
@@ -5485,7 +5477,7 @@ r.post('/deals', async (req, res) => {
     } catch (ne) { console.warn('[NOTIFY] deal_created:', ne.message); }
 
     try {
-      await autoGenCrmTasks(data.id, 'deal', req.user.userId);
+      await autoGenCrmTasksForNewLead(data.id, req.user.userId);
     } catch (autoErr) { console.error('Auto-create tasks on deal create error:', autoErr.message); }
 
     // Nhiệm vụ SX (sx_*) từ workshop_task_templates — khi loại Deal bật cờ hoặc client gửi apply_workshop_production_tasks.
@@ -5918,9 +5910,9 @@ r.put('/leads/:id', async (req, res) => {
 
     if (oldLead?.type === 'lead' && data?.type === 'deal') {
       try {
-        await completeConsultingCrmTasksForLead(id);
-      } catch (ccErr) {
-        console.warn('[crm PUT /leads/:id] complete consulting tasks after lead→deal:', ccErr.message);
+        await autoGenCrmTasksForNewLead(id, req.user.userId);
+      } catch (genErr) {
+        console.warn('[crm PUT /leads/:id] auto-gen deal tasks after lead→deal:', genErr.message);
       }
     }
 
@@ -6565,22 +6557,11 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       });
     } catch (_) {}
 
-    // ✅ CRM tasks: trigger fn_auto_gen_crm_tasks() đã tự động:
-    //    - Xóa lead tasks cũ
-    //    - Gen deal tasks mới từ templates
-    // Nếu trigger chưa chạy (chưa deploy SQL), fallback bằng code:
+    // Gen bộ nhiệm vụ Deal (1 lần) từ template pipeline công ty; task Lead cũ giữ DB, UI ẩn qua filter pipeline_type.
     try {
-      const { data: existingTasks } = await supabase.from('crm_tasks')
-        .select('id').eq('lead_id', req.params.id).limit(1);
-      if (!existingTasks?.length) {
-        await autoGenCrmTasks(req.params.id, 'deal', req.user.userId);
-      }
-    } catch (autoErr) { console.error('Auto-create tasks on convert-to-deal error:', autoErr.message); }
-
-    try {
-      await completeConsultingCrmTasksForLead(req.params.id);
-    } catch (ccErr) {
-      console.warn('[convert-to-deal] complete consulting tasks:', ccErr.message);
+      await autoGenCrmTasksForNewLead(req.params.id, req.user.userId);
+    } catch (autoErr) {
+      console.error('Auto-create tasks on convert-to-deal error:', autoErr.message);
     }
 
     // Không bootstrap Đơn 1 — chuyển Lead→Deal giữ một deal duy nhất, task trên deal đó.
@@ -6744,82 +6725,6 @@ r.patch('/leads/:id/stage', async (req, res) => {
           lead?.type === 'deal' ? 'crm_deal' : 'crm_lead', req.params.id);
       }
     } catch (ne) { console.warn('[NOTIFY] stage_changed:', ne.message); }
-
-    // ── AUTO-GENERATE CRM TASKS when stage changes ──
-    // Lead/deal mới (bộ pipeline): template gắn pipeline_stage_id.
-    // Lead/deal legacy (task cũ theo stage_slug): bộ mẫu Global theo canonical_slug.
-    try {
-      const isLegacyTaskSet = await leadUsesLegacyCrmTaskSet(req.params.id);
-      const { data: pStage } = await supabase.from('crm_pipeline_stages')
-        .select('name, pipeline_id, pipeline_type, canonical_slug').eq('id', stage_id).single();
-
-      if (isLegacyTaskSet) {
-        const slug = pStage?.canonical_slug || null;
-        if (slug) {
-          const legacy = await applyLegacyGlobalTemplatesForStage(
-            req.params.id,
-            slug,
-            req.user.userId,
-            lead?.type || 'lead',
-          );
-          if (legacy.created > 0) {
-            console.log(`Auto-created ${legacy.created} legacy CRM tasks (slug=${slug}) for lead ${req.params.id}`);
-          }
-        }
-      } else {
-        // Per-pipeline templates (lead/deal mới)
-        let createdFromPipelineTpl = false;
-        const { data: pipelineTpls } = await supabase
-          .from('crm_task_templates')
-          .select('id, stage_slug')
-          .eq('pipeline_stage_id', stage_id)
-          .eq('is_active', true)
-          .order('order_index');
-        if (pipelineTpls?.length) {
-          const { data: existsForStage } = await supabase
-            .from('crm_tasks')
-            .select('id')
-            .eq('lead_id', req.params.id)
-            .eq('pipeline_stage_id', stage_id)
-            .limit(1);
-          if (!existsForStage?.length) {
-            const tplIds = pipelineTpls.map((t) => t.id);
-            const { data: allItems } = await supabase
-              .from('crm_task_template_items')
-              .select('*')
-              .in('template_id', tplIds)
-              .order('order_index');
-            if (allItems?.length) {
-              const tplMap = {};
-              pipelineTpls.forEach((t) => { tplMap[t.id] = t; });
-              const inserts = allItems.map((item) => ({
-                lead_id: req.params.id,
-                title: item.title,
-                description: item.description || null,
-                priority: item.priority || 'medium',
-                stage_slug: tplMap[item.template_id]?.stage_slug || null,
-                pipeline_stage_id: stage_id,
-                order_index: item.order_index,
-                deadline: null,
-                created_by: req.user.userId,
-                completion_requires_file_or_note: !!item.completion_requires_file_or_note,
-                completion_requires_customer_note: !!item.completion_requires_customer_note,
-                completion_requires_customer_contact: !!item.completion_requires_customer_contact,
-                blocks_stage_advance: !!item.blocks_stage_advance,
-              }));
-              const { error: insErr } = await supabase.from('crm_tasks').insert(inserts);
-              if (!insErr) {
-                createdFromPipelineTpl = true;
-                console.log(`Auto-created ${inserts.length} CRM tasks (per-pipeline) for stage ${stage_id} on lead ${req.params.id}`);
-              }
-            }
-          }
-        }
-        if (!createdFromPipelineTpl) {
-          console.log(`[stage-change] lead=${req.params.id} stage=${stage_id} → chưa có template gắn pipeline_stage_id, không gen mặc định.`);
-        }
-      }
-    } catch (autoErr) { console.error('Auto-generate CRM tasks error:', autoErr.message); }
 
     // Deal → Thắng: tự tạo dự án xưởng server-side; nếu lỗi / thiếu luồng → trả deal_won cho modal
     let dealWonData = null;
@@ -10645,7 +10550,7 @@ r.get('/invoices/:id/pdf', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const CRM_TASK_SELECT =
-  '*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)';
+  '*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar), pipeline_stage:crm_pipeline_stages!crm_tasks_pipeline_stage_id_fkey(id, pipeline_type, name)';
 
 /**
  * Map task_id -> { files, notes } cho tab NV CRM (khớp logic cũ: doc_type = task_note → note).
@@ -10770,17 +10675,8 @@ r.get('/leads/:id/tasks', async (req, res) => {
 
     data = await appendFulfillmentChildTasksForMasterDeal(req.params.id, data || [], lead);
 
-    // Auto-gen CRM khi vẫn không có task (lead/deal mới). Lead/deal cũ đã có task → giữ nguyên.
-    if (!data?.length && lead) {
-      const type = lead.type || 'lead';
-      const created = await autoGenCrmTasks(req.params.id, type, lead.created_by || req.user.userId);
-      if (created > 0) {
-        const { data: newData } = await supabase.from('crm_tasks')
-          .select(CRM_TASK_SELECT)
-          .eq('lead_id', req.params.id)
-          .order('stage_slug').order('order_index');
-        data = await appendFulfillmentChildTasksForMasterDeal(req.params.id, newData || [], lead);
-      }
+    if (lead) {
+      data = filterCrmTasksForLeadType(data, lead.type);
     }
 
     // Đếm số file + ghi chú cho mỗi task (RPC GROUP BY — tránh timeout khi nhiều đính kèm)

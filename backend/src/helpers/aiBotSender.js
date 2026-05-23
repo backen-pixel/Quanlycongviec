@@ -18,9 +18,17 @@
  */
 
 const { supabase } = require('../config/supabase');
+const config = require('../config');
+const { dispatchNotificationToUser } = require('./notifications');
 
 const AI_BOT_USER_ID = '00000000-0000-0000-0000-0000000000a1';
 const AI_BOT_DISPLAY_NAME = '🤖 AI Assistant';
+
+/** Deep-link tới trang LeadDetail trên frontend. Bỏ qua nếu chưa cấu hình. */
+function leadDetailUrl(leadId) {
+  if (!leadId || !config.frontendUrl) return null;
+  return `${config.frontendUrl}/crm/leads/${leadId}`;
+}
 
 /* ════════════════════ NOTIFICATIONS (web socket + FCM/Expo cho app mobile) ════════════════════ */
 
@@ -57,7 +65,10 @@ async function notifyBotMessageRecipients({ kind, id, msgRow, channelInfo, io })
       .map((u) => String(u.id))
       .filter((uid) => uid && uid !== AI_BOT_USER_ID);
   }
-  if (!memberIds.length) return;
+  if (!memberIds.length) {
+    console.warn(`[ai-bot] Không có thành viên nhận push (${kind}:${id})`);
+    return;
+  }
 
   // Preview ngắn cho phần body của notification
   const raw = typeof msgRow.content === 'string' ? msgRow.content.trim() : '';
@@ -81,14 +92,6 @@ async function notifyBotMessageRecipients({ kind, id, msgRow, channelInfo, io })
     message_type: 'text',
   };
 
-  // Lazy-require để tránh circular & để cron context không bắt buộc có req.app
-  let sendMobilePush;
-  try {
-    ({ sendMobilePush } = require('../services/pushSender'));
-  } catch {
-    sendMobilePush = null;
-  }
-
   for (const uid of memberIds) {
     try {
       const { data: notif, error } = await supabase
@@ -104,16 +107,13 @@ async function notifyBotMessageRecipients({ kind, id, msgRow, channelInfo, io })
         })
         .select()
         .single();
-      if (error || !notif) continue;
-
-      // Realtime cho web
-      if (io) io.to(`user:${uid}`).emit('notification', notif);
-
-      // Push xuống app mobile (Expo + FCM). sendMobilePush đã tự lọc theo
-      // user notification preferences nên ai tắt chat thì không nhận.
-      if (sendMobilePush) {
-        void sendMobilePush(uid, notif);
+      if (error) {
+        console.warn('[ai-bot] insert notification lỗi:', uid, error.message);
+        continue;
       }
+      if (!notif) continue;
+
+      await dispatchNotificationToUser(io, uid, notif);
     } catch (e) {
       console.warn('[ai-bot] push notif lỗi cho user', uid, ':', e.message || e);
     }
@@ -183,17 +183,47 @@ async function loadChannelInfo(channelType, channelId) {
 async function buildChannelContextPayload(memberIds) {
   const now = Date.now();
   const horizon72h = new Date(now + 72 * 3600 * 1000).toISOString();
+  const horizon7d = new Date(now + 7 * 24 * 3600 * 1000).toISOString();   // hết tuần
+  const horizon30d = new Date(now + 30 * 24 * 3600 * 1000).toISOString(); // hết tháng
   const floor14d = new Date(now - 14 * 24 * 3600 * 1000).toISOString();
   const nowIso = new Date(now).toISOString();
+  // Mốc 00:00 hôm nay theo giờ VN — dùng để tính "tasks_done_today".
+  const todayVnStr = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
+  const startOfTodayIso = new Date(`${todayVnStr}T00:00:00+07:00`).toISOString();
+
+  // Schema giúp LLM biết các field nào tồn tại (dùng cho playbook custom/_pep_talk).
+  const SCHEMA = {
+    crm_tasks_overdue: 'Mảng task CRM đã quá hạn ({title, deadline, assignee, lead_code, lead_link, hours_to_deadline<0})',
+    crm_tasks_due_soon: 'Task CRM sắp đến hạn (≤72h) — cùng schema, hours_to_deadline>=0',
+    tasks_overdue: 'Mảng task chung (projects/tasks) đã quá hạn',
+    tasks_due_soon: 'Task chung sắp đến hạn (≤72h)',
+    tasks_done_today: 'Task CRM đã chuyển status=done HÔM NAY (theo giờ VN)',
+    tasks_due_this_week: 'Task (CRM + chung) còn mở, deadline trong 7 ngày tới — dùng cho nhắc nhiệm vụ tuần. Mỗi item có lead_link nếu là task CRM.',
+    tasks_due_this_month: 'Task (CRM + chung) còn mở, deadline trong 30 ngày tới — dùng cho nhắc nhiệm vụ tháng.',
+    leads_open: 'Lead/Deal đang mở do thành viên kênh phụ trách. Mỗi item có {id, code, title, assignee, stage, estimated_value, expected_close_date, link}.',
+    leads_expired: 'Lead/Deal có expected_close_date < hôm nay nhưng CHƯA đóng — kèm link & days_overdue. Dùng cho cảnh báo lead hết hạn.',
+    vip_leads: 'Top lead còn mở sắp xếp theo estimated_value giảm dần (≤8).',
+    cskh_needed: 'Lead cần chăm sóc lại (≥7 ngày, chưa có care_mark còn hiệu lực).',
+    members: 'Tên các thành viên kênh',
+  };
 
   if (!memberIds.length) {
     return {
+      _schema: SCHEMA,
       members: [],
       crm_tasks_overdue: [],
       crm_tasks_due_soon: [],
       tasks_overdue: [],
       tasks_due_soon: [],
+      tasks_done_today: [],
+      tasks_due_this_week: [],
+      tasks_due_this_month: [],
       leads_open: [],
+      leads_expired: [],
+      vip_leads: [],
+      cskh_needed: [],
       generated_at: nowIso,
     };
   }
@@ -206,7 +236,7 @@ async function buildChannelContextPayload(memberIds) {
   try {
     const { data } = await supabase
       .from('crm_tasks')
-      .select('id, title, deadline, priority, assignee_id, lead:crm_leads(code, title)')
+      .select('id, title, deadline, priority, assignee_id, lead:crm_leads(id, code, title)')
       .in('assignee_id', ids)
       .in('status', ['pending', 'in_progress'])
       .not('deadline', 'is', null)
@@ -223,6 +253,7 @@ async function buildChannelContextPayload(memberIds) {
         assignee: nameMap.get(t.assignee_id) || '—',
         lead_code: t.lead?.code || null,
         lead_title: t.lead?.title || null,
+        lead_link: leadDetailUrl(t.lead?.id),
         hours_to_deadline: Math.round((dlMs - now) / 3600000),
       };
       if (dlMs < now) crmOverdue.push({ ...item, overdue: true });
@@ -231,6 +262,38 @@ async function buildChannelContextPayload(memberIds) {
   } catch (e) {
     /* bảng có thể chưa tồn tại — bỏ qua */
   }
+
+  /* Task CRM còn mở, deadline trong 7 ngày / 30 ngày — cho 2 playbook tuần/tháng */
+  let tasksWeek = [];
+  let tasksMonth = [];
+  try {
+    const { data } = await supabase
+      .from('crm_tasks')
+      .select('id, title, deadline, priority, assignee_id, lead:crm_leads(id, code, title)')
+      .in('assignee_id', ids)
+      .in('status', ['pending', 'in_progress'])
+      .not('deadline', 'is', null)
+      .gte('deadline', nowIso)
+      .lte('deadline', horizon30d)
+      .order('deadline', { ascending: true })
+      .limit(80);
+    (data || []).forEach((t) => {
+      const dlMs = new Date(t.deadline).getTime();
+      const item = {
+        kind: 'crm_task',
+        title: t.title,
+        deadline: t.deadline,
+        priority: t.priority || null,
+        assignee: nameMap.get(t.assignee_id) || '—',
+        lead_code: t.lead?.code || null,
+        lead_title: t.lead?.title || null,
+        lead_link: leadDetailUrl(t.lead?.id),
+        days_to_deadline: Math.round((dlMs - now) / (24 * 3600000)),
+      };
+      if (dlMs <= new Date(horizon7d).getTime()) tasksWeek.push(item);
+      tasksMonth.push(item);
+    });
+  } catch { /* ignore */ }
 
   /* Task chung (projects/tasks) */
   let tOverdue = [];
@@ -243,20 +306,31 @@ async function buildChannelContextPayload(memberIds) {
       .neq('status', 'done')
       .not('due_date', 'is', null)
       .gte('due_date', floor14d)
-      .lte('due_date', horizon72h)
+      .lte('due_date', horizon30d) // mở rộng tới 30 ngày để cover tuần/tháng
       .order('due_date', { ascending: true })
-      .limit(40);
+      .limit(80);
     (data || []).forEach((t) => {
       const dlMs = new Date(t.due_date).getTime();
       const item = {
+        kind: 'task',
         title: t.title,
         due_date: t.due_date,
+        deadline: t.due_date, // alias để playbook tuần/tháng đọc đồng nhất
         priority: t.priority || null,
         assignee: nameMap.get(t.assignee_id) || '—',
         hours_to_deadline: Math.round((dlMs - now) / 3600000),
+        days_to_deadline: Math.round((dlMs - now) / (24 * 3600000)),
       };
-      if (dlMs < now) tOverdue.push({ ...item, overdue: true });
-      else tDueSoon.push({ ...item, overdue: false });
+      if (dlMs < now) {
+        tOverdue.push({ ...item, overdue: true });
+      } else if (dlMs <= new Date(horizon72h).getTime()) {
+        tDueSoon.push({ ...item, overdue: false });
+      }
+      // Gộp vào tuần/tháng nếu còn mở và trong tương lai
+      if (dlMs >= now) {
+        if (dlMs <= new Date(horizon7d).getTime()) tasksWeek.push(item);
+        tasksMonth.push(item);
+      }
     });
   } catch (e) {
     /* ignore */
@@ -267,32 +341,146 @@ async function buildChannelContextPayload(memberIds) {
   try {
     const { data } = await supabase
       .from('crm_leads')
-      .select('id, code, title, estimated_value, assigned_to, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name, is_won, is_lost)')
+      .select('id, code, title, estimated_value, assigned_to, expected_close_date, type, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name, is_won, is_lost)')
       .in('assigned_to', ids)
       .is('actual_close_date', null)
       .order('updated_at', { ascending: false })
-      .limit(20);
+      .limit(30);
     (data || []).forEach((l) => {
       if (l.stage?.is_won || l.stage?.is_lost) return;
       leads.push({
+        id: l.id,
         code: l.code,
         title: l.title,
+        type: l.type || 'lead',
         estimated_value: l.estimated_value,
         assignee: nameMap.get(l.assigned_to) || '—',
         stage: l.stage?.name || '—',
+        expected_close_date: l.expected_close_date || null,
+        link: leadDetailUrl(l.id),
       });
     });
   } catch (e) {
     /* ignore */
   }
 
+  /* Lead/Deal HẾT HẠN: expected_close_date < hôm nay, chưa đóng */
+  let leadsExpired = [];
+  try {
+    const todayStartIso = startOfTodayIso;
+    const { data } = await supabase
+      .from('crm_leads')
+      .select('id, code, title, estimated_value, assigned_to, expected_close_date, type, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name, is_won, is_lost)')
+      .in('assigned_to', ids)
+      .is('actual_close_date', null)
+      .not('expected_close_date', 'is', null)
+      .lt('expected_close_date', todayStartIso.slice(0, 10))
+      .order('expected_close_date', { ascending: true })
+      .limit(40);
+    (data || []).forEach((l) => {
+      if (l.stage?.is_won || l.stage?.is_lost) return;
+      const exp = new Date(`${l.expected_close_date}T00:00:00+07:00`).getTime();
+      leadsExpired.push({
+        id: l.id,
+        code: l.code,
+        title: l.title,
+        type: l.type || 'lead',
+        estimated_value: l.estimated_value,
+        estimated_value_text: fmtMoney(l.estimated_value),
+        assignee: nameMap.get(l.assigned_to) || '—',
+        stage: l.stage?.name || '—',
+        expected_close_date: l.expected_close_date,
+        days_overdue: Math.max(0, Math.round((now - exp) / (24 * 3600 * 1000))),
+        link: leadDetailUrl(l.id),
+      });
+    });
+  } catch { /* ignore */ }
+
+  /* Task CRM done HÔM NAY → cho khoá sổ cuối ngày */
+  let doneToday = [];
+  try {
+    const { data } = await supabase
+      .from('crm_tasks')
+      .select('id, title, assignee_id, completed_at, updated_at, lead:crm_leads(code, title)')
+      .in('assignee_id', ids)
+      .eq('status', 'done')
+      .gte('updated_at', startOfTodayIso)
+      .order('updated_at', { ascending: false })
+      .limit(30);
+    doneToday = (data || []).map((t) => ({
+      title: t.title,
+      assignee: nameMap.get(t.assignee_id) || '—',
+      lead_code: t.lead?.code || null,
+      lead_title: t.lead?.title || null,
+      completed_at: t.completed_at || t.updated_at,
+    }));
+  } catch { /* ignore */ }
+
+  /* VIP leads — leads có estimated_value cao, còn mở, do thành viên kênh phụ trách */
+  const vipLeads = [...leads]
+    .filter((l) => Number(l.estimated_value) > 0)
+    .sort((a, b) => (Number(b.estimated_value) || 0) - (Number(a.estimated_value) || 0))
+    .slice(0, 8)
+    .map((l) => ({ ...l, estimated_value_text: fmtMoney(l.estimated_value) }));
+
+  /* CSKH cần chăm — lead ≥7 ngày, chưa có care_mark còn hạn của bất kỳ ai trong kênh */
+  let cskhNeeded = [];
+  try {
+    const sevenDaysAgo = new Date(now - 7 * 24 * 3600 * 1000).toISOString();
+    const { data: candidates } = await supabase
+      .from('crm_leads')
+      .select('id, code, title, estimated_value, assigned_to, created_at, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name, is_won, is_lost)')
+      .in('assigned_to', ids)
+      .is('actual_close_date', null)
+      .lte('created_at', sevenDaysAgo)
+      .order('created_at', { ascending: true })
+      .limit(40);
+    const openLeads = (candidates || []).filter((l) => !l.stage?.is_won && !l.stage?.is_lost);
+
+    let caredLeadIds = new Set();
+    if (openLeads.length) {
+      const leadIds = openLeads.map((l) => l.id);
+      const { data: marks } = await supabase
+        .from('crm_lead_care_marks')
+        .select('lead_id, expires_at')
+        .in('lead_id', leadIds)
+        .gt('expires_at', new Date().toISOString());
+      caredLeadIds = new Set((marks || []).map((m) => m.lead_id));
+    }
+
+    cskhNeeded = openLeads
+      .filter((l) => !caredLeadIds.has(l.id))
+      .slice(0, 10)
+      .map((l) => ({
+        id: l.id,
+        code: l.code,
+        title: l.title,
+        assignee: nameMap.get(l.assigned_to) || '—',
+        stage: l.stage?.name || '—',
+        days_since_created: Math.round((now - new Date(l.created_at).getTime()) / (24 * 3600 * 1000)),
+        estimated_value: l.estimated_value,
+        link: leadDetailUrl(l.id),
+      }));
+  } catch { /* bảng có thể chưa tồn tại — ignore */ }
+
+  // Sort tasksWeek/tasksMonth theo deadline tăng dần (đã include cả 2 nguồn)
+  tasksWeek.sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime());
+  tasksMonth.sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime());
+
   return {
+    _schema: SCHEMA,
     members: memberIds.map((m) => m.full_name),
     crm_tasks_overdue: crmOverdue,
     crm_tasks_due_soon: crmDueSoon,
     tasks_overdue: tOverdue,
     tasks_due_soon: tDueSoon,
+    tasks_done_today: doneToday,
+    tasks_due_this_week: tasksWeek.slice(0, 30),
+    tasks_due_this_month: tasksMonth.slice(0, 40),
+    leads_expired: leadsExpired,
     leads_open: leads,
+    vip_leads: vipLeads,
+    cskh_needed: cskhNeeded,
     generated_at: nowIso,
   };
 }
@@ -302,7 +490,17 @@ async function buildChannelContextPayload(memberIds) {
  * Bảng có thể chưa tồn tại → trả mảng rỗng, OpenAI sẽ tự bỏ qua.
  */
 async function buildKpiPayload(memberIds) {
-  if (!memberIds.length) return { period: null, rows: [] };
+  const SCHEMA = {
+    period: 'Kỳ tháng dạng YYYY-MM',
+    rows: 'Mảng {name, net_points} sắp xếp giảm dần',
+    top_performer: 'Người đứng đầu (name + net_points) — null nếu rows rỗng',
+    at_risk: 'Mảng người có net_points < 0 — để cảnh báo',
+    avg_points: 'Điểm trung bình kênh',
+    members_with_data: 'Số thành viên có ít nhất 1 giao dịch KPI tháng',
+  };
+  if (!memberIds.length) {
+    return { _schema: SCHEMA, period: null, rows: [], top_performer: null, at_risk: [], avg_points: 0, members_with_data: 0 };
+  }
   const today = new Date();
   const periodStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString();
   const ids = memberIds.map((m) => m.id);
@@ -320,9 +518,22 @@ async function buildKpiPayload(memberIds) {
     const rows = [...sumMap.entries()]
       .map(([uid, pts]) => ({ name: nameMap.get(uid) || '—', net_points: pts }))
       .sort((a, b) => b.net_points - a.net_points);
-    return { period: periodStart.slice(0, 7), rows };
+    const top = rows.length ? rows[0] : null;
+    const atRisk = rows.filter((r) => r.net_points < 0);
+    const avg = rows.length
+      ? Math.round((rows.reduce((s, r) => s + (r.net_points || 0), 0) / rows.length) * 10) / 10
+      : 0;
+    return {
+      _schema: SCHEMA,
+      period: periodStart.slice(0, 7),
+      rows,
+      top_performer: top,
+      at_risk: atRisk,
+      avg_points: avg,
+      members_with_data: rows.length,
+    };
   } catch {
-    return { period: periodStart.slice(0, 7), rows: [] };
+    return { _schema: SCHEMA, period: periodStart.slice(0, 7), rows: [], top_performer: null, at_risk: [], avg_points: 0, members_with_data: 0 };
   }
 }
 
@@ -340,9 +551,40 @@ function fallbackTemplate(playbook, channelInfo, payload, customPrompt) {
   if (ds === 'channel_context') {
     const allOverdue = [...(payload.crm_tasks_overdue || []), ...(payload.tasks_overdue || [])];
     const dueSoon = [...(payload.crm_tasks_due_soon || []), ...(payload.tasks_due_soon || [])];
+    const doneToday = payload.tasks_done_today || [];
+    const vip = payload.vip_leads || [];
+    const cskh = payload.cskh_needed || [];
+    const expired = payload.leads_expired || [];
+    const week = payload.tasks_due_this_week || [];
+    const month = payload.tasks_due_this_month || [];
     lines.push(
-      `⚠️ Quá hạn: ${allOverdue.length} · Sắp hạn (≤72h): ${dueSoon.length} · Lead đang mở: ${(payload.leads_open || []).length}`,
+      `⚠️ Quá hạn: ${allOverdue.length} · Sắp hạn (≤72h): ${dueSoon.length} · 📅 Tuần: ${week.length} · 🗓 Tháng: ${month.length} · ✅ Done hôm nay: ${doneToday.length} · 💎 VIP: ${vip.length} · 🤝 CSKH: ${cskh.length} · 🔴 Lead hết hạn: ${expired.length}`,
     );
+
+    if (expired.length) {
+      lines.push('', '🔴 Lead/Deal đã HẾT HẠN:');
+      expired.slice(0, 8).forEach((l) => {
+        const linkSuffix = l.link ? ` → ${l.link}` : '';
+        lines.push(`- ${l.code || ''} ${l.title} · ${l.assignee} · trễ ${l.days_overdue} ngày · ${l.estimated_value_text || 0}đ${linkSuffix}`);
+      });
+    }
+    if (week.length) {
+      lines.push('', '📅 Nhiệm vụ hết hạn TRONG TUẦN (7 ngày):');
+      week.slice(0, 8).forEach((t) => {
+        const lead = t.lead_code ? ` — ${t.lead_code}` : '';
+        const linkSuffix = t.lead_link ? ` (${t.lead_link})` : '';
+        lines.push(`- ${t.title}${lead} · ${t.assignee} · còn ${t.days_to_deadline} ngày${linkSuffix}`);
+      });
+    }
+    if (month.length && !week.length) {
+      // Chỉ show "tháng" khi không có nhánh tuần (tránh trùng) — playbook tháng có prompt riêng
+      lines.push('', '🗓 Nhiệm vụ hết hạn TRONG THÁNG (30 ngày):');
+      month.slice(0, 10).forEach((t) => {
+        const lead = t.lead_code ? ` — ${t.lead_code}` : '';
+        const linkSuffix = t.lead_link ? ` (${t.lead_link})` : '';
+        lines.push(`- ${t.title}${lead} · ${t.assignee} · còn ${t.days_to_deadline} ngày${linkSuffix}`);
+      });
+    }
     if (allOverdue.length) {
       lines.push('', '🔴 Quá hạn:');
       allOverdue.slice(0, 8).forEach((t) => {
@@ -357,18 +599,43 @@ function fallbackTemplate(playbook, channelInfo, payload, customPrompt) {
         lines.push(`- ${t.title}${lead} · ${t.assignee} · còn ${t.hours_to_deadline}h`);
       });
     }
-    if (!allOverdue.length && !dueSoon.length) {
+    if (vip.length) {
+      lines.push('', '💎 Lead VIP còn mở (giá trị cao):');
+      vip.slice(0, 5).forEach((l) => {
+        lines.push(`- ${l.code || ''} ${l.title} · ${l.assignee} · ${l.estimated_value_text || fmtMoney(l.estimated_value)}đ · ${l.stage}`);
+      });
+    }
+    if (cskh.length) {
+      lines.push('', '🤝 Cần CSKH (≥7 ngày chưa chăm):');
+      cskh.slice(0, 5).forEach((l) => {
+        lines.push(`- ${l.code || ''} ${l.title} · ${l.assignee} · ${l.days_since_created} ngày · ${l.stage}`);
+      });
+    }
+    if (doneToday.length) {
+      lines.push('', `✅ Hoàn thành hôm nay (${doneToday.length}):`);
+      doneToday.slice(0, 6).forEach((t) => {
+        lines.push(`- ${t.title} · ${t.assignee}`);
+      });
+    }
+    if (!allOverdue.length && !dueSoon.length && !vip.length && !cskh.length && !doneToday.length) {
       lines.push('', '✅ Không có công việc gấp. Tận dụng thời gian chăm sóc lead mới!');
     }
   } else if (ds === 'kpi') {
     if (!payload.rows?.length) {
       lines.push('Chưa có dữ liệu KPI tháng cho thành viên kênh.');
     } else {
-      lines.push('📊 KPI tháng (điểm ròng):');
+      if (payload.top_performer) {
+        lines.push(`🏆 Top tháng: ${payload.top_performer.name} (+${payload.top_performer.net_points})`);
+      }
+      lines.push(`📊 Trung bình kênh: ${payload.avg_points} điểm/người · Có dữ liệu: ${payload.members_with_data}`);
+      lines.push('', 'Chi tiết:');
       payload.rows.slice(0, 10).forEach((r) => {
         const tag = r.net_points >= 0 ? '🟢' : '🔴';
         lines.push(`- ${tag} ${r.name}: ${r.net_points >= 0 ? '+' : ''}${r.net_points}`);
       });
+      if (payload.at_risk?.length) {
+        lines.push('', `⚠️ Đang âm điểm: ${payload.at_risk.map((r) => r.name).join(', ')}`);
+      }
     }
   } else if (ds === 'none') {
     lines.push(playbook?.system_prompt?.slice(0, 500) || '(Chưa cấu hình nội dung.)');

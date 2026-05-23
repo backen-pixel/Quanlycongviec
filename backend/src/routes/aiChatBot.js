@@ -52,11 +52,38 @@ r.get('/bot', (_req, res) => {
  */
 r.get('/channels', requireAdmin, async (_req, res) => {
   try {
+    // Phòng ban + metadata để FE filter theo Khối/Công ty
     const { data: depts } = await supabase
       .from('departments')
-      .select('id, name, color, is_active')
+      .select('id, name, color, is_active, company_id, division_unit_id, company:companies(id, name, short_name, division_unit_id)')
       .eq('is_active', true)
       .order('name');
+
+    // Region: map qua user thuộc phòng ban → user_company_regions
+    // (vì departments không trực tiếp có region_id). Chỉ lấy danh sách region_ids tổng hợp.
+    const deptIds = (depts || []).map((d) => d.id);
+    const deptRegions = new Map(); // dept_id → Set(region_id)
+    if (deptIds.length) {
+      const { data: usersWithDept } = await supabase
+        .from('users')
+        .select('id, department_id')
+        .in('department_id', deptIds)
+        .eq('is_active', true);
+      const userToDept = new Map((usersWithDept || []).map((u) => [u.id, u.department_id]));
+      const userIds = (usersWithDept || []).map((u) => u.id);
+      if (userIds.length) {
+        const { data: ucr } = await supabase
+          .from('user_company_regions')
+          .select('user_id, region_id')
+          .in('user_id', userIds);
+        (ucr || []).forEach((row) => {
+          const did = userToDept.get(row.user_id);
+          if (!did) return;
+          if (!deptRegions.has(did)) deptRegions.set(did, new Set());
+          deptRegions.get(did).add(row.region_id);
+        });
+      }
+    }
 
     const { data: groups } = await supabase
       .from('messenger_groups')
@@ -68,6 +95,11 @@ r.get('/channels', requireAdmin, async (_req, res) => {
         id: d.id,
         name: d.name,
         color: d.color || null,
+        company_id: d.company_id || null,
+        company_name: d.company?.short_name || d.company?.name || null,
+        // Khối: ưu tiên trực tiếp trên department, fallback về division của công ty.
+        division_unit_id: d.division_unit_id || d.company?.division_unit_id || null,
+        region_ids: [...(deptRegions.get(d.id) || new Set())],
       })),
       groups: (groups || [])
         .filter((g) => !g.is_direct)
@@ -76,6 +108,184 @@ r.get('/channels', requireAdmin, async (_req, res) => {
           name: g.name,
           is_lead_group: !!g.crm_lead_id,
         })),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Danh sách nhân viên active, có thể lọc theo Khối/Công ty/Khu vực/Phòng ban.
+ * Dùng cho UI "DM nhân viên" trong modal tạo lịch.
+ *
+ *   GET /ai-chat-bot/users?division_id=…&company_id=…&region_id=…&department_id=…
+ */
+r.get('/users', requireAdmin, async (req, res) => {
+  try {
+    const divisionId = req.query.division_id || '';
+    const companyId = req.query.company_id || '';
+    const regionId = req.query.region_id || '';
+    const deptId = req.query.department_id || '';
+
+    let q = supabase
+      .from('users')
+      .select('id, full_name, email, avatar, department_id, company_id, is_active, is_bot, department:departments!users_department_id_fkey(id, name, division_unit_id, company_id, company:companies(id, name, short_name, division_unit_id))')
+      .eq('is_active', true)
+      .neq('id', AI_BOT_USER_ID)
+      .order('full_name');
+
+    if (companyId) q = q.eq('company_id', companyId);
+    if (deptId) q = q.eq('department_id', deptId);
+
+    const { data: rows, error } = await q;
+    if (error) throw error;
+
+    // Hậu lọc theo Khối (depart hoặc company div) và Region (user_company_regions)
+    let users = (rows || []).filter((u) => {
+      if (divisionId) {
+        const dDiv = u.department?.division_unit_id || u.department?.company?.division_unit_id || null;
+        if (String(dDiv || '') !== String(divisionId)) return false;
+      }
+      return true;
+    });
+
+    if (regionId) {
+      const ids = users.map((u) => u.id);
+      let allowedSet = new Set();
+      if (ids.length) {
+        const { data: ucr } = await supabase
+          .from('user_company_regions')
+          .select('user_id')
+          .eq('region_id', regionId)
+          .in('user_id', ids);
+        allowedSet = new Set((ucr || []).map((r2) => r2.user_id));
+      }
+      users = users.filter((u) => allowedSet.has(u.id));
+    }
+
+    res.json({
+      users: users.map((u) => ({
+        id: u.id,
+        full_name: u.full_name,
+        email: u.email,
+        avatar: u.avatar || null,
+        company_id: u.company_id || null,
+        department_id: u.department_id || null,
+        department_name: u.department?.name || null,
+        company_name: u.department?.company?.short_name || u.department?.company?.name || null,
+        division_unit_id: u.department?.division_unit_id || u.department?.company?.division_unit_id || null,
+      })),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Đảm bảo có 1 messenger_groups (is_direct=true) giữa AI bot và user chỉ định.
+ * Tạo mới nếu chưa có. Trả về { group_id, name, created }.
+ *
+ *   POST /ai-chat-bot/ensure-direct-with-bot   body: { user_id }
+ */
+r.post('/ensure-direct-with-bot', requireAdmin, async (req, res) => {
+  try {
+    const userId = req.body?.user_id;
+    if (!userId) return res.status(400).json({ error: 'Thiếu user_id' });
+    if (String(userId) === AI_BOT_USER_ID) {
+      return res.status(400).json({ error: 'Không thể DM với chính bot' });
+    }
+
+    // Dùng cùng pair_key như endpoint /messenger/direct: sort 2 ID lexicographically.
+    const a = String(AI_BOT_USER_ID);
+    const b = String(userId);
+    const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+
+    const { data: existing } = await supabase
+      .from('messenger_groups')
+      .select('id, name')
+      .eq('direct_pair_key', key)
+      .maybeSingle();
+    if (existing?.id) {
+      return res.json({ group_id: existing.id, name: existing.name, created: false });
+    }
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('full_name')
+      .eq('id', userId)
+      .single();
+    const name = `🤖 AI ↔ ${user?.full_name || 'Nhân viên'}`;
+
+    const { data: group, error: gErr } = await supabase
+      .from('messenger_groups')
+      .insert({
+        name,
+        created_by: AI_BOT_USER_ID,
+        is_direct: true,
+        direct_pair_key: key,
+      })
+      .select('id, name')
+      .single();
+    if (gErr) return res.status(400).json({ error: gErr.message });
+
+    const { error: mErr } = await supabase.from('messenger_group_members').insert([
+      { group_id: group.id, user_id: AI_BOT_USER_ID, role: 'member', added_by: AI_BOT_USER_ID },
+      { group_id: group.id, user_id: userId, role: 'member', added_by: AI_BOT_USER_ID },
+    ]);
+    if (mErr) {
+      await supabase.from('messenger_groups').delete().eq('id', group.id);
+      return res.status(400).json({ error: mErr.message });
+    }
+
+    res.status(201).json({ group_id: group.id, name: group.name, created: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Cây bộ lọc cho UI tạo lịch: trả về danh sách Khối / Công ty / Khu vực
+ * để admin có thể thu hẹp danh sách phòng ban hiển thị.
+ */
+r.get('/channel-filters', requireAdmin, async (_req, res) => {
+  try {
+    // Khối: ecosystem_units depth=1 (cấp "Khối")
+    let divisions = [];
+    try {
+      const { data } = await supabase
+        .from('ecosystem_units')
+        .select('id, name, depth')
+        .eq('depth', 1)
+        .order('name');
+      divisions = (data || []).map((u) => ({ id: u.id, name: u.name }));
+    } catch { /* ignore */ }
+
+    const { data: companies } = await supabase
+      .from('companies')
+      .select('id, name, short_name, division_unit_id, is_active')
+      .eq('is_active', true)
+      .order('short_name', { nullsFirst: false });
+
+    const { data: regions } = await supabase
+      .from('company_regions')
+      .select('id, name, code, company_id, is_active')
+      .eq('is_active', true)
+      .order('order_index');
+
+    res.json({
+      divisions,
+      companies: (companies || []).map((c) => ({
+        id: c.id,
+        name: c.name,
+        short_name: c.short_name || c.name,
+        division_unit_id: c.division_unit_id || null,
+      })),
+      regions: (regions || []).map((r2) => ({
+        id: r2.id,
+        name: r2.name,
+        code: r2.code || null,
+        company_id: r2.company_id,
+      })),
     });
   } catch (e) {
     res.status(500).json({ error: e.message });

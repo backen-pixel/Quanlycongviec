@@ -125,6 +125,15 @@ function displayTitleForChat(n: AppNotification): {
     return { bubbleKey, title: display, letter, senderName, senderLetter, senderAvatarUrl };
   }
 
+  if (n.type === 'department_chat') {
+    const deptName =
+      typeof meta.dept_name === 'string'
+        ? meta.dept_name
+        : (n.title ?? 'Phòng ban');
+    const letter = String(deptName).trim()[0]?.toUpperCase() ?? 'P';
+    return { bubbleKey, title: deptName, letter, senderName, senderLetter, senderAvatarUrl };
+  }
+
   const groupName = typeof meta.group_name === 'string' ? meta.group_name : (n.title ?? entityId);
   const letter = String(groupName).trim()[0]?.toUpperCase() ?? '?';
   return { bubbleKey, title: groupName, letter, senderName, senderLetter, senderAvatarUrl };

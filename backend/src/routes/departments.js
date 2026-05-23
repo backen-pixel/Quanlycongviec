@@ -366,17 +366,38 @@ r.post('/:id/messages', async (req, res) => {
     const { data: dept } = await supabase.from('departments').select('name').eq('id', req.params.id).single();
 
     if (members) {
+      const { createNotification } = require('../helpers/notifications');
       const { sendWebPush } = require('./push');
+      const senderName = data.sender?.full_name || req.user.fullName || 'Đồng nghiệp';
+      let preview = typeof content === 'string' ? content.trim() : '';
+      if (!preview) {
+        if (attachments?.length) preview = '📎 Tệp đính kèm';
+        else preview = '[Tin nhắn]';
+      }
+      if (preview.length > 140) preview = `${preview.slice(0, 137)}…`;
+      const deptName = dept?.name || 'Chat phòng ban';
+      const meta = {
+        dept_name: deptName,
+        sender_name: senderName,
+        sender_avatar: data.sender?.avatar || null,
+        bubble_key: String(req.params.id),
+        bubble_wake: true,
+        message_id: data?.id ? String(data.id) : '',
+        sender_id: String(req.user.userId),
+        message_type: 'text',
+      };
       for (const m of members) {
         if (m.id !== req.user.userId) {
-          const { data: notif } = await supabase.from('notifications').insert({
-            user_id: m.id,
-            type: 'department_chat',
-            title: dept.name,
-            message: `${req.user.fullName}: ${content?.slice(0, 100) || 'Đã gửi file'}`,
-            entity_type: 'department',
-            entity_id: req.params.id,
-          }).select().single();
+          const notif = await createNotification(
+            req,
+            m.id,
+            'department_chat',
+            deptName,
+            `${senderName}: ${preview}`,
+            'department',
+            req.params.id,
+            meta,
+          );
           if (notif) sendWebPush(m.id, notif);
         }
       }

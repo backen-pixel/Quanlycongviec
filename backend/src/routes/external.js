@@ -32,8 +32,8 @@ const { nextCrmCode } = require('../helpers/crmNextCode');
 const https = require('https');
 const http = require('http');
 // Cùng helper auto-gen task theo template lead type — y hệt POST /crm/leads
-let autoGenCrmTasks = null;
-try { ({ autoGenCrmTasks } = require('../helpers/autoGenCrmTasks')); } catch (_) {}
+let autoGenCrmTasksForNewLead = null;
+try { ({ autoGenCrmTasksForNewLead } = require('../helpers/autoGenCrmTasks')); } catch (_) {}
 
 const r = Router();
 
@@ -470,14 +470,10 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
     }
     if (!lead) throw insertErr || new Error('Không tạo được lead');
 
-    // Auto-gen tasks theo template lead type — cùng luồng với POST /crm/leads
-    if (autoGenCrmTasks) {
+    // Auto-gen tasks theo bộ mẫu pipeline công ty — cùng luồng với POST /crm/leads
+    if (autoGenCrmTasksForNewLead) {
       try {
-        const { data: existingTasks } = await supabase.from('crm_tasks')
-          .select('id').eq('lead_id', lead.id).limit(1);
-        if (!existingTasks?.length) {
-          await autoGenCrmTasks(lead.id, 'lead', resolvedAssignee || null);
-        }
+        await autoGenCrmTasksForNewLead(lead.id, resolvedAssignee || null);
       } catch (autoErr) {
         console.warn('[External API] Auto-create tasks error:', autoErr.message);
       }

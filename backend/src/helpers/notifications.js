@@ -97,8 +97,35 @@ async function notificationExists(userId, type, entityId) {
   return count > 0;
 }
 
+/**
+ * Đẩy notification đã insert tới client (socket) + mobile push (Expo + FCM).
+ * Dùng cho cron/AI bot khi không có req.app — logic khớp server.js pushNotification.
+ */
+async function dispatchNotificationToUser(io, userId, notification) {
+  if (!userId || !notification) return;
+  if (isExpiryDeadlineNotificationType(notification.type)) return;
+
+  const allowed = await isNotificationAllowedForUser(
+    userId,
+    notification.type,
+    notification.entity_type,
+    notification.metadata,
+  );
+  if (!allowed) return;
+
+  if (io) io.to(`user:${userId}`).emit('notification', notification);
+
+  try {
+    const { sendMobilePush } = require('../services/pushSender');
+    void sendMobilePush(userId, notification);
+  } catch (e) {
+    console.warn('[dispatchNotificationToUser] push lỗi:', e.message || e);
+  }
+}
+
 module.exports = {
   createNotification,
   notifyMultiple,
   notificationExists,
+  dispatchNotificationToUser,
 };

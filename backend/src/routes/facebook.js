@@ -1868,8 +1868,8 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
 
   // ── Auto-gen CRM tasks (giống logic tạo thủ công) ──
   try {
-    const { autoGenCrmTasks } = require('../helpers/autoGenCrmTasks');
-    const created = await autoGenCrmTasks(lead.id, 'lead', page.created_by);
+    const { autoGenCrmTasksForNewLead } = require('../helpers/autoGenCrmTasks');
+    const created = await autoGenCrmTasksForNewLead(lead.id, page.created_by);
     if (created) console.log(`[FB] ✅ Auto-gen ${created} tasks for lead ${lead.code}`);
   } catch (e) { console.warn('[FB] Auto-gen tasks error:', e.message); }
 
