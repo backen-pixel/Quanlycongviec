@@ -464,6 +464,7 @@ export default function CRMTasksTab({
       supervisor_id: task.supervisor_id || '',
       stage_slug: task.stage_slug || '',
       blocks_stage_advance: !!task.blocks_stage_advance,
+      show_excel_quotation_upload: !!task.show_excel_quotation_upload,
     });
   };
 
@@ -481,6 +482,7 @@ export default function CRMTasksTab({
         supervisor_id: editForm.supervisor_id || null,
         stage_slug: editForm.stage_slug,
         blocks_stage_advance: !!editForm.blocks_stage_advance,
+        show_excel_quotation_upload: !!editForm.show_excel_quotation_upload,
       });
       setEditingTask(null);
       setTasks((p) => p.map((t) => (t.id === taskId ? { ...t, ...data } : t)));
@@ -984,8 +986,13 @@ export default function CRMTasksTab({
                   <Lock className="h-2.5 w-2.5" />Đã mở khóa
                 </span>
               )}
-              {/* Nút Upload Excel Báo giá — chỉ hiện cho task báo giá trong Deal, chưa hoàn thành */}
-              {leadType === 'deal' && (task.stage_slug === 'deal_quote_contract' || task.stage_slug === 'quotation') && task.status !== 'completed' && (
+              {/* Nút Upload Excel Báo giá — hiện khi:
+                  (a) nhiệm vụ bật cờ show_excel_quotation_upload ở bộ mẫu CRM, hoặc
+                  (b) legacy: task ở giai đoạn báo giá/hợp đồng trong Deal. */}
+              {(
+                !!task.show_excel_quotation_upload
+                || (leadType === 'deal' && (task.stage_slug === 'deal_quote_contract' || task.stage_slug === 'quotation'))
+              ) && task.status !== 'completed' && (
                 <button
                   onClick={(e) => { e.stopPropagation(); setExcelImportTaskId(task.id); }}
                   className="text-[10px] text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-medium cursor-pointer border border-emerald-200 transition-colors"
@@ -1663,6 +1670,25 @@ export default function CRMTasksTab({
                     </span>
                     <span className="block text-[10px] text-amber-700 mt-0.5">
                       Khi bật, {leadType === 'deal' ? 'deal' : 'lead'} không thể được kéo sang giai đoạn khác cho tới khi nhiệm vụ này hoàn thành (không áp dụng khi kéo Thắng/Thua).
+                    </span>
+                  </span>
+                </label>
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold text-gray-500 uppercase">Tiện ích</label>
+                <label className="mt-1 flex items-start gap-2 p-2.5 border border-emerald-200 bg-emerald-50 rounded-lg cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={!!editForm.show_excel_quotation_upload}
+                    onChange={(e) => setEditForm((f) => ({ ...f, show_excel_quotation_upload: e.target.checked }))}
+                    className="mt-0.5 accent-emerald-600"
+                  />
+                  <span className="flex-1">
+                    <span className="text-xs font-semibold text-emerald-800 flex items-center gap-1">
+                      <FileSpreadsheet className="h-3 w-3" /> Hiện nút "Upload Excel Báo giá"
+                    </span>
+                    <span className="block text-[10px] text-emerald-700 mt-0.5">
+                      Khi bật, nhiệm vụ sẽ có nút <b>📊 Upload Excel BG</b> ở tab Nhiệm vụ để tải file Excel báo giá và tạo báo giá tự động.
                     </span>
                   </span>
                 </label>

@@ -3,7 +3,7 @@ import api from '../lib/api';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Lock, Building2, Workflow, Globe, MapPin, RefreshCw } from 'lucide-react';
+import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Lock, Building2, Workflow, Globe, MapPin, RefreshCw, FileSpreadsheet } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -186,8 +186,9 @@ export default function CRMTemplatesPage() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  const load = async () => {
-    setLoading(true);
+  const load = async (opts = {}) => {
+    const silent = !!opts.silent;
+    if (!silent) setLoading(true);
     try {
       const tplParams = selectedPipelineId ? { pipeline_id: selectedPipelineId } : {};
       const [tplRes, compRes, deptRes] = await Promise.all([
@@ -201,13 +202,53 @@ export default function CRMTemplatesPage() {
       setDepartments(deptRes.data?.departments || deptRes.data || []);
       // Auto-pick công ty đầu tiên cho admin → xử lý ở useEffect riêng (theo dõi companies)
 
-      const exp = {};
-      (tplRes.data || []).forEach(t => { exp[t.id] = true; });
-      setExpanded(exp);
+      // Chỉ auto-expand bộ mẫu lần đầu thấy — giữ nguyên trạng thái expand/collapse user đã chọn.
+      setExpanded((prev) => {
+        const next = { ...prev };
+        (tplRes.data || []).forEach((t) => {
+          if (next[t.id] === undefined) next[t.id] = true;
+        });
+        return next;
+      });
     } catch {}
-    setLoading(false);
+    if (!silent) setLoading(false);
   };
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selectedPipelineId]);
+
+  // ── Helpers: cập nhật state cục bộ thay vì load lại toàn trang sau mỗi thao tác CRUD ──
+  const upsertTemplateLocal = (tplPartial) => {
+    if (!tplPartial?.id) return;
+    setTemplates((prev) => {
+      const idx = prev.findIndex((t) => t.id === tplPartial.id);
+      if (idx === -1) return [...prev, { items: [], ...tplPartial }];
+      const next = [...prev];
+      next[idx] = { ...next[idx], ...tplPartial };
+      return next;
+    });
+  };
+  const removeTemplateLocal = (tplId) => {
+    setTemplates((prev) => prev.filter((t) => t.id !== tplId));
+    setExpanded((p) => { const n = { ...p }; delete n[tplId]; return n; });
+  };
+  const upsertItemLocal = (tplId, itemPartial) => {
+    if (!itemPartial?.id) return;
+    setTemplates((prev) => prev.map((t) => {
+      if (t.id !== tplId) return t;
+      const items = Array.isArray(t.items) ? t.items : [];
+      const idx = items.findIndex((i) => i.id === itemPartial.id);
+      if (idx === -1) return { ...t, items: [...items, itemPartial] };
+      const nextItems = [...items];
+      nextItems[idx] = { ...nextItems[idx], ...itemPartial };
+      return { ...t, items: nextItems };
+    }));
+  };
+  const removeItemLocal = (tplId, itemId) => {
+    setTemplates((prev) => prev.map((t) => {
+      if (t.id !== tplId) return t;
+      const items = Array.isArray(t.items) ? t.items : [];
+      return { ...t, items: items.filter((i) => i.id !== itemId) };
+    }));
+  };
 
   // Khu vực CRM của công ty đang chọn (để áp dụng bộ mẫu toàn công ty)
   useEffect(() => {
@@ -360,16 +401,24 @@ export default function CRMTemplatesPage() {
           ? { pipeline_stage_id: newTpl.pipeline_stage_id, stage_slug: null }
           : { stage_slug: newTpl.stage_slug, pipeline_stage_id: null }),
       };
-      await api.post('/crm/task-templates', payload);
+      const { data } = await api.post('/crm/task-templates', payload);
       setNewTpl({ name: '', stage_slug: '', pipeline_stage_id: '' });
       setShowAddTpl(false);
-      load();
+      if (data?.id) {
+        upsertTemplateLocal({ ...data, items: [] });
+        setExpanded((p) => ({ ...p, [data.id]: true }));
+      } else {
+        load({ silent: true });
+      }
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
   const deleteTemplate = async (id) => {
     if (!confirm('Xóa bộ mẫu này?')) return;
-    try { await api.delete(`/crm/task-templates/${id}`); load(); } catch { alert('Lỗi'); }
+    try {
+      await api.delete(`/crm/task-templates/${id}`);
+      removeTemplateLocal(id);
+    } catch { alert('Lỗi'); }
   };
 
   /** Áp dụng bộ mẫu pipeline hiện tại cho mọi lead/deal thuộc tất cả khu vực của công ty. */
@@ -483,7 +532,9 @@ export default function CRMTemplatesPage() {
     try {
       await api.delete(`/crm/pipeline-stages/${stage.id}`);
       await reloadPipelineStages();
-      load();
+      // Một số template có thể bị mất pipeline_stage_id sau khi xóa stage → refresh ngầm để badge cập nhật,
+      // không bật lại loading spinner toàn trang.
+      load({ silent: true });
     } catch (e) { alert(e.response?.data?.error || 'Lỗi xóa giai đoạn'); }
   };
 
@@ -509,20 +560,25 @@ export default function CRMTemplatesPage() {
     const item = newItem[tplId];
     if (!item?.title?.trim()) return;
     try {
-      await api.post(`/crm/task-templates/${tplId}/items`, { ...item, checklist: item.checklist || [] });
+      const { data } = await api.post(`/crm/task-templates/${tplId}/items`, { ...item, checklist: item.checklist || [] });
       setNewItem(p => ({ ...p, [tplId]: { title: '', priority: 'medium', deadline_days: 0 } }));
-      load();
+      if (data?.id) upsertItemLocal(tplId, data);
+      else load({ silent: true });
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
   const deleteItem = async (tplId, itemId) => {
-    try { await api.delete(`/crm/task-templates/${tplId}/items/${itemId}`); load(); } catch {}
+    try {
+      await api.delete(`/crm/task-templates/${tplId}/items/${itemId}`);
+      removeItemLocal(tplId, itemId);
+    } catch {}
   };
 
   const updateTemplateItemFields = async (tplId, itemId, body) => {
     try {
-      await api.put(`/crm/task-templates/${tplId}/items/${itemId}`, body);
-      load();
+      const { data } = await api.put(`/crm/task-templates/${tplId}/items/${itemId}`, body);
+      if (data?.id) upsertItemLocal(tplId, data);
+      else upsertItemLocal(tplId, { id: itemId, ...body });
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi cập nhật mục mẫu');
       throw e;
@@ -530,7 +586,11 @@ export default function CRMTemplatesPage() {
   };
 
   const toggleDefault = async (tpl) => {
-    try { await api.put(`/crm/task-templates/${tpl.id}`, { is_default: !tpl.is_default }); load(); } catch {}
+    try {
+      const { data } = await api.put(`/crm/task-templates/${tpl.id}`, { is_default: !tpl.is_default });
+      if (data?.id) upsertTemplateLocal(data);
+      else upsertTemplateLocal({ id: tpl.id, is_default: !tpl.is_default });
+    } catch {}
   };
 
   const updateTemplate = async () => {
@@ -543,27 +603,32 @@ export default function CRMTemplatesPage() {
       if (editingTpl.stage_slug !== undefined) {
         payload.stage_slug = editingTpl.stage_slug || null;
       }
-      await api.put(`/crm/task-templates/${editingTpl.id}`, payload);
+      const { data } = await api.put(`/crm/task-templates/${editingTpl.id}`, payload);
+      const editingId = editingTpl.id;
       setEditingTpl(null);
-      load();
+      if (data?.id) upsertTemplateLocal(data);
+      else upsertTemplateLocal({ id: editingId, ...payload });
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
   // ═══ Checklist CRUD ═══
   const updateItemChecklist = async (tplId, itemId, checklist) => {
     try {
-      await api.put(`/crm/task-templates/${tplId}/items/${itemId}`, { checklist });
-      load();
+      const { data } = await api.put(`/crm/task-templates/${tplId}/items/${itemId}`, { checklist });
+      if (data?.id) upsertItemLocal(tplId, data);
+      else upsertItemLocal(tplId, { id: itemId, checklist });
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
   const updateItemVisibility = async (tplId, itemId, allowedCompanies, allowedDepts) => {
     try {
-      await api.put(`/crm/task-templates/${tplId}/items/${itemId}`, {
+      const payload = {
         default_allowed_companies: allowedCompanies?.length ? allowedCompanies : null,
         default_allowed_departments: allowedDepts?.length ? allowedDepts : null,
-      });
-      load();
+      };
+      const { data } = await api.put(`/crm/task-templates/${tplId}/items/${itemId}`, payload);
+      if (data?.id) upsertItemLocal(tplId, data);
+      else upsertItemLocal(tplId, { id: itemId, ...payload });
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
@@ -625,7 +690,7 @@ export default function CRMTemplatesPage() {
       await Promise.all(reordered.map((item, i) =>
         api.put(`/crm/task-templates/${tplId}/items/${item.id}`, { order_index: i })
       ));
-    } catch { load(); } // Reload on error
+    } catch { load({ silent: true }); } // Reload on error
   };
 
   // ═══ DRAG & DROP: Reorder templates within a stage ═══
@@ -660,7 +725,7 @@ export default function CRMTemplatesPage() {
       await Promise.all(reordered.map((tpl, i) =>
         api.put(`/crm/task-templates/${tpl.id}`, { order_index: i })
       ));
-    } catch { load(); }
+    } catch { load({ silent: true }); }
   };
 
   // ═══ DRAG & DROP: Reorder checklist items ═══
@@ -1169,7 +1234,7 @@ function TemplateCard({
   companyPipelinesAll = [], activeTab = 'deal',
 }) {
   const [editingItemId, setEditingItemId] = useState(null);
-  const [itemEditForm, setItemEditForm] = useState({ title: '', description: '', priority: 'medium', deadline_days: 0, blocks_stage_advance: false });
+  const [itemEditForm, setItemEditForm] = useState({ title: '', description: '', priority: 'medium', deadline_days: 0, blocks_stage_advance: false, show_excel_quotation_upload: false });
 
   const sortedItems = [...(tpl.items || [])].sort((a, b) => a.order_index - b.order_index);
 
@@ -1181,6 +1246,7 @@ function TemplateCard({
       priority: item.priority || 'medium',
       deadline_days: item.deadline_days ?? 0,
       blocks_stage_advance: !!item.blocks_stage_advance,
+      show_excel_quotation_upload: !!item.show_excel_quotation_upload,
     });
   };
 
@@ -1196,6 +1262,7 @@ function TemplateCard({
         priority: itemEditForm.priority,
         deadline_days: 0,
         blocks_stage_advance: !!itemEditForm.blocks_stage_advance,
+        show_excel_quotation_upload: !!itemEditForm.show_excel_quotation_upload,
       });
       setEditingItemId(null);
     } catch { /* alert trong updateTemplateItemFields */ }
@@ -1205,6 +1272,14 @@ function TemplateCard({
     try {
       await updateTemplateItemFields(tpl.id, item.id, {
         blocks_stage_advance: !item.blocks_stage_advance,
+      });
+    } catch { /* alert trong updateTemplateItemFields */ }
+  };
+
+  const toggleItemExcelUpload = async (item) => {
+    try {
+      await updateTemplateItemFields(tpl.id, item.id, {
+        show_excel_quotation_upload: !item.show_excel_quotation_upload,
       });
     } catch { /* alert trong updateTemplateItemFields */ }
   };
@@ -1360,10 +1435,22 @@ function TemplateCard({
                             <Lock className="h-2.5 w-2.5" /> Chặn
                           </span>
                         )}
+                        {item.show_excel_quotation_upload && (
+                          <span
+                            className="text-[9px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
+                            title="Hiển thị nút Upload Excel Báo giá ở tab Nhiệm vụ"
+                          >
+                            <FileSpreadsheet className="h-2.5 w-2.5" /> Excel BG
+                          </span>
+                        )}
                         <button type="button" onClick={() => toggleItemBlocking(item)}
                           className={`p-1 rounded cursor-pointer shrink-0 ${item.blocks_stage_advance ? 'text-amber-600 bg-amber-50 hover:bg-amber-100' : 'text-gray-400 hover:bg-amber-50 hover:text-amber-600'}`}
                           title={item.blocks_stage_advance ? 'Đang chặn chuyển giai đoạn — bấm để tắt' : 'Bật chặn: bắt buộc hoàn thành trước khi chuyển giai đoạn'}>
                           <Lock className="h-3.5 w-3.5" /></button>
+                        <button type="button" onClick={() => toggleItemExcelUpload(item)}
+                          className={`p-1 rounded cursor-pointer shrink-0 ${item.show_excel_quotation_upload ? 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100' : 'text-gray-400 hover:bg-emerald-50 hover:text-emerald-600'}`}
+                          title={item.show_excel_quotation_upload ? 'Đang hiển thị nút Upload Excel BG — bấm để tắt' : 'Bật: hiển thị nút Upload Excel Báo giá trên tab Nhiệm vụ'}>
+                          <FileSpreadsheet className="h-3.5 w-3.5" /></button>
                         <button type="button" onClick={() => setEditingVisibility(p => ({ ...p, [item.id]: !p[item.id] }))}
                           className={`p-1 rounded cursor-pointer shrink-0 ${(item.default_allowed_companies?.length > 0 || item.default_allowed_departments?.length > 0) ? 'text-red-500 hover:bg-red-50' : 'text-gray-400 hover:bg-purple-50 hover:text-purple-600'}`} title="Phân quyền xem">
                           <Shield className="h-3.5 w-3.5" /></button>
@@ -1414,6 +1501,16 @@ function TemplateCard({
                               <Lock className="h-3 w-3 text-amber-600" />
                               Chặn chuyển giai đoạn
                             </label>
+                            <label className="flex items-center gap-1.5 h-8 px-2 rounded border bg-white text-xs cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={!!itemEditForm.show_excel_quotation_upload}
+                                onChange={e => setItemEditForm(f => ({ ...f, show_excel_quotation_upload: e.target.checked }))}
+                                className="accent-emerald-600"
+                              />
+                              <FileSpreadsheet className="h-3 w-3 text-emerald-600" />
+                              Hiện nút Upload Excel BG
+                            </label>
                             <span className="flex-1" />
                             <button type="button" onClick={() => setEditingItemId(null)} className="h-8 px-3 rounded-lg text-xs font-medium bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 cursor-pointer">
                               Hủy
@@ -1424,6 +1521,9 @@ function TemplateCard({
                           </div>
                           <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
                             <Lock className="h-2.5 w-2.5 inline mr-1" /> Khi bật: lead/deal không thể chuyển sang giai đoạn khác (trừ Thắng/Thua) đến khi nhiệm vụ này hoàn thành.
+                          </p>
+                          <p className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1">
+                            <FileSpreadsheet className="h-2.5 w-2.5 inline mr-1" /> Khi bật: nhiệm vụ sinh ra ở tab Nhiệm vụ sẽ có nút <b>Upload Excel BG</b> để tải file báo giá Excel và tạo báo giá tự động.
                           </p>
                         </div>
                       )}

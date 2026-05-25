@@ -134,14 +134,15 @@ r.get('/users', requireAdmin, async (req, res) => {
       .neq('id', AI_BOT_USER_ID)
       .order('full_name');
 
-    if (companyId) q = q.eq('company_id', companyId);
     if (deptId) q = q.eq('department_id', deptId);
 
     const { data: rows, error } = await q;
     if (error) throw error;
 
-    // Hậu lọc theo Khối (depart hoặc company div) và Region (user_company_regions)
+    // Hậu lọc theo Công ty (effective: users.company_id || department.company_id) + Khối + Region
     let users = (rows || []).filter((u) => {
+      const effectiveCompanyId = u.company_id || u.department?.company_id || null;
+      if (companyId && String(effectiveCompanyId || '') !== String(companyId)) return false;
       if (divisionId) {
         const dDiv = u.department?.division_unit_id || u.department?.company?.division_unit_id || null;
         if (String(dDiv || '') !== String(divisionId)) return false;
@@ -164,17 +165,21 @@ r.get('/users', requireAdmin, async (req, res) => {
     }
 
     res.json({
-      users: users.map((u) => ({
-        id: u.id,
-        full_name: u.full_name,
-        email: u.email,
-        avatar: u.avatar || null,
-        company_id: u.company_id || null,
-        department_id: u.department_id || null,
-        department_name: u.department?.name || null,
-        company_name: u.department?.company?.short_name || u.department?.company?.name || null,
-        division_unit_id: u.department?.division_unit_id || u.department?.company?.division_unit_id || null,
-      })),
+      users: users.map((u) => {
+        const effectiveCompanyId = u.company_id || u.department?.company_id || null;
+        return {
+          id: u.id,
+          full_name: u.full_name,
+          email: u.email,
+          avatar: u.avatar || null,
+          company_id: effectiveCompanyId,
+          dept_company_id: u.department?.company_id || null,
+          department_id: u.department_id || null,
+          department_name: u.department?.name || null,
+          company_name: u.department?.company?.short_name || u.department?.company?.name || null,
+          division_unit_id: u.department?.division_unit_id || u.department?.company?.division_unit_id || null,
+        };
+      }),
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -294,7 +299,7 @@ r.get('/channel-filters', requireAdmin, async (_req, res) => {
 
 /* ─────────────────── PLAYBOOKS (mẫu nội dung AI) ─────────────────── */
 
-const VALID_DATA_SOURCES = ['channel_context', 'kpi', 'none'];
+const VALID_DATA_SOURCES = ['channel_context', 'kpi', 'none', 'company_report'];
 
 function validatePlaybook(body, { allowMissingPrompt = false } = {}) {
   const errors = [];
@@ -450,6 +455,7 @@ r.delete('/playbooks/:id', requireAdmin, async (req, res) => {
 
 // Giữ alias cũ để frontend cũ vẫn chạy nếu chưa cập nhật.
 const VALID_KINDS = ['daily_brief', 'overdue', 'kpi', 'custom'];
+const VALID_TIME_SCOPES = ['today', 'yesterday', 'last_7d', 'custom'];
 
 function normalizeSlots(input) {
   if (!Array.isArray(input)) return [{ h: 8, m: 0 }];
@@ -495,10 +501,38 @@ async function validatePayload(body) {
   if (!Number.isFinite(maxRuns) || maxRuns < 1 || maxRuns > 24) {
     errors.push('max_runs_per_day phải trong 1..24');
   }
+
+  if (body.time_scope != null && !VALID_TIME_SCOPES.includes(body.time_scope)) {
+    errors.push('time_scope không hợp lệ');
+  }
+  const ttl = parseInt(body.conversation_ttl_minutes, 10);
+  if (body.conversation_ttl_minutes != null && (!Number.isFinite(ttl) || ttl < 5 || ttl > 1440)) {
+    errors.push('conversation_ttl_minutes phải trong 5..1440');
+  }
+  if (body.company_whitelist != null && !Array.isArray(body.company_whitelist)) {
+    errors.push('company_whitelist phải là mảng UUID');
+  }
+  if (body.department_whitelist != null && !Array.isArray(body.department_whitelist)) {
+    errors.push('department_whitelist phải là mảng UUID');
+  }
+  if (body.user_whitelist != null && !Array.isArray(body.user_whitelist)) {
+    errors.push('user_whitelist phải là mảng UUID');
+  }
+
   return errors;
 }
 
 function buildRow(body, userId) {
+  const companyWhitelist = Array.isArray(body.company_whitelist) && body.company_whitelist.length
+    ? body.company_whitelist.filter(Boolean)
+    : null;
+  const departmentWhitelist = Array.isArray(body.department_whitelist) && body.department_whitelist.length
+    ? body.department_whitelist.filter(Boolean)
+    : null;
+  const userWhitelist = Array.isArray(body.user_whitelist) && body.user_whitelist.length
+    ? body.user_whitelist.filter(Boolean)
+    : null;
+
   return {
     channel_type: body.channel_type,
     channel_id: body.channel_id,
@@ -511,6 +545,14 @@ function buildRow(body, userId) {
     max_runs_per_day: Math.max(1, Math.min(24, parseInt(body.max_runs_per_day, 10) || 2)),
     weekdays: normalizeWeekdays(body.weekdays),
     enabled: body.enabled !== false,
+    time_scope: VALID_TIME_SCOPES.includes(body.time_scope) ? body.time_scope : 'today',
+    time_scope_days_offset: Math.max(0, parseInt(body.time_scope_days_offset, 10) || 0),
+    company_whitelist: companyWhitelist,
+    department_whitelist: departmentWhitelist,
+    user_whitelist: userWhitelist,
+    conversation_enabled: body.conversation_enabled === true,
+    conversation_ttl_minutes: Math.max(5, Math.min(1440, parseInt(body.conversation_ttl_minutes, 10) || 60)),
+    personal_scope_only: body.personal_scope_only === true,
     created_by: userId || null,
     updated_at: new Date().toISOString(),
   };
@@ -686,6 +728,48 @@ r.get('/schedules/:id/runs', requireAdmin, async (req, res) => {
       .limit(30);
     if (error) throw error;
     res.json({ runs: data || [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* ─────────────────── AI USER MEMORY ─────────────────── */
+
+const {
+  rebuildUserMemory,
+  rebuildAllActiveUsers,
+  getUserLearnedFacts,
+} = require('../helpers/aiUserMemory');
+
+/** POST /memory/rebuild — rebuild fact cho mọi user có activity 7 ngày */
+r.post('/memory/rebuild', requireAdmin, async (req, res) => {
+  try {
+    const useGpt = req.body?.use_gpt !== false;
+    const result = await rebuildAllActiveUsers({ days: req.body?.days || 7, useGpt });
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** POST /memory/rebuild/:userId — 1 user */
+r.post('/memory/rebuild/:userId', requireAdmin, async (req, res) => {
+  try {
+    const result = await rebuildUserMemory(req.params.userId, {
+      days: req.body?.days || 7,
+      useGpt: req.body?.use_gpt !== false,
+    });
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** GET /memory/:userId/facts — xem fact đã học (admin) */
+r.get('/memory/:userId/facts', requireAdmin, async (req, res) => {
+  try {
+    const data = await getUserLearnedFacts(req.params.userId);
+    res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

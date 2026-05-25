@@ -842,6 +842,16 @@ async function runScheduleSend(schedule, io) {
     return { status: 'skipped', error: `Mẫu "${playbook.name}" đang tắt` };
   }
 
+  /* Báo cáo công ty interactive — pipeline riêng (menu + conversation) */
+  if ((playbook.data_source || '') === 'company_report') {
+    try {
+      const { runReportMenuSend } = require('./aiReportMenu');
+      return await runReportMenuSend(schedule, playbook, channelInfo, io);
+    } catch (e) {
+      return { status: 'error', error: e.message };
+    }
+  }
+
   const memberIds = await loadChannelMemberIds(schedule.channel_type, schedule.channel_id);
 
   let payload;

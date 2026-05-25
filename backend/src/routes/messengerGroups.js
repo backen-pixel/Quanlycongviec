@@ -8,6 +8,7 @@ const { supabase } = require('../config/supabase');
 const config = require('../config');
 const { notifyMultiple } = require('../helpers/notifications');
 const { isAdminLike } = require('../helpers/adminRole');
+const { handleIncomingMessage } = require('../helpers/aiConversation');
 
 /** Bucket Supabase Storage (mặc định giống upload CRM). */
 const MESSENGER_STORAGE_BUCKET = process.env.SUPABASE_MESSENGER_BUCKET || 'attachments';
@@ -200,6 +201,17 @@ async function fetchMessengerMessageById(id) {
   if (error || !data) return null;
   const [hydrated] = await attachReplyParents([data]);
   return hydrated || data;
+}
+
+/** Fire-and-forget: kích hoạt AI conversation (báo cáo công ty) sau tin user gửi. */
+function triggerAiHookIfNeeded(messageRow, groupId, io) {
+  if (!messageRow || messageRow.is_system || messageRow.message_type === 'system') return;
+  handleIncomingMessage({
+    messageRow,
+    channelKind: 'group',
+    channelId: groupId,
+    io,
+  }).catch((err) => console.warn('[ai-conv] hook err:', err.message));
 }
 
 /** .in('id', …) + map UUID — tránh lệch khóa string/UUID khi join profile */
@@ -1023,6 +1035,7 @@ r.post('/groups/:id/chat', messengerChatJsonOrMultipart, async (req, res) => {
     if (io) io.to(`messenger_group:${req.params.id}`).emit('messenger_group:chat', data);
     const { data: grpRow } = await supabase.from('messenger_groups').select('name').eq('id', req.params.id).maybeSingle();
     await notifyMessengerGroupChatRecipients(req, req.params.id, req.authUserId, data, grpRow?.name || '');
+    triggerAiHookIfNeeded(data, req.params.id, io);
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1065,6 +1078,7 @@ r.post('/groups/:id/chat/upload', messengerMemoryUpload.single('file'), async (r
     if (io) io.to(`messenger_group:${req.params.id}`).emit('messenger_group:chat', data);
     const { data: grpRow } = await supabase.from('messenger_groups').select('name').eq('id', req.params.id).maybeSingle();
     await notifyMessengerGroupChatRecipients(req, req.params.id, req.authUserId, data, grpRow?.name || '');
+    triggerAiHookIfNeeded(data, req.params.id, io);
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });

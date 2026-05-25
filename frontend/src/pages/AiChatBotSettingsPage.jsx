@@ -40,7 +40,15 @@ import {
 const DATA_SOURCES = [
   { id: 'channel_context', label: 'Context kênh (task + lead + CSKH)', desc: 'Quét tasks/leads của thành viên kênh, gửi vào prompt' },
   { id: 'kpi', label: 'KPI tháng', desc: 'Tổng điểm KPI tháng của thành viên kênh' },
+  { id: 'company_report', label: 'Báo cáo công ty (menu + hỏi đáp)', desc: 'Menu chọn công ty → sếp trả lời → AI báo cáo lead/deal/nhân viên' },
   { id: 'none', label: 'Không kèm dữ liệu', desc: 'AI chỉ chạy theo prompt thuần (vd: lời chào, thông báo cố định)' },
+];
+
+const TIME_SCOPES = [
+  { id: 'today', label: 'Hôm nay (00:00 → lúc chạy)' },
+  { id: 'yesterday', label: 'Hôm qua (cả ngày)' },
+  { id: 'last_7d', label: '7 ngày qua' },
+  { id: 'custom', label: 'Tuỳ chỉnh (lùi N ngày)' },
 ];
 
 const WEEKDAY_LABELS = [
@@ -64,6 +72,14 @@ const EMPTY_SCHEDULE = {
   max_runs_per_day: 2,
   weekdays: [],
   enabled: true,
+  time_scope: 'today',
+  time_scope_days_offset: 0,
+  company_whitelist: [],
+  department_whitelist: [],
+  user_whitelist: [],
+  conversation_enabled: false,
+  conversation_ttl_minutes: 60,
+  personal_scope_only: false,
 };
 
 const EMPTY_PLAYBOOK = {
@@ -269,6 +285,14 @@ function SchedulesTab({
       playbook_id: sch.playbook_id || enabledPlaybooks[0]?.id || '',
       run_slots: Array.isArray(sch.run_slots) ? sch.run_slots : [{ h: 8, m: 0 }],
       weekdays: Array.isArray(sch.weekdays) ? sch.weekdays : [],
+      company_whitelist: Array.isArray(sch.company_whitelist) ? sch.company_whitelist : [],
+      department_whitelist: Array.isArray(sch.department_whitelist) ? sch.department_whitelist : [],
+      user_whitelist: Array.isArray(sch.user_whitelist) ? sch.user_whitelist : [],
+      time_scope: sch.time_scope || 'today',
+      time_scope_days_offset: sch.time_scope_days_offset ?? 0,
+      conversation_enabled: !!sch.conversation_enabled,
+      conversation_ttl_minutes: sch.conversation_ttl_minutes ?? 60,
+      personal_scope_only: !!sch.personal_scope_only,
     });
 
   const onSave = async () => {
@@ -305,6 +329,20 @@ function SchedulesTab({
       max_runs_per_day: editing.max_runs_per_day,
       weekdays: editing.weekdays?.length ? editing.weekdays : null,
       enabled: editing.enabled,
+      time_scope: editing.time_scope || 'today',
+      time_scope_days_offset: editing.time_scope_days_offset ?? 0,
+      company_whitelist: Array.isArray(editing.company_whitelist) && editing.company_whitelist.length
+        ? editing.company_whitelist
+        : null,
+      department_whitelist: Array.isArray(editing.department_whitelist) && editing.department_whitelist.length
+        ? editing.department_whitelist
+        : null,
+      user_whitelist: Array.isArray(editing.user_whitelist) && editing.user_whitelist.length
+        ? editing.user_whitelist
+        : null,
+      conversation_enabled: !!editing.conversation_enabled,
+      conversation_ttl_minutes: editing.conversation_ttl_minutes ?? 60,
+      personal_scope_only: !!editing.personal_scope_only,
     });
 
     try {
@@ -566,6 +604,54 @@ function ScheduleCard({ sch, busy, onEdit, onDelete, onToggle, onRunNow, onViewR
   );
 }
 
+/** Hàng nhỏ trong bộ lọc Phạm vi báo cáo: label trái + actions phải + content body */
+function ScopeRow({ icon, label, count, total, onSelectAll, onClear, children }) {
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[11px] font-medium text-gray-600 flex items-center gap-1">
+          {icon} {label}
+          <span className="text-gray-400">({count}/{total})</span>
+        </span>
+        <div className="flex gap-1.5">
+          {onSelectAll && total > 0 && (
+            <button type="button" onClick={onSelectAll} className="text-[10px] text-indigo-600 hover:underline">
+              Chọn hết
+            </button>
+          )}
+          {onClear && (
+            <button type="button" onClick={onClear} className="text-[10px] text-gray-500 hover:text-red-600 hover:underline">
+              Xoá
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-1">{children}</div>
+    </div>
+  );
+}
+
+/** Pill button cho multi-select. color: indigo | purple */
+function PillButton({ checked, onClick, color = 'indigo', children, title }) {
+  const palette = color === 'purple'
+    ? (checked
+      ? 'bg-purple-600 text-white border-purple-600 shadow-sm'
+      : 'bg-white text-gray-700 border-gray-200 hover:border-purple-400 hover:text-purple-700')
+    : (checked
+      ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+      : 'bg-white text-gray-700 border-gray-200 hover:border-indigo-400 hover:text-indigo-700');
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className={`h-6 px-2 rounded-full text-[10px] font-medium cursor-pointer transition border ${palette}`}
+    >
+      {children}
+    </button>
+  );
+}
+
 function ScheduleEditorModal({ value, onChange, channels, channelFilters, playbooks, onClose, onSave, saving }) {
   const update = (patch) => onChange({ ...value, ...patch });
 
@@ -573,6 +659,79 @@ function ScheduleEditorModal({ value, onChange, channels, channelFilters, playbo
   const isEditingExisting = !!value.id;
   const f = value._filter || {};
   const setFilter = (patch) => update({ _filter: { ...f, ...patch } });
+
+  // ── Scope picker (báo cáo công ty): cascade Khối → Cty → Dept → User
+  const [scopeUsers, setScopeUsers] = useState([]);
+  const [scopeUserQuery, setScopeUserQuery] = useState('');
+  const [scopeKhoiId, setScopeKhoiId] = useState('');
+  const scopePbIsReport = useMemo(
+    () => playbooks.find((p) => p.id === value.playbook_id)?.data_source === 'company_report',
+    [playbooks, value.playbook_id],
+  );
+  useEffect(() => {
+    if (!scopePbIsReport) return undefined;
+    let cancelled = false;
+    api
+      .get('/ai-chat-bot/users')
+      .then((r) => {
+        if (!cancelled) setScopeUsers(r.data?.users || []);
+      })
+      .catch(() => {
+        if (!cancelled) setScopeUsers([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [scopePbIsReport]);
+
+  // Cascade hierarchy
+  const scopeCompaniesFiltered = useMemo(() => {
+    const list = channelFilters?.companies || [];
+    if (!scopeKhoiId) return list;
+    return list.filter((c) => String(c.division_unit_id || '') === String(scopeKhoiId));
+  }, [channelFilters?.companies, scopeKhoiId]);
+
+  const scopeDepartmentsFiltered = useMemo(() => {
+    const cwl = Array.isArray(value.company_whitelist) ? value.company_whitelist.map(String) : [];
+    const allowedCompanyIds = cwl.length
+      ? cwl
+      : scopeCompaniesFiltered.map((c) => String(c.id));
+    return (channels?.departments || []).filter((d) => {
+      if (!allowedCompanyIds.includes(String(d.company_id || ''))) return false;
+      return true;
+    });
+  }, [channels?.departments, value.company_whitelist, scopeCompaniesFiltered]);
+
+  const scopeUsersFiltered = useMemo(() => {
+    const cwl = Array.isArray(value.company_whitelist) ? value.company_whitelist.map(String) : [];
+    const dwl = Array.isArray(value.department_whitelist) ? value.department_whitelist.map(String) : [];
+    const allowedCompanyIds = cwl.length
+      ? cwl
+      : scopeCompaniesFiltered.map((c) => String(c.id));
+    const allowedDeptIds = dwl.length
+      ? dwl
+      : scopeDepartmentsFiltered.map((d) => String(d.id));
+    const q = scopeUserQuery.trim().toLowerCase();
+    return scopeUsers.filter((u) => {
+      if (allowedCompanyIds.length && !allowedCompanyIds.includes(String(u.company_id || ''))) return false;
+      if (dwl.length && !allowedDeptIds.includes(String(u.department_id || ''))) return false;
+      if (q && !`${u.full_name || ''} ${u.email || ''}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [scopeUsers, value.company_whitelist, value.department_whitelist, scopeCompaniesFiltered, scopeDepartmentsFiltered, scopeUserQuery]);
+
+  // Helpers — toggle item in a whitelist array
+  const toggleInWhitelist = (key, id) => {
+    const cur = Array.isArray(value[key]) ? value[key] : [];
+    const set = new Set(cur.map(String));
+    if (set.has(String(id))) set.delete(String(id));
+    else set.add(String(id));
+    update({ [key]: [...set] });
+  };
+  const isSelected = (key, id) => {
+    const cur = Array.isArray(value[key]) ? value[key] : [];
+    return cur.map(String).includes(String(id));
+  };
 
   // ── Mode DM: tải danh sách nhân viên theo filter
   const [userList, setUserList] = useState([]);
@@ -979,7 +1138,15 @@ function ScheduleEditorModal({ value, onChange, channels, channelFilters, playbo
             <label className="block text-xs font-medium text-gray-700 mb-1">Mẫu nội dung AI *</label>
             <select
               value={value.playbook_id || ''}
-              onChange={(e) => update({ playbook_id: e.target.value })}
+              onChange={(e) => {
+                const pbId = e.target.value;
+                const pb = playbooks.find((p) => p.id === pbId);
+                const patch = { playbook_id: pbId };
+                if (pb?.data_source === 'company_report' && value.channel_type === 'group') {
+                  patch.conversation_enabled = true;
+                }
+                update(patch);
+              }}
               className="w-full h-10 px-3 rounded-xl border border-gray-200 outline-none focus:ring-2 focus:ring-indigo-500 text-sm bg-white"
             >
               <option value="">— Chọn mẫu —</option>
@@ -993,6 +1160,220 @@ function ScheduleEditorModal({ value, onChange, channels, channelFilters, playbo
               <p className="text-[11px] text-gray-500 mt-1.5 italic">{selectedPb.description}</p>
             )}
           </div>
+
+          {selectedPb?.data_source === 'company_report' && (
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-3 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <p className="text-[11px] font-semibold text-indigo-800 uppercase tracking-wide flex items-center gap-1.5">
+                  <Database className="h-3 w-3" /> Phạm vi báo cáo
+                </p>
+                {(scopeKhoiId
+                  || (value.company_whitelist || []).length
+                  || (value.department_whitelist || []).length
+                  || (value.user_whitelist || []).length) > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setScopeKhoiId('');
+                      update({ company_whitelist: [], department_whitelist: [], user_whitelist: [] });
+                    }}
+                    className="text-[10px] text-gray-500 hover:text-red-600 hover:underline"
+                  >
+                    Xoá tất cả
+                  </button>
+                )}
+              </div>
+
+              {/* Toggle 1-1 (DM) — đặt lên đầu vì ảnh hưởng các filter dưới */}
+              {value.channel_type === 'user' && (
+                <label className="flex items-center gap-2 cursor-pointer rounded-lg bg-amber-50 border border-amber-200 px-2.5 py-1.5">
+                  <input
+                    type="checkbox"
+                    checked={!!value.personal_scope_only}
+                    onChange={(e) => update({ personal_scope_only: e.target.checked })}
+                    className="w-3.5 h-3.5 rounded text-amber-600 cursor-pointer"
+                  />
+                  <span className="text-[11px] text-amber-900">
+                    <b>Chế độ 1-1:</b> mỗi NV chỉ thấy báo cáo của chính mình (bỏ qua phòng ban/NV bên dưới)
+                  </span>
+                </label>
+              )}
+
+              {/* Hàng 1: Kỳ + (Lùi N) + Khối — 3 cột chung 1 hàng */}
+              <div className="grid grid-cols-12 gap-2">
+                <div className={value.time_scope === 'custom' ? 'col-span-5' : 'col-span-6'}>
+                  <select
+                    value={value.time_scope || 'today'}
+                    onChange={(e) => update({ time_scope: e.target.value })}
+                    className="w-full h-8 px-2 rounded-lg border border-gray-200 outline-none focus:ring-2 focus:ring-indigo-500 text-[11px] bg-white"
+                  >
+                    {TIME_SCOPES.map((ts) => (
+                      <option key={ts.id} value={ts.id}>{ts.label}</option>
+                    ))}
+                  </select>
+                </div>
+                {value.time_scope === 'custom' && (
+                  <div className="col-span-2">
+                    <input
+                      type="number"
+                      min={0}
+                      max={90}
+                      value={value.time_scope_days_offset ?? 0}
+                      onChange={(e) => update({ time_scope_days_offset: parseInt(e.target.value, 10) || 0 })}
+                      placeholder="lùi N"
+                      className="w-full h-8 px-2 rounded-lg border border-gray-200 outline-none focus:ring-2 focus:ring-indigo-500 text-[11px] text-center"
+                    />
+                  </div>
+                )}
+                <div className={value.time_scope === 'custom' ? 'col-span-5' : 'col-span-6'}>
+                  <select
+                    value={scopeKhoiId}
+                    onChange={(e) => {
+                      setScopeKhoiId(e.target.value);
+                      update({ company_whitelist: [], department_whitelist: [], user_whitelist: [] });
+                    }}
+                    className="w-full h-8 px-2 rounded-lg border border-gray-200 outline-none focus:ring-2 focus:ring-indigo-500 text-[11px] bg-white"
+                  >
+                    <option value="">— Mọi khối —</option>
+                    {(channelFilters?.divisions || []).map((d) => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Disable scope khi personal_scope_only */}
+              {value.personal_scope_only ? (
+                <p className="text-[11px] text-amber-700 italic px-2 py-1.5 bg-amber-50/60 rounded-lg">
+                  Chế độ 1-1 đang bật — bộ lọc Công ty/Phòng ban/Nhân viên không áp dụng.
+                </p>
+              ) : (
+                <>
+                  {/* Công ty — pills */}
+                  <ScopeRow
+                    icon={<Building2 className="h-3 w-3" />}
+                    label="Công ty"
+                    count={(value.company_whitelist || []).length}
+                    total={scopeCompaniesFiltered.length}
+                    onSelectAll={() => update({ company_whitelist: scopeCompaniesFiltered.map((c) => c.id), department_whitelist: [], user_whitelist: [] })}
+                    onClear={(value.company_whitelist || []).length > 0 ? () => update({ company_whitelist: [], department_whitelist: [], user_whitelist: [] }) : null}
+                  >
+                    {scopeCompaniesFiltered.length === 0 ? (
+                      <span className="text-[10px] text-gray-400 italic">Không có công ty</span>
+                    ) : (
+                      scopeCompaniesFiltered.map((c) => (
+                        <PillButton
+                          key={c.id}
+                          checked={isSelected('company_whitelist', c.id)}
+                          onClick={() => toggleInWhitelist('company_whitelist', c.id)}
+                          color="indigo"
+                        >
+                          {c.short_name || c.name}
+                        </PillButton>
+                      ))
+                    )}
+                  </ScopeRow>
+
+                  {/* Phòng ban — pills */}
+                  <ScopeRow
+                    icon={<UsersRound className="h-3 w-3" />}
+                    label="Phòng ban"
+                    count={(value.department_whitelist || []).length}
+                    total={scopeDepartmentsFiltered.length}
+                    onSelectAll={() => update({ department_whitelist: scopeDepartmentsFiltered.map((d) => d.id), user_whitelist: [] })}
+                    onClear={(value.department_whitelist || []).length > 0 ? () => update({ department_whitelist: [], user_whitelist: [] }) : null}
+                  >
+                    {scopeDepartmentsFiltered.length === 0 ? (
+                      <span className="text-[10px] text-gray-400 italic">Chọn công ty trước</span>
+                    ) : (
+                      <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                        {scopeDepartmentsFiltered.map((d) => (
+                          <PillButton
+                            key={d.id}
+                            checked={isSelected('department_whitelist', d.id)}
+                            onClick={() => toggleInWhitelist('department_whitelist', d.id)}
+                            color="purple"
+                            title={d.company_name || ''}
+                          >
+                            {d.name}
+                          </PillButton>
+                        ))}
+                      </div>
+                    )}
+                  </ScopeRow>
+
+                  {/* Nhân viên — list */}
+                  <ScopeRow
+                    icon={<UserIcon className="h-3 w-3" />}
+                    label="Nhân viên"
+                    count={(value.user_whitelist || []).length}
+                    total={scopeUsersFiltered.length}
+                    onSelectAll={() => update({ user_whitelist: scopeUsersFiltered.map((u) => u.id) })}
+                    onClear={(value.user_whitelist || []).length > 0 ? () => update({ user_whitelist: [] }) : null}
+                  >
+                    <input
+                      value={scopeUserQuery}
+                      onChange={(e) => setScopeUserQuery(e.target.value)}
+                      placeholder="Tìm tên/email…"
+                      className="w-full h-7 px-2 mb-1 text-[10px] rounded-lg border border-gray-200 outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                    <div className="max-h-32 overflow-y-auto rounded-lg border border-gray-200 bg-white">
+                      {scopeUsersFiltered.length === 0 ? (
+                        <p className="text-[10px] text-gray-400 italic text-center py-2">Không có nhân viên</p>
+                      ) : (
+                        scopeUsersFiltered.map((u) => {
+                          const checked = isSelected('user_whitelist', u.id);
+                          return (
+                            <label
+                              key={u.id}
+                              className={`flex items-center gap-1.5 px-2 py-1 text-[10px] cursor-pointer hover:bg-indigo-50 ${checked ? 'bg-indigo-50' : ''}`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => toggleInWhitelist('user_whitelist', u.id)}
+                                className="rounded scale-90"
+                              />
+                              <span className="flex-1 truncate">
+                                <span className="font-medium text-gray-800">{u.full_name || u.email}</span>
+                                {u.department_name && <span className="text-gray-400"> · {u.department_name}</span>}
+                              </span>
+                            </label>
+                          );
+                        })
+                      )}
+                    </div>
+                  </ScopeRow>
+                </>
+              )}
+
+              {/* Conversation toggle (group only) */}
+              {value.channel_type === 'group' && (
+                <label className="flex items-center gap-2 cursor-pointer rounded-lg bg-white border border-gray-200 px-2.5 py-1.5">
+                  <input
+                    type="checkbox"
+                    checked={!!value.conversation_enabled}
+                    onChange={(e) => update({ conversation_enabled: e.target.checked })}
+                    className="w-3.5 h-3.5 rounded text-indigo-600 cursor-pointer"
+                  />
+                  <span className="text-[11px] text-gray-700 flex-1">Bật hỏi đáp sau menu (@mention)</span>
+                  {value.conversation_enabled && (
+                    <span className="flex items-center gap-1 text-[10px] text-gray-500">
+                      <input
+                        type="number"
+                        min={5}
+                        max={1440}
+                        value={value.conversation_ttl_minutes ?? 60}
+                        onChange={(e) => update({ conversation_ttl_minutes: parseInt(e.target.value, 10) || 60 })}
+                        className="w-14 h-6 px-1 rounded border border-gray-200 text-[10px] text-center"
+                      />
+                      phút
+                    </span>
+                  )}
+                </label>
+              )}
+            </div>
+          )}
 
           {/* Custom prompt (optional override) */}
           <div>
