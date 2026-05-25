@@ -455,7 +455,7 @@ r.delete('/playbooks/:id', requireAdmin, async (req, res) => {
 
 // Giữ alias cũ để frontend cũ vẫn chạy nếu chưa cập nhật.
 const VALID_KINDS = ['daily_brief', 'overdue', 'kpi', 'custom'];
-const VALID_TIME_SCOPES = ['today', 'yesterday', 'last_7d', 'custom'];
+const VALID_TIME_SCOPES = ['today', 'yesterday', 'last_7d', 'last_30d', 'custom'];
 
 function normalizeSlots(input) {
   if (!Array.isArray(input)) return [{ h: 8, m: 0 }];
@@ -518,6 +518,9 @@ async function validatePayload(body) {
   if (body.user_whitelist != null && !Array.isArray(body.user_whitelist)) {
     errors.push('user_whitelist phải là mảng UUID');
   }
+  if (body.region_whitelist != null && !Array.isArray(body.region_whitelist)) {
+    errors.push('region_whitelist phải là mảng UUID');
+  }
 
   return errors;
 }
@@ -531,6 +534,9 @@ function buildRow(body, userId) {
     : null;
   const userWhitelist = Array.isArray(body.user_whitelist) && body.user_whitelist.length
     ? body.user_whitelist.filter(Boolean)
+    : null;
+  const regionWhitelist = Array.isArray(body.region_whitelist) && body.region_whitelist.length
+    ? body.region_whitelist.filter(Boolean)
     : null;
 
   return {
@@ -550,6 +556,7 @@ function buildRow(body, userId) {
     company_whitelist: companyWhitelist,
     department_whitelist: departmentWhitelist,
     user_whitelist: userWhitelist,
+    region_whitelist: regionWhitelist,
     conversation_enabled: body.conversation_enabled === true,
     conversation_ttl_minutes: Math.max(5, Math.min(1440, parseInt(body.conversation_ttl_minutes, 10) || 60)),
     personal_scope_only: body.personal_scope_only === true,

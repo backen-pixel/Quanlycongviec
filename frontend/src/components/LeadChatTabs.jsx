@@ -585,10 +585,17 @@ function resolveMentionIdsFromContent(content, members) {
   return ids;
 }
 
+// Inline tokens: @mention, [label](url) markdown, bare http(s) URL
+const INLINE_TOKEN_RE = /(@[^\s\n@]+|\[[^\]]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s]+)/g;
+
 function renderMessengerTextContent(content, isMe) {
   if (!content) return null;
-  const parts = content.split(/(@[^\s\n@]+)/g);
+  const parts = content.split(INLINE_TOKEN_RE);
+  const linkCls = isMe
+    ? 'underline decoration-sky-100 text-sky-50 hover:text-white break-all'
+    : 'underline decoration-sky-400 text-sky-700 hover:text-sky-900 break-all';
   return parts.map((part, i) => {
+    if (!part) return null;
     if (part.startsWith('@')) {
       return (
         <span
@@ -599,6 +606,22 @@ function renderMessengerTextContent(content, isMe) {
         >
           {part}
         </span>
+      );
+    }
+    // Markdown link [label](url)
+    const md = part.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
+    if (md) {
+      return (
+        <a key={i} href={md[2]} target="_blank" rel="noopener noreferrer" className={`${linkCls} font-semibold`}>
+          {md[1]}
+        </a>
+      );
+    }
+    if (/^https?:\/\//.test(part)) {
+      return (
+        <a key={i} href={part} target="_blank" rel="noopener noreferrer" className={linkCls}>
+          {part}
+        </a>
       );
     }
     return <span key={i}>{part}</span>;

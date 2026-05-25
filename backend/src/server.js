@@ -341,6 +341,18 @@ server.listen(config.port, () => {
   console.log(`🚀 TuBep Pro Backend: http://localhost:${config.port}/api`);
   console.log(`⏱️ Server ready in ${process.uptime().toFixed(1)}s`);
 
+  // 🤖 Bot AI luôn online: ping last_activity mỗi 60s (kèm 1 ping ngay khi server start)
+  try {
+    const { recordUserPing } = require('./helpers/userPresence');
+    const BOT_ID = '00000000-0000-0000-0000-0000000000a1';
+    const pingBot = () => recordUserPing(BOT_ID).catch(() => {});
+    void pingBot();
+    setInterval(pingBot, 60 * 1000);
+    console.log('[ai-bot] presence: ping mỗi 60s (luôn online)');
+  } catch (e) {
+    console.warn('[ai-bot] presence ping failed:', e.message);
+  }
+
   // Cron KPI Tủ bếp: recompute hàng đêm 01:00 (disable bằng KPI_CRON_DISABLED=1)
   try { require('./jobs/kpiNightly').start(); } catch (e) { console.warn('[kpi-cron] Failed to start:', e.message); }
 

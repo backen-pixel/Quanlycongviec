@@ -300,6 +300,43 @@ async function getDmRecipientUserId(groupId) {
 /** Danh sách công ty trong phạm vi schedule. Auto thu hẹp về công ty mà NV trong whitelist
  *  đang làm việc — nếu admin chỉ chọn NV mà không chọn công ty, menu chỉ liệt kê đúng
  *  công ty có data liên quan thay vì tất cả. */
+/** Danh sách phòng ban của 1 công ty (kèm số NV active). */
+async function listDepartmentsInCompany({ company_id: companyId, search } = {}) {
+  if (!companyId) return { error: 'Thiếu company_id', departments: [] };
+  let q = supabase
+    .from('departments')
+    .select('id, name, color, is_active')
+    .eq('company_id', companyId)
+    .order('name');
+  if (search) q = q.ilike('name', `%${search}%`);
+  const { data: depts, error } = await q;
+  if (error) return { error: error.message, departments: [] };
+
+  const ids = (depts || []).map((d) => d.id);
+  const counts = new Map();
+  if (ids.length) {
+    const { data: users } = await supabase
+      .from('users')
+      .select('department_id, is_active')
+      .in('department_id', ids)
+      .neq('is_active', false);
+    for (const u of users || []) {
+      counts.set(u.department_id, (counts.get(u.department_id) || 0) + 1);
+    }
+  }
+  return {
+    company_id: companyId,
+    count: depts?.length || 0,
+    departments: (depts || []).map((d) => ({
+      id: d.id,
+      name: d.name,
+      color: d.color,
+      is_active: d.is_active,
+      active_user_count: counts.get(d.id) || 0,
+    })),
+  };
+}
+
 async function listCompaniesInScope({ schedule_id: scheduleId, company_whitelist: whitelistOverride, personal_recipient_user_id: personalUid } = {}) {
   let whitelist = whitelistOverride;
   if (scheduleId && whitelist === undefined) {
@@ -942,10 +979,38 @@ function fmtMoneyShort(n) {
  *  - Mỗi metric 1 dòng có emoji.
  *  - NV ngắn gọn: chỉ "L/D/xử lý" — không in metric 0.
  *  - Gom NV không hoạt động thành 1 dòng "+ N NV im ắng". */
-async function formatCompanyReportText({ company_id: companyId, schedule_id: scheduleId, time_scope: timeScope, days_offset: daysOffset, include_employees: includeEmployees = true, personal_recipient_user_id: personalUid, department_id: departmentId, user_filter_ids: userFilterIds, scope_label: scopeLabel }) {
-  // Nếu có department_id, resolve thành user_filter_ids
+async function formatCompanyReportText({ company_id: companyId, schedule_id: scheduleId, time_scope: timeScope, days_offset: daysOffset, include_employees: includeEmployees = true, personal_recipient_user_id: personalUid, department_id: departmentId, department_name: departmentName, user_filter_ids: userFilterIds, scope_label: scopeLabel }) {
   let extraUserIds = Array.isArray(userFilterIds) ? [...userFilterIds] : null;
   let resolvedScopeLabel = scopeLabel || null;
+
+  // Resolve department theo tên nếu chưa có id
+  if (!departmentId && departmentName && companyId) {
+    const term = String(departmentName).trim();
+    const { data: deptCandidates } = await supabase
+      .from('departments')
+      .select('id, name, company_id')
+      .eq('company_id', companyId)
+      .ilike('name', `%${term}%`)
+      .limit(5);
+    if (deptCandidates && deptCandidates.length === 1) {
+      departmentId = deptCandidates[0].id;
+      resolvedScopeLabel = `🏷 ${deptCandidates[0].name}`;
+    } else if (deptCandidates && deptCandidates.length > 1) {
+      // Ưu tiên match chính xác name (không phân biệt hoa thường)
+      const exact = deptCandidates.find((d) => d.name.toLowerCase() === term.toLowerCase());
+      if (exact) {
+        departmentId = exact.id;
+        resolvedScopeLabel = `🏷 ${exact.name}`;
+      } else {
+        return `❓ Cần chọn rõ phòng ban — có ${deptCandidates.length} phòng khớp "${term}":\n`
+          + deptCandidates.map((d, i) => `${i + 1}. ${d.name} (${d.id})`).join('\n')
+          + '\nGọi lại với department_id chính xác.';
+      }
+    } else {
+      return `❓ Không tìm thấy phòng ban nào khớp "${term}" trong công ty đã chọn. Dùng list_departments_in_company để xem các phòng có sẵn.`;
+    }
+  }
+
   if (departmentId) {
     const { data: deptUsers } = await supabase
       .from('users')
@@ -961,6 +1026,9 @@ async function formatCompanyReportText({ company_id: companyId, schedule_id: sch
         .eq('id', departmentId)
         .maybeSingle();
       if (dept?.name) resolvedScopeLabel = `🏷 ${dept.name}`;
+    }
+    if (!extraUserIds.length) {
+      return `📭 Phòng ban này không có NV active. (department_id=${departmentId})`;
     }
   }
   const summary = await getCompanyLeadSummary({ company_id: companyId, time_scope: timeScope, schedule_id: scheduleId, days_offset: daysOffset, personal_recipient_user_id: personalUid, user_filter_ids: extraUserIds });
@@ -1365,6 +1433,9 @@ async function loadUserKpiMonth(userId) {
 }
 
 async function loadUserPresence(userId) {
+  if (String(userId || '') === AI_BOT_USER_ID) {
+    return { online: true, last_ping_at: new Date().toISOString() };
+  }
   try {
     const { data } = await supabase
       .from('user_last_activity')
@@ -1920,38 +1991,42 @@ async function getLeadDealRiskReport({
   slaDueSoon.sort((a, b) => a.due_in_hours - b.due_in_hours);
   stagnantInStage.sort((a, b) => b.days_in_stage - a.days_in_stage);
 
-  // 4) Task quá hạn của các lead trong scope
+  // 4) Task quá hạn của các lead trong scope (chunk lead_ids tránh URL quá dài)
   const overdueTasks = [];
   const leadIds = filtered.map((l) => l.id);
   if (leadIds.length) {
     const leadMap = new Map(filtered.map((l) => [l.id, l]));
-    let taskQ = supabase
-      .from('crm_tasks')
-      .select('id, title, deadline, priority, status, assignee_id, lead_id, assignee:users!crm_tasks_assignee_id_fkey(id, full_name)')
-      .in('lead_id', leadIds)
-      .in('status', ['pending', 'in_progress'])
-      .not('deadline', 'is', null)
-      .lt('deadline', new Date(nowMs).toISOString())
-      .order('deadline', { ascending: true })
-      .limit(200);
-    if (assigneeIds) taskQ = taskQ.in('assignee_id', assigneeIds);
-    const { data: taskRows } = await taskQ;
-    for (const t of taskRows || []) {
-      const lead = leadMap.get(t.lead_id);
-      const dl = new Date(t.deadline).getTime();
-      overdueTasks.push({
-        task_id: t.id,
-        title: t.title,
-        deadline: t.deadline,
-        overdue_days: Math.round((nowMs - dl) / (24 * 3600 * 1000)),
-        priority: t.priority,
-        assignee: t.assignee?.full_name || null,
-        lead_id: t.lead_id,
-        lead_code: lead?.code || null,
-        lead_title: lead?.title || null,
-        lead_type: lead?.type || 'lead',
-        link: leadDetailUrl(t.lead_id),
-      });
+    const CHUNK = 100;
+    for (let i = 0; i < leadIds.length; i += CHUNK) {
+      const slice = leadIds.slice(i, i + CHUNK);
+      let taskQ = supabase
+        .from('crm_tasks')
+        .select('id, title, deadline, priority, status, assignee_id, lead_id, assignee:users!crm_tasks_assignee_id_fkey(id, full_name)')
+        .in('lead_id', slice)
+        .in('status', ['pending', 'in_progress'])
+        .not('deadline', 'is', null)
+        .lt('deadline', new Date(nowMs).toISOString())
+        .order('deadline', { ascending: true })
+        .limit(500);
+      if (assigneeIds) taskQ = taskQ.in('assignee_id', assigneeIds);
+      const { data: taskRows } = await taskQ;
+      for (const t of taskRows || []) {
+        const lead = leadMap.get(t.lead_id);
+        const dl = new Date(t.deadline).getTime();
+        overdueTasks.push({
+          task_id: t.id,
+          title: t.title,
+          deadline: t.deadline,
+          overdue_days: Math.round((nowMs - dl) / (24 * 3600 * 1000)),
+          priority: t.priority,
+          assignee: t.assignee?.full_name || null,
+          lead_id: t.lead_id,
+          lead_code: lead?.code || null,
+          lead_title: lead?.title || null,
+          lead_type: lead?.type || 'lead',
+          link: leadDetailUrl(t.lead_id),
+        });
+      }
     }
     overdueTasks.sort((a, b) => b.overdue_days - a.overdue_days);
   }
@@ -1978,8 +2053,169 @@ async function getLeadDealRiskReport({
     sla_due_soon: slaDueSoon.slice(0, safeLimit),
     stagnant_in_stage: stagnantInStage.slice(0, safeLimit),
     overdue_tasks: overdueTasks.slice(0, safeLimit),
+    sla_breached_total_value: slaBreached.reduce((s, x) => s + (Number(x.estimated_value) || 0), 0),
+    stagnant_total_value: stagnantInStage.reduce((s, x) => s + (Number(x.estimated_value) || 0), 0),
     generated_at: new Date().toISOString(),
   };
+}
+
+/**
+ * Render text gọn cho chat bubble: tổng quan + top 5/section + nhóm top NV gánh rủi ro.
+ * Dùng khi sếp hỏi "báo cáo lead/deal quá hạn SLA", "rủi ro pipeline cty X".
+ */
+async function formatLeadDealRiskText({
+  company_id,
+  pipeline_type,
+  user_filter_ids,
+  schedule_id,
+  personal_recipient_user_id,
+  due_soon_days,
+  stagnation_days,
+  top_per_section = 5,
+  today_only = false,
+} = {}) {
+  const r = await getLeadDealRiskReport({
+    company_id, pipeline_type, user_filter_ids, schedule_id,
+    personal_recipient_user_id,
+    due_soon_days: today_only ? 1 : due_soon_days,
+    stagnation_days,
+    limit_per_section: 200,
+  });
+  if (r.error) return `❌ ${r.error}`;
+
+  // Khi today_only: filter sla_breached + sla_due_soon về NGÀY HÔM NAY (VN)
+  if (today_only) {
+    const nowMs = Date.now();
+    const todayYmd = vnDateYmd();
+    const todayStartMs = new Date(`${todayYmd}T00:00:00+07:00`).getTime();
+    const todayEndMs = new Date(`${todayYmd}T23:59:59+07:00`).getTime();
+    r.sla_breached = (r.sla_breached || []).filter((x) => {
+      const dueMs = new Date(x.due_at).getTime();
+      return dueMs >= todayStartMs && dueMs <= nowMs;
+    });
+    r.sla_due_soon = (r.sla_due_soon || []).filter((x) => {
+      const dueMs = new Date(x.due_at).getTime();
+      return dueMs >= nowMs && dueMs <= todayEndMs;
+    });
+    r.totals = {
+      ...r.totals,
+      sla_breached: r.sla_breached.length,
+      sla_due_soon: r.sla_due_soon.length,
+    };
+    r.sla_breached_total_value = r.sla_breached.reduce((s, x) => s + (Number(x.estimated_value) || 0), 0);
+  }
+
+  let companyName = '';
+  if (company_id) {
+    const { data: c } = await supabase
+      .from('companies').select('name, short_name').eq('id', company_id).maybeSingle();
+    companyName = c?.short_name || c?.name || '';
+  }
+
+  const topN = Math.min(Math.max(Number(top_per_section) || 5, 1), 15);
+  const t = r.totals;
+  const th = r.thresholds;
+
+  const lines = [];
+  const titleSuffix = today_only ? ' · HÔM NAY' : '';
+  lines.push(`🚨 *Rủi ro Lead/Deal${companyName ? ` · ${companyName}` : ''}${titleSuffix}*`);
+  if (r.scope.pipeline_type && r.scope.pipeline_type !== 'all') {
+    lines.push(`📂 Pipeline: ${r.scope.pipeline_type}`);
+  }
+  if (!today_only) lines.push(`🧮 Đang mở trong scope: *${fmtInt(t.open_leads)}*`);
+  lines.push('━━━━━━━━━━━━━');
+  if (today_only) {
+    lines.push(`⚠️ Vừa quá SLA hôm nay: *${t.sla_breached}*` + (r.sla_breached_total_value > 0 ? ` · 💰${fmtMoneyShort(r.sla_breached_total_value)}` : ''));
+    lines.push(`⏰ Sắp quá SLA trong ngày: *${t.sla_due_soon}*`);
+  } else {
+    lines.push(`⚠️ Quá SLA: *${t.sla_breached}*` + (r.sla_breached_total_value > 0 ? ` · 💰${fmtMoneyShort(r.sla_breached_total_value)}` : ''));
+    lines.push(`⏰ Sắp quá SLA (<${th.due_soon_days}d): ${t.sla_due_soon}`);
+    lines.push(`⏳ Đứng yên >${th.stagnation_days}d: ${t.stagnant}` + (r.stagnant_total_value > 0 ? ` · 💰${fmtMoneyShort(r.stagnant_total_value)}` : ''));
+    lines.push(`📋 Task quá hạn: ${t.overdue_tasks}`);
+  }
+
+  // Helper: in mã code thành markdown link [CODE](url) nếu có id → FE sẽ tự render thành nút bấm.
+  const codeLink = (codeStr, idOrLink) => {
+    if (!codeStr) return '—';
+    const url = idOrLink && idOrLink.startsWith('http') ? idOrLink : (idOrLink ? leadDetailUrl(idOrLink) : null);
+    return url ? `[${codeStr}](${url})` : codeStr;
+  };
+
+  if (t.sla_breached > 0) {
+    lines.push('', `⚠️ *Top quá SLA*`);
+    for (const r2 of r.sla_breached.slice(0, topN)) {
+      const tag = r2.type === 'deal' ? 'D' : 'L';
+      const val = r2.estimated_value > 0 ? ` · ${fmtMoneyShort(r2.estimated_value)}` : '';
+      lines.push(`  • [${tag}] ${codeLink(r2.code, r2.link || r2.id)} · ${shortName(r2.assignee || '—')} · trễ ${r2.overdue_days}d (SLA ${r2.sla_days}d)${val}`);
+    }
+    if (t.sla_breached > topN) lines.push(`   …+${t.sla_breached - topN} lead/deal khác`);
+  }
+
+  if (t.sla_due_soon > 0) {
+    lines.push('', `⏰ *Sắp quá SLA*`);
+    for (const r2 of r.sla_due_soon.slice(0, topN)) {
+      const tag = r2.type === 'deal' ? 'D' : 'L';
+      lines.push(`  • [${tag}] ${codeLink(r2.code, r2.link || r2.id)} · ${shortName(r2.assignee || '—')} · còn ${r2.due_in_hours}h`);
+    }
+    if (t.sla_due_soon > topN) lines.push(`   …+${t.sla_due_soon - topN} khác`);
+  }
+
+  if (!today_only && t.stagnant > 0) {
+    lines.push('', `⏳ *Đứng yên lâu nhất*`);
+    for (const r2 of r.stagnant_in_stage.slice(0, topN)) {
+      const tag = r2.type === 'deal' ? 'D' : 'L';
+      const val = r2.estimated_value > 0 ? ` · ${fmtMoneyShort(r2.estimated_value)}` : '';
+      lines.push(`  • [${tag}] ${codeLink(r2.code, r2.link || r2.id)} · ${shortName(r2.stage_name || '—')} · ${shortName(r2.assignee || '—')} · ${r2.days_in_stage}d${val}`);
+    }
+    if (t.stagnant > topN) lines.push(`   …+${t.stagnant - topN} khác`);
+  }
+
+  if (!today_only && t.overdue_tasks > 0) {
+    lines.push('', `📋 *Task quá hạn (top)*`);
+    for (const tk of r.overdue_tasks.slice(0, topN)) {
+      const lead = tk.lead_code ? `[${codeLink(tk.lead_code, tk.lead_link || tk.lead_id)}] ` : '';
+      lines.push(`  • ${lead}${shortName(tk.title)} · ${shortName(tk.assignee || '—')} · trễ ${tk.overdue_days}d`);
+    }
+    if (t.overdue_tasks > topN) lines.push(`   …+${t.overdue_tasks - topN} khác`);
+  }
+
+  if (today_only && t.sla_breached === 0 && t.sla_due_soon === 0) {
+    lines.push('', '✅ Không có lead/deal nào cần xử lý SLA trong hôm nay.');
+  }
+
+  if (!today_only && (t.sla_breached > 0 || t.stagnant > 0)) {
+    const burden = new Map();
+    for (const x of r.sla_breached) {
+      if (!x.assignee) continue;
+      const cur = burden.get(x.assignee) || { sla: 0, stag: 0, value: 0 };
+      cur.sla += 1;
+      cur.value += Number(x.estimated_value) || 0;
+      burden.set(x.assignee, cur);
+    }
+    for (const x of r.stagnant_in_stage) {
+      if (!x.assignee) continue;
+      const cur = burden.get(x.assignee) || { sla: 0, stag: 0, value: 0 };
+      cur.stag += 1;
+      cur.value += Number(x.estimated_value) || 0;
+      burden.set(x.assignee, cur);
+    }
+    const ranked = [...burden.entries()]
+      .map(([name, v]) => ({ name, ...v, total: v.sla + v.stag }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, topN);
+    if (ranked.length) {
+      lines.push('', `👥 *Top NV gánh rủi ro*`);
+      for (const x of ranked) {
+        const parts = [];
+        if (x.sla) parts.push(`⚠️${x.sla}`);
+        if (x.stag) parts.push(`⏳${x.stag}`);
+        if (x.value > 0) parts.push(`💰${fmtMoneyShort(x.value)}`);
+        lines.push(`  • ${shortName(x.name)} · ${parts.join(' · ')}`);
+      }
+    }
+  }
+
+  return lines.join('\n').slice(0, 1900);
 }
 
 /* ─────────────────── CHANNEL CONTEXT (task/lead/CSKH/KPI) ─────────────────── */
@@ -2294,6 +2530,24 @@ const OPENAI_TOOL_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'list_departments_in_company',
+      description:
+        'Liệt kê các phòng ban thuộc 1 công ty (id, name, số NV active). '
+        + 'Dùng để resolve "Phòng Kinh doanh / phòng kho / phòng kế toán..." → department_id '
+        + 'trước khi gọi format_company_report_text với department_id.',
+      parameters: {
+        type: 'object',
+        properties: {
+          company_id: { type: 'string' },
+          search: { type: 'string', description: 'Lọc theo tên phòng (ILIKE).' },
+        },
+        required: ['company_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'format_company_report_text',
       description:
         'TRẢ VỀ TEXT đã format sẵn (chat-bubble friendly) cho báo cáo 1 công ty / 1 phòng ban / 1 nhóm NV: '
@@ -2312,6 +2566,7 @@ const OPENAI_TOOL_DEFINITIONS = [
           days_offset: { type: 'integer' },
           include_employees: { type: 'boolean', description: 'Mặc định true' },
           department_id: { type: 'string', description: 'Tùy chọn — UUID phòng ban để chỉ tính NV thuộc phòng.' },
+          department_name: { type: 'string', description: 'Tùy chọn — tên/keyword phòng ban (ILIKE) để tool tự resolve, vd "Kinh doanh", "kho", "kế toán". Ưu tiên department_id nếu có.' },
           user_filter_ids: { type: 'array', items: { type: 'string' }, description: 'Tùy chọn — list UUID NV cụ thể.' },
           scope_label: { type: 'string', description: 'Tùy chọn — label header (mặc định tự resolve từ department).' },
         },
@@ -2550,6 +2805,30 @@ const OPENAI_TOOL_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'format_lead_deal_risk_text',
+      description:
+        'TRẢ VỀ TEXT đã format sẵn cho báo cáo RỦI RO Lead/Deal (chat-bubble friendly): '
+        + 'tổng quan (đang mở, quá SLA, sắp SLA, đứng yên, task quá hạn) + Top 5 mỗi nhóm + Top NV gánh rủi ro. '
+        + 'DÙNG TOOL NÀY khi sếp xin: "báo cáo lead/deal quá hạn SLA", "rủi ro pipeline cty X", '
+        + '"lead nào sắp quá hạn", "deal đứng yên lâu nhất", "NV nào ôm nhiều lead trễ". '
+        + 'Tool đã chốt format đúng + đầy đủ số liệu. AI CHỈ in nguyên text trả về, KHÔNG tự viết lại.',
+      parameters: {
+        type: 'object',
+        properties: {
+          company_id: { type: 'string' },
+          pipeline_type: { type: 'string', enum: ['all', 'lead', 'deal'], description: 'Mặc định all' },
+          user_filter_ids: { type: 'array', items: { type: 'string' } },
+          due_soon_days: { type: 'integer', description: 'Ngưỡng "sắp quá SLA" (mặc định 3, tối đa 14)' },
+          stagnation_days: { type: 'integer', description: 'Ngưỡng "đứng yên" (mặc định 14, tối đa 90)' },
+          top_per_section: { type: 'integer', description: 'Số dòng/section (mặc định 5, max 15)' },
+          today_only: { type: 'boolean', description: 'true = CHỈ lấy lead/deal SLA RƠI VÀO HÔM NAY (vừa quá SLA hôm nay + sắp quá SLA trong ngày), bỏ section stagnant/task. Dùng khi sếp hỏi "SLA hôm nay", "deal nào hôm nay phải xử lý SLA".' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'get_lead_deal_risk_report',
       description:
         'Báo cáo RỦI RO Lead/Deal: (1) sla_breached — vượt SLA cột pipeline; (2) sla_due_soon — sắp vượt trong N ngày; '
@@ -2679,6 +2958,8 @@ async function executeTool(name, args, ctx = {}) {
       const text = await formatCompanyReportText(merged);
       return { text, company_id: merged.company_id };
     }
+    case 'list_departments_in_company':
+      return listDepartmentsInCompany(args);
     case 'get_overdue_breakdown':
       return getOverdueBreakdown(merged);
     case 'resolve_time_range':
@@ -2723,6 +3004,10 @@ async function executeTool(name, args, ctx = {}) {
       return getPipelineBreakdown(merged);
     case 'get_lead_deal_risk_report':
       return getLeadDealRiskReport(merged);
+    case 'format_lead_deal_risk_text': {
+      const text = await formatLeadDealRiskText(merged);
+      return { text, company_id: merged.company_id || null };
+    }
     case 'get_user_profile_card':
       return getUserProfileCard({
         ...args,
@@ -2766,6 +3051,7 @@ module.exports = {
   findUsersByName,
   listCompaniesInScope,
   getCompanyLeadSummary,
+  listDepartmentsInCompany,
   getEmployeeBreakdown,
   getEmployeeLeadsDrill,
   getOverdueBreakdown,
@@ -2773,6 +3059,7 @@ module.exports = {
   listPipelinesForCompany,
   getPipelineBreakdown,
   getLeadDealRiskReport,
+  formatLeadDealRiskText,
   getUserProfileCard,
   getEmployeeActivityReport,
   listEmployeesInScope,

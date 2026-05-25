@@ -1,6 +1,12 @@
 const { supabase } = require('../config/supabase');
 const { getCurrentLocationsForUserIds } = require('./userCurrentLocation');
 
+/** Bot AI luôn online — không có thật, không ping được, nhưng UX cần thấy bot sẵn sàng. */
+const AI_BOT_USER_ID = '00000000-0000-0000-0000-0000000000a1';
+function isBotUserId(id) {
+  return String(id || '') === AI_BOT_USER_ID;
+}
+
 /** Ngưỡng coi online: có ping trong 2 phút gần nhất */
 const ONLINE_THRESHOLD_MS = 2 * 60 * 1000;
 /** Ngưỡng coi device đang online: ping trong 90 giây gần nhất */
@@ -186,8 +192,12 @@ async function getPresenceForUserIds(userIds) {
   }
 
   const presence = {};
+  const nowIso = new Date().toISOString();
   for (const id of filtered) {
-    presence[id] = { online: false, last_ping_at: null };
+    // Bot AI: luôn online (không có ping thật từ thiết bị nào)
+    presence[id] = isBotUserId(id)
+      ? { online: true, last_ping_at: nowIso }
+      : { online: false, last_ping_at: null };
   }
   if (!filtered.length) return presence;
 
@@ -201,6 +211,7 @@ async function getPresenceForUserIds(userIds) {
   const threshold = Date.now() - ONLINE_THRESHOLD_MS;
   for (const row of data || []) {
     const id = String(row.user_id);
+    if (isBotUserId(id)) continue; // giữ nguyên trạng thái online cứng cho bot
     const ts = row.last_ping_at ? new Date(row.last_ping_at).getTime() : 0;
     presence[id] = {
       online: ts > threshold,

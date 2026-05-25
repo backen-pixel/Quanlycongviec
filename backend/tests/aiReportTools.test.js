@@ -19,7 +19,7 @@ const lastMonth = resolveTimeRange('last_month');
 assert.ok(lastMonth.label_vn.startsWith('tháng '));
 
 const tools = OPENAI_TOOL_DEFINITIONS;
-assert.strictEqual(tools.length, 22);
+assert.strictEqual(tools.length, 24);
 assert.ok(tools.some((t) => t.function.name === 'get_company_lead_summary'));
 assert.ok(tools.some((t) => t.function.name === 'resolve_assignee_scope'));
 assert.ok(tools.some((t) => t.function.name === 'find_users_by_name'));
@@ -38,5 +38,7 @@ assert.ok(tools.some((t) => t.function.name === 'list_employees_in_scope'));
 assert.ok(tools.some((t) => t.function.name === 'get_employee_leads_drill'));
 assert.ok(tools.some((t) => t.function.name === 'get_employee_activity_report'));
 assert.ok(tools.some((t) => t.function.name === 'format_company_report_text'));
+assert.ok(tools.some((t) => t.function.name === 'list_departments_in_company'));
+assert.ok(tools.some((t) => t.function.name === 'format_lead_deal_risk_text'));
 
 console.log('[aiReportTools.test] PASS');
