@@ -209,6 +209,7 @@ try { app.use('/api/push', require('./routes/push')); } catch (e) { console.warn
 try { app.use('/api/devices', require('./routes/devices')); } catch (e) { console.warn('⚠️ Devices route failed to load:', e.message); }
 try { app.use('/api/assistant', require('./routes/assistant')); } catch (e) { console.warn('⚠️ Assistant route failed to load:', e.message); }
 try { app.use('/api/ai-chat-bot', require('./routes/aiChatBot')); } catch (e) { console.warn('⚠️ AI Chat Bot route failed to load:', e.message); }
+try { app.use('/api/user-activity', require('./routes/userActivityLog')); } catch (e) { console.warn('⚠️ User Activity Log route failed to load:', e.message); }
 try { app.use('/api/integrations/stringee', require('./routes/stringee')); } catch (e) { console.warn('⚠️ Stringee route failed to load:', e.message); }
 
 // ─── Serve Frontend (SPA) in production ──
@@ -267,6 +268,21 @@ io.on('connection', (socket) => {
   socket.on('leave:messenger_group', (id) => id && socket.leave(`messenger_group:${id}`));
   socket.on('join:dept', (id) => socket.join(`dept:${id}`));
   socket.on('leave:dept', (id) => socket.leave(`dept:${id}`));
+
+  /* ── Typing indicator: client phát mỗi 2-3s khi đang gõ, server relay sang
+   *    cả room nhưng skip chính sender. Frontend tự auto-stop sau 4s không nhận event. */
+  socket.on('messenger_group:typing', ({ group_id, is_typing } = {}) => {
+    if (!group_id) return;
+    const uid = socket.user?.userId || socket.user?.id;
+    if (!uid) return;
+    socket.to(`messenger_group:${group_id}`).emit('messenger_group:typing', {
+      group_id,
+      user_id: uid,
+      full_name: socket.user?.fullName || socket.user?.full_name || null,
+      is_typing: !!is_typing,
+      ts: Date.now(),
+    });
+  });
 
   socket.on('task:moved', (data) => {
     io.emit('task:updated', data);
@@ -327,6 +343,9 @@ server.listen(config.port, () => {
 
   // Cron KPI Tủ bếp: recompute hàng đêm 01:00 (disable bằng KPI_CRON_DISABLED=1)
   try { require('./jobs/kpiNightly').start(); } catch (e) { console.warn('[kpi-cron] Failed to start:', e.message); }
+
+  // Cron AI User Memory — ~02:30, học thói quen từ user_activity_log → ai_chat_bot_user_facts
+  try { require('./jobs/aiUserMemoryNightly').start(); } catch (e) { console.warn('[ai-memory-cron] Failed to start:', e.message); }
 
   // Cron CSKH: nhắc chăm lại lead lúc 8h30 & 13h30 VN (disable bằng CSKH_CRON_DISABLED=1)
   try { require('./jobs/cskhReminder').start(io); } catch (e) { console.warn('[cskh-cron] Failed to start:', e.message); }

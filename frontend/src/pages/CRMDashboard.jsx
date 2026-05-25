@@ -48,6 +48,7 @@ import {
 import DealStageEventModal from '../components/DealStageEventModal';
 import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
+import { logFilter } from '../lib/activityLogger';
 import { FbCrmCommentComposer } from '../components/crmFbCommentUi';
 
 const LEAD_PRIORITY_COLORS = { high: 'bg-red-100 text-red-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-600' };
@@ -1264,6 +1265,59 @@ export default function CRMDashboard() {
     if (isAdmin && filterCompany) return String(filterCompany);
     return '';
   }, [isCompanyScopedAdmin, isAdmin, user?.company_id, filterCompany]);
+
+  /** Log mỗi khi bộ lọc CRM thay đổi → AI Chat Bot dùng để học thói quen của user. */
+  const lastLoggedFilterRef = useRef('');
+  useEffect(() => {
+    const snap = {
+      pipelineType,
+      companyId: dashboardScopeCompanyId || filterCompany || '',
+      assigneeId: filterAssignee || '',
+      assigneeName: filterAssigneeName || '',
+      source: filterSource || '',
+      stage: filterStage || '',
+      region: filterRegion || '',
+      leadType: filterLeadType || '',
+      phone: filterPhone,
+      search: searchText || '',
+    };
+    const hash = JSON.stringify(snap);
+    if (hash === lastLoggedFilterRef.current) return;
+    lastLoggedFilterRef.current = hash;
+    const hasAny = snap.companyId || snap.assigneeId || snap.source || snap.stage
+      || snap.region || snap.leadType || snap.search;
+    if (!hasAny) return;
+    const compName = companies?.find((c) => String(c.id) === String(snap.companyId))?.name;
+    const userName = users?.find((u) => String(u.id) === String(snap.assigneeId))?.full_name;
+    const parts = [];
+    if (compName) parts.push(`Cty ${compName}`);
+    if (userName) parts.push(`NV ${userName}`);
+    if (snap.assigneeName) parts.push(`Tên "${snap.assigneeName}"`);
+    if (snap.search) parts.push(`Tìm "${snap.search}"`);
+    if (snap.stage) parts.push('có lọc stage');
+    if (snap.region) parts.push('có lọc khu vực');
+    logFilter({
+      module: 'crm',
+      feature: snap.pipelineType === 'deal' ? 'deal_pipeline' : 'lead_pipeline',
+      query: snap,
+      label: `Lọc ${snap.pipelineType === 'deal' ? 'Deal' : 'Lead'}${parts.length ? ' · ' + parts.join(' · ') : ''}`,
+      importance: 1,
+    });
+  }, [
+    pipelineType,
+    dashboardScopeCompanyId,
+    filterCompany,
+    filterAssignee,
+    filterAssigneeName,
+    filterSource,
+    filterStage,
+    filterRegion,
+    filterLeadType,
+    filterPhone,
+    searchText,
+    companies,
+    users,
+  ]);
 
   /** NV trong bộ lọc CRM: theo công ty đang xem + API trả crm_region_ids (user_company_regions). */
   useEffect(() => {

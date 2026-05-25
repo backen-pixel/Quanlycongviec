@@ -619,6 +619,10 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
   const [mentionPickIdx, setMentionPickIdx] = useState(0);
   const [replyTo, setReplyTo] = useState(null);
   const [highlightId, setHighlightId] = useState(null);
+  // Typing indicator: Map<userId, { name, isBot, ts }>
+  const [typingMap, setTypingMap] = useState(() => new Map());
+  const typingThrottleRef = useRef(0);
+  const groupMetaRef = useRef(null);
   const fileInputRef = useRef(null);
   const audioInputRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -644,9 +648,12 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
   const loadGroupMeta = useCallback(async () => {
     try {
       const { data } = await api.get(`/messenger/groups/${groupId}`);
-      setGroupMeta({ is_direct: !!data?.is_direct, members: data?.members || [] });
+      const meta = { is_direct: !!data?.is_direct, members: data?.members || [] };
+      setGroupMeta(meta);
+      groupMetaRef.current = meta;
     } catch {
       setGroupMeta(null);
+      groupMetaRef.current = null;
     }
   }, [groupId]);
 
@@ -671,6 +678,15 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
         const gid = msg?.group_id ?? msg?.groupId;
         if (gid == null || String(gid) !== String(groupId)) return;
         setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+        // Khi tin nhắn mới vào (đặc biệt từ bot) → xóa typing của user gửi
+        if (msg?.user_id) {
+          setTypingMap((prev) => {
+            if (!prev.has(msg.user_id)) return prev;
+            const next = new Map(prev);
+            next.delete(msg.user_id);
+            return next;
+          });
+        }
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
       };
       const onMembers = (payload) => {
@@ -678,16 +694,75 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
         void loadGroupMeta();
         void load();
       };
+      const onTyping = (payload) => {
+        if (!payload || String(payload.group_id) !== String(groupId)) return;
+        const meId = String(user?.userId || user?.id || '');
+        const uid = String(payload.user_id);
+        if (uid === meId) return; // bỏ qua chính mình
+        setTypingMap((prev) => {
+          const next = new Map(prev);
+          if (payload.is_typing) {
+            const isBot = uid === '00000000-0000-0000-0000-0000000000a1';
+            // Lookup tên từ groupMetaRef.current (không phụ thuộc state để tránh re-subscribe socket)
+            let name = payload.full_name;
+            if (!name) {
+              const mem = (groupMetaRef.current?.members || []).find((m) => String(m.user_id) === uid);
+              name = mem?.user?.full_name || mem?.user?.email || (isBot ? '🤖 AI' : 'Ai đó');
+            }
+            next.set(uid, { name, isBot, ts: Date.now() });
+          } else {
+            next.delete(uid);
+          }
+          return next;
+        });
+      };
       socket.on('messenger_group:chat', onChat);
       socket.on('messenger_group:members', onMembers);
+      socket.on('messenger_group:typing', onTyping);
       return () => {
         socket.emit('leave:messenger_group', groupId);
         socket.off('messenger_group:chat', onChat);
         socket.off('messenger_group:members', onMembers);
+        socket.off('messenger_group:typing', onTyping);
       };
     }
     return undefined;
-  }, [groupId, socket, loadGroupMeta, load]);
+  }, [groupId, socket, loadGroupMeta, load, user]);
+
+  // Auto cleanup typing entries quá 5s không refresh (client tự stop nếu server không emit stop kịp)
+  useEffect(() => {
+    const t = setInterval(() => {
+      const now = Date.now();
+      setTypingMap((prev) => {
+        let changed = false;
+        const next = new Map(prev);
+        for (const [k, v] of prev) {
+          if (now - v.ts > 5000) {
+            next.delete(k);
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, 1500);
+    return () => clearInterval(t);
+  }, []);
+
+  // Phát typing event (throttle 2s) khi user gõ
+  const emitTyping = useCallback(() => {
+    if (!socket || !groupId) return;
+    const now = Date.now();
+    if (now - typingThrottleRef.current < 2000) return;
+    typingThrottleRef.current = now;
+    socket.emit('messenger_group:typing', { group_id: groupId, is_typing: true });
+  }, [socket, groupId]);
+
+  // Stop typing (sau khi gửi)
+  const emitStopTyping = useCallback(() => {
+    if (!socket || !groupId) return;
+    typingThrottleRef.current = 0;
+    socket.emit('messenger_group:typing', { group_id: groupId, is_typing: false });
+  }, [socket, groupId]);
 
   const leaveGroup = async () => {
     if (groupMeta?.is_direct) return;
@@ -787,6 +862,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
       }
       setText('');
       setReplyTo(null);
+      emitStopTyping();
       if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi gửi tin nhắn');
@@ -992,6 +1068,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
             </div>
           );
         })}
+        <TypingIndicators typingMap={typingMap} />
         <div ref={messagesEndRef} />
       </div>
 
@@ -1038,7 +1115,10 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
             onChange={(e) => {
               setText(e.target.value);
               requestAnimationFrame(syncMentionUi);
+              if (e.target.value.trim()) emitTyping();
+              else emitStopTyping();
             }}
+            onBlur={emitStopTyping}
             onKeyDown={(e) => {
               if (mentionOpen && mentionCandidates.length > 0) {
                 if (e.key === 'ArrowDown') {
@@ -1081,6 +1161,52 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
         </div>
       </div>
     </div>
+  );
+}
+
+/** Hiển thị chip "X đang nhập..." hoặc "🤖 AI đang trả lời..." dưới list message. */
+function TypingIndicators({ typingMap }) {
+  if (!typingMap || typingMap.size === 0) return null;
+  const entries = [...typingMap.values()];
+  const botEntry = entries.find((e) => e.isBot);
+  const humanEntries = entries.filter((e) => !e.isBot);
+
+  return (
+    <div className="px-3 pt-1 pb-2 space-y-1.5">
+      {botEntry && (
+        <div className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-violet-50 to-indigo-50 border border-indigo-200 px-3 py-1.5 shadow-sm">
+          <span className="text-sm">🤖</span>
+          <span className="text-xs font-medium text-indigo-700">AI đang trả lời</span>
+          <TypingDots color="indigo" />
+        </div>
+      )}
+      {humanEntries.length > 0 && (
+        <div className="inline-flex items-center gap-2 rounded-full bg-gray-100 border border-gray-200 px-3 py-1.5">
+          <span className="text-xs text-gray-700">
+            {humanEntries.length === 1
+              ? `${humanEntries[0].name} đang nhập`
+              : `${humanEntries.length} người đang nhập`}
+          </span>
+          <TypingDots color="gray" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 3 chấm bounce animation. */
+function TypingDots({ color = 'gray' }) {
+  const dotColor = color === 'indigo' ? 'bg-indigo-500' : 'bg-gray-400';
+  return (
+    <span className="inline-flex items-center gap-0.5" aria-hidden>
+      <span className={`inline-block w-1.5 h-1.5 rounded-full ${dotColor} animate-typing-dot`} style={{ animationDelay: '0ms' }} />
+      <span className={`inline-block w-1.5 h-1.5 rounded-full ${dotColor} animate-typing-dot`} style={{ animationDelay: '150ms' }} />
+      <span className={`inline-block w-1.5 h-1.5 rounded-full ${dotColor} animate-typing-dot`} style={{ animationDelay: '300ms' }} />
+      <style>{`
+        @keyframes typing-dot { 0%, 60%, 100% { opacity: 0.25; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
+        .animate-typing-dot { animation: typing-dot 1.2s infinite ease-in-out; }
+      `}</style>
+    </span>
   );
 }
 

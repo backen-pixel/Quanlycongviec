@@ -11,6 +11,29 @@ function isSxCrmTaskRow(t) {
 }
 
 /**
+ * Stage slug "khoá cứng" của Lead — task gắn slug này chỉ thuộc về Lead,
+ * sau khi convert sang Deal phải ẩn khỏi view Deal kể cả khi pipeline_stage_id null
+ * hoặc stage có pipeline_type='both'/null.
+ * Đồng bộ với LEAD_STAGES trên frontend (CRMTasksTab.jsx).
+ */
+const LEAD_ONLY_STAGE_SLUGS = new Set([
+  'consulting',
+  'lead',
+  'lead_new',
+  'lead_contacted',
+  'lead_consulting',
+  'lead_waiting',
+]);
+
+function isLeadOnlyStageSlug(slug) {
+  return LEAD_ONLY_STAGE_SLUGS.has(String(slug || '').toLowerCase());
+}
+
+function isDealOnlyStageSlug(slug) {
+  return String(slug || '').toLowerCase().startsWith('deal_');
+}
+
+/**
  * Khử trùng item bộ mẫu trước khi insert vào crm_tasks.
  */
 function dedupeTemplateItemsForInsert(items, tplMap, fallbackStageId, logTag) {
@@ -81,6 +104,7 @@ function buildTaskInsertsFromTemplates(templates, allItems, userId, leadId) {
       completion_requires_customer_note: !!item.completion_requires_customer_note,
       completion_requires_customer_contact: !!item.completion_requires_customer_contact,
       blocks_stage_advance: !!item.blocks_stage_advance,
+      show_excel_quotation_upload: !!item.show_excel_quotation_upload,
     };
   });
 }
@@ -197,13 +221,23 @@ async function autoGenCrmTasksForNewLead(leadId, userId) {
 }
 
 /**
- * Lọc task CRM hiển thị theo type lead/deal: ẩn task stage pipeline_type ngược loại.
- * Giữ task không gắn pipeline_stage (orphan) và task sx_*.
+ * Lọc task CRM hiển thị theo type lead/deal:
+ *  - Ẩn task có stage_slug khoá cứng (consulting → Lead, deal_* → Deal) khi xem trái loại.
+ *  - Ẩn task có pipeline_stage.pipeline_type ngược loại.
+ *  - Giữ task SX (sx_*) và task không phân loại rõ (orphan) cho cả hai view.
  */
 function filterCrmTasksForLeadType(tasks, leadType) {
   const entityType = leadType === 'deal' ? 'deal' : 'lead';
   return (tasks || []).filter((t) => {
     if (isSxCrmTaskRow(t)) return true;
+
+    // Khoá theo stage_slug — chặn task Lead lọt sang Deal sau khi chuyển đổi
+    // ngay cả khi task không có pipeline_stage_id (legacy / tạo thủ công)
+    // hoặc pipeline_stage.pipeline_type bị null/'both'.
+    const slug = String(t.stage_slug || '').toLowerCase();
+    if (entityType === 'deal' && isLeadOnlyStageSlug(slug)) return false;
+    if (entityType === 'lead' && isDealOnlyStageSlug(slug)) return false;
+
     if (!t.pipeline_stage_id) return true;
     const pt = t.pipeline_stage?.pipeline_type ?? t.stage?.pipeline_type;
     if (!pt) return true;
@@ -377,4 +411,6 @@ module.exports = {
   filterCrmTasksForLeadType,
   dedupeTemplateItemsForInsert,
   isSxCrmTaskRow,
+  isLeadOnlyStageSlug,
+  isDealOnlyStageSlug,
 };

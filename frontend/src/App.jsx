@@ -167,6 +167,7 @@ import MessengerDock from './components/MessengerDock';
 import AIAssistantChat from './components/AIAssistantChat';
 import { RequireCrmElevated, RequireExecutive } from './components/RequireRole';
 import api from './lib/api';
+import { useActivityRouteTracker } from './hooks/useActivityRouteTracker';
 import { isCrmOnlyModuleAccess } from './lib/moduleAccess';
 import { isCrmSharedPath } from './lib/sidebarModuleContext';
 import ReleaseNoteLoginModal from './components/ReleaseNoteLoginModal';
@@ -183,6 +184,7 @@ function ProtectedLayout() {
   const { user, loading } = useAuth();
   const location = useLocation();
   const [moduleAccess, setModuleAccess] = useState(null);
+  useActivityRouteTracker(!!user);
 
   useEffect(() => {
     if (!user) {

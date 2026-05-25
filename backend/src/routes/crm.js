@@ -10756,6 +10756,7 @@ r.post('/leads/:id/tasks', async (req, res) => {
       completion_requires_customer_note: !!b.completion_requires_customer_note,
       completion_requires_customer_contact: !!b.completion_requires_customer_contact,
       blocks_stage_advance: !!b.blocks_stage_advance,
+      show_excel_quotation_upload: !!b.show_excel_quotation_upload,
     }).select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)').single();
     if (error) throw error;
 
@@ -10872,6 +10873,7 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
       completion_requires_customer_note: !!item.completion_requires_customer_note,
       completion_requires_customer_contact: !!item.completion_requires_customer_contact,
       blocks_stage_advance: !!item.blocks_stage_advance,
+      show_excel_quotation_upload: !!item.show_excel_quotation_upload,
     }));
 
     const { data, error } = await supabase.from('crm_tasks').insert(inserts)
@@ -10976,7 +10978,7 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
     }
 
     const update = { updated_at: new Date().toISOString() };
-    const fields = ['title','description','status','priority','stage_slug','order_index','assignee_id','supervisor_id','deadline','shared_to_project','blocks_stage_advance'];
+    const fields = ['title','description','status','priority','stage_slug','order_index','assignee_id','supervisor_id','deadline','shared_to_project','blocks_stage_advance','show_excel_quotation_upload'];
     fields.forEach((f) => {
       if (b[f] === undefined) return;
       if (f === 'deadline' && b[f] != null && b[f] !== '') {
@@ -11775,6 +11777,7 @@ r.post('/task-templates/:tplId/items', async (req, res) => {
       completion_requires_customer_note: !!b.completion_requires_customer_note,
       completion_requires_customer_contact: !!b.completion_requires_customer_contact,
       blocks_stage_advance: !!b.blocks_stage_advance,
+      show_excel_quotation_upload: !!b.show_excel_quotation_upload,
     }).select().single();
     if (error) throw error;
     res.status(201).json(data);
@@ -11785,7 +11788,7 @@ r.post('/task-templates/:tplId/items', async (req, res) => {
 r.put('/task-templates/:tplId/items/:itemId', async (req, res) => {
   try {
     const update = {};
-    ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist', 'default_allowed_companies', 'default_allowed_departments', 'completion_requires_file_or_note', 'completion_requires_customer_note', 'completion_requires_customer_contact', 'blocks_stage_advance'].forEach(f => {
+    ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist', 'default_allowed_companies', 'default_allowed_departments', 'completion_requires_file_or_note', 'completion_requires_customer_note', 'completion_requires_customer_contact', 'blocks_stage_advance', 'show_excel_quotation_upload'].forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
     const { data, error } = await supabase.from('crm_task_template_items')
