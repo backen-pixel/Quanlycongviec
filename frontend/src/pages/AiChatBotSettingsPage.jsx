@@ -279,37 +279,73 @@ function SchedulesTab({
     setEditing({ ...EMPTY_SCHEDULE, playbook_id: enabledPlaybooks[0].id });
   };
 
-  const onEdit = (sch) =>
+  const onEdit = (sch) => {
+    // Detect 1-1 cá nhân fanout: schedule lưu channel_type='group' + personal_scope_only=true + recipient_user_ids.length>0.
+    // Đưa modal về mode user (personal_dm) để recipient picker hiển thị danh sách NV nhận DM.
+    const recipientIds = Array.isArray(sch.recipient_user_ids) ? sch.recipient_user_ids : [];
+    const isPersonalFanout = sch.personal_scope_only && recipientIds.length > 0;
+
     setEditing({
       ...EMPTY_SCHEDULE,
       ...sch,
+      channel_type: isPersonalFanout ? 'user' : sch.channel_type,
+      user_ids: isPersonalFanout ? recipientIds : [],
+      recipient_user_ids: recipientIds,
       playbook_id: sch.playbook_id || enabledPlaybooks[0]?.id || '',
       run_slots: Array.isArray(sch.run_slots) ? sch.run_slots : [{ h: 8, m: 0 }],
       weekdays: Array.isArray(sch.weekdays) ? sch.weekdays : [],
       company_whitelist: Array.isArray(sch.company_whitelist) ? sch.company_whitelist : [],
       department_whitelist: Array.isArray(sch.department_whitelist) ? sch.department_whitelist : [],
       user_whitelist: Array.isArray(sch.user_whitelist) ? sch.user_whitelist : [],
+      region_whitelist: Array.isArray(sch.region_whitelist) ? sch.region_whitelist : [],
       time_scope: sch.time_scope || 'today',
       time_scope_days_offset: sch.time_scope_days_offset ?? 0,
       conversation_enabled: !!sch.conversation_enabled,
       conversation_ttl_minutes: sch.conversation_ttl_minutes ?? 60,
       personal_scope_only: !!sch.personal_scope_only,
     });
+  };
 
   const onSave = async () => {
     if (!editing) return;
     if (!editing.title?.trim()) return showToast('Nhập tên gợi nhớ cho lịch', 'err');
     if (!editing.playbook_id) return showToast('Chọn mẫu nội dung AI', 'err');
 
-    const isUserMode = editing.channel_type === 'user' && !editing.id;
+    // Mode "1-1 cá nhân" (personal_dm fanout): gộp tất cả users vào 1 lịch với recipient_user_ids.
+    const isPersonalFanout = editing.channel_type === 'user' && !!editing.personal_scope_only;
 
-    // Mode "DM nhân viên": cần ensure direct group với bot cho từng user.
     let targetIds = [];
     let storedType = editing.channel_type;
-    if (isUserMode) {
+    let recipientUserIds = null;
+    let fanoutAnchorChannelId = null;
+
+    if (isPersonalFanout) {
       const userIds = Array.isArray(editing.user_ids) ? editing.user_ids : [];
-      if (!userIds.length) return showToast('Chọn ít nhất 1 nhân viên', 'err');
+      if (!userIds.length) return showToast('Chọn ít nhất 1 nhân viên nhận DM', 'err');
       storedType = 'group';
+      recipientUserIds = userIds;
+      // Cần 1 channel_id hợp lệ để thỏa NOT NULL constraint — dùng DM của user đầu tiên làm anchor.
+      // Cron sẽ ignore khi recipient_user_ids có giá trị.
+      try {
+        const ensureRes = await api.post('/ai-chat-bot/ensure-direct-with-bot', { user_id: userIds[0] });
+        fanoutAnchorChannelId = ensureRes?.data?.group_id;
+        if (!fanoutAnchorChannelId) throw new Error('Không có group_id anchor');
+      } catch (e) {
+        return showToast(e?.response?.data?.error || 'Không tạo được DM với user đầu tiên', 'err');
+      }
+    } else if (editing.channel_type === 'user' && !editing.id) {
+      // 1-1 quản lý (mode manager_dm): vẫn 1 schedule với DM của 1 user.
+      const userIds = Array.isArray(editing.user_ids) ? editing.user_ids : [];
+      if (!userIds.length) return showToast('Chọn quản lý nhận DM', 'err');
+      storedType = 'group';
+      try {
+        const ensureRes = await api.post('/ai-chat-bot/ensure-direct-with-bot', { user_id: userIds[0] });
+        const gid = ensureRes?.data?.group_id;
+        if (!gid) throw new Error('Không có group_id');
+        targetIds = [gid];
+      } catch (e) {
+        return showToast(e?.response?.data?.error || 'Không tạo được DM', 'err');
+      }
     } else {
       targetIds = editing.id
         ? [editing.channel_id]
@@ -344,6 +380,7 @@ function SchedulesTab({
       region_whitelist: Array.isArray(editing.region_whitelist) && editing.region_whitelist.length
         ? editing.region_whitelist
         : null,
+      recipient_user_ids: recipientUserIds,
       conversation_enabled: !!editing.conversation_enabled,
       conversation_ttl_minutes: editing.conversation_ttl_minutes ?? 60,
       personal_scope_only: !!editing.personal_scope_only,
@@ -352,25 +389,14 @@ function SchedulesTab({
     try {
       setBusyId('save');
       if (editing.id) {
-        await api.put(`/ai-chat-bot/schedules/${editing.id}`, buildPayload(editing.channel_id));
+        const cid = isPersonalFanout
+          ? (fanoutAnchorChannelId || editing.channel_id)
+          : (targetIds[0] || editing.channel_id);
+        await api.put(`/ai-chat-bot/schedules/${editing.id}`, buildPayload(cid));
         showToast('Đã cập nhật lịch');
-      } else if (isUserMode) {
-        const userIds = editing.user_ids;
-        let ok = 0;
-        let fail = 0;
-        for (const uid of userIds) {
-          try {
-            const ensureRes = await api.post('/ai-chat-bot/ensure-direct-with-bot', { user_id: uid });
-            const gid = ensureRes?.data?.group_id;
-            if (!gid) throw new Error('Không có group_id');
-            await api.post('/ai-chat-bot/schedules', buildPayload(gid));
-            ok += 1;
-          } catch {
-            fail += 1;
-          }
-        }
-        if (fail === 0) showToast(`Đã tạo ${ok} lịch DM ✓`);
-        else showToast(`Tạo được ${ok}/${userIds.length} lịch DM (${fail} lỗi)`, fail ? 'err' : 'ok');
+      } else if (isPersonalFanout) {
+        await api.post('/ai-chat-bot/schedules', buildPayload(fanoutAnchorChannelId));
+        showToast(`Đã tạo lịch fanout DM ${recipientUserIds.length} NV ✓`);
       } else {
         let ok = 0;
         let fail = 0;
@@ -957,7 +983,8 @@ function ScheduleEditorModal({ value, onChange, channels, channelFilters, playbo
   const [userQuery, setUserQuery] = useState('');
 
   useEffect(() => {
-    if (value.channel_type !== 'user' || isEditingExisting) return;
+    // Tải users khi mode = user (cả tạo mới + sửa) để recipient picker luôn hoạt động.
+    if (value.channel_type !== 'user') return;
     let cancelled = false;
     setUserLoading(true);
     const params = new URLSearchParams();
@@ -979,7 +1006,7 @@ function ScheduleEditorModal({ value, onChange, channels, channelFilters, playbo
     return () => {
       cancelled = true;
     };
-  }, [value.channel_type, isEditingExisting, f.division_id, f.company_id, f.region_id, f.department_id]);
+  }, [value.channel_type, f.division_id, f.company_id, f.region_id, f.department_id]);
 
   const filteredUsers = useMemo(() => {
     const q = userQuery.trim().toLowerCase();
@@ -1447,8 +1474,8 @@ function ScheduleEditorModal({ value, onChange, channels, channelFilters, playbo
                   </p>
                 </div>
 
-                {/* Hàng 1.5: Lọc Khối/Cty/KV/PB cho recipient picker (DM modes) */}
-                {(deliveryMode === 'personal_dm' || deliveryMode === 'manager_dm') && !isEditingExisting && (
+                {/* Hàng 1.5: Lọc Khối/Cty/KV/PB cho recipient picker (DM modes) — hiển thị cả khi edit */}
+                {(deliveryMode === 'personal_dm' || deliveryMode === 'manager_dm') && (
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5">
                     <select
                       value={f.division_id || ''}
@@ -1496,57 +1523,48 @@ function ScheduleEditorModal({ value, onChange, channels, channelFilters, playbo
                   </div>
                 )}
 
-                {/* Hàng 2: Người nhận theo mode */}
+                {/* Hàng 2: Người nhận theo mode — hiển thị cả khi edit (gộp 1 lịch nhiều NV) */}
                 {deliveryMode === 'personal_dm' && (
                   <div>
                     <div className="flex items-center justify-between mb-1">
-                      <p className="text-[10px] text-gray-600">👥 Người nhận ({selectedUserIds.length}{!isEditingExisting ? `/${filteredUsers.length}` : ''})</p>
-                      {!isEditingExisting && (
-                        <div className="flex gap-1">
-                          <button type="button" onClick={selectAllUsers} className="text-[10px] text-amber-700 hover:underline">Chọn hết</button>
-                          {selectedUserIds.length > 0 && (
-                            <button type="button" onClick={clearUsers} className="text-[10px] text-gray-500 hover:text-red-600 hover:underline">Xoá</button>
-                          )}
+                      <p className="text-[10px] text-gray-600">👥 Người nhận DM ({selectedUserIds.length}/{filteredUsers.length})</p>
+                      <div className="flex gap-1">
+                        <button type="button" onClick={selectAllUsers} className="text-[10px] text-amber-700 hover:underline">Chọn hết</button>
+                        {selectedUserIds.length > 0 && (
+                          <button type="button" onClick={clearUsers} className="text-[10px] text-gray-500 hover:text-red-600 hover:underline">Xoá</button>
+                        )}
+                      </div>
+                    </div>
+                    <input
+                      value={userQuery}
+                      onChange={(e) => setUserQuery(e.target.value)}
+                      placeholder="Tìm tên/email NV..."
+                      className="w-full h-8 px-2 mb-1.5 rounded-lg border border-gray-200 text-[11px] bg-white"
+                    />
+                    <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-1.5 bg-white">
+                      {userLoading ? (
+                        <div className="text-[10px] text-gray-400 text-center py-2">Đang tải...</div>
+                      ) : filteredUsers.length === 0 ? (
+                        <div className="text-[10px] text-gray-400 text-center py-2">Không có NV phù hợp</div>
+                      ) : (
+                        <div className="flex flex-wrap gap-1">
+                          {filteredUsers.slice(0, 80).map((u) => (
+                            <PillButton
+                              key={u.id}
+                              checked={selectedUserIds.map(String).includes(String(u.id))}
+                              onClick={() => toggleUser(u.id)}
+                              color="purple"
+                            >
+                              {u.full_name}
+                            </PillButton>
+                          ))}
                         </div>
                       )}
                     </div>
-                    {!isEditingExisting && (
-                      <>
-                        <input
-                          value={userQuery}
-                          onChange={(e) => setUserQuery(e.target.value)}
-                          placeholder="Tìm tên/email NV..."
-                          className="w-full h-8 px-2 mb-1.5 rounded-lg border border-gray-200 text-[11px] bg-white"
-                        />
-                        <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-1.5 bg-white">
-                          {userLoading ? (
-                            <div className="text-[10px] text-gray-400 text-center py-2">Đang tải...</div>
-                          ) : filteredUsers.length === 0 ? (
-                            <div className="text-[10px] text-gray-400 text-center py-2">Không có NV phù hợp</div>
-                          ) : (
-                            <div className="flex flex-wrap gap-1">
-                              {filteredUsers.slice(0, 80).map((u) => (
-                                <PillButton
-                                  key={u.id}
-                                  checked={selectedUserIds.map(String).includes(String(u.id))}
-                                  onClick={() => toggleUser(u.id)}
-                                  color="purple"
-                                >
-                                  {u.full_name}
-                                </PillButton>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                        {selectedUserIds.length > 1 && (
-                          <p className="text-[10px] text-amber-700 mt-1">
-                            Sẽ tạo {selectedUserIds.length} lịch DM riêng — mỗi NV 1 lịch (cùng nội dung & giờ chạy).
-                          </p>
-                        )}
-                      </>
-                    )}
-                    {isEditingExisting && (
-                      <p className="text-[10px] text-gray-500 italic">DM 1-1 với 1 nhân viên (lịch hiện tại).</p>
+                    {selectedUserIds.length > 0 && (
+                      <p className="text-[10px] text-amber-700 mt-1">
+                        ✓ 1 lịch duy nhất sẽ fan-out DM riêng cho {selectedUserIds.length} NV. Mỗi người chỉ thấy số liệu của chính mình.
+                      </p>
                     )}
                   </div>
                 )}

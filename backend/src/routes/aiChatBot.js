@@ -521,6 +521,9 @@ async function validatePayload(body) {
   if (body.region_whitelist != null && !Array.isArray(body.region_whitelist)) {
     errors.push('region_whitelist phải là mảng UUID');
   }
+  if (body.recipient_user_ids != null && !Array.isArray(body.recipient_user_ids)) {
+    errors.push('recipient_user_ids phải là mảng UUID');
+  }
 
   return errors;
 }
@@ -537,6 +540,9 @@ function buildRow(body, userId) {
     : null;
   const regionWhitelist = Array.isArray(body.region_whitelist) && body.region_whitelist.length
     ? body.region_whitelist.filter(Boolean)
+    : null;
+  const recipientUserIds = Array.isArray(body.recipient_user_ids) && body.recipient_user_ids.length
+    ? body.recipient_user_ids.filter(Boolean)
     : null;
 
   return {
@@ -557,6 +563,7 @@ function buildRow(body, userId) {
     department_whitelist: departmentWhitelist,
     user_whitelist: userWhitelist,
     region_whitelist: regionWhitelist,
+    recipient_user_ids: recipientUserIds,
     conversation_enabled: body.conversation_enabled === true,
     conversation_ttl_minutes: Math.max(5, Math.min(1440, parseInt(body.conversation_ttl_minutes, 10) || 60)),
     personal_scope_only: body.personal_scope_only === true,
@@ -572,10 +579,14 @@ async function enrichSchedule(rows) {
   const deptIds = [...new Set(rows.filter((r) => r.channel_type === 'department').map((r) => r.channel_id))];
   const groupIds = [...new Set(rows.filter((r) => r.channel_type === 'group').map((r) => r.channel_id))];
   const pbIds = [...new Set(rows.map((r) => r.playbook_id).filter(Boolean))];
+  const recipientIds = [...new Set(
+    rows.flatMap((r) => Array.isArray(r.recipient_user_ids) ? r.recipient_user_ids : []).filter(Boolean),
+  )];
 
   const deptMap = new Map();
   const groupMap = new Map();
   const pbMap = new Map();
+  const userMap = new Map();
   if (deptIds.length) {
     const { data } = await supabase.from('departments').select('id, name, color').in('id', deptIds);
     (data || []).forEach((d) => deptMap.set(d.id, d));
@@ -591,15 +602,28 @@ async function enrichSchedule(rows) {
       .in('id', pbIds);
     (data || []).forEach((p) => pbMap.set(p.id, p));
   }
+  if (recipientIds.length) {
+    const { data } = await supabase
+      .from('users')
+      .select('id, full_name, avatar')
+      .in('id', recipientIds);
+    (data || []).forEach((u) => userMap.set(String(u.id), u));
+  }
 
   return rows.map((r) => {
     const info = r.channel_type === 'department' ? deptMap.get(r.channel_id) : groupMap.get(r.channel_id);
     const pb = r.playbook_id ? pbMap.get(r.playbook_id) : null;
+    const recipients = Array.isArray(r.recipient_user_ids)
+      ? r.recipient_user_ids.map((uid) => userMap.get(String(uid))).filter(Boolean)
+      : [];
     return {
       ...r,
-      channel_name: info?.name || '(đã xóa)',
+      channel_name: recipients.length
+        ? `Fanout DM 1-1 · ${recipients.length} NV`
+        : (info?.name || '(đã xóa)'),
       channel_color: info?.color || null,
       playbook: pb || null,
+      recipients,
     };
   });
 }
@@ -618,18 +642,37 @@ r.get('/schedules', requireAdmin, async (_req, res) => {
   }
 });
 
+/** Helper: chạy upsert + auto retry không kèm các cột "chưa migrate". */
+async function insertOrUpdateScheduleWithFallback(row, mode, id) {
+  const optionalCols = ['recipient_user_ids', 'region_whitelist'];
+  let work = { ...row };
+  // Tối đa thử lại theo số cột optional + 1 lần ban đầu.
+  for (let attempt = 0; attempt < optionalCols.length + 1; attempt += 1) {
+    const q = mode === 'insert'
+      ? supabase.from('ai_chat_bot_schedules').insert(work).select('*').single()
+      : supabase.from('ai_chat_bot_schedules').update(work).eq('id', id).select('*').single();
+    const { data, error } = await q;
+    if (!error) return { data, droppedCols: optionalCols.filter((c) => !(c in work)) };
+    const msg = String(error.message || '').toLowerCase();
+    const isSchemaCacheMiss = msg.includes('schema cache') || msg.includes('does not exist');
+    if (!isSchemaCacheMiss) throw error;
+    // Tìm cột optional bị thiếu để gỡ ra rồi retry.
+    const missing = optionalCols.find((c) => c in work && msg.includes(c));
+    if (!missing) throw error;
+    delete work[missing];
+    console.warn(`[ai-chat-bot] Cột "${missing}" chưa migrate — bỏ qua khi save. Chạy database/240_ai_chat_bot_recipient_users.sql để dùng đầy đủ tính năng.`);
+  }
+  throw new Error('Không thể save schedule sau khi gỡ các cột optional.');
+}
+
 r.post('/schedules', requireAdmin, async (req, res) => {
   try {
     const errors = await validatePayload(req.body);
     if (errors.length) return res.status(400).json({ error: errors.join('; ') });
     const row = buildRow(req.body, req.user.userId);
-    const { data, error } = await supabase
-      .from('ai_chat_bot_schedules')
-      .insert(row)
-      .select('*')
-      .single();
-    if (error) throw error;
+    const { data, droppedCols } = await insertOrUpdateScheduleWithFallback(row, 'insert');
     const [enriched] = await enrichSchedule([data]);
+    if (droppedCols?.length) enriched._missing_columns = droppedCols;
     res.status(201).json({ schedule: enriched });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -642,15 +685,10 @@ r.put('/schedules/:id', requireAdmin, async (req, res) => {
     if (errors.length) return res.status(400).json({ error: errors.join('; ') });
     const row = buildRow(req.body, req.user.userId);
     delete row.created_by; // không đổi người tạo
-    const { data, error } = await supabase
-      .from('ai_chat_bot_schedules')
-      .update(row)
-      .eq('id', req.params.id)
-      .select('*')
-      .single();
-    if (error) throw error;
+    const { data, droppedCols } = await insertOrUpdateScheduleWithFallback(row, 'update', req.params.id);
     if (!data) return res.status(404).json({ error: 'Không tìm thấy lịch' });
     const [enriched] = await enrichSchedule([data]);
+    if (droppedCols?.length) enriched._missing_columns = droppedCols;
     res.json({ schedule: enriched });
   } catch (e) {
     res.status(500).json({ error: e.message });

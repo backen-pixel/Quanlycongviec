@@ -25,6 +25,53 @@ const { effectivePipelineStageSlaDays } = require('./crmPipelineSla');
 const AI_BOT_USER_ID = '00000000-0000-0000-0000-0000000000a1';
 const AI_BOT_DISPLAY_NAME = '🤖 AI Assistant';
 
+/**
+ * Đảm bảo có 1 messenger_groups direct giữa bot ↔ user. Trả về group_id (cũ hoặc mới tạo).
+ * Dùng pair_key giống endpoint /messenger/direct.
+ */
+async function ensureDmGroupWithBot(userId) {
+  if (!userId || String(userId) === AI_BOT_USER_ID) return null;
+  const a = String(AI_BOT_USER_ID);
+  const b = String(userId);
+  const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+
+  const { data: existing } = await supabase
+    .from('messenger_groups')
+    .select('id')
+    .eq('direct_pair_key', key)
+    .maybeSingle();
+  if (existing?.id) return existing.id;
+
+  const { data: user } = await supabase
+    .from('users')
+    .select('full_name')
+    .eq('id', userId)
+    .maybeSingle();
+  const name = `🤖 AI ↔ ${user?.full_name || 'Nhân viên'}`;
+
+  const { data: group, error: gErr } = await supabase
+    .from('messenger_groups')
+    .insert({
+      name,
+      created_by: AI_BOT_USER_ID,
+      is_direct: true,
+      direct_pair_key: key,
+    })
+    .select('id')
+    .single();
+  if (gErr) throw new Error(`ensureDmGroupWithBot insert group: ${gErr.message}`);
+
+  const { error: mErr } = await supabase.from('messenger_group_members').insert([
+    { group_id: group.id, user_id: AI_BOT_USER_ID, role: 'member', added_by: AI_BOT_USER_ID },
+    { group_id: group.id, user_id: userId, role: 'member', added_by: AI_BOT_USER_ID },
+  ]);
+  if (mErr) {
+    await supabase.from('messenger_groups').delete().eq('id', group.id);
+    throw new Error(`ensureDmGroupWithBot insert members: ${mErr.message}`);
+  }
+  return group.id;
+}
+
 /** Deep-link tới trang LeadDetail trên frontend. Bỏ qua nếu chưa cấu hình. */
 function leadDetailUrl(leadId) {
   if (!leadId || !config.frontendUrl) return null;
@@ -1052,6 +1099,54 @@ async function insertGroupBotMessage(groupId, content, io, channelInfo) {
  * @returns {Promise<{ status:'ok'|'error'|'skipped', message?:string, message_id?:string, error?:string, preview?:string }>}
  */
 async function runScheduleSend(schedule, io) {
+  // Fan-out: 1 lịch "1-1 cá nhân" có nhiều recipient_user_ids → gửi DM riêng cho từng người,
+  // mỗi người chỉ thấy dữ liệu của chính mình (personal_scope_only).
+  const recipients = Array.isArray(schedule.recipient_user_ids)
+    ? schedule.recipient_user_ids.filter(Boolean)
+    : [];
+  if (recipients.length && schedule.personal_scope_only) {
+    let ok = 0;
+    let fail = 0;
+    const errors = [];
+    const firstPreviews = [];
+    for (const uid of recipients) {
+      try {
+        const gid = await ensureDmGroupWithBot(uid);
+        if (!gid) { fail += 1; continue; }
+        const subSchedule = {
+          ...schedule,
+          channel_type: 'group',
+          channel_id: gid,
+          recipient_user_ids: null, // tránh đệ quy fanout
+          user_whitelist: null,
+          department_whitelist: null,
+          company_whitelist: null,
+          region_whitelist: null,
+          personal_scope_only: true,
+        };
+        const res = await runScheduleSend(subSchedule, io);
+        if (res?.status === 'ok') {
+          ok += 1;
+          if (firstPreviews.length < 2 && res.preview) firstPreviews.push(res.preview);
+        } else {
+          fail += 1;
+          if (res?.error) errors.push(res.error);
+        }
+      } catch (e) {
+        fail += 1;
+        errors.push(e.message);
+      }
+    }
+    if (ok === 0) {
+      return { status: 'error', error: `Fanout 0/${recipients.length}: ${errors.slice(0, 2).join('; ')}` };
+    }
+    return {
+      status: 'ok',
+      message: `Fanout ${ok}/${recipients.length} DM cá nhân` + (fail ? ` (${fail} lỗi)` : ''),
+      preview: firstPreviews.join('\n──\n').slice(0, 240),
+    };
+  }
+
   const channelInfo = await loadChannelInfo(schedule.channel_type, schedule.channel_id);
   if (!channelInfo) {
     return { status: 'error', error: 'Không tìm thấy kênh' };
