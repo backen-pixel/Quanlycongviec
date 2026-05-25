@@ -6,6 +6,35 @@ import { useAuth } from '../lib/auth';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import { getInitials, avatarColor } from '../lib/utils';
 
+// Inline: [label](url) markdown link + bare http(s) URL
+const INLINE_LINK_RE = /(\[[^\]]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s]+)/g;
+function renderTextWithLinks(text, isMe) {
+  if (!text) return null;
+  const parts = text.split(INLINE_LINK_RE);
+  const linkCls = isMe
+    ? 'underline decoration-sky-100 text-sky-50 hover:text-white break-all'
+    : 'underline decoration-sky-400 text-sky-700 hover:text-sky-900 break-all';
+  return parts.map((part, i) => {
+    if (!part) return null;
+    const md = part.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
+    if (md) {
+      return (
+        <a key={i} href={md[2]} target="_blank" rel="noopener noreferrer" className={`${linkCls} font-semibold`}>
+          {md[1]}
+        </a>
+      );
+    }
+    if (/^https?:\/\//.test(part)) {
+      return (
+        <a key={i} href={part} target="_blank" rel="noopener noreferrer" className={linkCls}>
+          {part}
+        </a>
+      );
+    }
+    return <span key={i}>{part}</span>;
+  });
+}
+
 const formatTime = (d) => {
   const date = new Date(d);
   const now = new Date();
@@ -143,7 +172,7 @@ export default function DepartmentChatBubble({ deptId, socket, fillParent }) {
                     }`}
                   >
                     {m.content ? (
-                      <p className="whitespace-pre-wrap break-words">{m.content}</p>
+                      <p className="whitespace-pre-wrap break-words">{renderTextWithLinks(m.content, isMe)}</p>
                     ) : null}
                     {Array.isArray(m.attachments) && m.attachments.length > 0 && (
                       <div className="mt-1 space-y-1">

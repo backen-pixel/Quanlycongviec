@@ -20,6 +20,7 @@
 const { supabase } = require('../config/supabase');
 const config = require('../config');
 const { dispatchNotificationToUser } = require('./notifications');
+const { effectivePipelineStageSlaDays } = require('./crmPipelineSla');
 
 const AI_BOT_USER_ID = '00000000-0000-0000-0000-0000000000a1';
 const AI_BOT_DISPLAY_NAME = '🤖 AI Assistant';
@@ -180,7 +181,75 @@ async function loadChannelInfo(channelType, channelId) {
  * Tóm hoạt động cần làm của các thành viên trong kênh (ưu tiên CRM + tasks).
  * Trả về object thuần để nhúng vào prompt LLM hoặc fallback template.
  */
-async function buildChannelContextPayload(memberIds) {
+/**
+ * Resolve danh sách user_id từ whitelist của schedule (company/department/user).
+ * Trả null nếu không có whitelist nào → giữ nguyên scope thành viên kênh.
+ * Khi có → trả mảng user_id để mở rộng vùng quét cho playbook channel_context.
+ */
+async function resolveScopeUserIdsForChannel(schedule) {
+  const userWl = Array.isArray(schedule?.user_whitelist) ? schedule.user_whitelist.filter(Boolean) : [];
+  const deptWl = Array.isArray(schedule?.department_whitelist) ? schedule.department_whitelist.filter(Boolean) : [];
+  const companyWl = Array.isArray(schedule?.company_whitelist) ? schedule.company_whitelist.filter(Boolean) : [];
+  const regionWl = Array.isArray(schedule?.region_whitelist) ? schedule.region_whitelist.filter(Boolean) : [];
+  if (!userWl.length && !deptWl.length && !companyWl.length && !regionWl.length) return null;
+
+  const ids = new Set(userWl);
+
+  // Theo khu vực: lấy NV qua bảng mapping user_company_regions
+  if (regionWl.length) {
+    const { data } = await supabase
+      .from('user_company_regions')
+      .select('user_id')
+      .in('region_id', regionWl);
+    const uids = [...new Set((data || []).map((r) => r.user_id))];
+    if (uids.length) {
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, is_active')
+        .in('id', uids)
+        .neq('is_active', false);
+      (users || []).forEach((u) => ids.add(u.id));
+    }
+  }
+
+  // Theo phòng ban
+  if (deptWl.length) {
+    const { data } = await supabase
+      .from('users')
+      .select('id')
+      .in('department_id', deptWl)
+      .neq('is_active', false);
+    (data || []).forEach((u) => ids.add(u.id));
+  }
+
+  // Theo công ty: lấy NV có company_id trực tiếp + NV có department thuộc company
+  if (companyWl.length) {
+    const { data: directUsers } = await supabase
+      .from('users')
+      .select('id')
+      .in('company_id', companyWl)
+      .neq('is_active', false);
+    (directUsers || []).forEach((u) => ids.add(u.id));
+
+    const { data: depts } = await supabase
+      .from('departments')
+      .select('id')
+      .in('company_id', companyWl);
+    const deptIds = (depts || []).map((d) => d.id);
+    if (deptIds.length) {
+      const { data: deptUsers } = await supabase
+        .from('users')
+        .select('id')
+        .in('department_id', deptIds)
+        .neq('is_active', false);
+      (deptUsers || []).forEach((u) => ids.add(u.id));
+    }
+  }
+
+  return [...ids].filter((u) => u && u !== AI_BOT_USER_ID);
+}
+
+async function buildChannelContextPayload(memberIds, opts = {}) {
   const now = Date.now();
   const horizon72h = new Date(now + 72 * 3600 * 1000).toISOString();
   const horizon7d = new Date(now + 7 * 24 * 3600 * 1000).toISOString();   // hết tuần
@@ -193,6 +262,55 @@ async function buildChannelContextPayload(memberIds) {
   }).format(new Date());
   const startOfTodayIso = new Date(`${todayVnStr}T00:00:00+07:00`).toISOString();
 
+  /* Khoảng thời gian cho SLA stage cảnh báo — mặc định CHỈ trong hôm nay.
+   * Hỗ trợ: today (default), yesterday, last_7d, last_30d.
+   * Các giá trị này khớp với schedule.time_scope.
+   * Window được trả ra payload qua field `sla_window` để playbook biết.
+   */
+  const scope = opts.time_scope || 'today';
+  const offsetDays = Math.max(0, Number(opts.time_scope_days_offset) || 0);
+  let slaWindowStartMs;
+  let slaWindowEndMs;
+  let slaWindowLabel;
+  {
+    const todayStartMs = new Date(startOfTodayIso).getTime();
+    const dayMs = 24 * 3600 * 1000;
+    switch (scope) {
+      case 'yesterday':
+        slaWindowStartMs = todayStartMs - dayMs;
+        slaWindowEndMs = todayStartMs - 1;
+        slaWindowLabel = 'hôm qua';
+        break;
+      case 'last_7d':
+        slaWindowStartMs = todayStartMs - 7 * dayMs;
+        slaWindowEndMs = now;
+        slaWindowLabel = '7 ngày gần đây';
+        break;
+      case 'last_30d':
+        slaWindowStartMs = todayStartMs - 30 * dayMs;
+        slaWindowEndMs = now;
+        slaWindowLabel = '30 ngày gần đây';
+        break;
+      case 'custom':
+        slaWindowStartMs = todayStartMs - offsetDays * dayMs;
+        slaWindowEndMs = now;
+        slaWindowLabel = offsetDays > 0 ? `${offsetDays} ngày gần đây` : 'hôm nay';
+        break;
+      case 'today':
+      default:
+        slaWindowStartMs = todayStartMs;
+        slaWindowEndMs = new Date(`${todayVnStr}T23:59:59+07:00`).getTime();
+        slaWindowLabel = 'hôm nay';
+        break;
+    }
+  }
+  const slaWindow = {
+    scope,
+    label: slaWindowLabel,
+    from: new Date(slaWindowStartMs).toISOString(),
+    to: new Date(slaWindowEndMs).toISOString(),
+  };
+
   // Schema giúp LLM biết các field nào tồn tại (dùng cho playbook custom/_pep_talk).
   const SCHEMA = {
     crm_tasks_overdue: 'Mảng task CRM đã quá hạn ({title, deadline, assignee, lead_code, lead_link, hours_to_deadline<0})',
@@ -204,6 +322,12 @@ async function buildChannelContextPayload(memberIds) {
     tasks_due_this_month: 'Task (CRM + chung) còn mở, deadline trong 30 ngày tới — dùng cho nhắc nhiệm vụ tháng.',
     leads_open: 'Lead/Deal đang mở do thành viên kênh phụ trách. Mỗi item có {id, code, title, assignee, stage, estimated_value, expected_close_date, link}.',
     leads_expired: 'Lead/Deal có expected_close_date < hôm nay nhưng CHƯA đóng — kèm link & days_overdue. Dùng cho cảnh báo lead hết hạn.',
+    leads_sla_breached_today: 'Lead/Deal vừa vượt SLA STAGE trong KHOẢNG sla_window (mặc định hôm nay, có thể là hôm qua / 7 ngày gần đây tùy schedule.time_scope). Mỗi item: {code, title, type, assignee, stage, sla_days, hours_overdue, link, estimated_value, estimated_value_text}.',
+    leads_sla_due_today: 'Lead/Deal SẮP vượt SLA STAGE trong khoảng còn lại tới cuối hôm nay (luôn là look-ahead trong ngày, không phụ thuộc sla_window). Mỗi item: {code, title, type, assignee, stage, sla_days, hours_left, link, estimated_value, estimated_value_text}.',
+    sla_window: 'Thông tin khoảng thời gian dùng để tính leads_sla_breached_today + *_in_window: {scope, label, from, to}. label dùng cho header thân thiện (vd: "hôm nay" / "hôm qua" / "7 ngày gần đây" / "30 ngày gần đây").',
+    crm_tasks_overdue_in_window: 'Task CRM trở thành quá hạn TRONG sla_window (deadline rơi vào [sla_window.from, sla_window.to] và < now, status còn pending/in_progress). Mỗi item kèm hours_overdue, overdue_at.',
+    tasks_overdue_in_window: 'Task chung trở thành quá hạn TRONG sla_window.',
+    leads_expired_in_window: 'Lead/Deal mở có expected_close_date RƠI VÀO sla_window và đã quá. Để cảnh báo "hôm trước có gì hết hạn".',
     vip_leads: 'Top lead còn mở sắp xếp theo estimated_value giảm dần (≤8).',
     cskh_needed: 'Lead cần chăm sóc lại (≥7 ngày, chưa có care_mark còn hiệu lực).',
     members: 'Tên các thành viên kênh',
@@ -222,6 +346,12 @@ async function buildChannelContextPayload(memberIds) {
       tasks_due_this_month: [],
       leads_open: [],
       leads_expired: [],
+      leads_sla_breached_today: [],
+      leads_sla_due_today: [],
+      sla_window: slaWindow,
+      crm_tasks_overdue_in_window: [],
+      tasks_overdue_in_window: [],
+      leads_expired_in_window: [],
       vip_leads: [],
       cskh_needed: [],
       generated_at: nowIso,
@@ -230,20 +360,22 @@ async function buildChannelContextPayload(memberIds) {
   const ids = memberIds.map((m) => m.id);
   const nameMap = new Map(memberIds.map((m) => [m.id, m.full_name]));
 
-  /* CRM tasks: pending/in_progress, có deadline, assignee ∈ kênh */
+  /* CRM tasks: pending/in_progress, có deadline, assignee ∈ kênh.
+   * Lùi quá khứ tới min(floor14d, sla_window.from) để cảnh báo hôm qua/tuần trước cũng đủ data. */
   let crmOverdue = [];
   let crmDueSoon = [];
   try {
+    const floorIso = new Date(Math.min(new Date(floor14d).getTime(), slaWindowStartMs)).toISOString();
     const { data } = await supabase
       .from('crm_tasks')
       .select('id, title, deadline, priority, assignee_id, lead:crm_leads(id, code, title)')
       .in('assignee_id', ids)
       .in('status', ['pending', 'in_progress'])
       .not('deadline', 'is', null)
-      .gte('deadline', floor14d)
+      .gte('deadline', floorIso)
       .lte('deadline', horizon72h)
       .order('deadline', { ascending: true })
-      .limit(40);
+      .limit(120);
     (data || []).forEach((t) => {
       const dlMs = new Date(t.deadline).getTime();
       const item = {
@@ -305,10 +437,10 @@ async function buildChannelContextPayload(memberIds) {
       .in('assignee_id', ids)
       .neq('status', 'done')
       .not('due_date', 'is', null)
-      .gte('due_date', floor14d)
+      .gte('due_date', new Date(Math.min(new Date(floor14d).getTime(), slaWindowStartMs)).toISOString())
       .lte('due_date', horizon30d) // mở rộng tới 30 ngày để cover tuần/tháng
       .order('due_date', { ascending: true })
-      .limit(80);
+      .limit(120);
     (data || []).forEach((t) => {
       const dlMs = new Date(t.due_date).getTime();
       const item = {
@@ -376,7 +508,7 @@ async function buildChannelContextPayload(memberIds) {
       .not('expected_close_date', 'is', null)
       .lt('expected_close_date', todayStartIso.slice(0, 10))
       .order('expected_close_date', { ascending: true })
-      .limit(40);
+      .limit(80);
     (data || []).forEach((l) => {
       if (l.stage?.is_won || l.stage?.is_lost) return;
       const exp = new Date(`${l.expected_close_date}T00:00:00+07:00`).getTime();
@@ -394,6 +526,69 @@ async function buildChannelContextPayload(memberIds) {
         link: leadDetailUrl(l.id),
       });
     });
+  } catch { /* ignore */ }
+
+  /* SLA STAGE-BASED — lead/deal vừa quá SLA trong window (today/yesterday/last_7d…) + sắp quá SLA trong ngày */
+  let slaBreachedToday = [];
+  let slaDueToday = [];
+  try {
+    const endOfTodayIso = new Date(`${todayVnStr}T23:59:59+07:00`).toISOString();
+    const endTodayMs = new Date(endOfTodayIso).getTime();
+    // Chỉ lấy lead có khả năng nằm trong window SLA: stage_entered_at đủ gần (max SLA ~60d).
+    // Phân trang để vượt qua giới hạn 1000 row mặc định của PostgREST.
+    const slaScanStartIso = new Date(slaWindowStartMs - 60 * 24 * 3600 * 1000).toISOString();
+    const PAGE = 1000;
+    const openLeads = [];
+    for (let from = 0; from < 10000; from += PAGE) {
+      const { data, error } = await supabase
+        .from('crm_leads')
+        .select('id, code, title, type, estimated_value, assigned_to, stage_entered_at, created_at, '
+          + 'stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name, sla_days, is_won, is_lost)')
+        .in('assigned_to', ids)
+        .is('actual_close_date', null)
+        .gte('stage_entered_at', slaScanStartIso)
+        .order('stage_entered_at', { ascending: false })
+        .range(from, from + PAGE - 1);
+      if (error) break;
+      if (!data || !data.length) break;
+      openLeads.push(...data);
+      if (data.length < PAGE) break;
+    }
+    openLeads.forEach((l) => {
+      if (l.stage?.is_won || l.stage?.is_lost) return;
+      const slaDays = effectivePipelineStageSlaDays(l.stage?.sla_days);
+      if (slaDays == null) return;
+      const entered = l.stage_entered_at || l.created_at;
+      if (!entered) return;
+      const enteredMs = new Date(entered).getTime();
+      const dueMs = enteredMs + slaDays * 24 * 3600 * 1000;
+      const baseItem = {
+        id: l.id,
+        code: l.code,
+        title: l.title,
+        type: l.type || 'lead',
+        assignee: nameMap.get(l.assigned_to) || '—',
+        stage: l.stage?.name || '—',
+        sla_days: slaDays,
+        estimated_value: l.estimated_value,
+        estimated_value_text: fmtMoney(l.estimated_value),
+        link: leadDetailUrl(l.id),
+      };
+      if (dueMs >= slaWindowStartMs && dueMs <= Math.min(slaWindowEndMs, now)) {
+        slaBreachedToday.push({
+          ...baseItem,
+          hours_overdue: Math.max(0, Math.round((now - dueMs) / 3600000)),
+          breached_at: new Date(dueMs).toISOString(),
+        });
+      } else if (dueMs > now && dueMs <= endTodayMs) {
+        slaDueToday.push({
+          ...baseItem,
+          hours_left: Math.max(0, Math.round((dueMs - now) / 3600000)),
+        });
+      }
+    });
+    slaBreachedToday.sort((a, b) => (b.hours_overdue || 0) - (a.hours_overdue || 0));
+    slaDueToday.sort((a, b) => (a.hours_left || 0) - (b.hours_left || 0));
   } catch { /* ignore */ }
 
   /* Task CRM done HÔM NAY → cho khoá sổ cuối ngày */
@@ -478,6 +673,34 @@ async function buildChannelContextPayload(memberIds) {
     tasks_due_this_week: tasksWeek.slice(0, 30),
     tasks_due_this_month: tasksMonth.slice(0, 40),
     leads_expired: leadsExpired,
+    leads_sla_breached_today: slaBreachedToday,
+    leads_sla_due_today: slaDueToday,
+    sla_window: slaWindow,
+    crm_tasks_overdue_in_window: crmOverdue
+      .filter((t) => {
+        const dl = new Date(t.deadline).getTime();
+        return dl >= slaWindowStartMs && dl <= Math.min(slaWindowEndMs, now);
+      })
+      .map((t) => ({
+        ...t,
+        hours_overdue: Math.round((now - new Date(t.deadline).getTime()) / 3600000),
+        overdue_at: t.deadline,
+      })),
+    tasks_overdue_in_window: tOverdue
+      .filter((t) => {
+        const dl = new Date(t.deadline).getTime();
+        return dl >= slaWindowStartMs && dl <= Math.min(slaWindowEndMs, now);
+      })
+      .map((t) => ({
+        ...t,
+        hours_overdue: Math.round((now - new Date(t.deadline).getTime()) / 3600000),
+        overdue_at: t.deadline,
+      })),
+    leads_expired_in_window: leadsExpired.filter((l) => {
+      if (!l.expected_close_date) return false;
+      const exp = new Date(`${l.expected_close_date}T00:00:00+07:00`).getTime();
+      return exp >= slaWindowStartMs && exp <= Math.min(slaWindowEndMs, now);
+    }),
     leads_open: leads,
     vip_leads: vipLeads,
     cskh_needed: cskhNeeded,
@@ -558,7 +781,7 @@ function fallbackTemplate(playbook, channelInfo, payload, customPrompt) {
     const week = payload.tasks_due_this_week || [];
     const month = payload.tasks_due_this_month || [];
     lines.push(
-      `⚠️ Quá hạn: ${allOverdue.length} · Sắp hạn (≤72h): ${dueSoon.length} · 📅 Tuần: ${week.length} · 🗓 Tháng: ${month.length} · ✅ Done hôm nay: ${doneToday.length} · 💎 VIP: ${vip.length} · 🤝 CSKH: ${cskh.length} · 🔴 Lead hết hạn: ${expired.length}`,
+      `⚠️ Quá hạn: ${allOverdue.length} · Sắp hạn (≤72h): ${dueSoon.length} · 📅 Tuần: ${week.length} · 🗓 Tháng: ${month.length} · ✅ Done hôm nay: ${doneToday.length} · 💎 VIP: ${vip.length} · 🤝 CSKH: ${cskh.length} · 🔴 Lead hết hạn: ${expired.length} · ⏰ SLA hôm nay: ${(payload.leads_sla_breached_today?.length || 0) + (payload.leads_sla_due_today?.length || 0)}`,
     );
 
     if (expired.length) {
@@ -861,7 +1084,28 @@ async function runScheduleSend(schedule, io) {
   } else if (ds === 'none') {
     payload = { members: memberIds.map((m) => m.full_name) };
   } else {
-    payload = await buildChannelContextPayload(memberIds);
+    // Mở rộng scope theo whitelist của schedule (cho phép cảnh báo bao trùm cả công ty/phòng ban,
+    // không chỉ thành viên kênh). Hữu ích khi nhóm chỉ có admin + bot.
+    const scopeUsers = await resolveScopeUserIdsForChannel(schedule);
+    let effectiveMembers = memberIds;
+    if (scopeUsers && scopeUsers.length) {
+      const known = new Set(memberIds.map((m) => m.id));
+      const extraIds = scopeUsers.filter((uid) => !known.has(uid));
+      if (extraIds.length) {
+        const { data: extraUsers } = await supabase
+          .from('users')
+          .select('id, full_name, is_active')
+          .in('id', extraIds);
+        const extraMembers = (extraUsers || [])
+          .filter((u) => u.is_active !== false)
+          .map((u) => ({ id: u.id, full_name: u.full_name }));
+        effectiveMembers = [...memberIds, ...extraMembers];
+      }
+    }
+    payload = await buildChannelContextPayload(effectiveMembers, {
+      time_scope: schedule.time_scope || 'today',
+      time_scope_days_offset: schedule.time_scope_days_offset ?? 0,
+    });
   }
 
   const apiKey = process.env.OPENAI_API_KEY;
