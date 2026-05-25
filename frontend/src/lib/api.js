@@ -13,9 +13,13 @@ api.interceptors.request.use((c) => {
 
 api.interceptors.response.use(r => r, (err) => {
   if (err.response?.status === 401) {
+    const code = err.response?.data?.code;
+    const isMidnight = code === 'session_expired_midnight'
+      || localStorage.getItem('logoutReason') === 'midnight';
     localStorage.removeItem('token');
     localStorage.removeItem('user');
-    window.location.href = '/login';
+    localStorage.removeItem('logoutReason');
+    window.location.href = isMidnight ? '/login?reason=midnight' : '/login';
   }
   return Promise.reject(err);
 });

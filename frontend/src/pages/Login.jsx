@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useMemo } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 
 export default function Login() {
@@ -9,6 +9,17 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const logoutNotice = useMemo(() => {
+    const reason = searchParams.get('reason');
+    if (reason === 'midnight') {
+      return 'Phiên đăng nhập đã kết thúc lúc 00:00 (giờ Việt Nam). Vui lòng đăng nhập lại.';
+    }
+    if (searchParams.get('expired') === '1') {
+      return 'Phiên đăng nhập đã hết hạn do không hoạt động. Vui lòng đăng nhập lại.';
+    }
+    return null;
+  }, [searchParams]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -60,9 +71,9 @@ export default function Login() {
             <h2 className="text-xl font-bold text-gray-900 mb-1">Đăng nhập</h2>
             <p className="text-sm text-gray-500 mb-6">Vui lòng nhập thông tin tài khoản</p>
 
-            {typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('expired') === '1' && (
+            {logoutNotice && (
               <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-700 text-sm rounded-lg animate-fade-in flex items-center gap-2">
-                ⏰ Phiên đăng nhập đã hết hạn do không hoạt động. Vui lòng đăng nhập lại.
+                🌙 {logoutNotice}
               </div>
             )}
 
