@@ -2,6 +2,26 @@ const jwt = require('jsonwebtoken');
 const config = require('../config');
 const { supabase } = require('../config/supabase');
 
+const VN_TZ = 'Asia/Ho_Chi_Minh';
+
+/** Mốc 00:00 VN HÔM NAY (ms). Token có iat < mốc này → coi như hết hạn. */
+function midnightVnTodayMs() {
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: VN_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+  });
+  const todayVn = fmt.format(new Date());
+  return new Date(`${todayVn}T00:00:00+07:00`).getTime();
+}
+
+/** Kiểm token có "qua đêm" chưa. Bypass khi env tắt hoặc role 'system'. */
+function isStaleAcrossMidnight(payload) {
+  if (process.env.AUTO_LOGOUT_AT_MIDNIGHT_DISABLED === '1') return false;
+  if (payload?.role === 'system') return false;
+  const iatMs = payload?.iat ? payload.iat * 1000 : 0;
+  if (!iatMs) return true;
+  return iatMs < midnightVnTodayMs();
+}
+
 const COMPANY_CACHE_MS = 60_000;
 const _companyCache = new Map(); // userId -> { company_id, at }
 const _regionCache = new Map(); // userId -> { crm_region_ids, at }
@@ -60,6 +80,9 @@ function auth(req, res, next) {
   if (!h || !h.startsWith('Bearer ')) return res.status(401).json({ error: 'Chưa đăng nhập' });
   try {
     const payload = jwt.verify(h.slice(7), config.jwtSecret);
+    if (isStaleAcrossMidnight(payload)) {
+      return res.status(401).json({ error: 'Phiên đăng nhập đã qua đêm — vui lòng đăng nhập lại', code: 'session_expired_midnight' });
+    }
     req.user = payload;
     // Một số route (push, preferences) dùng userId; token cũ có thể chỉ có id
     if (req.user.userId == null && req.user.id != null) req.user.userId = req.user.id;
@@ -86,4 +109,4 @@ function auth(req, res, next) {
   } catch { res.status(401).json({ error: 'Token hết hạn' }); }
 }
 
-module.exports = { auth };
+module.exports = { auth, midnightVnTodayMs, isStaleAcrossMidnight };

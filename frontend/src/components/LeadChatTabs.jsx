@@ -1118,7 +1118,10 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
               if (e.target.value.trim()) emitTyping();
               else emitStopTyping();
             }}
-            onBlur={emitStopTyping}
+            onBlur={() => {
+              emitStopTyping();
+              setTimeout(() => setMentionOpen(false), 200);
+            }}
             onKeyDown={(e) => {
               if (mentionOpen && mentionCandidates.length > 0) {
                 if (e.key === 'ArrowDown') {
@@ -1146,7 +1149,6 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
                 void send();
               }
             }}
-            onBlur={() => setTimeout(() => setMentionOpen(false), 200)}
             placeholder="Nhập tin nhắn… Gõ @ để nhắc tên thành viên"
             className="flex-1 min-h-[44px] px-4 py-2 border border-gray-200 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 resize-y max-h-32"
           />

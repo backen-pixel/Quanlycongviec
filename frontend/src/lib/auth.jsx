@@ -3,13 +3,15 @@ import api from '../lib/api';
 import { connectSocket, disconnectSocket } from '../lib/socket';
 import { useActivityPing } from '../hooks/useActivityPing';
 import { useDeviceHeartbeat } from '../hooks/useDeviceHeartbeat';
+import { useAutoLogoutAtMidnight } from '../hooks/useAutoLogoutAtMidnight';
 import GeoConsentBanner from '../components/GeoConsentBanner';
 
 const AuthCtx = createContext(null);
 
-function ActivityPingGate({ user, children }) {
+function ActivityPingGate({ user, onLogout, children }) {
   useActivityPing(!!user);
   useDeviceHeartbeat(!!user);
+  useAutoLogoutAtMidnight(!!user, onLogout);
   return (
     <>
       {children}
@@ -70,7 +72,7 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthCtx.Provider value={{ user, loading, login, logout, socket }}>
-      <ActivityPingGate user={user}>{children}</ActivityPingGate>
+      <ActivityPingGate user={user} onLogout={logout}>{children}</ActivityPingGate>
     </AuthCtx.Provider>
   );
 }
