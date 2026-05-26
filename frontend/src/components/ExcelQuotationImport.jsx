@@ -303,14 +303,31 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
     try {
       const resolvedLead = effectiveLeadId || '';
       const draft = buildQuotationDraftFromPreview(preview, file, user, resolvedLead, sourceFile);
-      sessionStorage.setItem(
-        QUOTATION_EXCEL_DRAFT_KEY,
-        JSON.stringify({ version: 1, ...draft }),
-      );
+      const payload = { version: 1, ...draft };
+
+      // Cách CHÍNH: truyền draft qua history state — in-memory, không đụng quota Storage.
+      // sessionStorage chỉ là fallback cho F5; nếu hết quota → bỏ qua, vẫn import được.
+      const serialized = JSON.stringify(payload);
+      try {
+        sessionStorage.removeItem(QUOTATION_EXCEL_DRAFT_KEY);
+      } catch (_) { /* ignore */ }
+      try {
+        sessionStorage.setItem(QUOTATION_EXCEL_DRAFT_KEY, serialized);
+      } catch (storageErr) {
+        // QuotaExceededError → dọn các key dễ phình, thử lại 1 lần. Vẫn lỗi thì kệ — đã có history state.
+        try {
+          sessionStorage.removeItem('crm_pipeline_ui_v1');
+        } catch (_) { /* ignore */ }
+        try {
+          sessionStorage.setItem(QUOTATION_EXCEL_DRAFT_KEY, serialized);
+        } catch (_) { /* ignore — fallback dùng history state */ }
+        console.warn('[excel-import] sessionStorage quota exceeded; using router state fallback', storageErr);
+      }
+
       const q = new URLSearchParams();
       q.set('from_excel', '1');
       if (resolvedLead) q.set('lead_id', resolvedLead);
-      navigate(`/crm/quotations/new?${q.toString()}`);
+      navigate(`/crm/quotations/new?${q.toString()}`, { state: { excelDraft: payload } });
       onClose?.();
       if (onImportDone) {
         try {
