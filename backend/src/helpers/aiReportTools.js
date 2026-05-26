@@ -2480,6 +2480,168 @@ async function summarizeUserActivity({ user_id, days = 7, ctx_user_id }) {
   };
 }
 
+/** Format ISO timestamptz → chuỗi VN có giây (vd "26/05/2026, 08:01:35"). */
+function formatAtVnSeconds(iso) {
+  if (!iso) return null;
+  try {
+    return new Intl.DateTimeFormat('vi-VN', {
+      timeZone: VN_TZ,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(new Date(iso));
+  } catch {
+    return String(iso);
+  }
+}
+
+function formatDurationMs(ms) {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return null;
+  const totalSec = Math.round(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `${h}h ${m}p ${s}s`;
+  if (m > 0) return `${m}p ${s}s`;
+  return `${s}s`;
+}
+
+async function getAuthEventsHistory({ user_id, days = 7, events, limit = 50, ctx_user_id }) {
+  const uid = user_id || ctx_user_id;
+  if (!uid) return { error: 'Thiếu user_id', items: [] };
+  const safeDays = Math.min(Math.max(Number(days) || 7, 1), 30);
+  const since = new Date(Date.now() - safeDays * 24 * 3600 * 1000).toISOString();
+  const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 200);
+
+  let q = supabase
+    .from('auth_event_log')
+    .select('event, reason, ip, platform, device_name, session_id, metadata, occurred_at')
+    .eq('user_id', uid)
+    .gte('occurred_at', since)
+    .order('occurred_at', { ascending: false })
+    .limit(safeLimit);
+
+  if (Array.isArray(events) && events.length) q = q.in('event', events);
+
+  const { data, error } = await q;
+  if (error) {
+    if (/relation .* does not exist/i.test(error.message || '')) {
+      return { error: 'Bảng auth_event_log chưa migrate — chạy database/241_auth_event_log.sql', items: [] };
+    }
+    return { error: error.message, items: [] };
+  }
+
+  return {
+    user_id: uid,
+    since,
+    days: safeDays,
+    count: (data || []).length,
+    items: (data || []).map((r) => ({
+      at: r.occurred_at,
+      at_vn: formatAtVnSeconds(r.occurred_at),
+      event: r.event,
+      reason: r.reason,
+      device: r.device_name || r.platform,
+      ip: r.ip,
+      session_id: r.session_id,
+      session_duration: r.metadata?.ms_session_duration
+        ? formatDurationMs(Number(r.metadata.ms_session_duration))
+        : null,
+    })),
+  };
+}
+
+async function summarizeAuthSessions({ user_id, days = 7, ctx_user_id }) {
+  const uid = user_id || ctx_user_id;
+  if (!uid) return { error: 'Thiếu user_id' };
+  const safeDays = Math.min(Math.max(Number(days) || 7, 1), 30);
+  const since = new Date(Date.now() - safeDays * 24 * 3600 * 1000).toISOString();
+
+  const { data, error } = await supabase
+    .from('auth_event_log')
+    .select('event, reason, device_name, platform, session_id, metadata, occurred_at')
+    .eq('user_id', uid)
+    .gte('occurred_at', since)
+    .order('occurred_at', { ascending: false })
+    .limit(500);
+
+  if (error) {
+    if (/relation .* does not exist/i.test(error.message || '')) {
+      return { error: 'Bảng auth_event_log chưa migrate — chạy database/241_auth_event_log.sql' };
+    }
+    return { error: error.message };
+  }
+
+  const rows = data || [];
+  const byEvent = {};
+  const sessions = [];
+  const loginBySession = new Map();
+
+  for (const r of rows) {
+    byEvent[r.event] = (byEvent[r.event] || 0) + 1;
+    if (r.event === 'login_success' && r.session_id) {
+      loginBySession.set(r.session_id, r);
+    }
+  }
+
+  for (const r of rows) {
+    const isLogout = ['logout', 'auto_logout_midnight', 'session_expired'].includes(r.event);
+    if (!isLogout || !r.session_id) continue;
+    const login = loginBySession.get(r.session_id);
+    if (!login) continue;
+    const msDur = r.metadata?.ms_session_duration
+      ? Number(r.metadata.ms_session_duration)
+      : new Date(r.occurred_at).getTime() - new Date(login.occurred_at).getTime();
+    sessions.push({
+      session_id: r.session_id,
+      login_at_vn: formatAtVnSeconds(login.occurred_at),
+      logout_at_vn: formatAtVnSeconds(r.occurred_at),
+      logout_event: r.event,
+      logout_reason: r.reason,
+      device: login.device_name || login.platform,
+      duration: formatDurationMs(msDur),
+    });
+    loginBySession.delete(r.session_id);
+  }
+
+  const lastLogin = rows.find((r) => r.event === 'login_success');
+  const lastLogout = rows.find((r) => ['logout', 'auto_logout_midnight', 'session_expired'].includes(r.event));
+  const openSessions = [...loginBySession.values()].map((login) => ({
+    session_id: login.session_id,
+    login_at_vn: formatAtVnSeconds(login.occurred_at),
+    device: login.device_name || login.platform,
+    still_open: true,
+  }));
+
+  return {
+    user_id: uid,
+    since,
+    days: safeDays,
+    total_events: rows.length,
+    by_event: byEvent,
+    completed_sessions: sessions.slice(0, 20),
+    open_sessions: openSessions.slice(0, 5),
+    last_login: lastLogin
+      ? {
+          at_vn: formatAtVnSeconds(lastLogin.occurred_at),
+          device: lastLogin.device_name || lastLogin.platform,
+        }
+      : null,
+    last_logout: lastLogout
+      ? {
+          at_vn: formatAtVnSeconds(lastLogout.occurred_at),
+          event: lastLogout.event,
+          reason: lastLogout.reason,
+        }
+      : null,
+    failed_logins: byEvent.login_failed || 0,
+  };
+}
+
 /** OpenAI tools JSON schema */
 const OPENAI_TOOL_DEFINITIONS = [
   {
@@ -2694,6 +2856,46 @@ const OPENAI_TOOL_DEFINITIONS = [
       description:
         'Rút trích insight ngắn gọn từ activity log: module hay dùng nhất, filter phổ biến (vd hay lọc Cty X, NV Y), '
         + 'thời điểm hoạt động nhiều, action gần nhất. Phù hợp khi sếp hỏi "X dạo này làm gì" hoặc khi cần personalize trả lời.',
+      parameters: {
+        type: 'object',
+        properties: {
+          user_id: { type: 'string' },
+          days: { type: 'integer', description: 'Mặc định 7, max 30.' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_auth_events_history',
+      description:
+        'Đọc nhật ký đăng nhập/đăng xuất chi tiết đến giây (IP, thiết bị, lý do). '
+        + 'Dùng khi hỏi "hôm nay đăng nhập lúc mấy giờ", "ai đăng nhập từ máy nào", "có bao nhiêu lần đăng nhập sai". '
+        + 'Nếu user_id không truyền sẽ dùng người đang chat với bot.',
+      parameters: {
+        type: 'object',
+        properties: {
+          user_id: { type: 'string', description: 'UUID user. Bỏ trống = người đang chat.' },
+          days: { type: 'integer', description: 'Số ngày lùi (mặc định 7, max 30).' },
+          events: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Lọc loại event: login_success, login_failed, logout, auto_logout_midnight, session_expired, token_invalid, password_changed.',
+          },
+          limit: { type: 'integer', description: 'Số entry (mặc định 50, max 200).' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'summarize_auth_sessions',
+      description:
+        'Tóm tắt phiên đăng nhập: lần login/logout gần nhất (giờ:phút:giây), thời lượng phiên, thiết bị, '
+        + 'số lần đăng nhập sai, phiên còn mở. Dùng khi hỏi "hôm nay làm việc bao lâu", "đăng xuất lúc mấy giờ".',
       parameters: {
         type: 'object',
         properties: {
@@ -2971,6 +3173,16 @@ async function executeTool(name, args, ctx = {}) {
       });
     case 'summarize_user_activity':
       return summarizeUserActivity({
+        ...args,
+        ctx_user_id: ctx.sender_user_id || ctx.personal_recipient_user_id || null,
+      });
+    case 'get_auth_events_history':
+      return getAuthEventsHistory({
+        ...args,
+        ctx_user_id: ctx.sender_user_id || ctx.personal_recipient_user_id || null,
+      });
+    case 'summarize_auth_sessions':
+      return summarizeAuthSessions({
         ...args,
         ctx_user_id: ctx.sender_user_id || ctx.personal_recipient_user_id || null,
       });

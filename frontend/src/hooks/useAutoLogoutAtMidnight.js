@@ -39,9 +39,13 @@ function msUntilNextMidnightVn() {
   return Math.max(0, next - Date.now()) + SAFETY_OFFSET_MS;
 }
 
-function performMidnightLogout(onLogout) {
+async function performMidnightLogout(onLogout) {
+  // Gọi onLogout('midnight') để auth.jsx audit lên server với reason chính xác.
   try {
-    if (typeof onLogout === 'function') onLogout();
+    if (typeof onLogout === 'function') {
+      const ret = onLogout('midnight');
+      if (ret && typeof ret.then === 'function') await ret;
+    }
   } catch (_) {}
   try {
     localStorage.setItem('logoutReason', 'midnight');

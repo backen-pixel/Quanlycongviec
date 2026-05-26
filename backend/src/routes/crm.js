@@ -7768,10 +7768,11 @@ r.post('/quotations', async (req, res) => {
     let linkedLeadId = quote.lead_id;
     if (!linkedLeadId && (quote.customer_id || quote.customer_name)) {
       try {
+        // crm_leads không có cột `status` — deal "đang mở" = chưa đóng (actual_close_date IS NULL).
         let dealQuery = supabase.from('crm_leads')
           .select('id, customer_id')
           .eq('type', 'deal')
-          .in('status', ['new', 'contacted', 'qualified', 'negotiation', 'proposal', 'open', 'active'])
+          .is('actual_close_date', null)
           .order('created_at', { ascending: false })
           .limit(1);
 

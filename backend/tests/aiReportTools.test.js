@@ -19,12 +19,14 @@ const lastMonth = resolveTimeRange('last_month');
 assert.ok(lastMonth.label_vn.startsWith('tháng '));
 
 const tools = OPENAI_TOOL_DEFINITIONS;
-assert.strictEqual(tools.length, 24);
+assert.strictEqual(tools.length, 26);
 assert.ok(tools.some((t) => t.function.name === 'get_company_lead_summary'));
 assert.ok(tools.some((t) => t.function.name === 'resolve_assignee_scope'));
 assert.ok(tools.some((t) => t.function.name === 'find_users_by_name'));
 assert.ok(tools.some((t) => t.function.name === 'get_user_activity_history'));
 assert.ok(tools.some((t) => t.function.name === 'summarize_user_activity'));
+assert.ok(tools.some((t) => t.function.name === 'get_auth_events_history'));
+assert.ok(tools.some((t) => t.function.name === 'summarize_auth_sessions'));
 assert.ok(tools.some((t) => t.function.name === 'get_user_learned_facts'));
 assert.ok(tools.some((t) => t.function.name === 'get_online_users'));
 assert.ok(tools.some((t) => t.function.name === 'get_channel_work_context'));

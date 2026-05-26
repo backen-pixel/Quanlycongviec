@@ -97,6 +97,7 @@ const InvoiceDetail = lazyWithRetry(() => import('./pages/InvoiceDetail'));
 const OrderForm = lazyWithRetry(() => import('./pages/OrderForm'));
 const InvoiceForm = lazyWithRetry(() => import('./pages/InvoiceForm'));
 const EventsFeedPage = lazyWithRetry(() => import('./pages/EventsFeedPage'));
+const EventsOverviewPage = lazyWithRetry(() => import('./pages/EventsOverviewPage'));
 const SocialFeedPage = lazyWithRetry(() => import('./pages/SocialFeedPage'));
 const SocialProfilePage = lazyWithRetry(() => import('./pages/SocialProfilePage'));
 const ReleaseNotesPage = lazyWithRetry(() => import('./pages/ReleaseNotesPage'));
@@ -360,6 +361,7 @@ export default function App() {
             <Route path="/crm" element={<Navigate to="/crm/dashboard" replace />} />
             <Route path="/crm/lead-journey" element={<LeadJourneyPage />} />
             <Route path="/crm/events" element={<EventsFeedPage />} />
+            <Route path="/crm/events/overview" element={<EventsOverviewPage />} />
             <Route path="/crm/messenger" element={<MessengerHubPage />} />
             <Route path="/crm/activity" element={<ActiveUsersPage />} />
             <Route path="/crm/dashboard" element={<CRMDashboard />} />
