@@ -10,6 +10,9 @@ const SOCIAL_SCOPE_PREFIX = 'internal_social';
 /**
  * Số bài mới trên bảng tin nội bộ (kể từ lần xem gần nhất).
  * Admin hệ thống: tổng mọi công ty hoặc theo company_id trong localStorage.
+ *
+ * Chỉ gọi API khi đã đăng nhập — provider này được mount ở root (ngoài
+ * ProtectedLayout) nên hook chạy cả khi user đang ở /login.
  */
 export function useInternalSocialUnread() {
   const { user } = useAuth();
@@ -18,6 +21,10 @@ export function useInternalSocialUnread() {
   const isSystemAdmin = checkSystemAdmin(user);
 
   const refresh = useCallback(async () => {
+    if (!user) {
+      setUnread(0);
+      return;
+    }
     try {
       const params = {};
       if (isSystemAdmin) {
@@ -31,9 +38,13 @@ export function useInternalSocialUnread() {
     } catch {
       setUnread(0);
     }
-  }, [isSystemAdmin]);
+  }, [user, isSystemAdmin]);
 
   useEffect(() => {
+    if (!user) {
+      setUnread(0);
+      return undefined;
+    }
     void refresh();
     const t = setInterval(refresh, 60_000);
     const onFocus = () => refresh();
@@ -47,7 +58,7 @@ export function useInternalSocialUnread() {
       window.removeEventListener('internal-social-read', onRead);
       window.removeEventListener('storage', onFocus);
     };
-  }, [refresh]);
+  }, [refresh, user]);
 
   return { unread, refresh };
 }

@@ -195,8 +195,34 @@ export default function BubblePermissionOnboardScreen({ navigation }: Props) {
         </View>
       ) : null}
 
+      {Platform.OS === 'android' ? (
+        <View style={[styles.card, CrmShadow.card]}>
+          <Text style={styles.stepNum}>3</Text>
+          <View style={styles.stepBody}>
+            <Text style={styles.stepTitle}>Bong bóng hệ thống (Android 11+)</Text>
+            <Text style={styles.stepDesc}>
+              Để bong bóng TuBep CRM xếp chung stack với Messenger/Zalo, vào{' '}
+              <Text style={styles.bold}>Cài đặt → Ứng dụng → TuBep CRM → Thông báo → Bong bóng</Text>
+              {' '}và chọn «Tất cả cuộc trò chuyện có thể bong bóng» (All conversations can bubble).
+            </Text>
+            <TouchableOpacity
+              style={styles.btnSec}
+              onPress={() => {
+                try {
+                  Battery?.openAppNotificationSettings?.();
+                } catch {
+                  Linking.openSettings();
+                }
+              }}
+            >
+              <Text style={styles.btnSecTxt}>Mở cài đặt thông báo</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
+
       <View style={[styles.card, CrmShadow.card]}>
-        <Text style={styles.stepNum}>{Platform.OS === 'android' ? '3' : '2'}</Text>
+        <Text style={styles.stepNum}>{Platform.OS === 'android' ? '4' : '2'}</Text>
         <View style={styles.stepBody}>
           <Text style={styles.stepTitle}>Tắt tối ưu pin (bắt buộc nhận tin khi app tắt)</Text>
           <Text style={styles.stepDesc}>
@@ -215,7 +241,7 @@ export default function BubblePermissionOnboardScreen({ navigation }: Props) {
 
       {Platform.OS === 'android' && oem?.hasAutoStartSettings ? (
         <View style={[styles.card, CrmShadow.card]}>
-          <Text style={styles.stepNum}>4</Text>
+          <Text style={styles.stepNum}>5</Text>
           <View style={styles.stepBody}>
             <Text style={styles.stepTitle}>
               Cho phép tự khởi động ({oem.manufacturer || 'OEM'})
@@ -294,6 +320,7 @@ const styles = StyleSheet.create({
   stepBody: { flex: 1 },
   stepTitle: { fontSize: 15, fontWeight: '700', color: CrmColors.gray900 },
   stepDesc: { fontSize: 13, color: CrmColors.gray600, marginTop: 4, lineHeight: 18 },
+  bold: { fontWeight: '800', color: CrmColors.gray800 },
   status: { fontSize: 12, fontWeight: '700', color: CrmColors.amber600, marginTop: 8 },
   statusOk: { color: CrmColors.emerald600 },
   btn: {

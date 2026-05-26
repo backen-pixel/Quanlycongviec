@@ -27,6 +27,7 @@ import type { MoreStackParamList } from '../navigation/types';
 import {
   CRM_MOBILE_PREFS_CHANGED,
   loadCrmMobilePrefs,
+  saveCrmMobilePrefs,
   type CrmMobilePrefs,
 } from '../lib/crmMobilePrefs';
 import {
@@ -44,10 +45,16 @@ const ZALO_BLUE = '#0068FF';
 const ZALO_BLUE_SOFT = '#E8F4FF';
 
 const EDGE = 10;
+/**
+ * Kích thước bong bóng (dp) — match Messenger ChatHeads (~60dp) cho dễ thấy.
+ * Compact dùng khi user thích nhỏ gọn (vẫn lớn hơn 48dp cũ).
+ */
+const BUBBLE_SIZE_DEFAULT = 60;
+const BUBBLE_SIZE_COMPACT = 52;
 /** Đường kính vùng thả (hình tròn giữa đáy màn hình) */
 const DROP_TARGET_DIAM = 56;
 const DROP_MARGIN_ABOVE_HOME = 10;
-const PAN_MOVE_THRESHOLD = 12;
+const PAN_MOVE_THRESHOLD = 8;
 /** Giữ lâu giống Zalo/Messenger — mở menu lối tắt */
 const LONG_PRESS_MS = 420;
 
@@ -130,13 +137,13 @@ export default function FloatingChatBubble() {
   const [nativeOverlayActive, setNativeOverlayActive] = useState(false);
   const { width, height } = Dimensions.get('window');
   const compact = prefs?.floatingChatBubbleCompact ?? false;
-  const bubbleSize = compact ? 48 : 58;
+  const bubbleSize = compact ? BUBBLE_SIZE_COMPACT : BUBBLE_SIZE_DEFAULT;
   const badge = Math.max(0, Number(chatUnreadCount) || 0);
 
   const xy = useRef(
-    new Animated.ValueXY({ x: width - 58 - EDGE, y: height * 0.62 }),
+    new Animated.ValueXY({ x: width - BUBBLE_SIZE_DEFAULT - EDGE, y: height * 0.62 }),
   ).current;
-  const drag = useRef({ x: width - 58 - EDGE, y: height * 0.62 }).current;
+  const drag = useRef({ x: width - BUBBLE_SIZE_DEFAULT - EDGE, y: height * 0.62 }).current;
   /** Tránh onPress sau khi giữ lâu (một số máy vẫn fire press khi nhả tay) */
   const suppressTapAfterLongPressRef = useRef(false);
   const pressScale = useRef(new Animated.Value(1)).current;
@@ -163,7 +170,7 @@ export default function FloatingChatBubble() {
       const pos = await loadFloatingBubblePosition();
       if (!cancelled && pos) {
         const { width: w, height: hgt } = Dimensions.get('window');
-        const bs = (p?.floatingChatBubbleCompact ?? false) ? 48 : 58;
+        const bs = (p?.floatingChatBubbleCompact ?? false) ? BUBBLE_SIZE_COMPACT : BUBBLE_SIZE_DEFAULT;
         const nx = clamp(pos.x, EDGE, w - bs - EDGE);
         const ny = clamp(pos.y, EDGE + 60, hgt - bs - EDGE - 40);
         drag.x = nx;
@@ -595,10 +602,37 @@ export default function FloatingChatBubble() {
               <Ionicons name="chevron-forward" size={18} color={CrmColors.gray400} />
             </TouchableOpacity>
 
+            <TouchableOpacity
+              style={styles.menuRow}
+              onPress={() => {
+                if (!prefs) return;
+                void saveCrmMobilePrefs({
+                  ...prefs,
+                  floatingChatBubbleCompact: !prefs.floatingChatBubbleCompact,
+                });
+                setQuickMenuOpen(false);
+              }}
+            >
+              <Ionicons
+                name={compact ? 'expand-outline' : 'contract-outline'}
+                size={22}
+                color={ZALO_BLUE}
+              />
+              <View style={styles.menuRowBody}>
+                <Text style={styles.menuRowTxt}>
+                  {compact ? 'Bong bóng lớn (56dp)' : 'Chế độ thu gọn (48dp)'}
+                </Text>
+                <Text style={styles.menuRowHint}>
+                  {compact ? 'Trở về kích thước chuẩn Messenger/Zalo' : 'Thu nhỏ bong bóng như Zalo'}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={CrmColors.gray400} />
+            </TouchableOpacity>
+
             <TouchableOpacity style={styles.menuRowDanger} onPress={() => hideBubbleLikeZalo()}>
               <Ionicons name="eye-off-outline" size={22} color={CrmColors.red700} />
               <View style={styles.menuRowBody}>
-                <Text style={styles.menuRowTxtDanger}>Ẩn bong bóng chat</Text>
+                <Text style={styles.menuRowTxtDanger}>Đóng bong bóng này</Text>
                 <Text style={styles.menuRowHint}>Tương đương kéo xuống vùng đỏ đáy màn hình</Text>
               </View>
             </TouchableOpacity>

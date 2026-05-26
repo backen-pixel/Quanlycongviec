@@ -2,6 +2,7 @@ const {
   isCrmSystemAdminUser,
   isCrmCompanyAdminUser,
   isCrmRegionAdminUser,
+  isCrmSalesAdminUser,
 } = require('./crmAccessRoles');
 
 /** UUID hợp lệ từ token / body */
@@ -26,10 +27,15 @@ function normalizeRegionIdList(raw) {
  * - region_admin: bắt buộc trong danh sách khu vực của user.
  * - User khác: nếu có crm_region_ids trên JWT → chỉ các lead thuộc khu vực đó (cộng hưởng lọc assigned ở route).
  */
+/** Admin / sales_admin công ty: gán khu vực tùy ý trong công ty (không khóa theo user_company_regions). */
+function userCanAssignAnyCrmRegion(user) {
+  return isCrmSystemAdminUser(user) || isCrmCompanyAdminUser(user) || isCrmSalesAdminUser(user);
+}
+
 function getCrmLeadRegionConstraint(req) {
   const user = req.user;
   if (!user) return { mode: 'none', ids: [] };
-  if (isCrmSystemAdminUser(user) || isCrmCompanyAdminUser(user)) {
+  if (userCanAssignAnyCrmRegion(user)) {
     return { mode: 'none', ids: [] };
   }
   const ids = normalizeRegionIdList(user.crm_region_ids);
@@ -90,6 +96,17 @@ function assertLeadReadableByRegionScope(req, leadRow) {
   return { ok: true };
 }
 
+/** Gán region_id lên lead/deal — NV chỉ được chọn khu vực trong crm_region_ids (trừ admin / sales_admin). */
+function assertUserCanAssignCrmRegion(req, regionId) {
+  if (!regionId) return { ok: true };
+  if (userCanAssignAnyCrmRegion(req?.user)) return { ok: true };
+  const c = getCrmLeadRegionConstraint(req);
+  if (c.mode === 'in' && c.ids?.length && !c.ids.includes(String(regionId))) {
+    return { ok: false, error: 'Không gán khu vực ngoài phạm vi được phân cho bạn' };
+  }
+  return { ok: true };
+}
+
 module.exports = {
   normalizeRegionIdList,
   getCrmLeadRegionConstraint,
@@ -97,4 +114,6 @@ module.exports = {
   fetchUserCrmRegionIds,
   assertLeadReadableByRegionScope,
   assertRegionBelongsToCompany,
+  userCanAssignAnyCrmRegion,
+  assertUserCanAssignCrmRegion,
 };

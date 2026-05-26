@@ -1246,7 +1246,7 @@ export default function LeadDetail() {
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         {/* Left: Customer Info */}
-        <div className="lg:col-span-1 space-y-4">
+        <div className="lg:col-span-1 space-y-4 min-w-0">
           {/* Customer Card - Inline Edit */}
           <div className="bg-white rounded-xl border p-5 space-y-4">
             <h3 className="text-sm font-bold text-gray-900 uppercase">Khách hàng</h3>
@@ -1348,7 +1348,7 @@ export default function LeadDetail() {
         </div>
 
         {/* Right: Documents + Activities with Tabs */}
-        <div className="lg:col-span-3 space-y-4">
+        <div className="lg:col-span-3 space-y-4 min-w-0">
           {/* Tab Switcher */}
           <div className="bg-white rounded-xl border">
             <div className="flex border-b">
@@ -2525,7 +2525,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
     }
     let cancelled = false;
     api
-      .get('/crm/company-regions', { params: { company_id: String(cid) } })
+      .get('/crm/company-regions', { params: { company_id: String(cid), for_module: 'crm' } })
       .then((r) => {
         if (cancelled) return;
         const list = Array.isArray(r.data) ? r.data : [];
@@ -2538,6 +2538,25 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
       cancelled = true;
     };
   }, [lead?.company_id]);
+
+  /** NV có crm_region_ids chỉ chọn khu vực được phân; admin / sales_admin chọn mọi khu vực CRM của công ty. */
+  const selectableRegions = useMemo(() => {
+    const active = companyRegions;
+    if (isAdminLike(currentUser)) return active;
+    const uidRegions = currentUser?.crm_region_ids;
+    if (Array.isArray(uidRegions) && uidRegions.length > 0) {
+      const allowed = new Set(uidRegions.map(String));
+      let list = active.filter((r) => allowed.has(String(r.id)));
+      if (lead?.region_id) {
+        const cur = active.find((r) => String(r.id) === String(lead.region_id));
+        if (cur && !list.some((r) => String(r.id) === String(cur.id))) {
+          list = [cur, ...list];
+        }
+      }
+      return list;
+    }
+    return active;
+  }, [companyRegions, currentUser, lead?.region_id]);
 
   const saveField = async (field, value) => {
     setSaving(true);
@@ -2557,7 +2576,15 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
       else if (field === 'expected_close_date') payload.expected_close_date = value || null;
       else if (field === 'description') payload.description = value || null;
       else if (field === 'next_follow_up') payload.next_follow_up = value || null;
-      else if (field === 'region_id') payload.region_id = value || null;
+      else if (field === 'region_id') {
+        const rid = value != null && String(value).trim();
+        payload.region_id = rid || null;
+        if (payload.region_id && !selectableRegions.some((r) => String(r.id) === String(payload.region_id))) {
+          alert('Khu vực không hợp lệ hoặc ngoài phạm vi được phân cho bạn');
+          setSaving(false);
+          return;
+        }
+      }
       else if (field === 'company_id') {
         payload.company_id = value || null;
         payload.region_id = null;
@@ -2583,13 +2610,14 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
           <div className="flex-1 min-w-0">
             <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">{label}</p>
             {isEditing ? (
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 min-w-0 relative z-20">
                 {type === 'select' ? (
                   <select
                     value={editVal}
                     onChange={e => setEditVal(e.target.value)}
-                    className="flex-1 h-8 px-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                    className="flex-1 min-w-0 w-full h-8 px-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 bg-white"
                     autoFocus
+                    title={(options || []).find(o => String(o.value) === String(editVal))?.label || ''}
                   >
                     <option value="">-- Chọn --</option>
                     {isSelectEmpty && (
@@ -2604,7 +2632,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
                     value={editVal}
                     onChange={e => setEditVal(e.target.value)}
                     rows={2}
-                    className="flex-1 px-2 py-1.5 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 resize-none"
+                    className="flex-1 min-w-0 w-full px-2 py-1.5 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 resize-none"
                     autoFocus
                   />
                 ) : (
@@ -2612,7 +2640,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
                     type={type}
                     value={editVal}
                     onChange={e => setEditVal(e.target.value)}
-                    className="flex-1 h-8 px-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
+                    className="flex-1 min-w-0 w-full h-8 px-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
                     autoFocus
                     onKeyDown={e => e.key === 'Enter' && saveField(field, editVal)}
                   />
@@ -2737,8 +2765,8 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
               : null
           }
           type="select"
-          options={companyRegions.map((r) => ({
-            value: r.id,
+          options={selectableRegions.map((r) => ({
+            value: String(r.id),
             label: `${r.name}${r.code ? ` (${r.code})` : ''}${r.division?.short_name || r.division?.name ? ` — ${r.division?.short_name || r.division?.name}` : ''}`,
           }))}
         />

@@ -190,6 +190,17 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
   }
 
   /**
+   * JS gọi khi user bật pref `useAndroidBubblesWhenAvailable` → lưu vào
+   * SharedPreferences để [BubbleFcmService] biết phải post Bubble API thay vì
+   * wake overlay tự vẽ. Đây là cách duy nhất để bong bóng CRM được System UI
+   * gom chung 1 stack với Messenger / Zalo.
+   */
+  @ReactMethod
+  fun setPreferBubblesApi(prefer: Boolean) {
+    prefs.edit().putBoolean(KEY_PREFER_BUBBLES_API, prefer).apply()
+  }
+
+  /**
    * Post notification kiểu bubble cho 1 conversation.
    * JS gọi khi có tin mới và muốn ưu tiên Android Bubbles thay vì overlay tự vẽ.
    */
@@ -480,5 +491,7 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
     internal const val KEY_PENDING_GROUP = "pending_group"
     internal const val KEY_PENDING_OPEN_MESSENGER = "pending_open_messenger"
     private const val KEY_LAST_BUBBLE_KEY = "last_bubble_key"
+    /** true = ưu tiên Android Bubbles API thay vì overlay tự vẽ. */
+    internal const val KEY_PREFER_BUBBLES_API = "prefer_bubbles_api"
   }
 }

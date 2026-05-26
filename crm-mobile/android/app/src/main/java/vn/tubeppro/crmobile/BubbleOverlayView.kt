@@ -13,18 +13,24 @@ import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
 import android.view.WindowManager
-import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
-import kotlin.math.min
 
 /**
  * View tròn render avatar (chữ cái) + badge cho bong bóng overlay.
  *
- * Đối ứng [com.facebook.chatheads.view.bubble.BubbleView] của Messenger.
- * Tự xử lý touch: tap, long-press, drag, snap mép, drop dismiss.
+ * KIẾN TRÚC: Window được tạo lớn ([WINDOW_DP] = 180dp) nhưng phần bong bóng vẽ
+ * thật chỉ [VISIBLE_DP] = 60dp ở **giữa** window. Phần đệm trong suốt 60dp mỗi
+ * bên giúp ngón tay không bị "thoát" window khi user kéo nhanh — đây là cách
+ * Facebook ChatHeads làm để drag mượt mà. Đánh đổi: vùng halo trong suốt sẽ
+ * không cho touch xuyên xuống app dưới (giống Messenger). Ta accept tradeoff
+ * này vì smoothness của drag là yêu cầu chính.
  *
- * KHÔNG tự gắn vào WindowManager — [BubbleWindowManager] phụ trách.
+ * Để giảm "false-tap" khi user chạm vào vùng halo trong suốt, [onTouchEvent]
+ * hit-test theo bán kính bubble visible: touch ngoài vòng tròn → trả về `false`
+ * và bubble không phản hồi (visual không có gì xảy ra).
+ *
+ * Tham khảo: [com.facebook.chatheads.view.bubble.BubbleView]
  */
 @SuppressLint("ViewConstructor")
 class BubbleOverlayView(
@@ -47,6 +53,11 @@ class BubbleOverlayView(
   private val avatarBitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { isFilterBitmap = true }
   private var badgeText: String? = null
   private var dragging = false
+
+  /** Bán kính bong bóng nhìn thấy (cố định, không phụ thuộc kích thước view). */
+  private val bubbleVisibleRadius = dp(VISIBLE_DP / 2f)
+  /** Bao rộng hơn bubble một chút để bắt touch ở mép cho dễ. */
+  private val touchableRadius = bubbleVisibleRadius + dp(6f)
 
   // ---------------- Paints ----------------
   private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -119,7 +130,8 @@ class BubbleOverlayView(
     val h = height.toFloat()
     val cx = w / 2f
     val cy = h / 2f
-    val outerR = min(cx, cy) - dp(2f)
+    // Dùng kích thước bubble CỐ ĐỊNH (không phụ thuộc view size — view có thể lớn 180dp).
+    val outerR = bubbleVisibleRadius - dp(2f)
 
     // Outer white circle + blue ring
     canvas.drawCircle(cx, cy, outerR, bgPaint)
@@ -176,9 +188,21 @@ class BubbleOverlayView(
 
   private var velocityTracker: VelocityTracker? = null
 
+  /** Kiểm tra điểm touch có nằm trong vùng tròn bubble (so với tâm view). */
+  private fun isOnVisibleBubble(x: Float, y: Float): Boolean {
+    val cx = width / 2f
+    val cy = height / 2f
+    val dist = hypot((x - cx).toDouble(), (y - cy).toDouble()).toFloat()
+    return dist <= touchableRadius
+  }
+
   override fun onTouchEvent(event: MotionEvent): Boolean {
     when (event.action) {
       MotionEvent.ACTION_DOWN -> {
+        // Bỏ qua DOWN ngoài vùng bubble — vùng đệm trong suốt 60dp mỗi bên
+        // không được phép trigger drag (tránh "false-tap" khi user vô tình
+        // chạm vào halo của window).
+        if (!isOnVisibleBubble(event.x, event.y)) return false
         touchDownX = event.rawX
         touchDownY = event.rawY
         touchDownTimeMs = SystemClock.uptimeMillis()
@@ -245,8 +269,22 @@ class BubbleOverlayView(
     val ZALO_BLUE: Int = Color.parseColor("#0068FF")
     val ZALO_BLUE_SOFT: Int = Color.parseColor("#E8F4FF")
 
-    /** LayoutParams chuẩn cho overlay window. */
-    fun makeLayoutParams(sizePx: Int, x: Int, y: Int): WindowManager.LayoutParams {
+    /** Kích thước bong bóng nhìn thấy (dp). */
+    const val VISIBLE_DP: Float = 60f
+    /** Kích thước window thật (lớn hơn để đảm bảo finger không "thoát" lúc kéo). */
+    const val WINDOW_DP: Float = 180f
+
+    fun visibleSizePx(ctx: Context): Int =
+      TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, VISIBLE_DP, ctx.resources.displayMetrics).toInt()
+
+    fun windowSizePx(ctx: Context): Int =
+      TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, WINDOW_DP, ctx.resources.displayMetrics).toInt()
+
+    /**
+     * LayoutParams cho overlay window. `windowSizePx` là kích thước WINDOW thật
+     * (lớn hơn bubble visible để có vùng đệm cho drag), không phải bubble size.
+     */
+    fun makeLayoutParams(windowSizePx: Int, x: Int, y: Int): WindowManager.LayoutParams {
       val type = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
         WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
       } else {
@@ -254,9 +292,10 @@ class BubbleOverlayView(
         WindowManager.LayoutParams.TYPE_PHONE
       }
       return WindowManager.LayoutParams(
-        sizePx, sizePx, x, y,
+        windowSizePx, windowSizePx, x, y,
         type,
         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+          WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
           WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
           WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
         android.graphics.PixelFormat.TRANSLUCENT,

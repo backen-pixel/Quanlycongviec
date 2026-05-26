@@ -25,6 +25,7 @@ const Overlay = NativeModules.FloatingBubbleOverlay as
       consumeOpenMessenger?: () => Promise<boolean>;
       saveAuthToken?: (token: string) => void;
       saveWebOrigin?: (origin: string) => void;
+      setPreferBubblesApi?: (prefer: boolean) => void;
       showConvBubble?: (groupId: string, title: string, avatarLetter: string) => void;
       hideConvBubble?: (groupId: string) => void;
       showPeek?: (sender: string, message: string, bubbleKey: string | null) => void;
@@ -222,6 +223,25 @@ export default function SystemBubbleSync() {
           await Overlay.stopOverlay?.().catch(() => {});
           return;
         }
+        // Ưu tiên Android Bubbles API — nếu thiết bị hỗ trợ + user đã bật
+        // pref + đã grant Bubbles permission → KHÔNG chạy overlay tự vẽ.
+        // Lý do: System UI sẽ tự render bubble và XẾP CHUNG STACK với
+        // Messenger/Zalo. Chạy overlay song song sẽ che mất bubble system
+        // → user không thấy bubble được gom với Mess/Zalo.
+        if (
+          prefs.useAndroidBubblesWhenAvailable &&
+          Overlay.areBubblesSupported
+        ) {
+          try {
+            const supported = await Overlay.areBubblesSupported();
+            if (supported) {
+              await Overlay.stopOverlay?.().catch(() => {});
+              return;
+            }
+          } catch {
+            /* fallback: vẫn chạy overlay */
+          }
+        }
         if (onlyUnread && badge === 0) {
           await Overlay.stopOverlay?.().catch(() => {});
           return;
@@ -398,7 +418,17 @@ export default function SystemBubbleSync() {
           try { Overlay.cancelChatNotification?.(bubbleKey); } catch { /* */ }
           return;
         }
-        noteOverlayConv(bubbleKey, title, bubbleAvatarLetter, senderAvatarUrl);
+        // Foreground: chỉ ghi entry vào overlay stack KHI overlay tự vẽ là
+        // strategy hiện hành (tức user không bật Bubbles API). Nếu Bubbles API
+        // đang lo phần background, foreground không cần đẩy overlay nữa
+        // — bong bóng RN in-app đã hiển thị rồi.
+        const preferBubblesActive =
+          prefs?.useAndroidBubblesWhenAvailable === true &&
+          Overlay.areBubblesSupported &&
+          Overlay.postBubbleNotification;
+        if (!preferBubblesActive) {
+          noteOverlayConv(bubbleKey, title, bubbleAvatarLetter, senderAvatarUrl);
+        }
         // Phase 4: FCM không deliver khi app foreground → tự post local heads-up
         try {
           Overlay.postChatNotification?.(

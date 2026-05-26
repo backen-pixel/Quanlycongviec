@@ -1386,17 +1386,68 @@ class ExpandedChatPanel(
 
   // ---------- Avatar loader ----------
 
+  /**
+   * Set ảnh avatar dạng HÌNH TRÒN — không phụ thuộc `clipToOutline` (nhiều OEM
+   * Android render đường outline lệch hoặc bỏ qua khiến avatar méo). Dùng
+   * [circularBitmapDrawable] tự vẽ bằng `BitmapShader` → tròn 100% trên mọi máy.
+   */
   private fun loadAvatar(target: ImageView, url: String?, letter: String) {
+    target.scaleType = ImageView.ScaleType.FIT_XY
     target.setImageDrawable(letterDrawable(letter.ifBlank { "?" }, senderColor(letter)))
     if (url.isNullOrBlank()) return
     cachedBitmaps[url]?.let {
-      target.setImageBitmap(it)
+      target.setImageDrawable(circularBitmapDrawable(it))
       return
     }
     io.execute {
       val bmp = fetchBitmap(url) ?: return@execute
       cachedBitmaps[url] = bmp
-      main.post { target.setImageBitmap(bmp) }
+      main.post { target.setImageDrawable(circularBitmapDrawable(bmp)) }
+    }
+  }
+
+  /**
+   * Drawable hiển thị bitmap dưới dạng hình tròn dùng [android.graphics.BitmapShader]
+   * — tương đương Glide `CircleCrop` nhưng không phụ thuộc thư viện ngoài.
+   */
+  private fun circularBitmapDrawable(bmp: Bitmap): android.graphics.drawable.Drawable {
+    return object : android.graphics.drawable.Drawable() {
+      private val shader = android.graphics.BitmapShader(
+        bmp,
+        android.graphics.Shader.TileMode.CLAMP,
+        android.graphics.Shader.TileMode.CLAMP,
+      )
+      private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        this.shader = this@apply.shader.also { /* no-op */ }
+      }.also { it.shader = shader }
+      private val matrix = android.graphics.Matrix()
+
+      override fun onBoundsChange(bounds: android.graphics.Rect) {
+        super.onBoundsChange(bounds)
+        // Center-crop scale: scale theo cạnh ngắn của bitmap → vừa khít bounds.
+        val w = bounds.width().toFloat()
+        val h = bounds.height().toFloat()
+        val src = minOf(bmp.width, bmp.height).toFloat()
+        val scale = maxOf(w, h) / src
+        matrix.reset()
+        matrix.setScale(scale, scale)
+        val dx = (w - bmp.width * scale) / 2f
+        val dy = (h - bmp.height * scale) / 2f
+        matrix.postTranslate(dx, dy)
+        shader.setLocalMatrix(matrix)
+      }
+
+      override fun draw(canvas: android.graphics.Canvas) {
+        val w = bounds.width().toFloat()
+        val h = bounds.height().toFloat()
+        val r = minOf(w, h) / 2f
+        canvas.drawCircle(w / 2f, h / 2f, r, paint)
+      }
+
+      override fun setAlpha(a: Int) { paint.alpha = a }
+      override fun setColorFilter(cf: android.graphics.ColorFilter?) { paint.colorFilter = cf }
+      @Suppress("DEPRECATION")
+      override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
     }
   }
 
