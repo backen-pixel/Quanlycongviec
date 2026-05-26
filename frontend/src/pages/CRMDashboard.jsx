@@ -13,7 +13,7 @@ import {
   Clock, List, LayoutGrid, GitMerge, UserCheck, Trash2, CheckSquare, BarChart3,
   MessageSquare,
 } from 'lucide-react';
-import { ListView, PlannerView, DeadlineView, CommentsView, CrmDeadlineSourceBadge } from '../components/CRMViews';
+import { ListView, PlannerView, DeadlineView, CommentsView } from '../components/CRMViews';
 import { resolveCrmLeadKanbanScheduleSource } from '../lib/crmLeadDeadlineDisplay';
 import EmployeePicker from '../components/EmployeePicker';
 import {
@@ -282,11 +282,11 @@ function getCrmOpenTaskDeadlineTone(deadlineIso) {
 function pipelineCardToneClasses(level) {
   switch (level) {
     case 'overdue':
-      return 'bg-red-50 border-red-300';
+      return 'bg-red-100 border-red-300';
     case 'soon':
-      return 'bg-orange-50 border-orange-300';
+      return 'bg-orange-100 border-orange-300';
     case 'warn':
-      return 'bg-amber-50 border-amber-200';
+      return 'bg-orange-50 border-orange-200';
     default:
       return 'bg-white border-gray-200';
   }
@@ -629,6 +629,8 @@ export default function CRMDashboard() {
   });
   /** Hiện cột Kanban «Chưa có giai đoạn» ở cuối — chứa deal không thuộc bất kỳ cột nào của pipeline đang xem. */
   const [showOrphanDealColumn, setShowOrphanDealColumn] = useState(() => !!P?.showOrphanDealColumn);
+  /** Thu gọn alert strip «deal quá hạn» (chỉ theo phiên, không lưu) */
+  const [overdueAlertCollapsed, setOverdueAlertCollapsed] = useState(false);
   const [showAdvSearch, setShowAdvSearch] = useState(() => {
     if (P?.showAdvSearch) return true;
     if (snapshotHasActiveFilters(P)) return true;
@@ -2290,6 +2292,41 @@ export default function CRMDashboard() {
     return currentPipeline;
   }, [currentPipeline, orphanDealColumn]);
 
+  /**
+   * Danh sách lead/deal QUÁ HẠN theo pipeline đang xem.
+   * Ưu tiên hạn NV CRM (`crm_next_open_task_deadline`); nếu không có thì xét SLA cột.
+   * Bỏ qua stage Thắng/Lost. Sắp xếp giảm dần theo thời gian quá hạn.
+   */
+  const overdueItems = useMemo(() => {
+    if (viewMode !== 'kanban' && viewMode !== 'deadline' && viewMode !== 'list') return [];
+    const isLead = pipelineType === 'lead';
+    const items = isLead ? leads : deals;
+    const stages = isLead ? stagesLead : stagesDeal;
+    if (!items?.length || !stages?.length) return [];
+    const stageMap = new Map(stages.map((s) => [String(s.id), s]));
+    const out = [];
+    for (const it of items) {
+      const stage = stageMap.get(String(it.stage_id || ''));
+      if (!stage || stage.is_won || stage.is_lost) continue;
+      const taskTone = getCrmOpenTaskDeadlineTone(it.crm_next_open_task_deadline);
+      const slaTone = getPipelineStageSlaTone(it.stage_entered_at, stage);
+      const tone = taskTone || slaTone;
+      if (!tone || tone.level !== 'overdue') continue;
+      out.push({
+        id: it.id,
+        code: it.code || `#${it.id}`,
+        title: it.title || '',
+        customerName: it.customer?.full_name || '',
+        assigneeName: it.assignee?.full_name || '',
+        stageName: stage.name,
+        overdueMs: Math.abs(tone.remainingMs || 0),
+        source: taskTone ? 'task' : 'sla',
+      });
+    }
+    out.sort((a, b) => b.overdueMs - a.overdueMs);
+    return out;
+  }, [viewMode, pipelineType, leads, deals, stagesLead, stagesDeal]);
+
   const listViewPipelineId = useMemo(() => {
     if (!dashboardScopeCompanyId) return '';
     return resolvePipelineIdForCompany(dashboardScopeCompanyId) || '';
@@ -3144,17 +3181,84 @@ export default function CRMDashboard() {
               <X className="h-3.5 w-3.5" /> Xóa bộ lọc
             </button>
           )}
-
-          {/* Result count */}
-          {(searchText || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterRegion || filterLeadType || filterPhone === 'no_phone' || timePreset) && (
-            <span className="text-xs text-gray-500 bg-gray-100 px-3 py-2 rounded-lg">
-              {pipelineType === 'lead' ? leads.length : deals.length} / {pipelineType === 'lead' ? allLeads.length : allDeals.length} trên Kanban
-              {activePipelinePhoneTotals?.all != null && filterPhone && (
-                <span className="text-gray-600"> · tổng khớp lọc SĐT (API): {(filterPhone === 'has_phone' ? activePipelinePhoneTotals.hasPhone : activePipelinePhoneTotals.noPhone)?.toLocaleString('vi-VN') ?? '—'}</span>
-              )}
-            </span>
-          )}
         </div>
+
+        {/* ── ALERT: deal/lead QUÁ HẠN — Quản lý nhìn thấy mã ngay, click để cuộn/mở chi tiết ── */}
+        {overdueItems.length > 0 && (
+          <div className="rounded-xl border border-red-300 bg-gradient-to-r from-red-50 via-rose-50 to-orange-50 shadow-sm">
+            <div className="flex items-start gap-3 px-4 py-3">
+              <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-red-100 ring-1 ring-red-300">
+                <AlertTriangle className="h-5 w-5 text-red-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-bold text-red-700">
+                    {overdueItems.length} {pipelineType === 'lead' ? 'lead' : 'deal'} quá hạn cần xử lý ngay
+                  </span>
+                  <span className="text-[11px] text-red-600/80">
+                    (theo NV CRM hoặc SLA cột — đã lọc theo bộ lọc hiện tại)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setOverdueAlertCollapsed((v) => !v)}
+                    className="ml-auto text-xs font-medium text-red-700 hover:text-red-900 underline-offset-2 hover:underline cursor-pointer"
+                  >
+                    {overdueAlertCollapsed ? 'Hiện danh sách' : 'Thu gọn'}
+                  </button>
+                </div>
+                {!overdueAlertCollapsed && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {overdueItems.slice(0, 40).map((it) => {
+                      const days = Math.floor(it.overdueMs / 86400000);
+                      const hours = Math.floor((it.overdueMs % 86400000) / 3600000);
+                      const overdueLabel = days > 0 ? `${days} ngày` : `${hours} giờ`;
+                      const tip = [
+                        it.title && `📌 ${it.title}`,
+                        it.customerName && `👤 ${it.customerName}`,
+                        it.assigneeName && `🤝 ${it.assigneeName}`,
+                        `📂 ${it.stageName}`,
+                        `⏱️ Quá hạn ${overdueLabel} (${it.source === 'task' ? 'NV CRM' : 'SLA cột'})`,
+                      ].filter(Boolean).join('\n');
+                      return (
+                        <button
+                          key={it.id}
+                          type="button"
+                          title={tip}
+                          onClick={() => {
+                            const el = document.querySelector(`[data-crm-pipeline-card="${it.id}"]`);
+                            if (el) {
+                              el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+                              el.classList.add('ring-2', 'ring-red-500', 'ring-offset-2');
+                              setTimeout(() => {
+                                el.classList.remove('ring-2', 'ring-red-500', 'ring-offset-2');
+                              }, 2500);
+                            } else {
+                              persistCrmPipelineUiNow();
+                              localStorage.setItem('crm_pinned_tab', pipelineType);
+                              markCrmPipelineCardFocus(it.id);
+                              navigate(`/crm/leads/${it.id}`);
+                            }
+                          }}
+                          className="group inline-flex items-center gap-1.5 px-2 py-1 bg-white border border-red-200 rounded-md text-[11px] font-mono font-semibold text-red-700 hover:bg-red-100 hover:border-red-400 transition cursor-pointer shadow-sm"
+                        >
+                          <span>{it.code}</span>
+                          <span className="text-[10px] font-sans font-normal text-red-500 group-hover:text-red-700">
+                            · {overdueLabel}
+                          </span>
+                        </button>
+                      );
+                    })}
+                    {overdueItems.length > 40 && (
+                      <span className="inline-flex items-center px-2 py-1 text-[11px] text-red-600 italic">
+                        +{overdueItems.length - 40} mã khác…
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── CUSTOM DATE RANGE PICKER ── */}
         {showCustomDate && (
@@ -4921,7 +5025,7 @@ function KanbanStageCard({
   );
 }
 
-// Kanban Item Card - MISA Style
+// Kanban Item Card - MISA style (redesign: header gọn, value lớn, footer phụ trách + actions)
 function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted }) {
   const navigate = useNavigate();
   const dealDragLocked = isDealCrmKanbanDragLocked(item, pipelineType);
@@ -4954,11 +5058,9 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
     return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
   };
 
-  const stageColor = stage.color || '#e5e7eb';
-
+  const stageColor = stage.color || '#94a3b8';
   const selectedForMerge = mergeSelectedIds && mergeSelectedIds.some((x) => String(x) === String(item.id));
-
-  const splitPickZones = !!onToggleMergeSelect;
+  const canMergeSelect = typeof onToggleMergeSelect === 'function';
 
   const slaTone = getPipelineStageSlaTone(item.stage_entered_at, stage);
   const taskTone = getCrmOpenTaskDeadlineTone(item.crm_next_open_task_deadline);
@@ -4968,29 +5070,114 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
   const scheduleTone = taskTone || slaTone;
   const cardSurface = pipelineCardToneClasses(cardToneLevel);
 
+  // SLA badge phía bên phải giá trị tiền
+  const slaBadge = (() => {
+    if (!scheduleTone?.deadlineTs || stage?.is_won || stage?.is_lost) return null;
+    const isOverdue = cardToneLevel === 'overdue';
+    const remainingLabel = isOverdue
+      ? formatRemainingMs(Math.abs(scheduleTone.remainingMs))
+      : formatRemainingMs(scheduleTone.remainingMs);
+    if (!remainingLabel) return null;
+    const tonePalette =
+      cardToneLevel === 'overdue' ? 'bg-red-50 text-red-700 border-red-200'
+      : cardToneLevel === 'soon'  ? 'bg-orange-50 text-orange-700 border-orange-200'
+      : cardToneLevel === 'warn'  ? 'bg-amber-50 text-amber-800 border-amber-200'
+      : 'bg-slate-50 text-slate-600 border-slate-200';
+    return (
+      <span
+        className={`shrink-0 inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${tonePalette}`}
+        title={[
+          `Hạn: ${new Date(scheduleTone.deadlineTs).toLocaleString('vi-VN')}`,
+          `Nguồn: ${scheduleResolved.source === 'task' ? 'NV CRM mở' : 'SLA cột'}`,
+          isOverdue ? `Đã quá ${remainingLabel}` : `Còn ${remainingLabel}`,
+        ].join('\n')}
+      >
+        <Clock className="h-3 w-3" strokeWidth={2.4} />
+        {isOverdue ? <>Quá {remainingLabel}</> : <>Còn {remainingLabel}</>}
+      </span>
+    );
+  })();
+
+  const assigneeUser = item.assignee || item.lead_owner || null;
+
+  // Badge SX/VC (giữ logic cũ, gói thành biến)
+  const sxVcBadge = (() => {
+    const vcStage = item.vc_pipeline_stage;
+    const sxStage = item.sx_pipeline_stage;
+    const hasProject = !!item.project_id;
+    const stageIsWon = item.stage?.is_won;
+    const fallbackForWon = !vcStage && !sxStage && (hasProject || stageIsWon) && item.type === 'deal'
+      ? { id: null, name: 'Chờ vào xưởng', color: '#0369a1', icon: '⏳', bucket_slug: 'won_pending' }
+      : null;
+    const activeStage = vcStage || sxStage || fallbackForWon;
+    if (!activeStage) return null;
+    const isVC = !!vcStage;
+    const icon = activeStage?.icon
+      || (isVC
+        ? (activeStage?.bucket_slug === 'delivery_pending' ? '📦'
+          : activeStage?.bucket_slug === 'completed' ? '✅' : '🚚')
+        : (activeStage?.bucket_slug === 'won_pending' ? '⏳'
+          : activeStage?.bucket_slug === 'completed' ? '✅' : '🏭'));
+    const label = isVC ? 'VC' : 'SX';
+    const defaultColor = isVC ? '#ea580c' : '#0369a1';
+    const isPlaceholder = !vcStage && !sxStage;
+    return (
+      <div
+        className={`flex items-center gap-1.5 rounded-md px-1.5 py-1 ${isPlaceholder ? 'border-dashed' : ''}`}
+        title={isPlaceholder ? 'Chưa có giai đoạn xưởng — chờ bàn giao Sản xuất hoặc cấu hình pipeline xưởng' : undefined}
+        style={{
+          backgroundColor: activeStage.color ? `${activeStage.color}12` : (isVC ? '#fff7ed' : '#f0f9ff'),
+          border: `1px ${isPlaceholder ? 'dashed' : 'solid'} ${activeStage.color ? `${activeStage.color}50` : (isVC ? '#fed7aa' : '#bae6fd')}`,
+          opacity: isPlaceholder ? 0.9 : 1,
+        }}
+      >
+        <span className="text-[11px] shrink-0">{icon}</span>
+        <span className="text-[9px] font-bold uppercase tracking-wide shrink-0"
+          style={{ color: activeStage.color || defaultColor }}>{label}</span>
+        <span className="text-[11px] font-semibold truncate"
+          style={{ color: activeStage.color || defaultColor }}>
+          {activeStage.name}
+        </span>
+      </div>
+    );
+  })();
+
+  // Badge ngày giao xưởng từ linked_project
+  const productionDeadlineBadge = (() => {
+    const pd = item.linked_project?.production_deadline;
+    if (!pd) return null;
+    const isOverdue = new Date(pd) < new Date();
+    const isSoon = !isOverdue && new Date(pd) < new Date(Date.now() + 3 * 86400000);
+    const tone = isOverdue ? 'bg-red-50 border-red-200 text-red-700'
+      : isSoon ? 'bg-amber-50 border-amber-200 text-amber-700'
+      : 'bg-teal-50 border-teal-200 text-teal-700';
+    return (
+      <div className={`flex items-center gap-1.5 rounded-md border px-1.5 py-1 text-[11px] font-medium ${tone}`}>
+        <span>🏭</span>
+        <span className="truncate">
+          Giao xưởng: {new Date(pd).toLocaleDateString('vi-VN')}
+          {isOverdue ? ' ⚠️' : isSoon ? ' ⚡' : ''}
+        </span>
+      </div>
+    );
+  })();
+
   return (
     <div
       data-crm-pipeline-card={item.id}
       draggable={!dealDragLocked}
       onDragStart={handleDragStart}
       title={dealDragLocked ? 'Cột Sản xuất/Vận chuyển trên CRM — kéo về Thắng hoặc giai đoạn trước; tiến độ xưởng/VC qua badge' : undefined}
-      onClick={
-        splitPickZones
-          ? undefined
-          : () => {
-              openLeadDetail();
-            }
-      }
-      className={`relative ${compact ? 'min-h-[5.25rem]' : 'min-h-[7rem]'} overflow-hidden rounded-lg border transition-all duration-200 group/card hover:-translate-y-0.5 hover:shadow-lg ${cardSurface} ${
-        dealDragLocked
-          ? 'cursor-default'
-          : splitPickZones
-            ? 'cursor-grab active:cursor-grabbing'
-            : 'cursor-pointer'
-      } ${selectedForMerge ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
-      style={{
-        borderLeft: `3px solid ${stageColor}`,
+      onClick={(ev) => {
+        if (ev.target.closest?.('[data-kanban-flag-btn]') || ev.target.closest?.('[data-kanban-comment-btn]') || ev.target.closest?.('[data-kanban-select-zone]')) {
+          return;
+        }
+        openLeadDetail();
       }}
+      className={`relative overflow-hidden rounded-lg border transition-all duration-200 group/card hover:-translate-y-0.5 hover:shadow-md ${cardSurface} ${
+        dealDragLocked ? 'cursor-default' : 'cursor-pointer'
+      } ${selectedForMerge ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
+      style={{ borderLeft: `3px solid ${stageColor}` }}
     >
       {typeof item.kpi_ledger_month_net === 'number' && !stage?.is_lost && (
         <KpiKanbanLedgerBadge
@@ -5000,319 +5187,205 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
           compact={compact}
         />
       )}
-      {/* Cụm nút bottom-right: ghim → tích xanh → bình luận. Đặt cùng 1 hàng,
-          z-index cao hơn lớp splitPickZones (z-20) để vẫn click được. */}
-      {(typeof onTogglePin === 'function' || typeof onToggleInteracted === 'function' || typeof onOpenKanbanComment === 'function') && (
-        <div className="absolute bottom-2 right-2 z-[40] flex items-center gap-1">
-          {typeof onTogglePin === 'function' && (
-            <button
-              type="button"
-              data-kanban-flag-btn
-              title={item.is_pinned ? 'Bỏ ghim thẻ' : 'Ghim thẻ lên đầu'}
-              onClick={(ev) => {
-                ev.stopPropagation();
-                onTogglePin(item, !item.is_pinned);
-              }}
-              className={`flex h-7 w-7 items-center justify-center rounded-full border bg-white/95 shadow-md transition-colors cursor-pointer ${
-                item.is_pinned
-                  ? 'border-amber-300 text-amber-600 hover:bg-amber-50'
-                  : 'border-gray-200/90 text-slate-500 hover:border-amber-300 hover:text-amber-600 hover:bg-amber-50'
-              }`}
+
+      {/* Checkbox chọn gộp/hàng loạt — góc trên trái */}
+      {canMergeSelect && (
+        <button
+          type="button"
+          data-kanban-select-zone
+          title={selectedForMerge ? 'Bỏ chọn thẻ này' : 'Chọn để gộp / xóa / chuyển hàng loạt'}
+          onClick={(ev) => {
+            ev.stopPropagation();
+            onToggleMergeSelect(item.id);
+          }}
+          className={`absolute top-1.5 right-1.5 z-30 flex h-5 w-5 items-center justify-center rounded border bg-white/95 shadow-sm transition-colors cursor-pointer ${
+            selectedForMerge
+              ? 'border-amber-500 bg-amber-100 text-amber-700'
+              : 'border-slate-300 text-slate-400 opacity-0 group-hover/card:opacity-100 hover:border-amber-400 hover:text-amber-600'
+          }`}
+        >
+          <CheckSquare className="h-3.5 w-3.5" strokeWidth={2.4} />
+        </button>
+      )}
+
+      <div className={`${compact ? 'p-2.5' : 'p-3'} space-y-1.5`}>
+        {/* 1. Header: mã + ngày tạo (NỔI BẬT) + cảnh báo + badge MỚI */}
+        <div className="flex items-center gap-1.5 min-w-0 pr-6">
+          <span className="font-mono text-[11px] font-semibold text-slate-500 truncate">{item.code}</span>
+          {item.created_at && (
+            <span
+              className="shrink-0 inline-flex items-center gap-0.5 rounded-md border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-indigo-700"
+              title={`Tạo ${pipelineType === 'deal' ? 'deal' : 'lead'}: ${new Date(item.created_at).toLocaleString('vi-VN')}`}
             >
-              <Pin className={`h-3.5 w-3.5 ${item.is_pinned ? 'rotate-45 fill-amber-500' : ''}`} strokeWidth={2.25} />
-            </button>
-          )}
-          {typeof onToggleInteracted === 'function' && (
-            <button
-              type="button"
-              data-kanban-flag-btn
-              title={item.is_interacted ? 'Bỏ đánh dấu đã tương tác' : 'Đánh dấu đã tương tác với khách'}
-              onClick={(ev) => {
-                ev.stopPropagation();
-                onToggleInteracted(item, !item.is_interacted);
-              }}
-              className={`flex h-7 w-7 items-center justify-center rounded-full border bg-white/95 shadow-md transition-colors cursor-pointer ${
-                item.is_interacted
-                  ? 'border-blue-300 text-blue-600 hover:bg-blue-50'
-                  : 'border-gray-200/90 text-slate-500 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50'
-              }`}
-            >
-              <CheckCircle2 className={`h-3.5 w-3.5 ${item.is_interacted ? 'fill-blue-500 text-white' : ''}`} strokeWidth={2.25} />
-            </button>
-          )}
-          {typeof onOpenKanbanComment === 'function' && (
-            <button
-              type="button"
-              data-kanban-comment-btn
-              title="Bình luận nhanh"
-              onClick={(ev) => {
-                ev.stopPropagation();
-                onOpenKanbanComment(item);
-              }}
-              className="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200/90 bg-white/95 text-slate-600 shadow-md transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600 cursor-pointer"
-            >
-              <MessageSquare className="h-3.5 w-3.5" strokeWidth={2.25} />
-            </button>
-          )}
-        </div>
-      )}
-      {splitPickZones && (
-        <>
-          {/* Hai vùng màu — chỉ hiện khi hover thẻ */}
-          <div
-            className="pointer-events-none absolute inset-0 z-[5] flex flex-col rounded-lg opacity-0 transition-opacity duration-150 group-hover/card:opacity-100"
-            aria-hidden
-          >
-            <div className="h-[30%] min-h-[2.25rem] shrink-0 border-b border-amber-200/60 bg-amber-100/65" />
-            <div className="min-h-0 flex-1 bg-sky-100/50" />
-          </div>
-
-          <button
-            type="button"
-            data-kanban-select-zone
-            title="30% trên: chọn để gộp / xóa / chuyển hàng loạt"
-            onClick={(ev) => {
-              ev.stopPropagation();
-              onToggleMergeSelect(item.id);
-            }}
-            className={`absolute left-0 right-0 top-0 z-20 flex h-[30%] min-h-[2.25rem] cursor-pointer items-center justify-center border-0 bg-transparent p-0 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-500 ${
-              selectedForMerge ? 'ring-1 ring-inset ring-amber-400/70' : ''
-            }`}
-          >
-            <span className="pointer-events-none flex flex-col items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100">
-              <CheckSquare className={`${compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} text-amber-900 drop-shadow-sm`} />
-              <span className={`font-bold text-amber-950 drop-shadow-sm ${compact ? 'text-[9px]' : 'text-[10px]'}`}>Chọn</span>
-            </span>
-          </button>
-
-          <button
-            type="button"
-            data-kanban-detail-zone
-            title="70% dưới: mở chi tiết lead/deal"
-            onClick={(ev) => {
-              ev.stopPropagation();
-              openLeadDetail();
-            }}
-            className="absolute bottom-0 left-0 right-0 top-[30%] z-[15] cursor-pointer border-0 bg-transparent p-0 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500"
-          >
-            <span className="pointer-events-none absolute bottom-2 left-1/2 z-10 flex -translate-x-1/2 flex-col items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100">
-              <Eye className={`${compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} text-sky-900 drop-shadow-sm`} />
-              <span className={`font-bold text-sky-950 drop-shadow-sm ${compact ? 'text-[9px]' : 'text-[10px]'}`}>Chi tiết</span>
-            </span>
-          </button>
-        </>
-      )}
-
-      <div
-        className={`relative z-0 ${splitPickZones ? 'pointer-events-none' : ''} ${compact ? 'p-2' : 'p-3'}`}
-      >
-      {/* Header: Code + Value */}
-      <div className={`flex items-start justify-between ${compact ? 'mb-1' : 'mb-2'}`}>
-        <p className={`font-semibold text-blue-600 flex items-center gap-1 min-w-0 ${compact ? 'text-[10px]' : 'text-xs'}`}>
-          <span className="truncate">{item.code}</span>
-          {cardToneLevel === 'overdue' && (
-            <AlertTriangle className={`${compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} text-red-600 shrink-0`} aria-hidden />
-          )}
-        </p>
-        {item.estimated_value > 0 && (
-          <p className={`font-bold text-emerald-600 ${compact ? 'text-[10px] leading-tight text-right max-w-[52%]' : 'text-sm'}`}>{formatVND(item.estimated_value)}</p>
-        )}
-      </div>
-
-      {/* Title */}
-      <div className={`flex items-start gap-1.5 min-w-0 ${compact ? 'mb-1' : 'mb-2'}`}>
-        <div className="flex-1 min-w-0">
-          <p
-            title={splitPickZones ? undefined : item.title}
-            className={`font-medium text-gray-900 truncate ${compact ? 'text-xs' : 'text-sm'}`}
-          >{item.title}</p>
-        </div>
-        {item.is_new_for_current_user && (
-          <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-white bg-rose-500 px-1.5 py-0.5 rounded leading-tight">Mới</span>
-        )}
-      </div>
-
-      {(item.company?.short_name || item.company?.name || item.crm_region?.name) && (
-        <div className={`flex flex-wrap gap-1 ${compact ? 'mb-1' : 'mb-2'}`}>
-          {(item.company?.short_name || item.company?.name) && (
-            <span className="max-w-full truncate rounded px-1.5 py-0.5 text-[10px] font-medium bg-slate-100 text-slate-700">
-              🏢 {item.company.short_name || item.company.name}
-            </span>
-          )}
-          {item.crm_region?.name && (
-            <span className="max-w-full truncate rounded px-1.5 py-0.5 text-[10px] font-medium bg-teal-50 text-teal-800">
-              📍 {item.crm_region.name}
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* Customer name + Phone */}
-      {(item.customer?.full_name || item.customer?.phone) && (
-        <div className={`space-y-0.5 ${compact ? 'mb-1' : 'mb-2'}`}>
-          {item.customer?.full_name && (
-            <p className={`text-gray-600 truncate ${compact ? 'text-[10px]' : 'text-xs'}`}>👤 {item.customer.full_name}</p>
-          )}
-          {item.customer?.phone && (
-            <p className={`text-green-600 font-medium truncate ${compact ? 'text-[10px]' : 'text-xs'}`}>📞 {item.customer.phone}</p>
-          )}
-        </div>
-      )}
-
-      {/* Thời gian tạo / thời gian tại cột — reset khi đổi cột */}
-      <div className={`space-y-0.5 border-t border-gray-200/70 ${compact ? 'mt-1 pt-1.5 mb-1' : 'mt-2 pt-2 mb-2'}`}>
-        <p className={`font-bold text-gray-500 uppercase tracking-wide ${compact ? 'text-[8px]' : 'text-[9px]'}`}>Lên kế hoạch thực hiện</p>
-        <p className={`text-gray-600 leading-snug ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
-          <span className="text-gray-500">Tạo lead:</span>{' '}
-          {item.created_at ? (
-            <>
+              <Calendar className="h-3 w-3" strokeWidth={2.4} />
               {formatDate(item.created_at)}
-              <span className="text-gray-400"> · {formatAgeDetailed(item.created_at)}</span>
-            </>
-          ) : (
-            '—'
-          )}
-        </p>
-        <p className={`text-gray-800 leading-snug ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
-          <span className="text-gray-500">Tại cột:</span>{' '}
-          <span className="font-semibold text-gray-900">
-            {item.stage_entered_at ? formatAgeDetailed(item.stage_entered_at) : '—'}
-          </span>
-          {scheduleTone.deadlineTs != null && !stage?.is_won && !stage?.is_lost && (
-            <span className="block mt-0.5 text-gray-500 font-normal">
-              <span className="inline-flex flex-wrap items-center gap-1.5">
-                <CrmDeadlineSourceBadge source={scheduleResolved.source} />
-                <span>
-                  Hạn: {new Date(scheduleTone.deadlineTs).toLocaleString('vi-VN')}
-                </span>
-              </span>
-              {scheduleTone.remainingMs != null && scheduleTone.level !== 'ok' && (
-                <>
-                  {' · '}
-                  {scheduleTone.level === 'overdue' ? (
-                    <span className="text-red-600 font-semibold">
-                      Quá hạn {formatRemainingMs(Math.abs(scheduleTone.remainingMs))}
-                    </span>
-                  ) : (
-                    <span>Còn {formatRemainingMs(scheduleTone.remainingMs)}</span>
-                  )}
-                </>
-              )}
             </span>
           )}
+          {cardToneLevel === 'overdue' && (
+            <AlertTriangle className="h-3 w-3 text-red-500 shrink-0" aria-hidden />
+          )}
+          {item.is_new_for_current_user && (
+            <span className="ml-auto shrink-0 inline-flex items-center rounded bg-rose-500 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white leading-none">
+              Mới
+            </span>
+          )}
+        </div>
+
+        {/* 2. Tiêu đề */}
+        <p
+          title={item.title}
+          className={`font-medium text-slate-800 leading-snug ${compact ? 'text-[12px] line-clamp-2' : 'text-[13px] line-clamp-2'}`}
+        >
+          {item.title || <span className="italic text-slate-400">(Không tiêu đề)</span>}
         </p>
-      </div>
 
-      {/* Một người phụ trách (Lead & Deal) */}
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
-          {(() => {
-            const u = item.assignee || item.lead_owner;
-            if (!u) {
-              return <p className="text-[10px] text-gray-400"><span className="text-gray-500">Phụ trách:</span> —</p>;
-            }
-            return (
-              <div className="flex items-center gap-2 min-w-0">
-                <div
-                  className={`rounded-full flex items-center justify-center font-bold text-white shrink-0 ${
-                    compact ? 'h-5 w-5 text-[10px]' : 'h-6 w-6 text-xs'
-                  }`}
-                  style={{ backgroundColor: stageColor }}
-                >
-                  {getInitials(u.full_name)}
-                </div>
-                <div className="min-w-0">
-                  <p className="text-[10px] text-gray-400 leading-tight">Phụ trách</p>
-                  <p className={`text-gray-700 font-medium truncate ${compact ? 'text-[10px]' : 'text-xs'}`}>{u.full_name}</p>
-                </div>
-              </div>
-            );
-          })()}
-        </div>
-      </div>
+        {/* 3. Giá trị tiền (lớn, xanh) + SLA badge bên phải */}
+        {(item.estimated_value > 0 || slaBadge) && (
+          <div className="flex items-center justify-between gap-2">
+            {item.estimated_value > 0 ? (
+              <p className={`font-bold tabular-nums leading-none text-emerald-600 ${compact ? 'text-[15px]' : 'text-[16px]'}`}>
+                {formatVND(item.estimated_value)}
+              </p>
+            ) : <span className="text-[11px] text-slate-400 italic">Chưa định giá</span>}
+            {slaBadge}
+          </div>
+        )}
 
-      {/* Deadline */}
-      {item.expected_close_date && (
-        <div className={`${compact ? 'mt-1' : 'mt-2'} text-[10px] px-2 py-1 rounded-lg font-medium ${
-          new Date(item.expected_close_date) < new Date()
-            ? 'bg-red-100 text-red-600'
-            : new Date(item.expected_close_date) < new Date(Date.now() + 3 * 86400000)
-            ? 'bg-amber-100 text-amber-600'
-            : 'bg-purple-100 text-purple-600'
-        }`}>
-          📅 Deadline: {new Date(item.expected_close_date).toLocaleDateString('vi-VN')}
-        </div>
-      )}
-
-      {/* Badge trạng thái module — ưu tiên VC nếu đã bàn giao, còn lại hiện SX.
-          Deal đã Thắng / có dự án mà chưa có badge SX (sync chậm hoặc pipeline xưởng thiếu cột intake) → hiển thị placeholder "Chờ vào xưởng" để KHÔNG bị "mất tag". */}
-      {(() => {
-        const vcStage = item.vc_pipeline_stage;
-        const sxStage = item.sx_pipeline_stage;
-        const hasProject = !!item.project_id;
-        const stageIsWon = item.stage?.is_won;
-        const fallbackForWon = !vcStage && !sxStage && (hasProject || stageIsWon) && item.type === 'deal'
-          ? { id: null, name: 'Chờ vào xưởng', color: '#0369a1', icon: '⏳', bucket_slug: 'won_pending' }
-          : null;
-        const activeStage = vcStage || sxStage || fallbackForWon;
-        if (!activeStage) return null;
-
-        const isVC = !!vcStage;
-        const icon = activeStage?.icon
-          || (isVC
-            ? (activeStage?.bucket_slug === 'delivery_pending' ? '📦'
-              : activeStage?.bucket_slug === 'completed' ? '✅' : '🚚')
-            : (activeStage?.bucket_slug === 'won_pending' ? '⏳'
-              : activeStage?.bucket_slug === 'completed' ? '✅' : '🏭'));
-        const label = isVC ? 'VC' : 'SX';
-        const defaultColor = isVC ? '#ea580c' : '#0369a1';
-
-        const isPlaceholder = !vcStage && !sxStage;
-        return (
-          <div className={`${compact ? 'mt-1' : 'mt-2'}`}>
-            <div
-              className={`flex items-center gap-1.5 px-2 py-1 rounded-lg ${isPlaceholder ? 'border-dashed' : ''}`}
-              title={isPlaceholder ? 'Chưa có giai đoạn xưởng — chờ bàn giao Sản xuất hoặc cấu hình pipeline xưởng' : undefined}
-              style={{
-                backgroundColor: activeStage.color ? `${activeStage.color}12` : (isVC ? '#fff7ed' : '#f0f9ff'),
-                border: `1px ${isPlaceholder ? 'dashed' : 'solid'} ${activeStage.color ? `${activeStage.color}50` : (isVC ? '#fed7aa' : '#bae6fd')}`,
-                opacity: isPlaceholder ? 0.85 : 1,
-              }}>
-              <span className="text-[11px] shrink-0">{icon}</span>
-              <span className="text-[10px] font-bold uppercase tracking-wide shrink-0"
-                style={{ color: activeStage.color || defaultColor }}>{label}</span>
-              <span className={`font-semibold truncate ${compact ? 'text-[10px]' : 'text-xs'}`}
-                style={{ color: activeStage.color || defaultColor }}>
-                {activeStage.name}
+        {/* 4. KH + SĐT: 2 cột (NỔI BẬT — tên KH đậm, SĐT mono lớn) */}
+        {(item.customer?.full_name || item.customer?.phone) && (
+          <div className="flex items-center justify-between gap-2">
+            {item.customer?.full_name ? (
+              <span
+                className="inline-flex items-center gap-1 min-w-0 truncate text-[12px] font-semibold text-slate-800"
+                title={item.customer.full_name}
+              >
+                <User className="h-3.5 w-3.5 shrink-0 text-blue-500" strokeWidth={2.4} />
+                <span className="truncate">{item.customer.full_name}</span>
               </span>
+            ) : <span />}
+            {item.customer?.phone && (
+              <a
+                href={`tel:${item.customer.phone}`}
+                onClick={(ev) => ev.stopPropagation()}
+                className="shrink-0 inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 font-mono text-[12px] font-bold tabular-nums text-emerald-700 hover:bg-emerald-100 transition-colors"
+                title={`Gọi ${item.customer.phone}`}
+              >
+                <Phone className="h-3 w-3" strokeWidth={2.4} />
+                {item.customer.phone}
+              </a>
+            )}
+          </div>
+        )}
+
+        {/* 5. Vị trí (Khu vực CRM) — thay vị trí cũ của Công ty */}
+        {item.crm_region?.name && (
+          <div className="text-[11px] text-slate-600">
+            <span className="inline-flex items-center gap-1 min-w-0 truncate max-w-full">
+              <MapPin className="h-3 w-3 shrink-0 text-rose-400" />
+              <span className="truncate">{item.crm_region.name}</span>
+            </span>
+          </div>
+        )}
+
+        {/* 6. Hàng badge phụ: SX/VC + ngày giao xưởng (nếu có) */}
+        {(sxVcBadge || productionDeadlineBadge) && (
+          <div className="flex flex-wrap gap-1.5 pt-0.5">
+            {sxVcBadge}
+            {productionDeadlineBadge}
+          </div>
+        )}
+
+        {/* 7. Deadline kỳ vọng (expected_close_date) */}
+        {item.expected_close_date && (() => {
+          const isOverdue = new Date(item.expected_close_date) < new Date();
+          const isSoon = !isOverdue && new Date(item.expected_close_date) < new Date(Date.now() + 3 * 86400000);
+          const tone = isOverdue ? 'bg-red-100 text-red-700 border-red-200'
+            : isSoon ? 'bg-amber-100 text-amber-700 border-amber-200'
+            : 'bg-purple-50 text-purple-700 border-purple-200';
+          return (
+            <div className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${tone}`}>
+              <Calendar className="h-3 w-3" />
+              Deadline: {new Date(item.expected_close_date).toLocaleDateString('vi-VN')}
             </div>
-          </div>
-        );
-      })()}
+          );
+        })()}
 
-      {/* Ngày giao xưởng từ linked project */}
-      {item.linked_project?.production_deadline && (() => {
-        const pd = item.linked_project.production_deadline;
-        const isOverdue = new Date(pd) < new Date();
-        const isSoon = !isOverdue && new Date(pd) < new Date(Date.now() + 3 * 86400000);
-        return (
-          <div className={`${compact ? 'mt-1' : 'mt-2'} flex items-center gap-1.5 px-2 py-1 rounded-lg ${isOverdue ? 'bg-red-50 border border-red-200' : isSoon ? 'bg-amber-50 border border-amber-200' : 'bg-teal-50 border border-teal-200'}`}>
-            <span className="text-[10px]">🏭</span>
-            <span className={`font-medium truncate ${compact ? 'text-[10px]' : 'text-xs'} ${isOverdue ? 'text-red-700' : isSoon ? 'text-amber-700' : 'text-teal-700'}`}>
-              Giao xưởng: {new Date(pd).toLocaleDateString('vi-VN')}
-              {isOverdue ? ' ⚠️' : isSoon ? ' ⚡' : ''}
-            </span>
+        {/* 8. Lý do thua */}
+        {item.lost_reason && (
+          <div className="rounded-md border border-red-100 bg-red-50 px-2 py-1">
+            <p className="text-[9px] font-semibold uppercase tracking-wide text-red-500">Lý do thua</p>
+            <p className="text-[11px] text-red-700 line-clamp-2 leading-snug">{item.lost_reason}</p>
           </div>
-        );
-      })()}
+        )}
 
-      {/* Lý do thua */}
-      {item.lost_reason && (
-        <div className="mt-2 px-2 py-1.5 bg-red-50 border border-red-100 rounded-lg">
-          <p className="text-[10px] text-red-400 font-medium">❌ Lý do thua</p>
-          <p className="text-xs text-red-600 line-clamp-2">{item.lost_reason}</p>
+        {/* 9. Footer: avatar + tên phụ trách (trái) + cụm actions (phải) */}
+        <div className="flex items-center justify-between gap-2 pt-1.5 mt-1 border-t border-slate-100">
+          <div className="flex items-center gap-1.5 min-w-0">
+            {assigneeUser ? (
+              <>
+                <div
+                  className="h-6 w-6 shrink-0 rounded-full flex items-center justify-center text-[10px] font-bold text-white shadow-sm"
+                  style={{ backgroundColor: stageColor }}
+                  title={`Phụ trách: ${assigneeUser.full_name}`}
+                >
+                  {getInitials(assigneeUser.full_name)}
+                </div>
+                <span className="truncate text-[11px] font-medium text-slate-700" title={assigneeUser.full_name}>
+                  {assigneeUser.full_name}
+                </span>
+              </>
+            ) : (
+              <>
+                <div
+                  className="h-6 w-6 shrink-0 rounded-full flex items-center justify-center text-[10px] font-bold text-slate-400 bg-slate-100 border border-dashed border-slate-300"
+                  title="Chưa gán phụ trách"
+                >
+                  ?
+                </div>
+                <span className="truncate text-[11px] italic text-slate-400">Chưa gán</span>
+              </>
+            )}
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            {typeof onOpenKanbanComment === 'function' && (
+              <button
+                type="button"
+                data-kanban-comment-btn
+                title="Bình luận nhanh"
+                onClick={(ev) => { ev.stopPropagation(); onOpenKanbanComment(item); }}
+                className="flex h-6 w-6 items-center justify-center rounded-full text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
+              >
+                <MessageSquare className="h-3.5 w-3.5" strokeWidth={2.2} />
+              </button>
+            )}
+            {typeof onTogglePin === 'function' && (
+              <button
+                type="button"
+                data-kanban-flag-btn
+                title={item.is_pinned ? 'Bỏ ghim thẻ' : 'Ghim thẻ lên đầu'}
+                onClick={(ev) => { ev.stopPropagation(); onTogglePin(item, !item.is_pinned); }}
+                className={`flex h-6 w-6 items-center justify-center rounded-full transition-colors cursor-pointer ${
+                  item.is_pinned ? 'text-amber-600 hover:bg-amber-50' : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50'
+                }`}
+              >
+                <Pin className={`h-3.5 w-3.5 ${item.is_pinned ? 'rotate-45 fill-amber-500' : ''}`} strokeWidth={2.2} />
+              </button>
+            )}
+            {typeof onToggleInteracted === 'function' && (
+              <button
+                type="button"
+                data-kanban-flag-btn
+                title={item.is_interacted ? 'Bỏ đánh dấu đã tương tác' : 'Đánh dấu đã tương tác với khách'}
+                onClick={(ev) => { ev.stopPropagation(); onToggleInteracted(item, !item.is_interacted); }}
+                className={`flex h-6 w-6 items-center justify-center rounded-full transition-colors cursor-pointer ${
+                  item.is_interacted ? 'text-blue-600 hover:bg-blue-50' : 'text-slate-400 hover:text-blue-600 hover:bg-blue-50'
+                }`}
+              >
+                <CheckCircle2 className={`h-3.5 w-3.5 ${item.is_interacted ? 'fill-blue-500 text-white' : ''}`} strokeWidth={2.2} />
+              </button>
+            )}
+          </div>
         </div>
-      )}
       </div>
     </div>
   );
