@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
-import { Suspense, Component, useMemo, useState, useEffect } from 'react';
+import { Suspense, Component, useEffect } from 'react';
 import { AuthProvider, useAuth } from './lib/auth';
 import { lazyWithRetry, clearChunkReloadFlag, isChunkLoadErrorMessage } from './lib/lazyWithRetry';
 
@@ -83,7 +83,6 @@ const ProductionApprovalsPage = lazyWithRetry(() => import('./pages/ProductionAp
 const ProductionPipelineSettingsPage = lazyWithRetry(() => import('./pages/ProductionPipelineSettingsPage'));
 const WorkshopTaskTemplatesPage = lazyWithRetry(() => import('./pages/WorkshopTaskTemplatesPage'));
 const ProductionHandoverSettingsPage = lazyWithRetry(() => import('./pages/ProductionHandoverSettingsPage'));
-const ProductionTrashPage = lazyWithRetry(() => import('./pages/ProductionTrashPage'));
 const LogisticsDashboard = lazyWithRetry(() => import('./pages/LogisticsDashboard'));
 const LogisticsDetail = lazyWithRetry(() => import('./pages/LogisticsDetail'));
 const LogisticsPipelineSettingsPage = lazyWithRetry(() => import('./pages/LogisticsPipelineSettingsPage'));
@@ -153,7 +152,7 @@ const VoiceRecordingsPage = lazyWithRetry(() => import('./pages/VoiceRecordingsP
 const MessengerHubPage = lazyWithRetry(() => import('./pages/MessengerHubPage'));
 const ActiveUsersPage = lazyWithRetry(() => import('./pages/ActiveUsersPage'));
 const RequestMonitorPage = lazyWithRetry(() => import('./pages/RequestMonitorPage'));
-const TrashPage = lazyWithRetry(() => import('./pages/TrashPage'));
+const UnifiedTrashPage = lazyWithRetry(() => import('./pages/UnifiedTrashPage'));
 const ThemeSettingsPage = lazyWithRetry(() => import('./pages/ThemeSettingsPage'));
 const PasswordSettingsPage = lazyWithRetry(() => import('./pages/PasswordSettingsPage'));
 const LocationSettingsPage = lazyWithRetry(() => import('./pages/LocationSettingsPage'));
@@ -166,13 +165,12 @@ import { ThemeProvider } from './components/ThemeProvider';
 import { CrmNotesFabProvider } from './context/CrmNotesFabContext';
 import { MessengerDockProvider } from './context/MessengerDockContext';
 import MessengerDock from './components/MessengerDock';
-import AIAssistantChat from './components/AIAssistantChat';
 import { RequireCrmElevated, RequireExecutive } from './components/RequireRole';
-import api from './lib/api';
 import { useActivityRouteTracker } from './hooks/useActivityRouteTracker';
-import { isCrmOnlyModuleAccess } from './lib/moduleAccess';
 import { isCrmSharedPath } from './lib/sidebarModuleContext';
 import ReleaseNoteLoginModal from './components/ReleaseNoteLoginModal';
+import SharedProviders from './shared/SharedProviders';
+import { useModuleAccess } from './shared/context/ModuleAccessContext';
 
 function PageLoader() {
   return (
@@ -185,33 +183,8 @@ function PageLoader() {
 function ProtectedLayout() {
   const { user, loading } = useAuth();
   const location = useLocation();
-  const [moduleAccess, setModuleAccess] = useState(null);
+  const { loading: moduleAccessLoading, crmOnly } = useModuleAccess();
   useActivityRouteTracker(!!user);
-
-  useEffect(() => {
-    if (!user) {
-      setModuleAccess(null);
-      return undefined;
-    }
-    let cancelled = false;
-    const fallback = { allowAll: true };
-    const timer = window.setTimeout(() => {
-      if (!cancelled) setModuleAccess((prev) => (prev === null ? fallback : prev));
-    }, 12_000);
-    api.get('/ecosystem/my-module-access')
-      .then((r) => {
-        if (!cancelled) setModuleAccess(r.data ?? fallback);
-      })
-      .catch(() => {
-        if (!cancelled) setModuleAccess(fallback);
-      });
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [user]);
-
-  const crmOnly = useMemo(() => isCrmOnlyModuleAccess(moduleAccess), [moduleAccess]);
 
   useEffect(() => {
     if (crmOnly) {
@@ -230,7 +203,7 @@ function ProtectedLayout() {
     return () => { cancelled = true; };
   }, [user]);
 
-  if (loading || (user && moduleAccess === null)) {
+  if (loading || (user && moduleAccessLoading)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[var(--color-page-bg)]">
         <div className="flex flex-col items-center gap-3">
@@ -291,7 +264,6 @@ function ProtectedLayout() {
             </main>
           </div>
           {!crmOnly && <PinnedProjectsWidget />}
-          <AIAssistantChat />
         </div>
     </CrmNotesFabProvider>
   );
@@ -314,6 +286,7 @@ export default function App() {
     <ErrorBoundary>
     <AuthProvider>
       <BrowserRouter>
+        <SharedProviders>
         <ChunkReloadInit />
         <MessengerDockProvider>
         <ThemeProvider>
@@ -407,7 +380,7 @@ export default function App() {
             <Route path="/settings/api-keys" element={<RequireCrmElevated><ApiKeysSettingsPage /></RequireCrmElevated>} />
             <Route path="/settings/ai-chat-bot" element={<RequireCrmElevated><AiChatBotSettingsPage /></RequireCrmElevated>} />
             <Route path="/settings/request-monitor" element={<RequestMonitorPage />} />
-            <Route path="/admin/trash" element={<RequireCrmElevated><TrashPage /></RequireCrmElevated>} />
+            <Route path="/admin/trash" element={<UnifiedTrashPage />} />
             <Route path="/crm/customers" element={<CRMCustomersPage />} />
             <Route path="/crm/tasks" element={<CRMTasksPage />} />
             <Route path="/crm/assignments" element={<CRMAssignmentsPage />} />
@@ -423,7 +396,7 @@ export default function App() {
               <Route path="pipeline-settings" element={<ProductionPipelineSettingsPage />} />
               <Route path="task-templates" element={<WorkshopTaskTemplatesPage />} />
               <Route path="handover-settings" element={<ProductionHandoverSettingsPage />} />
-              <Route path="trash" element={<ProductionTrashPage />} />
+              <Route path="trash" element={<Navigate to="/admin/trash?tab=sx" replace />} />
               <Route path="projects/:id" element={<ProductionDetail />} />
             </Route>
             <Route path="/vc" element={<ProductionLayout />}>
@@ -432,6 +405,7 @@ export default function App() {
               <Route path="pipeline-settings" element={<LogisticsPipelineSettingsPage />} />
               <Route path="task-templates" element={<LogisticsTaskTemplatesPage />} />
               <Route path="teams" element={<WorkshopTeamsPage />} />
+              <Route path="trash" element={<Navigate to="/admin/trash?tab=vc" replace />} />
               <Route path="projects/:id" element={<LogisticsDetail />} />
             </Route>
             <Route path="/ecosystem-permissions" element={<EcosystemPermissionsPage />} />
@@ -457,6 +431,7 @@ export default function App() {
         <MessengerDock />
         </ThemeProvider>
         </MessengerDockProvider>
+        </SharedProviders>
       </BrowserRouter>
     </AuthProvider>
     </ErrorBoundary>

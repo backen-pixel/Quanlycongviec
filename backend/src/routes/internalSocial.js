@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { isCrmSystemAdminUser } = require('../helpers/crmAccessRoles');
+const { emitNotifyBadge } = require('../helpers/notifyBadge');
 
 const r = Router();
 r.use(auth);
@@ -1331,6 +1332,7 @@ r.post('/posts', async (req, res) => {
       .single();
     if (refErr) throw refErr;
     const [postOut] = await hydratePostsToResponse([fullRow], me);
+    emitNotifyBadge(req.app, 'social', { company_id: companyId });
     res.status(201).json({ post: { ...postOut, attachments: savedAttachments } });
   } catch (e) {
     console.error('POST /internal-social/posts:', e);

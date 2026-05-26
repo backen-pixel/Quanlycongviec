@@ -5,7 +5,9 @@ import { useMessengerDock } from '../context/MessengerDockContext';
 import OnlineStatusDot from '../components/OnlineStatusDot';
 import LiveActivityMap from '../components/LiveActivityMap';
 import { getInitials, avatarColor } from '../lib/utils';
-import { Activity, Building2, ExternalLink, History, Laptop, LogIn, LogOut, Loader2, MapPin, MessageCircle, Monitor, RefreshCw, Search, ShieldAlert, Smartphone, Users } from 'lucide-react';
+import { Activity, Building2, ExternalLink, History, Laptop, LogIn, LogOut, Loader2, MapPin, MessageCircle, Monitor, RefreshCw, ShieldAlert, Smartphone, Users } from 'lucide-react';
+import ScopeFilterBar from '../shared/components/ScopeFilterBar';
+import { useScopeFilter } from '../shared/hooks/useScopeFilter';
 
 const ROLE_LABELS = {
   admin: 'Admin',
@@ -118,13 +120,17 @@ export default function ActiveUsersPage() {
   const { openMessengerGroupChat, markGroupRead } = useMessengerDock();
   const uid = user?.id || user?.user_id;
   const [chatLoadingId, setChatLoadingId] = useState(null);
-  const [companies, setCompanies] = useState([]);
-  const [departments, setDepartments] = useState([]);
-  const [companyId, setCompanyId] = useState('');
-  const [departmentId, setDepartmentId] = useState('');
+  const scope = useScopeFilter({
+    storageKey: 'crm_activity',
+    companiesModule: 'crm',
+    showCompany: true,
+    showDepartment: true,
+    showSearch: true,
+    persist: true,
+    autoDefaultCompany: true,
+  });
+  const { companyId, departmentId, companies, apiParams: scopeApiParams } = scope;
   const [filter, setFilter] = useState('online');
-  const [search, setSearch] = useState('');
-  const [searchDebounced, setSearchDebounced] = useState('');
   const [rows, setRows] = useState([]);
   const [stats, setStats] = useState({ online: 0, total: 0 });
   const [thresholdMin, setThresholdMin] = useState(2);
@@ -139,41 +145,11 @@ export default function ActiveUsersPage() {
   const [authDays, setAuthDays] = useState(1);
   const [authEventFilter, setAuthEventFilter] = useState('all');
 
-  useEffect(() => {
-    const t = setTimeout(() => setSearchDebounced(search.trim()), 300);
-    return () => clearTimeout(t);
-  }, [search]);
-
-  useEffect(() => {
-    api
-      .get('/companies', { params: { for_module: 'crm' } })
-      .then((r) => setCompanies(r.data?.companies || []))
-      .catch(() => setCompanies([]));
-    api
-      .get('/users/departments/list')
-      .then((r) => setDepartments(r.data?.departments || []))
-      .catch(() => setDepartments([]));
-  }, []);
-
-  useEffect(() => {
-    if (!companyId && user?.company_id) {
-      setCompanyId(String(user.company_id));
-    }
-  }, [user?.company_id, companyId]);
-
-  const departmentsForCompany = useMemo(() => {
-    if (!companyId) return departments;
-    return departments.filter((d) => String(d.company_id || '') === String(companyId));
-  }, [departments, companyId]);
-
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const params = {};
-      if (companyId) params.company_id = companyId;
-      if (departmentId) params.department_id = departmentId;
-      if (searchDebounced) params.search = searchDebounced;
+      const params = { ...scopeApiParams };
       const { data } = await api.get('/users/activity', { params });
       setRows(data?.users || []);
       setStats(data?.stats || { online: 0, total: 0 });
@@ -184,7 +160,7 @@ export default function ActiveUsersPage() {
       setError(e.response?.data?.error || e.message || 'Không tải được danh sách');
     }
     setLoading(false);
-  }, [companyId, departmentId, searchDebounced]);
+  }, [scopeApiParams]);
 
   useEffect(() => {
     void load();
@@ -482,54 +458,11 @@ export default function ActiveUsersPage() {
           </span>
         </div>
 
-        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-          <label className="block">
-            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Công ty</span>
-            <select
-              value={companyId}
-              onChange={(e) => {
-                setCompanyId(e.target.value);
-                setDepartmentId('');
-              }}
-              className="mt-0.5 w-full h-9 px-2 rounded-lg border border-slate-200 text-sm bg-white"
-            >
-              <option value="">Tất cả</option>
-              {companies.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.short_name || c.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block">
-            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Phòng ban</span>
-            <select
-              value={departmentId}
-              onChange={(e) => setDepartmentId(e.target.value)}
-              disabled={!companyId}
-              className="mt-0.5 w-full h-9 px-2 rounded-lg border border-slate-200 text-sm bg-white disabled:opacity-50"
-            >
-              <option value="">Tất cả</option>
-              {departmentsForCompany.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block sm:col-span-2">
-            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Tìm kiếm</span>
-            <div className="relative mt-0.5">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Tên hoặc email…"
-                className="w-full h-9 pl-8 pr-3 rounded-lg border border-slate-200 text-sm"
-              />
-            </div>
-          </label>
-        </div>
+        <ScopeFilterBar
+          scope={scope}
+          className="mt-4"
+          searchPlaceholder="Tên hoặc email…"
+        />
 
         <div className="mt-3 flex flex-wrap gap-1">
           {[

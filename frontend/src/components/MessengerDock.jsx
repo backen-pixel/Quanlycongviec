@@ -8,7 +8,7 @@ import DepartmentChatBubble from './DepartmentChatBubble';
 import { MessageCircle, X, Minus, Maximize2, Search, Users, Loader2, ChevronRight, Building2 } from 'lucide-react';
 import api from '../lib/api';
 import OnlineStatusDot, { isUserOnline } from './OnlineStatusDot';
-import { useUserPresence } from '../hooks/useUserPresence';
+import { usePresence } from '../shared/context/PresenceContext';
 
 export const MESSENGER_DOCK_W = 52;
 const BUBBLE_W = 340;
@@ -164,7 +164,7 @@ export default function MessengerDock() {
     return [...ids];
   }, [staffRows, groups, windows, chatToasts, groupPeerById]);
 
-  const presenceByUser = useUserPresence(presenceUserIds, { enabled: !!uid });
+  const presenceByUser = usePresence(presenceUserIds, { enabled: !!uid });
 
   const onPickStaff = async (u) => {
     if (!u?.id || String(u.id) === String(uid)) return;

@@ -10,7 +10,7 @@ const jwt = require('jsonwebtoken');
 const { Server } = require('socket.io');
 require('dotenv').config();
 const config = require('./config');
-const { recordUserPing } = require('./helpers/userPresence');
+const { recordUserPing, setPresenceBroadcast } = require('./helpers/userPresence');
 const { isAdminLike } = require('./helpers/adminRole');
 
 const app = express();
@@ -21,6 +21,14 @@ const io = new Server(server, {
   cors: { origin: true, methods: ['GET', 'POST'], credentials: true },
 });
 app.set('io', io);
+
+setPresenceBroadcast((userId, last_ping_at) => {
+  io.emit('presence:update', {
+    user_id: userId,
+    online: true,
+    last_ping_at: last_ping_at || new Date().toISOString(),
+  });
+});
 
 app.use(helmet());
 

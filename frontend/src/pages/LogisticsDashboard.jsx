@@ -13,7 +13,7 @@ import {
   Truck, CheckCircle2, AlertTriangle, Search, X, Calendar,
   Package, Users, LayoutGrid, List, Plus,
   CheckSquare, UserCheck, Loader2, Wrench, ShieldCheck,
-  Filter, Clock, Layers,
+  Filter, Clock, Layers, Trash2,
 } from 'lucide-react';
 import { LogisticsListView, LogisticsPlannerView, LogisticsCalendarView } from '../components/LogisticsViews';
 import NewLogisticsProjectModal from '../components/NewLogisticsProjectModal';
@@ -67,6 +67,9 @@ export default function LogisticsDashboard() {
     return WS_DASH_VIEW_MODES.includes(v) ? v : 'kanban';
   });
   const [showNewProject, setShowNewProject] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteReason, setDeleteReason] = useState('');
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [companies, setCompanies] = useState([]);
   const [filterCompany, setFilterCompany] = useState(() => P0?.filterCompany ?? '');
   const [timePreset, setTimePreset] = useState(() => P0?.timePreset ?? '');
@@ -419,6 +422,40 @@ export default function LogisticsDashboard() {
     } catch (e) { console.error(e); load(); }
   }, [load]);
 
+  const handleDeleteCard = useCallback((projectId, projectLabel) => {
+    if (!projectId) return;
+    setDeleteTarget({ id: projectId, label: projectLabel });
+    setDeleteReason('');
+  }, []);
+
+  const cancelDelete = useCallback(() => {
+    if (deleteBusy) return;
+    setDeleteTarget(null);
+    setDeleteReason('');
+  }, [deleteBusy]);
+
+  const confirmDelete = useCallback(async () => {
+    if (!deleteTarget) return;
+    setDeleteBusy(true);
+    const targetId = deleteTarget.id;
+    const reason = deleteReason.trim();
+    const prev = projectsRef.current;
+    setProjects((cur) => cur.filter((p) => String(p.id) !== String(targetId)));
+    try {
+      await api.delete(`/logistics/projects/${targetId}`, {
+        data: { delete_reason: reason || null },
+      });
+      setDeleteTarget(null);
+      setDeleteReason('');
+    } catch (e) {
+      console.error(e);
+      alert(e.response?.data?.error || 'Lỗi xóa dự án');
+      setProjects(prev);
+    } finally {
+      setDeleteBusy(false);
+    }
+  }, [deleteTarget, deleteReason]);
+
   const calculateDays = (createdAt) => {
     if (!createdAt) return '';
     const days = Math.floor((Date.now() - new Date(createdAt).getTime()) / 86400000);
@@ -482,6 +519,9 @@ export default function LogisticsDashboard() {
           </button>
           <Link to="/vc/pipeline-settings" className="h-9 px-3 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white text-gray-700 text-sm font-medium hover:bg-gray-50">
             Cài đặt pipeline
+          </Link>
+          <Link to={{ pathname: '/admin/trash', search: '?tab=vc' }} className="h-9 px-3 inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white text-rose-700 text-sm font-medium hover:bg-rose-50">
+            <Trash2 className="h-3.5 w-3.5" /> Thùng rác
           </Link>
         </div>
       </div>
@@ -740,7 +780,7 @@ export default function LogisticsDashboard() {
       )}
 
       {viewMode === 'kanban' && (
-        <KanbanView pipeline={filteredKanbanPipeline} onMoveStage={handleMoveStage}
+        <KanbanView pipeline={filteredKanbanPipeline} onMoveStage={handleMoveStage} onDelete={handleDeleteCard}
           calculateDays={calculateDays} selectedIds={selectedIds} onToggleSelect={toggleSelect} />
       )}
       {viewMode === 'list' && <LogisticsListView pipeline={filteredKanbanPipeline} calculateDays={calculateDays} />}
@@ -748,6 +788,68 @@ export default function LogisticsDashboard() {
       {viewMode === 'calendar' && <LogisticsCalendarView pipeline={filteredKanbanPipeline} />}
 
       {showNewProject && <NewLogisticsProjectModal onClose={() => { setShowNewProject(false); load(); }} />}
+
+      {deleteTarget && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" onClick={cancelDelete}>
+          <div
+            className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-md p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className="h-9 w-9 rounded-lg bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base font-bold text-gray-900">Xóa khỏi Vận chuyển?</h3>
+                <p className="text-sm text-gray-600 mt-0.5 truncate" title={deleteTarget.label}>
+                  Dự án: <strong className="text-gray-900">{deleteTarget.label}</strong>
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Dự án sẽ được chuyển vào thùng rác VC, có thể khôi phục từ <code className="bg-gray-100 px-1 rounded">/admin/trash?tab=vc</code>.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <label className="text-xs font-semibold text-gray-700 block mb-1">
+                Lý do xóa <span className="text-gray-400 font-normal">(không bắt buộc, tối đa 500 ký tự)</span>
+              </label>
+              <textarea
+                value={deleteReason}
+                onChange={(e) => setDeleteReason(e.target.value.slice(0, 500))}
+                placeholder="VD: Khách hủy đơn / chuyển sang dự án khác / nhập trùng..."
+                rows={3}
+                autoFocus
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-rose-400 focus:border-transparent resize-none"
+              />
+              <div className="text-[10px] text-gray-400 text-right mt-0.5">{deleteReason.length}/500</div>
+            </div>
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={cancelDelete}
+                disabled={deleteBusy}
+                className="h-9 px-3 rounded-lg border border-gray-200 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 cursor-pointer"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={confirmDelete}
+                disabled={deleteBusy}
+                className="h-9 px-3 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-sm font-medium inline-flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+              >
+                {deleteBusy ? (
+                  <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang xóa...</>
+                ) : (
+                  <><Trash2 className="h-3.5 w-3.5" /> Xóa vào thùng rác</>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Bulk Deadline Modal */}
       {showBulkDeadline && (
@@ -821,7 +923,7 @@ function KPICard({ icon, iconBgColor, iconColor, label, value }) {
 }
 
 // Kanban Stage Column
-function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds, onToggleSelect }) {
+function KanbanStageCard({ stage, items, onMoveStage, onDelete, calculateDays, selectedIds, onToggleSelect }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
   const [columnMaxH, setColumnMaxH] = useState('70vh');
@@ -871,7 +973,7 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
         ) : (
           items.map((item) => (
             <KanbanCard key={item.id} item={item} stage={stage} calculateDays={calculateDays}
-              isSelected={selectedIds?.has(item.id)} onToggleSelect={onToggleSelect} />
+              isSelected={selectedIds?.has(item.id)} onToggleSelect={onToggleSelect} onDelete={onDelete} />
           ))
         )}
       </div>
@@ -880,7 +982,7 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
 }
 
 // Kanban Card
-function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect }) {
+function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, onDelete }) {
   const navigate = useNavigate();
   const handleDragStart = (e) => {
     if (e.target.closest?.('[data-workshop-bulk-checkbox]')) {
@@ -929,6 +1031,22 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect }) 
             className="h-4 w-4 rounded border-gray-300 text-orange-600 focus:ring-orange-500 cursor-pointer"
           />
         </label>
+      )}
+      {onDelete && (
+        <button
+          type="button"
+          data-workshop-bulk-checkbox
+          onClick={(ev) => {
+            ev.stopPropagation();
+            onDelete(item.id, item.name || item.code || item.id);
+          }}
+          onMouseDown={(ev) => ev.stopPropagation()}
+          onDragStart={(ev) => { ev.preventDefault(); ev.stopPropagation(); }}
+          className="absolute z-20 top-2 right-9 rounded-md p-1 text-rose-500 opacity-0 group-hover:opacity-100 hover:bg-rose-50 cursor-pointer transition-opacity"
+          title="Xóa khỏi VC (vào thùng rác)"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
       )}
 
       <div className="flex items-start justify-between pr-7 mb-2">
@@ -1024,7 +1142,7 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect }) 
 }
 
 // Kanban View Container
-function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggleSelect }) {
+function KanbanView({ pipeline, onMoveStage, onDelete, calculateDays, selectedIds, onToggleSelect }) {
   return (
     <WorkshopPipelineKanbanScroll cardSelector="[data-vc-kanban-card]">
       <div className="flex gap-0 min-w-max">
@@ -1034,6 +1152,7 @@ function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggl
             stage={stage}
             items={stage.items}
             onMoveStage={onMoveStage}
+            onDelete={onDelete}
             calculateDays={calculateDays}
             selectedIds={selectedIds}
             onToggleSelect={onToggleSelect}

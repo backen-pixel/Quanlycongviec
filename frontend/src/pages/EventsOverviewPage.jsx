@@ -34,7 +34,8 @@ import {
   XCircle,
 } from 'lucide-react';
 
-const LS_EVENTS_COMPANY = 'crm_events_filter_company_id';
+import ScopeFilterBar from '../shared/components/ScopeFilterBar';
+import { useScopeFilter } from '../shared/hooks/useScopeFilter';
 
 function pad(n) {
   return String(n).padStart(2, '0');
@@ -109,10 +110,15 @@ function StatCard({ icon: Icon, label, value, sub, color = 'blue' }) {
 export default function EventsOverviewPage() {
   const { user } = useAuth();
   const isSystemAdmin = checkSystemAdmin(user);
-  const [companies, setCompanies] = useState([]);
-  const [filterCompanyId, setFilterCompanyId] = useState(() => {
-    try { return localStorage.getItem(LS_EVENTS_COMPANY) || ''; } catch { return ''; }
+  const scope = useScopeFilter({
+    storageKey: 'crm_events',
+    showCompany: true,
+    showDepartment: false,
+    showSearch: false,
+    autoDefaultCompany: false,
   });
+  const filterCompanyId = scope.companyId;
+  const companies = scope.companies;
 
   const [preset, setPreset] = useState('month');
   const [rangeFrom, setRangeFrom] = useState(() => resolvePresetRange('month').from);
@@ -140,24 +146,6 @@ export default function EventsOverviewPage() {
     const cid = user?.company_id != null ? String(user.company_id).trim() : '';
     return cid || '';
   }, [isSystemAdmin, filterCompanyId, user?.company_id]);
-
-  useEffect(() => {
-    if (!isSystemAdmin) return;
-    api.get('/companies', { params: { for_module: 'crm' } })
-      .then((r) => {
-        const list = r.data?.companies || r.data || [];
-        setCompanies(Array.isArray(list) ? list : []);
-      })
-      .catch(() => setCompanies([]));
-  }, [isSystemAdmin]);
-
-  useEffect(() => {
-    if (!isSystemAdmin) return;
-    try {
-      if (filterCompanyId) localStorage.setItem(LS_EVENTS_COMPANY, filterCompanyId);
-      else localStorage.removeItem(LS_EVENTS_COMPANY);
-    } catch { /* ignore */ }
-  }, [isSystemAdmin, filterCompanyId]);
 
   useEffect(() => {
     api.get('/events/event-types').then((r) => setEventTypes(r.data || [])).catch(() => {});
@@ -284,18 +272,13 @@ export default function EventsOverviewPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {isSystemAdmin && (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 min-w-[200px]">
               <Building2 className="h-4 w-4 text-gray-500 shrink-0" />
-              <select
-                value={filterCompanyId}
-                onChange={(e) => setFilterCompanyId(e.target.value)}
-                className="h-9 min-w-[160px] px-3 border rounded-lg text-sm bg-white"
-              >
-                <option value="">Tất cả công ty</option>
-                {companies.map((c) => (
-                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                ))}
-              </select>
+              <ScopeFilterBar
+                scope={{ ...scope, showDepartment: false, showSearch: false, showDateRange: false }}
+                companyLabel=""
+                companyAllowAll
+              />
             </div>
           )}
           <Link

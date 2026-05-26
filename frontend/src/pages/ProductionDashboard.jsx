@@ -603,7 +603,22 @@ export default function ProductionDashboard() {
       return;
     }
 
-    if (!wid) return;
+    if (!wid) {
+      setProjects((prev) => prev.map((p) => (p.id === projectId
+        ? { ...p, sx_kanban_column_id: targetCol.id, sx_intake: false }
+        : p)));
+      try {
+        await api.patch(`/production/projects/${projectId}/stage`, {
+          production_pipeline_stage_id: targetCol.id,
+          company_id: companyParam || undefined,
+        });
+        scheduleCrmBadgeRefresh(projectId);
+      } catch (e) {
+        console.error(e);
+        load();
+      }
+      return;
+    }
 
     const optimisticStage = {
       id: wid,

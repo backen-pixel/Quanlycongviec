@@ -17,7 +17,7 @@ function formatDateTime(d) {
  * - Admin xem được danh sách đã xóa giả, khôi phục hoặc xóa vĩnh viễn.
  * - Hệ thống tự xóa vĩnh viễn sau 30 ngày (purge_after).
  */
-export default function ProductionTrashPage() {
+export default function ProductionTrashPage({ embedded = false }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -88,8 +88,8 @@ export default function ProductionTrashPage() {
   };
 
   return (
-    <div className="space-y-4 max-w-5xl">
-      {/* Header */}
+    <div className={`space-y-4 ${embedded ? '' : 'max-w-5xl'}`}>
+      {!embedded && (
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-center gap-2">
           <Trash2 className="h-7 w-7 text-rose-600" />
@@ -117,6 +117,20 @@ export default function ProductionTrashPage() {
           </Link>
         </div>
       </div>
+      )}
+
+      {embedded && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => load(q)}
+            disabled={loading}
+            className="text-sm font-medium text-gray-700 border border-gray-200 rounded-lg px-3 py-2 bg-white inline-flex items-center gap-1.5 hover:bg-gray-50 disabled:opacity-50 cursor-pointer"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Tải lại
+          </button>
+        </div>
+      )}
 
       {/* Search */}
       <div className="bg-white border border-gray-200 rounded-xl p-3 shadow-sm">

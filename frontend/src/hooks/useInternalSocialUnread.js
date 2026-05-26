@@ -3,7 +3,9 @@ import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isSystemAdmin as checkSystemAdmin } from '../lib/adminRole';
 
-const LS_SOCIAL_COMPANY = 'internal_social_filter_company_id';
+import { readScopeField } from '../shared/lib/scopeFilterStorage';
+
+const SOCIAL_SCOPE_PREFIX = 'internal_social';
 
 /**
  * Số bài mới trên bảng tin nội bộ (kể từ lần xem gần nhất).
@@ -20,7 +22,7 @@ export function useInternalSocialUnread() {
       const params = {};
       if (isSystemAdmin) {
         try {
-          const cid = localStorage.getItem(LS_SOCIAL_COMPANY);
+          const cid = readScopeField(SOCIAL_SCOPE_PREFIX, 'company_id');
           if (cid) params.company_id = cid;
         } catch { /* ignore */ }
       }

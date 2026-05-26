@@ -5,6 +5,7 @@ const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { restoreTrashItem } = require('../helpers/trashSnapshot');
+const { writeAuditLog } = require('../helpers/auditLog');
 
 const r = Router();
 r.use(auth);
@@ -82,18 +83,42 @@ r.get('/:id', requireAdmin, async (req, res) => {
 
 // POST /api/trash/:id/restore — phục hồi 1 mục
 r.post('/:id/restore', requireAdmin, async (req, res) => {
+  const { data: before } = await supabase.from('trash_items').select('id, entity_type, entity_id, entity_label, company_id').eq('id', req.params.id).maybeSingle();
   const out = await restoreTrashItem(supabase, req.params.id);
   if (!out.ok) {
     return res.status(400).json({ error: out.error, errors: out.errors || [] });
   }
+  void writeAuditLog(req, {
+    module: 'trash',
+    action: 'restore',
+    entity_type: before?.entity_type,
+    entity_id: before?.entity_id,
+    entity_label: before?.entity_label,
+    company_id: before?.company_id,
+    metadata: { trash_item_id: req.params.id, restore_errors: out.errors || [] },
+  });
   res.json({ success: true, errors: out.errors || [] });
 });
 
 // DELETE /api/trash/:id — xóa vĩnh viễn
 r.delete('/:id', requireAdmin, async (req, res) => {
   try {
+    const { data: before } = await supabase
+      .from('trash_items')
+      .select('id, entity_type, entity_id, entity_label, company_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
     const { error } = await supabase.from('trash_items').delete().eq('id', req.params.id);
     if (error) throw error;
+    void writeAuditLog(req, {
+      module: 'trash',
+      action: 'purge',
+      entity_type: before?.entity_type,
+      entity_id: before?.entity_id,
+      entity_label: before?.entity_label,
+      company_id: before?.company_id,
+      metadata: { trash_item_id: req.params.id },
+    });
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -112,6 +137,11 @@ r.post('/empty', requireAdmin, async (req, res) => {
     }
     const { error } = await q;
     if (error) throw error;
+    void writeAuditLog(req, {
+      module: 'trash',
+      action: 'empty',
+      metadata: { scope: isSuper ? 'all' : String(req.user?.company_id || '') },
+    });
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });

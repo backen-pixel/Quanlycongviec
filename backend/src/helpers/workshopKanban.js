@@ -1,4 +1,8 @@
+const fs = require('fs');
+const path = require('path');
 const { supabase } = require('../config/supabase');
+
+const AGENT_DEBUG_LOG_PATH = path.join(__dirname, '../../../debug-fb4228.log');
 const { normalizeWorkshopCompanyId } = require('./workshopCompanyScope');
 const {
   buildPipelineStageSelect,
@@ -454,7 +458,7 @@ async function syncCrmLeadFromLogisticsStage(projectId, crmSyncTypeOrStageRow) {
 
   const { data: leads } = await supabase
     .from('crm_leads')
-    .select('id, stage_id, sx_handover_at, stage:crm_pipeline_stages(id, name, sync_role, is_won, is_lost)')
+    .select('id, stage_id, sx_handover_at, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, sync_role, is_won, is_lost)')
     .eq('project_id', projectId)
     .eq('type', 'deal');
 
@@ -487,13 +491,39 @@ async function getCrmThangStageId() {
  *   - Project rời "Chờ vào xưởng" (có current_stage_id thực) → stage_id = "Sản xuất"
  *   - Project quay về intake (current_stage_id = null) → stage_id = "Thắng"
  */
+/** @param {string} location @param {string} message @param {object} data @param {string} hypothesisId */
+function agentDebugLog(location, message, data, hypothesisId) {
+  const payload = {
+    sessionId: 'fb4228',
+    location,
+    message,
+    data,
+    hypothesisId,
+    timestamp: Date.now(),
+    runId: 'post-fix',
+  };
+  // #region agent log
+  try {
+    fs.appendFileSync(AGENT_DEBUG_LOG_PATH, `${JSON.stringify(payload)}\n`);
+  } catch (_) { /* ignore */ }
+  fetch('http://127.0.0.1:7754/ingest/c6417520-0159-4c13-a5f9-ac15886b2276', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'fb4228' },
+    body: JSON.stringify(payload),
+  }).catch(() => {});
+  // #endregion
+}
+
 async function syncCrmLeadSxPipelineFromProject(projectId) {
   const { data: project } = await supabase
     .from('projects')
     .select('id, current_stage_id, status, company_id')
     .eq('id', projectId)
     .single();
-  if (!project) return;
+  if (!project) {
+    agentDebugLog('workshopKanban.js:syncCrm', 'project not found', { projectId }, 'E');
+    return;
+  }
 
   const [stageUuid, pipeRows0] = await Promise.all([
     resolveSxPipelineStageUuidForProject(project),
@@ -541,34 +571,85 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
     !!project.current_stage_id &&
     prodWorkflowStageIds.has(String(project.current_stage_id));
 
+  // Cột Kanban thực tế có thể lưu trên deal (kéo cột bucket không có workflow_stage_id).
+  let leadPipelineColId = null;
+  try {
+    const { data: leadColRow } = await supabase
+      .from('crm_leads')
+      .select('sx_pipeline_stage_id')
+      .eq('project_id', projectId)
+      .eq('type', 'deal')
+      .not('sx_pipeline_stage_id', 'is', null)
+      .limit(1)
+      .maybeSingle();
+    leadPipelineColId = leadColRow?.sx_pipeline_stage_id || null;
+  } catch (_) { /* ignore */ }
+
   // Tìm cột hiện tại trong pipeline config
   const currentRow =
     prodPipeAll.find((r) => project.current_stage_id && r.workflow_stage_id && String(r.workflow_stage_id) === String(project.current_stage_id))
+    || prodPipeAll.find((r) => leadPipelineColId && String(r.id) === String(leadPipelineColId))
     || prodPipeAll.find((r) => stageUuid && String(r.id) === String(stageUuid));
+
+  agentDebugLog(
+    'workshopKanban.js:syncCrm:context',
+    'pipeline context',
+    {
+      projectId,
+      projectCompanyId: project.company_id || null,
+      currentStageId: project.current_stage_id || null,
+      stageUuid: stageUuid || null,
+      currentRowId: currentRow?.id || null,
+      currentRowName: currentRow?.name || null,
+      currentRowOrder: currentRow?.order_index ?? null,
+      crmTargetStageId: currentRow?.crm_target_stage_id || null,
+      crmSyncType: currentRow?.crm_sync_type || null,
+      pipeRowCount: prodPipeAll.length,
+      hasStageUuidInRows,
+    },
+    'D',
+  );
 
   // ── Ưu tiên: dùng crm_target_stage_id trực tiếp nếu đã cấu hình ──
   if (currentRow?.crm_target_stage_id) {
     const { data: leads } = await supabase
       .from('crm_leads')
-      .select('id, stage_id, sx_handover_at, stage:crm_pipeline_stages(id, name, sync_role, is_won, is_lost)')
+      .select('id, stage_id, sx_handover_at, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, sync_role, is_won, is_lost)')
       .eq('project_id', projectId)
       .eq('type', 'deal');
     await Promise.all(
       (leads || []).map((lead) => {
         const patch = {};
         if (stageUuid) patch.sx_pipeline_stage_id = stageUuid;
-        // Race-guard: chỉ tự đổi stage CRM khi:
-        //   1) đã có sx_handover_at
-        //   2) chưa ở target rồi
-        //   3) đang ở cột "auto-managed" (post-Thắng SX/VC) HOẶC đang ở Thắng
-        // → tránh ghi đè khi Sale vừa kéo deal về Đàm phán / Báo giá / Thua…
+        const st = Array.isArray(lead.stage) ? lead.stage[0] : lead.stage;
+        const canOverwrite = shouldAutoOverwriteCrmStage(lead.stage);
+        const skipReasons = [];
+        if (!lead.sx_handover_at) skipReasons.push('no_sx_handover_at');
+        if (String(lead.stage_id || '') === String(currentRow.crm_target_stage_id)) skipReasons.push('already_at_target');
+        if (!canOverwrite) skipReasons.push('race_guard_blocked');
         if (
           lead.sx_handover_at
           && String(lead.stage_id || '') !== String(currentRow.crm_target_stage_id)
-          && shouldAutoOverwriteCrmStage(lead.stage)
+          && canOverwrite
         ) {
           patch.stage_id = currentRow.crm_target_stage_id;
         }
+        agentDebugLog(
+          'workshopKanban.js:syncCrm:targetBranch',
+          'lead patch decision',
+          {
+            leadId: lead.id,
+            branch: 'crm_target_stage_id',
+            skipReasons,
+            hasHandover: !!lead.sx_handover_at,
+            canOverwrite,
+            stageName: st?.name || null,
+            stageIsWon: !!st?.is_won,
+            stageSyncRole: st?.sync_role || null,
+            patchKeys: Object.keys(patch),
+          },
+          skipReasons.includes('no_sx_handover_at') ? 'A' : skipReasons.includes('race_guard_blocked') ? 'B' : 'D',
+        );
         if (!Object.keys(patch).length) return Promise.resolve();
         return supabase.from('crm_leads').update(patch).eq('id', lead.id);
       }),
@@ -577,14 +658,22 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
   }
 
   // ── Fallback: dùng crm_sync_type='production' (hành vi cũ) ──
-  const triggerRows = prodPipeList.filter((r) => r.crm_sync_type === 'production');
+  // Gồm cả cột bucket (workflow_stage_id null) — prodPipeList trước đây bỏ sót toàn bộ pipeline kiểu KCS.
+  const triggerRows = prodPipeAll.filter((r) => r.crm_sync_type === 'production');
   let isInCrmProductionTriggerStage = isInRealProductionStage; // fallback hành vi cũ
 
-  if (triggerRows.length > 0 && project.current_stage_id) {
-    // Tìm order_index nhỏ nhất của các trigger rows
+  if (currentRow?.crm_sync_type === 'production') {
+    isInCrmProductionTriggerStage = true;
+  } else if (triggerRows.length > 0 && currentRow) {
     const minTriggerOrder = Math.min(...triggerRows.map((r) => r.order_index ?? 999));
-    if (currentRow) {
-      isInCrmProductionTriggerStage = (currentRow.order_index ?? 999) >= minTriggerOrder;
+    isInCrmProductionTriggerStage = (currentRow.order_index ?? 999) >= minTriggerOrder;
+  } else if (triggerRows.length > 0 && project.current_stage_id) {
+    const minTriggerOrder = Math.min(...triggerRows.map((r) => r.order_index ?? 999));
+    const rowByWorkflow = prodPipeAll.find(
+      (r) => r.workflow_stage_id && String(r.workflow_stage_id) === String(project.current_stage_id),
+    );
+    if (rowByWorkflow) {
+      isInCrmProductionTriggerStage = (rowByWorkflow.order_index ?? 999) >= minTriggerOrder;
     } else {
       isInCrmProductionTriggerStage = false;
     }
@@ -595,9 +684,26 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
     getCrmThangStageId(),
   ]);
 
+  agentDebugLog(
+    'workshopKanban.js:syncCrm:legacy',
+    'legacy production sync',
+    {
+      projectId,
+      triggerRowCount: triggerRows.length,
+      minTriggerOrder: triggerRows.length
+        ? Math.min(...triggerRows.map((r) => r.order_index ?? 999))
+        : null,
+      isInCrmProductionTriggerStage,
+      isInRealProductionStage,
+      sanXuatStageId: sanXuatStageId || null,
+      thangStageId: thangStageId || null,
+    },
+    triggerRows.length ? 'D' : 'C',
+  );
+
   const { data: leads } = await supabase
     .from('crm_leads')
-    .select('id, stage_id, sx_handover_at, stage:crm_pipeline_stages(id, name, sync_role, is_won, is_lost)')
+    .select('id, stage_id, sx_handover_at, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, sync_role, is_won, is_lost)')
     .eq('project_id', projectId)
     .eq('type', 'deal');
 
@@ -609,13 +715,43 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
 
       // Chỉ đổi cột CRM sau khi Sale đã bàn giao SX (sx_handover_at) — trước đó chỉ cập nhật badge.
       // Race-guard: bỏ qua nếu Sale đang để deal ở cột pre-Thắng (Đàm phán/Báo giá…) hoặc Thua.
-      if (lead.sx_handover_at && shouldAutoOverwriteCrmStage(lead.stage)) {
+      const st = Array.isArray(lead.stage) ? lead.stage[0] : lead.stage;
+      const canOverwrite = shouldAutoOverwriteCrmStage(lead.stage);
+      const skipReasons = [];
+      if (!lead.sx_handover_at) skipReasons.push('no_sx_handover_at');
+      if (!canOverwrite) skipReasons.push('race_guard_blocked');
+      if (!isInCrmProductionTriggerStage && !thangStageId) skipReasons.push('not_in_trigger_no_thang');
+      if (isInCrmProductionTriggerStage && !sanXuatStageId) skipReasons.push('no_sx_production_crm_stage');
+      if (lead.sx_handover_at && canOverwrite) {
         if (isInCrmProductionTriggerStage && sanXuatStageId) {
           if (String(lead.stage_id || '') !== String(sanXuatStageId)) update.stage_id = sanXuatStageId;
+          else skipReasons.push('already_at_san_xuat');
         } else if (!isInCrmProductionTriggerStage && thangStageId) {
           if (String(lead.stage_id || '') !== String(thangStageId)) update.stage_id = thangStageId;
+          else skipReasons.push('already_at_thang');
         }
       }
+
+      agentDebugLog(
+        'workshopKanban.js:syncCrm:legacyLead',
+        'lead patch decision',
+        {
+          leadId: lead.id,
+          branch: 'crm_sync_type_production',
+          skipReasons,
+          hasHandover: !!lead.sx_handover_at,
+          canOverwrite,
+          isInCrmProductionTriggerStage,
+          stageName: st?.name || null,
+          stageIsWon: !!st?.is_won,
+          stageSyncRole: st?.sync_role || null,
+          updateKeys: Object.keys(update),
+        },
+        skipReasons.includes('no_sx_handover_at') ? 'A'
+          : skipReasons.includes('race_guard_blocked') ? 'B'
+            : skipReasons.includes('no_sx_production_crm_stage') ? 'C'
+              : skipReasons.includes('not_in_trigger') ? 'D' : 'D',
+      );
 
       if (!Object.keys(update).length) return Promise.resolve();
       return supabase.from('crm_leads').update(update).eq('id', lead.id);

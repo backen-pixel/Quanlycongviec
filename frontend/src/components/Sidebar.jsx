@@ -2,7 +2,6 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import api from '../lib/api';
 import NotificationCenter from './NotificationCenter';
 import { getInitials, avatarColor } from '../lib/utils';
 import { publicFileUrl } from '../lib/publicFileUrl';
@@ -14,16 +13,14 @@ import {
   BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot,
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { isCrmOnlyModuleAccess } from '../lib/moduleAccess';
 import {
   isCrmSidebarActive,
   readStoredModule,
   resolveActiveModule,
   storeModule,
 } from '../lib/sidebarModuleContext';
-import { useReleaseNotesUnread } from '../hooks/useReleaseNotesUnread';
-import { useCrmAssignmentsUnread } from '../hooks/useCrmAssignmentsUnread';
-import { useInternalSocialUnread } from '../hooks/useInternalSocialUnread';
+import { useModuleAccess } from '../shared/context/ModuleAccessContext';
+import { useSidebarUnreadBadges } from '../shared/context/UnreadBadgesContext';
 
 // Reorganized menu structure - 4 groups
 const MENU_GROUPS = [
@@ -33,14 +30,9 @@ const MENU_GROUPS = [
     emoji: '📊',
     items: [
       { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-      { to: '/social', icon: Share2, label: 'Bảng tin nội bộ' },
       { to: '/dashboard/divisions', icon: BarChart3, label: 'Dashboard Khối' },
       { to: '/my-tasks', icon: Inbox, label: 'Việc của tôi' },
-      { to: '/settings/password', icon: Lock, label: 'Đổi mật khẩu' },
-      { to: '/settings/location', icon: MapPin, label: 'Vị trí làm việc' },
-      { to: '/settings/devices', icon: Smartphone, label: 'Thiết bị đăng nhập' },
       { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },
-      { to: '/tools/voice-recordings', icon: Mic, label: 'Cuộc gọi & ghi âm' },
       { to: '/project-workflow', icon: GitBranch, label: 'Công việc dự án' },
     ]
   },
@@ -84,13 +76,8 @@ const MENU_GROUPS = [
       { to: '/approval-rules', icon: Settings, label: 'Quy tắc duyệt' },
       { to: '/settings/pdf', icon: Settings, label: 'Thông tin PDF' },
       { to: '/settings/theme', icon: Settings, label: 'Giao diện & Hình nền' },
-      { to: '/settings/misa', icon: FileCheck, label: 'MISA meInvoice' },
-      { to: '/settings/api-keys', icon: Key, label: 'API Key tích hợp' },
       { to: '/settings/ai-chat-bot', icon: Bot, label: 'AI Bot trong chat' },
       { to: '/settings/request-monitor', icon: Activity, label: 'Theo dõi Request' },
-      { to: '/knowledge', icon: GraduationCap, label: 'Kiến thức' },
-      { to: '/guide', icon: BookOpen, label: 'Hướng dẫn sử dụng' },
-      { to: '/updates', icon: Megaphone, label: 'Có gì mới?' },
       // { to: '/templates', icon: ClipboardList, label: 'Dự án mẫu' },
       // { to: '/stage-groups', icon: FolderKanban, label: 'Nhóm quy trình' },
     ]
@@ -195,7 +182,7 @@ const CRM_MENU_BOTTOM_GROUPS = [
       { to: '/crm/sources-settings', icon: Tags, label: 'Nguồn & phân loại', adminOnly: true },
       { to: '/crm/task-templates', icon: ListChecks, label: 'Bộ mẫu CRM', adminOnly: true },
       { to: '/crm/auto-project-config', icon: Settings, label: 'Auto tạo dự án', adminOnly: true },
-      { to: '/admin/trash', icon: Trash2, label: 'Thùng rác (xóa giả)', adminOnly: true },
+      { to: '/admin/trash', icon: Trash2, label: 'Thùng rác (tổng hợp)', adminOnly: true },
     ],
   },
   {
@@ -223,7 +210,7 @@ const SX_MENU_GROUPS = [
     emoji: '🏭',
     items: [
       { to: '/sx/dashboard', icon: LayoutDashboard, label: 'Dashboard xưởng', end: true },
-      { to: '/sx/trash', icon: Trash2, label: 'Thùng rác (dự án đã xóa)', adminOnly: true },
+      { to: { pathname: '/admin/trash', search: '?tab=sx' }, icon: Trash2, label: 'Thùng rác SX', adminOnly: true },
     ]
   },
   {
@@ -284,6 +271,7 @@ const VC_MENU_GROUPS = [
       { to: '/vc/teams', icon: Users, label: 'Quản lý Đội nhóm' },
       { to: '/vc/pipeline-settings', icon: Settings, label: 'Pipeline VC' },
       { to: '/vc/task-templates', icon: ListChecks, label: 'Bộ nhiệm vụ VC/LĐ' },
+      { to: { pathname: '/admin/trash', search: '?tab=vc' }, icon: Trash2, label: 'Thùng rác VC', adminOnly: true },
     ]
   },
 ];
@@ -382,7 +370,7 @@ function MenuGroup({ group, collapsed, isAdmin, isExecutive, canAccessModule, us
         <nav className="space-y-0.5 px-2 mt-1">
           {items.map((item) => (
             <SideLink
-              key={`${group.id}-${item.to}-${item.label}`}
+              key={`${group.id}-${typeof item.to === 'string' ? item.to : `${item.to?.pathname || ''}${item.to?.search || ''}`}-${item.label}`}
               {...item}
               moduleContext={moduleContext}
               collapsed={collapsed}
@@ -401,34 +389,15 @@ function MenuGroup({ group, collapsed, isAdmin, isExecutive, canAccessModule, us
 }
 
 export default function Sidebar() {
-  const { total: updatesUnread } = useReleaseNotesUnread();
-  const { unread: assignmentsUnread } = useCrmAssignmentsUnread();
-  const { unread: socialUnread } = useInternalSocialUnread();
+  const { updatesUnread, assignmentsUnread, socialUnread } = useSidebarUnreadBadges();
+  const { canAccessModule, crmOnly } = useModuleAccess();
   const [collapsed, setCollapsed] = useState(false);
   const [showAppSwitcher, setShowAppSwitcher] = useState(false);
   const [pinnedModule, setPinnedModule] = useState(() => localStorage.getItem('pinned_module') || '/crm');
-  const [moduleAccess, setModuleAccess] = useState(null);
   const appSwitcherRef = useRef(null);
   const { user, logout, socket } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-
-  useEffect(() => {
-    if (!user) return;
-    api.get('/ecosystem/my-module-access')
-      .then((r) => setModuleAccess(r.data))
-      .catch(() => setModuleAccess({ allowAll: true }));
-  }, [user]);
-
-  const canAccessModule = useCallback((key) => {
-    if (!key) return true;
-    if (!moduleAccess) return true;
-    if (moduleAccess.allowAll) return true;
-    return moduleAccess.modules?.[key] !== false;
-  }, [moduleAccess]);
-
-  /** Nhân viên chỉ được ecosystem + CRM (khối KD): chỉ menu CRM, không Công việc / SX / VC */
-  const crmOnly = useMemo(() => isCrmOnlyModuleAccess(moduleAccess), [moduleAccess]);
 
   // Auto-collapse sidebar on quotation form pages (need more screen space)
   useEffect(() => {

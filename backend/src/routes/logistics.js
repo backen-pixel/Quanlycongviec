@@ -11,6 +11,7 @@ const { notifyMultiple: notifyMultipleShared } = require('../helpers/notificatio
 const { syncCrmLeadFromLogisticsStage, syncVcPipelineStageToLead, emitCrmBadgeUpdateForProject } = require('../helpers/workshopKanban');
 const { effectiveWorkshopCompanyId, normalizeWorkshopCompanyId } = require('../helpers/workshopCompanyScope');
 const { leadDocVisibleForModuleAndUser } = require('../helpers/documentShareScope');
+const { writeAuditLog } = require('../helpers/auditLog');
 
 const r = Router();
 r.use(auth);
@@ -44,6 +45,15 @@ function buildLogisticsScopeFilter(stageIds) {
   parts.push(`status.in.(${LOGISTICS_STATUSES.join(',')})`);
   return parts.join(',');
 }
+
+/** Áp cờ vc_deleted_at IS NULL — graceful nếu cột chưa tồn tại (migration 242 chưa chạy). */
+function applyVcNotDeletedFilter(query) {
+  try { return query.is('vc_deleted_at', null); } catch { return query; }
+}
+const IS_VC_DELETED_AT_MISSING = (err) =>
+  !!err && String(err.message || '').toLowerCase().includes('vc_deleted_at');
+const IS_VC_DELETE_REASON_MISSING = (err) =>
+  !!err && String(err.message || '').toLowerCase().includes('vc_delete_reason');
 
 const VC_SELECT_FULL = `id, company_id, name, color, icon, order_index, is_active, progress_percent, workflow_stage_id, bucket_slug, crm_sync_type,
       crm_target_stage_id, crm_target_stage:crm_pipeline_stages(id, name, color, icon, order_index),
@@ -387,12 +397,33 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
         workshop_type:workshop_project_types(id, name, applies_to),
         tasks(id, status)`)
       .or(orFilter);
+    query = applyVcNotDeletedFilter(query);
 
     if (division_id) query = query.eq('division_id', division_id);
     if (company_id) query = query.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
     if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
 
     let { data: projectsRaw, error: dashErr } = await query.order('created_at', { ascending: false });
+    if (dashErr && IS_VC_DELETED_AT_MISSING(dashErr)) {
+      // Migration 242 chưa chạy — retry không filter cờ này
+      let qNoSoft = supabase
+        .from('projects')
+        .select(`id, code, name, estimated_value, status, deadline, created_at, company_id, logistics_company_id,
+          current_stage_id, vc_kanban_column_id,
+          current_stage:workflow_stages(id, slug, name, color, icon),
+          customer:customers(id, full_name),
+          company:companies!projects_company_id_fkey(id, name, short_name),
+          logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
+          workshop_type:workshop_project_types(id, name, applies_to),
+          tasks(id, status)`)
+        .or(orFilter);
+      if (division_id) qNoSoft = qNoSoft.eq('division_id', division_id);
+      if (company_id) qNoSoft = qNoSoft.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
+      if (workshop_type_id) qNoSoft = qNoSoft.eq('workshop_type_id', workshop_type_id);
+      const rNoSoft = await qNoSoft.order('created_at', { ascending: false });
+      projectsRaw = rNoSoft.data;
+      dashErr = rNoSoft.error;
+    }
     // Graceful degradation nếu vc_kanban_column_id chưa tồn tại
     if (dashErr && dashErr.message?.includes('vc_kanban_column_id')) {
       let q2 = supabase
@@ -508,6 +539,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
         workshop_type:workshop_project_types(id, name, applies_to),
         tasks(id, status)`, { count: 'exact' })
       .or(orFilter);
+    query = applyVcNotDeletedFilter(query);
 
     if (search) query = query.or(`name.ilike.%${search}%,code.ilike.%${search}%`);
     if (priority) query = query.eq('priority', priority);
@@ -518,6 +550,34 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
     let { data: projectsRaw, error } = await query
       .order('created_at', { ascending: false })
       .range((parsedPage - 1) * parsedLimit, parsedPage * parsedLimit - 1);
+
+    if (error && IS_VC_DELETED_AT_MISSING(error)) {
+      // Migration 242 chưa chạy — retry không có cờ
+      let qNoSoft = supabase
+        .from('projects')
+        .select(`id, code, name, estimated_value, priority, deadline, created_at, status, notes, company_id, logistics_company_id,
+          current_stage_id, vc_kanban_column_id,
+          current_stage:workflow_stages(id, slug, name, color, icon),
+          customer:customers(id, full_name, phone),
+          company:companies!projects_company_id_fkey(id, name, short_name),
+          logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
+          logistics_person:users!projects_logistics_person_id_fkey(id, full_name, avatar),
+          production_person:users!projects_production_person_id_fkey(id, full_name),
+          sales_person:users!projects_sales_person_id_fkey(id, full_name),
+          workshop_type:workshop_project_types(id, name, applies_to),
+          tasks(id, status)`, { count: 'exact' })
+        .or(orFilter);
+      if (search) qNoSoft = qNoSoft.or(`name.ilike.%${search}%,code.ilike.%${search}%`);
+      if (priority) qNoSoft = qNoSoft.eq('priority', priority);
+      if (division_id) qNoSoft = qNoSoft.eq('division_id', division_id);
+      if (company_id) qNoSoft = qNoSoft.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
+      if (workshop_type_id) qNoSoft = qNoSoft.eq('workshop_type_id', workshop_type_id);
+      const r2 = await qNoSoft
+        .order('created_at', { ascending: false })
+        .range((parsedPage - 1) * parsedLimit, parsedPage * parsedLimit - 1);
+      projectsRaw = r2.data;
+      error = r2.error;
+    }
 
     let projects = projectsRaw || [];
 
@@ -1083,6 +1143,231 @@ r.patch('/projects/:projectId/incidents/:incidentId', requirePermission('project
       .from('project_incidents').update(update).eq('id', req.params.incidentId).eq('project_id', req.params.projectId).select('*').single();
     if (error) throw error;
     res.json(data);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Thùng rác VC (soft delete) ─────────────────────────────────────────────
+// Migration: database/242_vc_soft_delete.sql
+
+const VC_ADMIN_ROLES = new Set(['admin', 'superadmin', 'super_admin']);
+function isVcAdmin(user) { return VC_ADMIN_ROLES.has(user?.role); }
+
+const VC_TRASH_SELECT = `id, code, name, status, priority, deadline, created_at, company_id, logistics_company_id,
+  vc_deleted_at, vc_deleted_by, vc_delete_reason,
+  customer:customers(id, full_name, phone),
+  company:companies!projects_company_id_fkey(id, name, short_name),
+  logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
+  deleted_user:users!projects_vc_deleted_by_fkey(id, full_name)`;
+
+const VC_TRASH_SELECT_FALLBACK = `id, code, name, status, priority, deadline, created_at, company_id, logistics_company_id,
+  vc_deleted_at, vc_deleted_by, vc_delete_reason,
+  customer:customers(id, full_name, phone),
+  company:companies!projects_company_id_fkey(id, name, short_name),
+  logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name)`;
+
+const VC_TRASH_SELECT_NO_REASON = `id, code, name, status, priority, deadline, created_at, company_id, logistics_company_id,
+  vc_deleted_at, vc_deleted_by,
+  customer:customers(id, full_name, phone),
+  company:companies!projects_company_id_fkey(id, name, short_name),
+  logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
+  deleted_user:users!projects_vc_deleted_by_fkey(id, full_name)`;
+
+const VC_TRASH_SELECT_FALLBACK_NO_REASON = `id, code, name, status, priority, deadline, created_at, company_id, logistics_company_id,
+  vc_deleted_at, vc_deleted_by,
+  customer:customers(id, full_name, phone),
+  company:companies!projects_company_id_fkey(id, name, short_name),
+  logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name)`;
+
+// DELETE /api/logistics/projects/:id — soft-delete khỏi module VC
+r.delete('/projects/:id', requirePermission('projects', 'edit'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const rawReason = req.body?.delete_reason ?? req.query?.delete_reason ?? '';
+    const deleteReason = String(rawReason || '').trim().slice(0, 500) || null;
+
+    const { data: project, error: pErr } = await supabase
+      .from('projects')
+      .select('id, code, name, company_id, logistics_company_id')
+      .eq('id', id)
+      .maybeSingle();
+    if (pErr) throw pErr;
+    if (!project) return res.status(404).json({ error: 'Không tìm thấy dự án' });
+
+    const buildPatch = (includeReason) => {
+      const patch = {
+        vc_deleted_at: new Date().toISOString(),
+        vc_deleted_by: req.user.userId,
+      };
+      if (includeReason) patch.vc_delete_reason = deleteReason;
+      return patch;
+    };
+
+    let { error } = await supabase.from('projects').update(buildPatch(true)).eq('id', id);
+    // Migration 243 chưa chạy — bỏ delete_reason rồi thử lại
+    if (error && IS_VC_DELETE_REASON_MISSING(error)) {
+      const retry = await supabase.from('projects').update(buildPatch(false)).eq('id', id);
+      error = retry.error;
+    }
+    if (error) {
+      if (IS_VC_DELETED_AT_MISSING(error)) {
+        return res.status(503).json({
+          error: 'Tính năng Thùng rác VC chưa được kích hoạt. Vui lòng chạy migration 242_vc_soft_delete.sql',
+        });
+      }
+      throw error;
+    }
+
+    void writeAuditLog(req, {
+      module: 'logistics',
+      action: 'soft_delete',
+      entity_type: 'project',
+      entity_id: id,
+      entity_label: project.name || project.code || id,
+      company_id: project.logistics_company_id || project.company_id,
+      metadata: { delete_reason: deleteReason, source: 'vc_kanban' },
+    });
+
+    const io = req.app.get('io');
+    if (io) io.emit('logistics:project_trashed', { id });
+    res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/logistics/trash — danh sách dự án đã xóa khỏi VC
+r.get('/trash', requirePermission('projects', 'view'), async (req, res) => {
+  try {
+    const { search, company_id: companyIdQuery } = req.query;
+    const company_id = effectiveWorkshopCompanyId(req, companyIdQuery);
+
+    const buildQuery = (selectCols) => {
+      let q = supabase
+        .from('projects')
+        .select(selectCols)
+        .not('vc_deleted_at', 'is', null)
+        .order('vc_deleted_at', { ascending: false })
+        .limit(500);
+      if (company_id) q = q.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
+      if (search) q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%`);
+      return q;
+    };
+
+    let { data, error } = await buildQuery(VC_TRASH_SELECT);
+    if (error && IS_VC_DELETE_REASON_MISSING(error)) {
+      const r2 = await buildQuery(VC_TRASH_SELECT_NO_REASON);
+      data = r2.data;
+      error = r2.error;
+    }
+    if (error && (error.message?.includes('projects_vc_deleted_by_fkey') || error.message?.includes('relationship'))) {
+      const r2 = await buildQuery(VC_TRASH_SELECT_FALLBACK);
+      data = r2.data;
+      error = r2.error;
+      if (error && IS_VC_DELETE_REASON_MISSING(error)) {
+        const r3 = await buildQuery(VC_TRASH_SELECT_FALLBACK_NO_REASON);
+        data = r3.data;
+        error = r3.error;
+      }
+    }
+    if (error && IS_VC_DELETED_AT_MISSING(error)) {
+      return res.json({ items: [], migration_required: true });
+    }
+    if (error) throw error;
+    res.json({ items: data || [] });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/logistics/trash/:id/restore — phục hồi dự án về module VC
+r.post('/trash/:id/restore', requirePermission('projects', 'edit'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: project, error: gErr } = await supabase
+      .from('projects')
+      .select('id, name, code, company_id, logistics_company_id, vc_deleted_at')
+      .eq('id', id)
+      .maybeSingle();
+    if (gErr) {
+      if (IS_VC_DELETED_AT_MISSING(gErr)) {
+        return res.status(503).json({ error: 'Tính năng Thùng rác VC chưa được kích hoạt' });
+      }
+      throw gErr;
+    }
+    if (!project) return res.status(404).json({ error: 'Không tìm thấy dự án' });
+    if (!project.vc_deleted_at) return res.status(400).json({ error: 'Dự án không nằm trong thùng rác' });
+
+    const patchRestore = { vc_deleted_at: null, vc_deleted_by: null, vc_delete_reason: null };
+    let { error } = await supabase.from('projects').update(patchRestore).eq('id', id);
+    if (error && IS_VC_DELETE_REASON_MISSING(error)) {
+      const { vc_delete_reason: _omit, ...rest } = patchRestore;
+      void _omit;
+      const retry = await supabase.from('projects').update(rest).eq('id', id);
+      error = retry.error;
+    }
+    if (error) throw error;
+
+    void writeAuditLog(req, {
+      module: 'logistics',
+      action: 'restore',
+      entity_type: 'project',
+      entity_id: id,
+      entity_label: project.name || project.code || id,
+      company_id: project.logistics_company_id || project.company_id,
+      metadata: { source: 'vc_trash' },
+    });
+
+    const io = req.app.get('io');
+    if (io) io.emit('logistics:project_restored', { id });
+    res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/logistics/trash/:id — xóa vĩnh viễn (chỉ admin)
+r.delete('/trash/:id', requirePermission('projects', 'edit'), async (req, res) => {
+  try {
+    if (!isVcAdmin(req.user)) {
+      return res.status(403).json({ error: 'Chỉ admin được xóa vĩnh viễn' });
+    }
+    const { id } = req.params;
+    const { data: project, error: gErr } = await supabase
+      .from('projects')
+      .select('id, name, code, company_id, logistics_company_id, vc_deleted_at')
+      .eq('id', id)
+      .maybeSingle();
+    if (gErr && IS_VC_DELETED_AT_MISSING(gErr)) {
+      return res.status(503).json({ error: 'Tính năng Thùng rác VC chưa được kích hoạt' });
+    }
+    if (gErr) throw gErr;
+    if (!project) return res.status(404).json({ error: 'Không tìm thấy dự án' });
+    if (!project.vc_deleted_at) {
+      return res.status(400).json({ error: 'Chỉ xóa vĩnh viễn dự án đã ở thùng rác. Hãy xóa mềm trước.' });
+    }
+
+    const { error } = await supabase.from('projects').delete().eq('id', id);
+    if (error) throw error;
+
+    void writeAuditLog(req, {
+      module: 'logistics',
+      action: 'purge',
+      entity_type: 'project',
+      entity_id: id,
+      entity_label: project.name || project.code || id,
+      company_id: project.logistics_company_id || project.company_id,
+      metadata: { source: 'vc_trash' },
+    });
+
+    const io = req.app.get('io');
+    if (io) io.emit('logistics:project_purged', { id });
+    res.json({ success: true });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });

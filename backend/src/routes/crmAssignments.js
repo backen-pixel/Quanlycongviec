@@ -287,11 +287,14 @@ async function replaceAssignees(assignmentId, userIds) {
   return userIds;
 }
 
+const { emitNotifyBadge } = require('../helpers/notifyBadge');
+
 function pushNotif(req, userId, payload) {
   if (!userId) return;
   try {
     const push = req.app.get('pushNotification');
     if (typeof push === 'function') void push(userId, payload);
+    emitNotifyBadge(req.app, 'assignments');
   } catch { /* ignore */ }
 }
 

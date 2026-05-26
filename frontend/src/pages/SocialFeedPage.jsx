@@ -12,92 +12,17 @@ import {
   ChevronLeft, ChevronRight, Maximize2, Pencil, Share2, EyeOff, Search, User,
 } from 'lucide-react';
 
-const LS_SOCIAL_COMPANY = 'internal_social_filter_company_id';
+import ScopeFilterBar from '../shared/components/ScopeFilterBar';
+import { useScopeFilter } from '../shared/hooks/useScopeFilter';
+import { UserPresenceAvatar } from '../shared/context/PresenceContext';
 const BODY_PREVIEW = 280;
 /** File lớn hơn ngưỡng → upload stream (disk) trên server */
 const UPLOAD_STREAM_BYTES = 48 * 1024 * 1024;
 const MAX_ATTACHMENTS = 12;
 
-/** Cảm xúc (đồng bộ backend `internal_social_likes.reaction`) */
-const REACTION_OPTIONS = [
-  { key: 'like', emoji: '👍', label: 'Thích' },
-  { key: 'love', emoji: '❤️', label: 'Yêu thích' },
-  { key: 'care', emoji: '🤗', label: 'Thương thương' },
-  { key: 'haha', emoji: '😆', label: 'Haha' },
-  { key: 'wow', emoji: '😮', label: 'Wow' },
-  { key: 'sad', emoji: '😢', label: 'Buồn' },
-  { key: 'angry', emoji: '😠', label: 'Phẫn nộ' },
-];
-
-const REACTION_EMOJI = Object.fromEntries(REACTION_OPTIONS.map((o) => [o.key, o.emoji]));
-
-/** Icon tròn kiểu Facebook (picker + tóm tắt) */
-function ReactionCircle({ reactionKey, size = 'lg' }) {
-  const wrap =
-    size === 'lg'
-      ? 'h-10 w-10 min-h-[2.5rem] min-w-[2.5rem]'
-      : size === 'md'
-        ? 'h-7 w-7 min-h-7 min-w-7'
-        : 'h-[18px] w-[18px] min-h-[18px] min-w-[18px]';
-  const thumb =
-    size === 'lg' ? 'h-[22px] w-[22px]' : size === 'md' ? 'h-4 w-4' : 'h-2.5 w-2.5';
-  const heart = size === 'lg' ? 'h-5 w-5' : size === 'md' ? 'h-3.5 w-3.5' : 'h-2.5 w-2.5';
-  const em =
-    size === 'lg' ? 'text-[22px] leading-none' : size === 'md' ? 'text-sm leading-none' : 'text-[10px] leading-none';
-  const ring = size === 'sm' ? 'border border-white shadow-sm' : 'border-2 border-white shadow-md';
-  const base = `flex ${wrap} shrink-0 items-center justify-center rounded-full ${ring}`;
-
-  switch (reactionKey) {
-    case 'like':
-      return (
-        <span className={`${base} bg-[#1877f2]`} aria-hidden>
-          <ThumbsUp className={`${thumb} text-white`} strokeWidth={2.2} fill="currentColor" />
-        </span>
-      );
-    case 'love':
-      return (
-        <span className={`${base} bg-gradient-to-br from-pink-500 to-red-600`} aria-hidden>
-          <Heart className={`${heart} text-white`} fill="currentColor" stroke="none" />
-        </span>
-      );
-    case 'care':
-      return (
-        <span className={`${base} bg-amber-100 ${em}`} aria-hidden>
-          {REACTION_EMOJI.care}
-        </span>
-      );
-    case 'haha':
-      return (
-        <span className={`${base} bg-amber-300 ${em}`} aria-hidden>
-          {REACTION_EMOJI.haha}
-        </span>
-      );
-    case 'wow':
-      return (
-        <span className={`${base} bg-amber-300 ${em}`} aria-hidden>
-          {REACTION_EMOJI.wow}
-        </span>
-      );
-    case 'sad':
-      return (
-        <span className={`${base} bg-amber-300 ${em}`} aria-hidden>
-          {REACTION_EMOJI.sad}
-        </span>
-      );
-    case 'angry':
-      return (
-        <span className={`${base} bg-gradient-to-b from-orange-500 to-red-700 ${em}`} aria-hidden>
-          {REACTION_EMOJI.angry}
-        </span>
-      );
-    default:
-      return (
-        <span className={`${base} bg-[#1877f2]`} aria-hidden>
-          <ThumbsUp className={`${thumb} text-white`} strokeWidth={2.2} fill="currentColor" />
-        </span>
-      );
-  }
-}
+import ReactionCircle from '../shared/components/ReactionCircle';
+import { PostReactionActions, ReactionSummary } from '../shared/components/EngagementBar';
+import { REACTION_OPTIONS, REACTION_EMOJI } from '../shared/lib/reactions';
 
 function normalizeSocialPost(p) {
   if (!p || typeof p !== 'object') return p;
@@ -194,27 +119,30 @@ function AuthorProfileLink({ user, className = '', children }) {
   );
 }
 
-function Avatar({ user }) {
+function Avatar({ user, showPresence = true }) {
   const name = user?.full_name || user?.email || '?';
   const initials = getInitials(name);
   const pic = typeof user?.avatar === 'string' && user.avatar.trim();
-  if (pic) {
-    return (
-      <img
-        src={pic}
-        alt=""
-        title={name}
-        className="h-10 w-10 shrink-0 rounded-full border border-gray-200/90 object-cover"
-      />
-    );
-  }
-  return (
+  const inner = pic ? (
+    <img
+      src={pic}
+      alt=""
+      title={name}
+      className="h-10 w-10 shrink-0 rounded-full border border-gray-200/90 object-cover"
+    />
+  ) : (
     <div
       className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-semibold text-white"
       title={name}
     >
       {initials}
     </div>
+  );
+  if (!showPresence || !(user?.id || user?.user_id)) return inner;
+  return (
+    <UserPresenceAvatar user={user} size="md">
+      {inner}
+    </UserPresenceAvatar>
   );
 }
 
@@ -925,26 +853,6 @@ function PostCard({
     ? `${(post.body || '').slice(0, BODY_PREVIEW)}…`
     : (post.body || '');
 
-  const [rxHover, setRxHover] = useState(false);
-  const rxCloseTimer = useRef(null);
-  const clearRxTimer = () => {
-    if (rxCloseTimer.current) {
-      clearTimeout(rxCloseTimer.current);
-      rxCloseTimer.current = null;
-    }
-  };
-  const openRx = () => {
-    clearRxTimer();
-    setRxHover(true);
-  };
-  const scheduleCloseRx = () => {
-    clearRxTimer();
-    rxCloseTimer.current = setTimeout(() => setRxHover(false), 280);
-  };
-  useEffect(() => () => clearRxTimer(), []);
-
-  const myRx = post.my_reaction && REACTION_EMOJI[post.my_reaction] ? post.my_reaction : null;
-
   const galleryItems = useMemo(() => collectGalleryItems(post, comments), [post, comments]);
   const nestedComments = useMemo(
     () => nestComments((comments || []).map(normalizeComment)),
@@ -1155,149 +1063,22 @@ function PostCard({
         </div>
       )}
 
-      <div className="px-4 py-2 border-t border-gray-100 flex items-center justify-between gap-2 text-sm text-gray-600">
-        <span className="flex flex-1 items-center gap-3 flex-wrap min-w-0">
-          {(() => {
-            const total = post.like_count ?? 0;
-            if (total <= 0) return null;
-            const rc = post.reaction_counts || {};
-            const keys = Object.keys(rc)
-              .filter((k) => rc[k] > 0)
-              .sort((a, b) => (rc[b] || 0) - (rc[a] || 0))
-              .slice(0, 3);
-            const open = () => onOpenReactionList?.(post.id);
-            if (!keys.length) {
-              return (
-                <button
-                  type="button"
-                  onClick={open}
-                  className="flex items-center gap-1 rounded-lg px-1 py-0.5 text-blue-700 hover:bg-gray-100"
-                >
-                  <ThumbsUp className="w-4 h-4 fill-current" />
-                  <span>{total}</span>
-                </button>
-              );
-            }
-            return (
-              <button
-                type="button"
-                onClick={open}
-                className="flex max-w-full items-center gap-2 rounded-lg px-1 py-0.5 text-left text-gray-800 hover:bg-gray-100"
-              >
-                <span className="flex items-center shrink-0 pl-0.5">
-                  {keys.map((k, i) => (
-                    <span
-                      key={k}
-                      className={`relative inline-flex ${i > 0 ? '-ml-1.5' : ''}`}
-                      style={{ zIndex: i }}
-                      title={k}
-                    >
-                      <ReactionCircle reactionKey={k} size="sm" />
-                    </span>
-                  ))}
-                </span>
-                <span className="font-medium tabular-nums">{total}</span>
-              </button>
-            );
-          })()}
-          {post.comment_count > 0 && (
-            <span className="flex items-center gap-1 text-gray-600">
-              <MessageCircle className="w-4 h-4 shrink-0 text-gray-500" />
-              <span>{post.comment_count}</span>
-            </span>
-          )}
-        </span>
-        {(() => {
-          const total = post.like_count ?? 0;
-          if (total <= 0) return null;
-          const rc = post.reaction_counts || {};
-          const keys = Object.keys(rc)
-            .filter((k) => rc[k] > 0)
-            .sort((a, b) => (rc[b] || 0) - (rc[a] || 0))
-            .slice(0, 3);
-          if (!keys.length) return null;
-          return (
-            <button
-              type="button"
-              onClick={() => onOpenReactionList?.(post.id)}
-              className="hidden shrink-0 sm:inline-flex -space-x-1 rounded-lg p-1 hover:bg-gray-100"
-              aria-label="Xem cảm xúc"
-            >
-              {keys.map((k, i) => (
-                <span key={k} className="relative inline-flex" style={{ zIndex: keys.length - i }}>
-                  <ReactionCircle reactionKey={k} size="sm" />
-                </span>
-              ))}
-            </button>
-          );
-        })()}
-      </div>
+      <ReactionSummary
+        reactionCounts={post.reaction_counts}
+        likeCount={post.like_count}
+        commentCount={post.comment_count}
+        onOpenReactionList={() => onOpenReactionList?.(post.id)}
+      />
 
-      <div className="flex border-t border-gray-100">
-        <div
-          className="relative flex-1"
-          onMouseEnter={openRx}
-          onMouseLeave={scheduleCloseRx}
-        >
-          {rxHover && (
-            <div
-              role="menu"
-              className="absolute bottom-full left-1/2 z-20 mb-2 flex -translate-x-1/2 items-center gap-0.5 rounded-full border border-gray-200/90 bg-white/95 px-2 py-1.5 shadow-[0_2px_16px_rgba(0,0,0,0.18)] backdrop-blur-sm"
-              onMouseEnter={openRx}
-              onMouseLeave={scheduleCloseRx}
-            >
-              {REACTION_OPTIONS.map((opt) => (
-                <button
-                  key={opt.key}
-                  type="button"
-                  title={opt.label}
-                  className="rounded-full p-0.5 transition-transform hover:scale-125 hover:z-10 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-1"
-                  onClick={() => {
-                    clearRxTimer();
-                    setRxHover(false);
-                    onReaction(post.id, opt.key);
-                  }}
-                >
-                  <ReactionCircle reactionKey={opt.key} size="lg" />
-                </button>
-              ))}
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={() => onReaction(post.id, 'like')}
-            className={`w-full flex items-center justify-center gap-2 py-2.5 text-sm font-medium transition-colors ${
-              post.liked_by_me ? 'text-blue-600 bg-blue-50/50' : 'text-gray-600 hover:bg-gray-50'
-            }`}
-          >
-            {myRx && myRx !== 'like' ? (
-              <ReactionCircle reactionKey={myRx} size="md" />
-            ) : (
-              <ThumbsUp className={`w-5 h-5 ${post.liked_by_me && (!myRx || myRx === 'like') ? 'fill-current' : ''}`} />
-            )}
-            {myRx && myRx !== 'like' ? REACTION_OPTIONS.find((o) => o.key === myRx)?.label || 'Thích' : 'Thích'}
-          </button>
-        </div>
-        <button
-          type="button"
-          onClick={() => onToggleComments(post.id)}
-          className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-medium border-l border-gray-100 ${
-            commentsOpen ? 'text-blue-600 bg-blue-50/30' : 'text-gray-600 hover:bg-gray-50'
-          }`}
-        >
-          <MessageCircle className="w-5 h-5" />
-          Bình luận
-        </button>
-        <button
-          type="button"
-          onClick={() => onShare?.(post)}
-          className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-medium border-l border-gray-100 text-gray-600 hover:bg-gray-50"
-          title="Chia sẻ hoặc sao chép liên kết bài viết"
-        >
-          <Share2 className="w-5 h-5" />
-          Chia sẻ
-        </button>
-      </div>
+      <PostReactionActions
+        entityId={post.id}
+        myReaction={post.my_reaction}
+        likedByMe={post.liked_by_me}
+        onReaction={onReaction}
+        onToggleComments={onToggleComments}
+        commentsOpen={commentsOpen}
+        onShare={() => onShare?.(post)}
+      />
 
       {commentsOpen && (
         <div className="border-t border-gray-100 bg-gray-50/80 px-4 py-3 space-y-3">
@@ -1358,28 +1139,17 @@ export default function SocialFeedPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const isSystemAdmin = checkSystemAdmin(user);
 
-  const [companies, setCompanies] = useState([]);
-  const [filterCompanyId, setFilterCompanyId] = useState(() => {
-    try { return localStorage.getItem(LS_SOCIAL_COMPANY) || ''; } catch { return ''; }
+  const scope = useScopeFilter({
+    storageKey: 'internal_social',
+    companiesModule: 'crm',
+    showCompany: isSystemAdmin,
+    showDepartment: false,
+    showSearch: false,
+    autoDefaultCompany: !isSystemAdmin,
+    persist: true,
   });
-
-  useEffect(() => {
-    if (!isSystemAdmin) return;
-    api.get('/companies', { params: { for_module: 'crm' } })
-      .then((r) => {
-        const list = r.data?.companies || r.data || [];
-        setCompanies(Array.isArray(list) ? list : []);
-      })
-      .catch(() => setCompanies([]));
-  }, [isSystemAdmin]);
-
-  useEffect(() => {
-    if (!isSystemAdmin) return;
-    try {
-      if (filterCompanyId) localStorage.setItem(LS_SOCIAL_COMPANY, filterCompanyId);
-      else localStorage.removeItem(LS_SOCIAL_COMPANY);
-    } catch { /* ignore */ }
-  }, [isSystemAdmin, filterCompanyId]);
+  const filterCompanyId = scope.companyId;
+  const companies = scope.companies;
 
   const effectiveCompanyId = useMemo(() => {
     if (isSystemAdmin) return filterCompanyId || '';
@@ -2106,16 +1876,20 @@ export default function SocialFeedPage() {
           <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-sm">
             <Building2 className="w-4 h-4 text-amber-700 shrink-0" />
             <span className="text-amber-900 shrink-0">Công ty:</span>
-            <select
-              value={filterCompanyId}
-              onChange={(e) => setFilterCompanyId(e.target.value)}
-              className="flex-1 min-w-0 border border-amber-200 rounded-lg px-2 py-1.5 bg-white text-sm"
-            >
-              <option value="">— Chọn công ty —</option>
-              {companies.map((c) => (
-                <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-              ))}
-            </select>
+            <div className="flex-1 min-w-0">
+              <ScopeFilterBar
+                scope={{
+                  ...scope,
+                  showDepartment: false,
+                  showSearch: false,
+                  showDateRange: false,
+                  companies,
+                }}
+                companyLabel=""
+                companyAllowAll={false}
+                emptyCompanyLabel="— Chọn công ty —"
+              />
+            </div>
           </div>
         )}
 

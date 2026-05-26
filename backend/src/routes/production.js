@@ -1255,6 +1255,72 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
       return;
     }
 
+    const pipelineStageId = req.body?.production_pipeline_stage_id || req.body?.sx_pipeline_stage_id || null;
+
+    // Cột Kanban chỉ có production_pipeline_stages.id (không map workflow) — cập nhật badge + sync CRM.
+    if (pipelineStageId && !stage_id) {
+      const colId = String(pipelineStageId);
+      const { data: colRow } = await supabase
+        .from('production_pipeline_stages')
+        .select('id, workflow_stage_id, bucket_slug')
+        .eq('id', colId)
+        .maybeSingle();
+      if (!colRow) return res.status(400).json({ error: 'Cột pipeline sản xuất không tồn tại' });
+
+      const leadPatch = { sx_pipeline_stage_id: colId };
+      const { error: leadUpdErr } = await supabase
+        .from('crm_leads')
+        .update(leadPatch)
+        .eq('project_id', id)
+        .eq('type', 'deal');
+      if (leadUpdErr && !leadUpdErr.message?.includes('sx_pipeline_stage_id')) throw leadUpdErr;
+
+      let projectUpd = {};
+      if (colRow.workflow_stage_id) {
+        projectUpd = { current_stage_id: colRow.workflow_stage_id };
+        const { data: targetStage } = await supabase
+          .from('workflow_stages')
+          .select('slug')
+          .eq('id', colRow.workflow_stage_id)
+          .maybeSingle();
+        const statusMap = { production: 'producing', delivery: 'shipping', 'customer-care': 'warranty' };
+        if (targetStage?.slug && statusMap[targetStage.slug]) {
+          projectUpd.status = statusMap[targetStage.slug];
+        }
+      }
+      if (Object.keys(projectUpd).length) {
+        await supabase.from('projects').update(projectUpd).eq('id', id);
+      }
+
+      const { data: updatedPipe } = await supabase
+        .from('projects')
+        .select(`
+          id, code, name, status, current_stage_id, production_person_id,
+          current_stage:workflow_stages(id, slug, name, color)
+        `)
+        .eq('id', id)
+        .single();
+
+      res.json({ project: updatedPipe, pipeline_stage_id: colId });
+
+      const ioPipe = req.app.get('io');
+      setImmediate(() => {
+        void (async () => {
+          try {
+            await syncCrmLeadSxPipelineFromProject(id);
+          } catch (syncErr) {
+            console.warn('[production] syncCrmLeadSxPipelineFromProject (pipeline col):', syncErr.message);
+          }
+          try {
+            if (ioPipe) await emitCrmBadgeUpdateForProject(id, ioPipe);
+          } catch (emitErr) {
+            console.warn('[production] emitCrmBadgeUpdateForProject (pipeline col):', emitErr.message);
+          }
+        })();
+      });
+      return;
+    }
+
     if (!stage_id) {
       return res.status(400).json({ error: 'stage_id required' });
     }
@@ -1369,7 +1435,7 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
               if (vcDeliveryStageId) {
                 const { data: leads } = await supabase
                   .from('crm_leads')
-                  .select('id, stage_id, stage:crm_pipeline_stages(id, name, sync_role, is_won, is_lost)')
+                  .select('id, stage_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, sync_role, is_won, is_lost)')
                   .eq('project_id', projectId)
                   .eq('type', 'deal');
                 await Promise.all(
