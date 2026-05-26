@@ -86,7 +86,7 @@ object BubbleNotifBuilder {
 
     ensureChannel(ctx)
 
-    val avatarIcon = IconCompat.createWithBitmap(makeAvatarBitmap(avatarLetter))
+    val avatarIcon = IconCompat.createWithAdaptiveBitmap(makeAvatarBitmap(avatarLetter))
     val person = Person.Builder()
       .setName(senderName)
       .setIcon(avatarIcon)
@@ -169,7 +169,7 @@ object BubbleNotifBuilder {
   }
 
   /** Vẽ avatar tròn 1 ký tự — đủ làm icon Bubble (yêu cầu Bitmap, không vector). */
-  private fun makeAvatarBitmap(letter: String, sizePx: Int = 192): Bitmap {
+  private fun makeAvatarBitmap(letter: String, sizePx: Int = 256): Bitmap {
     val bmp = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
     val c = Canvas(bmp)
     val pBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#E8F4FF") }

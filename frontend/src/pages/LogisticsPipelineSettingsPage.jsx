@@ -376,6 +376,25 @@ export default function LogisticsPipelineSettingsPage() {
                   <p className="text-[10px] text-gray-500">
                     Khi deal VC đến cột này, deal CRM liên kết sẽ tự chuyển sang cột đã chọn và thông báo nhân viên sale.
                   </p>
+                  {!form.crm_target_stage_id && (
+                    <div className="space-y-1 pt-1">
+                      <label className="flex items-center gap-2 text-xs cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={['delivery', 'installation', 'customer_care'].includes(form.crm_sync_type)}
+                          onChange={(e) => setForm((f) => ({ ...f, crm_sync_type: e.target.checked ? 'delivery' : '' }))}
+                          className="rounded border-blue-400 accent-blue-600"
+                        />
+                        <span className="text-blue-600 font-medium">Dùng sync_role mặc định (Vận chuyển/Lắp đặt)</span>
+                        <span className="text-gray-400 font-normal text-[10px]">legacy — chọn cột CRM bên trên thay thế</span>
+                      </label>
+                      {(form.crm_sync_type === 'installation' || form.crm_sync_type === 'customer_care') && (
+                        <p className="text-[10px] text-amber-600 pl-6">
+                          Đang dùng giá trị legacy <code className="bg-amber-50 px-1 rounded">{form.crm_sync_type}</code> — tick lại để chuyển về <code className="bg-amber-50 px-1 rounded">delivery</code>, hoặc chọn cột CRM bên trên.
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 

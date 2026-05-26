@@ -218,8 +218,24 @@ class OverlayBubbleService : Service() {
 
   // ---- Multi-bubble stack ----
 
-  private fun bubbleSizePx(): Int = dp(52f).toInt()
-  private fun stackOverlapPx(): Int = dp(16f).toInt()
+  /** Kích thước bubble nhìn thấy (dp). Khớp với [BubbleOverlayView.VISIBLE_DP]. */
+  private fun bubbleVisibleSizePx(): Int = BubbleOverlayView.visibleSizePx(this)
+
+  /**
+   * Kích thước WINDOW thật của bubble — lớn hơn bubble visible để phần đệm
+   * trong suốt giúp ngón tay không "thoát" window khi kéo nhanh. Nhờ đó touch
+   * capture luôn được giữ → drag mượt mà giống Messenger ChatHeads / Zalo.
+   * Khớp với [BubbleOverlayView.WINDOW_DP].
+   */
+  private fun bubbleWindowSizePx(): Int = BubbleOverlayView.windowSizePx(this)
+
+  /** Padding trong suốt giữa mép window và mép bubble (mỗi bên). */
+  private fun bubblePadPx(): Int = (bubbleWindowSizePx() - bubbleVisibleSizePx()) / 2
+
+  /** Backwards compat: code cũ gọi `bubbleSizePx()` nghĩa là VISIBLE size. */
+  private fun bubbleSizePx(): Int = bubbleVisibleSizePx()
+
+  private fun stackOverlapPx(): Int = dp(18f).toInt()
 
   private fun renderStack(
     entries: List<BubbleStackStore.Entry>,
@@ -231,34 +247,41 @@ class OverlayBubbleService : Service() {
       // Không show bubble, chỉ skip render.
       return
     }
-    val sizePx = bubbleSizePx()
+    val visSize = bubbleVisibleSizePx()
+    val winSize = bubbleWindowSizePx()
+    val pad = bubblePadPx()
     val keysInStack = entries.map { it.key }.toSet()
     // Gỡ bubble không còn trong store
     val toRemove = managed.keys.filter { it !in keysInStack }
     for (k in toRemove) removeBubbleView(k)
 
     val metrics = resources.displayMetrics
-    // Khôi phục vị trí top bubble đã lưu (Phase 6)
-    val savedX = prefs.getInt(KEY_TOP_X, Int.MIN_VALUE)
-    val savedY = prefs.getInt(KEY_TOP_Y, Int.MIN_VALUE)
-    val defaultX = metrics.widthPixels - sizePx - dp(10f).toInt()
-    val defaultY = (metrics.heightPixels * 0.55f).toInt()
-    val topX = if (savedX != Int.MIN_VALUE) savedX.coerceIn(0, metrics.widthPixels - sizePx) else defaultX
-    val topY = if (savedY != Int.MIN_VALUE) savedY.coerceIn(0, metrics.heightPixels - sizePx) else defaultY
+    // Vị trí lưu = TOP-LEFT của BUBBLE NHÌN THẤY (visible) — bền vững khi đổi
+    // window size sau này.
+    val savedVisX = prefs.getInt(KEY_TOP_X, Int.MIN_VALUE)
+    val savedVisY = prefs.getInt(KEY_TOP_Y, Int.MIN_VALUE)
+    val defaultVisX = metrics.widthPixels - visSize - dp(10f).toInt()
+    val defaultVisY = (metrics.heightPixels * 0.55f).toInt()
+    val topVisX = if (savedVisX != Int.MIN_VALUE) savedVisX.coerceIn(0, metrics.widthPixels - visSize) else defaultVisX
+    val topVisY = if (savedVisY != Int.MIN_VALUE) savedVisY.coerceIn(0, metrics.heightPixels - visSize) else defaultVisY
 
     entries.forEachIndexed { index, entry ->
       val isTop = index == entries.lastIndex
-      val y = if (isTop) topY else (topY - (entries.lastIndex - index) * stackOverlapPx()).coerceAtLeast(dp(48f).toInt())
-      val x = topX
+      val visibleY = if (isTop) topVisY else (topVisY - (entries.lastIndex - index) * stackOverlapPx()).coerceAtLeast(dp(48f).toInt())
+      // Convert sang WINDOW position (window có pad trong suốt bao quanh bubble).
+      val winX = topVisX - pad
+      val winY = visibleY - pad
       val mb = managed[entry.key]
+      // Bỏ qua bubble đang được user kéo — animate sẽ ghi đè translation.
+      if (mb != null && entry.key == draggingKey) return@forEachIndexed
       if (mb != null) {
         mb.view.setAvatarLetter(entry.letter)
-        animateTo(mb, x, y)
+        animateTo(mb, winX, winY)
         // Badge per-bubble: mỗi bubble hiện count riêng (theo entry.unreadCount).
         mb.view.setBadge(entry.unreadCount)
         if (!entry.avatarUrl.isNullOrBlank()) loadAvatarAsync(entry.avatarUrl, mb.view)
       } else {
-        attachBubble(entry, x, y, sizePx, isTop = isTop)
+        attachBubble(entry, winX, winY, winSize, isTop = isTop)
       }
       if (entry.key == loadAvatarForKey && !loadAvatarUrl.isNullOrBlank()) {
         managed[entry.key]?.let { loadAvatarAsync(loadAvatarUrl, it.view) }
@@ -268,7 +291,10 @@ class OverlayBubbleService : Service() {
     if (peekForKey != null && peekForKey !in managed) hidePeek()
   }
 
-  private fun attachBubble(entry: BubbleStackStore.Entry, x: Int, y: Int, sizePx: Int, isTop: Boolean) {
+  /**
+   * @param windowSize WINDOW size (180dp) — không phải visible bubble (60dp).
+   */
+  private fun attachBubble(entry: BubbleStackStore.Entry, x: Int, y: Int, windowSize: Int, isTop: Boolean) {
     val view = BubbleOverlayView(this, object : BubbleOverlayView.Callback {
       override fun onTap() = handleTap(entry.key)
       override fun onLongPress() = handleLongPress(entry.key)
@@ -279,19 +305,22 @@ class OverlayBubbleService : Service() {
         showDropTarget()
       }
       override fun onDragMove(rawX: Float, rawY: Float) {
-        moveBubble(entry.key, rawX, rawY, sizePx)
+        moveBubble(entry.key, rawX, rawY)
         // Magnetic: khi gần drop → vibrate nhẹ + scale ring drop
         val dropDist = distanceToDropCenter(rawX, rawY)
         magneticFeedback(dropDist)
       }
       override fun onDragEnd(rawX: Float, rawY: Float, droppedToDismiss: Boolean, vx: Float, vy: Float) {
-        val dropped = isOverDropTarget(rawX, rawY, sizePx)
+        val dropped = isOverDropTarget(rawX, rawY)
         draggingKey = null
         hideDropTarget()
+        // Commit View translation đã dùng trong drag → chuyển sang vị trí window thật.
+        commitDragTranslation(entry.key)
         if (dropped) {
+          vibrateLight()
           removeBubble(entry.key)
         } else {
-          settleBubble(entry.key, sizePx, vx, vy)
+          settleBubble(entry.key, vx, vy)
         }
       }
     }).apply {
@@ -299,7 +328,7 @@ class OverlayBubbleService : Service() {
       // Badge per-bubble = entry.unreadCount (đúng số tin chưa đọc của RIÊNG conv này).
       setBadge(entry.unreadCount)
     }
-    val params = BubbleOverlayView.makeLayoutParams(sizePx, x, y)
+    val params = BubbleOverlayView.makeLayoutParams(windowSize, x, y)
     try {
       wm.addView(view, params)
       managed[entry.key] = ManagedBubble(entry.key, view, params)
@@ -312,23 +341,30 @@ class OverlayBubbleService : Service() {
   private fun layoutStackPositions() {
     if (draggingKey != null) return
     val entries = BubbleStackStore.load(this)
-    val sizePx = bubbleSizePx()
+    val visSize = bubbleVisibleSizePx()
+    val pad = bubblePadPx()
     val metrics = resources.displayMetrics
     val topKey = entries.lastOrNull()?.key
     val topMb = topKey?.let { managed[it] }
-    val topX = topMb?.params?.x ?: (metrics.widthPixels - sizePx - dp(10f).toInt())
-    val topY = topMb?.params?.y ?: (metrics.heightPixels * 0.55f).toInt()
+    val topWinX = topMb?.params?.x ?: (metrics.widthPixels - visSize - dp(10f).toInt() - pad)
+    val topWinY = topMb?.params?.y ?: ((metrics.heightPixels * 0.55f).toInt() - pad)
     entries.forEachIndexed { index, entry ->
       val mb = managed[entry.key] ?: return@forEachIndexed
       val isTop = index == entries.lastIndex
-      val targetX = topX
-      val targetY = if (isTop) topY else (topY - (entries.lastIndex - index) * stackOverlapPx()).coerceAtLeast(dp(48f).toInt())
-      animateTo(mb, targetX, targetY)
+      val targetWinX = topWinX
+      // Stack offset là theo VISIBLE bubble; pad không đổi nên cộng/trừ trên window cũng đúng.
+      val targetWinY = if (isTop) topWinY else (topWinY - (entries.lastIndex - index) * stackOverlapPx()).coerceAtLeast(dp(48f).toInt() - pad)
+      animateTo(mb, targetWinX, targetWinY)
     }
   }
 
   private fun bringToFront(key: String) {
     val mb = managed[key] ?: return
+    // Optimization: nếu bubble đã ở TOP stack (case phổ biến nhất) thì không
+    // cần remove+add — tránh flicker/jank ngay đầu drag mà user mô tả là
+    // "kéo không mượt mà". Chỉ remove+add khi user kéo bubble ở dưới chồng.
+    val topKey = BubbleStackStore.load(this).lastOrNull()?.key
+    if (topKey == key) return
     try {
       wm.removeView(mb.view)
       wm.addView(mb.view, mb.params)
@@ -429,11 +465,16 @@ class OverlayBubbleService : Service() {
   private fun peekLayoutParams(mb: ManagedBubble): WindowManager.LayoutParams {
     val type = overlayWindowType()
     val width = dp(200f).toInt()
-    val sizePx = bubbleSizePx()
+    val visSize = bubbleVisibleSizePx()
+    val pad = bubblePadPx()
     val metrics = resources.displayMetrics
-    val onLeft = mb.params.x + sizePx / 2 < metrics.widthPixels / 2
-    val x = if (onLeft) mb.params.x + sizePx + dp(6f).toInt() else mb.params.x - width - dp(6f).toInt()
-    val y = mb.params.y + dp(4f).toInt()
+    // Bubble visible top-left = window top-left + pad. Center = + winSize/2.
+    val visLeft = mb.params.x + pad
+    val visTop = mb.params.y + pad
+    val visCx = mb.params.x + bubbleWindowSizePx() / 2
+    val onLeft = visCx < metrics.widthPixels / 2
+    val x = if (onLeft) visLeft + visSize + dp(6f).toInt() else visLeft - width - dp(6f).toInt()
+    val y = visTop + dp(4f).toInt()
     return WindowManager.LayoutParams(
       width, WindowManager.LayoutParams.WRAP_CONTENT,
       x.coerceIn(0, metrics.widthPixels - width),
@@ -448,12 +489,39 @@ class OverlayBubbleService : Service() {
 
   // ---- Drag ----
 
-  private fun moveBubble(key: String, rawX: Float, rawY: Float, sizePx: Int) {
+  /**
+   * Khi user đang kéo, **không** gọi [WindowManager.updateViewLayout] — nhiều OEM
+   * (Xiaomi/Oppo/Vivo) sẽ dispatch `ACTION_CANCEL` ngay khi window đổi vị trí
+   * trong lúc gesture đang chạy → bubble "tịt" sau vài pixel. Thay vào đó, giữ
+   * nguyên vị trí window và dịch chuyển View bằng `translationX/Y` (kết hợp
+   * `FLAG_LAYOUT_NO_LIMITS` đã set ở [BubbleOverlayView.makeLayoutParams]).
+   *
+   * Vị trí thật được commit ở [commitDragTranslation] khi user nhả tay.
+   */
+  private fun moveBubble(key: String, rawX: Float, rawY: Float) {
     val mb = managed[key] ?: return
-    val metrics = resources.displayMetrics
-    val half = sizePx / 2
-    mb.params.x = clamp((rawX - half).toInt(), 0, metrics.widthPixels - sizePx)
-    mb.params.y = clamp((rawY - half).toInt(), 0, metrics.heightPixels - sizePx)
+    // Bubble vẽ ở GIỮA window 180dp → muốn bubble center ở finger thì window
+    // top-left = finger - windowSize/2.
+    val halfWin = bubbleWindowSizePx() / 2
+    val targetWinX = (rawX - halfWin).toInt()
+    val targetWinY = (rawY - halfWin).toInt()
+    mb.view.translationX = (targetWinX - mb.params.x).toFloat()
+    mb.view.translationY = (targetWinY - mb.params.y).toFloat()
+  }
+
+  /**
+   * Sau ACTION_UP, dồn translation thành vị trí window thật để các animation
+   * (spring/fling) chạy từ đúng điểm bubble đang hiển thị.
+   */
+  private fun commitDragTranslation(key: String) {
+    val mb = managed[key] ?: return
+    val tx = mb.view.translationX
+    val ty = mb.view.translationY
+    if (tx == 0f && ty == 0f) return
+    mb.params.x += tx.toInt()
+    mb.params.y += ty.toInt()
+    mb.view.translationX = 0f
+    mb.view.translationY = 0f
     try { wm.updateViewLayout(mb.view, mb.params) } catch (_: Throwable) {}
   }
 
@@ -463,13 +531,20 @@ class OverlayBubbleService : Service() {
    *  - Nếu velocity nhỏ → SpringAnimation snap thẳng tới mép gần nhất.
    *  - Cuối cùng persist XY + reflow stack.
    */
-  private fun settleBubble(key: String, sizePx: Int, vx: Float, vy: Float) {
+  private fun settleBubble(key: String, vx: Float, vy: Float) {
     val mb = managed[key] ?: return
     val metrics = resources.displayMetrics
+    val visSize = bubbleVisibleSizePx()
+    val pad = bubblePadPx()
     val edge = dp(8f).toInt()
-    val maxX = (metrics.widthPixels - sizePx - edge).toFloat()
-    val maxY = (metrics.heightPixels - sizePx - dp(80f).toInt()).toFloat()
-    val minY = dp(48f).toFloat()
+    // Bounds tính theo VISIBLE bubble, sau đó convert sang WINDOW (= visible - pad).
+    val maxVisX = metrics.widthPixels - visSize - edge
+    val maxVisY = metrics.heightPixels - visSize - dp(80f).toInt()
+    val minVisY = dp(48f).toInt()
+    val minWinX = (edge - pad).toFloat()
+    val minWinY = (minVisY - pad).toFloat()
+    val maxWinX = (maxVisX - pad).toFloat()
+    val maxWinY = (maxVisY - pad).toFloat()
     cancelAnimations(key)
 
     val speed = hypot(vx.toDouble(), vy.toDouble()).toFloat()
@@ -480,16 +555,16 @@ class OverlayBubbleService : Service() {
       val flingX = FlingAnimation(finX).apply {
         setStartVelocity(vx)
         friction = 1.1f
-        setMinValue(edge.toFloat()); setMaxValue(maxX)
+        setMinValue(minWinX); setMaxValue(maxWinX)
         addUpdateListener { _, value, _ ->
           mb.params.x = value.toInt(); safeUpdate(mb)
         }
-        addEndListener { _, _, _, _ -> snapToEdgeSpring(mb, sizePx) }
+        addEndListener { _, _, _, _ -> snapToEdgeSpring(mb) }
       }
       val flingY = FlingAnimation(finY).apply {
         setStartVelocity(vy)
         friction = 1.1f
-        setMinValue(minY); setMaxValue(maxY)
+        setMinValue(minWinY); setMaxValue(maxWinY)
         addUpdateListener { _, value, _ ->
           mb.params.y = value.toInt(); safeUpdate(mb)
         }
@@ -497,20 +572,24 @@ class OverlayBubbleService : Service() {
       mb.flingX = flingX; mb.flingY = flingY
       flingX.start(); flingY.start()
     } else {
-      snapToEdgeSpring(mb, sizePx)
+      snapToEdgeSpring(mb)
       // Spring Y về vị trí gần nhất hợp lệ
-      animateTo(mb, mb.params.x, mb.params.y.coerceIn(minY.toInt(), maxY.toInt()))
+      animateTo(mb, mb.params.x, mb.params.y.coerceIn(minWinY.toInt(), maxWinY.toInt()))
     }
     persistTopPos()
     layoutStackPositions()
   }
 
-  private fun snapToEdgeSpring(mb: ManagedBubble, sizePx: Int) {
+  private fun snapToEdgeSpring(mb: ManagedBubble) {
     val metrics = resources.displayMetrics
+    val visSize = bubbleVisibleSizePx()
+    val pad = bubblePadPx()
     val edge = dp(8f).toInt()
     val mid = metrics.widthPixels / 2
-    val targetX = if (mb.params.x + sizePx / 2 < mid) edge else metrics.widthPixels - sizePx - edge
-    animateTo(mb, targetX, mb.params.y)
+    val visCx = mb.params.x + bubbleWindowSizePx() / 2
+    val targetVisX = if (visCx < mid) edge else metrics.widthPixels - visSize - edge
+    val targetWinX = targetVisX - pad
+    animateTo(mb, targetWinX, mb.params.y)
     persistTopPos()
   }
 
@@ -551,16 +630,19 @@ class OverlayBubbleService : Service() {
   private fun persistTopPos() {
     val topKey = BubbleStackStore.load(this).lastOrNull()?.key ?: return
     val mb = managed[topKey] ?: return
+    val pad = bubblePadPx()
+    // Lưu VISIBLE bubble top-left (= window top-left + pad). Semantic ổn định
+    // qua các lần đổi window size sau này.
     prefs.edit()
-      .putInt(KEY_TOP_X, mb.params.x)
-      .putInt(KEY_TOP_Y, mb.params.y)
+      .putInt(KEY_TOP_X, mb.params.x + pad)
+      .putInt(KEY_TOP_Y, mb.params.y + pad)
       .apply()
   }
 
   private fun showDropTarget() {
     if (dropTargetView != null) return
-    val sizePx = dp(72f).toInt()
-    val container = FrameLayout(this).apply {
+    val ringSizePx = dp(76f).toInt()
+    val ring = FrameLayout(this).apply {
       background = android.graphics.drawable.GradientDrawable().apply {
         shape = android.graphics.drawable.GradientDrawable.OVAL
         setColor(android.graphics.Color.parseColor("#33EF4444"))
@@ -569,17 +651,40 @@ class OverlayBubbleService : Service() {
       addView(android.widget.TextView(this@OverlayBubbleService).apply {
         text = "×"
         setTextColor(android.graphics.Color.parseColor("#DC2626"))
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 32f)
         gravity = Gravity.CENTER
       }, FrameLayout.LayoutParams(
         FrameLayout.LayoutParams.MATCH_PARENT,
         FrameLayout.LayoutParams.MATCH_PARENT,
       ))
+    }
+    val container = android.widget.LinearLayout(this).apply {
+      orientation = android.widget.LinearLayout.VERTICAL
+      gravity = Gravity.CENTER_HORIZONTAL
+      addView(
+        android.widget.TextView(this@OverlayBubbleService).apply {
+          text = "Thả vào đây để đóng"
+          setTextColor(android.graphics.Color.parseColor("#DC2626"))
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+          typeface = android.graphics.Typeface.DEFAULT_BOLD
+          gravity = Gravity.CENTER
+        },
+        android.widget.LinearLayout.LayoutParams(
+          android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+          android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply { bottomMargin = dp(6f).toInt() },
+      )
+      addView(
+        ring,
+        android.widget.LinearLayout.LayoutParams(ringSizePx, ringSizePx),
+      )
       scaleX = 0.6f; scaleY = 0.6f; alpha = 0f
       animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(180).start()
     }
     val params = WindowManager.LayoutParams(
-      sizePx, sizePx, 0, dp(80f).toInt(),
+      WindowManager.LayoutParams.WRAP_CONTENT,
+      WindowManager.LayoutParams.WRAP_CONTENT,
+      0, dp(80f).toInt(),
       overlayWindowType(),
       WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
         WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
@@ -599,7 +704,7 @@ class OverlayBubbleService : Service() {
     val realH = getRealScreenHeightPx()
     val w = metrics.widthPixels
     val centerX = w / 2f
-    val centerY = realH - dp(80f) - dp(36f)
+    val centerY = realH - dp(80f) - dp(38f)
     return centerX to centerY
   }
 
@@ -609,20 +714,28 @@ class OverlayBubbleService : Service() {
   }
 
   private var lastVibrateAt = 0L
+  private var lastMagneticFactor = 1f
   private fun magneticFeedback(distance: Float) {
     val threshold = dp(120f)
     val container = dropTargetView ?: return
-    if (distance < threshold) {
-      // Scale ring up (magnetic effect)
-      val factor = (1.0f + (1.0f - (distance / threshold)) * 0.3f).coerceIn(1f, 1.3f)
-      container.animate().scaleX(factor).scaleY(factor).setDuration(60).start()
+    val targetFactor = if (distance < threshold) {
+      (1.0f + (1.0f - (distance / threshold)) * 0.3f).coerceIn(1f, 1.3f)
+    } else 1f
+    // Chỉ update khi factor thật sự thay đổi đáng kể (>2%) — `animate()` được
+    // gọi mỗi 16ms nếu không gate sẽ queue animation chồng chất gây jank trên
+    // máy yếu, làm bubble drag GIẬT (đây có thể là nguồn của "không mượt mà").
+    if (kotlin.math.abs(targetFactor - lastMagneticFactor) > 0.02f) {
+      lastMagneticFactor = targetFactor
+      container.animate().cancel()
+      container.animate().scaleX(targetFactor).scaleY(targetFactor)
+        .setDuration(if (targetFactor > 1f) 60 else 80).start()
+    }
+    if (distance < dp(80f)) {
       val now = System.currentTimeMillis()
-      if (now - lastVibrateAt > 220 && distance < dp(80f)) {
+      if (now - lastVibrateAt > 220) {
         lastVibrateAt = now
         vibrateLight()
       }
-    } else {
-      container.animate().scaleX(1f).scaleY(1f).setDuration(80).start()
     }
   }
 
@@ -641,16 +754,19 @@ class OverlayBubbleService : Service() {
     val v = dropTargetView ?: return
     try { wm.removeView(v) } catch (_: Throwable) {}
     dropTargetView = null
+    lastMagneticFactor = 1f
   }
 
-  private fun isOverDropTarget(rawX: Float, rawY: Float, sizePx: Int): Boolean {
+  private fun isOverDropTarget(rawX: Float, rawY: Float): Boolean {
     val realH = getRealScreenHeightPx()
     val displayH = resources.displayMetrics.heightPixels
     val yThresh = (minOf(realH, displayH)) * 0.65f
-    // Chỉ cần ngón tay HOẶC tâm bubble nằm trong 35% dưới màn là xóa.
+    // Bubble visible center y = window y + translation y + windowSize/2 (vì
+    // bubble vẽ ở GIỮA window).
     val key = draggingKey
     val mb = key?.let { managed[it] }
-    val bubbleCy = mb?.let { it.params.y + sizePx / 2f } ?: rawY
+    val winSize = bubbleWindowSizePx()
+    val bubbleCy = mb?.let { (it.params.y + it.view.translationY) + winSize / 2f } ?: rawY
     return rawY >= yThresh || bubbleCy >= yThresh
   }
 

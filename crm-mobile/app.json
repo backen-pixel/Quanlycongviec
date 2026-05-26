@@ -2,7 +2,7 @@
   "expo": {
     "name": "TuBep CRM",
     "slug": "crm-mobile",
-    "version": "1.2.1",
+    "version": "1.2.5",
     "orientation": "portrait",
     "icon": "./assets/app-icon.jpg",
     "userInterfaceStyle": "light",
@@ -23,7 +23,7 @@
     },
     "android": {
       "package": "vn.tubeppro.crmobile",
-      "versionCode": 7,
+      "versionCode": 11,
       "permissions": [
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_DATA_SYNC",

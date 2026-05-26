@@ -30,6 +30,7 @@ const {
   applyCrmLeadRegionFilterToQuery,
   assertLeadReadableByRegionScope,
   assertRegionBelongsToCompany,
+  assertUserCanAssignCrmRegion,
   normalizeRegionIdList,
 } = require('../helpers/crmRegionScope');
 const {
@@ -5276,10 +5277,8 @@ r.post('/leads', async (req, res) => {
     if (body.region_id) {
       const v = await assertRegionBelongsToCompany(supabase, body.company_id, body.region_id);
       if (!v.ok) return res.status(400).json({ error: v.error });
-      const rc = getCrmLeadRegionConstraint(req);
-      if (rc.mode === 'in' && rc.ids?.length && !rc.ids.includes(String(body.region_id))) {
-        return res.status(403).json({ error: 'Không tạo lead ngoài khu vực được phân' });
-      }
+      const ar = assertUserCanAssignCrmRegion(req, body.region_id);
+      if (!ar.ok) return res.status(403).json({ error: ar.error });
     } else {
       const { data: defR } = await supabase
         .from('company_regions')
@@ -5387,10 +5386,8 @@ r.post('/deals', async (req, res) => {
     if (body.region_id) {
       const v = await assertRegionBelongsToCompany(supabase, body.company_id, body.region_id);
       if (!v.ok) return res.status(400).json({ error: v.error });
-      const rc = getCrmLeadRegionConstraint(req);
-      if (rc.mode === 'in' && rc.ids?.length && !rc.ids.includes(String(body.region_id))) {
-        return res.status(403).json({ error: 'Không tạo deal ngoài khu vực được phân' });
-      }
+      const ar = assertUserCanAssignCrmRegion(req, body.region_id);
+      if (!ar.ok) return res.status(403).json({ error: ar.error });
     } else {
       const { data: defR } = await supabase
         .from('company_regions')
@@ -5818,13 +5815,15 @@ r.put('/leads/:id', async (req, res) => {
       }
     }
 
+    if (Object.prototype.hasOwnProperty.call(safeBody, 'region_id')) {
+      if (safeBody.region_id === '' || safeBody.region_id === undefined) safeBody.region_id = null;
+    }
     if (Object.prototype.hasOwnProperty.call(safeBody, 'region_id') && safeBody.region_id != null) {
-      const v = await assertRegionBelongsToCompany(supabase, oldLead?.company_id, safeBody.region_id);
+      const effectiveCompanyId = safeBody.company_id ?? oldLead?.company_id;
+      const v = await assertRegionBelongsToCompany(supabase, effectiveCompanyId, safeBody.region_id);
       if (!v.ok) return res.status(400).json({ error: v.error });
-      const rc = getCrmLeadRegionConstraint(req);
-      if (rc.mode === 'in' && rc.ids?.length && !rc.ids.includes(String(safeBody.region_id))) {
-        return res.status(403).json({ error: 'Không đổi lead/deal sang khu vực ngoài phạm vi của bạn' });
-      }
+      const ar = assertUserCanAssignCrmRegion(req, safeBody.region_id);
+      if (!ar.ok) return res.status(403).json({ error: ar.error });
     }
 
     if (

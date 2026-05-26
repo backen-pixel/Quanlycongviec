@@ -19,6 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { io, type Socket } from 'socket.io-client';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
+import { Audio } from 'expo-av';
 import { api, formatApiError, postMultipart } from '../api/client';
 import { API_ORIGIN } from '../config';
 import { useAuth } from '../context/AuthContext';
@@ -32,6 +33,27 @@ import { setForegroundLead } from '../lib/bubbleRealtimeSocket';
 type Props = { leadId: string };
 
 type ChatFilter = 'all' | 'media' | 'file' | 'link';
+
+/** Trạng thái UI ghi âm trong composer (giống Messenger group chat). */
+type RecState = 'idle' | 'recording' | 'done';
+
+function fmtSecs(secs: number): string {
+  const m = Math.floor(secs / 60);
+  const s = Math.floor(secs % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/**
+ * Mở Cài đặt ứng dụng khi quyền bị "Don't ask again" — cùng lý lẽ với
+ * `voicePermissions.requestVoicePermissionsQuick`: 1 nút Đóng + 1 nút Mở
+ * cài đặt, không retry sai vô hạn.
+ */
+function alertPermissionGap(title: string, message: string) {
+  Alert.alert(title, message, [
+    { text: 'Đóng', style: 'cancel' },
+    { text: 'Mở Cài đặt', onPress: () => void Linking.openSettings() },
+  ]);
+}
 
 function fileUrl(path: string | null | undefined): string | null {
   if (!path) return null;
@@ -70,6 +92,24 @@ export default function LeadChatPanel({ leadId }: Props) {
   const insets = useSafeAreaInsets();
   const socketRef = useRef<Socket | null>(null);
   const listRef = useRef<ScrollView>(null);
+
+  // ── Voice recording ──────────────────────────────
+  const [recState, setRecState] = useState<RecState>('idle');
+  const [recDur, setRecDur] = useState(0);
+  const recRef = useRef<Audio.Recording | null>(null);
+  const recUriRef = useRef<string | null>(null);
+  const recTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Bảo đảm dọn recording khi unmount (tránh leak file/handle).
+  useEffect(() => {
+    return () => {
+      if (recTimer.current) clearInterval(recTimer.current);
+      void (async () => {
+        try { await recRef.current?.stopAndUnloadAsync(); } catch { /* ignore */ }
+        recRef.current = null;
+      })();
+    };
+  }, []);
 
   useEffect(() => {
     const update = () => {
@@ -245,10 +285,34 @@ export default function LeadChatPanel({ leadId }: Props) {
   };
 
   const pickImage = async () => {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      Alert.alert('Quyền', 'Cần quyền thư viện ảnh để gửi hình.');
-      return;
+    // Bước 1: kiểm tra quyền hiện tại — nếu chưa từng hỏi → gọi `request…` để
+    // hệ thống bật dialog. Nếu đã từ chối "Don't ask again" (`canAskAgain=false`)
+    // → phải mở Settings vì dialog sẽ không bao giờ hiện lại nữa.
+    const cur = await ImagePicker.getMediaLibraryPermissionsAsync();
+    let granted = cur.status === 'granted';
+    if (!granted) {
+      if (cur.status === 'denied' && cur.canAskAgain === false) {
+        alertPermissionGap(
+          'Cần quyền Thư viện ảnh',
+          'Bạn đã chặn quyền truy cập ảnh. Mở Cài đặt → Quyền → Ảnh và bật để gửi hình trong chat.',
+        );
+        return;
+      }
+      const next = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      granted = next.status === 'granted';
+      if (!granted) {
+        // User vừa từ chối — nếu hệ thống cho ASK_AGAIN, lần sau bấm lại sẽ hiện dialog;
+        // còn nếu khoá luôn thì đẩy thẳng Settings.
+        if (next.status === 'denied' && next.canAskAgain === false) {
+          alertPermissionGap(
+            'Cần quyền Thư viện ảnh',
+            'Bạn đã chặn quyền truy cập ảnh. Mở Cài đặt → Quyền → Ảnh và bật để gửi hình.',
+          );
+        } else {
+          Alert.alert('Quyền', 'Cần quyền thư viện ảnh để gửi hình.');
+        }
+        return;
+      }
     }
     const res = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
@@ -267,6 +331,90 @@ export default function LeadChatPanel({ leadId }: Props) {
     if (res.canceled || !res.assets?.[0]) return;
     const a = res.assets[0];
     await uploadAsset(a.uri, a.name || 'file', a.mimeType || 'application/octet-stream');
+  };
+
+  // ── Voice recording (ghi âm trực tiếp, không chọn file) ─────────────
+  const startRecording = async () => {
+    try {
+      // Xin quyền micro nếu chưa có. expo-av tự đồng bộ với android.permission.RECORD_AUDIO.
+      const cur = await Audio.getPermissionsAsync();
+      let granted = cur.status === 'granted';
+      if (!granted) {
+        const next = await Audio.requestPermissionsAsync();
+        granted = next.status === 'granted';
+        if (!granted) {
+          alertPermissionGap(
+            'Cần quyền Micro',
+            'Bật quyền Micro trong Cài đặt → Quyền để ghi âm trong chat.',
+          );
+          return;
+        }
+      }
+      // Phải set audio mode trước khi tạo recording — iOS requirement.
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      const { recording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY,
+      );
+      recRef.current = recording;
+      recUriRef.current = null;
+      setRecState('recording');
+      setRecDur(0);
+      recTimer.current = setInterval(() => setRecDur((d) => d + 1), 1000);
+    } catch (e: unknown) {
+      chatDebugLog('lead-chat', 'startRecording failed', { message: (e as Error)?.message });
+      Alert.alert('Lỗi', 'Không thể ghi âm. Hãy kiểm tra quyền micro.');
+    }
+  };
+
+  const stopRecording = async () => {
+    if (recTimer.current) {
+      clearInterval(recTimer.current);
+      recTimer.current = null;
+    }
+    try {
+      const rec = recRef.current;
+      if (!rec) {
+        setRecState('idle');
+        return;
+      }
+      await rec.stopAndUnloadAsync();
+      const uri = rec.getURI();
+      recRef.current = null;
+      if (uri) {
+        recUriRef.current = uri;
+        setRecState('done');
+      } else {
+        setRecState('idle');
+      }
+    } catch {
+      setRecState('idle');
+    }
+  };
+
+  const cancelRecording = async () => {
+    if (recTimer.current) {
+      clearInterval(recTimer.current);
+      recTimer.current = null;
+    }
+    try { await recRef.current?.stopAndUnloadAsync(); } catch { /* ignore */ }
+    recRef.current = null;
+    recUriRef.current = null;
+    setRecState('idle');
+    setRecDur(0);
+  };
+
+  const sendVoice = async () => {
+    const uri = recUriRef.current;
+    if (!uri) {
+      setRecState('idle');
+      return;
+    }
+    const fname = `voice_${Date.now()}.m4a`;
+    // Reset trạng thái trước khi upload — UX không treo nếu mạng chậm.
+    recUriRef.current = null;
+    setRecState('idle');
+    setRecDur(0);
+    await uploadAsset(uri, fname, 'audio/m4a');
   };
 
   const renderMsg = (msg: CrmLeadMessage) => {
@@ -427,32 +575,68 @@ export default function LeadChatPanel({ leadId }: Props) {
           ))}
         </View>
       </View>
-      <View style={styles.attachRow}>
-        <TouchableOpacity style={styles.iconBtn} onPress={() => void pickImage()} disabled={sending}>
-          <Text style={styles.iconBtnTxt}>🖼</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.iconBtn} onPress={() => void pickDoc()} disabled={sending}>
-          <Text style={styles.iconBtnTxt}>📎</Text>
-        </TouchableOpacity>
-      </View>
-      <View style={[styles.inputRow, { paddingBottom: composerPadBottom }]}>
-        <TextInput
-          style={styles.input}
-          placeholder="Nhập tin nhắn…"
-          placeholderTextColor={CrmColors.gray400}
-          value={draft}
-          onChangeText={setDraft}
-          multiline
-          maxLength={4000}
-        />
-        <TouchableOpacity
-          style={[styles.send, (!draft.trim() || sending) && styles.sendOff]}
-          onPress={() => void sendText()}
-          disabled={!draft.trim() || sending}
-        >
-          <Text style={styles.sendTxt}>{sending ? '…' : 'Gửi'}</Text>
-        </TouchableOpacity>
-      </View>
+      {recState === 'idle' ? (
+        <View style={styles.attachRow}>
+          <TouchableOpacity style={styles.iconBtn} onPress={() => void pickImage()} disabled={sending}>
+            <Text style={styles.iconBtnTxt}>🖼</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.iconBtn} onPress={() => void pickDoc()} disabled={sending}>
+            <Text style={styles.iconBtnTxt}>📎</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.iconBtn, styles.iconBtnMic]}
+            onPress={() => void startRecording()}
+            disabled={sending}
+          >
+            <Text style={styles.iconBtnTxt}>🎙</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {/* Recording UI: thanh đỏ khi đang ghi / thanh xanh khi đã ghi xong */}
+      {recState === 'recording' ? (
+        <View style={styles.recBar}>
+          <View style={styles.recDot} />
+          <Text style={styles.recDurTxt}>Đang ghi âm…  {fmtSecs(recDur)}</Text>
+          <TouchableOpacity style={styles.recCancel} onPress={() => void cancelRecording()}>
+            <Text style={styles.recCancelTxt}>Hủy</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.recStop} onPress={() => void stopRecording()}>
+            <Text style={styles.recStopTxt}>⏹ Dừng</Text>
+          </TouchableOpacity>
+        </View>
+      ) : recState === 'done' ? (
+        <View style={[styles.recBar, styles.recBarDone]}>
+          <Text style={[styles.recDurTxt, styles.recDurTxtDone]}>🎵 Đã ghi {fmtSecs(recDur)} giây</Text>
+          <TouchableOpacity style={styles.recCancel} onPress={() => void cancelRecording()}>
+            <Text style={styles.recCancelTxt}>Hủy</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.recStop, styles.recStopSend]} onPress={() => void sendVoice()}>
+            <Text style={styles.recStopTxt}>Gửi ▲</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {recState === 'idle' ? (
+        <View style={[styles.inputRow, { paddingBottom: composerPadBottom }]}>
+          <TextInput
+            style={styles.input}
+            placeholder="Nhập tin nhắn…"
+            placeholderTextColor={CrmColors.gray400}
+            value={draft}
+            onChangeText={setDraft}
+            multiline
+            maxLength={4000}
+          />
+          <TouchableOpacity
+            style={[styles.send, (!draft.trim() || sending) && styles.sendOff]}
+            onPress={() => void sendText()}
+            disabled={!draft.trim() || sending}
+          >
+            <Text style={styles.sendTxt}>{sending ? '…' : 'Gửi'}</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
     </Root>
   );
 }
@@ -554,6 +738,41 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   iconBtnTxt: { fontSize: 20 },
+  iconBtnMic: { backgroundColor: '#E8F8F4', borderColor: '#2EC4B6' },
+
+  // Voice recording bar (đỏ khi đang ghi, xanh khi đã ghi xong).
+  recBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#FFF5F5',
+    borderRadius: CrmRadii.md,
+    borderWidth: 1,
+    borderColor: '#FFD0D0',
+    gap: 8,
+    marginBottom: 8,
+  },
+  recBarDone: { backgroundColor: '#F2FBF7', borderColor: '#A6E5CE' },
+  recDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#FF3B30' },
+  recDurTxt: { flex: 1, fontSize: 14, color: '#FF3B30', fontWeight: '700' },
+  recDurTxtDone: { color: '#19A974' },
+  recCancel: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: CrmColors.gray200,
+  },
+  recCancelTxt: { fontSize: 13, color: CrmColors.gray700, fontWeight: '700' },
+  recStop: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#FF3B30',
+  },
+  recStopSend: { backgroundColor: CrmColors.blue600 },
+  recStopTxt: { fontSize: 13, color: '#fff', fontWeight: '800' },
+
   inputRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
   input: {
     flex: 1,
