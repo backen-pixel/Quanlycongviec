@@ -9,7 +9,7 @@ import { isoToDatetimeLocalValue, datetimeLocalValueToIso } from '../lib/datetim
 import {
   Calendar, List, Plus, Search, Filter, MapPin, Clock, Users, MessageSquare,
   Check, X, ChevronLeft, ChevronRight, Settings, Trash2, Edit3, Send, CheckCircle2,
-  XCircle, AlertCircle, Loader2, Building2, Ban,
+  XCircle, AlertCircle, Loader2, Building2, Ban, BarChart3,
 } from 'lucide-react';
 
 const LS_EVENTS_COMPANY = 'crm_events_filter_company_id';
@@ -285,6 +285,12 @@ export default function EventsFeedPage() {
               </select>
             </div>
           )}
+          <Link
+            to="/crm/events/overview"
+            className="h-9 px-3 border rounded-lg text-sm font-medium flex items-center gap-1.5 text-gray-700 hover:bg-gray-50"
+          >
+            <BarChart3 className="h-4 w-4 text-blue-600" /> Tổng quan
+          </Link>
           {/* View toggle */}
           <div className="flex bg-gray-100 rounded-lg p-0.5">
           <button onClick={() => setView('calendar')} className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${view === 'calendar' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>

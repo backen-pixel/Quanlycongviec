@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const config = require('../config');
 const { supabase } = require('../config/supabase');
+const { logAuthEvent } = require('../helpers/authEventLog');
 
 const VN_TZ = 'Asia/Ho_Chi_Minh';
 
@@ -81,6 +82,13 @@ function auth(req, res, next) {
   try {
     const payload = jwt.verify(h.slice(7), config.jwtSecret);
     if (isStaleAcrossMidnight(payload)) {
+      void logAuthEvent({
+        event: 'auto_logout_midnight',
+        user_id: payload.userId || payload.id || null,
+        email: payload.email || null,
+        reason: 'session_expired_midnight',
+        req,
+      });
       return res.status(401).json({ error: 'Phiên đăng nhập đã qua đêm — vui lòng đăng nhập lại', code: 'session_expired_midnight' });
     }
     req.user = payload;
@@ -106,7 +114,20 @@ function auth(req, res, next) {
       return;
     }
     next();
-  } catch { res.status(401).json({ error: 'Token hết hạn' }); }
+  } catch {
+    let partial = null;
+    try {
+      partial = jwt.decode(h.slice(7));
+    } catch (_) {}
+    void logAuthEvent({
+      event: 'token_invalid',
+      user_id: partial?.userId || partial?.id || null,
+      email: partial?.email || null,
+      reason: 'jwt_verify_failed',
+      req,
+    });
+    res.status(401).json({ error: 'Token hết hạn' });
+  }
 }
 
 module.exports = { auth, midnightVnTodayMs, isStaleAcrossMidnight };

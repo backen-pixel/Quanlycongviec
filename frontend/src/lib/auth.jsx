@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import api from '../lib/api';
+import { flushNow } from '../lib/activityLogger';
 import { connectSocket, disconnectSocket } from '../lib/socket';
 import { useActivityPing } from '../hooks/useActivityPing';
 import { useDeviceHeartbeat } from '../hooks/useDeviceHeartbeat';
@@ -53,18 +54,38 @@ export function AuthProvider({ children }) {
   }, []);
 
   const login = async (email, password) => {
-    const { data } = await api.post('/auth/login', { email, password });
+    // session_id sinh ở client → ghép cặp login → logout audit. Lưu cùng token để khi logout gửi lại.
+    const sessionId = `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    const { data } = await api.post('/auth/login', { email, password, session_id: sessionId });
     localStorage.setItem('token', data.token);
     localStorage.setItem('user', JSON.stringify(data.user));
+    localStorage.setItem('session_id', data.session_id || sessionId);
+    localStorage.setItem('login_ts', String(Date.now()));
     setUser(data.user);
     const s = connectSocket();
     setSocket(s);
     return data.user;
   };
 
-  const logout = () => {
+  const logout = async (reason = 'manual') => {
+    // Audit logout: gọi API trước khi xoá token. Lỗi mạng cũng vẫn xoá cục bộ.
+    try {
+      await flushNow();
+    } catch (_) {}
+    try {
+      const sessionId = localStorage.getItem('session_id') || null;
+      const loginTs = Number(localStorage.getItem('login_ts')) || null;
+      const msSession = loginTs ? Date.now() - loginTs : null;
+      await api.post('/auth/logout', {
+        reason,
+        session_id: sessionId,
+        ms_session_duration: msSession,
+      });
+    } catch (_) { /* token hết hạn / mất mạng — vẫn logout cục bộ */ }
     localStorage.removeItem('token');
     localStorage.removeItem('user');
+    localStorage.removeItem('session_id');
+    localStorage.removeItem('login_ts');
     disconnectSocket();
     setUser(null);
     setSocket(null);

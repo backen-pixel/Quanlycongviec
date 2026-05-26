@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const { supabase } = require('../config/supabase');
 const config = require('../config');
 const { auth } = require('../middleware/auth');
+const { logAuthEvent } = require('../helpers/authEventLog');
 
 const r = Router();
 
@@ -12,15 +13,35 @@ r.post('/login', async (req, res) => {
   try {
     const emailTrim = String(req.body.email || '').trim();
     const { password } = req.body;
-    if (!emailTrim || !password) return res.status(400).json({ error: 'Thiếu email/mật khẩu' });
+    const clientSessionId = req.body?.session_id ? String(req.body.session_id).slice(0, 80) : null;
+    if (!emailTrim || !password) {
+      void logAuthEvent({ event: 'login_failed', email: emailTrim || null, reason: 'missing_credentials', req });
+      return res.status(400).json({ error: 'Thiếu email/mật khẩu' });
+    }
 
     const { data } = await supabase.from('users').select('*').eq('email', emailTrim).neq('is_active', false).limit(1);
-    if (!data?.length) return res.status(401).json({ error: 'Sai email hoặc mật khẩu' });
+    if (!data?.length) {
+      void logAuthEvent({ event: 'login_failed', email: emailTrim, reason: 'user_not_found_or_disabled', req });
+      return res.status(401).json({ error: 'Sai email hoặc mật khẩu' });
+    }
 
     const user = data[0];
-    if (!(await bcrypt.compare(password, user.password))) return res.status(401).json({ error: 'Sai email hoặc mật khẩu' });
+    if (!(await bcrypt.compare(password, user.password))) {
+      void logAuthEvent({ event: 'login_failed', email: emailTrim, user_id: user.id, reason: 'wrong_password', req });
+      return res.status(401).json({ error: 'Sai email hoặc mật khẩu' });
+    }
 
     await supabase.from('users').update({ last_login_at: new Date().toISOString() }).eq('id', user.id);
+    // Sinh session_id ngắn nếu client không gửi (UUID v4 đơn giản).
+    const sessionId = clientSessionId || `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    void logAuthEvent({
+      event: 'login_success',
+      user_id: user.id,
+      email: user.email,
+      session_id: sessionId,
+      reason: 'password',
+      req,
+    });
     // Resolve company_id from department
     let company_id = user.company_id || null;
     if (!company_id && user.department_id) {
@@ -52,6 +73,7 @@ r.post('/login', async (req, res) => {
 
     res.json({
       token,
+      session_id: sessionId,
       user: {
         id: user.id,
         userId: user.id,
@@ -67,7 +89,38 @@ r.post('/login', async (req, res) => {
         position: user.position || null,
       },
     });
-  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi server' }); }
+  } catch (e) {
+    console.error(e);
+    void logAuthEvent({ event: 'login_failed', email: req.body?.email || null, reason: 'server_error', req });
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// Đăng xuất: client gọi trước khi xoá token để audit chính xác (kèm reason, session_id).
+//   Body (optional): { reason: 'manual'|'midnight'|'idle'|'forced', session_id }
+//   Yêu cầu auth — nhưng nếu token đã hết hạn vẫn cho POST với body { email, reason } để log session_expired.
+r.post('/logout', auth, async (req, res) => {
+  try {
+    const reason = req.body?.reason ? String(req.body.reason).slice(0, 60) : 'manual';
+    const event = reason === 'midnight' ? 'auto_logout_midnight'
+      : reason === 'expired' ? 'session_expired'
+      : 'logout';
+    await logAuthEvent({
+      event,
+      user_id: req.user?.userId || null,
+      email: req.user?.email || null,
+      session_id: req.body?.session_id || null,
+      reason,
+      metadata: req.body?.ms_session_duration
+        ? { ms_session_duration: Number(req.body.ms_session_duration) || null }
+        : null,
+      req,
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[auth/logout]', e);
+    res.json({ ok: true }); // không chặn client logout
+  }
 });
 
 // Đăng ký
@@ -125,6 +178,12 @@ r.post('/change-password', auth, async (req, res) => {
       .update({ password: hash, updated_at: new Date().toISOString() })
       .eq('id', req.user.userId);
     if (uErr) throw uErr;
+    void logAuthEvent({
+      event: 'password_changed',
+      user_id: req.user.userId,
+      email: req.user.email || null,
+      req,
+    });
     res.json({ ok: true, message: 'Đã đổi mật khẩu' });
   } catch (e) {
     console.error(e);

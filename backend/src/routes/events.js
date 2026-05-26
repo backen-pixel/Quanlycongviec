@@ -233,6 +233,259 @@ r.get('/', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/** Ngày theo múi giờ VN (YYYY-MM-DD) */
+function vnDateKey(isoStr) {
+  if (!isoStr) return null;
+  const d = new Date(isoStr);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+}
+
+/** Thứ Hai tuần chứa ngày (YYYY-MM-DD, VN) */
+function vnWeekStartKey(isoStr) {
+  const key = vnDateKey(isoStr);
+  if (!key) return null;
+  const [y, m, day] = key.split('-').map(Number);
+  const dt = new Date(y, m - 1, day);
+  const dow = dt.getDay();
+  const diff = dow === 0 ? -6 : 1 - dow;
+  dt.setDate(dt.getDate() + diff);
+  const yy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+}
+
+function vnMonthKey(isoStr) {
+  const key = vnDateKey(isoStr);
+  return key ? key.slice(0, 7) : null;
+}
+
+function daysBetweenInclusive(fromStr, toStr) {
+  const a = new Date(`${fromStr}T12:00:00`);
+  const b = new Date(`${toStr}T12:00:00`);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return 1;
+  return Math.max(1, Math.round((b - a) / 86400000) + 1);
+}
+
+function weeksBetweenInclusive(fromStr, toStr) {
+  const days = daysBetweenInclusive(fromStr, toStr);
+  return Math.max(1, Math.ceil(days / 7));
+}
+
+// GET /events/overview — Tổng quan / thống kê sự kiện
+r.get('/overview', async (req, res) => {
+  try {
+    const sc = resolveEventsCompanyScope(req, res);
+    if (!sc.ok) return;
+    const {
+      date_from: dateFromQ,
+      date_to: dateToQ,
+      user_id: userId,
+      region_id: regionId,
+      type: eventType,
+      granularity: granularityQ,
+    } = req.query;
+
+    const pad = (n) => String(n).padStart(2, '0');
+    const now = new Date();
+    const defaultTo = vnDateKey(now.toISOString()) || `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    const defaultFrom = `${defaultTo.slice(0, 7)}-01`;
+
+    const dateFrom = (dateFromQ && String(dateFromQ).trim()) || defaultFrom;
+    const dateTo = (dateToQ && String(dateToQ).trim()) || defaultTo;
+    if (dateFrom > dateTo) {
+      return res.status(400).json({ error: 'date_from phải trước hoặc bằng date_to' });
+    }
+
+    let companyLeadIds = [];
+    if (sc.companyId) {
+      companyLeadIds = await fetchAllLeadIdsForCompany(sc.companyId);
+    }
+
+    let regionLeadIds = null;
+    if (regionId && String(regionId).trim()) {
+      let lq = supabase.from('crm_leads').select('id').eq('region_id', String(regionId).trim());
+      if (sc.companyId) lq = lq.eq('company_id', sc.companyId);
+      const { data: lr, error: lRegErr } = await lq;
+      if (lRegErr) throw lRegErr;
+      regionLeadIds = new Set((lr || []).map((x) => x.id).filter(Boolean));
+    }
+
+    const pageSize = 1000;
+    let from = 0;
+    const selectCols = 'id, event_type, event_type_id, status, start_time, created_by, assignee_id, lead_id';
+    const rawEvents = [];
+    for (;;) {
+      let q = supabase.from('crm_events').select(selectCols);
+      q = applyEventsCompanyFilter(q, sc.companyId, companyLeadIds);
+      q = q.gte('start_time', `${dateFrom}T00:00:00+07:00`);
+      q = q.lte('start_time', `${dateTo}T23:59:59.999+07:00`);
+      if (userId) q = q.or(`created_by.eq.${userId},assignee_id.eq.${userId}`);
+      if (eventType) q = q.eq('event_type', eventType);
+      if (regionLeadIds) {
+        const lids = [...regionLeadIds].slice(0, EVENTS_COMPANY_OR_MAX_IN);
+        if (lids.length === 0) {
+          return res.json(emptyOverviewPayload(dateFrom, dateTo, granularityQ));
+        }
+        q = q.in('lead_id', lids);
+      }
+      q = q.order('start_time', { ascending: true }).range(from, from + pageSize - 1);
+      const { data, error } = await q;
+      if (error) throw error;
+      const chunk = data || [];
+      rawEvents.push(...chunk);
+      if (chunk.length < pageSize) break;
+      from += pageSize;
+    }
+
+    const daySpan = daysBetweenInclusive(dateFrom, dateTo);
+    let granularity = granularityQ && ['day', 'week', 'month'].includes(granularityQ) ? granularityQ : null;
+    if (!granularity) {
+      if (daySpan <= 14) granularity = 'day';
+      else if (daySpan <= 92) granularity = 'week';
+      else granularity = 'month';
+    }
+
+    const [{ data: typeRows }, { data: userRows }] = await Promise.all([
+      supabase.from('event_types').select('id, name, slug, icon, color').order('sort_order'),
+      sc.companyId
+        ? supabase.from('users').select('id, full_name, avatar').eq('company_id', sc.companyId).eq('is_active', true)
+        : supabase.from('users').select('id, full_name, avatar').eq('is_active', true),
+    ]);
+
+    const typeBySlug = {};
+    const typeById = {};
+    (typeRows || []).forEach((t) => {
+      typeBySlug[t.slug] = t;
+      typeById[t.id] = t;
+    });
+    const userById = {};
+    (userRows || []).forEach((u) => { userById[u.id] = u; });
+
+    const STATUS_KEYS = ['planned', 'in_progress', 'completed', 'cancelled'];
+    const byStatus = {};
+    STATUS_KEYS.forEach((s) => { byStatus[s] = 0; });
+
+    const byType = {};
+    const byStaff = {};
+    const timelineMap = {};
+    const staffSeen = new Set();
+
+    const bucketKey = (iso) => {
+      if (granularity === 'week') return vnWeekStartKey(iso);
+      if (granularity === 'month') return vnMonthKey(iso);
+      return vnDateKey(iso);
+    };
+
+    const formatBucketLabel = (key) => {
+      if (!key) return '';
+      if (granularity === 'month') {
+        const [y, m] = key.split('-');
+        return `T${parseInt(m, 10)}/${y}`;
+      }
+      const [y, m, d] = key.split('-');
+      return `${d}/${m}`;
+    };
+
+    for (const ev of rawEvents) {
+      const st = ev.status && STATUS_KEYS.includes(ev.status) ? ev.status : 'planned';
+      byStatus[st] = (byStatus[st] || 0) + 1;
+
+      const slug = ev.event_type || 'other';
+      if (!byType[slug]) {
+        const ref = typeBySlug[slug] || (ev.event_type_id && typeById[ev.event_type_id]) || {};
+        byType[slug] = {
+          slug,
+          name: ref.name || slug,
+          icon: ref.icon || '📋',
+          color: ref.color || '#6B7280',
+          count: 0,
+        };
+      }
+      byType[slug].count += 1;
+
+      const bKey = bucketKey(ev.start_time);
+      if (bKey) {
+        if (!timelineMap[bKey]) timelineMap[bKey] = { bucket: bKey, label: formatBucketLabel(bKey), count: 0 };
+        timelineMap[bKey].count += 1;
+      }
+
+      const staffIds = new Set();
+      if (ev.created_by) staffIds.add(ev.created_by);
+      if (ev.assignee_id) staffIds.add(ev.assignee_id);
+      staffIds.forEach((uid) => {
+        staffSeen.add(uid);
+        if (!byStaff[uid]) {
+          const u = userById[uid] || {};
+          byStaff[uid] = {
+            user_id: uid,
+            full_name: u.full_name || 'Không rõ',
+            avatar: u.avatar || null,
+            as_creator: 0,
+            as_assignee: 0,
+            total: 0,
+          };
+        }
+        if (ev.created_by === uid) byStaff[uid].as_creator += 1;
+        if (ev.assignee_id === uid) byStaff[uid].as_assignee += 1;
+        byStaff[uid].total += 1;
+      });
+    }
+
+    const total = rawEvents.length;
+    const completed = byStatus.completed || 0;
+    const timeline = Object.values(timelineMap).sort((a, b) => a.bucket.localeCompare(b.bucket));
+    const byTypeList = Object.values(byType).sort((a, b) => b.count - a.count);
+    const byStaffList = Object.values(byStaff).sort((a, b) => b.total - a.total);
+
+    res.json({
+      period: { from: dateFrom, to: dateTo, days: daySpan, weeks: weeksBetweenInclusive(dateFrom, dateTo) },
+      granularity,
+      summary: {
+        total,
+        planned: byStatus.planned || 0,
+        in_progress: byStatus.in_progress || 0,
+        completed,
+        cancelled: byStatus.cancelled || 0,
+        completion_rate: total > 0 ? Math.round((completed / total) * 1000) / 10 : 0,
+        avg_per_day: total > 0 ? Math.round((total / daySpan) * 100) / 100 : 0,
+        avg_per_week: total > 0 ? Math.round((total / weeksBetweenInclusive(dateFrom, dateTo)) * 100) /  100 : 0,
+        unique_staff: staffSeen.size,
+      },
+      by_status: STATUS_KEYS.map((status) => ({
+        status,
+        count: byStatus[status] || 0,
+      })),
+      by_type: byTypeList,
+      by_staff: byStaffList,
+      timeline,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+function emptyOverviewPayload(dateFrom, dateTo, granularityQ) {
+  const daySpan = daysBetweenInclusive(dateFrom, dateTo);
+  let granularity = granularityQ && ['day', 'week', 'month'].includes(granularityQ) ? granularityQ : 'day';
+  if (!granularityQ) {
+    if (daySpan <= 14) granularity = 'day';
+    else if (daySpan <= 92) granularity = 'week';
+    else granularity = 'month';
+  }
+  return {
+    period: { from: dateFrom, to: dateTo, days: daySpan, weeks: weeksBetweenInclusive(dateFrom, dateTo) },
+    granularity,
+    summary: {
+      total: 0, planned: 0, in_progress: 0, completed: 0, cancelled: 0,
+      completion_rate: 0, avg_per_day: 0, avg_per_week: 0, unique_staff: 0,
+    },
+    by_status: ['planned', 'in_progress', 'completed', 'cancelled'].map((status) => ({ status, count: 0 })),
+    by_type: [],
+    by_staff: [],
+    timeline: [],
+  };
+}
+
 // GET /events/calendar — Calendar view (events in date range)
 r.get('/calendar', async (req, res) => {
   try {

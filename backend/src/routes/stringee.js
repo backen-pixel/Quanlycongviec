@@ -86,10 +86,11 @@ r.post('/webhook', async (req, res) => {
           }).eq('id', log.id);
 
           // Tìm lead/deal active của customer
+          // crm_leads không có cột `status` — "active" = chưa đóng (actual_close_date IS NULL).
           const { data: lead } = await supabase.from('crm_leads')
             .select('id')
             .eq('customer_id', customer.id)
-            .in('status', ['new', 'contacted', 'qualified', 'negotiation', 'proposal', 'open', 'active'])
+            .is('actual_close_date', null)
             .order('created_at', { ascending: false })
             .limit(1).maybeSingle();
 
@@ -101,7 +102,7 @@ r.post('/webhook', async (req, res) => {
           const { data: leadByPhone } = await supabase.from('crm_leads')
             .select('id, customer_id')
             .or(`phone.eq.${cleanPhone},phone.eq.+84${cleanPhone.slice(1)}`)
-            .in('status', ['new', 'contacted', 'qualified', 'negotiation', 'proposal', 'open', 'active'])
+            .is('actual_close_date', null)
             .order('created_at', { ascending: false })
             .limit(1).maybeSingle();
 

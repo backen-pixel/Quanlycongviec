@@ -5,7 +5,7 @@ import { useMessengerDock } from '../context/MessengerDockContext';
 import OnlineStatusDot from '../components/OnlineStatusDot';
 import LiveActivityMap from '../components/LiveActivityMap';
 import { getInitials, avatarColor } from '../lib/utils';
-import { Activity, Building2, ExternalLink, Laptop, Loader2, MapPin, MessageCircle, Monitor, RefreshCw, Search, Smartphone, Users } from 'lucide-react';
+import { Activity, Building2, ExternalLink, History, Laptop, LogIn, LogOut, Loader2, MapPin, MessageCircle, Monitor, RefreshCw, Search, ShieldAlert, Smartphone, Users } from 'lucide-react';
 
 const ROLE_LABELS = {
   admin: 'Admin',
@@ -28,6 +28,37 @@ function formatRelativeTime(iso) {
   if (diff < 86400_000) return `${Math.floor(diff / 3600_000)} giờ trước`;
   return new Date(iso).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
+
+function formatAtSeconds(iso) {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleString('vi-VN', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    });
+  } catch { return String(iso); }
+}
+
+function formatDurationMs(ms) {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return '—';
+  const s = Math.round(ms / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}h ${m}p ${sec}s`;
+  if (m > 0) return `${m}p ${sec}s`;
+  return `${sec}s`;
+}
+
+const AUTH_EVENT_META = {
+  login_success:        { label: 'Đăng nhập',         tone: 'bg-emerald-50 text-emerald-700 border-emerald-200', Icon: LogIn },
+  login_failed:         { label: 'Đăng nhập sai',     tone: 'bg-rose-50 text-rose-700 border-rose-200',          Icon: ShieldAlert },
+  logout:               { label: 'Đăng xuất',         tone: 'bg-slate-100 text-slate-700 border-slate-200',      Icon: LogOut },
+  auto_logout_midnight: { label: 'Hết phiên qua đêm', tone: 'bg-amber-50 text-amber-800 border-amber-200',       Icon: LogOut },
+  session_expired:      { label: 'Phiên hết hạn',     tone: 'bg-amber-50 text-amber-800 border-amber-200',       Icon: LogOut },
+  token_invalid:        { label: 'Token lỗi',         tone: 'bg-rose-50 text-rose-700 border-rose-200',          Icon: ShieldAlert },
+  password_changed:     { label: 'Đổi mật khẩu',      tone: 'bg-sky-50 text-sky-700 border-sky-200',             Icon: ShieldAlert },
+};
 
 const PLATFORM_META = {
   android: { Icon: Smartphone, label: 'Android', color: 'text-emerald-600 bg-emerald-50 border-emerald-200' },
@@ -102,6 +133,11 @@ export default function ActiveUsersPage() {
   const [branchRegions, setBranchRegions] = useState([]);
   const [mapEmployeeScope, setMapEmployeeScope] = useState('all');
   const [mapSectionTab, setMapSectionTab] = useState('map');
+  const [authEvents, setAuthEvents] = useState([]);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState('');
+  const [authDays, setAuthDays] = useState(1);
+  const [authEventFilter, setAuthEventFilter] = useState('all');
 
   useEffect(() => {
     const t = setTimeout(() => setSearchDebounced(search.trim()), 300);
@@ -186,8 +222,81 @@ export default function ActiveUsersPage() {
   const displayRows = useMemo(() => {
     if (filter === 'online') return rows.filter((u) => !!u.online);
     if (filter === 'offline') return rows.filter((u) => !u.online);
+    if (filter === 'auth_log') return [];
     return rows;
   }, [rows, filter]);
+
+  const userMap = useMemo(() => {
+    const m = new Map();
+    for (const u of rows || []) m.set(String(u.id), u);
+    return m;
+  }, [rows]);
+
+  const loadAuthEvents = useCallback(async () => {
+    setAuthLoading(true);
+    setAuthError('');
+    try {
+      const params = {
+        since: new Date(Date.now() - authDays * 24 * 3600 * 1000).toISOString(),
+        limit: 500,
+      };
+      if (companyId) params.company_id = companyId;
+      if (departmentId) params.department_id = departmentId;
+      if (authEventFilter !== 'all') params.events = authEventFilter;
+      const { data } = await api.get('/auth-events', { params });
+      setAuthEvents(data?.items || []);
+    } catch (e) {
+      setAuthEvents([]);
+      const msg = e.response?.data?.error || e.message || 'Không tải được lịch sử đăng nhập';
+      setAuthError(e.response?.status === 403 ? 'Cần quyền quản trị để xem log toàn nhóm' : msg);
+    }
+    setAuthLoading(false);
+  }, [companyId, departmentId, authDays, authEventFilter]);
+
+  useEffect(() => {
+    if (filter !== 'auth_log') return;
+    void loadAuthEvents();
+  }, [filter, loadAuthEvents]);
+
+  /** Ghép cặp login → logout để tính thời lượng phiên. */
+  const authSessions = useMemo(() => {
+    if (filter !== 'auth_log') return [];
+    const logins = new Map();
+    const out = [];
+    const sorted = [...authEvents].sort((a, b) => new Date(a.occurred_at) - new Date(b.occurred_at));
+    for (const ev of sorted) {
+      const key = `${ev.user_id}|${ev.session_id || ev.id}`;
+      if (ev.event === 'login_success') {
+        logins.set(key, ev);
+      } else if (['logout', 'auto_logout_midnight', 'session_expired'].includes(ev.event)) {
+        const login = logins.get(key) || (ev.session_id && logins.get(`${ev.user_id}|${ev.session_id}`));
+        if (login) {
+          out.push({
+            ...ev,
+            login_at: login.occurred_at,
+            duration_ms: ev.metadata?.ms_session_duration
+              ? Number(ev.metadata.ms_session_duration)
+              : new Date(ev.occurred_at).getTime() - new Date(login.occurred_at).getTime(),
+          });
+          logins.delete(key);
+        } else {
+          out.push({ ...ev, login_at: null, duration_ms: null });
+        }
+      } else {
+        out.push({ ...ev, login_at: null, duration_ms: null });
+      }
+    }
+    // Phiên còn mở (login chưa có logout).
+    for (const login of logins.values()) {
+      out.push({
+        ...login,
+        login_at: login.occurred_at,
+        duration_ms: Date.now() - new Date(login.occurred_at).getTime(),
+        still_open: true,
+      });
+    }
+    return out.sort((a, b) => new Date(b.occurred_at) - new Date(a.occurred_at));
+  }, [authEvents, filter]);
 
   const branchLocations = useMemo(() => {
     return (branchRegions || [])
@@ -427,6 +536,7 @@ export default function ActiveUsersPage() {
             { id: 'online', label: 'Đang hoạt động' },
             { id: 'all', label: 'Tất cả' },
             { id: 'offline', label: 'Offline' },
+            { id: 'auth_log', label: 'Lịch sử đăng nhập' },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -451,6 +561,7 @@ export default function ActiveUsersPage() {
           </div>
         )}
 
+        {filter !== 'auth_log' && (
         <div className="mb-4 rounded-xl border border-slate-200 bg-white overflow-hidden">
           <div className="px-3 sm:px-4 pt-3 sm:pt-4 pb-2 flex flex-wrap items-center justify-between gap-2 border-b border-slate-100">
             <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
@@ -621,8 +732,142 @@ export default function ActiveUsersPage() {
             )}
           </div>
         </div>
+        )}
 
-        {loading && rows.length === 0 ? (
+        {filter === 'auth_log' && (
+          <div className="mb-4 rounded-xl border border-slate-200 bg-white overflow-hidden">
+            <div className="px-3 sm:px-4 pt-3 sm:pt-4 pb-3 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
+                <History className="h-4 w-4 text-sky-600" />
+                Lịch sử đăng nhập / đăng xuất
+                <span className="text-[11px] font-normal text-slate-500">
+                  (chi tiết đến giây)
+                </span>
+              </h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={authDays}
+                  onChange={(e) => setAuthDays(Number(e.target.value))}
+                  className="h-8 px-2 rounded-lg border border-slate-200 text-xs bg-white"
+                >
+                  <option value={1}>Hôm nay & hôm qua</option>
+                  <option value={3}>3 ngày qua</option>
+                  <option value={7}>7 ngày qua</option>
+                  <option value={30}>30 ngày qua</option>
+                </select>
+                <select
+                  value={authEventFilter}
+                  onChange={(e) => setAuthEventFilter(e.target.value)}
+                  className="h-8 px-2 rounded-lg border border-slate-200 text-xs bg-white"
+                >
+                  <option value="all">Tất cả sự kiện</option>
+                  <option value="login_success">Đăng nhập thành công</option>
+                  <option value="login_failed">Đăng nhập sai</option>
+                  <option value="logout,auto_logout_midnight,session_expired">Đăng xuất</option>
+                  <option value="token_invalid">Token lỗi</option>
+                  <option value="password_changed">Đổi mật khẩu</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={() => void loadAuthEvents()}
+                  disabled={authLoading}
+                  className="h-8 px-2.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 inline-flex items-center gap-1 disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${authLoading ? 'animate-spin' : ''}`} />
+                  Tải lại
+                </button>
+              </div>
+            </div>
+
+            {authError && (
+              <div className="px-4 py-3 text-xs text-amber-900 bg-amber-50 border-b border-amber-200">
+                {authError}
+              </div>
+            )}
+
+            {authLoading && authSessions.length === 0 ? (
+              <div className="flex justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-sky-600" />
+              </div>
+            ) : authSessions.length === 0 ? (
+              <div className="text-center py-12 text-sm text-slate-500">
+                Chưa có sự kiện đăng nhập trong khoảng thời gian này.
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Nếu bảng <code className="text-rose-600">auth_event_log</code> chưa tồn tại,
+                  chạy migration <code>database/241_auth_event_log.sql</code> trên Supabase SQL Editor.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-slate-50 text-slate-600 sticky top-0">
+                    <tr>
+                      <th className="text-left font-semibold px-3 py-2">Thời gian</th>
+                      <th className="text-left font-semibold px-3 py-2">Nhân viên</th>
+                      <th className="text-left font-semibold px-3 py-2">Sự kiện</th>
+                      <th className="text-left font-semibold px-3 py-2">Thiết bị / IP</th>
+                      <th className="text-left font-semibold px-3 py-2">Phiên</th>
+                      <th className="text-left font-semibold px-3 py-2">Lý do</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {authSessions.map((ev, idx) => {
+                      const meta = AUTH_EVENT_META[ev.event] || { label: ev.event, tone: 'bg-slate-100 text-slate-700 border-slate-200', Icon: Activity };
+                      const u = userMap.get(String(ev.user_id));
+                      const name = u?.full_name || ev.email || (ev.user_id ? `User ${String(ev.user_id).slice(0, 8)}…` : '(không xác định)');
+                      const EventIcon = meta.Icon;
+                      return (
+                        <tr key={`${ev.id || idx}`} className="hover:bg-slate-50">
+                          <td className="px-3 py-2 whitespace-nowrap font-mono text-[11px] text-slate-700">
+                            {formatAtSeconds(ev.occurred_at)}
+                            <div className="text-[10px] text-slate-400">{formatRelativeTime(ev.occurred_at)}</div>
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="font-semibold text-slate-800 truncate max-w-[180px]">{name}</div>
+                            {ev.email ? <div className="text-[10px] text-slate-500 truncate max-w-[180px]">{ev.email}</div> : null}
+                          </td>
+                          <td className="px-3 py-2">
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-semibold ${meta.tone}`}>
+                              <EventIcon className="h-3 w-3" />
+                              {meta.label}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="text-slate-700 truncate max-w-[180px]" title={ev.device_name || ''}>
+                              {ev.device_name || ev.platform || '—'}
+                            </div>
+                            {ev.ip ? <div className="text-[10px] text-slate-500 font-mono">{ev.ip}</div> : null}
+                          </td>
+                          <td className="px-3 py-2 text-slate-600">
+                            {ev.login_at && ev.event !== 'login_success' ? (
+                              <>
+                                <div className="text-[10px] text-slate-500">Login: <span className="font-mono">{formatAtSeconds(ev.login_at)}</span></div>
+                                <div className="font-semibold text-slate-700">
+                                  {ev.still_open ? <span className="text-emerald-700">Còn mở · </span> : null}
+                                  {formatDurationMs(ev.duration_ms)}
+                                </div>
+                              </>
+                            ) : ev.still_open ? (
+                              <span className="text-emerald-700 font-semibold">Còn mở · {formatDurationMs(ev.duration_ms)}</span>
+                            ) : (
+                              <span className="text-slate-400">—</span>
+                            )}
+                            {ev.session_id ? <div className="text-[9px] text-slate-400 font-mono truncate max-w-[120px]">{ev.session_id}</div> : null}
+                          </td>
+                          <td className="px-3 py-2 text-slate-600">
+                            {ev.reason || '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {filter === 'auth_log' ? null : loading && rows.length === 0 ? (
           <div className="flex justify-center py-16">
             <Loader2 className="h-8 w-8 animate-spin text-sky-600" />
           </div>
