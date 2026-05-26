@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import api from '../lib/api';
+import { UserPresenceAvatar } from '../shared/context/PresenceContext';
+import { getInitials, avatarColor } from '../lib/utils';
 import { isAdminLike } from '../lib/adminRole';
 import {
   ChevronLeft, BarChart3, Search, Users, CheckCircle2, XCircle, Clock,
@@ -401,9 +403,14 @@ export default function KnowledgeScoreboardPage() {
                     <tr key={s.id} className="border-t hover:bg-gray-50">
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-2">
-                          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-400 to-fuchsia-500 text-white flex items-center justify-center text-xs font-bold shrink-0">
-                            {(s.user?.full_name || '?').charAt(0).toUpperCase()}
-                          </div>
+                          <UserPresenceAvatar user={s.user} size="sm">
+                            <div
+                              className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
+                              style={{ backgroundColor: avatarColor(s.user?.full_name || s.user?.email || '?') }}
+                            >
+                              {getInitials(s.user?.full_name || s.user?.email || '?')}
+                            </div>
+                          </UserPresenceAvatar>
                           <div className="min-w-0">
                             <p className="font-medium text-gray-900 truncate">{s.user?.full_name || '—'}</p>
                             <p className="text-xs text-gray-400 truncate flex items-center gap-1">

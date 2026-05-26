@@ -7,6 +7,8 @@ import {
   UserMinus, Activity, Trophy,
 } from 'lucide-react';
 import KpiUserFilter from '../components/KpiUserFilter';
+import { usePresence, UserPresenceAvatar } from '../shared/context/PresenceContext';
+import { getInitials, avatarColor } from '../lib/utils';
 import { KPI_IMPROVEMENT_HINTS } from '../lib/kpiGroupATestMatrix';
 import {
   fmtNumber,
@@ -253,6 +255,12 @@ export default function KpiCompanyDashboard() {
     finally { setRecomputing(false); }
   };
 
+  const presenceUserIds = useMemo(
+    () => (data?.rows || []).map((r) => r.user?.id).filter(Boolean).slice(0, 150),
+    [data?.rows],
+  );
+  usePresence(presenceUserIds, { enabled: presenceUserIds.length > 0 });
+
   const sortedRows = useMemo(() => {
     if (!data?.rows) return [];
     const rows = [...data.rows];
@@ -391,10 +399,22 @@ export default function KpiCompanyDashboard() {
                       <tr key={r.user.id} className="cursor-pointer border-t hover:bg-blue-50/30" onClick={() => setSelectedUser(r)}>
                         <td className="px-3 py-2 font-medium">
                           <div className="flex items-center gap-2">
-                            {r.user.full_name || r.user.email}
-                            {r.on_leave_today && <UserMinus className="h-3.5 w-3.5 text-purple-500" />}
+                            <UserPresenceAvatar user={r.user} size="sm">
+                              <div
+                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
+                                style={{ backgroundColor: avatarColor(r.user.full_name || r.user.email) }}
+                              >
+                                {getInitials(r.user.full_name || r.user.email || '?')}
+                              </div>
+                            </UserPresenceAvatar>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="truncate">{r.user.full_name || r.user.email}</span>
+                                {r.on_leave_today && <UserMinus className="h-3.5 w-3.5 shrink-0 text-purple-500" />}
+                              </div>
+                              <div className="text-[11px] text-gray-500 truncate">{r.user.email}</div>
+                            </div>
                           </div>
-                          <div className="text-[11px] text-gray-500">{r.user.email}</div>
                         </td>
                         <td className="px-3 py-2 text-xs text-gray-700">{r.user.department?.name || '—'}</td>
                         <td className="px-3 py-2 text-right">

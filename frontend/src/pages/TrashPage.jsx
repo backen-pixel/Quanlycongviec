@@ -245,7 +245,7 @@ function TrashDetailModal({ trashId, onClose }) {
   );
 }
 
-export default function TrashPage() {
+export default function TrashPage({ embedded = false }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -319,7 +319,8 @@ export default function TrashPage() {
   }, [items]);
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className={embedded ? 'space-y-4' : 'max-w-6xl mx-auto'}>
+      {!embedded && (
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-semibold flex items-center gap-2">
@@ -346,6 +347,27 @@ export default function TrashPage() {
           </button>
         </div>
       </div>
+      )}
+
+      {embedded && (
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={load}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 hover:bg-gray-50 text-sm"
+          >
+            <RefreshCw className="h-4 w-4" /> Tải lại
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirmEmpty(true)}
+            disabled={items.length === 0}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-red-300 text-red-700 hover:bg-red-50 text-sm disabled:opacity-50"
+          >
+            <AlertTriangle className="h-4 w-4" /> Dọn sạch
+          </button>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
         {FILTER_TABS.map((t) => (

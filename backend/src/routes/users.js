@@ -7,6 +7,7 @@ const { normalizeRegionIdList, assertRegionBelongsToCompany } = require('../help
 const { syncUserOrgToEcosystem } = require('../helpers/ecosystemSync');
 const { recordUserPing, getPresenceForUserIds, listUsersWithActivity, ONLINE_THRESHOLD_MS } = require('../helpers/userPresence');
 const { getCurrentLocationForUser } = require('../helpers/userCurrentLocation');
+const { parseScopeFromQuery } = require('../helpers/scopeQueryParams');
 
 const r = Router();
 r.use(auth);
@@ -218,16 +219,12 @@ r.get('/locations', async (req, res) => {
 /** Danh sách nhân viên + ai đang hoạt động (ping trong 2 phút) */
 r.get('/activity', async (req, res) => {
   try {
-    let { company_id: companyId, department_id: departmentId, search, online_only: onlineOnly } = req.query;
-    const role = req.user.role;
-    const elevated = ['admin', 'manager', 'region_admin'].includes(role);
-    if (!elevated && req.user.company_id) {
-      companyId = companyId || req.user.company_id;
-    }
+    const scope = parseScopeFromQuery(req, { forceUserCompany: true });
+    const { online_only: onlineOnly } = req.query;
     const { users, stats } = await listUsersWithActivity({
-      companyId: companyId || null,
-      departmentId: departmentId || null,
-      search: search ? String(search).trim() : '',
+      companyId: scope.companyId,
+      departmentId: scope.departmentId,
+      search: scope.search || '',
       onlineOnly: onlineOnly === '1' || onlineOnly === 'true',
     });
     res.json({

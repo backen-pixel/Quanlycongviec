@@ -153,6 +153,12 @@ async function getDevicesForUserIds(userIds) {
 
 const MIGRATION_HINT = 'database/67_user_activity_and_messenger_pins.sql';
 
+/** Gắn từ server.js — phát `presence:update` qua Socket.IO khi có ping. */
+let presenceBroadcastFn = null;
+function setPresenceBroadcast(fn) {
+  presenceBroadcastFn = typeof fn === 'function' ? fn : null;
+}
+
 /**
  * Ghi nhận user còn hoạt động (HTTP POST /users/ping hoặc socket presence:ping).
  * @param {string} userId
@@ -171,6 +177,14 @@ async function recordUserPing(userId) {
   if (error) {
     console.warn('[userPresence] recordUserPing:', error.message, '- chạy migration', MIGRATION_HINT);
     return { ok: false, persisted: false, error: error.message };
+  }
+
+  if (presenceBroadcastFn) {
+    try {
+      presenceBroadcastFn(uid, last_ping_at);
+    } catch (e) {
+      console.warn('[userPresence] presenceBroadcastFn:', e?.message || e);
+    }
   }
 
   return { ok: true, persisted: true, last_ping_at };
@@ -300,6 +314,7 @@ module.exports = {
   DEVICE_ONLINE_THRESHOLD_MS,
   MIGRATION_HINT,
   recordUserPing,
+  setPresenceBroadcast,
   getPresenceForUserIds,
   getDevicesForUserIds,
   listUsersWithActivity,
