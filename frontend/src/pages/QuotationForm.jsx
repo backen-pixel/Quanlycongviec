@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import api from '../lib/api';
 import { Plus, Trash2, Save, ArrowLeft, ShoppingCart, Printer, Download, Search, X, AlignLeft, Loader2, Check, History } from 'lucide-react';
 import SaveToast from '../components/SaveToast';
@@ -97,6 +97,7 @@ export default function QuotationForm() {
   const isEdit = !!id;
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const location = useLocation();
   const { user } = useAuth();
   const [descPopup, setDescPopup] = useState(null); // { idx, name, description }
 
@@ -220,10 +221,14 @@ export default function QuotationForm() {
       const fromExcel = searchParams.get('from_excel') === '1';
       if (fromExcel) {
         try {
-          const raw = sessionStorage.getItem(QUOTATION_EXCEL_DRAFT_KEY);
-          if (raw) {
-            const parsed = JSON.parse(raw);
-            sessionStorage.removeItem(QUOTATION_EXCEL_DRAFT_KEY);
+          // Ưu tiên history state (in-memory, không đụng quota Storage), fallback sessionStorage cho F5.
+          let parsed = location.state?.excelDraft || null;
+          if (!parsed) {
+            const raw = sessionStorage.getItem(QUOTATION_EXCEL_DRAFT_KEY);
+            if (raw) parsed = JSON.parse(raw);
+          }
+          try { sessionStorage.removeItem(QUOTATION_EXCEL_DRAFT_KEY); } catch (_) { /* ignore */ }
+          if (parsed) {
             const dform = parsed.form || {};
             const urlLead = searchParams.get('lead_id') || '';
             const pt = dform.payment_terms || '';
