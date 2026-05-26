@@ -34,10 +34,52 @@ function isCompanyScopedAdmin(user) {
   return isAdminLike(user) && hasCompanyId(user);
 }
 
+function isProductionAdmin(user) {
+  return normalizeRole(user?.role) === 'production_admin';
+}
+
+function isLogisticsAdmin(user) {
+  return normalizeRole(user?.role) === 'logistics_admin';
+}
+
+/** Admin module SX hoặc VC (hoặc admin hệ thống/công ty). */
+function isModuleAdmin(user, moduleKey) {
+  if (isSystemAdmin(user) || isAdminLike(user)) return true;
+  const k = String(moduleKey || '').trim().toLowerCase();
+  if (k === 'production' || k === 'sx') return isProductionAdmin(user);
+  if (k === 'logistics' || k === 'vc') return isLogisticsAdmin(user);
+  return false;
+}
+
+/**
+ * Tab thùng rác gộp: crm | sx | vc
+ * - crm: admin-like
+ * - sx: admin-like hoặc production_admin
+ * - vc: admin-like hoặc logistics_admin
+ */
+function canViewTrashTab(user, tab) {
+  const t = String(tab || '').trim().toLowerCase();
+  if (isSystemAdmin(user) || isAdminLike(user)) return true;
+  if (t === 'crm' || t === '') return false;
+  if (t === 'sx') return isProductionAdmin(user);
+  if (t === 'vc') return isLogisticsAdmin(user);
+  return false;
+}
+
+function canAccessTrash(user) {
+  if (isSystemAdmin(user) || isAdminLike(user)) return true;
+  return isProductionAdmin(user) || isLogisticsAdmin(user);
+}
+
 module.exports = {
   normalizeRole,
   hasCompanyId,
   isAdminLike,
   isSystemAdmin,
   isCompanyScopedAdmin,
+  isProductionAdmin,
+  isLogisticsAdmin,
+  isModuleAdmin,
+  canViewTrashTab,
+  canAccessTrash,
 };

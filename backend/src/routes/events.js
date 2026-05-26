@@ -4,6 +4,11 @@ const { auth } = require('../middleware/auth');
 const { notifyMultiple } = require('../helpers/notifications');
 const { isCrmSystemAdminUser, isCrmCompanyAdminUser } = require('../helpers/crmAccessRoles');
 const { isAdminLike } = require('../helpers/adminRole');
+const {
+  normalizeEventModule,
+  assertEventModuleWrite,
+  resolveEventModulesQueryFilter,
+} = require('../helpers/eventModuleScope');
 const r = Router();
 
 r.use(auth);
@@ -71,12 +76,13 @@ async function assertEventCompanyAccess(req, res, eventId) {
   const sc = resolveEventsCompanyScope(req, res);
   if (!sc.ok) return false;
   if (!sc.companyId && isCrmSystemAdminUser(req.user)) return true;
-  const { data: row, error } = await supabase.from('crm_events').select('id, company_id, lead_id').eq('id', eventId).maybeSingle();
+  const { data: row, error } = await supabase.from('crm_events').select('id, company_id, lead_id, module').eq('id', eventId).maybeSingle();
   if (error) throw error;
   if (!row) {
     res.status(404).json({ error: 'Không tìm thấy sự kiện' });
     return false;
   }
+  if (!(await assertEventModuleAccessOnRow(req, res, row))) return false;
   if (!sc.companyId) return true;
   if (row.company_id && String(row.company_id) === String(sc.companyId)) return true;
   if (row.lead_id) {
@@ -188,12 +194,43 @@ const EVENT_SELECT = `*,
   event_type_ref:event_types(id, name, slug, icon, color, stage_slug),
   participants:crm_event_participants(id, user_id, status, user:users(id, full_name, avatar))`;
 
+function normalizeModuleParam(v) {
+  return normalizeEventModule(v);
+}
+function normalizeModulesParam(v) {
+  if (v == null) return null;
+  const raw = Array.isArray(v) ? v : String(v).split(',');
+  const out = [];
+  for (const x of raw) {
+    const m = normalizeEventModule(x);
+    if (m && !out.includes(m)) out.push(m);
+  }
+  return out.length ? out : null;
+}
+
+async function assertEventModuleAccessOnRow(req, res, row) {
+  if (!row) return true;
+  const mod = normalizeEventModule(row.module) || 'crm';
+  const check = await assertEventModuleWrite(req.user, mod);
+  if (check.ok) return true;
+  res.status(403).json({ error: check.message });
+  return false;
+}
+
 // GET /events — Feed (mới nhất trước) with filters
 r.get('/', async (req, res) => {
   try {
     const sc = resolveEventsCompanyScope(req, res);
     if (!sc.ok) return;
     const { type, status, user_id, lead_id, customer_id, date_from, date_to, search, limit, offset, region_id } = req.query;
+    let moduleFilter = normalizeModuleParam(req.query.module);
+    let modulesFilter = moduleFilter ? null : normalizeModulesParam(req.query.modules);
+    const modScope = await resolveEventModulesQueryFilter(req.user, moduleFilter, modulesFilter);
+    if (modScope.error) {
+      return res.status(403).json({ error: modScope.error.message });
+    }
+    moduleFilter = modScope.moduleFilter;
+    modulesFilter = modScope.modulesFilter;
     let companyLeadIds = [];
     if (sc.companyId) {
       companyLeadIds = await fetchAllLeadIdsForCompany(sc.companyId);
@@ -217,6 +254,8 @@ r.get('/', async (req, res) => {
 
     if (type) q = q.eq('event_type', type);
     if (status) q = q.eq('status', status);
+    if (moduleFilter) q = q.eq('module', moduleFilter);
+    else if (modulesFilter && modulesFilter.length) q = q.in('module', modulesFilter);
     if (user_id) q = q.or(`created_by.eq.${user_id},assignee_id.eq.${user_id}`);
     if (lead_id) q = q.eq('lead_id', lead_id);
     if (customer_id) q = q.eq('customer_id', customer_id);
@@ -227,9 +266,26 @@ r.get('/', async (req, res) => {
     q = q.order('start_time', { ascending: false })
       .range(parseInt(offset) || 0, (parseInt(offset) || 0) + (parseInt(limit) || 50) - 1);
 
-    const { data, error, count } = await q;
+    let result = await q;
+    // Migration 245 chưa chạy — bỏ filter module và thử lại.
+    if (result.error && /column.*module.*does not exist|42703/i.test(String(result.error.message || ''))) {
+      let q2 = supabase.from('crm_events').select(EVENT_SELECT, { count: 'exact' });
+      q2 = applyEventsCompanyFilter(q2, sc.companyId, companyLeadIds);
+      if (type) q2 = q2.eq('event_type', type);
+      if (status) q2 = q2.eq('status', status);
+      if (user_id) q2 = q2.or(`created_by.eq.${user_id},assignee_id.eq.${user_id}`);
+      if (lead_id) q2 = q2.eq('lead_id', lead_id);
+      if (customer_id) q2 = q2.eq('customer_id', customer_id);
+      if (date_from) q2 = q2.gte('start_time', date_from);
+      if (date_to) q2 = q2.lte('start_time', date_to + 'T23:59:59');
+      if (search) q2 = q2.or(`title.ilike.%${search}%,location.ilike.%${search}%,description.ilike.%${search}%`);
+      q2 = q2.order('start_time', { ascending: false })
+        .range(parseInt(offset) || 0, (parseInt(offset) || 0) + (parseInt(limit) || 50) - 1);
+      result = await q2;
+    }
+    const { data, error, count } = result;
     if (error) throw error;
-    res.json({ events: data || [], total: count });
+    res.json({ events: data || [], total: count, module_filter: moduleFilter });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -492,6 +548,14 @@ r.get('/calendar', async (req, res) => {
     const sc = resolveEventsCompanyScope(req, res);
     if (!sc.ok) return;
     const { month, year, region_id } = req.query; // month: 1-12, year: 2026
+    let moduleFilter = normalizeModuleParam(req.query.module);
+    let modulesFilter = moduleFilter ? null : normalizeModulesParam(req.query.modules);
+    const modScope = await resolveEventModulesQueryFilter(req.user, moduleFilter, modulesFilter);
+    if (modScope.error) {
+      return res.status(403).json({ error: modScope.error.message });
+    }
+    moduleFilter = modScope.moduleFilter;
+    modulesFilter = modScope.modulesFilter;
     const m = parseInt(month, 10) || new Date().getMonth() + 1;
     const y = parseInt(year, 10) || new Date().getFullYear();
     const pad = (n) => String(n).padStart(2, '0');
@@ -520,8 +584,26 @@ r.get('/calendar', async (req, res) => {
       }
       cq = cq.in('lead_id', lids.slice(0, EVENTS_COMPANY_OR_MAX_IN));
     }
+    if (moduleFilter) cq = cq.eq('module', moduleFilter);
+    else if (modulesFilter && modulesFilter.length) cq = cq.in('module', modulesFilter);
     cq = cq.order('start_time');
-    const { data, error } = await cq;
+    let cqRes = await cq;
+    if (cqRes.error && /column.*module.*does not exist|42703/i.test(String(cqRes.error.message || ''))) {
+      let cq2 = supabase.from('crm_events').select(EVENT_SELECT)
+        .gte('start_time', startDate).lte('start_time', endDate);
+      cq2 = applyEventsCompanyFilter(cq2, sc.companyId, companyLeadIds);
+      if (region_id && String(region_id).trim()) {
+        let lq = supabase.from('crm_leads').select('id').eq('region_id', String(region_id).trim());
+        if (sc.companyId) lq = lq.eq('company_id', sc.companyId);
+        const { data: lr } = await lq;
+        const lids = (lr || []).map((x) => x.id).filter(Boolean);
+        if (lids.length === 0) return res.json([]);
+        cq2 = cq2.in('lead_id', lids.slice(0, EVENTS_COMPANY_OR_MAX_IN));
+      }
+      cq2 = cq2.order('start_time');
+      cqRes = await cq2;
+    }
+    const { data, error } = cqRes;
     if (error) throw error;
     res.json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -571,6 +653,7 @@ r.post('/', async (req, res) => {
       end_time: b.end_time != null && b.end_time !== '' ? normalizeEventTimestamp(b.end_time) : null,
       all_day: b.all_day || false,
       status: b.status || 'planned',
+      module: normalizeModuleParam(b.module) || 'crm',
       lead_id: b.lead_id || null,
       customer_id: b.customer_id || null,
       project_id: b.project_id || null,
@@ -608,8 +691,19 @@ r.post('/', async (req, res) => {
     }
     insert.company_id = evCompanyId;
 
-    const { data, error } = await supabase.from('crm_events')
-      .insert(insert).select(EVENT_SELECT).single();
+    const modCheck = await assertEventModuleWrite(req.user, insert.module);
+    if (!modCheck.ok) {
+      return res.status(403).json({ error: modCheck.message });
+    }
+
+    let insertRes = await supabase.from('crm_events').insert(insert).select(EVENT_SELECT).single();
+    // Migration 245 chưa chạy — bỏ field module và thử lại.
+    if (insertRes.error && /column.*module.*does not exist|42703/i.test(String(insertRes.error.message || ''))) {
+      const { module: _omitMod, ...legacyInsert } = insert;
+      void _omitMod;
+      insertRes = await supabase.from('crm_events').insert(legacyInsert).select(EVENT_SELECT).single();
+    }
+    const { data, error } = insertRes;
     if (error) throw error;
 
     // Add participants
@@ -689,6 +783,19 @@ r.put('/:id', async (req, res) => {
       }
       update[f] = b[f];
     });
+    if (b.module !== undefined) {
+      const m = normalizeModuleParam(b.module);
+      if (m) {
+        const modCheck = await assertEventModuleWrite(req.user, m);
+        if (!modCheck.ok) {
+          return res.status(403).json({ error: modCheck.message });
+        }
+        if (!isAdminLike(req.user)) {
+          return res.status(403).json({ error: 'Chỉ admin được đổi khối/module của sự kiện' });
+        }
+        update.module = m;
+      }
+    }
     if (isCrmSystemAdminUser(req.user) && b.company_id !== undefined) {
       update.company_id = b.company_id === '' || b.company_id === null ? null : String(b.company_id);
     }
@@ -719,8 +826,13 @@ r.put('/:id', async (req, res) => {
       update.cancel_reason = null;
     }
 
-    const { data, error } = await supabase.from('crm_events')
-      .update(update).eq('id', req.params.id).select(EVENT_SELECT).single();
+    let updRes = await supabase.from('crm_events').update(update).eq('id', req.params.id).select(EVENT_SELECT).single();
+    if (updRes.error && /column.*module.*does not exist|42703/i.test(String(updRes.error.message || ''))) {
+      const { module: _om, ...legacyUpdate } = update;
+      void _om;
+      updRes = await supabase.from('crm_events').update(legacyUpdate).eq('id', req.params.id).select(EVENT_SELECT).single();
+    }
+    const { data, error } = updRes;
     if (error) throw error;
 
     // Update participants if provided

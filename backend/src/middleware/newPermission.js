@@ -5,30 +5,40 @@
 // ════════════════════════════════════════════════════════════
 
 const { supabase } = require('../config/supabase');
+const { isAdminLike } = require('../helpers/adminRole');
+
+/** Chỉ bật khi dev local — KHÔNG dùng production. */
+function permissionFailOpen() {
+  return process.env.PERMISSION_FAIL_OPEN === '1' || process.env.NODE_ENV !== 'production';
+}
 
 // ─────────────────────────────────────────────────────────────
 // CORE: Check if user has permission using RPC
 // ─────────────────────────────────────────────────────────────
-async function checkPermission(userId, resource, action, ecosystemUnitId = null) {
+async function checkPermission(userId, resource, action, ecosystemUnitId = null, user = null) {
   try {
+    if (user && isAdminLike(user)) return true;
+
     const { data, error } = await supabase.rpc('user_has_permission', {
       p_user_id: userId,
       p_resource: resource,
       p_action: action,
       p_ecosystem_unit_id: ecosystemUnitId,
     });
-    
+
     if (error) {
       console.error('RPC user_has_permission error:', error.message);
-      // If RPC doesn't exist, allow by default (admin-only deployment)
-      if (error.message?.includes('function') || error.code === '42883') return true;
-      return true; // Fallback: allow if RPC fails
+      if (permissionFailOpen()) {
+        if (error.message?.includes('function') || error.code === '42883') return true;
+        return true;
+      }
+      return false;
     }
-    
+
     return data === true;
   } catch (e) {
     console.error('Exception in checkPermission:', e);
-    return true; // Fallback: allow on exception
+    return permissionFailOpen();
   }
 }
 
@@ -109,8 +119,7 @@ function requirePermission(resource, action, getEcosystemUnitId = null) {
         }
       }
       
-      // Check permission using RPC
-      const allowed = await checkPermission(userId, resource, action, ecosystemUnitId);
+      const allowed = await checkPermission(userId, resource, action, ecosystemUnitId, req.user);
       
       if (!allowed) {
         console.warn(`Permission denied: user=${userId}, resource=${resource}, action=${action}, unit=${ecosystemUnitId}`);

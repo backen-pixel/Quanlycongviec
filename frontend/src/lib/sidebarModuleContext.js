@@ -13,8 +13,23 @@ export const CRM_SHARED_PATHS = [
   '/admin/trash',
 ];
 
+/**
+ * Các trang CRM nhưng được nhiều module dùng chung (Sự kiện, Đang hoạt động,
+ * Nhóm chat). Khi điều hướng đến đây từ sidebar SX/VC thì sidebar phải GIỮ
+ * NGUYÊN module gốc, không nhảy sang CRM.
+ */
+export const CRM_CROSS_MODULE_PATHS = [
+  '/crm/events',
+  '/crm/activity',
+  '/crm/messenger',
+];
+
 export function isCrmSharedPath(pathname) {
   return CRM_SHARED_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
+
+export function isCrmCrossModulePath(pathname) {
+  return CRM_CROSS_MODULE_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
 export function isWorkPrimaryPath(pathname) {
@@ -42,7 +57,13 @@ export function isWorkPrimaryPath(pathname) {
 }
 
 export function resolveModuleFromPathname(pathname) {
-  if (pathname.startsWith('/crm') || pathname.startsWith('/tools/voice-recordings')) return 'crm';
+  if (pathname.startsWith('/tools/voice-recordings')) return 'crm';
+  if (pathname.startsWith('/crm')) {
+    // /crm/events, /crm/activity, /crm/messenger được dùng chung — nhường
+    // module context cho navStateModuleContext / sessionStorage quyết định.
+    if (isCrmCrossModulePath(pathname)) return null;
+    return 'crm';
+  }
   if (pathname.startsWith('/sx')) return 'sx';
   if (pathname.startsWith('/vc')) return 'vc';
   if (pathname.startsWith('/knowledge')) return 'knowledge';
@@ -65,6 +86,11 @@ export function storeModule(module) {
 }
 
 export function resolveActiveModule(pathname, navStateModuleContext) {
+  // Trang CRM dùng chung (events/activity/messenger): ưu tiên context từ state
+  // hoặc sessionStorage — chỉ rơi về 'crm' khi không có gì.
+  if (isCrmCrossModulePath(pathname)) {
+    return navStateModuleContext || readStoredModule() || 'crm';
+  }
   const fromPath = resolveModuleFromPathname(pathname);
   if (fromPath) return fromPath;
   if (navStateModuleContext) return navStateModuleContext;
@@ -74,6 +100,7 @@ export function resolveActiveModule(pathname, navStateModuleContext) {
 
 export function isCrmSidebarActive(pathname, activeModule, crmOnly) {
   if (crmOnly) return true;
-  if (pathname.startsWith('/crm') || pathname.startsWith('/tools/voice-recordings')) return true;
-  return activeModule === 'crm' && isCrmSharedPath(pathname);
+  if (pathname.startsWith('/tools/voice-recordings')) return true;
+  if (pathname.startsWith('/crm') && !isCrmCrossModulePath(pathname)) return true;
+  return activeModule === 'crm' && (isCrmSharedPath(pathname) || isCrmCrossModulePath(pathname));
 }

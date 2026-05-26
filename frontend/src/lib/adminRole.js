@@ -31,3 +31,34 @@ export function isSystemAdmin(user) {
 export function isCompanyScopedAdmin(user) {
   return isAdminLike(user) && hasCompanyId(user);
 }
+
+export function isProductionAdmin(user) {
+  return normalizeRole(user?.role) === 'production_admin';
+}
+
+export function isLogisticsAdmin(user) {
+  return normalizeRole(user?.role) === 'logistics_admin';
+}
+
+export function isModuleAdmin(user, moduleKey) {
+  if (isSystemAdmin(user) || isAdminLike(user)) return true;
+  const k = String(moduleKey || '').trim().toLowerCase();
+  if (k === 'production' || k === 'sx') return isProductionAdmin(user);
+  if (k === 'logistics' || k === 'vc') return isLogisticsAdmin(user);
+  return false;
+}
+
+/** Tab thùng rác: crm | sx | vc */
+export function canViewTrashTab(user, tab) {
+  const t = String(tab || '').trim().toLowerCase();
+  if (isSystemAdmin(user) || isAdminLike(user)) return true;
+  if (t === 'crm' || !t) return isAdminLike(user);
+  if (t === 'sx') return isAdminLike(user) || isProductionAdmin(user);
+  if (t === 'vc') return isAdminLike(user) || isLogisticsAdmin(user);
+  return false;
+}
+
+export function canAccessTrash(user) {
+  if (isSystemAdmin(user) || isAdminLike(user)) return true;
+  return isProductionAdmin(user) || isLogisticsAdmin(user);
+}

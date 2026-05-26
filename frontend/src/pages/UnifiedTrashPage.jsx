@@ -1,7 +1,7 @@
 import { useSearchParams, Link } from 'react-router-dom';
 import { Trash2, Target, Factory, Truck, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../lib/auth';
-import { isAdminLike } from '../lib/adminRole';
+import { canAccessTrash, canViewTrashTab } from '../lib/adminRole';
 import TrashPage from './TrashPage';
 import ProductionTrashPage from './ProductionTrashPage';
 import LogisticsTrashPage from './LogisticsTrashPage';
@@ -38,15 +38,17 @@ const VALID_TABS = new Set(TABS.map((t) => t.id));
 export default function UnifiedTrashPage() {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const rawTab = searchParams.get('tab') || 'crm';
-  const tab = VALID_TABS.has(rawTab) ? rawTab : 'crm';
-  const activeMeta = TABS.find((t) => t.id === tab) || TABS[0];
+  const visibleTabs = TABS.filter((t) => canViewTrashTab(user, t.id));
+  const defaultTab = visibleTabs[0]?.id || 'crm';
+  const rawTab = searchParams.get('tab') || defaultTab;
+  const tab = visibleTabs.some((t) => t.id === rawTab) ? rawTab : defaultTab;
+  const activeMeta = visibleTabs.find((t) => t.id === tab) || visibleTabs[0] || TABS[0];
 
-  if (!isAdminLike(user)) {
+  if (!canAccessTrash(user) || visibleTabs.length === 0) {
     return (
       <div className="max-w-lg mx-auto py-16 text-center text-gray-500">
         <AlertTriangle className="h-10 w-10 text-amber-400 mx-auto mb-3" />
-        <p className="font-medium">Chỉ Admin được phép xem Thùng rác.</p>
+        <p className="font-medium">Bạn không có quyền xem Thùng rác.</p>
       </div>
     );
   }
@@ -80,7 +82,7 @@ export default function UnifiedTrashPage() {
         role="tablist"
         aria-label="Module thùng rác"
       >
-        {TABS.map((t) => {
+        {visibleTabs.map((t) => {
           const Icon = t.icon;
           const on = tab === t.id;
           return (

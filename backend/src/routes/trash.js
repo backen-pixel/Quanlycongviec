@@ -6,15 +6,14 @@ const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { restoreTrashItem } = require('../helpers/trashSnapshot');
 const { writeAuditLog } = require('../helpers/auditLog');
+const { canAccessTrash, isAdminLike, isProductionAdmin, isLogisticsAdmin } = require('../helpers/adminRole');
 
 const r = Router();
 r.use(auth);
 
-const ADMIN_ROLES = new Set(['admin', 'superadmin', 'super_admin']);
-
-function requireAdmin(req, res, next) {
-  if (!ADMIN_ROLES.has(req.user?.role)) {
-    return res.status(403).json({ error: 'Chỉ admin được truy cập thùng rác' });
+function requireTrashAccess(req, res, next) {
+  if (!canAccessTrash(req.user)) {
+    return res.status(403).json({ error: 'Không có quyền truy cập thùng rác' });
   }
   next();
 }
@@ -25,9 +24,20 @@ const TRASH_SELECT_WITH_REASON =
 const TRASH_SELECT_NO_REASON =
   'id, entity_type, entity_id, entity_label, company_id, deleted_by, deleted_at, purge_after, deleter:users!trash_items_deleted_by_fkey(id, full_name)';
 
-r.get('/', requireAdmin, async (req, res) => {
+r.get('/', requireTrashAccess, async (req, res) => {
   try {
-    const { entity_type, q } = req.query;
+    let { entity_type, q } = req.query;
+    if (isProductionAdmin(req.user) && !isAdminLike(req.user)) {
+      if (entity_type && entity_type !== 'project') {
+        return res.status(403).json({ error: 'Chỉ được xem thùng rác Sản xuất (dự án)' });
+      }
+      entity_type = entity_type || 'project';
+    }
+    if (isLogisticsAdmin(req.user) && !isAdminLike(req.user)) {
+      return res.status(403).json({
+        error: 'Thùng rác Vận chuyển dùng API /api/logistics/trash',
+      });
+    }
     const isSuper = req.user?.role === 'superadmin' || req.user?.role === 'super_admin';
 
     const buildQuery = (selectCols) => {
@@ -60,7 +70,7 @@ r.get('/', requireAdmin, async (req, res) => {
 });
 
 // GET /api/trash/:id — xem chi tiết (snapshot) 1 mục đã xóa
-r.get('/:id', requireAdmin, async (req, res) => {
+r.get('/:id', requireTrashAccess, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('trash_items')
@@ -82,7 +92,7 @@ r.get('/:id', requireAdmin, async (req, res) => {
 });
 
 // POST /api/trash/:id/restore — phục hồi 1 mục
-r.post('/:id/restore', requireAdmin, async (req, res) => {
+r.post('/:id/restore', requireTrashAccess, async (req, res) => {
   const { data: before } = await supabase.from('trash_items').select('id, entity_type, entity_id, entity_label, company_id').eq('id', req.params.id).maybeSingle();
   const out = await restoreTrashItem(supabase, req.params.id);
   if (!out.ok) {
@@ -101,7 +111,7 @@ r.post('/:id/restore', requireAdmin, async (req, res) => {
 });
 
 // DELETE /api/trash/:id — xóa vĩnh viễn
-r.delete('/:id', requireAdmin, async (req, res) => {
+r.delete('/:id', requireTrashAccess, async (req, res) => {
   try {
     const { data: before } = await supabase
       .from('trash_items')
@@ -126,7 +136,7 @@ r.delete('/:id', requireAdmin, async (req, res) => {
 });
 
 // POST /api/trash/empty — dọn sạch (admin công ty: chỉ company mình)
-r.post('/empty', requireAdmin, async (req, res) => {
+r.post('/empty', requireTrashAccess, async (req, res) => {
   try {
     const isSuper = req.user?.role === 'superadmin' || req.user?.role === 'super_admin';
     let q = supabase.from('trash_items').delete();
