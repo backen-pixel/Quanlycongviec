@@ -94,6 +94,105 @@ async function snapshotLeadDocument(sb, docId, deletedBy) {
   }
 }
 
+/**
+ * Snapshot 1 project (Sản xuất / Quản lý xưởng) trước khi xóa cứng.
+ * Bao gồm: row projects, tasks + sub, project_comments, stage_transitions,
+ * project_workflow_lines, project_products, linked crm_leads + sub.
+ * Mục tiêu khôi phục: card SX hiện lại trên Kanban với metadata gốc.
+ */
+async function snapshotProject(sb, projectId, deletedBy, options = {}) {
+  const client = getClient(sb);
+  try {
+    const { data: project } = await client.from('projects').select('*').eq('id', projectId).maybeSingle();
+    if (!project) return { ok: false, error: 'Dự án không tồn tại' };
+
+    const { data: tasks } = await client.from('tasks').select('*').eq('project_id', projectId);
+    const taskIds = (tasks || []).map((t) => t.id);
+
+    let checklists = [];
+    let comments = [];
+    let participants = [];
+    let timeLogs = [];
+    let taskAttachments = [];
+    if (taskIds.length) {
+      [
+        { data: checklists },
+        { data: comments },
+        { data: participants },
+        { data: timeLogs },
+        { data: taskAttachments },
+      ] = await Promise.all([
+        client.from('task_checklists').select('*').in('task_id', taskIds),
+        client.from('task_comments').select('*').in('task_id', taskIds),
+        client.from('task_participants').select('*').in('task_id', taskIds),
+        client.from('task_time_logs').select('*').in('task_id', taskIds),
+        client.from('file_attachments').select('*').eq('entity_type', 'task').in('entity_id', taskIds),
+      ]);
+    }
+
+    const [{ data: projectComments }, { data: stageTransitions }, { data: workflowLines }, { data: products }, { data: leads }] = await Promise.all([
+      client.from('project_comments').select('*').eq('project_id', projectId),
+      client.from('stage_transitions').select('*').eq('project_id', projectId),
+      client.from('project_workflow_lines').select('*').eq('project_id', projectId),
+      client.from('project_products').select('*').eq('project_id', projectId),
+      client.from('crm_leads').select('*').eq('project_id', projectId),
+    ]);
+
+    const leadIds = (leads || []).map((l) => l.id);
+    let leadDocuments = [];
+    let leadActivities = [];
+    let quotations = [];
+    let orders = [];
+    let invoices = [];
+    if (leadIds.length) {
+      const safeSel = async (table) => {
+        try { const { data } = await client.from(table).select('*').in('lead_id', leadIds); return data || []; }
+        catch { return []; }
+      };
+      [leadDocuments, leadActivities, quotations, orders, invoices] = await Promise.all([
+        safeSel('lead_documents'),
+        safeSel('crm_activities'),
+        safeSel('quotations'),
+        safeSel('orders'),
+        safeSel('invoices'),
+      ]);
+    }
+
+    const row = {
+      entity_type: 'project',
+      entity_id: projectId,
+      entity_label: project.name || project.code || `Dự án ${String(projectId).slice(0, 8)}`,
+      company_id: project.company_id || null,
+      deleted_by: deletedBy || null,
+      snapshot: {
+        project,
+        tasks: tasks || [],
+        task_checklists: checklists || [],
+        task_comments: comments || [],
+        task_participants: participants || [],
+        task_time_logs: timeLogs || [],
+        file_attachments: taskAttachments || [],
+        project_comments: projectComments || [],
+        stage_transitions: stageTransitions || [],
+        project_workflow_lines: workflowLines || [],
+        project_products: products || [],
+        crm_leads: leads || [],
+        lead_documents: leadDocuments,
+        crm_activities: leadActivities,
+        quotations,
+        orders,
+        invoices,
+      },
+    };
+    if (options.delete_reason) row.delete_reason = options.delete_reason;
+
+    const trashId = await insertTrashRow(client, row);
+    return { ok: true, trashId };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
 async function snapshotTaskAttachment(sb, attId, deletedBy) {
   const client = getClient(sb);
   try {
@@ -121,12 +220,94 @@ async function snapshotTaskAttachment(sb, attId, deletedBy) {
   }
 }
 
-// Cố gắng insert lại 1 row vào bảng đích; bỏ qua lỗi UNIQUE (row đã tồn tại)
-async function safeInsert(sb, table, row) {
-  if (!row) return;
-  const { error } = await sb.from(table).upsert(row, { onConflict: 'id' });
-  if (error) {
-    console.warn(`[trash:restore] upsert ${table} failed:`, error.message);
+// Cột thường gặp gây fail upsert (generated / computed). Loại bỏ trước khi restore.
+const STRIPPED_COLUMNS = new Set([
+  'search_vector', 'tsv', 'full_text',
+  // crm_leads — cột GENERATED STORED (xem các migration 100/110/147)
+  'weighted_value',
+]);
+
+// Cache theo từng bảng các cột đã phát hiện là generated / không tồn tại
+// → lần sau cùng bảng sẽ strip ngay từ đầu, tránh round-trip thừa.
+const learnedDropCols = new Map(); // table -> Set<string>
+
+function getDropSet(table) {
+  if (!learnedDropCols.has(table)) learnedDropCols.set(table, new Set());
+  return learnedDropCols.get(table);
+}
+
+function sanitizeRowForRestore(table, row) {
+  if (!row || typeof row !== 'object') return row;
+  const drops = getDropSet(table);
+  const out = {};
+  for (const [k, v] of Object.entries(row)) {
+    if (STRIPPED_COLUMNS.has(k)) continue;
+    if (drops.has(k)) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+// Pattern các lỗi Postgres có thể strip cột rồi retry an toàn
+const STRIPPABLE_PATTERNS = [
+  /column "([^"]+)" of relation .* does not exist/i,             // 42703
+  /cannot insert a non-DEFAULT value into column "([^"]+)"/i,    // 428C9 generated column
+  /column "([^"]+)" can only be updated to DEFAULT/i,            // 428C9
+  /column "([^"]+)" is a generated column/i,
+];
+
+function extractStrippableColumn(message) {
+  if (!message) return null;
+  for (const re of STRIPPABLE_PATTERNS) {
+    const m = re.exec(message);
+    if (m && m[1]) return m[1];
+  }
+  return null;
+}
+
+/**
+ * Cố gắng insert lại 1 row vào bảng đích.
+ * Auto-strip các cột generated / không tồn tại, loop tối đa 8 lần (1 cột/lần).
+ * Trả về { ok, error?: { code, message, details, hint } } để caller thu thập lỗi.
+ */
+async function safeInsert(sb, table, row, opts = {}) {
+  if (!row) return { ok: true };
+  let current = sanitizeRowForRestore(table, row);
+  const onConflict = opts.onConflict || 'id';
+  const drops = getDropSet(table);
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const { error } = await sb.from(table).upsert(current, { onConflict });
+    if (!error) return { ok: true };
+
+    const col = extractStrippableColumn(error.message);
+    if (col && Object.prototype.hasOwnProperty.call(current, col)) {
+      drops.add(col); // ghi nhớ để lần sau strip sẵn cho cùng bảng
+      const { [col]: _drop, ...rest } = current;
+      void _drop;
+      current = rest;
+      continue; // retry không tính là fail
+    }
+
+    console.warn(`[trash:restore] upsert ${table} failed:`, {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+    });
+    return {
+      ok: false,
+      error: { code: error.code || null, message: error.message, details: error.details || null, hint: error.hint || null },
+    };
+  }
+  return { ok: false, error: { code: null, message: `Quá số lần retry strip cột cho bảng ${table}`, details: null, hint: null } };
+}
+
+async function restoreManyAndCollect(sb, table, rows, errors, opts) {
+  if (!Array.isArray(rows) || rows.length === 0) return;
+  for (const r of rows) {
+    const res = await safeInsert(sb, table, r, opts);
+    if (!res.ok) errors.push({ table, ...res.error });
   }
 }
 
@@ -142,23 +323,58 @@ async function restoreTrashItem(sb, trashId) {
     if (!row) return { ok: false, error: 'Không tìm thấy mục trong thùng rác' };
 
     const snap = row.snapshot || {};
+    const errors = []; // thu thập lỗi non-fatal để báo về client
+    let primaryFailed = false;
+
     if (row.entity_type === 'crm_lead') {
-      // Restore lead chính trước, sau đó children, rồi các bảng liên quan
-      await safeInsert(client, 'crm_leads', snap.lead);
-      for (const child of snap.children || []) await safeInsert(client, 'crm_leads', child);
-      for (const doc of snap.documents || []) await safeInsert(client, 'lead_documents', doc);
-      for (const act of snap.activities || []) await safeInsert(client, 'crm_activities', act);
-      for (const tk of snap.tasks || []) await safeInsert(client, 'crm_tasks', tk);
+      const r = await safeInsert(client, 'crm_leads', snap.lead);
+      if (!r.ok) { errors.push({ table: 'crm_leads', ...r.error }); primaryFailed = true; }
+      await restoreManyAndCollect(client, 'crm_leads', snap.children, errors);
+      await restoreManyAndCollect(client, 'lead_documents', snap.documents, errors);
+      await restoreManyAndCollect(client, 'crm_activities', snap.activities, errors);
+      await restoreManyAndCollect(client, 'crm_tasks', snap.tasks, errors);
+    } else if (row.entity_type === 'project') {
+      // Khôi phục project trước (parent của crm_leads), rồi các bảng con
+      const r = await safeInsert(client, 'projects', snap.project);
+      if (!r.ok) { errors.push({ table: 'projects', ...r.error }); primaryFailed = true; }
+      await restoreManyAndCollect(client, 'crm_leads', snap.crm_leads, errors);
+      await restoreManyAndCollect(client, 'tasks', snap.tasks, errors);
+      await restoreManyAndCollect(client, 'task_checklists', snap.task_checklists, errors);
+      await restoreManyAndCollect(client, 'task_comments', snap.task_comments, errors);
+      await restoreManyAndCollect(client, 'task_participants', snap.task_participants, errors);
+      await restoreManyAndCollect(client, 'task_time_logs', snap.task_time_logs, errors);
+      await restoreManyAndCollect(client, 'file_attachments', snap.file_attachments, errors);
+      await restoreManyAndCollect(client, 'project_comments', snap.project_comments, errors);
+      await restoreManyAndCollect(client, 'stage_transitions', snap.stage_transitions, errors);
+      await restoreManyAndCollect(client, 'project_workflow_lines', snap.project_workflow_lines, errors);
+      await restoreManyAndCollect(client, 'project_products', snap.project_products, errors);
+      await restoreManyAndCollect(client, 'lead_documents', snap.lead_documents, errors);
+      await restoreManyAndCollect(client, 'crm_activities', snap.crm_activities, errors);
+      await restoreManyAndCollect(client, 'quotations', snap.quotations, errors);
+      await restoreManyAndCollect(client, 'orders', snap.orders, errors);
+      await restoreManyAndCollect(client, 'invoices', snap.invoices, errors);
     } else if (row.entity_type === 'lead_document') {
-      await safeInsert(client, 'lead_documents', snap.document);
+      const r = await safeInsert(client, 'lead_documents', snap.document);
+      if (!r.ok) { errors.push({ table: 'lead_documents', ...r.error }); primaryFailed = true; }
     } else if (row.entity_type === 'crm_task_attachment') {
-      await safeInsert(client, 'crm_task_attachments', snap.attachment);
+      const r = await safeInsert(client, 'crm_task_attachments', snap.attachment);
+      if (!r.ok) { errors.push({ table: 'crm_task_attachments', ...r.error }); primaryFailed = true; }
     } else {
       return { ok: false, error: `Loại không hỗ trợ: ${row.entity_type}` };
     }
 
+    if (primaryFailed) {
+      // Không xóa trash item — admin có thể thử lại sau khi sửa schema/FK
+      const top = errors[0];
+      return {
+        ok: false,
+        error: `Không khôi phục được bản ghi chính: ${top?.message || 'lỗi không xác định'}`,
+        errors,
+      };
+    }
+
     await client.from('trash_items').delete().eq('id', trashId);
-    return { ok: true };
+    return { ok: true, errors };
   } catch (e) {
     return { ok: false, error: e.message };
   }
@@ -166,6 +382,7 @@ async function restoreTrashItem(sb, trashId) {
 
 module.exports = {
   snapshotCrmLead,
+  snapshotProject,
   snapshotLeadDocument,
   snapshotTaskAttachment,
   restoreTrashItem,

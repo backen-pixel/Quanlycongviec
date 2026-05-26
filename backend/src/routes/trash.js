@@ -83,8 +83,10 @@ r.get('/:id', requireAdmin, async (req, res) => {
 // POST /api/trash/:id/restore — phục hồi 1 mục
 r.post('/:id/restore', requireAdmin, async (req, res) => {
   const out = await restoreTrashItem(supabase, req.params.id);
-  if (!out.ok) return res.status(400).json({ error: out.error });
-  res.json({ success: true });
+  if (!out.ok) {
+    return res.status(400).json({ error: out.error, errors: out.errors || [] });
+  }
+  res.json({ success: true, errors: out.errors || [] });
 });
 
 // DELETE /api/trash/:id — xóa vĩnh viễn

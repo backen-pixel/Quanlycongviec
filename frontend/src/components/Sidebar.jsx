@@ -223,6 +223,7 @@ const SX_MENU_GROUPS = [
     emoji: '🏭',
     items: [
       { to: '/sx/dashboard', icon: LayoutDashboard, label: 'Dashboard xưởng', end: true },
+      { to: '/sx/trash', icon: Trash2, label: 'Thùng rác (dự án đã xóa)', adminOnly: true },
     ]
   },
   {
