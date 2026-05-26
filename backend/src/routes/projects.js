@@ -2209,7 +2209,17 @@ r.post('/:id/approve-advance', async (req, res) => {
 r.delete('/:id', requirePermission('projects', 'delete'), async (req, res) => {
   try {
     const { data: project } = await supabase.from('projects').select('code,name').eq('id', req.params.id).single();
-    
+
+    // Snapshot vào thùng rác trước khi xóa cứng — cho phép admin khôi phục sau.
+    // Bỏ qua lỗi snapshot (best-effort), không chặn việc xóa.
+    try {
+      const { snapshotProject } = require('../helpers/trashSnapshot');
+      const reason = (req.body && typeof req.body.delete_reason === 'string') ? req.body.delete_reason.trim() : '';
+      await snapshotProject(supabase, req.params.id, req.user?.userId || null, reason ? { delete_reason: reason } : {});
+    } catch (snapErr) {
+      console.warn('[projects:delete] snapshot to trash failed:', snapErr?.message || snapErr);
+    }
+
     // Xóa tất cả bảng phụ thuộc trước khi xóa project (ignore errors for missing tables)
     const { data: taskIds } = await supabase.from('tasks').select('id').eq('project_id', req.params.id);
     if (taskIds?.length) {
