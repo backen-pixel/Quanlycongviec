@@ -23,6 +23,7 @@ import { useWorkshopStaffFilter } from '../hooks/useWorkshopStaffFilter';
 import {
   peekWorkshopPipelineCardFocus, clearWorkshopPipelineCardFocus, markWorkshopPipelineCardFocus,
 } from '../lib/workshopPipelineStorage';
+import ModuleQuickActions from '../shared/components/ModuleQuickActions';
 
 const INTAKE_BUCKET = 'delivery_pending';
 
@@ -520,9 +521,8 @@ export default function LogisticsDashboard() {
           <Link to="/vc/pipeline-settings" className="h-9 px-3 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white text-gray-700 text-sm font-medium hover:bg-gray-50">
             Cài đặt pipeline
           </Link>
-          <Link to={{ pathname: '/admin/trash', search: '?tab=vc' }} className="h-9 px-3 inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white text-rose-700 text-sm font-medium hover:bg-rose-50">
-            <Trash2 className="h-3.5 w-3.5" /> Thùng rác
-          </Link>
+          <span className="hidden md:inline-block w-px h-6 bg-gray-200 mx-1" aria-hidden />
+          <ModuleQuickActions trashTab="vc" />
         </div>
       </div>
 

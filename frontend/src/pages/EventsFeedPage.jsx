@@ -1,9 +1,14 @@
 import { useState, useEffect, useMemo, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { isAdminLike, isSystemAdmin as checkSystemAdmin } from '../lib/adminRole';
+import {
+  isAdminLike,
+  isSystemAdmin as checkSystemAdmin,
+  isProductionAdmin,
+  isLogisticsAdmin,
+} from '../lib/adminRole';
 import { formatDate } from '../lib/utils';
 import { isoToDatetimeLocalValue, datetimeLocalValueToIso } from '../lib/datetimeLocal';
 import {
@@ -14,6 +19,7 @@ import {
 
 import ScopeFilterBar from '../shared/components/ScopeFilterBar';
 import { useScopeFilter } from '../shared/hooks/useScopeFilter';
+import { useModuleAccess } from '../shared/context/ModuleAccessContext';
 
 const STATUS_MAP = {
   planned: { label: 'Đã lên kế hoạch', color: 'bg-blue-100 text-blue-700', icon: Clock },
@@ -21,6 +27,18 @@ const STATUS_MAP = {
   completed: { label: 'Hoàn thành', color: 'bg-emerald-100 text-emerald-700', icon: CheckCircle2 },
   cancelled: { label: 'Đã hủy', color: 'bg-red-100 text-red-700', icon: XCircle },
 };
+
+/** Module/Khối — phân loại sự kiện theo khối kinh doanh / sản xuất / VC / chung. */
+export const EVENT_MODULE_OPTIONS = [
+  { value: '', label: 'Tất cả khối', emoji: '🌐', color: 'bg-gray-100 text-gray-700 border-gray-200' },
+  { value: 'crm', label: 'Kinh doanh', emoji: '💼', color: 'bg-sky-100 text-sky-700 border-sky-200' },
+  { value: 'production', label: 'Sản xuất', emoji: '🏭', color: 'bg-violet-100 text-violet-700 border-violet-200' },
+  { value: 'logistics', label: 'Vận chuyển/Lắp đặt', emoji: '🚚', color: 'bg-orange-100 text-orange-700 border-orange-200' },
+  { value: 'general', label: 'Chung công ty', emoji: '🏢', color: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+];
+function moduleMeta(v) {
+  return EVENT_MODULE_OPTIONS.find((o) => o.value === String(v || '')) || EVENT_MODULE_OPTIONS[1];
+}
 
 function formatTime(isoStr) {
   if (!isoStr) return '';
@@ -66,9 +84,48 @@ export default function EventsFeedPage() {
   const filterCompanyId = scope.companyId;
   const companies = scope.companies;
 
+  const { moduleAccess, canAccessModule } = useModuleAccess();
+
+  /**
+   * Khối user được phép xem sự kiện:
+   * - Admin / allowAll → null = không lọc (xem tất cả khối).
+   * - User thường → chỉ những khối có quyền + luôn thêm 'general' (sự kiện chung công ty).
+   */
+  const allowedModules = useMemo(() => {
+    if (!moduleAccess || moduleAccess.allowAll || isAdmin || isSystemAdmin) return null;
+    if (isProductionAdmin(user)) return ['general', 'production'];
+    if (isLogisticsAdmin(user)) return ['general', 'logistics'];
+    const list = ['general'];
+    if (canAccessModule('crm')) list.push('crm');
+    if (canAccessModule('production')) list.push('production');
+    if (canAccessModule('logistics')) list.push('logistics');
+    return list;
+  }, [moduleAccess, isAdmin, isSystemAdmin, canAccessModule, user]);
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialModule = useMemo(() => {
+    const v = String(searchParams.get('module') || '').toLowerCase();
+    return EVENT_MODULE_OPTIONS.some((o) => o.value === v) ? v : '';
+  }, [searchParams]);
+  const [filterModule, setFilterModule] = useState(initialModule);
+
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams);
+    if (filterModule) next.set('module', filterModule);
+    else next.delete('module');
+    if (next.toString() !== searchParams.toString()) {
+      setSearchParams(next, { replace: true });
+    }
+  }, [filterModule]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const listParams = useMemo(
-    () => (isSystemAdmin && filterCompanyId ? { company_id: filterCompanyId } : {}),
-    [isSystemAdmin, filterCompanyId],
+    () => {
+      const p = isSystemAdmin && filterCompanyId ? { company_id: filterCompanyId } : {};
+      if (filterModule) p.module = filterModule;
+      else if (allowedModules && allowedModules.length) p.modules = allowedModules.join(',');
+      return p;
+    },
+    [isSystemAdmin, filterCompanyId, filterModule, allowedModules],
   );
 
   /** Danh sách nhân viên cho filter / form sự kiện — chỉ trong một công ty (không «tất cả» xuyên hệ thống). */
@@ -258,6 +315,32 @@ export default function EventsFeedPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {/*
+           * Bộ chuyển khối CHỈ hiển thị cho admin (xem được mọi khối).
+           * Nhân viên thường tự lọc theo các khối mình có quyền — không cần UI.
+           */}
+          {(isAdmin || isSystemAdmin) && (
+            <div className="flex items-center gap-1.5 bg-white border border-gray-200 rounded-lg p-1 shadow-sm" title="Lọc theo khối">
+              {EVENT_MODULE_OPTIONS
+                .map((m) => {
+                  const active = filterModule === m.value;
+                  return (
+                    <button
+                      key={m.value || 'all'}
+                      type="button"
+                      onClick={() => setFilterModule(m.value)}
+                      className={`px-2.5 h-7 inline-flex items-center gap-1 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+                        active ? `${m.color} border` : 'text-gray-600 hover:bg-gray-50 border border-transparent'
+                      }`}
+                      title={m.label}
+                    >
+                      <span>{m.emoji}</span>
+                      <span className="hidden lg:inline">{m.label}</span>
+                    </button>
+                  );
+                })}
+            </div>
+          )}
           {isSystemAdmin && (
             <div className="flex items-center gap-2 mr-1 min-w-[200px]">
               <Building2 className="h-4 w-4 text-gray-500 shrink-0" />
@@ -425,6 +508,9 @@ export default function EventsFeedPage() {
           presetDay={editEvent ? null : createPresetDay}
           eventTypes={eventTypes}
           users={users}
+          defaultModule={filterModule || (allowedModules && allowedModules.find((m) => m !== 'general')) || 'crm'}
+          allowedModules={isAdmin || isSystemAdmin ? null : allowedModules}
+          allowGeneralModule={isAdmin || isSystemAdmin}
           onClose={() => { setShowCreate(false); setEditEvent(null); setCreatePresetDay(null); }}
           onSaved={() => { setShowCreate(false); setEditEvent(null); setCreatePresetDay(null); refreshEventsData(); }}
         />
@@ -491,6 +577,17 @@ function EventCard({ event: ev, eventTypes, currentUser, onRespond, onDelete, on
           </div>
         </div>
         <div className="flex items-center gap-1">
+          {(() => {
+            const mm = moduleMeta(ev.module);
+            return (
+              <span
+                className={`text-[10px] px-2 py-0.5 rounded-full font-medium border ${mm.color}`}
+                title={`Khối: ${mm.label}`}
+              >
+                {mm.emoji} {mm.label}
+              </span>
+            );
+          })()}
           <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${statusInfo.color}`}>{statusInfo.label}</span>
           <button onClick={onEdit} title="Sửa" className="p-1 text-gray-400 hover:text-blue-600 rounded cursor-pointer"><Edit3 className="h-3.5 w-3.5" /></button>
           {canManage && ev.status !== 'cancelled' && ev.status !== 'completed' && typeof onCancel === 'function' && (
@@ -1578,7 +1675,10 @@ function EventDateTime24hPickers({ label, required, value, onChange, hint }) {
 // ═══════════════════════════════════════════════════════════════
 // EVENT CREATE/EDIT MODAL
 // ═══════════════════════════════════════════════════════════════
-function EventCreateModal({ event, presetDay, eventTypes, users, onClose, onSaved }) {
+function EventCreateModal({
+  event, presetDay, eventTypes, users, onClose, onSaved,
+  defaultModule = 'crm', allowedModules = null, allowGeneralModule = false,
+}) {
   const isEdit = !!event;
   const participantsAutoFilled = useRef(false);
   const toLocalDateTimeInput = (value) => isoToDatetimeLocalValue(value);
@@ -1601,6 +1701,7 @@ function EventCreateModal({ event, presetDay, eventTypes, users, onClose, onSave
     assignee_id: event?.assignee_id || JSON.parse(localStorage.getItem('user') || '{}').id || '',
     result: event?.result || '',
     status: event?.status || 'planned',
+    module: event?.module || defaultModule || 'crm',
   });
   const [participantIds, setParticipantIds] = useState(
     event?.participants?.map(p => p.user_id) || []
@@ -1688,6 +1789,40 @@ function EventCreateModal({ event, presetDay, eventTypes, users, onClose, onSave
         </div>
 
         <div className="p-6 space-y-4">
+          {/* Khối / Module — chỉ hiện chọn nếu user thuộc nhiều khối, hoặc là admin */}
+          {(() => {
+            const visibleModules = EVENT_MODULE_OPTIONS.filter((m) => {
+              if (!m.value) return false;
+              if (m.value === 'general' && !allowGeneralModule) return false;
+              if (!allowedModules) return true;
+              return allowedModules.includes(m.value);
+            });
+            if (visibleModules.length <= 1) return null;
+            return (
+              <div>
+                <label className="text-xs font-medium text-gray-600 block mb-2">Khối / Module</label>
+                <div className="flex flex-wrap gap-2">
+                  {visibleModules.map((m) => {
+                    const active = String(form.module || 'crm') === m.value;
+                    return (
+                      <button
+                        key={m.value}
+                        type="button"
+                        onClick={() => setForm((f) => ({ ...f, module: m.value }))}
+                        className={`px-3 py-1.5 rounded-lg text-sm font-medium border-2 cursor-pointer transition ${
+                          active ? `${m.color}` : 'border-gray-200 hover:border-gray-300 text-gray-600'
+                        }`}
+                        title={m.label}
+                      >
+                        {m.emoji} {m.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Event type selector */}
           <div>
             <label className="text-xs font-medium text-gray-600 block mb-2">Loại sự kiện</label>

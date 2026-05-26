@@ -20,6 +20,7 @@ import { useWorkshopStaffFilter } from '../hooks/useWorkshopStaffFilter';
 import {
   peekWorkshopPipelineCardFocus, clearWorkshopPipelineCardFocus, markWorkshopPipelineCardFocus,
 } from '../lib/workshopPipelineStorage';
+import ModuleQuickActions from '../shared/components/ModuleQuickActions';
 
 const INTAKE_BUCKET = 'won_pending';
 
@@ -835,6 +836,8 @@ export default function ProductionDashboard() {
           >
             ⚙️
           </Link>
+          <span className="hidden md:inline-block w-px h-6 bg-gray-200 mx-1" aria-hidden />
+          <ModuleQuickActions trashTab="sx" />
         </div>
       </div>
 

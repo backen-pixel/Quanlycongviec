@@ -201,6 +201,23 @@ const CRM_MENU_BOTTOM_GROUPS = [
   },
 ];
 
+// Chức năng chung dùng cho mọi module — đặt ngay sau Dashboard từng module,
+// đồng bộ trải nghiệm với CRM_MENU_TOP_GROUP.
+// `moduleScope` giúp các trang dùng chung tự lọc theo khối (ví dụ Sự kiện).
+function buildSharedTopLinks(moduleScope) {
+  const eventsTo = moduleScope
+    ? { pathname: '/crm/events', search: `?module=${moduleScope}` }
+    : '/crm/events';
+  return [
+    { to: '/social', icon: Share2, label: 'Bảng tin nội bộ' },
+    { to: eventsTo, icon: Calendar, label: 'Sự kiện' },
+    { to: '/crm/activity', icon: Activity, label: 'Đang hoạt động' },
+    { to: '/crm/messenger', icon: MessageCircle, label: 'Nhóm chat' },
+  ];
+}
+const SHARED_TOP_LINKS_SX = buildSharedTopLinks('production');
+const SHARED_TOP_LINKS_VC = buildSharedTopLinks('logistics');
+
 // PRODUCTION (SẢN XUẤT) menu structure
 const SX_MENU_GROUPS = [
   {
@@ -210,19 +227,25 @@ const SX_MENU_GROUPS = [
     emoji: '🏭',
     items: [
       { to: '/sx/dashboard', icon: LayoutDashboard, label: 'Dashboard xưởng', end: true },
-      { to: { pathname: '/admin/trash', search: '?tab=sx' }, icon: Trash2, label: 'Thùng rác SX', adminOnly: true },
     ]
+  },
+  {
+    id: 'sx-shared',
+    title: '2. Chức năng chung',
+    emoji: '🌐',
+    items: SHARED_TOP_LINKS_SX,
   },
   {
     id: 'sx-projects',
     moduleKey: 'production',
-    title: '2. Điều hành xưởng',
+    title: '3. Điều hành xưởng',
     emoji: '📦',
     items: [
       { to: '/sx/dashboard', icon: FolderKanban, label: 'Deal vào xưởng' },
       { to: '/sx/pipeline-settings', icon: Settings, label: 'Pipeline xưởng' },
       { to: '/sx/task-templates', icon: ListChecks, label: 'Bộ mẫu nhiệm vụ xưởng' },
       { to: '/sx/handover-settings', icon: UserCog, label: 'Bàn giao CRM → SX', adminOnly: true },
+      { to: { pathname: '/admin/trash', search: '?tab=sx' }, icon: Trash2, label: 'Thùng rác SX', adminOnly: true },
     ]
   },
 ];
@@ -262,9 +285,15 @@ const VC_MENU_GROUPS = [
     ]
   },
   {
+    id: 'vc-shared',
+    title: '2. Chức năng chung',
+    emoji: '🌐',
+    items: SHARED_TOP_LINKS_VC,
+  },
+  {
     id: 'vc-projects',
     moduleKey: 'logistics',
-    title: '2. Điều hành VC',
+    title: '3. Điều hành VC',
     emoji: '📦',
     items: [
       { to: '/vc/dashboard', icon: FolderKanban, label: 'Dự án vận chuyển' },
