@@ -648,11 +648,19 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
 });
 
 // ─── Project detail ─────────────────────────────────────────────────────────
+/**
+ * Workshop type fields (migration 97 + 251).
+ * Cần trả về `workshop_type_id` + embed `workshop_type:workshop_project_types(...)`
+ * để Frontend hiển thị badge "Đã phân loại" và load pipeline VC theo loại.
+ */
+const VC_WORKSHOP_TYPE_SCALAR = 'workshop_type_id,';
+const VC_WORKSHOP_TYPE_EMBED = 'workshop_type:workshop_project_types(id, name, applies_to),';
 
 const LOGISTICS_DETAIL_SELECT_FULL = `
         id, company_id, code, name, estimated_value, status, deadline, created_at, notes, priority,
         production_deadline, production_note, install_address, vc_kanban_column_id,
-        current_stage_id,
+        current_stage_id, ${VC_WORKSHOP_TYPE_SCALAR}
+        ${VC_WORKSHOP_TYPE_EMBED}
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone, email, address),
         company:companies!projects_company_id_fkey(id, name, short_name),
@@ -670,7 +678,8 @@ const LOGISTICS_DETAIL_SELECT_FULL = `
 const LOGISTICS_DETAIL_SELECT_NO_TEAMS = `
         id, company_id, code, name, estimated_value, status, deadline, created_at, notes, priority,
         production_deadline, production_note, install_address, vc_kanban_column_id,
-        current_stage_id,
+        current_stage_id, ${VC_WORKSHOP_TYPE_SCALAR}
+        ${VC_WORKSHOP_TYPE_EMBED}
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone, email, address),
         company:companies!projects_company_id_fkey(id, name, short_name),
@@ -685,7 +694,8 @@ const LOGISTICS_DETAIL_SELECT_NO_TEAMS = `
 const LOGISTICS_DETAIL_SELECT_NO_VC_K = `
         id, company_id, code, name, estimated_value, status, deadline, created_at, notes, priority,
         production_deadline, production_note, install_address,
-        current_stage_id,
+        current_stage_id, ${VC_WORKSHOP_TYPE_SCALAR}
+        ${VC_WORKSHOP_TYPE_EMBED}
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone, email, address),
         company:companies!projects_company_id_fkey(id, name, short_name),
@@ -700,43 +710,68 @@ const LOGISTICS_DETAIL_SELECT_NO_VC_K = `
 const LOGISTICS_DETAIL_SELECT_NO_USERS = `
         id, company_id, code, name, estimated_value, status, deadline, created_at, notes, priority,
         production_deadline, production_note, install_address, vc_kanban_column_id,
-        current_stage_id,
+        current_stage_id, ${VC_WORKSHOP_TYPE_SCALAR}
+        ${VC_WORKSHOP_TYPE_EMBED}
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone, email, address),
         company:companies!projects_company_id_fkey(id, name, short_name),
         logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
         tasks(id, title, status, priority, due_date, stage_id, stage:workflow_stages(id, slug, name))`;
 
+function vcStripWorkshopTypeEmbed(sel) {
+  return sel.replace(VC_WORKSHOP_TYPE_EMBED, '');
+}
+function vcStripWorkshopTypeAll(sel) {
+  return sel.replace(VC_WORKSHOP_TYPE_EMBED, '').replace(VC_WORKSHOP_TYPE_SCALAR, '');
+}
+
 async function fetchLogisticsProjectRow(projectUuid) {
-  const tries = [
+  const baseTries = [
     LOGISTICS_DETAIL_SELECT_FULL,
     LOGISTICS_DETAIL_SELECT_NO_TEAMS,
     LOGISTICS_DETAIL_SELECT_NO_VC_K,
     LOGISTICS_DETAIL_SELECT_NO_USERS,
   ];
+  /**
+   * Chain biến thể workshop_type:
+   *  - 'full':    có cả scalar + embed
+   *  - 'no_embed': chỉ scalar (FK chưa nạp trên PostgREST)
+   *  - 'no_col':   bỏ cả workshop_type_id (DB chưa migrate)
+   */
+  const transforms = [
+    (sel) => sel,
+    vcStripWorkshopTypeEmbed,
+    vcStripWorkshopTypeAll,
+  ];
   let lastErr = null;
-  for (const sel of tries) {
-    const { data, error } = await supabase.from('projects').select(sel).eq('id', projectUuid).single();
-    if (!error && data) return { data, error: null };
-    lastErr = error;
-    if (error?.code === 'PGRST116') return { data: null, error };
-    const msg = String(error?.message || '');
-    // Missing relationship between projects and users (schema cache) → retry without any user joins
-    if (msg.includes("relationship between 'projects' and 'users'")) continue;
-    if (msg.includes('schema cache') && msg.includes('projects') && msg.includes('users')) continue;
-    if (msg.includes('vc_kanban_column_id') && sel !== LOGISTICS_DETAIL_SELECT_NO_VC_K) continue;
-    if (
-      msg.includes('installer_person_id')
-      || msg.includes('workshop_teams')
-      || msg.includes('delivery_team')
-      || msg.includes('installation_team')
-    ) continue;
-    if (
-      msg.includes('logistics_person_id')
-      || msg.includes('logistics_person')
-      || msg.includes('projects_logistics_person')
-    ) continue;
-    return { data: null, error };
+  for (const baseSel of baseTries) {
+    for (const tx of transforms) {
+      const sel = tx(baseSel);
+      const { data, error } = await supabase.from('projects').select(sel).eq('id', projectUuid).single();
+      if (!error && data) return { data, error: null };
+      lastErr = error;
+      if (error?.code === 'PGRST116') return { data: null, error };
+      const msg = String(error?.message || '');
+      // Workshop_type relationship/column issues → thử biến thể tiếp theo trên CÙNG baseSel
+      if (msg.includes('workshop_project_types') || msg.includes('workshop_type_id')) continue;
+      // Các lỗi cũ → break inner loop để chuyển baseSel tiếp theo
+      if (msg.includes("relationship between 'projects' and 'users'")) break;
+      if (msg.includes('schema cache') && msg.includes('projects') && msg.includes('users')) break;
+      if (msg.includes('vc_kanban_column_id') && baseSel !== LOGISTICS_DETAIL_SELECT_NO_VC_K) break;
+      if (
+        msg.includes('installer_person_id')
+        || msg.includes('workshop_teams')
+        || msg.includes('delivery_team')
+        || msg.includes('installation_team')
+      ) break;
+      if (
+        msg.includes('logistics_person_id')
+        || msg.includes('logistics_person')
+        || msg.includes('projects_logistics_person')
+      ) break;
+      // Lỗi khác → trả về luôn
+      return { data: null, error };
+    }
   }
   return { data: null, error: lastErr };
 }

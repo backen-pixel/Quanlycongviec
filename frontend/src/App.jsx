@@ -145,6 +145,8 @@ const KnowledgeExercisePage = lazyWithRetry(() => import('./pages/KnowledgeExerc
 const KnowledgeMyHistoryPage = lazyWithRetry(() => import('./pages/KnowledgeMyHistoryPage'));
 const KnowledgeAdminPage = lazyWithRetry(() => import('./pages/KnowledgeAdminPage'));
 const KnowledgeScoreboardPage = lazyWithRetry(() => import('./pages/KnowledgeScoreboardPage'));
+const KnowledgeCertificatesPage = lazyWithRetry(() => import('./pages/KnowledgeCertificatesPage'));
+const KnowledgeCertificateDetailPage = lazyWithRetry(() => import('./pages/KnowledgeCertificateDetailPage'));
 const CategoriesPage = lazyWithRetry(() => import('./pages/CategoriesPage'));
 const PrivacyPage = lazyWithRetry(() => import('./pages/PrivacyPage'));
 const VoiceRecordingsPage = lazyWithRetry(() => import('./pages/VoiceRecordingsPage'));
@@ -393,7 +395,7 @@ export default function App() {
               <Route path="pipeline" element={<ProductionDashboard variant="pipeline" />} />
               <Route path="approvals" element={<ProductionApprovalsPage />} />
               <Route path="pipeline-settings" element={<ProductionPipelineSettingsPage />} />
-              <Route path="task-templates" element={<WorkshopTaskTemplatesPage />} />
+              <Route path="task-templates" element={<WorkshopTaskTemplatesPage fixedArea="production" />} />
               <Route path="handover-settings" element={<ProductionHandoverSettingsPage />} />
               <Route path="trash" element={<Navigate to="/admin/trash?tab=sx" replace />} />
               <Route path="projects/:id" element={<ProductionDetail />} />
@@ -413,6 +415,8 @@ export default function App() {
             <Route path="/knowledge/lessons/:id" element={<KnowledgeLessonPage />} />
             <Route path="/knowledge/exercises/:id" element={<KnowledgeExercisePage />} />
             <Route path="/knowledge/my-history" element={<KnowledgeMyHistoryPage />} />
+            <Route path="/knowledge/certificates" element={<KnowledgeCertificatesPage />} />
+            <Route path="/knowledge/certificates/:id" element={<KnowledgeCertificateDetailPage />} />
             <Route path="/knowledge/admin" element={<KnowledgeAdminPage />} />
             <Route path="/knowledge/scoreboard" element={<KnowledgeScoreboardPage />} />
             <Route path="/updates" element={<ReleaseNotesPage />} />

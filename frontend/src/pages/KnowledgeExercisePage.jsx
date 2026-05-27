@@ -1,20 +1,22 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import KnowledgeMediaGallery from '../components/KnowledgeMediaGallery';
 import { youtubeEmbedUrl } from '../lib/knowledgeMarkdown';
 import {
   ChevronLeft, ChevronRight, CheckCircle2, Clock, Award, Loader2,
-  PartyPopper, RotateCcw, BookOpen, ListChecks, ArrowRight,
+  PartyPopper, RotateCcw, BookOpen, ListChecks, ArrowRight, Trophy,
 } from 'lucide-react';
 
 function ExerciseMediaHeader({ exercise }) {
   const hasImage = !!exercise.image_url;
   const hasVideo = !!exercise.video_url;
   if (!hasImage && !hasVideo) return null;
-  const embed = exercise.video_type === 'youtube' || (exercise.video_url || '').match(/(youtu\.be|youtube\.com)/)
-    ? youtubeEmbedUrl(exercise.video_url)
-    : null;
+  const embed = exercise.video_embed_id
+    ? youtubeEmbedUrl(exercise.video_url, exercise.video_embed_id)
+    : (exercise.video_type === 'youtube' || (exercise.video_url || '').match(/(youtu\.be|youtube\.com)/))
+      ? youtubeEmbedUrl(exercise.video_url)
+      : null;
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
       {hasImage && (
@@ -389,6 +391,8 @@ export default function KnowledgeExercisePage() {
     setSubmitting(false);
   };
 
+  const closeCertBanner = () => setResult((r) => (r ? { ...r, certificate_issued: null } : r));
+
   const retry = () => {
     setResult(null);
     setElapsed(0);
@@ -411,6 +415,38 @@ export default function KnowledgeExercisePage() {
   if (result) {
     return (
       <div className="max-w-5xl mx-auto py-6">
+        {result.certificate_issued && (
+          <div className="mb-6 relative overflow-hidden rounded-2xl bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400 text-white p-5 shadow-xl">
+            <div className="absolute -top-10 -right-10 w-40 h-40 bg-white/10 rounded-full blur-3xl" />
+            <div className="relative flex items-start gap-4">
+              <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
+                <Trophy className="h-7 w-7" />
+              </div>
+              <div className="flex-1">
+                <p className="text-xs font-bold uppercase tracking-widest opacity-90">🎉 Mở khoá chứng nhận</p>
+                <h3 className="text-lg font-bold mt-0.5">Bạn vừa hoàn thành toàn bộ khoá học!</h3>
+                <p className="text-sm opacity-90 mt-1">
+                  Mã chứng nhận: <strong className="font-mono">{result.certificate_issued.certificate_number}</strong>
+                </p>
+              </div>
+              <div className="flex flex-col gap-2 shrink-0">
+                <Link
+                  to={`/knowledge/certificates/${result.certificate_issued.id}`}
+                  className="px-4 py-2 bg-white text-amber-700 rounded-lg text-sm font-bold hover:bg-amber-50 flex items-center gap-1"
+                >
+                  <Award className="h-4 w-4" /> Xem
+                </Link>
+                <button
+                  type="button"
+                  onClick={closeCertBanner}
+                  className="text-xs text-white/80 hover:text-white"
+                >
+                  Ẩn
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         <ResultScreen result={result} exercise={exercise} onRetry={retry} onBack={() => navigate(backUrl)} />
       </div>
     );
@@ -432,6 +468,11 @@ export default function KnowledgeExercisePage() {
           </div>
           <h1 className="text-2xl font-bold text-gray-900">{exercise.title}</h1>
           {exercise.instructions && <p className="text-gray-600 mt-3">{exercise.instructions}</p>}
+
+          <div className="mt-6 text-left">
+            <ExerciseMediaHeader exercise={exercise} />
+            <KnowledgeMediaGallery items={exercise.attachments} title="Tài liệu tham khảo" />
+          </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6 text-left">
             <div className="p-3 bg-gray-50 rounded-lg">

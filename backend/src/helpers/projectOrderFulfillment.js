@@ -243,32 +243,53 @@ async function applyProductionTemplateToFulfillmentLead({
 
     // Strict mode: ưu tiên template đúng company xưởng (templateSourceCompanyId) / company CRM deal, fallback global,
     // và cuối cùng emergency seed để "bằng bất cứ giá nào" vẫn có sx_* tasks.
-    let { data: templates, error: tplErr } = await supabase
-      .from('workshop_task_templates')
-      .select('id, name, is_default, order_index, company_id')
-      .eq('workshop_area', 'production')
-      .eq('is_active', true)
-      .eq('company_id', mustCompanyId)
-      .order('order_index', { ascending: true });
-    if (tplErr?.message?.includes('order_index')) {
-      const r2 = await supabase
+    //
+    // Truy vấn KÈM production_stage_id (migration 256) để gen task gắn cột pipeline thật → gate Kanban
+    // chặn chuyển giai đoạn hoạt động chính xác. DB cũ → retry không có cột.
+    const fetchTemplatesStrict = async (scope) => {
+      const wantStage = scope.wantStageCol;
+      const cols = wantStage
+        ? 'id, name, is_default, order_index, company_id, production_stage_id'
+        : 'id, name, is_default, order_index, company_id';
+      let q = supabase
         .from('workshop_task_templates')
-        .select('id, name, is_default, company_id')
+        .select(cols)
         .eq('workshop_area', 'production')
-        .eq('is_active', true)
-        .eq('company_id', mustCompanyId);
-      templates = r2.data;
-      tplErr = r2.error;
+        .eq('is_active', true);
+      if (scope.companyId) q = q.eq('company_id', scope.companyId);
+      else q = q.is('company_id', null);
+      q = q.order('order_index', { ascending: true });
+      const r = await q;
+      if (r.error?.message?.includes('order_index')) {
+        const colsNoOrder = wantStage
+          ? 'id, name, is_default, company_id, production_stage_id'
+          : 'id, name, is_default, company_id';
+        let q2 = supabase
+          .from('workshop_task_templates')
+          .select(colsNoOrder)
+          .eq('workshop_area', 'production')
+          .eq('is_active', true);
+        if (scope.companyId) q2 = q2.eq('company_id', scope.companyId);
+        else q2 = q2.is('company_id', null);
+        return await q2;
+      }
+      return r;
+    };
+
+    let templates = [];
+    let tplErr = null;
+    let r1 = await fetchTemplatesStrict({ companyId: mustCompanyId, wantStageCol: true });
+    if (r1.error && String(r1.error.message || '').includes('production_stage_id')) {
+      r1 = await fetchTemplatesStrict({ companyId: mustCompanyId, wantStageCol: false });
     }
+    templates = r1.data || [];
+    tplErr = r1.error;
     if (tplErr) throw tplErr;
     if (!templates?.length) {
-      const g = await supabase
-        .from('workshop_task_templates')
-        .select('id, name, is_default, order_index, company_id')
-        .eq('workshop_area', 'production')
-        .eq('is_active', true)
-        .is('company_id', null)
-        .order('order_index', { ascending: true });
+      let g = await fetchTemplatesStrict({ companyId: null, wantStageCol: true });
+      if (g.error && String(g.error.message || '').includes('production_stage_id')) {
+        g = await fetchTemplatesStrict({ companyId: null, wantStageCol: false });
+      }
       if (g.error) throw g.error;
       templates = g.data || [];
     }
@@ -284,12 +305,21 @@ async function applyProductionTemplateToFulfillmentLead({
     }
 
     const templateIds = templates.map((t) => t.id).filter(Boolean);
-    const { data: items, error: itemErr } = await supabase
+    // Cố gắng select kèm blocks_stage_advance (migration 256) — fallback bỏ cờ nếu DB chưa migrate.
+    const fetchItems = async (wantBlocking) => supabase
       .from('workshop_task_template_items')
-      .select('id, template_id, title, description, priority, deadline_days, order_index, checklist')
+      .select(
+        wantBlocking
+          ? 'id, template_id, title, description, priority, deadline_days, order_index, checklist, blocks_stage_advance'
+          : 'id, template_id, title, description, priority, deadline_days, order_index, checklist',
+      )
       .in('template_id', templateIds)
       .order('template_id')
       .order('order_index');
+    let { data: items, error: itemErr } = await fetchItems(true);
+    if (itemErr && String(itemErr.message || '').includes('blocks_stage_advance')) {
+      ({ data: items, error: itemErr } = await fetchItems(false));
+    }
     if (itemErr) throw itemErr;
     if (!items?.length) {
       const emergency = buildEmergencySxInserts(handoverStrict);
@@ -319,6 +349,12 @@ async function applyProductionTemplateToFulfillmentLead({
         .filter((t) => t?.id)
         .map((t) => [String(t.id), slugByTemplateName(t.name)]),
     );
+    // Gắn task vào cột pipeline thật (production_pipeline_stages.id) — gate Kanban dùng cột này.
+    const pipelineColByTemplateId = new Map(
+      (templates || [])
+        .filter((t) => t?.id)
+        .map((t) => [String(t.id), t.production_stage_id || null]),
+    );
     const templateOrder = new Map(templateIds.map((id, idx) => [String(id), idx]));
     const sortedItems = [...items].sort((a, b) => {
       const ta = templateOrder.get(String(a.template_id)) ?? 9999;
@@ -333,7 +369,7 @@ async function applyProductionTemplateToFulfillmentLead({
         ? `\n\nNhiệm vụ nhỏ:\n${checklist.map((x, i) => `${i + 1}. ${x}`).join('\n')}`
         : '';
       const stageSlug = stageSlugByTemplateId.get(String(it.template_id)) || 'sx_other';
-      return {
+      const row = {
         lead_id: leadId,
         title: it.title,
         description: `${it.description || ''}${checklistText}`.trim() || null,
@@ -345,7 +381,12 @@ async function applyProductionTemplateToFulfillmentLead({
         supervisor_id: null,
         deadline: null,
         created_by: createdBy,
+        // Parity với CRM: kế thừa cờ "Chặn chuyển giai đoạn" từ mẫu xưởng.
+        blocks_stage_advance: !!it.blocks_stage_advance,
+        // D: gắn task sx_* với cột pipeline thật → gate kanban SX bám đúng cột công ty + phân loại.
+        production_pipeline_stage_id: pipelineColByTemplateId.get(String(it.template_id)) || null,
       };
+      return row;
     });
 
     const toInsertStrict = await filterMissingSxInserts(inserts);
@@ -358,7 +399,16 @@ async function applyProductionTemplateToFulfillmentLead({
         company_id: mustCompanyId,
       };
     }
-    const { error: insErr } = await supabase.from('crm_tasks').insert(toInsertStrict);
+    // Insert với fallback chuỗi: nếu DB chưa apply migration 256 → strip cột mới và retry.
+    let insErr = (await supabase.from('crm_tasks').insert(toInsertStrict)).error;
+    if (insErr && String(insErr.message || '').includes('production_pipeline_stage_id')) {
+      const stripped = toInsertStrict.map(({ production_pipeline_stage_id: _p, ...rest }) => rest);
+      insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+    }
+    if (insErr && String(insErr.message || '').includes('blocks_stage_advance')) {
+      const stripped = toInsertStrict.map(({ blocks_stage_advance: _b, production_pipeline_stage_id: _p, ...rest }) => rest);
+      insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+    }
     if (insErr) throw insErr;
     return {
       created: toInsertStrict.length,
@@ -418,10 +468,13 @@ async function applyProductionTemplateToFulfillmentLead({
     ? await loadProductionHandoverMaps(targetCompanyId)
     : { responsibleUserId: null, assigneeByTemplateItemId: new Map() };
 
-  const fetchTemplates = async (companyMode) => {
+  const fetchTemplates = async (companyMode, wantStage = true) => {
+    const cols = wantStage
+      ? 'id, name, is_default, order_index, company_id, production_stage_id'
+      : 'id, name, is_default, order_index, company_id';
     let q = supabase
       .from('workshop_task_templates')
-      .select('id, name, is_default, order_index, company_id')
+      .select(cols)
       .eq('workshop_area', 'production')
       .eq('is_active', true);
     if (companyMode === 'scoped' && targetCompanyId) q = q.eq('company_id', targetCompanyId);
@@ -429,9 +482,12 @@ async function applyProductionTemplateToFulfillmentLead({
     q = q.order('order_index', { ascending: true });
     const r = await q;
     if (r.error?.message?.includes('order_index')) {
+      const colsNoOrder = wantStage
+        ? 'id, name, is_default, company_id, production_stage_id'
+        : 'id, name, is_default, company_id';
       let q2 = supabase
         .from('workshop_task_templates')
-        .select('id, name, is_default, company_id')
+        .select(colsNoOrder)
         .eq('workshop_area', 'production')
         .eq('is_active', true);
       if (companyMode === 'scoped' && targetCompanyId) q2 = q2.eq('company_id', targetCompanyId);
@@ -441,10 +497,18 @@ async function applyProductionTemplateToFulfillmentLead({
     return r;
   };
 
-  let { data: templates, error: tplErr } = await fetchTemplates('scoped');
+  let r1 = await fetchTemplates('scoped', true);
+  if (r1.error && String(r1.error.message || '').includes('production_stage_id')) {
+    r1 = await fetchTemplates('scoped', false);
+  }
+  let templates = r1.data;
+  let tplErr = r1.error;
   if (tplErr) throw tplErr;
   if (!templates?.length) {
-    const g = await fetchTemplates('global');
+    let g = await fetchTemplates('global', true);
+    if (g.error && String(g.error.message || '').includes('production_stage_id')) {
+      g = await fetchTemplates('global', false);
+    }
     templates = g.data;
     tplErr = g.error;
   }
@@ -461,12 +525,20 @@ async function applyProductionTemplateToFulfillmentLead({
   }
 
   const templateIds = templates.map((t) => t.id).filter(Boolean);
-  const { data: items, error: itemErr } = await supabase
+  const fetchItemsLoose = async (wantBlocking) => supabase
     .from('workshop_task_template_items')
-    .select('id, template_id, title, description, priority, deadline_days, order_index, checklist')
+    .select(
+      wantBlocking
+        ? 'id, template_id, title, description, priority, deadline_days, order_index, checklist, blocks_stage_advance'
+        : 'id, template_id, title, description, priority, deadline_days, order_index, checklist',
+    )
     .in('template_id', templateIds)
     .order('template_id')
     .order('order_index');
+  let { data: items, error: itemErr } = await fetchItemsLoose(true);
+  if (itemErr && String(itemErr.message || '').includes('blocks_stage_advance')) {
+    ({ data: items, error: itemErr } = await fetchItemsLoose(false));
+  }
   if (itemErr) throw itemErr;
   if (!items?.length) {
     const emergency = buildEmergencySxInserts(handoverLoose);
@@ -496,6 +568,11 @@ async function applyProductionTemplateToFulfillmentLead({
       .filter((t) => t?.id)
       .map((t) => [String(t.id), slugByTemplateName(t.name)]),
   );
+  const pipelineColByTemplateId = new Map(
+    (templates || [])
+      .filter((t) => t?.id)
+      .map((t) => [String(t.id), t.production_stage_id || null]),
+  );
 
   const templateOrder = new Map(templateIds.map((id, idx) => [String(id), idx]));
   const sortedItems = [...items].sort((a, b) => {
@@ -523,6 +600,8 @@ async function applyProductionTemplateToFulfillmentLead({
       supervisor_id: null,
       deadline: null,
       created_by: createdBy,
+      blocks_stage_advance: !!it.blocks_stage_advance,
+      production_pipeline_stage_id: pipelineColByTemplateId.get(String(it.template_id)) || null,
     };
   });
 
@@ -536,7 +615,15 @@ async function applyProductionTemplateToFulfillmentLead({
       company_id: targetCompanyId || null,
     };
   }
-  const { error: insErr } = await supabase.from('crm_tasks').insert(toInsertLoose);
+  let insErr = (await supabase.from('crm_tasks').insert(toInsertLoose)).error;
+  if (insErr && String(insErr.message || '').includes('production_pipeline_stage_id')) {
+    const stripped = toInsertLoose.map(({ production_pipeline_stage_id: _p, ...rest }) => rest);
+    insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+  }
+  if (insErr && String(insErr.message || '').includes('blocks_stage_advance')) {
+    const stripped = toInsertLoose.map(({ blocks_stage_advance: _b, production_pipeline_stage_id: _p, ...rest }) => rest);
+    insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+  }
   if (insErr) throw insErr;
   return {
     created: toInsertLoose.length,

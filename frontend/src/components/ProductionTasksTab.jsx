@@ -267,6 +267,7 @@ export default function ProductionTasksTab({
       due_date: task.due_date ? task.due_date.substring(0, 16) : '',
       assignee_id: task.assignee_id || '',
       stage_id: task.stage_id || '',
+      blocks_stage_advance: !!task.blocks_stage_advance,
     });
   };
 
@@ -280,6 +281,7 @@ export default function ProductionTasksTab({
         due_date: editForm.due_date || null,
         assignee_id: editForm.assignee_id || null,
         stage_id: editForm.stage_id || null,
+        blocks_stage_advance: !!editForm.blocks_stage_advance,
       });
       setEditingTask(null);
       loadTasks();
@@ -442,6 +444,12 @@ export default function ProductionTasksTab({
                 <span className="text-[10px] text-green-600 bg-green-50 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-medium">
                   <FileText className="h-2.5 w-2.5" />Có ghi chú
                 </span>
+              )}
+              {task.blocks_stage_advance && (
+                <span
+                  className="text-[10px] text-amber-700 bg-amber-100 border border-amber-200 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-semibold"
+                  title="Phải hoàn thành trước khi kéo cột Kanban SX"
+                >⛔ Chặn GĐ</span>
               )}
             </div>
           </div>
@@ -894,6 +902,20 @@ export default function ProductionTasksTab({
                     </button>
                   ))}
                 </div>
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold text-gray-500 uppercase">Chặn chuyển giai đoạn</label>
+                <label className="mt-1 flex items-center gap-2 px-3 py-2 rounded-lg border border-amber-200 bg-amber-50 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={!!editForm.blocks_stage_advance}
+                    onChange={e => setEditForm(f => ({ ...f, blocks_stage_advance: e.target.checked }))}
+                    className="accent-amber-600"
+                  />
+                  <span className="text-xs font-medium text-amber-800">
+                    ⛔ Bắt buộc hoàn thành trước khi kéo cột Kanban SX
+                  </span>
+                </label>
               </div>
             </div>
             <div className="px-5 py-4 border-t bg-gray-50 rounded-b-2xl flex items-center justify-end gap-2">

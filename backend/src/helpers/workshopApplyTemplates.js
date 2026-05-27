@@ -54,6 +54,17 @@ function isTaskProductionStageColumnError(err) {
   return m.includes('tasks.production_stage_id') || (m.includes('production_stage_id') && m.includes('tasks'));
 }
 
+function isTaskBlocksStageAdvanceColumnError(err) {
+  const m = String(err?.message || '').toLowerCase();
+  return m.includes('blocks_stage_advance') && (m.includes('tasks') || m.includes('column'));
+}
+
+function isItemBlocksStageAdvanceColumnError(err) {
+  const m = String(err?.message || '').toLowerCase();
+  return m.includes('blocks_stage_advance')
+    && (m.includes('workshop_task_template_items') || m.includes('column'));
+}
+
 /** Map workflow_stages.id → production_pipeline_stages.id (ưu tiên công ty). */
 async function resolveProductionPipelineStageId(workflowStageId, companyId) {
   if (!workflowStageId) return null;
@@ -213,11 +224,19 @@ async function applyWorkshopTemplateToProject(projectId, templateId, userId, opt
     return { ok: false, error: 'Bộ mẫu đã tắt', statusCode: 400 };
   }
 
-  const { data: items, error: ie } = await supabase
+  let { data: items, error: ie } = await supabase
     .from('workshop_task_template_items')
     .select('*')
     .eq('template_id', templateId)
     .order('order_index');
+  // Tương thích DB chưa apply migration 256 (thiếu blocks_stage_advance) — Postgrest có thể vẫn trả * OK.
+  if (ie && isItemBlocksStageAdvanceColumnError(ie)) {
+    ({ data: items, error: ie } = await supabase
+      .from('workshop_task_template_items')
+      .select('id, template_id, title, description, priority, deadline_days, order_index, checklist, default_allowed_companies, default_allowed_departments')
+      .eq('template_id', templateId)
+      .order('order_index'));
+  }
   if (ie) return { ok: false, error: ie.message, statusCode: 500 };
   if (!items?.length) {
     return { ok: false, error: 'Bộ mẫu trống', statusCode: 400 };
@@ -286,12 +305,23 @@ async function applyWorkshopTemplateToProject(projectId, templateId, userId, opt
     if (tpl.workshop_area === 'production' && pipelineStageIdForTask) {
       row.production_stage_id = pipelineStageIdForTask;
     }
+    // Parity với CRM: kế thừa cờ "Chặn chuyển giai đoạn" từ mẫu xưởng
+    // → tasks dự án không cho kéo cột Kanban SX khi chưa done.
+    row.blocks_stage_advance = !!s.item.blocks_stage_advance;
     taskRows.push(row);
   }
 
   let { data: insertedTasks, error: insErr } = await supabase.from('tasks').insert(taskRows).select('id');
   if (insErr && isTaskProductionStageColumnError(insErr)) {
     const rowsNoPs = taskRows.map(({ production_stage_id: _p, ...rest }) => rest);
+    ({ data: insertedTasks, error: insErr } = await supabase.from('tasks').insert(rowsNoPs).select('id'));
+  }
+  if (insErr && isTaskBlocksStageAdvanceColumnError(insErr)) {
+    const rowsNoFlag = taskRows.map(({ blocks_stage_advance: _b, ...rest }) => rest);
+    ({ data: insertedTasks, error: insErr } = await supabase.from('tasks').insert(rowsNoFlag).select('id'));
+  }
+  if (insErr && isTaskProductionStageColumnError(insErr)) {
+    const rowsNoPs = taskRows.map(({ production_stage_id: _p, blocks_stage_advance: _b, ...rest }) => rest);
     ({ data: insertedTasks, error: insErr } = await supabase.from('tasks').insert(rowsNoPs).select('id'));
   }
   if (insErr) return { ok: false, error: insErr.message, statusCode: 500 };

@@ -26,6 +26,7 @@ import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
 import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
 import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
 import PipelineStepper from '../components/PipelineStepper';
+import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
 
 /** Cùng tên tab với LeadDetail (chi tiết deal) — bỏ facebook và calls */
 const DEAL_TAB_KEYS = new Set(['tasks', 'documents', 'activities', 'notes', 'team', 'chat', 'approvals', 'incidents']);
@@ -541,6 +542,8 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   // Production pipeline stages (loaded from API)
   const [productionStages, setProductionStages] = useState([]);
   const [handoverModal, setHandoverModal] = useState(null); // { projectId, projectName, targetSxStageId }
+  // Modal cảnh báo task chặn chuyển giai đoạn (parity CRM) — bật khi PATCH /stage trả 400 code: SX_BLOCKING_TASKS_INCOMPLETE.
+  const [blockingTasksModal, setBlockingTasksModal] = useState(null);
   const [handoverLogisticsCompanyId, setHandoverLogisticsCompanyId] = useState('');
   const [handoverCompanies, setHandoverCompanies] = useState([]);
   const [handoverErr, setHandoverErr] = useState('');
@@ -1055,7 +1058,18 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         }, 280);
       }
     } catch (e) {
-      alert('Lỗi: ' + (e.response?.data?.error || e.message));
+      const respBody = e?.response?.data || {};
+      if (respBody.code === 'SX_BLOCKING_TASKS_INCOMPLETE') {
+        setBlockingTasksModal({
+          currentStageName: respBody.current_stage_name || '',
+          targetStageName: respBody.target_stage_name || '',
+          remainingTasks: Array.isArray(respBody.remaining_tasks) ? respBody.remaining_tasks : [],
+        });
+        // Đồng bộ lại UI để rollback optimistic.
+        refreshProjectSilently();
+        return;
+      }
+      alert('Lỗi: ' + (respBody?.error || e.message));
       // Nếu optimistic sai do lỗi server, đồng bộ lại
       refreshProjectSilently();
     }
@@ -1982,6 +1996,16 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
           </div>
         </div>
       )}
+
+      {/* Modal cảnh báo còn nhiệm vụ chặn chuyển giai đoạn (parity CRM) */}
+      <BlockingTasksAlertModal
+        open={!!blockingTasksModal}
+        onClose={() => setBlockingTasksModal(null)}
+        currentStageName={blockingTasksModal?.currentStageName || ''}
+        targetStageName={blockingTasksModal?.targetStageName || ''}
+        remainingTasks={blockingTasksModal?.remainingTasks || []}
+        onGoToTasks={() => { try { setActiveTab('tasks'); } catch (_) { /* tab có thể chưa khởi tạo */ } }}
+      />
 
       {/* SX → VC/LĐ handover modal (khi đổi stage tới cột có cờ bàn giao VC) */}
       {handoverModal && moduleKey !== 'vc' && (

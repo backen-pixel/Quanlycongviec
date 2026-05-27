@@ -346,6 +346,13 @@ export default function KnowledgeLibraryPage() {
         </div>
         <div className="flex gap-2">
           <Link
+            to="/knowledge/certificates"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-lg hover:from-amber-600 hover:to-orange-600 text-sm shadow-sm font-medium"
+          >
+            <Award className="h-4 w-4" />
+            Chứng nhận
+          </Link>
+          <Link
             to="/knowledge/my-history"
             className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:border-violet-300 hover:text-violet-700 text-sm shadow-sm"
           >

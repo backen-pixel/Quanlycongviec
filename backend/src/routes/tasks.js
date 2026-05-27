@@ -281,7 +281,7 @@ r.put('/:id', async (req, res) => {
     const update = { updated_at: new Date().toISOString() };
 
     // Pick allowed fields
-    const fields = ['title','description','notes','status','priority','assignee_id','supervisor_id','due_date','start_date','estimated_hours','actual_hours','stage_id','order_index'];
+    const fields = ['title','description','notes','status','priority','assignee_id','supervisor_id','due_date','start_date','estimated_hours','actual_hours','stage_id','order_index','blocks_stage_advance','production_stage_id'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
 
     if (update.status === 'done') update.completed_at = new Date().toISOString();
@@ -290,7 +290,12 @@ r.put('/:id', async (req, res) => {
     // Get old values
     const { data: old } = await supabase.from('tasks').select('status,assignee_id,title').eq('id', req.params.id).single();
 
-    const { data, error } = await supabase.from('tasks').update(update).eq('id', req.params.id).select().single();
+    let { data, error } = await supabase.from('tasks').update(update).eq('id', req.params.id).select().single();
+    // Tương thích DB chưa migration 256 (thiếu blocks_stage_advance / production_stage_id) — strip rồi retry.
+    if (error && /(blocks_stage_advance|production_stage_id)/i.test(String(error.message || ''))) {
+      const { blocks_stage_advance: _b, production_stage_id: _p, ...legacy } = update;
+      ({ data, error } = await supabase.from('tasks').update(legacy).eq('id', req.params.id).select().single());
+    }
     if (error) throw error;
 
     if (data?.project_id && (b.description !== undefined || b.notes !== undefined)) {

@@ -259,6 +259,7 @@ const KNOWLEDGE_MENU_GROUPS = [
     items: [
       { to: '/knowledge', icon: GraduationCap, label: 'Thư viện kiến thức', end: true },
       { to: '/knowledge/my-history', icon: ClipboardCheck, label: 'Lịch sử bài làm' },
+      { to: '/knowledge/certificates', icon: FileCheck, label: 'Chứng nhận của tôi' },
     ],
   },
   {
