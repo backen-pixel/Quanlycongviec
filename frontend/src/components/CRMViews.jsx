@@ -453,7 +453,7 @@ function KanbanColumn({ topBarColor, title, subtitle, count, headerExtras, child
         </div>
         {subtitle && <p className="text-[10px] text-gray-500">{subtitle}</p>}
       </div>
-      <div className={`bg-gray-50 border border-gray-200 border-t-0 overflow-y-auto p-2 space-y-2 ${isDragOver ? 'bg-blue-50' : ''}`}
+      <div className={`border border-white/30 border-t-0 overflow-y-auto p-2 space-y-2 ${isDragOver ? 'bg-blue-50/60' : ''}`}
         style={{ maxHeight: '70vh', minHeight: '160px' }}>
         {children}
       </div>
@@ -940,21 +940,21 @@ export function DeadlineView({
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between flex-wrap gap-2 px-2">
-        <p className="text-xs text-gray-500">
-          Trường deadline: <strong>{cfg.primary_field || '—'}</strong>
-          {cfg.fallback_field && <> (fallback: <strong>{cfg.fallback_field}</strong>)</>}
-          <span className="ml-2 text-gray-400">· Không hiển thị deal/lead ở cột Mất</span>
-          {!canDrag && <span className="ml-2 text-amber-700">(Kéo-thả tắt: cấu hình chưa dùng expected_close_date)</span>}
-          {canDrag && <span className="ml-2 text-emerald-700">Kéo-thả → cập nhật <code>expected_close_date</code></span>}
-        </p>
-        {onOpenSettings && (
-          <button onClick={onOpenSettings}
-            className="text-xs text-blue-600 hover:underline cursor-pointer inline-flex items-center gap-1">
-            <SettingsIcon className="h-3.5 w-3.5" /> Cấu hình deadline
+      {onOpenSettings && (
+        <div className="flex items-center justify-end px-2">
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            title="Cấu hình trường deadline & quy tắc hiển thị"
+            className="group inline-flex items-center gap-2 h-9 px-3.5 rounded-lg border border-blue-300 bg-white/80 backdrop-blur-sm text-sm font-semibold text-blue-700 shadow-sm hover:bg-blue-50 hover:border-blue-500 hover:shadow-md active:scale-[0.98] transition-all cursor-pointer"
+          >
+            <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-blue-100 text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+              <SettingsIcon className="h-3.5 w-3.5" strokeWidth={2.5} />
+            </span>
+            Cấu hình deadline
           </button>
-        )}
-      </div>
+        </div>
+      )}
       <KanbanBoardShell>
         {BUCKET_ORDER.map(key => {
           const meta = cfg.buckets?.[key];
@@ -1061,13 +1061,20 @@ export function CommentsView({ pipeline, pipelineType, commentsIndex, onRefreshI
   }, [allItems, commentsIndex, search, onlyMine, user?.id]);
 
   return (
-    <div className="space-y-3 rounded-xl bg-[#f0f2f5] p-3 sm:p-4">
+    <div
+      className="space-y-3 rounded-xl p-3 sm:p-4 border border-white/30"
+      style={{
+        backgroundColor: 'rgba(255, 255, 255, 0.18)',
+        backdropFilter: 'blur(10px) saturate(150%)',
+        WebkitBackdropFilter: 'blur(10px) saturate(150%)',
+      }}
+    >
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[200px] max-w-md">
           <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-gray-400" />
           <input value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Tìm trong các mục đã bình luận…"
-            className="w-full h-9 pl-8 pr-3 text-sm border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            className="w-full h-9 pl-8 pr-3 text-sm border rounded-lg bg-white/70 focus:outline-none focus:ring-2 focus:ring-blue-500 backdrop-blur-sm" />
         </div>
         <label className="inline-flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
           <input type="checkbox" checked={onlyMine} onChange={e => setOnlyMine(e.target.checked)} />
@@ -1306,7 +1313,14 @@ function CommentCard({ item, expanded, onToggle, onChanged, navigate }) {
   const postInitial = (item.title || item.code || '?').trim().charAt(0).toUpperCase() || '?';
 
   return (
-    <div className="flex flex-col overflow-hidden rounded-lg border border-[#e4e6eb] bg-white shadow-sm">
+    <div
+      className="flex flex-col overflow-hidden rounded-lg border border-white/40 shadow-sm"
+      style={{
+        backgroundColor: 'rgba(255, 255, 255, 0.7)',
+        backdropFilter: 'blur(12px) saturate(160%)',
+        WebkitBackdropFilter: 'blur(12px) saturate(160%)',
+      }}
+    >
       {/* Header kiểu bài đăng Facebook */}
       <div className="px-3 pt-3 pb-2">
         <div className="flex gap-2.5">

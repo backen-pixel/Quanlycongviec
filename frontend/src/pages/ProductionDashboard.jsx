@@ -987,54 +987,6 @@ export default function ProductionDashboard() {
         );
       })()}
 
-      {/* Strip thống kê đang sản xuất theo từng cột pipeline (số deal + giá trị) */}
-      {(() => {
-        const cols = (filteredKanbanPipeline || []).filter((c) => c.bucket_slug !== INTAKE_BUCKET);
-        if (!cols.length) return null;
-        const totalCount = cols.reduce((n, c) => n + (c.items?.length || 0), 0);
-        const totalValue = cols.reduce(
-          (s, c) => s + (c.items || []).reduce((ss, p) => ss + (Number(p.estimated_value) || 0), 0),
-          0,
-        );
-        if (totalCount === 0) return null;
-        return (
-          <div className="rounded-lg border border-teal-200 bg-white">
-            <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b bg-teal-50/60">
-              <Factory className="h-4 w-4 text-teal-700 shrink-0" />
-              <span className="text-sm font-semibold text-teal-900">Đang sản xuất theo cột</span>
-              <span className="ml-auto text-xs font-semibold text-teal-800">
-                Tổng: {totalCount} deal · {formatVND(totalValue)}
-              </span>
-            </div>
-            <div className="flex flex-wrap gap-2 p-2">
-              {cols.map((c) => {
-                const count = c.items?.length || 0;
-                const value = (c.items || []).reduce((s, p) => s + (Number(p.estimated_value) || 0), 0);
-                if (count === 0) return null;
-                return (
-                  <div
-                    key={c.id}
-                    className="inline-flex items-center gap-2 rounded-md border bg-white px-2.5 py-1"
-                    style={{ borderColor: `${c.color || '#0f766e'}55` }}
-                    title={`${c.name}: ${count} deal · ${formatVND(value)}`}
-                  >
-                    <span className="text-base shrink-0" aria-hidden>{c.icon || '📋'}</span>
-                    <span className="text-xs font-medium text-gray-700 truncate max-w-[140px]">{c.name}</span>
-                    <span
-                      className="text-[11px] font-bold px-1.5 py-0.5 rounded"
-                      style={{ backgroundColor: `${c.color || '#0f766e'}20`, color: c.color || '#0f766e' }}
-                    >
-                      {count}
-                    </span>
-                    <span className="text-[11px] tabular-nums text-gray-600">{formatVND(value)}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })()}
-
       {/* Toolbar 1 dòng: Search + Chip filter inline + Bộ lọc + Sắp xếp (luôn hiển thị) */}
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
@@ -1651,12 +1603,24 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
         isOverColumn ? 'ring-2 ring-blue-400 ring-dashed rounded-lg' : ''
       }`}
     >
-      {/* Header tối giản — sticky khi cuộn dọc */}
-      <div className={`sticky top-0 z-10 bg-gray-200/95 backdrop-blur supports-[backdrop-filter]:bg-gray-200/85 px-2 py-2.5 border-b transition-colors ${isOverColumn ? 'bg-blue-100/90 border-blue-300' : 'border-gray-300/70'}`}>
+      {/* Header tối giản — sticky khi cuộn dọc, có thanh accent màu cột ở đỉnh */}
+      <div
+        className={`sticky top-0 z-10 bg-gray-200/95 backdrop-blur supports-[backdrop-filter]:bg-gray-200/85 px-2 py-2.5 border-b rounded-t-md transition-colors ${isOverColumn ? 'bg-blue-100/90 border-blue-300' : 'border-gray-300/70'}`}
+        style={{ borderTop: `8px solid ${stageColor}` }}
+      >
         <div className="flex items-center gap-1.5">
-          <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: stageColor }} />
           <h3 className="text-sm font-semibold text-gray-900 truncate">{stage.name}</h3>
-          <span className="text-xs text-gray-400 tabular-nums">({items.length})</span>
+          <span
+            className="shrink-0 inline-flex items-center justify-center min-w-[24px] h-[22px] px-1.5 rounded-md text-[13px] font-bold tabular-nums leading-none"
+            style={{
+              backgroundColor: `${stageColor}22`,
+              color: stageColor,
+              border: `1px solid ${stageColor}55`,
+            }}
+            title={`${items.length} đơn`}
+          >
+            {items.length}
+          </span>
           {stage.is_handover_to_logistics && (
             <span className="px-1 py-0.5 bg-orange-100 text-orange-600 text-[9px] font-bold rounded shrink-0">→VC</span>
           )}
@@ -1676,13 +1640,13 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
           const typeName = stage.workshop_type?.name;
           if (!typeName) return null;
           return (
-            <div className="mt-1 ml-3.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-teal-50 border border-teal-200 text-[10px] font-medium text-teal-700 max-w-full">
+            <div className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-teal-50 border border-teal-200 text-[10px] font-medium text-teal-700 max-w-full">
               <span className="shrink-0">📦</span>
               <span className="truncate" title={`Phân loại: ${typeName}`}>{typeName}</span>
             </div>
           );
         })()}
-        <p className="text-[11px] text-gray-500 tabular-nums mt-0.5 ml-3.5">
+        <p className="text-[11px] text-gray-500 tabular-nums mt-0.5">
           {totalValue > 0 ? formatVND(totalValue) : '0đ'}
         </p>
       </div>

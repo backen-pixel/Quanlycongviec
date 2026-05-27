@@ -38,7 +38,7 @@ const MENU_GROUPS = [
   },
   {
     id: 'workspace',
-    title: '2. Không gian làm việc',
+    title: '2. Làm việc',
     emoji: '🏢',
     items: [
       { to: '/projects', icon: FolderKanban, label: 'Dự án', moduleKey: 'projects' },
@@ -329,7 +329,7 @@ function SideLink({ to, icon: Icon, label, collapsed, end, badge, moduleContext 
       onClick={onNavClick}
       end={to === '/' || end}
       className={({ isActive }) =>
-        `flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-all ${
+        `flex items-center gap-3 rounded-lg px-3 py-2 text-[14px] font-medium transition-all ${
           isActive
             ? 'bg-[var(--color-sidebar-active)] text-[var(--color-sidebar-text-active)]'
             : 'text-[var(--color-sidebar-text)] hover:bg-[var(--color-sidebar-hover)] hover:text-white'
@@ -337,7 +337,7 @@ function SideLink({ to, icon: Icon, label, collapsed, end, badge, moduleContext 
       }
     >
       <span className="relative shrink-0">
-        <Icon className="h-[18px] w-[18px]" />
+        <Icon className="h-[19px] w-[19px]" />
         {badge > 0 && (
           <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">
             {badge > 9 ? '9+' : badge}
@@ -383,13 +383,14 @@ function MenuGroup({ group, collapsed, isAdmin, isExecutive, canAccessModule, us
       {!collapsed ? (
         <button
           onClick={() => setOpen(!open)}
-          className="w-full flex items-center justify-between px-4 py-1 text-[10px] font-semibold text-[var(--color-sidebar-text)] uppercase tracking-widest opacity-60 hover:opacity-100 transition-opacity cursor-pointer"
+          title={group.title}
+          className="w-full h-9 flex items-center justify-between gap-2 px-4 text-[13px] font-extrabold text-white uppercase tracking-wide hover:bg-white/5 rounded-md transition-colors cursor-pointer"
         >
-          <span className="flex items-center gap-2">
-            <span className="text-sm">{group.emoji}</span>
-            <span>{group.title}</span>
+          <span className="flex items-center gap-2 min-w-0 flex-1">
+            <span className="text-sm shrink-0">{group.emoji}</span>
+            <span className="truncate">{group.title}</span>
           </span>
-          <ChevronDown className={`h-3 w-3 transition-transform ${open ? '' : 'rotate-180'}`} />
+          <ChevronDown className={`h-3 w-3 shrink-0 transition-transform ${open ? '' : 'rotate-180'}`} />
         </button>
       ) : (
         <div className="px-2 py-1 text-center text-sm opacity-60">{group.emoji}</div>
@@ -609,6 +610,10 @@ export default function Sidebar() {
       )}
 
       <aside
+      style={{
+        backdropFilter: 'var(--sidebar-backdrop, none)',
+        WebkitBackdropFilter: 'var(--sidebar-backdrop, none)',
+      }}
       className={`flex flex-col bg-[var(--color-sidebar)] transition-all duration-200 relative ${
         collapsed ? 'w-[60px]' : 'w-[240px]'
       }`}
@@ -624,11 +629,11 @@ export default function Sidebar() {
         {/* Active app indicator — click cycles through các module được phép (chỉ CRM nếu crmOnly) */}
         {(() => {
           const modList = [
-            { key: 'work', mod: null, label: 'Công việc', emoji: '📋', path: '/dashboard', color: 'bg-blue-500/20 hover:bg-blue-500/30', dot: 'bg-blue-500/30' },
-            { key: 'crm', mod: 'crm', label: 'CRM', emoji: '💼', path: '/crm', color: 'bg-emerald-500/20 hover:bg-emerald-500/30', dot: 'bg-emerald-500/40' },
-            { key: 'sx', mod: 'production', label: 'Xưởng SX', emoji: '🏭', path: '/sx', color: 'bg-orange-500/20 hover:bg-orange-500/30', dot: 'bg-orange-500/40' },
-            { key: 'vc', mod: 'logistics', label: 'Vận chuyển', emoji: '🚚', path: '/vc', color: 'bg-amber-500/20 hover:bg-amber-500/30', dot: 'bg-amber-500/40' },
-            { key: 'knowledge', mod: null, label: 'Kiến thức', emoji: '🎓', path: '/knowledge', color: 'bg-violet-500/20 hover:bg-violet-500/30', dot: 'bg-violet-500/40' },
+            { key: 'work', mod: null, label: 'Công việc', emoji: '📋', path: '/dashboard', color: 'bg-blue-500/35 hover:bg-blue-500/55 ring-blue-300/40', dot: 'bg-blue-500/70' },
+            { key: 'crm', mod: 'crm', label: 'CRM', emoji: '💼', path: '/crm', color: 'bg-emerald-500/35 hover:bg-emerald-500/55 ring-emerald-300/40', dot: 'bg-emerald-500/70' },
+            { key: 'sx', mod: 'production', label: 'Xưởng SX', emoji: '🏭', path: '/sx', color: 'bg-orange-500/35 hover:bg-orange-500/55 ring-orange-300/40', dot: 'bg-orange-500/70' },
+            { key: 'vc', mod: 'logistics', label: 'Vận chuyển', emoji: '🚚', path: '/vc', color: 'bg-amber-500/35 hover:bg-amber-500/55 ring-amber-300/40', dot: 'bg-amber-500/70' },
+            { key: 'knowledge', mod: null, label: 'Kiến thức', emoji: '🎓', path: '/knowledge', color: 'bg-violet-500/35 hover:bg-violet-500/55 ring-violet-300/40', dot: 'bg-violet-500/70' },
           ].filter((m) => {
             if (crmOnly) return m.key === 'crm' || m.key === 'knowledge';
             return !m.mod || canAccessModule(m.mod);
@@ -642,16 +647,19 @@ export default function Sidebar() {
           return (
             <button
               onClick={() => navigate(next.path)}
-              title={`Chuyển sang ${next.label}`}
-              className={`flex items-center gap-2 flex-1 rounded-lg px-2 py-1.5 transition-colors cursor-pointer ${cur.color}`}
+              title={`Đang ở: ${cur.label} — bấm để chuyển sang ${next.label}`}
+              className={`group flex items-center gap-2.5 flex-1 rounded-lg px-2 py-1.5 ring-1 shadow-sm transition-all cursor-pointer ${cur.color}`}
             >
-              <div className={`flex items-center justify-center w-7 h-7 rounded-md text-white text-sm shrink-0 ${cur.dot}`}>
+              <div className={`flex items-center justify-center w-9 h-9 rounded-lg text-white text-lg shrink-0 shadow-inner ${cur.dot}`}>
                 {cur.emoji}
               </div>
               {!collapsed && (
                 <div className="flex-1 text-left min-w-0">
-                  <h1 className="text-sm font-bold text-white leading-tight truncate">{cur.label}</h1>
-                  <p className="text-[10px] text-white/50 leading-tight truncate">→ {next.label}</p>
+                  <h1 className="text-[15px] font-extrabold text-white leading-tight truncate drop-shadow-sm">{cur.label}</h1>
+                  <p className="text-[11px] font-medium text-white/85 leading-tight truncate flex items-center gap-1">
+                    <ChevronRight className="h-3 w-3 shrink-0 -ml-0.5 transition-transform group-hover:translate-x-0.5" />
+                    <span className="truncate">{next.label}</span>
+                  </p>
                 </div>
               )}
             </button>
@@ -746,21 +754,21 @@ export default function Sidebar() {
                 {getInitials(user?.full_name || 'U')}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-medium text-white truncate">{user?.full_name}</p>
-                <p className="text-[10px] text-[var(--color-sidebar-text)] truncate">{user?.email}</p>
+                <p className="text-[13px] font-semibold text-white truncate">{user?.full_name}</p>
+                <p className="text-[11px] text-white/75 truncate">{user?.email}</p>
               </div>
             </div>
             <button
               onClick={doLogout}
-              className="w-full flex items-center gap-3 px-3 py-2 text-[13px] font-medium text-[var(--color-sidebar-text)] hover:bg-[var(--color-sidebar-hover)] hover:text-white rounded-lg transition-all cursor-pointer"
+              className="w-full flex items-center gap-3 px-3 py-2 text-[14px] font-medium text-[var(--color-sidebar-text)] hover:bg-[var(--color-sidebar-hover)] hover:text-white rounded-lg transition-all cursor-pointer"
             >
-              <LogOut className="h-[18px] w-[18px]" />
+              <LogOut className="h-[19px] w-[19px]" />
               <span>Đăng xuất</span>
             </button>
             <NavLink to="/settings/theme"
-              className="w-full flex items-center gap-3 px-3 py-2 text-[13px] font-medium text-[var(--color-sidebar-text)] hover:bg-[var(--color-sidebar-hover)] hover:text-white rounded-lg transition-all"
+              className="w-full flex items-center gap-3 px-3 py-2 text-[14px] font-medium text-[var(--color-sidebar-text)] hover:bg-[var(--color-sidebar-hover)] hover:text-white rounded-lg transition-all"
             >
-              <Palette className="h-[18px] w-[18px]" />
+              <Palette className="h-[19px] w-[19px]" />
               <span>Giao diện</span>
             </NavLink>
           </>

@@ -65,7 +65,7 @@ export default function ProductionApprovals() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 space-y-6">
+    <div className="min-h-screen space-y-6">
       <div>
         <p className="text-xs text-gray-500 font-semibold">XƯỞNG / Duyệt hồ sơ</p>
         <h1 className="text-2xl font-bold text-gray-900">Duyệt hồ sơ sản xuất</h1>

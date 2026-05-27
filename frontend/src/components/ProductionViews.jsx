@@ -95,70 +95,251 @@ function formatDate(d) {
   return new Date(d).toLocaleDateString('vi-VN');
 }
 
-/** Danh sách dạng bảng — giống CRM ListView, điều hướng chi tiết xưởng */
+// ── Helpers cho list view (đồng bộ với CRM ListView) ────────────────────────
+function getInitials(name) {
+  if (!name) return '?';
+  const parts = String(name).trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  return parts.map((p) => p[0]).join('').toUpperCase().slice(0, 2);
+}
+
+const AVATAR_PALETTE = [
+  '#0891b2', '#0d9488', '#059669', '#65a30d', '#ca8a04',
+  '#d97706', '#ea580c', '#dc2626', '#db2777', '#c026d3',
+  '#9333ea', '#7c3aed', '#4f46e5', '#2563eb', '#0284c7',
+];
+
+function colorFromName(name) {
+  if (!name) return '#94a3b8';
+  let h = 0;
+  for (let i = 0; i < name.length; i += 1) {
+    h = (h * 31 + name.charCodeAt(i)) & 0xfffffff;
+  }
+  return AVATAR_PALETTE[Math.abs(h) % AVATAR_PALETTE.length];
+}
+
+function PersonAvatarCell({ name, fallback = '—' }) {
+  if (!name) return <span className="text-gray-400">{fallback}</span>;
+  return (
+    <span className="inline-flex items-center gap-1.5 min-w-0 max-w-full" title={name}>
+      <span
+        className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white shadow-sm"
+        style={{ backgroundColor: colorFromName(name) }}
+        aria-hidden
+      >
+        {getInitials(name)}
+      </span>
+      <span className="truncate text-gray-700">{name}</span>
+    </span>
+  );
+}
+
+/** Danh sách dạng bảng — đồng bộ design với CRM ListView (sticky header, hover xanh,
+ *  ô xếp chồng cho Mã / Tên / Người, avatar màu, lazy render 150 + 300) */
 export function ProductionListView({ pipeline, calculateDays }) {
   const navigate = useNavigate();
   const goProject = (projectId) => {
     markWorkshopPipelineCardFocus(projectId, 'sx');
     navigate(`/sx/projects/${projectId}`);
   };
-  const allItems = pipeline.flatMap((s) => s.items.map((item) => ({ ...item, _stage: s })));
+
+  const allItems = useMemo(
+    () => pipeline.flatMap((s) => s.items.map((item) => ({ ...item, _stage: s }))),
+    [pipeline],
+  );
+
+  // Lazy render: 150 dòng đầu, +300 mỗi lần cuộn gần đáy.
+  const INITIAL_PAGE = 150;
+  const PAGE_STEP = 300;
+  const [visibleCount, setVisibleCount] = useState(INITIAL_PAGE);
+  const scrollContainerRef = useRef(null);
+  const loadMoreSentinelRef = useRef(null);
+  const loadingMoreRef = useRef(false);
+
+  useEffect(() => {
+    setVisibleCount(INITIAL_PAGE);
+    loadingMoreRef.current = false;
+    if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+  }, [pipeline]);
+
+  useEffect(() => {
+    const sentinel = loadMoreSentinelRef.current;
+    const root = scrollContainerRef.current;
+    if (!sentinel || !root) return undefined;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (loadingMoreRef.current) return;
+        if (entries.some((e) => e.isIntersecting)) {
+          loadingMoreRef.current = true;
+          setVisibleCount((c) => c + PAGE_STEP);
+          requestAnimationFrame(() => {
+            loadingMoreRef.current = false;
+          });
+        }
+      },
+      { root, rootMargin: '600px 0px', threshold: 0 },
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [allItems.length]);
+
   if (!allItems.length) {
     return <p className="text-center text-gray-400 py-12 text-sm">Không có dự án xưởng</p>;
   }
+
+  const totalValue = allItems.reduce((s, i) => s + (Number(i.estimated_value) || 0), 0);
+
+  const headerCellCls = 'px-3 py-2.5 font-semibold whitespace-nowrap bg-gray-100 border-b border-gray-300 sticky top-0 text-left z-20';
+
   return (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto shadow-sm">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="bg-gray-50 text-left text-xs text-gray-500 uppercase">
-            <th className="px-4 py-3 font-medium">Mã</th>
-            <th className="px-4 py-3 font-medium">Tên dự án</th>
-            <th className="px-4 py-3 font-medium">Khách hàng</th>
-            <th className="px-4 py-3 font-medium">Cột pipeline</th>
-            <th className="px-4 py-3 font-medium text-right">Giá trị</th>
-            <th className="px-4 py-3 font-medium">SX phụ trách</th>
-            <th className="px-4 py-3 font-medium">Sale</th>
-            <th className="px-4 py-3 font-medium">Deadline</th>
-            <th className="px-4 py-3 font-medium">Ngày tạo</th>
-            <th className="px-4 py-3 font-medium">Thời gian</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-100">
-          {allItems.map((item) => {
-            const daysLabel = calculateDays(item.created_at);
-            return (
-              <tr
-                key={item.id}
-                onClick={() => goProject(item.id)}
-                className="hover:bg-teal-50/60 cursor-pointer transition-colors"
-              >
-                <td className="px-4 py-2.5 text-teal-600 font-medium whitespace-nowrap">{item.code}</td>
-                <td className="px-4 py-2.5 font-medium text-gray-900 max-w-[220px] truncate">{item.name}</td>
-                <td className="px-4 py-2.5 text-gray-600">{item.customer?.full_name || '—'}</td>
-                <td className="px-4 py-2.5">
-                  <span
-                    className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium"
-                    style={{ backgroundColor: `${item._stage.color || '#0d9488'}20`, color: item._stage.color || '#0f766e' }}
-                  >
-                    {item._stage.icon} {item._stage.name}
-                  </span>
-                </td>
-                <td className="px-4 py-2.5 text-right font-medium text-gray-900 whitespace-nowrap">
-                  {Number(item.estimated_value) > 0 ? formatVND(item.estimated_value) : '—'}
-                </td>
-                <td className="px-4 py-2.5 text-gray-600 text-xs">{item.production_person?.full_name || '—'}</td>
-                <td className="px-4 py-2.5 text-gray-500 text-xs">{item.sales_person?.full_name || '—'}</td>
-                <td className="px-4 py-2.5 text-gray-400 text-xs whitespace-nowrap">{item.deadline ? formatDate(item.deadline) : '—'}</td>
-                <td className="px-4 py-2.5 text-gray-400 text-xs whitespace-nowrap">{formatDate(item.created_at)}</td>
-                <td className="px-4 py-2.5 text-xs whitespace-nowrap text-gray-600">{daysLabel}</td>
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+        <p className="text-xs text-gray-500">
+          {allItems.length} dự án
+          {pipeline.length ? ` · ${pipeline.length} cột pipeline` : ''}
+        </p>
+      </div>
+
+      <div className="bg-white rounded-xl border overflow-hidden">
+        <div
+          ref={scrollContainerRef}
+          className="overflow-auto max-h-[calc(100vh-18rem)] min-h-[24rem]"
+        >
+          <table className="w-full text-sm min-w-max border-separate border-spacing-0">
+            <thead>
+              <tr className="text-left text-[10px] text-gray-600 uppercase tracking-wide">
+                <th className={`${headerCellCls} left-0 z-30`}>Mã</th>
+                <th className={headerCellCls}>Tên dự án</th>
+                <th className={headerCellCls}>Khách hàng</th>
+                <th className={headerCellCls}>Cột pipeline</th>
+                <th className={`${headerCellCls} text-right`}>Giá trị</th>
+                <th className={headerCellCls}>SX phụ trách</th>
+                <th className={headerCellCls}>Sale</th>
+                <th className={headerCellCls}>Deadline</th>
+                <th className={headerCellCls}>Thời gian</th>
               </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      <div className="px-4 py-2 bg-gray-50 text-xs text-gray-500 flex justify-between border-t border-gray-100">
-        <span>Tổng: {allItems.length} dự án</span>
-        <span>GT: {formatVND(allItems.reduce((s, i) => s + (Number(i.estimated_value) || 0), 0))}</span>
+            </thead>
+            <tbody className="[&_tr:not(:last-child)>td]:border-b [&_tr>td]:border-gray-200">
+              {allItems.slice(0, visibleCount).map((item) => {
+                const daysTotal = calculateDays(item.created_at);
+                const stage = item._stage;
+                const sxName = item.production_person?.full_name || '';
+                const saleName = item.sales_person?.full_name || '';
+                const phone = item.customer?.phone || '';
+                return (
+                  <tr
+                    key={item.id}
+                    onClick={() => goProject(item.id)}
+                    className="group/row hover:bg-blue-100 cursor-pointer transition-colors"
+                  >
+                    {/* Mã + ngày tạo */}
+                    <td className="px-3 py-2 text-xs whitespace-normal align-top max-w-[200px] sticky left-0 z-[1] bg-white group-hover/row:bg-blue-100 transition-colors">
+                      <div className="flex flex-col min-w-0 leading-tight">
+                        <span className="font-medium text-teal-600 truncate" title={item.code || ''}>
+                          {item.code || '—'}
+                        </span>
+                        {item.created_at && (
+                          <span
+                            className="text-[12px] font-medium text-gray-500 mt-1 tabular-nums"
+                            title={`Ngày tạo: ${new Date(item.created_at).toLocaleString('vi-VN')}`}
+                          >
+                            📅 {formatDate(item.created_at)}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    {/* Tên dự án + SĐT */}
+                    <td className="px-3 py-2 text-xs whitespace-normal align-top max-w-[260px]">
+                      <div className="flex flex-col min-w-0 leading-tight">
+                        <span className="font-medium text-gray-800 truncate" title={item.name || ''}>
+                          {item.name || '—'}
+                        </span>
+                        {phone ? (
+                          <a
+                            href={`tel:${phone}`}
+                            onClick={(ev) => ev.stopPropagation()}
+                            className="text-[12px] font-mono font-bold text-emerald-600 hover:text-emerald-700 mt-1 tabular-nums truncate inline-block"
+                            title={`Gọi ${phone}`}
+                          >
+                            📞 {phone}
+                          </a>
+                        ) : (
+                          <span className="text-[12px] text-gray-300 mt-1">📞 —</span>
+                        )}
+                      </div>
+                    </td>
+                    {/* Khách hàng */}
+                    <td className="px-3 py-2 text-xs whitespace-nowrap max-w-[200px] truncate text-gray-700">
+                      {item.customer?.full_name || '—'}
+                    </td>
+                    {/* Cột pipeline */}
+                    <td className="px-3 py-2 text-xs whitespace-nowrap">
+                      {stage ? (
+                        <span
+                          className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium"
+                          style={{
+                            backgroundColor: `${stage.color || '#0d9488'}20`,
+                            color: stage.color || '#0f766e',
+                          }}
+                        >
+                          {stage.icon} {stage.name}
+                        </span>
+                      ) : '—'}
+                    </td>
+                    {/* Giá trị */}
+                    <td className="px-3 py-2 text-xs whitespace-nowrap text-right tabular-nums text-gray-900 font-medium">
+                      {Number(item.estimated_value) > 0 ? formatVND(item.estimated_value) : '—'}
+                    </td>
+                    {/* SX phụ trách */}
+                    <td className="px-3 py-2 text-xs whitespace-nowrap max-w-[200px]">
+                      <PersonAvatarCell name={sxName} />
+                    </td>
+                    {/* Sale */}
+                    <td className="px-3 py-2 text-xs whitespace-nowrap max-w-[200px]">
+                      <PersonAvatarCell name={saleName} />
+                    </td>
+                    {/* Deadline */}
+                    <td className="px-3 py-2 text-xs whitespace-nowrap text-gray-700">
+                      {item.deadline ? formatDate(item.deadline) : '—'}
+                    </td>
+                    {/* Thời gian (highlight theo độ trễ) */}
+                    <td className="px-3 py-2 text-xs whitespace-nowrap">
+                      <span
+                        className={
+                          daysTotal > 30
+                            ? 'text-red-600 font-bold'
+                            : daysTotal > 14
+                              ? 'text-amber-600 font-semibold'
+                              : 'text-gray-500'
+                        }
+                      >
+                        {daysTotal} ngày
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {visibleCount < allItems.length && (
+            <div
+              ref={loadMoreSentinelRef}
+              className="flex items-center justify-center py-3 text-[11px] text-gray-400"
+            >
+              <span
+                className="inline-block h-3 w-3 mr-2 border-2 border-gray-300 border-t-blue-500 rounded-full animate-spin"
+                aria-hidden
+              />
+              Đang tải thêm… ({visibleCount.toLocaleString()}/{allItems.length.toLocaleString()})
+            </div>
+          )}
+        </div>
+        <div className="px-4 py-2 bg-gray-50 text-xs text-gray-500 flex flex-wrap justify-between gap-x-4 gap-y-1 border-t">
+          <span>
+            Hiển thị: {Math.min(visibleCount, allItems.length).toLocaleString()} / {allItems.length.toLocaleString()} dự án
+          </span>
+          <span>GT: {formatVND(totalValue)}</span>
+        </div>
       </div>
     </div>
   );
@@ -572,7 +753,7 @@ function PlannerColumn({ topBarColor, title, subtitle, count, headerExtras, chil
         {subtitle && <p className="text-[10px] text-gray-500">{subtitle}</p>}
       </div>
       <div
-        className={`bg-gray-50 border border-gray-200 border-t-0 overflow-y-auto p-2 space-y-2 ${isDragOver ? 'bg-blue-50' : ''}`}
+        className={`border border-white/30 border-t-0 overflow-y-auto p-2 space-y-2 ${isDragOver ? 'bg-blue-50/60' : ''}`}
         style={{ maxHeight: '70vh', minHeight: '160px' }}
       >
         {children}
