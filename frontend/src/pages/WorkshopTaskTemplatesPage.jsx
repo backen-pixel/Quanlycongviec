@@ -4,7 +4,7 @@ import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { findDefaultAdminCrmCompanyPhucDat } from '../lib/crmCompanyFilter';
-import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield } from 'lucide-react';
+import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Globe, MapPin } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -47,9 +47,11 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
   const [editingTpl, setEditingTpl] = useState(null);
   const [newItem, setNewItem] = useState({});
   const [showAddTpl, setShowAddTpl] = useState(false);
-  const effectiveInitialArea = fixedArea || initialArea || 'production';
+  // Flow tuần tự: Công ty → Phân loại → Pipeline.
+  // Khi route cố định khu vực (fixedArea), activeTab tự khoá theo route.
+  const effectiveInitialArea = fixedArea || '';
 
-  const [newTpl, setNewTpl] = useState({ name: '', workshop_area: effectiveInitialArea });
+  const [newTpl, setNewTpl] = useState({ name: '', workshop_area: fixedArea || initialArea || 'production' });
   const [activeTab, setActiveTab] = useState(effectiveInitialArea);
   const [editingChecklist, setEditingChecklist] = useState({});
   const [newCheckItem, setNewCheckItem] = useState({});
@@ -57,31 +59,52 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
   const [companies, setCompanies] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
+  const [pipelineStages, setPipelineStages] = useState([]);
+  const [selectedStageKey, setSelectedStageKey] = useState('');
   const [seedingNine, setSeedingNine] = useState(false);
   const companyDefaultResolvedRef = useRef(false);
 
   const currentStages = activeTab === 'logistics' ? WORKSHOP_LOGISTICS_STAGES : WORKSHOP_PRODUCTION_STAGES;
+
+  const selectedPipelineStage = selectedStageKey === 'global'
+    ? null
+    : pipelineStages.find((s) => String(s.id) === String(selectedStageKey));
+
+  const stageFilterParams = () => {
+    const key = activeTab === 'logistics' ? 'logistics_stage_id' : 'production_stage_id';
+    return { [key]: selectedStageKey === 'global' ? 'global' : selectedStageKey };
+  };
+
+  const loadPipelineStages = async () => {
+    if (!selectedCompanyId || !activeTab) {
+      setPipelineStages([]);
+      return;
+    }
+    try {
+      const path = activeTab === 'logistics' ? '/logistics/pipeline-stages' : '/production/pipeline-stages';
+      const { data } = await api.get(path, { params: { company_id: selectedCompanyId } });
+      const rows = (Array.isArray(data) ? data : []).filter((s) => s.is_active !== false);
+      setPipelineStages(rows.sort((a, b) => (a.order_index || 0) - (b.order_index || 0)));
+    } catch {
+      setPipelineStages([]);
+    }
+  };
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
+  const canLoadTemplates = !!selectedCompanyId && !!activeTab && !!selectedStageKey;
+
   const load = async () => {
     setLoading(true);
     try {
-      const [tplRes, compRes, deptRes] = await Promise.all([
-        api.get('/production/task-templates', {
-          params: {
-            active_only: 'false',
-            ...(selectedCompanyId ? { company_id: selectedCompanyId } : {}),
-            ...(fixedArea ? { workshop_area: fixedArea } : {}),
-          },
-        }),
-        api.get('/companies', { params: { for_module: activeTab === 'logistics' ? 'logistics' : 'production' } }).catch(() => ({ data: [] })),
+      const compModule = activeTab === 'logistics' ? 'logistics' : 'production';
+      const [compRes, deptRes] = await Promise.all([
+        api.get('/companies', { params: { for_module: compModule } }).catch(() => ({ data: [] })),
         api.get('/departments').catch(() => ({ data: [] })),
       ]);
-      setTemplates(tplRes.data || []);
       const coList = compRes.data?.companies || compRes.data || [];
       setCompanies(coList);
       setDepartments(deptRes.data?.departments || deptRes.data || []);
@@ -94,15 +117,47 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
           if (pick) setSelectedCompanyId(pick);
         }
       }
-      const exp = {};
-      (tplRes.data || []).forEach(t => { exp[t.id] = true; });
-      setExpanded(exp);
+
+      if (canLoadTemplates) {
+        const { data } = await api.get('/production/task-templates', {
+          params: {
+            active_only: 'false',
+            workshop_area: fixedArea || activeTab,
+            company_id: selectedCompanyId,
+            ...stageFilterParams(),
+          },
+        });
+        setTemplates(data || []);
+        const exp = {};
+        (data || []).forEach((t) => { exp[t.id] = true; });
+        setExpanded(exp);
+      } else {
+        setTemplates([]);
+      }
     } catch {}
     setLoading(false);
   };
-  useEffect(() => { load(); }, [selectedCompanyId, activeTab, fixedArea]);
+  useEffect(() => { load(); }, [selectedCompanyId, activeTab, fixedArea, selectedStageKey]);
 
-  const filteredTemplates = templates.filter((t) => t.workshop_area === activeTab);
+  useEffect(() => {
+    setSelectedStageKey('');
+    loadPipelineStages();
+  }, [selectedCompanyId, activeTab]);
+
+  const filteredTemplates = templates.filter((t) => t.workshop_area === (fixedArea || activeTab));
+
+  const stagePayloadForTpl = () => {
+    if (activeTab === 'logistics') {
+      return {
+        logistics_stage_id: selectedStageKey === 'global' ? null : selectedStageKey,
+        production_stage_id: null,
+      };
+    }
+    return {
+      production_stage_id: selectedStageKey === 'global' ? null : selectedStageKey,
+      logistics_stage_id: null,
+    };
+  };
 
   const norm = (s) => String(s || '')
     .toLowerCase()
@@ -200,7 +255,8 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
         name: newTpl.name.trim(),
         workshop_area: fixedArea || newTpl.workshop_area,
         company_id: selectedCompanyId || null,
-        order_index: filteredTemplates.filter((x) => x.workshop_area === newTpl.workshop_area).length,
+        order_index: filteredTemplates.length,
+        ...stagePayloadForTpl(),
       });
       setNewTpl({ name: '', workshop_area: activeTab });
       setShowAddTpl(false);
@@ -248,6 +304,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
         name: editingTpl.name.trim(),
         workshop_area: fixedArea || editingTpl.workshop_area,
         company_id: selectedCompanyId || null,
+        ...stagePayloadForTpl(),
       });
       setEditingTpl(null);
       load();
@@ -334,13 +391,11 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
   };
 
   // ═══ DRAG & DROP: Reorder templates within a stage ═══
-  const handleTemplateDragEnd = async (event, stageSlug) => {
+  const handleTemplateDragEnd = async (event) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    const stageTpls = filteredTemplates
-      .filter((t) => t.workshop_area === stageSlug)
-      .sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+    const stageTpls = [...filteredTemplates].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
     
     const oldIdx = stageTpls.findIndex(t => t.id === active.id);
     const newIdx = stageTpls.findIndex(t => t.id === over.id);
@@ -400,21 +455,43 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
     </div>
   );
 
+  const stageDisplay = selectedPipelineStage
+    ? { label: selectedPipelineStage.name, icon: selectedPipelineStage.icon || '📌', color: selectedPipelineStage.color || '#0f766e' }
+    : { label: 'Bộ mẫu chung (Global)', icon: '🌐', color: '#64748b' };
+
+  const stageTpls = [...filteredTemplates].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+
   return (
-    <div className="space-y-5 max-w-4xl">
+    <div className="space-y-5 max-w-6xl">
       {/* Header */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">📋 Bộ nhiệm vụ mẫu xưởng</h1>
           <p className="text-sm text-gray-500">
-            {filteredTemplates.length} bộ mẫu {activeTab === 'logistics' ? 'VC & Lắp đặt' : 'Sản xuất'} — Kéo thả để sắp xếp.
-            {activeTab === 'production' && (
-              <> Bộ này dùng khi CRM gen nhiệm vụ <code className="text-xs bg-gray-100 px-1 rounded">sx_*</code> theo công ty xưởng (vd. Phúc Đạt).</>
-            )}
-            {' '}Ngày hẹn trên từng nhiệm vụ do nhân viên tự đặt — không tự gen từ số ngày ở đây.
+            Phân theo <strong>cột pipeline</strong> của công ty đã chọn. Khi tạo dự án mới, hệ thống áp một lần các bộ mẫu của cột hiện tại + Global.
+            Ngày hẹn trên từng nhiệm vụ do nhân viên tự đặt.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {!fixedArea && (
+            <div className="inline-flex bg-gray-100 rounded-lg p-0.5" title="Phân loại bộ mẫu">
+              {[
+                { key: 'production', label: '🏭 Sản xuất' },
+                { key: 'logistics',  label: '🚚 VC & Lắp đặt' },
+              ].map((a) => (
+                <button
+                  key={a.key}
+                  type="button"
+                  onClick={() => setActiveTab(a.key)}
+                  className={`h-8 px-3 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                    activeTab === a.key ? 'bg-white shadow-sm text-blue-700' : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  {a.label}
+                </button>
+              ))}
+            </div>
+          )}
           {isAdmin && (
             <select
               value={selectedCompanyId}
@@ -433,7 +510,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
           <Link to="/sx/dashboard" className="text-sm text-blue-600 hover:text-blue-800 font-medium">
             ← Dashboard xưởng
           </Link>
-          {activeTab === 'production' && isAdmin && (
+          {activeTab === 'production' && isAdmin && selectedCompanyId && (
             <button
               type="button"
               onClick={ensureNineProductionTemplates}
@@ -444,50 +521,138 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
               {seedingNine ? '…' : '🏭'} Chuẩn hoá 9 bộ SX
             </button>
           )}
-          <button onClick={() => { setShowAddTpl(true); setNewTpl({ name: '', workshop_area: currentStages[0]?.slug || activeTab }); }}
-            className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer">
+          <button
+            onClick={() => {
+              if (!selectedCompanyId) { alert('Chọn công ty trước.'); return; }
+              if (!activeTab) { alert('Chọn phân loại Sản xuất / VC trước.'); return; }
+              if (!selectedStageKey) { alert('Chọn pipeline (hoặc "Bộ mẫu chung") trước.'); return; }
+              setShowAddTpl(true);
+              setNewTpl({ name: '', workshop_area: fixedArea || activeTab });
+            }}
+            disabled={!canLoadTemplates}
+            className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer disabled:bg-gray-300 disabled:cursor-not-allowed"
+            title={!canLoadTemplates ? 'Chọn đủ Công ty → Phân loại → Pipeline trước' : 'Thêm bộ mẫu mới ở pipeline đang chọn'}
+          >
             <Plus className="h-4 w-4" /> Thêm bộ mẫu
           </button>
         </div>
       </div>
 
-      {/* Tab Lead / Deal */}
-      {!fixedArea && (
-        <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
-          {[
-            { key: 'production', label: '🏭 Sản xuất', desc: 'Nhiệm vụ giai đoạn SX' },
-            { key: 'logistics', label: '🚚 VC & Lắp đặt', desc: 'Giao hàng & lắp đặt' },
-          ].map((tab) => (
-            <button key={tab.key} type="button" onClick={() => setActiveTab(tab.key)}
-              className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-all cursor-pointer ${
-                activeTab === tab.key ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500 hover:text-gray-700'
-              }`}>
-              {tab.label}
-              <span className="block text-[10px] font-normal mt-0.5 opacity-70">{tab.desc}</span>
-            </button>
-          ))}
+      {/* Stepper trạng thái */}
+      <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+        <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full ${selectedCompanyId ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}`}>
+          <span className="font-semibold">1.</span> Công ty
+          {selectedCompanyId ? <span>✓</span> : <span>·</span>}
+        </span>
+        <span className="text-gray-300">→</span>
+        <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full ${activeTab ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : (selectedCompanyId ? 'bg-amber-50 text-amber-800 border border-amber-200' : 'bg-gray-50 text-gray-400 border border-gray-200')}`}>
+          <span className="font-semibold">2.</span> Phân loại
+          {activeTab ? <span>✓</span> : <span>·</span>}
+        </span>
+        <span className="text-gray-300">→</span>
+        <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full ${selectedStageKey ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : (activeTab ? 'bg-amber-50 text-amber-800 border border-amber-200' : 'bg-gray-50 text-gray-400 border border-gray-200')}`}>
+          <span className="font-semibold">3.</span> Pipeline
+          {selectedStageKey ? <span>✓</span> : <span>·</span>}
+        </span>
+        <span className="text-gray-300">→</span>
+        <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full ${canLoadTemplates ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-gray-50 text-gray-400 border border-gray-200'}`}>
+          <span className="font-semibold">4.</span> Bộ mẫu
+        </span>
+      </div>
+
+      {!selectedCompanyId && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <strong>Bước 1:</strong> Chọn <strong>Công ty</strong> ở góc phải header để bắt đầu cấu hình.
         </div>
       )}
 
-      {/* Stages preview */}
-      <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl p-4 border border-blue-100">
-        <h3 className="text-xs font-bold text-gray-600 mb-2 uppercase tracking-wider">
-          📊 Khu vực {activeTab === 'logistics' ? 'VC & Lắp đặt' : 'Sản xuất'} ({currentStages.length} nhóm)
-        </h3>
-        <div className="flex items-center gap-1 overflow-x-auto pb-1">
-          {currentStages.map((s, i) => (
-            <div key={s.slug} className="flex items-center">
-              <div className="px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap"
-                style={{ backgroundColor: s.color + '18', color: s.color, border: `1px solid ${s.color}30` }}>
-                {s.icon} {s.label}
-                <span className="ml-1 opacity-60">({filteredTemplates.filter((t) => t.workshop_area === s.slug).length})</span>
-              </div>
-              {i < currentStages.length - 1 && <span className="text-gray-300 mx-1">→</span>}
+      <div className="flex flex-col lg:flex-row gap-4">
+        {/* Sidebar: phân loại + pipeline stages */}
+        <aside className="lg:w-56 shrink-0 space-y-3">
+          {!fixedArea && (
+            <div className={`space-y-1 ${!selectedCompanyId ? 'opacity-60 pointer-events-none' : ''}`}>
+              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider px-2 flex items-center gap-1">
+                <span className="font-semibold">2.</span> Phân loại
+              </p>
+              {ALL_WORKSHOP_AREAS.map((a) => (
+                <button
+                  key={a.slug}
+                  type="button"
+                  onClick={() => setActiveTab(a.slug)}
+                  disabled={!selectedCompanyId}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 cursor-pointer border disabled:cursor-not-allowed ${
+                    activeTab === a.slug
+                      ? 'border-teal-600 bg-teal-50 text-teal-900 font-medium'
+                      : 'border-transparent bg-white text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  <span className="shrink-0">{a.icon}</span>
+                  <span className="truncate">{a.label.replace(/^\W+\s*/, '')}</span>
+                </button>
+              ))}
             </div>
-          ))}
-        </div>
-      </div>
+          )}
+          <div className={`space-y-1 ${!selectedCompanyId || !activeTab ? 'opacity-60 pointer-events-none' : ''}`}>
+          <p className="text-[10px] font-bold uppercase tracking-wider px-2 mb-1 flex items-center gap-1"
+             style={{ color: activeTab ? (activeTab === 'logistics' ? '#0f766e' : '#0f766e') : '#9ca3af' }}>
+            <MapPin className="h-3 w-3" />
+            <span className="font-semibold">3.</span> Pipeline
+            {activeTab && (
+              <span
+                className="ml-auto text-[9px] font-semibold px-1.5 py-0.5 rounded-full"
+                style={{
+                  backgroundColor: (activeTab === 'logistics' ? '#14b8a6' : '#0f766e') + '20',
+                  color: activeTab === 'logistics' ? '#0f766e' : '#0f766e',
+                }}
+              >
+                {activeTab === 'logistics' ? '🚚 VC' : '🏭 SX'}
+              </span>
+            )}
+          </p>
+          <button
+            type="button"
+            onClick={() => setSelectedStageKey('global')}
+            disabled={!activeTab}
+            className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 cursor-pointer disabled:cursor-not-allowed ${
+              selectedStageKey === 'global' ? 'bg-slate-900 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            }`}
+          >
+            <Globe className="h-4 w-4 shrink-0" />
+            <span className="truncate">Bộ mẫu chung</span>
+          </button>
+          {pipelineStages.map((st) => {
+            const active = String(selectedStageKey) === String(st.id);
+            return (
+              <button
+                key={st.id}
+                type="button"
+                onClick={() => setSelectedStageKey(st.id)}
+                className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 cursor-pointer border ${
+                  active
+                    ? 'border-teal-600 bg-teal-50 text-teal-900 font-medium'
+                    : 'border-transparent bg-white text-gray-700 hover:bg-gray-50'
+                }`}
+                style={!active && st.color ? { borderLeft: `3px solid ${st.color}` } : {}}
+              >
+                <span className="shrink-0">{st.icon || '📌'}</span>
+                <span className="truncate">{st.name}</span>
+              </button>
+            );
+          })}
+          {selectedCompanyId && activeTab && pipelineStages.length === 0 && (
+            <p className="text-xs text-gray-400 px-2 py-2">Chưa có cột pipeline — cấu hình tại Cài đặt pipeline.</p>
+          )}
+          </div>
+        </aside>
 
+        <div className="flex-1 min-w-0 space-y-4">
+        {!canLoadTemplates && selectedCompanyId && (
+          <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">
+            {!activeTab
+              ? '👉 Chọn phân loại (Sản xuất / VC & Lắp đặt) ở thanh bên trái.'
+              : '👉 Chọn pipeline / "Bộ mẫu chung" ở thanh bên trái để cấu hình bộ nhiệm vụ.'}
+          </div>
+        )}
       {/* Add Template Form */}
       {showAddTpl && (
         <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
@@ -508,71 +673,85 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
         </div>
       )}
 
-      {/* Templates grouped by stage */}
-      {currentStages.map(stage => {
-        const stageTpls = filteredTemplates
-          .filter((t) => t.workshop_area === stage.slug)
-          .sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
-        return (
-          <div key={stage.slug}>
-            <h2 className="text-sm font-bold mb-2 flex items-center gap-2" style={{ color: stage.color }}>
-              {stage.icon} {stage.label}
-              <span className="text-gray-400 font-normal">({stageTpls.length} bộ mẫu)</span>
-            </h2>
+      {canLoadTemplates && (
+        <h2 className="text-sm font-bold mb-2 flex items-center gap-2" style={{ color: stageDisplay.color }}>
+          {stageDisplay.icon} {stageDisplay.label}
+          <span className="text-gray-400 font-normal">({stageTpls.length} bộ mẫu)</span>
+        </h2>
+      )}
 
-            {stageTpls.length === 0 && (
-              <div className="border-2 border-dashed rounded-xl p-4 text-center text-gray-400 text-xs mb-3">
-                Chưa có bộ mẫu nào — Nhấn "Thêm bộ mẫu" để tạo
-              </div>
-            )}
+      {canLoadTemplates && stageTpls.length === 0 && (
+        <div className="border-2 border-dashed rounded-xl p-4 text-center text-gray-400 text-xs mb-3">
+          Chưa có bộ mẫu cho cột này — Nhấn &quot;Thêm bộ mẫu&quot; để tạo
+        </div>
+      )}
 
-            {/* Drag & Drop for templates */}
-            <DndContext sensors={sensors} collisionDetection={closestCenter}
-              onDragEnd={(e) => handleTemplateDragEnd(e, stage.slug)}>
-              <SortableContext items={stageTpls.map(t => t.id)} strategy={verticalListSortingStrategy}>
-                <div className="space-y-2 mb-4">
-                  {stageTpls.map(tpl => (
-                    <SortableItem key={tpl.id} id={tpl.id}>
-                      {({ dragHandleProps, isDragging }) => (
-                        <TemplateCard
-                          tpl={tpl} stage={stage} isDragging={isDragging}
-                          dragHandleProps={dragHandleProps}
-                          fixedArea={fixedArea}
-                          expanded={expanded[tpl.id]} onToggleExpand={() => setExpanded(p => ({ ...p, [tpl.id]: !p[tpl.id] }))}
-                          editingTpl={editingTpl} setEditingTpl={setEditingTpl} updateTemplate={updateTemplate}
-                          toggleDefault={toggleDefault} deleteTemplate={deleteTemplate}
-                          newItem={newItem} setNewItem={setNewItem} addItem={addItem} deleteItem={deleteItem}
-                          editingChecklist={editingChecklist} setEditingChecklist={setEditingChecklist}
-                          newCheckItem={newCheckItem} setNewCheckItem={setNewCheckItem}
-                          addChecklistItem={addChecklistItem} removeChecklistItem={removeChecklistItem}
-                          sensors={sensors} handleItemDragEnd={handleItemDragEnd}
-                          handleChecklistDragEnd={handleChecklistDragEnd}
-                          templates={templates} setTemplates={setTemplates}
-                          updateItemChecklist={updateItemChecklist}
-                          updateTemplateItemFields={updateTemplateItemFields}
-                          editingVisibility={editingVisibility} setEditingVisibility={setEditingVisibility}
-                          companies={companies} departments={departments}
-                          toggleItemCompany={toggleItemCompany} toggleItemDept={toggleItemDept}
-                        />
-                      )}
-                    </SortableItem>
-                  ))}
-                </div>
-              </SortableContext>
-            </DndContext>
+      {canLoadTemplates && (
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleTemplateDragEnd}>
+        <SortableContext items={stageTpls.map((t) => t.id)} strategy={verticalListSortingStrategy}>
+          <div className="space-y-2 mb-4">
+            {stageTpls.map((tpl) => (
+              <SortableItem key={tpl.id} id={tpl.id}>
+                {({ dragHandleProps, isDragging }) => (
+                  <TemplateCard
+                    tpl={tpl}
+                    stage={stageDisplay}
+                    isDragging={isDragging}
+                    dragHandleProps={dragHandleProps}
+                    fixedArea={fixedArea}
+                    expanded={expanded[tpl.id]}
+                    onToggleExpand={() => setExpanded((p) => ({ ...p, [tpl.id]: !p[tpl.id] }))}
+                    editingTpl={editingTpl}
+                    setEditingTpl={setEditingTpl}
+                    updateTemplate={updateTemplate}
+                    toggleDefault={toggleDefault}
+                    deleteTemplate={deleteTemplate}
+                    newItem={newItem}
+                    setNewItem={setNewItem}
+                    addItem={addItem}
+                    deleteItem={deleteItem}
+                    editingChecklist={editingChecklist}
+                    setEditingChecklist={setEditingChecklist}
+                    newCheckItem={newCheckItem}
+                    setNewCheckItem={setNewCheckItem}
+                    addChecklistItem={addChecklistItem}
+                    removeChecklistItem={removeChecklistItem}
+                    sensors={sensors}
+                    handleItemDragEnd={handleItemDragEnd}
+                    handleChecklistDragEnd={handleChecklistDragEnd}
+                    templates={templates}
+                    setTemplates={setTemplates}
+                    updateItemChecklist={updateItemChecklist}
+                    updateTemplateItemFields={updateTemplateItemFields}
+                    editingVisibility={editingVisibility}
+                    setEditingVisibility={setEditingVisibility}
+                    companies={companies}
+                    departments={departments}
+                    toggleItemCompany={toggleItemCompany}
+                    toggleItemDept={toggleItemDept}
+                  />
+                )}
+              </SortableItem>
+            ))}
           </div>
-        );
-      })}
+        </SortableContext>
+      </DndContext>
+      )}
 
-      {filteredTemplates.length === 0 && !loading && (
-        <div className="text-center py-12">
-          <p className="text-gray-400 text-lg mb-2">📭 Chưa có bộ mẫu nào cho {activeTab === 'logistics' ? 'VC & Lắp đặt' : 'Sản xuất'}</p>
-          <button type="button" onClick={() => { setShowAddTpl(true); setNewTpl({ name: '', workshop_area: currentStages[0]?.slug || activeTab }); }}
-            className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium cursor-pointer hover:bg-blue-700">
+      {canLoadTemplates && filteredTemplates.length === 0 && !loading && (
+        <div className="text-center py-8">
+          <p className="text-gray-400 mb-2">📭 Chưa có bộ mẫu cho cột này</p>
+          <button
+            type="button"
+            onClick={() => { setShowAddTpl(true); setNewTpl({ name: '', workshop_area: fixedArea || activeTab }); }}
+            className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium cursor-pointer hover:bg-blue-700"
+          >
             <Plus className="h-4 w-4 inline mr-1" /> Tạo bộ mẫu đầu tiên
           </button>
         </div>
       )}
+        </div>
+      </div>
     </div>
   );
 }

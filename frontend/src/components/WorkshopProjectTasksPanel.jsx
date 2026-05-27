@@ -60,6 +60,24 @@ export default function WorkshopProjectTasksPanel({
     [crmDealDocs, shareMod],
   );
 
+  const resolvePipelineStageId = useCallback(async () => {
+    const area = workArea === 'logistics' ? 'logistics' : 'production';
+    const cid = area === 'logistics'
+      ? (project?.logistics_company_id || project?.logistics_company?.id || project?.company_id || null)
+      : (project?.company_id || project?.company?.id || null);
+    const workflowStageId = project?.current_stage_id || null;
+    if (!cid || !workflowStageId) return null;
+    try {
+      const path = area === 'logistics' ? '/logistics/pipeline-stages' : '/production/pipeline-stages';
+      const { data } = await api.get(path, { params: { company_id: cid } });
+      const rows = Array.isArray(data) ? data : [];
+      const hit = rows.find((s) => String(s.workflow_stage_id) === String(workflowStageId));
+      return hit?.id || null;
+    } catch {
+      return null;
+    }
+  }, [workArea, project?.company_id, project?.company?.id, project?.logistics_company_id, project?.logistics_company?.id, project?.current_stage_id]);
+
   const loadTemplates = useCallback(async () => {
     setTemplatesLoading(true);
     try {
@@ -67,19 +85,29 @@ export default function WorkshopProjectTasksPanel({
       const cid = area === 'logistics'
         ? (project?.logistics_company_id || project?.logistics_company?.id || null)
         : (project?.company_id || project?.company?.id || null);
-      const { data } = await api.get('/production/task-templates', {
-        params: {
-          workshop_area: area,
-          active_only: 'true',
-          ...(cid ? { company_id: cid } : {}),
-        },
+      const stageId = await resolvePipelineStageId();
+      const stageKey = area === 'logistics' ? 'logistics_stage_id' : 'production_stage_id';
+
+      const [scopedRes, globalRes] = await Promise.all([
+        stageId
+          ? api.get('/production/task-templates', {
+            params: { workshop_area: area, active_only: 'true', ...(cid ? { company_id: cid } : {}), [stageKey]: stageId },
+          })
+          : Promise.resolve({ data: [] }),
+        api.get('/production/task-templates', {
+          params: { workshop_area: area, active_only: 'true', ...(cid ? { company_id: cid } : {}), [stageKey]: 'global' },
+        }),
+      ]);
+      const merged = new Map();
+      [...(globalRes.data || []), ...(scopedRes.data || [])].forEach((t) => {
+        if (t?.id) merged.set(t.id, t);
       });
-      setTemplates(data || []);
+      setTemplates([...merged.values()]);
     } catch {
       setTemplates([]);
     }
     setTemplatesLoading(false);
-  }, [workArea, project?.company_id, project?.logistics_company_id, project?.company?.id, project?.logistics_company?.id]);
+  }, [workArea, project?.company_id, project?.logistics_company_id, project?.company?.id, project?.logistics_company?.id, resolvePipelineStageId]);
 
   useEffect(() => {
     if (showTemplatePanel) loadTemplates();

@@ -844,7 +844,7 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
     try {
       const c1 = await supabase
         .from('project_comments')
-        .select('id, content, created_at, user:users(id, full_name, avatar)')
+        .select('id, content, created_at, user:users!project_comments_user_id_fkey(id, full_name, avatar)')
         .eq('project_id', rowId)
         .order('created_at', { ascending: false })
         .limit(30);

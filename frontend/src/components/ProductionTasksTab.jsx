@@ -21,6 +21,8 @@ function taskStatus(t) {
 
 export default function ProductionTasksTab({
   projectId,
+  projectCompanyId = null,
+  projectCurrentStageId = null,
   stages = [],
   users = [],
   onReload,
@@ -51,13 +53,31 @@ export default function ProductionTasksTab({
   const loadTasks = async () => {
     setLoading(true);
     try {
-      const [tasksRes, tplRes] = await Promise.all([
+      const area = shareModule === 'logistics' ? 'logistics' : 'production';
+      const cid = projectCompanyId || null;
+      let stageId = null;
+      if (cid && projectCurrentStageId) {
+        try {
+          const path = area === 'logistics' ? '/logistics/pipeline-stages' : '/production/pipeline-stages';
+          const { data: pStages } = await api.get(path, { params: { company_id: cid } });
+          const hit = (pStages || []).find((s) => String(s.workflow_stage_id) === String(projectCurrentStageId));
+          stageId = hit?.id || null;
+        } catch { /* ignore */ }
+      }
+      const stageKey = area === 'logistics' ? 'logistics_stage_id' : 'production_stage_id';
+      const tplParams = { workshop_area: area, active_only: 'true', ...(cid ? { company_id: cid } : {}) };
+      const [tasksRes, globalRes, scopedRes] = await Promise.all([
         api.get('/tasks', { params: { project_id: projectId } }),
-        api.get('/production/task-templates'),
+        api.get('/production/task-templates', { params: { ...tplParams, [stageKey]: 'global' } }),
+        stageId
+          ? api.get('/production/task-templates', { params: { ...tplParams, [stageKey]: stageId } })
+          : Promise.resolve({ data: [] }),
       ]);
       const list = tasksRes.data?.tasks || tasksRes.data || [];
       setTasks(list);
-      setTemplates(tplRes.data || []);
+      const merged = new Map();
+      [...(globalRes.data || []), ...(scopedRes.data || [])].forEach((t) => { if (t?.id) merged.set(t.id, t); });
+      setTemplates([...merged.values()]);
       const expanded = {};
       list.forEach(t => { if (t.stage_id) expanded[t.stage_id] = true; });
       setExpandedStages(expanded);

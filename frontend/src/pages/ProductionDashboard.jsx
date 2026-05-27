@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
@@ -13,18 +13,17 @@ import {
   Factory, Users, LayoutGrid, List,
   CheckSquare, UserCheck, Loader2, Truck, Filter, Clock, Layers, Trash2, MessageSquare, Pin, ArrowUpDown,
 } from 'lucide-react';
-import { ProductionListView, ProductionPlannerView, ProductionCalendarView, ProductionCommentsView } from '../components/ProductionViews';
+import { ProductionListView, ProductionPlannerView, ProductionCalendarView, ProductionCommentsView, ProductionDeadlineView } from '../components/ProductionViews';
 import WorkshopPipelineKanbanScroll from '../components/WorkshopPipelineKanbanScroll';
 import WorkshopStaffFilterPanel from '../components/WorkshopStaffFilterPanel';
 import { useWorkshopStaffFilter } from '../hooks/useWorkshopStaffFilter';
 import {
   peekWorkshopPipelineCardFocus, clearWorkshopPipelineCardFocus, markWorkshopPipelineCardFocus,
 } from '../lib/workshopPipelineStorage';
-import ModuleQuickActions from '../shared/components/ModuleQuickActions';
 
 const INTAKE_BUCKET = 'won_pending';
 
-const WS_DASH_VIEW_MODES = ['kanban', 'list', 'planner', 'calendar', 'comments'];
+const WS_DASH_VIEW_MODES = ['kanban', 'list', 'planner', 'deadline', 'comments', 'calendar'];
 
 const LS_SX = 'sx_dash_filters_v1';
 function readSxDashPersisted() {
@@ -160,6 +159,7 @@ export default function ProductionDashboard() {
   const [projects, setProjects] = useState([]);
   const [pipeline, setPipeline] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [firstLoaded, setFirstLoaded] = useState(false);
   const [searchQuery, setSearchQuery] = useState(() => (typeof P0?.searchQuery === 'string' ? P0.searchQuery : ''));
   const [priorityFilter, setPriorityFilter] = useState(() => (typeof P0?.priorityFilter === 'string' ? P0.priorityFilter : ''));
   const [stageFilter, setStageFilter] = useState(() => (typeof P0?.stageFilter === 'string' ? P0.stageFilter : ''));
@@ -183,6 +183,8 @@ export default function ProductionDashboard() {
   const [showAdvFilter, setShowAdvFilter] = useState(false);
   const [filterWorkTypeId, setFilterWorkTypeId] = useState(() => P0?.filterWorkTypeId ?? '');
   const [workTypes, setWorkTypes] = useState([]);
+  /** Hiện cột ảo «Chưa phân loại» ở cuối Kanban — gom các project chưa có workshop_type_id. */
+  const [showOrphanColumn, setShowOrphanColumn] = useState(() => !!P0?.showOrphanColumn);
 
   // Bulk selection
   const [selectedIds, setSelectedIds] = useState(new Set());
@@ -204,6 +206,9 @@ export default function ProductionDashboard() {
   const [handoverErr, setHandoverErr] = useState('');
   const [handoverSaving, setHandoverSaving] = useState(false);
   const [commentsIndex, setCommentsIndex] = useState({});
+  const [kanbanCommentItem, setKanbanCommentItem] = useState(null);
+  const [kanbanCommentBody, setKanbanCommentBody] = useState('');
+  const [kanbanCommentPosting, setKanbanCommentPosting] = useState(false);
 
   const navigate = useNavigate();
 
@@ -258,16 +263,17 @@ export default function ProductionDashboard() {
     try {
       const dashQ = {
         ...(companyParam ? { company_id: companyParam } : {}),
-        ...(filterWorkTypeId ? { workshop_type_id: filterWorkTypeId } : {}),
       };
       const maxRecords = kanbanLoadKey === 'all' ? 5000
         : Math.min(parseInt(kanbanLoadKey, 10) || 500, 5000);
 
+      // KHÔNG truyền workshop_type_id ở fetch chính — filter loại làm phía client để
+      // đổi loại không reload toàn trang. Pipeline columns được refetch silent ở
+      // useEffect bên dưới khi filterWorkTypeId đổi.
       const [dashRes, projectList] = await Promise.all([
         api.get('/production/dashboard', { params: dashQ }).catch(() => ({ data: { kpis: {}, pipeline: [] } })),
         fetchWorkshopProjectPages(api, '/production/projects', {
           companyId: companyParam,
-          workshopTypeId: filterWorkTypeId || undefined,
           maxRecords,
           pageSize: 500,
         }).catch(() => []),
@@ -279,9 +285,35 @@ export default function ProductionDashboard() {
       console.error(e);
     }
     setLoading(false);
-  }, [companyParam, kanbanLoadKey, filterWorkTypeId]);
+    setFirstLoaded(true);
+  }, [companyParam, kanbanLoadKey]);
 
   useEffect(() => { load(); }, [load]);
+
+  /**
+   * Refetch pipeline columns SILENT khi đổi phân loại — không bật spinner toàn trang.
+   * Bỏ qua lần đầu (load() đã set pipeline). Chỉ chạy khi filterWorkTypeId thay đổi.
+   */
+  const initialWorkTypeRef = useRef(true);
+  useEffect(() => {
+    if (initialWorkTypeRef.current) {
+      initialWorkTypeRef.current = false;
+      return;
+    }
+    if (loading) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const params = { all: 'false' };
+        if (companyParam) params.company_id = companyParam;
+        if (filterWorkTypeId) params.workshop_type_id = filterWorkTypeId;
+        const { data } = await api.get('/production/pipeline-stages', { params });
+        if (cancelled) return;
+        if (Array.isArray(data) && data.length) setPipeline(data);
+      } catch { /* silent */ }
+    })();
+    return () => { cancelled = true; };
+  }, [filterWorkTypeId, companyParam, loading]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -299,11 +331,13 @@ export default function ProductionDashboard() {
         filterCompany, timePreset, customFrom, customTo, kanbanLoadKey,
         filterPersonId, filterPersonName, filterRegion, filterPhone, filterWorkTypeId,
         searchQuery, priorityFilter, stageFilter, viewMode, sortBy,
+        showOrphanColumn,
       }));
     } catch { /* ignore */ }
   }, [
     filterCompany, timePreset, customFrom, customTo, kanbanLoadKey, filterPersonId, filterPersonName,
     filterRegion, filterPhone, filterWorkTypeId, searchQuery, priorityFilter, stageFilter, viewMode, sortBy,
+    showOrphanColumn,
   ]);
 
   // Đóng menu sắp xếp khi click ra ngoài
@@ -350,9 +384,15 @@ export default function ProductionDashboard() {
       if (!matchesProject(p, { personNameQ: deferredPersonName })) return false;
       if (filterPhone === 'has' && !p.customer?.phone) return false;
       if (filterPhone === 'no' && p.customer?.phone) return false;
+      // Filter phân loại client-side (không reload trang khi đổi loại)
+      if (filterWorkTypeId === 'none') {
+        if (p.workshop_type_id || p.workshop_type?.id) return false;
+      } else if (filterWorkTypeId) {
+        if (String(p.workshop_type_id || p.workshop_type?.id || '') !== String(filterWorkTypeId)) return false;
+      }
       return true;
     });
-  }, [projects, dateFromTo, matchesProject, deferredPersonName, filterPhone]);
+  }, [projects, dateFromTo, matchesProject, deferredPersonName, filterPhone, filterWorkTypeId]);
 
   const toggleSelect = useCallback((id, e) => {
     e?.stopPropagation();
@@ -445,13 +485,69 @@ export default function ProductionDashboard() {
       return tb - ta;
     };
 
-    return baseStages.map((stage) => ({
+    /**
+     * Resolve cột Kanban cho 1 project trên pipeline hiện hành (client-side).
+     * Replicate logic BE `kanbanColumnIdForProject` để khi đổi phân loại không
+     * cần đợi BE gắn lại sx_kanban_column_id.
+     */
+    const sortedStages = [...baseStages].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+    const intake = sortedStages.find((s) => s.bucket_slug === 'won_pending');
+    const handover = sortedStages.find((s) => s.is_handover_to_logistics === true);
+    const VC_STATUSES = new Set(['shipping', 'installing', 'warranty']);
+
+    const colIdFor = (project) => {
+      if (VC_STATUSES.has(project.status) && handover) return handover.id;
+      const cid = project.current_stage_id;
+      if (cid) {
+        for (const col of sortedStages) {
+          const wid = col.workflow_stage_id || col.workflow_stage?.id;
+          if (wid && String(wid) === String(cid)) return col.id;
+        }
+      }
+      // Won deal nhưng chưa map được workflow → cột intake hoặc cột đầu tiên
+      if (project.sx_won_deal || project.sx_intake) {
+        if (intake) return intake.id;
+        return sortedStages[0]?.id || null;
+      }
+      // Fallback: dùng giá trị BE đã gắn (nếu vẫn hợp lệ trong pipeline mới)
+      if (project.sx_kanban_column_id && sortedStages.some((s) => s.id === project.sx_kanban_column_id)) {
+        return project.sx_kanban_column_id;
+      }
+      return null;
+    };
+
+    /** Project được coi là «chưa phân loại» khi không có workshop_type_id. */
+    const isOrphan = (p) => !p.workshop_type_id && !p.workshop_type?.id;
+    /** Bật cột ảo khi user tích checkbox & đang xem Tất cả loại (không lọc cụ thể). */
+    const includeOrphan = showOrphanColumn && !filterWorkTypeId;
+
+    const baseColumns = baseStages.map((stage) => ({
       ...stage,
       items: scopeProjects
-        .filter((project) => project.sx_kanban_column_id === stage.id)
+        .filter((project) => {
+          if (includeOrphan && isOrphan(project)) return false; // chuyển sang cột ảo
+          return colIdFor(project) === stage.id;
+        })
         .sort(sortSxItems),
     }));
-  }, [pipeline, scopeProjects]);
+
+    if (!includeOrphan) return baseColumns;
+
+    const orphanItems = scopeProjects.filter(isOrphan).sort(sortSxItems);
+    const orphanCol = {
+      id: '__orphan_no_type__',
+      __virtual: true,
+      name: 'Chưa phân loại',
+      slug: 'unclassified',
+      icon: '📦',
+      color: '#94a3b8',
+      description: 'Project chưa được gán phân loại (Tủ bếp / Cánh kính / …). Tích phân loại để chuyển vào pipeline.',
+      items: orphanItems,
+      bucket_slug: 'orphan',
+      workflow_stage_id: null,
+    };
+    return [...baseColumns, orphanCol];
+  }, [pipeline, scopeProjects, showOrphanColumn, filterWorkTypeId]);
 
   const filteredKanbanPipeline = useMemo(() => {
     const result = kanbanPipeline.map((stage) => ({
@@ -477,11 +573,6 @@ export default function ProductionDashboard() {
     filteredKanbanPipelineRef.current = result;
     return result;
   }, [kanbanPipeline, searchQuery, priorityFilter, stageFilter, sortBy]);
-
-  const filteredProjectCount = useMemo(
-    () => filteredKanbanPipeline.reduce((n, s) => n + s.items.length, 0),
-    [filteredKanbanPipeline],
-  );
 
   const allVisibleProjectIds = useMemo(
     () => filteredKanbanPipeline.flatMap((s) => (s.items || []).map((x) => x.id)).filter(Boolean),
@@ -512,6 +603,29 @@ export default function ProductionDashboard() {
     if (viewMode !== 'comments') return;
     refreshProjectCommentsIndex();
   }, [viewMode, refreshProjectCommentsIndex]);
+
+  const submitKanbanQuickComment = useCallback(async () => {
+    const v = kanbanCommentBody.trim();
+    const it = kanbanCommentItem;
+    if (!v || !it) return;
+    setKanbanCommentPosting(true);
+    try {
+      await api.post(`/projects/${it.id}/comments`, { content: v });
+      setKanbanCommentItem(null);
+      setKanbanCommentBody('');
+      setCommentsIndex((prev) => ({
+        ...prev,
+        [String(it.id)]: {
+          count: (prev[String(it.id)]?.count || 0) + 1,
+          last_at: new Date().toISOString(),
+          last_user_id: user?.id ?? null,
+        },
+      }));
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Lỗi gửi bình luận');
+    }
+    setKanbanCommentPosting(false);
+  }, [kanbanCommentBody, kanbanCommentItem, user?.id]);
 
   /** Từ chi tiết: cuộn tới thẻ vừa xem (cần đặt sau filteredKanbanPipeline) */
   useEffect(() => {
@@ -545,11 +659,6 @@ export default function ProductionDashboard() {
     return () => clearTimeout(t);
   }, [loading, viewMode, filteredKanbanPipeline]);
 
-  const totalValue = useMemo(
-    () => scopeProjects.reduce((sum, p) => sum + (Number(p.estimated_value) || 0), 0),
-    [scopeProjects],
-  );
-
   const scopeKpis = useMemo(() => {
     const list = scopeProjects;
     if (!list.length) {
@@ -575,6 +684,19 @@ export default function ProductionDashboard() {
     const lockedInVc = ['shipping', 'installing', 'warranty', 'completed'].includes(String(current?.status || ''));
     if (lockedInVc) {
       alert('Deal đã bàn giao sang Vận chuyển nên không thể kéo về cột khác.');
+      return;
+    }
+
+    // Kéo vào cột ảo «Chưa phân loại» → bỏ workshop_type_id của project.
+    if (targetCol?.__virtual && targetCol?.id === '__orphan_no_type__') {
+      try {
+        await api.put(`/projects/${projectId}`, { workshop_type_id: null });
+        setProjects((prev) => prev.map((p) => (p.id === projectId
+          ? { ...p, workshop_type_id: null, workshop_type: null }
+          : p)));
+      } catch (e) {
+        alert(e.response?.data?.error || 'Lỗi gỡ phân loại');
+      }
       return;
     }
 
@@ -770,8 +892,7 @@ export default function ProductionDashboard() {
   const advFilterCount =
     staffFilterActiveCount + (filterPhone ? 1 : 0) + (hasTimeFilter ? 1 : 0)
     + (filterWorkTypeId ? 1 : 0)
-    + (String(searchQuery || '').trim() ? 1 : 0) + (priorityFilter ? 1 : 0) + (stageFilter ? 1 : 0)
-    + (viewMode !== 'kanban' ? 1 : 0);
+    + (String(searchQuery || '').trim() ? 1 : 0) + (priorityFilter ? 1 : 0) + (stageFilter ? 1 : 0);
 
   const hasActiveFilter = !!(
     searchQuery || priorityFilter || stageFilter || hasTimeFilter
@@ -790,7 +911,9 @@ export default function ProductionDashboard() {
     resetStaffFilters();
   }, [resetStaffFilters]);
 
-  if (loading) {
+  // Lần đầu chưa có data → spinner toàn vùng. Reload sau đó dùng overlay nhẹ
+  // (xem block <main className="relative"> ở dưới) để toolbar/KPI vẫn hiển thị.
+  if (loading && !firstLoaded) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full" />
@@ -813,6 +936,9 @@ export default function ProductionDashboard() {
           {[
             { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
             { id: 'list', icon: List, label: 'Danh sách' },
+            { id: 'planner', icon: Users, label: 'Planner' },
+            { id: 'deadline', icon: Clock, label: 'Deadline' },
+            { id: 'comments', icon: MessageSquare, label: 'Bình luận' },
             { id: 'calendar', icon: Calendar, label: 'Lịch' },
           ].map((v) => (
             <button
@@ -829,15 +955,6 @@ export default function ProductionDashboard() {
               {v.label}
             </button>
           ))}
-          <Link
-            to="/sx/pipeline-settings"
-            className="h-9 px-3 inline-flex items-center rounded-lg border border-gray-200 bg-white text-gray-600 text-sm hover:bg-gray-50"
-            title="Cài đặt pipeline"
-          >
-            ⚙️
-          </Link>
-          <span className="hidden md:inline-block w-px h-6 bg-gray-200 mx-1" aria-hidden />
-          <ModuleQuickActions trashTab="sx" />
         </div>
       </div>
 
@@ -849,14 +966,71 @@ export default function ProductionDashboard() {
           return new Date(p.production_deadline) < new Date(Date.now() + 3 * 86400000);
         }).length;
         const total = scopeKpis.total;
+        // Tổng giá trị của các deal đang sản xuất (status producing hoặc current_stage='production')
+        const producingValue = scopeProjects
+          .filter((p) => p.current_stage?.slug === 'production' || p.status === 'producing')
+          .reduce((sum, p) => sum + (Number(p.estimated_value) || 0), 0);
         return (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
             <KPICard accent="bg-violet-500" label="Tổng dự án" value={total} descriptor={total > 0 ? `↑ ${total} tuần này` : '—'} />
-            <KPICard accent="bg-teal-500" label="Đang sản xuất" value={scopeKpis.producing} descriptor={`${scopeKpis.avg_progress}% tiến độ TB`} />
+            <KPICard
+              accent="bg-teal-500"
+              label="Đang sản xuất"
+              value={scopeKpis.producing}
+              descriptor={scopeKpis.producing > 0 ? formatVND(producingValue) : '—'}
+            />
             <KPICard accent="bg-emerald-500" label="Hoàn thành" value={scopeKpis.completed} descriptor="tuần này" />
             <KPICard accent="bg-red-500" label="Quá hạn" value={scopeKpis.overdue} descriptor={scopeKpis.overdue > 0 ? 'cần xử lý' : 'không có'} valueTone={scopeKpis.overdue > 0 ? 'danger' : undefined} />
             <KPICard accent="bg-orange-500" label="Trễ giao xưởng" value={overdueProd} descriptor={overdueProd > 0 ? 'cần xử lý' : 'không có'} valueTone={overdueProd > 0 ? 'danger' : undefined} />
             <KPICard accent="bg-amber-500" label="Sắp giao (3 ngày)" value={soonProd} descriptor={soonProd > 0 ? 'sắp đến hạn' : '—'} valueTone={soonProd > 0 ? 'warning' : undefined} />
+          </div>
+        );
+      })()}
+
+      {/* Strip thống kê đang sản xuất theo từng cột pipeline (số deal + giá trị) */}
+      {(() => {
+        const cols = (filteredKanbanPipeline || []).filter((c) => c.bucket_slug !== INTAKE_BUCKET);
+        if (!cols.length) return null;
+        const totalCount = cols.reduce((n, c) => n + (c.items?.length || 0), 0);
+        const totalValue = cols.reduce(
+          (s, c) => s + (c.items || []).reduce((ss, p) => ss + (Number(p.estimated_value) || 0), 0),
+          0,
+        );
+        if (totalCount === 0) return null;
+        return (
+          <div className="rounded-lg border border-teal-200 bg-white">
+            <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b bg-teal-50/60">
+              <Factory className="h-4 w-4 text-teal-700 shrink-0" />
+              <span className="text-sm font-semibold text-teal-900">Đang sản xuất theo cột</span>
+              <span className="ml-auto text-xs font-semibold text-teal-800">
+                Tổng: {totalCount} deal · {formatVND(totalValue)}
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2 p-2">
+              {cols.map((c) => {
+                const count = c.items?.length || 0;
+                const value = (c.items || []).reduce((s, p) => s + (Number(p.estimated_value) || 0), 0);
+                if (count === 0) return null;
+                return (
+                  <div
+                    key={c.id}
+                    className="inline-flex items-center gap-2 rounded-md border bg-white px-2.5 py-1"
+                    style={{ borderColor: `${c.color || '#0f766e'}55` }}
+                    title={`${c.name}: ${count} deal · ${formatVND(value)}`}
+                  >
+                    <span className="text-base shrink-0" aria-hidden>{c.icon || '📋'}</span>
+                    <span className="text-xs font-medium text-gray-700 truncate max-w-[140px]">{c.name}</span>
+                    <span
+                      className="text-[11px] font-bold px-1.5 py-0.5 rounded"
+                      style={{ backgroundColor: `${c.color || '#0f766e'}20`, color: c.color || '#0f766e' }}
+                    >
+                      {count}
+                    </span>
+                    <span className="text-[11px] tabular-nums text-gray-600">{formatVND(value)}</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         );
       })()}
@@ -914,6 +1088,69 @@ export default function ProductionDashboard() {
               </span>
             );
           })()}
+
+          {/* Phân loại — luôn hiển thị trên toolbar (không cần mở Bộ lọc) */}
+          {companyForTypes && (
+            <div
+              className={`inline-flex items-center gap-1 h-9 px-2 rounded-lg border shrink-0 ${
+                filterWorkTypeId === 'none'
+                  ? 'border-amber-300 bg-amber-50'
+                  : filterWorkTypeId
+                    ? 'border-teal-300 bg-teal-50'
+                    : 'border-gray-200 bg-white'
+              }`}
+              title="Phân loại dự án xưởng"
+            >
+              <Layers className={`h-3.5 w-3.5 shrink-0 ${
+                filterWorkTypeId === 'none' ? 'text-amber-600'
+                : filterWorkTypeId ? 'text-teal-700' : 'text-gray-500'
+              }`} />
+              <select
+                value={filterWorkTypeId}
+                onChange={(e) => setFilterWorkTypeId(e.target.value)}
+                className={`h-8 text-sm bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[12rem] font-medium ${
+                  filterWorkTypeId === 'none' ? 'text-amber-700'
+                  : filterWorkTypeId ? 'text-teal-800' : 'text-gray-700'
+                }`}
+              >
+                <option value="">{workTypes.length === 0 ? 'Chưa cấu hình loại' : 'Phân loại: Tất cả'}</option>
+                <option value="none">⚠️ Chưa phân loại</option>
+                {workTypes.map((wt) => (
+                  <option key={wt.id} value={wt.id}>{wt.name}</option>
+                ))}
+              </select>
+              {filterWorkTypeId && (
+                <button
+                  type="button"
+                  onClick={() => setFilterWorkTypeId('')}
+                  className="p-1 rounded hover:bg-white/70 cursor-pointer"
+                  title="Bỏ lọc phân loại"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Cột ảo «Chưa phân loại» — chỉ hiển thị khi đang xem Tất cả loại */}
+          {viewMode === 'kanban' && !filterWorkTypeId && (
+            <label
+              className={`inline-flex items-center gap-1.5 h-9 px-2.5 border rounded-lg text-xs cursor-pointer transition-colors shrink-0 ${
+                showOrphanColumn
+                  ? 'bg-slate-100 border-slate-400 text-slate-800'
+                  : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+              }`}
+              title="Hiện cột ảo ở cuối Kanban — gom các project chưa được gán phân loại (workshop type)."
+            >
+              <input
+                type="checkbox"
+                checked={showOrphanColumn}
+                onChange={(e) => setShowOrphanColumn(e.target.checked)}
+                className="h-3.5 w-3.5 cursor-pointer accent-slate-600"
+              />
+              <span>📦 Chưa phân loại</span>
+            </label>
+          )}
 
           {/* Bộ lọc */}
           <button
@@ -974,15 +1211,6 @@ export default function ProductionDashboard() {
               <X className="h-3.5 w-3.5" /> Xóa lọc
             </button>
           )}
-        </div>
-
-        {/* Stats row: tổng số + giá trị */}
-        <div className="flex flex-wrap items-center gap-3 text-[12px] text-gray-600">
-          <p className="tabular-nums">
-            Hiển thị <strong className="text-gray-900">{filteredProjectCount}</strong> dự án
-            <span className="text-gray-400 mx-1.5">·</span>
-            Tổng <strong className="text-gray-900">{formatVND(totalValue)}</strong>
-          </p>
         </div>
 
         {showAdvFilter && (
@@ -1066,7 +1294,7 @@ export default function ProductionDashboard() {
               {companyForTypes && (
                 <div className="flex flex-col gap-0.5">
                   <label className="text-[10px] text-gray-500 font-medium">Phân loại</label>
-                  <div className="inline-flex items-center gap-1 h-8 px-2 bg-gray-50 border border-gray-200 rounded-lg" title="Cấu hình tại Cài đặt pipeline">
+                  <div className="inline-flex items-center gap-1 h-8 px-2 bg-gray-50 border border-gray-200 rounded-lg">
                     <Layers className="h-3.5 w-3.5 text-slate-500 shrink-0" />
                     <select
                       value={filterWorkTypeId}
@@ -1074,6 +1302,7 @@ export default function ProductionDashboard() {
                       className="h-7 text-xs bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[11rem]"
                     >
                       <option value="">{workTypes.length === 0 ? 'Chưa cấu hình' : 'Tất cả loại'}</option>
+                      <option value="none">⚠️ Chưa phân loại</option>
                       {workTypes.map((wt) => (
                         <option key={wt.id} value={wt.id}>{wt.name}</option>
                       ))}
@@ -1108,45 +1337,6 @@ export default function ProductionDashboard() {
               </div>
             </div>
 
-            {/* Thêm 2 view phụ ít dùng: Planner + Bảng tin (đã có Kanban/Danh sách/Lịch ở header) */}
-            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-gray-200/80">
-              <p className="text-[10px] font-semibold text-gray-500 sm:mr-1">Chế độ xem khác</p>
-              {[
-                { id: 'planner', icon: Users, label: 'Planner' },
-                { id: 'comments', icon: MessageSquare, label: 'Bảng tin' },
-              ].map((v) => {
-                const active = viewMode === v.id;
-                return (
-                  <span
-                    key={v.id}
-                    className={`inline-flex items-stretch rounded-lg text-xs font-medium transition-colors overflow-hidden ${
-                      active ? 'bg-blue-600 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-100'
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setViewMode(v.id)}
-                      className={`h-8 px-3 flex items-center gap-1.5 cursor-pointer ${active ? '' : ''}`}
-                      title={active ? `Đang xem ${v.label}` : `Chuyển sang ${v.label}`}
-                    >
-                      <v.icon className="h-3.5 w-3.5" />
-                      {v.label}
-                    </button>
-                    {active && (
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); setViewMode('kanban'); }}
-                        className="h-8 w-7 inline-flex items-center justify-center border-l border-white/30 hover:bg-blue-700 cursor-pointer"
-                        title={`Bỏ ${v.label} (về Kanban)`}
-                        aria-label={`Bỏ ${v.label}`}
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </span>
-                );
-              })}
-            </div>
           </div>
         )}
       </div>
@@ -1181,25 +1371,52 @@ export default function ProductionDashboard() {
         </div>
       )}
 
-      {viewMode === 'kanban' && (
-        <KanbanView pipeline={filteredKanbanPipeline} onMoveStage={handleMoveStage} calculateDays={calculateDays}
-          selectedIds={selectedIds} onToggleSelect={toggleSelect} onSelectColumn={selectColumn}
-          onHandoverVC={openHandoverModal} remeasureToken={showAdvFilter ? 'adv-on' : 'adv-off'} />
-      )}
+      <div className="relative">
+        {loading && firstLoaded && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/60 backdrop-blur-[2px] rounded-xl pointer-events-none">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-200 rounded-full shadow-sm">
+              <div className="animate-spin h-4 w-4 border-2 border-blue-600 border-t-transparent rounded-full" />
+              <span className="text-xs text-gray-700">Đang cập nhật…</span>
+            </div>
+          </div>
+        )}
 
-      {viewMode === 'list' && <ProductionListView pipeline={filteredKanbanPipeline} calculateDays={calculateDays} />}
+        {viewMode === 'kanban' && (
+          <KanbanView pipeline={filteredKanbanPipeline} onMoveStage={handleMoveStage} calculateDays={calculateDays}
+            selectedIds={selectedIds} onToggleSelect={toggleSelect} onSelectColumn={selectColumn}
+            onHandoverVC={openHandoverModal}
+            onOpenKanbanComment={(item) => { setKanbanCommentItem(item); setKanbanCommentBody(''); }}
+            workTypes={workTypes}
+            onSetWorkType={async (projectId, typeId) => {
+              try {
+                await api.put(`/projects/${projectId}`, { workshop_type_id: typeId || null });
+                setProjects((prev) => prev.map((p) => (p.id === projectId
+                  ? { ...p, workshop_type_id: typeId || null,
+                      workshop_type: typeId ? (workTypes.find((w) => String(w.id) === String(typeId)) || null) : null }
+                  : p)));
+              } catch (e) {
+                alert(e.response?.data?.error || 'Lỗi đổi phân loại');
+              }
+            }}
+            remeasureToken={showAdvFilter ? 'adv-on' : 'adv-off'} />
+        )}
 
-      {viewMode === 'planner' && <ProductionPlannerView pipeline={filteredKanbanPipeline} />}
+        {viewMode === 'list' && <ProductionListView pipeline={filteredKanbanPipeline} calculateDays={calculateDays} />}
 
-      {viewMode === 'calendar' && <ProductionCalendarView pipeline={filteredKanbanPipeline} />}
+        {viewMode === 'planner' && <ProductionPlannerView pipeline={filteredKanbanPipeline} />}
 
-      {viewMode === 'comments' && (
-        <ProductionCommentsView
-          pipeline={filteredKanbanPipeline}
-          commentsIndex={commentsIndex}
-          onRefreshIndex={() => refreshProjectCommentsIndex()}
-        />
-      )}
+        {viewMode === 'deadline' && <ProductionDeadlineView pipeline={filteredKanbanPipeline} />}
+
+        {viewMode === 'calendar' && <ProductionCalendarView pipeline={filteredKanbanPipeline} />}
+
+        {viewMode === 'comments' && (
+          <ProductionCommentsView
+            pipeline={filteredKanbanPipeline}
+            commentsIndex={commentsIndex}
+            onRefreshIndex={() => refreshProjectCommentsIndex()}
+          />
+        )}
+      </div>
 
       {/* Bulk Deadline Modal */}
       {showBulkDeadline && (
@@ -1314,6 +1531,74 @@ export default function ProductionDashboard() {
           </div>
         </div>
       )}
+
+      {/* Bình luận nhanh trên thẻ Kanban — gửi vào /projects/:id/comments */}
+      {kanbanCommentItem && (
+        <div
+          className="fixed inset-0 z-[70] flex items-start justify-center bg-black/50 p-4 pt-[10vh]"
+          onClick={() => { if (!kanbanCommentPosting) { setKanbanCommentItem(null); setKanbanCommentBody(''); } }}
+        >
+          <div
+            className="w-full max-w-md overflow-hidden rounded-xl border border-[#e4e6eb] bg-[#f0f2f5] shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-[#e4e6eb] bg-white px-3 py-2.5">
+              <p className="text-[15px] font-bold text-[#050505]">Bình luận nhanh</p>
+              <button
+                type="button"
+                disabled={kanbanCommentPosting}
+                onClick={() => { setKanbanCommentItem(null); setKanbanCommentBody(''); }}
+                className="rounded-full p-1.5 text-[#65676b] hover:bg-[#f0f2f5] cursor-pointer disabled:opacity-50"
+                aria-label="Đóng"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="border-b border-[#e4e6eb] bg-white px-3 py-3">
+              <div className="flex gap-2.5">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#e4e6eb] text-[14px] font-bold text-[#65676b]">
+                  {(kanbanCommentItem.name || kanbanCommentItem.code || '?').trim().charAt(0).toUpperCase() || '?'}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[15px] font-semibold text-[#050505]">{kanbanCommentItem.name}</p>
+                  <p className="text-xs text-[#65676b]">
+                    {kanbanCommentItem.code}
+                    {kanbanCommentItem.customer?.full_name ? ` · ${kanbanCommentItem.customer.full_name}` : ''}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-white px-3 py-3">
+              <textarea
+                autoFocus
+                value={kanbanCommentBody}
+                onChange={(e) => setKanbanCommentBody(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault();
+                    submitKanbanQuickComment();
+                  }
+                }}
+                disabled={kanbanCommentPosting}
+                rows={3}
+                placeholder={`Bình luận với tư cách ${user?.full_name || user?.email || 'bạn'}…`}
+                className="w-full resize-y rounded-xl border border-[#e4e6eb] bg-[#f0f2f5] px-3 py-2 text-sm text-[#050505] focus:border-[#1877f2]/40 focus:outline-none focus:ring-1 focus:ring-[#1877f2]/30"
+              />
+              <div className="mt-2 flex items-center justify-between">
+                <p className="text-[11px] text-[#65676b]">Ctrl+Enter để gửi nhanh</p>
+                <button
+                  type="button"
+                  disabled={kanbanCommentPosting || !kanbanCommentBody.trim()}
+                  onClick={submitKanbanQuickComment}
+                  className="h-9 px-4 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 disabled:opacity-50 cursor-pointer"
+                >
+                  {kanbanCommentPosting ? 'Đang gửi…' : 'Gửi'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1337,7 +1622,7 @@ function KPICard({ accent = 'bg-blue-500', label, value, descriptor, valueTone }
 }
 
 // ── KANBAN STAGE CARD — header tối giản (dot + tên + count + total) ────────
-function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC }) {
+function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const stageColor = stage.color || '#94a3b8';
   const totalValue = items.reduce((sum, p) => sum + (Number(p.estimated_value) || 0), 0);
@@ -1386,6 +1671,17 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
             </button>
           )}
         </div>
+        {/* Mô tả phân loại — gắn với workshop_type của cột */}
+        {(() => {
+          const typeName = stage.workshop_type?.name;
+          if (!typeName) return null;
+          return (
+            <div className="mt-1 ml-3.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-teal-50 border border-teal-200 text-[10px] font-medium text-teal-700 max-w-full">
+              <span className="shrink-0">📦</span>
+              <span className="truncate" title={`Phân loại: ${typeName}`}>{typeName}</span>
+            </div>
+          );
+        })()}
         <p className="text-[11px] text-gray-500 tabular-nums mt-0.5 ml-3.5">
           {totalValue > 0 ? formatVND(totalValue) : '0đ'}
         </p>
@@ -1405,7 +1701,8 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
           items.map((item) => (
             <KanbanCard key={item.id} item={item} stage={stage} calculateDays={calculateDays}
               isSelected={selectedIds?.has(item.id)} onToggleSelect={onToggleSelect}
-              onHandoverVC={onHandoverVC} />
+              onHandoverVC={onHandoverVC} onOpenKanbanComment={onOpenKanbanComment}
+              workTypes={workTypes} onSetWorkType={onSetWorkType} />
           ))
         )}
       </div>
@@ -1414,7 +1711,7 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
 }
 
 // ── KANBAN ITEM CARD (y hệt CRM KanbanCard) ─────────────────────────────────
-function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, onHandoverVC }) {
+function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType }) {
   const navigate = useNavigate();
   const [handingOver, setHandingOver] = useState(false);
   const [localPinned, setLocalPinned] = useState(!!item.is_pinned);
@@ -1571,6 +1868,30 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
         {item.name}
       </h4>
 
+      {/* Row phân loại — click đổi nhanh, không kích hoạt navigate (data-sx-quick-btn) */}
+      {Array.isArray(workTypes) && workTypes.length > 0 && typeof onSetWorkType === 'function' && (
+        <div data-sx-quick-btn className="mb-1.5" onClick={(ev) => ev.stopPropagation()}>
+          <select
+            value={item.workshop_type_id || ''}
+            onChange={(ev) => {
+              ev.stopPropagation();
+              onSetWorkType(item.id, ev.target.value || null);
+            }}
+            className={`max-w-full h-6 text-[10px] px-1.5 pr-5 rounded border bg-white cursor-pointer focus:outline-none focus:ring-1 focus:ring-teal-400 ${
+              item.workshop_type_id
+                ? 'border-teal-200 text-teal-800'
+                : 'border-amber-300 text-amber-700 bg-amber-50'
+            }`}
+            title={item.workshop_type_id ? `Phân loại: ${item.workshop_type?.name || ''}` : 'Bấm để chọn phân loại'}
+          >
+            <option value="">⚠️ Chưa phân loại</option>
+            {workTypes.map((wt) => (
+              <option key={wt.id} value={wt.id}>{wt.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {/* Row 3: Giá trị + Deadline cùng hàng */}
       {(Number(item.estimated_value) > 0 || primaryDeadline) && (
         <div className="flex items-center justify-between gap-2 mb-1.5 min-w-0">
@@ -1671,14 +1992,19 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
           <span className="h-5 w-5 rounded-full bg-gray-100 text-gray-400 text-[10px] flex items-center justify-center shrink-0" title="Chưa có người phụ trách">?</span>
         )}
 
-        {/* Quick: chat + more */}
+        {/* Quick: bình luận nhanh (nếu có handler) hoặc mở chat */}
         <button
           type="button"
           data-sx-quick-btn
-          title="Mở trao đổi"
+          data-sx-kanban-comment-btn
+          title={typeof onOpenKanbanComment === 'function' ? 'Bình luận nhanh' : 'Mở trao đổi'}
           onClick={(e) => {
             e.stopPropagation();
-            navigate(`/sx/projects/${item.id}?tab=chat`);
+            if (typeof onOpenKanbanComment === 'function') {
+              onOpenKanbanComment(item);
+            } else {
+              navigate(`/sx/projects/${item.id}?tab=chat`);
+            }
           }}
           className="h-5 w-5 inline-flex items-center justify-center rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 cursor-pointer"
         >
@@ -1736,7 +2062,7 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
 }
 
 // ── KANBAN VIEW CONTAINER (y hệt CRM KanbanView) ─────────────────────────────
-function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC, remeasureToken }) {
+function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, remeasureToken }) {
   return (
     <WorkshopPipelineKanbanScroll
       cardSelector="[data-sx-kanban-card]"
@@ -1755,6 +2081,9 @@ function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggl
             onToggleSelect={onToggleSelect}
             onSelectColumn={onSelectColumn}
             onHandoverVC={onHandoverVC}
+            onOpenKanbanComment={onOpenKanbanComment}
+            workTypes={workTypes}
+            onSetWorkType={onSetWorkType}
           />
         ))}
       </div>

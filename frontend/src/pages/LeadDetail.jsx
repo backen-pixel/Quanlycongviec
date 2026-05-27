@@ -121,12 +121,20 @@ export default function LeadDetail() {
   /** Kéo deal Thắng chưa có dự án: chọn công ty SX */
   const [dealStageWonPick, setDealStageWonPick] = useState(null);
   const [dealStageWonCompanyId, setDealStageWonCompanyId] = useState('');
+  const [dealStageWonWorkTypeId, setDealStageWonWorkTypeId] = useState('');
   const [dealStageWonErr, setDealStageWonErr] = useState('');
   const [productionCompaniesSx, setProductionCompaniesSx] = useState([]);
   const projectCompanyPickRef = useRef(false);
   const [pickProjectCompanyOpen, setPickProjectCompanyOpen] = useState(false);
   const [pickProjectCompanyId, setPickProjectCompanyId] = useState('');
+  const [pickProjectCompanyWorkTypeId, setPickProjectCompanyWorkTypeId] = useState('');
   const [pickProjectCompanyErr, setPickProjectCompanyErr] = useState('');
+  /**
+   * Phân loại theo công ty SX cho 2 modal won-pick / pick-project-company.
+   * Cùng dùng 1 list — modal nào mở thì useEffect bên dưới fetch theo company của modal đó.
+   */
+  const [wonModalWorkTypes, setWonModalWorkTypes] = useState([]);
+  const [wonModalWorkTypesLoading, setWonModalWorkTypesLoading] = useState(false);
   const [showDeleteLeadModal, setShowDeleteLeadModal] = useState(false);
   const [blockPhoneOnDeleteLead, setBlockPhoneOnDeleteLead] = useState(true);
   const [deleteReason, setDeleteReason] = useState('');
@@ -135,13 +143,49 @@ export default function LeadDetail() {
   const [crmTasksRefreshKey, setCrmTasksRefreshKey] = useState(0);
   const [reopeningLost, setReopeningLost] = useState(false);
 
+  /**
+   * Fetch danh sách phân loại theo công ty SX đang chọn ở 2 modal:
+   *   - dealStageWonPick (kéo deal sang Thắng)
+   *   - pickProjectCompanyOpen (tạo dự án xưởng cho deal đã Thắng)
+   * Modal nào mở mới fetch theo company của modal đó.
+   */
+  useEffect(() => {
+    let activeCompanyId = '';
+    if (dealStageWonPick && dealStageWonCompanyId) activeCompanyId = dealStageWonCompanyId;
+    else if (pickProjectCompanyOpen && pickProjectCompanyId) activeCompanyId = pickProjectCompanyId;
+    if (!activeCompanyId) {
+      setWonModalWorkTypes([]);
+      return undefined;
+    }
+    let cancelled = false;
+    setWonModalWorkTypesLoading(true);
+    api.get('/workshop/project-types', { params: { company_id: activeCompanyId, module: 'production' } })
+      .then((r) => {
+        if (cancelled) return;
+        const rows = Array.isArray(r.data) ? r.data : (r.data?.data || []);
+        setWonModalWorkTypes(rows);
+        // Reset workshop_type_id của modal đang mở nếu không thuộc công ty mới
+        const inList = (id) => rows.some((t) => String(t.id) === String(id));
+        if (dealStageWonPick && dealStageWonWorkTypeId && !inList(dealStageWonWorkTypeId)) {
+          setDealStageWonWorkTypeId('');
+        }
+        if (pickProjectCompanyOpen && pickProjectCompanyWorkTypeId && !inList(pickProjectCompanyWorkTypeId)) {
+          setPickProjectCompanyWorkTypeId('');
+        }
+      })
+      .catch(() => { if (!cancelled) setWonModalWorkTypes([]); })
+      .finally(() => { if (!cancelled) setWonModalWorkTypesLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dealStageWonPick, dealStageWonCompanyId, pickProjectCompanyOpen, pickProjectCompanyId]);
+
   // Auto-create project (chạy ngầm)
   const [autoCreateStatus, setAutoCreateStatus] = useState(null); // null | 'loading' | 'success' | 'error'
   const [autoCreateResult, setAutoCreateResult] = useState(null); // { project_id, project_code, tasks_created }
   const [autoCreateError, setAutoCreateError] = useState('');
   const autoCreateCalledRef = useRef(false);
 
-  const autoCreateProject = async (dealId, productionCompanyId) => {
+  const autoCreateProject = async (dealId, productionCompanyId, workshopTypeId = null) => {
     if (!productionCompanyId) {
       setPickProjectCompanyOpen(true);
       setPickProjectCompanyErr('');
@@ -154,6 +198,7 @@ export default function LeadDetail() {
     try {
       const { data } = await api.post(`/crm/deals/${dealId}/auto-create-project`, {
         production_company_id: productionCompanyId,
+        ...(workshopTypeId ? { workshop_type_id: workshopTypeId } : {}),
       });
       setAutoCreateResult(data);
       setAutoCreateStatus('success');
@@ -696,12 +741,21 @@ export default function LeadDetail() {
       setDealStageWonErr('Vui lòng chọn công ty thuộc module Sản xuất.');
       return;
     }
+    if (wonModalWorkTypes.length > 0 && !dealStageWonWorkTypeId) {
+      setDealStageWonErr('Công ty này có phân loại — vui lòng chọn phân loại sản xuất.');
+      return;
+    }
     const ctx = dealStageWonPick;
     if (!ctx) return;
     setDealStageWonErr('');
-    const merged = { ...ctx.extraData, production_company_id: dealStageWonCompanyId };
+    const merged = {
+      ...ctx.extraData,
+      production_company_id: dealStageWonCompanyId,
+      ...(dealStageWonWorkTypeId ? { workshop_type_id: dealStageWonWorkTypeId } : {}),
+    };
     setDealStageWonPick(null);
     setDealStageWonCompanyId('');
+    setDealStageWonWorkTypeId('');
     if (ctx.targetStage.create_event_on_enter) {
       setDealDetailEventCtx({ stageId: ctx.stageId, extraData: merged, targetStage: ctx.targetStage });
     } else {
@@ -714,9 +768,13 @@ export default function LeadDetail() {
       setPickProjectCompanyErr('Vui lòng chọn công ty Sản xuất.');
       return;
     }
+    if (wonModalWorkTypes.length > 0 && !pickProjectCompanyWorkTypeId) {
+      setPickProjectCompanyErr('Công ty này có phân loại — vui lòng chọn phân loại sản xuất.');
+      return;
+    }
     setPickProjectCompanyErr('');
     autoCreateCalledRef.current = false;
-    await autoCreateProject(id, pickProjectCompanyId);
+    await autoCreateProject(id, pickProjectCompanyId, pickProjectCompanyWorkTypeId || null);
   };
 
   const confirmDealDetailEvent = async ({ startIso, endIso, titlePreview, locPreview }) => {
@@ -1904,7 +1962,7 @@ export default function LeadDetail() {
       {dealStageWonPick && (
         <div
           className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4"
-          onClick={() => { setDealStageWonPick(null); setDealStageWonErr(''); }}
+          onClick={() => { setDealStageWonPick(null); setDealStageWonErr(''); setDealStageWonWorkTypeId(''); }}
         >
           <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-2 mb-2">
@@ -1914,9 +1972,10 @@ export default function LeadDetail() {
             <p className="text-sm text-gray-600 mb-4">
               Chuyển deal sang <strong>Thắng</strong> cần gắn công ty thuộc <strong>module Sản xuất</strong> cho dự án xưởng.
             </p>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Công ty <span className="text-red-600">*</span></label>
             <select
               value={dealStageWonCompanyId}
-              onChange={(e) => { setDealStageWonCompanyId(e.target.value); setDealStageWonErr(''); }}
+              onChange={(e) => { setDealStageWonCompanyId(e.target.value); setDealStageWonWorkTypeId(''); setDealStageWonErr(''); }}
               className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white"
             >
               <option value="">— Chọn công ty —</option>
@@ -1924,12 +1983,42 @@ export default function LeadDetail() {
                 <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
               ))}
             </select>
+            {/* Phân loại theo công ty SX vừa chọn */}
+            {dealStageWonCompanyId && (
+              <div className="mt-3">
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Phân loại sản xuất {wonModalWorkTypes.length > 0 && <span className="text-red-600">*</span>}
+                </label>
+                <select
+                  value={dealStageWonWorkTypeId}
+                  onChange={(e) => { setDealStageWonWorkTypeId(e.target.value); setDealStageWonErr(''); }}
+                  disabled={wonModalWorkTypesLoading || wonModalWorkTypes.length === 0}
+                  className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400"
+                >
+                  <option value="">
+                    {wonModalWorkTypesLoading
+                      ? 'Đang tải phân loại…'
+                      : (wonModalWorkTypes.length === 0
+                          ? '— Công ty chưa có phân loại nào —'
+                          : '— Chọn phân loại —')}
+                  </option>
+                  {wonModalWorkTypes.map((t) => (
+                    <option key={t.id} value={t.id}>📦 {t.name}</option>
+                  ))}
+                </select>
+                {wonModalWorkTypes.length === 0 && !wonModalWorkTypesLoading && (
+                  <p className="mt-1 text-[11px] text-gray-500">
+                    Công ty này chưa cấu hình phân loại — admin có thể vào /sx/pipeline-settings để thêm.
+                  </p>
+                )}
+              </div>
+            )}
             {dealStageWonErr && <p className="text-xs text-red-600 mt-2">{dealStageWonErr}</p>}
             <div className="flex gap-2 mt-4">
               <button
                 type="button"
                 className="flex-1 h-10 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50"
-                onClick={() => { setDealStageWonPick(null); setDealStageWonErr(''); }}
+                onClick={() => { setDealStageWonPick(null); setDealStageWonErr(''); setDealStageWonWorkTypeId(''); }}
               >
                 Hủy
               </button>
@@ -1948,7 +2037,7 @@ export default function LeadDetail() {
       {pickProjectCompanyOpen && lead?.type === 'deal' && !lead?.project_id && (
         <div
           className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4"
-          onClick={() => { setPickProjectCompanyOpen(false); projectCompanyPickRef.current = false; setPickProjectCompanyErr(''); }}
+          onClick={() => { setPickProjectCompanyOpen(false); projectCompanyPickRef.current = false; setPickProjectCompanyErr(''); setPickProjectCompanyWorkTypeId(''); }}
         >
           <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-2 mb-2">
@@ -1958,9 +2047,10 @@ export default function LeadDetail() {
             <p className="text-sm text-gray-600 mb-4">
               Deal đã <strong>Thắng</strong> nhưng chưa có dự án. Chọn công ty <strong>module Sản xuất</strong> để hệ thống tạo dự án.
             </p>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Công ty <span className="text-red-600">*</span></label>
             <select
               value={pickProjectCompanyId}
-              onChange={(e) => { setPickProjectCompanyId(e.target.value); setPickProjectCompanyErr(''); }}
+              onChange={(e) => { setPickProjectCompanyId(e.target.value); setPickProjectCompanyWorkTypeId(''); setPickProjectCompanyErr(''); }}
               className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white"
             >
               <option value="">— Chọn công ty —</option>
@@ -1968,12 +2058,42 @@ export default function LeadDetail() {
                 <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
               ))}
             </select>
+            {/* Phân loại theo công ty SX vừa chọn */}
+            {pickProjectCompanyId && (
+              <div className="mt-3">
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Phân loại sản xuất {wonModalWorkTypes.length > 0 && <span className="text-red-600">*</span>}
+                </label>
+                <select
+                  value={pickProjectCompanyWorkTypeId}
+                  onChange={(e) => { setPickProjectCompanyWorkTypeId(e.target.value); setPickProjectCompanyErr(''); }}
+                  disabled={wonModalWorkTypesLoading || wonModalWorkTypes.length === 0}
+                  className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400"
+                >
+                  <option value="">
+                    {wonModalWorkTypesLoading
+                      ? 'Đang tải phân loại…'
+                      : (wonModalWorkTypes.length === 0
+                          ? '— Công ty chưa có phân loại nào —'
+                          : '— Chọn phân loại —')}
+                  </option>
+                  {wonModalWorkTypes.map((t) => (
+                    <option key={t.id} value={t.id}>📦 {t.name}</option>
+                  ))}
+                </select>
+                {wonModalWorkTypes.length === 0 && !wonModalWorkTypesLoading && (
+                  <p className="mt-1 text-[11px] text-gray-500">
+                    Công ty này chưa cấu hình phân loại — admin có thể vào /sx/pipeline-settings để thêm.
+                  </p>
+                )}
+              </div>
+            )}
             {pickProjectCompanyErr && <p className="text-xs text-red-600 mt-2">{pickProjectCompanyErr}</p>}
             <div className="flex gap-2 mt-4">
               <button
                 type="button"
                 className="flex-1 h-10 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50"
-                onClick={() => { setPickProjectCompanyOpen(false); projectCompanyPickRef.current = false; setPickProjectCompanyErr(''); }}
+                onClick={() => { setPickProjectCompanyOpen(false); projectCompanyPickRef.current = false; setPickProjectCompanyErr(''); setPickProjectCompanyWorkTypeId(''); }}
               >
                 Để sau
               </button>
