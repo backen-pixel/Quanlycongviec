@@ -2,8 +2,29 @@ import { useState, useRef } from 'react';
 import { useTheme } from '../components/ThemeProvider';
 import { useAuth } from '../lib/auth';
 import {
-  Upload, Check, Palette, Image, SlidersHorizontal, Trash2, Type, Eye, CloudUpload, CloudDownload, Loader2,
+  Upload, Check, Palette, Image, SlidersHorizontal, Trash2, Type, Eye, CloudUpload, CloudDownload, Loader2, Layers,
 } from 'lucide-react';
+
+const SIDEBAR_STYLE_OPTIONS = [
+  {
+    id: 'solid',
+    label: 'Đặc',
+    desc: 'Sidebar tô màu đầy đủ — rõ ràng, tương phản cao.',
+    emoji: '🧱',
+  },
+  {
+    id: 'transparent',
+    label: 'Trong suốt',
+    desc: 'Gần như xuyên thấu — nhìn rõ hình nền phía sau, có blur nhẹ giữ chữ dễ đọc.',
+    emoji: '🌫️',
+  },
+  {
+    id: 'frosted',
+    label: 'Bóng mờ kính',
+    desc: 'Hiệu ứng kính mờ (frosted glass) như Bitrix24 / iOS.',
+    emoji: '✨',
+  },
+];
 
 const TEXT_PRESETS = [
   { id: 'light', name: '☀️ Sáng (mặc định)', textHeading: '#111827', textBody: '#374151', textMuted: '#6b7280', textCard: '#1f2937' },
@@ -19,16 +40,13 @@ const TEXT_PRESETS = [
 export default function ThemeSettingsPage() {
   const { user } = useAuth();
   const {
-    theme, changeTheme, setBackgroundImage, setOverlayOpacity, setTextColors, presets,
+    theme, changeTheme, setBackgroundImage, setOverlayOpacity, setTextColors, setSidebarStyle, presets,
     pushThemeToServer, pullThemeFromServer,
   } = useTheme();
   const fileRef = useRef();
   const [uploading, setUploading] = useState(false);
   const [pushing, setPushing] = useState(false);
   const [pulling, setPulling] = useState(false);
-  const [customColors, setCustomColors] = useState({
-    sidebar: theme.sidebar, pageBg: theme.pageBg, accent: theme.accent,
-  });
   const [textColorState, setTextColorState] = useState({
     textHeading: theme.textHeading || '#111827',
     textBody: theme.textBody || '#374151',
@@ -47,14 +65,6 @@ export default function ThemeSettingsPage() {
 
   const removeBackground = () => changeTheme({ ...theme, bgImage: null, bgOverlay: 'rgba(0,0,0,0)' });
 
-  const applyCustomColors = () => {
-    changeTheme({
-      ...theme, id: 'custom', sidebar: customColors.sidebar,
-      sidebarHover: customColors.sidebar + '22', sidebarActive: customColors.sidebar + '44',
-      sidebarText: '#94a3c6', pageBg: customColors.pageBg, accent: customColors.accent,
-    });
-  };
-
   const applyTextPreset = (preset) => {
     const { textHeading, textBody, textMuted, textCard } = preset;
     setTextColorState({ textHeading, textBody, textMuted, textCard });
@@ -67,7 +77,6 @@ export default function ThemeSettingsPage() {
   const restoreFactoryDefault = () => {
     const def = presets.find((p) => p.id === 'default') ?? presets[0];
     changeTheme(def);
-    setCustomColors({ sidebar: def.sidebar, pageBg: def.pageBg, accent: def.accent });
     setTextColorState({
       textHeading: def.textHeading || '#111827',
       textBody: def.textBody || '#374151',
@@ -166,6 +175,93 @@ export default function ThemeSettingsPage() {
         </div>
       </div>
 
+      {/* Sidebar style — chọn hiệu ứng đặc / trong suốt / bóng mờ kính */}
+      <div className="bg-white rounded-xl border p-5">
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <div>
+            <h2 className="text-base font-bold text-gray-900 flex items-center gap-2">
+              <Layers className="h-4 w-4" /> Hiệu ứng sidebar
+            </h2>
+            <p className="text-xs text-gray-500 mt-1">
+              Chọn cách hiển thị thanh điều hướng bên trái. Hiệu ứng kính mờ sẽ cho thấy hình nền phía sau — đẹp nhất khi đã chọn hình nền.
+            </p>
+          </div>
+          {!theme.bgImage && (
+            <span className="shrink-0 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+              Mẹo: tải hình nền bên dưới để thấy rõ hiệu ứng trong suốt / bóng mờ.
+            </span>
+          )}
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {SIDEBAR_STYLE_OPTIONS.map((opt) => {
+            const active = (theme.sidebarStyle || 'solid') === opt.id;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => setSidebarStyle(opt.id)}
+                className={`relative p-3 rounded-xl border-2 transition-all cursor-pointer text-left ${
+                  active
+                    ? 'border-blue-500 ring-2 ring-blue-200 shadow-md'
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                {/* Mini preview của sidebar */}
+                <div
+                  className="relative h-20 rounded-lg overflow-hidden mb-2 border border-gray-200"
+                  style={{
+                    backgroundImage: theme.bgImage
+                      ? `url(${theme.bgImage})`
+                      : 'linear-gradient(135deg, #c7d2fe 0%, #fbcfe8 50%, #fde68a 100%)',
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'center',
+                  }}
+                >
+                  <div
+                    className="absolute inset-y-0 left-0 w-1/3 flex flex-col gap-1 p-1.5"
+                    style={{
+                      backgroundColor:
+                        opt.id === 'solid'
+                          ? theme.sidebar
+                          : opt.id === 'transparent'
+                            ? `${theme.sidebar}48`
+                            : `${theme.sidebar}80`,
+                      backdropFilter:
+                        opt.id === 'frosted'
+                          ? 'blur(8px) saturate(180%)'
+                          : opt.id === 'transparent'
+                            ? 'blur(3px) saturate(130%)'
+                            : 'none',
+                      WebkitBackdropFilter:
+                        opt.id === 'frosted'
+                          ? 'blur(8px) saturate(180%)'
+                          : opt.id === 'transparent'
+                            ? 'blur(3px) saturate(130%)'
+                            : 'none',
+                    }}
+                  >
+                    <div className="h-1.5 rounded bg-white/85" />
+                    <div className="h-1.5 rounded bg-white/55" />
+                    <div className="h-1.5 rounded bg-white/35" />
+                    <div className="h-1.5 rounded bg-white/55" />
+                  </div>
+                </div>
+                <p className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
+                  <span aria-hidden>{opt.emoji}</span>
+                  <span>{opt.label}</span>
+                </p>
+                <p className="text-[11px] text-gray-500 mt-0.5 leading-snug">{opt.desc}</p>
+                {active && (
+                  <span className="absolute top-2 right-2 inline-flex items-center justify-center h-5 w-5 rounded-full bg-blue-500 text-white shadow-sm">
+                    <Check className="h-3 w-3" />
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Background image upload */}
       <div className="bg-white rounded-xl border p-5">
         <h2 className="text-base font-bold text-gray-900 mb-4 flex items-center gap-2">
@@ -206,28 +302,6 @@ export default function ThemeSettingsPage() {
             <p className="text-[11px] text-gray-400">Hỗ trợ JPG, PNG, WebP. Khuyến nghị ≥1920×1080.</p>
           </div>
         </div>
-      </div>
-
-      {/* Custom colors */}
-      <div className="bg-white rounded-xl border p-5">
-        <h2 className="text-base font-bold text-gray-900 mb-4 flex items-center gap-2">
-          <SlidersHorizontal className="h-4 w-4" /> Tùy chỉnh màu sắc
-        </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {[{k:'sidebar',l:'Sidebar'},{k:'pageBg',l:'Nền trang'},{k:'accent',l:'Màu chính'}].map(({k,l}) => (
-            <div key={k}>
-              <label className="block text-xs font-medium text-gray-600 mb-1">{l}</label>
-              <div className="flex items-center gap-2">
-                <input type="color" value={customColors[k]} onChange={e => setCustomColors(p => ({...p, [k]: e.target.value}))} className="w-10 h-10 rounded-lg cursor-pointer border-0" />
-                <input type="text" value={customColors[k]} onChange={e => setCustomColors(p => ({...p, [k]: e.target.value}))} className="flex-1 h-10 px-3 border rounded-lg text-sm font-mono" />
-              </div>
-            </div>
-          ))}
-        </div>
-        <button onClick={applyCustomColors}
-          className="mt-4 h-10 px-5 bg-gray-900 hover:bg-gray-800 text-white rounded-lg text-sm font-medium cursor-pointer flex items-center gap-2">
-          <Check className="h-4 w-4" /> Áp dụng
-        </button>
       </div>
 
       {/* Text colors with PRESETS + LIVE PREVIEW */}

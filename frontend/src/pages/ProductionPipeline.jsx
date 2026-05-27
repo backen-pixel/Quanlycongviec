@@ -54,7 +54,7 @@ export default function ProductionPipeline() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 space-y-6">
+    <div className="min-h-screen space-y-6">
       <div>
         <p className="text-xs text-gray-500 font-semibold">XƯỞNG / Pipeline sản xuất</p>
         <h1 className="text-2xl font-bold text-gray-900">Pipeline sản xuất</h1>

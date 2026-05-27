@@ -68,7 +68,7 @@ export default function ProductionTasks() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 space-y-6">
+    <div className="min-h-screen space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <p className="text-xs text-gray-500 font-semibold">XƯỞNG / Nhiệm vụ sản xuất</p>

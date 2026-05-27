@@ -2926,7 +2926,7 @@ export default function CRMDashboard() {
   const ctrlTxt = compactLeadUi ? 'text-xs' : 'text-sm';
 
   return (
-    <div className={`min-h-screen bg-gray-50 ${compactLeadUi ? 'space-y-3' : 'space-y-6'}`}>
+    <div className={`min-h-screen ${compactLeadUi ? 'space-y-3' : 'space-y-6'}`}>
       {/* Auto-create project banner */}
       {autoCreateStatus === 'loading' && (
         <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl p-4 text-white shadow-lg flex items-center gap-4">
@@ -2982,9 +2982,6 @@ export default function CRMDashboard() {
       {/* Header — tab Lead: gọn hơn để nhường chỗ Kanban */}
       <div className={`flex items-center justify-between px-0 ${compactLeadUi ? 'gap-2' : ''}`}>
         <div>
-          <div className={`flex items-center gap-2 ${compactLeadUi ? 'mb-0.5' : 'mb-2'}`}>
-            <span className={`text-gray-500 font-semibold ${compactLeadUi ? 'text-[10px]' : 'text-xs'}`}>CRM / Quản lý khách hàng</span>
-          </div>
           <h1 className={`font-bold text-gray-900 ${compactLeadUi ? 'text-xl sm:text-2xl' : 'text-3xl'}`}>
             {pipelineType === 'lead' ? '💼 Quản lý Leads' : '🎯 Quản lý Deals'}
           </h1>
@@ -3211,9 +3208,16 @@ export default function CRMDashboard() {
 
         {/* ── ALERT: deal/lead QUÁ HẠN — Quản lý nhìn thấy mã ngay, click để cuộn/mở chi tiết ── */}
         {overdueItems.length > 0 && (
-          <div className="rounded-xl border border-red-300 bg-gradient-to-r from-red-50 via-rose-50 to-orange-50 shadow-sm">
+          <div
+            className="rounded-xl border border-red-300/60 shadow-sm"
+            style={{
+              backgroundColor: 'rgba(254, 226, 226, 0.35)',
+              backdropFilter: 'blur(8px) saturate(150%)',
+              WebkitBackdropFilter: 'blur(8px) saturate(150%)',
+            }}
+          >
             <div className="flex items-start gap-3 px-4 py-3">
-              <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-red-100 ring-1 ring-red-300">
+              <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-red-100/70 ring-1 ring-red-300/70 backdrop-blur-sm">
                 <AlertTriangle className="h-5 w-5 text-red-600" />
               </div>
               <div className="flex-1 min-w-0">
@@ -3265,7 +3269,7 @@ export default function CRMDashboard() {
                               navigate(`/crm/leads/${it.id}`);
                             }
                           }}
-                          className="group inline-flex items-center gap-1.5 px-2 py-1 bg-white border border-red-200 rounded-md text-[11px] font-mono font-semibold text-red-700 hover:bg-red-100 hover:border-red-400 transition cursor-pointer shadow-sm"
+                          className="group inline-flex items-center gap-1.5 px-2 py-1 bg-white/60 border border-red-200/70 rounded-md text-[11px] font-mono font-semibold text-red-700 hover:bg-white/90 hover:border-red-400 transition cursor-pointer shadow-sm backdrop-blur-sm"
                         >
                           <span>{it.code}</span>
                           <span className="text-[10px] font-sans font-normal text-red-500 group-hover:text-red-700">
@@ -3860,22 +3864,24 @@ export default function CRMDashboard() {
               onToggleInteracted={toggleInteractedFlag}
               remeasureToken={showAdvSearch ? 1 : 0}
             />
-            {/* Chú thích màu sắc thẻ Kanban — giúp quản lý/NV phân biệt nhanh trạng thái thẻ */}
-            <div className="flex flex-wrap items-center gap-3 px-3 py-2 border-t border-gray-100 bg-white text-[11px] text-gray-600">
-              <span className="font-semibold text-gray-500 mr-1">Chú thích:</span>
-              <span className="inline-flex items-center gap-1.5">
-                <span className="inline-block h-3 w-5 rounded border border-gray-300 bg-white" aria-hidden />
-                Bình thường
-              </span>
-              <span className="inline-flex items-center gap-1.5">
-                <span className="inline-block h-3 w-5 rounded border border-orange-300 bg-orange-100" aria-hidden />
-                Sắp tới hạn
-              </span>
-              <span className="inline-flex items-center gap-1.5">
-                <span className="inline-block h-3 w-5 rounded border border-red-300 bg-red-100" aria-hidden />
-                Quá hạn
-              </span>
-            </div>
+            {/* Chú thích màu sắc thẻ Kanban — chỉ hiện sau khi load xong dữ liệu */}
+            {!firstLoading && (
+              <div className="flex flex-wrap items-center gap-3 px-3 py-2 border-t border-gray-100 bg-white text-[11px] text-gray-600">
+                <span className="font-semibold text-gray-500 mr-1">Chú thích:</span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="inline-block h-3 w-5 rounded border border-gray-300 bg-white" aria-hidden />
+                  Bình thường
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="inline-block h-3 w-5 rounded border border-orange-300 bg-orange-100" aria-hidden />
+                  Sắp tới hạn
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="inline-block h-3 w-5 rounded border border-red-300 bg-red-100" aria-hidden />
+                  Quá hạn
+                </span>
+              </div>
+            )}
             {/* Nút Tải thêm 1000 */}
             {kanbanLoadLimit !== 'all' && (() => {
               const offset = pipelineType === 'lead' ? loadMoreState.leadOffset : loadMoreState.dealOffset;
@@ -5002,7 +5008,7 @@ function KanbanStageCard({
       onDragLeave={handleColumnDragLeave}
       onDrop={handleColumnDrop}
       className={`flex flex-col flex-shrink-0 rounded-lg transition-all duration-200 ${
-        compact ? 'w-[17rem] max-[380px]:w-[15.5rem]' : 'w-80 max-[420px]:w-[17rem]'
+        compact ? 'w-[15rem] max-[380px]:w-[13.5rem]' : 'w-[17rem] max-[420px]:w-[15rem]'
       } ${isOverColumn ? 'ring-2 ring-blue-500 ring-dashed' : ''}`}
     >
       {/* Sticky header: thanh màu + tên cột — luôn dính trên cùng khi kéo Kanban */}
@@ -5057,9 +5063,9 @@ function KanbanStageCard({
           flex-1 để khung cột vẫn trải dài tới đáy ngay cả khi không còn thẻ. */}
       <div
         ref={containerRef}
-        className={`flex-1 bg-gray-50 border border-gray-200 border-t-0 rounded-b-lg transition-all ${
+        className={`flex-1 border border-white/30 border-t-0 rounded-b-lg transition-all ${
           compact ? 'p-2 space-y-2' : 'p-3 space-y-3'
-        } ${isOverColumn ? 'bg-blue-50' : ''}`}
+        } ${isOverColumn ? 'bg-blue-50/60' : ''}`}
         style={{ minHeight: compact ? '160px' : '180px' }}
       >
         {items.length === 0 ? (
@@ -5243,7 +5249,7 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
       className={`relative overflow-hidden rounded-lg border transition-all duration-200 group/card hover:-translate-y-0.5 hover:shadow-md ${cardSurface} ${
         dealDragLocked ? 'cursor-default' : 'cursor-pointer'
       } ${selectedForMerge ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
-      style={{ borderLeft: `3px solid ${stageColor}` }}
+      style={{ borderTop: `3px solid ${stageColor}` }}
     >
       {typeof item.kpi_ledger_month_net === 'number' && !stage?.is_lost && (
         <KpiKanbanLedgerBadge

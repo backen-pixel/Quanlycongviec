@@ -11,7 +11,7 @@
   --color-sidebar: #1b2a4a;
   --color-sidebar-hover: #243556;
   --color-sidebar-active: #2d4a7a;
-  --color-sidebar-text: #94a3c6;
+  --color-sidebar-text: #ffffff;
   --color-sidebar-text-active: #ffffff;
   --color-topbar: #ffffff;
   --color-page-bg: #f0f2f5;
@@ -33,6 +33,58 @@ h1, h2, h3, h4, h5, h6 {
 .text-gray-700 { color: var(--color-text-body, #374151) !important; }
 .text-gray-500 { color: var(--color-text-muted, #6b7280) !important; }
 .text-gray-400 { color: var(--color-text-muted, #9ca3af) !important; }
+
+/* ── Auto-transparent: wrapper ngoài cùng của tất cả các trang dashboard ─────
+   Mọi <div class="min-h-screen bg-gray-50"> (hoặc bg-slate/gradient gray) bên
+   trong <main> sẽ trở nên trong suốt → hình nền (--color-page-bg hoặc bg-image)
+   xuyên thấu qua toàn bộ vùng dashboard. Card .bg-white bên trong vẫn đặc,
+   giữ nội dung dễ đọc. Không ảnh hưởng modal / popup (render qua portal). */
+main .min-h-screen.bg-gray-50,
+main .min-h-screen.bg-gray-100,
+main .min-h-screen.bg-slate-50,
+main .min-h-screen.bg-slate-100,
+main .min-h-full.bg-gray-50,
+main .min-h-full.bg-gray-100,
+main .min-h-full.bg-slate-50,
+main .min-h-full.bg-slate-100 {
+  background-color: transparent !important;
+}
+/* Gradient gray (vd. `bg-gradient-to-br from-gray-50 to-gray-100`) cũng tự xoá nền */
+main .min-h-screen.bg-gradient-to-br.from-gray-50,
+main .min-h-screen.bg-gradient-to-br.from-gray-100,
+main .min-h-screen.bg-gradient-to-br.from-slate-50,
+main .min-h-screen.bg-gradient-to-br.from-slate-100,
+main .min-h-full.bg-gradient-to-br.from-gray-50,
+main .min-h-full.bg-gradient-to-br.from-gray-100 {
+  background-image: none !important;
+  background-color: transparent !important;
+}
+
+/* ── Glass / frosted nhẹ cho card, button outline, select, input trong dashboard ──
+   Áp dụng trong vùng <main>; portal (modal, tooltip…) ngoài main không bị ảnh hưởng.
+   Card .bg-white → bán trong 70% + blur 10px → nhìn nhẹ nhàng, hiện đại trên bg-image.
+   Button có nền màu rõ (bg-blue-600, bg-emerald-500…) không match nên giữ nguyên đặc. */
+main .bg-white {
+  background-color: rgba(255, 255, 255, 0.72) !important;
+  backdrop-filter: blur(10px) saturate(160%);
+  -webkit-backdrop-filter: blur(10px) saturate(160%);
+}
+
+/* Input / select / textarea trong dashboard — glass nhẹ hơn để giữ chữ sắc nét */
+main input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]):not([type="range"]):not([type="submit"]):not([type="button"]),
+main select,
+main textarea {
+  background-color: rgba(255, 255, 255, 0.78) !important;
+  backdrop-filter: blur(8px) saturate(150%);
+  -webkit-backdrop-filter: blur(8px) saturate(150%);
+}
+
+/* Khi focus → tăng độ đặc để chữ rõ hơn khi đang gõ */
+main input:focus,
+main select:focus,
+main textarea:focus {
+  background-color: rgba(255, 255, 255, 0.95) !important;
+}
 
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
