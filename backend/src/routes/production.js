@@ -739,19 +739,28 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
     const sortedKanban = [...kanbanStages].sort((a, b) => a.order_index - b.order_index);
 
     const orFilter = buildScopeOrFilter(stageIds, wonIds);
-    const runQuery = (fallback = false) => supabase
-      .from('projects')
-      .select(`
-        id, code, name, estimated_value, status, deadline, created_at, company_id,
-        current_stage_id,
-        current_stage:workflow_stages(id, slug, name, color, icon),
-        customer:customers(id, full_name),
-        company:companies!projects_company_id_fkey(id, name, short_name),
-        logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
-        tasks(id, status)
-        ${fallback ? '' : 'workshop_type:workshop_project_types(id, name, applies_to),'}
-      `)
-      .or(orFilter);
+    /**
+     * Modes:
+     *  - 'full': join workshop_type + scalar workshop_type_id
+     *  - 'no_join': chỉ scalar workshop_type_id (FK chưa nạp được)
+     *  - 'no_col':  bỏ cả workshop_type_id (DB chưa migrate cột — migration 251)
+     */
+    const runQuery = (mode = 'full') => {
+      const wtScalar = mode === 'no_col' ? '' : ', workshop_type_id';
+      const wtJoin = mode === 'full' ? ', workshop_type:workshop_project_types(id, name, applies_to)' : '';
+      return supabase
+        .from('projects')
+        .select(`
+          id, code, name, estimated_value, status, deadline, created_at, company_id,
+          current_stage_id${wtScalar},
+          current_stage:workflow_stages(id, slug, name, color, icon),
+          customer:customers(id, full_name),
+          company:companies!projects_company_id_fkey(id, name, short_name),
+          logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
+          tasks(id, status)${wtJoin}
+        `)
+        .or(orFilter);
+    };
 
     // workshop_type_id='none' → lọc deal CHƯA phân loại (workshop_type_id IS NULL)
     const wantsUnclassified = String(workshop_type_id || '').toLowerCase() === 'none';
@@ -761,23 +770,33 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
       return q;
     };
 
-    let query = runQuery(false);
+    let query = runQuery('full');
     if (division_id) query = query.eq('division_id', division_id);
     if (company_id) query = query.eq('company_id', company_id);
     query = applyWorkshopTypeFilter(query);
 
     let projects = [];
     let { data, error } = await query.order('created_at', { ascending: false });
-    const needsFallback = error && (
+
+    // Bước 1: nếu lỗi do FK embed chưa nạp → bỏ join, vẫn giữ scalar workshop_type_id
+    const needsNoJoin = error && (
       error.message?.includes('workshop_project_types') ||
-      error.message?.includes('relationship')
+      (error.message?.includes('relationship') && !error.message?.includes('workflow_stages'))
     );
-    if (needsFallback) {
-      let q2 = runQuery(true);
+    if (needsNoJoin) {
+      let q2 = runQuery('no_join');
       if (division_id) q2 = q2.eq('division_id', division_id);
       if (company_id) q2 = q2.eq('company_id', company_id);
       q2 = applyWorkshopTypeFilter(q2);
       ({ data, error } = await q2.order('created_at', { ascending: false }));
+    }
+    // Bước 2: nếu vẫn lỗi do cột workshop_type_id chưa tồn tại trên bảng projects → fallback hoàn toàn
+    if (error && error.message?.includes('workshop_type_id')) {
+      let q3 = runQuery('no_col');
+      if (division_id) q3 = q3.eq('division_id', division_id);
+      if (company_id) q3 = q3.eq('company_id', company_id);
+      // Không thể filter theo workshop_type_id khi DB chưa có cột — bỏ filter này
+      ({ data, error } = await q3.order('created_at', { ascending: false }));
     }
     if (error) throw error;
     projects = data || [];
@@ -847,7 +866,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
       .select(`
         id, code, name, estimated_value, priority, deadline, created_at, status, notes, company_id,
         production_deadline, production_note, vc_kanban_column_id,
-        current_stage_id,
+        current_stage_id, workshop_type_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
         vc_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug),
         customer:customers(id, full_name, phone),
