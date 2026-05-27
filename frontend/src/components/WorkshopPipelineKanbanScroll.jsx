@@ -100,9 +100,11 @@ export default function WorkshopPipelineKanbanScroll({
     const measure = () => {
       const el = kanbanHScrollRef.current;
       if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const avail = window.innerHeight - rect.top - 12;
-      setScrollMaxH(`${Math.max(360, avail)}px`);
+      // Chiều cao Kanban cố định ~720px (đủ ~3-4 card), giới hạn trần theo viewport
+      // để không tràn trên màn hình nhỏ.
+      const TARGET = 720;
+      const maxByViewport = Math.max(360, window.innerHeight - 120);
+      setScrollMaxH(`${Math.min(TARGET, maxByViewport)}px`);
     };
     const raf = requestAnimationFrame(measure);
     const t = setTimeout(measure, 120);
@@ -240,6 +242,22 @@ export default function WorkshopPipelineKanbanScroll({
         style={enableViewportScroll ? { maxHeight: scrollMaxH } : undefined}
       >
         {children}
+      </div>
+      {/* Chú thích màu sắc trạng thái card — giúp người dùng phân biệt nhanh */}
+      <div className="flex flex-wrap items-center gap-3 px-3 py-2 mt-1 border-t border-gray-100 bg-white text-[11px] text-gray-600 rounded-b-lg">
+        <span className="font-semibold text-gray-500 mr-1">Chú thích:</span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block h-3 w-5 rounded border border-gray-300 bg-white" aria-hidden />
+          Bình thường
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block h-3 w-5 rounded border border-orange-300 bg-orange-100" aria-hidden />
+          Sắp tới hạn
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block h-3 w-5 rounded border border-red-300 bg-red-100" aria-hidden />
+          Quá hạn
+        </span>
       </div>
     </div>
   );

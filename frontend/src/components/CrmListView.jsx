@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { markCrmPipelineCardFocus, persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
@@ -26,6 +26,28 @@ function formatKpiLedgerCell(v) {
   const n = Number(v);
   const s = n.toLocaleString('vi-VN', { maximumFractionDigits: 2 });
   return n > 0 ? `+${s}` : s;
+}
+
+function getInitials(name) {
+  if (!name) return '?';
+  const parts = String(name).trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  return parts.map((p) => p[0]).join('').toUpperCase().slice(0, 2);
+}
+
+const AVATAR_PALETTE = [
+  '#0891b2', '#0d9488', '#059669', '#65a30d', '#ca8a04',
+  '#d97706', '#ea580c', '#dc2626', '#db2777', '#c026d3',
+  '#9333ea', '#7c3aed', '#4f46e5', '#2563eb', '#0284c7',
+];
+
+function colorFromName(name) {
+  if (!name) return '#94a3b8';
+  let h = 0;
+  for (let i = 0; i < name.length; i += 1) {
+    h = (h * 31 + name.charCodeAt(i)) & 0xfffffff;
+  }
+  return AVATAR_PALETTE[Math.abs(h) % AVATAR_PALETTE.length];
 }
 
 function closeResultLabel(item, stage) {
@@ -250,6 +272,45 @@ export function ListView({
   const [historyByLead, setHistoryByLead] = useState({});
   const [parentCodes, setParentCodes] = useState({});
   const [historyLoading, setHistoryLoading] = useState(false);
+
+  // Lazy render: hiện 150 dòng đầu, tự tải thêm theo batch 300 khi cuộn gần đáy.
+  // First paint nhanh, batch lớn để giảm số lần re-render khi scroll dài.
+  const INITIAL_PAGE = 150;
+  const PAGE_STEP = 300;
+  const [visibleCount, setVisibleCount] = useState(INITIAL_PAGE);
+  const scrollContainerRef = useRef(null);
+  const loadMoreSentinelRef = useRef(null);
+  const loadingMoreRef = useRef(false);
+
+  useEffect(() => {
+    setVisibleCount(INITIAL_PAGE);
+    loadingMoreRef.current = false;
+    if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+  }, [pipeline]);
+
+  // IntersectionObserver setup MỘT LẦN trên mount (không re-mount theo visibleCount).
+  // Dùng ref `loadingMoreRef` để khoá lại tránh trigger setState liên tiếp khi sentinel còn trong vùng quan sát.
+  useEffect(() => {
+    const sentinel = loadMoreSentinelRef.current;
+    const root = scrollContainerRef.current;
+    if (!sentinel || !root) return undefined;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (loadingMoreRef.current) return;
+        if (entries.some((e) => e.isIntersecting)) {
+          loadingMoreRef.current = true;
+          setVisibleCount((c) => c + PAGE_STEP);
+          // Mở khoá trong frame kế tiếp, sau khi DOM đã extend → sentinel tự ra khỏi vùng quan sát.
+          requestAnimationFrame(() => {
+            loadingMoreRef.current = false;
+          });
+        }
+      },
+      { root, rootMargin: '600px 0px', threshold: 0 },
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [allItems.length]);
 
   useEffect(() => {
     const keys = resolveVisibleColumnKeys(allColumns, pipelineType, pipelineId, companyId);
@@ -544,16 +605,20 @@ export function ListView({
         </div>
       </div>
 
-      <div className="bg-white rounded-xl border overflow-x-auto">
-        <table className="w-full text-sm min-w-max">
+      <div className="bg-white rounded-xl border overflow-hidden">
+        <div
+          ref={scrollContainerRef}
+          className="overflow-auto max-h-[calc(100vh-18rem)] min-h-[24rem]"
+        >
+        <table className="w-full text-sm min-w-max border-separate border-spacing-0">
           <thead>
-            <tr className="bg-gradient-to-r from-slate-700 to-slate-800 text-left text-[10px] text-white uppercase tracking-wide">
+            <tr className="text-left text-[10px] text-gray-600 uppercase tracking-wide">
               {visibleColumns.map((col) => (
                 <th
                   key={col.key}
-                  className={`px-3 py-2.5 font-semibold whitespace-nowrap ${
+                  className={`px-3 py-2.5 font-semibold whitespace-nowrap bg-gray-100 border-b border-gray-300 sticky top-0 ${
                     col.align === 'right' ? 'text-right' : 'text-left'
-                  } ${col.sticky ? 'sticky left-0 z-10 bg-slate-800' : ''}`}
+                  } ${col.sticky ? 'left-0 z-30' : 'z-20'}`}
                   title={col.label}
                 >
                   {col.label}
@@ -561,8 +626,8 @@ export function ListView({
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
-            {allItems.map((item) => {
+          <tbody className="[&_tr:not(:last-child)>td]:border-b [&_tr>td]:border-gray-200">
+            {allItems.slice(0, visibleCount).map((item) => {
               const daysTotal = calculateDays(item.created_at);
               const hist = historyByLead[String(item.id)] || [];
               const timing = buildStageTimingByStageId(item, hist, allowedStageIds);
@@ -577,47 +642,101 @@ export function ListView({
                     markCrmPipelineCardFocus(item.id);
                     navigate(`/crm/leads/${item.id}`);
                   }}
-                  className="hover:bg-blue-50/50 cursor-pointer transition-colors"
+                  className="group/row hover:bg-blue-100 cursor-pointer transition-colors"
                 >
                   {visibleColumns.map((col) => {
                     const raw = getCellValue(item, col);
                     const isStage = col.key === 'stage';
                     const isDaysTotal = col.key === 'days_total';
                     const isDaysStage = col.key === 'days_in_stage';
+                    const isCode = col.key === 'code';
+                    const isTitle = col.key === 'title';
+                    const isPerson = col.key === 'assignee' || col.key === 'lead_owner';
+                    const stackedCell = isCode || isTitle || isPerson;
+                    const phone = item.phone || item.customer?.phone || '';
                     return (
                       <td
                         key={col.key}
-                        className={`px-3 py-2 text-xs whitespace-nowrap max-w-[220px] truncate ${
+                        className={`px-3 py-2 text-xs ${
+                          stackedCell ? 'whitespace-normal align-top max-w-[260px]' : 'whitespace-nowrap max-w-[220px] truncate'
+                        } ${
                           col.align === 'right' ? 'text-right tabular-nums' : 'text-left'
-                        } ${col.sticky ? 'sticky left-0 z-[1] bg-white font-medium text-blue-600' : ''} ${
-                          col.key === 'code' ? 'font-medium text-blue-600' : 'text-gray-700'
+                        } ${col.sticky ? 'sticky left-0 z-[1] bg-white group-hover/row:bg-blue-100 font-medium text-blue-600 transition-colors' : ''} ${
+                          isCode && !col.sticky ? 'font-medium text-blue-600' : ''
+                        } ${
+                          !isCode && !stackedCell ? 'text-gray-700' : ''
                         }`}
-                        title={typeof raw === 'string' ? raw : undefined}
+                        title={typeof raw === 'string' && !stackedCell ? raw : undefined}
                       >
-                        {col.key === 'code' ? (
-                          <span className="inline-flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              title={item.is_pinned ? 'Bỏ ghim' : 'Ghim thẻ lên đầu'}
-                              onClick={(ev) => handleTogglePin(item, ev)}
-                              className={`inline-flex h-4 w-4 items-center justify-center rounded ${
-                                item.is_pinned ? 'text-amber-500' : 'text-gray-300 hover:text-amber-500'
-                              }`}
-                            >
-                              <Pin className={`h-3.5 w-3.5 ${item.is_pinned ? 'rotate-45 fill-amber-500' : ''}`} strokeWidth={2.25} />
-                            </button>
-                            <button
-                              type="button"
-                              title={item.is_interacted ? 'Bỏ đã tương tác' : 'Đánh dấu đã tương tác'}
-                              onClick={(ev) => handleToggleInteracted(item, ev)}
-                              className={`inline-flex h-4 w-4 items-center justify-center rounded ${
-                                item.is_interacted ? 'text-blue-500' : 'text-gray-300 hover:text-blue-500'
-                              }`}
-                            >
-                              <CheckCircle2 className={`h-3.5 w-3.5 ${item.is_interacted ? 'fill-blue-500 text-white' : ''}`} strokeWidth={2.25} />
-                            </button>
-                            <span>{raw}</span>
-                          </span>
+                        {isCode ? (
+                          <div className="flex items-start gap-1.5 min-w-0">
+                            <div className="flex shrink-0 items-center gap-0.5 pt-0.5">
+                              <button
+                                type="button"
+                                title={item.is_pinned ? 'Bỏ ghim' : 'Ghim thẻ lên đầu'}
+                                onClick={(ev) => handleTogglePin(item, ev)}
+                                className={`inline-flex h-4 w-4 items-center justify-center rounded ${
+                                  item.is_pinned ? 'text-amber-500' : 'text-gray-300 hover:text-amber-500'
+                                }`}
+                              >
+                                <Pin className={`h-3.5 w-3.5 ${item.is_pinned ? 'rotate-45 fill-amber-500' : ''}`} strokeWidth={2.25} />
+                              </button>
+                              <button
+                                type="button"
+                                title={item.is_interacted ? 'Bỏ đã tương tác' : 'Đánh dấu đã tương tác'}
+                                onClick={(ev) => handleToggleInteracted(item, ev)}
+                                className={`inline-flex h-4 w-4 items-center justify-center rounded ${
+                                  item.is_interacted ? 'text-blue-500' : 'text-gray-300 hover:text-blue-500'
+                                }`}
+                              >
+                                <CheckCircle2 className={`h-3.5 w-3.5 ${item.is_interacted ? 'fill-blue-500 text-white' : ''}`} strokeWidth={2.25} />
+                              </button>
+                            </div>
+                            <div className="flex flex-col min-w-0 leading-tight">
+                              <span className="font-medium text-blue-600 truncate" title={item.code || ''}>{item.code || '—'}</span>
+                              {item.created_at && (
+                                <span className="text-[12px] font-medium text-gray-500 mt-1 tabular-nums" title={`Ngày tạo: ${new Date(item.created_at).toLocaleString('vi-VN')}`}>
+                                  📅 {formatDate(item.created_at)}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ) : isTitle ? (
+                          <div className="flex flex-col min-w-0 leading-tight">
+                            <span className="font-medium text-gray-800 truncate" title={item.title || ''}>{item.title || '—'}</span>
+                            {phone ? (
+                              <a
+                                href={`tel:${phone}`}
+                                onClick={(ev) => ev.stopPropagation()}
+                                className="text-[12px] font-mono font-bold text-emerald-600 hover:text-emerald-700 mt-1 tabular-nums truncate inline-block"
+                                title={`Gọi ${phone}`}
+                              >
+                                📞 {phone}
+                              </a>
+                            ) : (
+                              <span className="text-[12px] text-gray-300 mt-1">📞 —</span>
+                            )}
+                          </div>
+                        ) : isPerson ? (
+                          (() => {
+                            const u = col.key === 'assignee'
+                              ? (item.assignee || item.lead_owner)
+                              : item.lead_owner;
+                            const name = u?.full_name || '';
+                            if (!name) return <span className="text-gray-400">—</span>;
+                            return (
+                              <span className="inline-flex items-center gap-1.5 min-w-0 max-w-full" title={name}>
+                                <span
+                                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white shadow-sm"
+                                  style={{ backgroundColor: colorFromName(name) }}
+                                  aria-hidden
+                                >
+                                  {getInitials(name)}
+                                </span>
+                                <span className="truncate text-gray-700">{name}</span>
+                              </span>
+                            );
+                          })()
                         ) : isStage && item._stage ? (
                           <span
                             className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium"
@@ -655,8 +774,20 @@ export function ListView({
             })}
           </tbody>
         </table>
+        {visibleCount < allItems.length && (
+          <div
+            ref={loadMoreSentinelRef}
+            className="flex items-center justify-center py-3 text-[11px] text-gray-400"
+          >
+            <span className="inline-block h-3 w-3 mr-2 border-2 border-gray-300 border-t-blue-500 rounded-full animate-spin" aria-hidden />
+            Đang tải thêm… ({visibleCount.toLocaleString()}/{allItems.length.toLocaleString()})
+          </div>
+        )}
+        </div>
         <div className="px-4 py-2 bg-gray-50 text-xs text-gray-500 flex flex-wrap justify-between gap-x-4 gap-y-1 border-t">
-          <span>Tổng: {allItems.length} {pipelineType === 'deal' ? 'deal' : 'lead'}</span>
+          <span>
+            Hiển thị: {Math.min(visibleCount, allItems.length).toLocaleString()} / {allItems.length.toLocaleString()} {pipelineType === 'deal' ? 'deal' : 'lead'}
+          </span>
           <span>GT: {formatVND(allItems.reduce((s, i) => s + (i.estimated_value || 0), 0))}</span>
         </div>
       </div>
