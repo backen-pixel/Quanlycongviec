@@ -5,7 +5,9 @@
 
 const {
   isHandoverMissingError,
+  isPipelineWorkshopTypeMissingError,
   markHandoverColumnMissing,
+  markPipelineWorkshopTypeColumnMissing,
   stripHandoverFields,
 } = require('./productionPipelineSchema');
 
@@ -21,26 +23,61 @@ const SAMPLES = [
   { slug: 'sx-sample-handover-vc', name: 'Bàn giao Vận chuyển', color: '#DC2626', icon: '🚚', wsOrder: 57, crm_sync_type: null, handover: true },
 ];
 
-async function ensureSampleProductionPipelineStages(supabase, companyId = null) {
+async function ensureSampleProductionPipelineStages(supabase, companyId = null, opts = {}) {
   const cid = companyId != null && String(companyId).trim() ? String(companyId).trim() : null;
+  const wkt = opts.workshopTypeId != null && String(opts.workshopTypeId).trim()
+    ? String(opts.workshopTypeId).trim()
+    : null;
 
-  let hcQ = supabase
-    .from('production_pipeline_stages')
-    .select('id', { count: 'exact', head: true })
-    .eq('is_handover_to_logistics', true);
-  if (cid) hcQ = hcQ.eq('company_id', cid);
-  else hcQ = hcQ.is('company_id', null);
-  const handoverCountRes = await hcQ;
+  /** Áp scope (company_id, workshop_type_id) cho 1 query select. */
+  const applyScope = (q) => {
+    let qq = q;
+    if (cid) qq = qq.eq('company_id', cid);
+    else qq = qq.is('company_id', null);
+    if (wkt) qq = qq.eq('workshop_type_id', wkt);
+    else qq = qq.is('workshop_type_id', null);
+    return qq;
+  };
+
+  let hcQ = applyScope(
+    supabase
+      .from('production_pipeline_stages')
+      .select('id', { count: 'exact', head: true })
+      .eq('is_handover_to_logistics', true),
+  );
+  let handoverCountRes = await hcQ;
+  if (handoverCountRes.error && isPipelineWorkshopTypeMissingError(handoverCountRes.error)) {
+    markPipelineWorkshopTypeColumnMissing();
+    let hcQ2 = supabase
+      .from('production_pipeline_stages')
+      .select('id', { count: 'exact', head: true })
+      .eq('is_handover_to_logistics', true);
+    if (cid) hcQ2 = hcQ2.eq('company_id', cid);
+    else hcQ2 = hcQ2.is('company_id', null);
+    handoverCountRes = await hcQ2;
+  }
   const handoverCols = handoverCountRes.error ? 0 : (handoverCountRes.count ?? 0);
 
-  let maxQ = supabase
-    .from('production_pipeline_stages')
-    .select('order_index')
-    .order('order_index', { ascending: false })
-    .limit(1);
-  if (cid) maxQ = maxQ.eq('company_id', cid);
-  else maxQ = maxQ.is('company_id', null);
-  const { data: maxRow } = await maxQ;
+  let maxQ = applyScope(
+    supabase
+      .from('production_pipeline_stages')
+      .select('order_index')
+      .order('order_index', { ascending: false })
+      .limit(1),
+  );
+  let maxRowRes = await maxQ;
+  if (maxRowRes.error && isPipelineWorkshopTypeMissingError(maxRowRes.error)) {
+    markPipelineWorkshopTypeColumnMissing();
+    let maxQ2 = supabase
+      .from('production_pipeline_stages')
+      .select('order_index')
+      .order('order_index', { ascending: false })
+      .limit(1);
+    if (cid) maxQ2 = maxQ2.eq('company_id', cid);
+    else maxQ2 = maxQ2.is('company_id', null);
+    maxRowRes = await maxQ2;
+  }
+  const maxRow = maxRowRes.data;
   let nextOrder = (maxRow?.[0]?.order_index != null ? Number(maxRow[0].order_index) : 0) + 1;
 
   const inserted = [];
@@ -55,40 +92,39 @@ async function ensureSampleProductionPipelineStages(supabase, companyId = null) 
     return true;
   });
 
+  // Tất cả cột mẫu đều gắn vào 1 workflow_stage 'production' (giống logic
+  // form: pipeline xưởng = giai đoạn workflow «Sản xuất» chung).
+  let { data: prodWs, error: prodWsErr } = await supabase
+    .from('workflow_stages')
+    .select('id')
+    .eq('slug', 'production')
+    .maybeSingle();
+  if (prodWsErr) throw new Error(`workflow_stages(production): ${prodWsErr.message}`);
+  const productionWorkflowStageId = prodWs?.id || null;
+
   for (const s of rowsToCreate) {
-    let { data: ws, error: wsErr } = await supabase
-      .from('workflow_stages')
-      .select('id')
-      .eq('slug', s.slug)
-      .maybeSingle();
-    if (wsErr) throw new Error(`workflow_stages: ${wsErr.message}`);
+    const wid = productionWorkflowStageId;
 
-    if (!ws) {
-      const insW = await supabase
-        .from('workflow_stages')
-        .insert({
-          name: s.name,
-          slug: s.slug,
-          color: s.color,
-          icon: s.icon,
-          order_index: s.wsOrder,
-          is_active: true,
-        })
-        .select('id')
-        .single();
-      if (insW.error) throw new Error(`Tạo workflow_stages [${s.slug}]: ${insW.error.message}`);
-      ws = insW.data;
+    // Dedupe theo (company_id, workshop_type_id, name) — vì giờ nhiều cột chia sẻ cùng workflow_stage_id
+    let exQ = applyScope(
+      supabase
+        .from('production_pipeline_stages')
+        .select('id, name')
+        .eq('name', s.name),
+    );
+    let exRes = await exQ.maybeSingle();
+    if (exRes.error && isPipelineWorkshopTypeMissingError(exRes.error)) {
+      markPipelineWorkshopTypeColumnMissing();
+      let exQ2 = supabase
+        .from('production_pipeline_stages')
+        .select('id, name')
+        .eq('name', s.name);
+      if (cid) exQ2 = exQ2.eq('company_id', cid);
+      else exQ2 = exQ2.is('company_id', null);
+      exRes = await exQ2.maybeSingle();
     }
-
-    const wid = ws.id;
-    let exQ = supabase
-      .from('production_pipeline_stages')
-      .select('id, name')
-      .eq('workflow_stage_id', wid);
-    if (cid) exQ = exQ.eq('company_id', cid);
-    else exQ = exQ.is('company_id', null);
-    const { data: existingPipe, error: exErr } = await exQ.maybeSingle();
-    if (exErr) throw new Error(`production_pipeline_stages: ${exErr.message}`);
+    const existingPipe = exRes.data;
+    if (exRes.error) throw new Error(`production_pipeline_stages: ${exRes.error.message}`);
 
     if (existingPipe) {
       alreadyHad.push(s.name);
@@ -106,6 +142,7 @@ async function ensureSampleProductionPipelineStages(supabase, companyId = null) 
       is_handover_to_logistics: !!s.handover,
       crm_sync_type: s.crm_sync_type || null,
       company_id: cid,
+      workshop_type_id: wkt,
     };
 
     let ins = stripHandoverFields({ ...payload });
@@ -117,6 +154,16 @@ async function ensureSampleProductionPipelineStages(supabase, companyId = null) 
 
     if (insP.error && isHandoverMissingError(insP.error)) {
       markHandoverColumnMissing();
+      ins = stripHandoverFields({ ...payload });
+      insP = await supabase
+        .from('production_pipeline_stages')
+        .insert(ins)
+        .select('id, name, order_index')
+        .single();
+    }
+
+    if (insP.error && isPipelineWorkshopTypeMissingError(insP.error)) {
+      markPipelineWorkshopTypeColumnMissing();
       ins = stripHandoverFields({ ...payload });
       insP = await supabase
         .from('production_pipeline_stages')

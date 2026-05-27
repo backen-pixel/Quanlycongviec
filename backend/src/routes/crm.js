@@ -6594,7 +6594,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 r.patch('/leads/:id/stage', async (req, res) => {
   try {
-    const { stage_id, lost_reason, production_company_id } = req.body;
+    const { stage_id, lost_reason, production_company_id, workshop_type_id: bodyWorkshopTypeId } = req.body;
     const { data: lead } = await supabase
       .from('crm_leads')
       .select('type, project_id, company_id, assigned_to, lead_owner_id, lead_type_id, use_order_tasks, parent_lead_id, stage_id, sx_handover_at')
@@ -6758,6 +6758,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
         dealId: req.params.id,
         userId: req.user.userId,
         productionCompanyId: effectiveProductionCompanyId,
+        workshopTypeId: bodyWorkshopTypeId || null,
       });
 
       if (auto.ok) {
@@ -11856,6 +11857,7 @@ r.post('/deals/:id/auto-create-project', async (req, res) => {
       dealId: req.params.id,
       userId: req.user.userId,
       productionCompanyId: resolvedPc,
+      workshopTypeId: req.body?.workshop_type_id || null,
     });
     if (!result.ok) {
       if (result.existing_project_id) {

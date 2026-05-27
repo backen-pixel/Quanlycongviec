@@ -891,7 +891,7 @@ r.get('/:id', async (req, res) => {
     // Comments (trao đổi) — may fail if migration 03 not run
     let comments = [], activities = [], transitions = [];
     try {
-      const r1 = await supabase.from('project_comments').select('*, user:users(id,full_name,avatar)').eq('project_id', req.params.id).order('created_at', { ascending: false });
+      const r1 = await supabase.from('project_comments').select(PROJECT_COMMENT_SELECT_WITH_USER).eq('project_id', req.params.id).order('created_at', { ascending: false });
       comments = r1.data || [];
     } catch { }
 
@@ -2300,6 +2300,10 @@ r.post('/:id/check-advance', async (req, res) => {
 });
 
 // ─── PROJECT COMMENTS ──
+// Sau migration 248 (project_comment_reactions), PostgREST cần chỉ rõ FK tác giả bình luận.
+const PROJECT_COMMENT_SELECT_WITH_USER =
+  '*, user:users!project_comments_user_id_fkey(id,full_name,avatar)';
+
 r.get('/comments/index', async (req, res) => {
   try {
     const raw = String(req.query.project_ids || '').trim();
@@ -2330,19 +2334,101 @@ r.get('/comments/index', async (req, res) => {
   }
 });
 
+// ─── PROJECT COMMENT REACTIONS — hỗ trợ "thả cảm xúc" giống CRM ───
+const PROJECT_COMMENT_ALLOWED_REACTION_EMOJI = new Set(['👍', '❤️', '😂', '😮', '😢', '🙏']);
+
+function projectCommentReactionsTableMissing(error) {
+  return String(error?.message || '').toLowerCase().includes('project_comment_reactions');
+}
+
+function aggregateProjectCommentReactions(rows, currentUserId) {
+  const counts = new Map();
+  let mine = null;
+  for (const r of rows || []) {
+    const em = r.emoji;
+    if (!PROJECT_COMMENT_ALLOWED_REACTION_EMOJI.has(em)) continue;
+    counts.set(em, (counts.get(em) || 0) + 1);
+    if (String(r.user_id) === String(currentUserId)) mine = em;
+  }
+  const summary = [...counts.entries()]
+    .map(([emoji, count]) => ({ emoji, count }))
+    .sort((a, b) => b.count - a.count || String(a.emoji).localeCompare(String(b.emoji)));
+  return { summary, mine };
+}
+
+async function fetchProjectCommentReactionsAggregate(commentIds, userId) {
+  if (!commentIds.length) return new Map();
+  const { data: rx, error } = await supabase
+    .from('project_comment_reactions')
+    .select('comment_id, user_id, emoji')
+    .in('comment_id', commentIds);
+  if (error) {
+    if (projectCommentReactionsTableMissing(error)) return null;
+    throw error;
+  }
+  const byComment = new Map();
+  for (const row of rx || []) {
+    const k = row.comment_id;
+    if (!byComment.has(k)) byComment.set(k, []);
+    byComment.get(k).push(row);
+  }
+  const out = new Map();
+  for (const cid of commentIds) {
+    out.set(cid, aggregateProjectCommentReactions(byComment.get(cid) || [], userId));
+  }
+  return out;
+}
+
 r.get('/:id/comments', async (req, res) => {
   try {
-    const { data } = await supabase.from('project_comments').select('*, user:users(id,full_name,avatar)').eq('project_id', req.params.id).order('created_at', { ascending: false });
-    res.json({ comments: data });
-  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+    const { data, error } = await supabase
+      .from('project_comments')
+      .select(PROJECT_COMMENT_SELECT_WITH_USER)
+      .eq('project_id', req.params.id)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false });
+    if (error && !String(error.message || '').includes('deleted_at')) throw error;
+    let rows = data;
+    if (error && String(error.message || '').includes('deleted_at')) {
+      const fb = await supabase
+        .from('project_comments')
+        .select(PROJECT_COMMENT_SELECT_WITH_USER)
+        .eq('project_id', req.params.id)
+        .order('created_at', { ascending: false });
+      rows = fb.data || [];
+    }
+    rows = rows || [];
+
+    // Đính kèm reactions (nếu bảng đã tạo)
+    const ids = rows.map((c) => c.id);
+    let reactions = null;
+    try { reactions = await fetchProjectCommentReactionsAggregate(ids, req.user.userId); }
+    catch { reactions = null; }
+    const out = rows.map((c) => ({
+      ...c,
+      reactions: reactions?.get(c.id) || { summary: [], mine: null },
+    }));
+    res.json({ comments: out });
+  } catch (e) { console.error('GET /projects/:id/comments:', e); res.status(500).json({ error: e.message || 'Lỗi' }); }
 });
 
 r.post('/:id/comments', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('project_comments').insert({
+    const insertRow = {
       project_id: req.params.id, user_id: req.user.userId, content: req.body.content,
       attachments: req.body.attachments || [],
-    }).select('*, user:users(id,full_name,avatar)').single();
+    };
+    if (req.body?.parent_id != null && String(req.body.parent_id).trim() !== '') {
+      insertRow.parent_id = req.body.parent_id;
+    }
+    let { data, error } = await supabase.from('project_comments').insert(insertRow)
+      .select(PROJECT_COMMENT_SELECT_WITH_USER).single();
+    if (error && String(error.message || '').toLowerCase().includes('parent_id')) {
+      // parent_id chưa có (chưa chạy migration 248) → fallback bỏ parent_id
+      delete insertRow.parent_id;
+      ({ data, error } = await supabase.from('project_comments').insert(insertRow)
+        .select(PROJECT_COMMENT_SELECT_WITH_USER).single());
+    }
     if (error) throw error;
 
     // Emit socket for realtime chat
@@ -2377,6 +2463,93 @@ r.delete('/:id/comments/:commentId', async (req, res) => {
     if (io) io.emit('project:comment:deleted', { project_id: req.params.id, comment_id: req.params.commentId });
     res.json({ message: 'Đã xóa' });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// PATCH /projects/:id/comments/:commentId — chỉ tác giả mới sửa được
+r.patch('/:id/comments/:commentId', async (req, res) => {
+  try {
+    const content = String(req.body?.content || '').trim();
+    if (!content) return res.status(400).json({ error: 'Nội dung trống' });
+    const patch = { content, updated_at: new Date().toISOString() };
+    let { data, error } = await supabase
+      .from('project_comments')
+      .update(patch)
+      .eq('id', req.params.commentId)
+      .eq('user_id', req.user.userId)
+      .select(PROJECT_COMMENT_SELECT_WITH_USER)
+      .maybeSingle();
+    if (error && String(error.message || '').toLowerCase().includes('updated_at')) {
+      delete patch.updated_at;
+      ({ data, error } = await supabase
+        .from('project_comments')
+        .update(patch)
+        .eq('id', req.params.commentId)
+        .eq('user_id', req.user.userId)
+        .select(PROJECT_COMMENT_SELECT_WITH_USER)
+        .maybeSingle());
+    }
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Không tìm thấy bình luận hoặc không có quyền sửa' });
+
+    // Đính kèm reactions hiện tại để FE có dữ liệu mới nhất
+    let reactions = { summary: [], mine: null };
+    try {
+      const m = await fetchProjectCommentReactionsAggregate([data.id], req.user.userId);
+      if (m) reactions = m.get(data.id) || reactions;
+    } catch { /* ignore */ }
+    const io = req.app.get('io');
+    if (io) io.emit('project:comment:updated', { project_id: req.params.id, comment: data });
+    res.json({ ...data, reactions });
+  } catch (e) {
+    console.error('PATCH /projects/:id/comments/:commentId:', e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
+// PUT /projects/:id/comments/:commentId/reaction — toggle 1 emoji của user hiện tại
+r.put('/:id/comments/:commentId/reaction', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const commentId = req.params.commentId;
+    const emoji = String(req.body?.emoji || '').trim();
+    if (!emoji) return res.status(400).json({ error: 'Thiếu emoji' });
+    if (!PROJECT_COMMENT_ALLOWED_REACTION_EMOJI.has(emoji)) {
+      return res.status(400).json({ error: 'Emoji không hợp lệ' });
+    }
+
+    const { data: existing, error: selErr } = await supabase
+      .from('project_comment_reactions')
+      .select('comment_id, user_id, emoji')
+      .eq('comment_id', commentId)
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (selErr && !projectCommentReactionsTableMissing(selErr)) throw selErr;
+    if (selErr && projectCommentReactionsTableMissing(selErr)) {
+      return res.status(500).json({ error: 'Bảng cảm xúc chưa được tạo. Hãy chạy migration database/248_project_comments_threads_reactions.sql.' });
+    }
+
+    if (existing && existing.emoji === emoji) {
+      // toggle off
+      const { error: delErr } = await supabase
+        .from('project_comment_reactions')
+        .delete()
+        .eq('comment_id', commentId)
+        .eq('user_id', userId);
+      if (delErr) throw delErr;
+    } else {
+      const { error: upErr } = await supabase
+        .from('project_comment_reactions')
+        .upsert({ comment_id: commentId, user_id: userId, emoji }, { onConflict: 'comment_id,user_id' });
+      if (upErr) throw upErr;
+    }
+
+    const m = await fetchProjectCommentReactionsAggregate([commentId], userId);
+    const aggregate = m?.get(commentId) || { summary: [], mine: null };
+    res.json(aggregate);
+  } catch (e) {
+    console.error('PUT /projects/:id/comments/:commentId/reaction:', e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
 });
 
 // ─── PROJECT DOCUMENTS (production-native file storage) ──
@@ -2443,7 +2616,7 @@ r.get('/:id/task-files', async (req, res) => {
 r.get('/:id/activities', async (req, res) => {
   try {
     const { data } = await supabase.from('project_comments')
-      .select('*, user:users(id,full_name,avatar)')
+      .select(PROJECT_COMMENT_SELECT_WITH_USER)
       .eq('project_id', req.params.id)
       .order('created_at', { ascending: false });
     res.json({ activities: data || [] });
@@ -2456,7 +2629,7 @@ r.post('/:id/activities', async (req, res) => {
       project_id: req.params.id, user_id: req.user.userId,
       content: JSON.stringify({ type: req.body.type || 'note', title: req.body.title, description: req.body.description || '', outcome: req.body.outcome || '' }),
       attachments: [],
-    }).select('*, user:users(id,full_name,avatar)').single();
+    }).select(PROJECT_COMMENT_SELECT_WITH_USER).single();
     if (error) throw error;
     res.status(201).json({ activity: data });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
@@ -2566,7 +2739,7 @@ r.get('/latest-comments', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 20;
     const { data: comments, error } = await supabase.from('project_comments')
-      .select('id, content, created_at, project_id, user:users(id, full_name, avatar_url), project:projects(id, code, name)')
+      .select('id, content, created_at, project_id, user:users!project_comments_user_id_fkey(id, full_name, avatar_url), project:projects(id, code, name)')
       .order('created_at', { ascending: false })
       .limit(limit);
     if (error) throw error;

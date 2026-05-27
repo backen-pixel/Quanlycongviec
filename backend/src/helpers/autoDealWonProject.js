@@ -16,19 +16,46 @@ const {
  * Tạo dự án xưởng từ deal thắng (luồng tự động — dùng chung cho POST auto-create và PATCH stage).
  * @returns {Promise<{ ok: true, project_id, project_code, project_name, tasks_created } | { ok: false, error: string, statusCode?: number, existing_project_id?: string }>}
  */
-async function autoCreateProjectFromWonDeal({ req, dealId, userId, productionCompanyId }) {
+async function autoCreateProjectFromWonDeal({ req, dealId, userId, productionCompanyId, workshopTypeId = null }) {
   try {
-    return await runAutoCreateProjectFromWonDeal({ req, dealId, userId, productionCompanyId });
+    return await runAutoCreateProjectFromWonDeal({ req, dealId, userId, productionCompanyId, workshopTypeId });
   } catch (e) {
     console.error('[auto-project] Error:', e.message);
     return { ok: false, error: e.message || 'Lỗi tạo dự án', statusCode: 500 };
   }
 }
 
-async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, productionCompanyId }) {
+async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, productionCompanyId, workshopTypeId = null }) {
   const coCheck = await validateProductionCompanyId(productionCompanyId);
   if (!coCheck.ok) {
     return { ok: false, error: coCheck.error, statusCode: 400 };
+  }
+
+  /**
+   * Validate phân loại (workshop_project_types) — phải thuộc đúng công ty SX & áp dụng cho 'production'.
+   * Nếu workshopTypeId không hợp lệ → bỏ qua (KHÔNG fail toàn bộ flow), chỉ log cảnh báo.
+   */
+  let validatedWorkshopTypeId = null;
+  if (workshopTypeId) {
+    try {
+      const { data: wt } = await supabase
+        .from('workshop_project_types')
+        .select('id, company_id, applies_to, is_active')
+        .eq('id', workshopTypeId)
+        .maybeSingle();
+      if (
+        wt
+        && String(wt.company_id) === String(coCheck.company.id)
+        && (wt.applies_to === 'production' || wt.applies_to === 'both')
+        && wt.is_active !== false
+      ) {
+        validatedWorkshopTypeId = wt.id;
+      } else {
+        console.warn('[auto-project] workshop_type_id không hợp lệ — bỏ qua, project sẽ chưa phân loại');
+      }
+    } catch (e) {
+      console.warn('[auto-project] workshop_type lookup:', e.message);
+    }
   }
 
   const { data: deal } = await supabase.from('crm_leads')
@@ -78,6 +105,7 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
     priority: config?.default_priority || deal.priority || 'medium',
     sales_person_id: deal.assigned_to || userId,
     consult_date: new Date().toISOString(),
+    ...(validatedWorkshopTypeId ? { workshop_type_id: validatedWorkshopTypeId } : {}),
   });
 
   let project;

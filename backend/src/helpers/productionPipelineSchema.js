@@ -12,6 +12,10 @@ let crmTargetStageJoinAvailable = true;
 let productionCompanyIdColumnAvailable = true;
 /** Cột progress_percent (migration 141) — tắt nếu DB chưa migrate */
 let pipelineProgressPercentColumnAvailable = true;
+/** Cột workshop_type_id (migration 251) — tắt nếu DB chưa migrate */
+let pipelineWorkshopTypeColumnAvailable = true;
+/** Embed workshop_type:workshop_project_types — tắt nếu schema cache chưa expose FK */
+let pipelineWorkshopTypeJoinAvailable = true;
 
 function isHandoverMissingError(err) {
   if (!err) return false;
@@ -111,11 +115,54 @@ function markPipelineProgressPercentColumnMissing() {
   pipelineProgressPercentColumnAvailable = false;
 }
 
+function isPipelineWorkshopTypeMissingError(err) {
+  if (!err || !pipelineWorkshopTypeColumnAvailable) return false;
+  const s = String(err.message || err.details || err.hint || '').toLowerCase();
+  return s.includes('workshop_type_id') && (s.includes('does not exist') || s.includes('could not find'));
+}
+
+function markPipelineWorkshopTypeColumnMissing() {
+  if (pipelineWorkshopTypeColumnAvailable) {
+    console.warn(
+      '[production_pipeline_stages] Cột workshop_type_id chưa tồn tại. Chạy database/251_production_pipeline_workshop_type.sql trên Supabase.',
+    );
+  }
+  pipelineWorkshopTypeColumnAvailable = false;
+}
+
+/** Lỗi PostgREST: schema cache chưa expose FK production_pipeline_stages → workshop_project_types */
+function isPipelineWorkshopTypeEmbedRelationshipError(err) {
+  if (!err || !pipelineWorkshopTypeJoinAvailable) return false;
+  const raw = [err.message, err.details, err.hint, err.code, typeof err === 'object' ? JSON.stringify(err) : '']
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  if (!raw) return false;
+  if (raw.includes('could not find') && raw.includes('relationship') && raw.includes('workshop_project_types')) return true;
+  if (raw.includes('schema cache') && raw.includes('production_pipeline') && raw.includes('workshop_project_types')) return true;
+  return false;
+}
+
+function markPipelineWorkshopTypeJoinMissing() {
+  if (pipelineWorkshopTypeJoinAvailable) {
+    console.warn(
+      '[production_pipeline_stages] Không embed được workshop_type → workshop_project_types (schema cache / FK). Chỉ trả về workshop_type_id, không join tên loại.',
+    );
+  }
+  pipelineWorkshopTypeJoinAvailable = false;
+}
+
 /** Chuỗi .select() cho bảng production_pipeline_stages (+ join workflow_stage) */
 function buildPipelineStageSelect() {
   const cid = productionCompanyIdColumnAvailable ? 'company_id, ' : '';
   const h = handoverToLogisticsColumnAvailable ? 'is_handover_to_logistics, ' : '';
   const pp = pipelineProgressPercentColumnAvailable ? 'progress_percent, ' : '';
+  let wt = '';
+  if (pipelineWorkshopTypeColumnAvailable) {
+    wt = pipelineWorkshopTypeJoinAvailable
+      ? 'workshop_type_id, workshop_type:workshop_project_types(id, name, applies_to), '
+      : 'workshop_type_id, ';
+  }
   let t = '';
   if (crmTargetStageColumnAvailable) {
     if (crmTargetStageJoinAvailable) {
@@ -124,7 +171,7 @@ function buildPipelineStageSelect() {
       t = 'crm_target_stage_id, ';
     }
   }
-  return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, ${h}${pp}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
+  return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, ${h}${pp}${wt}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
 }
 
 /** Bỏ field khỏi object insert/update nếu DB không có cột */
@@ -134,6 +181,7 @@ function stripHandoverFields(obj) {
   if (!handoverToLogisticsColumnAvailable) delete o.is_handover_to_logistics;
   if (!crmTargetStageColumnAvailable) delete o.crm_target_stage_id;
   if (!pipelineProgressPercentColumnAvailable) delete o.progress_percent;
+  if (!pipelineWorkshopTypeColumnAvailable) delete o.workshop_type_id;
   return o;
 }
 
@@ -146,6 +194,8 @@ function _resetForTests() {
   crmTargetStageJoinAvailable = true;
   productionCompanyIdColumnAvailable = true;
   pipelineProgressPercentColumnAvailable = true;
+  pipelineWorkshopTypeColumnAvailable = true;
+  pipelineWorkshopTypeJoinAvailable = true;
 }
 
 module.exports = {
@@ -159,6 +209,10 @@ module.exports = {
   markProductionCompanyIdColumnMissing,
   isPipelineProgressPercentMissingError,
   markPipelineProgressPercentColumnMissing,
+  isPipelineWorkshopTypeMissingError,
+  markPipelineWorkshopTypeColumnMissing,
+  isPipelineWorkshopTypeEmbedRelationshipError,
+  markPipelineWorkshopTypeJoinMissing,
   isHandoverColumnInSchema,
   isCrmTargetStageColumnInSchema,
   isCrmTargetStageJoinInSchema,

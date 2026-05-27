@@ -10,10 +10,14 @@ const {
   isCrmTargetStageMissingError,
   isCrmTargetStageEmbedRelationshipError,
   isProductionCompanyIdMissingError,
+  isPipelineWorkshopTypeMissingError,
+  isPipelineWorkshopTypeEmbedRelationshipError,
   markHandoverColumnMissing,
   markCrmTargetStageColumnMissing,
   markCrmTargetStageJoinMissing,
   markProductionCompanyIdColumnMissing,
+  markPipelineWorkshopTypeColumnMissing,
+  markPipelineWorkshopTypeJoinMissing,
 } = require('./productionPipelineSchema');
 const { isCrmPostWonManagedStage } = require('./crmDealStageGate');
 
@@ -137,6 +141,18 @@ async function loadProductionPipelineStagesRows(includeInactive = false, company
       data = retry.data;
       error = retry.error;
     }
+    if (error && isPipelineWorkshopTypeMissingError(error)) {
+      markPipelineWorkshopTypeColumnMissing();
+      const retry = await runBase(scope);
+      data = retry.data;
+      error = retry.error;
+    }
+    if (error && isPipelineWorkshopTypeEmbedRelationshipError(error)) {
+      markPipelineWorkshopTypeJoinMissing();
+      const retry = await runBase(scope);
+      data = retry.data;
+      error = retry.error;
+    }
     if (error && isCrmTargetStageEmbedRelationshipError(error)) {
       markCrmTargetStageJoinMissing();
       const retry = await runBase(scope);
@@ -184,9 +200,30 @@ async function loadProductionPipelineStagesRows(includeInactive = false, company
   }));
 }
 
-async function getResolvedKanbanStages(companyId = null) {
+/**
+ * @param {string|null} companyId
+ * @param {object} [opts]
+ * @param {string|null} [opts.workshopTypeId]  null = không filter, 'none' = chỉ cột Bộ chung,
+ *                                              <uuid> = cột của loại đó + Bộ chung (fallback)
+ */
+async function getResolvedKanbanStages(companyId = null, opts = {}) {
   const rows = await loadProductionPipelineStagesRows(false, companyId);
   const { stages: ws, bySlug, ids: workshopIds } = await getWorkshopStageMap();
+
+  /** Lọc rows theo workshop_type_id: cột intake luôn được giữ. */
+  const filterByType = (list) => {
+    if (!list?.length) return list;
+    const wkt = opts?.workshopTypeId;
+    if (!wkt) return list;
+    if (String(wkt).toLowerCase() === 'none') {
+      return list.filter((r) => r.bucket_slug === INTAKE_BUCKET || !r.workshop_type_id);
+    }
+    return list.filter((r) => (
+      r.bucket_slug === INTAKE_BUCKET
+      || !r.workshop_type_id
+      || String(r.workshop_type_id) === String(wkt)
+    ));
+  };
 
   if (!rows?.length) {
     const fallback = [
@@ -218,7 +255,8 @@ async function getResolvedKanbanStages(companyId = null) {
     return { stages: fallback, fromDb: false, workshopIds };
   }
 
-  const active = rows.filter((r) => r.is_active).sort((a, b) => a.order_index - b.order_index);
+  const filtered = filterByType(rows);
+  const active = (filtered || rows).filter((r) => r.is_active).sort((a, b) => a.order_index - b.order_index);
   return { stages: active, fromDb: true, workshopIds };
 }
 
@@ -260,20 +298,26 @@ function enrichOneSxProject(project, sortedStages, wonSet) {
 
 /**
  * Gắn sx_kanban_column_id theo pipeline đã cấu hình (theo công ty dự án, hoặc filterCompanyId khi dashboard lọc 1 công ty).
+ * @param {string|null} [workshopTypeId]  Khi dashboard filter 1 phân loại → dùng pipeline của phân loại đó.
+ *                                         'none' = bộ chung; <uuid> = loại + bộ chung (fallback).
  */
-async function enrichProjectsForSx(projects, wonIds, filterCompanyId = null) {
+async function enrichProjectsForSx(projects, wonIds, filterCompanyId = null, workshopTypeId = null) {
   const wonSet = new Set(wonIds);
   const f = normalizeWorkshopCompanyId(filterCompanyId);
+  const wktKey = workshopTypeId || '__any__';
   const keyFor = (p) => {
-    if (f) return `__f:${f}`;
+    if (f) return `__f:${f}|t:${wktKey}`;
     const id = p.company_id || p.company?.id;
-    return id ? String(id) : '__global__';
+    return `${id ? String(id) : '__global__'}|t:${wktKey}`;
   };
-  const keys = f ? [`__f:${f}`] : [...new Set((projects || []).map(keyFor))];
+  const keys = f ? [`__f:${f}|t:${wktKey}`] : [...new Set((projects || []).map(keyFor))];
   const cache = new Map();
   for (const key of keys) {
-    const cid = key.startsWith('__f:') ? key.slice(4) : (key === '__global__' ? null : key);
-    const { stages } = await getResolvedKanbanStages(cid);
+    const [scopePart] = key.split('|');
+    const cid = scopePart.startsWith('__f:')
+      ? scopePart.slice(4)
+      : (scopePart === '__global__' ? null : scopePart);
+    const { stages } = await getResolvedKanbanStages(cid, { workshopTypeId });
     const sorted = [...stages].sort((a, b) => a.order_index - b.order_index);
     cache.set(key, sorted);
   }

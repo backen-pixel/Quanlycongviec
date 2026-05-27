@@ -85,7 +85,6 @@ const WorkshopTaskTemplatesPage = lazyWithRetry(() => import('./pages/WorkshopTa
 const ProductionHandoverSettingsPage = lazyWithRetry(() => import('./pages/ProductionHandoverSettingsPage'));
 const LogisticsDashboard = lazyWithRetry(() => import('./pages/LogisticsDashboard'));
 const LogisticsDetail = lazyWithRetry(() => import('./pages/LogisticsDetail'));
-const LogisticsPipelineSettingsPage = lazyWithRetry(() => import('./pages/LogisticsPipelineSettingsPage'));
 const LogisticsTaskTemplatesPage = lazyWithRetry(() => import('./pages/LogisticsTaskTemplatesPage'));
 const WorkshopTeamsPage = lazyWithRetry(() => import('./pages/WorkshopTeamsPage'));
 const QuotationsPage = lazyWithRetry(() => import('./pages/QuotationsPage'));
@@ -402,7 +401,7 @@ export default function App() {
             <Route path="/vc" element={<ProductionLayout />}>
               <Route index element={<Navigate to="dashboard" replace />} />
               <Route path="dashboard" element={<LogisticsDashboard />} />
-              <Route path="pipeline-settings" element={<LogisticsPipelineSettingsPage />} />
+              <Route path="pipeline-settings" element={<Navigate to="/sx/pipeline-settings" replace />} />
               <Route path="task-templates" element={<LogisticsTaskTemplatesPage />} />
               <Route path="teams" element={<WorkshopTeamsPage />} />
               <Route path="trash" element={<Navigate to="/admin/trash?tab=vc" replace />} />
