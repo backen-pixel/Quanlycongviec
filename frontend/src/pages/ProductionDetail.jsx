@@ -675,15 +675,27 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     return () => { cancelled = true; };
   }, [project?.crmDeals?.[0]?.id]);
 
-  // Pipeline SX/VC theo công ty dự án
+  /**
+   * Pipeline SX/VC theo công ty dự án + phân loại (workshop_type_id).
+   * Nếu project chưa phân loại → 'global' (chỉ lấy cột không gắn loại).
+   * Có loại → BE trả về cột của loại đó + cột chung (fallback).
+   */
   useEffect(() => {
     const cid = project?.company_id || project?.company?.id;
-    if (!cid) return;
-    api.get(`${MOD.apiPrefix}/pipeline-stages`, { params: { company_id: cid } }).then((r) => {
+    if (!cid) return undefined;
+    const wtId = project?.workshop_type_id || project?.workshop_type?.id || null;
+    const params = { company_id: cid };
+    if (wtId) params.workshop_type_id = wtId;
+    else params.workshop_type_id = 'global';
+    let cancelled = false;
+    api.get(`${MOD.apiPrefix}/pipeline-stages`, { params }).then((r) => {
+      if (cancelled) return;
       const rows = r.data || [];
       if (rows.length) setProductionStages(rows);
-    }).catch(() => {});
-  }, [MOD.apiPrefix, project?.company_id, project?.company?.id]);
+      else setProductionStages([]);
+    }).catch(() => { if (!cancelled) setProductionStages([]); });
+    return () => { cancelled = true; };
+  }, [MOD.apiPrefix, project?.company_id, project?.company?.id, project?.workshop_type_id, project?.workshop_type?.id]);
 
   const loadProjectDocs = useCallback(async (projectId) => {
     try {
@@ -1337,6 +1349,25 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
           )}
         </div>
       </div>
+
+      {/* Hint phân loại — pipeline stepper bám theo workshop_type của project (công ty + loại). */}
+      {moduleKey !== 'vc' && (
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-gray-500">Pipeline:</span>
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 font-medium">
+            🏢 {project.company?.short_name || project.company?.name || 'Chưa có công ty'}
+          </span>
+          {project.workshop_type?.name || project.workshop_type_id ? (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-teal-50 text-teal-700 font-medium border border-teal-200">
+              📦 {project.workshop_type?.name || 'Đã phân loại'}
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 font-medium border border-amber-200">
+              ⚠️ Chưa phân loại — chỉ hiển thị cột chung
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Pipeline — shared PipelineStepper component */}
       <PipelineStepper
