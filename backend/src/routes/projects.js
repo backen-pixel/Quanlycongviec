@@ -779,7 +779,11 @@ r.post('/:id/expenses', async (req, res) => {
 // Không requirePermission('projects','view'): tab đơn/nhiệm vụ trên deal cần tải project — chỉ cần auth.
 r.get('/:id', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('projects').select(`
+    /**
+     * Lấy detail project. Embed `workshop_type:workshop_project_types(...)`
+     * có thể fail nếu PostgREST schema cache chưa nạp FK → fallback bỏ embed.
+     */
+    const baseSelect = `
       *, customers(*),
       company:companies(id,name,short_name),
       current_stage:workflow_stages(*),
@@ -788,7 +792,18 @@ r.get('/:id', async (req, res) => {
       project_manager:users!projects_project_manager_id_fkey(id,full_name,avatar,email),
       supervisor:users!projects_supervisor_id_fkey(id,full_name,avatar,email),
       tasks(*, assignee:users!tasks_assignee_id_fkey(id,full_name,avatar), stage:workflow_stages(id,name,slug,color,order_index), checklists:task_checklists(id,title,is_completed,order_index,notes,attachments))
-    `).eq('id', req.params.id).single();
+    `;
+    const withWorkshopType = `${baseSelect}, workshop_type:workshop_project_types(id,name,applies_to)`;
+    let { data, error } = await supabase.from('projects')
+      .select(withWorkshopType)
+      .eq('id', req.params.id)
+      .single();
+    if (error && (error.message?.includes('workshop_project_types') || error.message?.includes('relationship'))) {
+      ({ data, error } = await supabase.from('projects')
+        .select(baseSelect)
+        .eq('id', req.params.id)
+        .single());
+    }
     if (error) throw error;
 
     // Try to load stage persons (may fail if migration 07 not run)
