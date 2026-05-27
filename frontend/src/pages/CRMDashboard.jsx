@@ -630,7 +630,7 @@ export default function CRMDashboard() {
   /** Hiện cột Kanban «Chưa có giai đoạn» ở cuối — chứa deal không thuộc bất kỳ cột nào của pipeline đang xem. */
   const [showOrphanDealColumn, setShowOrphanDealColumn] = useState(() => !!P?.showOrphanDealColumn);
   /** Thu gọn alert strip «deal quá hạn» (chỉ theo phiên, không lưu) */
-  const [overdueAlertCollapsed, setOverdueAlertCollapsed] = useState(false);
+  const [overdueAlertCollapsed, setOverdueAlertCollapsed] = useState(true);
   const [showAdvSearch, setShowAdvSearch] = useState(() => {
     if (P?.showAdvSearch) return true;
     if (snapshotHasActiveFilters(P)) return true;
@@ -653,6 +653,9 @@ export default function CRMDashboard() {
   /** Trạng thái đồng bộ ngầm (silent refetch): hiển thị "Cập nhật lúc HH:mm" thay vì spinner */
   const [syncing, setSyncing] = useState(false);
   const [lastSyncAt, setLastSyncAt] = useState(null);
+  // True khi đang load lần đầu (chưa có dữ liệu trên dashboard).
+  // Hiển thị banner "Đang tải dữ liệu…" thay vì màn trắng.
+  const [firstLoading, setFirstLoading] = useState(true);
   const [viewMode, setViewMode] = useState(() => {
     const v = P?.viewMode;
     return ['kanban', 'list', 'planner', 'deadline', 'comments', 'calendar'].includes(v) ? v : 'kanban';
@@ -1775,6 +1778,7 @@ export default function CRMDashboard() {
     } catch (e) {
       console.error(e);
       if (silent && !isStale()) setSyncing(false);
+      if (!isStale()) setFirstLoading(false);
     }
     if (isStale()) {
       if (silent) setSyncing(false);
@@ -1794,6 +1798,7 @@ export default function CRMDashboard() {
     if (!isStale()) {
       if (silent) setSyncing(false);
       setLastSyncAt(new Date());
+      setFirstLoading(false);
     }
   };
 
@@ -2983,7 +2988,12 @@ export default function CRMDashboard() {
           <h1 className={`font-bold text-gray-900 ${compactLeadUi ? 'text-xl sm:text-2xl' : 'text-3xl'}`}>
             {pipelineType === 'lead' ? '💼 Quản lý Leads' : '🎯 Quản lý Deals'}
           </h1>
-          {lastSyncAt && (
+          {firstLoading ? (
+            <div className={`flex items-center gap-1.5 text-blue-600 ${compactLeadUi ? 'text-[10px] mt-0.5' : 'text-xs mt-1'}`}>
+              <span className={`inline-block rounded-full bg-blue-500 animate-pulse ${compactLeadUi ? 'h-1.5 w-1.5' : 'h-2 w-2'}`} />
+              <span className="font-medium">Đang tải dữ liệu…</span>
+            </div>
+          ) : lastSyncAt && (
             <div className={`flex items-center gap-1.5 text-gray-500 ${compactLeadUi ? 'text-[10px] mt-0.5' : 'text-xs mt-1'}`} title="Tự cập nhật realtime qua Socket.IO + đồng bộ ngầm mỗi 15s">
               <span className={`inline-block rounded-full ${syncing ? 'bg-blue-500 animate-pulse' : 'bg-emerald-500'} ${compactLeadUi ? 'h-1.5 w-1.5' : 'h-2 w-2'}`} />
               <span>
@@ -3005,6 +3015,22 @@ export default function CRMDashboard() {
           </button>
         </div>
       </div>
+
+      {/* Banner "Đang tải dữ liệu" — chỉ hiện khi đang load LẦN ĐẦU (chưa có dữ liệu).
+          Tránh trắng màn khi user vừa vào dashboard mà API trả về chậm. */}
+      {firstLoading && (
+        <div className="flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 shadow-sm">
+          <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-100">
+            <span className="inline-block h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" aria-hidden />
+          </span>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-blue-900">Đang tải dữ liệu CRM…</p>
+            <p className="text-[11px] text-blue-700/80 mt-0.5">
+              Đồng bộ {pipelineType === 'lead' ? 'leads' : 'deals'}, pipeline, KPI và bộ lọc. Vui lòng chờ trong giây lát.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Pill-style Tab Switcher + Pin — kích thước cố định, không nhảy cỡ theo tab đang active.
           min-width để 2 nút Lead/Deal luôn cân nhau dù số lượng (Leads/Deals) lệch nhau. */}
@@ -3693,7 +3719,6 @@ export default function CRMDashboard() {
               iconColor="text-indigo-600"
               label="Điểm KPI (tháng)"
               value={formatKpiLedgerNet(kpiLedgerMonthNetSumVisible)}
-              sublabel={kpis.kpi_ledger_period_start ? `Sổ cái · ${String(kpis.kpi_ledger_period_start).slice(0, 7)}` : undefined}
               trend={null}
               hint={kpiLedgerMonthCardHint}
             />
@@ -3835,6 +3860,22 @@ export default function CRMDashboard() {
               onToggleInteracted={toggleInteractedFlag}
               remeasureToken={showAdvSearch ? 1 : 0}
             />
+            {/* Chú thích màu sắc thẻ Kanban — giúp quản lý/NV phân biệt nhanh trạng thái thẻ */}
+            <div className="flex flex-wrap items-center gap-3 px-3 py-2 border-t border-gray-100 bg-white text-[11px] text-gray-600">
+              <span className="font-semibold text-gray-500 mr-1">Chú thích:</span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="inline-block h-3 w-5 rounded border border-gray-300 bg-white" aria-hidden />
+                Bình thường
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="inline-block h-3 w-5 rounded border border-orange-300 bg-orange-100" aria-hidden />
+                Sắp tới hạn
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="inline-block h-3 w-5 rounded border border-red-300 bg-red-100" aria-hidden />
+                Quá hạn
+              </span>
+            </div>
             {/* Nút Tải thêm 1000 */}
             {kanbanLoadLimit !== 'all' && (() => {
               const offset = pipelineType === 'lead' ? loadMoreState.leadOffset : loadMoreState.dealOffset;
@@ -4263,30 +4304,30 @@ export default function CRMDashboard() {
   );
 }
 
-/** Tổng Deal + Đang đàm phán + Thắng — một ô lớn, 3 cột đều nhau. */
+/** Tổng Deal + Đang đàm phán + Thắng — một ô lớn, 3 cột đều nhau (font đồng cỡ với các KPICard khác). */
 function DealCountSummaryKpiCard({ total, negotiating, won, filterNote, className = '' }) {
   const items = [
     { label: 'Tổng Deal', value: total, numClass: 'text-cyan-700' },
-    { label: 'Đang đàm phán', value: negotiating, numClass: 'text-blue-700' },
+    { label: 'Đàm phán', value: negotiating, numClass: 'text-blue-700' },
     { label: 'Thắng', value: won, numClass: 'text-emerald-700' },
   ];
   return (
     <div
-      className={`h-full min-w-0 flex flex-col rounded-lg border border-gray-200 bg-gradient-to-br from-slate-50 to-white shadow-sm px-3 py-2.5 ${className}`}
+      className={`h-full min-w-0 flex flex-col rounded-lg border border-gray-200 bg-white shadow-sm px-2 py-2 ${className}`}
     >
       {filterNote ? (
-        <p className="text-[10px] text-amber-800/90 leading-tight mb-2 text-center shrink-0">{filterNote}</p>
+        <p className="text-[9px] text-amber-800/90 leading-tight mb-1 text-center shrink-0 truncate" title={filterNote}>{filterNote}</p>
       ) : null}
-      <div className="flex-1 grid grid-cols-3 divide-x divide-gray-200 items-center min-h-[3.25rem]">
+      <div className="flex-1 grid grid-cols-3 divide-x divide-gray-200 items-center">
         {items.map((it) => (
           <div
             key={it.label}
-            className="flex flex-col items-center justify-center text-center min-w-0 px-1 py-0.5"
+            className="flex flex-col items-center justify-center text-center min-w-0 px-1"
           >
-            <p className="text-[10px] sm:text-[11px] font-semibold text-gray-600 uppercase tracking-wide leading-tight px-0.5">
+            <p className="text-[9px] font-semibold text-gray-500 uppercase tracking-wide leading-tight truncate max-w-full" title={it.label}>
               {it.label}
             </p>
-            <p className={`mt-1 text-xl sm:text-2xl font-bold tabular-nums leading-none ${it.numClass}`}>
+            <p className={`mt-0.5 text-base md:text-lg font-bold tabular-nums leading-tight ${it.numClass}`}>
               {Number(it.value ?? 0).toLocaleString('vi-VN')}
             </p>
           </div>
@@ -4308,11 +4349,16 @@ function DealExpectedValueKpiCard({
   compact,
 }) {
   const [draftPct, setDraftPct] = useState(String(pct ?? 50));
+  const [editorOpen, setEditorOpen] = useState(false);
 
   useEffect(() => {
     setDraftPct(String(pct ?? 50));
     onDraftPctChange?.(null);
   }, [pct, editUserId]);
+
+  useEffect(() => {
+    if (!editorOpen) onDraftPctChange?.(null);
+  }, [editorOpen]);
 
   const pushDraftPct = (raw) => {
     setDraftPct(raw);
@@ -4331,6 +4377,7 @@ function DealExpectedValueKpiCard({
     setDraftPct(String(n));
     onDraftPctChange?.(null);
     onPctChange?.(n);
+    setEditorOpen(false);
   };
 
   return (
@@ -4358,36 +4405,55 @@ function DealExpectedValueKpiCard({
         >
           {formatVND(expectedValue)}
         </p>
-        {sublabel && (
-          <p className="text-[9px] text-violet-700/90 leading-snug truncate max-w-full" title={sublabel}>
-            {sublabel}
-          </p>
-        )}
-        {editUserId && (
-          <div className="flex flex-wrap items-center justify-center gap-1 pt-0.5" onClick={(e) => e.stopPropagation()}>
-            <span className="text-[9px] text-gray-500 truncate max-w-[5.5rem]" title={assigneeLabel}>
-              {assigneeLabel}:
-            </span>
-            <input
-              type="number"
-              min={0}
-              max={100}
-              value={draftPct}
-              onChange={(e) => pushDraftPct(e.target.value)}
-              onBlur={commitPct}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  commitPct();
-                }
-              }}
-              className="w-10 h-5 px-0.5 text-[10px] border border-violet-200 rounded text-center tabular-nums focus:outline-none focus:ring-1 focus:ring-violet-400"
-              title="% kỳ vọng (áp dụng cho deal bạn phụ trách)"
-            />
-            <span className="text-[9px] text-gray-500">%</span>
-          </div>
-        )}
       </div>
+      {editUserId && (
+        <>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setEditorOpen((v) => !v); }}
+            className="absolute top-1 right-1 inline-flex items-center rounded border border-violet-200 bg-violet-50 px-1 py-0.5 text-[9px] font-semibold text-violet-700 hover:bg-violet-100 transition-colors cursor-pointer tabular-nums"
+            title={`Đổi % kỳ vọng cho ${assigneeLabel} (hiện ${pct}%)`}
+          >
+            {pct}%
+          </button>
+          {editorOpen && (
+            <>
+              <div className="fixed inset-0 z-[60]" onClick={() => setEditorOpen(false)} />
+              <div
+                className="absolute top-7 right-1 z-[70] w-48 rounded-lg border border-violet-200 bg-white shadow-lg p-2 text-left"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <p className="text-[10px] text-gray-500 truncate mb-1" title={assigneeLabel}>
+                  % kỳ vọng cho <span className="font-semibold text-gray-700">{assigneeLabel}</span>
+                </p>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    autoFocus
+                    value={draftPct}
+                    onChange={(e) => pushDraftPct(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); commitPct(); }
+                      if (e.key === 'Escape') { setEditorOpen(false); }
+                    }}
+                    className="flex-1 h-7 px-1.5 text-xs font-semibold border border-violet-300 rounded text-center tabular-nums focus:outline-none focus:ring-1 focus:ring-violet-500"
+                  />
+                  <span className="text-xs text-gray-500">%</span>
+                  <button
+                    type="button"
+                    onClick={commitPct}
+                    className="h-7 px-2 text-[11px] font-semibold text-white bg-violet-600 hover:bg-violet-700 rounded cursor-pointer"
+                  >
+                    Lưu
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -5414,15 +5480,16 @@ function KanbanView({
   const [isDraggingCard, setIsDraggingCard] = useState(false);
   const [scrollMaxH, setScrollMaxH] = useState('70vh');
 
-  // Đo chiều cao khả dụng cho vùng cuộn Kanban (window - top - 12).
-  // Re-measure khi remeasureToken đổi (vd. ẩn/hiện bộ lọc nâng cao) để vùng cuộn tự co/giãn.
+  // Chiều cao Kanban cố định ~3 card mỗi cột (~720px). Không phụ thuộc viewport
+  // để bố cục đồng nhất trên mọi màn hình; phần còn lại scroll trong cột.
+  // Trên màn rất nhỏ thì co lại = viewport - 120 để không tràn ra ngoài.
   useEffect(() => {
     const measure = () => {
       const el = kanbanHScrollRef.current;
       if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const avail = window.innerHeight - rect.top - 12;
-      setScrollMaxH(`${Math.max(360, avail)}px`);
+      const TARGET = 560;
+      const maxByViewport = Math.max(320, window.innerHeight - 120);
+      setScrollMaxH(`${Math.min(TARGET, maxByViewport)}px`);
     };
     const raf = requestAnimationFrame(measure);
     const t = setTimeout(measure, 120);
