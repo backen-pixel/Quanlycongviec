@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import api from '../lib/api';
 import { isAdminLike } from '../lib/adminRole';
 import KnowledgeAttachmentEditor from '../components/KnowledgeAttachmentEditor';
-import { ChevronLeft, Plus, Trash2, Save, Loader2, Image as ImageIcon, BarChart3, AlertCircle, Tag, TrendingUp, Star, Users, ListChecks, Edit3, Search, Filter, ExternalLink } from 'lucide-react';
+import { ChevronLeft, Plus, Trash2, Save, Loader2, Image as ImageIcon, BarChart3, AlertCircle, Tag, TrendingUp, Star, Users, ListChecks, Edit3, Search, Filter, ExternalLink, Award, ShieldCheck, Upload, X } from 'lucide-react';
 
 const VIDEO_TYPES = [
   { value: '', label: 'Không video' },
@@ -37,7 +37,40 @@ export default function KnowledgeAdminPage() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const [catForm, setCatForm] = useState({ name: '', slug: '', icon: '📚', description: '', parent_id: '', sort_order: 0 });
+  const [catForm, setCatForm] = useState({
+    name: '', slug: '', icon: '📚', description: '', parent_id: '', sort_order: 0,
+    badge_image_url: '', require_all_exercises_passed: true,
+    certificate_template: { signature_name: '', signature_title: '', footer_note: '', accent_color: '' },
+  });
+  const [badgeUploading, setBadgeUploading] = useState(false);
+  const badgeInputRef = useRef(null);
+
+  const handleBadgeUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      alert('Vui lòng chọn file ảnh (PNG, JPG, WEBP, ...)');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      if (!confirm(`File ${(file.size / 1024 / 1024).toFixed(1)}MB khá lớn. Khuyên dùng ảnh < 1MB cho tốc độ tải. Vẫn upload?`)) return;
+    }
+    setBadgeUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('entity_type', 'knowledge_badges');
+      if (catForm.id) fd.append('entity_id', catForm.id);
+      const { data } = await api.post('/upload/single', fd, { timeout: 120000 });
+      if (!data?.file_url) throw new Error('Không nhận được URL');
+      setCatForm((prev) => ({ ...prev, badge_image_url: data.file_url }));
+    } catch (err) {
+      alert(err.response?.data?.error || err.message || 'Lỗi upload');
+    } finally {
+      setBadgeUploading(false);
+      if (badgeInputRef.current) badgeInputRef.current.value = '';
+    }
+  };
   const [lessonForm, setLessonForm] = useState(null);
   const [exForm, setExForm] = useState(null);
   const [exerciseFilters, setExerciseFilters] = useState({ q: '', lesson_id: '', category_id: '', type: '' });
@@ -95,10 +128,20 @@ export default function KnowledgeAdminPage() {
     if (!catForm.name.trim()) return alert('Nhập tên danh mục');
     setSaving(true);
     try {
-      const body = { ...catForm, parent_id: catForm.parent_id || null };
+      const body = {
+        ...catForm,
+        parent_id: catForm.parent_id || null,
+        badge_image_url: catForm.badge_image_url || null,
+        require_all_exercises_passed: catForm.require_all_exercises_passed !== false,
+        certificate_template: catForm.certificate_template || {},
+      };
       if (catForm.id) await api.patch(`/knowledge/categories/${catForm.id}`, body);
       else await api.post('/knowledge/categories', body);
-      setCatForm({ name: '', slug: '', icon: '📚', description: '', parent_id: '', sort_order: 0 });
+      setCatForm({
+        name: '', slug: '', icon: '📚', description: '', parent_id: '', sort_order: 0,
+        badge_image_url: '', require_all_exercises_passed: true,
+        certificate_template: { signature_name: '', signature_title: '', footer_note: '', accent_color: '' },
+      });
       loadAll();
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi');
@@ -256,23 +299,162 @@ export default function KnowledgeAdminPage() {
             <input className="w-full border rounded-lg px-3 py-2 text-sm" placeholder="Tên *" value={catForm.name} onChange={(e) => setCatForm({ ...catForm, name: e.target.value })} />
             <input className="w-full border rounded-lg px-3 py-2 text-sm" placeholder="Slug (tự sinh nếu trống)" value={catForm.slug} onChange={(e) => setCatForm({ ...catForm, slug: e.target.value })} />
             <input className="w-full border rounded-lg px-3 py-2 text-sm" placeholder="Icon emoji" value={catForm.icon} onChange={(e) => setCatForm({ ...catForm, icon: e.target.value })} />
-            <select className="w-full border rounded-lg px-3 py-2 text-sm" value={catForm.parent_id} onChange={(e) => setCatForm({ ...catForm, parent_id: e.target.value })}>
+            <select className="w-full border rounded-lg px-3 py-2 text-sm" value={catForm.parent_id || ''} onChange={(e) => setCatForm({ ...catForm, parent_id: e.target.value })}>
               <option value="">— Không cha —</option>
               {categories.filter((c) => c.id !== catForm.id).map((c) => (
                 <option key={c.id} value={c.id}>{c.icon} {c.name}</option>
               ))}
             </select>
-            <textarea className="w-full border rounded-lg px-3 py-2 text-sm" rows={2} placeholder="Mô tả" value={catForm.description} onChange={(e) => setCatForm({ ...catForm, description: e.target.value })} />
-            <button type="button" onClick={saveCategory} disabled={saving} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm">
-              <Save className="h-4 w-4" /> Lưu
-            </button>
+            <textarea className="w-full border rounded-lg px-3 py-2 text-sm" rows={2} placeholder="Mô tả" value={catForm.description || ''} onChange={(e) => setCatForm({ ...catForm, description: e.target.value })} />
+
+            {/* ─── Khu vực HUY CHƯƠNG + CHỨNG NHẬN ───────────────────────── */}
+            <div className="pt-3 mt-2 border-t border-amber-200">
+              <div className="flex items-center gap-2 mb-2">
+                <Award className="h-4 w-4 text-amber-600" />
+                <h3 className="text-sm font-semibold text-amber-800">Huy chương & chứng nhận</h3>
+              </div>
+
+              <label className="text-[11px] text-gray-500 uppercase font-semibold tracking-wide flex items-center gap-1">
+                <ImageIcon className="h-3 w-3" /> Ảnh huy chương
+              </label>
+
+              <input
+                ref={badgeInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/jpg,image/webp,image/gif,image/svg+xml"
+                className="hidden"
+                onChange={handleBadgeUpload}
+              />
+
+              <div className="mt-1 grid grid-cols-[1fr_auto] gap-2">
+                <input
+                  type="url"
+                  className="border rounded-lg px-3 py-2 text-sm"
+                  placeholder="Dán URL ảnh huy chương (https://...)"
+                  value={catForm.badge_image_url || ''}
+                  onChange={(e) => setCatForm({ ...catForm, badge_image_url: e.target.value })}
+                />
+                <button
+                  type="button"
+                  onClick={() => badgeInputRef.current?.click()}
+                  disabled={badgeUploading}
+                  className="px-3 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 disabled:opacity-50 flex items-center gap-1.5 shrink-0"
+                  title="Upload file từ máy"
+                >
+                  {badgeUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  {badgeUploading ? 'Đang tải...' : 'Upload file'}
+                </button>
+              </div>
+
+              {catForm.badge_image_url ? (
+                <div className="mt-2 p-3 bg-gradient-to-br from-amber-50 to-orange-50 rounded-lg border border-amber-200 flex items-center gap-3 relative">
+                  <img src={catForm.badge_image_url} alt="Huy chương" className="w-20 h-20 object-contain drop-shadow shrink-0" />
+                  <div className="text-xs text-amber-800 flex-1 min-w-0">
+                    <p className="font-semibold">Xem trước huy chương</p>
+                    <p className="text-amber-700 mt-0.5">Hiển thị trên thẻ chứng nhận và bộ sưu tập.</p>
+                    <p className="text-[10px] text-gray-500 truncate mt-1" title={catForm.badge_image_url}>
+                      🔗 {catForm.badge_image_url}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setCatForm({ ...catForm, badge_image_url: '' })}
+                    className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-white border border-gray-200 text-gray-500 hover:text-red-600 hover:border-red-300 flex items-center justify-center"
+                    title="Xoá ảnh"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => badgeInputRef.current?.click()}
+                  disabled={badgeUploading}
+                  className="mt-2 w-full p-4 bg-gray-50 hover:bg-amber-50 rounded-lg border-2 border-dashed border-gray-300 hover:border-amber-400 text-center text-xs text-gray-500 hover:text-amber-700 transition-all flex flex-col items-center gap-1.5"
+                >
+                  <Upload className="h-5 w-5" />
+                  <span><strong>Bấm để chọn file</strong> hoặc kéo thả ảnh từ máy</span>
+                  <span className="text-[10px] text-gray-400">PNG nền trong suốt, vuông 1:1, &lt; 1 MB (chấp nhận đến 5 MB)</span>
+                </button>
+              )}
+
+              <label className="mt-3 flex items-center gap-2 text-sm bg-amber-50 border border-amber-200 rounded-lg p-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={catForm.require_all_exercises_passed !== false}
+                  onChange={(e) => setCatForm({ ...catForm, require_all_exercises_passed: e.target.checked })}
+                />
+                <ShieldCheck className="h-4 w-4 text-amber-700" />
+                <span className="text-amber-900 font-medium">
+                  Bắt buộc đạt tất cả bài tập mới cấp chứng nhận
+                </span>
+              </label>
+              <p className="text-[11px] text-gray-500 -mt-1">
+                Bật: học viên phải hoàn thành 100% bài học VÀ 100% bài tập đạt điểm. Tắt: chỉ cần đủ bài học.
+              </p>
+
+              <details className="mt-2">
+                <summary className="text-xs text-amber-700 cursor-pointer font-medium">⚙️ Tuỳ biến mẫu chứng nhận</summary>
+                <div className="mt-2 space-y-2 p-3 bg-amber-50/50 rounded-lg border border-amber-100">
+                  <input
+                    className="w-full border rounded-lg px-3 py-1.5 text-sm"
+                    placeholder="Tên người ký (vd: Nguyễn Văn A)"
+                    value={catForm.certificate_template?.signature_name || ''}
+                    onChange={(e) => setCatForm({ ...catForm, certificate_template: { ...catForm.certificate_template, signature_name: e.target.value } })}
+                  />
+                  <input
+                    className="w-full border rounded-lg px-3 py-1.5 text-sm"
+                    placeholder="Chức vụ người ký (vd: Giám đốc đào tạo)"
+                    value={catForm.certificate_template?.signature_title || ''}
+                    onChange={(e) => setCatForm({ ...catForm, certificate_template: { ...catForm.certificate_template, signature_title: e.target.value } })}
+                  />
+                  <input
+                    className="w-full border rounded-lg px-3 py-1.5 text-sm"
+                    placeholder="Ghi chú dưới chứng nhận (footer note)"
+                    value={catForm.certificate_template?.footer_note || ''}
+                    onChange={(e) => setCatForm({ ...catForm, certificate_template: { ...catForm.certificate_template, footer_note: e.target.value } })}
+                  />
+                </div>
+              </details>
+            </div>
+
+            <div className="flex gap-2 pt-2 border-t">
+              <button type="button" onClick={saveCategory} disabled={saving} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm">
+                <Save className="h-4 w-4" /> Lưu
+              </button>
+              {catForm.id && (
+                <button type="button" onClick={() => setCatForm({
+                  name: '', slug: '', icon: '📚', description: '', parent_id: '', sort_order: 0,
+                  badge_image_url: '', require_all_exercises_passed: true,
+                  certificate_template: { signature_name: '', signature_title: '', footer_note: '', accent_color: '' },
+                })} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm">
+                  Huỷ sửa
+                </button>
+              )}
+            </div>
           </div>
+
           <ul className="space-y-2">
             {categories.map((c) => (
               <li key={c.id} className="flex items-center justify-between bg-white border rounded-lg px-3 py-2 text-sm">
-                <span>{c.icon} {c.name}</span>
+                <div className="flex items-center gap-2">
+                  {c.badge_image_url ? (
+                    <img src={c.badge_image_url} alt="" className="w-8 h-8 object-contain shrink-0" />
+                  ) : (
+                    <span className="text-lg">{c.icon}</span>
+                  )}
+                  <span>{c.name}</span>
+                  {c.require_all_exercises_passed && (
+                    <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium" title="Bắt buộc đạt tất cả bài tập">
+                      🏅 Chứng nhận
+                    </span>
+                  )}
+                </div>
                 <div className="flex gap-1">
-                  <button type="button" className="text-blue-600 text-xs" onClick={() => setCatForm(c)}>Sửa</button>
+                  <button type="button" className="text-blue-600 text-xs" onClick={() => setCatForm({
+                    ...c,
+                    certificate_template: c.certificate_template || { signature_name: '', signature_title: '', footer_note: '', accent_color: '' },
+                  })}>Sửa</button>
                   <button type="button" className="text-red-600" onClick={() => deleteCategory(c.id)}><Trash2 className="h-4 w-4" /></button>
                 </div>
               </li>

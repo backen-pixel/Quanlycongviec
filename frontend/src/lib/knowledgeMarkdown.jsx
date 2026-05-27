@@ -127,7 +127,7 @@ export function extractToc(content) {
 }
 
 export function youtubeEmbedUrl(url, embedId) {
-  const id = embedId || (url && String(url).match(/(?:youtu\.be\/|v=)([^?&]+)/)?.[1]);
+  const id = embedId || (url && String(url).match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=))([^?&]+)/)?.[1]);
   return id ? `https://www.youtube.com/embed/${id}` : null;
 }
 

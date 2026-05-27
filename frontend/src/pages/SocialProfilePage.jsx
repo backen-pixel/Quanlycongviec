@@ -4,7 +4,7 @@ import {
   Camera, Image as ImageIcon, Loader2, Pencil,
   Building2, ArrowLeft, Calendar, Mail, Phone, Trash2,
   FileText, Video as VideoIcon, X, ChevronLeft, ChevronRight as ChevRight,
-  Play,
+  Play, Award, ShieldCheck, Hash, Trophy,
 } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -321,6 +321,11 @@ export default function SocialProfilePage() {
   const [mediaNextOffset, setMediaNextOffset] = useState(0);
   const [mediaLoadingMore, setMediaLoadingMore] = useState(false);
 
+  const [certs, setCerts] = useState([]);
+  const [certsLoading, setCertsLoading] = useState(false);
+  const [certsErr, setCertsErr] = useState(null);
+  const [certsLoaded, setCertsLoaded] = useState(false);
+
   const [lightboxIdx, setLightboxIdx] = useState(null);
 
   const isOwner = !!profile && !!user && String(profile.id) === String(user.id);
@@ -385,15 +390,31 @@ export default function SocialProfilePage() {
     }
   }, [userId]);
 
+  const loadCerts = useCallback(async () => {
+    setCertsLoading(true);
+    setCertsErr(null);
+    try {
+      const { data } = await api.get(`/knowledge/users/${userId}/certificates`);
+      setCerts(Array.isArray(data?.certificates) ? data.certificates : []);
+      setCertsLoaded(true);
+    } catch (e) {
+      setCertsErr(e.response?.data?.error || e.message);
+    } finally {
+      setCertsLoading(false);
+    }
+  }, [userId]);
+
   useEffect(() => {
     loadProfile();
     loadPosts(0, false);
-  }, [loadProfile, loadPosts]);
+    loadCerts();
+  }, [loadProfile, loadPosts, loadCerts]);
 
   useEffect(() => {
     if (tab === 'photos') loadMedia(0, false, 'image');
     else if (tab === 'videos') loadMedia(0, false, 'video');
-  }, [tab, loadMedia]);
+    else if (tab === 'certificates' && !certsLoaded) loadCerts();
+  }, [tab, loadMedia, loadCerts, certsLoaded]);
 
   const handleAvatarPick = async (e) => {
     const file = e.target.files?.[0];
@@ -607,6 +628,21 @@ export default function SocialProfilePage() {
                   </p>
                 )}
                 <p className="text-xs text-gray-500 pt-1">Tổng bài đăng: <strong className="text-gray-800">{profile.post_count || 0}</strong></p>
+                {certs.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setTab('certificates')}
+                    className="mt-2 w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 hover:from-amber-100 hover:to-orange-100 transition-all"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Trophy className="h-4 w-4 text-amber-600" />
+                      <span className="text-xs font-semibold text-amber-800">
+                        {certs.length} chứng nhận
+                      </span>
+                    </span>
+                    <span className="text-[10px] text-amber-600">Xem →</span>
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -614,25 +650,32 @@ export default function SocialProfilePage() {
       </div>
 
       <div className="mx-auto max-w-5xl px-4 sm:px-8 py-6 space-y-3">
-        <div className="rounded-xl border border-gray-200 bg-white p-1 inline-flex gap-1 sticky top-2 z-10 shadow-sm">
+        <div className="rounded-xl border border-gray-200 bg-white p-1 inline-flex gap-1 sticky top-2 z-10 shadow-sm flex-wrap">
           {[
             { key: 'posts', label: 'Bài đăng', icon: FileText },
             { key: 'photos', label: 'Ảnh', icon: ImageIcon },
             { key: 'videos', label: 'Video', icon: VideoIcon },
+            { key: 'certificates', label: 'Chứng nhận', icon: Award, count: certs.length },
           ].map((t) => {
             const Icon = t.icon;
             const active = tab === t.key;
+            const isCert = t.key === 'certificates';
             return (
               <button
                 key={t.key}
                 type="button"
                 onClick={() => setTab(t.key)}
                 className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${active
-                  ? 'bg-blue-600 text-white shadow'
+                  ? (isCert ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow' : 'bg-blue-600 text-white shadow')
                   : 'text-gray-700 hover:bg-gray-100'}`}
               >
                 <Icon className="h-4 w-4" />
                 {t.label}
+                {t.count > 0 && (
+                  <span className={`ml-0.5 px-1.5 py-0 rounded-full text-[10px] font-bold ${active ? 'bg-white/25' : 'bg-amber-100 text-amber-700'}`}>
+                    {t.count}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -714,6 +757,101 @@ export default function SocialProfilePage() {
                   Tải thêm
                 </button>
               </div>
+            )}
+          </>
+        )}
+
+        {tab === 'certificates' && (
+          <>
+            {certsLoading && (
+              <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-amber-500" /></div>
+            )}
+            {certsErr && !certsLoading && (
+              <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{certsErr}</div>
+            )}
+            {!certsLoading && !certsErr && certs.length === 0 && (
+              <div className="rounded-xl border border-dashed border-amber-200 bg-gradient-to-br from-amber-50/50 to-orange-50/30 p-8 text-center">
+                <div className="w-16 h-16 mx-auto rounded-full bg-amber-100 flex items-center justify-center mb-3">
+                  <Award className="h-8 w-8 text-amber-400" />
+                </div>
+                <p className="text-sm text-gray-600 font-medium">
+                  {isOwner ? 'Bạn chưa có chứng nhận nào' : 'Thành viên chưa có chứng nhận'}
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  {isOwner
+                    ? 'Hoàn thành các khoá học và bài tập trong Thư viện kiến thức để được cấp chứng nhận.'
+                    : 'Khi thành viên đạt chứng nhận, sẽ hiển thị tại đây.'}
+                </p>
+                {isOwner && (
+                  <Link to="/knowledge" className="inline-flex items-center gap-1 mt-3 text-amber-600 text-sm hover:underline">
+                    <Trophy className="h-4 w-4" /> Đi học ngay →
+                  </Link>
+                )}
+              </div>
+            )}
+            {certs.length > 0 && (
+              <>
+                <div className="rounded-xl bg-gradient-to-r from-amber-500/95 via-orange-500/95 to-rose-500/95 text-white px-5 py-4 flex items-center justify-between flex-wrap gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-full bg-white/15 backdrop-blur-sm flex items-center justify-center">
+                      <Trophy className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wider opacity-90">Bộ sưu tập chứng nhận</p>
+                      <p className="text-2xl font-bold leading-tight">{certs.length} chứng nhận</p>
+                    </div>
+                  </div>
+                  {isOwner && (
+                    <Link
+                      to="/knowledge/certificates"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/15 hover:bg-white/25 text-sm font-medium backdrop-blur-sm"
+                    >
+                      Xem tất cả →
+                    </Link>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-3">
+                  {certs.map((c) => {
+                    const badgeUrl = c.badge_image_url || c.category?.badge_image_url;
+                    return (
+                      <Link
+                        key={c.id}
+                        to={`/knowledge/certificates/${c.id}`}
+                        className="group relative overflow-hidden rounded-2xl border-2 border-amber-200 bg-gradient-to-br from-amber-50 via-yellow-50 to-orange-50 hover:border-amber-400 hover:shadow-lg transition-all"
+                      >
+                        <div className="absolute -top-10 -right-10 w-32 h-32 bg-amber-200/40 rounded-full blur-2xl" />
+                        <div className="relative p-4">
+                          <div className="flex items-start justify-between gap-2">
+                            {badgeUrl ? (
+                              <img
+                                src={badgeUrl}
+                                alt="Huy chương"
+                                className="w-14 h-14 object-contain drop-shadow group-hover:scale-110 transition-transform shrink-0"
+                              />
+                            ) : (
+                              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 text-white flex items-center justify-center shadow-md shrink-0">
+                                <Award className="h-6 w-6" />
+                              </div>
+                            )}
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-semibold flex items-center gap-1 shrink-0">
+                              <ShieldCheck className="h-3 w-3" /> Xác thực
+                            </span>
+                          </div>
+                          <p className="mt-3 text-[10px] font-bold text-amber-700 uppercase tracking-wider">Chứng nhận</p>
+                          <h3 className="text-sm font-bold text-gray-900 line-clamp-2 mt-0.5">
+                            {!badgeUrl && c.category?.icon} {c.category?.name || 'Khoá học'}
+                          </h3>
+                          <div className="mt-2 flex items-center justify-between text-[11px] text-gray-500 pt-2 border-t border-amber-200/60">
+                            <span className="font-mono">{c.certificate_number}</span>
+                            <span>{new Date(c.issued_at).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                          </div>
+                        </div>
+                      </Link>
+                    );
+                  })}
+                </div>
+              </>
             )}
           </>
         )}

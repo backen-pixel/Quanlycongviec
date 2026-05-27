@@ -26,6 +26,7 @@ const {
   applyAllActiveWorkshopTemplatesForArea,
 } = require('../helpers/workshopApplyTemplates');
 const { applyProductionTemplateToFulfillmentLead } = require('../helpers/projectOrderFulfillment');
+const { assertSxKanbanAdvanceAllowed } = require('../helpers/workshopStageAdvanceGate');
 const { notifyMultiple: notifyMultipleShared, createNotification: createNotif } = require('../helpers/notifications');
 const {
   buildPipelineStageSelect,
@@ -991,10 +992,18 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
 // ─── GET /production/projects/:id ──
 /** Columns added in migration 76 — included here, falls back gracefully if migration not yet applied */
 const MIGRATION_76_COLS = 'production_deadline, production_note,';
+/**
+ * Workshop type fields (migration 97 + 251).
+ * `workshop_type_id` scalar + embed `workshop_type:workshop_project_types(...)` để frontend
+ * hiển thị badge "Đã phân loại / Chưa phân loại" và load pipeline stepper theo loại.
+ */
+const WORKSHOP_TYPE_SCALAR = 'workshop_type_id,';
+const WORKSHOP_TYPE_EMBED = 'workshop_type:workshop_project_types(id, name, applies_to),';
 
 const PROJECT_DETAIL_SELECT = `
         id, company_id, code, name, description, estimated_value, priority, deadline, ${MIGRATION_76_COLS} status, notes, created_at,
-        current_stage_id,
+        current_stage_id, ${WORKSHOP_TYPE_SCALAR}
+        ${WORKSHOP_TYPE_EMBED}
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone, email, address, city),
         company:companies!projects_company_id_fkey(id, name, short_name),
@@ -1025,7 +1034,8 @@ const PROJECT_DETAIL_SELECT = `
 // Mục tiêu: vẫn mở được chi tiết dự án + hiển thị stage/tag đúng.
 const PROJECT_DETAIL_SELECT_MIN = `
         id, company_id, code, name, description, estimated_value, priority, deadline, status, notes, created_at,
-        current_stage_id,
+        current_stage_id, ${WORKSHOP_TYPE_SCALAR}
+        ${WORKSHOP_TYPE_EMBED}
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone, email, address, city),
         company:companies!projects_company_id_fkey(id, name, short_name),
@@ -1040,6 +1050,26 @@ const PROJECT_DETAIL_SELECT_MIN = `
           to_stage:workflow_stages!stage_transitions_to_stage_id_fkey(id, name, slug)
         )
       `;
+
+/**
+ * Strip workshop_type fields khi DB chưa có (migration 97/251 chưa apply) hoặc
+ * PostgREST schema cache chưa nạp FK `projects.workshop_type_id → workshop_project_types`.
+ * Bỏ embed trước, nếu vẫn lỗi sẽ bỏ cả scalar.
+ */
+function stripWorkshopTypeEmbed(sel) {
+  return sel.replace(WORKSHOP_TYPE_EMBED, '');
+}
+function stripWorkshopTypeAll(sel) {
+  return sel.replace(WORKSHOP_TYPE_EMBED, '').replace(WORKSHOP_TYPE_SCALAR, '');
+}
+function isWorkshopTypeEmbedError(err) {
+  const m = String(err?.message || '');
+  return m.includes('workshop_project_types');
+}
+function isWorkshopTypeColumnError(err) {
+  const m = String(err?.message || '');
+  return m.includes('workshop_type_id');
+}
 
 r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) => {
   try {
@@ -1060,9 +1090,28 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       const fallbackSelect = PROJECT_DETAIL_SELECT.replace(MIGRATION_76_COLS, '');
       ({ data: project, error } = await supabase.from('projects').select(fallbackSelect).eq('id', projectId).single());
     }
+    // FK workshop_project_types chưa nạp được trên PostgREST → bỏ embed, giữ scalar workshop_type_id
+    if (error && isWorkshopTypeEmbedError(error)) {
+      ({ data: project, error } = await supabase
+        .from('projects')
+        .select(stripWorkshopTypeEmbed(PROJECT_DETAIL_SELECT))
+        .eq('id', projectId)
+        .single());
+    }
+    // Cột workshop_type_id chưa tồn tại (migration 97/251 chưa chạy) → bỏ cả scalar
+    if (error && isWorkshopTypeColumnError(error)) {
+      ({ data: project, error } = await supabase
+        .from('projects')
+        .select(stripWorkshopTypeAll(PROJECT_DETAIL_SELECT))
+        .eq('id', projectId)
+        .single());
+    }
     // Relationship/columns not ready — retry with minimal select (no optional embeds)
     if (error && (error.message?.includes('relationship') || error.message?.includes('does not exist'))) {
-      ({ data: project, error } = await supabase.from('projects').select(PROJECT_DETAIL_SELECT_MIN).eq('id', projectId).single());
+      let minSel = PROJECT_DETAIL_SELECT_MIN;
+      if (isWorkshopTypeEmbedError(error)) minSel = stripWorkshopTypeEmbed(minSel);
+      if (isWorkshopTypeColumnError(error)) minSel = stripWorkshopTypeAll(minSel);
+      ({ data: project, error } = await supabase.from('projects').select(minSel).eq('id', projectId).single());
     }
 
     if (error || !project) {
@@ -1116,8 +1165,25 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
           const fallbackSelect = PROJECT_DETAIL_SELECT.replace(MIGRATION_76_COLS, '');
           ({ data: project, error } = await supabase.from('projects').select(fallbackSelect).eq('id', projectId).single());
         }
+        if (error && isWorkshopTypeEmbedError(error)) {
+          ({ data: project, error } = await supabase
+            .from('projects')
+            .select(stripWorkshopTypeEmbed(PROJECT_DETAIL_SELECT))
+            .eq('id', projectId)
+            .single());
+        }
+        if (error && isWorkshopTypeColumnError(error)) {
+          ({ data: project, error } = await supabase
+            .from('projects')
+            .select(stripWorkshopTypeAll(PROJECT_DETAIL_SELECT))
+            .eq('id', projectId)
+            .single());
+        }
         if (error && (error.message?.includes('relationship') || error.message?.includes('does not exist'))) {
-          ({ data: project, error } = await supabase.from('projects').select(PROJECT_DETAIL_SELECT_MIN).eq('id', projectId).single());
+          let minSel = PROJECT_DETAIL_SELECT_MIN;
+          if (isWorkshopTypeEmbedError(error)) minSel = stripWorkshopTypeEmbed(minSel);
+          if (isWorkshopTypeColumnError(error)) minSel = stripWorkshopTypeAll(minSel);
+          ({ data: project, error } = await supabase.from('projects').select(minSel).eq('id', projectId).single());
         }
       }
     }
@@ -1257,16 +1323,40 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
 
     const workshopPipeline = WORKSHOP_STAGE_SLUGS.map((slug) => bySlug[slug]).filter(Boolean);
     const pcid = project.company_id || project.company?.id || null;
-    const { stages: kStages } = await getResolvedKanbanStages(pcid ? String(pcid) : null);
+    // Pipeline xưởng + cột Kanban được tách theo `workshop_type_id` (phân loại):
+    // - Có loại  → cột riêng của loại đó (+ cột chung không gắn loại).
+    // - Chưa phân loại → chỉ cột chung (workshopTypeId = 'none').
+    // Nếu KHÔNG truyền workshopTypeId, helper gộp TẤT CẢ cột của TẤT CẢ loại trong công ty,
+    // dẫn đến `sx_kanban_column_id` bám nhầm cột của một loại khác (cùng workflow_stage_id "Sản xuất"
+    // nhưng khác phân loại) → thông báo "không nằm trong danh sách cột đang hiển thị".
+    const projectWorkshopTypeId = project.workshop_type_id
+      || project.workshop_type?.id
+      || null;
+    const wktForResolve = projectWorkshopTypeId || 'none';
+    const { stages: kStages } = await getResolvedKanbanStages(pcid ? String(pcid) : null, { workshopTypeId: wktForResolve });
     const sortedK = [...kStages].sort((a, b) => a.order_index - b.order_index);
-    const [sxRow] = await enrichProjectsForSx([project], wonIds, pcid ? String(pcid) : null);
+    const [sxRow] = await enrichProjectsForSx([project], wonIds, pcid ? String(pcid) : null, wktForResolve);
+
+    // Khi cùng `workflow_stage_id` (vd: "Sản xuất") có nhiều cột Kanban khác nhau của cùng phân loại
+    // (Tiếp nhận, Thiết kế, Sản xuất, Thu tiền…), `kanbanColumnIdForProject` chỉ match qua
+    // `current_stage_id` nên luôn trả cột có `order_index` thấp nhất. Ưu tiên `sx_pipeline_stage_id`
+    // lưu trên CRM deal (nguồn sự thật khi user kéo card trên Kanban) — chỉ dùng khi cột đó còn nằm
+    // trong danh sách đã lọc theo workshop_type, tránh "rò" cột thuộc phân loại khác.
+    const sortedKIdSet = new Set(sortedK.map((c) => String(c.id)));
+    const crmStageId = (crmSummary || [])
+      .map((d) => d?.sx_pipeline_stage?.id || null)
+      .find((sid) => sid && sortedKIdSet.has(String(sid))) || null;
+    const finalSxKanbanColumnId = crmStageId || sxRow.sx_kanban_column_id;
+    const finalIntakeFromCrm = crmStageId
+      ? Boolean(sortedK.find((c) => String(c.id) === String(crmStageId))?.bucket_slug === INTAKE_BUCKET)
+      : sxRow.sx_intake;
 
     res.json({
       project: {
         ...project,
         sx_won_deal: sxRow.sx_won_deal,
-        sx_kanban_column_id: sxRow.sx_kanban_column_id,
-        sx_intake: sxRow.sx_intake,
+        sx_kanban_column_id: finalSxKanbanColumnId,
+        sx_intake: finalIntakeFromCrm,
         taskProgress,
         productionTaskProgress,
         logisticsTaskProgress,
@@ -1390,6 +1480,25 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
         .maybeSingle();
       if (!colRow) return res.status(400).json({ error: 'Cột pipeline sản xuất không tồn tại' });
 
+      // Gate parity CRM: chặn kéo cột Kanban SX khi còn nhiệm vụ tick "Chặn chuyển giai đoạn"
+      // (crm_tasks sx_* hoặc tasks dự án) ở cột hiện tại — chỉ chặn khi kéo TIẾN. Lùi / về intake cho phép.
+      const gate = await assertSxKanbanAdvanceAllowed({
+        projectId: id,
+        targetColId: colId,
+        currentColId: req.body?.current_sx_pipeline_stage_id || null,
+      });
+      if (!gate.ok) {
+        return res.status(400).json({
+          error: gate.error,
+          code: gate.code,
+          remaining_tasks: gate.remaining_tasks,
+          current_stage_id: gate.current_stage_id,
+          target_stage_id: gate.target_stage_id,
+          current_stage_name: gate.current_stage_name,
+          target_stage_name: gate.target_stage_name,
+        });
+      }
+
       const leadPatch = { sx_pipeline_stage_id: colId };
       const { error: leadUpdErr } = await supabase
         .from('crm_leads')
@@ -1467,6 +1576,51 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
     }
     if (targetStageErr || !targetStage) {
       return res.status(400).json({ error: 'Giai đoạn workflow không tồn tại' });
+    }
+
+    // Gate parity CRM cho nhánh PipelineStepper (gửi stage_id = workflow_stage_id):
+    //   Tìm cột pipeline SX (production_pipeline_stages) tương ứng với workflow_stage_id
+    //   + company + workshop_type của project, rồi gọi assertSxKanbanAdvanceAllowed.
+    try {
+      let wktId = req.body?.workshop_type_id || null;
+      if (!wktId) {
+        try {
+          const { data: pj } = await supabase
+            .from('projects')
+            .select('workshop_type_id')
+            .eq('id', id)
+            .maybeSingle();
+          wktId = pj?.workshop_type_id || null;
+        } catch (_) { /* DB chưa migration 97 → bỏ qua */ }
+      }
+      let q = supabase
+        .from('production_pipeline_stages')
+        .select('id')
+        .eq('company_id', companyIdForPipeline)
+        .eq('workflow_stage_id', stage_id);
+      if (wktId) q = q.eq('workshop_type_id', wktId);
+      const { data: matched } = await q.limit(1);
+      const targetColId = matched?.[0]?.id || null;
+      if (targetColId) {
+        const gate = await assertSxKanbanAdvanceAllowed({
+          projectId: id,
+          targetColId,
+          currentColId: req.body?.current_sx_pipeline_stage_id || null,
+        });
+        if (!gate.ok) {
+          return res.status(400).json({
+            error: gate.error,
+            code: gate.code,
+            remaining_tasks: gate.remaining_tasks,
+            current_stage_id: gate.current_stage_id,
+            target_stage_id: gate.target_stage_id,
+            current_stage_name: gate.current_stage_name,
+            target_stage_name: gate.target_stage_name,
+          });
+        }
+      }
+    } catch (gateErr) {
+      console.warn('[production] gate by workflow_stage_id:', gateErr.message);
     }
 
     const statusMap = {
@@ -2207,21 +2361,32 @@ r.post('/task-templates/:tplId/items', requirePermission('projects', 'edit'), as
       .order('order_index', { ascending: false })
       .limit(1);
     const nextOrder = (existing?.[0]?.order_index ?? 0) + 1;
-    const { data, error } = await supabase
+    const insertRow = {
+      template_id: req.params.tplId,
+      title: b.title.trim(),
+      description: b.description || null,
+      priority: b.priority || 'medium',
+      deadline_days: Number.isFinite(Number(b.deadline_days)) ? Number(b.deadline_days) : 0,
+      order_index: nextOrder,
+      checklist: Array.isArray(b.checklist) ? b.checklist : [],
+      default_allowed_companies: Array.isArray(b.default_allowed_companies) ? b.default_allowed_companies : null,
+      default_allowed_departments: Array.isArray(b.default_allowed_departments) ? b.default_allowed_departments : null,
+      blocks_stage_advance: !!b.blocks_stage_advance,
+    };
+    let { data, error } = await supabase
       .from('workshop_task_template_items')
-      .insert({
-        template_id: req.params.tplId,
-        title: b.title.trim(),
-        description: b.description || null,
-        priority: b.priority || 'medium',
-        deadline_days: Number.isFinite(Number(b.deadline_days)) ? Number(b.deadline_days) : 0,
-        order_index: nextOrder,
-        checklist: Array.isArray(b.checklist) ? b.checklist : [],
-        default_allowed_companies: Array.isArray(b.default_allowed_companies) ? b.default_allowed_companies : null,
-        default_allowed_departments: Array.isArray(b.default_allowed_departments) ? b.default_allowed_departments : null,
-      })
+      .insert(insertRow)
       .select()
       .single();
+    if (error && String(error.message || '').includes('blocks_stage_advance')) {
+      // DB chưa apply migration 256 — bỏ cờ và retry để vẫn tạo được item.
+      const { blocks_stage_advance: _drop, ...legacy } = insertRow;
+      ({ data, error } = await supabase
+        .from('workshop_task_template_items')
+        .insert(legacy)
+        .select()
+        .single());
+    }
     if (error) throw error;
     res.status(201).json(data);
   } catch (e) {
@@ -2234,15 +2399,24 @@ r.put('/task-templates/:tplId/items/:itemId', requirePermission('projects', 'edi
   try {
     const update = {};
     ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist',
-      'default_allowed_companies', 'default_allowed_departments'].forEach((f) => {
+      'default_allowed_companies', 'default_allowed_departments', 'blocks_stage_advance'].forEach((f) => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('workshop_task_template_items')
       .update(update)
       .eq('id', req.params.itemId)
       .select()
       .single();
+    if (error && String(error.message || '').includes('blocks_stage_advance')) {
+      const { blocks_stage_advance: _drop, ...legacy } = update;
+      ({ data, error } = await supabase
+        .from('workshop_task_template_items')
+        .update(legacy)
+        .eq('id', req.params.itemId)
+        .select()
+        .single());
+    }
     if (error) throw error;
     res.json(data);
   } catch (e) {

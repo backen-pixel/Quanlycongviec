@@ -57,6 +57,211 @@ function extractYoutubeId(url) {
   return m ? m[1] : null;
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// CERTIFICATE HELPERS
+// ════════════════════════════════════════════════════════════════════════
+
+// Lấy danh sách bài học "đủ điều kiện" của 1 danh mục cho 1 user (theo role).
+async function getCategoryLessonsForUser(categoryId, userObj) {
+  const { data: lessons } = await supabase
+    .from('knowledge_lessons')
+    .select('id, target_roles, is_published')
+    .eq('category_id', categoryId)
+    .eq('is_published', true);
+  const role = String(userObj?.role ?? '').trim().toLowerCase();
+  return (lessons || []).filter((l) => {
+    const roles = l.target_roles;
+    if (!roles || !Array.isArray(roles) || roles.length === 0) return true;
+    return roles.map((x) => String(x).toLowerCase()).includes(role);
+  });
+}
+
+// Tính số bài đã hoàn thành + thống kê bài tập cho 1 user trong 1 danh mục.
+async function getCategoryProgressStats(categoryId, userId, userObj) {
+  const lessons = await getCategoryLessonsForUser(categoryId, userObj);
+  const lessonIds = lessons.map((l) => l.id);
+  if (!lessonIds.length) {
+    return {
+      lessons, lessonIds, completedLessons: 0, totalLessons: 0,
+      exerciseStats: { total: 0, passed: 0, avgScore: null, pendingIds: [] },
+    };
+  }
+
+  const { data: prog } = await supabase
+    .from('knowledge_lesson_progress')
+    .select('lesson_id, status')
+    .eq('user_id', userId)
+    .in('lesson_id', lessonIds);
+  const completedSet = new Set((prog || []).filter((p) => p.status === 'completed').map((p) => p.lesson_id));
+
+  const { data: exs } = await supabase
+    .from('knowledge_exercises')
+    .select('id')
+    .in('lesson_id', lessonIds);
+  const exIds = (exs || []).map((e) => e.id);
+
+  let exerciseStats = { total: exIds.length, passed: 0, avgScore: null, pendingIds: [] };
+  if (exIds.length) {
+    const { data: subs } = await supabase
+      .from('knowledge_exercise_submissions')
+      .select('exercise_id, status, score, submitted_at')
+      .eq('user_id', userId)
+      .in('exercise_id', exIds);
+    // best score per exercise
+    const best = new Map();
+    (subs || []).forEach((s) => {
+      const prev = best.get(s.exercise_id);
+      if (!prev || (s.score ?? -1) > (prev.score ?? -1)) best.set(s.exercise_id, s);
+    });
+    const passedSet = new Set();
+    [...best.values()].forEach((s) => { if (s.status === 'passed') passedSet.add(s.exercise_id); });
+    exerciseStats.passed = passedSet.size;
+    exerciseStats.pendingIds = exIds.filter((id) => !passedSet.has(id));
+    const withScore = [...best.values()].filter((s) => s.score != null);
+    if (withScore.length) {
+      exerciseStats.avgScore = Math.round((withScore.reduce((a, b) => a + Number(b.score), 0) / withScore.length) * 100) / 100;
+    }
+  }
+
+  return {
+    lessons,
+    lessonIds,
+    completedLessons: completedSet.size,
+    totalLessons: lessons.length,
+    exerciseStats,
+  };
+}
+
+// Đánh giá khả năng cấp chứng nhận. Trả về { eligible, reason, stats, category }.
+// Tách riêng để cả tryIssueCertificate và /progress dùng chung.
+async function evaluateCertificateEligibility(userId, categoryId, userObj) {
+  const { data: category } = await supabase
+    .from('knowledge_categories')
+    .select('id, name, icon, badge_image_url, require_all_exercises_passed, certificate_template, company_id')
+    .eq('id', categoryId)
+    .maybeSingle();
+  if (!category) {
+    return { eligible: false, reason: 'Khoá học không tồn tại', stats: null, category: null };
+  }
+
+  const stats = await getCategoryProgressStats(categoryId, userId, userObj);
+  if (stats.totalLessons === 0) {
+    return { eligible: false, reason: 'Khoá học chưa có bài học nào', stats, category };
+  }
+  if (stats.completedLessons < stats.totalLessons) {
+    return {
+      eligible: false,
+      reason: `Bạn mới hoàn thành ${stats.completedLessons}/${stats.totalLessons} bài học`,
+      stats, category,
+    };
+  }
+  // Mặc định: yêu cầu đạt hết bài tập trong khoá (cờ require_all_exercises_passed)
+  const requireExs = category.require_all_exercises_passed !== false;
+  if (requireExs && stats.exerciseStats.total > 0 && stats.exerciseStats.passed < stats.exerciseStats.total) {
+    return {
+      eligible: false,
+      reason: `Bạn cần đạt thêm ${stats.exerciseStats.total - stats.exerciseStats.passed}/${stats.exerciseStats.total} bài tập`,
+      stats, category,
+    };
+  }
+  return { eligible: true, reason: null, stats, category };
+}
+
+// Kiểm tra & cấp chứng nhận nếu đủ điều kiện.
+// Idempotent (UNIQUE user_id, category_id). Trả về certificate vừa cấp hoặc null.
+async function tryIssueCertificate(userId, categoryId, userObj) {
+  if (!userId || !categoryId) return null;
+
+  const { data: existing } = await supabase
+    .from('knowledge_certificates')
+    .select('id, status')
+    .eq('user_id', userId)
+    .eq('category_id', categoryId)
+    .maybeSingle();
+  if (existing) return null;
+
+  const evalResult = await evaluateCertificateEligibility(userId, categoryId, userObj);
+  if (!evalResult.eligible) return null;
+  const { stats, category: cat } = evalResult;
+
+  const { data: usr } = await supabase
+    .from('users')
+    .select('id, full_name, email, role, company_id, department_id')
+    .eq('id', userId)
+    .single();
+
+  const { data: numRow } = await supabase.rpc('knowledge_next_certificate_number');
+  const { data: codeRow } = await supabase.rpc('knowledge_random_verify_code');
+  const certificate_number = numRow || `CN-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
+  const verify_code = codeRow || Math.random().toString(36).slice(2, 12).toUpperCase();
+
+  const insert = {
+    user_id: userId,
+    category_id: categoryId,
+    certificate_number,
+    verify_code,
+    total_lessons: stats.totalLessons,
+    completed_lessons: stats.completedLessons,
+    avg_exercise_score: stats.exerciseStats.avgScore,
+    passed_exercises: stats.exerciseStats.passed,
+    total_exercises: stats.exerciseStats.total,
+    badge_image_url: cat?.badge_image_url || null,
+    metadata: {
+      full_name: usr?.full_name || null,
+      email: usr?.email || null,
+      role: usr?.role || null,
+      company_id: usr?.company_id || null,
+      department_id: usr?.department_id || null,
+      category_name: cat?.name || null,
+      category_icon: cat?.icon || null,
+      badge_image_url: cat?.badge_image_url || null,
+      certificate_template: cat?.certificate_template || null,
+    },
+  };
+
+  const { data, error } = await supabase
+    .from('knowledge_certificates')
+    .insert(insert)
+    .select('*')
+    .single();
+  if (error) {
+    if (error.code === '23505') return null; // race condition — đã có rồi
+    // Fallback: nếu DB chưa chạy migration 260 → bỏ cột badge_image_url và thử lại
+    if (error.code === '42703' && /badge_image_url/i.test(error.message || '')) {
+      const { badge_image_url: _b, ...legacy } = insert;
+      const { data: retry, error: retryErr } = await supabase
+        .from('knowledge_certificates')
+        .insert(legacy)
+        .select('*')
+        .single();
+      if (retryErr) {
+        console.error('issue certificate (legacy) error', retryErr);
+        return null;
+      }
+      return retry;
+    }
+    console.error('issue certificate error', error);
+    return null;
+  }
+  return data;
+}
+
+// Wrapper an toàn — không bao giờ ném lỗi, dùng trong các route bất kỳ.
+async function maybeIssueCertificateForLesson(req, lessonId) {
+  try {
+    const { data: lesson } = await supabase
+      .from('knowledge_lessons')
+      .select('category_id')
+      .eq('id', lessonId)
+      .maybeSingle();
+    if (!lesson?.category_id) return null;
+    return await tryIssueCertificate(req.user.userId, lesson.category_id, req.user);
+  } catch (e) {
+    console.error('maybeIssueCertificateForLesson failed', e);
+    return null;
+  }
+}
+
 function gradeQuiz(questions, answers) {
   const items = questions?.items || [];
   if (!items.length) return { score: 100, passed: true, details: [] };
@@ -105,7 +310,10 @@ r.get('/categories', async (req, res) => {
 r.post('/categories', async (req, res) => {
   try {
     if (!canManage(req)) return res.status(403).json({ error: 'Không có quyền' });
-    const { name, slug, description, icon, parent_id, sort_order, company_id, is_active } = req.body;
+    const {
+      name, slug, description, icon, parent_id, sort_order, company_id, is_active,
+      badge_image_url, require_all_exercises_passed, certificate_template,
+    } = req.body;
     if (!name) return res.status(400).json({ error: 'Tên danh mục là bắt buộc' });
     const insert = {
       name,
@@ -118,7 +326,15 @@ r.post('/categories', async (req, res) => {
       is_active: is_active !== false,
       created_by: req.user.userId,
     };
-    const { data, error } = await supabase.from('knowledge_categories').insert(insert).select().single();
+    if (badge_image_url !== undefined) insert.badge_image_url = badge_image_url || null;
+    if (require_all_exercises_passed !== undefined) insert.require_all_exercises_passed = !!require_all_exercises_passed;
+    if (certificate_template !== undefined) insert.certificate_template = certificate_template || {};
+    let { data, error } = await supabase.from('knowledge_categories').insert(insert).select().single();
+    // Fallback nếu DB chưa chạy migration 260
+    if (error && error.code === '42703' && /badge_image_url|require_all_exercises_passed|certificate_template/i.test(error.message || '')) {
+      delete insert.badge_image_url; delete insert.require_all_exercises_passed; delete insert.certificate_template;
+      ({ data, error } = await supabase.from('knowledge_categories').insert(insert).select().single());
+    }
     if (error) throw error;
     res.status(201).json(data);
   } catch (e) {
@@ -131,10 +347,17 @@ r.patch('/categories/:id', async (req, res) => {
   try {
     if (!canManage(req)) return res.status(403).json({ error: 'Không có quyền' });
     const update = { updated_at: new Date().toISOString() };
-    ['name', 'slug', 'description', 'icon', 'parent_id', 'sort_order', 'company_id', 'is_active'].forEach((f) => {
+    [
+      'name', 'slug', 'description', 'icon', 'parent_id', 'sort_order', 'company_id', 'is_active',
+      'badge_image_url', 'require_all_exercises_passed', 'certificate_template',
+    ].forEach((f) => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
-    const { data, error } = await supabase.from('knowledge_categories').update(update).eq('id', req.params.id).select().single();
+    let { data, error } = await supabase.from('knowledge_categories').update(update).eq('id', req.params.id).select().single();
+    if (error && error.code === '42703' && /badge_image_url|require_all_exercises_passed|certificate_template/i.test(error.message || '')) {
+      delete update.badge_image_url; delete update.require_all_exercises_passed; delete update.certificate_template;
+      ({ data, error } = await supabase.from('knowledge_categories').update(update).eq('id', req.params.id).select().single());
+    }
     if (error) throw error;
     res.json(data);
   } catch (e) {
@@ -409,7 +632,7 @@ r.delete('/lessons/:id', async (req, res) => {
 // POST /knowledge/lessons/:id/complete
 r.post('/lessons/:id/complete', async (req, res) => {
   try {
-    const { data: lesson } = await supabase.from('knowledge_lessons').select('is_published, target_roles').eq('id', req.params.id).single();
+    const { data: lesson } = await supabase.from('knowledge_lessons').select('is_published, target_roles, category_id').eq('id', req.params.id).single();
     if (!lesson || !lessonVisibleToUser(lesson, req)) return res.status(404).json({ error: 'Không tìm thấy' });
     const now = new Date().toISOString();
     const { data, error } = await supabase
@@ -427,7 +650,12 @@ r.post('/lessons/:id/complete', async (req, res) => {
       .select()
       .single();
     if (error) throw error;
-    res.json(data);
+
+    const newCert = lesson.category_id
+      ? await tryIssueCertificate(req.user.userId, lesson.category_id, req.user)
+      : null;
+
+    res.json({ ...data, certificate_issued: newCert || null });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -468,13 +696,19 @@ r.get('/exercises/:id', async (req, res) => {
 
     const payload = { ...ex };
     if (!canManage(req) && ex.type === 'quiz') {
-      const items = (ex.questions?.items || []).map(({ id, question, type, options }) => ({
+      const items = (ex.questions?.items || []).map(({ id, question, type, options, image_url }) => ({
         id,
         question,
         type,
         options,
+        ...(image_url ? { image_url } : {}),
       }));
       payload.questions = { items };
+    }
+    const ytId = extractYoutubeId(ex.video_url);
+    if (ytId) {
+      payload.video_embed_id = ytId;
+      if (!payload.video_type) payload.video_type = 'youtube';
     }
     payload.attempt_count = count || 0;
     res.json(payload);
@@ -597,7 +831,13 @@ r.post('/exercises/:id/submit', async (req, res) => {
       .select()
       .single();
     if (insErr) throw insErr;
-    res.status(201).json(data);
+
+    let newCert = null;
+    if (status === 'passed' && ex.lesson?.id) {
+      newCert = await maybeIssueCertificateForLesson(req, ex.lesson.id);
+    }
+
+    res.status(201).json({ ...data, certificate_issued: newCert || null });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -729,6 +969,203 @@ r.delete('/lessons/:id/rate', async (req, res) => {
       .eq('user_id', req.user.userId)
       .eq('lesson_id', req.params.id);
     res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════
+// CERTIFICATES — Chứng nhận hoàn thành khoá (danh mục)
+// ════════════════════════════════════════════════════════════════════════
+
+// GET /knowledge/categories/:id/progress — tiến độ chi tiết của user trong 1 khoá
+r.get('/categories/:id/progress', async (req, res) => {
+  try {
+    const evalResult = await evaluateCertificateEligibility(req.user.userId, req.params.id, req.user);
+    const { stats, category, eligible, reason } = evalResult;
+    const { data: cert } = await supabase
+      .from('knowledge_certificates')
+      .select('id, certificate_number, verify_code, issued_at, status, badge_image_url')
+      .eq('user_id', req.user.userId)
+      .eq('category_id', req.params.id)
+      .maybeSingle();
+    const totalLessons = stats?.totalLessons || 0;
+    const completedLessons = stats?.completedLessons || 0;
+    const exerciseStats = stats?.exerciseStats || { total: 0, passed: 0, avgScore: null };
+    // Phần trăm hoàn thành tính trung bình bài học + bài tập (cân bằng)
+    const lessonRate = totalLessons ? completedLessons / totalLessons : 0;
+    const exRate = exerciseStats.total ? exerciseStats.passed / exerciseStats.total : 1;
+    const overallRate = (exerciseStats.total > 0 && (category?.require_all_exercises_passed !== false))
+      ? Math.round(((lessonRate + exRate) / 2) * 100)
+      : Math.round(lessonRate * 100);
+    res.json({
+      category_id: req.params.id,
+      total_lessons: totalLessons,
+      completed_lessons: completedLessons,
+      completion_rate: overallRate,
+      lesson_completion_rate: Math.round(lessonRate * 100),
+      exercises: exerciseStats,
+      certificate: cert || null,
+      eligible,
+      reason,
+      badge_image_url: category?.badge_image_url || null,
+      require_all_exercises_passed: category?.require_all_exercises_passed !== false,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /knowledge/categories/:id/issue-certificate — kích hoạt cấp thủ công (idempotent)
+r.post('/categories/:id/issue-certificate', async (req, res) => {
+  try {
+    const cert = await tryIssueCertificate(req.user.userId, req.params.id, req.user);
+    if (!cert) {
+      const { data: existing } = await supabase
+        .from('knowledge_certificates')
+        .select('*, category:knowledge_categories(id, name, icon, badge_image_url)')
+        .eq('user_id', req.user.userId)
+        .eq('category_id', req.params.id)
+        .maybeSingle();
+      if (existing) return res.json({ certificate: existing, already_issued: true });
+      const evalResult = await evaluateCertificateEligibility(req.user.userId, req.params.id, req.user);
+      return res.status(400).json({
+        error: evalResult.reason || 'Chưa đủ điều kiện cấp chứng nhận',
+        progress: evalResult.stats,
+        eligible: false,
+      });
+    }
+    res.status(201).json({ certificate: cert });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /knowledge/certificates — chứng nhận của tôi
+r.get('/certificates', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('knowledge_certificates')
+      .select('*, category:knowledge_categories(id, name, slug, icon, badge_image_url)')
+      .eq('user_id', req.user.userId)
+      .order('issued_at', { ascending: false });
+    if (error) throw error;
+    res.json({ certificates: data || [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /knowledge/users/:userId/certificates — public xem chứng nhận của 1 user (mạng nội bộ)
+r.get('/users/:userId/certificates', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('knowledge_certificates')
+      .select('id, certificate_number, verify_code, issued_at, status, total_lessons, completed_lessons, total_exercises, passed_exercises, avg_exercise_score, badge_image_url, category:knowledge_categories(id, name, slug, icon, badge_image_url)')
+      .eq('user_id', req.params.userId)
+      .eq('status', 'issued')
+      .order('issued_at', { ascending: false });
+    if (error) throw error;
+    res.json({ certificates: data || [], count: (data || []).length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /knowledge/certificates/:id — chi tiết để in/xem
+r.get('/certificates/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('knowledge_certificates')
+      .select(`*,
+        category:knowledge_categories(id, name, slug, icon, description, badge_image_url, certificate_template),
+        user:users!knowledge_certificates_user_id_fkey(id, full_name, email, role, avatar)`)
+      .eq('id', req.params.id)
+      .single();
+    if (error) throw error;
+    if (!canManage(req) && data.user_id !== req.user.userId) {
+      return res.status(403).json({ error: 'Không có quyền xem chứng nhận này' });
+    }
+    res.json(data);
+  } catch (e) {
+    res.status(404).json({ error: 'Không tìm thấy chứng nhận' });
+  }
+});
+
+// GET /knowledge/certificates/verify/:code — xác minh public (vẫn cần auth do middleware)
+r.get('/certificates/verify/:code', async (req, res) => {
+  try {
+    const { data } = await supabase
+      .from('knowledge_certificates')
+      .select(`id, certificate_number, verify_code, issued_at, status, total_lessons, completed_lessons, avg_exercise_score, metadata,
+        category:knowledge_categories(id, name, icon),
+        user:users!knowledge_certificates_user_id_fkey(id, full_name, email)`)
+      .eq('verify_code', String(req.params.code).toUpperCase())
+      .maybeSingle();
+    if (!data) return res.status(404).json({ error: 'Không tìm thấy chứng nhận', valid: false });
+    res.json({ valid: data.status === 'issued', certificate: data });
+  } catch (e) {
+    res.status(500).json({ error: e.message, valid: false });
+  }
+});
+
+// GET /knowledge/admin/certificates — admin xem tất cả
+r.get('/admin/certificates', async (req, res) => {
+  try {
+    if (!canManage(req)) return res.status(403).json({ error: 'Không có quyền' });
+    const { category_id, user_id, status, q } = req.query;
+    let query = supabase
+      .from('knowledge_certificates')
+      .select(`*,
+        category:knowledge_categories(id, name, icon, company_id),
+        user:users!knowledge_certificates_user_id_fkey(id, full_name, email, company_id, department_id)`)
+      .order('issued_at', { ascending: false })
+      .limit(500);
+    if (category_id) query = query.eq('category_id', category_id);
+    if (user_id) query = query.eq('user_id', user_id);
+    if (status) query = query.eq('status', status);
+    const { data, error } = await query;
+    if (error) throw error;
+
+    let list = data || [];
+    const adminCompanyId = req.user.company_id || null;
+    const sysAdmin = isSystemAdmin(req.user);
+    if (!sysAdmin && adminCompanyId) {
+      list = list.filter((c) => String(c.user?.company_id || '') === String(adminCompanyId));
+    }
+    if (q) {
+      const s = String(q).toLowerCase();
+      list = list.filter((c) =>
+        c.user?.full_name?.toLowerCase().includes(s)
+        || c.user?.email?.toLowerCase().includes(s)
+        || c.certificate_number?.toLowerCase().includes(s)
+        || c.category?.name?.toLowerCase().includes(s),
+      );
+    }
+    res.json({ certificates: list, total: list.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /knowledge/admin/certificates/:id/revoke
+r.post('/admin/certificates/:id/revoke', async (req, res) => {
+  try {
+    if (!canManage(req)) return res.status(403).json({ error: 'Không có quyền' });
+    const { reason } = req.body || {};
+    const { data, error } = await supabase
+      .from('knowledge_certificates')
+      .update({
+        status: 'revoked',
+        revoked_at: new Date().toISOString(),
+        revoked_by: req.user.userId,
+        revoked_reason: reason || null,
+      })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

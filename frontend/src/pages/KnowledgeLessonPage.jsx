@@ -6,7 +6,7 @@ import KnowledgeMediaGallery from '../components/KnowledgeMediaGallery';
 import {
   BookOpen, Video, ClipboardList, CheckCircle2, ChevronLeft, ChevronRight,
   PlayCircle, Loader2, Clock, Award, ArrowRight, ListChecks,
-  Bookmark, Star, Tag, AlertCircle, MessageSquare,
+  Bookmark, Star, Tag, AlertCircle, MessageSquare, Trophy, X,
 } from 'lucide-react';
 
 function StarRow({ value, onClick, size = 'h-5 w-5' }) {
@@ -115,6 +115,7 @@ export default function KnowledgeLessonPage() {
   const [completing, setCompleting] = useState(false);
   const [scrollProgress, setScrollProgress] = useState(0);
   const [siblingLessons, setSiblingLessons] = useState([]);
+  const [newCertificate, setNewCertificate] = useState(null);
   const contentRef = useRef(null);
 
   useEffect(() => {
@@ -166,8 +167,11 @@ export default function KnowledgeLessonPage() {
   const markComplete = async () => {
     setCompleting(true);
     try {
-      await api.post(`/knowledge/lessons/${id}/complete`);
+      const { data } = await api.post(`/knowledge/lessons/${id}/complete`);
       setLesson((l) => ({ ...l, progress: { ...l.progress, status: 'completed' } }));
+      if (data?.certificate_issued) {
+        setNewCertificate(data.certificate_issued);
+      }
     } catch {
       alert('Lỗi');
     }
@@ -226,6 +230,46 @@ export default function KnowledgeLessonPage() {
       <div className="fixed top-0 left-0 right-0 h-1 z-30 pointer-events-none">
         <div className="h-full bg-gradient-to-r from-violet-500 to-fuchsia-500 transition-all" style={{ width: `${scrollProgress}%` }} />
       </div>
+
+      {newCertificate && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-300">
+          <div className="relative max-w-md w-full bg-gradient-to-br from-amber-50 via-yellow-50 to-orange-50 rounded-3xl border-4 border-amber-300 shadow-2xl p-8 text-center">
+            <button
+              type="button"
+              onClick={() => setNewCertificate(null)}
+              className="absolute top-3 right-3 p-1.5 rounded-full hover:bg-amber-100 text-amber-700"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <div className="w-20 h-20 mx-auto rounded-full bg-gradient-to-br from-amber-400 to-orange-500 text-white flex items-center justify-center shadow-lg animate-bounce">
+              <Trophy className="h-10 w-10" />
+            </div>
+            <p className="mt-4 text-sm font-bold text-amber-700 uppercase tracking-widest">🎉 Chúc mừng!</p>
+            <h2 className="mt-1 text-2xl font-bold text-gray-900">Bạn vừa nhận được chứng nhận</h2>
+            <p className="mt-2 text-gray-600">
+              Hoàn thành khoá học <strong>{lesson.category?.name}</strong>.
+            </p>
+            <p className="mt-3 font-mono text-sm bg-white border border-amber-200 rounded-lg py-1.5 px-3 inline-block text-amber-800">
+              {newCertificate.certificate_number}
+            </p>
+            <div className="mt-5 flex gap-2 justify-center">
+              <Link
+                to={`/knowledge/certificates/${newCertificate.id}`}
+                className="px-5 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-lg font-semibold hover:from-amber-600 hover:to-orange-600 flex items-center gap-2"
+              >
+                <Award className="h-4 w-4" /> Xem chứng nhận
+              </Link>
+              <button
+                type="button"
+                onClick={() => setNewCertificate(null)}
+                className="px-4 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"
+              >
+                Để sau
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Link to="/knowledge" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-violet-600 mb-4">
         <ChevronLeft className="h-4 w-4" /> Thư viện kiến thức
@@ -366,6 +410,11 @@ export default function KnowledgeLessonPage() {
                   <button type="button" onClick={() => setTab('text')} className="text-blue-600 text-sm mt-2 hover:underline">
                     Xem đầy đủ →
                   </button>
+                </div>
+              )}
+              {(lesson.attachments || []).length > 0 && (
+                <div className="p-6 border-t border-gray-100">
+                  <KnowledgeMediaGallery items={lesson.attachments} title="Tài liệu & media tham khảo" />
                 </div>
               )}
             </div>
