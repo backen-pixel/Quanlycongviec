@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import api from '../lib/api';
 import TaskDetailModal from '../components/TaskDetailModal';
 import TaskCreateModal from '../components/TaskCreateModal';
@@ -44,7 +44,7 @@ function TaskCard({ task: t, onClick, dragListeners }) {
       </div>
 
       {/* Title */}
-      <h4 className="text-sm font-medium text-gray-800 mb-1">{t.title}</h4>
+      <h4 className="text-sm font-medium mb-1" style={{ color: '#000000' }}>{t.title}</h4>
 
       {/* Project name */}
       {t.projects?.name && (
@@ -76,19 +76,27 @@ function TaskCard({ task: t, onClick, dragListeners }) {
 function DroppableColumn({ status, label, tasks, onTaskClick, onAdd }) {
   const taskIds = tasks.map(t => t.id);
   return (
-    <div className="shrink-0 w-80">
-      <div className="flex items-center gap-2 mb-3 px-1">
+    <div className="shrink-0 w-80 flex flex-col" style={{ maxHeight: 'calc(100vh - 220px)' }}>
+      <div className="flex items-center gap-2 mb-3 px-2 py-1.5 rounded-lg bg-white/70 backdrop-blur-sm border border-white/40 shadow-sm">
         <div className={`w-2.5 h-2.5 rounded-full ${TASK_COLORS[status]}`} />
-        <h3 className="text-sm font-semibold text-gray-700">{label}</h3>
-        <span className="text-[11px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-medium">{tasks.length}</span>
+        <h3 className="text-sm font-bold" style={{ color: '#0f172a' }}>{label}</h3>
+        <span className="ml-auto text-[11px] bg-slate-900/90 text-white px-2 py-0.5 rounded-full font-bold tabular-nums shadow-sm">{tasks.length}</span>
       </div>
       <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
-        <div className="space-y-2 min-h-[200px] p-2 rounded-xl bg-gray-100/60" data-status={status}>
-          {tasks.map(t => (
-            <SortableTaskCard key={t.id} task={t} onClick={onTaskClick} />
-          ))}
+        <div
+          className="flex-1 min-h-[200px] p-2 rounded-xl bg-gray-100/60 flex flex-col gap-2 overflow-hidden"
+          data-status={status}
+        >
+          {/* Vùng cuộn dọc cho các task */}
+          <div className="flex-1 overflow-y-auto space-y-2 pr-1 [scrollbar-width:thin]">
+            {tasks.map(t => (
+              <SortableTaskCard key={t.id} task={t} onClick={onTaskClick} />
+            ))}
+          </div>
+          {/* Nút Thêm cố định ở đáy cột — không cuộn theo */}
           <button onClick={onAdd}
-            className="w-full flex items-center justify-center gap-2 p-2.5 rounded-lg border-2 border-dashed border-gray-200 text-gray-400 hover:border-blue-300 hover:text-blue-500 text-sm transition-colors cursor-pointer">
+            style={{ color: '#000000' }}
+            className="shrink-0 w-full flex items-center justify-center gap-2 p-2.5 rounded-lg border-2 border-dashed border-gray-300 bg-white/40 hover:bg-white/70 hover:border-blue-400 text-sm transition-colors cursor-pointer">
             <Plus className="h-4 w-4" /> Thêm
           </button>
         </div>
@@ -100,7 +108,11 @@ function DroppableColumn({ status, label, tasks, onTaskClick, onAdd }) {
 export default function Tasks() {
   const [columns, setColumns] = useState({});
   const [allTasks, setAllTasks] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // firstLoading: chỉ true ở lần fetch đầu tiên (hiện spinner full-screen).
+  // refreshing: true cho các lần fetch tiếp theo (debounce search/filter) — không che bảng,
+  //             tránh nháy màn hình mỗi lần gõ tìm task.
+  const [firstLoading, setFirstLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [total, setTotal] = useState(0);
   const [view, setView] = useState('kanban');
   const [selectedTask, setSelectedTask] = useState(null);
@@ -111,22 +123,34 @@ export default function Tasks() {
   const [activeTask, setActiveTask] = useState(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const isFirstLoadRef = useRef(true);
+  const reqIdRef = useRef(0);
 
-  const load = () => {
-    setLoading(true);
+  const load = useCallback(() => {
+    if (isFirstLoadRef.current) setFirstLoading(true);
+    else setRefreshing(true);
+
+    const myReq = ++reqIdRef.current;
     const params = { group_by: 'status' };
     if (search) params.search = search;
     if (filterProject) params.project_id = filterProject;
 
     api.get('/tasks', { params })
       .then(r => {
+        // Bỏ qua phản hồi cũ nếu user đã gõ thêm — chống race condition khi typing nhanh
+        if (myReq !== reqIdRef.current) return;
         setColumns(r.data.columns || {});
         setTotal(r.data.total || 0);
         setAllTasks(Object.values(r.data.columns || {}).flat());
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
-  };
+      .finally(() => {
+        if (myReq !== reqIdRef.current) return;
+        isFirstLoadRef.current = false;
+        setFirstLoading(false);
+        setRefreshing(false);
+      });
+  }, [search, filterProject]);
 
   useEffect(() => {
     load();
@@ -134,6 +158,27 @@ export default function Tasks() {
   }, []);
 
   useEffect(load, [filterProject]);
+
+  // ── Debounce search: gõ tới đâu lọc tới đó (300ms idle) ────────────────────
+  const searchDebounceRef = useRef(null);
+  useEffect(() => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => load(), 300);
+    return () => clearTimeout(searchDebounceRef.current);
+  }, [search]);
+
+  // Client-side filter để hiển thị tức thì trong khi chờ API trả về (List view)
+  const filteredList = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return allTasks;
+    return allTasks.filter((t) => {
+      const title = (t.title || '').toLowerCase();
+      const proj = `${t.projects?.code || ''} ${t.projects?.name || ''}`.toLowerCase();
+      const assignee = (t.assignee?.full_name || '').toLowerCase();
+      const stage = (t.stage?.name || '').toLowerCase();
+      return title.includes(q) || proj.includes(q) || assignee.includes(q) || stage.includes(q);
+    });
+  }, [allTasks, search]);
 
   // DnD handlers
   const findColumn = (taskId) => {
@@ -189,7 +234,7 @@ export default function Tasks() {
     }
   };
 
-  if (loading) {
+  if (firstLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <svg className="animate-spin h-6 w-6 text-gray-400" viewBox="0 0 24 24">
@@ -210,10 +255,10 @@ export default function Tasks() {
         </div>
         <div className="flex items-center gap-2">
           <div className="flex gap-0.5 bg-gray-100 rounded-lg p-0.5">
-            <button onClick={() => setView('kanban')} className={`h-8 px-3 rounded-md text-xs font-medium flex items-center gap-1 cursor-pointer ${view === 'kanban' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>
+            <button onClick={() => setView('kanban')} className={`h-8 px-3 rounded-md text-xs font-medium flex items-center gap-1 cursor-pointer transition-colors ${view === 'kanban' ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-200 shadow-sm' : 'text-gray-500 hover:text-gray-800 hover:bg-white/60'}`}>
               <Columns className="h-3.5 w-3.5" /> Kanban
             </button>
-            <button onClick={() => setView('list')} className={`h-8 px-3 rounded-md text-xs font-medium flex items-center gap-1 cursor-pointer ${view === 'list' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>
+            <button onClick={() => setView('list')} className={`h-8 px-3 rounded-md text-xs font-medium flex items-center gap-1 cursor-pointer transition-colors ${view === 'list' ? 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200 shadow-sm' : 'text-gray-500 hover:text-gray-800 hover:bg-white/60'}`}>
               <List className="h-3.5 w-3.5" /> Danh sách
             </button>
           </div>
@@ -228,8 +273,29 @@ export default function Tasks() {
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 max-w-xs">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <input value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && load()}
-            placeholder="Tìm task..." className="w-full h-9 pl-10 pr-3 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Tìm task theo tên, dự án, người thực hiện…"
+            autoFocus
+            className="w-full h-9 pl-10 pr-8 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+          />
+          {refreshing && (
+            <svg className="absolute right-8 top-1/2 -translate-y-1/2 h-4 w-4 text-blue-500 animate-spin" viewBox="0 0 24 24" aria-hidden>
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+            </svg>
+          )}
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 inline-flex items-center justify-center text-gray-400 hover:text-gray-700 cursor-pointer"
+              title="Xoá tìm kiếm"
+            >
+              ×
+            </button>
+          )}
         </div>
         <select value={filterProject} onChange={e => setFilterProject(e.target.value)}
           className="h-9 px-3 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white">
@@ -255,45 +321,46 @@ export default function Tasks() {
           </DragOverlay>
         </DndContext>
       ) : (
-        /* List view — with project name, stage, assignee */
+        /* List view — sticky header + scroll dọc tối đa 8 dòng */
         <div className="bg-white rounded-xl border overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b">
-              <tr>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Task</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Dự án</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Giai đoạn</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Trạng thái</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Người thực hiện</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Ưu tiên</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Hạn chót</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {allTasks.map(t => (
-                <tr key={t.id} onClick={() => setSelectedTask(t.id)} className="hover:bg-gray-50 cursor-pointer">
+          <div className="overflow-auto" style={{ maxHeight: 'calc(48px * 8 + 41px)' }}>
+            <table className="w-full text-sm" style={{ tableLayout: 'auto', minWidth: 720 }}>
+              <thead className="bg-gray-50 border-b sticky top-0 z-10">
+                <tr>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Task</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Dự án</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Giai đoạn</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Trạng thái</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Người thực hiện</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Ưu tiên</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Hạn chót</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {filteredList.map(t => (
+                <tr key={t.id} onClick={() => setSelectedTask(t.id)} className="cursor-pointer transition-colors hover:bg-slate-200/70">
                   <td className="px-4 py-3">
-                    <p className="font-medium text-gray-900">{t.title}</p>
+                    <p className="font-medium" style={{ color: '#000000' }}>{t.title}</p>
                     {t.projects?.name && <p className="text-[10px] text-gray-400 mt-0.5">{t.projects.name}</p>}
                   </td>
-                  <td className="px-4 py-3 text-xs text-blue-600 font-bold">{t.projects?.code || '—'}</td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 text-xs text-blue-600 font-bold whitespace-nowrap">{t.projects?.code || '—'}</td>
+                  <td className="px-4 py-3 whitespace-nowrap">
                     {t.stage ? (
-                      <span className="text-[10px] px-2 py-0.5 rounded-full text-white font-medium" style={{ backgroundColor: t.stage.color }}>
+                      <span className="inline-block text-[10px] px-2 py-0.5 rounded-full text-white font-medium whitespace-nowrap" style={{ backgroundColor: t.stage.color }}>
                         {t.stage.name}
                       </span>
                     ) : <span className="text-xs text-gray-400">—</span>}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 whitespace-nowrap">
                     <span className="flex items-center gap-1.5">
-                      <span className={`w-2 h-2 rounded-full ${TASK_COLORS[t.status]}`} />
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${TASK_COLORS[t.status]}`} />
                       <span className="text-xs">{TASK_STATUS[t.status]}</span>
                     </span>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 whitespace-nowrap">
                     {t.assignee ? (
                       <div className="flex items-center gap-1.5">
-                        <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold"
+                        <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold shrink-0"
                           style={{ backgroundColor: avatarColor(t.assignee.full_name) }}>
                           {getInitials(t.assignee.full_name)}
                         </div>
@@ -301,20 +368,32 @@ export default function Tasks() {
                       </div>
                     ) : <span className="text-xs text-gray-400">—</span>}
                   </td>
-                  <td className="px-4 py-3">
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full ${PRIORITY_COLORS[t.priority]}`}>{PRIORITY_LABELS[t.priority]}</span>
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <span className={`inline-block text-[10px] px-2 py-0.5 rounded-full whitespace-nowrap ${PRIORITY_COLORS[t.priority]}`}>{PRIORITY_LABELS[t.priority]}</span>
                   </td>
-                  <td className={`px-4 py-3 text-xs ${t.due_date && new Date(t.due_date) < new Date() && t.status !== 'done' ? 'text-red-500 font-medium' : 'text-gray-500'}`}>
+                  <td className={`px-4 py-3 text-xs whitespace-nowrap ${t.due_date && new Date(t.due_date) < new Date() && t.status !== 'done' ? 'text-red-500 font-medium' : 'text-gray-500'}`}>
                     {formatDate(t.due_date) || '—'}
                   </td>
                 </tr>
               ))}
-            </tbody>
-          </table>
-          {allTasks.length === 0 && (
-            <div className="text-center py-12 text-gray-400">
-              <CheckSquare className="h-10 w-10 mx-auto mb-2 opacity-30" />
-              <p className="text-sm">Chưa có công việc</p>
+              </tbody>
+            </table>
+            {filteredList.length === 0 && (
+              <div className="text-center py-12 text-gray-400">
+                <CheckSquare className="h-10 w-10 mx-auto mb-2 opacity-30" />
+                <p className="text-sm">
+                  {search ? `Không tìm thấy task nào khớp "${search}"` : 'Chưa có công việc'}
+                </p>
+              </div>
+            )}
+          </div>
+          {/* Footer hiển thị số dòng — giúp user biết bảng còn dữ liệu cuộn dưới */}
+          {filteredList.length > 8 && (
+            <div className="px-4 py-2 border-t border-gray-100 bg-gray-50/70 text-[11px] text-gray-500 flex items-center justify-between">
+              <span>Hiển thị {Math.min(8, filteredList.length)} / {filteredList.length} task — cuộn để xem thêm</span>
+              {search && (
+                <span className="text-blue-600 font-medium">Đang lọc theo: "{search}"</span>
+              )}
             </div>
           )}
         </div>

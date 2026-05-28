@@ -80,8 +80,8 @@ export default function PersonalTasks() {
               <div key={key} className="shrink-0 w-72">
                 <div className="flex items-center gap-2 mb-3 px-1">
                   <div className={`w-2.5 h-2.5 rounded-full ${TASK_COLORS[key]}`} />
-                  <h3 className="text-sm font-semibold text-gray-700">{label}</h3>
-                  <span className="text-[11px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{colTasks.length}</span>
+                  <h3 className="text-sm font-semibold text-white drop-shadow-sm">{label}</h3>
+                  <span className="text-[11px] bg-white/20 text-white border border-white/25 px-2 py-0.5 rounded-full backdrop-blur-sm">{colTasks.length}</span>
                 </div>
                 <div className="space-y-2 min-h-[120px] p-2 rounded-xl bg-gray-100/60">
                   {colTasks.map(t => (
@@ -134,7 +134,7 @@ export default function PersonalTasks() {
               <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Hạn</th>
             </tr></thead>
             <tbody className="divide-y">{tasks.map(t => (
-              <tr key={t.id} onClick={() => setSelectedTask(t.id)} className="hover:bg-gray-50 cursor-pointer">
+              <tr key={t.id} onClick={() => setSelectedTask(t.id)} className="cursor-pointer transition-colors hover:bg-slate-200/70">
                 <td className="px-4 py-3 font-medium text-gray-900">{t.title}</td>
                 <td className="px-4 py-3"><span className="flex items-center gap-1.5"><span className={`w-2 h-2 rounded-full ${TASK_COLORS[t.status]}`} /><span className="text-xs">{TASK_STATUS[t.status]}</span></span></td>
                 <td className="px-4 py-3 text-xs text-gray-600">{t.assignee?.full_name || '—'}</td>

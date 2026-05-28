@@ -428,7 +428,7 @@ export default function CreateProject() {
           <h1 className="text-2xl font-bold text-gray-900">
             {dealId ? '🎉 Tạo Dự Án Từ Deal' : 'Tạo Dự Án Mới'}
           </h1>
-          <p className="text-sm text-gray-600 mt-1">Nhập thông tin, chọn luồng và phân công nhiệm vụ</p>
+          <p className="text-sm mt-1 drop-shadow-sm" style={{ color: '#ffffff' }}>Nhập thông tin, chọn luồng và phân công nhiệm vụ</p>
         </div>
         <button
           onClick={handleCancel}
@@ -439,26 +439,28 @@ export default function CreateProject() {
       </div>
 
       {/* Tabs */}
-      <div data-tour="create-tabs" className="flex gap-0 border-b border-gray-200">
+      <div data-tour="create-tabs" className="flex gap-0 border-b border-white/30">
         {[
           { id: 'info', label: '📋 Thông Tin', desc: 'Dự án & khách hàng' },
           { id: 'flow', label: '🔄 Quy Trình', desc: 'Luồng, nhiệm vụ & phân công' },
           { id: 'files', label: '📎 Tệp', desc: 'Báo giá & tài liệu' }
-        ].map(tab => (
-          <button
-            data-tour={`tab-${tab.id}`}
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`px-6 py-3 font-medium text-sm border-b-2 transition ${
-              activeTab === tab.id
-                ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-gray-600 hover:text-gray-900'
-            }`}
-          >
-            <div>{tab.label}</div>
-            <div className="text-xs text-gray-500">{tab.desc}</div>
-          </button>
-        ))}
+        ].map(tab => {
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              data-tour={`tab-${tab.id}`}
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-6 py-3 font-medium text-sm border-b-2 transition ${
+                isActive ? 'border-white' : 'border-transparent hover:border-white/40'
+              }`}
+              style={{ color: '#ffffff' }}
+            >
+              <div className="drop-shadow-sm" style={{ color: '#ffffff', opacity: isActive ? 1 : 0.85 }}>{tab.label}</div>
+              <div className="text-xs drop-shadow-sm" style={{ color: '#ffffff', opacity: isActive ? 0.95 : 0.7 }}>{tab.desc}</div>
+            </button>
+          );
+        })}
       </div>
 
       {/* Content Card */}
@@ -577,21 +579,21 @@ export default function CreateProject() {
             {/* Customer Info Card */}
             {selectedCustomer && (
               <div className="bg-green-50 rounded-lg p-4 border border-green-200">
-                <h4 className="font-semibold text-gray-900 mb-3 text-sm flex items-center gap-2">
+                <h4 className="font-semibold mb-3 text-sm flex items-center gap-2" style={{ color: '#000000' }}>
                   <User className="h-4 w-4 text-green-600" /> Thông Tin Khách Hàng
                 </h4>
                 <div className="grid grid-cols-3 gap-4 text-sm">
                   <div>
-                    <p className="text-xs text-gray-600 mb-1">Tên</p>
-                    <p className="font-semibold text-gray-900">{selectedCustomer.full_name}</p>
+                    <p className="text-xs mb-1" style={{ color: '#4b5563' }}>Tên</p>
+                    <p className="font-semibold" style={{ color: '#000000' }}>{selectedCustomer.full_name}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-gray-600 mb-1">Điện thoại</p>
-                    <p className="font-semibold text-gray-900">{selectedCustomer.phone}</p>
+                    <p className="text-xs mb-1" style={{ color: '#4b5563' }}>Điện thoại</p>
+                    <p className="font-semibold" style={{ color: '#000000' }}>{selectedCustomer.phone}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-gray-600 mb-1">Email</p>
-                    <p className="font-semibold text-gray-900 truncate">{selectedCustomer.email || '-'}</p>
+                    <p className="text-xs mb-1" style={{ color: '#4b5563' }}>Email</p>
+                    <p className="font-semibold truncate" style={{ color: '#000000' }}>{selectedCustomer.email || '-'}</p>
                   </div>
                 </div>
               </div>
@@ -686,8 +688,8 @@ export default function CreateProject() {
                         : 'border-gray-200 hover:border-gray-300 bg-white'
                     }`}
                   >
-                    <p className="font-semibold text-gray-900 text-sm">{flow.name}</p>
-                    <p className="text-xs text-gray-500 mt-1">{flow.description || 'Luồng sản xuất'}</p>
+                    <p className="font-semibold text-sm" style={{ color: '#000000' }}>{flow.name}</p>
+                    <p className="text-xs mt-1" style={{ color: '#4b5563' }}>{flow.description || 'Luồng sản xuất'}</p>
                     {flow.is_default && (
                       <span className="inline-block text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded mt-2">
                         ⭐ Mặc định

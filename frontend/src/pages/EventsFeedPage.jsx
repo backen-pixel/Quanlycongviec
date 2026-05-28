@@ -156,6 +156,13 @@ export default function EventsFeedPage() {
   const [calYear, setCalYear] = useState(new Date().getFullYear());
   const [calEvents, setCalEvents] = useState([]);
   const [selectedDay, setSelectedDay] = useState(null);
+  /** Mức hiển thị lịch: 'hidden' (ẩn để feed full) | 'compact' (mini) | 'full' (đầy đủ). Lưu localStorage. */
+  const [calendarMode, setCalendarMode] = useState(() => {
+    try { return localStorage.getItem('events_calendar_mode') || 'full'; } catch { return 'full'; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('events_calendar_mode', calendarMode); } catch { /* ignore */ }
+  }, [calendarMode]);
   const [createPresetDay, setCreatePresetDay] = useState(null);
   const currentUser = user || {};
 
@@ -204,6 +211,14 @@ export default function EventsFeedPage() {
     loadFeed();
     if (view === 'calendar') loadCalendar();
   }, [view, filterType, filterStatus, filterUser, filterRegionId, calMonth, calYear, listParams, rangeFrom, rangeTo]);
+
+  // Debounce search 300ms — tự tìm khi gõ, không cần Enter
+  useEffect(() => {
+    if (view !== 'feed' && view !== 'calendar') return undefined;
+    const t = setTimeout(() => { loadFeed(); }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
 
   const loadEventTypes = () => api.get('/events/event-types').then(r => setEventTypes(r.data || [])).catch(() => {});
 
@@ -380,85 +395,117 @@ export default function EventsFeedPage() {
       {/* Feed: chỉ bộ lọc + danh sách; Lịch: thêm khối lịch tháng phía trên */}
       {(view === 'feed' || view === 'calendar') && (
         <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-100 bg-gray-50/90 space-y-3">
-            <div className="flex items-center gap-2 text-xs font-semibold text-gray-600 uppercase tracking-wide">
-              <Filter className="h-3.5 w-3.5" /> Bộ lọc
-              {view === 'calendar' && (
-                <span className="font-normal normal-case text-gray-500">(tab Lịch: thời gian theo tháng đang chọn)</span>
-              )}
-            </div>
-            <div className="flex flex-wrap items-end gap-2">
-              <div className="relative flex-1 min-w-[180px] max-w-sm">
-                <label className="block text-[10px] text-gray-500 mb-0.5">Tìm kiếm</label>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                  <input value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && loadFeed()}
-                    placeholder="Enter để tìm..." className="w-full h-9 pl-10 pr-3 border rounded-lg text-sm" />
+          {/* Toolbar bộ lọc — compact 1 hàng, scroll ngang nếu chật */}
+          <details open className="border-b border-gray-100">
+            <summary className="list-none cursor-pointer select-none flex items-center justify-between gap-2 px-4 py-2 bg-gray-50/90 hover:bg-gray-100/90">
+              <div className="flex items-center gap-2 text-xs font-semibold text-gray-700 uppercase tracking-wide">
+                <Filter className="h-3.5 w-3.5" /> Bộ lọc
+                {view === 'calendar' && (
+                  <span className="font-normal normal-case text-gray-500">(theo tháng đang chọn)</span>
+                )}
+                {hasActiveFilters && (
+                  <span className="ml-1 inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded-full normal-case">
+                    Đang lọc
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {hasActiveFilters && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.preventDefault(); clearFilters(); }}
+                    className="h-7 px-2.5 text-[11px] font-medium text-red-600 hover:bg-red-50 rounded-md cursor-pointer"
+                  >
+                    × Xoá lọc
+                  </button>
+                )}
+                <span className="text-[10px] text-gray-400 hidden sm:inline">Click để gập/mở</span>
+              </div>
+            </summary>
+            <div className="px-4 py-3 bg-gray-50/60">
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="relative flex-1 min-w-[200px] max-w-sm">
+                  <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Tìm kiếm</label>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <input
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder="Gõ để tìm…"
+                      className="w-full h-9 pl-10 pr-8 border rounded-lg text-sm"
+                    />
+                    {search && (
+                      <button
+                        type="button"
+                        onClick={() => setSearch('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 inline-flex items-center justify-center text-gray-400 hover:text-gray-700 cursor-pointer"
+                        title="Xoá tìm kiếm"
+                      >×</button>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Từ ngày</label>
+                  <input type="date" value={rangeFrom} onChange={e => setRangeFrom(e.target.value)}
+                    disabled={view === 'calendar'}
+                    className={`h-9 px-2 border rounded-lg text-sm ${view === 'calendar' ? 'bg-gray-100 text-gray-600' : ''}`}
+                    title={view === 'calendar' ? 'Đổi tháng trên lịch để đổi khoảng ngày' : ''} />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Đến ngày</label>
+                  <input type="date" value={rangeTo} onChange={e => setRangeTo(e.target.value)}
+                    disabled={view === 'calendar'}
+                    className={`h-9 px-2 border rounded-lg text-sm ${view === 'calendar' ? 'bg-gray-100 text-gray-600' : ''}`} />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Loại</label>
+                  <select value={filterType} onChange={e => setFilterType(e.target.value)} className="h-9 px-3 border rounded-lg text-sm min-w-[120px]">
+                    <option value="">Tất cả loại</option>
+                    {eventTypes.map(t => <option key={t.slug} value={t.slug}>{t.icon} {t.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Trạng thái</label>
+                  <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="h-9 px-3 border rounded-lg text-sm min-w-[130px]">
+                    <option value="">Tất cả</option>
+                    {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Nhân viên</label>
+                  <select value={filterUser} onChange={e => setFilterUser(e.target.value)} className="h-9 px-3 border rounded-lg text-sm min-w-[140px]">
+                    <option value="">Tất cả</option>
+                    {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium text-gray-500 mb-0.5 flex items-center gap-1">
+                    <MapPin className="h-3 w-3" /> Khu vực
+                  </label>
+                  <select
+                    value={filterRegionId}
+                    onChange={e => setFilterRegionId(e.target.value)}
+                    disabled={!effectiveCompanyIdForUsers}
+                    className="h-9 px-3 border rounded-lg text-sm min-w-[150px] disabled:bg-gray-100"
+                    title={!effectiveCompanyIdForUsers ? 'Chọn công ty (admin) để lọc khu vực' : ''}
+                  >
+                    <option value="">Tất cả khu vực</option>
+                    {regions.map((rg) => (
+                      <option key={rg.id} value={rg.id}>{rg.name}{rg.code ? ` (${rg.code})` : ''}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
-              <div>
-                <label className="block text-[10px] text-gray-500 mb-0.5">Từ ngày</label>
-                <input type="date" value={rangeFrom} onChange={e => setRangeFrom(e.target.value)}
-                  disabled={view === 'calendar'}
-                  className={`h-9 px-2 border rounded-lg text-sm ${view === 'calendar' ? 'bg-gray-100 text-gray-600' : ''}`}
-                  title={view === 'calendar' ? 'Đổi tháng trên lịch để đổi khoảng ngày' : ''} />
-              </div>
-              <div>
-                <label className="block text-[10px] text-gray-500 mb-0.5">Đến ngày</label>
-                <input type="date" value={rangeTo} onChange={e => setRangeTo(e.target.value)}
-                  disabled={view === 'calendar'}
-                  className={`h-9 px-2 border rounded-lg text-sm ${view === 'calendar' ? 'bg-gray-100 text-gray-600' : ''}`} />
-              </div>
-              <div>
-                <label className="block text-[10px] text-gray-500 mb-0.5">Loại</label>
-                <select value={filterType} onChange={e => setFilterType(e.target.value)} className="h-9 px-3 border rounded-lg text-sm min-w-[120px]">
-                  <option value="">Tất cả loại</option>
-                  {eventTypes.map(t => <option key={t.slug} value={t.slug}>{t.icon} {t.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] text-gray-500 mb-0.5">Trạng thái</label>
-                <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="h-9 px-3 border rounded-lg text-sm min-w-[130px]">
-                  <option value="">Tất cả</option>
-                  {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] text-gray-500 mb-0.5">Nhân viên</label>
-                <select value={filterUser} onChange={e => setFilterUser(e.target.value)} className="h-9 px-3 border rounded-lg text-sm min-w-[140px]">
-                  <option value="">Tất cả</option>
-                  {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] text-gray-500 mb-0.5 flex items-center gap-1">
-                  <MapPin className="h-3 w-3" /> Khu vực
-                </label>
-                <select
-                  value={filterRegionId}
-                  onChange={e => setFilterRegionId(e.target.value)}
-                  disabled={!effectiveCompanyIdForUsers}
-                  className="h-9 px-3 border rounded-lg text-sm min-w-[150px] disabled:bg-gray-100"
-                  title={!effectiveCompanyIdForUsers ? 'Chọn công ty (admin) để lọc khu vực' : ''}
-                >
-                  <option value="">Tất cả khu vực</option>
-                  {regions.map((rg) => (
-                    <option key={rg.id} value={rg.id}>{rg.name}{rg.code ? ` (${rg.code})` : ''}</option>
-                  ))}
-                </select>
-              </div>
-              {hasActiveFilters && (
-                <button type="button" onClick={clearFilters}
-                  className="h-9 px-3 text-xs text-red-600 hover:underline cursor-pointer self-end">Xóa lọc</button>
-              )}
             </div>
-          </div>
+          </details>
 
-          <div className={`p-4 ${view === 'calendar' ? 'space-y-6' : ''}`}>
-            {view === 'calendar' && (
+          <div className={`p-4 ${view === 'calendar' ? 'space-y-4' : ''}`}>
+            {view === 'calendar' && calendarMode !== 'hidden' && (
               <CalendarView
                 month={calMonth} year={calYear} events={calEvents} eventTypes={eventTypes}
                 loading={calLoading} selectedDay={selectedDay}
+                mode={calendarMode}
+                onModeChange={setCalendarMode}
                 onPrevMonth={() => { if (calMonth === 1) { setCalMonth(12); setCalYear(y => y - 1); } else setCalMonth(m => m - 1); }}
                 onNextMonth={() => { if (calMonth === 12) { setCalMonth(1); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); }}
                 onSelectDay={setSelectedDay}
@@ -471,12 +518,48 @@ export default function EventsFeedPage() {
                 onEdit={(ev) => { setEditEvent(ev); setCreatePresetDay(null); setShowCreate(true); }}
               />
             )}
+            {view === 'calendar' && calendarMode === 'hidden' && (
+              <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-blue-50 border border-blue-100">
+                <span className="text-xs text-blue-800 flex items-center gap-2">
+                  <Calendar className="h-3.5 w-3.5" /> Lịch đang ẩn — feed có toàn bộ chỗ trống
+                </span>
+                <div className="flex gap-1">
+                  <button onClick={() => setCalendarMode('compact')}
+                    className="h-7 px-2.5 text-[11px] font-semibold rounded-md bg-white border border-blue-200 text-blue-700 hover:bg-blue-50 cursor-pointer">
+                    📅 Thu gọn
+                  </button>
+                  <button onClick={() => setCalendarMode('full')}
+                    className="h-7 px-2.5 text-[11px] font-semibold rounded-md bg-white border border-blue-200 text-blue-700 hover:bg-blue-50 cursor-pointer">
+                    📆 Mở rộng
+                  </button>
+                </div>
+              </div>
+            )}
             <div>
-              <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                <List className="h-4 w-4 text-gray-500" /> Feed sự kiện
-                <span className="text-xs font-normal text-gray-400">(cùng bộ lọc phía trên)</span>
-              </h2>
-              <div className="space-y-4">
+              <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+                <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                  <List className="h-4 w-4 text-gray-500" /> Feed sự kiện
+                  <span className="text-xs font-normal text-gray-400">({events.length} sự kiện)</span>
+                </h2>
+                {events.length > 6 && (
+                  <span className="text-[11px] text-gray-400">Cuộn dọc để xem thêm</span>
+                )}
+              </div>
+              {/* Vùng cuộn — chiều cao phụ thuộc chế độ lịch:
+                  hidden  → feed full (chừa 320px cho header/filter)
+                  compact → lịch chỉ ~280px (chừa 620px)
+                  full    → lịch ~720px (chừa 1060px khi nhiều tuần)  */}
+              <div
+                className="overflow-y-auto pr-2 space-y-4 [scrollbar-width:thin]"
+                style={{
+                  maxHeight: view === 'calendar'
+                    ? calendarMode === 'hidden' ? 'calc(100vh - 320px)'
+                      : calendarMode === 'compact' ? 'calc(100vh - 600px)'
+                        : 'calc(100vh - 800px)'
+                    : 'calc(100vh - 360px)',
+                  minHeight: 240,
+                }}
+              >
                 {loading ? (
                   <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-blue-500" /></div>
                 ) : events.length === 0 ? (
@@ -950,7 +1033,9 @@ function SelectedDayEventDetail({ ev, eventTypes, onEdit }) {
 // ═══════════════════════════════════════════════════════════════
 // CALENDAR VIEW — Monthly grid
 // ═══════════════════════════════════════════════════════════════
-function CalendarView({ month, year, events, eventTypes, loading, selectedDay, onPrevMonth, onNextMonth, onSelectDay, onOpenCreateForDay, onEdit }) {
+function CalendarView({ month, year, events, eventTypes, loading, selectedDay, onPrevMonth, onNextMonth, onSelectDay, onOpenCreateForDay, onEdit, mode = 'full', onModeChange }) {
+  // mode: 'compact' (mini grid, không hiện tên event — gợi ý dot màu) | 'full' (default)
+  const isCompact = mode === 'compact';
   const selectedDayDetailRef = useRef(null);
   const [scrollToDetailNonce, setScrollToDetailNonce] = useState(0);
 
@@ -992,109 +1077,172 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
     ? [...(eventsByDay[selectedDay] || [])].sort((a, b) => new Date(a.start_time) - new Date(b.start_time))
     : [];
 
+  // Số event hiển thị / chiều cao cell theo mode
+  const maxChipsPerCell = isCompact ? 0 : 3;
+  const cellMinH = isCompact ? 44 : 100;
+
   return (
-    <div className="bg-white rounded-xl border p-4">
-      {/* Calendar header */}
-      <div className="flex items-center justify-between mb-4">
-        <button onClick={onPrevMonth} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ChevronLeft className="h-5 w-5" /></button>
-        <h2 className="text-lg font-bold text-gray-900">{monthNames[month]} {year}</h2>
-        <button onClick={onNextMonth} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ChevronRight className="h-5 w-5" /></button>
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+      {/* Calendar header — toolbar hiện đại */}
+      <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-gradient-to-r from-blue-50/70 via-white to-blue-50/70 border-b border-gray-100">
+        <div className="flex items-center gap-1.5">
+          <button onClick={onPrevMonth} title="Tháng trước"
+            className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-gray-600 hover:bg-white hover:text-blue-600 hover:shadow-sm cursor-pointer transition">
+            <ChevronLeft className="h-4.5 w-4.5" />
+          </button>
+          <h2 className="text-base sm:text-lg font-bold text-gray-900 px-2 tabular-nums">{monthNames[month]} {year}</h2>
+          <button onClick={onNextMonth} title="Tháng sau"
+            className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-gray-600 hover:bg-white hover:text-blue-600 hover:shadow-sm cursor-pointer transition">
+            <ChevronRight className="h-4.5 w-4.5" />
+          </button>
+          {!isCurrentMonth && (
+            <button
+              onClick={() => {
+                const t = new Date();
+                if (t.getMonth() + 1 < month || t.getFullYear() < year) onPrevMonth();
+                else onNextMonth();
+              }}
+              className="hidden sm:inline-flex ml-1 h-7 px-2.5 text-[11px] font-semibold rounded-md bg-white border border-blue-200 text-blue-700 hover:bg-blue-50 cursor-pointer"
+              title="Về tháng hiện tại"
+            >Hôm nay</button>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-gray-500 hidden md:inline">{events.length} sự kiện</span>
+          {/* Toggle 3 mức hiển thị: Ẩn / Thu gọn / Mở rộng */}
+          {onModeChange && (
+            <div className="flex gap-0.5 bg-gray-100 rounded-lg p-0.5">
+              <button
+                onClick={() => onModeChange('hidden')}
+                title="Ẩn lịch — dành chỗ cho feed"
+                className="h-7 px-2.5 text-[11px] font-semibold rounded-md text-gray-600 hover:bg-white cursor-pointer transition"
+              >👁️‍🗨️ Ẩn</button>
+              <button
+                onClick={() => onModeChange('compact')}
+                className={`h-7 px-2.5 text-[11px] font-semibold rounded-md cursor-pointer transition ${
+                  isCompact ? 'bg-white shadow-sm text-blue-700 ring-1 ring-blue-200' : 'text-gray-600 hover:bg-white'
+                }`}
+                title="Thu gọn — chỉ hiện chấm màu cho ngày có event"
+              >📅 Thu gọn</button>
+              <button
+                onClick={() => onModeChange('full')}
+                className={`h-7 px-2.5 text-[11px] font-semibold rounded-md cursor-pointer transition ${
+                  !isCompact ? 'bg-white shadow-sm text-blue-700 ring-1 ring-blue-200' : 'text-gray-600 hover:bg-white'
+                }`}
+                title="Mở rộng — hiện tên event trong từng ngày"
+              >📆 Mở rộng</button>
+            </div>
+          )}
+        </div>
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-20"><Loader2 className="h-8 w-8 animate-spin text-blue-500" /></div>
+        <div className="flex justify-center py-16"><Loader2 className="h-7 w-7 animate-spin text-blue-500" /></div>
       ) : (
-        <>
+        <div className="p-3 sm:p-4">
           {/* Day headers */}
           <div className="grid grid-cols-7 mb-1">
-            {dayNames.map(d => (
-              <div key={d} className="text-center text-xs font-bold text-gray-500 py-2">{d}</div>
+            {dayNames.map((d, i) => (
+              <div key={d} className={`text-center text-[11px] font-bold py-1.5 uppercase tracking-wide ${
+                i === 0 ? 'text-rose-500' : 'text-gray-500'
+              }`}>{d}</div>
             ))}
           </div>
 
-          {/* Calendar grid — mỗi ô: vùng xanh nhạt (Tạo mới) + vùng vàng nhạt (Xem lịch) */}
-          <div className="grid grid-cols-7 border-t border-l">
+          {/* Calendar grid */}
+          <div className="grid grid-cols-7 gap-1">
             {cells.map((day, i) => {
               const dayEvents = day ? (eventsByDay[day] || []) : [];
               const isTodayCell = isCurrentMonth && day === today.getDate();
               const isSelected = day === selectedDay;
+              const isWeekend = i % 7 === 0; // CN
+              if (!day) {
+                return <div key={i} className="rounded-lg bg-gray-50/40 border border-dashed border-gray-100" style={{ minHeight: cellMinH }} />;
+              }
               return (
                 <div
                   key={i}
                   role="presentation"
-                  className={`min-h-[100px] border-r border-b flex flex-col overflow-hidden transition
-                    ${!day ? 'bg-gray-50' : ''}
-                    ${isSelected ? 'ring-2 ring-blue-400 ring-inset z-[1]' : ''}
-                  `}
+                  className={`group relative rounded-lg border flex flex-col overflow-hidden transition cursor-pointer ${
+                    isSelected
+                      ? 'ring-2 ring-blue-500 ring-offset-1 border-blue-300 shadow-md'
+                      : 'border-gray-200 hover:border-blue-300 hover:shadow-sm'
+                  } ${isTodayCell ? 'bg-blue-50/40' : 'bg-white'}`}
+                  style={{ minHeight: cellMinH }}
+                  onClick={(e) => {
+                    if (e.target.closest?.('[data-cal-event-chip]') || e.target.closest?.('[data-create-btn]')) return;
+                    onSelectDay(day);
+                    setScrollToDetailNonce((n) => n + 1);
+                  }}
                 >
-                  {day && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onSelectDay(day);
-                          onOpenCreateForDay(day);
-                        }}
-                        className="flex-shrink-0 w-full text-left bg-sky-100 hover:bg-sky-200/90 border-b border-sky-200/60 px-1 py-1 flex items-center justify-between gap-0.5 cursor-pointer"
-                        aria-label={`Tạo sự kiện ngày ${day}`}
-                      >
-                        <span
-                          className={`text-sm font-medium w-7 h-7 flex items-center justify-center rounded-full shrink-0
-                            ${isTodayCell ? 'bg-blue-600 text-white' : 'text-gray-800'}
-                          `}
-                        >
-                          {day}
-                        </span>
-                        <span className="text-[9px] font-semibold text-sky-900/80 leading-tight text-right">Tạo mới</span>
-                      </button>
-                      <div
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            onSelectDay(day);
-                            setScrollToDetailNonce((n) => n + 1);
-                          }
-                        }}
-                        onClick={(e) => {
-                          if (!day) return;
-                          if (e.target.closest?.('[data-cal-event-chip]')) return;
-                          onSelectDay(day);
-                          setScrollToDetailNonce((n) => n + 1);
-                        }}
-                        className="flex-1 min-h-[56px] bg-amber-50 hover:bg-amber-100/90 p-0.5 flex flex-col cursor-pointer border-t border-amber-100"
-                        aria-label={`Xem lịch ngày ${day}`}
-                      >
-                        <div className="text-[9px] font-semibold text-amber-900/70 px-0.5 mb-0.5 shrink-0">Xem lịch</div>
-                        <div className="space-y-0.5 flex-1 min-h-0 overflow-hidden">
-                          {dayEvents.slice(0, 3).map(ev => {
-                            const typeInfo = eventTypes.find(t => t.slug === ev.event_type) || ev.event_type_ref || {};
-                            return (
-                              <div
-                                key={ev.id}
-                                data-cal-event-chip
-                                className="text-[10px] leading-tight px-1 py-0.5 rounded truncate font-medium"
-                                style={{ backgroundColor: (typeInfo.color || '#3B82F6') + '20', color: typeInfo.color || '#3B82F6' }}
-                                title={`${ev.title} — ${formatTime(ev.start_time)} — Nhấn để sửa`}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onSelectDay(day);
-                                  setScrollToDetailNonce((n) => n + 1);
-                                  onEdit(ev);
-                                }}
-                              >
-                                {typeInfo.icon} {ev.title}
-                              </div>
-                            );
-                          })}
-                          {dayEvents.length > 3 && (
-                            <div className="text-[10px] text-amber-800/60 px-1">+{dayEvents.length - 3} khác</div>
-                          )}
-                        </div>
+                  {/* Header dòng ngày */}
+                  <div className={`flex items-center justify-between px-1.5 py-1 ${isCompact ? '' : 'border-b border-gray-100'}`}>
+                    <span
+                      className={`text-[12px] font-bold w-6 h-6 inline-flex items-center justify-center rounded-full shrink-0 tabular-nums ${
+                        isTodayCell
+                          ? 'bg-blue-600 text-white shadow-sm'
+                          : isWeekend ? 'text-rose-600' : 'text-gray-800'
+                      }`}
+                    >{day}</span>
+                    {/* Compact: gom event thành dots màu, max 4 */}
+                    {isCompact && dayEvents.length > 0 && (
+                      <div className="flex items-center gap-0.5">
+                        {dayEvents.slice(0, 4).map((ev) => {
+                          const typeInfo = eventTypes.find((t) => t.slug === ev.event_type) || ev.event_type_ref || {};
+                          return (
+                            <span
+                              key={ev.id}
+                              className="w-1.5 h-1.5 rounded-full"
+                              style={{ backgroundColor: typeInfo.color || '#3B82F6' }}
+                              title={`${ev.title} (${formatTime(ev.start_time)})`}
+                            />
+                          );
+                        })}
+                        {dayEvents.length > 4 && (
+                          <span className="text-[9px] font-bold text-gray-500 ml-0.5">+{dayEvents.length - 4}</span>
+                        )}
                       </div>
-                    </>
+                    )}
+                    <button
+                      type="button"
+                      data-create-btn
+                      onClick={(e) => { e.stopPropagation(); onSelectDay(day); onOpenCreateForDay(day); }}
+                      className={`w-5 h-5 inline-flex items-center justify-center rounded text-blue-600 hover:bg-blue-50 cursor-pointer transition ${
+                        isCompact ? 'opacity-0 group-hover:opacity-100' : 'opacity-50 hover:opacity-100'
+                      }`}
+                      title={`Tạo sự kiện ngày ${day}`}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+
+                  {/* Body — danh sách event (chỉ hiện ở mode full) */}
+                  {!isCompact && (
+                    <div className="flex-1 min-h-0 p-0.5 space-y-0.5 overflow-hidden">
+                      {dayEvents.slice(0, maxChipsPerCell).map(ev => {
+                        const typeInfo = eventTypes.find(t => t.slug === ev.event_type) || ev.event_type_ref || {};
+                        return (
+                          <div
+                            key={ev.id}
+                            data-cal-event-chip
+                            className="text-[10px] leading-tight px-1 py-0.5 rounded truncate font-medium hover:shadow-sm transition"
+                            style={{ backgroundColor: (typeInfo.color || '#3B82F6') + '22', color: typeInfo.color || '#3B82F6' }}
+                            title={`${ev.title} — ${formatTime(ev.start_time)} — Nhấn để sửa`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSelectDay(day);
+                              setScrollToDetailNonce((n) => n + 1);
+                              onEdit(ev);
+                            }}
+                          >
+                            {typeInfo.icon} {ev.title}
+                          </div>
+                        );
+                      })}
+                      {dayEvents.length > maxChipsPerCell && (
+                        <div className="text-[10px] font-semibold text-gray-500 px-1">+{dayEvents.length - maxChipsPerCell} khác</div>
+                      )}
+                    </div>
                   )}
                 </div>
               );
@@ -1130,7 +1278,7 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
               )}
             </div>
           )}
-        </>
+        </div>
       )}
     </div>
   );

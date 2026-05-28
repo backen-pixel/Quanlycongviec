@@ -112,6 +112,24 @@ function threadRowKey(t) {
   return `g:${t.groupId}`;
 }
 
+/** Sinh gradient màu avatar nhất quán theo tên (tạo cảm giác đa dạng cho danh sách hội thoại). */
+const AVATAR_GRADIENTS = [
+  'linear-gradient(135deg, #0ea5e9, #0891b2)',
+  'linear-gradient(135deg, #8b5cf6, #6366f1)',
+  'linear-gradient(135deg, #f43f5e, #ec4899)',
+  'linear-gradient(135deg, #22c55e, #16a34a)',
+  'linear-gradient(135deg, #f59e0b, #ea580c)',
+  'linear-gradient(135deg, #14b8a6, #0d9488)',
+  'linear-gradient(135deg, #6366f1, #4f46e5)',
+  'linear-gradient(135deg, #a855f7, #7c3aed)',
+];
+function avatarGradientFor(name) {
+  const s = String(name || '?');
+  let h = 0;
+  for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return AVATAR_GRADIENTS[h % AVATAR_GRADIENTS.length];
+}
+
 /** Gộp API /messenger/groups với preview local; ghim lấy từ DB (pinnedGroupIds). */
 function buildMessengerThreads(apiList, lsMessengerRows, pinnedGroupIds) {
   const pinSet = new Set(pinnedGroupIds || []);
@@ -650,37 +668,46 @@ export default function MessengerHubPage() {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col bg-[#e8eef5] text-slate-800">
-      <div className="flex min-h-0 flex-1 border-t border-slate-200/80">
+    <div className="flex h-full min-h-0 flex-1 flex-col text-slate-800 relative">
+      {/* gradient backdrop trên nền page-bg để cảm giác có chiều sâu */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background: 'radial-gradient(ellipse at top left, rgba(14,165,233,0.10), transparent 55%), radial-gradient(ellipse at bottom right, rgba(168,85,247,0.10), transparent 55%)',
+        }}
+      />
+      <div className="relative flex min-h-0 flex-1 border-t border-white/30">
         {!leftOpen && (
-          <div className="flex w-[52px] shrink-0 flex-col border-r border-slate-200 bg-white shadow-sm z-[1]">
-            <div className="flex shrink-0 justify-center border-b border-slate-100 py-2">
+          <div className="flex w-[56px] shrink-0 flex-col border-r border-white/30 bg-white/55 backdrop-blur-xl shadow-sm z-[1]">
+            <div className="flex shrink-0 justify-center border-b border-white/30 py-2">
               <button
                 type="button"
                 title="Mở danh sách đầy đủ"
                 onClick={() => setLeftOpen(true)}
-                className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-700 hover:border-sky-200 hover:bg-sky-50"
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/60 bg-white/70 backdrop-blur text-slate-700 hover:border-sky-300 hover:bg-sky-50 hover:text-sky-700 transition shadow-sm"
               >
                 <PanelLeftOpen className="h-4 w-4" />
               </button>
             </div>
-            <div className="flex min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto px-1.5 py-2">
+            <div className="flex min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto px-1.5 py-3 [scrollbar-width:thin]">
               {filteredThreads.map((t) => {
                 const isSel = t.groupId && selectedGroupId === t.groupId;
                 const unread = t.groupId ? unreadByGroupId[t.groupId] || 0 : 0;
+                const avatarGradient = avatarGradientFor(t.title);
                 return (
                   <button
                     key={threadRowKey(t)}
                     type="button"
                     title={t.title || 'Hội thoại'}
                     onClick={() => openMessengerThread(t)}
-                    className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-400 to-cyan-600 text-sm font-bold text-white shadow-sm ring-2 ring-offset-1 ring-offset-white transition hover:opacity-95 ${
+                    className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-[13px] font-bold text-white shadow-md ring-2 ring-offset-2 ring-offset-white/40 transition hover:scale-105 hover:shadow-lg ${
                       isSel ? 'ring-sky-500' : 'ring-transparent'
                     }`}
+                    style={{ background: avatarGradient }}
                   >
-                    {(t.title || '?').slice(0, 1)}
+                    {(t.title || '?').slice(0, 1).toUpperCase()}
                     {unread > 0 ? (
-                      <span className="absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full border-2 border-white bg-red-500 px-0.5 text-[9px] font-bold text-white">
+                      <span className="absolute -right-1 -top-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full border-2 border-white bg-rose-500 px-0.5 text-[9px] font-bold text-white shadow">
                         {unread > 99 ? '…' : unread}
                       </span>
                     ) : null}
@@ -692,57 +719,76 @@ export default function MessengerHubPage() {
         )}
         {/* —— Cột trái: danh sách —— */}
         {leftOpen && (
-        <aside className="w-[300px] shrink-0 flex flex-col bg-white border-r border-slate-200 shadow-sm">
-          <div className="p-2.5 border-b border-slate-100 flex gap-1.5">
-            <button
-              type="button"
-              title="Thu gọn danh sách hội thoại"
-              onClick={() => setLeftOpen(false)}
-              className="h-9 w-9 shrink-0 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 flex items-center justify-center"
-            >
-              <PanelLeftClose className="h-4 w-4" />
-            </button>
-            <div className="relative flex-1">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-              <input
-                value={threadFilter}
-                onChange={(e) => setThreadFilter(e.target.value)}
-                placeholder="Tìm hội thoại…"
-                className="w-full h-9 pl-8 pr-2 rounded-lg bg-slate-100 border-0 text-sm placeholder:text-slate-400 focus:ring-2 focus:ring-sky-400"
-              />
-            </div>
-            <button
-              type="button"
-              title="Tạo nhóm chat"
-              onClick={() => setCreateOpen(true)}
-              className="h-9 w-9 shrink-0 rounded-lg bg-sky-500 text-white flex items-center justify-center hover:bg-sky-600"
-            >
-              <UserPlus className="h-4 w-4" />
-            </button>
-          </div>
-          <div className="flex px-2 gap-1 border-b border-slate-100">
-            {[
-              { id: 'all', label: 'Tất cả' },
-              { id: 'pinned', label: 'Ưu tiên' },
-            ].map((t) => (
+        <aside className="w-[320px] shrink-0 flex flex-col bg-white/65 backdrop-blur-xl border-r border-white/30 shadow-sm">
+          {/* Hero header — Messenger title + tổng quan */}
+          <div className="px-3.5 pt-3 pb-2 bg-gradient-to-r from-sky-50/70 via-white/30 to-violet-50/70 border-b border-white/40">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <div className="h-9 w-9 rounded-2xl bg-gradient-to-br from-sky-500 via-cyan-500 to-violet-600 text-white flex items-center justify-center shadow-md ring-2 ring-white/70">
+                  <MessageCircle className="h-4 w-4" />
+                </div>
+                <div>
+                  <h1 className="text-[15px] font-bold leading-none" style={{ color: '#0f172a' }}>Tin nhắn</h1>
+                  <p className="text-[10px] text-slate-500 mt-0.5">{filteredThreads.length} hội thoại</p>
+                </div>
+              </div>
               <button
-                key={t.id}
                 type="button"
-                onClick={() => setListTab(t.id)}
-                className={`flex-1 py-2 text-xs font-semibold rounded-t-lg border-b-2 transition ${
-                  listTab === t.id ? 'border-sky-500 text-sky-700 bg-sky-50/50' : 'border-transparent text-slate-500 hover:text-slate-700'
-                }`}
+                title="Thu gọn danh sách hội thoại"
+                onClick={() => setLeftOpen(false)}
+                className="h-8 w-8 shrink-0 rounded-lg border border-white/60 bg-white/70 backdrop-blur text-slate-600 hover:bg-white hover:text-slate-800 hover:shadow-sm flex items-center justify-center transition"
               >
-                {t.label}
+                <PanelLeftClose className="h-4 w-4" />
               </button>
-            ))}
+            </div>
+            <div className="flex gap-1.5 items-center">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <input
+                  value={threadFilter}
+                  onChange={(e) => setThreadFilter(e.target.value)}
+                  placeholder="Tìm hội thoại…"
+                  className="w-full h-9 pl-9 pr-3 rounded-full bg-white/80 backdrop-blur border border-white/70 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-300/60 focus:bg-white shadow-sm transition"
+                />
+              </div>
+              <button
+                type="button"
+                title="Tạo nhóm chat"
+                onClick={() => setCreateOpen(true)}
+                className="h-9 w-9 shrink-0 rounded-full bg-gradient-to-br from-sky-500 to-cyan-600 text-white flex items-center justify-center hover:from-sky-600 hover:to-cyan-700 hover:shadow-lg shadow-md transition"
+              >
+                <UserPlus className="h-4 w-4" />
+              </button>
+            </div>
           </div>
-          <div className="px-2 py-2 border-b border-slate-100 bg-slate-50/50 shrink-0">
+          {/* Tabs — segmented control glass */}
+          <div className="px-3 pt-2 pb-1 border-b border-white/40">
+            <div className="flex gap-1 p-1 rounded-xl bg-white/55 backdrop-blur border border-white/60">
+              {[
+                { id: 'all', label: 'Tất cả' },
+                { id: 'pinned', label: 'Ưu tiên' },
+              ].map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setListTab(t.id)}
+                  className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition ${
+                    listTab === t.id
+                      ? 'bg-white text-sky-700 shadow-sm ring-1 ring-sky-200'
+                      : 'text-slate-600 hover:text-slate-800 hover:bg-white/60'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="px-2.5 py-2 border-b border-white/40 bg-white/30 shrink-0">
             {!staffPanelOpen ? (
               <button
                 type="button"
                 onClick={() => setStaffPanelOpen(true)}
-                className="w-full h-8 rounded-lg border border-slate-200 bg-white text-[11px] font-semibold text-slate-700 hover:bg-slate-50 flex items-center justify-center gap-1.5"
+                className="w-full h-9 rounded-xl border border-white/70 bg-white/75 backdrop-blur text-[11px] font-semibold text-slate-700 hover:bg-white hover:shadow-sm flex items-center justify-center gap-1.5 transition"
               >
                 <Search className="h-3.5 w-3.5 text-sky-600" />
                 Tìm nhân viên
@@ -871,64 +917,74 @@ export default function MessengerHubPage() {
               </div>
             )}
           </div>
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto px-1.5 py-1 [scrollbar-width:thin]">
             {filteredThreads.length === 0 && (
-              <p className="p-4 text-xs text-slate-400 text-center">
-                Chưa có nhóm hoặc chat trực tiếp. Dùng nút Chat cạnh tên nhân viên hoặc tạo nhóm.
-              </p>
+              <div className="p-6 text-center">
+                <div className="mx-auto w-12 h-12 mb-2 rounded-full bg-gradient-to-br from-sky-100 to-violet-100 flex items-center justify-center">
+                  <MessageCircle className="h-5 w-5 text-sky-500" />
+                </div>
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  Chưa có nhóm hoặc chat trực tiếp.<br/>
+                  Bấm <strong>+</strong> ở trên hoặc tìm nhân viên để bắt đầu.
+                </p>
+              </div>
             )}
             {filteredThreads.map((t) => {
               const isSel = t.groupId && selectedGroupId === t.groupId;
               const unread = t.groupId ? unreadByGroupId[t.groupId] || 0 : 0;
+              const avatarGradient = avatarGradientFor(t.title);
               return (
                 <div
                   key={threadRowKey(t)}
                   role="presentation"
                   onClick={() => openMessengerThread(t)}
-                  className={`w-full flex items-start gap-2.5 px-3 py-2.5 text-left border-b border-slate-50 hover:bg-slate-50 cursor-pointer ${
-                    isSel ? 'bg-sky-50/80' : ''
+                  className={`group w-full flex items-start gap-2.5 px-2.5 py-2.5 rounded-xl mb-1 text-left cursor-pointer transition-all ${
+                    isSel
+                      ? 'bg-gradient-to-r from-sky-100/90 to-cyan-50/90 shadow-sm ring-1 ring-sky-200'
+                      : 'hover:bg-white/85'
                   }`}
                 >
                   <div className="relative shrink-0">
-                    <div className="w-11 h-11 rounded-full bg-gradient-to-br from-sky-400 to-cyan-600 text-white flex items-center justify-center text-sm font-bold">
-                      {(t.title || '?').slice(0, 1)}
+                    <div
+                      className="w-11 h-11 rounded-2xl text-white flex items-center justify-center text-sm font-bold shadow-md ring-2 ring-white/70"
+                      style={{ background: avatarGradient }}
+                    >
+                      {(t.title || '?').slice(0, 1).toUpperCase()}
                     </div>
                     {unread > 0 && (
-                      <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-0.5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center border-2 border-white">
+                      <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-0.5 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center border-2 border-white shadow">
                         {unread > 99 ? '99+' : unread}
                       </span>
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1 flex-wrap">
-                      <span className="text-sm font-semibold text-slate-800 truncate">{t.title}</span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className={`text-sm truncate ${unread > 0 ? 'font-bold text-slate-900' : 'font-semibold text-slate-800'}`}>{t.title}</span>
                       {t.is_direct ? (
-                        <span className="text-[9px] font-semibold px-1 py-0 rounded bg-emerald-100 text-emerald-800 shrink-0">
-                          Trực tiếp
-                        </span>
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 shrink-0">1-1</span>
                       ) : (
-                        <span className="text-[9px] font-semibold px-1 py-0 rounded bg-violet-100 text-violet-800 shrink-0">
-                          Nhóm
-                        </span>
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-800 shrink-0">Nhóm</span>
                       )}
                       {t.pinned && <Pin className="h-3 w-3 text-amber-500 shrink-0 fill-amber-500" />}
                     </div>
-                    <p className="text-xs text-slate-500 truncate">{t.lastPreview || '—'}</p>
+                    <p className={`text-xs truncate mt-0.5 ${unread > 0 ? 'text-slate-700 font-medium' : 'text-slate-500'}`}>{t.lastPreview || '—'}</p>
                     {typeof t.messageCount === 'number' && t.messageCount > 0 ? (
-                      <p className="text-[10px] text-slate-400">{t.messageCount} tin nhắn</p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">{t.messageCount} tin nhắn</p>
                     ) : null}
                   </div>
                   <div className="flex flex-col items-end gap-1 shrink-0">
-                    <span className="text-[10px] text-slate-400">
+                    <span className="text-[10px] text-slate-400 whitespace-nowrap">
                       {formatRelativeTime(t.lastMessageAt || t.updatedAt)}
                     </span>
                     <button
                       type="button"
-                      className="p-0.5 rounded text-slate-400 hover:text-amber-600"
+                      className={`p-1 rounded-md transition ${
+                        t.pinned ? 'text-amber-500' : 'text-slate-300 hover:text-amber-500 opacity-0 group-hover:opacity-100'
+                      }`}
                       title={t.pinned ? 'Bỏ ghim' : 'Ghim'}
                       onClick={(e) => void togglePin(t, e)}
                     >
-                      <Pin className={`h-3.5 w-3.5 ${t.pinned ? 'fill-amber-500 text-amber-600' : ''}`} />
+                      <Pin className={`h-3.5 w-3.5 ${t.pinned ? 'fill-amber-500' : ''}`} />
                     </button>
                   </div>
                 </div>
@@ -939,72 +995,80 @@ export default function MessengerHubPage() {
         )}
 
         {/* —— Giữa: chat —— */}
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-[#eef2f8]">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-transparent">
           {!selectedGroupId ? (
             <div className="flex flex-1 flex-col items-center justify-center p-8 text-slate-400">
-              <MessageCircle className="h-14 w-14 mb-3 opacity-40" />
-              <p className="text-sm font-medium text-slate-600">Chọn một cuộc trò chuyện</p>
-              <p className="text-xs mt-1 text-center max-w-xs">
-                Trang này chỉ dành cho nhóm và chat trực tiếp giữa nhân viên. Chat Lead/Deal nằm trong CRM.
+              <div className="w-20 h-20 mb-4 rounded-full bg-gradient-to-br from-sky-100 via-cyan-100 to-violet-100 backdrop-blur flex items-center justify-center shadow-md ring-4 ring-white/40">
+                <MessageCircle className="h-10 w-10 text-sky-500" />
+              </div>
+              <p className="text-base font-bold" style={{ color: '#0f172a' }}>Chọn một cuộc trò chuyện</p>
+              <p className="text-sm mt-2 text-center max-w-sm text-slate-500 leading-relaxed">
+                Trang này dành cho <strong>nhóm chat nội bộ</strong> và <strong>chat 1-1</strong> giữa nhân viên.
+                Chat Lead/Deal sẽ nằm trong CRM.
               </p>
             </div>
           ) : (
             <>
-              <header className="h-12 shrink-0 flex items-center gap-2 px-3 bg-white border-b border-slate-200 shadow-sm">
-                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-sky-500 to-cyan-600 text-white flex items-center justify-center text-xs font-bold">
-                  {(selected?.title || '?').slice(0, 1)}
+              <header className="h-14 shrink-0 flex items-center gap-2 px-4 bg-white/70 backdrop-blur-xl border-b border-white/40 shadow-sm">
+                <div
+                  className="w-10 h-10 rounded-2xl text-white flex items-center justify-center text-sm font-bold shadow-md ring-2 ring-white/70"
+                  style={{ background: avatarGradientFor(selected?.title) }}
+                >
+                  {(selected?.title || '?').slice(0, 1).toUpperCase()}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-slate-800 truncate">{selected?.title}</p>
-                  <p className="text-[10px] text-slate-500 truncate">
-                    {selected?.is_direct ? 'Chat trực tiếp (Messenger)' : 'Nhóm chat nội bộ (Messenger)'}
+                  <p className="text-sm font-bold truncate" style={{ color: '#0f172a' }}>{selected?.title}</p>
+                  <p className="text-[11px] text-slate-500 truncate flex items-center gap-1">
+                    {selected?.is_direct ? (
+                      <><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Chat trực tiếp</>
+                    ) : (
+                      <><Users className="h-3 w-3" /> Nhóm chat · {groupMembers.length || '—'} thành viên</>
+                    )}
                   </p>
                 </div>
-                <button type="button" className="p-2 rounded-lg text-slate-500 hover:bg-slate-100" title="Gọi (sắp có)">
-                  <Phone className="h-4 w-4" />
-                </button>
-                <button type="button" className="p-2 rounded-lg text-slate-500 hover:bg-slate-100" title="Video (sắp có)">
-                  <Video className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  className="p-2 rounded-lg text-slate-500 hover:bg-slate-100"
-                  title={rightOpen ? 'Ẩn bảng phải' : 'Thông tin hội thoại'}
-                  onClick={() => setRightOpen((v) => !v)}
-                >
-                  {rightOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
-                </button>
-                {!selected?.is_direct && (
+                <div className="flex items-center gap-1 shrink-0">
+                  <button type="button" className="p-2 rounded-xl text-slate-500 hover:bg-slate-200/70 hover:text-slate-700 transition" title="Gọi (sắp có)">
+                    <Phone className="h-4 w-4" />
+                  </button>
+                  <button type="button" className="p-2 rounded-xl text-slate-500 hover:bg-slate-200/70 hover:text-slate-700 transition" title="Video (sắp có)">
+                    <Video className="h-4 w-4" />
+                  </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      setRightOpen(true);
-                      setRightSection('members');
-                    }}
-                    className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 inline-flex items-center gap-1.5"
-                    title="Quản lý thành viên"
+                    className="p-2 rounded-xl text-slate-500 hover:bg-slate-200/70 hover:text-slate-700 transition"
+                    title={rightOpen ? 'Ẩn bảng phải' : 'Thông tin hội thoại'}
+                    onClick={() => setRightOpen((v) => !v)}
                   >
-                    <Users className="h-3.5 w-3.5" />
-                    Thành viên
-                    {groupMembers.length > 0 && (
-                      <span className="ml-0.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-sky-100 px-1 text-[10px] font-bold text-sky-700">
-                        {groupMembers.length}
-                      </span>
-                    )}
+                    {rightOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
                   </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() =>
-                    openMessengerGroupChat({ id: selectedGroupId, name: selected?.title })
-                  }
-                  className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-cyan-600 text-white hover:bg-cyan-700"
-                >
-                  Chat nổi
-                </button>
+                  {!selected?.is_direct && (
+                    <button
+                      type="button"
+                      onClick={() => { setRightOpen(true); setRightSection('members'); }}
+                      className="text-xs font-semibold px-3 py-1.5 rounded-xl bg-white/70 backdrop-blur border border-white/70 text-slate-700 hover:bg-white hover:shadow-sm inline-flex items-center gap-1.5 transition"
+                      title="Quản lý thành viên"
+                    >
+                      <Users className="h-3.5 w-3.5" />
+                      Thành viên
+                      {groupMembers.length > 0 && (
+                        <span className="ml-0.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-sky-100 px-1 text-[10px] font-bold text-sky-700">
+                          {groupMembers.length}
+                        </span>
+                      )}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => openMessengerGroupChat({ id: selectedGroupId, name: selected?.title })}
+                    className="text-xs font-semibold px-3 py-1.5 rounded-xl bg-gradient-to-r from-sky-500 to-cyan-600 text-white hover:from-sky-600 hover:to-cyan-700 shadow-md hover:shadow-lg transition inline-flex items-center gap-1"
+                  >
+                    <PanelRightOpen className="h-3.5 w-3.5" />
+                    Chat nổi
+                  </button>
+                </div>
               </header>
               <div className="flex min-h-0 flex-1">
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white/50 backdrop-blur-sm">
                   <MessengerGroupChatTab
                     groupId={selectedGroupId}
                     socket={socket}
@@ -1013,21 +1077,28 @@ export default function MessengerHubPage() {
                   />
                 </div>
                 {rightOpen && (
-                  <aside className="flex w-[272px] shrink-0 flex-col border-l border-slate-200 bg-white shadow-sm">
-                    <div className="p-3 border-b border-slate-100 text-center">
-                      <div className="w-16 h-16 mx-auto rounded-full bg-gradient-to-br from-sky-500 to-cyan-600 text-white flex items-center justify-center text-lg font-bold mb-2">
-                        {(selected?.title || '?').slice(0, 1)}
+                  <aside className="flex w-[288px] shrink-0 flex-col border-l border-white/40 bg-white/65 backdrop-blur-xl shadow-sm">
+                    <div className="p-4 border-b border-white/40 text-center bg-gradient-to-b from-sky-50/60 to-transparent">
+                      <div
+                        className="w-20 h-20 mx-auto rounded-3xl text-white flex items-center justify-center text-2xl font-bold mb-2 shadow-lg ring-4 ring-white/70"
+                        style={{ background: avatarGradientFor(selected?.title) }}
+                      >
+                        {(selected?.title || '?').slice(0, 1).toUpperCase()}
                       </div>
-                      <p className="text-sm font-semibold text-slate-800 truncate px-1">{selected?.title}</p>
-                      <p className="text-[11px] text-slate-500 mt-0.5">
-                        {selected?.is_direct ? 'Chat trực tiếp' : 'Nhóm Messenger'}
+                      <p className="text-sm font-bold truncate px-1" style={{ color: '#0f172a' }}>{selected?.title}</p>
+                      <p className="text-[11px] text-slate-500 mt-0.5 inline-flex items-center gap-1 justify-center">
+                        {selected?.is_direct ? (
+                          <><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Chat trực tiếp</>
+                        ) : (
+                          <><Users className="h-3 w-3" /> Nhóm Messenger</>
+                        )}
                       </p>
-                      <p className="text-[10px] text-slate-500 px-2 mt-3 text-center">
+                      <p className="text-[10px] text-slate-500 px-2 mt-3 text-center leading-relaxed">
                         Hội thoại nội bộ, không gắn Lead/Deal trên CRM.
                       </p>
                     </div>
-                    <p className="text-[10px] font-bold text-slate-500 uppercase px-3 py-1.5 bg-slate-50 border-y border-slate-100">Thông tin hội thoại</p>
-                    <div className="flex border-b border-slate-100 text-[11px] font-semibold">
+                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider px-3 py-1.5 bg-white/40 border-y border-white/40">Thông tin hội thoại</p>
+                    <div className="flex border-b border-white/40 text-[11px] font-semibold bg-white/30">
                       {[
                         !selected?.is_direct && {
                           id: 'members',
@@ -1043,7 +1114,7 @@ export default function MessengerHubPage() {
                           type="button"
                           onClick={() => setRightSection(id)}
                           className={`flex-1 py-2 flex items-center justify-center gap-1 border-b-2 transition ${
-                            rightSection === id ? 'border-sky-500 text-sky-700' : 'border-transparent text-slate-500'
+                            rightSection === id ? 'border-sky-500 text-sky-700 bg-white/60' : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-white/40'
                           }`}
                         >
                           <Icon className="h-3.5 w-3.5" />
@@ -1080,10 +1151,13 @@ export default function MessengerHubPage() {
                               return (
                                 <li
                                   key={m.user_id}
-                                  className="flex items-center gap-2 rounded-lg border border-slate-100 p-2 bg-white"
+                                  className="flex items-center gap-2 rounded-xl border border-white/60 p-2 bg-white/70 backdrop-blur hover:bg-white hover:shadow-sm transition"
                                 >
-                                  <div className="h-8 w-8 shrink-0 rounded-full bg-gradient-to-br from-sky-400 to-cyan-600 text-white flex items-center justify-center text-[11px] font-bold">
-                                    {(u.full_name || '?').slice(0, 1)}
+                                  <div
+                                    className="h-9 w-9 shrink-0 rounded-2xl text-white flex items-center justify-center text-[12px] font-bold shadow-sm ring-2 ring-white/70"
+                                    style={{ background: avatarGradientFor(u.full_name || u.email) }}
+                                  >
+                                    {(u.full_name || '?').slice(0, 1).toUpperCase()}
                                   </div>
                                   <div className="min-w-0 flex-1">
                                     <p className="text-[12px] font-semibold text-slate-800 truncate flex items-center gap-1">
@@ -1215,15 +1289,17 @@ export default function MessengerHubPage() {
 
       {/* Modal tạo nhóm */}
       {createOpen && (
-        <div className="fixed inset-0 z-[220] flex items-center justify-center bg-black/45 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white shadow-xl border border-slate-200 overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50">
-              <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                <Users className="h-4 w-4 text-sky-600" />
-                Tạo nhóm chat
+        <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white/95 backdrop-blur-xl shadow-2xl border border-white/60 overflow-hidden ring-1 ring-black/5">
+            <div className="px-4 py-3 border-b border-white/60 flex items-center justify-between bg-gradient-to-r from-sky-50 via-cyan-50 to-violet-50">
+              <h2 className="text-sm font-bold flex items-center gap-2" style={{ color: '#0f172a' }}>
+                <div className="h-7 w-7 rounded-xl bg-gradient-to-br from-sky-500 to-cyan-600 text-white flex items-center justify-center shadow-md">
+                  <Users className="h-3.5 w-3.5" />
+                </div>
+                Tạo nhóm chat mới
               </h2>
-              <button type="button" className="text-slate-500 text-lg leading-none px-1" onClick={closeCreateModal}>
-                ×
+              <button type="button" className="h-8 w-8 rounded-lg hover:bg-white/70 text-slate-500 hover:text-slate-700 flex items-center justify-center transition" onClick={closeCreateModal}>
+                <X className="h-4 w-4" />
               </button>
             </div>
             <div className="p-4 space-y-3 max-h-[70vh] overflow-y-auto">

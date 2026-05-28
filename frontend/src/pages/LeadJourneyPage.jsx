@@ -542,52 +542,129 @@ function BranchFlowDiagram({ active, setActive }) {
 function DetailPanel({ step }) {
   const lane=LANE[step.mod];
   const nodeColor=step.isWon||step.isEnd?'#16a34a':step.id===9?'#1d4ed8':lane.color;
+  const glassBase = {
+    background:'rgba(255,255,255,0.7)',
+    backdropFilter:'blur(20px) saturate(140%)',
+    WebkitBackdropFilter:'blur(20px) saturate(140%)',
+    boxShadow:'0 8px 28px rgba(15,23,42,0.10)',
+  };
   return (
     <div style={{display:'grid',gridTemplateColumns:step.event?'1fr 1fr':'1fr',gap:14}}>
-      <div style={{background:'white',borderRadius:20,border:`1.5px solid ${lane.border}`,overflow:'hidden'}}>
-        <div style={{background:`linear-gradient(135deg,${nodeColor},${nodeColor}cc)`,padding:'14px 18px',display:'flex',alignItems:'center',gap:12}}>
-          <div style={{width:44,height:44,borderRadius:11,background:'rgba(255,255,255,.2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:24}}>{step.icon}</div>
+      <div style={{
+        ...glassBase, borderRadius:20,
+        border:`1.5px solid ${lane.color}33`, overflow:'hidden',
+      }}>
+        <div style={{
+          background:`linear-gradient(135deg,${nodeColor},${nodeColor}cc)`,
+          padding:'14px 18px',display:'flex',alignItems:'center',gap:12,
+          boxShadow:`inset 0 -1px 0 ${nodeColor}66`,
+        }}>
+          <div style={{
+            width:46,height:46,borderRadius:13,
+            background:'rgba(255,255,255,.25)',
+            border:'1.5px solid rgba(255,255,255,.4)',
+            display:'flex',alignItems:'center',justifyContent:'center',fontSize:24,
+            backdropFilter:'blur(4px)', WebkitBackdropFilter:'blur(4px)',
+          }}>{step.icon}</div>
           <div>
-            <div style={{fontSize:17,fontWeight:900,color:'white'}}>{step.label}</div>
-            <div style={{fontSize:11,color:'rgba(255,255,255,.7)',marginTop:2}}>{step.sub}</div>
+            <div style={{fontSize:17,fontWeight:900,color:'white',letterSpacing:'-0.01em'}}>{step.label}</div>
+            <div style={{fontSize:11,color:'rgba(255,255,255,.85)',marginTop:2,fontWeight:500}}>{step.sub}</div>
           </div>
-          <div style={{marginLeft:'auto',background:'rgba(255,255,255,.2)',borderRadius:8,padding:'3px 10px',fontSize:10,fontWeight:700,color:'white'}}>{lane.icon} {lane.label}</div>
+          <div style={{
+            marginLeft:'auto',
+            background:'rgba(255,255,255,.22)',
+            border:'1px solid rgba(255,255,255,.35)',
+            borderRadius:10,padding:'4px 11px',fontSize:10,fontWeight:700,color:'white',
+            backdropFilter:'blur(4px)', WebkitBackdropFilter:'blur(4px)',
+          }}>{lane.icon} {lane.label}</div>
         </div>
         <div style={{padding:'14px 18px'}}>
-          <p style={{fontSize:13.5,color:'#475569',lineHeight:1.65,margin:'0 0 12px'}}>{step.detail}</p>
+          <p style={{fontSize:13.5,color:'#1e293b',lineHeight:1.65,margin:'0 0 12px'}}>{step.detail}</p>
           {step.crmDealTrigger!==undefined&&(
-            <div style={{display:'inline-flex',alignItems:'center',gap:6,background:'#f5f3ff',border:'1px solid #ddd6fe',borderRadius:8,padding:'6px 12px',fontSize:12,color:'#7c3aed',fontWeight:700,marginBottom:12}}>
+            <div style={{
+              display:'inline-flex',alignItems:'center',gap:6,
+              background:'rgba(245,243,255,0.85)',
+              backdropFilter:'blur(8px)', WebkitBackdropFilter:'blur(8px)',
+              border:'1px solid rgba(124,58,237,0.35)',
+              borderRadius:10,padding:'6px 12px',fontSize:12,color:'#6d28d9',fontWeight:700,marginBottom:12,
+              boxShadow:'0 2px 8px rgba(124,58,237,0.12)',
+            }}>
               <RefreshCw size={11}/> CRM Deal → {CRM_DEAL[step.crmDealTrigger].icon} {CRM_DEAL[step.crmDealTrigger].label}
             </div>
           )}
           {step.tips&&<>
-            <div style={{fontSize:10,fontWeight:800,color:'#94a3b8',letterSpacing:'.06em',marginBottom:8}}>GỢI Ý THAO TÁC</div>
+            <div style={{
+              fontSize:10,fontWeight:800,color:'#64748b',letterSpacing:'.08em',marginBottom:8,
+              textTransform:'uppercase',
+            }}>💡 Gợi ý thao tác</div>
             {step.tips.map((t,i)=>(
-              <div key={i} style={{display:'flex',gap:8,padding:'6px 0',borderTop:i>0?'1px solid #f1f5f9':'none',alignItems:'flex-start'}}>
-                <span style={{fontSize:13,flexShrink:0}}>{t.slice(0,2)}</span>
-                <span style={{fontSize:13,color:'#475569',lineHeight:1.5}}>{t.slice(2).trim()}</span>
+              <div key={i} style={{
+                display:'flex',gap:10,padding:'8px 10px',marginBottom:4,
+                borderRadius:10,
+                background: i % 2 === 0 ? 'rgba(248,250,252,0.7)' : 'transparent',
+                alignItems:'flex-start',
+              }}>
+                <span style={{fontSize:14,flexShrink:0,lineHeight:1.2}}>{t.slice(0,2)}</span>
+                <span style={{fontSize:13,color:'#334155',lineHeight:1.5,fontWeight:500}}>{t.slice(2).trim()}</span>
               </div>
             ))}
           </>}
         </div>
       </div>
       {step.event&&(
-        <div style={{borderRadius:20,overflow:'hidden',border:`1.5px solid ${step.event.type==='end'?'#bbf7d0':'#bfdbfe'}`,background:step.event.type==='end'?'#f0fdf4':'#eff6ff',display:'flex',flexDirection:'column'}}>
-          <div style={{background:step.event.type==='end'?'linear-gradient(135deg,#16a34a,#15803d)':'linear-gradient(135deg,#2563eb,#1d4ed8)',padding:'14px 18px',display:'flex',alignItems:'center',gap:10}}>
-            <div style={{width:40,height:40,borderRadius:10,background:'rgba(255,255,255,.2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:22}}>{step.event.icon}</div>
+        <div style={{
+          borderRadius:20,overflow:'hidden',
+          border:`1.5px solid ${step.event.type==='end'?'rgba(22,163,74,0.35)':'rgba(37,99,235,0.35)'}`,
+          ...glassBase,
+          display:'flex',flexDirection:'column',
+        }}>
+          <div style={{
+            background:step.event.type==='end'
+              ? 'linear-gradient(135deg,#16a34a,#15803d)'
+              : 'linear-gradient(135deg,#2563eb,#1d4ed8)',
+            padding:'14px 18px',display:'flex',alignItems:'center',gap:10,
+          }}>
+            <div style={{
+              width:42,height:42,borderRadius:12,
+              background:'rgba(255,255,255,.25)',
+              border:'1.5px solid rgba(255,255,255,.4)',
+              display:'flex',alignItems:'center',justifyContent:'center',fontSize:22,
+              backdropFilter:'blur(4px)', WebkitBackdropFilter:'blur(4px)',
+            }}>{step.event.icon}</div>
             <div>
-              <div style={{fontSize:14,fontWeight:800,color:'white'}}>{step.event.title}</div>
-              <div style={{fontSize:10,color:'rgba(255,255,255,.7)',marginTop:2}}>{step.event.type==='end'?'🔄 Kết thúc, quay CRM':'🤖 Tự động kích hoạt'}</div>
+              <div style={{fontSize:14,fontWeight:800,color:'white',letterSpacing:'-0.01em'}}>{step.event.title}</div>
+              <div style={{fontSize:10,color:'rgba(255,255,255,.85)',marginTop:2,fontWeight:500}}>
+                {step.event.type==='end'?'🔄 Kết thúc, quay CRM':'🤖 Tự động kích hoạt'}
+              </div>
             </div>
           </div>
           <div style={{padding:'14px 18px',flex:1,display:'flex',flexDirection:'column',gap:10}}>
-            <p style={{fontSize:13,color:'#475569',lineHeight:1.6,margin:0}}>{step.event.desc}</p>
-            {[{icon:<Bell size={13}/>,label:'THÔNG BÁO',val:step.event.notify,bg:step.event.type==='end'?'#dcfce7':'#dbeafe',ic:step.event.type==='end'?'#16a34a':'#2563eb'},
-              step.event.crmUpdate&&{icon:<RefreshCw size={13}/>,label:'CRM AUTO',val:step.event.crmUpdate,bg:'#f5f3ff',ic:'#7c3aed'}
+            <p style={{fontSize:13,color:'#1e293b',lineHeight:1.6,margin:0}}>{step.event.desc}</p>
+            {[
+              {icon:<Bell size={13}/>,label:'THÔNG BÁO',val:step.event.notify,
+                bg:step.event.type==='end'?'rgba(220,252,231,0.9)':'rgba(219,234,254,0.9)',
+                ic:step.event.type==='end'?'#16a34a':'#2563eb'},
+              step.event.crmUpdate&&{icon:<RefreshCw size={13}/>,label:'CRM AUTO',val:step.event.crmUpdate,
+                bg:'rgba(245,243,255,0.9)',ic:'#7c3aed'},
             ].filter(Boolean).map((row,i)=>(
-              <div key={i} style={{background:'white',borderRadius:10,padding:'10px 12px',display:'flex',gap:8,alignItems:'flex-start',border:'1px solid #f1f5f9'}}>
-                <div style={{width:28,height:28,borderRadius:7,background:row.bg,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,color:row.ic}}>{row.icon}</div>
-                <div><div style={{fontSize:10,fontWeight:800,color:'#374151'}}>{row.label}</div><div style={{fontSize:12,color:'#64748b',marginTop:2}}>{row.val}</div></div>
+              <div key={i} style={{
+                background:'rgba(255,255,255,0.75)',
+                backdropFilter:'blur(8px)', WebkitBackdropFilter:'blur(8px)',
+                borderRadius:12,padding:'10px 12px',
+                display:'flex',gap:10,alignItems:'flex-start',
+                border:'1px solid rgba(241,245,249,0.8)',
+                boxShadow:'0 1px 4px rgba(15,23,42,0.05)',
+              }}>
+                <div style={{
+                  width:30,height:30,borderRadius:8,background:row.bg,
+                  display:'flex',alignItems:'center',justifyContent:'center',
+                  flexShrink:0,color:row.ic,
+                  border:`1px solid ${row.ic}30`,
+                }}>{row.icon}</div>
+                <div>
+                  <div style={{fontSize:10,fontWeight:800,color:'#0f172a',letterSpacing:'0.04em'}}>{row.label}</div>
+                  <div style={{fontSize:12,color:'#475569',marginTop:2,fontWeight:500}}>{row.val}</div>
+                </div>
               </div>
             ))}
           </div>
@@ -829,17 +906,26 @@ function LeadDealFunnelPanel() {
           gap: 12,
           marginBottom: 16,
           paddingBottom: 14,
-          borderBottom: '1px solid #e2e8f0',
+          borderBottom: '1px solid rgba(226,232,240,0.6)',
         }}
       >
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <div style={{ fontSize: 14, fontWeight: 800, color: '#0f172a', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Filter size={18} style={{ color: '#7c3aed', flexShrink: 0 }} />
-            Phễu Lead → Deal
+        <div style={{ flex: 1, minWidth: 220, display:'flex', alignItems:'center', gap:12 }}>
+          <div style={{
+            width:40, height:40, borderRadius:12,
+            background:'linear-gradient(135deg, rgba(124,58,237,0.18), rgba(124,58,237,0.06))',
+            border:'1.5px solid rgba(124,58,237,0.35)',
+            display:'flex', alignItems:'center', justifyContent:'center',
+          }}>
+            <Filter size={18} style={{ color: '#7c3aed' }} />
           </div>
-          <div style={{ fontSize: 11.5, color: '#64748b', marginTop: 4, lineHeight: 1.45 }}>
-            Giai đoạn lấy từ pipeline CRM của công ty (Lead rồi Deal).{' '}
-            <strong>Không hiển thị cột Thua</strong> — chỉ các giai đoạn còn &quot;lọc&quot; khách trong kinh doanh.
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: '#0f172a', letterSpacing:'-0.01em' }}>
+              Phễu Lead → Deal
+            </div>
+            <div style={{ fontSize: 11.5, color: '#475569', marginTop: 4, lineHeight: 1.45 }}>
+              Giai đoạn lấy từ pipeline CRM của công ty (Lead rồi Deal).{' '}
+              <strong>Không hiển thị cột Thua</strong>.
+            </div>
           </div>
         </div>
         {showCompanyPicker && (
@@ -853,11 +939,14 @@ function LeadDealFunnelPanel() {
                 minWidth: 200,
                 padding: '8px 12px',
                 borderRadius: 10,
-                border: '1.5px solid #e2e8f0',
+                border: '1.5px solid rgba(226,232,240,0.8)',
                 fontSize: 13,
                 fontWeight: 600,
-                background: 'white',
+                background: 'rgba(255,255,255,0.75)',
+                backdropFilter:'blur(8px)',
+                WebkitBackdropFilter:'blur(8px)',
                 cursor: 'pointer',
+                boxShadow:'0 1px 4px rgba(15,23,42,0.05)',
               }}
             >
               <option value="">— Chọn công ty —</option>
@@ -877,15 +966,18 @@ function LeadDealFunnelPanel() {
             height: 36,
             padding: '0 14px',
             borderRadius: 10,
-            border: '1.5px solid #e2e8f0',
-            background: loading ? '#f8fafc' : 'white',
+            border: '1.5px solid rgba(226,232,240,0.8)',
+            background: loading ? 'rgba(248,250,252,0.7)' : 'rgba(255,255,255,0.75)',
+            backdropFilter:'blur(8px)',
+            WebkitBackdropFilter:'blur(8px)',
             fontSize: 12,
             fontWeight: 700,
-            color: '#475569',
+            color: '#334155',
             cursor: loading || !companyId ? 'not-allowed' : 'pointer',
             display: 'flex',
             alignItems: 'center',
             gap: 6,
+            boxShadow:'0 1px 4px rgba(15,23,42,0.05)',
           }}
         >
           <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
@@ -912,60 +1004,58 @@ function LeadDealFunnelPanel() {
       {companyId && !loading && !err && (
         <>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 18 }}>
-            <div style={{ background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: 12, padding: '10px 14px', minWidth: 120 }}>
-              <div style={{ fontSize: 10, fontWeight: 800, color: '#7c3aed', letterSpacing: '0.04em' }}>LEAD (không Thua)</div>
-              <div style={{ fontSize: 22, fontWeight: 900, color: '#5b21b6' }}>{sumLead}</div>
-            </div>
-            <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 12, padding: '10px 14px', minWidth: 120 }}>
-              <div style={{ fontSize: 10, fontWeight: 800, color: '#2563eb', letterSpacing: '0.04em' }}>DEAL (không Thua)</div>
-              <div style={{ fontSize: 22, fontWeight: 900, color: '#1d4ed8' }}>{sumDeal}</div>
-            </div>
-            {kpis?.lead?.conversion_rate != null && (
-              <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 12, padding: '10px 14px', minWidth: 140 }}>
-                <div style={{ fontSize: 10, fontWeight: 800, color: '#15803d', letterSpacing: '0.04em' }}>TỶ LỆ LEAD→DEAL (CRM)</div>
-                <div style={{ fontSize: 22, fontWeight: 900, color: '#166534' }}>{kpis.lead.conversion_rate}%</div>
+            {[
+              { label:'LEAD (không Thua)', value:sumLead, color:'#7c3aed', valueColor:'#5b21b6' },
+              { label:'DEAL (không Thua)', value:sumDeal, color:'#2563eb', valueColor:'#1d4ed8' },
+              ...(kpis?.lead?.conversion_rate != null ? [{
+                label:'TỶ LỆ LEAD→DEAL (CRM)', value:`${kpis.lead.conversion_rate}%`,
+                color:'#15803d', valueColor:'#166534',
+              }] : []),
+              ...(overdueTasksTotal != null ? [{
+                label:'NHIỆM VỤ QUÁ HẠN', value:overdueTasksTotal,
+                color: overdueTasksTotal > 0 ? '#c2410c' : '#64748b',
+                valueColor: overdueTasksTotal > 0 ? '#9a3412' : '#475569',
+                sub: `Lead ${kpis?.lead?.overdue_tasks ?? '—'} · Deal ${kpis?.deal?.overdue_tasks ?? '—'}`,
+              }] : []),
+            ].map((kpi, i) => (
+              <div key={i} style={{
+                flex:'1 1 140px', minWidth:140,
+                background: `linear-gradient(135deg, ${kpi.color}18, rgba(255,255,255,0.7))`,
+                backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)',
+                border:`1.5px solid ${kpi.color}40`,
+                borderRadius:14, padding:'12px 16px',
+                boxShadow:`0 4px 14px ${kpi.color}1a`,
+                transition:'transform .2s, box-shadow .2s',
+              }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: kpi.color, letterSpacing: '0.06em' }}>{kpi.label}</div>
+                <div style={{ fontSize: 24, fontWeight: 900, color: kpi.valueColor, letterSpacing:'-0.01em', marginTop:2 }}>{kpi.value}</div>
+                {kpi.sub && (
+                  <div style={{ fontSize: 10, color: '#64748b', marginTop: 4, lineHeight: 1.35, fontWeight:500 }}>
+                    {kpi.sub}
+                  </div>
+                )}
               </div>
-            )}
-            {overdueTasksTotal != null && (
-              <div
-                style={{
-                  background: overdueTasksTotal > 0 ? '#fff7ed' : '#f8fafc',
-                  border: `1px solid ${overdueTasksTotal > 0 ? '#fed7aa' : '#e2e8f0'}`,
-                  borderRadius: 12,
-                  padding: '10px 14px',
-                  minWidth: 140,
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 10,
-                    fontWeight: 800,
-                    color: overdueTasksTotal > 0 ? '#c2410c' : '#64748b',
-                    letterSpacing: '0.04em',
-                  }}
-                >
-                  NHIỆM VỤ QUÁ HẠN
-                </div>
-                <div style={{ fontSize: 22, fontWeight: 900, color: overdueTasksTotal > 0 ? '#9a3412' : '#475569' }}>{overdueTasksTotal}</div>
-                <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 4, lineHeight: 1.35 }}>
-                  Lead {kpis?.lead?.overdue_tasks ?? '—'} · Deal {kpis?.deal?.overdue_tasks ?? '—'}
-                </div>
-              </div>
-            )}
+            ))}
           </div>
 
-          {/* Phễu Lead — SVG */}
+          {/* Phễu Lead — glass card */}
           <div
             style={{
               marginBottom: 12,
               padding: '14px 12px 18px',
-              borderRadius: 16,
-              background: 'linear-gradient(180deg, #faf5ff 0%, #ffffff 55%)',
-              border: '1px solid #ede9fe',
+              borderRadius: 18,
+              background: 'linear-gradient(180deg, rgba(250,245,255,0.85) 0%, rgba(255,255,255,0.6) 55%)',
+              backdropFilter:'blur(16px) saturate(140%)',
+              WebkitBackdropFilter:'blur(16px) saturate(140%)',
+              border: '1.5px solid rgba(196,181,253,0.45)',
+              boxShadow:'0 6px 24px rgba(124,58,237,0.08)',
             }}
           >
-            <div style={{ marginBottom: 12, fontSize: 12, fontWeight: 800, color: '#6d28d9', letterSpacing: '0.08em', textAlign: 'center' }}>
-              PIPELINE LEAD
+            <div style={{
+              marginBottom: 12, fontSize: 12, fontWeight: 800, color: '#6d28d9',
+              letterSpacing: '0.12em', textAlign: 'center',
+            }}>
+              ━━ PIPELINE LEAD ━━
             </div>
             {leadStages.length === 0 ? (
               <div style={{ textAlign: 'center', fontSize: 13, color: '#94a3b8', padding: '24px 8px' }}>
@@ -981,28 +1071,38 @@ function LeadDealFunnelPanel() {
               textAlign: 'center',
               fontSize: 12,
               fontWeight: 800,
-              color: '#64748b',
-              padding: '12px 0',
-              borderTop: '1px dashed #e2e8f0',
-              borderBottom: '1px dashed #e2e8f0',
-              marginBottom: 16,
+              color: '#475569',
+              padding: '10px 14px',
+              margin:'0 auto 16px',
+              maxWidth:360,
+              borderRadius:99,
+              background:'rgba(255,255,255,0.6)',
+              backdropFilter:'blur(8px)', WebkitBackdropFilter:'blur(8px)',
+              border: '1px dashed rgba(148,163,184,0.5)',
+              letterSpacing:'0.02em',
             }}
           >
             ↓ Chuyển đổi · lọc cơ hội sang Deal ↓
           </div>
 
-          {/* Phễu Deal — SVG */}
+          {/* Phễu Deal — glass card */}
           <div
             style={{
               marginBottom: 8,
               padding: '14px 12px 18px',
-              borderRadius: 16,
-              background: 'linear-gradient(180deg, #eff6ff 0%, #ffffff 55%)',
-              border: '1px solid #dbeafe',
+              borderRadius: 18,
+              background: 'linear-gradient(180deg, rgba(239,246,255,0.85) 0%, rgba(255,255,255,0.6) 55%)',
+              backdropFilter:'blur(16px) saturate(140%)',
+              WebkitBackdropFilter:'blur(16px) saturate(140%)',
+              border: '1.5px solid rgba(191,219,254,0.55)',
+              boxShadow:'0 6px 24px rgba(37,99,235,0.08)',
             }}
           >
-            <div style={{ marginBottom: 12, fontSize: 12, fontWeight: 800, color: '#1d4ed8', letterSpacing: '0.08em', textAlign: 'center' }}>
-              PIPELINE DEAL
+            <div style={{
+              marginBottom: 12, fontSize: 12, fontWeight: 800, color: '#1d4ed8',
+              letterSpacing: '0.12em', textAlign: 'center',
+            }}>
+              ━━ PIPELINE DEAL ━━
             </div>
             {dealStages.length === 0 ? (
               <div style={{ textAlign: 'center', fontSize: 13, color: '#94a3b8', padding: '24px 8px' }}>
@@ -1013,7 +1113,7 @@ function LeadDealFunnelPanel() {
             )}
           </div>
 
-          <p style={{ fontSize: 11.5, color: '#94a3b8', marginTop: 18, lineHeight: 1.55, marginBottom: 0 }}>
+          <p style={{ fontSize: 11.5, color: '#64748b', marginTop: 18, lineHeight: 1.55, marginBottom: 0 }}>
             Hình phễu chỉ thể hiện <strong>thứ tự lọc</strong> (trên rộng → dưới hẹp), không phản ánh tỷ lệ số lượng giữa các cột; số hiển thị bên cạnh mỗi giai đoạn là số liệu thực.
             Dữ liệu theo quyền xem CRM của bạn. Giai đoạn Thắng vẫn có trong phễu; chỉ ẩn cột <strong>Thua</strong>.
           </p>
@@ -1041,73 +1141,149 @@ export default function LeadJourneyPage() {
   }));
   const showStepDiagram = tab === 0 || tab === 1;
 
+  /** Style chung — glass card hiện đại. */
+  const glassCard = {
+    background: 'rgba(255,255,255,0.65)',
+    backdropFilter: 'blur(20px) saturate(140%)',
+    WebkitBackdropFilter: 'blur(20px) saturate(140%)',
+    border: '1px solid rgba(255,255,255,0.6)',
+    boxShadow: '0 8px 32px rgba(15,23,42,0.10)',
+  };
+  const glassCardSoft = {
+    background: 'rgba(255,255,255,0.55)',
+    backdropFilter: 'blur(16px) saturate(140%)',
+    WebkitBackdropFilter: 'blur(16px) saturate(140%)',
+    border: '1px solid rgba(255,255,255,0.55)',
+    boxShadow: '0 4px 20px rgba(15,23,42,0.08)',
+  };
   return (
-    <div style={{minHeight:'100vh',background:'#f1f5f9',padding:'18px 18px 48px'}}>
+    <div style={{minHeight:'100vh',padding:'18px 18px 48px'}}>
       <style>{`
         @keyframes glow-pulse{0%,100%{opacity:.25}50%{opacity:.55}}
         @keyframes panel-in{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
         .panel-in{animation:panel-in .4s cubic-bezier(.16,1,.3,1) both}
+        .lj-jump-btn:hover{transform:translateY(-2px) scale(1.08)}
+        .lj-tab-btn:hover:not([data-active="true"]){background:rgba(255,255,255,0.85)!important;border-color:rgba(148,163,184,0.45)!important;color:#1e293b!important}
       `}</style>
       <div style={{maxWidth:1220,margin:'0 auto'}}>
 
-        {/* Header */}
-        <div style={{background:'white',borderRadius:20,padding:'14px 20px',marginBottom:12,border:'1px solid #e2e8f0',display:'flex',alignItems:'center',gap:14,flexWrap:'wrap'}}>
-          <div style={{flex:1,minWidth:200}}>
-            <div style={{fontSize:17,fontWeight:900,color:'#111'}}>🗺️ Hành trình Deal</div>
-            <div style={{fontSize:11,color:'#64748b',marginTop:2}}>
-              {tab === 2
-                ? 'Phễu theo pipeline CRM (Lead + Deal) — lọc khách hàng qua từng giai đoạn'
-                : 'Lead CRM → Sản xuất → Vận chuyển → CSKH → Quay về CRM'}
+        {/* Header — Hero glass */}
+        <div style={{
+          ...glassCard, borderRadius:24, padding:'16px 22px', marginBottom:14,
+          display:'flex', alignItems:'center', gap:14, flexWrap:'wrap',
+          backgroundImage:'linear-gradient(135deg, rgba(124,58,237,0.08), rgba(255,255,255,0) 40%, rgba(22,163,74,0.06))',
+        }}>
+          <div style={{flex:1,minWidth:200,display:'flex',alignItems:'center',gap:12}}>
+            <div style={{
+              width:44,height:44,borderRadius:14,
+              background:'linear-gradient(135deg,#7c3aed,#2563eb,#16a34a)',
+              display:'flex',alignItems:'center',justifyContent:'center',
+              fontSize:22, boxShadow:'0 6px 18px rgba(124,58,237,0.35)',
+              border:'1.5px solid rgba(255,255,255,0.5)',
+            }}>🗺️</div>
+            <div>
+              <div style={{fontSize:18,fontWeight:900,color:'#0f172a',letterSpacing:'-0.01em'}}>Hành trình Deal</div>
+              <div style={{fontSize:11.5,color:'#475569',marginTop:2}}>
+                {tab === 2
+                  ? 'Phễu theo pipeline CRM (Lead + Deal) — lọc khách hàng qua từng giai đoạn'
+                  : 'Lead CRM → Sản xuất → Vận chuyển → CSKH → Quay về CRM'}
+              </div>
             </div>
           </div>
           {showStepDiagram && modProgress.map(({mod,l,done,total,isActive})=>(
-            <div key={mod} style={{display:'flex',alignItems:'center',gap:8,padding:'7px 12px',borderRadius:12,
-              background:isActive?l.light:'#f8fafc',border:`1.5px solid ${isActive?l.border:'#f1f5f9'}`,transition:'all .3s'}}>
+            <div key={mod} style={{
+              display:'flex',alignItems:'center',gap:8,padding:'8px 12px',borderRadius:14,
+              background:isActive
+                ? `linear-gradient(135deg, ${l.color}22, rgba(255,255,255,0.7))`
+                : 'rgba(255,255,255,0.55)',
+              backdropFilter:'blur(10px)',
+              WebkitBackdropFilter:'blur(10px)',
+              border:`1.5px solid ${isActive ? `${l.color}66` : 'rgba(255,255,255,0.6)'}`,
+              boxShadow: isActive ? `0 4px 14px ${l.color}25` : '0 2px 8px rgba(15,23,42,0.05)',
+              transition:'all .3s',
+            }}>
               <span style={{fontSize:16}}>{l.icon}</span>
               <div>
-                <div style={{fontSize:10,fontWeight:800,color:isActive?l.color:'#94a3b8'}}>{mod}</div>
-                <div style={{fontSize:11,color:'#64748b'}}>{done}/{total}</div>
+                <div style={{fontSize:10,fontWeight:800,color:isActive?l.color:'#64748b',letterSpacing:'0.04em'}}>{mod}</div>
+                <div style={{fontSize:11,color:'#475569',fontWeight:600}}>{done}/{total}</div>
               </div>
-              <div style={{width:36,height:4,background:'#e2e8f0',borderRadius:4,overflow:'hidden'}}>
-                <div style={{height:'100%',borderRadius:4,background:l.color,width:`${(done/total)*100}%`,transition:'width .4s'}}/>
+              <div style={{width:40,height:5,background:'rgba(226,232,240,0.6)',borderRadius:99,overflow:'hidden'}}>
+                <div style={{
+                  height:'100%', borderRadius:99,
+                  background: `linear-gradient(90deg, ${l.color}, ${l.color}cc)`,
+                  width:`${(done/total)*100}%`,
+                  transition:'width .4s',
+                  boxShadow: done > 0 ? `0 0 8px ${l.color}80` : 'none',
+                }}/>
               </div>
             </div>
           ))}
           {showStepDiagram ? (
-          <div style={{textAlign:'right'}}>
-            <div style={{fontSize:28,fontWeight:900,color:nodeColor,lineHeight:1,transition:'color .3s'}}>{pct}<span style={{fontSize:13,color:'#94a3b8',fontWeight:400}}>%</span></div>
-            <div style={{fontSize:10,color:'#94a3b8'}}>bước {active+1}/14</div>
+          <div style={{
+            textAlign:'right', padding:'8px 16px', borderRadius:14,
+            background:`linear-gradient(135deg, ${nodeColor}18, rgba(255,255,255,0.7))`,
+            border:`1.5px solid ${nodeColor}44`,
+            backdropFilter:'blur(10px)',
+            WebkitBackdropFilter:'blur(10px)',
+          }}>
+            <div style={{fontSize:30,fontWeight:900,color:nodeColor,lineHeight:1,transition:'color .3s',letterSpacing:'-0.02em'}}>
+              {pct}<span style={{fontSize:14,color:'#94a3b8',fontWeight:500}}>%</span>
+            </div>
+            <div style={{fontSize:10,color:'#64748b',fontWeight:600,marginTop:2}}>bước {active+1}/14</div>
           </div>
           ) : (
-          <div style={{textAlign:'right',paddingLeft:12}}>
-            <div style={{fontSize:12,fontWeight:800,color:'#7c3aed'}}>Phễu CRM</div>
-            <div style={{fontSize:10,color:'#94a3b8',marginTop:2}}>Theo cột pipeline</div>
+          <div style={{
+            textAlign:'right',padding:'8px 16px',borderRadius:14,
+            background:'linear-gradient(135deg, rgba(124,58,237,0.15), rgba(255,255,255,0.7))',
+            border:'1.5px solid rgba(124,58,237,0.35)',
+            backdropFilter:'blur(10px)',
+            WebkitBackdropFilter:'blur(10px)',
+          }}>
+            <div style={{fontSize:13,fontWeight:800,color:'#7c3aed'}}>Phễu CRM</div>
+            <div style={{fontSize:10,color:'#64748b',marginTop:2,fontWeight:600}}>Theo cột pipeline</div>
           </div>
           )}
         </div>
 
-        {/* Tabs */}
-        <div style={{display:'flex',gap:6,marginBottom:10,flexWrap:'wrap'}}>
+        {/* Tabs — glass pills */}
+        <div style={{
+          display:'inline-flex',gap:4,marginBottom:12,flexWrap:'wrap',
+          padding:4, borderRadius:14, ...glassCardSoft,
+        }}>
           {[
             {id:1,icon:<GitBranch size={13}/>,label:'Sơ đồ Luồng Nhánh (CRM đầy đủ)'},
             {id:0,icon:<LayoutGrid size={13}/>,label:'Swim Lanes'},
             {id:2,icon:<Filter size={13}/>,label:'Phễu Lead → Deal'},
-          ].map(t=>(
-            <button key={t.id} onClick={()=>setTab(t.id)} style={{
-              height:34,padding:'0 16px',borderRadius:10,cursor:'pointer',
-              border:`1.5px solid ${tab===t.id?(tab===2?'#7c3aed':nodeColor):'#e2e8f0'}`,
-              background:tab===t.id?(tab===2?'#7c3aed':nodeColor):'white',
-              color:tab===t.id?'white':'#64748b',
-              fontSize:12,fontWeight:700,
-              display:'flex',alignItems:'center',gap:6,
-              transition:'all .2s',
-            }}>{t.icon}{t.label}</button>
-          ))}
+          ].map(t=>{
+            const isActive = tab===t.id;
+            const activeColor = t.id===2?'#7c3aed':nodeColor;
+            return (
+            <button
+              key={t.id}
+              data-active={isActive}
+              className="lj-tab-btn"
+              onClick={()=>setTab(t.id)}
+              style={{
+                height:34,padding:'0 16px',borderRadius:10,cursor:'pointer',
+                border:`1.5px solid ${isActive ? activeColor : 'transparent'}`,
+                background: isActive
+                  ? `linear-gradient(135deg, ${activeColor}, ${activeColor}dd)`
+                  : 'rgba(255,255,255,0.4)',
+                color: isActive ? 'white' : '#64748b',
+                fontSize:12,fontWeight:700,
+                display:'flex',alignItems:'center',gap:6,
+                transition:'all .2s',
+                boxShadow: isActive ? `0 4px 14px ${activeColor}55` : 'none',
+              }}
+            >{t.icon}{t.label}</button>
+          );})}
         </div>
 
-        {/* Diagram */}
-        <div style={{background:'white',borderRadius:20,border:'1px solid #e2e8f0',overflowX:'auto',
-          padding:'6px 4px 8px',boxShadow:'0 4px 24px rgba(0,0,0,0.06)'}}>
+        {/* Diagram — glass canvas */}
+        <div style={{
+          ...glassCard, borderRadius:20, overflowX:'auto',
+          padding:'10px 6px 12px',
+        }}>
           {tab===2 ? (
             <LeadDealFunnelPanel />
           ) : tab===0 ? (
@@ -1117,44 +1293,80 @@ export default function LeadJourneyPage() {
           )}
         </div>
 
-        {/* Slider */}
-        {showStepDiagram && (<div style={{background:'white',borderRadius:14,border:'1px solid #e2e8f0',padding:'10px 18px',marginTop:10,display:'flex',alignItems:'center',gap:12}}>
-          <span style={{fontSize:20}}>{cur.icon}</span>
-          <input type="range" min={0} max={13} value={active} onChange={e=>setActive(Number(e.target.value))}
-            style={{flex:1,accentColor:nodeColor,cursor:'pointer'}}/>
-          <div style={{background:lane.light,border:`1.5px solid ${lane.border}`,borderRadius:10,padding:'4px 14px',whiteSpace:'nowrap',transition:'all .3s'}}>
-            <span style={{fontSize:12,fontWeight:800,color:nodeColor}}>{cur.label}</span>
-            <span style={{fontSize:11,color:'#94a3b8',marginLeft:6}}>{lane.label}</span>
+        {/* Slider — glass */}
+        {showStepDiagram && (
+          <div style={{
+            ...glassCardSoft, borderRadius:16, padding:'10px 18px',
+            marginTop:12, display:'flex', alignItems:'center', gap:14,
+          }}>
+            <span style={{
+              fontSize:20, width:36, height:36, borderRadius:10,
+              background:`${nodeColor}18`, border:`1px solid ${nodeColor}40`,
+              display:'inline-flex', alignItems:'center', justifyContent:'center',
+            }}>{cur.icon}</span>
+            <input
+              type="range" min={0} max={13} value={active}
+              onChange={e=>setActive(Number(e.target.value))}
+              style={{flex:1, accentColor:nodeColor, cursor:'pointer'}}
+            />
+            <div style={{
+              background:`linear-gradient(135deg, ${lane.color}18, rgba(255,255,255,0.7))`,
+              border:`1.5px solid ${lane.color}55`,
+              borderRadius:12, padding:'5px 14px', whiteSpace:'nowrap',
+              backdropFilter:'blur(8px)', WebkitBackdropFilter:'blur(8px)',
+              transition:'all .3s',
+            }}>
+              <span style={{fontSize:12,fontWeight:800,color:nodeColor}}>{cur.label}</span>
+              <span style={{fontSize:11,color:'#64748b',marginLeft:6,fontWeight:600}}>{lane.label}</span>
+            </div>
           </div>
-        </div>)}
+        )}
 
         {/* Detail */}
         {showStepDiagram && (
-        <div key={active} className="panel-in" style={{marginTop:12}}>
-          <DetailPanel step={cur}/>
-        </div>
+          <div key={active} className="panel-in" style={{marginTop:14}}>
+            <DetailPanel step={cur}/>
+          </div>
         )}
 
-        {/* Quick-jump */}
+        {/* Quick-jump — glass */}
         {showStepDiagram && (
-        <div style={{marginTop:12,background:'white',borderRadius:14,border:'1px solid #e2e8f0',padding:'12px 18px',display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
-          <span style={{fontSize:11,color:'#94a3b8',fontWeight:600,marginRight:4}}>Nhảy nhanh:</span>
-          {STEPS.map(s=>{
-            const done=s.id<active, curr=s.id===active;
-            const sc=s.isWon||s.isEnd?'#16a34a':s.id===9?'#1d4ed8':LANE[s.mod].color;
-            return (
-              <button key={s.id} onClick={()=>setActive(s.id)} title={s.label} style={{
-                width:curr?38:28,height:curr?38:28,borderRadius:'50%',
-                border:`2px solid ${done||curr?sc:'#e2e8f0'}`,
-                background:done?sc:curr?'white':'#f8fafc',
-                cursor:'pointer',fontSize:done?11:15,
-                display:'flex',alignItems:'center',justifyContent:'center',
-                transition:'all .25s cubic-bezier(.34,1.56,.64,1)',
-                boxShadow:curr?`0 0 0 4px ${sc}30`:'none',padding:0,flexShrink:0,
-              }}>{done?'✓':s.icon}</button>
-            );
-          })}
-        </div>
+          <div style={{
+            marginTop:14, ...glassCardSoft, borderRadius:16,
+            padding:'12px 18px', display:'flex', alignItems:'center', gap:6, flexWrap:'wrap',
+          }}>
+            <span style={{
+              fontSize:11,color:'#64748b',fontWeight:700,marginRight:6,
+              letterSpacing:'0.04em', textTransform:'uppercase',
+            }}>Nhảy nhanh:</span>
+            {STEPS.map(s=>{
+              const done=s.id<active, curr=s.id===active;
+              const sc=s.isWon||s.isEnd?'#16a34a':s.id===9?'#1d4ed8':LANE[s.mod].color;
+              return (
+                <button
+                  key={s.id}
+                  className="lj-jump-btn"
+                  onClick={()=>setActive(s.id)}
+                  title={s.label}
+                  style={{
+                    width:curr?40:30, height:curr?40:30, borderRadius:'50%',
+                    border:`2px solid ${done||curr?sc:'rgba(226,232,240,0.8)'}`,
+                    background: done
+                      ? `linear-gradient(135deg, ${sc}, ${sc}cc)`
+                      : curr ? 'rgba(255,255,255,0.95)' : 'rgba(248,250,252,0.7)',
+                    color: done ? 'white' : '#0f172a',
+                    cursor:'pointer', fontSize:done?12:15,
+                    display:'flex', alignItems:'center', justifyContent:'center',
+                    transition:'all .25s cubic-bezier(.34,1.56,.64,1)',
+                    boxShadow: curr
+                      ? `0 0 0 4px ${sc}30, 0 4px 14px ${sc}40`
+                      : done ? `0 3px 10px ${sc}40` : '0 1px 4px rgba(15,23,42,0.06)',
+                    padding:0, flexShrink:0,
+                  }}
+                >{done?'✓':s.icon}</button>
+              );
+            })}
+          </div>
         )}
 
       </div>

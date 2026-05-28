@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import Modal from '../components/Modal';
@@ -13,7 +13,10 @@ export default function CustomersPage() {
   const [stats, setStats] = useState({});
   const [search, setSearch] = useState('');
   const [filterStatusId, setFilterStatusId] = useState('all');
-  const [loading, setLoading] = useState(true);
+  const [firstLoading, setFirstLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const isFirstLoadRef = useRef(true);
+  const reqIdRef = useRef(0);
   const [showCreate, setShowCreate] = useState(false);
   const [editId, setEditId] = useState(null);
   const [custStatuses, setCustStatuses] = useState([]);
@@ -31,15 +34,36 @@ export default function CustomersPage() {
       .catch(() => {});
   }, []);
 
-  const load = () => {
-    setLoading(true);
-    const params = { search: search || undefined, limit: 200 };
+  const load = useCallback(() => {
+    if (isFirstLoadRef.current) setFirstLoading(true);
+    else setRefreshing(true);
+
+    const myReq = ++reqIdRef.current;
+    const params = { limit: 200 };
+    if (search.trim()) params.search = search.trim();
     if (filterStatusId !== 'all') params.status_id = filterStatusId;
+
     api.get('/customers', { params })
-      .then(r => { setCustomers(r.data.customers || []); setStats(r.data.stats || {}); })
-      .catch(() => {}).finally(() => setLoading(false));
-  };
-  useEffect(load, [filterStatusId]);
+      .then((r) => {
+        if (myReq !== reqIdRef.current) return;
+        setCustomers(r.data.customers || []);
+        setStats(r.data.stats || {});
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (myReq !== reqIdRef.current) return;
+        isFirstLoadRef.current = false;
+        setFirstLoading(false);
+        setRefreshing(false);
+      });
+  }, [search, filterStatusId]);
+
+  // Tải khi đổi tab trạng thái hoặc khi gõ tìm kiếm (debounce 300ms; lần đầu load ngay)
+  useEffect(() => {
+    const delay = isFirstLoadRef.current ? 0 : 300;
+    const t = setTimeout(() => load(), delay);
+    return () => clearTimeout(t);
+  }, [search, filterStatusId, load]);
 
   const openDeleteCustomer = (e, c) => {
     e.stopPropagation();
@@ -131,21 +155,48 @@ export default function CustomersPage() {
       {/* Search */}
       <div className="relative max-w-md">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-        <input value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && load()}
-          placeholder="Tìm tên, SĐT, email, công ty..." className="w-full h-9 pl-10 pr-3 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Tìm tên, SĐT, email, công ty…"
+          className="w-full h-9 pl-10 pr-8 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+        />
+        {refreshing && (
+          <svg className="absolute right-8 top-1/2 -translate-y-1/2 h-4 w-4 text-blue-500 animate-spin" viewBox="0 0 24 24" aria-hidden>
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+          </svg>
+        )}
+        {search && (
+          <button
+            type="button"
+            onClick={() => setSearch('')}
+            className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 inline-flex items-center justify-center text-gray-400 hover:text-gray-700 cursor-pointer"
+            title="Xoá tìm kiếm"
+          >
+            ×
+          </button>
+        )}
       </div>
 
       {/* List */}
-      {loading ? (
+      {firstLoading ? (
         <div className="flex items-center justify-center py-16"><svg className="animate-spin h-6 w-6 text-gray-400" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg></div>
       ) : customers.length === 0 ? (
         <div className="text-center py-16">
           <UsersIcon className="h-12 w-12 mx-auto text-gray-300 mb-3" />
-          <p className="text-sm text-gray-400">Chưa có khách hàng</p>
-          <button onClick={() => setShowCreate(true)} className="mt-2 text-sm text-blue-600 font-medium cursor-pointer">+ Thêm KH</button>
+          <p className="text-sm text-gray-400">
+            {search.trim() ? `Không tìm thấy khách hàng khớp "${search.trim()}"` : 'Chưa có khách hàng'}
+          </p>
+          {!search.trim() && (
+            <button type="button" onClick={() => setShowCreate(true)} className="mt-2 text-sm text-blue-600 font-medium cursor-pointer">+ Thêm KH</button>
+          )}
         </div>
       ) : (
-        <div className="grid gap-3">
+        <div
+          className="grid gap-3 overflow-y-auto pr-2 [scrollbar-width:thin]"
+          style={{ maxHeight: 'calc(100vh - 280px)' }}
+        >
           {customers.map((c, i) => {
             const st = getStatusDisplay(c);
             return (
@@ -187,6 +238,11 @@ export default function CustomersPage() {
               </Link>
             );
           })}
+          {customers.length > 0 && (
+            <p className="text-center text-[11px] text-gray-400 py-2">
+              Hiển thị {customers.length} khách hàng — cuộn để xem thêm
+            </p>
+          )}
         </div>
       )}
 

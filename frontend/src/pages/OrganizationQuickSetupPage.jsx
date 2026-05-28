@@ -347,7 +347,7 @@ export default function OrganizationQuickSetupPage() {
   const scopeReady = !!effectiveCompanyId && !!batchDeptId;
 
   return (
-    <div className="min-h-[calc(100vh-5rem)] bg-slate-50/90">
+    <div className="min-h-[calc(100vh-5rem)]">
       <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
         <header className="mb-8 flex flex-col gap-4 border-b border-slate-200/80 pb-6 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex gap-4">
@@ -355,8 +355,8 @@ export default function OrganizationQuickSetupPage() {
               <Briefcase className="h-6 w-6 text-slate-700" strokeWidth={1.5} />
             </span>
             <div>
-              <h1 className="text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">Thiết lập tổ chức nhanh</h1>
-              <p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-500">
+              <h1 className="text-xl font-semibold tracking-tight sm:text-2xl drop-shadow-sm" style={{ color: '#ffffff' }}>Thiết lập tổ chức nhanh</h1>
+              <p className="mt-1 max-w-2xl text-sm leading-relaxed drop-shadow-sm" style={{ color: '#ffffff' }}>
                 Chọn khối → công ty → phòng ban → khu vực; nhập một hoặc nhiều nhân viên; gán quyền; bấm tạo.
               </p>
             </div>

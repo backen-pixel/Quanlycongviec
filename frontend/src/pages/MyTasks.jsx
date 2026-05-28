@@ -97,7 +97,7 @@ export default function MyTasks() {
         <div className="bg-red-50 border border-red-200 rounded-xl p-4 animate-fade-in">
           <div className="flex items-center gap-2 mb-2">
             <AlertTriangle className="h-4 w-4 text-red-600" />
-            <h3 className="text-sm font-semibold text-red-800">⚠️ {totalOverdue} task quá hạn</h3>
+            <h3 className="text-sm font-semibold" style={{ color: '#000000' }}>⚠️ {totalOverdue} task quá hạn</h3>
           </div>
           <div className="space-y-1">
             {overdue.slice(0, 5).map(t => (
@@ -115,23 +115,34 @@ export default function MyTasks() {
       <div className="flex items-center justify-between">
         <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5">
           {[
-            { id: 'assigned', label: 'Được giao', icon: Inbox, count: totalAssigned },
-            { id: 'created', label: 'Tôi giao', icon: User, count: totalCreated },
-          ].map(t => (
-            <button key={t.id} onClick={() => setActiveTab(t.id)}
-              className={`h-8 px-3 rounded-md text-xs font-medium flex items-center gap-1.5 cursor-pointer ${
-                activeTab === t.id ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
-              }`}>
-              <t.icon className="h-3.5 w-3.5" />{t.label}
-              {t.count > 0 && <span className="text-[10px] bg-gray-200 px-1.5 rounded-full">{t.count}</span>}
-            </button>
-          ))}
+            { id: 'assigned', label: 'Được giao', icon: Inbox, count: totalAssigned, activeCls: 'bg-blue-50 text-blue-700 ring-1 ring-blue-200 shadow-sm', countCls: 'bg-blue-100 text-blue-700' },
+            { id: 'created', label: 'Tôi giao', icon: User, count: totalCreated, activeCls: 'bg-purple-50 text-purple-700 ring-1 ring-purple-200 shadow-sm', countCls: 'bg-purple-100 text-purple-700' },
+          ].map(t => {
+            const isActive = activeTab === t.id;
+            return (
+              <button key={t.id} onClick={() => setActiveTab(t.id)}
+                className={`h-8 px-3 rounded-md text-xs font-medium flex items-center gap-1.5 cursor-pointer transition-colors ${
+                  isActive ? t.activeCls : 'text-gray-500 hover:text-gray-700'
+                }`}>
+                <t.icon className="h-3.5 w-3.5" />{t.label}
+                {t.count > 0 && (
+                  <span className={`text-[10px] font-bold px-1.5 rounded-full ${isActive ? t.countCls : 'bg-gray-200 text-gray-600'}`}>{t.count}</span>
+                )}
+              </button>
+            );
+          })}
         </div>
         <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5">
-          {['active', 'done', 'all'].map(f => (
-            <button key={f} onClick={() => setFilterStatus(f)}
-              className={`h-7 px-2.5 rounded-md text-[11px] font-medium cursor-pointer ${filterStatus === f ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>
-              {f === 'active' ? 'Đang làm' : f === 'done' ? 'Đã xong' : 'Tất cả'}
+          {[
+            { id: 'active', label: 'Đang làm', activeCls: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 shadow-sm' },
+            { id: 'done', label: 'Đã xong', activeCls: 'bg-slate-200 text-slate-800 ring-1 ring-slate-300 shadow-sm' },
+            { id: 'all', label: 'Tất cả', activeCls: 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200 shadow-sm' },
+          ].map(f => (
+            <button key={f.id} onClick={() => setFilterStatus(f.id)}
+              className={`h-7 px-2.5 rounded-md text-[11px] font-medium cursor-pointer transition-colors ${
+                filterStatus === f.id ? f.activeCls : 'text-gray-500 hover:text-gray-700'
+              }`}>
+              {f.label}
             </button>
           ))}
         </div>

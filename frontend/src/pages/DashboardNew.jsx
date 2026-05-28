@@ -427,7 +427,7 @@ function WorkloadWidget({ workload }) {
     <div className="bg-white rounded-xl border border-gray-200 p-6">
       <div className="flex items-center justify-between mb-6"><h2 className="text-lg font-bold text-gray-900 flex items-center gap-2"><TrendingUp className="h-5 w-5 text-blue-600" />Phân Bổ Dự Án Theo Giai Đoạn</h2><Link to="/projects" className="text-xs text-blue-600 hover:underline flex items-center gap-1">Xem tất cả <ArrowRight className="h-3 w-3" /></Link></div>
       <div className="space-y-4">
-        {workload.map(s => (<div key={s.id} className="group"><div className="hover:bg-gray-50 rounded-lg p-2 -mx-2 transition-colors"><div className="flex items-center justify-between mb-1.5"><span className="text-sm font-medium text-gray-700 flex items-center gap-2">{s.icon && <span>{s.icon}</span>}<span className="w-3 h-3 rounded-full" style={{ backgroundColor: s.color }} />{s.name}</span><span className="text-sm font-bold text-gray-900">{s.project_count} dự án</span></div><div className="h-3 bg-gray-100 rounded-full overflow-hidden"><div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.max((s.project_count/mx)*100, s.project_count > 0 ? 5 : 0)}%`, backgroundColor: s.color || '#3b82f6' }} /></div></div></div>))}
+        {workload.map(s => (<div key={s.id} className="group"><div className="rounded-lg p-2 -mx-2"><div className="flex items-center justify-between mb-1.5"><span className="text-sm font-medium text-gray-700 flex items-center gap-2">{s.icon && <span>{s.icon}</span>}<span className="w-3 h-3 rounded-full" style={{ backgroundColor: s.color }} />{s.name}</span><span className="text-sm font-bold text-gray-900">{s.project_count} dự án</span></div><div className="h-3 bg-gray-100 rounded-full overflow-hidden"><div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.max((s.project_count/mx)*100, s.project_count > 0 ? 5 : 0)}%`, backgroundColor: s.color || '#3b82f6' }} /></div></div></div>))}
         {workload.length === 0 && <div className="text-center py-8 text-gray-400"><TrendingUp className="h-12 w-12 mx-auto mb-2 opacity-50" /><p className="text-sm">Chưa có dữ liệu</p></div>}
       </div>
     </div>
@@ -462,7 +462,7 @@ function ActivityFeed({ activities }) {
       <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2 mb-6"><Activity className="h-5 w-5 text-indigo-600" />Hoạt Động Gần Đây</h2>
       <div className="space-y-3 max-h-96 overflow-y-auto">
         {activities.map(a => (
-          <div key={a.id} className="flex items-start gap-3 p-3 rounded-lg hover:bg-gray-50">
+          <div key={a.id} className="flex items-start gap-3 p-3 rounded-lg transition-colors hover:bg-slate-200/70">
             <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ backgroundColor: avatarColor(a.user?.full_name) }}>{getInitials(a.user?.full_name)}</div>
             <div className="flex-1 min-w-0"><p className="text-sm text-gray-900"><span className="font-semibold">{a.user?.full_name}</span> {a.description}</p><p className="text-xs text-gray-500 mt-1">{fmtTime(a.created_at)}</p></div>
             <span className={`px-2 py-1 rounded text-xs font-medium ${actColor(a.action)}`}>{a.action}</span>
