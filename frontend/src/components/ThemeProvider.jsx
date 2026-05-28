@@ -3,6 +3,7 @@ import {
 } from 'react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { findPreset, TEXT_PALETTES } from '../lib/backgroundPresets';
 
 const ThemeContext = createContext();
 
@@ -67,24 +68,33 @@ function rgba(hex, alpha) {
   return `rgba(${c.r}, ${c.g}, ${c.b}, ${alpha})`;
 }
 
+/**
+ * Resolve preset từ theme.bgPreset (nếu có).
+ * Trả về null nếu không phải preset hợp lệ.
+ */
+function resolveBgPreset(theme) {
+  return findPreset(theme?.bgPreset);
+}
+
 function applyTheme(theme) {
   const root = document.documentElement;
+  const preset = resolveBgPreset(theme);
 
   // ── Hiệu ứng sidebar: 'solid' (đặc) | 'transparent' (đổ bóng trong suốt) | 'frosted' (bóng mờ kính) ──
   const sidebarStyle = theme.sidebarStyle || 'solid';
-  let sidebarBg = theme.sidebar;
+  const sidebarBase = preset?.sidebar || theme.sidebar;
+  let sidebarBg = sidebarBase;
   let sidebarHover = theme.sidebarHover;
   let sidebarActive = theme.sidebarActive;
   let backdropFilter = 'none';
   if (sidebarStyle === 'frosted') {
-    sidebarBg = rgba(theme.sidebar, 0.55);
-    sidebarHover = rgba(theme.sidebar, 0.75);
+    sidebarBg = rgba(sidebarBase, 0.55);
+    sidebarHover = rgba(sidebarBase, 0.75);
     sidebarActive = rgba(theme.sidebarActive, 0.85);
     backdropFilter = 'blur(22px) saturate(180%)';
   } else if (sidebarStyle === 'transparent') {
-    // Gần như xuyên thấu — phần nền phía sau hơi mờ nhẹ để chữ vẫn đọc được.
-    sidebarBg = rgba(theme.sidebar, 0.28);
-    sidebarHover = rgba(theme.sidebar, 0.5);
+    sidebarBg = rgba(sidebarBase, 0.28);
+    sidebarHover = rgba(sidebarBase, 0.5);
     sidebarActive = rgba(theme.sidebarActive, 0.7);
     backdropFilter = 'blur(8px) saturate(130%)';
   }
@@ -96,20 +106,37 @@ function applyTheme(theme) {
   root.style.setProperty('--color-sidebar-text', '#ffffff');
   root.style.setProperty('--color-sidebar-text-active', '#ffffff');
   root.style.setProperty('--color-page-bg', theme.pageBg);
-  root.style.setProperty('--color-primary-600', theme.accent);
+  root.style.setProperty('--color-primary-600', preset?.accent || theme.accent);
 
-  // Text colors
-  root.style.setProperty('--color-text-heading', theme.textHeading || '#111827');
-  root.style.setProperty('--color-text-body', theme.textBody || '#374151');
-  root.style.setProperty('--color-text-muted', theme.textMuted || '#6b7280');
-  root.style.setProperty('--color-text-card', theme.textCard || '#1f2937');
+  // ── Text colors ──
+  // Auto palette từ preset.textTheme (light/dark). Override thủ công (theme.text*) đè lên auto.
+  const palette = preset ? TEXT_PALETTES[preset.textTheme] || TEXT_PALETTES.dark : null;
+  root.style.setProperty('--color-text-heading', theme.textHeading || palette?.textHeading || '#111827');
+  root.style.setProperty('--color-text-body', theme.textBody || palette?.textBody || '#374151');
+  root.style.setProperty('--color-text-muted', theme.textMuted || palette?.textMuted || '#6b7280');
+  root.style.setProperty('--color-text-card', theme.textCard || palette?.textCard || '#1f2937');
 
-  // Background image
-  if (theme.bgImage) {
+  // ── Background layer (gradient/image), animated scene xử lý ngoài ──
+  if (preset?.type === 'gradient' && preset.gradient) {
+    root.style.setProperty('--bg-image', preset.gradient);
+    root.style.setProperty('--bg-image-mode', 'gradient');
+    root.style.setProperty('--bg-overlay', 'rgba(0,0,0,0)');
+  } else if (preset?.type === 'image' && preset.image) {
+    root.style.setProperty('--bg-image', `url(${preset.image})`);
+    root.style.setProperty('--bg-image-mode', 'image');
+    root.style.setProperty('--bg-overlay', preset.overlay || 'rgba(0,0,0,0.15)');
+  } else if (preset?.type === 'animated') {
+    // Animated → render canvas riêng. Nền tĩnh lấy từ baseGradient (đẹp trước khi canvas paint).
+    root.style.setProperty('--bg-image', preset.baseGradient || 'none');
+    root.style.setProperty('--bg-image-mode', preset.baseGradient ? 'gradient' : 'none');
+    root.style.setProperty('--bg-overlay', 'rgba(0,0,0,0)');
+  } else if (theme.bgImage) {
     root.style.setProperty('--bg-image', `url(${theme.bgImage})`);
+    root.style.setProperty('--bg-image-mode', 'image');
     root.style.setProperty('--bg-overlay', theme.bgOverlay || 'rgba(0,0,0,0.03)');
   } else {
     root.style.setProperty('--bg-image', 'none');
+    root.style.setProperty('--bg-image-mode', 'none');
     root.style.setProperty('--bg-overlay', 'rgba(0,0,0,0)');
   }
 
@@ -183,9 +210,22 @@ export function ThemeProvider({ children }) {
     setTheme(newTheme);
   };
 
+  /**
+   * Cập nhật màu chữ tuỳ chỉnh. Truyền value=null cho field nào để xoá override
+   * (quay về palette auto từ preset).
+   */
   const setTextColors = (colors) => {
-    const newTheme = { ...theme, ...colors, id: theme.id === 'custom' ? 'custom' : theme.id };
-    setTheme(newTheme);
+    setTheme((prev) => {
+      const next = { ...prev };
+      Object.keys(colors || {}).forEach((k) => {
+        if (colors[k] === null || colors[k] === undefined) {
+          delete next[k];
+        } else {
+          next[k] = colors[k];
+        }
+      });
+      return next;
+    });
   };
 
   /** Đổi hiệu ứng sidebar: 'solid' | 'transparent' | 'frosted'. */
@@ -193,6 +233,26 @@ export function ThemeProvider({ children }) {
     if (!['solid', 'transparent', 'frosted'].includes(style)) return;
     setTheme({ ...theme, sidebarStyle: style });
   };
+
+  /**
+   * Chọn preset hình nền theo id (gradient/image/animated).
+   * Đồng thời xoá bgImage cũ (upload) để không xung đột.
+   */
+  const setBgPreset = (presetId) => {
+    setTheme((prev) => ({ ...prev, bgPreset: presetId, bgImage: null }));
+  };
+
+  /** Xoá hết preset/upload → quay về theme.pageBg đơn sắc. */
+  const clearBackground = () => {
+    setTheme((prev) => ({ ...prev, bgPreset: null, bgImage: null, bgOverlay: 'rgba(0,0,0,0)' }));
+  };
+
+  /** Scene động đang chọn (rain/stars/snow/raindrops) — App.jsx render canvas. */
+  const activeAnimatedScene = (() => {
+    const p = findPreset(theme?.bgPreset);
+    if (p?.type === 'animated') return { scene: p.scene, opts: p.sceneOpts || {}, id: p.id };
+    return null;
+  })();
 
   /** Đẩy theme hiện tại (đang lưu cục bộ) lên máy chủ cho tài khoản đăng nhập. */
   const pushThemeToServer = useCallback(async () => {
@@ -226,6 +286,9 @@ export function ThemeProvider({ children }) {
         setOverlayOpacity,
         setTextColors,
         setSidebarStyle,
+        setBgPreset,
+        clearBackground,
+        activeAnimatedScene,
         presets: PRESET_THEMES,
         pushThemeToServer,
         pullThemeFromServer,

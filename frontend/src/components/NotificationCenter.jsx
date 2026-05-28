@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { alertIncomingNotification, cancelNotificationSpeech } from '../lib/notificationAlert';
@@ -217,7 +218,27 @@ export default function NotificationCenter({ socket }) {
   const [deadlinesModule, setDeadlinesModule] = useState('all');
   const [toastNotification, setToastNotification] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const rootRef = useRef(null);
   const panelRef = useRef(null);
+  const [panelPos, setPanelPos] = useState({ top: 0, left: 0 });
+
+  const PANEL_WIDTH = 384; // w-96
+
+  const updatePanelPosition = useCallback(() => {
+    const anchor = rootRef.current;
+    if (!anchor) return;
+    const rect = anchor.getBoundingClientRect();
+    let left = rect.right + 8;
+    let top = rect.top;
+    if (left + PANEL_WIDTH > window.innerWidth - 12) {
+      left = Math.max(12, rect.left - PANEL_WIDTH - 8);
+    }
+    const maxH = Math.min(520, window.innerHeight - 24);
+    if (top + maxH > window.innerHeight - 12) {
+      top = Math.max(12, window.innerHeight - maxH - 12);
+    }
+    setPanelPos({ top, left });
+  }, []);
 
   const loadCskhNotifs = async () => {
     setCskhLoading(true);
@@ -427,8 +448,21 @@ export default function NotificationCenter({ socket }) {
   }, [open, tab, deadlinesModule, onlyUnread, activityDate]);
 
   useEffect(() => {
+    if (!open) return undefined;
+    updatePanelPosition();
+    window.addEventListener('resize', updatePanelPosition);
+    window.addEventListener('scroll', updatePanelPosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePanelPosition);
+      window.removeEventListener('scroll', updatePanelPosition, true);
+    };
+  }, [open, updatePanelPosition]);
+
+  useEffect(() => {
     const handler = (e) => {
-      if (panelRef.current && !panelRef.current.contains(e.target)) setOpen(false);
+      if (rootRef.current?.contains(e.target)) return;
+      if (panelRef.current?.contains(e.target)) return;
+      setOpen(false);
     };
     if (open) document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -480,7 +514,7 @@ export default function NotificationCenter({ socket }) {
   };
 
   return (
-    <div className="relative" ref={panelRef}>
+    <div className="relative" ref={rootRef}>
       {/* Toast Notification */}
       {toastNotification && (
         <NotificationToast
@@ -532,8 +566,12 @@ export default function NotificationCenter({ socket }) {
         )}
       </button>
 
-      {open && (
-        <div className="absolute left-full ml-2 top-0 w-96 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 animate-fade-in overflow-hidden">
+      {open && createPortal(
+        <div
+          ref={panelRef}
+          className="fixed w-96 bg-white rounded-xl shadow-2xl border border-gray-200 z-[200] animate-fade-in overflow-hidden"
+          style={{ top: panelPos.top, left: panelPos.left }}
+        >
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
             <h3 className="text-sm font-semibold text-gray-900">Thông báo</h3>
             <div className="flex items-center gap-2">
@@ -878,7 +916,8 @@ export default function NotificationCenter({ socket }) {
               })
             )}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

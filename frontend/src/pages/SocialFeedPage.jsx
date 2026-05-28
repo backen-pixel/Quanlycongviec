@@ -105,14 +105,15 @@ function canModerate(role) {
   return ['admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'administrator', 'region_admin'].includes(r);
 }
 
-function AuthorProfileLink({ user, className = '', children }) {
+function AuthorProfileLink({ user, className = '', style, children }) {
   const id = user?.id;
   const label = children ?? (user?.full_name || user?.email || 'Thành viên');
-  if (!id) return <span className={className}>{label}</span>;
+  if (!id) return <span className={className} style={style}>{label}</span>;
   return (
     <Link
       to={`/social/u/${id}`}
       className={`hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded ${className}`}
+      style={style}
     >
       {label}
     </Link>
@@ -868,7 +869,7 @@ function PostCard({
   };
 
   return (
-    <article id={`social-post-${post.id}`} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden scroll-mt-20">
+    <article id={`social-post-${post.id}`} className="bg-white/70 backdrop-blur-xl rounded-2xl shadow-md border border-white/60 overflow-hidden scroll-mt-20 hover:shadow-xl transition-shadow">
       <div className="px-4 pt-3 pb-2 flex items-start gap-3">
         {author.id ? (
           <Link to={`/social/u/${author.id}`} className="shrink-0 rounded-full hover:opacity-90 transition-opacity" title="Xem trang cá nhân">
@@ -882,71 +883,60 @@ function PostCard({
             <div className="min-w-0">
               <AuthorProfileLink
                 user={author}
-                className="font-semibold text-gray-900 text-[15px] leading-tight"
+                className="font-semibold text-[15px] leading-tight hover:text-blue-600 transition-colors"
+                style={{ color: '#0f172a' }}
               />
-              <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1">
-                <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" title="Nội bộ" />
+              <p className="text-xs mt-0.5 flex items-center gap-1.5" style={{ color: '#64748b' }}>
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 ring-1 ring-emerald-200" title="Nội bộ" />
                 {timeAgo(post.created_at)}
-                {author.role && <span className="text-gray-400"> · {author.role}</span>}
+                {author.role && <span className="text-slate-400">· {author.role}</span>}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-0.5">
               <details ref={menuRef} className="relative">
-                <summary className="list-none cursor-pointer p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 [&::-webkit-details-marker]:hidden" title="Tuỳ chọn bài viết">
+                <summary className="list-none cursor-pointer p-1.5 rounded-full text-slate-500 hover:bg-slate-200/70 hover:text-slate-800 [&::-webkit-details-marker]:hidden transition" title="Tuỳ chọn bài viết">
                   <MoreHorizontal className="w-4 h-4" />
                 </summary>
                 <div
                   role="menu"
-                  className="absolute right-0 top-full z-30 mt-1 w-56 rounded-lg border border-gray-200 bg-white py-1 text-sm shadow-lg"
+                  className="absolute right-0 top-full z-30 mt-1 w-56 rounded-xl border border-white/60 bg-white/95 backdrop-blur-xl py-1 text-sm shadow-xl"
                   onClick={(e) => e.stopPropagation()}
                 >
                   {showEdit && (
                     <button
                       type="button"
                       role="menuitem"
-                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-gray-800 hover:bg-gray-50"
-                      onClick={() => {
-                        onEdit?.(post);
-                        closePostMenu();
-                      }}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-800 hover:bg-slate-200/70 transition-colors"
+                      onClick={() => { onEdit?.(post); closePostMenu(); }}
                     >
-                      <Pencil className="h-4 w-4 shrink-0 text-gray-500" />
+                      <Pencil className="h-4 w-4 shrink-0 text-slate-500" />
                       Sửa bài viết
                     </button>
                   )}
                   <button
                     type="button"
                     role="menuitem"
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-gray-800 hover:bg-gray-50"
-                    onClick={() => {
-                      onShare?.(post);
-                      closePostMenu();
-                    }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-800 hover:bg-slate-200/70 transition-colors"
+                    onClick={() => { onShare?.(post); closePostMenu(); }}
                   >
-                    <Share2 className="h-4 w-4 shrink-0 text-gray-500" />
+                    <Share2 className="h-4 w-4 shrink-0 text-slate-500" />
                     Sao chép liên kết
                   </button>
                   <button
                     type="button"
                     role="menuitem"
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-gray-800 hover:bg-gray-50"
-                    onClick={() => {
-                      onHideForMe?.(post.id);
-                      closePostMenu();
-                    }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-800 hover:bg-slate-200/70 transition-colors"
+                    onClick={() => { onHideForMe?.(post.id); closePostMenu(); }}
                   >
-                    <EyeOff className="h-4 w-4 shrink-0 text-gray-500" />
+                    <EyeOff className="h-4 w-4 shrink-0 text-slate-500" />
                     Ẩn khỏi bảng tin của tôi
                   </button>
                   {(isAuthor || canMod) && !post.hidden_at && (
                     <button
                       type="button"
                       role="menuitem"
-                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-amber-800 hover:bg-amber-50"
-                      onClick={() => {
-                        onHideCompany?.(post.id);
-                        closePostMenu();
-                      }}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-amber-800 hover:bg-amber-50 transition-colors"
+                      onClick={() => { onHideCompany?.(post.id); closePostMenu(); }}
                     >
                       <EyeOff className="h-4 w-4 shrink-0" />
                       Ẩn với cả công ty
@@ -956,11 +946,8 @@ function PostCard({
                     <button
                       type="button"
                       role="menuitem"
-                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-emerald-800 hover:bg-emerald-50"
-                      onClick={() => {
-                        onUnhideCompany?.(post.id);
-                        closePostMenu();
-                      }}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-emerald-800 hover:bg-emerald-50 transition-colors"
+                      onClick={() => { onUnhideCompany?.(post.id); closePostMenu(); }}
                     >
                       Hiện lại với công ty
                     </button>
@@ -969,11 +956,8 @@ function PostCard({
                     <button
                       type="button"
                       role="menuitem"
-                      className="flex w-full items-center gap-2 border-t border-gray-100 px-3 py-2 text-left text-red-700 hover:bg-red-50"
-                      onClick={() => {
-                        closePostMenu();
-                        onDelete(post.id);
-                      }}
+                      className="flex w-full items-center gap-2 border-t border-slate-200/60 px-3 py-2 text-left text-red-700 hover:bg-red-50 transition-colors"
+                      onClick={() => { closePostMenu(); onDelete(post.id); }}
                     >
                       <Trash2 className="h-4 w-4 shrink-0" />
                       Xóa bài viết
@@ -1081,13 +1065,13 @@ function PostCard({
       />
 
       {commentsOpen && (
-        <div className="border-t border-gray-100 bg-gray-50/80 px-4 py-3 space-y-3">
+        <div className="border-t border-white/40 bg-slate-50/50 backdrop-blur px-4 py-3 space-y-3">
           {commentsLoading ? (
-            <div className="flex justify-center py-4 text-gray-400 text-sm">
+            <div className="flex justify-center py-4 text-slate-400 text-sm">
               <Loader2 className="w-5 h-5 animate-spin" />
             </div>
           ) : (
-            <div className="space-y-2 max-h-80 overflow-y-auto pr-0.5">
+            <div className="space-y-2 max-h-80 overflow-y-auto pr-0.5 [scrollbar-width:thin]">
               {(comments || []).length > 0 ? (
                 <SocialCommentBranch
                   nodes={nestedComments}
@@ -1098,14 +1082,14 @@ function PostCard({
                   onCommentReact={onCommentReact}
                 />
               ) : (
-                <p className="text-center text-xs text-gray-400 py-2">Chưa có bình luận.</p>
+                <p className="text-center text-xs text-slate-400 py-2">Chưa có bình luận.</p>
               )}
             </div>
           )}
           {replyTo?.id && (
-            <div className="flex items-center justify-between gap-2 rounded-lg border border-blue-100 bg-blue-50/80 px-3 py-1.5 text-xs text-blue-900">
+            <div className="flex items-center justify-between gap-2 rounded-lg border border-blue-200/70 bg-blue-50/80 backdrop-blur px-3 py-1.5 text-xs text-blue-900">
               <span className="truncate">Trả lời <strong>{replyTo.name}</strong></span>
-              <button type="button" className="shrink-0 font-medium text-blue-700 hover:underline" onClick={() => onCancelReplyComment(post.id)}>
+              <button type="button" className="shrink-0 font-semibold text-blue-700 hover:underline" onClick={() => onCancelReplyComment(post.id)}>
                 Hủy
               </button>
             </div>
@@ -1116,14 +1100,15 @@ function PostCard({
               value={commentText}
               onChange={(e) => onCommentText(e.target.value)}
               placeholder={replyTo?.id ? `Trả lời ${replyTo.name}…` : 'Viết bình luận…'}
-              className="flex-1 px-3 py-2 rounded-full border border-gray-200 text-sm bg-white"
+              className="flex-1 px-4 py-2 rounded-full border border-slate-200 text-sm bg-white/90 backdrop-blur focus:bg-white focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200/60 transition"
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSendComment(post.id); } }}
             />
             <button
               type="button"
               disabled={sendingComment || !commentText.trim()}
               onClick={() => onSendComment(post.id)}
-              className="p-2 rounded-full bg-blue-600 text-white disabled:opacity-40"
+              className="p-2 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed shadow-md hover:shadow-lg transition-all"
+              title="Gửi"
             >
               {sendingComment ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
             </button>
@@ -1804,35 +1789,42 @@ export default function SocialFeedPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f0f2f5]">
+    <div className="min-h-screen">
       {toast && (
-        <div className="fixed bottom-6 left-1/2 z-[120] -translate-x-1/2 rounded-full bg-gray-900 px-4 py-2 text-sm text-white shadow-lg">
+        <div className="fixed bottom-6 left-1/2 z-[120] -translate-x-1/2 rounded-full bg-gray-900/90 backdrop-blur px-4 py-2 text-sm text-white shadow-xl ring-1 ring-white/10">
           {toast}
         </div>
       )}
       <div className="max-w-[816px] mx-auto px-3 py-4 md:py-6 space-y-4">
-        <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center shadow-md">
-              <Heart className="w-5 h-5 text-white fill-white/20" />
+        {/* Header — hero card glass */}
+        <header className="relative overflow-hidden rounded-2xl border border-white/50 bg-white/55 backdrop-blur-xl shadow-lg">
+          <div className="absolute inset-0 bg-gradient-to-r from-blue-500/10 via-indigo-500/5 to-fuchsia-500/10 pointer-events-none" />
+          <div className="relative flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 sm:p-5">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-600 via-indigo-600 to-fuchsia-600 flex items-center justify-center shadow-lg ring-4 ring-white/40">
+                <Heart className="w-6 h-6 text-white fill-white/40" />
+              </div>
+              <div>
+                <h1 className="text-xl md:text-2xl font-bold tracking-tight" style={{ color: '#0f172a' }}>Bảng tin nội bộ</h1>
+                <p className="text-xs mt-0.5" style={{ color: '#475569' }}>
+                  Chia sẻ nội dung, ảnh/video/file — upload lên kho của công ty.
+                </p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-xl md:text-2xl font-bold text-gray-900">Bảng tin nội bộ</h1>
-              <p className="text-xs text-gray-500">Chia sẻ nội dung, ảnh/video/file — upload lên kho của công ty.</p>
-            </div>
+            <button
+              type="button"
+              onClick={() => { offsetRef.current = 0; fetchFeed(false); }}
+              className="self-start sm:self-center flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/80 backdrop-blur border border-white/70 text-sm font-semibold text-slate-700 hover:bg-white hover:shadow-md transition shadow-sm"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-blue-600' : 'text-blue-600'}`} />
+              Làm mới
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => { offsetRef.current = 0; fetchFeed(false); }}
-            className="self-start flex items-center gap-2 px-3 py-2 rounded-lg bg-white border border-gray-200 text-sm text-gray-700 hover:bg-gray-50 shadow-sm"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            Làm mới
-          </button>
         </header>
 
+        {/* Thanh tìm thành viên — glass */}
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500 pointer-events-none" />
           <input
             type="search"
             value={memberSearchQ}
@@ -1843,39 +1835,42 @@ export default function SocialFeedPage() {
             onFocus={() => { if (memberSearchHits.length) setMemberSearchOpen(true); }}
             onBlur={() => { setTimeout(() => setMemberSearchOpen(false), 180); }}
             placeholder="Tìm thành viên (tên, email)…"
-            className="w-full rounded-xl border border-gray-200 bg-white py-2.5 pl-9 pr-3 text-sm shadow-sm focus:border-blue-400 focus:outline-none"
+            className="w-full rounded-2xl border border-white/60 bg-white/65 backdrop-blur-xl py-2.5 pl-10 pr-3 text-sm shadow-sm focus:border-blue-400 focus:bg-white/90 focus:outline-none focus:ring-2 focus:ring-blue-200/60 transition placeholder:text-slate-500"
+            style={{ color: '#0f172a' }}
           />
           {memberSearchOpen && memberSearchHits.length > 0 && (
-            <ul className="absolute z-40 mt-1 w-full max-h-64 overflow-y-auto rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
+            <ul className="absolute z-40 mt-1.5 w-full max-h-64 overflow-y-auto rounded-2xl border border-white/60 bg-white/95 backdrop-blur-xl py-1 shadow-xl [scrollbar-width:thin]">
               {memberSearchHits.map((u) => (
                 <li key={u.id}>
                   <Link
                     to={`/social/u/${u.id}`}
-                    className="flex items-center gap-2 px-3 py-2 hover:bg-gray-50"
+                    className="flex items-center gap-2.5 px-3 py-2 hover:bg-slate-200/70 transition-colors"
                     onMouseDown={(e) => e.preventDefault()}
                   >
                     <Avatar user={u} />
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-gray-900 truncate">{u.full_name || u.email}</p>
-                      <p className="text-xs text-gray-500 truncate">{u.email}</p>
+                      <p className="text-sm font-semibold truncate" style={{ color: '#0f172a' }}>{u.full_name || u.email}</p>
+                      <p className="text-xs truncate" style={{ color: '#64748b' }}>{u.email}</p>
                     </div>
-                    <User className="h-4 w-4 text-gray-400 shrink-0" />
+                    <User className="h-4 w-4 text-slate-400 shrink-0" />
                   </Link>
                 </li>
               ))}
             </ul>
           )}
           {memberSearchOpen && memberSearchQ.trim().length >= 2 && !memberSearchHits.length && (
-            <p className="absolute z-40 mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-500 shadow-lg">
+            <p className="absolute z-40 mt-1.5 w-full rounded-2xl border border-white/60 bg-white/95 backdrop-blur px-3 py-2 text-xs text-slate-500 shadow-xl">
               Không tìm thấy thành viên.
             </p>
           )}
         </div>
 
         {isSystemAdmin && (
-          <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-sm">
-            <Building2 className="w-4 h-4 text-amber-700 shrink-0" />
-            <span className="text-amber-900 shrink-0">Công ty:</span>
+          <div className="flex items-center gap-2 bg-amber-50/80 backdrop-blur-xl border border-amber-200/80 rounded-2xl px-3 py-2 text-sm shadow-sm">
+            <div className="w-7 h-7 rounded-lg bg-amber-200/80 inline-flex items-center justify-center shrink-0">
+              <Building2 className="w-4 h-4 text-amber-700" />
+            </div>
+            <span className="font-semibold shrink-0" style={{ color: '#78350f' }}>Công ty:</span>
             <div className="flex-1 min-w-0">
               <ScopeFilterBar
                 scope={{
@@ -1894,17 +1889,18 @@ export default function SocialFeedPage() {
         )}
 
         {err && (
-          <div className="bg-red-50 border border-red-200 text-red-800 text-sm rounded-xl px-4 py-3">
+          <div className="bg-red-50/80 backdrop-blur border border-red-200/80 text-red-800 text-sm rounded-2xl px-4 py-3 shadow-sm flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
             {err}
           </div>
         )}
 
-        {/* Thanh kích hoạt + modal tạo bài (kiểu Facebook) */}
+        {/* Thanh kích hoạt soạn bài — glass */}
         {effectiveCompanyId && (
           <>
-            <div className="flex items-center gap-3 bg-white rounded-xl shadow-sm border border-gray-200 p-3">
+            <div className="flex items-center gap-3 bg-white/65 backdrop-blur-xl rounded-2xl shadow-md border border-white/60 p-3 hover:shadow-lg transition-shadow">
               {user?.id ? (
-                <Link to={`/social/u/${user.id}`} className="shrink-0 rounded-full hover:opacity-90" title="Trang cá nhân của bạn">
+                <Link to={`/social/u/${user.id}`} className="shrink-0 rounded-full hover:opacity-90 ring-2 ring-white/70 hover:ring-blue-300 transition" title="Trang cá nhân của bạn">
                   <Avatar user={user} />
                 </Link>
               ) : (
@@ -1913,7 +1909,7 @@ export default function SocialFeedPage() {
               <button
                 type="button"
                 onClick={openComposerModal}
-                className="flex-1 min-w-0 text-left rounded-full border border-blue-200 bg-gray-50 hover:bg-gray-100 px-4 py-2.5 text-[15px] text-gray-500 transition-colors"
+                className="flex-1 min-w-0 text-left rounded-full border border-blue-200/70 bg-white/70 hover:bg-blue-50/80 hover:border-blue-300 px-4 py-2.5 text-[15px] text-slate-500 transition-colors"
               >
                 {composerFirstName} ơi, bạn đang nghĩ gì thế?
               </button>
@@ -1922,7 +1918,7 @@ export default function SocialFeedPage() {
                   type="button"
                   title="Video / ảnh"
                   onClick={(e) => { e.preventDefault(); openComposerAndPickFiles(); }}
-                  className="p-2 rounded-full hover:bg-gray-100 text-red-500"
+                  className="p-2 rounded-full hover:bg-red-50 text-red-500 transition-colors"
                 >
                   <Video className="w-6 h-6" />
                 </button>
@@ -1930,7 +1926,7 @@ export default function SocialFeedPage() {
                   type="button"
                   title="Ảnh hoặc file"
                   onClick={(e) => { e.preventDefault(); openComposerAndPickFiles(); }}
-                  className="p-2 rounded-full hover:bg-gray-100 text-green-600"
+                  className="p-2 rounded-full hover:bg-emerald-50 text-emerald-600 transition-colors"
                 >
                   <ImagePlus className="w-6 h-6" />
                 </button>
@@ -1938,7 +1934,7 @@ export default function SocialFeedPage() {
                   type="button"
                   title="Mở soạn thảo"
                   onClick={(e) => { e.preventDefault(); openComposerModal(); }}
-                  className="p-2 rounded-full hover:bg-gray-100 text-amber-500"
+                  className="p-2 rounded-full hover:bg-amber-50 text-amber-500 transition-colors"
                 >
                   <Smile className="w-6 h-6" />
                 </button>
@@ -1950,7 +1946,7 @@ export default function SocialFeedPage() {
                 <div className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto p-4 pt-8 sm:pt-14">
                   <button
                     type="button"
-                    className="fixed inset-0 bg-black/50"
+                    className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm"
                     aria-label="Đóng"
                     onClick={closeComposer}
                   />
@@ -1958,16 +1954,16 @@ export default function SocialFeedPage() {
                     role="dialog"
                     aria-modal="true"
                     aria-labelledby="social-composer-title"
-                    className="relative z-10 my-auto w-full max-w-lg rounded-xl bg-white shadow-2xl border border-gray-200 flex flex-col max-h-[min(90vh,720px)]"
+                    className="relative z-10 my-auto w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-white/40 flex flex-col max-h-[min(90vh,720px)] overflow-hidden ring-1 ring-black/5"
                   >
-                    <div className="relative flex items-center justify-center px-12 py-3 border-b border-gray-200 shrink-0">
-                      <h2 id="social-composer-title" className="text-lg font-bold text-gray-900">
+                    <div className="relative flex items-center justify-center px-12 py-3.5 border-b border-slate-200 bg-gradient-to-r from-blue-50/60 via-white to-indigo-50/60 shrink-0">
+                      <h2 id="social-composer-title" className="text-lg font-bold" style={{ color: '#0f172a' }}>
                         {editingPost ? 'Sửa bài viết' : 'Tạo bài viết'}
                       </h2>
                       <button
                         type="button"
                         onClick={closeComposer}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-full text-gray-500 hover:bg-gray-100"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-full text-slate-500 hover:bg-slate-200/70 transition-colors"
                         aria-label="Đóng"
                       >
                         <X className="w-5 h-5" />
@@ -2309,7 +2305,7 @@ export default function SocialFeedPage() {
                       </p>
                     </div>
 
-                    <div className="shrink-0 border-t border-gray-200 p-3 bg-gray-50">
+                    <div className="shrink-0 border-t border-slate-200 p-3 bg-gradient-to-r from-slate-50 via-white to-slate-50">
                       <button
                         type="button"
                         disabled={
@@ -2326,7 +2322,7 @@ export default function SocialFeedPage() {
                           || (composer.publishMode === 'scheduled' && !(composer.scheduledAt || '').trim())
                         }
                         onClick={handlePost}
-                        className="w-full py-2.5 rounded-lg text-[15px] font-semibold bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed"
+                        className="w-full py-2.5 rounded-xl text-[15px] font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 disabled:from-slate-300 disabled:to-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed shadow-md hover:shadow-lg transition-all"
                       >
                         {posting
                           ? (editingPost ? 'Đang lưu…' : 'Đang đăng…')
@@ -2379,8 +2375,12 @@ export default function SocialFeedPage() {
               />
             ))}
             {!posts.length && !loading && effectiveCompanyId && (
-              <div className="text-center py-16 text-gray-500 text-sm bg-white rounded-xl border border-dashed border-gray-200">
-                Chưa có bài viết. Hãy là người đầu tiên đăng lên bảng tin.
+              <div className="text-center py-16 text-slate-500 text-sm bg-white/55 backdrop-blur-xl rounded-2xl border border-dashed border-white/70 shadow-sm">
+                <div className="mx-auto mb-3 w-14 h-14 rounded-full bg-gradient-to-br from-blue-100 to-indigo-100 flex items-center justify-center">
+                  <Heart className="w-6 h-6 text-blue-500" />
+                </div>
+                <p className="font-semibold text-slate-700">Chưa có bài viết</p>
+                <p className="mt-1 text-xs">Hãy là người đầu tiên đăng lên bảng tin.</p>
               </div>
             )}
             <div ref={sentinelRef} className="h-4" />

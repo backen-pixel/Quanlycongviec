@@ -50,6 +50,7 @@ class ErrorBoundary extends Component {
   }
 }
 import Sidebar from './components/Sidebar';
+import AnimatedBackground from './components/AnimatedBackground';
 import Login from './pages/Login';
 
 const Dashboard = lazyWithRetry(() => import('./pages/DashboardNew'));
@@ -162,7 +163,7 @@ const MyDevicesPage = lazyWithRetry(() => import('./pages/MyDevicesPage'));
 import { Settings } from 'lucide-react';
 
 import PinnedProjectsWidget from './components/PinnedProjectsWidget';
-import { ThemeProvider } from './components/ThemeProvider';
+import { ThemeProvider, useTheme } from './components/ThemeProvider';
 import { CrmNotesFabProvider } from './context/CrmNotesFabContext';
 import { MessengerDockProvider } from './context/MessengerDockContext';
 import MessengerDock from './components/MessengerDock';
@@ -239,6 +240,8 @@ function ProtectedLayout() {
 
   const fullscreenPages = ['/projects/create', '/crm/messenger'];
   const isFullscreen = fullscreenPages.some((p) => location.pathname.startsWith(p));
+  // Scene động canvas (rain/stars/snow/raindrops) lấy từ ThemeProvider context
+  const { activeAnimatedScene } = useTheme() || {};
 
   return (
     <CrmNotesFabProvider>
@@ -248,6 +251,13 @@ function ProtectedLayout() {
             style={{ backgroundImage: 'var(--bg-image, none)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundAttachment: 'fixed' }} />
           <div className="absolute inset-0 pointer-events-none z-0"
             style={{ backgroundColor: 'var(--bg-overlay, rgba(0,0,0,0))' }} />
+          {activeAnimatedScene && (
+            <AnimatedBackground
+              key={activeAnimatedScene.id}
+              scene={activeAnimatedScene.scene}
+              opts={activeAnimatedScene.opts}
+            />
+          )}
           <Sidebar />
           <div className="flex-1 flex flex-col min-w-0 relative z-10">
             <main

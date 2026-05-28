@@ -105,18 +105,35 @@ export default function InvoicesPage() {
           <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-10 px-3 border rounded-lg text-sm" />
           {(search || payFilter || dateFrom || dateTo) && <button onClick={() => { setSearch(''); setPayFilter(''); setDateFrom(''); setDateTo(''); }} className="text-xs text-red-500 hover:underline cursor-pointer">Xóa lọc</button>}
         </div>
-        <table className="w-full text-sm"><thead><tr className="border-b text-left text-xs text-gray-500 uppercase">
-          <th className="py-3 px-3">Mã</th><th className="py-3 px-3">Tiêu đề</th><th className="py-3 px-3">Khách hàng</th>
-          <th className="py-3 px-3 text-right">Tổng tiền</th><th className="py-3 px-3 text-right">Đã thu</th><th className="py-3 px-3 text-right">Còn nợ</th><th className="py-3 px-3">TT</th>
-          <th className="py-3 px-3 text-center"><span className="flex items-center gap-1 justify-center"><FileCheck className="h-3.5 w-3.5" />HĐĐT</span></th>
-          <th className="py-3 px-3">Người tạo</th><th className="py-3 px-3">Ngày</th><th className="py-3 px-3 text-center">PDF</th><th className="py-3 px-3 text-center">Phát hành MISA</th><th className="py-3 px-3"></th>
-        </tr></thead><tbody>
+        <div
+          className="overflow-auto rounded-lg border border-gray-200 [scrollbar-width:thin]"
+          style={{ maxHeight: 'calc(100vh - 360px)', minHeight: 240 }}
+        >
+        <table className="w-full text-sm">
+          <thead className="bg-white/90 backdrop-blur sticky top-0 z-10 shadow-sm">
+            <tr className="border-b text-left text-xs text-gray-600 uppercase">
+              <th className="py-3 px-3 whitespace-nowrap">Mã</th>
+              <th className="py-3 px-3 whitespace-nowrap">Tiêu đề</th>
+              <th className="py-3 px-3 whitespace-nowrap">Khách hàng</th>
+              <th className="py-3 px-3 text-right whitespace-nowrap">Tổng tiền</th>
+              <th className="py-3 px-3 text-right whitespace-nowrap">Đã thu</th>
+              <th className="py-3 px-3 text-right whitespace-nowrap">Còn nợ</th>
+              <th className="py-3 px-3 whitespace-nowrap">TT</th>
+              <th className="py-3 px-3 text-center whitespace-nowrap"><span className="flex items-center gap-1 justify-center"><FileCheck className="h-3.5 w-3.5" />HĐĐT</span></th>
+              <th className="py-3 px-3 whitespace-nowrap">Người tạo</th>
+              <th className="py-3 px-3 whitespace-nowrap">Ngày</th>
+              <th className="py-3 px-3 text-center whitespace-nowrap">PDF</th>
+              <th className="py-3 px-3 text-center whitespace-nowrap">Phát hành MISA</th>
+              <th className="py-3 px-3"></th>
+            </tr>
+          </thead>
+          <tbody>
           {filtered.map(i => {
             const debt = (i.total || 0) - (i.paid_amount || 0);
             const misaKey = i.misa_status || 'not_sent';
             const misaBadge = MISA_BADGE[misaKey] || MISA_BADGE.not_sent;
             return (
-              <tr key={i.id} className="border-b hover:bg-gray-50 cursor-pointer" onClick={() => navigate(`/crm/invoices/${i.id}`)}>
+              <tr key={i.id} className="border-b hover:bg-slate-200/70 transition-colors cursor-pointer" onClick={() => navigate(`/crm/invoices/${i.id}`)}>
                 <td className="py-3 px-3 font-bold text-purple-600">{i.code}</td>
                 <td className="py-3 px-3 font-medium">{i.title || '-'}</td>
                 <td className="py-3 px-3 text-gray-600">{i.customer_name || i.customer?.full_name || '-'}</td>
@@ -151,7 +168,14 @@ export default function InvoicesPage() {
             );
           })}
         </tbody></table>
-        {filtered.length === 0 && <p className="text-center text-sm text-gray-400 py-8">Không có hóa đơn phù hợp</p>}
+          {filtered.length === 0 && <p className="text-center text-sm text-gray-400 py-8">Không có hóa đơn phù hợp</p>}
+        </div>
+        {filtered.length > 0 && (
+          <div className="mt-2 flex items-center justify-between text-[11px] text-gray-500 px-1">
+            <span>Hiển thị <strong className="text-gray-700">{filtered.length}</strong> hóa đơn{(search || payFilter || dateFrom || dateTo) ? ' (đã lọc)' : ''}</span>
+            {filtered.length > 8 && <span>Cuộn dọc để xem thêm</span>}
+          </div>
+        )}
       </div>
     </div>
   );

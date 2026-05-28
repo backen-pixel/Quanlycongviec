@@ -39,6 +39,21 @@ function initialsOf(name) {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
+const BUBBLE_GRADIENTS = [
+  'linear-gradient(135deg, #0ea5e9, #0891b2)',
+  'linear-gradient(135deg, #8b5cf6, #6366f1)',
+  'linear-gradient(135deg, #f43f5e, #ec4899)',
+  'linear-gradient(135deg, #22c55e, #16a34a)',
+  'linear-gradient(135deg, #f59e0b, #ea580c)',
+  'linear-gradient(135deg, #14b8a6, #0d9488)',
+];
+function bubbleGradientFor(name) {
+  const s = String(name || '?');
+  let h = 0;
+  for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return BUBBLE_GRADIENTS[h % BUBBLE_GRADIENTS.length];
+}
+
 export default function MessengerDock() {
   const { user, socket } = useAuth();
   const {
@@ -206,115 +221,113 @@ export default function MessengerDock() {
 
   const ui = (
     <>
-      {expanded.map((w, i) => (
+      {expanded.map((w, i) => {
+        const peerForHeader =
+          w.peerUserId || (w.groupId ? groupPeerById.get(String(w.groupId)) : null);
+        const showPeerDot = w.chatType !== 'department' && (w.isDirect || peerForHeader);
+        const peerOnline = showPeerDot ? isUserOnline(presenceByUser, peerForHeader) : false;
+        const headerGradient =
+          w.chatType === 'department' && w.color
+            ? `linear-gradient(135deg, ${w.color}, ${w.color}cc)`
+            : w.chatType === 'lead'
+              ? 'linear-gradient(135deg, #6366f1, #a855f7)'
+              : bubbleGradientFor(w.title || w.code);
+        return (
         <div
           key={w.windowKey}
-          className="fixed flex flex-col rounded-2xl border border-slate-200/80 bg-white shadow-2xl overflow-hidden ring-1 ring-black/5"
+          className="fixed flex flex-col rounded-2xl border border-white/40 bg-white/95 backdrop-blur-xl shadow-2xl overflow-hidden ring-1 ring-black/5 transition-all"
           style={{
             zIndex: Z_BUBBLE,
             width: BUBBLE_W,
-            height: 460,
+            height: 480,
             right: DOCK_W + BUBBLE_GAP + i * (BUBBLE_W + BUBBLE_GAP),
             bottom: 16,
           }}
         >
+          {/* HEADER — gradient + glass overlay tạo cảm giác chiều sâu */}
           <div
-            className="shrink-0 flex items-center gap-2 px-3 py-2.5 text-white"
-            style={
-              w.chatType === 'department' && w.color
-                ? { background: `linear-gradient(135deg, ${w.color}, ${w.color}cc)` }
-                : { background: 'linear-gradient(to right, #0ea5e9, #0891b2)' }
-            }
+            className="relative shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-white overflow-hidden"
+            style={{ background: headerGradient }}
           >
-            <div className="relative w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-xs font-bold shrink-0">
+            <div className="absolute inset-0 bg-gradient-to-b from-white/15 via-transparent to-black/10 pointer-events-none" />
+            <div className="relative w-9 h-9 rounded-2xl bg-white/25 backdrop-blur flex items-center justify-center text-xs font-bold shrink-0 ring-2 ring-white/40 shadow-md">
               {w.chatType === 'department' ? (
                 <Building2 className="h-4 w-4" />
               ) : (
-                (w.code || w.title || '?').slice(0, 1)
+                (w.code || w.title || '?').slice(0, 1).toUpperCase()
               )}
-              {w.chatType !== 'department' && (w.isDirect || w.peerUserId || (w.groupId && groupPeerById.has(String(w.groupId)))) ? (
+              {showPeerDot ? (
                 <OnlineStatusDot
-                  online={isUserOnline(
-                    presenceByUser,
-                    w.peerUserId || groupPeerById.get(String(w.groupId)),
-                  )}
+                  online={peerOnline}
                   size="md"
                   className="absolute -bottom-0.5 -right-0.5"
                 />
               ) : null}
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold truncate">{w.title}</p>
-              {w.chatType === 'lead' && w.code ? <p className="text-[10px] text-sky-100 truncate">{w.code}</p> : null}
-              {w.chatType === 'department' ? (
-                <p className="text-[10px] text-white/80 truncate">Chat phòng ban</p>
-              ) : null}
-              {w.chatType === 'messenger_group' ? (
-                <p className="text-[10px] text-sky-100 truncate flex items-center gap-1">
-                  {w.isDirect || w.peerUserId || groupPeerById.has(String(w.groupId)) ? (
+            <div className="relative flex-1 min-w-0">
+              <p className="text-[13px] font-bold truncate drop-shadow-sm">{w.title}</p>
+              {w.chatType === 'lead' && w.code ? (
+                <p className="text-[10px] text-white/90 truncate font-medium">{w.code}</p>
+              ) : w.chatType === 'department' ? (
+                <p className="text-[10px] text-white/85 truncate flex items-center gap-1"><Building2 className="h-2.5 w-2.5" /> Chat phòng ban</p>
+              ) : w.chatType === 'messenger_group' ? (
+                <p className="text-[10px] text-white/90 truncate flex items-center gap-1">
+                  {showPeerDot ? (
                     <>
-                      <OnlineStatusDot
-                        online={isUserOnline(
-                          presenceByUser,
-                          w.peerUserId || groupPeerById.get(String(w.groupId)),
-                        )}
-                      />
-                      {isUserOnline(
-                        presenceByUser,
-                        w.peerUserId || groupPeerById.get(String(w.groupId)),
-                      )
-                        ? 'Đang online'
-                        : 'Offline'}
+                      <span className={`w-1.5 h-1.5 rounded-full ${peerOnline ? 'bg-emerald-300' : 'bg-white/50'}`} />
+                      {peerOnline ? 'Đang hoạt động' : 'Offline'}
                     </>
                   ) : (
-                    'Nhóm chat nội bộ'
+                    <><Users className="h-2.5 w-2.5" /> Nhóm chat nội bộ</>
                   )}
                 </p>
               ) : null}
             </div>
-            <button
-              type="button"
-              onClick={() => toggleMinimize(w.windowKey)}
-              className="p-1.5 rounded-lg hover:bg-white/15"
-              title="Thu nhỏ"
-            >
-              <Minus className="h-4 w-4" />
-            </button>
-            {w.chatType === 'lead' && w.leadId ? (
-              <Link
-                to={`/crm/leads/${w.leadId}?tab=chat`}
-                className="p-1.5 rounded-lg hover:bg-white/15"
-                title="Mở Lead / Deal (CRM)"
+            <div className="relative flex items-center gap-0.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => toggleMinimize(w.windowKey)}
+                className="p-1.5 rounded-lg hover:bg-white/20 transition"
+                title="Thu nhỏ"
               >
-                <Maximize2 className="h-4 w-4" />
-              </Link>
-            ) : w.chatType === 'department' && w.deptId ? (
-              <Link
-                to={`/departments/${w.deptId}/chat`}
-                className="p-1.5 rounded-lg hover:bg-white/15"
-                title="Mở trang Chat phòng ban"
+                <Minus className="h-4 w-4" />
+              </button>
+              {w.chatType === 'lead' && w.leadId ? (
+                <Link
+                  to={`/crm/leads/${w.leadId}?tab=chat`}
+                  className="p-1.5 rounded-lg hover:bg-white/20 transition"
+                  title="Mở Lead / Deal (CRM)"
+                >
+                  <Maximize2 className="h-4 w-4" />
+                </Link>
+              ) : w.chatType === 'department' && w.deptId ? (
+                <Link
+                  to={`/departments/${w.deptId}/chat`}
+                  className="p-1.5 rounded-lg hover:bg-white/20 transition"
+                  title="Mở trang Chat phòng ban"
+                >
+                  <Maximize2 className="h-4 w-4" />
+                </Link>
+              ) : (
+                <Link
+                  to="/crm/messenger"
+                  className="p-1.5 rounded-lg hover:bg-white/20 transition"
+                  title="Mở trang Nhóm chat"
+                >
+                  <Maximize2 className="h-4 w-4" />
+                </Link>
+              )}
+              <button
+                type="button"
+                onClick={() => closeWindow(w.windowKey)}
+                className="p-1.5 rounded-lg hover:bg-white/20 transition"
+                title="Đóng"
               >
-                <Maximize2 className="h-4 w-4" />
-              </Link>
-            ) : (
-              <Link
-                to="/crm/messenger"
-                className="p-1.5 rounded-lg hover:bg-white/15"
-                title="Mở trang Nhóm chat"
-              >
-                <Maximize2 className="h-4 w-4" />
-              </Link>
-            )}
-            <button
-              type="button"
-              onClick={() => closeWindow(w.windowKey)}
-              className="p-1.5 rounded-lg hover:bg-white/15"
-              title="Đóng"
-            >
-              <X className="h-4 w-4" />
-            </button>
+                <X className="h-4 w-4" />
+              </button>
+            </div>
           </div>
-          <div className="flex-1 min-h-0 flex flex-col bg-slate-50">
+          <div className="flex-1 min-h-0 flex flex-col bg-gradient-to-b from-slate-50/80 to-white/60">
             {w.chatType === 'messenger_group' && w.groupId ? (
               <MessengerGroupChatTab groupId={w.groupId} socket={socket} fillParent />
             ) : w.chatType === 'department' && w.deptId ? (
@@ -324,63 +337,76 @@ export default function MessengerDock() {
             ) : null}
           </div>
         </div>
-      ))}
+        );
+      })}
 
       {launcherOpen ? (
         <div
           ref={launcherRef}
-          className="fixed flex flex-col rounded-l-xl border border-slate-200 bg-white shadow-2xl overflow-hidden"
+          className="fixed flex flex-col rounded-l-2xl border border-white/40 bg-white/85 backdrop-blur-2xl shadow-2xl overflow-hidden ring-1 ring-black/5"
           style={{
             zIndex: Z_LAUNCHER,
             width: LAUNCHER_W,
-            maxHeight: 'min(72vh, 560px)',
+            maxHeight: 'min(72vh, 580px)',
             right: DOCK_W,
             top: '50%',
             transform: 'translateY(-50%)',
           }}
         >
-          <div className="shrink-0 px-3 py-2.5 border-b border-slate-100 bg-slate-50 flex items-center justify-between gap-2">
-            <div>
-              <p className="text-xs font-bold text-slate-800">Chat nhanh</p>
-              <p className="text-[10px] text-slate-500">Tìm NV hoặc chọn nhóm</p>
-            </div>
-            <div className="flex items-center gap-1">
-              <Link
-                to="/crm/messenger"
-                className="text-[10px] font-semibold text-sky-600 hover:text-sky-800 px-2 py-1 rounded-md hover:bg-sky-50"
-                onClick={() => setLauncherOpen(false)}
-              >
-                Trang đầy đủ
-              </Link>
-              <button
-                type="button"
-                className="p-1 rounded-lg text-slate-500 hover:bg-slate-200"
-                title="Đóng"
-                onClick={() => setLauncherOpen(false)}
-              >
-                <X className="h-4 w-4" />
-              </button>
+          {/* Header hero */}
+          <div className="shrink-0 relative px-3.5 py-3 border-b border-white/40 bg-gradient-to-br from-sky-500/95 via-cyan-500/95 to-violet-500/95 text-white overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-b from-white/15 to-black/10 pointer-events-none" />
+            <div className="relative flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <div className="h-8 w-8 rounded-xl bg-white/25 backdrop-blur ring-2 ring-white/40 flex items-center justify-center shadow">
+                  <MessageCircle className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold drop-shadow-sm">Chat nhanh</p>
+                  <p className="text-[10px] text-white/85">Tìm NV hoặc chọn nhóm</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1">
+                <Link
+                  to="/crm/messenger"
+                  className="text-[10px] font-semibold text-white px-2 py-1 rounded-lg bg-white/15 hover:bg-white/25 backdrop-blur transition"
+                  onClick={() => setLauncherOpen(false)}
+                >
+                  Trang đầy đủ
+                </Link>
+                <button
+                  type="button"
+                  className="p-1.5 rounded-lg text-white hover:bg-white/20 transition"
+                  title="Đóng"
+                  onClick={() => setLauncherOpen(false)}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
           </div>
 
-          <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-3">
+          <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-4 [scrollbar-width:thin]">
             <div>
-              <label className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-1">
+              <label className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
                 <Search className="h-3 w-3" /> Tìm nhân viên
               </label>
-              <input
-                type="search"
-                value={staffQ}
-                onChange={(e) => setStaffQ(e.target.value)}
-                placeholder="Tên, email…"
-                className="w-full text-sm border border-slate-200 rounded-lg px-2.5 py-2 focus:ring-2 focus:ring-sky-400 focus:border-transparent"
-              />
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
+                <input
+                  type="search"
+                  value={staffQ}
+                  onChange={(e) => setStaffQ(e.target.value)}
+                  placeholder="Tên, email…"
+                  className="w-full text-sm border border-white/60 bg-white/70 backdrop-blur rounded-xl pl-8 pr-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-sky-300/70 focus:bg-white shadow-sm transition"
+                />
+              </div>
               {staffLoading ? (
                 <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang tìm…
                 </div>
               ) : staffRows.length ? (
-                <ul className="mt-1.5 space-y-0.5 border border-slate-100 rounded-lg divide-y divide-slate-50 max-h-40 overflow-y-auto">
+                <ul className="mt-1.5 space-y-0.5 border border-white/60 bg-white/55 backdrop-blur rounded-xl max-h-40 overflow-y-auto p-1 [scrollbar-width:thin]">
                   {staffRows.map((u) => {
                     const online = isUserOnline(presenceByUser, u.id);
                     return (
@@ -389,14 +415,17 @@ export default function MessengerDock() {
                         type="button"
                         onClick={() => void onPickStaff(u)}
                         disabled={String(u.id) === String(uid)}
-                        className="w-full text-left px-2 py-1.5 text-xs hover:bg-sky-50 disabled:opacity-40 flex items-center gap-2"
+                        className="w-full text-left px-2 py-1.5 text-xs hover:bg-sky-50 rounded-lg disabled:opacity-40 flex items-center gap-2 transition"
                       >
-                        <span className="relative shrink-0 w-7 h-7 rounded-full bg-gradient-to-br from-slate-300 to-slate-400 text-white flex items-center justify-center text-[10px] font-bold">
+                        <span
+                          className="relative shrink-0 w-8 h-8 rounded-xl text-white flex items-center justify-center text-[11px] font-bold shadow-sm ring-2 ring-white/70"
+                          style={{ background: bubbleGradientFor(u.full_name || u.email) }}
+                        >
                           {(u.full_name || u.email || '?')[0].toUpperCase()}
-                          <OnlineStatusDot online={online} className="absolute bottom-0 right-0" />
+                          <OnlineStatusDot online={online} className="absolute -bottom-0.5 -right-0.5" />
                         </span>
                         <span className="truncate flex-1 min-w-0">
-                          <span className="font-medium text-slate-800">{u.full_name || u.email}</span>
+                          <span className="font-semibold text-slate-800 block truncate">{u.full_name || u.email}</span>
                           {u.email && u.full_name ? (
                             <span className="block text-[10px] text-slate-500 truncate">{u.email}</span>
                           ) : null}
@@ -408,12 +437,12 @@ export default function MessengerDock() {
                   })}
                 </ul>
               ) : staffQ.trim() ? (
-                <p className="text-[11px] text-slate-400 py-1">Không có kết quả</p>
+                <p className="text-[11px] text-slate-400 py-1.5 text-center">Không có kết quả</p>
               ) : null}
             </div>
 
             <div>
-              <label className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-1">
+              <label className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
                 <Users className="h-3 w-3" /> Nhóm của tôi
               </label>
               <input
@@ -421,14 +450,14 @@ export default function MessengerDock() {
                 value={groupFilter}
                 onChange={(e) => setGroupFilter(e.target.value)}
                 placeholder="Lọc tên nhóm…"
-                className="w-full text-sm border border-slate-200 rounded-lg px-2.5 py-2 focus:ring-2 focus:ring-sky-400 focus:border-transparent mb-1.5"
+                className="w-full text-sm border border-white/60 bg-white/70 backdrop-blur rounded-xl px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-sky-300/70 focus:bg-white shadow-sm mb-1.5 transition"
               />
               {groupsLoading ? (
                 <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang tải nhóm…
                 </div>
               ) : filteredGroups.length ? (
-                <ul className="space-y-0.5 border border-slate-100 rounded-lg divide-y divide-slate-50 max-h-48 overflow-y-auto">
+                <ul className="space-y-0.5 border border-white/60 bg-white/55 backdrop-blur rounded-xl max-h-52 overflow-y-auto p-1 [scrollbar-width:thin]">
                   {filteredGroups.map((g) => {
                     const n = unreadByGroupId[g.id] || 0;
                     const peerOnline = g.is_direct && g.peer_id ? isUserOnline(presenceByUser, g.peer_id) : false;
@@ -437,20 +466,29 @@ export default function MessengerDock() {
                         <button
                           type="button"
                           onClick={() => onPickGroup(g)}
-                          className="w-full text-left px-2 py-1.5 text-xs hover:bg-cyan-50 flex items-center justify-between gap-2"
+                          className="w-full text-left px-2 py-1.5 text-xs hover:bg-cyan-50 rounded-lg flex items-center justify-between gap-2 transition group"
                         >
-                          <span className="flex items-center gap-1.5 min-w-0 flex-1">
-                            {g.is_direct && g.peer_id ? (
-                              <OnlineStatusDot online={peerOnline} size="md" />
-                            ) : null}
-                            <span className="truncate font-medium text-slate-800">{g.name || 'Nhóm'}</span>
+                          <span className="flex items-center gap-2 min-w-0 flex-1">
+                            <span
+                              className="relative shrink-0 w-8 h-8 rounded-xl text-white flex items-center justify-center text-[11px] font-bold shadow-sm ring-2 ring-white/70"
+                              style={{ background: bubbleGradientFor(g.name || g.raw_name) }}
+                            >
+                              {(g.name || g.raw_name || '?').slice(0,1).toUpperCase()}
+                              {g.is_direct && g.peer_id ? (
+                                <OnlineStatusDot online={peerOnline} size="md" className="absolute -bottom-0.5 -right-0.5" />
+                              ) : null}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="truncate font-semibold text-slate-800 block">{g.name || 'Nhóm'}</span>
+                              <span className="text-[10px] text-slate-500">{g.is_direct ? 'Trực tiếp' : 'Nhóm chat'}</span>
+                            </span>
                           </span>
                           {n > 0 ? (
-                            <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">
+                            <span className="shrink-0 min-w-[20px] h-[20px] px-1.5 rounded-full bg-gradient-to-br from-rose-500 to-pink-500 text-white text-[10px] font-bold flex items-center justify-center shadow">
                               {n > 99 ? '…' : n}
                             </span>
                           ) : (
-                            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-400 group-hover:text-sky-600 transition" />
                           )}
                         </button>
                       </li>
@@ -458,7 +496,7 @@ export default function MessengerDock() {
                   })}
                 </ul>
               ) : (
-                <p className="text-[11px] text-slate-400 py-1">Chưa có nhóm hoặc không khớp lọc</p>
+                <p className="text-[11px] text-slate-400 py-1.5 text-center">Chưa có nhóm hoặc không khớp lọc</p>
               )}
             </div>
           </div>
@@ -494,7 +532,7 @@ export default function MessengerDock() {
               tabIndex={0}
               onClick={onOpen}
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onOpen(); }}
-              className="pointer-events-auto group relative flex items-start gap-2.5 px-3 py-2.5 rounded-xl border border-slate-200 bg-white shadow-xl hover:shadow-2xl hover:border-sky-300 cursor-pointer transition"
+              className="pointer-events-auto group relative flex items-start gap-2.5 px-3 py-2.5 rounded-2xl border border-white/60 bg-white/90 backdrop-blur-xl shadow-xl hover:shadow-2xl hover:border-sky-300 hover:bg-white cursor-pointer transition-all hover:-translate-x-0.5"
               title={`${t.sender?.name || ''} • ${t.title || ''}`}
             >
               <div className="shrink-0 relative">
@@ -545,27 +583,27 @@ export default function MessengerDock() {
 
       <div
         ref={dockBarRef}
-        className="fixed flex flex-col items-center gap-2 py-3 px-1.5 rounded-l-2xl border border-slate-200 bg-white/95 shadow-lg backdrop-blur-sm"
+        className="fixed flex flex-col items-center gap-2 py-3 px-1.5 rounded-l-2xl border border-white/50 bg-white/75 shadow-xl backdrop-blur-xl ring-1 ring-black/5"
         style={{ zIndex: Z_DOCK, right: 0, top: '50%', transform: 'translateY(-50%)', width: DOCK_W }}
       >
         <button
           type="button"
           onClick={() => setLauncherOpen((v) => !v)}
-          className={`relative w-10 h-10 rounded-full flex items-center justify-center shadow-md transition ${
+          className={`relative w-11 h-11 rounded-2xl flex items-center justify-center shadow-md transition-all ${
             launcherOpen
-              ? 'bg-slate-800 text-white ring-2 ring-sky-400'
-              : 'bg-gradient-to-br from-sky-500 to-cyan-600 text-white hover:opacity-95'
+              ? 'bg-slate-800 text-white ring-2 ring-sky-400 scale-95'
+              : 'bg-gradient-to-br from-sky-500 via-cyan-500 to-violet-500 text-white hover:scale-105 hover:shadow-lg ring-2 ring-white/60'
           }`}
           title={launcherOpen ? 'Đóng danh sách' : 'Tìm nhân viên & nhóm chat'}
         >
           <MessageCircle className="h-5 w-5" />
           {!launcherOpen && totalUnread > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center border-2 border-white">
+            <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-gradient-to-br from-rose-500 to-pink-500 text-white text-[10px] font-bold flex items-center justify-center border-2 border-white shadow">
               {totalUnread > 99 ? '99+' : totalUnread}
             </span>
           )}
         </button>
-        <div className="w-8 border-t border-slate-200 my-0.5" />
+        {windows.length > 0 && <div className="w-7 border-t border-slate-300/60 my-0.5" />}
         {windows.map((w) => {
           const n =
             w.chatType === 'messenger_group' && w.groupId
@@ -579,25 +617,28 @@ export default function MessengerDock() {
             w.peerUserId || (w.groupId ? groupPeerById.get(String(w.groupId)) : null);
           const showPeerDot = !!(w.isDirect || peerId) && w.chatType !== 'department';
           const isDept = w.chatType === 'department';
+          const bg = isDept && w.color
+            ? `linear-gradient(135deg, ${w.color}, ${w.color}cc)`
+            : w.chatType === 'lead'
+              ? 'linear-gradient(135deg, #6366f1, #a855f7)'
+              : bubbleGradientFor(w.title || w.code);
           return (
             <button
               key={w.windowKey}
               type="button"
               title={w.title}
               onClick={() => toggleMinimize(w.windowKey)}
-              className={`relative w-10 h-10 rounded-full border-2 flex items-center justify-center text-[11px] font-bold transition ${
+              className={`relative w-10 h-10 rounded-xl flex items-center justify-center text-[11px] font-bold text-white transition-all shadow-sm ring-2 ${
                 w.minimized
-                  ? 'border-slate-200 bg-slate-100 text-slate-600'
-                  : isDept
-                    ? 'border-white text-white'
-                    : 'border-cyan-500 bg-cyan-50 text-cyan-800'
+                  ? 'opacity-50 ring-white/30 hover:opacity-100 hover:scale-105'
+                  : 'ring-white/60 hover:scale-110 hover:shadow-md'
               }`}
-              style={isDept && !w.minimized && w.color ? { backgroundColor: w.color } : undefined}
+              style={{ background: bg }}
             >
               {isDept ? (
                 <Building2 className="h-4 w-4" />
               ) : (
-                (w.code || w.title || '?').slice(0, 2)
+                (w.code || w.title || '?').slice(0, 2).toUpperCase()
               )}
               {showPeerDot ? (
                 <OnlineStatusDot
@@ -607,7 +648,7 @@ export default function MessengerDock() {
                 />
               ) : null}
               {n > 0 && (
-                <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-0.5 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center border border-white">
+                <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-0.5 rounded-full bg-gradient-to-br from-rose-500 to-pink-500 text-white text-[9px] font-bold flex items-center justify-center border border-white shadow">
                   {n > 99 ? '…' : n}
                 </span>
               )}

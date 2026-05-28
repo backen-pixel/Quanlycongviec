@@ -383,36 +383,38 @@ export default function ProductsPage() {
       {/* Code Parts Manager */}
       {showCodeParts && <CodePartsManager codeParts={codeParts} onReload={load} />}
 
-      {/* Products Table */}
-      <div className="bg-white rounded-xl border overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-gray-50 border-b text-left text-xs font-semibold text-gray-500 uppercase">
-              <th className="p-3 w-10">STT</th>
-              <th className="p-3">Mã thành phẩm</th>
-              <th className="p-3">Tên thành phẩm</th>
-              <th className="p-3">Nhóm ngành</th>
-              <th className="p-3 text-center">Ngang</th>
-              <th className="p-3 text-center">Cao</th>
-              <th className="p-3 text-center">Sâu</th>
-              <th className="p-3 text-right">Giá bán (VAT)</th>
-              <th className="p-3 text-right">Giá chưa VAT</th>
-              <th className="p-3">ĐVT</th>
-              <th className="p-3 text-center w-20"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr><td colSpan={11} className="p-8 text-center text-gray-400">Đang tải...</td></tr>
-            ) : products.length === 0 ? (
-              <tr><td colSpan={11} className="p-8 text-center text-gray-400">Chưa có sản phẩm</td></tr>
-            ) : products.map((p, i) => (
-              <tr key={p.id} className="border-b hover:bg-gray-50">
+      {/* Products Table — scroll dọc tối đa 6 dòng + sticky header
+          (1 row ≈ 53px = p-3 padding-y 24px + ~29px content; 6 rows + ~46px header) */}
+      <div className="bg-white rounded-xl border overflow-hidden">
+        <div className="overflow-auto" style={{ maxHeight: 'calc(53px * 6 + 46px)' }}>
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-gray-50 border-b text-left text-xs font-semibold text-gray-500 uppercase">
+                <th className="p-3 w-10">STT</th>
+                <th className="p-3 whitespace-nowrap">Mã thành phẩm</th>
+                <th className="p-3">Tên thành phẩm</th>
+                <th className="p-3 whitespace-nowrap">Nhóm ngành</th>
+                <th className="p-3 text-center whitespace-nowrap">Ngang</th>
+                <th className="p-3 text-center whitespace-nowrap">Cao</th>
+                <th className="p-3 text-center whitespace-nowrap">Sâu</th>
+                <th className="p-3 text-right whitespace-nowrap">Giá bán (VAT)</th>
+                <th className="p-3 text-right whitespace-nowrap">Giá chưa VAT</th>
+                <th className="p-3 whitespace-nowrap">ĐVT</th>
+                <th className="p-3 text-center w-20"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={11} className="p-8 text-center text-gray-400">Đang tải...</td></tr>
+              ) : products.length === 0 ? (
+                <tr><td colSpan={11} className="p-8 text-center text-gray-400">Chưa có sản phẩm</td></tr>
+              ) : products.map((p, i) => (
+                <tr key={p.id} className="border-b transition-colors hover:bg-slate-200/70">
                 <td className="p-3 text-gray-400">{i + 1}</td>
                 <td className="p-3">
                   <span className="font-mono text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded">{p.code}</span>
                 </td>
-                <td className="p-3 font-medium text-gray-900">{p.name}</td>
+                <td className="p-3 font-medium" style={{ color: '#000000' }}>{p.name}</td>
                 <td className="p-3">
                   {p.category?.name ? (
                     <span className="text-xs bg-purple-50 text-purple-600 px-2 py-0.5 rounded-full">{p.category.name}</span>
@@ -434,8 +436,14 @@ export default function ProductsPage() {
                 </td>
               </tr>
             ))}
-          </tbody>
-        </table>
+            </tbody>
+          </table>
+        </div>
+        {products.length > 0 && !loading && (
+          <div className="px-3 py-2 border-t border-gray-100 bg-gray-50/70 text-[11px] text-gray-500">
+            Hiển thị {products.length} sản phẩm — cuộn để xem thêm
+          </div>
+        )}
       </div>
 
       {/* Add/Edit Modal */}

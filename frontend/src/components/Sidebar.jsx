@@ -614,7 +614,7 @@ export default function Sidebar() {
         backdropFilter: 'var(--sidebar-backdrop, none)',
         WebkitBackdropFilter: 'var(--sidebar-backdrop, none)',
       }}
-      className={`flex flex-col bg-[var(--color-sidebar)] transition-all duration-200 relative ${
+      className={`flex flex-col bg-[var(--color-sidebar)] transition-all duration-200 relative z-30 shrink-0 overflow-visible ${
         collapsed ? 'w-[60px]' : 'w-[240px]'
       }`}
     >
@@ -667,8 +667,8 @@ export default function Sidebar() {
         })()}
       </div>
 
-      {/* Notification bell */}
-      <div className="px-2 pt-3 pb-1">
+      {/* Notification bell — overflow-visible để panel portal không bị cắt */}
+      <div className="px-2 pt-3 pb-1 overflow-visible relative z-40">
         <NotificationCenter socket={socket} />
       </div>
 

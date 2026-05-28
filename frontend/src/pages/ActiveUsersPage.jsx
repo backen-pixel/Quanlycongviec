@@ -424,15 +424,15 @@ export default function ActiveUsersPage() {
   };
 
   return (
-    <div className="flex flex-col h-full min-h-0 bg-slate-50">
-      <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-4 sm:px-6">
+    <div className="flex flex-col h-full min-h-0">
+      <div className="shrink-0 border-b border-white/40 bg-white/55 backdrop-blur-xl px-4 py-4 sm:px-6 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+            <h1 className="text-lg font-bold flex items-center gap-2" style={{ color: '#0f172a' }}>
               <Activity className="h-5 w-5 text-emerald-600" />
               Đang hoạt động
             </h1>
-            <p className="text-xs text-slate-500 mt-1 max-w-xl">
+            <p className="text-xs mt-1 max-w-xl" style={{ color: '#475569' }}>
               Ai đang mở app (có ping trong {thresholdMin} phút). Thiết bị trùng tên sẽ được gộp để tránh lặp. Tự làm mới mỗi 30 giây.
             </p>
           </div>
@@ -440,7 +440,7 @@ export default function ActiveUsersPage() {
             type="button"
             onClick={() => void load()}
             disabled={loading}
-            className="h-9 px-3 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-700 hover:bg-slate-50 inline-flex items-center gap-1.5 disabled:opacity-50"
+            className="h-9 px-3 rounded-lg border border-white/60 bg-white/70 backdrop-blur text-sm font-medium text-slate-700 hover:bg-white/90 inline-flex items-center gap-1.5 disabled:opacity-50 shadow-sm"
           >
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             Làm mới
@@ -448,11 +448,11 @@ export default function ActiveUsersPage() {
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-1 text-xs font-semibold">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50/90 backdrop-blur text-emerald-800 border border-emerald-200 px-3 py-1 text-xs font-semibold shadow-sm">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             {stats.online} đang hoạt động
           </span>
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 px-3 py-1 text-xs font-medium">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/70 backdrop-blur text-slate-700 border border-white/70 px-3 py-1 text-xs font-medium shadow-sm">
             <Users className="h-3.5 w-3.5" />
             {stats.total} nhân viên
           </span>
@@ -475,10 +475,10 @@ export default function ActiveUsersPage() {
               key={tab.id}
               type="button"
               onClick={() => setFilter(tab.id)}
-              className={`h-8 px-3 rounded-lg text-xs font-semibold transition-colors ${
+              className={`h-8 px-3 rounded-lg text-xs font-semibold transition-colors shadow-sm ${
                 filter === tab.id
-                  ? 'bg-sky-600 text-white'
-                  : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                  ? 'bg-sky-600 text-white ring-1 ring-sky-700'
+                  : 'bg-white/70 backdrop-blur border border-white/70 text-slate-700 hover:bg-white/90'
               }`}
             >
               {tab.label}
@@ -495,19 +495,28 @@ export default function ActiveUsersPage() {
         )}
 
         {filter !== 'auth_log' && (
-        <div className="mb-4 rounded-xl border border-slate-200 bg-white overflow-hidden">
-          <div className="px-3 sm:px-4 pt-3 sm:pt-4 pb-2 flex flex-wrap items-center justify-between gap-2 border-b border-slate-100">
-            <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
+        <div className="mb-4 rounded-2xl border border-white/50 bg-white/55 backdrop-blur-xl overflow-hidden shadow-lg">
+          <div className="px-3 sm:px-4 pt-3 sm:pt-4 pb-2 flex flex-wrap items-center justify-between gap-2 border-b border-white/40 bg-gradient-to-r from-sky-50/60 via-white/30 to-emerald-50/60">
+            <h2 className="text-sm font-semibold flex items-center gap-1.5" style={{ color: '#0f172a' }}>
               <MapPin className="h-4 w-4 text-sky-600" />
               Bản đồ chi nhánh + vị trí nhân viên
             </h2>
-            <span className="text-[11px] text-slate-500">
-              {mapPoints.length} điểm · {employeeLivePoints.length} NV có vị trí
-              {employeesWithoutLocation.length > 0 ? ` · ${employeesWithoutLocation.length} chưa có` : ''}
-            </span>
+            <div className="flex items-center gap-2 text-[11px]">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-50/90 text-indigo-700 border border-indigo-200 font-semibold">
+                <Building2 className="h-3 w-3" /> {branchLocations.length} chi nhánh
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50/90 text-emerald-700 border border-emerald-200 font-semibold">
+                <MapPin className="h-3 w-3" /> {employeeLivePoints.length} NV có vị trí
+              </span>
+              {employeesWithoutLocation.length > 0 && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50/90 text-amber-800 border border-amber-200 font-semibold">
+                  {employeesWithoutLocation.length} chưa có
+                </span>
+              )}
+            </div>
           </div>
 
-          <div className="flex border-b border-slate-200 px-3 sm:px-4 gap-0 overflow-x-auto">
+          <div className="flex border-b border-white/40 px-3 sm:px-4 gap-0 overflow-x-auto bg-white/30">
             {[
               { id: 'map', label: 'Bản đồ' },
               { id: 'list', label: 'Danh sách điểm', count: mapPoints.length },
@@ -520,13 +529,13 @@ export default function ActiveUsersPage() {
                 className={`shrink-0 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px transition-colors ${
                   mapSectionTab === tab.id
                     ? 'border-sky-600 text-sky-700'
-                    : 'border-transparent text-slate-500 hover:text-slate-800'
+                    : 'border-transparent text-slate-600 hover:text-slate-900'
                 }`}
               >
                 {tab.label}
                 {tab.count != null && tab.count > 0 ? (
                   <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] ${
-                    tab.id === 'missing' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'
+                    tab.id === 'missing' ? 'bg-amber-100 text-amber-800' : 'bg-sky-100 text-sky-700'
                   }`}>
                     {tab.count}
                   </span>
@@ -537,26 +546,26 @@ export default function ActiveUsersPage() {
 
           <div className="p-3 sm:p-4">
             <div className="mb-3 flex flex-wrap items-center gap-2">
-              <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
+              <div className="inline-flex rounded-lg border border-white/60 overflow-hidden bg-white/70 backdrop-blur shadow-sm">
                 <button
                   type="button"
                   onClick={() => setMapEmployeeScope('all')}
-                  className={`h-7 px-2.5 text-[11px] font-semibold ${mapEmployeeScope === 'all' ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                  className={`h-7 px-2.5 text-[11px] font-semibold transition ${mapEmployeeScope === 'all' ? 'bg-emerald-600 text-white' : 'text-slate-700 hover:bg-white/90'}`}
                 >
                   Tất cả NV
                 </button>
                 <button
                   type="button"
                   onClick={() => setMapEmployeeScope('online')}
-                  className={`h-7 px-2.5 text-[11px] font-semibold border-l border-slate-200 ${mapEmployeeScope === 'online' ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                  className={`h-7 px-2.5 text-[11px] font-semibold border-l border-white/60 transition ${mapEmployeeScope === 'online' ? 'bg-emerald-600 text-white' : 'text-slate-700 hover:bg-white/90'}`}
                 >
                   Chỉ online
                 </button>
               </div>
-              <span className="text-[11px] text-slate-500 inline-flex items-center gap-3">
-                <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-indigo-600" /> Chi nhánh</span>
-                <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> NV online</span>
-                <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-500" /> NV offline</span>
+              <span className="inline-flex items-center gap-3 px-3 py-1 rounded-lg bg-white/70 backdrop-blur border border-white/60 text-[11px] font-medium text-slate-700 shadow-sm">
+                <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-indigo-600 ring-2 ring-indigo-200" /> Chi nhánh</span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-emerald-200 animate-pulse" /> NV online</span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 ring-2 ring-slate-200" /> NV offline</span>
               </span>
             </div>
 
@@ -590,30 +599,49 @@ export default function ActiveUsersPage() {
 
             {mapSectionTab === 'list' && (
               mapPoints.length === 0 ? (
-                <p className="text-sm text-slate-500 py-6 text-center">Chưa có điểm nào trên bản đồ.</p>
+                <p className="text-sm text-slate-600 py-6 text-center">Chưa có điểm nào trên bản đồ.</p>
               ) : (
-                <ul className="divide-y divide-slate-100 max-h-[min(480px,60vh)] overflow-y-auto rounded-lg border border-slate-200">
+                <ul className="divide-y divide-white/40 max-h-[min(480px,60vh)] overflow-y-auto rounded-lg border border-white/50 bg-white/40 backdrop-blur [scrollbar-width:thin]">
                   {mapPoints.map((loc) => {
                     const href = mapOpenHref(loc);
                     const hasGeo = Number.isFinite(Number(loc.lat)) && Number.isFinite(Number(loc.lng));
                     const coordsLabel = hasGeo ? `${Number(loc.lat).toFixed(5)}, ${Number(loc.lng).toFixed(5)}` : '';
+                    const isBranch = loc.type === 'branch';
                     return (
-                      <li key={loc.key} className="px-3 py-2.5 hover:bg-slate-50 flex items-start gap-2">
-                        <MapPin className={`h-4 w-4 shrink-0 mt-0.5 ${loc.type === 'branch' ? 'text-indigo-500' : 'text-sky-500'}`} />
+                      <li key={loc.key} className="px-3 py-2.5 hover:bg-slate-200/70 transition-colors flex items-start gap-2.5">
+                        <div className={`shrink-0 w-8 h-8 rounded-lg inline-flex items-center justify-center shadow-sm ${
+                          isBranch
+                            ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-200'
+                            : loc.online
+                              ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200'
+                              : 'bg-slate-100 text-slate-600 ring-1 ring-slate-200'
+                        }`}>
+                          {isBranch ? <Building2 className="h-4 w-4" /> : <MapPin className="h-4 w-4" />}
+                        </div>
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold text-slate-800 truncate">{loc.label}</p>
-                          <p className="text-[11px] text-slate-500 mt-0.5">
-                            {loc.type === 'branch' ? 'Chi nhánh' : loc.online ? 'Đang online' : 'Offline'}
-                            {loc.address ? ` · ${loc.address}` : ''}
-                            {!hasGeo ? ' · (chưa có toạ độ)' : coordsLabel ? ` · ${coordsLabel}` : ''}
-                          </p>
+                          <p className="text-sm font-semibold truncate" style={{ color: '#0f172a' }}>{loc.label}</p>
+                          <div className="text-[11px] mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5" style={{ color: '#475569' }}>
+                            <span className={`inline-flex items-center gap-1 px-1.5 rounded text-[10px] font-semibold ${
+                              isBranch
+                                ? 'bg-indigo-50 text-indigo-700'
+                                : loc.online
+                                  ? 'bg-emerald-50 text-emerald-700'
+                                  : 'bg-slate-100 text-slate-600'
+                            }`}>
+                              {isBranch ? 'Chi nhánh' : loc.online ? '● Online' : '○ Offline'}
+                            </span>
+                            {loc.address && <span className="truncate">{loc.address}</span>}
+                            {!hasGeo
+                              ? <span className="text-amber-700 font-semibold">(chưa có toạ độ)</span>
+                              : coordsLabel && <span className="font-mono text-[10px] text-slate-500">{coordsLabel}</span>}
+                          </div>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
-                          {loc.type === 'branch' && isAdmin ? (
+                          {isBranch && isAdmin ? (
                             <button
                               type="button"
                               onClick={() => void regeocodeBranch(loc.id, { clearCache: true })}
-                              className="text-[10px] font-semibold text-amber-700 hover:text-amber-900 hover:underline"
+                              className="text-[10px] font-semibold text-amber-700 hover:text-amber-900 hover:underline px-1.5 py-0.5 rounded hover:bg-amber-50"
                               title="Xác định lại toạ độ chi nhánh từ địa chỉ / map URL (xóa cache geocode)"
                             >
                               Sửa toạ độ
@@ -623,7 +651,8 @@ export default function ActiveUsersPage() {
                             href={href}
                             target="_blank"
                             rel="noreferrer"
-                            className="text-slate-400 hover:text-slate-700"
+                            className="inline-flex items-center justify-center w-7 h-7 rounded-md text-sky-700 bg-sky-50 hover:bg-sky-100 transition"
+                            title="Mở trên Google Maps"
                           >
                             <ExternalLink className="h-3.5 w-3.5" />
                           </a>
@@ -642,20 +671,22 @@ export default function ActiveUsersPage() {
                 </p>
               ) : (
                 <div className="space-y-3">
-                  <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                    {employeesWithoutLocation.length} nhân viên chưa có vị trí hợp lệ ({mapEmployeeScope === 'online' ? 'đang online' : 'trong bộ lọc'}).
+                  <p className="text-xs bg-amber-50/90 backdrop-blur border border-amber-200 rounded-lg px-3 py-2" style={{ color: '#7c2d12' }}>
+                    <strong>{employeesWithoutLocation.length} nhân viên</strong> chưa có vị trí hợp lệ ({mapEmployeeScope === 'online' ? 'đang online' : 'trong bộ lọc'}).
                     Nhắc mở app/web → Cài đặt → <strong>Vị trí làm việc</strong> → «Cập nhật ngay» và cho phép định vị.
                   </p>
-                  <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 max-h-[min(480px,60vh)] overflow-y-auto">
+                  <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 max-h-[min(480px,60vh)] overflow-y-auto [scrollbar-width:thin]">
                     {employeesWithoutLocation.map((u) => (
                       <li
                         key={u.id}
-                        className="text-[11px] text-slate-700 px-2 py-1.5 rounded border border-slate-100 bg-slate-50 truncate"
+                        className="text-[11px] px-2.5 py-1.5 rounded-lg border border-white/60 bg-white/65 backdrop-blur truncate hover:bg-white/85 transition flex items-center gap-1.5"
                         title={u.email || ''}
+                        style={{ color: '#0f172a' }}
                       >
-                        <span className="font-medium">{u.full_name || u.email}</span>
-                        <span className={u.online ? ' text-emerald-600' : ' text-slate-400'}>
-                          {u.online ? ' · online' : ' · offline'}
+                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${u.online ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                        <span className="font-medium truncate flex-1">{u.full_name || u.email}</span>
+                        <span className={`text-[10px] font-semibold shrink-0 ${u.online ? 'text-emerald-700' : 'text-slate-500'}`}>
+                          {u.online ? 'online' : 'offline'}
                         </span>
                       </li>
                     ))}
@@ -668,8 +699,8 @@ export default function ActiveUsersPage() {
         )}
 
         {filter === 'auth_log' && (
-          <div className="mb-4 rounded-xl border border-slate-200 bg-white overflow-hidden">
-            <div className="px-3 sm:px-4 pt-3 sm:pt-4 pb-3 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
+          <div className="mb-4 rounded-2xl border border-white/50 bg-white/55 backdrop-blur-xl overflow-hidden shadow-lg">
+            <div className="px-3 sm:px-4 pt-3 sm:pt-4 pb-3 border-b border-white/40 flex flex-wrap items-center justify-between gap-2 bg-gradient-to-r from-sky-50/60 via-white/30 to-sky-50/60">
               <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
                 <History className="h-4 w-4 text-sky-600" />
                 Lịch sử đăng nhập / đăng xuất
@@ -731,16 +762,20 @@ export default function ActiveUsersPage() {
                 </p>
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <>
+              <div
+                className="overflow-auto [scrollbar-width:thin]"
+                style={{ maxHeight: 'calc(100vh - 380px)', minHeight: 240 }}
+              >
                 <table className="w-full text-xs">
-                  <thead className="bg-slate-50 text-slate-600 sticky top-0">
+                  <thead className="bg-white/85 backdrop-blur text-slate-700 sticky top-0 z-10 shadow-sm">
                     <tr>
-                      <th className="text-left font-semibold px-3 py-2">Thời gian</th>
-                      <th className="text-left font-semibold px-3 py-2">Nhân viên</th>
-                      <th className="text-left font-semibold px-3 py-2">Sự kiện</th>
-                      <th className="text-left font-semibold px-3 py-2">Thiết bị / IP</th>
-                      <th className="text-left font-semibold px-3 py-2">Phiên</th>
-                      <th className="text-left font-semibold px-3 py-2">Lý do</th>
+                      <th className="text-left font-semibold px-3 py-2 whitespace-nowrap">Thời gian</th>
+                      <th className="text-left font-semibold px-3 py-2 whitespace-nowrap">Nhân viên</th>
+                      <th className="text-left font-semibold px-3 py-2 whitespace-nowrap">Sự kiện</th>
+                      <th className="text-left font-semibold px-3 py-2 whitespace-nowrap">Thiết bị / IP</th>
+                      <th className="text-left font-semibold px-3 py-2 whitespace-nowrap">Phiên</th>
+                      <th className="text-left font-semibold px-3 py-2 whitespace-nowrap">Lý do</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -750,7 +785,7 @@ export default function ActiveUsersPage() {
                       const name = u?.full_name || ev.email || (ev.user_id ? `User ${String(ev.user_id).slice(0, 8)}…` : '(không xác định)');
                       const EventIcon = meta.Icon;
                       return (
-                        <tr key={`${ev.id || idx}`} className="hover:bg-slate-50">
+                        <tr key={`${ev.id || idx}`} className="hover:bg-slate-200/70 transition-colors">
                           <td className="px-3 py-2 whitespace-nowrap font-mono text-[11px] text-slate-700">
                             {formatAtSeconds(ev.occurred_at)}
                             <div className="text-[10px] text-slate-400">{formatRelativeTime(ev.occurred_at)}</div>
@@ -796,6 +831,11 @@ export default function ActiveUsersPage() {
                   </tbody>
                 </table>
               </div>
+              <div className="px-3 sm:px-4 py-2 border-t border-white/40 bg-white/30 backdrop-blur flex flex-wrap items-center justify-between gap-2 text-[11px]" style={{ color: '#475569' }}>
+                <span>Hiển thị <strong>{authSessions.length}</strong> sự kiện</span>
+                {authSessions.length > 8 && <span className="text-slate-500">Cuộn để xem thêm</span>}
+              </div>
+              </>
             )}
           </div>
         )}
@@ -805,108 +845,117 @@ export default function ActiveUsersPage() {
             <Loader2 className="h-8 w-8 animate-spin text-sky-600" />
           </div>
         ) : displayRows.length === 0 ? (
-          <div className="text-center py-16 text-slate-500 text-sm">
+          <div className="text-center py-16 text-sm" style={{ color: '#475569' }}>
             {filter === 'online' ? 'Chưa có ai đang hoạt động trong bộ lọc này.' : 'Không có nhân viên phù hợp.'}
           </div>
         ) : (
           <ul className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-            {displayRows.map((u) => (
-              <li
-                key={u.id}
-                className={`rounded-xl border bg-white p-4 shadow-sm transition-shadow hover:shadow-md ${
-                  u.online ? 'border-emerald-200' : 'border-slate-200'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <div className="relative shrink-0">
-                    <div
-                      className={`w-11 h-11 rounded-full flex items-center justify-center text-sm font-bold text-white ${avatarColor(u.full_name || u.email)}`}
-                    >
-                      {u.avatar ? (
-                        <img src={u.avatar} alt="" className="w-full h-full rounded-full object-cover" />
-                      ) : (
-                        getInitials(u.full_name || u.email)
-                      )}
-                    </div>
-                    <OnlineStatusDot online={u.online} className="absolute -bottom-0.5 -right-0.5" size="md" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-slate-900 truncate">{u.full_name || u.email}</p>
-                    <p className="text-xs text-slate-500 truncate">{u.email}</p>
-                    <p className="text-[11px] text-slate-500 mt-1 flex items-center gap-1">
-                      <Building2 className="h-3 w-3 shrink-0" />
-                      <span className="truncate">{u.department?.name || '—'}</span>
-                      {u.role && (
-                        <span className="ml-1 px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
-                          {ROLE_LABELS[u.role] || u.role}
-                        </span>
-                      )}
-                    </p>
-                    <p className={`text-[11px] mt-1.5 font-medium ${u.online ? 'text-emerald-700' : 'text-slate-400'}`}>
-                      {u.online ? 'Đang hoạt động' : `Offline · ${formatRelativeTime(u.last_ping_at)}`}
-                    </p>
-                    {(() => {
-                      const loc = resolveUserLocation(u);
-                      if (!loc) return null;
-                      const label = loc.address || `${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}`;
-                      return (
-                        <p className="text-[11px] mt-1 text-slate-600 flex items-center gap-1">
-                          <MapPin className="h-3 w-3 text-sky-600 shrink-0" />
-                          <span className="truncate" title={label}>
-                            {label}
-                          </span>
-                        </p>
-                      );
-                    })()}
-                    {Array.isArray(u.devices) && u.devices.length > 0 ? (
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {u.devices.slice(0, 4).map((d, idx) => (
-                          <DeviceBadge key={`${d.platform}-${idx}`} device={d} />
-                        ))}
-                        {u.devices.length > 4 ? (
-                          <span className="text-[10px] text-slate-400 font-semibold self-center">
-                            +{u.devices.length - 4}
-                          </span>
-                        ) : null}
+            {displayRows.map((u) => {
+              const loc = resolveUserLocation(u);
+              const locLabel = loc ? (loc.address || `${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}`) : null;
+              const locHref = loc ? `https://www.google.com/maps?q=${loc.lat},${loc.lng}` : null;
+              return (
+                <li
+                  key={u.id}
+                  className={`group rounded-2xl border bg-white/65 backdrop-blur-xl p-4 shadow-md transition hover:shadow-xl hover:bg-white/80 hover:-translate-y-0.5 ${
+                    u.online ? 'border-emerald-200/80' : 'border-white/60'
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="relative shrink-0">
+                      <div
+                        className={`w-12 h-12 rounded-full flex items-center justify-center text-sm font-bold text-white shadow-md ring-2 ring-white/80 ${avatarColor(u.full_name || u.email)}`}
+                      >
+                        {u.avatar ? (
+                          <img src={u.avatar} alt="" className="w-full h-full rounded-full object-cover" />
+                        ) : (
+                          getInitials(u.full_name || u.email)
+                        )}
                       </div>
-                    ) : null}
-                    {(() => {
-                      const loc = resolveUserLocation(u);
-                      if (!loc) return null;
-                      const href = `https://www.google.com/maps?q=${loc.lat},${loc.lng}`;
-                      const label = loc.address || 'Xem vị trí trên bản đồ';
-                      return (
-                        <a
-                          href={href}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-2 inline-flex items-center gap-1 text-[11px] text-sky-700 hover:text-sky-900 hover:underline"
-                        >
-                          <MapPin className="h-3 w-3" />
-                          {label}
-                          <ExternalLink className="h-3 w-3" />
-                        </a>
-                      );
-                    })()}
+                      <OnlineStatusDot online={u.online} className="absolute -bottom-0.5 -right-0.5" size="md" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold truncate" style={{ color: '#0f172a' }}>{u.full_name || u.email}</p>
+                      <p className="text-xs truncate" style={{ color: '#64748b' }}>{u.email}</p>
+                      <p className="text-[11px] mt-1 flex items-center gap-1 flex-wrap" style={{ color: '#475569' }}>
+                        <Building2 className="h-3 w-3 shrink-0" />
+                        <span className="truncate">{u.department?.name || '—'}</span>
+                        {u.role && (
+                          <span className="ml-1 px-1.5 py-0.5 rounded bg-slate-100/90 text-slate-700 font-semibold">
+                            {ROLE_LABELS[u.role] || u.role}
+                          </span>
+                        )}
+                      </p>
+                      <p className={`text-[11px] mt-1.5 font-semibold ${u.online ? 'text-emerald-700' : 'text-slate-500'}`}>
+                        {u.online ? '● Đang hoạt động' : `○ Offline · ${formatRelativeTime(u.last_ping_at)}`}
+                      </p>
+                    </div>
                   </div>
-                </div>
-                <div className="mt-3 pt-3 border-t border-slate-100 flex justify-end">
-                  <button
-                    type="button"
-                    disabled={chatLoadingId === u.id || String(u.id) === String(uid)}
-                    onClick={() => void startDirectChat(u)}
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 hover:text-sky-900 disabled:opacity-50"
-                  >
-                    {chatLoadingId === u.id ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <MessageCircle className="h-3.5 w-3.5" />
-                    )}
-                    Nhắn tin
-                  </button>
-                </div>
-              </li>
-            ))}
+
+                  {/* Vị trí — nổi bật, click mở map */}
+                  {loc ? (
+                    <a
+                      href={locHref}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-3 flex items-start gap-2 rounded-xl border border-sky-200/80 bg-gradient-to-br from-sky-50/95 to-blue-50/80 backdrop-blur p-2.5 hover:from-sky-100 hover:to-blue-100/90 hover:border-sky-300 transition group/loc"
+                      title="Mở vị trí trên Google Maps"
+                    >
+                      <div className="shrink-0 w-8 h-8 rounded-lg bg-sky-600 text-white inline-flex items-center justify-center shadow-md ring-2 ring-white">
+                        <MapPin className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[10px] font-bold text-sky-700 uppercase tracking-wide">
+                          Vị trí hiện tại
+                        </p>
+                        <p className="text-[12px] font-semibold leading-snug truncate" style={{ color: '#0c4a6e' }} title={locLabel}>
+                          {locLabel}
+                        </p>
+                        <p className="text-[10px] text-sky-700/80 mt-0.5 flex items-center gap-1.5">
+                          <span className="font-mono">{loc.lat.toFixed(4)}, {loc.lng.toFixed(4)}</span>
+                          {loc.captured_at && <span>· {formatRelativeTime(loc.captured_at)}</span>}
+                        </p>
+                      </div>
+                      <ExternalLink className="h-3.5 w-3.5 text-sky-600 shrink-0 mt-0.5 opacity-60 group-hover/loc:opacity-100" />
+                    </a>
+                  ) : (
+                    <div className="mt-3 flex items-center gap-2 rounded-xl border border-dashed border-amber-300/80 bg-amber-50/70 backdrop-blur px-2.5 py-2 text-[11px]" style={{ color: '#78350f' }}>
+                      <MapPin className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                      <span>Chưa có vị trí — bật định vị trong Cài đặt</span>
+                    </div>
+                  )}
+
+                  {Array.isArray(u.devices) && u.devices.length > 0 ? (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {u.devices.slice(0, 4).map((d, idx) => (
+                        <DeviceBadge key={`${d.platform}-${idx}`} device={d} />
+                      ))}
+                      {u.devices.length > 4 ? (
+                        <span className="text-[10px] text-slate-500 font-semibold self-center">
+                          +{u.devices.length - 4}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  <div className="mt-3 pt-3 border-t border-white/60 flex justify-end">
+                    <button
+                      type="button"
+                      disabled={chatLoadingId === u.id || String(u.id) === String(uid)}
+                      onClick={() => void startDirectChat(u)}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-sky-700 hover:text-white hover:bg-sky-600 disabled:opacity-50 px-2.5 py-1 rounded-md transition-colors"
+                    >
+                      {chatLoadingId === u.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <MessageCircle className="h-3.5 w-3.5" />
+                      )}
+                      Nhắn tin
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

@@ -155,24 +155,29 @@ export default function QuotationsPage() {
           {hasAnyFilter && <button onClick={() => { setSearch(''); setStatusFilter(''); setDateFrom(''); setDateTo(''); setCompanyFilter(''); setRegionFilter(''); setCreatorFilter(''); setOrphanFilter(''); }} className="text-xs text-red-500 hover:underline cursor-pointer">Xóa lọc</button>}
         </div>
 
-        <div className="overflow-x-auto">
+        <div
+          className="overflow-auto rounded-lg border border-gray-200 [scrollbar-width:thin]"
+          style={{ maxHeight: 'calc(100vh - 360px)', minHeight: 240 }}
+        >
           <table className="w-full text-sm">
-            <thead><tr className="border-b text-left text-xs text-gray-500 uppercase">
-              <th className="py-3 px-3">Mã</th>
-              <th className="py-3 px-3">Tiêu đề</th>
-              <th className="py-3 px-3">Khách hàng</th>
-              <th className="py-3 px-3">Deal liên kết</th>
-              <th className="py-3 px-3">Công ty / Khu vực</th>
-              <th className="py-3 px-3 text-right">Tổng tiền</th>
-              <th className="py-3 px-3">Trạng thái</th>
-              <th className="py-3 px-3">Người tạo</th>
-              <th className="py-3 px-3">Ngày tạo</th>
-              <th className="py-3 px-3 text-center">PDF</th>
-              <th className="py-3 px-3"></th>
-            </tr></thead>
+            <thead className="bg-white/90 backdrop-blur sticky top-0 z-10 shadow-sm">
+              <tr className="border-b text-left text-xs text-gray-600 uppercase">
+                <th className="py-3 px-3 whitespace-nowrap">Mã</th>
+                <th className="py-3 px-3 whitespace-nowrap">Tiêu đề</th>
+                <th className="py-3 px-3 whitespace-nowrap">Khách hàng</th>
+                <th className="py-3 px-3 whitespace-nowrap">Deal liên kết</th>
+                <th className="py-3 px-3 whitespace-nowrap">Công ty / Khu vực</th>
+                <th className="py-3 px-3 text-right whitespace-nowrap">Tổng tiền</th>
+                <th className="py-3 px-3 whitespace-nowrap">Trạng thái</th>
+                <th className="py-3 px-3 whitespace-nowrap">Người tạo</th>
+                <th className="py-3 px-3 whitespace-nowrap">Ngày tạo</th>
+                <th className="py-3 px-3 text-center whitespace-nowrap">PDF</th>
+                <th className="py-3 px-3"></th>
+              </tr>
+            </thead>
             <tbody>
               {filtered.map(q => (
-                <tr key={q.id} className="border-b hover:bg-gray-50 cursor-pointer" onClick={() => navigate(`/crm/quotations/${q.id}`)}>
+                <tr key={q.id} className="border-b hover:bg-slate-200/70 transition-colors cursor-pointer" onClick={() => navigate(`/crm/quotations/${q.id}`)}>
                   <td className="py-3 px-3 font-bold text-blue-600">{q.code}</td>
                   <td className="py-3 px-3 font-medium text-gray-900">{q.title || '-'}</td>
                   <td className="py-3 px-3 text-gray-600">{q.customer_name || q.customer?.full_name || '-'}</td>
@@ -216,6 +221,12 @@ export default function QuotationsPage() {
           </table>
           {filtered.length === 0 && <p className="text-center text-sm text-gray-400 py-8">Không có báo giá phù hợp</p>}
         </div>
+        {filtered.length > 0 && (
+          <div className="mt-2 flex items-center justify-between text-[11px] text-gray-500 px-1">
+            <span>Hiển thị <strong className="text-gray-700">{filtered.length}</strong> báo giá{hasAnyFilter ? ' (đã lọc)' : ''}</span>
+            {filtered.length > 8 && <span>Cuộn dọc để xem thêm</span>}
+          </div>
+        )}
       </div>
 
       {/* Excel Import Modal */}
