@@ -1,9 +1,35 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { writeFileSync, mkdirSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+const BUILD_VERSION = String(Date.now());
 
 const analyze = process.env.ANALYZE === '1';
 const plugins = [react(), tailwindcss()];
+
+/**
+ * Sinh `dist/version.json` lúc build để frontend poll phát hiện phiên bản mới
+ * (bypass cache HTML/JS ở trình duyệt cũ).
+ */
+plugins.push({
+  name: 'emit-version-json',
+  apply: 'build',
+  closeBundle() {
+    try {
+      const outDir = resolve(__dirname, 'dist');
+      mkdirSync(outDir, { recursive: true });
+      writeFileSync(
+        resolve(outDir, 'version.json'),
+        JSON.stringify({ version: BUILD_VERSION, builtAt: new Date().toISOString() }, null, 2),
+        'utf8',
+      );
+    } catch (e) {
+      console.warn('[vite] emit-version-json:', e?.message);
+    }
+  },
+});
 if (analyze) {
   const { visualizer } = await import('rollup-plugin-visualizer');
   plugins.push(visualizer({
@@ -17,6 +43,9 @@ if (analyze) {
 
 export default defineConfig({
   plugins,
+  define: {
+    __APP_VERSION__: JSON.stringify(BUILD_VERSION),
+  },
   server: {
     proxy: {
       '/api': 'http://localhost:4000',
