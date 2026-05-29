@@ -13,6 +13,7 @@ import { isAdminLike } from '../lib/adminRole';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
 import CRMTasksTab from '../components/CRMTasksTab';
+import UnifiedTaskHistoryWidget from '../components/UnifiedTaskHistoryWidget';
 import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
 import ExcelQuotationImport from '../components/ExcelQuotationImport';
 import QuotationSourceExcelLink from '../components/QuotationSourceExcelLink';
@@ -109,6 +110,7 @@ export default function LeadDetail() {
   const [assignBeforeWonUser, setAssignBeforeWonUser] = useState('');
   const [assigningForWon, setAssigningForWon] = useState(false);
   const [assignBeforeWonError, setAssignBeforeWonError] = useState('');
+  const [assignBeforeWonRegion, setAssignBeforeWonRegion] = useState('');
   const [editingLeadTitle, setEditingLeadTitle] = useState(false);
   const [leadTitleDraft, setLeadTitleDraft] = useState('');
   const [savingLeadTitle, setSavingLeadTitle] = useState(false);
@@ -704,6 +706,7 @@ export default function LeadDetail() {
       const hasAssignee = !!(lead?.assigned_to || lead?.lead_owner_id);
       if (!hasAssignee) {
         setAssignBeforeWonUser('');
+        setAssignBeforeWonRegion(lead?.region_id ? String(lead.region_id) : '');
         setShowAssignBeforeWonModal(true);
       } else {
         setShowConvertModal(true);
@@ -828,12 +831,14 @@ export default function LeadDetail() {
 
   const handleAssignAndConvert = async () => {
     if (!assignBeforeWonUser) { setAssignBeforeWonError('Vui lòng chọn nhân viên phụ trách'); return; }
+    if (!assignBeforeWonRegion) { setAssignBeforeWonError('Vui lòng chọn khu vực'); return; }
     setAssigningForWon(true);
     setAssignBeforeWonError('');
     try {
       const { data } = await api.post(`/crm/leads/${id}/convert-to-deal`, {
         assigned_to: assignBeforeWonUser,
         company_id: lead?.company_id || undefined,
+        region_id: assignBeforeWonRegion,
       });
       setShowAssignBeforeWonModal(false);
       navigateToCrmDealFocused(data?.lead?.id || data?.deal?.id || data?.id || id);
@@ -1533,6 +1538,7 @@ export default function LeadDetail() {
             {/* Tab Content */}
             <div className="p-5">
               {activeTab === 'tasks' ? (
+                <>
                 <CRMTasksTab
                   leadId={id}
                   leadType={lead?.type || 'lead'}
@@ -1541,6 +1547,13 @@ export default function LeadDetail() {
                   refreshKey={crmTasksRefreshKey}
                   sxTemplateCompanyId={lead?.sx_template_company_id || null}
                 />
+                <div className="mt-6">
+                  <UnifiedTaskHistoryWidget
+                    leadId={id}
+                    projectId={lead?.project_id || undefined}
+                  />
+                </div>
+                </>
               ) : activeTab === 'kpi_ledger' ? (
                 <LeadKpiLedgerPanel leadId={id} />
               ) : activeTab === 'documents' ? (
@@ -1900,6 +1913,35 @@ export default function LeadDetail() {
               </div>
             )}
 
+            <div className="mb-3">
+              <label className="text-xs font-semibold text-gray-700 mb-1.5 block">
+                📍 Khu vực <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={assignBeforeWonRegion}
+                onChange={(e) => { setAssignBeforeWonRegion(e.target.value); setAssignBeforeWonError(''); }}
+                disabled={!lead?.company_id || selectableRegions.length === 0}
+                className="w-full h-10 px-3 border border-gray-200 rounded-xl text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+              >
+                <option value="">
+                  {!lead?.company_id
+                    ? '— Lead chưa có công ty —'
+                    : selectableRegions.length === 0
+                      ? '— Công ty chưa có khu vực —'
+                      : '— Chọn khu vực —'}
+                </option>
+                {selectableRegions.map((reg) => (
+                  <option key={reg.id} value={reg.id}>{reg.name}</option>
+                ))}
+              </select>
+              {!lead?.company_id && (
+                <p className="text-[10px] text-amber-500 mt-1">⚠️ Lead chưa có công ty — vào mục Thông tin để gán công ty trước</p>
+              )}
+              {lead?.company_id && selectableRegions.length === 0 && (
+                <p className="text-[10px] text-amber-500 mt-1">⚠️ Công ty chưa có khu vực — vào CRM/Khu vực để thêm trước</p>
+              )}
+            </div>
+
             <div className="mb-4">
               <label className="text-xs font-semibold text-gray-700 mb-1.5 block">👤 Người phụ trách deal</label>
               <EmployeePicker
@@ -1931,7 +1973,7 @@ export default function LeadDetail() {
               </button>
               <button
                 onClick={handleAssignAndConvert}
-                disabled={assigningForWon || !assignBeforeWonUser || !lead?.customer_id}
+                disabled={assigningForWon || !assignBeforeWonUser || !assignBeforeWonRegion || !lead?.customer_id}
                 className="flex-1 h-10 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {assigningForWon ? (
@@ -3195,8 +3237,11 @@ function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose,
   const [companies, setCompanies] = useState([]);
   const [selectedCompany, setSelectedCompany] = useState('');
   const [selectedSales, setSelectedSales] = useState(lead?.assigned_to || lead?.lead_owner_id || '');
+  const [regions, setRegions] = useState([]);
+  const [regionsLoading, setRegionsLoading] = useState(false);
+  const [selectedRegion, setSelectedRegion] = useState(lead?.region_id ? String(lead.region_id) : '');
 
-  const canConvert = customer?.full_name && customer?.phone;
+  const canConvert = customer?.full_name && customer?.phone && !!selectedRegion;
 
   // Load companies + auto-select from lead
   useEffect(() => {
@@ -3213,12 +3258,49 @@ function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose,
     })();
   }, [lead?.company_id]);
 
+  // Load khu vực CRM khi chọn công ty
+  useEffect(() => {
+    if (!selectedCompany) {
+      setRegions([]);
+      return undefined;
+    }
+    let cancel = false;
+    setRegionsLoading(true);
+    api
+      .get('/crm/company-regions', { params: { company_id: selectedCompany, for_module: 'crm' } })
+      .then((r) => {
+        if (cancel) return;
+        const list = Array.isArray(r.data) ? r.data : [];
+        setRegions(list.filter((x) => x.is_active !== false));
+      })
+      .catch(() => {
+        if (!cancel) setRegions([]);
+      })
+      .finally(() => {
+        if (!cancel) setRegionsLoading(false);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [selectedCompany]);
+
+  // Bỏ chọn region nếu không thuộc danh mục theo công ty hiện tại
+  useEffect(() => {
+    if (!selectedRegion || regions.length === 0) return;
+    if (!regions.some((r) => String(r.id) === String(selectedRegion))) setSelectedRegion('');
+  }, [regions, selectedRegion]);
+
   const handleConvert = async () => {
+    if (!selectedRegion) {
+      alert('Vui lòng chọn khu vực trước khi chuyển sang Deal');
+      return;
+    }
     setConverting(true);
     try {
       const { data } = await api.post(`/crm/leads/${leadId}/convert-to-deal`, {
         ...(selectedSales ? { assigned_to: selectedSales } : {}),
         company_id: selectedCompany || undefined,
+        region_id: selectedRegion,
       });
       alert(`✅ ${data.message}`);
       onSuccess(data?.lead?.id || data?.deal?.id || data?.id || leadId);
@@ -3243,12 +3325,15 @@ function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose,
             <div className={`text-sm flex items-center gap-2 ${customer?.full_name && customer?.phone ? 'text-emerald-600' : 'text-red-600'}`}>
               {customer?.full_name && customer?.phone ? '✅' : '❌'} Khách hàng: {customer?.full_name || '—'}, {customer?.phone || 'Chưa có SĐT'}
             </div>
+            <div className={`text-sm flex items-center gap-2 ${selectedRegion ? 'text-emerald-600' : 'text-red-600'}`}>
+              {selectedRegion ? '✅' : '❌'} Khu vực: {regions.find((r) => String(r.id) === String(selectedRegion))?.name || 'Chưa chọn'}
+            </div>
           </div>
 
           {/* Chọn Công ty */}
           <div>
             <label className="text-xs font-bold text-gray-700 mb-1 block">🏢 Công ty thực hiện</label>
-            <select value={selectedCompany} onChange={e => { setSelectedCompany(e.target.value); setSelectedSales(''); }}
+            <select value={selectedCompany} onChange={e => { setSelectedCompany(e.target.value); setSelectedSales(''); setSelectedRegion(''); }}
               className="w-full h-10 px-3 border rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-blue-500">
               <option value="">-- Chọn công ty --</option>
               {companies.map(c => (
@@ -3257,6 +3342,35 @@ function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose,
             </select>
             {lead?.company_id && selectedCompany === lead.company_id && (
               <p className="text-[10px] text-emerald-600 mt-0.5">✓ Tự động lấy từ Lead</p>
+            )}
+          </div>
+
+          {/* Chọn Khu vực — bắt buộc */}
+          <div>
+            <label className="text-xs font-bold text-gray-700 mb-1 block">
+              📍 Khu vực <span className="text-red-500">*</span>
+            </label>
+            <select
+              value={selectedRegion}
+              onChange={(e) => setSelectedRegion(e.target.value)}
+              disabled={!selectedCompany || regionsLoading || regions.length === 0}
+              className="w-full h-10 px-3 border rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-400"
+            >
+              <option value="">
+                {!selectedCompany
+                  ? '-- Chọn công ty trước --'
+                  : regionsLoading
+                    ? 'Đang tải khu vực…'
+                    : regions.length === 0
+                      ? '-- Công ty chưa có khu vực --'
+                      : '-- Chọn khu vực --'}
+              </option>
+              {regions.map((reg) => (
+                <option key={reg.id} value={reg.id}>{reg.name}</option>
+              ))}
+            </select>
+            {selectedCompany && !regionsLoading && regions.length === 0 && (
+              <p className="text-[10px] text-amber-500 mt-0.5">⚠️ Công ty chưa có khu vực — vào CRM/Khu vực để thêm trước</p>
             )}
           </div>
 

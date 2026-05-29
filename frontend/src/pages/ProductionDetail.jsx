@@ -22,6 +22,7 @@ import {
   AlertTriangle, CheckCircle2, Circle, Clock, Truck, Wrench,
 } from 'lucide-react';
 import CRMTasksTab from '../components/CRMTasksTab';
+import UnifiedTaskHistoryWidget from '../components/UnifiedTaskHistoryWidget';
 import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
 import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
 import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
@@ -1549,7 +1550,8 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
 
             <div className="p-5">
               {activeTab === 'tasks' && (
-                crmLeadId ? (
+                <>
+                {crmLeadId ? (
                   <CRMTasksTab
                     leadId={crmLeadId}
                     leadType="deal"
@@ -1572,7 +1574,11 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                       Gắn deal từ CRM (deal phải trỏ đúng <span className="font-mono">project_id</span>) để dùng tab pipeline CRM; hoặc thêm nhiệm vụ trực tiếp trên dự án / CRM.
                     </p>
                   </div>
-                )
+                )}
+                <div className="mt-6">
+                  <UnifiedTaskHistoryWidget projectId={id} />
+                </div>
+                </>
               )}
 
               {/* Tài liệu */}

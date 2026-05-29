@@ -32,6 +32,7 @@ const MENU_GROUPS = [
       { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
       { to: '/dashboard/divisions', icon: BarChart3, label: 'Dashboard Khối' },
       { to: '/my-tasks', icon: Inbox, label: 'Việc của tôi' },
+      { to: '/work/unified', icon: Layers, label: 'Tổng hợp nhiệm vụ' },
       { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },
       { to: '/project-workflow', icon: GitBranch, label: 'Công việc dự án' },
     ]

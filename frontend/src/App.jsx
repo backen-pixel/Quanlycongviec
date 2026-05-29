@@ -55,6 +55,7 @@ import Login from './pages/Login';
 
 const Dashboard = lazyWithRetry(() => import('./pages/DashboardNew'));
 const MyTasks = lazyWithRetry(() => import('./pages/MyTasks'));
+const WorkTasksUnifiedPage = lazyWithRetry(() => import('./pages/WorkTasksUnifiedPage'));
 const Projects = lazyWithRetry(() => import('./pages/Projects'));
 const ProjectDetail = lazyWithRetry(() => import('./pages/ProjectDetail'));
 const Tasks = lazyWithRetry(() => import('./pages/Tasks'));
@@ -312,6 +313,7 @@ export default function App() {
             <Route path="/social/u/:userId" element={<SocialProfilePage />} />
             <Route path="/dashboard/divisions" element={<DivisionDashboardPage />} />
             <Route path="/my-tasks" element={<MyTasks />} />
+            <Route path="/work/unified" element={<Suspense fallback={<PageLoader />}><WorkTasksUnifiedPage /></Suspense>} />
             <Route path="/projects" element={<Projects />} />
             <Route path="/projects/create" element={<CreateProject />} />
             <Route path="/projects/:id" element={<ProjectDetail />} />
