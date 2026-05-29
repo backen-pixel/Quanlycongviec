@@ -13,7 +13,6 @@ const {
   createProjectTask,
   updateProjectTask,
   deleteProjectTask,
-  addProjectTaskComment: addProjectTaskCommentCore,
 } = require('../helpers/projectTaskMutations');
 
 const r = Router();
