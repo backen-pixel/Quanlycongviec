@@ -427,17 +427,18 @@ export default function TrashPage({ embedded = false }) {
                 const meta = ENTITY_META[it.entity_type] || { label: it.entity_type, icon: FileText, color: 'bg-gray-100 text-gray-700' };
                 const Icon = meta.icon;
                 return (
-                  <tr key={it.id} className="hover:bg-gray-50">
+                  <tr key={it.id} className="hover:bg-slate-200/70 transition-colors">
                     <td className="px-4 py-3">
                       <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium ${meta.color}`}>
                         <Icon className="h-3.5 w-3.5" /> {meta.label}
                       </span>
                     </td>
-                    <td className="px-4 py-3 font-medium text-gray-900 max-w-xs truncate" title={it.entity_label}>
+                    <td className="px-4 py-3 font-medium max-w-xs truncate" style={{ color: '#000000' }} title={it.entity_label}>
                       <button
                         type="button"
                         onClick={() => setDetailId(it.id)}
                         className="hover:text-blue-600 hover:underline text-left truncate max-w-full cursor-pointer"
+                        style={{ color: '#000000' }}
                         title="Bấm để xem chi tiết"
                       >
                         {it.entity_label || '—'}

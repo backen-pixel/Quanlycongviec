@@ -926,7 +926,6 @@ export default function ProductionDashboard() {
       {/* Header — gọn nhẹ, view-mode buttons outlined */}
       <div className="flex items-end justify-between gap-3 flex-wrap">
         <div>
-          <p className="text-[11px] text-gray-500 font-medium mb-0.5">Sản xuất / Quản lý xưởng</p>
           <h1 className="text-xl md:text-2xl font-bold text-gray-900 flex items-center gap-1.5">
             <Factory className="h-5 w-5 text-blue-600" />
             Quản lý sản xuất
@@ -948,8 +947,9 @@ export default function ProductionDashboard() {
               className={`h-9 px-3 rounded-lg border text-sm font-medium inline-flex items-center gap-1.5 cursor-pointer transition-colors ${
                 viewMode === v.id
                   ? 'border-blue-500 bg-blue-50 text-blue-700'
-                  : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                  : 'border-gray-200 bg-white hover:bg-gray-50'
               }`}
+              style={viewMode === v.id ? undefined : { color: '#000000' }}
             >
               <v.icon className="h-3.5 w-3.5" />
               {v.label}
@@ -1111,8 +1111,9 @@ export default function ProductionDashboard() {
             className={`h-9 px-3 rounded-lg border text-sm font-medium inline-flex items-center gap-1.5 shrink-0 cursor-pointer ${
               showAdvFilter || advFilterCount
                 ? 'border-blue-300 bg-blue-50 text-blue-700'
-                : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                : 'border-gray-200 bg-white hover:bg-gray-50'
             }`}
+            style={(showAdvFilter || advFilterCount) ? undefined : { color: '#000000' }}
           >
             <Filter className="h-3.5 w-3.5" />
             Bộ lọc
@@ -1129,8 +1130,9 @@ export default function ProductionDashboard() {
               type="button"
               onClick={() => setSortOpen((s) => !s)}
               className={`h-9 px-3 rounded-lg border text-sm font-medium inline-flex items-center gap-1.5 shrink-0 cursor-pointer ${
-                sortOpen ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                sortOpen ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white hover:bg-gray-50'
               }`}
+              style={sortOpen ? undefined : { color: '#000000' }}
             >
               <ArrowUpDown className="h-3.5 w-3.5" />
               {SX_SORT_OPTIONS.find((o) => o.id === sortBy)?.label || 'Sắp xếp'}
@@ -1557,16 +1559,16 @@ export default function ProductionDashboard() {
 
 // KPI Card — thanh màu mảnh ở trên + label / value / descriptor (giống mockup)
 function KPICard({ accent = 'bg-blue-500', label, value, descriptor, valueTone }) {
-  const valueColor =
-    valueTone === 'danger' ? 'text-red-600'
-    : valueTone === 'warning' ? 'text-amber-600'
-    : 'text-gray-900';
+  const isDanger = valueTone === 'danger';
+  const isWarning = valueTone === 'warning';
+  const valueClass = isDanger ? 'text-red-600' : isWarning ? 'text-amber-600' : '';
+  const valueStyle = !isDanger && !isWarning ? { color: '#000000' } : undefined;
   return (
     <div className="relative min-w-0 rounded-lg border border-gray-200 bg-white shadow-sm hover:shadow-md transition-shadow overflow-hidden">
       <div className={`h-[3px] w-full ${accent}`} />
       <div className="px-3 py-2 flex flex-col gap-0.5">
         <p className="text-[11px] text-gray-500 font-medium truncate" title={label}>{label}</p>
-        <p className={`text-2xl font-bold leading-none tabular-nums ${valueColor}`}>{value}</p>
+        <p className={`text-2xl font-bold leading-none tabular-nums ${valueClass}`} style={valueStyle}>{value}</p>
         {descriptor && <p className="text-[11px] text-gray-400 truncate" title={descriptor}>{descriptor}</p>}
       </div>
     </div>
@@ -1609,7 +1611,7 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
         style={{ borderTop: `8px solid ${stageColor}` }}
       >
         <div className="flex items-center gap-1.5">
-          <h3 className="text-sm font-semibold text-gray-900 truncate">{stage.name}</h3>
+          <h3 className="text-sm font-semibold truncate" style={{ color: '#000000' }}>{stage.name}</h3>
           <span
             className="shrink-0 inline-flex items-center justify-center min-w-[24px] h-[22px] px-1.5 rounded-md text-[13px] font-bold tabular-nums leading-none"
             style={{
@@ -1828,7 +1830,11 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
       </div>
 
       {/* Row 2: Tên dự án — chính, đậm, 2 dòng */}
-      <h4 className="text-[13px] font-semibold text-gray-900 leading-snug line-clamp-2 mb-1" title={item.name}>
+      <h4
+        className="text-[13px] font-semibold leading-snug line-clamp-2 mb-1"
+        style={{ color: '#000000' }}
+        title={item.name}
+      >
         {item.name}
       </h4>
 

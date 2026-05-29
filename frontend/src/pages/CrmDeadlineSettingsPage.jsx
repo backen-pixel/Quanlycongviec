@@ -128,7 +128,7 @@ export default function CrmDeadlineSettingsPage() {
           ) : (
             <div className="space-y-4">
               <div className="bg-white rounded-xl border p-4">
-                <p className="text-sm font-bold text-gray-900 mb-2">Trường nguồn deadline</p>
+                <p className="text-sm font-bold mb-2" style={{ color: '#000000' }}>Trường nguồn deadline</p>
                 <div className="space-y-2">
                   <div>
                     <label className="block text-xs font-medium text-gray-700 mb-1">Trường chính</label>
@@ -152,7 +152,7 @@ export default function CrmDeadlineSettingsPage() {
               </div>
 
               <div className="bg-white rounded-xl border p-4">
-                <p className="text-sm font-bold text-gray-900 mb-2">Các nhóm hiển thị</p>
+                <p className="text-sm font-bold mb-2" style={{ color: '#000000' }}>Các nhóm hiển thị</p>
                 <div className="divide-y">
                   {BUCKETS_DEF.map((b) => {
                     const cur = buckets[b.key] || { enabled: true, label: b.label };

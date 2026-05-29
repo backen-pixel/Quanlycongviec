@@ -206,7 +206,7 @@ export default function KnowledgeScoreboardPage() {
       <div className="bg-white rounded-2xl border border-gray-200 p-4 mb-4">
         <div className="flex items-center gap-2 mb-3">
           <Filter className="h-4 w-4 text-violet-600" />
-          <h3 className="font-semibold text-gray-900">Bộ lọc</h3>
+          <h3 className="font-semibold" style={{ color: '#000000' }}>Bộ lọc</h3>
           {activeFilterCount > 0 && (
             <span className="text-xs px-2 py-0.5 bg-violet-100 text-violet-700 rounded-full">
               {activeFilterCount} đang áp dụng
@@ -412,7 +412,7 @@ export default function KnowledgeScoreboardPage() {
                             </div>
                           </UserPresenceAvatar>
                           <div className="min-w-0">
-                            <p className="font-medium text-gray-900 truncate">{s.user?.full_name || '—'}</p>
+                            <p className="font-medium truncate" style={{ color: '#000000' }}>{s.user?.full_name || '—'}</p>
                             <p className="text-xs text-gray-400 truncate flex items-center gap-1">
                               {s.user?.company?.name && (
                                 <><Building2 className="h-3 w-3" />{s.user.company.name}</>

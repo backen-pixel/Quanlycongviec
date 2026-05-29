@@ -546,18 +546,19 @@ export default function EventsFeedPage() {
                 )}
               </div>
               {/* Vùng cuộn — chiều cao phụ thuộc chế độ lịch:
-                  hidden  → feed full (chừa 320px cho header/filter)
-                  compact → lịch chỉ ~280px (chừa 620px)
-                  full    → lịch ~720px (chừa 1060px khi nhiều tuần)  */}
+                  hidden  → feed full (chừa 260px cho header/filter)
+                  compact → lịch chỉ ~280px (chừa 540px)
+                  full    → lịch ~720px (chừa 740px khi nhiều tuần)
+                  Layout: GRID 2 cột song song trên ≥lg để hiển thị nhiều sự kiện hơn 1 viewport. */}
               <div
-                className="overflow-y-auto pr-2 space-y-4 [scrollbar-width:thin]"
+                className="overflow-y-auto pr-1 [scrollbar-width:thin]"
                 style={{
                   maxHeight: view === 'calendar'
-                    ? calendarMode === 'hidden' ? 'calc(100vh - 320px)'
-                      : calendarMode === 'compact' ? 'calc(100vh - 600px)'
-                        : 'calc(100vh - 800px)'
-                    : 'calc(100vh - 360px)',
-                  minHeight: 240,
+                    ? calendarMode === 'hidden' ? 'calc(100vh - 260px)'
+                      : calendarMode === 'compact' ? 'calc(100vh - 540px)'
+                        : 'calc(100vh - 740px)'
+                    : 'calc(100vh - 300px)',
+                  minHeight: 320,
                 }}
               >
                 {loading ? (
@@ -567,12 +568,16 @@ export default function EventsFeedPage() {
                     <Calendar className="h-12 w-12 mx-auto mb-3 opacity-50" />
                     <p className="text-sm">Không có sự kiện phù hợp bộ lọc</p>
                   </div>
-                ) : events.map(ev => (
-                  <EventCard key={ev.id} event={ev} eventTypes={eventTypes} currentUser={currentUser}
-                    onRespond={handleRespond} onDelete={handleDelete} onCancel={handleCancel}
-                    onStatusChange={handleStatusChange}
-                    onEdit={() => { setEditEvent(ev); setShowCreate(true); }} />
-                ))}
+                ) : (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    {events.map(ev => (
+                      <EventCard key={ev.id} event={ev} eventTypes={eventTypes} currentUser={currentUser}
+                        onRespond={handleRespond} onDelete={handleDelete} onCancel={handleCancel}
+                        onStatusChange={handleStatusChange}
+                        onEdit={() => { setEditEvent(ev); setShowCreate(true); }} />
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -642,36 +647,23 @@ function EventCard({ event: ev, eventTypes, currentUser, onRespond, onDelete, on
   };
 
   return (
-    <div className="bg-white rounded-xl border shadow-sm hover:shadow-md transition-shadow">
-      {/* Header — Creator info */}
-      <div className="flex items-start justify-between px-5 pt-4 pb-2">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-sm font-bold text-blue-700">
-            {ev.creator?.avatar ? <img src={ev.creator.avatar} className="w-10 h-10 rounded-full object-cover" /> :
+    <div className="bg-white rounded-xl border shadow-sm hover:shadow-md transition-shadow flex flex-col h-full">
+      {/* Header — Creator info (gọn) */}
+      <div className="flex items-start justify-between px-3.5 pt-3 pb-1.5 gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-xs font-bold text-blue-700 shrink-0">
+            {ev.creator?.avatar ? <img src={ev.creator.avatar} className="w-8 h-8 rounded-full object-cover" /> :
               (ev.creator?.full_name || '?').charAt(0)}
           </div>
-          <div>
-            <div className="flex items-center gap-1.5 text-sm">
-              <span className="font-semibold text-gray-900">{ev.creator?.full_name || 'Người dùng'}</span>
-              <span className="text-gray-400">›</span>
-              <span className="text-gray-500">Tất cả nhân viên</span>
+          <div className="min-w-0">
+            <div className="flex items-center gap-1 text-[12px] min-w-0">
+              <span className="font-semibold text-gray-900 truncate">{ev.creator?.full_name || 'Người dùng'}</span>
             </div>
-            <p className="text-xs text-gray-400">{formatDateVN(ev.created_at)}, {formatTime(ev.created_at)}</p>
+            <p className="text-[10px] text-gray-400 leading-tight">{formatDateVN(ev.created_at)}, {formatTime(ev.created_at)}</p>
           </div>
         </div>
-        <div className="flex items-center gap-1">
-          {(() => {
-            const mm = moduleMeta(ev.module);
-            return (
-              <span
-                className={`text-[10px] px-2 py-0.5 rounded-full font-medium border ${mm.color}`}
-                title={`Khối: ${mm.label}`}
-              >
-                {mm.emoji} {mm.label}
-              </span>
-            );
-          })()}
-          <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${statusInfo.color}`}>{statusInfo.label}</span>
+        <div className="flex items-center gap-0.5 shrink-0">
+          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${statusInfo.color}`}>{statusInfo.label}</span>
           <button onClick={onEdit} title="Sửa" className="p-1 text-gray-400 hover:text-blue-600 rounded cursor-pointer"><Edit3 className="h-3.5 w-3.5" /></button>
           {canManage && ev.status !== 'cancelled' && ev.status !== 'completed' && typeof onCancel === 'function' && (
             <button
@@ -687,9 +679,23 @@ function EventCard({ event: ev, eventTypes, currentUser, onRespond, onDelete, on
           )}
         </div>
       </div>
+      {/* Module chip — 1 hàng mỏng, không ăn chỗ */}
+      <div className="px-3.5 pb-1">
+        {(() => {
+          const mm = moduleMeta(ev.module);
+          return (
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium border ${mm.color}`}
+              title={`Khối: ${mm.label}`}
+            >
+              {mm.emoji} {mm.label}
+            </span>
+          );
+        })()}
+      </div>
       {/* Lý do hủy — hiển thị khi đã cancel */}
       {ev.status === 'cancelled' && ev.cancel_reason && (
-        <div className="mx-5 mb-2 -mt-1 rounded-lg border border-red-200 bg-red-50/70 px-3 py-1.5 text-xs text-red-700">
+        <div className="mx-3.5 mb-1.5 rounded-lg border border-red-200 bg-red-50/70 px-2.5 py-1 text-[11px] text-red-700">
           <span className="font-semibold">Lý do hủy:</span> {ev.cancel_reason}
         </div>
       )}
@@ -732,165 +738,170 @@ function EventCard({ event: ev, eventTypes, currentUser, onRespond, onDelete, on
         </div>
       )}
 
-      {/* Event label */}
-      <div className="px-5 pb-1">
-        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Sự kiện</span>
-      </div>
-
-      {/* Event body — Bitrix style with date block */}
-      <div className="px-5 pb-4 flex gap-4">
+      {/* Event body — Bitrix style with date block (compact) */}
+      <div className="px-3.5 pb-3 flex gap-2.5 flex-1 min-h-0">
         {/* Date block */}
-        <div className="flex-shrink-0 w-16 text-center">
-          <div className="bg-blue-600 text-white text-[10px] font-bold py-0.5 rounded-t-lg uppercase">
+        <div className="flex-shrink-0 w-12 text-center">
+          <div className="bg-blue-600 text-white text-[9px] font-bold py-0.5 rounded-t-md uppercase">
             {getDayOfWeek(ev.start_time)}
           </div>
-          <div className="border border-t-0 rounded-b-lg py-1.5">
-            <span className="text-2xl font-bold text-gray-900">{getDayNum(ev.start_time)}</span>
+          <div className="border border-t-0 rounded-b-md py-1">
+            <span className="text-xl font-bold leading-none" style={{ color: '#000000' }}>{getDayNum(ev.start_time)}</span>
           </div>
         </div>
 
         {/* Details */}
-        <div className="flex-1 space-y-1.5">
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500">Tên sự kiện:</span>
-            <span className="text-sm font-bold text-gray-900">{typeInfo.icon} {ev.title}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500">Ngày giờ:</span>
-            <span className="text-sm text-gray-700">
-              {(() => {
-                const startLabel = isToday(ev.start_time) ? 'Hôm nay' : formatDateVN(ev.start_time);
-                const startTime = formatTime(ev.start_time);
-                if (!ev.end_time) return `${startLabel}, ${startTime}`;
-                const sameDay = isSameDay(ev.start_time, ev.end_time);
-                const endTime = formatTime(ev.end_time);
-                if (sameDay) {
-                  return `${startLabel}, ${startTime} — ${endTime}`;
-                }
-                // Khác ngày: hiển thị đầy đủ
-                const endLabel = isToday(ev.end_time) ? 'Hôm nay' : formatDateVN(ev.end_time);
-                return `${startLabel}, ${startTime} → ${endLabel}, ${endTime}`;
-              })()}
-            </span>
-          </div>
+        <div className="flex-1 min-w-0 space-y-1">
+          {/* Title */}
+          <p className="text-[13px] font-bold text-gray-900 leading-snug line-clamp-2" title={ev.title}>
+            <span className="mr-1">{typeInfo.icon}</span>{ev.title}
+          </p>
+          {/* Datetime */}
+          <p className="text-[11px] text-gray-600 flex items-center gap-1">
+            <Clock className="h-3 w-3 text-gray-400 shrink-0" />
+            <span className="truncate">{(() => {
+              const startLabel = isToday(ev.start_time) ? 'Hôm nay' : formatDateVN(ev.start_time);
+              const startTime = formatTime(ev.start_time);
+              if (!ev.end_time) return `${startLabel}, ${startTime}`;
+              const sameDay = isSameDay(ev.start_time, ev.end_time);
+              const endTime = formatTime(ev.end_time);
+              if (sameDay) return `${startLabel}, ${startTime} — ${endTime}`;
+              const endLabel = isToday(ev.end_time) ? 'Hôm nay' : formatDateVN(ev.end_time);
+              return `${startLabel}, ${startTime} → ${endLabel}, ${endTime}`;
+            })()}</span>
+          </p>
           {ev.location && (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500">Địa điểm:</span>
-              <span className="text-sm text-gray-700 flex items-center gap-1"><MapPin className="h-3.5 w-3.5 text-gray-400" /> {ev.location}</span>
-            </div>
+            <p className="text-[11px] text-gray-600 flex items-center gap-1 truncate" title={ev.location}>
+              <MapPin className="h-3 w-3 text-gray-400 shrink-0" />
+              <span className="truncate">{ev.location}</span>
+            </p>
           )}
           {ev.lead && (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500">Deal:</span>
-              <Link to={`/crm/leads/${ev.lead.id}`} className="text-sm text-blue-600 hover:underline font-medium">
+            <p className="text-[11px] truncate">
+              <span className="text-gray-500">Deal: </span>
+              <Link to={`/crm/leads/${ev.lead.id}`} className="text-blue-600 hover:underline font-medium">
                 {ev.lead.code} — {ev.lead.title}
               </Link>
-            </div>
+            </p>
           )}
           {ev.customer && (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500">Khách hàng:</span>
-              <span className="text-sm text-gray-700">{ev.customer.full_name} {ev.customer.phone ? `(${ev.customer.phone})` : ''}</span>
-            </div>
+            <p className="text-[11px] text-gray-600 truncate">
+              <span className="text-gray-500">KH: </span>
+              {ev.customer.full_name} {ev.customer.phone ? `(${ev.customer.phone})` : ''}
+            </p>
           )}
-          {ev.description && <p className="text-sm text-gray-600 mt-1">{ev.description}</p>}
-          {ev.result && <p className="text-sm text-emerald-700 bg-emerald-50 px-2 py-1 rounded mt-1">📝 {ev.result}</p>}
+          {ev.description && <p className="text-[11px] text-gray-600 line-clamp-2">{ev.description}</p>}
+          {ev.result && <p className="text-[11px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded line-clamp-2">📝 {ev.result}</p>}
 
-          {/* Participants */}
-          {confirmed.length > 0 && (
-            <div className="flex items-center gap-2 mt-1">
-              <span className="text-xs text-gray-500">Xác nhận:</span>
-              <div className="flex -space-x-1.5">
-                {confirmed.map(p => (
-                  <div key={p.id} title={p.user?.full_name} className="w-7 h-7 rounded-full bg-emerald-100 border-2 border-white flex items-center justify-center text-[10px] font-bold text-emerald-700">
-                    {p.user?.avatar ? <img src={p.user.avatar} className="w-7 h-7 rounded-full object-cover" /> : (p.user?.full_name || '?').charAt(0)}
+          {/* Participants — chip nhỏ */}
+          {(confirmed.length > 0 || declined.length > 0) && (
+            <div className="flex items-center gap-3 pt-0.5">
+              {confirmed.length > 0 && (
+                <div className="flex items-center gap-1">
+                  <Check className="h-3 w-3 text-emerald-500" />
+                  <div className="flex -space-x-1">
+                    {confirmed.slice(0, 4).map(p => (
+                      <div key={p.id} title={p.user?.full_name} className="w-5 h-5 rounded-full bg-emerald-100 border border-white flex items-center justify-center text-[9px] font-bold text-emerald-700">
+                        {p.user?.avatar ? <img src={p.user.avatar} className="w-5 h-5 rounded-full object-cover" /> : (p.user?.full_name || '?').charAt(0)}
+                      </div>
+                    ))}
+                    {confirmed.length > 4 && (
+                      <div className="w-5 h-5 rounded-full bg-emerald-50 border border-white flex items-center justify-center text-[9px] font-bold text-emerald-700">
+                        +{confirmed.length - 4}
+                      </div>
+                    )}
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {declined.length > 0 && (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500">Từ chối:</span>
-              <div className="flex -space-x-1.5">
-                {declined.map(p => (
-                  <div key={p.id} title={p.user?.full_name} className="w-7 h-7 rounded-full bg-red-100 border-2 border-white flex items-center justify-center text-[10px] font-bold text-red-700">
-                    {p.user?.avatar ? <img src={p.user.avatar} className="w-7 h-7 rounded-full object-cover" /> : (p.user?.full_name || '?').charAt(0)}
+                </div>
+              )}
+              {declined.length > 0 && (
+                <div className="flex items-center gap-1">
+                  <X className="h-3 w-3 text-red-500" />
+                  <div className="flex -space-x-1">
+                    {declined.slice(0, 3).map(p => (
+                      <div key={p.id} title={p.user?.full_name} className="w-5 h-5 rounded-full bg-red-100 border border-white flex items-center justify-center text-[9px] font-bold text-red-700">
+                        {p.user?.avatar ? <img src={p.user.avatar} className="w-5 h-5 rounded-full object-cover" /> : (p.user?.full_name || '?').charAt(0)}
+                      </div>
+                    ))}
+                    {declined.length > 3 && (
+                      <div className="w-5 h-5 rounded-full bg-red-50 border border-white flex items-center justify-center text-[9px] font-bold text-red-700">
+                        +{declined.length - 3}
+                      </div>
+                    )}
                   </div>
-                ))}
-              </div>
+                </div>
+              )}
             </div>
           )}
         </div>
       </div>
 
       {/* Action buttons */}
-      <div className="px-5 pb-3 flex items-center gap-3 flex-wrap">
+      <div className="px-3.5 pb-2 flex items-center gap-1.5 flex-wrap">
         {/* Confirm/Decline for current user */}
         {(!myParticipation || myParticipation.status === 'pending') && (
           <>
             <button onClick={() => onRespond(ev.id, 'confirmed')}
-              className="h-8 px-4 bg-blue-500 hover:bg-blue-600 text-white rounded text-xs font-bold uppercase tracking-wide cursor-pointer">
-              Xác nhận tham dự
+              className="h-7 px-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded text-[11px] font-bold uppercase tracking-wide cursor-pointer">
+              Xác nhận
             </button>
             <button onClick={() => onRespond(ev.id, 'declined')}
-              className="h-8 px-4 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded text-xs font-bold uppercase tracking-wide cursor-pointer">
+              className="h-7 px-2.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded text-[11px] font-bold uppercase tracking-wide cursor-pointer">
               Từ chối
             </button>
           </>
         )}
         {myParticipation?.status === 'confirmed' && (
-          <span className="text-xs text-emerald-600 font-medium flex items-center gap-1"><Check className="h-3.5 w-3.5" /> Đã xác nhận</span>
+          <span className="text-[11px] text-emerald-600 font-medium flex items-center gap-1"><Check className="h-3 w-3" /> Đã xác nhận</span>
         )}
         {myParticipation?.status === 'declined' && (
-          <span className="text-xs text-red-500 font-medium flex items-center gap-1"><X className="h-3.5 w-3.5" /> Đã từ chối</span>
+          <span className="text-[11px] text-red-500 font-medium flex items-center gap-1"><X className="h-3 w-3" /> Đã từ chối</span>
         )}
 
         {/* Status quick actions */}
         {ev.status === 'planned' && ev.created_by === currentUser.id && (
           <button onClick={() => onStatusChange(ev.id, 'in_progress')}
-            className="text-xs text-amber-600 hover:underline cursor-pointer font-medium">▶ Bắt đầu</button>
+            className="text-[11px] text-amber-600 hover:underline cursor-pointer font-medium">▶ Bắt đầu</button>
         )}
         {ev.status === 'in_progress' && (
           <button onClick={() => onStatusChange(ev.id, 'completed')}
-            className="text-xs text-emerald-600 hover:underline cursor-pointer font-medium">✅ Hoàn thành</button>
+            className="text-[11px] text-emerald-600 hover:underline cursor-pointer font-medium">✅ Hoàn thành</button>
         )}
       </div>
 
-      {/* Comments section */}
-      <div className="border-t px-5 py-2.5">
-        <div className="flex items-center gap-4 text-xs text-gray-500">
+      {/* Comments section — compact footer */}
+      <div className="border-t px-3.5 py-1.5 mt-auto">
+        <div className="flex items-center gap-3 text-[11px] text-gray-500">
           <button onClick={() => { setShowComments(!showComments); if (!showComments) loadComments(); }}
             className="hover:text-blue-600 cursor-pointer flex items-center gap-1">
-            <MessageSquare className="h-3.5 w-3.5" /> Bình luận
+            <MessageSquare className="h-3 w-3" /> Bình luận
           </button>
-          <span className="flex items-center gap-1"><Users className="h-3.5 w-3.5" /> {(ev.participants || []).length}</span>
+          <span className="flex items-center gap-1"><Users className="h-3 w-3" /> {(ev.participants || []).length}</span>
         </div>
 
         {showComments && (
-          <div className="mt-3 space-y-2">
+          <div className="mt-2 space-y-1.5">
             {comments.map(c => (
-              <div key={c.id} className="flex gap-2">
-                <div className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center text-[10px] font-bold text-gray-500 flex-shrink-0">
+              <div key={c.id} className="flex gap-1.5">
+                <div className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-[9px] font-bold text-gray-500 flex-shrink-0">
                   {(c.user?.full_name || '?').charAt(0)}
                 </div>
-                <div>
-                  <span className="text-xs font-semibold text-gray-700">{c.user?.full_name}</span>
-                  <p className="text-sm text-gray-600">{c.content}</p>
+                <div className="min-w-0 flex-1">
+                  <span className="text-[11px] font-semibold text-gray-700">{c.user?.full_name}</span>
+                  <p className="text-[12px] text-gray-600 break-words">{c.content}</p>
                 </div>
               </div>
             ))}
-            <div className="flex gap-2 mt-2">
-              <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center text-[10px] font-bold text-blue-600 flex-shrink-0">
+            <div className="flex gap-1.5 mt-1.5">
+              <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center text-[9px] font-bold text-blue-600 flex-shrink-0">
                 {(currentUser.full_name || '?').charAt(0)}
               </div>
               <div className="flex-1 flex gap-1">
                 <input value={comment} onChange={e => setComment(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && submitComment()}
-                  placeholder="Thêm bình luận..." className="flex-1 h-8 px-3 border rounded-lg text-sm" />
+                  placeholder="Thêm bình luận..." className="flex-1 h-7 px-2 border rounded-lg text-xs" />
                 <button onClick={submitComment} disabled={sending}
-                  className="h-8 px-3 bg-blue-600 text-white rounded-lg cursor-pointer disabled:opacity-50">
-                  <Send className="h-3.5 w-3.5" />
+                  className="h-7 px-2 bg-blue-600 text-white rounded-lg cursor-pointer disabled:opacity-50">
+                  <Send className="h-3 w-3" />
                 </button>
               </div>
             </div>

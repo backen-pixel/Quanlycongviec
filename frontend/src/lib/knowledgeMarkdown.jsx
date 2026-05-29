@@ -14,7 +14,7 @@ function renderInline(text, keyPrefix) {
     if (m.index > 0) parts.push(remaining.slice(0, m.index));
     const token = m[0];
     if (token.startsWith('**')) {
-      parts.push(<strong key={`${keyPrefix}-b-${idx}`} className="font-semibold text-gray-900">{token.slice(2, -2)}</strong>);
+      parts.push(<strong key={`${keyPrefix}-b-${idx}`} className="font-semibold" style={{ color: '#000000' }}>{token.slice(2, -2)}</strong>);
     } else if (token.startsWith('`')) {
       parts.push(<code key={`${keyPrefix}-c-${idx}`} className="px-1.5 py-0.5 rounded bg-gray-100 text-pink-700 font-mono text-[0.85em]">{token.slice(1, -1)}</code>);
     } else if (token.startsWith('[')) {
@@ -48,7 +48,7 @@ export function renderMarkdownLines(content) {
       out.push(
         <ul key={`ul-${out.length}`} className="list-disc ml-6 my-2 space-y-1">
           {listBuffer.map((li, i) => (
-            <li key={i} className="text-[15px] leading-relaxed text-gray-700">{renderInline(li, `li-${out.length}-${i}`)}</li>
+            <li key={i} className="text-[15px] leading-relaxed" style={{ color: '#1f2937' }}>{renderInline(li, `li-${out.length}-${i}`)}</li>
           ))}
         </ul>,
       );
@@ -82,16 +82,16 @@ export function renderMarkdownLines(content) {
       out.push(<h4 key={i} className="text-base font-bold text-gray-900 mt-5 mb-2">{renderInline(line.slice(4), `h4-${i}`)}</h4>);
     } else if (line.startsWith('## ')) {
       flushList();
-      out.push(<h3 key={i} className="text-lg font-bold text-gray-900 mt-6 mb-2 pb-1 border-b border-gray-100">{renderInline(line.slice(3), `h3-${i}`)}</h3>);
+      out.push(<h3 key={i} className="text-lg font-bold mt-6 mb-2 pb-1 border-b border-gray-100" style={{ color: '#000000' }}>{renderInline(line.slice(3), `h3-${i}`)}</h3>);
     } else if (line.startsWith('# ')) {
       flushList();
-      out.push(<h2 key={i} className="text-xl font-bold text-gray-900 mt-6 mb-3">{renderInline(line.slice(2), `h2-${i}`)}</h2>);
+      out.push(<h2 key={i} className="text-xl font-bold mt-6 mb-3" style={{ color: '#000000' }}>{renderInline(line.slice(2), `h2-${i}`)}</h2>);
     } else if (line.startsWith('- ') || line.startsWith('* ')) {
       listBuffer.push(line.slice(2));
     } else if (/^\d+\.\s/.test(line)) {
       flushList();
       out.push(
-        <p key={i} className="text-[15px] leading-relaxed text-gray-700 ml-4">
+        <p key={i} className="text-[15px] leading-relaxed ml-4" style={{ color: '#1f2937' }}>
           <span className="text-blue-600 font-semibold mr-1">{line.match(/^(\d+\.)/)[1]}</span>
           {renderInline(line.replace(/^\d+\.\s/, ''), `ol-${i}`)}
         </p>,
@@ -104,7 +104,7 @@ export function renderMarkdownLines(content) {
       out.push(<div key={i} className="h-2" />);
     } else {
       flushList();
-      out.push(<p key={i} className="text-[15px] leading-relaxed text-gray-700 my-1">{renderInline(line, `p-${i}`)}</p>);
+      out.push(<p key={i} className="text-[15px] leading-relaxed my-1" style={{ color: '#1f2937' }}>{renderInline(line, `p-${i}`)}</p>);
     }
   });
   flushList();

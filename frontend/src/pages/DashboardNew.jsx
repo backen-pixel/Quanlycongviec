@@ -84,14 +84,19 @@ export default function DashboardNew() {
     <div className="min-h-screen p-4 sm:p-6 lg:p-8">
       <div className="mb-6">
         <div className="flex items-center justify-between mb-4">
-          <h1 className="text-3xl font-bold text-gray-900">📊 Dashboard</h1>
+          <h1 className="text-3xl font-bold" style={{ color: '#000000' }}>📊 Dashboard</h1>
         </div>
         <div data-tour="division-tabs" className="flex items-center gap-3">
           <select
             value={selectedDiv || ''}
             onChange={e => handleTabChange(e.target.value || null)}
-            className="h-10 px-4 pr-8 rounded-xl border border-gray-200 bg-white text-sm font-medium text-gray-700 focus:ring-2 focus:ring-blue-500 focus:border-transparent cursor-pointer appearance-none"
-            style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'12\' height=\'12\' viewBox=\'0 0 12 12\'%3E%3Cpath d=\'M3 5l3 3 3-3\' stroke=\'%236b7280\' fill=\'none\' stroke-width=\'1.5\'/%3E%3C/svg%3E")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center' }}
+            className="h-10 px-4 pr-8 rounded-xl border border-gray-200 bg-white text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:border-transparent cursor-pointer appearance-none"
+            style={{
+              color: '#000000',
+              backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 5l3 3 3-3' stroke='%236b7280' fill='none' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\")",
+              backgroundRepeat: 'no-repeat',
+              backgroundPosition: 'right 12px center',
+            }}
           >
             <option value="">🏠 Tổng quan</option>
             {divisions.map(d => (
@@ -119,7 +124,7 @@ function MainDashboardContent({ overview, workload, alerts, activities }) {
     {/* CRM Stats */}
     {overview.crm && (
       <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-3 mb-8">
-        <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2">
+        <h3 className="text-sm font-bold flex items-center gap-2" style={{ color: '#000000' }}>
           <Target className="h-4 w-4 text-purple-600" /> CRM — Lead & Deal
         </h3>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -256,7 +261,7 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
       {/* CRM Revenue per Khối */}
       {data?.crm && (data.crm.total_orders > 0 || data.crm.total_paid > 0) && (
         <div className="bg-white rounded-xl border p-5">
-          <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2"><DollarSign className="h-4 w-4 text-emerald-600" />Doanh thu Khối</h3>
+          <h3 className="text-sm font-bold mb-3 flex items-center gap-2" style={{ color: '#000000' }}><DollarSign className="h-4 w-4 text-emerald-600" />Doanh thu Khối</h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="bg-blue-50 rounded-lg p-3"><p className="text-[10px] text-blue-600 uppercase font-medium">Tổng ĐH</p><p className="text-lg font-bold text-blue-700">{formatVND(data.crm.total_orders)}</p></div>
             <div className="bg-purple-50 rounded-lg p-3"><p className="text-[10px] text-purple-600 uppercase font-medium">Đã xuất HĐ</p><p className="text-lg font-bold text-purple-700">{formatVND(data.crm.total_invoiced)}</p></div>
@@ -269,7 +274,7 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
       {/* Task Detail */}
       {task_detail?.length > 0 && (
         <div data-tour="task-detail" className="bg-white rounded-xl border border-gray-200 p-6">
-          <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2 mb-5"><CheckSquare className="h-5 w-5 text-blue-600" />Chi Tiết Nhiệm Vụ Theo Quy Trình</h3>
+          <h3 className="text-lg font-bold flex items-center gap-2 mb-5" style={{ color: '#000000' }}><CheckSquare className="h-5 w-5 text-blue-600" />Chi Tiết Nhiệm Vụ Theo Quy Trình</h3>
           <div className="flex items-center gap-2 flex-wrap mb-5 bg-gray-50 rounded-xl p-3">
             <div className="relative flex-1 min-w-[150px] max-w-[250px]">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
@@ -300,7 +305,7 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
                 <button onClick={() => setExpandedStage(expandedStage === td.stage ? null : td.stage)} className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 transition-colors text-left">
                   <div className="flex items-center gap-3">
                     {expandedStage === td.stage ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}
-                    <span className="text-sm font-bold text-gray-900">{td.stage}</span>
+                    <span className="text-sm font-bold" style={{ color: '#000000' }}>{td.stage}</span>
                     <span className="text-xs text-gray-500">{td.total} nhiệm vụ</span>
                   </div>
                   <div className="flex items-center gap-3">
@@ -331,7 +336,7 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
                             <div className="flex items-center justify-between mb-3">
                               <div className="flex items-center gap-2">
                                 <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">{proj.code}</span>
-                                <h4 className="text-sm font-bold text-gray-900 group-hover:text-blue-600">{proj.name}</h4>
+                                <h4 className="text-sm font-bold group-hover:text-blue-600" style={{ color: '#000000' }}>{proj.name}</h4>
                               </div>
                               <div className="flex items-center gap-2">
                                 <span className="text-xs text-emerald-600 font-bold">{done}/{total}</span>
@@ -384,7 +389,7 @@ function ProjectColumn({ title, projects, color }) {
   const hdr = { amber: 'bg-amber-100', blue: 'bg-blue-100', emerald: 'bg-emerald-100' };
   return (
     <div className={`rounded-xl border-2 ${cls[color]} overflow-hidden`}>
-      <div className={`${hdr[color]} px-4 py-3 flex items-center justify-between`}><h4 className="text-sm font-bold text-gray-900">{title}</h4><span className="text-xs font-bold text-gray-600">{projects.length}</span></div>
+      <div className={`${hdr[color]} px-4 py-3 flex items-center justify-between`}><h4 className="text-sm font-bold" style={{ color: '#000000' }}>{title}</h4><span className="text-xs font-bold text-gray-600">{projects.length}</span></div>
       <div className="p-3 space-y-2 max-h-80 overflow-y-auto">
         {projects.map(p => (
           <Link to={`/projects/${p.id}`} key={p.id} className="block bg-white rounded-lg p-3 border border-gray-200 hover:shadow-sm hover:border-blue-300 transition-all">
@@ -403,13 +408,19 @@ function ProjectColumn({ title, projects, color }) {
 function KPICard({ title, value, subtitle, trend, trendLabel, trendNegative, icon: Icon, color, bgColor }) {
   const tc = trendNegative ? (trend > 0 ? 'text-red-600' : 'text-emerald-600') : (trend > 0 ? 'text-emerald-600' : trend < 0 ? 'text-red-600' : 'text-gray-500');
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-6 hover:shadow-lg transition-all group">
-      <div className="flex items-start justify-between mb-4">
-        <div className={`w-12 h-12 rounded-xl ${bgColor} flex items-center justify-center group-hover:scale-110 transition-transform`}><Icon className={`h-6 w-6 ${color.replace('bg-', 'text-')}`} /></div>
-        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{title}</p>
+    <div className="bg-white rounded-xl border border-gray-200 p-6 hover:shadow-lg transition-all group min-w-0 overflow-hidden">
+      <div className="flex items-start justify-between gap-2 mb-4">
+        <div className={`w-12 h-12 shrink-0 rounded-xl ${bgColor} flex items-center justify-center group-hover:scale-110 transition-transform`}><Icon className={`h-6 w-6 ${color.replace('bg-', 'text-')}`} /></div>
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide text-right truncate min-w-0" title={title}>{title}</p>
       </div>
-      <h3 className="text-3xl font-bold text-gray-900 mb-1">{value}</h3>
-      <p className="text-sm text-gray-600 mb-2">{subtitle}</p>
+      <h3
+        className="font-bold mb-1 break-all"
+        style={{ color: '#000000', fontSize: 'clamp(1.25rem, 2.6vw, 1.875rem)', lineHeight: 1.15 }}
+        title={typeof value === 'string' || typeof value === 'number' ? String(value) : undefined}
+      >
+        {value}
+      </h3>
+      <p className="text-sm text-gray-600 mb-2 truncate" title={subtitle}>{subtitle}</p>
       {trend !== undefined && trend !== null && trendLabel && (
         <div className={`flex items-center gap-1 text-xs font-medium ${tc}`}>
           {!trendNegative && trend > 0 && <TrendingUp className="h-3.5 w-3.5" />}
@@ -425,9 +436,9 @@ function WorkloadWidget({ workload }) {
   const mx = Math.max(...workload.map(d => d.project_count), 1);
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-6">
-      <div className="flex items-center justify-between mb-6"><h2 className="text-lg font-bold text-gray-900 flex items-center gap-2"><TrendingUp className="h-5 w-5 text-blue-600" />Phân Bổ Dự Án Theo Giai Đoạn</h2><Link to="/projects" className="text-xs text-blue-600 hover:underline flex items-center gap-1">Xem tất cả <ArrowRight className="h-3 w-3" /></Link></div>
+      <div className="flex items-center justify-between mb-6"><h2 className="text-lg font-bold flex items-center gap-2" style={{ color: '#000000' }}><TrendingUp className="h-5 w-5 text-blue-600" />Phân Bổ Dự Án Theo Giai Đoạn</h2><Link to="/projects" className="text-xs text-blue-600 hover:underline flex items-center gap-1">Xem tất cả <ArrowRight className="h-3 w-3" /></Link></div>
       <div className="space-y-4">
-        {workload.map(s => (<div key={s.id} className="group"><div className="rounded-lg p-2 -mx-2"><div className="flex items-center justify-between mb-1.5"><span className="text-sm font-medium text-gray-700 flex items-center gap-2">{s.icon && <span>{s.icon}</span>}<span className="w-3 h-3 rounded-full" style={{ backgroundColor: s.color }} />{s.name}</span><span className="text-sm font-bold text-gray-900">{s.project_count} dự án</span></div><div className="h-3 bg-gray-100 rounded-full overflow-hidden"><div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.max((s.project_count/mx)*100, s.project_count > 0 ? 5 : 0)}%`, backgroundColor: s.color || '#3b82f6' }} /></div></div></div>))}
+        {workload.map(s => (<div key={s.id} className="group"><div className="rounded-lg p-2 -mx-2"><div className="flex items-center justify-between mb-1.5"><span className="text-sm font-medium text-gray-700 flex items-center gap-2">{s.icon && <span>{s.icon}</span>}<span className="w-3 h-3 rounded-full" style={{ backgroundColor: s.color }} />{s.name}</span><span className="text-sm font-bold" style={{ color: '#000000' }}>{s.project_count} dự án</span></div><div className="h-3 bg-gray-100 rounded-full overflow-hidden"><div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.max((s.project_count/mx)*100, s.project_count > 0 ? 5 : 0)}%`, backgroundColor: s.color || '#3b82f6' }} /></div></div></div>))}
         {workload.length === 0 && <div className="text-center py-8 text-gray-400"><TrendingUp className="h-12 w-12 mx-auto mb-2 opacity-50" /><p className="text-sm">Chưa có dữ liệu</p></div>}
       </div>
     </div>
@@ -445,7 +456,7 @@ function AlertsWidget({ alerts }) {
   const total = Object.values(alerts).reduce((s, v) => s + v, 0);
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-6">
-      <div className="flex items-center justify-between mb-6"><h2 className="text-lg font-bold text-gray-900 flex items-center gap-2"><Bell className="h-5 w-5 text-amber-600" />Cảnh Báo</h2>{total > 0 && <span className="px-2.5 py-1 bg-red-100 text-red-700 text-xs font-bold rounded-full">{total}</span>}</div>
+      <div className="flex items-center justify-between mb-6"><h2 className="text-lg font-bold flex items-center gap-2" style={{ color: '#000000' }}><Bell className="h-5 w-5 text-amber-600" />Cảnh Báo</h2>{total > 0 && <span className="px-2.5 py-1 bg-red-100 text-red-700 text-xs font-bold rounded-full">{total}</span>}</div>
       <div className="space-y-3">
         {items.map((it, i) => (<div key={i} className={`flex items-center justify-between p-3 rounded-lg ${it.bg}`}><div className="flex items-center gap-2"><AlertTriangle className={`h-4 w-4 ${it.color}`} /><span className="text-sm font-medium text-gray-700">{it.label}</span></div><span className={`text-lg font-bold ${it.color}`}>{it.value}</span></div>))}
         {total === 0 && <div className="text-center py-8 text-gray-400"><CheckSquare className="h-12 w-12 mx-auto mb-2 opacity-50" /><p className="text-sm">Không có cảnh báo</p></div>}
@@ -459,12 +470,12 @@ function ActivityFeed({ activities }) {
   const actColor = (a) => a === 'create' ? 'bg-green-100 text-green-700' : a === 'update' ? 'bg-blue-100 text-blue-700' : a === 'delete' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700';
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-6">
-      <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2 mb-6"><Activity className="h-5 w-5 text-indigo-600" />Hoạt Động Gần Đây</h2>
+      <h2 className="text-lg font-bold flex items-center gap-2 mb-6" style={{ color: '#000000' }}><Activity className="h-5 w-5 text-indigo-600" />Hoạt Động Gần Đây</h2>
       <div className="space-y-3 max-h-96 overflow-y-auto">
         {activities.map(a => (
           <div key={a.id} className="flex items-start gap-3 p-3 rounded-lg transition-colors hover:bg-slate-200/70">
             <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ backgroundColor: avatarColor(a.user?.full_name) }}>{getInitials(a.user?.full_name)}</div>
-            <div className="flex-1 min-w-0"><p className="text-sm text-gray-900"><span className="font-semibold">{a.user?.full_name}</span> {a.description}</p><p className="text-xs text-gray-500 mt-1">{fmtTime(a.created_at)}</p></div>
+            <div className="flex-1 min-w-0"><p className="text-sm" style={{ color: '#000000' }}><span className="font-semibold">{a.user?.full_name}</span> {a.description}</p><p className="text-xs text-gray-500 mt-1">{fmtTime(a.created_at)}</p></div>
             <span className={`px-2 py-1 rounded text-xs font-medium ${actColor(a.action)}`}>{a.action}</span>
           </div>
         ))}

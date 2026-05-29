@@ -72,11 +72,12 @@ export default function PipelineStepper({
                 <p
                   className={`mt-2 text-xs text-center leading-tight max-w-[80px] ${
                     isCurrent
-                      ? 'text-gray-900 font-bold'
+                      ? 'font-bold'
                       : isPast
                         ? 'text-emerald-600 font-medium'
                         : 'text-gray-500'
                   }`}
+                  style={isCurrent ? { color: '#000000' } : undefined}
                 >
                   {s.name}
                 </p>

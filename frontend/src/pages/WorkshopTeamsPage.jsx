@@ -163,9 +163,10 @@ export default function WorkshopTeamsPage() {
               onClick={() => setActiveType(key)}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border transition-all cursor-pointer ${
                 activeType === key
-                  ? `${c.bg} ${c.border} text-gray-900 shadow-sm`
-                  : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
+                  ? `${c.bg} ${c.border} shadow-sm`
+                  : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
               }`}
+              style={{ color: activeType === key ? '#000000' : '#475569' }}
             >
               <TIcon className="h-4 w-4" /> Đội {c.label} ({teams.filter((t) => t.type === key).length})
             </button>
@@ -271,7 +272,7 @@ export default function WorkshopTeamsPage() {
                     </div>
                   ) : (
                     <div className="flex-1 min-w-0">
-                      <h3 className="text-sm font-bold text-gray-900">{team.name}</h3>
+                      <h3 className="text-sm font-bold" style={{ color: '#000000' }}>{team.name}</h3>
                       {team.description && <p className="text-[11px] text-gray-500 truncate">{team.description}</p>}
                     </div>
                   )}

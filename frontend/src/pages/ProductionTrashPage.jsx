@@ -177,7 +177,7 @@ export default function ProductionTrashPage({ embedded = false }) {
               {items.map((it) => (
                 <li key={it.id} className="px-5 py-3 hover:bg-gray-50/70 flex items-start gap-3">
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-gray-900 truncate" title={it.entity_label}>
+                    <p className="text-sm font-semibold truncate" style={{ color: '#000000' }} title={it.entity_label}>
                       {it.entity_label || `Dự án ${String(it.entity_id).slice(0, 8)}`}
                     </p>
                     <p className="text-[11px] text-gray-500 mt-0.5 truncate">

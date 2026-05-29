@@ -47,13 +47,13 @@ function RatingSection({ lesson, onChange }) {
 
   return (
     <section className="mt-8 bg-white rounded-2xl border border-gray-200 p-6">
-      <h2 className="text-lg font-bold text-gray-900 mb-1 flex items-center gap-2">
+      <h2 className="text-lg font-bold mb-1 flex items-center gap-2" style={{ color: '#000000' }}>
         <MessageSquare className="h-5 w-5 text-amber-500" /> Đánh giá bài học
       </h2>
       {lesson.rating_count > 0 ? (
         <div className="flex items-center gap-2 text-sm text-gray-600 mb-4">
           <StarRow value={Math.round(lesson.rating_avg || 0)} />
-          <span className="font-semibold text-gray-900">{lesson.rating_avg}</span>
+          <span className="font-semibold" style={{ color: '#000000' }}>{lesson.rating_avg}</span>
           <span className="text-gray-400">({lesson.rating_count} đánh giá)</span>
         </div>
       ) : (
@@ -487,7 +487,7 @@ export default function KnowledgeLessonPage() {
                       {i + 1}
                     </div>
                     <div className="flex-1">
-                      <p className="font-semibold text-gray-900">{ex.title}</p>
+                      <p className="font-semibold" style={{ color: '#000000' }}>{ex.title}</p>
                       <p className="text-xs text-gray-500 mt-1 flex items-center gap-2">
                         <span className="px-2 py-0.5 bg-gray-100 rounded">
                           {ex.type === 'quiz' ? 'Trắc nghiệm' : ex.type === 'checklist' ? 'Checklist' : 'Tự luận'}
