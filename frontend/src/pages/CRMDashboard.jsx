@@ -32,6 +32,8 @@ import {
   buildCrmDashboardCacheKey,
   getCrmDashboardCache,
   saveCrmDashboardCache,
+  getCrmDashboardMetaCache,
+  saveCrmDashboardMetaCache,
 } from '../lib/crmDashboardCache';
 import { userSeesAllCrmDealsScoped } from '../lib/crmDealAccess';
 import {
@@ -983,6 +985,42 @@ export default function CRMDashboard() {
       suppressFilterCompanyLoadRef.current = false;
       return;
     }
+    let veryFreshCacheHit = false;
+    // ── Hydrate metadata cache (localStorage) — sống qua đóng tab ──
+    try {
+      if (user?.id) {
+        const meta = getCrmDashboardMetaCache(user.id);
+        if (meta?.data) {
+          const m = meta.data;
+          if (Array.isArray(m.companies) && m.companies.length && companies.length === 0) {
+            setCompanies(m.companies);
+          }
+          if (Array.isArray(m.users) && m.users.length && users.length === 0) {
+            setUsers(m.users);
+          }
+          if (Array.isArray(m.pipelines) && m.pipelines.length && pipelines.length === 0) {
+            setPipelines(m.pipelines);
+          }
+          if (Array.isArray(m.sources) && m.sources.length && sources.length === 0) {
+            setSources(m.sources);
+          }
+          if (Array.isArray(m.leadTypes) && m.leadTypes.length && leadTypes.length === 0) {
+            setLeadTypes(m.leadTypes);
+          }
+          if (Array.isArray(m.stagesLead) && m.stagesLead.length && stagesLead.length === 0) {
+            setStagesLead(m.stagesLead);
+          }
+          if (Array.isArray(m.stagesDeal) && m.stagesDeal.length && stagesDeal.length === 0) {
+            setStagesDeal(m.stagesDeal);
+          }
+          if (m.fbPages && (!fbPages || Object.keys(fbPages).length === 0)) {
+            setFbPages(m.fbPages);
+          }
+        }
+      }
+    } catch {
+      /* meta hydrate lỗi — bỏ qua */
+    }
     // ── Stale-while-revalidate: hydrate cache để dashboard hiện ngay ──
     try {
       const cacheKey = buildCrmDashboardCacheKey({
@@ -1015,16 +1053,24 @@ export default function CRMDashboard() {
           // Tắt spinner ngay — user thấy dashboard tức thì
           setFirstLoading(false);
           lastHydratedCacheKeyRef.current = cacheKey;
+          // Cache cực tươi (< 30s) → bỏ qua silent reload, giảm tải API
+          if (cached.isVeryFresh) {
+            veryFreshCacheHit = true;
+          }
         }
       }
     } catch {
       /* cache hydrate lỗi — fallback về fetch bình thường */
     }
+    if (veryFreshCacheHit) {
+      // Không cần silent reload — live-version polling sẽ phát hiện thay đổi nếu có
+      return undefined;
+    }
     if (loadDebounceTimerRef.current) clearTimeout(loadDebounceTimerRef.current);
     loadDebounceTimerRef.current = setTimeout(() => {
       loadDebounceTimerRef.current = null;
       void load({ silent: true });
-    }, 280);
+    }, 80);
     return () => {
       if (loadDebounceTimerRef.current) {
         clearTimeout(loadDebounceTimerRef.current);
@@ -1853,6 +1899,23 @@ export default function CRMDashboard() {
         });
       } catch {
         /* cache lỗi không ảnh hưởng dashboard */
+      }
+      // ─── Lưu metadata cache (localStorage) — sống qua đóng tab ───
+      try {
+        if (user?.id) {
+          saveCrmDashboardMetaCache(user.id, {
+            companies: companiesValue,
+            users: usersValue,
+            pipelines: pipelinesValue,
+            stagesLead: stagesLeadValue,
+            stagesDeal: stagesDealValue,
+            sources: sourcesValue,
+            leadTypes: leadTypesValue,
+            fbPages: fbPagesValue,
+          });
+        }
+      } catch {
+        /* meta cache lỗi không ảnh hưởng dashboard */
       }
       void refreshPipelinePhoneTotalsForType(pipelineType);
       if (!isStale()) {
