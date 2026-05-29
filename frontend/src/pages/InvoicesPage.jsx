@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { Search, Receipt, DollarSign, Calendar, Download, Plus, Trash2, FileCheck, Loader2 } from 'lucide-react';
+import { Search, Receipt, DollarSign, Calendar, Download, Plus, Trash2, FileCheck, Loader2, Wallet, AlertCircle } from 'lucide-react';
 
 const PAY_MAP = { unpaid: 'Chưa TT', partial: 'TT 1 phần', paid: 'Đã TT đủ' };
 const PAY_COLORS = { unpaid: 'bg-red-100 text-red-700', partial: 'bg-amber-100 text-amber-700', paid: 'bg-emerald-100 text-emerald-700' };
@@ -82,10 +82,60 @@ export default function InvoicesPage() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="bg-white rounded-xl border p-4"><p className="text-xs text-gray-500 uppercase">Tổng hóa đơn</p><p className="text-xl font-bold text-gray-900">{formatVND(totalAmount)}</p></div>
-        <div className="bg-white rounded-xl border p-4"><p className="text-xs text-gray-500 uppercase">Đã thu</p><p className="text-xl font-bold text-emerald-600">{formatVND(totalPaid)}</p></div>
-        <div className="bg-white rounded-xl border p-4"><p className="text-xs text-gray-500 uppercase">Còn nợ</p><p className="text-xl font-bold text-red-600">{formatVND(totalDebt)}</p></div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {[
+          {
+            label: 'Tổng hóa đơn',
+            value: totalAmount,
+            icon: Receipt,
+            gradient: 'from-indigo-100 via-blue-50 to-white',
+            border: 'border-indigo-300',
+            iconBg: 'bg-indigo-200',
+            iconColor: 'text-indigo-700',
+            accent: 'bg-indigo-500',
+          },
+          {
+            label: 'Đã thu',
+            value: totalPaid,
+            icon: Wallet,
+            gradient: 'from-emerald-100 via-green-50 to-white',
+            border: 'border-emerald-300',
+            iconBg: 'bg-emerald-200',
+            iconColor: 'text-emerald-700',
+            accent: 'bg-emerald-500',
+          },
+          {
+            label: 'Còn nợ',
+            value: totalDebt,
+            icon: AlertCircle,
+            gradient: 'from-red-100 via-rose-50 to-white',
+            border: 'border-red-300',
+            iconBg: 'bg-red-200',
+            iconColor: 'text-red-700',
+            accent: 'bg-red-500',
+          },
+        ].map((kpi) => {
+          const Icon = kpi.icon;
+          return (
+            <div
+              key={kpi.label}
+              className={`relative overflow-hidden bg-gradient-to-br ${kpi.gradient} border ${kpi.border} rounded-2xl p-4 shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200`}
+            >
+              <div className={`absolute top-0 left-0 right-0 h-1 ${kpi.accent}`} />
+              <div className="flex items-center gap-3">
+                <div className={`h-12 w-12 rounded-xl ${kpi.iconBg} flex items-center justify-center shrink-0 shadow-sm`}>
+                  <Icon className={`h-6 w-6 ${kpi.iconColor}`} />
+                </div>
+                <div className="flex-1 min-w-0 text-left">
+                  <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: '#000000' }}>{kpi.label}</p>
+                  <p className="text-2xl font-extrabold leading-tight tracking-tight mt-0.5 truncate" style={{ color: '#000000' }} title={formatVND(kpi.value)}>
+                    {formatVND(kpi.value)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       {/* Payment tabs */}

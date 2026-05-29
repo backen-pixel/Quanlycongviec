@@ -22,9 +22,9 @@ function formatDateVN(iso) {
 
 function renderMarkdownLines(content) {
   return content.split('\n').map((line, i) => {
-    if (line.startsWith('### ')) return <h4 key={i} className="text-sm font-bold text-gray-900 mt-3 mb-1">{line.slice(4)}</h4>;
-    if (line.startsWith('## ')) return <h3 key={i} className="text-base font-bold text-gray-900 mt-4 mb-1">{line.slice(3)}</h3>;
-    if (line.startsWith('# ')) return <h2 key={i} className="text-lg font-bold text-gray-900 mt-4 mb-2">{line.slice(2)}</h2>;
+    if (line.startsWith('### ')) return <h4 key={i} className="text-sm font-bold mt-3 mb-1" style={{ color: '#000000' }}>{line.slice(4)}</h4>;
+    if (line.startsWith('## ')) return <h3 key={i} className="text-base font-bold mt-4 mb-1" style={{ color: '#000000' }}>{line.slice(3)}</h3>;
+    if (line.startsWith('# ')) return <h2 key={i} className="text-lg font-bold mt-4 mb-2" style={{ color: '#000000' }}>{line.slice(2)}</h2>;
     if (line.startsWith('- ')) return <li key={i} className="ml-4 text-sm list-disc">{line.slice(2)}</li>;
     if (line.startsWith('* ')) return <li key={i} className="ml-4 text-sm list-disc">{line.slice(2)}</li>;
     if (line.trim() === '') return <br key={i} />;
@@ -51,10 +51,10 @@ function BuiltinUpdateCard({ item, isExpanded, onToggle }) {
             <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-blue-600 text-white">Mới trong app</span>
             <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${cat.color}`}>{cat.label}</span>
             {item.version && (
-              <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-mono">{item.version}</span>
+              <span className="text-[11px] bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-full font-mono font-bold shadow-sm" style={{ color: '#047857' }}>v{item.version}</span>
             )}
           </div>
-          <h3 className="text-base font-bold text-gray-900 mt-1">{item.title}</h3>
+          <h3 className="text-base font-bold mt-1" style={{ color: '#000000' }}>{item.title}</h3>
           <p className="text-xs text-gray-400 mt-0.5">{formatDateVN(item.publishedAt)}</p>
           {!isExpanded && (
             <p className="text-sm text-gray-500 mt-1 line-clamp-2">
@@ -152,7 +152,7 @@ export default function ReleaseNotesPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+          <h1 className="text-2xl font-bold flex items-center gap-2" style={{ color: '#000000' }}>
             <Megaphone className="h-6 w-6 text-blue-600" /> Có gì mới?
           </h1>
           <p className="text-sm text-gray-500 mt-0.5">
@@ -227,9 +227,9 @@ export default function ReleaseNotesPage() {
                           {!note.is_published && <span className="text-[10px] bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded font-medium">Nháp</span>}
                           {!note.is_read && note.is_published && <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />}
                           <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${cat.color}`}>{cat.label}</span>
-                          {note.version && <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-mono">{note.version}</span>}
+                          {note.version && <span className="text-[11px] bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-full font-mono font-bold shadow-sm" style={{ color: '#047857' }}>v{note.version}</span>}
                         </div>
-                        <h3 className="text-base font-bold text-gray-900 mt-1">{note.title}</h3>
+                        <h3 className="text-base font-bold mt-1" style={{ color: '#000000' }}>{note.title}</h3>
                         <p className="text-xs text-gray-400 mt-0.5">
                           {note.creator?.full_name || 'Admin'} · {formatDateVN(note.published_at || note.created_at)}
                         </p>

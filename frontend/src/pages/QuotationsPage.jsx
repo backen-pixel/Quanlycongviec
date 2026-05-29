@@ -97,7 +97,7 @@ export default function QuotationsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><FileText className="h-6 w-6 text-blue-600" /> Báo giá</h1>
+          <h1 className="text-2xl font-bold flex items-center gap-2" style={{ color: '#000000' }}><FileText className="h-6 w-6 text-blue-600" /> Báo giá</h1>
           <p className="text-sm text-gray-500 mt-1">{summary.total} báo giá · {formatVND(summary.value)}{summary.orphan > 0 ? ` · ${summary.orphan} chưa gắn deal` : ''}</p>
         </div>
         <div className="flex items-center gap-2">
@@ -179,7 +179,7 @@ export default function QuotationsPage() {
               {filtered.map(q => (
                 <tr key={q.id} className="border-b hover:bg-slate-200/70 transition-colors cursor-pointer" onClick={() => navigate(`/crm/quotations/${q.id}`)}>
                   <td className="py-3 px-3 font-bold text-blue-600">{q.code}</td>
-                  <td className="py-3 px-3 font-medium text-gray-900">{q.title || '-'}</td>
+                  <td className="py-3 px-3 font-medium" style={{ color: '#000000' }}>{q.title || '-'}</td>
                   <td className="py-3 px-3 text-gray-600">{q.customer_name || q.customer?.full_name || '-'}</td>
                   <td className="py-3 px-3 text-xs">
                     {q.lead?.code ? (
@@ -200,7 +200,7 @@ export default function QuotationsPage() {
                       <span className="block mt-0.5 inline-flex items-center gap-1 text-purple-700"><MapPin className="h-3 w-3" />{q.region.name}</span>
                     )}
                   </td>
-                  <td className="py-3 px-3 text-right font-bold text-gray-900">{formatVND(q.total || 0)}</td>
+                  <td className="py-3 px-3 text-right font-bold" style={{ color: '#000000' }}>{formatVND(q.total || 0)}</td>
                   <td className="py-3 px-3"><span className={`text-xs px-2 py-0.5 rounded font-medium ${STATUS_COLORS[q.status] || ''}`}>{STATUS_MAP[q.status] || q.status}</span></td>
                   <td className="py-3 px-3 text-xs">
                     <span className="text-gray-700 font-medium inline-flex items-center gap-1"><UserIcon className="h-3 w-3 text-gray-400" />{q.creator?.full_name || '—'}</span>

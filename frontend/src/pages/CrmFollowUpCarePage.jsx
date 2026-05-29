@@ -612,10 +612,6 @@ export default function CrmFollowUpCarePage() {
             <CalendarClock className="h-7 w-7 text-emerald-600 shrink-0" />
             CSKH — Lead theo tuổi & pipeline
           </h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Lọc theo tuổi lead (dựa trên <span className="font-mono">created_at</span>) và cột pipeline. Cột{' '}
-            <strong>Chuyển cột</strong> dùng các giai đoạn thuộc pipeline công ty đang chọn.
-          </p>
         </div>
         <button
           type="button"
@@ -696,7 +692,7 @@ export default function CrmFollowUpCarePage() {
           </label>
 
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-gray-500 flex items-center gap-1"><CalendarClock className="h-3.5 w-3.5" /> Tuổi lead (tính theo created_at)</span>
+            <span className="text-xs text-gray-500 flex items-center gap-1"><CalendarClock className="h-3.5 w-3.5" /> Tuổi lead</span>
             <select
               value={timePreset}
               onChange={(e) => setTimePreset(e.target.value)}
@@ -822,9 +818,12 @@ export default function CrmFollowUpCarePage() {
           Không có lead/deal khớp bộ lọc. Thử nới «Khung thời gian» hoặc bỏ cột pipeline.
         </div>
       ) : (
-        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden overflow-x-auto">
+        <div
+          className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-auto"
+          style={{ maxHeight: 'calc(100vh - 180px)', minHeight: '70vh' }}
+        >
           <table className="min-w-full text-sm">
-            <thead className="bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide">
+            <thead className="bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide sticky top-0 z-10 shadow-sm">
               <tr>
                 <th className="px-3 py-2.5 text-center" title="Đã chăm sóc — ẩn nhắc 30 ngày">CSKH</th>
                 <th className="px-3 py-2.5">Lead / Deal</th>

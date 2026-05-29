@@ -243,8 +243,7 @@ export default function KpiMonthlyScorecard() {
     <div className="p-4 md:p-6 max-w-[1400px] mx-auto space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Scorecard KPI tháng (Tủ bếp)</h1>
-          <p className="text-sm text-gray-500 mt-0.5">15 KPI × nhân viên — dùng cho cuộc họp giao ban.</p>
+          <h1 className="text-2xl font-bold" style={{ color: '#000000' }}>Scorecard KPI tháng (Tủ bếp)</h1>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <input

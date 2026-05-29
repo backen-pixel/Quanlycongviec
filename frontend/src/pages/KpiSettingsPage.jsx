@@ -122,7 +122,7 @@ function GroupATimeParamsPanel({ defs, edits, setEdits, save, savingId }) {
       <div className="flex items-start gap-2">
         <Clock className="w-5 h-5 text-blue-700 shrink-0 mt-0.5" />
         <div>
-          <h3 className="font-semibold text-blue-900 text-sm">Nhóm A — thông số thời gian</h3>
+          <h3 className="font-semibold text-sm" style={{ color: '#000000' }}>Nhóm A — thông số thời gian</h3>
           <p className="text-xs text-blue-800 mt-0.5">
             Giờ hành chính &amp; ngày lễ: tab <strong>Lịch làm việc</strong>. SLA cột deal (A5/A6): tab <strong>Pipeline KPI</strong> / Cài đặt pipeline CRM.
           </p>
@@ -572,7 +572,7 @@ function TargetsTab({ companyId, roleFilter }) {
       {err && <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">{err}</div>}
 
       <div className="bg-blue-50/40 border border-blue-100 rounded-xl p-3">
-        <h3 className="font-semibold text-sm text-gray-900 mb-2 flex items-center gap-2">
+        <h3 className="font-semibold text-sm mb-2 flex items-center gap-2" style={{ color: '#000000' }}>
           <Plus className="w-4 h-4" /> Thêm / cập nhật target
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
@@ -884,7 +884,7 @@ function BusinessHoursPanel({ companyId }) {
     <div className="bg-white border border-gray-100 rounded-xl p-4 space-y-4 max-w-2xl">
       <div className="flex items-center gap-2">
         <Clock className="w-5 h-5 text-blue-600" />
-        <h3 className="font-semibold text-gray-900">Giờ hành chính</h3>
+        <h3 className="font-semibold" style={{ color: '#000000' }}>Giờ hành chính</h3>
       </div>
       {err && <div className="bg-red-50 border border-red-200 rounded px-3 py-2 text-sm text-red-700">{err}</div>}
       {msg && <div className="bg-emerald-50 border border-emerald-200 rounded px-3 py-2 text-sm text-emerald-700">{msg}</div>}
@@ -990,7 +990,7 @@ function HolidaysPanel({ companyId }) {
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <CalendarDays className="w-5 h-5 text-amber-600" />
-        <h3 className="font-semibold text-gray-900">Ngày lễ / nghỉ chung</h3>
+        <h3 className="font-semibold" style={{ color: '#000000' }}>Ngày lễ / nghỉ chung</h3>
         {companyId && <span className="text-[10px] text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full">+ lễ hệ thống (null)</span>}
       </div>
       {err && <div className="bg-red-50 border border-red-200 rounded px-3 py-2 text-sm text-red-700">{err}</div>}
@@ -1116,7 +1116,7 @@ function LeavesPanel({ companyId, roleFilter }) {
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <UserMinus className="w-5 h-5 text-purple-600" />
-        <h3 className="font-semibold text-gray-900">Ngày phép nhân viên</h3>
+        <h3 className="font-semibold" style={{ color: '#000000' }}>Ngày phép nhân viên</h3>
       </div>
       {err && <div className="bg-red-50 border border-red-200 rounded px-3 py-2 text-sm text-red-700">{err}</div>}
 
@@ -1632,7 +1632,7 @@ function CrmTaskBundleTab({ companyId, variant = 'full', roleFilter = '' }) {
   const renderTemplateCard = (tpl) => (
     <div key={tpl.id} className="border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm">
       <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex flex-wrap items-center gap-2">
-        <span className="font-semibold text-gray-900">{tpl.name}</span>
+        <span className="font-semibold" style={{ color: '#000000' }}>{tpl.name}</span>
         <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-mono">{tpl.stage_slug}</span>
         <label className="inline-flex items-center gap-1.5 text-xs text-gray-600 ml-auto">
           <span className="shrink-0">Loại pipeline:</span>
@@ -1668,7 +1668,7 @@ function CrmTaskBundleTab({ companyId, variant = 'full', roleFilter = '' }) {
                 return (
                   <tr key={it.id} className="border-b border-gray-50 hover:bg-gray-50/80">
                     <td className="px-4 py-2.5">
-                      <div className="font-medium text-gray-900">{it.title}</div>
+                      <div className="font-medium" style={{ color: '#000000' }}>{it.title}</div>
                       {it.description && (
                         <div className="text-xs text-gray-500 mt-0.5 line-clamp-2">{it.description}</div>
                       )}
@@ -1734,7 +1734,7 @@ function CrmTaskBundleTab({ companyId, variant = 'full', roleFilter = '' }) {
   const renderSection = (title, subtitle, accentClass, list) => (
     <section className="space-y-4">
       <div className={`rounded-lg border px-4 py-3 ${accentClass}`}>
-        <h3 className="text-sm font-bold text-gray-900">{title}</h3>
+        <h3 className="text-sm font-bold" style={{ color: '#000000' }}>{title}</h3>
         <p className="text-xs text-gray-600 mt-1">{subtitle}</p>
       </div>
       {list.length ? (
@@ -1881,8 +1881,7 @@ export default function KpiSettingsPage() {
       <div className="flex items-center gap-3">
         <Settings className="w-6 h-6 text-blue-600" />
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Cấu hình KPI Tủ bếp</h1>
-          <p className="text-sm text-gray-500">Quản lý thông số 15 KPI, target theo nhân viên, đóng/mở kỳ.</p>
+          <h1 className="text-2xl font-bold" style={{ color: '#000000' }}>Cấu hình KPI Tủ bếp</h1>
         </div>
       </div>
 
