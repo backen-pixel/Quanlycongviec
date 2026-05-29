@@ -6,6 +6,7 @@ import {
   Sparkles, TrendingUp, Award, ArrowRight, Flame, Library,
   Bookmark, Star, AlertCircle, History, Tag,
 } from 'lucide-react';
+import { KnowledgeDeadlineBanner, KnowledgeLearningTimeline } from '../components/KnowledgeDeadline';
 
 const CATEGORY_COLORS = [
   { bg: 'from-blue-500 to-cyan-500', text: 'text-blue-700', ring: 'ring-blue-100', soft: 'bg-blue-50' },
@@ -159,22 +160,46 @@ function LessonCard({ lesson, idx }) {
   const status = lesson.progress_status;
   const color = pickColor(idx);
   const hasVideo = !!lesson.video_url;
+  const locked = !!lesson.is_locked;
+  const Wrapper = locked ? 'div' : Link;
+  const wrapperProps = locked
+    ? { title: lesson.unlock_reason || 'Bài học đang khoá — cần hoàn thành bài trước' }
+    : { to: `/knowledge/lessons/${lesson.id}` };
   return (
-    <Link
-      to={`/knowledge/lessons/${lesson.id}`}
-      className="group bg-white rounded-2xl border border-gray-200 overflow-hidden hover:border-violet-300 hover:shadow-lg transition-all flex flex-col"
+    <Wrapper
+      {...wrapperProps}
+      className={`group bg-white rounded-2xl border overflow-hidden transition-all flex flex-col ${
+        locked
+          ? 'border-amber-200 opacity-80 cursor-not-allowed'
+          : 'border-gray-200 hover:border-violet-300 hover:shadow-lg'
+      }`}
     >
       <div className={`relative h-32 bg-gradient-to-br ${color.bg} flex items-center justify-center overflow-hidden`}>
         {lesson.cover_image_url ? (
-          <img src={lesson.cover_image_url} alt={lesson.title} className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform" loading="lazy" />
+          <img
+            src={lesson.cover_image_url}
+            alt={lesson.title}
+            className={`absolute inset-0 w-full h-full object-cover transition-transform ${locked ? 'grayscale' : 'group-hover:scale-105'}`}
+            loading="lazy"
+          />
         ) : (
           <span className="text-5xl opacity-30 group-hover:scale-125 transition-transform">
             {lesson.category?.icon || '📖'}
           </span>
         )}
-        {hasVideo && (
+        {hasVideo && !locked && (
           <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
             <PlayCircle className="h-12 w-12 text-white" />
+          </div>
+        )}
+        {locked && (
+          <div className="absolute inset-0 bg-black/50 flex items-center justify-center backdrop-blur-[1px]">
+            <div className="text-center text-white px-3">
+              <div className="text-3xl mb-1">🔒</div>
+              <p className="text-[11px] font-semibold leading-tight line-clamp-2">
+                {lesson.unlock_reason || 'Hoàn thành bài học trước để mở khoá'}
+              </p>
+            </div>
           </div>
         )}
 
@@ -192,7 +217,7 @@ function LessonCard({ lesson, idx }) {
               <CheckCircle2 className="h-3 w-3" /> Đã học
             </span>
           )}
-          {status === 'in_progress' && (
+          {status === 'in_progress' && !locked && (
             <span className="px-2 py-1 bg-amber-400 text-amber-900 rounded-full text-[10px] font-bold">
               Đang học
             </span>
@@ -243,7 +268,7 @@ function LessonCard({ lesson, idx }) {
           )}
         </div>
       </div>
-    </Link>
+    </Wrapper>
   );
 }
 
@@ -255,6 +280,8 @@ export default function KnowledgeLibraryPage() {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all'); // all | bookmarked | required
   const [progress, setProgress] = useState({ progress: [], completed: 0, total: 0 });
+  const [categoryDeadline, setCategoryDeadline] = useState(null);
+  const [showCategoryTimeline, setShowCategoryTimeline] = useState(false);
   const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
   const isAdmin = ['admin', 'sales_admin', 'manager'].includes(currentUser.role);
 
@@ -266,6 +293,17 @@ export default function KnowledgeLibraryPage() {
   useEffect(() => {
     loadLessons();
   }, [selectedCategory, search, filter]);
+
+  useEffect(() => {
+    setShowCategoryTimeline(false);
+    if (!selectedCategory) {
+      setCategoryDeadline(null);
+      return;
+    }
+    api.get(`/knowledge/categories/${selectedCategory}/progress`)
+      .then((r) => setCategoryDeadline(r.data?.deadline || null))
+      .catch(() => setCategoryDeadline(null));
+  }, [selectedCategory]);
 
   const loadCategories = async () => {
     try {
@@ -378,6 +416,26 @@ export default function KnowledgeLibraryPage() {
         selectedId={selectedCategory}
         onSelect={setSelectedCategory}
       />
+
+      {selectedCategory && categoryDeadline?.supported && categoryDeadline.mode !== 'none' && (
+        <div className="mb-6 space-y-3">
+          <KnowledgeDeadlineBanner deadline={categoryDeadline} />
+          <button
+            type="button"
+            onClick={() => setShowCategoryTimeline(!showCategoryTimeline)}
+            className="text-sm text-violet-600 font-medium hover:underline flex items-center gap-1"
+          >
+            <History className="h-4 w-4" />
+            {showCategoryTimeline ? 'Ẩn lịch học & bài tập' : 'Xem lịch học & bài tập theo thời gian'}
+          </button>
+          {showCategoryTimeline && (
+            <KnowledgeLearningTimeline
+              categoryId={selectedCategory}
+              title="Lịch học trong khoá này"
+            />
+          )}
+        </div>
+      )}
 
       <section>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">

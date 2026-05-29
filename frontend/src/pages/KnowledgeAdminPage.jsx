@@ -41,7 +41,10 @@ export default function KnowledgeAdminPage() {
     name: '', slug: '', icon: '📚', description: '', parent_id: '', sort_order: 0,
     badge_image_url: '', require_all_exercises_passed: true,
     certificate_template: { signature_name: '', signature_title: '', footer_note: '', accent_color: '' },
+    deadline_mode: 'none', deadline_at: '', deadline_duration_days: '', deadline_note: '',
   });
+  const [deadlineHistory, setDeadlineHistory] = useState([]);
+  const [showDeadlineHistory, setShowDeadlineHistory] = useState(false);
   const [badgeUploading, setBadgeUploading] = useState(false);
   const badgeInputRef = useRef(null);
 
@@ -124,8 +127,22 @@ export default function KnowledgeAdminPage() {
     }
   };
 
+  const loadDeadlineHistory = async (categoryId) => {
+    if (!categoryId) { setDeadlineHistory([]); return; }
+    try {
+      const { data } = await api.get(`/knowledge/categories/${categoryId}/deadline-history`);
+      setDeadlineHistory(data.history || []);
+    } catch {
+      setDeadlineHistory([]);
+    }
+  };
+
   const saveCategory = async () => {
     if (!catForm.name.trim()) return alert('Nhập tên danh mục');
+    if (catForm.deadline_mode === 'fixed' && !catForm.deadline_at) return alert('Vui lòng chọn ngày hết hạn');
+    if (catForm.deadline_mode === 'relative' && (!catForm.deadline_duration_days || Number(catForm.deadline_duration_days) <= 0)) {
+      return alert('Vui lòng nhập số ngày hợp lệ (> 0)');
+    }
     setSaving(true);
     try {
       const body = {
@@ -134,6 +151,10 @@ export default function KnowledgeAdminPage() {
         badge_image_url: catForm.badge_image_url || null,
         require_all_exercises_passed: catForm.require_all_exercises_passed !== false,
         certificate_template: catForm.certificate_template || {},
+        deadline_mode: catForm.deadline_mode || 'none',
+        deadline_at: catForm.deadline_mode === 'fixed' ? (catForm.deadline_at ? new Date(catForm.deadline_at).toISOString() : null) : null,
+        deadline_duration_days: catForm.deadline_mode === 'relative' ? Number(catForm.deadline_duration_days) || null : null,
+        deadline_note: catForm.deadline_note || null,
       };
       if (catForm.id) await api.patch(`/knowledge/categories/${catForm.id}`, body);
       else await api.post('/knowledge/categories', body);
@@ -141,7 +162,10 @@ export default function KnowledgeAdminPage() {
         name: '', slug: '', icon: '📚', description: '', parent_id: '', sort_order: 0,
         badge_image_url: '', require_all_exercises_passed: true,
         certificate_template: { signature_name: '', signature_title: '', footer_note: '', accent_color: '' },
+        deadline_mode: 'none', deadline_at: '', deadline_duration_days: '', deadline_note: '',
       });
+      setDeadlineHistory([]);
+      setShowDeadlineHistory(false);
       loadAll();
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi');
@@ -418,16 +442,131 @@ export default function KnowledgeAdminPage() {
               </details>
             </div>
 
+            {/* ─── Deadline khoá học ─── */}
+            <div className="bg-gradient-to-br from-rose-50 to-orange-50 border-2 border-rose-200 rounded-xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <p className="text-sm font-bold text-rose-900 flex items-center gap-2">⏰ Hạn hoàn thành khoá học</p>
+                  <p className="text-xs text-rose-700/80">Áp deadline để học viên hoàn thành đúng thời gian quy định.</p>
+                </div>
+                {catForm.id && (
+                  <button
+                    type="button"
+                    onClick={() => { if (!showDeadlineHistory) loadDeadlineHistory(catForm.id); setShowDeadlineHistory(!showDeadlineHistory); }}
+                    className="text-xs px-3 py-1.5 bg-white border border-rose-300 text-rose-700 rounded-lg hover:bg-rose-50"
+                  >
+                    📜 Lịch sử ({deadlineHistory.length})
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <label className={`flex items-start gap-2 p-2 rounded-lg border cursor-pointer ${catForm.deadline_mode === 'none' ? 'bg-white border-rose-400 ring-2 ring-rose-200' : 'bg-white/60 border-gray-200'}`}>
+                  <input type="radio" name="deadline_mode" checked={catForm.deadline_mode === 'none'} onChange={() => setCatForm({ ...catForm, deadline_mode: 'none' })} className="mt-0.5" />
+                  <div>
+                    <p className="text-xs font-semibold">Không hạn</p>
+                    <p className="text-[10px] text-gray-500">Học viên tự sắp xếp</p>
+                  </div>
+                </label>
+                <label className={`flex items-start gap-2 p-2 rounded-lg border cursor-pointer ${catForm.deadline_mode === 'fixed' ? 'bg-white border-rose-400 ring-2 ring-rose-200' : 'bg-white/60 border-gray-200'}`}>
+                  <input type="radio" name="deadline_mode" checked={catForm.deadline_mode === 'fixed'} onChange={() => setCatForm({ ...catForm, deadline_mode: 'fixed' })} className="mt-0.5" />
+                  <div>
+                    <p className="text-xs font-semibold">Cố định ngày</p>
+                    <p className="text-[10px] text-gray-500">Cùng deadline cho mọi học viên</p>
+                  </div>
+                </label>
+                <label className={`flex items-start gap-2 p-2 rounded-lg border cursor-pointer ${catForm.deadline_mode === 'relative' ? 'bg-white border-rose-400 ring-2 ring-rose-200' : 'bg-white/60 border-gray-200'}`}>
+                  <input type="radio" name="deadline_mode" checked={catForm.deadline_mode === 'relative'} onChange={() => setCatForm({ ...catForm, deadline_mode: 'relative' })} className="mt-0.5" />
+                  <div>
+                    <p className="text-xs font-semibold">N ngày từ lúc bắt đầu</p>
+                    <p className="text-[10px] text-gray-500">Mỗi học viên có hạn riêng</p>
+                  </div>
+                </label>
+              </div>
+
+              {catForm.deadline_mode === 'fixed' && (
+                <div className="mt-3">
+                  <label className="text-[11px] font-medium text-rose-800">Hạn chót *</label>
+                  <input
+                    type="datetime-local"
+                    className="w-full border border-rose-300 rounded-lg px-3 py-2 text-sm bg-white"
+                    value={catForm.deadline_at || ''}
+                    onChange={(e) => setCatForm({ ...catForm, deadline_at: e.target.value })}
+                  />
+                </div>
+              )}
+
+              {catForm.deadline_mode === 'relative' && (
+                <div className="mt-3">
+                  <label className="text-[11px] font-medium text-rose-800">Số ngày kể từ khi bắt đầu *</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      className="w-32 border border-rose-300 rounded-lg px-3 py-2 text-sm bg-white"
+                      value={catForm.deadline_duration_days || ''}
+                      onChange={(e) => setCatForm({ ...catForm, deadline_duration_days: e.target.value })}
+                    />
+                    <span className="text-xs text-gray-600">ngày</span>
+                  </div>
+                </div>
+              )}
+
+              {catForm.deadline_mode !== 'none' && (
+                <div className="mt-3">
+                  <label className="text-[11px] font-medium text-rose-800">Ghi chú (lý do thay đổi…)</label>
+                  <input
+                    type="text"
+                    className="w-full border border-rose-200 rounded-lg px-3 py-2 text-sm bg-white"
+                    placeholder="VD: Gia hạn thêm 7 ngày do …"
+                    value={catForm.deadline_note || ''}
+                    onChange={(e) => setCatForm({ ...catForm, deadline_note: e.target.value })}
+                  />
+                </div>
+              )}
+
+              {showDeadlineHistory && (
+                <div className="mt-3 bg-white rounded-lg border border-rose-200 max-h-60 overflow-y-auto">
+                  <div className="px-3 py-2 border-b text-[11px] uppercase tracking-wider text-rose-700 font-bold">Lịch sử thay đổi deadline</div>
+                  {deadlineHistory.length === 0 ? (
+                    <p className="px-3 py-4 text-xs text-gray-400 text-center">Chưa có thay đổi nào</p>
+                  ) : (
+                    <ul className="divide-y divide-rose-100">
+                      {deadlineHistory.map((h) => (
+                        <li key={h.id} className="px-3 py-2 text-xs">
+                          <div className="flex items-center justify-between text-[11px] text-gray-500">
+                            <span>{new Date(h.created_at).toLocaleString('vi-VN')}</span>
+                            <span className="font-medium">{h.changed_by_user?.full_name || '—'}</span>
+                          </div>
+                          <div className="mt-1 text-gray-800">
+                            <span className="line-through opacity-60">
+                              {h.prev_mode || 'none'}{h.prev_deadline_at ? ` → ${new Date(h.prev_deadline_at).toLocaleDateString('vi-VN')}` : ''}{h.prev_duration_days ? ` (${h.prev_duration_days}d)` : ''}
+                            </span>
+                            <span className="mx-2 text-rose-500">➜</span>
+                            <span className="font-semibold text-rose-700">
+                              {h.new_mode || 'none'}{h.new_deadline_at ? ` → ${new Date(h.new_deadline_at).toLocaleDateString('vi-VN')}` : ''}{h.new_duration_days ? ` (${h.new_duration_days}d)` : ''}
+                            </span>
+                          </div>
+                          {h.note && <p className="mt-0.5 text-[11px] text-gray-600 italic">"{h.note}"</p>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+
             <div className="flex gap-2 pt-2 border-t">
               <button type="button" onClick={saveCategory} disabled={saving} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm">
                 <Save className="h-4 w-4" /> Lưu
               </button>
               {catForm.id && (
-                <button type="button" onClick={() => setCatForm({
+                <button type="button" onClick={() => { setCatForm({
                   name: '', slug: '', icon: '📚', description: '', parent_id: '', sort_order: 0,
                   badge_image_url: '', require_all_exercises_passed: true,
                   certificate_template: { signature_name: '', signature_title: '', footer_note: '', accent_color: '' },
-                })} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm">
+                  deadline_mode: 'none', deadline_at: '', deadline_duration_days: '', deadline_note: '',
+                }); setDeadlineHistory([]); setShowDeadlineHistory(false); }} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm">
                   Huỷ sửa
                 </button>
               )}
@@ -449,12 +588,28 @@ export default function KnowledgeAdminPage() {
                       🏅 Chứng nhận
                     </span>
                   )}
+                  {c.deadline_mode && c.deadline_mode !== 'none' && (
+                    <span className="text-[10px] bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded-full font-medium" title="Có deadline">
+                      ⏰ {c.deadline_mode === 'fixed' && c.deadline_at
+                        ? new Date(c.deadline_at).toLocaleDateString('vi-VN')
+                        : c.deadline_mode === 'relative' && c.deadline_duration_days
+                          ? `${c.deadline_duration_days} ngày`
+                          : 'Deadline'}
+                    </span>
+                  )}
                 </div>
                 <div className="flex gap-1">
-                  <button type="button" className="text-blue-600 text-xs" onClick={() => setCatForm({
-                    ...c,
-                    certificate_template: c.certificate_template || { signature_name: '', signature_title: '', footer_note: '', accent_color: '' },
-                  })}>Sửa</button>
+                  <button type="button" className="text-blue-600 text-xs" onClick={() => {
+                    setCatForm({
+                      ...c,
+                      certificate_template: c.certificate_template || { signature_name: '', signature_title: '', footer_note: '', accent_color: '' },
+                      deadline_mode: c.deadline_mode || 'none',
+                      deadline_at: c.deadline_at ? new Date(c.deadline_at).toISOString().slice(0, 16) : '',
+                      deadline_duration_days: c.deadline_duration_days || '',
+                      deadline_note: c.deadline_note || '',
+                    });
+                    loadDeadlineHistory(c.id);
+                  }}>Sửa</button>
                   <button type="button" className="text-red-600" onClick={() => deleteCategory(c.id)}><Trash2 className="h-4 w-4" /></button>
                 </div>
               </li>

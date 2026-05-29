@@ -40,6 +40,14 @@ ON CONFLICT (id) DO UPDATE SET
   icon = EXCLUDED.icon,
   is_active = true;
 
+-- Deadline khoá Lead: 30 ngày kể từ ngày bắt đầu học (cần migration 261)
+UPDATE knowledge_categories SET
+  deadline_mode = 'relative',
+  deadline_duration_days = 30,
+  deadline_note = 'Hoàn thành toàn bộ khoá trong 30 ngày kể từ khi bắt đầu bài học đầu tiên',
+  require_all_exercises_passed = true
+WHERE id = 'd2000001-0000-0000-0000-000000000001';
+
 -- ══════════════════════════════════════════════════════════════════════════
 -- BÀI 01 — Khái niệm Lead
 -- ══════════════════════════════════════════════════════════════════════════
@@ -1814,6 +1822,114 @@ $md$,
   is_required = EXCLUDED.is_required, sort_order = EXCLUDED.sort_order,
   is_published = true, updated_at = now();
 
+-- ══════════════════════════════════════════════════════════════════════════
+-- BÀI 13 ⭐⭐ — Bài thi tổng kết khoá học
+-- ══════════════════════════════════════════════════════════════════════════
+INSERT INTO knowledge_lessons (
+  id, category_id, title, summary, content_md,
+  cover_image_url, attachments,
+  duration_minutes, tags, is_required, sort_order, is_published, published_at
+) VALUES (
+  'b2000001-0000-0000-0000-000000000013',
+  'd2000001-0000-0000-0000-000000000001',
+  'Bài 13 🏆 : Bài thi tổng kết — Lead Master Certification',
+  'Bài thi cuối khoá. Tổng hợp kiến thức từ Bài 1 đến Bài 12. Bắt buộc đạt 85% để nhận chứng nhận hoàn thành khoá học.',
+  $md$# Bài 13 🏆 — Bài thi tổng kết
+
+> **Chúc mừng bạn đã hoàn thành 12 bài học của khoá đào tạo "Lead — Khách hàng tiềm năng".** Bây giờ là bước cuối cùng: **Bài thi tổng kết**.
+
+## 1. Mục đích
+
+Bài thi này:
+- **Đánh giá tổng hợp** kiến thức bạn đã tiếp thu từ Bài 1 đến Bài 12
+- **Xác nhận năng lực** vận hành quy trình Lead trên hệ thống CRM của công ty
+- **Là điều kiện bắt buộc** để được cấp Chứng nhận Lead Master
+
+## 2. Cấu trúc bài thi
+
+| Hạng mục | Chi tiết |
+|---|---|
+| Số câu hỏi | **20 câu** trắc nghiệm |
+| Phạm vi | Toàn bộ 12 bài học |
+| Thời gian làm bài | **30 phút** |
+| Điểm đạt | **85/100** (đạt 17/20 câu trở lên) |
+| Số lượt được làm | Tối đa **2 lượt** |
+| Khoảng cách giữa 2 lượt | Tối thiểu 30 phút (khuyến nghị xem lại bài học) |
+
+## 3. Phân bổ câu hỏi theo chủ đề
+
+| Chủ đề | Số câu | Bài liên quan |
+|---|---|---|
+| Khái niệm Lead & tiếp nhận | 3 | Bài 1, 2 |
+| Bảng Kanban & quy trình | 2 | Bài 3 |
+| 6 thông tin bắt buộc & KPI A3 | 2 | Bài 4 |
+| Nhiệm vụ — tạo, quản lý | 2 | Bài 5 |
+| **Quy định minh chứng (cờ task)** | 3 | Bài 6 ⭐ |
+| Tài liệu & hoạt động | 2 | Bài 7, 8 |
+| SLA & deadline | 2 | Bài 9 |
+| **Hệ thống KPI** | 2 | Bài 10 ⭐ |
+| Chuyển Deal & tình huống đặc biệt | 2 | Bài 11, 12 |
+
+## 4. Lưu ý quan trọng trước khi làm
+
+### 4.1. Chuẩn bị tinh thần
+- Tìm không gian yên tĩnh, tránh bị gián đoạn trong 30 phút
+- Tắt thông báo điện thoại, đóng các tab không liên quan
+- Chuẩn bị giấy bút ghi chú nếu cần
+
+### 4.2. Ôn tập trước
+Trước khi bấm "Bắt đầu", khuyến nghị xem lại 2 bài quan trọng nhất:
+- **Bài 6** — Quy định hoàn thành nhiệm vụ (ghi chú + file)
+- **Bài 10** — Hệ thống KPI và quy tắc cộng/trừ điểm
+
+### 4.3. Quy chuẩn làm bài
+- Đọc kỹ câu hỏi và TẤT CẢ các đáp án trước khi chọn
+- Một số câu là "chọn nhiều đáp án" — chú ý dấu hiệu trong đề
+- Có thể bỏ qua câu khó, quay lại sau (trong cùng lượt)
+- Khi hết thời gian, hệ thống tự nộp bài
+
+### 4.4. Trường hợp không đạt
+- Sau lượt 1 không đạt: được làm lại lượt 2 sau **tối thiểu 30 phút**
+- Sau lượt 2 vẫn không đạt: liên hệ trưởng phòng để được hỗ trợ đào tạo bổ sung
+- Sau khi đào tạo bổ sung, admin có thể mở lại lượt thi (xét duyệt từng trường hợp)
+
+## 5. Sau khi đạt bài thi
+
+Hệ thống sẽ **tự động cấp Chứng nhận Lead Master** ngay lập tức với:
+
+- 🏅 **Huy chương** của khoá học
+- 📜 **Số chứng nhận** dạng `CN-2026-XXXXXX`
+- 🔐 **Mã xác minh** 10 ký tự để xác thực
+- 📅 Ngày cấp + ảnh huy chương
+- 🖨️ Có thể **in ra giấy A4 ngang** để treo bàn làm việc
+
+Chứng nhận này được lưu vĩnh viễn trong profile của bạn và hiển thị công khai trong **Mạng nội bộ** — đồng nghiệp có thể thấy thành tích của bạn.
+
+## 6. Cam kết
+
+> *"Tôi xác nhận đã đọc kỹ và hiểu toàn bộ 12 bài học. Tôi cam kết áp dụng đúng quy trình, ghi nhận đầy đủ minh chứng và tuân thủ các quy định về KPI trong quá trình làm việc."*
+
+Sau khi hoàn thành bài thi và nhận chứng nhận, bạn chính thức trở thành **Lead Master** — chuyên viên kinh doanh được cấp chứng nhận của công ty.
+
+Chúc bạn làm bài tốt!
+$md$,
+  'https://images.unsplash.com/photo-1606326608606-aa0b62935f2b?w=1200&q=80',
+  $j$[
+    {"type":"image","url":"https://images.unsplash.com/photo-1546410531-bb4caa6b424d?w=1200&q=80","caption":"Bài thi tổng kết Lead Master"}
+  ]$j$::jsonb,
+  5,
+  ARRAY['lead','final-exam','certification','quan-trong'],
+  true,
+  13,
+  true,
+  now()
+) ON CONFLICT (id) DO UPDATE SET
+  title = EXCLUDED.title, summary = EXCLUDED.summary, content_md = EXCLUDED.content_md,
+  cover_image_url = EXCLUDED.cover_image_url, attachments = EXCLUDED.attachments,
+  duration_minutes = EXCLUDED.duration_minutes, tags = EXCLUDED.tags,
+  is_required = EXCLUDED.is_required, sort_order = EXCLUDED.sort_order,
+  is_published = true, updated_at = now();
+
 COMMIT;
 
 -- ══════════════════════════════════════════════════════════════════════════
@@ -2511,16 +2627,170 @@ VALUES (
   questions = EXCLUDED.questions, passing_score = EXCLUDED.passing_score,
   max_attempts = EXCLUDED.max_attempts, sort_order = EXCLUDED.sort_order, updated_at = now();
 
+-- ─── Ex 18 🏆 BÀI THI TỔNG KẾT ──────────────────────────────────────────
+INSERT INTO knowledge_exercises (
+  id, lesson_id, title, instructions, type, questions,
+  passing_score, max_attempts, time_limit_minutes, sort_order,
+  image_url
+) VALUES (
+  'c2000001-0000-0000-0000-000000000018',
+  'b2000001-0000-0000-0000-000000000013',
+  '🏆 BÀI THI TỔNG KẾT — Lead Master Certification',
+  'Bài thi cuối khoá. 20 câu trắc nghiệm tổng hợp từ Bài 1 đến Bài 12. Đạt 85/100 (17/20 câu) trong 30 phút. Tối đa 2 lượt. Nộp bài đạt yêu cầu = TỰ ĐỘNG nhận chứng nhận Lead Master.',
+  'quiz',
+  $j${
+    "items": [
+      {"id":"q01","question":"Lead khác Customer ở điểm cốt lõi nào?","type":"single",
+       "options":[
+         "Lead có giá trị thấp hơn",
+         "Lead chưa cam kết mua, Customer đã ký hợp đồng",
+         "Lead không có số điện thoại",
+         "Lead chỉ có ở Facebook"],
+       "correct":[1]},
+
+      {"id":"q02","question":"Khi tạo Lead, hệ thống BẮT BUỘC TỐI THIỂU thông tin nào?","type":"multiple",
+       "options":["Tiêu đề Lead","Khách hàng","Mã số thuế","Tài khoản ngân hàng"],
+       "correct":[0,1]},
+
+      {"id":"q03","question":"Quy chuẩn thời gian phản hồi cho Lead HOT là?","type":"single",
+       "options":["Trong vòng 5 phút","Trong vòng 30 phút","Trong vòng 2 giờ","Trong vòng 1 ngày"],
+       "correct":[0]},
+
+      {"id":"q04","question":"Trên bảng Kanban, mỗi cột tương ứng với?","type":"single",
+       "options":["Một nhân viên","Một giai đoạn (stage)","Một loại sản phẩm","Một khu vực địa lý"],
+       "correct":[1]},
+
+      {"id":"q05","question":"Hệ thống KHÔNG cho kéo Lead sang giai đoạn mới trong trường hợp nào?","type":"multiple",
+       "options":[
+         "Còn nhiệm vụ bắt buộc chưa hoàn thành",
+         "Bạn không phải người phụ trách Lead",
+         "Lead đang ở trạng thái Mất (cần Mở lại trước)",
+         "Lead có nhiều hơn 5 tài liệu đính kèm"],
+       "correct":[0,1,2]},
+
+      {"id":"q06","question":"Có MẤY trường thông tin BẮT BUỘC trên mỗi Lead (KPI A3)?","type":"single",
+       "options":["3","4","6","10"],"correct":[2]},
+
+      {"id":"q07","question":"Khi A3 < 80%, hậu quả là gì?","type":"single",
+       "options":[
+         "Không sao cả, chỉ là cảnh báo",
+         "Tổng điểm KPI tháng bị CAP tối đa 70",
+         "Bị trừ lương tự động",
+         "Bị khoá tài khoản"],
+       "correct":[1]},
+
+      {"id":"q08","question":"Ba cách tạo nhiệm vụ trên Lead bao gồm?","type":"multiple",
+       "options":[
+         "Tạo thủ công từng nhiệm vụ",
+         "Sinh từ mẫu (template) của trưởng nhóm",
+         "Tự động sinh khi chuyển giai đoạn",
+         "Email cho admin để admin tạo hộ"],
+       "correct":[0,1,2]},
+
+      {"id":"q09","question":"Nhiệm vụ 'chặn giai đoạn' (blocker) có tác dụng gì?","type":"single",
+       "options":[
+         "Khoá Lead lại, không ai sửa được",
+         "Lead không thể chuyển sang giai đoạn tiếp nếu nhiệm vụ chưa hoàn thành",
+         "Tự động xoá nhiệm vụ sau 7 ngày",
+         "Chỉ admin mới thấy"],
+       "correct":[1]},
+
+      {"id":"q10","question":"BÀI 6 ⭐ — Cờ 'Bắt buộc minh chứng liên hệ' yêu cầu gì?","type":"single",
+       "options":[
+         "Chỉ cần ghi chú là đủ",
+         "Phải có GHI CHÚ HOẶC FILE đính kèm (1 trong 2)",
+         "Phải có cả ghi chú VÀ file (đầy đủ cả hai)",
+         "Phải có chữ ký khách hàng"],
+       "correct":[1]},
+
+      {"id":"q11","question":"BÀI 6 ⭐ — Ghi chú nào ĐẠT YÊU CẦU?","type":"single",
+       "options":[
+         "Done",
+         "Khách đồng ý rồi",
+         "14h30 — Đã gọi anh Minh, anh chốt mẫu cửa Xingfa hệ 55 vân gỗ 6.8tr/m², hẹn đo đạc 9h thứ 7",
+         "OK"],
+       "correct":[2]},
+
+      {"id":"q12","question":"BÀI 6 ⭐ — Bấm Hoàn thành hàng loạt 10 nhiệm vụ, 3 thiếu minh chứng. Kết quả?","type":"single",
+       "options":[
+         "Cả 10 cùng fail",
+         "Cả 10 cùng pass",
+         "7 pass + 3 giữ ở trạng thái cũ để bổ sung",
+         "Hệ thống treo"],
+       "correct":[2]},
+
+      {"id":"q13","question":"Hợp đồng PDF đã ký nên LƯU Ở ĐÂU?","type":"single",
+       "options":["Ghi chú task","Email cá nhân","Tài liệu Lead","Chat nội bộ"],
+       "correct":[2]},
+
+      {"id":"q14","question":"Chỉ số 'Lần đầu chạm' (First Touch) ảnh hưởng đến KPI nào?","type":"single",
+       "options":["A1 - Số Lead tạo mới","B1 - Tiếp xúc thành công","A2 - Tỷ lệ thắng Deal","B6 - Lead chuyển Deal"],
+       "correct":[1]},
+
+      {"id":"q15","question":"SLA chuẩn ngành tủ bếp/cửa nhôm cho giai đoạn 'Đã báo giá → Đã đồng ý' là?","type":"single",
+       "options":["3 ngày","7 ngày","14 ngày","30 ngày"],
+       "correct":[2]},
+
+      {"id":"q16","question":"Cách XỬ LÝ ĐÚNG khi biết trước không kịp deadline nhiệm vụ?","type":"single",
+       "options":[
+         "Cứ để trễ, không sao",
+         "Sửa deadline TRƯỚC khi quá hạn, ghi lý do trong ghi chú",
+         "Xoá nhiệm vụ",
+         "Nhờ đồng nghiệp đóng hộ"],
+       "correct":[1]},
+
+      {"id":"q17","question":"BÀI 10 ⭐ — Khi A4 (đúng hạn) < 80%, hậu quả là gì?","type":"single",
+       "options":[
+         "Bị trừ 10 điểm cố định",
+         "Tổng điểm KPI tháng bị CAP tối đa 70",
+         "Không sao",
+         "Bị giảm cấp bậc nhân viên"],
+       "correct":[1]},
+
+      {"id":"q18","question":"BÀI 10 ⭐ — Thắng 1 Deal (ký HĐ + nhận cọc) cộng bao nhiêu điểm KPI?","type":"single",
+       "options":["+3","+5","+10","+20"],
+       "correct":[2]},
+
+      {"id":"q19","question":"Trước khi chuyển Lead → Deal, ĐIỀU KIỆN BẮT BUỘC nào sau đây?","type":"multiple",
+       "options":[
+         "KH đã đồng ý mua (có ghi nhận cụ thể)",
+         "Đã thống nhất sản phẩm, số lượng, giá",
+         "Khách hàng tồn tại trong danh bạ Customer",
+         "Đã có ảnh chụp KH đến showroom"],
+       "correct":[0,1,2]},
+
+      {"id":"q20","question":"Sau khi chuyển Lead → Deal, có nút HOÀN TÁC không?","type":"single",
+       "options":[
+         "Có, nút Revert ở góc phải",
+         "KHÔNG có hoàn tác — cần admin can thiệp nếu chuyển nhầm",
+         "Có, tự hoàn tác sau 24h nếu chưa ký HĐ",
+         "Tự hoàn tác sau 1 tuần"],
+       "correct":[1]}
+    ]
+  }$j$::jsonb,
+  85, 2, 30, 1,
+  'https://images.unsplash.com/photo-1606326608606-aa0b62935f2b?w=1200&q=80'
+) ON CONFLICT (id) DO UPDATE SET
+  title = EXCLUDED.title, instructions = EXCLUDED.instructions, type = EXCLUDED.type,
+  questions = EXCLUDED.questions, passing_score = EXCLUDED.passing_score, image_url = EXCLUDED.image_url,
+  max_attempts = EXCLUDED.max_attempts, time_limit_minutes = EXCLUDED.time_limit_minutes,
+  sort_order = EXCLUDED.sort_order, updated_at = now();
+
 COMMIT;
 
 -- ══════════════════════════════════════════════════════════════════════════
 -- TỔNG KẾT
 -- ══════════════════════════════════════════════════════════════════════════
 -- ✅ 1 danh mục : "🎯 Lead — Khách hàng tiềm năng" (ngành tủ bếp/cửa nhôm)
--- ✅ 12 bài học (văn phong chuyên nghiệp, súc tích, ví dụ thực tế ngành)
--- ✅ 17 bài tập : 11 quiz + 4 checklist + 2 essay
---    - Bài 6 + Bài 10 : Quiz NGHIÊM (80%, 15 phút, tối đa 3 lượt)
---    - Còn lại : Quiz tiêu chuẩn (70%)
+-- ✅ 13 bài học (12 bài kiến thức + 1 bài giới thiệu bài thi tổng kết)
+-- ✅ 18 bài tập : 12 quiz + 4 checklist + 2 essay
+--    - Bài 6  ⭐  : Quiz NGHIÊM (80%, 15 phút, 3 lượt) — Quy định minh chứng
+--    - Bài 10 ⭐  : Quiz NGHIÊM (80%, 15 phút, 3 lượt) — Hệ thống KPI
+--    - Bài 13 🏆 : BÀI THI TỔNG KẾT (85%, 30 phút, 2 lượt) — 20 câu tổng hợp
+--    - Còn lại    : Quiz tiêu chuẩn (70%)
+--
+-- ⚙️ Khi cờ require_all_exercises_passed = true (mặc định):
+--    Học viên BẮT BUỘC pass bài thi tổng kết (Ex 18) mới được cấp chứng nhận.
 --
 -- File dùng ON CONFLICT DO UPDATE → chạy lại sẽ ghi đè nội dung mới nhất.
 --

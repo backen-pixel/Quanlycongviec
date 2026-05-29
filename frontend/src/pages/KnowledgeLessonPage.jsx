@@ -3,6 +3,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { renderMarkdownLines, youtubeEmbedUrl, estimateReadingTime } from '../lib/knowledgeMarkdown';
 import KnowledgeMediaGallery from '../components/KnowledgeMediaGallery';
+import { KnowledgeDeadlineBanner } from '../components/KnowledgeDeadline';
 import {
   BookOpen, Video, ClipboardList, CheckCircle2, ChevronLeft, ChevronRight,
   PlayCircle, Loader2, Clock, Award, ArrowRight, ListChecks,
@@ -116,6 +117,7 @@ export default function KnowledgeLessonPage() {
   const [scrollProgress, setScrollProgress] = useState(0);
   const [siblingLessons, setSiblingLessons] = useState([]);
   const [newCertificate, setNewCertificate] = useState(null);
+  const [lockInfo, setLockInfo] = useState(null);
   const contentRef = useRef(null);
 
   useEffect(() => {
@@ -144,13 +146,21 @@ export default function KnowledgeLessonPage() {
 
   const loadLesson = async () => {
     setLoading(true);
+    setLockInfo(null);
     try {
       const { data } = await api.get(`/knowledge/lessons/${id}`);
       setLesson(data);
       if (data.video_url && !data.content_md) setTab('video');
       else setTab('text');
     } catch (e) {
-      console.error(e);
+      if (e.response?.status === 423 && e.response?.data?.locked) {
+        setLockInfo({
+          reason: e.response.data.error || 'Bài học đang khoá',
+          prev_lesson_id: e.response.data.prev_lesson_id || null,
+        });
+      } else {
+        console.error(e);
+      }
     }
     setLoading(false);
   };
@@ -168,7 +178,11 @@ export default function KnowledgeLessonPage() {
     setCompleting(true);
     try {
       const { data } = await api.post(`/knowledge/lessons/${id}/complete`);
-      setLesson((l) => ({ ...l, progress: { ...l.progress, status: 'completed' } }));
+      setLesson((l) => ({
+        ...l,
+        progress: { ...l.progress, status: 'completed' },
+        next_lesson: data?.next_lesson || l.next_lesson || null,
+      }));
       if (data?.certificate_issued) {
         setNewCertificate(data.certificate_issued);
       }
@@ -196,12 +210,45 @@ export default function KnowledgeLessonPage() {
     };
   }, [lesson, siblingLessons]);
 
+  // Bài kế tiếp theo backend (kèm trạng thái khoá thật)
+  const apiNextLesson = lesson?.next_lesson || null;
+
   const readingTime = useMemo(() => estimateReadingTime(lesson?.content_md), [lesson?.content_md]);
 
   if (loading) {
     return (
       <div className="flex justify-center py-20">
         <div className="animate-spin h-8 w-8 border-2 border-blue-600 border-t-transparent rounded-full" />
+      </div>
+    );
+  }
+
+  if (lockInfo) {
+    return (
+      <div className="max-w-2xl mx-auto py-12 px-4">
+        <div className="rounded-3xl border-2 border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 p-8 text-center shadow-lg">
+          <div className="w-20 h-20 mx-auto rounded-full bg-amber-100 flex items-center justify-center mb-4">
+            <AlertCircle className="h-10 w-10 text-amber-500" />
+          </div>
+          <h2 className="text-2xl font-bold text-amber-900 mb-2">Bài học đang khoá</h2>
+          <p className="text-amber-700 mb-6">{lockInfo.reason}</p>
+          <div className="flex flex-col sm:flex-row gap-2 justify-center">
+            {lockInfo.prev_lesson_id && (
+              <Link
+                to={`/knowledge/lessons/${lockInfo.prev_lesson_id}`}
+                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-xl text-sm font-semibold hover:from-amber-600 hover:to-orange-600 shadow"
+              >
+                <ChevronLeft className="h-4 w-4" /> Đi đến bài học cần hoàn thành
+              </Link>
+            )}
+            <Link
+              to="/knowledge"
+              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-white border border-amber-200 text-amber-700 rounded-xl text-sm font-medium hover:bg-amber-50"
+            >
+              ← Thư viện kiến thức
+            </Link>
+          </div>
+        </div>
       </div>
     );
   }
@@ -274,6 +321,8 @@ export default function KnowledgeLessonPage() {
       <Link to="/knowledge" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-violet-600 mb-4">
         <ChevronLeft className="h-4 w-4" /> Thư viện kiến thức
       </Link>
+
+      {lesson.deadline && <KnowledgeDeadlineBanner deadline={lesson.deadline} />}
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-6">
         <article ref={contentRef} className="min-w-0">
@@ -472,15 +521,30 @@ export default function KnowledgeLessonPage() {
                 Đánh dấu hoàn thành
               </button>
             )}
-            {nextLesson && (
-              <Link
-                to={`/knowledge/lessons/${nextLesson.id}`}
-                className="px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium flex items-center justify-center gap-2"
-              >
-                Bài tiếp theo
-                <ChevronRight className="h-4 w-4" />
-              </Link>
-            )}
+            {(() => {
+              const target = apiNextLesson || nextLesson;
+              if (!target) return null;
+              const locked = apiNextLesson ? apiNextLesson.is_locked : (hasExercises && !isCompleted);
+              if (locked) {
+                return (
+                  <div
+                    className="px-4 py-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm font-medium flex items-center gap-2 cursor-not-allowed"
+                    title={apiNextLesson?.unlock_reason || 'Hãy hoàn thành bài học (và bài tập) trước khi sang bài kế tiếp'}
+                  >
+                    🔒 Cần hoàn thành bài học hiện tại
+                  </div>
+                );
+              }
+              return (
+                <Link
+                  to={`/knowledge/lessons/${target.id}`}
+                  className="px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium flex items-center justify-center gap-2"
+                >
+                  Học bài tiếp theo
+                  <ChevronRight className="h-4 w-4" />
+                </Link>
+              );
+            })()}
           </div>
 
           <RatingSection lesson={lesson} onChange={loadLesson} />
@@ -511,25 +575,44 @@ export default function KnowledgeLessonPage() {
                 <p className="text-xs text-gray-400">Không có bài khác</p>
               ) : (
                 <ul className="space-y-1">
-                  {siblingLessons.map((l) => (
-                    <li key={l.id}>
-                      <Link
-                        to={`/knowledge/lessons/${l.id}`}
-                        className={`flex items-start gap-2 px-2 py-1.5 rounded-lg text-sm transition-colors ${
-                          l.id === lesson.id ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-50'
-                        }`}
-                      >
+                  {siblingLessons.map((l) => {
+                    const locked = !!l.is_locked && l.id !== lesson.id;
+                    const inner = (
+                      <>
                         <span className="mt-0.5 shrink-0">
                           {l.progress_status === 'completed' ? (
                             <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+                          ) : locked ? (
+                            <span className="text-amber-500 text-[12px] leading-none">🔒</span>
                           ) : (
                             <div className={`h-3.5 w-3.5 rounded-full border ${l.id === lesson.id ? 'border-blue-600 bg-blue-100' : 'border-gray-300'}`} />
                           )}
                         </span>
-                        <span className="line-clamp-2">{l.title}</span>
-                      </Link>
-                    </li>
-                  ))}
+                        <span className={`line-clamp-2 ${locked ? 'text-gray-400' : ''}`}>{l.title}</span>
+                      </>
+                    );
+                    return (
+                      <li key={l.id}>
+                        {locked ? (
+                          <div
+                            title={l.unlock_reason || 'Bài học đang khoá'}
+                            className="flex items-start gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-400 cursor-not-allowed bg-gray-50"
+                          >
+                            {inner}
+                          </div>
+                        ) : (
+                          <Link
+                            to={`/knowledge/lessons/${l.id}`}
+                            className={`flex items-start gap-2 px-2 py-1.5 rounded-lg text-sm transition-colors ${
+                              l.id === lesson.id ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-50'
+                            }`}
+                          >
+                            {inner}
+                          </Link>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>
