@@ -5,6 +5,11 @@ const PDFDocument = require('pdfkit');
 const multer = require('multer');
 const XLSX = require('xlsx');
 const { crmTaskMeetsCompletionRequirements, crmTaskRequiresCompletionEvidence } = require('../helpers/crmTaskCompletionEvidence');
+const {
+  createCrmLeadTask,
+  updateCrmLeadTask,
+  deleteCrmLeadTask,
+} = require('../helpers/crmLeadTaskMutations');
 const { createNotification: createNotif, notifyMultiple: notifyMultipleShared } = require('../helpers/notifications');
 const { DEFAULT_CHECKLISTS } = require('../helpers/defaultChecklists');
 const { generateFlowTasks, generateStepTasks } = require('../helpers/generateFlowTasks');
@@ -6425,6 +6430,29 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 
     const companyId = req.body.company_id || lead.company_id || null;
 
+    // Bắt buộc chọn khu vực CRM khi chuyển Lead → Deal (đồng nhất phân quyền theo region).
+    const regionIdRaw =
+      (req.body.region_id != null ? req.body.region_id : lead.region_id) || null;
+    const regionId = regionIdRaw ? String(regionIdRaw).trim() : '';
+    if (!regionId) {
+      return res.status(400).json({ error: 'Vui lòng chọn khu vực trước khi chuyển Lead sang Deal.' });
+    }
+    {
+      const { data: region, error: regionErr } = await supabase
+        .from('company_regions')
+        .select('id, company_id, is_active')
+        .eq('id', regionId)
+        .maybeSingle();
+      if (regionErr) throw regionErr;
+      if (!region) return res.status(400).json({ error: 'Khu vực không tồn tại.' });
+      if (region.is_active === false) {
+        return res.status(400).json({ error: 'Khu vực đã ngưng hoạt động — chọn khu vực khác.' });
+      }
+      if (companyId && String(region.company_id || '') !== String(companyId)) {
+        return res.status(400).json({ error: 'Khu vực không thuộc công ty của lead.' });
+      }
+    }
+
     // Pipeline dùng cho cột Deal đầu tiên phải trùng pipeline Kanban của công ty (trước đây lấy 1 cột deal trên toàn DB → stage_id lạ, không nằm cột nào trên board).
     let pipelineForDeal = null;
     if (req.body.pipeline_id) {
@@ -6489,6 +6517,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
         assigned_to: ownerId,
         lead_owner_id: ownerId,
         company_id: companyId,
+        region_id: regionId,
         updated_at: new Date().toISOString(),
         stage_entered_at: new Date().toISOString(),
       })
@@ -10729,62 +10758,9 @@ r.post('/leads/:id/tasks/resync-pipeline', async (req, res) => {
 // CREATE task
 r.post('/leads/:id/tasks', async (req, res) => {
   try {
-    const b = req.body;
-    const targetLeadId = await resolveCrmTaskWriteLeadId(req.params.id);
-    let pipelineStageId = b.pipeline_stage_id || null;
-    if (!pipelineStageId) {
-      const { data: leadRow } = await supabase
-        .from('crm_leads')
-        .select('stage_id')
-        .eq('id', targetLeadId)
-        .maybeSingle();
-      pipelineStageId = leadRow?.stage_id || null;
-    }
-    const { data, error } = await supabase.from('crm_tasks').insert({
-      lead_id: targetLeadId,
-      title: b.title,
-      description: b.description || null,
-      status: b.status || 'pending',
-      priority: b.priority || 'medium',
-      stage_slug: b.stage_slug || null,
-      pipeline_stage_id: pipelineStageId,
-      order_index: b.order_index || 0,
-      assignee_id: b.assignee_id || null,
-      supervisor_id: b.supervisor_id || null,
-      deadline: b.deadline ? normalizeTimestamp(b.deadline) : null,
-      created_by: req.user.userId,
-      completion_requires_file_or_note: !!b.completion_requires_file_or_note,
-      completion_requires_customer_note: !!b.completion_requires_customer_note,
-      completion_requires_customer_contact: !!b.completion_requires_customer_contact,
-      blocks_stage_advance: !!b.blocks_stage_advance,
-      show_excel_quotation_upload: !!b.show_excel_quotation_upload,
-    }).select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)').single();
-    if (error) throw error;
-
-    // 🔔 NOTIFICATION: Task CRM mới (đúng khối CRM/SX + khu vực lead)
-    try {
-      if (data.assignee_id) {
-        const { data: leadSnap } = await supabase.from('crm_leads')
-          .select('company_id, region_id')
-          .eq('id', targetLeadId)
-          .maybeSingle();
-        const eco = ecosystemModuleKeyForCrmDeadline(crmTaskDeadlineModuleKey(data.stage_slug));
-        const okAssignees = await filterUserIdsForCrmLeadScopedNotification(
-          supabase,
-          leadSnap || {},
-          [data.assignee_id],
-          eco,
-        );
-        if (okAssignees.some((x) => String(x) === String(data.assignee_id))) {
-          await createNotification(req, data.assignee_id, 'crm_task_assigned',
-            '📌 Nhiệm vụ CRM mới',
-            `Bạn được giao: "${data.title}"`,
-            'crm_task', data.id);
-        }
-      }
-    } catch (ne) { console.warn('[NOTIFY] crm_task_created:', ne.message); }
-
-    res.status(201).json(data);
+    const result = await createCrmLeadTask(req, req.params.id, req.body);
+    if (result.error) return res.status(result.status || 500).json({ error: result.error });
+    return res.status(result.status).json(result.data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -11126,9 +11102,9 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
 // DELETE task
 r.delete('/leads/:leadId/tasks/:taskId', async (req, res) => {
   try {
-    const { error } = await supabase.from('crm_tasks').delete().eq('id', req.params.taskId);
-    if (error) throw error;
-    res.json({ success: true });
+    const result = await deleteCrmLeadTask(req, req.params.taskId);
+    if (result.error) return res.status(result.status || 500).json({ error: result.error });
+    return res.json(result.data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

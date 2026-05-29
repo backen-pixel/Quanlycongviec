@@ -9,6 +9,12 @@ const {
   canViewerSeeByCompanyAndDept,
 } = require('../helpers/documentShareScope');
 const { isAdminLike } = require('../helpers/adminRole');
+const {
+  createProjectTask,
+  updateProjectTask,
+  deleteProjectTask,
+  addProjectTaskComment: addProjectTaskCommentCore,
+} = require('../helpers/projectTaskMutations');
 
 const r = Router();
 r.use(auth);
@@ -164,179 +170,18 @@ r.get('/:id', async (req, res) => {
 // ─── CREATE TASK ──
 r.post('/', async (req, res) => {
   try {
-    const b = req.body;
-    const { data, error } = await supabase.from('tasks').insert({
-      project_id: b.project_id || null,
-      stage_id: b.stage_id || null,
-      workflow_line_id: b.workflow_line_id || null,
-      title: b.title,
-      description: b.description || null,
-      priority: b.priority || 'medium',
-      status: b.status || 'pending',
-      assignee_id: b.assignee_id || null,
-      created_by_id: req.user.userId,
-      due_date: b.due_date || null,
-      start_date: b.start_date || null,
-      estimated_hours: b.estimated_hours || null,
-      attachments: b.attachments || [],
-      task_type: b.task_type || 'project',
-    }).select().single();
-    if (error) throw error;
-
-    // Add participants & observers
-    if (b.participants?.length) {
-      await supabase.from('task_participants').insert(
-        b.participants.map(p => ({ task_id: data.id, user_id: p.user_id, role: p.role || 'participant' }))
-      );
-      // Notify participants
-      for (const p of b.participants) {
-        if (p.user_id !== req.user.userId) {
-          const role = p.role === 'observer' ? 'quan sát' : 'hỗ trợ';
-          await createNotification(req, p.user_id, 'task_assigned', '👥 Thêm vào công việc',
-            `Bạn được thêm vào "${b.title}" với vai trò ${role}`, 'task', data.id, taskProjectMeta(data.project_id));
-        }
-      }
-    }
-
-    // Add checklists
-    if (b.checklists?.length) {
-      console.log(`[TASK ${data.id}] Creating ${b.checklists.length} checklists:`, b.checklists);
-      for (const c of b.checklists) {
-        const { data: cl, error: clError } = await supabase.from('task_checklists').insert({
-          task_id: data.id,
-          title: c.title || c,
-          order_index: b.checklists.indexOf(c),
-          attachments: c.attachments || [],
-          notes: c.notes || null,
-        }).select().single();
-        
-        if (clError) {
-          console.error(`[TASK ${data.id}] Checklist insert error:`, clError);
-        } else {
-          console.log(`[TASK ${data.id}] Checklist created:`, cl.id, cl.title);
-        }
-        
-        // Notify checklist assignee if set
-        if (c.notes && cl) {
-          try {
-            const parsed = typeof c.notes === 'string' ? JSON.parse(c.notes) : c.notes;
-            if (parsed?.assignee_id && parsed.assignee_id !== req.user.userId) {
-              await createNotification(req, parsed.assignee_id, 'task_assigned',
-                '📋 Checklist được giao',
-                `Bạn được giao checklist "${c.title}" trong công việc "${b.title}"`,
-                'task', data.id, taskProjectMeta(data.project_id));
-            }
-          } catch {}
-        }
-      }
-    } else {
-      console.log(`[TASK ${data.id}] No checklists provided`);
-    }
-
-    // Save file attachments to DB
-    if (b.attachments?.length) {
-      await supabase.from('file_attachments').insert(
-        b.attachments.map(f => ({
-          entity_type: 'task', entity_id: data.id,
-          file_name: f.file_name, file_url: f.file_url,
-          file_size: f.file_size, mime_type: f.mime_type,
-          uploaded_by: req.user.userId,
-        }))
-      );
-    }
-
-    // Notification — giao việc
-    if (b.assignee_id && b.assignee_id !== req.user.userId) {
-      await createNotification(req, b.assignee_id, 'task_assigned', '📌 Công việc mới',
-        `Bạn được giao: "${b.title}"${b.due_date ? ` — Hạn: ${new Date(b.due_date).toLocaleDateString('vi-VN')}` : ''}`,
-        'task', data.id, taskProjectMeta(data.project_id));
-    }
-
-    // Notification — project team (only for project tasks)
-    if (b.project_id) {
-      const { data: proj } = await supabase.from('projects').select('sales_person_id,designer_id,project_manager_id,production_person_id,code').eq('id', b.project_id).single();
-      if (proj) {
-        // Production project → only notify production_person_id; CRM project → CRM team
-        const teamIds = proj.production_person_id
-          ? [proj.production_person_id]
-          : [proj.sales_person_id, proj.designer_id, proj.project_manager_id].filter(Boolean);
-        const allIds = [...new Set([...teamIds, b.assignee_id].filter(Boolean))];
-        await notifyMultiple(req, allIds, 'task_created',
-          '✅ Công việc mới', `Công việc "${b.title}" được tạo trong dự án ${proj.code}`,
-          'task', data.id, taskProjectMeta(b.project_id));
-      }
-    }
-
-    await logActivity(req.user.userId, 'created', 'task', data.id, `Tạo task: ${b.title}`);
-    const io = req.app.get('io');
-    notify(io, 'task:created', data);
-    res.status(201).json({ task: data });
+    const result = await createProjectTask(req, req.body);
+    if (result.error) return res.status(result.status || 500).json({ error: result.error });
+    return res.status(result.status).json(result.data);
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
 // ─── UPDATE TASK ──
 r.put('/:id', async (req, res) => {
   try {
-    const b = req.body;
-    const update = { updated_at: new Date().toISOString() };
-
-    // Pick allowed fields
-    const fields = ['title','description','notes','status','priority','assignee_id','supervisor_id','due_date','start_date','estimated_hours','actual_hours','stage_id','order_index','blocks_stage_advance','production_stage_id'];
-    fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
-
-    if (update.status === 'done') update.completed_at = new Date().toISOString();
-    if (update.status === 'in_progress' && !b.start_date) update.start_date = new Date().toISOString();
-
-    // Get old values
-    const { data: old } = await supabase.from('tasks').select('status,assignee_id,title').eq('id', req.params.id).single();
-
-    let { data, error } = await supabase.from('tasks').update(update).eq('id', req.params.id).select().single();
-    // Tương thích DB chưa migration 256 (thiếu blocks_stage_advance / production_stage_id) — strip rồi retry.
-    if (error && /(blocks_stage_advance|production_stage_id)/i.test(String(error.message || ''))) {
-      const { blocks_stage_advance: _b, production_stage_id: _p, ...legacy } = update;
-      ({ data, error } = await supabase.from('tasks').update(legacy).eq('id', req.params.id).select().single());
-    }
-    if (error) throw error;
-
-    if (data?.project_id && (b.description !== undefined || b.notes !== undefined)) {
-      try {
-        const { upsertLeadDocumentFromProjectTask } = require('../helpers/syncProjectTaskToLeadDocument');
-        await upsertLeadDocumentFromProjectTask(data, { userId: req.user.userId });
-      } catch (syncErr) {
-        console.warn('[tasks] sync task → lead_document:', syncErr.message);
-      }
-    }
-
-    // Notifications on status change
-    if (old && update.status && update.status !== old.status) {
-      // Nếu chuyển sang review → thông báo cho người tạo
-      if (update.status === 'review' && data.created_by_id) {
-        await createNotification(req, data.created_by_id, 'task_updated', 'Chờ nghiệm thu', `Công việc "${old.title}" đã hoàn thành, chờ bạn kiểm tra`, 'task', data.id, taskProjectMeta(data.project_id));
-      }
-      // Nếu người giao duyệt xong → thông báo cho người thực hiện
-      if (update.status === 'done' && data.assignee_id) {
-        await createNotification(req, data.assignee_id, 'task_updated', 'Công việc đã duyệt', `Công việc "${old.title}" đã được nghiệm thu`, 'task', data.id, taskProjectMeta(data.project_id));
-      }
-      await logActivity(req.user.userId, 'status_changed', 'task', data.id, `Chuyển trạng thái: ${old.status} → ${update.status}`, { status: old.status }, { status: update.status });
-    }
-
-    // Notification on reassign
-    if (update.assignee_id && update.assignee_id !== old?.assignee_id) {
-      await createNotification(req, update.assignee_id, 'task_assigned', 'Được giao công việc', `Bạn được giao: ${data.title}`, 'task', data.id, taskProjectMeta(data.project_id));
-    }
-
-    const io = req.app.get('io');
-    notify(io, 'task:updated', data);
-
-    if (data?.status === 'done') {
-      try {
-        await scheduleNextWorkshopTaskAfterComplete(data);
-      } catch (chainErr) {
-        console.warn('[tasks] workshop deadline chain:', chainErr.message);
-      }
-    }
-
-    res.json({ task: data });
+    const result = await updateProjectTask(req, req.params.id, req.body);
+    if (result.error) return res.status(result.status || 500).json({ error: result.error });
+    return res.status(result.status).json(result.data);
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
@@ -409,10 +254,9 @@ r.patch('/:id/status', async (req, res) => {
 // ─── DELETE TASK ──
 r.delete('/:id', async (req, res) => {
   try {
-    const { data: task } = await supabase.from('tasks').select('title').eq('id', req.params.id).single();
-    await supabase.from('tasks').delete().eq('id', req.params.id);
-    await logActivity(req.user.userId, 'deleted', 'task', req.params.id, `Xóa task: ${task?.title}`);
-    res.json({ message: 'Đã xóa' });
+    const result = await deleteProjectTask(req, req.params.id);
+    if (result.error) return res.status(result.status || 500).json({ error: result.error });
+    return res.json(result.data);
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
 

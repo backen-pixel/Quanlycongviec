@@ -4,6 +4,32 @@
  */
 export const BUILTIN_UPDATES = [
   {
+    id: '2026-05-unified-work-tasks',
+    version: '2.1.0',
+    category: 'feature',
+    publishedAt: '2026-05-29T12:00:00.000Z',
+    title: 'Tổng hợp nhiệm vụ — xem & thao tác mọi NV từ module Công việc',
+    content: `## Tổng hợp nhiệm vụ (mới)
+
+Menu **Công việc → Tổng hợp nhiệm vụ** (\`/work/unified\`) — đầu mối xem mọi nhiệm vụ từ:
+- **CRM** (Lead/Deal)
+- **Sản xuất** & **Vận chuyển / Lắp đặt**
+- **Giao việc CRM** (Kanban độc lập)
+
+### 3 tab chính
+1. **Theo dự án** — chọn dự án → 4 nhóm NV + tiến độ X/Y hoàn thành.
+2. **Tất cả NV** — bảng gom mọi nguồn, lọc loại NV, trạng thái, tìm kiếm.
+3. **Lịch sử ghi nhận** — timeline thống nhất ai làm gì, lúc nào.
+
+### CRUD từ Công việc
+- Tạo, sửa, đổi trạng thái, bình luận — ghi đúng về module gốc (không nhân bản dữ liệu).
+- Nút **Mở trong module gốc** — deep-link về Lead, dự án SX/VC, Giao việc CRM.
+
+### Lịch sử thống nhất
+- Mọi thay đổi quan trọng (tạo, trạng thái, gán NV, deadline, hoàn thành, bình luận) được ghi vào \`unified_task_history\`.
+- Widget nhỏ **Lịch sử nhiệm vụ** trên trang chi tiết Lead, Sản xuất, Vận chuyển.`,
+  },
+  {
     id: '2026-05-knowledge-deal-crm-courses',
     version: '2.0.0',
     category: 'feature',

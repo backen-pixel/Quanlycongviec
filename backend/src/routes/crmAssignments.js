@@ -10,6 +10,12 @@ const {
   persistAssignmentNotification,
   buildAssignmentNotificationInsert,
 } = require('../helpers/crmAssignmentNotifications');
+const {
+  createCrmAssignment: createCrmAssignmentCore,
+  updateCrmAssignment: updateCrmAssignmentCore,
+  deleteCrmAssignment: deleteCrmAssignmentCore,
+  addCrmAssignmentComment: addCrmAssignmentCommentCore,
+} = require('../helpers/crmAssignmentMutations');
 const { createTTLCache } = require('../helpers/ttlCache');
 
 const assignColsCache = createTTLCache({
@@ -455,58 +461,11 @@ r.get('/', async (req, res) => {
 // POST /api/crm/assignments
 r.post('/', async (req, res) => {
   try {
-    const {
-      title, description, assignee_id, assignee_ids, department_ids, region_ids,
-      column_id, company_id, priority, status, deadline,
-    } = req.body || {};
-    if (!title || !title.trim()) return res.status(400).json({ error: 'Cần tiêu đề' });
-
-    const effectiveCompany = isAdmin(req)
-      ? (company_id || req.user?.company_id || null)
-      : (req.user?.company_id || null);
-
-    const finalAssignees = await expandAssigneeIds({
-      assignee_ids: assignee_ids && assignee_ids.length ? assignee_ids : (assignee_id ? [assignee_id] : []),
-      department_ids,
-      region_ids,
-      company_id: effectiveCompany,
-    });
-    const primaryAssignee = finalAssignees[0] || null;
-
-    let posBase = 0;
-    if (column_id) {
-      const { data: maxRow } = await supabase
-        .from('crm_assignments')
-        .select('position')
-        .eq('column_id', column_id)
-        .order('position', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      posBase = ((maxRow?.position ?? -1) + 1);
-    }
-
-    const payload = {
-      title: title.trim(),
-      description: description || null,
-      assignee_id: primaryAssignee,
-      created_by_id: req.user.userId,
-      column_id: column_id || null,
-      company_id: effectiveCompany,
-      priority: priority || 'medium',
-      status: status || 'pending',
-      deadline: deadline || null,
-      position: posBase,
-    };
-    const { data, error } = await supabase
-      .from('crm_assignments')
-      .insert(payload)
-      .select(ASSIGNMENT_SELECT)
-      .single();
-    if (error) throw error;
-
-    await replaceAssignees(data.id, finalAssignees);
-
-    // Thông báo cho từng người được giao
+    const result = await createCrmAssignmentCore(req, req.body || {});
+    if (result.error) return res.status(result.status || 500).json({ error: result.error });
+    const data = result.data?.assignment;
+    // Thông báo cho từng người được giao (giữ logic route gốc)
+    const finalAssignees = data?.assignee_id ? [data.assignee_id] : [];
     for (const uid of finalAssignees) {
       if (String(uid) === String(req.user.userId)) continue;
       const notif = await persistNotification(uid, {
@@ -522,9 +481,8 @@ r.post('/', async (req, res) => {
         assignmentId: data.id,
       }));
     }
-
     await attachAssigneesToAssignments([data]);
-    res.status(201).json({ assignment: data });
+    res.status(result.status).json(result.data);
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi tạo nhiệm vụ' }); }
 });
 
@@ -679,10 +637,9 @@ r.delete('/:id', async (req, res) => {
     if (!isAssignmentCreator(req, row)) {
       return res.status(403).json({ error: 'Chỉ người tạo nhiệm vụ mới được sửa hoặc xóa' });
     }
-
-    const { error } = await supabase.from('crm_assignments').delete().eq('id', req.params.id);
-    if (error) throw error;
-    res.json({ ok: true });
+    const result = await deleteCrmAssignmentCore(req, req.params.id);
+    if (result.error) return res.status(result.status || 500).json({ error: result.error });
+    return res.json(result.data);
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi xóa nhiệm vụ' }); }
 });
 
