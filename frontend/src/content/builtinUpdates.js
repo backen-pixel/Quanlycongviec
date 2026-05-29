@@ -4,6 +4,50 @@
  */
 export const BUILTIN_UPDATES = [
   {
+    id: '2026-05-knowledge-deal-crm-courses',
+    version: '2.0.0',
+    category: 'feature',
+    publishedAt: '2026-05-29T08:00:00.000Z',
+    title: 'Thư viện kiến thức — 2 khoá mới (Deal & CRM toàn phần mềm), bài tập nâng cấp & UX bài học',
+    content: `## Khoá học mới
+
+### 💼 Deal — Cơ hội bán hàng (13 bài + bài thi Deal Master)
+- 13 bài học chuyên sâu về vòng đời Deal: Lead → Báo giá → Đàm phán → Ký HĐ → Thắng/Thua → Bàn giao SX → Điểm Deal.
+- Áp dụng tình huống ngành **tủ bếp / cửa nhôm**, giọng nghiêm túc.
+- **Bài thi tổng kết Deal Master**: 20 câu tình huống / đạt **90%** / **30 phút** / tối đa 2 lần.
+- Pipeline 6 giai đoạn được khẳng định là **mẫu tượng trưng** — công ty có thể cấu hình pipeline riêng.
+- Deadline khoá: **30 ngày** (tương đối từ ngày bắt đầu).
+
+### 🖥️ Hướng dẫn CRM — Toàn bộ phần mềm (20 bài + bài thi tổng)
+- 12 bài Lead/Deal trên phần mềm (menu, nút, tab, gate, tạo dự án…).
+- **7 bài chức năng mới bổ sung**: Dashboard CRM, Sự kiện, Nhóm chat, Đang hoạt động, Bảng tin nội bộ, Cuộc gọi & ghi âm, CRM Mobile.
+- **Bài thi tổng kết CRM Operator**: 25 câu / đạt **90%** / **30 phút**.
+- Deadline khoá: **21 ngày**.
+
+## Bài tập nâng cấp toàn diện
+- Câu hỏi đổi sang **tình huống thực tế** (case study), nhiều câu chọn nhiều, đáp án nhiễu hợp lý.
+- Điểm đạt nâng từ 70% → **80%**, giới hạn **2 lần làm**.
+- Checklist chuyển thành **cam kết tuân thủ** (tick 100% các điều khoản KPI / quy trình).
+
+## UX bài học & bài tập
+- **Câu chọn nhiều** hiển thị rõ ràng:
+  - Badge xanh lá *"Câu này chọn nhiều đáp án"* trên đầu câu hỏi.
+  - Hint đếm số đáp án đã chọn (real-time).
+  - Checkbox màu xanh lá, sidebar có dấu \`+\` đánh dấu.
+  - Trang kết quả có pill *Chọn nhiều / Chọn 1* trên mỗi câu.
+- **Bài học có video** mặc định mở tab **Video** (không còn mặc định Văn bản).
+- Khoá bài tuần tự: xong bài + pass bài tập mới mở bài kế tiếp; nút **Học bài tiếp theo**.
+
+## Deadline & lịch sử học tập
+- Khoá có **deadline cố định** hoặc **tương đối từ ngày bắt đầu**, banner đếm ngược trên trang khoá.
+- **Lịch sử thay đổi deadline** — admin xem ai đổi gì khi nào.
+- Học viên có **timeline** học (bài bắt đầu / hoàn thành / bài tập nộp) với nhãn **Đúng hạn / Trễ**.
+
+## Chứng nhận & profile
+- Khi pass tất cả bài tập + bài thi tổng → tự cấp **chứng nhận** với mã định danh và **huy chương** riêng (admin upload từng khoá).
+- Chứng nhận hiển thị trên **trang Profile mạng nội bộ** của học viên.`,
+  },
+  {
     id: '2026-05-crm-assignments',
     version: '1.9.0',
     category: 'feature',

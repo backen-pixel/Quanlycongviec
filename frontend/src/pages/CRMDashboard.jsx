@@ -28,6 +28,11 @@ import {
   persistCrmPipelineUiNow,
   snapshotHasProperty,
 } from '../lib/crmPipelineStorage';
+import {
+  buildCrmDashboardCacheKey,
+  getCrmDashboardCache,
+  saveCrmDashboardCache,
+} from '../lib/crmDashboardCache';
 import { userSeesAllCrmDealsScoped } from '../lib/crmDealAccess';
 import {
   findDefaultAdminCrmCompanyPhucDat,
@@ -695,6 +700,8 @@ export default function CRMDashboard() {
   /** load() vừa setFilterCompany — tránh useEffect filterCompany gọi load() lần 2 */
   const suppressFilterCompanyLoadRef = useRef(false);
   const loadDebounceTimerRef = useRef(null);
+  /** Cache key vừa hydrate — tránh hydrate lại liên tục cùng 1 filter combo */
+  const lastHydratedCacheKeyRef = useRef(null);
   /** Giá trị GET /crm/live-version gần nhất — đổi → silent reload Kanban/KPI */
   const crmLiveVersionRef = useRef(null);
   /** Số bản ghi lead/deal tải cho Kanban (API /crm/leads có phân trang; "all" = lặp offset đến hết) */
@@ -975,6 +982,43 @@ export default function CRMDashboard() {
     if (suppressFilterCompanyLoadRef.current) {
       suppressFilterCompanyLoadRef.current = false;
       return;
+    }
+    // ── Stale-while-revalidate: hydrate cache để dashboard hiện ngay ──
+    try {
+      const cacheKey = buildCrmDashboardCacheKey({
+        userId: user?.id,
+        filterCompany,
+        filterAssignee,
+        filterPhone,
+        filterLeadType,
+        customDateFrom,
+        customDateTo,
+        kanbanLoadLimit,
+      });
+      if (cacheKey && cacheKey !== lastHydratedCacheKeyRef.current) {
+        const cached = getCrmDashboardCache(cacheKey);
+        if (cached?.data) {
+          const c = cached.data;
+          if (c.dataLead !== undefined) setDataLead(c.dataLead);
+          if (c.dataDeal !== undefined) setDataDeal(c.dataDeal);
+          if (Array.isArray(c.pipelines)) setPipelines(c.pipelines);
+          if (Array.isArray(c.allLeads)) setAllLeads(c.allLeads);
+          if (Array.isArray(c.allDeals)) setAllDeals(c.allDeals);
+          if (c.loadMoreState) setLoadMoreState({ ...c.loadMoreState, loading: false });
+          if (Array.isArray(c.stagesLead)) setStagesLead(c.stagesLead);
+          if (Array.isArray(c.stagesDeal)) setStagesDeal(c.stagesDeal);
+          if (Array.isArray(c.sources)) setSources(c.sources);
+          if (Array.isArray(c.leadTypes)) setLeadTypes(c.leadTypes);
+          if (c.fbPages) setFbPages(c.fbPages);
+          if (Array.isArray(c.companies) && c.companies.length) setCompanies(c.companies);
+          if (Array.isArray(c.users) && c.users.length) setUsers(c.users);
+          // Tắt spinner ngay — user thấy dashboard tức thì
+          setFirstLoading(false);
+          lastHydratedCacheKeyRef.current = cacheKey;
+        }
+      }
+    } catch {
+      /* cache hydrate lỗi — fallback về fetch bình thường */
     }
     if (loadDebounceTimerRef.current) clearTimeout(loadDebounceTimerRef.current);
     loadDebounceTimerRef.current = setTimeout(() => {
@@ -1733,12 +1777,11 @@ export default function CRMDashboard() {
       }
       setDataLead(dashLeadRes.data);
       setDataDeal(dashDealRes.data);
-      setPipelines(
-        narrowPipelinesToDefaultForCompany(
-          Array.isArray(pipelinesRes.data) ? pipelinesRes.data : [],
-          resolvedCompanyId || null,
-        ),
+      const pipelinesValue = narrowPipelinesToDefaultForCompany(
+        Array.isArray(pipelinesRes.data) ? pipelinesRes.data : [],
+        resolvedCompanyId || null,
       );
+      setPipelines(pipelinesValue);
       const userKey = getCurrentUserKeyForLeadSeen(user);
       const viewedLocal = getLocallyViewedLeadIdSet(userKey);
       const mergeLeadSeenLocal = (rows) =>
@@ -1749,27 +1792,68 @@ export default function CRMDashboard() {
       const dealsResult = dealsRows || { rows: [], nextOffset: 0, total: null };
       const leadsData = Array.isArray(leadsResult) ? leadsResult : leadsResult.rows;
       const dealsData = Array.isArray(dealsResult) ? dealsResult : dealsResult.rows;
-      setAllLeads(dedupeCrmKanbanRows(mergeLeadSeenLocal(leadsData)));
-      setAllDeals((prev) =>
-        preserveCrmKanbanPipelineBadges(
-          prev,
-          dedupeCrmKanbanRows(mergeLeadSeenLocal(dealsData)),
-        ),
-      );
-      setLoadMoreState({
+      const allLeadsValue = dedupeCrmKanbanRows(mergeLeadSeenLocal(leadsData));
+      setAllLeads(allLeadsValue);
+      let allDealsValue = dedupeCrmKanbanRows(mergeLeadSeenLocal(dealsData));
+      setAllDeals((prev) => {
+        allDealsValue = preserveCrmKanbanPipelineBadges(prev, allDealsValue);
+        return allDealsValue;
+      });
+      const loadMoreStateValue = {
         leadOffset: Array.isArray(leadsResult) ? leadsData.length : (leadsResult.nextOffset ?? leadsData.length),
         dealOffset: Array.isArray(dealsResult) ? dealsData.length : (dealsResult.nextOffset ?? dealsData.length),
         leadTotal: Array.isArray(leadsResult) ? null : leadsResult.total,
         dealTotal: Array.isArray(dealsResult) ? null : dealsResult.total,
         loading: false,
-      });
-      setStagesLead(sortAndDedupePipelineStages(stagesLeadRes.data || []));
-      setStagesDeal(sortAndDedupePipelineStages(stagesDealRes.data || []));
-      setSources(sourcesRes.data?.sources || (Array.isArray(sourcesRes.data) ? sourcesRes.data : []));
-      setLeadTypes(Array.isArray(leadTypesRes.data) ? leadTypesRes.data : []);
-      if (sourcesRes.data?.fb_pages) setFbPages(sourcesRes.data.fb_pages);
-      setCompanies(companiesRes.data?.companies || companiesRes.data || []);
-      setUsers(Array.isArray(usersRes.data) ? usersRes.data : usersRes.data?.users || []);
+      };
+      setLoadMoreState(loadMoreStateValue);
+      const stagesLeadValue = sortAndDedupePipelineStages(stagesLeadRes.data || []);
+      const stagesDealValue = sortAndDedupePipelineStages(stagesDealRes.data || []);
+      setStagesLead(stagesLeadValue);
+      setStagesDeal(stagesDealValue);
+      const sourcesValue = sourcesRes.data?.sources || (Array.isArray(sourcesRes.data) ? sourcesRes.data : []);
+      const leadTypesValue = Array.isArray(leadTypesRes.data) ? leadTypesRes.data : [];
+      setSources(sourcesValue);
+      setLeadTypes(leadTypesValue);
+      let fbPagesValue = null;
+      if (sourcesRes.data?.fb_pages) {
+        fbPagesValue = sourcesRes.data.fb_pages;
+        setFbPages(fbPagesValue);
+      }
+      const companiesValue = companiesRes.data?.companies || companiesRes.data || [];
+      const usersValue = Array.isArray(usersRes.data) ? usersRes.data : usersRes.data?.users || [];
+      setCompanies(companiesValue);
+      setUsers(usersValue);
+      // ─── Lưu cache để lần sau mở/đổi filter render tức thì ───
+      try {
+        const cacheKey = buildCrmDashboardCacheKey({
+          userId: user?.id,
+          filterCompany: resolvedCompanyId || filterCompany,
+          filterAssignee,
+          filterPhone,
+          filterLeadType,
+          customDateFrom,
+          customDateTo,
+          kanbanLoadLimit,
+        });
+        saveCrmDashboardCache(cacheKey, {
+          dataLead: dashLeadRes.data,
+          dataDeal: dashDealRes.data,
+          pipelines: pipelinesValue,
+          allLeads: allLeadsValue,
+          allDeals: allDealsValue,
+          loadMoreState: loadMoreStateValue,
+          stagesLead: stagesLeadValue,
+          stagesDeal: stagesDealValue,
+          sources: sourcesValue,
+          leadTypes: leadTypesValue,
+          fbPages: fbPagesValue,
+          companies: companiesValue,
+          users: usersValue,
+        });
+      } catch {
+        /* cache lỗi không ảnh hưởng dashboard */
+      }
       void refreshPipelinePhoneTotalsForType(pipelineType);
       if (!isStale()) {
         const otherType = pipelineType === 'lead' ? 'deal' : 'lead';
