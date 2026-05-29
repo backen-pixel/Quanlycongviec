@@ -3,8 +3,9 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import {
   Award, ChevronLeft, Loader2, Search, Calendar, Hash,
-  ShieldCheck, Sparkles, Trophy, FileBadge2, ExternalLink, Filter,
+  ShieldCheck, Sparkles, Trophy, FileBadge2, ExternalLink, Filter, ChevronDown,
 } from 'lucide-react';
+import { KnowledgeDeadlineBanner, KnowledgeLearningTimeline } from '../components/KnowledgeDeadline';
 
 function formatDate(iso) {
   if (!iso) return '—';
@@ -90,7 +91,7 @@ function CertificateCard({ cert }) {
   );
 }
 
-function ProgressTowardsCertificate({ progress, onIssue, issuing }) {
+function ProgressTowardsCertificate({ progress, onIssue, issuing, timelineCategoryId, onToggleTimeline }) {
   if (!progress.length) return null;
   return (
     <section className="mb-8">
@@ -164,6 +165,21 @@ function ProgressTowardsCertificate({ progress, onIssue, issuing }) {
                 </div>
               </div>
 
+              {p.deadline?.supported && p.deadline.mode !== 'none' && (
+                <div className="mt-3">
+                  <KnowledgeDeadlineBanner deadline={p.deadline} compact />
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => onToggleTimeline(timelineCategoryId === p.category_id ? null : p.category_id)}
+                className="mt-3 w-full px-3 py-2 text-xs font-medium text-violet-700 bg-violet-50 rounded-lg hover:bg-violet-100 flex items-center justify-center gap-1"
+              >
+                <ChevronDown className={`h-3.5 w-3.5 transition-transform ${timelineCategoryId === p.category_id ? 'rotate-180' : ''}`} />
+                {timelineCategoryId === p.category_id ? 'Ẩn lịch học' : 'Xem lịch học & bài tập'}
+              </button>
+
               {canIssue && (
                 <button
                   type="button"
@@ -194,6 +210,15 @@ function ProgressTowardsCertificate({ progress, onIssue, issuing }) {
           );
         })}
       </div>
+
+      {timelineCategoryId && (
+        <div className="mt-4">
+          <KnowledgeLearningTimeline
+            categoryId={timelineCategoryId}
+            title={`Lịch học — ${progress.find((x) => x.category_id === timelineCategoryId)?.name || ''}`}
+          />
+        </div>
+      )}
     </section>
   );
 }
@@ -205,6 +230,7 @@ export default function KnowledgeCertificatesPage() {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all'); // all | issued | revoked
   const [issuing, setIssuing] = useState(null);
+  const [timelineCategoryId, setTimelineCategoryId] = useState(null);
 
   useEffect(() => {
     loadAll();
@@ -332,7 +358,13 @@ export default function KnowledgeCertificatesPage() {
         </div>
       ) : (
         <>
-          <ProgressTowardsCertificate progress={progress} onIssue={handleIssue} issuing={issuing} />
+          <ProgressTowardsCertificate
+            progress={progress}
+            onIssue={handleIssue}
+            issuing={issuing}
+            timelineCategoryId={timelineCategoryId}
+            onToggleTimeline={setTimelineCategoryId}
+          />
 
           <section>
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">

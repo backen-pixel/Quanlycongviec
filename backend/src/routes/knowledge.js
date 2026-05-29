@@ -76,6 +76,108 @@ async function getCategoryLessonsForUser(categoryId, userObj) {
   });
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// DEADLINE — tính hạn chót của 1 khoá học cho 1 user (an toàn nếu DB chưa migrate)
+// ════════════════════════════════════════════════════════════════════════
+//
+// Trả về:
+//   {
+//     mode: 'none' | 'fixed' | 'relative',
+//     started_at: ISO|null,                 // user bắt đầu học từ khi nào
+//     deadline_at: ISO|null,                // hạn áp dụng cho user này (đã tính theo mode)
+//     duration_days: number|null,           // số ngày cho phép (chỉ với mode=relative)
+//     days_remaining: number|null,          // số ngày còn lại tính từ NOW (âm = quá hạn)
+//     is_overdue: boolean,
+//     supported: boolean,                   // false nếu DB chưa có cột deadline_mode → bỏ qua
+//   }
+async function computeUserDeadline(categoryId, userId) {
+  if (!categoryId) return { mode: 'none', supported: false, started_at: null, deadline_at: null, duration_days: null, days_remaining: null, is_overdue: false };
+
+  let category;
+  try {
+    const { data, error } = await supabase
+      .from('knowledge_categories')
+      .select('id, deadline_mode, deadline_at, deadline_duration_days')
+      .eq('id', categoryId)
+      .maybeSingle();
+    if (error && error.code === '42703') {
+      return { mode: 'none', supported: false, started_at: null, deadline_at: null, duration_days: null, days_remaining: null, is_overdue: false };
+    }
+    category = data;
+  } catch {
+    return { mode: 'none', supported: false, started_at: null, deadline_at: null, duration_days: null, days_remaining: null, is_overdue: false };
+  }
+
+  const mode = category?.deadline_mode || 'none';
+  const out = { mode, supported: true, started_at: null, deadline_at: null, duration_days: category?.deadline_duration_days ?? null, days_remaining: null, is_overdue: false };
+  if (mode === 'none') return out;
+
+  // Tìm thời điểm user bắt đầu khoá (lesson_progress sớm nhất)
+  if (userId) {
+    const { data: lessons } = await supabase
+      .from('knowledge_lessons')
+      .select('id')
+      .eq('category_id', categoryId);
+    const lessonIds = (lessons || []).map((l) => l.id);
+    if (lessonIds.length) {
+      const { data: firstProgress } = await supabase
+        .from('knowledge_lesson_progress')
+        .select('started_at')
+        .eq('user_id', userId)
+        .in('lesson_id', lessonIds)
+        .order('started_at', { ascending: true })
+        .limit(1);
+      out.started_at = firstProgress?.[0]?.started_at || null;
+    }
+  }
+
+  if (mode === 'fixed') {
+    out.deadline_at = category.deadline_at || null;
+  } else if (mode === 'relative') {
+    const d = Number(category.deadline_duration_days || 0);
+    if (out.started_at && d > 0) {
+      const base = new Date(out.started_at);
+      base.setDate(base.getDate() + d);
+      out.deadline_at = base.toISOString();
+    }
+  }
+
+  if (out.deadline_at) {
+    const diffMs = new Date(out.deadline_at).getTime() - Date.now();
+    out.days_remaining = Math.ceil(diffMs / 86400000);
+    out.is_overdue = diffMs < 0;
+  }
+  return out;
+}
+
+// Cập nhật cờ on_time/late + snapshot deadline khi user hoàn thành bài học
+// An toàn nếu DB chưa có cột (try/catch).
+async function tagLessonProgressDeadline(userId, lessonId, categoryId) {
+  try {
+    const dl = await computeUserDeadline(categoryId, userId);
+    if (!dl.supported || dl.mode === 'none' || !dl.deadline_at) return;
+    const isLate = Date.now() > new Date(dl.deadline_at).getTime();
+    await supabase
+      .from('knowledge_lesson_progress')
+      .update({ completed_late: !!isLate, deadline_snapshot: dl.deadline_at })
+      .eq('user_id', userId)
+      .eq('lesson_id', lessonId);
+  } catch { /* ignore */ }
+}
+
+async function tagSubmissionDeadline(submissionId, userId, categoryId) {
+  try {
+    if (!submissionId) return;
+    const dl = await computeUserDeadline(categoryId, userId);
+    if (!dl.supported || dl.mode === 'none' || !dl.deadline_at) return;
+    const isLate = Date.now() > new Date(dl.deadline_at).getTime();
+    await supabase
+      .from('knowledge_exercise_submissions')
+      .update({ submitted_late: !!isLate, deadline_snapshot: dl.deadline_at })
+      .eq('id', submissionId);
+  } catch { /* ignore */ }
+}
+
 // Tính số bài đã hoàn thành + thống kê bài tập cho 1 user trong 1 danh mục.
 async function getCategoryProgressStats(categoryId, userId, userObj) {
   const lessons = await getCategoryLessonsForUser(categoryId, userObj);
@@ -246,6 +348,122 @@ async function tryIssueCertificate(userId, categoryId, userObj) {
   return data;
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// SEQUENTIAL UNLOCK — chỉ mở bài sau khi bài TRƯỚC ĐÓ đã hoàn thành
+// ════════════════════════════════════════════════════════════════════════
+//
+// Quy tắc khoá:
+//   - Bài đầu tiên (sort_order nhỏ nhất) trong danh mục: LUÔN MỞ
+//   - Các bài sau: chỉ mở khi bài LIỀN TRƯỚC nó:
+//       (a) đã có progress.status = 'completed', VÀ
+//       (b) nếu bài liền trước có bài tập → tất cả bài tập đã pass
+//   - Admin / manager (canManage) → bỏ qua tất cả khoá để duyệt nội dung
+//
+// Trả về Map<lessonId, { locked: bool, reason: string|null, prev_lesson_id: string|null }>
+async function computeLessonLockMap(categoryId, userId, userObj, lessonsInCategory) {
+  if (!categoryId || !userId) return new Map();
+  const allLessons = (lessonsInCategory && lessonsInCategory.length)
+    ? lessonsInCategory
+    : (await supabase
+        .from('knowledge_lessons')
+        .select('id, sort_order, title, is_published, target_roles')
+        .eq('category_id', categoryId)
+        .eq('is_published', true)).data || [];
+
+  const visible = allLessons.filter((l) => {
+    const roles = l.target_roles;
+    if (!roles || !Array.isArray(roles) || roles.length === 0) return true;
+    const role = String(userObj?.role ?? '').trim().toLowerCase();
+    return roles.map((x) => String(x).toLowerCase()).includes(role);
+  }).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+
+  const ids = visible.map((l) => l.id);
+  if (!ids.length) return new Map();
+
+  // Lấy tiến độ học của user cho danh sách bài này
+  const { data: progressRows } = await supabase
+    .from('knowledge_lesson_progress')
+    .select('lesson_id, status')
+    .eq('user_id', userId)
+    .in('lesson_id', ids);
+  const completedSet = new Set((progressRows || []).filter((p) => p.status === 'completed').map((p) => p.lesson_id));
+
+  // Lấy bài tập của các bài và best submission của user
+  const { data: exRows } = await supabase
+    .from('knowledge_exercises')
+    .select('id, lesson_id')
+    .in('lesson_id', ids);
+  const exByLesson = new Map();
+  (exRows || []).forEach((ex) => {
+    if (!exByLesson.has(ex.lesson_id)) exByLesson.set(ex.lesson_id, []);
+    exByLesson.get(ex.lesson_id).push(ex.id);
+  });
+
+  const allExIds = (exRows || []).map((e) => e.id);
+  const passedSet = new Set();
+  if (allExIds.length) {
+    const { data: subs } = await supabase
+      .from('knowledge_exercise_submissions')
+      .select('exercise_id, status, score')
+      .eq('user_id', userId)
+      .in('exercise_id', allExIds);
+    const best = new Map();
+    (subs || []).forEach((s) => {
+      const prev = best.get(s.exercise_id);
+      if (!prev || (s.score ?? -1) > (prev.score ?? -1)) best.set(s.exercise_id, s);
+    });
+    [...best.values()].forEach((s) => { if (s.status === 'passed') passedSet.add(s.exercise_id); });
+  }
+
+  const isPrevLessonDone = (lesson) => {
+    if (!completedSet.has(lesson.id)) return false;
+    const exs = exByLesson.get(lesson.id) || [];
+    if (exs.length === 0) return true;
+    return exs.every((id) => passedSet.has(id));
+  };
+
+  const map = new Map();
+  let prev = null;
+  for (const l of visible) {
+    if (!prev) {
+      map.set(l.id, { locked: false, reason: null, prev_lesson_id: null });
+    } else if (isPrevLessonDone(prev)) {
+      map.set(l.id, { locked: false, reason: null, prev_lesson_id: prev.id });
+    } else {
+      const exsPrev = exByLesson.get(prev.id) || [];
+      const exDone = exsPrev.every((id) => passedSet.has(id));
+      const lessonDone = completedSet.has(prev.id);
+      let reason;
+      if (!lessonDone && exsPrev.length === 0) reason = `Cần hoàn thành "${prev.title}" trước`;
+      else if (!lessonDone) reason = `Cần đọc & hoàn thành "${prev.title}" trước`;
+      else if (!exDone) reason = `Cần làm đạt bài tập của "${prev.title}" trước`;
+      else reason = `Cần hoàn thành "${prev.title}" trước`;
+      map.set(l.id, { locked: true, reason, prev_lesson_id: prev.id });
+    }
+    prev = l;
+  }
+  return map;
+}
+
+// Tính bài học TIẾP THEO (sort_order liền sau) trong cùng danh mục, có thể null.
+async function getNextLessonInCategory(currentLessonId) {
+  const { data: cur } = await supabase
+    .from('knowledge_lessons')
+    .select('category_id, sort_order')
+    .eq('id', currentLessonId)
+    .maybeSingle();
+  if (!cur?.category_id) return null;
+  const { data: next } = await supabase
+    .from('knowledge_lessons')
+    .select('id, title, sort_order, cover_image_url, summary')
+    .eq('category_id', cur.category_id)
+    .eq('is_published', true)
+    .gt('sort_order', cur.sort_order ?? 0)
+    .order('sort_order', { ascending: true })
+    .limit(1);
+  return (next && next[0]) || null;
+}
+
 // Wrapper an toàn — không bao giờ ném lỗi, dùng trong các route bất kỳ.
 async function maybeIssueCertificateForLesson(req, lessonId) {
   try {
@@ -313,6 +531,7 @@ r.post('/categories', async (req, res) => {
     const {
       name, slug, description, icon, parent_id, sort_order, company_id, is_active,
       badge_image_url, require_all_exercises_passed, certificate_template,
+      deadline_mode, deadline_at, deadline_duration_days, deadline_note,
     } = req.body;
     if (!name) return res.status(400).json({ error: 'Tên danh mục là bắt buộc' });
     const insert = {
@@ -329,13 +548,31 @@ r.post('/categories', async (req, res) => {
     if (badge_image_url !== undefined) insert.badge_image_url = badge_image_url || null;
     if (require_all_exercises_passed !== undefined) insert.require_all_exercises_passed = !!require_all_exercises_passed;
     if (certificate_template !== undefined) insert.certificate_template = certificate_template || {};
+    if (deadline_mode !== undefined) insert.deadline_mode = deadline_mode || 'none';
+    if (deadline_at !== undefined) insert.deadline_at = deadline_at || null;
+    if (deadline_duration_days !== undefined) insert.deadline_duration_days = deadline_duration_days ? Number(deadline_duration_days) : null;
+    if (deadline_note !== undefined) insert.deadline_note = deadline_note || null;
     let { data, error } = await supabase.from('knowledge_categories').insert(insert).select().single();
-    // Fallback nếu DB chưa chạy migration 260
-    if (error && error.code === '42703' && /badge_image_url|require_all_exercises_passed|certificate_template/i.test(error.message || '')) {
-      delete insert.badge_image_url; delete insert.require_all_exercises_passed; delete insert.certificate_template;
+    if (error && error.code === '42703') {
+      ['badge_image_url','require_all_exercises_passed','certificate_template','deadline_mode','deadline_at','deadline_duration_days','deadline_note']
+        .forEach((k) => delete insert[k]);
       ({ data, error } = await supabase.from('knowledge_categories').insert(insert).select().single());
     }
     if (error) throw error;
+
+    // Log lịch sử deadline khi tạo mới
+    if (data && (insert.deadline_mode && insert.deadline_mode !== 'none')) {
+      await supabase.from('knowledge_category_deadline_history').insert({
+        category_id: data.id,
+        changed_by: req.user.userId,
+        prev_mode: 'none',
+        new_mode: insert.deadline_mode,
+        new_deadline_at: insert.deadline_at || null,
+        new_duration_days: insert.deadline_duration_days || null,
+        note: deadline_note || 'Tạo khoá học mới với deadline',
+      }).then(() => {}, () => {});
+    }
+
     res.status(201).json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -350,15 +587,58 @@ r.patch('/categories/:id', async (req, res) => {
     [
       'name', 'slug', 'description', 'icon', 'parent_id', 'sort_order', 'company_id', 'is_active',
       'badge_image_url', 'require_all_exercises_passed', 'certificate_template',
+      'deadline_mode', 'deadline_at', 'deadline_duration_days', 'deadline_note',
     ].forEach((f) => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
+    if (update.deadline_duration_days !== undefined && update.deadline_duration_days !== null) {
+      update.deadline_duration_days = Number(update.deadline_duration_days) || null;
+    }
+
+    // Lấy snapshot trước để log lịch sử nếu deadline thay đổi
+    const wantsDeadlineChange = ['deadline_mode','deadline_at','deadline_duration_days'].some((k) => update[k] !== undefined);
+    let prev = null;
+    if (wantsDeadlineChange) {
+      const r2 = await supabase
+        .from('knowledge_categories')
+        .select('deadline_mode, deadline_at, deadline_duration_days')
+        .eq('id', req.params.id)
+        .maybeSingle();
+      prev = r2.data || null;
+    }
+
     let { data, error } = await supabase.from('knowledge_categories').update(update).eq('id', req.params.id).select().single();
-    if (error && error.code === '42703' && /badge_image_url|require_all_exercises_passed|certificate_template/i.test(error.message || '')) {
-      delete update.badge_image_url; delete update.require_all_exercises_passed; delete update.certificate_template;
+    if (error && error.code === '42703') {
+      ['badge_image_url','require_all_exercises_passed','certificate_template','deadline_mode','deadline_at','deadline_duration_days','deadline_note']
+        .forEach((k) => delete update[k]);
       ({ data, error } = await supabase.from('knowledge_categories').update(update).eq('id', req.params.id).select().single());
     }
     if (error) throw error;
+
+    if (wantsDeadlineChange && data) {
+      const newMode = update.deadline_mode ?? prev?.deadline_mode ?? 'none';
+      const newAt = update.deadline_at ?? prev?.deadline_at ?? null;
+      const newDays = update.deadline_duration_days ?? prev?.deadline_duration_days ?? null;
+      const changed = (
+        (prev?.deadline_mode || 'none') !== newMode ||
+        (prev?.deadline_at || null) !== (newAt || null) ||
+        (prev?.deadline_duration_days || null) !== (newDays || null)
+      );
+      if (changed) {
+        await supabase.from('knowledge_category_deadline_history').insert({
+          category_id: req.params.id,
+          changed_by: req.user.userId,
+          prev_mode: prev?.deadline_mode || 'none',
+          prev_deadline_at: prev?.deadline_at || null,
+          prev_duration_days: prev?.deadline_duration_days || null,
+          new_mode: newMode,
+          new_deadline_at: newAt,
+          new_duration_days: newDays,
+          note: req.body.deadline_note || null,
+        }).then(() => {}, () => {});
+      }
+    }
+
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -428,14 +708,32 @@ r.get('/lessons', async (req, res) => {
       });
     }
 
+    // Tính trạng thái khoá tuần tự (theo từng category) — admin/manager bỏ qua khoá
+    const lockMap = new Map();
+    if (!canManage(req) && lessons.length) {
+      const byCat = new Map();
+      lessons.forEach((l) => {
+        if (!byCat.has(l.category_id)) byCat.set(l.category_id, []);
+        byCat.get(l.category_id).push(l);
+      });
+      for (const [catId, catLessons] of byCat) {
+        const m = await computeLessonLockMap(catId, req.user.userId, req.user, catLessons);
+        m.forEach((v, k) => lockMap.set(k, v));
+      }
+    }
+
     let enriched = lessons.map((l) => {
       const rm = ratingMap[l.id];
+      const lock = lockMap.get(l.id) || { locked: false, reason: null, prev_lesson_id: null };
       return {
         ...l,
         progress_status: progressMap[l.id] || 'not_started',
         is_bookmarked: bookmarkSet.has(l.id),
         rating_avg: rm ? Math.round((rm.sum / rm.count) * 10) / 10 : null,
         rating_count: rm ? rm.count : 0,
+        is_locked: lock.locked,
+        unlock_reason: lock.reason,
+        prev_lesson_id: lock.prev_lesson_id,
       };
     });
 
@@ -460,6 +758,20 @@ r.get('/lessons/:id', async (req, res) => {
     if (error) throw error;
     if (!lessonVisibleToUser(lesson, req)) return res.status(404).json({ error: 'Không tìm thấy bài học' });
 
+    // Kiểm tra khoá tuần tự (admin/manager bỏ qua)
+    let lockInfo = { locked: false, reason: null, prev_lesson_id: null };
+    if (!canManage(req) && lesson.category_id) {
+      const lockMap = await computeLessonLockMap(lesson.category_id, req.user.userId, req.user);
+      lockInfo = lockMap.get(req.params.id) || lockInfo;
+      if (lockInfo.locked) {
+        return res.status(423).json({
+          error: lockInfo.reason || 'Bài học đang khoá, cần hoàn thành bài học trước đó',
+          locked: true,
+          prev_lesson_id: lockInfo.prev_lesson_id,
+        });
+      }
+    }
+
     const { data: exercises } = await supabase
       .from('knowledge_exercises')
       .select('id, title, instructions, type, passing_score, max_attempts, time_limit_minutes, image_url, video_url, video_type, attachments, sort_order')
@@ -483,6 +795,11 @@ r.get('/lessons/:id', async (req, res) => {
       },
       { onConflict: 'user_id,lesson_id' },
     );
+
+    const nextLesson = await getNextLessonInCategory(req.params.id);
+    const deadlineInfo = lesson.category_id
+      ? await computeUserDeadline(lesson.category_id, req.user.userId)
+      : null;
 
     const safeExercises = canManage(req)
       ? exercises
@@ -534,6 +851,8 @@ r.get('/lessons/:id', async (req, res) => {
       ratings: ratings || [],
       rating_avg: ratingAvg,
       rating_count: ratingCount,
+      next_lesson: nextLesson || null,
+      deadline: deadlineInfo || null,
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -651,11 +970,26 @@ r.post('/lessons/:id/complete', async (req, res) => {
       .single();
     if (error) throw error;
 
+    if (lesson.category_id) {
+      await tagLessonProgressDeadline(req.user.userId, req.params.id, lesson.category_id);
+    }
+
     const newCert = lesson.category_id
       ? await tryIssueCertificate(req.user.userId, lesson.category_id, req.user)
       : null;
 
-    res.json({ ...data, certificate_issued: newCert || null });
+    let nextLesson = await getNextLessonInCategory(req.params.id);
+    if (nextLesson && !canManage(req) && lesson.category_id) {
+      const lockMap = await computeLessonLockMap(lesson.category_id, req.user.userId, req.user);
+      const lk = lockMap.get(nextLesson.id);
+      nextLesson = { ...nextLesson, is_locked: !!lk?.locked, unlock_reason: lk?.reason || null };
+    }
+
+    res.json({
+      ...data,
+      certificate_issued: newCert || null,
+      next_lesson: nextLesson || null,
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -682,11 +1016,24 @@ r.get('/exercises/:id', async (req, res) => {
   try {
     const { data: ex, error } = await supabase
       .from('knowledge_exercises')
-      .select('*, lesson:knowledge_lessons(id, is_published, target_roles)')
+      .select('*, lesson:knowledge_lessons(id, category_id, is_published, target_roles)')
       .eq('id', req.params.id)
       .single();
     if (error) throw error;
     if (!lessonVisibleToUser(ex.lesson, req)) return res.status(404).json({ error: 'Không tìm thấy' });
+
+    // Chặn truy cập bài tập của bài học đang khoá
+    if (!canManage(req) && ex.lesson?.category_id) {
+      const lockMap = await computeLessonLockMap(ex.lesson.category_id, req.user.userId, req.user);
+      const lk = lockMap.get(ex.lesson.id);
+      if (lk?.locked) {
+        return res.status(423).json({
+          error: lk.reason || 'Bài học chứa bài tập này đang khoá',
+          locked: true,
+          prev_lesson_id: lk.prev_lesson_id || null,
+        });
+      }
+    }
 
     const { count } = await supabase
       .from('knowledge_exercise_submissions')
@@ -788,11 +1135,19 @@ r.post('/exercises/:id/submit', async (req, res) => {
     const { answers } = req.body;
     const { data: ex, error } = await supabase
       .from('knowledge_exercises')
-      .select('*, lesson:knowledge_lessons(id, is_published, target_roles)')
+      .select('*, lesson:knowledge_lessons(id, category_id, is_published, target_roles)')
       .eq('id', req.params.id)
       .single();
     if (error) throw error;
     if (!lessonVisibleToUser(ex.lesson, req)) return res.status(404).json({ error: 'Không tìm thấy' });
+
+    if (!canManage(req) && ex.lesson?.category_id) {
+      const lockMap = await computeLessonLockMap(ex.lesson.category_id, req.user.userId, req.user);
+      const lk = lockMap.get(ex.lesson.id);
+      if (lk?.locked) {
+        return res.status(423).json({ error: lk.reason || 'Bài học đang khoá', locked: true });
+      }
+    }
 
     const { count } = await supabase
       .from('knowledge_exercise_submissions')
@@ -832,12 +1187,46 @@ r.post('/exercises/:id/submit', async (req, res) => {
       .single();
     if (insErr) throw insErr;
 
+    let submissionRow = data;
+    if (ex.lesson?.category_id) {
+      await tagSubmissionDeadline(data.id, req.user.userId, ex.lesson.category_id);
+      const { data: refreshed } = await supabase
+        .from('knowledge_exercise_submissions')
+        .select('submitted_late, deadline_snapshot')
+        .eq('id', data.id)
+        .maybeSingle();
+      if (refreshed) submissionRow = { ...data, ...refreshed };
+    }
+
     let newCert = null;
     if (status === 'passed' && ex.lesson?.id) {
       newCert = await maybeIssueCertificateForLesson(req, ex.lesson.id);
     }
 
-    res.status(201).json({ ...data, certificate_issued: newCert || null });
+    // Sau khi nộp bài, kiểm tra xem bài học liền sau đã "mở khoá" chưa
+    let nextLesson = null;
+    if (ex.lesson?.id) {
+      nextLesson = await getNextLessonInCategory(ex.lesson.id);
+      if (nextLesson && !canManage(req)) {
+        const { data: parentLesson } = await supabase
+          .from('knowledge_lessons')
+          .select('category_id')
+          .eq('id', ex.lesson.id)
+          .maybeSingle();
+        if (parentLesson?.category_id) {
+          const lockMap = await computeLessonLockMap(parentLesson.category_id, req.user.userId, req.user);
+          const lk = lockMap.get(nextLesson.id);
+          nextLesson = { ...nextLesson, is_locked: !!lk?.locked, unlock_reason: lk?.reason || null };
+        }
+      }
+    }
+
+    res.status(201).json({
+      ...submissionRow,
+      certificate_issued: newCert || null,
+      next_lesson: nextLesson || null,
+      current_lesson_id: ex.lesson?.id || null,
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -998,6 +1387,8 @@ r.get('/categories/:id/progress', async (req, res) => {
     const overallRate = (exerciseStats.total > 0 && (category?.require_all_exercises_passed !== false))
       ? Math.round(((lessonRate + exRate) / 2) * 100)
       : Math.round(lessonRate * 100);
+    const deadline = await computeUserDeadline(req.params.id, req.user.userId);
+
     res.json({
       category_id: req.params.id,
       total_lessons: totalLessons,
@@ -1010,6 +1401,146 @@ r.get('/categories/:id/progress', async (req, res) => {
       reason,
       badge_image_url: category?.badge_image_url || null,
       require_all_exercises_passed: category?.require_all_exercises_passed !== false,
+      deadline,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /knowledge/categories/:id/deadline-history — lịch sử thay đổi deadline
+r.get('/categories/:id/deadline-history', async (req, res) => {
+  try {
+    let { data, error } = await supabase
+      .from('knowledge_category_deadline_history')
+      .select('*')
+      .eq('category_id', req.params.id)
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (error && error.code === '42P01') return res.json({ history: [], supported: false });
+    if (error) throw error;
+    const userIds = [...new Set((data || []).map((h) => h.changed_by).filter(Boolean))];
+    let userMap = {};
+    if (userIds.length) {
+      const { data: users } = await supabase.from('users').select('id, full_name, avatar').in('id', userIds);
+      userMap = Object.fromEntries((users || []).map((u) => [u.id, u]));
+    }
+    const history = (data || []).map((h) => ({
+      ...h,
+      changed_by_user: h.changed_by ? userMap[h.changed_by] || null : null,
+    }));
+    res.json({ history, supported: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /knowledge/categories/:id/learning-timeline — lịch học của user trong khoá
+//   Trả về danh sách event (lesson_completed, exercise_submitted) kèm cờ on_time/late
+r.get('/categories/:id/learning-timeline', async (req, res) => {
+  try {
+    const userId = req.query.user_id && canManage(req) ? req.query.user_id : req.user.userId;
+    const { data: lessons } = await supabase
+      .from('knowledge_lessons')
+      .select('id, title, sort_order')
+      .eq('category_id', req.params.id)
+      .order('sort_order');
+    const lessonIds = (lessons || []).map((l) => l.id);
+    const lessonMap = new Map((lessons || []).map((l) => [l.id, l]));
+    const events = [];
+
+    if (lessonIds.length) {
+      const lpSelect = 'lesson_id, status, started_at, completed_at, last_viewed_at, completed_late, deadline_snapshot';
+      let { data: prog, error: lpErr } = await supabase
+        .from('knowledge_lesson_progress')
+        .select(lpSelect)
+        .eq('user_id', userId)
+        .in('lesson_id', lessonIds);
+      // Fallback nếu DB chưa có cột deadline
+      if (lpErr && lpErr.code === '42703') {
+        const r2 = await supabase
+          .from('knowledge_lesson_progress')
+          .select('lesson_id, status, started_at, completed_at, last_viewed_at')
+          .eq('user_id', userId)
+          .in('lesson_id', lessonIds);
+        prog = r2.data;
+      }
+      (prog || []).forEach((p) => {
+        const l = lessonMap.get(p.lesson_id);
+        if (p.completed_at) {
+          events.push({
+            type: 'lesson_completed',
+            title: l?.title || 'Bài học',
+            at: p.completed_at,
+            is_late: !!p.completed_late,
+            deadline_snapshot: p.deadline_snapshot || null,
+            lesson_id: p.lesson_id,
+          });
+        } else if (p.status === 'in_progress' && p.started_at) {
+          events.push({
+            type: 'lesson_started',
+            title: l?.title || 'Bài học',
+            at: p.started_at,
+            is_late: false,
+            lesson_id: p.lesson_id,
+          });
+        }
+      });
+
+      const { data: exs } = await supabase
+        .from('knowledge_exercises')
+        .select('id, title, lesson_id')
+        .in('lesson_id', lessonIds);
+      const exIds = (exs || []).map((e) => e.id);
+      const exMap = new Map((exs || []).map((e) => [e.id, e]));
+      if (exIds.length) {
+        let { data: subs, error: subErr } = await supabase
+          .from('knowledge_exercise_submissions')
+          .select('id, exercise_id, score, status, submitted_at, attempt_number, submitted_late, deadline_snapshot')
+          .eq('user_id', userId)
+          .in('exercise_id', exIds)
+          .order('submitted_at', { ascending: false });
+        if (subErr && subErr.code === '42703') {
+          const r2 = await supabase
+            .from('knowledge_exercise_submissions')
+            .select('id, exercise_id, score, status, submitted_at, attempt_number')
+            .eq('user_id', userId)
+            .in('exercise_id', exIds)
+            .order('submitted_at', { ascending: false });
+          subs = r2.data;
+        }
+        (subs || []).forEach((s) => {
+          const ex = exMap.get(s.exercise_id);
+          events.push({
+            type: 'exercise_submitted',
+            title: ex?.title || 'Bài tập',
+            at: s.submitted_at,
+            is_late: !!s.submitted_late,
+            deadline_snapshot: s.deadline_snapshot || null,
+            score: s.score,
+            status: s.status,
+            attempt_number: s.attempt_number,
+            exercise_id: s.exercise_id,
+            lesson_id: ex?.lesson_id || null,
+          });
+        });
+      }
+    }
+
+    events.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+
+    const deadline = await computeUserDeadline(req.params.id, userId);
+    const lateCount = events.filter((e) => e.is_late).length;
+    const onTimeCount = events.filter((e) => !e.is_late && (e.type === 'lesson_completed' || e.type === 'exercise_submitted')).length;
+
+    res.json({
+      timeline: events,
+      deadline,
+      summary: {
+        total_events: events.length,
+        on_time: onTimeCount,
+        late: lateCount,
+      },
     });
   } catch (e) {
     res.status(500).json({ error: e.message });

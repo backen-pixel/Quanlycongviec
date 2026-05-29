@@ -259,10 +259,12 @@ function EssayPlayer({ exercise, onSubmit, submitting }) {
   );
 }
 
-function ResultScreen({ result, exercise, onRetry, onBack }) {
+function ResultScreen({ result, exercise, onRetry, onBack, onGoNext }) {
   const passed = result.status === 'passed';
   const score = result.score ?? 0;
   const items = exercise.questions?.items || [];
+  const nextLesson = result?.next_lesson || null;
+  const nextLocked = nextLesson?.is_locked;
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -283,6 +285,14 @@ function ResultScreen({ result, exercise, onRetry, onBack }) {
         )}
         {exercise.type === 'essay' && (
           <p className="text-gray-600 mt-2">Bài đã được gửi tới quản trị viên để chấm điểm.</p>
+        )}
+        {result.submitted_late && (
+          <p className="mt-3 text-sm text-red-600 font-medium flex items-center justify-center gap-1">
+            ⚠ Nộp sau hạn quy định của khoá học
+          </p>
+        )}
+        {result.submitted_late === false && passed && (
+          <p className="mt-3 text-sm text-emerald-600 font-medium">✓ Nộp đúng hạn</p>
         )}
       </div>
 
@@ -308,6 +318,34 @@ function ResultScreen({ result, exercise, onRetry, onBack }) {
               );
             })}
           </ul>
+        </div>
+      )}
+
+      {passed && nextLesson && (
+        <div className="mt-6 bg-gradient-to-r from-blue-50 via-sky-50 to-emerald-50 border-2 border-blue-200 rounded-2xl p-5 flex flex-col sm:flex-row items-center gap-4 shadow-sm">
+          <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center shrink-0">
+            <BookOpen className="h-6 w-6 text-blue-600" />
+          </div>
+          <div className="flex-1 text-center sm:text-left">
+            <p className="text-xs font-bold uppercase tracking-wider text-blue-600">Bài học tiếp theo</p>
+            <p className="text-base font-bold text-gray-900 line-clamp-1">{nextLesson.title}</p>
+            {nextLocked && (
+              <p className="text-xs text-amber-700 mt-0.5">🔒 {nextLesson.unlock_reason || 'Còn bài tập cần hoàn thành'}</p>
+            )}
+          </div>
+          {!nextLocked ? (
+            <button
+              type="button"
+              onClick={() => onGoNext?.(nextLesson)}
+              className="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-sky-600 text-white rounded-xl font-semibold hover:from-blue-700 hover:to-sky-700 shadow flex items-center gap-2 shrink-0"
+            >
+              Học bài tiếp theo →
+            </button>
+          ) : (
+            <div className="px-4 py-2.5 rounded-xl bg-amber-100 text-amber-700 text-sm font-medium flex items-center gap-2 shrink-0">
+              🔒 Đang khoá
+            </div>
+          )}
         </div>
       )}
 
@@ -373,8 +411,17 @@ export default function KnowledgeExercisePage() {
       const { data } = await api.get(`/knowledge/exercises/${id}`);
       setExercise(data);
     } catch (e) {
-      alert(e.response?.data?.error || 'Không tìm thấy bài tập');
-      navigate('/knowledge');
+      if (e.response?.status === 423 && e.response?.data?.locked) {
+        alert(`🔒 ${e.response.data.error || 'Bài học chứa bài tập này đang khoá'}`);
+        if (e.response.data.prev_lesson_id) {
+          navigate(`/knowledge/lessons/${e.response.data.prev_lesson_id}`);
+        } else {
+          navigate('/knowledge');
+        }
+      } else {
+        alert(e.response?.data?.error || 'Không tìm thấy bài tập');
+        navigate('/knowledge');
+      }
     }
     setLoading(false);
   };
@@ -447,7 +494,13 @@ export default function KnowledgeExercisePage() {
             </div>
           </div>
         )}
-        <ResultScreen result={result} exercise={exercise} onRetry={retry} onBack={() => navigate(backUrl)} />
+        <ResultScreen
+          result={result}
+          exercise={exercise}
+          onRetry={retry}
+          onBack={() => navigate(backUrl)}
+          onGoNext={(nl) => navigate(`/knowledge/lessons/${nl.id}`)}
+        />
       </div>
     );
   }
