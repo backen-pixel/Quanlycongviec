@@ -138,7 +138,7 @@ function ProgressTowardsCertificate({ progress, onIssue, issuing, timelineCatego
                   </div>
                 )}
                 <div className="flex-1 min-w-0">
-                  <h3 className="font-semibold text-gray-900 line-clamp-1">{p.name}</h3>
+                  <h3 className="font-semibold line-clamp-1" style={{ color: '#000000' }}>{p.name}</h3>
                   <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
                     <span className={lessonsDone ? 'text-emerald-600 font-medium' : ''}>
                       {lessonsDone ? '✓' : '•'} {p.completed_lessons}/{p.total_lessons} bài học

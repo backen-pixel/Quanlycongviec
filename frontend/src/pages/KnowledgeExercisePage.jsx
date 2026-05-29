@@ -92,7 +92,7 @@ function QuizPlayer({ exercise, onSubmit, submitting, onAnswersChange }) {
           </div>
         )}
 
-        <h3 className="text-lg font-semibold text-gray-900 mb-2 leading-relaxed">{current.question}</h3>
+        <h3 className="text-lg font-semibold mb-2 leading-relaxed" style={{ color: '#000000' }}>{current.question}</h3>
 
         {current.type === 'multiple' && (
           <p className="text-xs text-emerald-700 mb-4 italic">
@@ -311,12 +311,12 @@ function ResultScreen({ result, exercise, onRetry, onBack, onGoNext }) {
         <div className={`mx-auto w-20 h-20 rounded-full flex items-center justify-center mb-4 ${passed ? 'bg-green-100' : 'bg-amber-100'}`}>
           {passed ? <PartyPopper className="h-10 w-10 text-green-600" /> : <Award className="h-10 w-10 text-amber-600" />}
         </div>
-        <h2 className="text-2xl font-bold text-gray-900">
+        <h2 className="text-2xl font-bold" style={{ color: '#000000' }}>
           {passed ? 'Chúc mừng! Bạn đã đạt.' : 'Chưa đạt — hãy thử lại nhé!'}
         </h2>
         {exercise.type !== 'essay' && (
           <>
-            <p className="text-5xl font-bold mt-4 mb-2 text-gray-900">{score}%</p>
+            <p className="text-5xl font-bold mt-4 mb-2" style={{ color: '#000000' }}>{score}%</p>
             <p className="text-sm text-gray-500">
               Yêu cầu tối thiểu: <strong>{exercise.passing_score ?? 70}%</strong>
             </p>
@@ -337,7 +337,7 @@ function ResultScreen({ result, exercise, onRetry, onBack, onGoNext }) {
 
       {exercise.type === 'quiz' && items.length > 0 && (
         <div className="bg-white rounded-2xl border border-gray-200 p-6">
-          <h3 className="font-semibold mb-4 flex items-center gap-2">
+          <h3 className="font-semibold mb-4 flex items-center gap-2" style={{ color: '#000000' }}>
             <ListChecks className="h-5 w-5 text-blue-600" /> Chi tiết bài làm
           </h3>
           <ul className="space-y-3">
@@ -352,7 +352,7 @@ function ResultScreen({ result, exercise, onRetry, onBack, onGoNext }) {
                   <span className="text-sm font-medium text-gray-500 mt-0.5">{idx + 1}.</span>
                   <div className="flex-1">
                     <div className="flex items-start gap-2 flex-wrap">
-                      <p className="text-sm text-gray-900 font-medium flex-1 min-w-0">{q.question}</p>
+                      <p className="text-sm font-medium flex-1 min-w-0" style={{ color: '#000000' }}>{q.question}</p>
                       <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full whitespace-nowrap ${
                         isMulti ? 'bg-emerald-100 text-emerald-700 border border-emerald-300' : 'bg-blue-100 text-blue-700 border border-blue-300'
                       }`}>
@@ -566,7 +566,7 @@ export default function KnowledgeExercisePage() {
           <div className="w-20 h-20 mx-auto rounded-full bg-purple-100 flex items-center justify-center mb-4">
             <ListChecks className="h-10 w-10 text-purple-600" />
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">{exercise.title}</h1>
+          <h1 className="text-2xl font-bold" style={{ color: '#000000' }}>{exercise.title}</h1>
           {exercise.instructions && <p className="text-gray-600 mt-3">{exercise.instructions}</p>}
 
           <div className="mt-6 text-left">
@@ -577,19 +577,19 @@ export default function KnowledgeExercisePage() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6 text-left">
             <div className="p-3 bg-gray-50 rounded-lg">
               <p className="text-xs text-gray-500">Loại</p>
-              <p className="text-sm font-semibold">{typeLabel}</p>
+              <p className="text-sm font-semibold" style={{ color: '#000000' }}>{typeLabel}</p>
             </div>
             <div className="p-3 bg-gray-50 rounded-lg">
               <p className="text-xs text-gray-500">Số câu</p>
-              <p className="text-sm font-semibold">{itemCount}</p>
+              <p className="text-sm font-semibold" style={{ color: '#000000' }}>{itemCount}</p>
             </div>
             <div className="p-3 bg-gray-50 rounded-lg">
               <p className="text-xs text-gray-500">Điểm đạt</p>
-              <p className="text-sm font-semibold">{exercise.passing_score ?? 70}%</p>
+              <p className="text-sm font-semibold" style={{ color: '#000000' }}>{exercise.passing_score ?? 70}%</p>
             </div>
             <div className={`p-3 rounded-lg ${exercise.time_limit_minutes ? 'bg-red-50' : 'bg-gray-50'}`}>
               <p className={`text-xs ${exercise.time_limit_minutes ? 'text-red-600' : 'text-gray-500'}`}>Thời gian</p>
-              <p className="text-sm font-semibold">{exercise.time_limit_minutes ? `${exercise.time_limit_minutes} phút` : 'Không giới hạn'}</p>
+              <p className="text-sm font-semibold" style={{ color: '#000000' }}>{exercise.time_limit_minutes ? `${exercise.time_limit_minutes} phút` : 'Không giới hạn'}</p>
             </div>
           </div>
 

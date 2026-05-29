@@ -1307,7 +1307,7 @@ export default function LeadDetail() {
         <div className="lg:col-span-1 space-y-4 min-w-0">
           {/* Customer Card - Inline Edit */}
           <div className="bg-white rounded-xl border p-5 space-y-4">
-            <h3 className="text-sm font-bold text-gray-900 uppercase">Khách hàng</h3>
+            <h3 className="text-sm font-bold uppercase" style={{ color: '#000000' }}>Khách hàng</h3>
             
             {customer ? (
               <div className="space-y-3">
@@ -1332,7 +1332,7 @@ export default function LeadDetail() {
                           </button>
                         </div>
                       ) : (
-                        <p className="text-sm font-medium text-gray-900 hover:bg-gray-50 p-1 rounded cursor-pointer group-hover:bg-gray-50"
+                        <p className="text-sm font-medium hover:bg-gray-50 p-1 rounded cursor-pointer group-hover:bg-gray-50" style={{ color: '#000000' }}
                           onClick={() => startEditField(field, customer[field])}>
                           {customer[field] || '—'} <Edit2 className="h-3 w-3 inline opacity-0 group-hover:opacity-100 ml-1" />
                         </p>
@@ -1365,7 +1365,7 @@ export default function LeadDetail() {
                           </button>
                         </div>
                       ) : (
-                        <p className="text-sm font-medium text-gray-900 hover:bg-gray-50 p-1 rounded cursor-pointer group-hover:bg-gray-50"
+                        <p className="text-sm font-medium hover:bg-gray-50 p-1 rounded cursor-pointer group-hover:bg-gray-50" style={{ color: '#000000' }}
                           onClick={() => startEditField(field, customer[field])}>
                           {customer[field] || '—'} <Edit2 className="h-3 w-3 inline opacity-0 group-hover:opacity-100 ml-1" />
                         </p>
@@ -1723,7 +1723,7 @@ export default function LeadDetail() {
                                 <span className="text-lg shrink-0">{typeInfo.icon}</span>
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center justify-between">
-                                    <p className="text-sm font-medium text-gray-900">{act.title}</p>
+                                    <p className="text-sm font-medium" style={{ color: '#000000' }}>{act.title}</p>
                                     <span className="text-[10px] text-gray-400">{formatDate(act.activity_date)}</span>
                                   </div>
                                   {act.description && <p className="text-xs text-gray-600 mt-1">{act.description}</p>}
@@ -1892,7 +1892,7 @@ export default function LeadDetail() {
             ) : (
               <div className="bg-gray-50 rounded-xl px-3 py-2 mb-4 mt-2">
                 <p className="text-xs font-semibold text-gray-500 mb-0.5">Khách hàng:</p>
-                <p className="text-sm font-medium text-gray-900">{customer?.full_name || '—'}</p>
+                <p className="text-sm font-medium" style={{ color: '#000000' }}>{customer?.full_name || '—'}</p>
                 {customer?.phone
                   ? <p className="text-xs text-green-600 mt-0.5">📞 {customer.phone}</p>
                   : <p className="text-xs text-amber-500 mt-0.5">⚠️ Chưa có SĐT (có thể bổ sung sau)</p>
@@ -2780,7 +2780,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
                 className="cursor-pointer group/val"
               >
                 {displayValue ? (
-                  <p className="text-sm font-medium text-gray-900">{displayValue}</p>
+                  <p className="text-sm font-medium" style={{ color: '#000000' }}>{displayValue}</p>
                 ) : (
                   <p className="text-sm text-gray-300 italic group-hover/val:text-blue-400 transition-colors">
                     Nhấn để nhập...
@@ -2804,7 +2804,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
 
   return (
     <div className="bg-white rounded-xl border p-5 space-y-1">
-      <h3 className="text-sm font-bold text-gray-900 uppercase mb-2">Thông tin</h3>
+      <h3 className="text-sm font-bold uppercase mb-2" style={{ color: '#000000' }}>Thông tin</h3>
 
       <EditableRow icon="💰" label="Giá trị" field="estimated_value"
         value={lead?.estimated_value || ''}

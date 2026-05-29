@@ -916,7 +916,7 @@ function KPICard({ icon, iconBgColor, iconColor, label, value }) {
       <div className={`shrink-0 rounded-md ${iconBgColor} ${iconColor} p-1`}>{icon}</div>
       <div className="min-w-0 flex-1 flex flex-col justify-center gap-0">
         <p className="text-[10px] md:text-[11px] text-gray-500 font-semibold uppercase tracking-wide truncate leading-none">{label}</p>
-        <p className="text-sm md:text-base font-bold text-gray-900 tabular-nums leading-tight">{value}</p>
+        <p className="text-sm md:text-base font-bold tabular-nums leading-tight" style={{ color: '#000000' }}>{value}</p>
       </div>
     </div>
   );
@@ -953,7 +953,7 @@ function KanbanStageCard({ stage, items, onMoveStage, onDelete, calculateDays, s
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="text-lg shrink-0">{stage.icon || '📦'}</span>
-            <h3 className="font-semibold text-gray-900 truncate">{stage.name}</h3>
+            <h3 className="font-semibold truncate" style={{ color: '#000000' }}>{stage.name}</h3>
           </div>
           <span className="px-2 py-1 bg-gray-100 text-gray-700 text-xs font-bold rounded">{items.length}</span>
         </div>
@@ -1057,7 +1057,7 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
       </div>
 
       <div className="flex items-start gap-1.5 min-w-0 mb-2">
-        <p className="text-sm font-medium text-gray-900 truncate flex-1 min-w-0">{item.name}</p>
+        <p className="text-sm font-medium truncate flex-1 min-w-0" style={{ color: '#000000' }}>{item.name}</p>
         {isNew && <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-white bg-rose-500 px-1.5 py-0.5 rounded leading-tight">Mới</span>}
       </div>
       {item.workshop_type?.name && (

@@ -140,7 +140,7 @@ export default function KnowledgeMyHistoryPage() {
                       <span className="text-xs text-gray-400">{TYPE_LABEL[s.exercise?.type] || s.exercise?.type}</span>
                       <span className="text-xs text-gray-400">· Lần thứ {s.attempt_number}</span>
                     </div>
-                    <h3 className="font-semibold text-gray-900 mt-1">{s.exercise?.title}</h3>
+                    <h3 className="font-semibold mt-1" style={{ color: '#000000' }}>{s.exercise?.title}</h3>
                     {s.exercise?.lesson && (
                       <Link to={`/knowledge/lessons/${s.exercise.lesson.id}`} className="text-xs text-violet-600 hover:underline mt-0.5 inline-block">
                         ← {s.exercise.lesson.title}

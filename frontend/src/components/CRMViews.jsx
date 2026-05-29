@@ -137,7 +137,7 @@ function renderItemCard(item, navigate, extras = null, mergePick = null) {
         <div className="min-w-0 flex-1">
           <p className="text-xs text-blue-600 font-medium">{item.code}</p>
           <div className="flex items-start gap-1.5 mt-0.5 min-w-0">
-            <p className="text-sm font-medium text-gray-900 truncate flex-1 min-w-0">{item.title}</p>
+            <p className="text-sm font-medium truncate flex-1 min-w-0" style={{ color: '#000000' }}>{item.title}</p>
             {item.is_new_for_current_user && (
               <span className="shrink-0 text-[9px] font-bold uppercase text-white bg-rose-500 px-1 py-0.5 rounded leading-tight">Mới</span>
             )}
@@ -150,7 +150,7 @@ function renderItemCard(item, navigate, extras = null, mergePick = null) {
           </span>
         )}
       </div>
-      {item.estimated_value > 0 && <p className="text-xs font-bold text-gray-900 mt-2">{formatVND(item.estimated_value)}</p>}
+      {item.estimated_value > 0 && <p className="text-xs font-bold mt-2" style={{ color: '#000000' }}>{formatVND(item.estimated_value)}</p>}
       {typeof item.kpi_ledger_month_net === 'number' && (
         <p className={`text-[10px] font-mono font-semibold mt-1 ${
           item.kpi_ledger_month_net > 0 ? 'text-emerald-700' : item.kpi_ledger_month_net < 0 ? 'text-red-700' : 'text-gray-600'
@@ -299,7 +299,7 @@ function PlannerByOwner({ allItems, pipelineType, navigate, onGoPersonal }) {
               {group.user.full_name?.charAt(0) || '?'}
             </div>
             <div>
-              <p className="text-sm font-semibold text-gray-900">{group.user.full_name}</p>
+              <p className="text-sm font-semibold" style={{ color: '#000000' }}>{group.user.full_name}</p>
               <p className="text-[10px] text-gray-500">{group.items.length} {pipelineType === 'deal' ? 'deal' : 'lead'} • {formatVND(group.totalValue)}</p>
             </div>
           </div>
@@ -445,7 +445,7 @@ function KanbanColumn({ topBarColor, title, subtitle, count, headerExtras, child
       <div className="h-1.5 w-full" style={{ backgroundColor: topBarColor || '#e5e7eb' }} />
       <div className={`bg-white border border-gray-200 border-t-0 p-3 ${isDragOver ? 'bg-blue-50' : ''}`}>
         <div className="flex items-start justify-between gap-2 mb-1">
-          <h3 className="font-semibold text-gray-900 truncate text-sm flex-1">{title}</h3>
+          <h3 className="font-semibold truncate text-sm flex-1" style={{ color: '#000000' }}>{title}</h3>
           <div className="flex items-center gap-1.5 shrink-0">
             {headerExtras}
             <span className="px-2 py-0.5 bg-gray-100 text-gray-700 font-bold rounded text-[10px]">{count}</span>

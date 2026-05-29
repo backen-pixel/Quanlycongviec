@@ -867,7 +867,8 @@ export default function CRMTasksTab({
           >
             <div className="flex flex-wrap items-center gap-1.5 min-w-0">
               <p
-                className={`text-sm min-w-0 ${task.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}
+                className={`text-sm min-w-0 ${task.status === 'completed' ? 'line-through text-gray-400' : ''}`}
+                style={task.status === 'completed' ? undefined : { color: '#000000' }}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
                   openEditModal(task);
@@ -1200,7 +1201,7 @@ export default function CRMTasksTab({
           <div className="flex items-center gap-1.5">
             <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center text-xs font-bold text-blue-700">{stats.percent}%</div>
             <div className="text-[10px] text-gray-500 leading-tight">
-              <span className="font-medium text-gray-900">{stats.completed}/{stats.total}</span> xong
+              <span className="font-medium" style={{ color: '#000000' }}>{stats.completed}/{stats.total}</span> xong
               {stats.overdue > 0 && <span className="text-red-600 ml-1">• {stats.overdue} quá hạn</span>}
             </div>
           </div>

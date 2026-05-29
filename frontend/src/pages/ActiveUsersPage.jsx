@@ -849,8 +849,17 @@ export default function ActiveUsersPage() {
             {filter === 'online' ? 'Chưa có ai đang hoạt động trong bộ lọc này.' : 'Không có nhân viên phù hợp.'}
           </div>
         ) : (
-          <ul className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-            {displayRows.map((u) => {
+          <div
+            className="overflow-y-auto pr-1 [scrollbar-width:thin]"
+            style={{ maxHeight: 'calc(100vh - 320px)', minHeight: 360 }}
+          >
+            <ul className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {/* Sticky count header — bám trên khi cuộn */}
+              <li className="col-span-full sticky top-0 z-10 -mt-1 mb-1 px-3 py-1.5 rounded-lg bg-white/75 backdrop-blur border border-white/60 text-[11px] flex items-center justify-between shadow-sm" style={{ color: '#475569' }}>
+                <span>Hiển thị <strong style={{ color: '#0f172a' }}>{displayRows.length}</strong> nhân viên</span>
+                {displayRows.length > 9 && <span>Cuộn dọc để xem thêm</span>}
+              </li>
+              {displayRows.map((u) => {
               const loc = resolveUserLocation(u);
               const locLabel = loc ? (loc.address || `${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}`) : null;
               const locHref = loc ? `https://www.google.com/maps?q=${loc.lat},${loc.lng}` : null;
@@ -956,7 +965,8 @@ export default function ActiveUsersPage() {
                 </li>
               );
             })}
-          </ul>
+            </ul>
+          </div>
         )}
       </div>
     </div>

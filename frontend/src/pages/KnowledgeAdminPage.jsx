@@ -319,7 +319,7 @@ export default function KnowledgeAdminPage() {
       {tab === 'categories' && !loading && (
         <div className="grid md:grid-cols-2 gap-6">
           <div className="bg-white rounded-xl border p-4 space-y-3">
-            <h2 className="font-semibold">{catForm.id ? 'Sửa danh mục' : 'Thêm danh mục'}</h2>
+            <h2 className="font-semibold" style={{ color: '#000000' }}>{catForm.id ? 'Sửa danh mục' : 'Thêm danh mục'}</h2>
             <input className="w-full border rounded-lg px-3 py-2 text-sm" placeholder="Tên *" value={catForm.name} onChange={(e) => setCatForm({ ...catForm, name: e.target.value })} />
             <input className="w-full border rounded-lg px-3 py-2 text-sm" placeholder="Slug (tự sinh nếu trống)" value={catForm.slug} onChange={(e) => setCatForm({ ...catForm, slug: e.target.value })} />
             <input className="w-full border rounded-lg px-3 py-2 text-sm" placeholder="Icon emoji" value={catForm.icon} onChange={(e) => setCatForm({ ...catForm, icon: e.target.value })} />
@@ -335,7 +335,7 @@ export default function KnowledgeAdminPage() {
             <div className="pt-3 mt-2 border-t border-amber-200">
               <div className="flex items-center gap-2 mb-2">
                 <Award className="h-4 w-4 text-amber-600" />
-                <h3 className="text-sm font-semibold text-amber-800">Huy chương & chứng nhận</h3>
+                <h3 className="text-sm font-semibold" style={{ color: '#000000' }}>Huy chương & chứng nhận</h3>
               </div>
 
               <label className="text-[11px] text-gray-500 uppercase font-semibold tracking-wide flex items-center gap-1">
@@ -630,7 +630,7 @@ export default function KnowledgeAdminPage() {
                 {lessons.map((l) => (
                   <li key={l.id} className="bg-white border rounded-lg p-3 flex justify-between items-start gap-2">
                     <div>
-                      <p className="font-medium">{l.title}</p>
+                      <p className="font-medium" style={{ color: '#000000' }}>{l.title}</p>
                       <p className="text-xs text-gray-500">{l.category?.name} · {l.is_published ? 'Đã xuất bản' : 'Nháp'}</p>
                       <div className="flex gap-2 mt-2">
                         <button type="button" className="text-xs text-blue-600" onClick={() => setLessonForm({ ...l, target_roles: l.target_roles || [] })}>Sửa</button>
@@ -869,6 +869,7 @@ export default function KnowledgeAdminPage() {
               value={exerciseFilters.category_id}
               onChange={(e) => setExerciseFilters({ ...exerciseFilters, category_id: e.target.value })}
               className="border border-gray-200 rounded-lg px-2 py-2 text-sm"
+              style={{ color: '#000000' }}
             >
               <option value="">— Mọi danh mục —</option>
               {categories.map((c) => (
@@ -879,6 +880,7 @@ export default function KnowledgeAdminPage() {
               value={exerciseFilters.lesson_id}
               onChange={(e) => setExerciseFilters({ ...exerciseFilters, lesson_id: e.target.value })}
               className="border border-gray-200 rounded-lg px-2 py-2 text-sm"
+              style={{ color: '#000000' }}
             >
               <option value="">— Mọi bài học —</option>
               {lessons.map((l) => (
@@ -889,6 +891,7 @@ export default function KnowledgeAdminPage() {
               value={exerciseFilters.type}
               onChange={(e) => setExerciseFilters({ ...exerciseFilters, type: e.target.value })}
               className="border border-gray-200 rounded-lg px-2 py-2 text-sm"
+              style={{ color: '#000000' }}
             >
               <option value="">— Mọi loại —</option>
               <option value="quiz">Trắc nghiệm</option>
@@ -905,7 +908,7 @@ export default function KnowledgeAdminPage() {
           ) : (
             <div className="bg-white border rounded-xl overflow-hidden">
               <table className="w-full text-sm">
-                <thead className="bg-gray-50 text-gray-500 text-xs uppercase">
+                <thead className="bg-gray-50 text-xs uppercase" style={{ color: '#000000' }}>
                   <tr>
                     <th className="text-left px-3 py-2">Bài tập</th>
                     <th className="text-left px-3 py-2">Bài học</th>
@@ -919,10 +922,10 @@ export default function KnowledgeAdminPage() {
                 </thead>
                 <tbody>
                   {allExercises.map((ex) => (
-                    <tr key={ex.id} className="border-t hover:bg-gray-50">
-                      <td className="px-3 py-2 font-medium">{ex.title}</td>
+                    <tr key={ex.id} className="border-t hover:bg-slate-200/70 transition-colors">
+                      <td className="px-3 py-2 font-medium" style={{ color: '#000000' }}>{ex.title}</td>
                       <td className="px-3 py-2 text-xs">
-                        <p className="text-gray-700">{ex.lesson?.title}</p>
+                        <p style={{ color: '#000000' }}>{ex.lesson?.title}</p>
                         <p className="text-gray-400">{ex.lesson?.category?.icon} {ex.lesson?.category?.name}</p>
                       </td>
                       <td className="px-2 py-2 text-center text-xs">

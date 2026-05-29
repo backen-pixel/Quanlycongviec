@@ -92,11 +92,13 @@ export default function UnifiedTrashPage() {
               role="tab"
               aria-selected={on}
               onClick={() => setTab(t.id)}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
-                on ? 'bg-white text-gray-900 shadow-sm border border-gray-200' : 'text-gray-600 hover:text-gray-900'
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
+                on
+                  ? 'bg-gradient-to-r from-rose-500 to-pink-500 text-white shadow-md border border-rose-400/60 ring-2 ring-rose-200'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-white/70'
               }`}
             >
-              <Icon className={`h-4 w-4 ${on ? 'text-rose-600' : 'text-gray-400'}`} />
+              <Icon className={`h-4 w-4 ${on ? 'text-white' : 'text-gray-400'}`} />
               {t.label}
             </button>
           );

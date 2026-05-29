@@ -4405,9 +4405,10 @@ function DealExpectedValueKpiCard({
           Giá trị kỳ vọng
         </p>
         <p
-          className={`font-bold text-gray-900 tabular-nums leading-snug ${
+          className={`font-bold tabular-nums leading-snug ${
             compact ? 'text-sm' : 'text-sm md:text-base'
           }`}
+          style={{ color: '#000000' }}
         >
           {formatVND(expectedValue)}
         </p>
@@ -4488,9 +4489,10 @@ function KPICard({ icon, iconBgColor, iconColor, label, value, sublabel, trend, 
           {label}
         </p>
         <p
-          className={`font-bold text-gray-900 tabular-nums leading-snug ${
+          className={`font-bold tabular-nums leading-snug ${
             compact ? 'text-sm' : 'text-sm md:text-base'
           }`}
+          style={{ color: '#000000' }}
         >
           {displayValue}
         </p>
@@ -5024,7 +5026,7 @@ function KanbanStageCard({
           <div className="flex flex-col gap-0.5 min-w-0 flex-1">
             <div className="flex items-center gap-1.5 min-w-0">
               <span className={compact ? 'text-base shrink-0' : 'text-lg shrink-0'}>{stage.icon || '📌'}</span>
-              <h3 className={`font-semibold text-gray-900 truncate ${compact ? 'text-sm' : ''}`}>{stage.name}</h3>
+              <h3 className={`font-semibold truncate ${compact ? 'text-sm' : ''}`} style={{ color: '#000000' }}>{stage.name}</h3>
             </div>
             {String(stage.description || '').trim() !== '' && (
               <p

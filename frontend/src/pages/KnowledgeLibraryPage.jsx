@@ -93,7 +93,7 @@ function ContinueLearning({ lessons }) {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs text-orange-600 font-semibold mb-1">Tiếp tục đọc</p>
-                  <h3 className="font-semibold text-gray-900 line-clamp-2 group-hover:text-violet-600 transition-colors">
+                  <h3 className="font-semibold line-clamp-2 group-hover:text-violet-600 transition-colors" style={{ color: '#000000' }}>
                     {l.lesson?.title || 'Bài học'}
                   </h3>
                   <p className="text-xs text-gray-400 mt-2 flex items-center gap-1">
@@ -128,7 +128,7 @@ function CategoryGrid({ categories, selectedId, onSelect }) {
           <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-gray-700 to-gray-900 text-white flex items-center justify-center text-2xl mb-3">
             📚
           </div>
-          <p className="font-semibold text-gray-900">Tất cả</p>
+          <p className="font-semibold" style={{ color: '#000000' }}>Tất cả</p>
           <p className="text-xs text-gray-500 mt-0.5">Mọi chủ đề</p>
         </button>
         {categories.map((cat, idx) => {
@@ -146,7 +146,7 @@ function CategoryGrid({ categories, selectedId, onSelect }) {
               <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${color.bg} text-white flex items-center justify-center text-2xl mb-3 group-hover:scale-110 transition-transform`}>
                 {cat.icon || '📚'}
               </div>
-              <p className="font-semibold text-gray-900">{cat.name}</p>
+              <p className="font-semibold" style={{ color: '#000000' }}>{cat.name}</p>
               {cat.description && <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{cat.description}</p>}
             </button>
           );
@@ -235,7 +235,7 @@ function LessonCard({ lesson, idx }) {
             {lesson.category.icon} {lesson.category.name}
           </p>
         )}
-        <h3 className="font-bold text-gray-900 line-clamp-2 group-hover:text-violet-600 transition-colors">
+        <h3 className="font-bold line-clamp-2 group-hover:text-violet-600 transition-colors" style={{ color: '#000000' }}>
           {lesson.title}
         </h3>
         {lesson.summary && <p className="text-sm text-gray-500 mt-1 line-clamp-2 flex-1">{lesson.summary}</p>}
