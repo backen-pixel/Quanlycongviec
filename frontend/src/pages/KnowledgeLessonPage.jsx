@@ -150,7 +150,7 @@ export default function KnowledgeLessonPage() {
     try {
       const { data } = await api.get(`/knowledge/lessons/${id}`);
       setLesson(data);
-      if (data.video_url && !data.content_md) setTab('video');
+      if (data.video_url) setTab('video');
       else setTab('text');
     } catch (e) {
       if (e.response?.status === 423 && e.response?.data?.locked) {
