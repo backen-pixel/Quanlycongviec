@@ -80,7 +80,25 @@ function QuizPlayer({ exercise, onSubmit, submitting, onAnswersChange }) {
           <span className="text-xs text-gray-400">{answered} / {items.length} đã trả lời</span>
         </div>
 
-        <h3 className="text-lg font-semibold text-gray-900 mb-4 leading-relaxed">{current.question}</h3>
+        {current.type === 'multiple' ? (
+          <div className="mb-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 border-2 border-emerald-300 text-emerald-800 text-sm font-bold animate-in fade-in">
+            <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-emerald-600 text-white text-[11px]">✓✓</span>
+            Câu này chọn nhiều đáp án
+          </div>
+        ) : (
+          <div className="mb-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-50 border-2 border-blue-300 text-blue-800 text-sm font-bold">
+            <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-blue-600 text-white text-[11px]">●</span>
+            Chọn 1 đáp án đúng
+          </div>
+        )}
+
+        <h3 className="text-lg font-semibold text-gray-900 mb-2 leading-relaxed">{current.question}</h3>
+
+        {current.type === 'multiple' && (
+          <p className="text-xs text-emerald-700 mb-4 italic">
+            💡 Có thể có nhiều đáp án đúng — hãy tick tất cả các đáp án bạn cho là đúng (đã chọn: <strong>{(answers[current.id] || []).length}</strong>).
+          </p>
+        )}
 
         {current.image_url && (
           <img src={current.image_url} alt="Minh họa câu hỏi" className="w-full max-h-80 object-contain rounded-lg border bg-gray-50 mb-4" />
@@ -88,24 +106,26 @@ function QuizPlayer({ exercise, onSubmit, submitting, onAnswersChange }) {
 
         <div className="space-y-2">
           {(current.options || []).map((opt, oi) => {
-            const isSelected = current.type === 'multiple'
+            const isMulti = current.type === 'multiple';
+            const isSelected = isMulti
               ? (answers[current.id] || []).includes(oi)
               : answers[current.id] === oi;
+            const selectedClass = isSelected
+              ? (isMulti ? 'border-emerald-500 bg-emerald-50' : 'border-blue-500 bg-blue-50')
+              : 'border-gray-100 hover:border-gray-300 bg-gray-50';
             return (
               <label
                 key={oi}
-                className={`flex items-start gap-3 p-3 rounded-xl cursor-pointer border-2 transition-all ${
-                  isSelected ? 'border-blue-500 bg-blue-50' : 'border-gray-100 hover:border-gray-300 bg-gray-50'
-                }`}
+                className={`flex items-start gap-3 p-3 rounded-xl cursor-pointer border-2 transition-all ${selectedClass}`}
               >
                 <input
-                  type={current.type === 'multiple' ? 'checkbox' : 'radio'}
+                  type={isMulti ? 'checkbox' : 'radio'}
                   name={current.id}
                   checked={isSelected}
-                  onChange={() => current.type === 'multiple' ? toggleMultiple(current.id, oi) : setAnswer(current.id, oi)}
-                  className="mt-0.5"
+                  onChange={() => isMulti ? toggleMultiple(current.id, oi) : setAnswer(current.id, oi)}
+                  className={`mt-0.5 w-4 h-4 ${isMulti ? 'accent-emerald-600' : 'accent-blue-600'}`}
                 />
-                <span className="text-sm text-gray-800">{opt}</span>
+                <span className="text-sm text-gray-800 flex-1">{opt}</span>
               </label>
             );
           })}
@@ -147,25 +167,44 @@ function QuizPlayer({ exercise, onSubmit, submitting, onAnswersChange }) {
         <div className="grid grid-cols-6 lg:grid-cols-4 gap-2">
           {items.map((q, idx) => {
             const a = answers[q.id];
-            const isAnswered = q.type === 'multiple' ? Array.isArray(a) && a.length > 0 : a !== undefined && a !== null;
+            const isMulti = q.type === 'multiple';
+            const isAnswered = isMulti ? Array.isArray(a) && a.length > 0 : a !== undefined && a !== null;
             const isCurrent = idx === currentIdx;
             return (
               <button
                 key={q.id}
                 type="button"
                 onClick={() => setCurrentIdx(idx)}
-                className={`h-9 rounded-lg text-sm font-medium border transition-all ${
+                title={isMulti ? 'Câu chọn nhiều đáp án' : 'Câu chọn 1 đáp án'}
+                className={`relative h-9 rounded-lg text-sm font-medium border-2 transition-all ${
                   isCurrent
-                    ? 'bg-blue-600 text-white border-blue-600'
+                    ? (isMulti ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-blue-600 text-white border-blue-600')
                     : isAnswered
-                    ? 'bg-blue-50 text-blue-700 border-blue-200'
-                    : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400'
+                    ? (isMulti ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-blue-50 text-blue-700 border-blue-200')
+                    : (isMulti ? 'bg-white text-gray-500 border-emerald-200 hover:border-emerald-400' : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400')
                 }`}
               >
                 {idx + 1}
+                {isMulti && (
+                  <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-600 text-white text-[8px] font-bold flex items-center justify-center border border-white">
+                    +
+                  </span>
+                )}
               </button>
             );
           })}
+        </div>
+        <div className="mt-3 space-y-1 text-[11px] text-gray-500">
+          <div className="flex items-center gap-1.5">
+            <span className="inline-block w-3 h-3 rounded bg-blue-100 border border-blue-300"></span>
+            Chọn 1 đáp án
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="relative inline-block w-3 h-3 rounded bg-emerald-100 border border-emerald-300">
+              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-600 text-white text-[6px] font-bold flex items-center justify-center">+</span>
+            </span>
+            Chọn nhiều đáp án
+          </div>
         </div>
         <button
           type="button"
@@ -304,14 +343,22 @@ function ResultScreen({ result, exercise, onRetry, onBack, onGoNext }) {
           <ul className="space-y-3">
             {items.map((q, idx) => {
               const userAns = result.answers?.[q.id];
-              const userText = q.type === 'multiple'
+              const isMulti = q.type === 'multiple';
+              const userText = isMulti
                 ? (Array.isArray(userAns) ? userAns.map((i) => q.options?.[i]).filter(Boolean).join(', ') : '—')
                 : (typeof userAns === 'number' ? q.options?.[userAns] : '—');
               return (
                 <li key={q.id} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
                   <span className="text-sm font-medium text-gray-500 mt-0.5">{idx + 1}.</span>
                   <div className="flex-1">
-                    <p className="text-sm text-gray-900 font-medium">{q.question}</p>
+                    <div className="flex items-start gap-2 flex-wrap">
+                      <p className="text-sm text-gray-900 font-medium flex-1 min-w-0">{q.question}</p>
+                      <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full whitespace-nowrap ${
+                        isMulti ? 'bg-emerald-100 text-emerald-700 border border-emerald-300' : 'bg-blue-100 text-blue-700 border border-blue-300'
+                      }`}>
+                        {isMulti ? 'Chọn nhiều' : 'Chọn 1'}
+                      </span>
+                    </div>
                     <p className="text-xs text-gray-600 mt-1">Bạn chọn: <span className="font-medium">{userText || '—'}</span></p>
                   </div>
                 </li>
