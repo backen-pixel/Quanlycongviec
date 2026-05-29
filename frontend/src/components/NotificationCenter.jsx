@@ -11,6 +11,7 @@ import NotificationToast from './NotificationToast';
 import NotificationSettings from './NotificationSettings';
 import { AI_DEADLINE_DIGEST_EVENT } from '../lib/aiDeadlineDigestEvent';
 import { dispatchBadgeRefresh } from '../shared/lib/badgeEvents';
+import { useMessengerDock } from '../context/MessengerDockContext';
 
 const ICON_MAP = {
   task_assigned: CheckSquare,
@@ -194,8 +195,36 @@ function moduleChipLabel(key) {
   return k || '—';
 }
 
+/**
+ * Lấy tên người gửi từ thông báo messenger/lead chat.
+ * - Ưu tiên `metadata.sender_name`
+ * - Fallback: parse từ `message` theo format "{sender}: {preview}"
+ * - Fallback: lấy phần trước "—" trong title (dạng "Messenger · Trò chuyện: A — B")
+ */
+function extractChatSenderName(n) {
+  const meta = n?.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  const fromMeta = String(meta.sender_name || meta.sender || '').trim();
+  if (fromMeta) return fromMeta;
+  const msg = String(n?.message || '').trim();
+  if (msg) {
+    const colonIdx = msg.indexOf(':');
+    if (colonIdx > 0 && colonIdx < 60) {
+      const cand = msg.slice(0, colonIdx).trim();
+      if (cand) return cand;
+    }
+  }
+  const title = String(n?.title || '');
+  const dashIdx = title.indexOf('—');
+  if (dashIdx > 0) {
+    const left = title.slice(0, dashIdx).replace(/^.*Trò chuyện:\s*/i, '').trim();
+    if (left) return left;
+  }
+  return 'Tin nhắn';
+}
+
 export default function NotificationCenter({ socket }) {
   const navigate = useNavigate();
+  const { openMessengerGroupChat, openLeadChat } = useMessengerDock();
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [unreadActivity, setUnreadActivity] = useState(0);
@@ -222,7 +251,7 @@ export default function NotificationCenter({ socket }) {
   const panelRef = useRef(null);
   const [panelPos, setPanelPos] = useState({ top: 0, left: 0 });
 
-  const PANEL_WIDTH = 384; // w-96
+  const PANEL_WIDTH = 440;
 
   const updatePanelPosition = useCallback(() => {
     const anchor = rootRef.current;
@@ -569,59 +598,101 @@ export default function NotificationCenter({ socket }) {
       {open && createPortal(
         <div
           ref={panelRef}
-          className="fixed w-96 bg-white rounded-xl shadow-2xl border border-gray-200 z-[200] animate-fade-in overflow-hidden"
-          style={{ top: panelPos.top, left: panelPos.left }}
+          className="fixed bg-white rounded-2xl shadow-[0_20px_50px_-12px_rgba(0,0,0,0.35)] border border-gray-200 z-[200] animate-fade-in overflow-hidden"
+          style={{ top: panelPos.top, left: panelPos.left, width: PANEL_WIDTH }}
         >
-          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-            <h3 className="text-sm font-semibold text-gray-900">Thông báo</h3>
-            <div className="flex items-center gap-2">
-              {(tab === 'activity' ? unreadActivity
-                : tab === 'events' ? unreadEvents
-                  : tab === 'messages' ? unreadChat
-                    : tab === 'assignments' ? unreadAssignments
-                      : unreadDeadlines) > 0 && (
-                <button onClick={markAllRead} className="text-xs text-blue-600 hover:text-blue-700 font-medium cursor-pointer flex items-center gap-1">
-                  <CheckCheck className="h-3.5 w-3.5" /> Đọc tất cả
+          {/* HEADER GRADIENT */}
+          <div className="relative overflow-hidden bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900 px-4 py-3">
+            <div className="absolute inset-0 opacity-20 pointer-events-none">
+              <div className="absolute -top-6 -right-8 w-32 h-32 bg-blue-400 rounded-full blur-3xl" />
+              <div className="absolute -bottom-8 -left-6 w-28 h-28 bg-purple-400 rounded-full blur-3xl" />
+            </div>
+            <div className="relative flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="h-9 w-9 rounded-xl bg-white/15 backdrop-blur-md border border-white/20 flex items-center justify-center shadow-md shrink-0">
+                  <Bell className="h-4.5 w-4.5 text-white" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-bold text-white leading-tight">Trung tâm thông báo</h3>
+                  <p className="text-[11px] text-blue-100/90 mt-0.5">
+                    {bellBadgeCount > 0 ? `${bellBadgeCount} thông báo mới` : 'Không có thông báo mới'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                {(tab === 'activity' ? unreadActivity
+                  : tab === 'events' ? unreadEvents
+                    : tab === 'messages' ? unreadChat
+                      : tab === 'assignments' ? unreadAssignments
+                        : unreadDeadlines) > 0 && (
+                  <button
+                    onClick={markAllRead}
+                    className="text-[11px] text-white font-semibold cursor-pointer flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/15 backdrop-blur-md border border-white/20 hover:bg-white/25 transition-colors"
+                    title="Đánh dấu đã đọc tất cả"
+                  >
+                    <CheckCheck className="h-3.5 w-3.5" /> Đọc hết
+                  </button>
+                )}
+                <button
+                  onClick={() => setSettingsOpen(true)}
+                  className="w-7 h-7 rounded-lg hover:bg-white/20 flex items-center justify-center text-white/80 cursor-pointer hover:text-white transition-colors"
+                  title="Cài đặt thông báo"
+                >
+                  <Settings className="h-4 w-4" />
                 </button>
-              )}
-              <button 
-                onClick={() => setSettingsOpen(true)}
-                className="w-6 h-6 rounded hover:bg-gray-100 flex items-center justify-center text-gray-400 cursor-pointer hover:text-gray-600 transition-colors"
-                title="Cài đặt thông báo"
-              >
-                <Settings className="h-4 w-4" />
-              </button>
-              <button onClick={() => setOpen(false)} className="w-6 h-6 rounded hover:bg-gray-100 flex items-center justify-center text-gray-400 cursor-pointer">
-                <X className="h-4 w-4" />
-              </button>
+                <button
+                  onClick={() => setOpen(false)}
+                  className="w-7 h-7 rounded-lg hover:bg-white/20 flex items-center justify-center text-white/80 cursor-pointer hover:text-white transition-colors"
+                  title="Đóng"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
             </div>
           </div>
 
-          <div className="flex border-b border-gray-100 overflow-x-auto">
-            <button type="button" onClick={() => { setTab('activity'); setDeadlinesModule('all'); }}
-              className={`shrink-0 px-2 py-2 text-[10px] font-medium text-center cursor-pointer whitespace-nowrap ${tab === 'activity' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
-              Hoạt động{unreadActivity > 0 ? ` (${unreadActivity})` : ''}
-            </button>
-            <button type="button" onClick={() => { setTab('assignments'); setDeadlinesModule('all'); }}
-              className={`shrink-0 px-2 py-2 text-[10px] font-medium text-center cursor-pointer whitespace-nowrap ${tab === 'assignments' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-500'}`}>
-              Giao việc{unreadAssignments > 0 ? ` (${unreadAssignments})` : ''}
-            </button>
-            <button type="button" onClick={() => { setTab('events'); setDeadlinesModule('all'); }}
-              className={`shrink-0 px-2 py-2 text-[10px] font-medium text-center cursor-pointer whitespace-nowrap ${tab === 'events' ? 'text-violet-600 border-b-2 border-violet-600' : 'text-gray-500'}`}>
-              Sự kiện{unreadEvents > 0 ? ` (${unreadEvents})` : ''}
-            </button>
-            <button type="button" onClick={() => { setTab('messages'); setDeadlinesModule('all'); }}
-              className={`shrink-0 px-2 py-2 text-[10px] font-medium text-center cursor-pointer whitespace-nowrap ${tab === 'messages' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
-              Tin nhắn{unreadChat > 0 ? ` (${unreadChat})` : ''}
-            </button>
-            <button type="button" onClick={() => setTab('deadlines')}
-              className={`shrink-0 px-2 py-2 text-[10px] font-medium text-center cursor-pointer whitespace-nowrap ${tab === 'deadlines' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
-              Nhắc hạn{unreadDeadlines > 0 ? ` (${unreadDeadlines})` : ''}
-            </button>
-            <button type="button" onClick={() => setTab('cskh')}
-              className={`shrink-0 px-2 py-2 text-[10px] font-medium text-center cursor-pointer whitespace-nowrap ${tab === 'cskh' ? 'text-emerald-600 border-b-2 border-emerald-600' : 'text-gray-500'}`}>
-              CSKH{cskhCount > 0 ? ` (${cskhCount})` : ''}
-            </button>
+          {/* TABS */}
+          <div className="flex gap-1 px-2 py-2 border-b border-gray-100 overflow-x-auto bg-gradient-to-b from-gray-50/60 to-white">
+            {[
+              { id: 'activity', label: 'Hoạt động', count: unreadActivity, icon: Sparkles, color: 'blue' },
+              { id: 'assignments', label: 'Giao việc', count: unreadAssignments, icon: ClipboardList, color: 'indigo' },
+              { id: 'events', label: 'Sự kiện', count: unreadEvents, icon: Calendar, color: 'violet' },
+              { id: 'messages', label: 'Tin nhắn', count: unreadChat, icon: MessageSquare, color: 'sky' },
+              { id: 'deadlines', label: 'Nhắc hạn', count: unreadDeadlines, icon: Clock, color: 'amber' },
+              { id: 'cskh', label: 'CSKH', count: cskhCount, icon: CalendarClock, color: 'emerald' },
+            ].map((t) => {
+              const TabIcon = t.icon;
+              const active = tab === t.id;
+              const activeColorMap = {
+                blue: 'bg-blue-600 text-white shadow-md shadow-blue-500/30',
+                indigo: 'bg-indigo-600 text-white shadow-md shadow-indigo-500/30',
+                violet: 'bg-violet-600 text-white shadow-md shadow-violet-500/30',
+                sky: 'bg-sky-600 text-white shadow-md shadow-sky-500/30',
+                amber: 'bg-amber-600 text-white shadow-md shadow-amber-500/30',
+                emerald: 'bg-emerald-600 text-white shadow-md shadow-emerald-500/30',
+              };
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => { setTab(t.id); if (t.id !== 'deadlines') setDeadlinesModule('all'); }}
+                  className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold cursor-pointer whitespace-nowrap transition-all ${
+                    active ? activeColorMap[t.color] : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                  style={!active ? { color: '#000000' } : undefined}
+                >
+                  <TabIcon className="h-3.5 w-3.5" />
+                  {t.label}
+                  {t.count > 0 && (
+                    <span className={`ml-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] rounded-full px-1 text-[10px] font-bold ${
+                      active ? 'bg-white/30 text-white' : 'bg-red-500 text-white'
+                    }`}>
+                      {t.count > 99 ? '99+' : t.count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
 
           {(tab === 'activity' || tab === 'events' || tab === 'messages' || tab === 'assignments') && (
@@ -677,20 +748,23 @@ export default function NotificationCenter({ socket }) {
             </div>
           )}
 
-          <div className="max-h-[400px] overflow-y-auto">
+          <div className="max-h-[440px] overflow-y-auto bg-gradient-to-b from-white to-slate-50/40">
             {tab === 'cskh' ? (
               cskhLoading ? (
-                <div className="flex items-center justify-center py-8">
-                  <svg className="animate-spin h-5 w-5 text-emerald-500" viewBox="0 0 24 24">
+                <div className="flex flex-col items-center justify-center py-10 gap-2">
+                  <svg className="animate-spin h-6 w-6 text-emerald-500" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
                   </svg>
+                  <p className="text-xs" style={{ color: '#000000' }}>Đang tải...</p>
                 </div>
               ) : cskhNotifs.length === 0 ? (
-                <div className="text-center py-10">
-                  <CalendarClock className="h-8 w-8 mx-auto text-gray-300 mb-2" />
-                  <p className="text-sm text-gray-400">Không có lead nào cần nhắc CSKH</p>
-                  <p className="text-xs text-gray-300 mt-1">Đã tích sẽ ẩn đến hết ngày — sang ngày mới sẽ hiện lại các lead chưa chăm</p>
+                <div className="text-center py-12 px-6">
+                  <div className="mx-auto h-16 w-16 rounded-2xl bg-gradient-to-br from-emerald-100 to-green-50 border border-emerald-200 flex items-center justify-center mb-3 shadow-sm">
+                    <CalendarClock className="h-7 w-7 text-emerald-500" />
+                  </div>
+                  <p className="text-sm font-semibold" style={{ color: '#000000' }}>Không có lead nào cần nhắc CSKH</p>
+                  <p className="text-xs text-gray-400 mt-1">Đã tích sẽ ẩn đến hết ngày — sang ngày mới sẽ hiện lại các lead chưa chăm</p>
                   <button
                     type="button"
                     onClick={undoCskhDismissals}
@@ -707,30 +781,32 @@ export default function NotificationCenter({ socket }) {
                   return (
                     <div
                       key={key}
-                      className="px-4 py-3 hover:bg-emerald-50/60 cursor-pointer border-b border-gray-50 transition-colors"
+                      className="relative px-4 py-3 hover:bg-emerald-50/60 cursor-pointer border-b border-gray-50 transition-colors bg-gradient-to-r from-emerald-50/40 to-transparent"
                     >
+                      <span className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-emerald-500 to-teal-500" />
                       <div className="flex gap-3 items-start">
                         <div
-                          className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 text-sm font-bold"
+                          className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 text-base font-bold shadow-sm ring-1 ring-white/60"
                           style={{ backgroundColor: `${n.stage_color || '#10B981'}20`, color: n.stage_color || '#10B981' }}
                         >
-                          {n.stage_icon || <CalendarClock className="h-4 w-4" />}
+                          {n.stage_icon || <CalendarClock className="h-5 w-5" />}
                         </div>
                         <div className="flex-1 min-w-0" onClick={() => navigateToCskh(n)}>
                           <div className="flex items-start justify-between gap-2">
-                            <p className="text-sm font-semibold text-gray-900">
+                            <p className="text-sm font-bold leading-snug" style={{ color: '#000000' }}>
                               {n.lead_count} lead cần chăm lại
                             </p>
-                            <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 shrink-0">
+                            <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-md bg-emerald-100 border border-emerald-200 text-emerald-700 shrink-0">
                               CSKH
                             </span>
                           </div>
-                          <p className="text-xs text-gray-500 mt-0.5">
-                            {n.stage_icon ? `${n.stage_icon} ` : ''}<span className="font-medium">{n.stage_name}</span>
+                          <p className="text-xs text-gray-600 mt-1 leading-relaxed">
+                            {n.stage_icon ? `${n.stage_icon} ` : ''}<span className="font-semibold">{n.stage_name}</span>
                             {' · '}{n.pipeline_name}
                             {n.company_name ? ` · ${n.company_name}` : ''}
                           </p>
-                          <p className="text-[10px] text-gray-400 mt-0.5">
+                          <p className="text-[10px] text-gray-400 mt-1 flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
                             Tuổi lead: {n.time_label}
                           </p>
                         </div>
@@ -753,16 +829,19 @@ export default function NotificationCenter({ socket }) {
                 })
               )
             ) : loading ? (
-              <div className="flex items-center justify-center py-8">
-                <svg className="animate-spin h-5 w-5 text-gray-400" viewBox="0 0 24 24">
+              <div className="flex flex-col items-center justify-center py-10 gap-2">
+                <svg className="animate-spin h-6 w-6 text-blue-500" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
                 </svg>
+                <p className="text-xs" style={{ color: '#000000' }}>Đang tải...</p>
               </div>
             ) : notifications.length === 0 ? (
-              <div className="text-center py-10">
-                <Bell className="h-8 w-8 mx-auto text-gray-300 mb-2" />
-                <p className="text-sm text-gray-400">
+              <div className="text-center py-12 px-6">
+                <div className="mx-auto h-16 w-16 rounded-2xl bg-gradient-to-br from-blue-100 to-indigo-50 border border-blue-200 flex items-center justify-center mb-3 shadow-sm">
+                  <Bell className="h-7 w-7 text-blue-400" />
+                </div>
+                <p className="text-sm font-semibold" style={{ color: '#000000' }}>
                   {tab === 'messages'
                     ? 'Không có tin nhắn'
                     : tab === 'events'
@@ -775,6 +854,7 @@ export default function NotificationCenter({ socket }) {
                             ? 'Không có thông báo hoạt động chưa đọc'
                             : 'Chưa có thông báo hoạt động'}
                 </p>
+                <p className="text-xs text-gray-400 mt-1">Bạn đã xem hết — quay lại sau nhé!</p>
               </div>
             ) : (
               notifications.map(n => {
@@ -789,6 +869,31 @@ export default function NotificationCenter({ socket }) {
                     key={n.id}
                     onClick={() => {
                       if (!n.is_read && !isApproval) markRead(n.id);
+                      // Tin nhắn messenger (nhóm/1-1) → mở Dock với tên người gửi
+                      if (n.type === 'messenger_chat' && n.entity_type === 'messenger_group' && n.entity_id) {
+                        const senderName = extractChatSenderName(n);
+                        openMessengerGroupChat({
+                          id: n.entity_id,
+                          name: senderName,
+                          title: senderName,
+                          is_direct: !!n.metadata?.is_direct,
+                          peer_id: n.metadata?.peer_id || n.metadata?.sender_id || null,
+                        });
+                        setOpen(false);
+                        return;
+                      }
+                      // Chat trên Lead/Deal → mở Lead chat dock
+                      if (n.type === 'lead_chat' && n.entity_id) {
+                        const senderName = extractChatSenderName(n);
+                        openLeadChat({
+                          id: n.entity_id,
+                          title: n.metadata?.lead_title || senderName || 'Lead',
+                          code: n.metadata?.lead_code || '',
+                          type: n.metadata?.lead_type || 'lead',
+                        });
+                        setOpen(false);
+                        return;
+                      }
                       // Smart navigation based on entity type
                       const pid = n.metadata?.project_id || (n.entity_type === 'project' ? n.entity_id : null);
                       const navTab = n.metadata?.nav_tab;
@@ -819,27 +924,30 @@ export default function NotificationCenter({ socket }) {
                       }
                       setOpen(false);
                     }}
-                    className={`px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-50 transition-colors ${!n.is_read ? 'bg-blue-50/40' : ''}`}
+                    className={`relative px-4 py-3 hover:bg-blue-50/50 cursor-pointer border-b border-gray-50 transition-colors ${!n.is_read ? 'bg-gradient-to-r from-blue-50/60 to-transparent' : ''}`}
                   >
+                    {!n.is_read && (
+                      <span className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-blue-500 to-indigo-500" />
+                    )}
                     <div className="flex gap-3">
-                      <div className={`w-8 h-8 rounded-lg ${isApproval ? 'bg-orange-100 text-orange-600' : color} flex items-center justify-center shrink-0`}>
-                        <Icon className="h-4 w-4" />
+                      <div className={`w-10 h-10 rounded-xl ${isApproval ? 'bg-orange-100 text-orange-600' : color} flex items-center justify-center shrink-0 shadow-sm ring-1 ring-white/60`}>
+                        <Icon className="h-5 w-5" />
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between gap-2">
-                          <p className={`text-sm ${!n.is_read ? 'font-semibold text-gray-900' : 'text-gray-700'}`}>
+                          <p className={`text-sm leading-snug ${!n.is_read ? 'font-bold' : 'font-medium'}`} style={{ color: '#000000' }}>
                             {n.title}
                           </p>
                           <div className="flex items-center gap-1 shrink-0">
                             {inferNotificationModuleKey(n) && (
-                              <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">
+                              <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-slate-700">
                                 {moduleChipLabel(inferNotificationModuleKey(n))}
                               </span>
                             )}
-                            {!n.is_read && !isApproval && <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0 mt-1.5" />}
+                            {!n.is_read && !isApproval && <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0 mt-1.5 animate-pulse" />}
                           </div>
                         </div>
-                        <p className="text-xs text-gray-500 mt-0.5 line-clamp-2 whitespace-pre-line">{n.message}</p>
+                        <p className="text-xs text-gray-600 mt-1 line-clamp-2 whitespace-pre-line leading-relaxed">{n.message}</p>
 
                         {/* Approval: show notes + files */}
                         {isApproval && n.metadata?.notes && (
@@ -908,7 +1016,10 @@ export default function NotificationCenter({ socket }) {
                           <p className="text-[10px] text-red-500 font-medium mt-1">❌ Đã từ chối</p>
                         )}
 
-                        <p className="text-[10px] text-gray-400 mt-1">{formatDateTime(n.created_at)}</p>
+                        <p className="text-[10px] text-gray-400 mt-1.5 flex items-center gap-1">
+                          <Clock className="h-3 w-3" />
+                          {formatDateTime(n.created_at)}
+                        </p>
                       </div>
                     </div>
                   </div>

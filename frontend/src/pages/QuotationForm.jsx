@@ -719,7 +719,7 @@ export default function QuotationForm() {
         <div className="flex items-center gap-3">
           <button onClick={() => navigate('/crm/quotations')} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
           <div>
-            <h1 className="text-xl font-bold text-gray-900">{isEdit ? 'Sửa báo giá' : 'Tạo báo giá mới'}</h1>
+            <h1 className="text-xl font-bold" style={{ color: '#000000' }}>{isEdit ? 'Sửa báo giá' : 'Tạo báo giá mới'}</h1>
             {isEdit && form.code && <p className="text-xs text-blue-600 font-bold">{form.code}</p>}
             {excelDraftHint && (
               <p className="text-xs text-emerald-700 font-medium mt-1 rounded-lg bg-emerald-50 border border-emerald-100 px-2 py-1 inline-block">
@@ -797,7 +797,7 @@ export default function QuotationForm() {
 
       {/* Customer Info - MISA style */}
       <div className="bg-white rounded-xl border p-4">
-        <h2 className="text-sm font-bold text-gray-900 mb-3">Liên kết deal & khách hàng</h2>
+        <h2 className="text-sm font-bold mb-3" style={{ color: '#000000' }}>Liên kết deal & khách hàng</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="md:col-span-2">
             <label className="text-xs font-medium text-gray-600 flex items-center gap-1.5">
@@ -860,7 +860,7 @@ export default function QuotationForm() {
       {/* Items Table - MISA style with per-item VAT */}
       <div className="bg-white rounded-xl border p-3">
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-sm font-bold text-gray-900">Chi tiết hàng hóa / dịch vụ</h2>
+          <h2 className="text-sm font-bold" style={{ color: '#000000' }}>Chi tiết hàng hóa / dịch vụ</h2>
           <div className="flex items-center gap-2 flex-wrap">
             <button onClick={() => setShowProductPicker(true)} className="h-9 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
               <Search className="h-3.5 w-3.5" /> Tìm & thêm sản phẩm
@@ -1309,7 +1309,7 @@ export default function QuotationForm() {
 
       {/* Terms */}
       <div className="bg-white rounded-xl border p-4">
-        <h2 className="text-sm font-bold text-gray-900 mb-3">Điều khoản</h2>
+        <h2 className="text-sm font-bold mb-3" style={{ color: '#000000' }}>Điều khoản</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="text-xs font-medium text-gray-600">Hiệu lực đến</label>
@@ -1329,7 +1329,7 @@ export default function QuotationForm() {
             )}
           </div>
           <div className="md:col-span-2 rounded-lg border border-rose-100 bg-rose-50/50 p-3 space-y-3">
-            <h3 className="text-xs font-bold text-rose-950">Cọc & thanh toán còn lại</h3>
+            <h3 className="text-xs font-bold" style={{ color: '#000000' }}>Cọc & thanh toán còn lại</h3>
             <p className="text-[11px] text-rose-900/80">Số liệu khớp block cuối file Excel (hoặc nhập tay). Hiển thị tóm tắt cạnh <strong>TỔNG CỘNG</strong>.</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
@@ -1399,7 +1399,7 @@ export default function QuotationForm() {
 
       {isEdit && (
         <div className="bg-white rounded-xl border p-4">
-          <h2 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
+          <h2 className="text-sm font-bold mb-3 flex items-center gap-2" style={{ color: '#000000' }}>
             <History className="h-4 w-4 text-slate-600" /> Lịch sử chỉnh sửa báo giá
           </h2>
           {historyLoading ? (
@@ -1436,7 +1436,7 @@ export default function QuotationForm() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setDescPopup(null)}>
           <div className="bg-white rounded-xl max-w-lg w-full shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-3 border-b">
-              <h3 className="text-sm font-bold text-gray-900">📝 Chi tiết mô tả — {descPopup.name}</h3>
+              <h3 className="text-sm font-bold" style={{ color: '#000000' }}>📝 Chi tiết mô tả — {descPopup.name}</h3>
               <button onClick={() => setDescPopup(null)} className="p-1 hover:bg-gray-100 rounded-lg cursor-pointer"><X className="h-4 w-4 text-gray-500" /></button>
             </div>
             <div className="p-5">

@@ -171,7 +171,12 @@ export default function CRMTasksPage() {
           <StatusIcon className={`h-4 w-4 ${task.status === 'completed' ? 'text-emerald-500' : task.status === 'in_progress' ? 'text-blue-500' : 'text-gray-300'}`} />
         </button>
         <div className="flex-1 min-w-0">
-          <p className={`text-sm ${task.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}>{task.title}</p>
+          <p
+            className={`text-sm ${task.status === 'completed' ? 'line-through text-gray-400' : 'font-medium'}`}
+            style={task.status === 'completed' ? undefined : { color: '#000000' }}
+          >
+            {task.title}
+          </p>
           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
             {task.lead && (
               <Link to={`/crm/leads/${task.lead_id}`} className="text-[10px] text-indigo-600 hover:underline flex items-center gap-0.5">
@@ -196,7 +201,7 @@ export default function CRMTasksPage() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">✅ Công việc CRM</h1>
+          <h1 className="text-2xl font-bold" style={{ color: '#000000' }}>✅ Công việc CRM</h1>
           <p className="text-sm text-gray-500">{stats.total} công việc — {stats.completed} hoàn thành</p>
           {!isAdmin && (
             <p className="text-xs text-blue-700 mt-1 flex items-center gap-1">
@@ -235,16 +240,70 @@ export default function CRMTasksPage() {
       {/* KPIs */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: 'Tổng', value: stats.total, color: 'text-gray-900', bg: 'bg-gray-50' },
-          { label: 'Đang làm', value: stats.inProgress, color: 'text-blue-700', bg: 'bg-blue-50' },
-          { label: 'Quá hạn', value: stats.overdue, color: 'text-red-700', bg: 'bg-red-50' },
-          { label: 'Hoàn thành', value: stats.completed, color: 'text-emerald-700', bg: 'bg-emerald-50' },
-        ].map(kpi => (
-          <div key={kpi.label} className={`${kpi.bg} rounded-xl p-4 text-center`}>
-            <p className={`text-2xl font-bold ${kpi.color}`}>{kpi.value}</p>
-            <p className="text-xs text-gray-500 mt-0.5">{kpi.label}</p>
-          </div>
-        ))}
+          {
+            label: 'Tổng',
+            value: stats.total,
+            icon: List,
+            gradient: 'from-slate-100 via-gray-50 to-white',
+            border: 'border-slate-300',
+            iconBg: 'bg-slate-200',
+            iconColor: 'text-slate-700',
+            accent: 'bg-slate-500',
+          },
+          {
+            label: 'Đang làm',
+            value: stats.inProgress,
+            icon: Clock,
+            gradient: 'from-blue-100 via-sky-50 to-white',
+            border: 'border-blue-300',
+            iconBg: 'bg-blue-200',
+            iconColor: 'text-blue-700',
+            accent: 'bg-blue-500',
+          },
+          {
+            label: 'Quá hạn',
+            value: stats.overdue,
+            icon: AlertTriangle,
+            gradient: 'from-red-100 via-rose-50 to-white',
+            border: 'border-red-300',
+            iconBg: 'bg-red-200',
+            iconColor: 'text-red-700',
+            accent: 'bg-red-500',
+          },
+          {
+            label: 'Hoàn thành',
+            value: stats.completed,
+            icon: CheckCircle2,
+            gradient: 'from-emerald-100 via-green-50 to-white',
+            border: 'border-emerald-300',
+            iconBg: 'bg-emerald-200',
+            iconColor: 'text-emerald-700',
+            accent: 'bg-emerald-500',
+          },
+        ].map(kpi => {
+          const Icon = kpi.icon;
+          return (
+            <div
+              key={kpi.label}
+              className={`relative overflow-hidden bg-gradient-to-br ${kpi.gradient} border ${kpi.border} rounded-2xl p-4 shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200`}
+            >
+              <div className={`absolute top-0 left-0 right-0 h-1 ${kpi.accent}`} />
+              <div className="flex items-center gap-3">
+                <div className={`h-11 w-11 rounded-xl ${kpi.iconBg} flex items-center justify-center shrink-0 shadow-sm`}>
+                  <Icon className={`h-5 w-5 ${kpi.iconColor}`} />
+                </div>
+                <div className="flex-1 min-w-0 text-left">
+                  <p className="text-3xl font-extrabold leading-none tracking-tight" style={{ color: '#000000' }}>
+                    {kpi.value}
+                  </p>
+                  <p className="text-xs font-semibold mt-1 uppercase tracking-wide" style={{ color: '#000000' }}>
+                    {kpi.label}
+                  </p>
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       {/* Filters */}
@@ -275,7 +334,10 @@ export default function CRMTasksPage() {
 
       {/* LIST VIEW */}
       {viewMode === 'list' && (
-        <div className="bg-white rounded-xl border divide-y">
+        <div
+          className="bg-white rounded-xl border divide-y overflow-y-auto"
+          style={{ maxHeight: '640px' }}
+        >
           {filtered.length === 0 ? (
             <p className="text-center text-sm text-gray-400 py-8">Không có công việc</p>
           ) : filtered.map(t => <TaskCard key={t.id} task={t} />)}
@@ -293,8 +355,18 @@ export default function CRMTasksPage() {
             { key: 'noDeadline', label: '⏳ Chưa có hạn', tasks: deadlineGroups.noDeadline, color: 'border-gray-200 bg-gray-50' },
           ].filter(g => g.tasks.length > 0).map(group => (
             <div key={group.key} className={`border rounded-xl ${group.color}`}>
-              <div className="px-4 py-2 font-semibold text-sm">{group.label} <span className="text-gray-400 font-normal">({group.tasks.length})</span></div>
-              <div className="bg-white rounded-b-xl">{group.tasks.map(t => <TaskCard key={t.id} task={t} />)}</div>
+              <div className="px-4 py-2 font-semibold text-sm flex items-center justify-between">
+                <span>{group.label} <span className="text-gray-400 font-normal">({group.tasks.length})</span></span>
+                {group.tasks.length > 10 && (
+                  <span className="text-[10px] font-normal text-gray-500">Cuộn để xem thêm</span>
+                )}
+              </div>
+              <div
+                className="bg-white rounded-b-xl overflow-y-auto"
+                style={{ maxHeight: '640px' }}
+              >
+                {group.tasks.map(t => <TaskCard key={t.id} task={t} />)}
+              </div>
             </div>
           ))}
         </div>
@@ -310,13 +382,23 @@ export default function CRMTasksPage() {
                 <span className="text-sm font-semibold">{group.user.full_name}</span>
                 <span className="text-xs text-gray-400">({group.tasks.length} việc)</span>
               </div>
-              <div className="bg-white rounded-b-xl">{group.tasks.map(t => <TaskCard key={t.id} task={t} />)}</div>
+              <div
+                className="bg-white rounded-b-xl overflow-y-auto"
+                style={{ maxHeight: '640px' }}
+              >
+                {group.tasks.map(t => <TaskCard key={t.id} task={t} />)}
+              </div>
             </div>
           ))}
           {plannerGroups.unassigned.length > 0 && (
             <div className="border rounded-xl border-dashed">
               <div className="px-4 py-3 bg-gray-50 rounded-t-xl text-sm font-semibold text-gray-500">Chưa giao ({plannerGroups.unassigned.length})</div>
-              <div className="bg-white rounded-b-xl">{plannerGroups.unassigned.map(t => <TaskCard key={t.id} task={t} />)}</div>
+              <div
+                className="bg-white rounded-b-xl overflow-y-auto"
+                style={{ maxHeight: '640px' }}
+              >
+                {plannerGroups.unassigned.map(t => <TaskCard key={t.id} task={t} />)}
+              </div>
             </div>
           )}
         </div>

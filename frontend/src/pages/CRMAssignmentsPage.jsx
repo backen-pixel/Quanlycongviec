@@ -356,7 +356,7 @@ export default function CRMAssignmentsPage() {
       {/* HEADER */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">📋 Giao việc CRM</h1>
+          <h1 className="text-2xl font-bold" style={{ color: '#000000' }}>📋 Giao việc CRM</h1>
           <p className="text-sm text-gray-500">
             {stats.total} nhiệm vụ — {stats.completed} hoàn thành — {stats.inProgress} đang làm
           </p>
@@ -410,16 +410,70 @@ export default function CRMAssignmentsPage() {
       {/* KPI */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: 'Tổng',       value: stats.total,      color: 'text-gray-900',     bg: 'bg-gray-50' },
-          { label: 'Đang làm',   value: stats.inProgress, color: 'text-blue-700',     bg: 'bg-blue-50' },
-          { label: 'Quá hạn',    value: stats.overdue,    color: 'text-red-700',      bg: 'bg-red-50' },
-          { label: 'Hoàn thành', value: stats.completed,  color: 'text-emerald-700',  bg: 'bg-emerald-50' },
-        ].map((kpi) => (
-          <div key={kpi.label} className={`${kpi.bg} rounded-xl p-4 text-center`}>
-            <p className={`text-2xl font-bold ${kpi.color}`}>{kpi.value}</p>
-            <p className="text-xs text-gray-500 mt-0.5">{kpi.label}</p>
-          </div>
-        ))}
+          {
+            label: 'Tổng',
+            value: stats.total,
+            icon: ListIcon,
+            gradient: 'from-slate-100 via-gray-50 to-white',
+            border: 'border-slate-300',
+            iconBg: 'bg-slate-200',
+            iconColor: 'text-slate-700',
+            accent: 'bg-slate-500',
+          },
+          {
+            label: 'Đang làm',
+            value: stats.inProgress,
+            icon: Clock,
+            gradient: 'from-blue-100 via-sky-50 to-white',
+            border: 'border-blue-300',
+            iconBg: 'bg-blue-200',
+            iconColor: 'text-blue-700',
+            accent: 'bg-blue-500',
+          },
+          {
+            label: 'Quá hạn',
+            value: stats.overdue,
+            icon: AlertTriangle,
+            gradient: 'from-red-100 via-rose-50 to-white',
+            border: 'border-red-300',
+            iconBg: 'bg-red-200',
+            iconColor: 'text-red-700',
+            accent: 'bg-red-500',
+          },
+          {
+            label: 'Hoàn thành',
+            value: stats.completed,
+            icon: CheckCircle2,
+            gradient: 'from-emerald-100 via-green-50 to-white',
+            border: 'border-emerald-300',
+            iconBg: 'bg-emerald-200',
+            iconColor: 'text-emerald-700',
+            accent: 'bg-emerald-500',
+          },
+        ].map((kpi) => {
+          const Icon = kpi.icon;
+          return (
+            <div
+              key={kpi.label}
+              className={`relative overflow-hidden bg-gradient-to-br ${kpi.gradient} border ${kpi.border} rounded-2xl p-4 shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200`}
+            >
+              <div className={`absolute top-0 left-0 right-0 h-1 ${kpi.accent}`} />
+              <div className="flex items-center gap-3">
+                <div className={`h-11 w-11 rounded-xl ${kpi.iconBg} flex items-center justify-center shrink-0 shadow-sm`}>
+                  <Icon className={`h-5 w-5 ${kpi.iconColor}`} />
+                </div>
+                <div className="flex-1 min-w-0 text-left">
+                  <p className="text-3xl font-extrabold leading-none tracking-tight" style={{ color: '#000000' }}>
+                    {kpi.value}
+                  </p>
+                  <p className="text-xs font-semibold mt-1 uppercase tracking-wide" style={{ color: '#000000' }}>
+                    {kpi.label}
+                  </p>
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       {/* FILTERS */}
@@ -542,11 +596,12 @@ function KanbanView({
         return (
           <div
             key={col.id}
-            className="w-72 shrink-0 bg-gray-50 rounded-xl border flex flex-col"
+            className="w-72 shrink-0 rounded-xl border border-white/40 flex flex-col shadow-sm backdrop-blur-md"
+            style={{ background: 'rgba(255,255,255,0.35)' }}
             onDragOver={allowDrop}
             onDrop={onDropCol(col.id)}
           >
-            <div className="px-3 py-2 flex items-center gap-2 border-b" style={{ borderTopColor: col.color, borderTopWidth: 3 }}>
+            <div className="px-3 py-2 flex items-center gap-2 border-b border-white/40 rounded-t-xl" style={{ borderTopColor: col.color, borderTopWidth: 3, background: 'rgba(255,255,255,0.45)' }}>
               <GripVertical className="h-3.5 w-3.5 text-gray-300" />
               <span className="text-sm font-semibold flex-1 truncate" style={{ color: col.color }}>
                 {col.name} {col.is_done_column ? <CheckCircle2 className="h-3 w-3 inline text-emerald-500" /> : null}

@@ -173,7 +173,7 @@ export default function InvoiceForm() {
         <div className="flex items-center gap-3">
           <button onClick={() => navigate(isEdit ? `/crm/invoices/${id}` : '/crm/invoices')} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
           <div>
-            <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+            <h1 className="text-xl font-bold flex items-center gap-2" style={{ color: '#000000' }}>
               <Receipt className="h-5 w-5 text-purple-600" />
               {isEdit ? 'Sửa hóa đơn' : 'Tạo hóa đơn mới'}
             </h1>
@@ -215,7 +215,7 @@ export default function InvoiceForm() {
 
       {/* Customer Info */}
       <div className="bg-white rounded-xl border p-4">
-        <h2 className="text-sm font-bold text-gray-900 mb-3">Thông tin khách hàng</h2>
+        <h2 className="text-sm font-bold mb-3" style={{ color: '#000000' }}>Thông tin khách hàng</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="text-xs font-medium text-gray-600">Khách hàng</label>
@@ -254,7 +254,7 @@ export default function InvoiceForm() {
       {/* Items Table */}
       <div className="bg-white rounded-xl border p-3">
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-sm font-bold text-gray-900">Chi tiết hàng hóa / dịch vụ</h2>
+          <h2 className="text-sm font-bold" style={{ color: '#000000' }}>Chi tiết hàng hóa / dịch vụ</h2>
           <div className="flex items-center gap-2">
             <button onClick={() => setShowProductPicker(true)} className="h-9 px-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
               <Search className="h-3.5 w-3.5" /> Tìm & thêm sản phẩm
@@ -335,7 +335,7 @@ export default function InvoiceForm() {
                     <td className="py-1 px-1"><input type="number" step="any" value={item.spec_factor || ''} onChange={e => updateItem(idx, 'spec_factor', e.target.value)} placeholder="0" title="Hệ số quy cách" className={`w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-purple-500 text-xs outline-none bg-transparent text-right ${parseFloat(item.spec_factor) > 0 ? 'text-indigo-700 font-semibold' : ''}`} /></td>
                     <td className="py-1 px-1"><input type="number" value={item.quantity} onChange={e => updateItem(idx, 'quantity', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-purple-500 text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1"><input type="number" value={item.unit_price} onChange={e => updateItem(idx, 'unit_price', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-purple-500 text-xs outline-none bg-transparent text-right" /></td>
-                    <td className="py-1 px-1 text-right text-xs font-medium text-gray-900">{formatVND(row.gross_amount || 0)}</td>
+                    <td className="py-1 px-1 text-right text-xs font-medium" style={{ color: '#000000' }}>{formatVND(row.gross_amount || 0)}</td>
                     <td className="py-1 px-1"><input type="number" value={item.discount_percent || 0} onChange={e => updateItem(idx, 'discount_percent', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-purple-500 text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1"><input type="number" value={item.vat_rate || 0} onChange={e => updateItem(idx, 'vat_rate', parseFloat(e.target.value) || 0)} className="w-full px-1 py-0.5 border-0 border-b border-transparent hover:border-gray-300 focus:border-purple-500 text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1 text-right text-xs text-gray-600">{formatVND(row.vat_amount || 0)}</td>

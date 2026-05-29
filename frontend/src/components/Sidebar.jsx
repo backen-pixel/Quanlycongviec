@@ -3,6 +3,7 @@ import { persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import NotificationCenter from './NotificationCenter';
+import SidebarTooltip from './SidebarTooltip';
 import { getInitials, avatarColor } from '../lib/utils';
 import { publicFileUrl } from '../lib/publicFileUrl';
 import {
@@ -324,38 +325,44 @@ function SideLink({ to, icon: Icon, label, collapsed, end, badge, moduleContext 
     if (moduleContext) storeModule(moduleContext);
   };
   return (
-    <NavLink
-      to={to}
-      state={moduleContext ? { moduleContext } : undefined}
-      onClick={onNavClick}
-      end={to === '/' || end}
-      className={({ isActive }) =>
-        `flex items-center gap-3 rounded-lg px-3 py-2 text-[14px] font-medium transition-all ${
-          isActive
-            ? 'bg-[var(--color-sidebar-active)] text-[var(--color-sidebar-text-active)]'
-            : 'text-[var(--color-sidebar-text)] hover:bg-[var(--color-sidebar-hover)] hover:text-white'
-        }`
-      }
+    <SidebarTooltip
+      label={label}
+      badge={badge}
+      enabled={collapsed}
     >
-      <span className="relative shrink-0">
-        <Icon className="h-[19px] w-[19px]" />
-        {badge > 0 && (
-          <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">
-            {badge > 9 ? '9+' : badge}
-          </span>
-        )}
-      </span>
-      {!collapsed && (
-        <span className="flex-1 flex items-center justify-between gap-2 min-w-0">
-          <span className="truncate">{label}</span>
+      <NavLink
+        to={to}
+        state={moduleContext ? { moduleContext } : undefined}
+        onClick={onNavClick}
+        end={to === '/' || end}
+        className={({ isActive }) =>
+          `flex items-center gap-3 rounded-lg px-3 py-2 text-[14px] font-medium transition-all ${
+            isActive
+              ? 'bg-[var(--color-sidebar-active)] text-[var(--color-sidebar-text-active)]'
+              : 'text-[var(--color-sidebar-text)] hover:bg-[var(--color-sidebar-hover)] hover:text-white'
+          }`
+        }
+      >
+        <span className="relative shrink-0">
+          <Icon className="h-[19px] w-[19px]" />
           {badge > 0 && (
-            <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+            <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">
               {badge > 9 ? '9+' : badge}
             </span>
           )}
         </span>
-      )}
-    </NavLink>
+        {!collapsed && (
+          <span className="flex-1 flex items-center justify-between gap-2 min-w-0">
+            <span className="truncate">{label}</span>
+            {badge > 0 && (
+              <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+                {badge > 9 ? '9+' : badge}
+              </span>
+            )}
+          </span>
+        )}
+      </NavLink>
+    </SidebarTooltip>
   );
 }
 
@@ -394,7 +401,9 @@ function MenuGroup({ group, collapsed, isAdmin, isExecutive, canAccessModule, us
           <ChevronDown className={`h-3 w-3 shrink-0 transition-transform ${open ? '' : 'rotate-180'}`} />
         </button>
       ) : (
-        <div className="px-2 py-1 text-center text-sm opacity-60">{group.emoji}</div>
+        <SidebarTooltip label={group.title} enabled={collapsed}>
+          <div className="px-2 py-1 text-center text-sm opacity-60">{group.emoji}</div>
+        </SidebarTooltip>
       )}
       
       {open && (
@@ -775,12 +784,16 @@ export default function Sidebar() {
           </>
         ) : (
           <>
-          <button onClick={doLogout} className="w-full p-2 text-[var(--color-sidebar-text)] hover:text-white cursor-pointer" title="Đăng xuất">
-            <LogOut className="h-5 w-5 mx-auto" />
-          </button>
-          <NavLink to="/settings/theme" className="w-full p-2 text-[var(--color-sidebar-text)] hover:text-white cursor-pointer block text-center" title="Giao diện">
-            <Palette className="h-5 w-5 mx-auto" />
-          </NavLink>
+          <SidebarTooltip label="Đăng xuất" enabled={collapsed}>
+            <button onClick={doLogout} className="w-full p-2 text-[var(--color-sidebar-text)] hover:text-white cursor-pointer">
+              <LogOut className="h-5 w-5 mx-auto" />
+            </button>
+          </SidebarTooltip>
+          <SidebarTooltip label="Giao diện" enabled={collapsed}>
+            <NavLink to="/settings/theme" className="w-full p-2 text-[var(--color-sidebar-text)] hover:text-white cursor-pointer block text-center">
+              <Palette className="h-5 w-5 mx-auto" />
+            </NavLink>
+          </SidebarTooltip>
           </>
         )}
       </div>

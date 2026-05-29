@@ -403,15 +403,10 @@ export default function VoiceRecordingsPage() {
   return (
     <div className="max-w-4xl mx-auto space-y-6 px-1 sm:px-0">
       <div>
-        <h1 className="text-xl sm:text-2xl font-bold text-gray-900 flex items-center gap-2 flex-wrap">
+        <h1 className="text-xl sm:text-2xl font-bold flex items-center gap-2 flex-wrap" style={{ color: '#000000' }}>
           <Mic className="h-7 w-7 text-violet-600 shrink-0" />
           Cuộc gọi &amp; đồng bộ ghi âm
         </h1>
-        <p className="text-sm text-gray-600 mt-2">
-          Ghi âm từ mobile hoặc upload web; có số thì tự ghép khách và Deal/Lead bạn phụ trách. Nút «Quét SĐT từ tên ghi âm» lấy số từ tên file/ghi chú (kể cả dạng{' '}
-          <code className="text-xs bg-gray-100 px-1 rounded">…_0987654321…</code>
-          ); sau đó «Quét ghép CRM» ghép lại theo SĐT đã có.
-        </p>
         {voiceAdmin ? (
           <p className="text-sm text-violet-800 mt-2 rounded-lg bg-violet-50 border border-violet-100 px-3 py-2">
             Quản trị: xem ghi âm của mọi nhân viên. Chọn nhân viên trong «Lọc theo NV» để chỉ xem file do người đó đồng bộ/tải lên.
