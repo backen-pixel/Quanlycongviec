@@ -10,8 +10,12 @@
  */
 
 const STORAGE_KEY = 'crm-dashboard-cache:v1';
+const META_STORAGE_KEY = 'crm-dashboard-meta-cache:v1'; // localStorage — metadata tĩnh
 const HARD_EXPIRY_MS = 30 * 60 * 1000; // 30 phút mới xóa hẳn
 const FRESH_TTL_MS = 10 * 60 * 1000; // < 10 phút coi là tươi
+const VERY_FRESH_MS = 30 * 1000; // < 30 giây → có thể bỏ qua silent refetch
+const META_HARD_EXPIRY_MS = 60 * 60 * 1000; // metadata: 1 giờ
+const META_FRESH_MS = 5 * 60 * 1000; // metadata: < 5 phút coi là tươi
 
 function readStore() {
   try {
@@ -93,7 +97,9 @@ export function getCrmDashboardCache(key) {
   return {
     data: entry.data,
     savedAt: entry.savedAt,
+    age,
     isFresh: age < FRESH_TTL_MS,
+    isVeryFresh: age < VERY_FRESH_MS,
   };
 }
 
@@ -136,6 +142,86 @@ export function invalidateCrmDashboardCache(key) {
       delete store[key];
       writeStore(store);
     }
+  } catch {
+    /* ignore */
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// METADATA CACHE — companies/users/pipelines/stages/sources/leadTypes
+// localStorage để sống qua đóng tab (data này hiếm khi đổi).
+// ─────────────────────────────────────────────────────────────────────────
+
+function readMetaStore() {
+  try {
+    const raw = localStorage.getItem(META_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeMetaStore(store) {
+  try {
+    localStorage.setItem(META_STORAGE_KEY, JSON.stringify(store));
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Đọc metadata cache theo userId. Trả về null nếu không có / hết hạn.
+ * Trả { data, age, isFresh, savedAt } khi có.
+ */
+export function getCrmDashboardMetaCache(userId) {
+  if (!userId) return null;
+  try {
+    const store = readMetaStore();
+    const entry = store[String(userId)];
+    if (!entry || typeof entry.savedAt !== 'number') return null;
+    const age = Date.now() - entry.savedAt;
+    if (age > META_HARD_EXPIRY_MS) {
+      delete store[String(userId)];
+      writeMetaStore(store);
+      return null;
+    }
+    return {
+      data: entry.data,
+      savedAt: entry.savedAt,
+      age,
+      isFresh: age < META_FRESH_MS,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Lưu metadata cache. payload có thể chứa các field:
+ * companies, users, pipelines, stagesLead, stagesDeal, sources, leadTypes, fbPages.
+ */
+export function saveCrmDashboardMetaCache(userId, payload) {
+  if (!userId || !payload) return;
+  try {
+    const store = readMetaStore();
+    // Giữ tối đa 4 user gần nhất (multi-account)
+    const keys = Object.keys(store).sort((a, b) => (store[b].savedAt || 0) - (store[a].savedAt || 0));
+    while (keys.length >= 4) {
+      const drop = keys.pop();
+      delete store[drop];
+    }
+    store[String(userId)] = { savedAt: Date.now(), data: payload };
+    writeMetaStore(store);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function clearCrmDashboardMetaCache() {
+  try {
+    localStorage.removeItem(META_STORAGE_KEY);
   } catch {
     /* ignore */
   }
