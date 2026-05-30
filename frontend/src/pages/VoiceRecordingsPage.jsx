@@ -1,9 +1,20 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { Mic, Upload, Trash2, RefreshCw, Square, Circle, UserRound, Link2, UserPlus, Inbox, ScanLine } from 'lucide-react';
+import { Mic, Upload, Trash2, RefreshCw, Square, Circle, UserRound, Link2, UserPlus, Inbox, ScanLine, Calendar as CalendarIcon } from 'lucide-react';
 import { formatDateTime } from '../lib/utils';
+import VoiceCalendarPanel from '../components/VoiceCalendarPanel';
+
+function toLocalISODate(d) {
+  if (!d) return '';
+  const date = new Date(d);
+  if (Number.isNaN(date.getTime())) return '';
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 function isVoiceRecordingsAdmin(role) {
   const x = String(role ?? '').toLowerCase().trim();
@@ -57,6 +68,7 @@ export default function VoiceRecordingsPage() {
   const chunksRef = useRef([]);
 
   const [listPhoneFilter, setListPhoneFilter] = useState('');
+  const [calendarDate, setCalendarDate] = useState('');
   const [attachRecording, setAttachRecording] = useState(null);
   const [custQuery, setCustQuery] = useState('');
   const [custRows, setCustRows] = useState([]);
@@ -111,6 +123,12 @@ export default function VoiceRecordingsPage() {
   useEffect(() => {
     void load();
   }, [listTab, filterUserId, voiceAdmin, listPhoneFilter]);
+
+  /** Lọc client-side theo ngày đã chọn trong calendar — không cần gọi lại API */
+  const filteredList = useMemo(() => {
+    if (!calendarDate) return list;
+    return list.filter((r) => toLocalISODate(r.call_started_at || r.created_at) === calendarDate);
+  }, [list, calendarDate]);
 
   useEffect(() => {
     if (!attachRecording) return;
@@ -574,6 +592,14 @@ export default function VoiceRecordingsPage() {
         </details>
       </div>
 
+      <VoiceCalendarPanel
+        recordings={list}
+        selectedDate={calendarDate}
+        onSelectDate={(d) => setCalendarDate(d || '')}
+        selectedPhone={listPhoneFilter}
+        onSelectPhone={(p) => setListPhoneFilter(p || '')}
+      />
+
       <div className="rounded-xl border border-gray-200 bg-white p-4 sm:p-5 shadow-sm">
         <div className="flex flex-wrap gap-2 mb-4 border-b border-gray-100 pb-3">
           <button
@@ -608,13 +634,28 @@ export default function VoiceRecordingsPage() {
           </button>
         </div>
         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-3">
-          <h2 className="font-semibold text-gray-900">
+          <h2 className="font-semibold flex items-center gap-2 flex-wrap" style={{ color: '#000000' }}>
             {listTab === 'unassigned'
               ? 'Chưa gắn Lead/Deal (có SĐT hoặc đã có KH)'
               : listTab === 'linked'
                 ? 'Đã gắn Deal / Lead'
                 : 'Đã đồng bộ'}{' '}
-            ({list.length})
+            ({filteredList.length}
+            {calendarDate ? ` / ${list.length}` : ''})
+            {calendarDate && (
+              <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-violet-100 text-violet-800 border border-violet-200">
+                <CalendarIcon className="h-3 w-3" />
+                {calendarDate.split('-').reverse().join('/')}
+                <button
+                  type="button"
+                  onClick={() => setCalendarDate('')}
+                  className="ml-0.5 text-violet-700 hover:text-violet-900 cursor-pointer"
+                  title="Bỏ lọc ngày"
+                >
+                  ×
+                </button>
+              </span>
+            )}
           </h2>
           <div className="flex flex-wrap items-center gap-2">
             {voiceAdmin ? (
@@ -675,17 +716,19 @@ export default function VoiceRecordingsPage() {
         </div>
         {loading ? (
           <p className="text-sm text-gray-500">Đang tải…</p>
-        ) : list.length === 0 ? (
+        ) : filteredList.length === 0 ? (
           <p className="text-sm text-gray-500">
-            {listTab === 'unassigned'
-              ? 'Không có bản nào cần gắn Lead/Deal. Tab này gồm bản đã có SĐT hoặc đã có khách nhưng chưa chọn cơ hội — dùng «Quét gắn» hoặc «Gắn KH / Lead».'
-              : listTab === 'linked'
-                ? 'Chưa có bản ghi nào đã ghép lead/deal. Dùng «Quét ghép CRM» sau khi có SĐT trùng khách & cơ hội do bạn phụ trách.'
-                : 'Chưa có bản ghi. App mobile sau khi đăng nhập sẽ hiện ở đây.'}
+            {calendarDate
+              ? `Không có ghi âm nào trong ngày ${calendarDate.split('-').reverse().join('/')} (theo bộ lọc hiện tại).`
+              : listTab === 'unassigned'
+                ? 'Không có bản nào cần gắn Lead/Deal. Tab này gồm bản đã có SĐT hoặc đã có khách nhưng chưa chọn cơ hội — dùng «Quét gắn» hoặc «Gắn KH / Lead».'
+                : listTab === 'linked'
+                  ? 'Chưa có bản ghi nào đã ghép lead/deal. Dùng «Quét ghép CRM» sau khi có SĐT trùng khách & cơ hội do bạn phụ trách.'
+                  : 'Chưa có bản ghi. App mobile sau khi đăng nhập sẽ hiện ở đây.'}
           </p>
         ) : (
           <ul className="space-y-4">
-            {list.map((r) => (
+            {filteredList.map((r) => (
               <li
                 key={r.id}
                 className="border border-gray-100 rounded-lg p-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"

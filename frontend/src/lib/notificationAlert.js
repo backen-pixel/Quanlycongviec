@@ -1,5 +1,6 @@
 import { getNotificationPrefsCache, isNotificationTypeEnabled } from './notificationPrefsCache';
 import { getCustomNotificationSoundBuffer } from './notificationSoundIdb';
+import { getPresetById } from './notificationPresets';
 
 const MAX_PLAY_SEC = 15;
 
@@ -70,33 +71,29 @@ async function ensureDefaultDecoded(ctx) {
   return out;
 }
 
-/** Chuông mặc định tổng hợp khi không có / không đọc được `notification.wav`. */
-function playSyntheticDefaultBell(vol) {
+/**
+ * Phát preset (chuông tổng hợp). Bỏ qua nếu không có Web Audio.
+ * @param {string} presetId
+ * @param {number} vol — 0..1.5 hệ số âm lượng tổng từ prefs.
+ * @returns {boolean} true nếu đã lên lịch phát.
+ */
+export function playPresetBell(presetId, vol) {
   const ctx = getAudioContext();
-  if (!ctx) return;
+  if (!ctx) return false;
   if (ctx.state === 'suspended') void ctx.resume().catch(() => {});
 
-  const peak = Math.min(0.35, Math.max(0.02, GAIN_BASE * vol * 0.06));
-  const now = ctx.currentTime;
+  const preset = getPresetById(presetId);
+  if (!preset || typeof preset.play !== 'function') return false;
+
   const master = ctx.createGain();
-  master.gain.setValueAtTime(0, now);
-  master.gain.linearRampToValueAtTime(peak, now + 0.025);
-  master.gain.exponentialRampToValueAtTime(0.0008, now + 0.38);
+  master.gain.value = Math.min(1.2, Math.max(0, GAIN_BASE * vol * 0.45));
   master.connect(ctx.destination);
-
-  const o1 = ctx.createOscillator();
-  o1.type = 'sine';
-  o1.frequency.setValueAtTime(880, now);
-  o1.connect(master);
-  o1.start(now);
-  o1.stop(now + 0.18);
-
-  const o2 = ctx.createOscillator();
-  o2.type = 'sine';
-  o2.frequency.setValueAtTime(660, now + 0.11);
-  o2.connect(master);
-  o2.start(now + 0.11);
-  o2.stop(now + 0.3);
+  try {
+    preset.play(ctx, master);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function ensureCustomDecoded(ctx) {
@@ -152,6 +149,39 @@ export async function playLoudNotificationSound(opts = {}) {
     lastBellAt = now;
   }
 
+  // Nếu user đã upload file tùy chỉnh — ưu tiên dùng file đó.
+  if (p.use_custom_sound) {
+    try {
+      const ready = await getBufferForPlay();
+      if (ready?.ctx && ready.buffer) {
+        const { ctx, buffer } = ready;
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        const gain = ctx.createGain();
+        gain.gain.value = GAIN_BASE * vol;
+        source.connect(gain).connect(ctx.destination);
+
+        const startRaw = Number(p.custom_sound_start_sec);
+        const start = Number.isFinite(startRaw)
+          ? Math.max(0, Math.min(startRaw, Math.max(0, buffer.duration - 0.05)))
+          : 0;
+        const maxFromStart = Math.min(MAX_PLAY_SEC, Math.max(0.05, buffer.duration - start));
+        const lenRaw = Number(p.custom_sound_play_sec);
+        const lenRequested = Number.isFinite(lenRaw) ? lenRaw : MAX_PLAY_SEC;
+        const playLen = Math.max(0.05, Math.min(maxFromStart, Math.min(MAX_PLAY_SEC, lenRequested)));
+
+        source.start(0, start, playLen);
+        return;
+      }
+    } catch {
+      /* fallback xuống preset bên dưới */
+    }
+  }
+
+  // Phát preset tổng hợp (mặc định 'classic').
+  if (playPresetBell(p.preset_id || 'classic', vol)) return;
+
+  // Fallback cuối: notification.wav nếu có; nếu không, oscillator đơn giản.
   try {
     const ready = await getBufferForPlay();
     if (ready?.ctx && ready.buffer) {
@@ -161,42 +191,19 @@ export async function playLoudNotificationSound(opts = {}) {
       const gain = ctx.createGain();
       gain.gain.value = GAIN_BASE * vol;
       source.connect(gain).connect(ctx.destination);
-
-      let offset = 0;
-      let playDur = Math.min(MAX_PLAY_SEC, buffer.duration);
-      if (p.use_custom_sound) {
-        const startRaw = Number(p.custom_sound_start_sec);
-        const start = Number.isFinite(startRaw)
-          ? Math.max(0, Math.min(startRaw, Math.max(0, buffer.duration - 0.05)))
-          : 0;
-        const maxFromStart = Math.min(MAX_PLAY_SEC, Math.max(0.05, buffer.duration - start));
-        const lenRaw = Number(p.custom_sound_play_sec);
-        const lenRequested = Number.isFinite(lenRaw) ? lenRaw : MAX_PLAY_SEC;
-        const playLen = Math.max(0.05, Math.min(maxFromStart, Math.min(MAX_PLAY_SEC, lenRequested)));
-        offset = start;
-        playDur = playLen;
-      }
-
-      source.start(0, offset, playDur);
+      source.start(0, 0, Math.min(MAX_PLAY_SEC, buffer.duration));
       return;
     }
   } catch {
-    /* fallback */
+    /* ignore */
   }
 
   try {
     const audio = new Audio(resolvedDefaultWavUrl());
     audio.volume = Math.min(1, vol);
-    const cap = () => {
-      if (audio.currentTime >= MAX_PLAY_SEC) {
-        audio.pause();
-        audio.removeEventListener('timeupdate', cap);
-      }
-    };
-    audio.addEventListener('timeupdate', cap);
     await audio.play();
   } catch {
-    playSyntheticDefaultBell(vol);
+    /* ignore */
   }
 }
 

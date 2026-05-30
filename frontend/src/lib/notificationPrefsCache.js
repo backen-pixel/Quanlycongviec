@@ -192,6 +192,14 @@ export function getNotificationPrefsCache() {
     /* ignore */
   }
 
+  let preset_id = 'classic';
+  try {
+    const raw = localStorage.getItem('notification_preset_id');
+    if (raw) preset_id = raw;
+  } catch {
+    /* ignore */
+  }
+
   return {
     ...prefs,
     sound_volume_percent,
@@ -199,7 +207,24 @@ export function getNotificationPrefsCache() {
     custom_sound_start_sec,
     custom_sound_play_sec,
     custom_sound_file_duration_sec,
+    preset_id,
   };
+}
+
+export function setNotificationPresetId(id) {
+  try {
+    if (id) localStorage.setItem('notification_preset_id', String(id));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function getNotificationPresetId() {
+  try {
+    return localStorage.getItem('notification_preset_id') || 'classic';
+  } catch {
+    return 'classic';
+  }
 }
 
 export function setNotificationPrefsCache(next) {

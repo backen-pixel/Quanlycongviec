@@ -2039,7 +2039,7 @@ function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggl
       enableViewportScroll
       remeasureToken={remeasureToken}
     >
-      <div className="flex min-w-max items-stretch gap-3">
+      <div className="flex min-w-max items-stretch gap-1">
         {pipeline.map((stage) => (
           <KanbanStageCard
             key={stage.id || stage.slug}

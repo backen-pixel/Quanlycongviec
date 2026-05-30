@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Bell, X } from 'lucide-react';
 import api from '../lib/api';
 import {
   setNotificationPrefsCache,
@@ -7,13 +9,16 @@ import {
   setNotificationCustomSoundTrim,
   setNotificationCustomSoundFileDurationSec,
   clearNotificationCustomSoundMeta,
+  setNotificationPresetId,
+  getNotificationPresetId,
 } from '../lib/notificationPrefsCache';
 import {
   saveCustomNotificationSoundBuffer,
   clearCustomNotificationSoundBuffer,
   getCustomNotificationSoundBuffer,
 } from '../lib/notificationSoundIdb';
-import { playLoudNotificationSound, invalidateNotificationSoundCache } from '../lib/notificationAlert';
+import { playLoudNotificationSound, invalidateNotificationSoundCache, playPresetBell } from '../lib/notificationAlert';
+import { NOTIFICATION_PRESETS } from '../lib/notificationPresets';
 
 const PREFS_FALLBACK = {
   browser_push: true,
@@ -177,7 +182,7 @@ const MODULE_SECTIONS = [
 /**
  * NotificationSettings — âm lượng, chuông tùy chỉnh, web push
  */
-export default function NotificationSettings({ isOpen, onClose }) {
+export default function NotificationSettings({ isOpen, onClose, anchorPanel = null }) {
   const [modulePrefs, setModulePrefs] = useState(() => ({ ...PREFS_FALLBACK }));
   const [savingPrefKey, setSavingPrefKey] = useState(null);
   const [pushSupported, setPushSupported] = useState(false);
@@ -189,6 +194,9 @@ export default function NotificationSettings({ isOpen, onClose }) {
   const [trimStartSec, setTrimStartSec] = useState(0);
   const [trimPlaySec, setTrimPlaySec] = useState(15);
   const [hasCustomBell, setHasCustomBell] = useState(false);
+  const [presetId, setPresetId] = useState(() => {
+    try { return getNotificationPresetId() || 'classic'; } catch { return 'classic'; }
+  });
 
   const syncTrimFromStorage = (duration) => {
     const dur = Number(duration) || 0;
@@ -426,23 +434,83 @@ export default function NotificationSettings({ isOpen, onClose }) {
     setTrimPlaySec(15);
   };
 
+  const PANEL_WIDTH = 460;
+
+  const panelGeometry = useMemo(() => {
+    if (!isOpen) return null;
+    const vw = typeof window !== 'undefined' ? window.innerWidth : 1280;
+    const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
+    const maxH = Math.min(620, vh - 24);
+
+    if (anchorPanel) {
+      let left = anchorPanel.left + anchorPanel.width + 12;
+      if (left + PANEL_WIDTH > vw - 12) {
+        left = anchorPanel.left - PANEL_WIDTH - 12;
+        if (left < 12) left = Math.max(12, vw - PANEL_WIDTH - 12);
+      }
+      let top = anchorPanel.top;
+      if (top + maxH > vh - 12) top = Math.max(12, vh - maxH - 12);
+      return { top, left, width: PANEL_WIDTH, maxHeight: maxH };
+    }
+
+    return {
+      top: Math.max(12, (vh - maxH) / 2),
+      left: Math.max(12, (vw - PANEL_WIDTH) / 2),
+      width: PANEL_WIDTH,
+      maxHeight: maxH,
+    };
+  }, [isOpen, anchorPanel]);
+
   if (!isOpen) return null;
 
-  return (
-    <div className="fixed inset-0 z-[9999] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+  return createPortal(
+    <>
       <div
-        onClick={e => e.stopPropagation()}
-        className="bg-white rounded-2xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-hidden flex flex-col animate-fade-in"
+        data-notification-settings-backdrop
+        className="fixed inset-0 z-[9998] bg-black/20 backdrop-blur-[1px] animate-fade-in"
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={onClose}
+        aria-hidden
+      />
+      <div
+        data-notification-settings-panel
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+        className="fixed z-[9999] bg-white rounded-2xl shadow-[0_20px_50px_-12px_rgba(0,0,0,0.45)] border border-gray-200 overflow-hidden flex flex-col animate-fade-in"
+        style={{
+          top: panelGeometry.top,
+          left: panelGeometry.left,
+          width: panelGeometry.width,
+          maxHeight: panelGeometry.maxHeight,
+        }}
       >
-        <div className="border-b p-4 flex items-center justify-between shrink-0">
-          <h2 className="text-lg font-bold text-gray-900">🔔 Cài đặt thông báo</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center text-gray-400 cursor-pointer"
-          >
-            ✕
-          </button>
+        <div className="relative overflow-hidden bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900 px-4 py-3 shrink-0">
+          <div className="absolute inset-0 opacity-20 pointer-events-none">
+            <div className="absolute -top-6 -right-8 w-32 h-32 bg-blue-400 rounded-full blur-3xl" />
+            <div className="absolute -bottom-8 -left-6 w-28 h-28 bg-purple-400 rounded-full blur-3xl" />
+          </div>
+          <div className="relative flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="h-9 w-9 rounded-xl bg-white/15 backdrop-blur-md border border-white/20 flex items-center justify-center shadow-md shrink-0">
+                <Bell className="h-4 w-4" style={{ color: '#ffffff' }} />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold leading-tight" style={{ color: '#ffffff' }}>Cài đặt thông báo</h3>
+                <p className="text-[11px] mt-0.5" style={{ color: 'rgba(219,234,254,0.9)' }}>
+                  Âm thanh · Push · Loại thông báo
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-7 h-7 rounded-lg hover:bg-white/20 flex items-center justify-center transition-colors cursor-pointer"
+              style={{ color: 'rgba(255,255,255,0.85)' }}
+              title="Đóng"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -536,6 +604,60 @@ export default function NotificationSettings({ isOpen, onClose }) {
               <p className="text-[10px] text-gray-500">0% = tắt chuông.</p>
             </div>
             <div className="px-3 py-2 rounded-lg border border-gray-100 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-medium text-gray-800">Chuông mặc định</p>
+                {hasCustomBell ? (
+                  <span className="text-[10px] text-amber-600 font-medium">Đang dùng chuông tùy chỉnh — tắt bên dưới để dùng preset</span>
+                ) : null}
+              </div>
+              <p className="text-[10px] text-gray-500">
+                Chọn một bộ chuông cài sẵn. Bấm 🔊 để nghe thử.
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                {NOTIFICATION_PRESETS.map((pset) => {
+                  const active = presetId === pset.id && !hasCustomBell;
+                  return (
+                    <div
+                      key={pset.id}
+                      className={`relative rounded-lg border p-2 transition-all ${
+                        active
+                          ? 'border-blue-400 bg-blue-50 shadow-sm'
+                          : 'border-gray-200 bg-white hover:border-blue-200 hover:bg-blue-50/40'
+                      } ${hasCustomBell ? 'opacity-60' : ''}`}
+                    >
+                      <button
+                        type="button"
+                        disabled={hasCustomBell}
+                        onClick={() => {
+                          setPresetId(pset.id);
+                          setNotificationPresetId(pset.id);
+                        }}
+                        className="block text-left w-full pr-7 cursor-pointer disabled:cursor-not-allowed"
+                      >
+                        <p className={`text-xs font-bold ${active ? 'text-blue-700' : 'text-gray-800'}`}>
+                          {pset.label}
+                        </p>
+                        <p className="text-[10px] text-gray-500 leading-snug mt-0.5">{pset.description}</p>
+                      </button>
+                      <button
+                        type="button"
+                        title="Nghe thử"
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          const volPct = soundVolume;
+                          const vol = Math.min(1.5, Math.max(0.05, volPct / 100));
+                          playPresetBell(pset.id, vol);
+                        }}
+                        className="absolute top-1.5 right-1.5 w-6 h-6 rounded-md bg-white border border-gray-200 hover:bg-blue-100 hover:border-blue-300 flex items-center justify-center text-xs cursor-pointer"
+                      >
+                        🔊
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="px-3 py-2 rounded-lg border border-gray-100 space-y-3">
               <p className="text-xs font-medium text-gray-800">Chuông tùy chỉnh (MP3, WAV, OGG…)</p>
               <p className="text-[10px] text-gray-500">
                 File có thể dài bất kỳ; mỗi thông báo chỉ phát <strong>tối đa 15 giây</strong> — chọn đoạn bên dưới.
@@ -618,17 +740,18 @@ export default function NotificationSettings({ isOpen, onClose }) {
           </div>
         </div>
 
-        <div className="border-t p-4 shrink-0 bg-gray-50">
+        <div className="border-t border-gray-100 p-3 shrink-0 bg-gradient-to-b from-white to-gray-50">
           <button
             type="button"
             onClick={onClose}
-            className="w-full h-10 rounded-lg border text-gray-700 hover:bg-gray-100 font-medium text-sm cursor-pointer"
+            className="w-full h-9 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-100 font-medium text-sm cursor-pointer transition-colors"
           >
             Đóng
           </button>
         </div>
       </div>
-    </div>
+    </>,
+    document.body,
   );
 }
 
