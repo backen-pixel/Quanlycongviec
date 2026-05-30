@@ -25,6 +25,7 @@ export default function LeadDealPicker({
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [results, setResults] = useState([]);
+  const [loadError, setLoadError] = useState('');
   const [loading, setLoading] = useState(false);
   const [highlighted, setHighlighted] = useState(0);
   const inputRef = useRef(null);
@@ -33,6 +34,7 @@ export default function LeadDealPicker({
 
   const fetchResults = useCallback(async (q) => {
     setLoading(true);
+    setLoadError('');
     try {
       const params = new URLSearchParams();
       params.set('type', type);
@@ -43,6 +45,7 @@ export default function LeadDealPicker({
       setResults(data.results || []);
     } catch (e) {
       setResults([]);
+      setLoadError(e.response?.data?.error || 'Không tải được danh sách deal');
     }
     setLoading(false);
   }, [type, customerId]);
@@ -170,7 +173,12 @@ export default function LeadDealPicker({
           </div>
 
           <div className="absolute z-30 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-80 overflow-y-auto">
-            {!loading && results.length === 0 && (
+            {!loading && loadError && (
+              <div className="px-4 py-6 text-center text-sm text-red-600">
+                {loadError}
+              </div>
+            )}
+            {!loading && !loadError && results.length === 0 && (
               <div className="px-4 py-6 text-center text-sm text-gray-500">
                 Không tìm thấy {labelText} nào{customerId ? ' của khách hàng này' : ''}.
               </div>

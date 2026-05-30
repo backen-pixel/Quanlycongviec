@@ -396,6 +396,7 @@ export function MessengerDockProvider({ children }) {
                   title: g.name || g.title || x.title,
                   peerUserId: peerUserId || x.peerUserId || null,
                   isDirect: g.is_direct ?? x.isDirect ?? false,
+                  avatar: g.avatar || g.peer_avatar || x.avatar || null,
                 }
               : x,
           );
@@ -413,6 +414,7 @@ export function MessengerDockProvider({ children }) {
             minimized: false,
             peerUserId,
             isDirect: !!g.is_direct,
+            avatar: g.avatar || g.peer_avatar || null,
           },
         ];
       });

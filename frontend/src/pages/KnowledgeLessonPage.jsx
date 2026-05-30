@@ -475,6 +475,9 @@ export default function KnowledgeLessonPage() {
                 <ListChecks className="h-5 w-5 text-purple-600" />
                 Bài tập kiểm tra ({lesson.exercises.length})
               </h2>
+              <div className="text-xs text-gray-600 mb-3 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg">
+                Bạn cần <strong>đọc xong bài học</strong> rồi mới làm bài tập, và phải <strong>đạt tất cả bài tập</strong> để mở khoá bài học tiếp theo.
+              </div>
               <div className="grid gap-3">
                 {lesson.exercises.map((ex, i) => (
                   <button

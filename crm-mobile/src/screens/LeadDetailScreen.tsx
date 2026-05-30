@@ -125,6 +125,10 @@ export default function LeadDetailScreen() {
   const [cust, setCust] = useState<CustForm>(emptyCust);
   const [savingCust, setSavingCust] = useState(false);
   const [converting, setConverting] = useState(false);
+  const [convertRegionPickOpen, setConvertRegionPickOpen] = useState(false);
+  const [convertRegions, setConvertRegions] = useState<Array<{ id: string; name?: string; is_active?: boolean }>>([]);
+  const [convertRegionsLoading, setConvertRegionsLoading] = useState(false);
+  const [convertRegionId, setConvertRegionId] = useState('');
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [members, setMembers] = useState<CrmLeadMember[]>([]);
   const [noteDraft, setNoteDraft] = useState('');
@@ -560,27 +564,48 @@ export default function LeadDetailScreen() {
     }
   };
 
-  const convertToDeal = () => {
-    Alert.alert('Chuyển sang Deal', 'Lead sẽ chuyển thành Deal (pipeline deal). Tiếp tục?', [
-      { text: 'Hủy', style: 'cancel' },
-      {
-        text: 'Chuyển',
-        onPress: async () => {
-          setConverting(true);
-          try {
-            await api.post(`/crm/leads/${id}/convert-to-deal`, {
-              company_id: lead?.company_id || undefined,
-            });
-            await load();
-            Alert.alert('Thành công', 'Đã chuyển sang Deal.');
-          } catch (e: unknown) {
-            Alert.alert('Lỗi', (e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Không chuyển được');
-          } finally {
-            setConverting(false);
-          }
-        },
-      },
-    ]);
+  const convertToDeal = async () => {
+    if (!lead?.company_id) {
+      Alert.alert('Thiếu công ty', 'Lead chưa có công ty — vào chi tiết Lead để gán công ty trước khi chuyển Deal.');
+      return;
+    }
+    setConvertRegionsLoading(true);
+    setConvertRegions([]);
+    setConvertRegionId(lead?.region_id ? String(lead.region_id) : '');
+    setConvertRegionPickOpen(true);
+    try {
+      const { data } = await api.get<Array<{ id: string; name?: string; is_active?: boolean }>>(
+        '/crm/company-regions',
+        { params: { company_id: lead.company_id, for_module: 'crm' } },
+      );
+      const list = Array.isArray(data) ? data : [];
+      setConvertRegions(list.filter((x) => x.is_active !== false));
+    } catch {
+      setConvertRegions([]);
+    } finally {
+      setConvertRegionsLoading(false);
+    }
+  };
+
+  const submitConvertToDeal = async () => {
+    if (!convertRegionId) {
+      Alert.alert('Thiếu khu vực', 'Vui lòng chọn khu vực trước khi chuyển sang Deal.');
+      return;
+    }
+    setConverting(true);
+    try {
+      await api.post(`/crm/leads/${id}/convert-to-deal`, {
+        company_id: lead?.company_id || undefined,
+        region_id: convertRegionId,
+      });
+      setConvertRegionPickOpen(false);
+      await load();
+      Alert.alert('Thành công', 'Đã chuyển sang Deal.');
+    } catch (e: unknown) {
+      Alert.alert('Lỗi', (e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Không chuyển được');
+    } finally {
+      setConverting(false);
+    }
   };
 
   const pickAndUploadDoc = async () => {
@@ -1447,6 +1472,59 @@ export default function LeadDetailScreen() {
             </View>
           </View>
         </View>
+      </Modal>
+
+      <Modal
+        visible={convertRegionPickOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => !converting && setConvertRegionPickOpen(false)}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={() => !converting && setConvertRegionPickOpen(false)}>
+          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.sheetTitle}>Chuyển sang Deal — chọn khu vực</Text>
+            <Text style={styles.rowSub}>Bắt buộc chọn khu vực CRM của lead trước khi chuyển sang Deal.</Text>
+            {convertRegionsLoading ? (
+              <ActivityIndicator style={{ marginVertical: 16 }} color={CrmColors.blue600} />
+            ) : (
+              <FlatList
+                data={convertRegions}
+                keyExtractor={(r) => r.id}
+                style={{ maxHeight: 320 }}
+                renderItem={({ item: reg }) => {
+                  const sel = convertRegionId === reg.id;
+                  return (
+                    <TouchableOpacity
+                      style={[styles.sheetRow, sel && { backgroundColor: CrmColors.blue50 }]}
+                      onPress={() => setConvertRegionId(reg.id)}
+                    >
+                      <Text style={styles.sheetName}>{reg.name || reg.id}</Text>
+                    </TouchableOpacity>
+                  );
+                }}
+                ListEmptyComponent={
+                  <Text style={styles.rowSub}>Công ty chưa có khu vực — vào CRM/Khu vực trên web để thêm trước.</Text>
+                }
+              />
+            )}
+            <View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
+              <TouchableOpacity
+                style={styles.lostCancel}
+                onPress={() => !converting && setConvertRegionPickOpen(false)}
+                disabled={converting}
+              >
+                <Text style={styles.lostCancelTxt}>Hủy</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.lostOk}
+                onPress={() => void submitConvertToDeal()}
+                disabled={converting || !convertRegionId}
+              >
+                <Text style={styles.lostOkTxt}>{converting ? '…' : 'Chuyển Deal'}</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
       </Modal>
 
       <Modal visible={wonProdPickOpen} transparent animationType="slide" onRequestClose={() => !savingStage && setWonProdPickOpen(false)}>

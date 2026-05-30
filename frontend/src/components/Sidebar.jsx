@@ -745,12 +745,16 @@ export default function Sidebar() {
       <div className="border-t border-white/10 p-3 space-y-2">
         {!collapsed ? (
           <>
-            <div className="flex items-center gap-3 px-2 py-1">
+            <NavLink
+              to={user?.id ? `/social/u/${user.id}` : '#'}
+              title="Mở trang cá nhân — chỉnh sửa thông tin & avatar"
+              className="flex items-center gap-3 px-2 py-1 rounded-lg hover:bg-[var(--color-sidebar-hover)] transition-colors cursor-pointer group"
+            >
               {user?.avatar ? (
                 <img
                   src={publicFileUrl(user.avatar)}
                   alt=""
-                  className="w-8 h-8 rounded-full object-cover border border-white/20 shrink-0"
+                  className="w-8 h-8 rounded-full object-cover border border-white/20 shrink-0 group-hover:border-white/50"
                   onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextSibling && (e.currentTarget.nextSibling.style.display = 'flex'); }}
                 />
               ) : null}
@@ -765,9 +769,10 @@ export default function Sidebar() {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-[13px] font-semibold text-white truncate">{user?.full_name}</p>
-                <p className="text-[11px] text-white/75 truncate">{user?.email}</p>
+                <p className="text-[11px] text-white/75 truncate group-hover:text-white/90">{user?.email}</p>
               </div>
-            </div>
+              <UserCog className="h-4 w-4 text-white/40 group-hover:text-white/90 shrink-0 transition-colors" />
+            </NavLink>
             <button
               onClick={doLogout}
               className="w-full flex items-center gap-3 px-3 py-2 text-[14px] font-medium text-[var(--color-sidebar-text)] hover:bg-[var(--color-sidebar-hover)] hover:text-white rounded-lg transition-all cursor-pointer"
@@ -784,6 +789,30 @@ export default function Sidebar() {
           </>
         ) : (
           <>
+          <SidebarTooltip label={`${user?.full_name || 'Trang cá nhân'} — bấm để chỉnh sửa`} enabled={collapsed}>
+            <NavLink
+              to={user?.id ? `/social/u/${user.id}` : '#'}
+              className="w-full p-1 flex items-center justify-center cursor-pointer hover:opacity-90"
+            >
+              {user?.avatar ? (
+                <img
+                  src={publicFileUrl(user.avatar)}
+                  alt=""
+                  className="w-8 h-8 rounded-full object-cover border border-white/20"
+                  onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextSibling && (e.currentTarget.nextSibling.style.display = 'flex'); }}
+                />
+              ) : null}
+              <div
+                className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold"
+                style={{
+                  backgroundColor: avatarColor(user?.full_name || 'User'),
+                  display: user?.avatar ? 'none' : 'flex',
+                }}
+              >
+                {getInitials(user?.full_name || 'U')}
+              </div>
+            </NavLink>
+          </SidebarTooltip>
           <SidebarTooltip label="Đăng xuất" enabled={collapsed}>
             <button onClick={doLogout} className="w-full p-2 text-[var(--color-sidebar-text)] hover:text-white cursor-pointer">
               <LogOut className="h-5 w-5 mx-auto" />

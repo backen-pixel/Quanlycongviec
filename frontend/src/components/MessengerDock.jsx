@@ -7,6 +7,7 @@ import { LeadChatTab, MessengerGroupChatTab } from './LeadChatTabs';
 import DepartmentChatBubble from './DepartmentChatBubble';
 import { MessageCircle, X, Minus, Maximize2, Search, Users, Loader2, ChevronRight, Building2 } from 'lucide-react';
 import api from '../lib/api';
+import { publicFileUrl } from '../lib/publicFileUrl';
 import OnlineStatusDot, { isUserOnline } from './OnlineStatusDot';
 import { usePresence } from '../shared/context/PresenceContext';
 
@@ -24,11 +25,43 @@ const TOAST_W = 280;
 const TOAST_GAP = 10;
 
 function avatarUrl(av) {
-  if (!av) return null;
-  if (typeof av !== 'string') return null;
-  if (av.startsWith('http://') || av.startsWith('https://') || av.startsWith('data:')) return av;
-  if (av.startsWith('/')) return av;
-  return `/uploads/avatars/${av}`;
+  if (!av || typeof av !== 'string') return null;
+  const u = publicFileUrl(av.trim());
+  return u || null;
+}
+
+/** Avatar tròn/vuông — ảnh thật nếu có, fallback chữ cái + gradient. */
+function DockAvatar({ src, name, size = 'sm', className = '', ringClass = 'ring-2 ring-white/70', maxInitials = 1, children }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const url = avatarUrl(src);
+  const showImg = !!(url && !imgFailed);
+  const label = name || '?';
+  const sizeCls =
+    size === 'header'
+      ? 'w-9 h-9 text-xs rounded-2xl'
+      : size === 'dock'
+        ? 'w-10 h-10 text-[11px] rounded-xl'
+        : 'w-8 h-8 text-[11px] rounded-xl';
+  const initials = initialsOf(label).slice(0, maxInitials);
+
+  return (
+    <span
+      className={`relative shrink-0 flex items-center justify-center font-bold text-white shadow-sm overflow-hidden ${sizeCls} ${ringClass} ${className}`}
+      style={!showImg ? { background: bubbleGradientFor(label) } : undefined}
+    >
+      {showImg ? (
+        <img
+          src={url}
+          alt=""
+          className="absolute inset-0 w-full h-full object-cover"
+          onError={() => setImgFailed(true)}
+        />
+      ) : (
+        initials
+      )}
+      {children}
+    </span>
+  );
 }
 
 function initialsOf(name) {
@@ -149,6 +182,14 @@ export default function MessengerDock() {
     });
   }, [groups, groupFilter]);
 
+  const groupAvatarById = useMemo(() => {
+    const m = new Map();
+    for (const g of groups) {
+      if (g?.id && g.peer_avatar) m.set(String(g.id), g.peer_avatar);
+    }
+    return m;
+  }, [groups]);
+
   const uid = user?.userId || user?.id;
 
   const groupPeerById = useMemo(() => {
@@ -191,6 +232,7 @@ export default function MessengerDock() {
           name: data.name || data.display_name || u.full_name,
           is_direct: true,
           peer_id: u.id,
+          peer_avatar: u.avatar || null,
         });
       }
       setLauncherOpen(false);
@@ -208,6 +250,7 @@ export default function MessengerDock() {
       name: g.name || g.raw_name,
       is_direct: !!g.is_direct,
       peer_id: g.peer_id || null,
+      peer_avatar: g.peer_avatar || null,
     });
     setLauncherOpen(false);
   };
@@ -226,6 +269,8 @@ export default function MessengerDock() {
           w.peerUserId || (w.groupId ? groupPeerById.get(String(w.groupId)) : null);
         const showPeerDot = w.chatType !== 'department' && (w.isDirect || peerForHeader);
         const peerOnline = showPeerDot ? isUserOnline(presenceByUser, peerForHeader) : false;
+        const windowAvatar =
+          w.avatar || (w.groupId ? groupAvatarById.get(String(w.groupId)) : null) || null;
         const headerGradient =
           w.chatType === 'department' && w.color
             ? `linear-gradient(135deg, ${w.color}, ${w.color}cc)`
@@ -250,20 +295,26 @@ export default function MessengerDock() {
             style={{ background: headerGradient }}
           >
             <div className="absolute inset-0 bg-gradient-to-b from-white/15 via-transparent to-black/10 pointer-events-none" />
-            <div className="relative w-9 h-9 rounded-2xl bg-white/25 backdrop-blur flex items-center justify-center text-xs font-bold shrink-0 ring-2 ring-white/40 shadow-md">
-              {w.chatType === 'department' ? (
+            {w.chatType === 'department' ? (
+              <div className="relative w-9 h-9 rounded-2xl bg-white/25 backdrop-blur flex items-center justify-center shrink-0 ring-2 ring-white/40 shadow-md">
                 <Building2 className="h-4 w-4" />
-              ) : (
-                (w.code || w.title || '?').slice(0, 1).toUpperCase()
-              )}
-              {showPeerDot ? (
-                <OnlineStatusDot
-                  online={peerOnline}
-                  size="md"
-                  className="absolute -bottom-0.5 -right-0.5"
-                />
-              ) : null}
-            </div>
+                {showPeerDot ? (
+                  <OnlineStatusDot online={peerOnline} size="md" className="absolute -bottom-0.5 -right-0.5" />
+                ) : null}
+              </div>
+            ) : (
+              <DockAvatar
+                src={windowAvatar}
+                name={w.title || w.code}
+                size="header"
+                ringClass="ring-2 ring-white/40 shadow-md"
+                maxInitials={1}
+              >
+                {showPeerDot ? (
+                  <OnlineStatusDot online={peerOnline} size="md" className="absolute -bottom-0.5 -right-0.5" />
+                ) : null}
+              </DockAvatar>
+            )}
             <div className="relative flex-1 min-w-0">
               <p className="text-[13px] font-bold truncate drop-shadow-sm">{w.title}</p>
               {w.chatType === 'lead' && w.code ? (
@@ -417,13 +468,9 @@ export default function MessengerDock() {
                         disabled={String(u.id) === String(uid)}
                         className="w-full text-left px-2 py-1.5 text-xs hover:bg-sky-50 rounded-lg disabled:opacity-40 flex items-center gap-2 transition"
                       >
-                        <span
-                          className="relative shrink-0 w-8 h-8 rounded-xl text-white flex items-center justify-center text-[11px] font-bold shadow-sm ring-2 ring-white/70"
-                          style={{ background: bubbleGradientFor(u.full_name || u.email) }}
-                        >
-                          {(u.full_name || u.email || '?')[0].toUpperCase()}
+                        <DockAvatar src={u.avatar} name={u.full_name || u.email} size="sm">
                           <OnlineStatusDot online={online} className="absolute -bottom-0.5 -right-0.5" />
-                        </span>
+                        </DockAvatar>
                         <span className="truncate flex-1 min-w-0">
                           <span className="font-semibold text-slate-800 block truncate">{u.full_name || u.email}</span>
                           {u.email && u.full_name ? (
@@ -469,15 +516,15 @@ export default function MessengerDock() {
                           className="w-full text-left px-2 py-1.5 text-xs hover:bg-cyan-50 rounded-lg flex items-center justify-between gap-2 transition group"
                         >
                           <span className="flex items-center gap-2 min-w-0 flex-1">
-                            <span
-                              className="relative shrink-0 w-8 h-8 rounded-xl text-white flex items-center justify-center text-[11px] font-bold shadow-sm ring-2 ring-white/70"
-                              style={{ background: bubbleGradientFor(g.name || g.raw_name) }}
+                            <DockAvatar
+                              src={g.is_direct ? g.peer_avatar : null}
+                              name={g.name || g.raw_name}
+                              size="sm"
                             >
-                              {(g.name || g.raw_name || '?').slice(0,1).toUpperCase()}
                               {g.is_direct && g.peer_id ? (
                                 <OnlineStatusDot online={peerOnline} size="md" className="absolute -bottom-0.5 -right-0.5" />
                               ) : null}
-                            </span>
+                            </DockAvatar>
                             <span className="min-w-0 flex-1">
                               <span className="truncate font-semibold text-slate-800 block">{g.name || 'Nhóm'}</span>
                               <span className="text-[10px] text-slate-500">{g.is_direct ? 'Trực tiếp' : 'Nhóm chat'}</span>
@@ -617,30 +664,48 @@ export default function MessengerDock() {
             w.peerUserId || (w.groupId ? groupPeerById.get(String(w.groupId)) : null);
           const showPeerDot = !!(w.isDirect || peerId) && w.chatType !== 'department';
           const isDept = w.chatType === 'department';
-          const bg = isDept && w.color
+          const dockAvatar =
+            w.avatar || (w.groupId ? groupAvatarById.get(String(w.groupId)) : null) || null;
+          const deptBg = isDept && w.color
             ? `linear-gradient(135deg, ${w.color}, ${w.color}cc)`
-            : w.chatType === 'lead'
-              ? 'linear-gradient(135deg, #6366f1, #a855f7)'
-              : bubbleGradientFor(w.title || w.code);
+            : null;
           return (
             <button
               key={w.windowKey}
               type="button"
               title={w.title}
               onClick={() => toggleMinimize(w.windowKey)}
-              className={`relative w-10 h-10 rounded-xl flex items-center justify-center text-[11px] font-bold text-white transition-all shadow-sm ring-2 ${
+              className={`relative transition-all ${
                 w.minimized
-                  ? 'opacity-50 ring-white/30 hover:opacity-100 hover:scale-105'
-                  : 'ring-white/60 hover:scale-110 hover:shadow-md'
+                  ? 'opacity-50 hover:opacity-100 hover:scale-105'
+                  : 'hover:scale-110 hover:shadow-md'
               }`}
-              style={{ background: bg }}
             >
               {isDept ? (
-                <Building2 className="h-4 w-4" />
+                <span
+                  className="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm ring-2 ring-white/60"
+                  style={{ background: deptBg || bubbleGradientFor(w.title) }}
+                >
+                  <Building2 className="h-4 w-4" />
+                </span>
               ) : (
-                (w.code || w.title || '?').slice(0, 2).toUpperCase()
+                <DockAvatar
+                  src={dockAvatar}
+                  name={w.title || w.code}
+                  size="dock"
+                  ringClass={`ring-2 shadow-sm ${w.minimized ? 'ring-white/30' : 'ring-white/60'}`}
+                  maxInitials={2}
+                >
+                  {showPeerDot ? (
+                    <OnlineStatusDot
+                      online={isUserOnline(presenceByUser, peerId)}
+                      size="md"
+                      className="absolute -bottom-0.5 -right-0.5"
+                    />
+                  ) : null}
+                </DockAvatar>
               )}
-              {showPeerDot ? (
+              {isDept && showPeerDot ? (
                 <OnlineStatusDot
                   online={isUserOnline(presenceByUser, peerId)}
                   size="md"

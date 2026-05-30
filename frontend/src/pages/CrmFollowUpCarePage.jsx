@@ -146,6 +146,9 @@ export default function CrmFollowUpCarePage() {
   const [wonAssignUser, setWonAssignUser] = useState('');
   const [wonAssigning, setWonAssigning] = useState(false);
   const [wonAssignError, setWonAssignError] = useState('');
+  const [wonAssignRegion, setWonAssignRegion] = useState('');
+  const [wonAssignRegions, setWonAssignRegions] = useState([]);
+  const [wonAssignRegionsLoading, setWonAssignRegionsLoading] = useState(false);
   const [lostModalOpen, setLostModalOpen] = useState(false);
   const [lostModalRow, setLostModalRow] = useState(null);
   const [lostModalStageId, setLostModalStageId] = useState(null);
@@ -424,6 +427,7 @@ export default function CrmFollowUpCarePage() {
       if (target.is_won && rowType === 'lead') {
         setWonAssignLeadId(row.id);
         setWonAssignUser(row.assigned_to || row.lead_owner_id || filterAssignee || user?.id || '');
+        setWonAssignRegion(row.region_id ? String(row.region_id) : '');
         setWonAssignError('');
         setWonAssignModal(true);
         return;
@@ -455,6 +459,7 @@ export default function CrmFollowUpCarePage() {
         if (data?.requires_conversion) {
           setWonAssignLeadId(row.id);
           setWonAssignUser(row.assigned_to || row.lead_owner_id || filterAssignee || user?.id || '');
+          setWonAssignRegion(row.region_id ? String(row.region_id) : '');
           setWonAssignError('');
           setWonAssignModal(true);
           return;
@@ -507,6 +512,7 @@ export default function CrmFollowUpCarePage() {
         closeLostModal();
         setWonAssignLeadId(row.id);
         setWonAssignUser(row.assigned_to || row.lead_owner_id || filterAssignee || user?.id || '');
+        setWonAssignRegion(row.region_id ? String(row.region_id) : '');
         setWonAssignError('');
         setWonAssignModal(true);
         return;
@@ -539,6 +545,10 @@ export default function CrmFollowUpCarePage() {
       setWonAssignError('Vui lòng chọn nhân viên phụ trách deal');
       return;
     }
+    if (!wonAssignRegion) {
+      setWonAssignError('Vui lòng chọn khu vực');
+      return;
+    }
     const lead = leads.find((l) => String(l.id) === String(wonAssignLeadId));
     if (!lead) return;
     setWonAssigning(true);
@@ -547,6 +557,7 @@ export default function CrmFollowUpCarePage() {
       await api.post(`/crm/leads/${encodeURIComponent(wonAssignLeadId)}/convert-to-deal`, {
         assigned_to: wonAssignUser,
         company_id: lead.company_id || effectiveCompanyId || undefined,
+        region_id: wonAssignRegion,
       });
       setWonAssignModal(false);
       setWonAssignLeadId(null);
@@ -557,7 +568,36 @@ export default function CrmFollowUpCarePage() {
     } finally {
       setWonAssigning(false);
     }
-  }, [wonAssignUser, wonAssignLeadId, leads, effectiveCompanyId, load]);
+  }, [wonAssignUser, wonAssignRegion, wonAssignLeadId, leads, effectiveCompanyId, load]);
+
+  /** Tải danh sách khu vực CRM cho modal "Chuyển sang Deal" theo công ty của lead. */
+  useEffect(() => {
+    if (!wonAssignModal || !wonAssignLeadId) return undefined;
+    const lead = leads.find((l) => String(l.id) === String(wonAssignLeadId));
+    const cid = lead?.company_id ? String(lead.company_id) : (effectiveCompanyId ? String(effectiveCompanyId) : '');
+    if (!cid) {
+      setWonAssignRegions([]);
+      return undefined;
+    }
+    let cancel = false;
+    setWonAssignRegionsLoading(true);
+    api
+      .get('/crm/company-regions', { params: { company_id: cid, for_module: 'crm' } })
+      .then((r) => {
+        if (cancel) return;
+        const list = Array.isArray(r.data) ? r.data : [];
+        setWonAssignRegions(list.filter((x) => x.is_active !== false));
+      })
+      .catch(() => {
+        if (!cancel) setWonAssignRegions([]);
+      })
+      .finally(() => {
+        if (!cancel) setWonAssignRegionsLoading(false);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [wonAssignModal, wonAssignLeadId, leads, effectiveCompanyId]);
 
   const toggleCareMark = useCallback(async (leadId) => {
     if (!leadId || careBusyId) return;
@@ -1094,6 +1134,37 @@ export default function CrmFollowUpCarePage() {
                 </div>
               )}
 
+              <div className="mb-3">
+                <label className="text-xs font-semibold text-gray-700 mb-1.5 block">
+                  📍 Khu vực <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={wonAssignRegion}
+                  onChange={(e) => {
+                    setWonAssignRegion(e.target.value);
+                    setWonAssignError('');
+                  }}
+                  disabled={!wonLead?.company_id || wonAssignRegionsLoading || wonAssignRegions.length === 0}
+                  className="w-full h-10 px-3 border border-gray-200 rounded-xl text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                >
+                  <option value="">
+                    {!wonLead?.company_id
+                      ? '— Lead chưa có công ty —'
+                      : wonAssignRegionsLoading
+                        ? 'Đang tải khu vực…'
+                        : wonAssignRegions.length === 0
+                          ? '— Công ty chưa có khu vực —'
+                          : '— Chọn khu vực —'}
+                  </option>
+                  {wonAssignRegions.map((reg) => (
+                    <option key={reg.id} value={reg.id}>{reg.name}</option>
+                  ))}
+                </select>
+                {wonLead?.company_id && !wonAssignRegionsLoading && wonAssignRegions.length === 0 && (
+                  <p className="text-[10px] text-amber-500 mt-1">⚠️ Công ty chưa có khu vực — vào CRM/Khu vực để thêm trước</p>
+                )}
+              </div>
+
               <div className="mb-4">
                 <label className="text-xs font-semibold text-gray-700 mb-1.5 block">👤 Người phụ trách deal</label>
                 <EmployeePicker
@@ -1132,7 +1203,7 @@ export default function CrmFollowUpCarePage() {
                 <button
                   type="button"
                   onClick={() => void handleWonAssignConvert()}
-                  disabled={wonAssigning || !wonAssignUser || !wonLead?.customer_id}
+                  disabled={wonAssigning || !wonAssignUser || !wonAssignRegion || !wonLead?.customer_id}
                   className="flex-1 h-10 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {wonAssigning ? (

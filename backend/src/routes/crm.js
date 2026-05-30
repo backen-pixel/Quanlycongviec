@@ -4629,11 +4629,12 @@ r.get('/leads/picker', async (req, res) => {
     const customerId = uuidQueryOrNull(req.query.customer_id);
     const limit = Math.min(Math.max(parseInt(req.query.limit) || 20, 1), 50);
 
+    // crm_leads không có cột `status` — trạng thái suy ra từ stage / actual_close_date.
     let query = supabase
       .from('crm_leads')
       .select(
-        'id, code, title, type, status, stage_id, company_id, region_id, customer_id, ' +
-          'assigned_to, lead_owner_id, estimated_value, created_at, ' +
+        'id, code, title, type, stage_id, company_id, region_id, customer_id, ' +
+          'assigned_to, lead_owner_id, estimated_value, created_at, actual_close_date, ' +
           'customer:customers(id, full_name, phone), ' +
           'company:companies!crm_leads_company_id_fkey(id, name, short_name), ' +
           'region:company_regions!crm_leads_region_id_fkey(id, name, code), ' +
@@ -4682,7 +4683,7 @@ r.get('/leads/picker', async (req, res) => {
         code: l.code,
         title: l.title,
         type: l.type,
-        status: l.status,
+        is_closed: !!l.actual_close_date,
         stage_id: l.stage_id,
         company_id: l.company_id,
         company_name: l.company?.short_name || l.company?.name || null,

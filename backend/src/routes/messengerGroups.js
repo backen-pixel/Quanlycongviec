@@ -468,7 +468,7 @@ r.get('/groups', async (req, res) => {
     const uniquePeers = [...new Set(peerIds)];
     let peerMap = new Map();
     if (uniquePeers.length) {
-      const { data: peerUsers } = await supabase.from('users').select('id, full_name').in('id', uniquePeers);
+      const { data: peerUsers } = await supabase.from('users').select('id, full_name, avatar').in('id', uniquePeers);
       (peerUsers || []).forEach((u) => peerMap.set(u.id, u));
     }
 
@@ -505,6 +505,7 @@ r.get('/groups', async (req, res) => {
     const list = (groupsFiltered || []).map((g) => {
       let display_name = g.name;
       let peer_id = null;
+      let peer_avatar = null;
       if (g.is_direct) {
         const mems = membersByG.get(g.id) || [];
         const other = mems.find((id) => String(id) !== String(uid));
@@ -512,6 +513,7 @@ r.get('/groups', async (req, res) => {
           peer_id = other;
           const pu = peerMap.get(other);
           if (pu?.full_name) display_name = pu.full_name;
+          if (pu?.avatar) peer_avatar = pu.avatar;
         }
       }
       const st = statsMap.get(g.id);
@@ -521,6 +523,7 @@ r.get('/groups', async (req, res) => {
         raw_name: g.name,
         is_direct: !!g.is_direct,
         peer_id,
+        peer_avatar,
         created_by: g.created_by,
         created_at: g.created_at,
         crm_lead_id: g.crm_lead_id || null,

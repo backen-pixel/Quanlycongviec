@@ -366,7 +366,7 @@ async function computeLessonLockMap(categoryId, userId, userObj, lessonsInCatego
     ? lessonsInCategory
     : (await supabase
         .from('knowledge_lessons')
-        .select('id, sort_order, title, is_published, target_roles')
+        .select('id, sort_order, title, is_published, target_roles, is_final_exam')
         .eq('category_id', categoryId)
         .eq('is_published', true)).data || [];
 
@@ -425,10 +425,11 @@ async function computeLessonLockMap(categoryId, userId, userObj, lessonsInCatego
   const map = new Map();
   let prev = null;
   for (const l of visible) {
+    let lockInfo;
     if (!prev) {
-      map.set(l.id, { locked: false, reason: null, prev_lesson_id: null });
+      lockInfo = { locked: false, reason: null, prev_lesson_id: null };
     } else if (isPrevLessonDone(prev)) {
-      map.set(l.id, { locked: false, reason: null, prev_lesson_id: prev.id });
+      lockInfo = { locked: false, reason: null, prev_lesson_id: prev.id };
     } else {
       const exsPrev = exByLesson.get(prev.id) || [];
       const exDone = exsPrev.every((id) => passedSet.has(id));
@@ -438,8 +439,26 @@ async function computeLessonLockMap(categoryId, userId, userObj, lessonsInCatego
       else if (!lessonDone) reason = `Cần đọc & hoàn thành "${prev.title}" trước`;
       else if (!exDone) reason = `Cần làm đạt bài tập của "${prev.title}" trước`;
       else reason = `Cần hoàn thành "${prev.title}" trước`;
-      map.set(l.id, { locked: true, reason, prev_lesson_id: prev.id });
+      lockInfo = { locked: true, reason, prev_lesson_id: prev.id };
     }
+
+    // Bài thi tổng kết: chỉ mở khi MỌI bài tập (ngoài bài thi) trong khoá đã đạt
+    if (l.is_final_exam && !lockInfo.locked) {
+      const otherExIds = (exRows || [])
+        .filter((e) => e.lesson_id !== l.id)
+        .map((e) => e.id);
+      const missing = otherExIds.filter((id) => !passedSet.has(id));
+      if (missing.length > 0) {
+        lockInfo = {
+          locked: true,
+          reason: `Bài thi tổng kết — cần đạt toàn bộ bài tập trong khoá trước (còn ${missing.length} bài tập chưa đạt)`,
+          prev_lesson_id: prev?.id || null,
+          requires_all_exercises_passed: true,
+        };
+      }
+    }
+
+    map.set(l.id, lockInfo);
     prev = l;
   }
   return map;
@@ -478,6 +497,18 @@ async function maybeIssueCertificateForLesson(req, lessonId) {
     console.error('maybeIssueCertificateForLesson failed', e);
     return null;
   }
+}
+
+async function isLessonViewedByUser(userId, lessonId) {
+  if (!userId || !lessonId) return false;
+  const { data } = await supabase
+    .from('knowledge_lesson_progress')
+    .select('status')
+    .eq('user_id', userId)
+    .eq('lesson_id', lessonId)
+    .maybeSingle();
+  if (!data) return false;
+  return data.status === 'in_progress' || data.status === 'completed';
 }
 
 function gradeQuiz(questions, answers) {
@@ -1033,6 +1064,17 @@ r.get('/exercises/:id', async (req, res) => {
           prev_lesson_id: lk.prev_lesson_id || null,
         });
       }
+
+      // Bắt buộc đã mở (đọc) bài học trước khi làm bài tập
+      const viewed = await isLessonViewedByUser(req.user.userId, ex.lesson.id);
+      if (!viewed) {
+        return res.status(423).json({
+          error: 'Hãy mở và đọc bài học trước khi làm bài tập',
+          locked: true,
+          requires_lesson_view: true,
+          lesson_id: ex.lesson.id,
+        });
+      }
     }
 
     const { count } = await supabase
@@ -1147,6 +1189,15 @@ r.post('/exercises/:id/submit', async (req, res) => {
       if (lk?.locked) {
         return res.status(423).json({ error: lk.reason || 'Bài học đang khoá', locked: true });
       }
+      const viewed = await isLessonViewedByUser(req.user.userId, ex.lesson.id);
+      if (!viewed) {
+        return res.status(423).json({
+          error: 'Hãy mở và đọc bài học trước khi làm bài tập',
+          locked: true,
+          requires_lesson_view: true,
+          lesson_id: ex.lesson.id,
+        });
+      }
     }
 
     const { count } = await supabase
@@ -1161,9 +1212,11 @@ r.post('/exercises/:id/submit', async (req, res) => {
 
     let score = null;
     let status = 'submitted';
+    let quizDetails = null;
     if (ex.type === 'quiz') {
       const graded = gradeQuiz(ex.questions, answers);
       score = graded.score;
+      quizDetails = graded.details;
       const pass = score >= (ex.passing_score ?? 70);
       status = pass ? 'passed' : 'failed';
     } else if (ex.type === 'checklist') {
@@ -1223,6 +1276,9 @@ r.post('/exercises/:id/submit', async (req, res) => {
 
     res.status(201).json({
       ...submissionRow,
+      status,
+      score,
+      details: quizDetails,
       certificate_issued: newCert || null,
       next_lesson: nextLesson || null,
       current_lesson_id: ex.lesson?.id || null,
@@ -1640,6 +1696,173 @@ r.get('/certificates/verify/:code', async (req, res) => {
   }
 });
 
+// GET /knowledge/admin/employee-progress
+// Trả về danh sách nhân viên + trạng thái khoá học (đạt chứng nhận chưa).
+// Query: category_id (bắt buộc), q (tìm tên/email), only=missing|issued
+r.get('/admin/employee-progress', async (req, res) => {
+  try {
+    if (!canManage(req)) return res.status(403).json({ error: 'Không có quyền' });
+    const { category_id, q, only, company_id, department_id, user_id } = req.query;
+    if (!category_id) return res.status(400).json({ error: 'Thiếu category_id' });
+
+    const { data: category } = await supabase
+      .from('knowledge_categories')
+      .select('id, name, icon, company_id, require_all_exercises_passed')
+      .eq('id', category_id)
+      .maybeSingle();
+    if (!category) return res.status(404).json({ error: 'Không tìm thấy khoá' });
+
+    const { data: lessons } = await supabase
+      .from('knowledge_lessons')
+      .select('id, target_roles, is_published')
+      .eq('category_id', category_id)
+      .eq('is_published', true);
+    const lessonIds = (lessons || []).map((l) => l.id);
+
+    const { data: exercises } = await supabase
+      .from('knowledge_exercises')
+      .select('id, lesson_id')
+      .in('lesson_id', lessonIds.length ? lessonIds : ['00000000-0000-0000-0000-000000000000']);
+    const exIds = (exercises || []).map((e) => e.id);
+
+    let userQuery = supabase
+      .from('users')
+      .select('id, full_name, email, role, avatar, company_id, department_id')
+      .order('full_name');
+
+    const sysAdmin = isSystemAdmin(req.user);
+    const adminCompanyId = req.user.company_id || null;
+    if (!sysAdmin && adminCompanyId) {
+      userQuery = userQuery.eq('company_id', adminCompanyId);
+    } else if (company_id) {
+      userQuery = userQuery.eq('company_id', company_id);
+    }
+    if (department_id) {
+      if (department_id === '__none__') userQuery = userQuery.is('department_id', null);
+      else userQuery = userQuery.eq('department_id', department_id);
+    }
+    if (user_id) userQuery = userQuery.eq('id', user_id);
+    const { data: users, error: userErr } = await userQuery;
+    if (userErr) throw userErr;
+
+    const companyIds = [...new Set((users || []).map((u) => u.company_id).filter(Boolean))];
+    const departmentIds = [...new Set((users || []).map((u) => u.department_id).filter(Boolean))];
+    const [{ data: companiesRows }, { data: departmentsRows }] = await Promise.all([
+      companyIds.length
+        ? supabase.from('companies').select('id, name, short_name').in('id', companyIds)
+        : Promise.resolve({ data: [] }),
+      departmentIds.length
+        ? supabase.from('departments').select('id, name').in('id', departmentIds)
+        : Promise.resolve({ data: [] }),
+    ]);
+    const companyMap = new Map((companiesRows || []).map((c) => [c.id, c]));
+    const departmentMap = new Map((departmentsRows || []).map((d) => [d.id, d]));
+    (users || []).forEach((u) => {
+      u.company = u.company_id ? companyMap.get(u.company_id) || null : null;
+      u.department = u.department_id ? departmentMap.get(u.department_id) || null : null;
+    });
+
+    const userIds = (users || []).map((u) => u.id);
+    if (!userIds.length) return res.json({ category, employees: [], total_lessons: lessonIds.length, total_exercises: exIds.length });
+
+    const [{ data: progress }, { data: submissions }, { data: certs }] = await Promise.all([
+      lessonIds.length
+        ? supabase
+            .from('knowledge_lesson_progress')
+            .select('user_id, lesson_id, status, completed_at, last_viewed_at')
+            .in('lesson_id', lessonIds)
+            .in('user_id', userIds)
+        : Promise.resolve({ data: [] }),
+      exIds.length
+        ? supabase
+            .from('knowledge_exercise_submissions')
+            .select('user_id, exercise_id, status, score, submitted_at')
+            .in('exercise_id', exIds)
+            .in('user_id', userIds)
+        : Promise.resolve({ data: [] }),
+      supabase
+        .from('knowledge_certificates')
+        .select('id, user_id, certificate_number, verify_code, status, issued_at, revoked_at')
+        .eq('category_id', category_id)
+        .in('user_id', userIds),
+    ]);
+
+    const progByUser = new Map();
+    (progress || []).forEach((p) => {
+      if (!progByUser.has(p.user_id)) progByUser.set(p.user_id, { completed: 0, in_progress: 0, last_viewed_at: null });
+      const it = progByUser.get(p.user_id);
+      if (p.status === 'completed') it.completed += 1;
+      else it.in_progress += 1;
+      if (!it.last_viewed_at || (p.last_viewed_at && p.last_viewed_at > it.last_viewed_at)) it.last_viewed_at = p.last_viewed_at;
+    });
+
+    const exBest = new Map();
+    (submissions || []).forEach((s) => {
+      const key = `${s.user_id}:${s.exercise_id}`;
+      const prev = exBest.get(key);
+      if (!prev || (s.score ?? -1) > (prev.score ?? -1)) exBest.set(key, s);
+    });
+    const exByUser = new Map();
+    [...exBest.values()].forEach((s) => {
+      if (!exByUser.has(s.user_id)) exByUser.set(s.user_id, { passed: 0, attempted: 0, lastAt: null });
+      const it = exByUser.get(s.user_id);
+      it.attempted += 1;
+      if (s.status === 'passed') it.passed += 1;
+      if (!it.lastAt || (s.submitted_at && s.submitted_at > it.lastAt)) it.lastAt = s.submitted_at;
+    });
+
+    const certByUser = new Map();
+    (certs || []).forEach((c) => certByUser.set(c.user_id, c));
+
+    const employees = (users || []).map((u) => {
+      const p = progByUser.get(u.id) || { completed: 0, in_progress: 0, last_viewed_at: null };
+      const e = exByUser.get(u.id) || { passed: 0, attempted: 0, lastAt: null };
+      const cert = certByUser.get(u.id) || null;
+      const lessonRate = lessonIds.length ? Math.round((p.completed / lessonIds.length) * 100) : 0;
+      const exRate = exIds.length ? Math.round((e.passed / exIds.length) * 100) : 100;
+      let state = 'not_started';
+      if (cert && cert.status === 'issued') state = 'issued';
+      else if (cert && cert.status === 'revoked') state = 'revoked';
+      else if (p.completed >= lessonIds.length && e.passed >= exIds.length && lessonIds.length > 0) state = 'eligible';
+      else if (p.completed > 0 || e.attempted > 0) state = 'in_progress';
+      return {
+        user: u,
+        completed_lessons: p.completed,
+        in_progress_lessons: p.in_progress,
+        passed_exercises: e.passed,
+        attempted_exercises: e.attempted,
+        lesson_rate: lessonRate,
+        exercise_rate: exRate,
+        last_activity_at: p.last_viewed_at || e.lastAt || null,
+        certificate: cert,
+        state,
+      };
+    });
+
+    let filtered = employees;
+    if (q) {
+      const s = String(q).toLowerCase();
+      filtered = filtered.filter((emp) =>
+        emp.user.full_name?.toLowerCase().includes(s)
+        || emp.user.email?.toLowerCase().includes(s),
+      );
+    }
+    if (only === 'issued') filtered = filtered.filter((e) => e.state === 'issued');
+    if (only === 'missing') filtered = filtered.filter((e) => e.state !== 'issued');
+    if (only === 'eligible') filtered = filtered.filter((e) => e.state === 'eligible');
+
+    res.json({
+      category,
+      total_lessons: lessonIds.length,
+      total_exercises: exIds.length,
+      total_employees: employees.length,
+      employees: filtered,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /knowledge/admin/certificates — admin xem tất cả
 r.get('/admin/certificates', async (req, res) => {
   try {
@@ -1674,6 +1897,97 @@ r.get('/admin/certificates', async (req, res) => {
       );
     }
     res.json({ certificates: list, total: list.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /knowledge/admin/grant-certificate
+// Cấp chứng nhận thủ công: hoàn thành mọi bài học + bài tập + cấp chứng nhận.
+r.post('/admin/grant-certificate', async (req, res) => {
+  try {
+    if (!canManage(req)) return res.status(403).json({ error: 'Không có quyền' });
+    const { email, user_id, category_id } = req.body || {};
+    if (!category_id) return res.status(400).json({ error: 'Thiếu category_id' });
+    if (!email && !user_id) return res.status(400).json({ error: 'Cần email hoặc user_id' });
+
+    let target;
+    if (user_id) {
+      const { data } = await supabase.from('users').select('id, full_name, email, role, company_id').eq('id', user_id).maybeSingle();
+      target = data;
+    } else {
+      const { data } = await supabase.from('users').select('id, full_name, email, role, company_id').eq('email', email).maybeSingle();
+      target = data;
+    }
+    if (!target) return res.status(404).json({ error: 'Không tìm thấy nhân viên' });
+
+    if (!isSystemAdmin(req.user) && req.user.company_id && String(target.company_id) !== String(req.user.company_id)) {
+      return res.status(403).json({ error: 'Không có quyền với nhân viên khác công ty' });
+    }
+
+    const { data: lessons } = await supabase
+      .from('knowledge_lessons')
+      .select('id')
+      .eq('category_id', category_id)
+      .eq('is_published', true);
+    const lessonIds = (lessons || []).map((l) => l.id);
+
+    const now = new Date().toISOString();
+    if (lessonIds.length) {
+      const rows = lessonIds.map((lid) => ({
+        user_id: target.id,
+        lesson_id: lid,
+        status: 'completed',
+        started_at: now,
+        completed_at: now,
+        last_viewed_at: now,
+      }));
+      await supabase.from('knowledge_lesson_progress').upsert(rows, { onConflict: 'user_id,lesson_id' });
+    }
+
+    const { data: exercises } = await supabase
+      .from('knowledge_exercises')
+      .select('id, type, passing_score')
+      .in('lesson_id', lessonIds.length ? lessonIds : ['00000000-0000-0000-0000-000000000000']);
+    const exIds = (exercises || []).map((e) => e.id);
+
+    if (exIds.length) {
+      await supabase.from('knowledge_exercise_submissions').delete().eq('user_id', target.id).in('exercise_id', exIds);
+      const subRows = (exercises || []).map((e) => ({
+        exercise_id: e.id,
+        user_id: target.id,
+        answers: e.type === 'essay' ? { essay: 'Cấp thủ công bởi admin.' } : e.type === 'checklist' ? { items: {} } : {},
+        score: Math.max(Number(e.passing_score) || 70, 100),
+        status: 'passed',
+        attempt_number: 1,
+        submitted_at: now,
+      }));
+      await supabase.from('knowledge_exercise_submissions').insert(subRows);
+    }
+
+    const cert = await tryIssueCertificate(target.id, category_id, target);
+    if (cert) return res.status(201).json({ certificate: cert, granted: true });
+
+    const { data: existing } = await supabase
+      .from('knowledge_certificates')
+      .select('*')
+      .eq('user_id', target.id)
+      .eq('category_id', category_id)
+      .maybeSingle();
+    if (existing) {
+      // Re-issue nếu đang revoked
+      if (existing.status === 'revoked') {
+        const { data: reissued } = await supabase
+          .from('knowledge_certificates')
+          .update({ status: 'issued', revoked_at: null, revoked_by: null, revoked_reason: null })
+          .eq('id', existing.id)
+          .select()
+          .single();
+        return res.json({ certificate: reissued, reissued: true });
+      }
+      return res.json({ certificate: existing, already_issued: true });
+    }
+    res.status(400).json({ error: 'Không thể cấp chứng nhận (kiểm tra điều kiện khoá học)' });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

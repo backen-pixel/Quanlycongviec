@@ -6,7 +6,14 @@ import { youtubeEmbedUrl } from '../lib/knowledgeMarkdown';
 import {
   ChevronLeft, ChevronRight, CheckCircle2, Clock, Award, Loader2,
   PartyPopper, RotateCcw, BookOpen, ListChecks, ArrowRight, Trophy,
+  XCircle,
 } from 'lucide-react';
+
+function formatCorrectAnswer(q) {
+  const indices = q.correct || [];
+  if (!indices.length || !q.options?.length) return '—';
+  return indices.map((i) => q.options[i]).filter(Boolean).join('; ');
+}
 
 function ExerciseMediaHeader({ exercise }) {
   const hasImage = !!exercise.image_url;
@@ -346,20 +353,41 @@ function ResultScreen({ result, exercise, onRetry, onBack, onGoNext }) {
               const isMulti = q.type === 'multiple';
               const userText = isMulti
                 ? (Array.isArray(userAns) ? userAns.map((i) => q.options?.[i]).filter(Boolean).join(', ') : '—')
-                : (typeof userAns === 'number' ? q.options?.[userAns] : '—');
+                : (typeof userAns === 'number' ? q.options?.[userAns] : (userAns !== undefined && userAns !== null ? q.options?.[Number(userAns)] : '—'));
+              const detail = (result.details || []).find((d) => d.id === q.id);
+              const isOk = detail?.correct === true;
               return (
-                <li key={q.id} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
-                  <span className="text-sm font-medium text-gray-500 mt-0.5">{idx + 1}.</span>
-                  <div className="flex-1">
+                <li
+                  key={q.id}
+                  className={`flex items-start gap-3 p-3 rounded-lg border ${
+                    isOk ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
+                  }`}
+                >
+                  <span className="mt-0.5 shrink-0">
+                    {isOk ? <CheckCircle2 className="h-5 w-5 text-green-600" /> : <XCircle className="h-5 w-5 text-red-600" />}
+                  </span>
+                  <div className="flex-1 min-w-0">
                     <div className="flex items-start gap-2 flex-wrap">
-                      <p className="text-sm font-medium flex-1 min-w-0" style={{ color: '#000000' }}>{q.question}</p>
+                      <p className="text-sm font-medium flex-1 min-w-0" style={{ color: '#000000' }}>
+                        {idx + 1}. {q.question}
+                      </p>
                       <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full whitespace-nowrap ${
                         isMulti ? 'bg-emerald-100 text-emerald-700 border border-emerald-300' : 'bg-blue-100 text-blue-700 border border-blue-300'
                       }`}>
                         {isMulti ? 'Chọn nhiều' : 'Chọn 1'}
                       </span>
                     </div>
-                    <p className="text-xs text-gray-600 mt-1">Bạn chọn: <span className="font-medium">{userText || '—'}</span></p>
+                    <p className="text-xs text-gray-700 mt-1">
+                      Bạn chọn: <span className="font-medium">{userText || '—'}</span>
+                    </p>
+                    <p className="text-xs text-gray-700 mt-0.5">
+                      Đáp án đúng: <span className="font-semibold text-green-800">{formatCorrectAnswer(q)}</span>
+                    </p>
+                    {q.explanation && (
+                      <p className="text-xs text-amber-900 mt-2 p-2 bg-amber-50 border border-amber-200 rounded-lg">
+                        {q.explanation}
+                      </p>
+                    )}
                   </div>
                 </li>
               );
@@ -459,10 +487,16 @@ export default function KnowledgeExercisePage() {
       setExercise(data);
     } catch (e) {
       if (e.response?.status === 423 && e.response?.data?.locked) {
-        alert(`🔒 ${e.response.data.error || 'Bài học chứa bài tập này đang khoá'}`);
-        if (e.response.data.prev_lesson_id) {
-          navigate(`/knowledge/lessons/${e.response.data.prev_lesson_id}`);
+        const data = e.response.data;
+        const msg = data.error || 'Bài tập đang khoá';
+        if (data.requires_lesson_view && data.lesson_id) {
+          alert(`${msg}.\n\nBạn sẽ được chuyển về trang bài học để đọc trước.`);
+          navigate(`/knowledge/lessons/${data.lesson_id}`);
+        } else if (data.prev_lesson_id) {
+          alert(msg);
+          navigate(`/knowledge/lessons/${data.prev_lesson_id}`);
         } else {
+          alert(msg);
           navigate('/knowledge');
         }
       } else {
