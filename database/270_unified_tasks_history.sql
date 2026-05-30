@@ -242,13 +242,13 @@ BEGIN
     IF NEW.status = 'done' THEN
       PERFORM fn_unified_task_history_insert(
         'task', NEW.id::text, NEW.project_id, v_lead_id, v_company_id,
-        NULL, 'completed', 'status', to_jsonb(OLD.status::text), to_jsonb('done'),
+        NULL, 'completed', 'status', to_jsonb(OLD.status::text), to_jsonb('done'::text),
         'Hoàn thành nhiệm vụ'
       );
     ELSIF NEW.status = 'blocked' THEN
       PERFORM fn_unified_task_history_insert(
         'task', NEW.id::text, NEW.project_id, v_lead_id, v_company_id,
-        NULL, 'blocked', 'status', to_jsonb(OLD.status::text), to_jsonb('blocked'),
+        NULL, 'blocked', 'status', to_jsonb(OLD.status::text), to_jsonb('blocked'::text),
         'Nhiệm vụ bị chặn'
       );
     END IF;
@@ -318,13 +318,13 @@ BEGIN
     PERFORM fn_unified_task_history_insert(
       'crm_task', NEW.id::text, v_project_id, NEW.lead_id, v_company_id,
       NULL, 'status_changed', 'status',
-      to_jsonb(OLD.status), to_jsonb(NEW.status),
-      OLD.status || ' → ' || NEW.status
+      to_jsonb(OLD.status::text), to_jsonb(NEW.status::text),
+      COALESCE(OLD.status::text, '') || ' → ' || COALESCE(NEW.status::text, '')
     );
     IF NEW.status = 'completed' THEN
       PERFORM fn_unified_task_history_insert(
         'crm_task', NEW.id::text, v_project_id, NEW.lead_id, v_company_id,
-        NULL, 'completed', 'status', to_jsonb(OLD.status), to_jsonb('completed'),
+        NULL, 'completed', 'status', to_jsonb(OLD.status::text), to_jsonb('completed'::text),
         'Hoàn thành nhiệm vụ CRM'
       );
     END IF;
@@ -393,7 +393,7 @@ BEGIN
     IF NEW.status = 'completed' THEN
       PERFORM fn_unified_task_history_insert(
         'crm_assignment', NEW.id::text, NULL, NULL, NEW.company_id,
-        NULL, 'completed', 'status', to_jsonb(OLD.status::text), to_jsonb('completed'),
+        NULL, 'completed', 'status', to_jsonb(OLD.status::text), to_jsonb('completed'::text),
         'Hoàn thành giao việc CRM'
       );
     END IF;
