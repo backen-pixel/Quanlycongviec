@@ -17,6 +17,7 @@ const {
   addCrmAssignmentComment: addCrmAssignmentCommentCore,
 } = require('../helpers/crmAssignmentMutations');
 const { createTTLCache } = require('../helpers/ttlCache');
+const { responseCache, invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
 
 const assignColsCache = createTTLCache({
   ttlMs: 90_000,
@@ -77,6 +78,16 @@ async function uploadAssignmentFileToStorage(file, assignmentId, kind) {
 
 const r = Router();
 r.use(auth);
+
+r.use((req, res, next) => {
+  if (req.method === 'GET') return next();
+  const origJson = res.json.bind(res);
+  res.json = function crmAssignmentsInvalidate(body) {
+    if (res.statusCode < 400) void rcInvalidateTags(['crm:assignments']);
+    return origJson(body);
+  };
+  next();
+});
 
 const ADMIN_ROLES = new Set(['admin', 'manager', 'sales_admin']);
 const isAdmin = (req) => ADMIN_ROLES.has(String(req.user?.role || '').toLowerCase());
@@ -646,7 +657,7 @@ r.delete('/:id', async (req, res) => {
 // ─── UNREAD / BADGE ──────────────────────────────────────────────────────────
 // GET /api/crm/assignments/unread-count
 // Đếm nhiệm vụ "cần chú ý" của user hiện tại: quá hạn / sắp hạn (24h) / chưa làm.
-r.get('/unread-count', async (req, res) => {
+r.get('/unread-count', responseCache({ ttl: 30, scope: 'user', tags: ['crm:assignments'] }), async (req, res) => {
   try {
     const uid = req.user.userId;
     const ids = await getUserInvolvedAssignmentIds(uid);

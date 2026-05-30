@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/newPermission');
+const { responseCache, invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
 const { effectiveWorkshopCompanyId, normalizeWorkshopCompanyId } = require('../helpers/workshopCompanyScope');
 const { isSystemAdmin } = require('../helpers/adminRole');
 const {
@@ -54,6 +55,16 @@ const { getRestrictedDivisionIdsForModule } = require('../helpers/ecosystemModul
 
 const r = Router();
 r.use(auth);
+
+r.use((req, res, next) => {
+  if (req.method === 'GET') return next();
+  const origJson = res.json.bind(res);
+  res.json = function productionInvalidate(body) {
+    if (res.statusCode < 400) void rcInvalidateTags(['production']);
+    return origJson(body);
+  };
+  next();
+});
 
 /** Tắt toàn bộ thông báo (DB + socket) phát ra từ module Sản xuất (/api/production). */
 const DISABLE_PRODUCTION_PUSH_NOTIFICATIONS = true;
@@ -368,7 +379,7 @@ async function allowedWorkflowStageIdsForPatch(companyId = null) {
 //   - không truyền        → trả tất cả (Global + theo loại) cho công ty
 //   - 'global'            → chỉ cột không gắn loại (workshop_type_id IS NULL)
 //   - <uuid>              → cột gắn loại đó + cột Global
-r.get('/pipeline-stages', requirePermission('projects', 'view'), async (req, res) => {
+r.get('/pipeline-stages', requirePermission('projects', 'view'), responseCache({ ttl: 300, scope: 'company', tags: ['production'] }), async (req, res) => {
   try {
     const includeInactive = req.query.all === 'true';
     const company_id = effectiveWorkshopCompanyId(req, req.query.company_id);
@@ -727,7 +738,7 @@ r.post('/pipeline-stages/seed-default-kitchen-glass', requirePermission('project
 });
 
 // ─── GET /production/dashboard ──
-r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
+r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 30, scope: 'user', tags: ['production'] }), async (req, res) => {
   try {
     const { division_id, company_id: companyIdQuery, workshop_type_id } = req.query;
     const company_id = effectiveWorkshopCompanyId(req, companyIdQuery);
@@ -845,7 +856,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
 });
 
 // ─── GET /production/projects ──
-r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
+r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 20, scope: 'user', tags: ['production'] }), async (req, res) => {
   try {
     const {
       search, priority, page = 1, limit = 100, division_id, company_id: companyIdQuery, stage_slug, sx_intake, workshop_type_id,

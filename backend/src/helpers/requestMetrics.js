@@ -18,13 +18,25 @@ let globalTotal = 0;
 let globalErrors = 0;
 let startedAt = Date.now();
 
-/** Cache counters (L1 in-process + L2 Redis). Reset cùng resetMetrics(). */
-const cacheCounters = { l1_hit: 0, l2_hit: 0, miss: 0, l2_error: 0 };
+/** Cache counters (L1 in-process + L2 Redis + response cache + pg pool). Reset cùng resetMetrics(). */
+const cacheCounters = {
+  l1_hit: 0, l2_hit: 0, miss: 0, l2_error: 0,
+  rc_hit: 0, rc_miss: 0, rc_304: 0,
+};
+let pgQueryCount = 0;
+let pgQueryTotalMs = 0;
+let pgQueryErrors = 0;
 
 function incCacheCounter(name) {
   if (Object.prototype.hasOwnProperty.call(cacheCounters, name)) {
     cacheCounters[name] += 1;
   }
+}
+
+function incPgQuery(durationMs, isError = false) {
+  pgQueryCount += 1;
+  pgQueryTotalMs += durationMs;
+  if (isError) pgQueryErrors += 1;
 }
 
 function getBucketKey(now = Date.now()) {
@@ -136,6 +148,11 @@ function getSnapshot() {
     timeBuckets: filled,
     topEndpoints,
     cache: { ...cacheCounters },
+    pg: {
+      query_count: pgQueryCount,
+      query_errors: pgQueryErrors,
+      avg_query_ms: pgQueryCount > 0 ? Math.round(pgQueryTotalMs / pgQueryCount) : 0,
+    },
     generatedAt: now,
   };
 }
@@ -148,6 +165,9 @@ function resetMetrics() {
   globalErrors = 0;
   startedAt = Date.now();
   for (const k of Object.keys(cacheCounters)) cacheCounters[k] = 0;
+  pgQueryCount = 0;
+  pgQueryTotalMs = 0;
+  pgQueryErrors = 0;
 }
 
-module.exports = { metricsMiddleware, getSnapshot, resetMetrics, incCacheCounter };
+module.exports = { metricsMiddleware, getSnapshot, resetMetrics, incCacheCounter, incPgQuery };

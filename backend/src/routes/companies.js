@@ -5,9 +5,20 @@ const { auth } = require('../middleware/auth');
 const { syncCompanyToEcosystem } = require('../helpers/ecosystemSync');
 const { getRestrictedDivisionIdsForModule, KNOWN_MODULE_KEYS } = require('../helpers/ecosystemModuleScope');
 const { isCrmCompanyAdminUser } = require('../helpers/crmAccessRoles');
+const { responseCache, invalidateTags } = require('../middleware/responseCache');
 
 const r = Router();
 r.use(auth);
+
+r.use((req, res, next) => {
+  if (req.method === 'GET') return next();
+  const origJson = res.json.bind(res);
+  res.json = function orgtreeInvalidate(body) {
+    void invalidateTags(['orgtree']);
+    return origJson(body);
+  };
+  next();
+});
 
 /**
  * @param {string} companyId
@@ -54,7 +65,7 @@ async function companyWithDivisionFields(data) {
 
 // ═══ LIST COMPANIES ═══
 // Query: for_module = crm | production | logistics | … — chỉ trả công ty thuộc khối được phép trong /ecosystem/modules (nếu có cấu hình scope)
-r.get('/', async (req, res) => {
+r.get('/', responseCache({ ttl: 120, scope: 'company', tags: ['orgtree'] }), async (req, res) => {
   try {
     const { search, for_module } = req.query;
     const mod = String(for_module || '').trim().toLowerCase();
@@ -116,7 +127,7 @@ r.get('/', async (req, res) => {
 });
 
 // ═══ GET COMPANIES OF CURRENT USER ═══
-r.get('/my/list', async (req, res) => {
+r.get('/my/list', responseCache({ ttl: 120, scope: 'user', tags: ['orgtree'] }), async (req, res) => {
   try {
     const { data } = await supabase.from('user_companies')
       .select('company:companies(*)')

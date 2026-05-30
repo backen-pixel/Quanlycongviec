@@ -5,7 +5,7 @@ const morgan = require('morgan');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const http = require('http');
-const axios = require('axios');
+const { externalAxios } = require('./config/httpAgents');
 const jwt = require('jsonwebtoken');
 const { Server } = require('socket.io');
 require('dotenv').config();
@@ -127,12 +127,15 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 // Root + Health
 app.get('/', (_, res) => res.json({ app: 'TuBep Pro API', status: 'ok' }));
 const { getStatus: getRedisStatus, getRedis: _initRedis } = require('./config/redis');
+const { isPgEnabled } = require('./config/db');
 _initRedis(); // khởi tạo kết nối nền nếu có REDIS_URL
 app.get('/api/health', (_, res) => res.json({
   status: 'ok',
   time: new Date().toISOString(),
   uptime: process.uptime(),
   redis: getRedisStatus(),
+  pg_pool: isPgEnabled() ? 'enabled' : 'disabled',
+  response_cache: process.env.RESPONSE_CACHE_DISABLED === '1' ? 'disabled' : 'enabled',
 }));
 
 // ─── Request Metrics (admin only) ───────────────────────────────────────────
@@ -331,6 +334,10 @@ app.set('pushNotification', async (userId, notification) => {
     );
     if (!allowed) return;
     io.to(`user:${userId}`).emit('notification', notification);
+    try {
+      const { invalidateTags } = require('./middleware/responseCache');
+      void invalidateTags(['notifications', `user:${userId}`]);
+    } catch { /* ignore */ }
     try {
       const { sendMobilePush } = require('./services/pushSender');
       void sendMobilePush(userId, notification);
@@ -775,7 +782,7 @@ server.listen(config.port, () => {
         );
         let lead = null;
         try {
-          const r = await axios.post(`http://localhost:${port}/api/crm/leads`, {
+          const r = await externalAxios.post(`http://localhost:${port}/api/crm/leads`, {
             title: '[FB] ' + (contact.fb_name || 'KH Facebook'),
             customer_id: customerId || null,
             source_id: page.data.default_source_id || fbSource?.id || null,

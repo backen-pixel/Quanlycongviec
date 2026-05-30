@@ -40,12 +40,22 @@ const crmRegionsCache = createTTLCache({
 function invalidatePipelinesAndStages() {
   crmPipelinesCache.invalidateRemote(null).catch(() => {});
   crmStagesCache.invalidateRemote(null).catch(() => {});
+  _bumpCrmHttpCache();
 }
 function invalidateSources() {
   crmSourcesCache.invalidateRemote(null).catch(() => {});
+  _bumpCrmHttpCache();
 }
 function invalidateRegions() {
   crmRegionsCache.invalidateRemote(null).catch(() => {});
+  _bumpCrmHttpCache();
+}
+
+function _bumpCrmHttpCache() {
+  try {
+    const { invalidateTags } = require('../middleware/responseCache');
+    void invalidateTags(['crm:pipelines', 'crm:sources', 'orgtree']);
+  } catch { /* ignore */ }
 }
 
 // ─── Pipelines ─────────────────────────────────────────────────────────────

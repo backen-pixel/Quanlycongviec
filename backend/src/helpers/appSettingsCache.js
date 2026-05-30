@@ -43,9 +43,13 @@ async function getAppSettingValue(key, fallback) {
 function invalidateAppSettingKey(key) {
   if (!key) {
     appSettingsCache.invalidateRemote(null).catch(() => {});
-    return;
+  } else {
+    appSettingsCache.invalidateRemote(`json:${key}`).catch(() => {});
   }
-  appSettingsCache.invalidateRemote(`json:${key}`).catch(() => {});
+  try {
+    const { invalidateTags } = require('../middleware/responseCache');
+    void invalidateTags(['settings']);
+  } catch { /* ignore */ }
 }
 
 module.exports = {

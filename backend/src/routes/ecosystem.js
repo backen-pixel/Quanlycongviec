@@ -4,9 +4,21 @@ const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { KNOWN_MODULE_KEYS, buildMyModuleAccessMap, invalidateEcosystemModuleScopeCache } = require('../helpers/ecosystemModuleScope');
 const { isAdminLike } = require('../helpers/adminRole');
+const { responseCache, invalidateTags } = require('../middleware/responseCache');
 
 const r = Router();
 r.use(auth);
+
+// Xoá response cache sau mọi mutation ecosystem
+r.use((req, res, next) => {
+  if (req.method === 'GET') return next();
+  const origJson = res.json.bind(res);
+  res.json = function ecosystemInvalidate(body) {
+    void invalidateTags(['ecosystem']);
+    return origJson(body);
+  };
+  next();
+});
 
 // ─── HELPER: Check ecosystem permission ──
 // User can manage a unit if:
@@ -87,7 +99,7 @@ async function getDescendantUnits(unitId) {
 // CẤP BẬC — ECOSYSTEM LEVELS
 // ═══════════════════════════════════════════════
 
-r.get('/levels', async (req, res) => {
+r.get('/levels', responseCache({ ttl: 300, scope: 'role', tags: ['ecosystem'] }), async (req, res) => {
   try {
     const { data, error } = await supabase.from('ecosystem_levels')
       .select('*').order('depth');
@@ -150,7 +162,7 @@ r.delete('/levels/:id', async (req, res) => {
 // ═══════════════════════════════════════════════
 
 // GET tree structure
-r.get('/units', async (req, res) => {
+r.get('/units', responseCache({ ttl: 300, scope: 'role', tags: ['ecosystem'] }), async (req, res) => {
   try {
     const { level } = req.query;
     
@@ -448,7 +460,7 @@ r.delete('/units/:unitId/members/:memberId', async (req, res) => {
 // NHÓM QUY TRÌNH — STAGE GROUPS
 // ═══════════════════════════════════════════════
 
-r.get('/stage-groups', async (req, res) => {
+r.get('/stage-groups', responseCache({ ttl: 300, scope: 'role', tags: ['ecosystem'] }), async (req, res) => {
   try {
     const { data: groups, error } = await supabase.from('workflow_stage_groups')
       .select('*').eq('is_active', true).order('order_index');
@@ -599,7 +611,7 @@ r.post('/units/:id/stage-groups', async (req, res) => {
 // ═══════════════════════════════════════════════
 
 // GET my accessible units (for current user)
-r.get('/my-units', async (req, res) => {
+r.get('/my-units', responseCache({ ttl: 120, scope: 'user', tags: ['ecosystem'] }), async (req, res) => {
   try {
     const { data: memberships } = await supabase.from('ecosystem_unit_members')
       .select(`

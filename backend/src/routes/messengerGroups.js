@@ -9,6 +9,7 @@ const config = require('../config');
 const { notifyMultiple } = require('../helpers/notifications');
 const { isAdminLike } = require('../helpers/adminRole');
 const { handleIncomingMessage } = require('../helpers/aiConversation');
+const { responseCache, invalidateTags: rcInvalidateTagsMessenger } = require('../middleware/responseCache');
 
 /** Bucket Supabase Storage (mặc định giống upload CRM). */
 const MESSENGER_STORAGE_BUCKET = process.env.SUPABASE_MESSENGER_BUCKET || 'attachments';
@@ -81,6 +82,17 @@ const messengerMemoryUpload = multer({
 
 const r = Router();
 r.use(auth);
+
+r.use((req, res, next) => {
+  if (req.method === 'GET') return next();
+  const origJson = res.json.bind(res);
+  res.json = function messengerInvalidate(body) {
+    if (res.statusCode < 400) void rcInvalidateTagsMessenger(['messenger']);
+    return origJson(body);
+  };
+  next();
+});
+
 /** JWT có thể chỉ có `id` — mọi chỗ trước dùng userId; thống nhất authUserId */
 r.use((req, res, next) => {
   const id = req.user?.userId ?? req.user?.id;
@@ -432,7 +444,7 @@ r.post('/direct', async (req, res) => {
 });
 
 /** Danh sách nhóm mà user là thành viên */
-r.get('/groups', async (req, res) => {
+r.get('/groups', responseCache({ ttl: 30, scope: 'user', tags: ['messenger'] }), async (req, res) => {
   try {
     const uid = req.authUserId;
     const { data: rows, error } = await supabase.from('messenger_group_members').select('group_id, role').eq('user_id', uid);

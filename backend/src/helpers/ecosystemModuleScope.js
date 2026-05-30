@@ -47,6 +47,10 @@ function invalidateEcosystemModuleScopeCache(moduleKey) {
   } else {
     scopeCache.invalidateRemote(null).catch(() => {});
   }
+  try {
+    const { invalidateTags } = require('../middleware/responseCache');
+    void invalidateTags(['ecosystem']);
+  } catch { /* ignore */ }
 }
 
 /**

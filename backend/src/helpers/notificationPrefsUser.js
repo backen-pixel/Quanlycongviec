@@ -66,10 +66,16 @@ async function getCachedPrefsForUser(userId) {
 function invalidateNotificationPrefsCache(userId) {
   if (userId == null) {
     cache.invalidateRemote(null).catch(() => {});
-    return;
+  } else {
+    const key = String(userId);
+    cache.invalidateRemote(key).catch(() => {});
   }
-  const key = String(userId);
-  cache.invalidateRemote(key).catch(() => {});
+  try {
+    const { invalidateTags } = require('../middleware/responseCache');
+    if (userId != null) {
+      void invalidateTags([`user:${userId}`]);
+    }
+  } catch { /* ignore */ }
 }
 
 /**

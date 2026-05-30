@@ -22,14 +22,26 @@ const {
   invalidateKpiBusinessHours,
   invalidateKpiHolidays,
 } = require('../helpers/kpiLookupCache');
+const { pgKpiDefinitions } = require('../helpers/pgHotQueries');
 const {
   effectivePipelineStageSlaDays,
   normalizePipelineStageSlaDaysForDb,
 } = require('../helpers/crmPipelineSla');
 const { KPI_RECOMPUTE_USER_ROLES_DEFAULT } = require('../services/kpiRoleApplies');
+const { responseCache, invalidateTags } = require('../middleware/responseCache');
 
 const r = Router();
 r.use(auth);
+
+r.use((req, res, next) => {
+  if (req.method === 'GET') return next();
+  const origJson = res.json.bind(res);
+  res.json = function kpiInvalidate(body) {
+    void invalidateTags(['kpi']);
+    return origJson(body);
+  };
+  next();
+});
 
 const MANAGER_ROLES = new Set(['admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'administrator', 'region_admin']);
 const ADMIN_ROLES = new Set(['admin', 'superadmin', 'super_admin', 'administrator']);
@@ -130,8 +142,10 @@ r.get('/users', async (req, res) => {
 });
 
 // ─── GET /api/kpi/definitions ────────────────────────────────────────────────
-r.get('/definitions', async (_req, res) => {
+r.get('/definitions', responseCache({ ttl: 300, scope: 'company', tags: ['kpi'] }), async (_req, res) => {
   try {
+    const pgDefs = await pgKpiDefinitions();
+    if (pgDefs) return res.json({ definitions: pgDefs });
     const defs = await getDefinitions();
     res.json({ definitions: defs });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -192,7 +206,7 @@ r.delete('/targets/:id', async (req, res) => {
 });
 
 // ─── GET /api/kpi/periods ────────────────────────────────────────────────────
-r.get('/periods', async (req, res) => {
+r.get('/periods', responseCache({ ttl: 120, scope: 'company', tags: ['kpi'] }), async (req, res) => {
   try {
     const limit = Math.min(48, Number(req.query.limit) || 12);
     const { data, error } = await supabase
@@ -1270,7 +1284,7 @@ const { clearCache: clearBizCache } = require('../services/businessHours');
 
 // ─── GET/PUT /api/kpi/business-hours ─────────────────────────────────────────
 // GET: trả về config của company (?company_id) hoặc default. PUT (manager+): upsert.
-r.get('/business-hours', async (req, res) => {
+r.get('/business-hours', responseCache({ ttl: 300, scope: 'company', tags: ['kpi'] }), async (req, res) => {
   try {
     const cid = req.query.company_id || null;
     const row = await getBusinessHoursConfigCached(cid);
@@ -1328,7 +1342,7 @@ r.put('/business-hours', async (req, res) => {
 });
 
 // ─── /api/kpi/holidays ───────────────────────────────────────────────────────
-r.get('/holidays', async (req, res) => {
+r.get('/holidays', responseCache({ ttl: 300, scope: 'company', tags: ['kpi'] }), async (req, res) => {
   try {
     const cid = req.query.company_id || null;
     const data = await getHolidaysCached(cid);

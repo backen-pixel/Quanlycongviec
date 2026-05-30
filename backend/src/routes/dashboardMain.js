@@ -1,6 +1,8 @@
 const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
+const { pgDashboardMainStats } = require('../helpers/pgHotQueries');
+const { responseCache } = require('../middleware/responseCache');
 
 const r = Router();
 r.use(auth);
@@ -173,7 +175,7 @@ r.get('/', async (req, res) => {
  * GET /api/dashboard-main/stats
  * Chỉ lấy thống kê (nhanh hơn)
  */
-r.get('/stats', async (req, res) => {
+r.get('/stats', responseCache({ ttl: 30, scope: 'user', tags: ['dashboard-main'] }), async (req, res) => {
   try {
     const userId = req.user.userId;
 
@@ -195,7 +197,12 @@ r.get('/stats', async (req, res) => {
       projectIds = await getProjectIdsByUser(userId);
     }
 
-    // Đếm projects
+    // Đếm tasks — ưu tiên pg aggregate
+    const pgStats = await pgDashboardMainStats(userId, projectIds);
+    if (pgStats) {
+      return res.json(pgStats);
+    }
+
     const { count: totalProjects } = await supabase
       .from('projects')
       .select('id', { count: 'exact', head: true })
