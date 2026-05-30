@@ -491,11 +491,15 @@ export default function NotificationCenter({ socket }) {
     const handler = (e) => {
       if (rootRef.current?.contains(e.target)) return;
       if (panelRef.current?.contains(e.target)) return;
+      // Panel cài đặt render qua portal — không nằm trong panelRef
+      if (e.target.closest?.('[data-notification-settings-panel]')) return;
+      if (e.target.closest?.('[data-notification-settings-backdrop]')) return;
+      if (settingsOpen) setSettingsOpen(false);
       setOpen(false);
     };
     if (open) document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
+  }, [open, settingsOpen]);
 
   const markAllRead = async () => {
     try {
@@ -580,8 +584,12 @@ export default function NotificationCenter({ socket }) {
         />
       )}
 
-      {/* Settings Modal */}
-      <NotificationSettings isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      {/* Settings side panel — docked to the right of Notification Center */}
+      <NotificationSettings
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        anchorPanel={open ? { top: panelPos.top, left: panelPos.left, width: PANEL_WIDTH } : null}
+      />
 
       <button
         onClick={() => setOpen(!open)}
@@ -613,7 +621,7 @@ export default function NotificationCenter({ socket }) {
                   <Bell className="h-4.5 w-4.5 text-white" />
                 </div>
                 <div className="min-w-0">
-                  <h3 className="text-sm font-bold text-white leading-tight">Trung tâm thông báo</h3>
+                  <h3 className="text-sm font-bold leading-tight" style={{ color: '#ffffff' }}>Trung tâm thông báo</h3>
                   <p className="text-[11px] text-blue-100/90 mt-0.5">
                     {bellBadgeCount > 0 ? `${bellBadgeCount} thông báo mới` : 'Không có thông báo mới'}
                   </p>

@@ -6,7 +6,7 @@ import { Outlet } from 'react-router-dom';
 export default function ProductionLayout() {
   return (
     <div className="sx-module min-h-full">
-      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-6">
+      <div className="w-full max-w-none py-2" style={{ marginLeft: '-12px', marginRight: '-28px', paddingLeft: 8, paddingRight: 8 }}>
         <Outlet />
       </div>
     </div>

@@ -506,10 +506,7 @@ export default function LogisticsDashboard() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-xs text-gray-500 font-semibold">Vận chuyển & Lắp đặt</span>
-          </div>
-          <h1 className="text-3xl font-bold text-gray-900">🚚 Quản lý Vận chuyển</h1>
+          <h1 className="text-3xl font-bold" style={{ color: '#000000' }}>🚚 Quản lý Vận chuyển</h1>
         </div>
         <div className="flex items-center gap-2 flex-wrap shrink-0">
           <button
@@ -949,21 +946,21 @@ function KanbanStageCard({ stage, items, onMoveStage, onDelete, calculateDays, s
       className={`flex-shrink-0 w-80 rounded-lg overflow-hidden transition-all duration-200 ${isOverColumn ? 'ring-2 ring-orange-500 ring-dashed' : ''}`}
     >
       <div className="h-1.5 w-full" style={{ backgroundColor: stageColor }} />
-      <div className={`bg-white border border-gray-200 border-t-0 p-4 transition-all ${isOverColumn ? 'bg-orange-50' : ''}`}>
+      <div className={`bg-white/40 backdrop-blur-md border border-white/40 border-t-0 p-4 transition-all ${isOverColumn ? 'bg-orange-100/60' : ''}`}>
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="text-lg shrink-0">{stage.icon || '📦'}</span>
             <h3 className="font-semibold truncate" style={{ color: '#000000' }}>{stage.name}</h3>
           </div>
-          <span className="px-2 py-1 bg-gray-100 text-gray-700 text-xs font-bold rounded">{items.length}</span>
+          <span className="px-2 py-1 bg-white/60 text-gray-800 text-xs font-bold rounded backdrop-blur-sm">{items.length}</span>
         </div>
-        <p className="text-xs text-gray-500">
+        <p className="text-xs" style={{ color: '#374151' }}>
           Giá trị: {formatVND(items.reduce((sum, p) => sum + (Number(p.estimated_value) || 0), 0))}
         </p>
       </div>
       <div
         ref={containerRef}
-        className={`bg-gray-50 border border-gray-200 border-t-0 p-3 space-y-3 overflow-y-auto transition-all ${isOverColumn ? 'bg-orange-50' : ''}`}
+        className={`bg-white/25 backdrop-blur-md border border-white/40 border-t-0 p-3 space-y-3 overflow-y-auto transition-all ${isOverColumn ? 'bg-orange-100/50' : ''}`}
         style={{ maxHeight: columnMaxH, minHeight: '200px' }}
       >
         {items.length === 0 ? (
