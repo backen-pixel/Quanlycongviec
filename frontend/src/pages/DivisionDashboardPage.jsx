@@ -53,7 +53,7 @@ export default function DivisionDashboardPage() {
     <div className="space-y-5 max-w-7xl">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+        <h1 className="text-xl font-bold text-gray-900 text-force-black flex items-center gap-2">
           <BarChart3 className="h-5 w-5 text-indigo-600" /> Dashboard Khối
         </h1>
         <div className="flex items-center gap-2">
@@ -96,7 +96,7 @@ export default function DivisionDashboardPage() {
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
             <div className="bg-white rounded-xl border p-4">
               <FolderKanban className="h-5 w-5 text-indigo-500 mb-1" />
-              <p className="text-2xl font-bold text-gray-900">{projects.length}</p>
+              <p className="text-2xl font-bold text-gray-900 text-force-black">{projects.length}</p>
               <p className="text-[10px] text-gray-500">Tổng dự án</p>
             </div>
             <div className="bg-white rounded-xl border p-4">
@@ -106,7 +106,7 @@ export default function DivisionDashboardPage() {
             </div>
             <div className="bg-white rounded-xl border p-4">
               <CheckSquare className="h-5 w-5 text-emerald-500 mb-1" />
-              <p className="text-2xl font-bold text-gray-900">{tasks.length}</p>
+              <p className="text-2xl font-bold text-gray-900 text-force-black">{tasks.length}</p>
               <p className="text-[10px] text-gray-500">Tổng nhiệm vụ</p>
             </div>
             <div className="bg-white rounded-xl border p-4">
@@ -121,7 +121,7 @@ export default function DivisionDashboardPage() {
             </div>
             <div className="bg-white rounded-xl border p-4">
               <Users className="h-5 w-5 text-purple-500 mb-1" />
-              <p className="text-2xl font-bold text-gray-900">{stats.members || 0}</p>
+              <p className="text-2xl font-bold text-gray-900 text-force-black">{stats.members || 0}</p>
               <p className="text-[10px] text-gray-500">Nhân viên</p>
             </div>
           </div>
@@ -129,7 +129,7 @@ export default function DivisionDashboardPage() {
           {/* Company breakdown — only when viewing all companies */}
           {!selectedCompany && companies.length > 1 && (
             <div className="bg-white rounded-xl border p-4">
-              <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2"><Building2 className="h-4 w-4 text-blue-600" /> Theo Công ty</h3>
+              <h3 className="text-sm font-bold text-gray-900 text-force-black mb-3 flex items-center gap-2"><Building2 className="h-4 w-4 text-blue-600" /> Theo Công ty</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                 {companies.map(c => {
                   const cProjects = projects.filter(p => p.company_id === c.id || p.company?.id === c.id);
@@ -139,7 +139,7 @@ export default function DivisionDashboardPage() {
                       className="flex items-center gap-3 p-3 rounded-lg border hover:border-blue-300 hover:bg-blue-50/50 cursor-pointer text-left transition-colors">
                       <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center text-xs font-bold text-blue-700">{(c.short_name || c.name || '?')[0]}</div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium text-gray-900 truncate">{c.short_name || c.name}</p>
+                        <p className="text-xs font-medium text-gray-900 text-force-black truncate">{c.short_name || c.name}</p>
                         <p className="text-[10px] text-gray-400">{cProjects.length} DA • {cTasks.length} NV</p>
                       </div>
                     </button>
@@ -152,7 +152,7 @@ export default function DivisionDashboardPage() {
           {/* Projects Table */}
           <div className="bg-white rounded-xl border overflow-hidden">
             <div className="p-4 border-b flex items-center justify-between">
-              <h3 className="text-sm font-bold text-gray-900">📋 Dự án ({projects.length})</h3>
+              <h3 className="text-sm font-bold text-gray-900 text-force-black">📋 Dự án ({projects.length})</h3>
               {selectedCompany && (
                 <button onClick={() => setSelectedCompany('')} className="text-xs text-blue-600 hover:underline cursor-pointer">← Xem tất cả công ty</button>
               )}
@@ -162,7 +162,7 @@ export default function DivisionDashboardPage() {
                 {projects.map(p => (
                   <div key={p.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-900 truncate">{p.name}</p>
+                      <p className="text-sm font-medium text-gray-900 text-force-black truncate">{p.name}</p>
                       <p className="text-[10px] text-gray-400">{p.code} • {p.customer_name || p.company?.short_name || ''}</p>
                     </div>
                     <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[p.status] || 'bg-gray-100 text-gray-600'}`}>{STATUS_LABELS[p.status] || p.status}</span>

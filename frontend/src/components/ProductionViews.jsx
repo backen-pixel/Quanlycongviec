@@ -542,7 +542,7 @@ function ProductionByOwnerCard({ item, goProject }) {
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-xs text-teal-600 font-medium">{item.code}</p>
-          <p className="text-sm font-medium text-gray-900 truncate mt-0.5">{item.name}</p>
+          <p className="text-sm font-medium text-gray-900 text-force-black truncate mt-0.5">{item.name}</p>
           {item.customer?.full_name && <p className="text-xs text-gray-500 mt-0.5">{item.customer.full_name}</p>}
         </div>
         {item._stage && (
@@ -744,7 +744,7 @@ function PlannerColumn({ topBarColor, title, subtitle, count, headerExtras, chil
       <div className="h-1.5 w-full" style={{ backgroundColor: topBarColor || '#e5e7eb' }} />
       <div className={`bg-white border border-gray-200 border-t-0 p-3 ${isDragOver ? 'bg-blue-50' : ''}`}>
         <div className="flex items-start justify-between gap-2 mb-1">
-          <h3 className="font-semibold text-gray-900 truncate text-sm flex-1">{title}</h3>
+          <h3 className="font-semibold text-gray-900 text-force-black truncate text-sm flex-1">{title}</h3>
           <div className="flex items-center gap-1.5 shrink-0">
             {headerExtras}
             <span className="px-2 py-0.5 bg-gray-100 text-gray-700 font-bold rounded text-[10px]">{count}</span>
@@ -1170,7 +1170,7 @@ function DeadlineCard({ item, goProject }) {
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-[11px] text-teal-600 font-medium">{item.code}</p>
-          <p className="text-sm font-medium text-gray-900 truncate mt-0.5">{item.name}</p>
+          <p className="text-sm font-medium text-gray-900 text-force-black truncate mt-0.5">{item.name}</p>
           {item.customer?.full_name && (
             <p className="text-[11px] text-gray-500 mt-0.5 truncate">{item.customer.full_name}</p>
           )}
@@ -1194,7 +1194,7 @@ function DeadlineCard({ item, goProject }) {
             : ''}
         </span>
         {Number(item.estimated_value) > 0 && (
-          <span className="font-semibold text-gray-900">{formatVND(item.estimated_value)}</span>
+          <span className="font-semibold text-gray-900 text-force-black">{formatVND(item.estimated_value)}</span>
         )}
       </div>
     </div>
@@ -1294,11 +1294,6 @@ export function ProductionDeadlineView({ pipeline }) {
 
   return (
     <div className="space-y-2">
-      <p className="text-xs text-gray-500 px-1">
-        Kéo thả thẻ giữa các cột để cập nhật <code className="bg-gray-100 rounded px-1 text-[11px]">production_deadline</code>
-        {' '}(hoặc <code className="bg-gray-100 rounded px-1 text-[11px]">deadline</code> nếu thẻ chỉ có deadline tổng).
-        Thả vào cột "Chưa có deadline" để xoá.
-      </p>
       <PlannerBoardShell>
         {SX_DEADLINE_BUCKETS.map((b) => {
           const items = grouped[b.key] || [];

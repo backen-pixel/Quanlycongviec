@@ -34,6 +34,24 @@ h1, h2, h3, h4, h5, h6 {
 .text-gray-500 { color: var(--color-text-muted, #6b7280) !important; }
 .text-gray-400 { color: var(--color-text-muted, #9ca3af) !important; }
 
+/* Kanban stage title — luôn đen, không bị theme/dark mode ghi đè */
+.kanban-stage-title,
+.kanban-stage-title * {
+  color: #000000 !important;
+}
+
+/* Utility — buộc chữ/số đen tuyệt đối, vượt qua mọi rule theme.
+   Dùng cho tiêu đề cột Planner/Deadline, tên dự án, số tiền… */
+.text-force-black {
+  color: #000000 !important;
+}
+
+/* Utility — buộc chữ trắng tuyệt đối (dùng cho overlay trên ảnh nền tối) */
+.text-force-white,
+.text-force-white * {
+  color: #ffffff !important;
+}
+
 /* ── Auto-transparent: wrapper ngoài cùng của tất cả các trang dashboard ─────
    Mọi <div class="min-h-screen bg-gray-50"> (hoặc bg-slate/gradient gray) bên
    trong <main> sẽ trở nên trong suốt → hình nền (--color-page-bg hoặc bg-image)
