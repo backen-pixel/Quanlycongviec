@@ -49,6 +49,7 @@ export type CrmLeadListItem = {
 
 export type CrmLeadDetail = CrmLeadListItem & {
   company_id?: string | null;
+  region_id?: string | null;
   customer?: {
     id?: string;
     full_name?: string | null;

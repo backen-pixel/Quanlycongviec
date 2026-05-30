@@ -78,6 +78,21 @@ export default function KnowledgeAdminPage() {
   const [exForm, setExForm] = useState(null);
   const [exerciseFilters, setExerciseFilters] = useState({ q: '', lesson_id: '', category_id: '', type: '' });
 
+  const [empCategoryId, setEmpCategoryId] = useState('');
+  const [empFilter, setEmpFilter] = useState({ q: '', only: '', company_id: '', department_id: '', user_id: '' });
+  const [empData, setEmpData] = useState(null);
+  const [empLoading, setEmpLoading] = useState(false);
+  const [empCompanies, setEmpCompanies] = useState([]);
+  const [empDepartments, setEmpDepartments] = useState([]);
+  const [empUsers, setEmpUsers] = useState([]);
+  const [empUserSearch, setEmpUserSearch] = useState('');
+  const isSysAdmin = !currentUser?.company_id && String(currentUser?.role || '').toLowerCase() === 'admin';
+  const userCompanyName = (() => {
+    if (!currentUser?.company_id) return '';
+    const co = empCompanies.find((c) => String(c.id) === String(currentUser.company_id));
+    return co?.short_name || co?.name || '';
+  })();
+
   useEffect(() => {
     loadAll();
   }, []);
@@ -85,7 +100,85 @@ export default function KnowledgeAdminPage() {
   useEffect(() => {
     if (tab === 'analytics' && !analytics) loadAnalytics();
     if (tab === 'exercises') loadExercises();
-  }, [tab, exerciseFilters]);
+    if (tab === 'employees' && empCategoryId) loadEmployees();
+  }, [tab, exerciseFilters, empCategoryId, empFilter]);
+
+  useEffect(() => {
+    if (tab !== 'employees') return;
+    loadEmpFilterOptions();
+  }, [tab, empFilter.company_id, empFilter.department_id]);
+
+  const loadEmpFilterOptions = async () => {
+    try {
+      const reqs = [];
+      if (empCompanies.length === 0) {
+        reqs.push(api.get('/companies').then((r) => setEmpCompanies(r.data?.companies || r.data || [])).catch(() => {}));
+      }
+      const deptParams = {};
+      const effectiveCompany = isSysAdmin ? empFilter.company_id : (currentUser?.company_id || '');
+      if (effectiveCompany) deptParams.company_id = effectiveCompany;
+      reqs.push(
+        api.get('/users/departments', { params: deptParams })
+          .then((r) => {
+            let depts = r.data?.departments || [];
+            if (effectiveCompany) depts = depts.filter((d) => !d.company_id || d.company_id === effectiveCompany);
+            setEmpDepartments(depts);
+          })
+          .catch(() => setEmpDepartments([]))
+      );
+      const userParams = { include_inactive: 'false' };
+      if (effectiveCompany) userParams.company_id = effectiveCompany;
+      if (empFilter.department_id) userParams.department_id = empFilter.department_id;
+      reqs.push(
+        api.get('/users', { params: userParams })
+          .then((r) => setEmpUsers(r.data?.users || r.data || []))
+          .catch(() => setEmpUsers([]))
+      );
+      await Promise.all(reqs);
+    } catch (e) {
+      // ignore
+    }
+  };
+
+  const loadEmployees = async () => {
+    if (!empCategoryId) return;
+    setEmpLoading(true);
+    try {
+      const params = { category_id: empCategoryId };
+      if (empFilter.q) params.q = empFilter.q;
+      if (empFilter.only) params.only = empFilter.only;
+      if (empFilter.company_id) params.company_id = empFilter.company_id;
+      if (empFilter.department_id) params.department_id = empFilter.department_id;
+      if (empFilter.user_id) params.user_id = empFilter.user_id;
+      const { data } = await api.get('/knowledge/admin/employee-progress', { params });
+      setEmpData(data);
+    } catch (e) {
+      alert(e.response?.data?.error || 'Không tải được danh sách nhân viên');
+      setEmpData(null);
+    }
+    setEmpLoading(false);
+  };
+
+  const grantCertificate = async (userEmail) => {
+    if (!confirm(`Cấp chứng nhận thủ công cho ${userEmail}?\n(hoàn thành tất cả bài học + bài tập + cấp chứng nhận)`)) return;
+    try {
+      await api.post('/knowledge/admin/grant-certificate', { email: userEmail, category_id: empCategoryId });
+      loadEmployees();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi cấp chứng nhận');
+    }
+  };
+
+  const revokeCertificate = async (certId) => {
+    const reason = prompt('Lý do thu hồi chứng nhận?');
+    if (reason === null) return;
+    try {
+      await api.post(`/knowledge/admin/certificates/${certId}/revoke`, { reason });
+      loadEmployees();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi thu hồi');
+    }
+  };
 
   const loadExercises = async () => {
     try {
@@ -287,6 +380,7 @@ export default function KnowledgeAdminPage() {
           { id: 'categories', label: 'Danh mục' },
           { id: 'lessons', label: 'Bài học' },
           { id: 'exercises', label: 'Bài tập' },
+          { id: 'employees', label: 'Chứng nhận NV' },
           { id: 'scoreboard', label: 'Bảng điểm', external: '/knowledge/scoreboard' },
           { id: 'submissions', label: `Chấm essay (${submissions.length})` },
           { id: 'analytics', label: 'Thống kê' },
@@ -1100,6 +1194,351 @@ export default function KnowledgeAdminPage() {
                 <button type="button" onClick={() => setExForm(null)} className="px-4 py-2 bg-gray-100 rounded-lg text-sm">Hủy</button>
               </div>
             </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'employees' && !loading && (
+        <div className="space-y-4">
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm space-y-4">
+            {/* Bước 1: Khoá học */}
+            <div className="rounded-lg border border-violet-200 bg-violet-50/60 p-3">
+              <div className="text-[11px] font-bold text-violet-700 uppercase tracking-wide mb-2">
+                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-violet-600 text-white text-[9px] mr-1">1</span>
+                Chọn khoá học để xem chứng nhận
+              </div>
+              <select
+                className="h-9 w-full md:w-96 px-2 bg-white border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 cursor-pointer"
+                value={empCategoryId}
+                onChange={(e) => setEmpCategoryId(e.target.value)}
+              >
+                <option value="">— Chọn khoá để xem —</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>{c.icon} {c.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Bước 2–4: Công ty → Phòng ban → NV (theo CRM Dashboard) */}
+            <div className="rounded-lg border border-slate-200 bg-slate-50/90 p-3 space-y-3">
+              <div className="text-[11px] font-bold text-slate-600 uppercase tracking-wide">
+                Lọc nhân viên (công ty → phòng ban → NV)
+              </div>
+              <div className="flex flex-wrap items-end gap-3">
+                {/* 2. Công ty */}
+                {isSysAdmin ? (
+                  <div className="flex flex-col gap-0.5 min-w-[10rem]">
+                    <label className="text-[10px] text-slate-600 font-semibold">
+                      <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-slate-600 text-white text-[9px] mr-1">2</span>
+                      Công ty
+                    </label>
+                    <select
+                      value={empFilter.company_id}
+                      onChange={(e) => {
+                        setEmpFilter({ ...empFilter, company_id: e.target.value, department_id: '', user_id: '' });
+                        setEmpUserSearch('');
+                      }}
+                      className="h-9 w-44 px-2 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                    >
+                      <option value="">Tất cả công ty</option>
+                      {empCompanies.map((c) => (
+                        <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                ) : currentUser?.company_id && (
+                  <span
+                    className="h-9 inline-flex items-center px-2.5 bg-indigo-50 border border-indigo-200 rounded-lg text-xs text-indigo-900 self-end"
+                    title="Admin phạm vi một công ty"
+                  >
+                    <span className="font-semibold text-[10px] mr-1.5">2</span>
+                    🏢 {userCompanyName || 'Công ty của bạn'}
+                  </span>
+                )}
+
+                {/* 3. Phòng ban */}
+                <div className="flex flex-col gap-0.5 min-w-[10rem]">
+                  <label className="text-[10px] text-slate-600 font-semibold">
+                    <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-slate-600 text-white text-[9px] mr-1">3</span>
+                    Phòng ban
+                  </label>
+                  <select
+                    value={empFilter.department_id}
+                    onChange={(e) => {
+                      setEmpFilter({ ...empFilter, department_id: e.target.value, user_id: '' });
+                      setEmpUserSearch('');
+                    }}
+                    title="Lọc theo phòng ban (đã giới hạn theo công ty đã chọn)"
+                    className="h-9 w-44 px-2 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                  >
+                    <option value="">Tất cả phòng ban</option>
+                    <option value="__none__">Chưa gán phòng ban</option>
+                    {empDepartments.map((d) => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* 4. NV */}
+                <div className="flex flex-wrap items-end gap-2 border-t border-slate-200/80 pt-3 mt-1 w-full sm:border-t-0 sm:pt-0 sm:mt-0 sm:w-auto sm:border-l sm:pl-3 sm:ml-0">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase self-center mr-1 hidden sm:inline">4</span>
+                  <div className="flex flex-col gap-0.5">
+                    <label className="text-[10px] text-slate-600 font-semibold">Tìm NV</label>
+                    <input
+                      type="search"
+                      value={empUserSearch}
+                      onChange={(e) => setEmpUserSearch(e.target.value)}
+                      placeholder="Tên, email…"
+                      className="h-9 w-36 px-2 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-0.5 min-w-[11rem] flex-1 sm:flex-initial sm:min-w-[12rem]">
+                    <label className="text-[10px] text-slate-600 font-semibold">Chọn NV</label>
+                    {(() => {
+                      const term = empUserSearch.trim().toLowerCase();
+                      const filtered = !term ? empUsers : empUsers.filter((u) => {
+                        const name = (u.full_name || '').toLowerCase();
+                        const email = (u.email || '').toLowerCase();
+                        const pos = (u.position || '').toLowerCase();
+                        return name.includes(term) || email.includes(term) || pos.includes(term);
+                      });
+                      const grouped = empDepartments
+                        .map((d) => ({ dept: d, users: filtered.filter((u) => u.department_id === d.id) }))
+                        .filter((g) => g.users.length > 0);
+                      const orphan = filtered.filter((u) => !u.department_id);
+                      return (
+                        <select
+                          value={empFilter.user_id}
+                          onChange={(e) => setEmpFilter({ ...empFilter, user_id: e.target.value })}
+                          title="Chỉ hiện NV thuộc công ty & phòng ban đã chọn (khi có)"
+                          className="h-9 w-full min-w-0 px-2 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                        >
+                          <option value="">Tất cả nhân viên</option>
+                          {grouped.length > 0 ? (
+                            <>
+                              {grouped.map(({ dept, users }) => (
+                                <optgroup key={dept.id} label={`📁 ${dept.name}`}>
+                                  {users.map((u) => (
+                                    <option key={u.id} value={u.id}>
+                                      {u.full_name || u.email}
+                                      {u.position ? ` (${u.position})` : ''}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              ))}
+                              {orphan.length > 0 && (
+                                <optgroup label="📁 Chưa gán phòng ban">
+                                  {orphan.map((u) => (
+                                    <option key={u.id} value={u.id}>
+                                      {u.full_name || u.email}
+                                      {u.position ? ` (${u.position})` : ''}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              )}
+                            </>
+                          ) : (
+                            filtered.map((u) => (
+                              <option key={u.id} value={u.id}>
+                                {u.full_name || u.email}
+                                {u.position ? ` (${u.position})` : ''}
+                              </option>
+                            ))
+                          )}
+                        </select>
+                      );
+                    })()}
+                  </div>
+                  {empUsers.length > 0 && (
+                    <span
+                      className="text-[10px] text-emerald-800 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-100 self-end whitespace-nowrap"
+                      title="Số NV sau bước công ty + phòng ban (trước ô tìm kiếm)"
+                    >
+                      {empUsers.length} NV
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Bộ lọc phụ: Tìm nhanh + Trạng thái */}
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-0.5 flex-1 min-w-[14rem]">
+                <label className="text-[10px] text-gray-500 font-semibold">Tìm nhanh trong bảng kết quả</label>
+                <div className="relative">
+                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-400" />
+                  <input
+                    className="w-full h-9 border border-gray-200 rounded-lg pl-8 pr-3 py-1.5 text-xs bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    placeholder="Tên hoặc email"
+                    value={empFilter.q}
+                    onChange={(e) => setEmpFilter({ ...empFilter, q: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[10px] text-gray-500 font-semibold">Trạng thái</label>
+                <select
+                  className="h-9 w-44 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer"
+                  value={empFilter.only}
+                  onChange={(e) => setEmpFilter({ ...empFilter, only: e.target.value })}
+                >
+                  <option value="">Tất cả</option>
+                  <option value="issued">Đã có chứng nhận</option>
+                  <option value="missing">Chưa có chứng nhận</option>
+                  <option value="eligible">Đã đủ điều kiện (chưa cấp)</option>
+                </select>
+              </div>
+              {(empFilter.company_id || empFilter.department_id || empFilter.user_id || empFilter.q || empFilter.only || empUserSearch) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEmpFilter({ q: '', only: '', company_id: '', department_id: '', user_id: '' });
+                    setEmpUserSearch('');
+                  }}
+                  className="h-9 inline-flex items-center gap-1 px-3 text-xs text-gray-600 hover:text-violet-700 border border-gray-200 hover:border-violet-300 rounded-lg bg-white"
+                >
+                  <X className="h-3.5 w-3.5" />
+                  Xoá bộ lọc
+                </button>
+              )}
+            </div>
+          </div>
+
+          {!empCategoryId ? (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 text-center text-sm text-amber-800">
+              Hãy chọn một khoá học để xem danh sách nhân viên và trạng thái chứng nhận.
+            </div>
+          ) : empLoading ? (
+            <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-violet-600" /></div>
+          ) : !empData ? null : (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="bg-white border rounded-2xl p-4">
+                  <p className="text-xs text-gray-500 uppercase">Tổng nhân viên</p>
+                  <p className="text-2xl font-bold">{empData.total_employees || 0}</p>
+                </div>
+                <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4">
+                  <p className="text-xs text-emerald-700 uppercase">Đã có chứng nhận</p>
+                  <p className="text-2xl font-bold text-emerald-700">
+                    {empData.employees.filter((e) => e.state === 'issued').length}
+                  </p>
+                </div>
+                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
+                  <p className="text-xs text-amber-700 uppercase">Đủ điều kiện</p>
+                  <p className="text-2xl font-bold text-amber-700">
+                    {empData.employees.filter((e) => e.state === 'eligible').length}
+                  </p>
+                </div>
+                <div className="bg-gray-50 border rounded-2xl p-4">
+                  <p className="text-xs text-gray-500 uppercase">Bài học / Bài tập</p>
+                  <p className="text-2xl font-bold">{empData.total_lessons} / {empData.total_exercises}</p>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl border overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+                    <tr>
+                      <th className="px-4 py-3 text-left">Nhân viên</th>
+                      <th className="px-4 py-3 text-left">Vai trò</th>
+                      <th className="px-4 py-3 text-left">Bài học</th>
+                      <th className="px-4 py-3 text-left">Bài tập</th>
+                      <th className="px-4 py-3 text-left">Hoạt động cuối</th>
+                      <th className="px-4 py-3 text-left">Chứng nhận</th>
+                      <th className="px-4 py-3"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {empData.employees.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-12 text-center text-gray-400">Không có nhân viên phù hợp</td>
+                      </tr>
+                    ) : empData.employees.map((emp) => (
+                      <tr key={emp.user.id} className="border-t hover:bg-gray-50">
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-gray-900">{emp.user.full_name}</div>
+                          <div className="text-xs text-gray-500">{emp.user.email}</div>
+                          {(emp.user.company?.short_name || emp.user.company?.name || emp.user.department?.name) && (
+                            <div className="text-[11px] text-gray-400 mt-0.5">
+                              {emp.user.company?.short_name || emp.user.company?.name || ''}
+                              {emp.user.company && emp.user.department ? ' · ' : ''}
+                              {emp.user.department?.name || ''}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-xs">
+                          <span className="px-2 py-1 bg-gray-100 rounded">{emp.user.role}</span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <div className="w-20 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                              <div className="h-full bg-blue-500" style={{ width: `${emp.lesson_rate}%` }} />
+                            </div>
+                            <span className="text-xs font-medium">{emp.completed_lessons}/{empData.total_lessons}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <div className="w-20 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                              <div className="h-full bg-purple-500" style={{ width: `${emp.exercise_rate}%` }} />
+                            </div>
+                            <span className="text-xs font-medium">{emp.passed_exercises}/{empData.total_exercises}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-500">
+                          {emp.last_activity_at ? new Date(emp.last_activity_at).toLocaleDateString('vi-VN') : '—'}
+                        </td>
+                        <td className="px-4 py-3">
+                          {emp.state === 'issued' && emp.certificate ? (
+                            <Link
+                              to={`/knowledge/certificates/${emp.certificate.id}`}
+                              className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-100 text-emerald-800 rounded text-xs font-medium"
+                            >
+                              <Award className="h-3 w-3" />
+                              {emp.certificate.certificate_number}
+                            </Link>
+                          ) : emp.state === 'revoked' ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-1 bg-red-100 text-red-700 rounded text-xs">
+                              Đã thu hồi
+                            </span>
+                          ) : emp.state === 'eligible' ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-1 bg-amber-100 text-amber-800 rounded text-xs">
+                              Đủ điều kiện
+                            </span>
+                          ) : emp.state === 'in_progress' ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs">
+                              Đang học
+                            </span>
+                          ) : (
+                            <span className="text-xs text-gray-400">Chưa bắt đầu</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {emp.state === 'issued' && emp.certificate ? (
+                            <button
+                              type="button"
+                              onClick={() => revokeCertificate(emp.certificate.id)}
+                              className="text-xs text-red-600 hover:underline"
+                            >
+                              Thu hồi
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => grantCertificate(emp.user.email)}
+                              className="text-xs text-violet-600 hover:underline"
+                              title="Hoàn thành tất cả bài học + bài tập + cấp chứng nhận"
+                            >
+                              Cấp thủ công
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </div>
       )}

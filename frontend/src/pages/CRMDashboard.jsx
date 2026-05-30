@@ -656,6 +656,9 @@ export default function CRMDashboard() {
   const [wonAssignUser, setWonAssignUser] = useState('');
   const [wonAssigning, setWonAssigning] = useState(false);
   const [wonAssignError, setWonAssignError] = useState('');
+  const [wonAssignRegion, setWonAssignRegion] = useState('');
+  const [wonAssignRegions, setWonAssignRegions] = useState([]);
+  const [wonAssignRegionsLoading, setWonAssignRegionsLoading] = useState(false);
   const [pinnedTab, setPinnedTab] = useState(() => P?.pinnedTab ?? (localStorage.getItem('crm_pinned_tab') || ''));
   /** Trạng thái đồng bộ ngầm (silent refetch): hiển thị "Cập nhật lúc HH:mm" thay vì spinner */
   const [syncing, setSyncing] = useState(false);
@@ -1659,6 +1662,35 @@ export default function CRMDashboard() {
     const ok = companyRegions.some((reg) => String(reg.id) === String(filterRegion));
     if (!ok) setFilterRegion('');
   }, [companyRegions, filterRegion]);
+
+  /** Tải danh sách khu vực CRM cho modal "Chuyển sang Deal" theo công ty của lead. */
+  useEffect(() => {
+    if (!wonAssignModal || !wonAssignLeadId) return undefined;
+    const lead = allLeads.find((l) => l.id === wonAssignLeadId);
+    const cid = lead?.company_id ? String(lead.company_id) : '';
+    if (!cid) {
+      setWonAssignRegions([]);
+      return undefined;
+    }
+    let cancel = false;
+    setWonAssignRegionsLoading(true);
+    api
+      .get('/crm/company-regions', { params: { company_id: cid, for_module: 'crm' } })
+      .then((r) => {
+        if (cancel) return;
+        const list = Array.isArray(r.data) ? r.data : [];
+        setWonAssignRegions(list.filter((x) => x.is_active !== false));
+      })
+      .catch(() => {
+        if (!cancel) setWonAssignRegions([]);
+      })
+      .finally(() => {
+        if (!cancel) setWonAssignRegionsLoading(false);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [wonAssignModal, wonAssignLeadId, allLeads]);
 
   const companyHasNoPipeline = useMemo(() => {
     if (!dashboardScopeCompanyId) return false;
@@ -2804,6 +2836,9 @@ export default function CRMDashboard() {
         const lead = allLeads.find((l) => l.id === leadId);
         setWonAssignLeadId(leadId);
         setWonAssignUser(lead?.assigned_to || lead?.lead_owner_id || '');
+        setWonAssignRegion(lead?.region_id ? String(lead.region_id) : '');
+        setWonAssignRegions([]);
+        setWonAssignRegionsLoading(false);
         setWonAssignModal(true);
         return;
       }
@@ -2941,6 +2976,7 @@ export default function CRMDashboard() {
 
   const handleWonAssignConvert = async () => {
     if (!wonAssignUser) { setWonAssignError('Vui lòng chọn nhân viên phụ trách'); return; }
+    if (!wonAssignRegion) { setWonAssignError('Vui lòng chọn khu vực'); return; }
     setWonAssigning(true);
     setWonAssignError('');
     const lead = allLeads.find(l => l.id === wonAssignLeadId);
@@ -2948,6 +2984,7 @@ export default function CRMDashboard() {
       await api.post(`/crm/leads/${wonAssignLeadId}/convert-to-deal`, {
         assigned_to: wonAssignUser,
         company_id: lead?.company_id || undefined,
+        region_id: wonAssignRegion,
       });
       setWonAssignModal(false);
       const snap = loadCrmPipelineSnapshot();
@@ -4223,6 +4260,37 @@ export default function CRMDashboard() {
                 </div>
               )}
 
+              <div className="mb-3">
+                <label className="text-xs font-semibold text-gray-700 mb-1.5 block">
+                  📍 Khu vực <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={wonAssignRegion}
+                  onChange={(e) => { setWonAssignRegion(e.target.value); setWonAssignError(''); }}
+                  disabled={!wonLead?.company_id || wonAssignRegionsLoading || wonAssignRegions.length === 0}
+                  className="w-full h-10 px-3 border border-gray-200 rounded-xl text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                >
+                  <option value="">
+                    {!wonLead?.company_id
+                      ? '— Lead chưa có công ty —'
+                      : wonAssignRegionsLoading
+                        ? 'Đang tải khu vực…'
+                        : wonAssignRegions.length === 0
+                          ? '— Công ty chưa có khu vực —'
+                          : '— Chọn khu vực —'}
+                  </option>
+                  {wonAssignRegions.map((reg) => (
+                    <option key={reg.id} value={reg.id}>{reg.name}</option>
+                  ))}
+                </select>
+                {!wonLead?.company_id && (
+                  <p className="text-[10px] text-amber-500 mt-1">⚠️ Lead chưa có công ty — vào chi tiết Lead để gán công ty trước</p>
+                )}
+                {wonLead?.company_id && !wonAssignRegionsLoading && wonAssignRegions.length === 0 && (
+                  <p className="text-[10px] text-amber-500 mt-1">⚠️ Công ty chưa có khu vực — vào CRM/Khu vực để thêm trước</p>
+                )}
+              </div>
+
               <div className="mb-4">
                 <label className="text-xs font-semibold text-gray-700 mb-1.5 block">👤 Người phụ trách deal</label>
                 <EmployeePicker
@@ -4254,7 +4322,7 @@ export default function CRMDashboard() {
                 </button>
                 <button
                   onClick={handleWonAssignConvert}
-                  disabled={wonAssigning || !wonAssignUser || !wonLead?.customer_id}
+                  disabled={wonAssigning || !wonAssignUser || !wonAssignRegion || !wonLead?.customer_id}
                   className="flex-1 h-10 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {wonAssigning ? (
