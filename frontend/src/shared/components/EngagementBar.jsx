@@ -160,7 +160,7 @@ export function PostReactionActions({
           type="button"
           onClick={() => onShare?.()}
           className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-medium border-l border-slate-100 text-slate-600 hover:bg-slate-200/70 transition-colors"
-          title="Chia sẻ hoặc sao chép liên kết"
+          title="Chia sẻ bài viết qua tin nhắn"
         >
           <Share2 className="w-5 h-5" />
           Chia sẻ

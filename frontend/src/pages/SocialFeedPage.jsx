@@ -25,6 +25,7 @@ const MAX_ATTACHMENTS = 12;
 import ReactionCircle from '../shared/components/ReactionCircle';
 import { PostReactionActions, ReactionSummary } from '../shared/components/EngagementBar';
 import { REACTION_OPTIONS, REACTION_EMOJI } from '../shared/lib/reactions';
+import ShareToMessengerModal from '../components/ShareToMessengerModal';
 
 function normalizeSocialPost(p) {
   if (!p || typeof p !== 'object') return p;
@@ -1166,6 +1167,7 @@ export default function SocialFeedPage() {
   const [audienceSearch, setAudienceSearch] = useState('');
   const [userSuggest, setUserSuggest] = useState([]);
   const [toast, setToast] = useState(null);
+  const [sharePost, setSharePost] = useState(null);
   const audienceSearchTimer = useRef(null);
   const [memberSearchQ, setMemberSearchQ] = useState('');
   const [memberSearchHits, setMemberSearchHits] = useState([]);
@@ -1583,25 +1585,9 @@ export default function SocialFeedPage() {
     }
   };
 
-  const handleSharePost = async (post) => {
-    const url = `${window.location.origin}/social?post=${post.id}`;
-    const snippet = String(post.body || '').trim().slice(0, 120);
-    const shareTitle = snippet || 'Bài viết bảng tin nội bộ';
-    try {
-      if (typeof navigator.share === 'function') {
-        await navigator.share({ title: shareTitle, text: snippet || shareTitle, url });
-        setToast('Đã chia sẻ bài viết.');
-        return;
-      }
-    } catch (e) {
-      if (e?.name === 'AbortError') return;
-    }
-    try {
-      await navigator.clipboard.writeText(url);
-      setToast('Đã sao chép liên kết bài viết.');
-    } catch {
-      setToast(url);
-    }
+  const handleSharePost = (post) => {
+    if (!post?.id) return;
+    setSharePost(post);
   };
 
   const handleHideCompany = async (postId) => {
@@ -1845,6 +1831,13 @@ export default function SocialFeedPage() {
         <div className="fixed bottom-6 left-1/2 z-[120] -translate-x-1/2 rounded-full bg-gray-900/90 backdrop-blur px-4 py-2 text-sm text-white shadow-xl ring-1 ring-white/10">
           {toast}
         </div>
+      )}
+      {sharePost && (
+        <ShareToMessengerModal
+          post={sharePost}
+          onClose={() => setSharePost(null)}
+          onSent={() => setToast('Đã gửi qua tin nhắn.')}
+        />
       )}
       <div className="max-w-[1280px] mx-auto px-3 py-4 md:py-6">
         {/* ──────────── HERO HEADER — Cover gradient + KPI tiles + 2 buttons ──────────── */}
