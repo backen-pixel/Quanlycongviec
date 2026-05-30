@@ -800,7 +800,7 @@ r.put('/:id', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
-// ═══ DEACTIVATE STAFF ═══
+// ═══ DEACTIVATE STAFF (soft delete) ═══
 r.delete('/:id', async (req, res) => {
   try {
     if (!['admin', 'manager'].includes(req.user.role)) {
@@ -809,6 +809,62 @@ r.delete('/:id', async (req, res) => {
     await supabase.from('users').update({ is_active: false }).eq('id', req.params.id);
     res.json({ message: 'Đã vô hiệu hóa' });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+// ═══ HARD DELETE STAFF — Xóa vĩnh viễn (admin only) ═══
+// NULL hoá các trường role/created_by ở các bảng nghiệp vụ, DELETE log/comment riêng,
+// rồi DELETE users (cascade tự xử lý các bảng có ON DELETE CASCADE).
+// Triển khai qua Postgres function `delete_user_hard` (xem migration 275).
+r.delete('/:id/permanent', async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Chỉ admin mới được xóa vĩnh viễn' });
+    }
+    const targetId = req.params.id;
+    if (!targetId) return res.status(400).json({ error: 'Thiếu id' });
+    if (String(targetId) === String(req.user.id || req.user.userId)) {
+      return res.status(400).json({ error: 'Không thể tự xóa tài khoản của chính bạn' });
+    }
+
+    const { data: target, error: tErr } = await supabase
+      .from('users')
+      .select('id, email, full_name, role')
+      .eq('id', targetId)
+      .single();
+    if (tErr || !target) return res.status(404).json({ error: 'Không tìm thấy nhân viên' });
+
+    // Cảnh báo nếu xóa admin cuối cùng
+    if (target.role === 'admin') {
+      const { count } = await supabase
+        .from('users')
+        .select('id', { count: 'exact', head: true })
+        .eq('role', 'admin')
+        .eq('is_active', true);
+      if ((count || 0) <= 1) {
+        return res.status(400).json({ error: 'Không thể xóa admin cuối cùng còn hoạt động' });
+      }
+    }
+
+    const { data, error } = await supabase.rpc('delete_user_hard', { p_user_id: targetId });
+    if (error) {
+      console.error('[users DELETE permanent]', error);
+      const msg = error.message || '';
+      if (msg.includes('delete_user_hard') && msg.toLowerCase().includes('does not exist')) {
+        return res.status(500).json({
+          error: 'Chưa cài đặt function `delete_user_hard`. Chạy migration database/275_delete_user_hard.sql trước.',
+        });
+      }
+      return res.status(500).json({ error: msg || 'Lỗi xóa nhân viên' });
+    }
+
+    res.json({
+      message: `Đã xóa vĩnh viễn nhân viên «${target.full_name || target.email}»`,
+      data,
+    });
+  } catch (e) {
+    console.error('[users DELETE permanent]', e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
 });
 
 module.exports = r;

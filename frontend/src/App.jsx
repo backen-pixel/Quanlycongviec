@@ -394,6 +394,7 @@ export default function App() {
             <Route path="/settings/ai-chat-bot" element={<RequireCrmElevated><AiChatBotSettingsPage /></RequireCrmElevated>} />
             <Route path="/settings/request-monitor" element={<RequestMonitorPage />} />
             <Route path="/admin/trash" element={<UnifiedTrashPage />} />
+            <Route path="/trash" element={<Navigate to="/admin/trash?tab=crm" replace />} />
             <Route path="/crm/customers" element={<CRMCustomersPage />} />
             <Route path="/crm/tasks" element={<CRMTasksPage />} />
             <Route path="/crm/assignments" element={<CRMAssignmentsPage />} />
