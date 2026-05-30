@@ -1,9 +1,20 @@
 const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
+const { responseCache, invalidateTags } = require('../middleware/responseCache');
 
 const r = Router();
 r.use(auth);
+
+r.use((req, res, next) => {
+  if (req.method === 'GET') return next();
+  const origJson = res.json.bind(res);
+  res.json = function orgtreeInvalidate(body) {
+    void invalidateTags(['orgtree']);
+    return origJson(body);
+  };
+  next();
+});
 
 // ═══════════════════════════════════════════════
 // QUẢN LÝ NHIỆM VỤ THEO KHỐI (DIVISION)
@@ -13,7 +24,7 @@ r.use(auth);
  * GET /api/divisions
  * Lấy danh sách tất cả các Khối
  */
-r.get('/', async (req, res) => {
+r.get('/', responseCache({ ttl: 120, scope: 'company', tags: ['orgtree'] }), async (req, res) => {
   try {
     const { data: levelData } = await supabase
       .from('ecosystem_levels')

@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
+const { responseCache, invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
 const PDFDocument = require('pdfkit');
 const multer = require('multer');
 const XLSX = require('xlsx');
@@ -610,6 +611,19 @@ const { onLeadWon = async () => null, onOrderConfirmed = async () => null, onQuo
 const r = Router();
 r.use(auth);
 
+// Auto-invalidate response cache cho mọi mutation CRM
+r.use((req, res, next) => {
+  if (req.method === 'GET') return next();
+  const origJson = res.json.bind(res);
+  res.json = function crmInvalidate(body) {
+    if (res.statusCode < 400) {
+      void rcInvalidateTags(['crm:list', 'crm:live']);
+    }
+    return origJson(body);
+  };
+  next();
+});
+
 // Debug: xác nhận backend đang chạy đúng bản code
 // GET /api/crm/_version
 r.get('/_version', (req, res) => {
@@ -894,7 +908,7 @@ async function computeCrmLiveVersionMs(req, effectiveCompanyId, date_from, date_
 }
 
 /** GET /crm/live-version — poll nhẹ cho dashboard (chỉ số v = ms) */
-r.get('/live-version', async (req, res) => {
+r.get('/live-version', responseCache({ ttl: 5, scope: 'company', tags: ['crm:live'] }), async (req, res) => {
   try {
     const { date_from, date_to } = req.query;
     const rawC = req.query.company_id && String(req.query.company_id).trim() ? String(req.query.company_id).trim() : null;
@@ -2094,7 +2108,7 @@ r.put('/settings/deal-stage-report-buckets', async (req, res) => {
   }
 });
 
-r.get('/dashboard', async (req, res) => {
+r.get('/dashboard', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
   try {
     const { type = 'lead', company_id, date_from, date_to } = req.query; // 'lead' or 'deal'
     const rawC = company_id && String(company_id).trim() ? String(company_id).trim() : null;
@@ -3267,7 +3281,7 @@ r.post('/leads/:id/zalo-notify-send', async (req, res) => {
 // EMPLOYEES BY COMPANY — Lọc nhân viên theo công ty của user đăng nhập
 // Chỉ hiển thị nhân viên thuộc phòng ban kinh doanh (sales) của công ty đó
 // ═══════════════════════════════════════════════════════════════════════════
-r.get('/employees-by-company', async (req, res) => {
+r.get('/employees-by-company', responseCache({ ttl: 120, scope: 'company', tags: ['orgtree'] }), async (req, res) => {
   try {
     const userId = req.user.userId;
     const { company_id: queryCompanyId } = req.query;
@@ -4704,7 +4718,7 @@ r.get('/leads/picker', async (req, res) => {
   }
 });
 
-r.get('/leads', async (req, res) => {
+r.get('/leads', responseCache({ ttl: 15, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
   try {
     const type = req.query.type || 'lead';
     const forcedDealSelf = type === 'deal' && req.user?.userId && !userSeesAllCrmDealsForScope(req.user);
@@ -12420,7 +12434,7 @@ const FOLLOWUP_TIME_BUCKETS = [
   { key: 'w4', label: '28–34 ngày trước', daysFrom: 34, daysTo: 28 },
 ];
 
-r.get('/followup-care/notifications', async (req, res) => {
+r.get('/followup-care/notifications', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
   try {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });

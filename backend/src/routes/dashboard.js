@@ -3,6 +3,11 @@ const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { lookupCache } = require('../helpers/ttlCache');
 const {
+  pgDashboardNotificationStats,
+  pgDashboardNotificationsList,
+} = require('../helpers/pgHotQueries');
+const { responseCache, invalidateTags } = require('../middleware/responseCache');
+const {
   isExpiryDeadlineNotificationType,
   EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST,
 } = require('../helpers/notificationOperationalFilter');
@@ -65,8 +70,13 @@ function isProjectModuleNotification(n) {
   return false;
 }
 
-r.get('/', async (req, res) => {
+r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['notifications'] }), async (req, res) => {
   try {
+    const pgResult = await pgDashboardNotificationStats(req.user.userId);
+    if (pgResult) {
+      return res.json(pgResult);
+    }
+
     const { data: rows, error } = await supabase
       .from('notifications')
       .select('type, entity_type, metadata')
@@ -114,9 +124,21 @@ r.get('/', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // GET /dashboard/notifications — List notifications for current user
 // ═══════════════════════════════════════════════════════════════════════════
-r.get('/notifications', async (req, res) => {
+r.get('/notifications', responseCache({ ttl: 20, scope: 'user', tags: ['notifications'] }), async (req, res) => {
   try {
     const { unread, limit = 50, channel, from_date: fromDate, to_date: toDate } = req.query;
+
+    const pgResult = await pgDashboardNotificationsList(req.user.userId, {
+      unread,
+      limit,
+      channel,
+      fromDate,
+      toDate,
+    });
+    if (pgResult) {
+      return res.json(pgResult);
+    }
+
     const lim = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100);
     const ch = channel ? String(channel).toLowerCase() : '';
     const fetchCap = Math.min(lim * 5, 300);
@@ -245,6 +267,7 @@ r.put('/notifications/read-all', async (req, res) => {
 
     const { error } = await q;
     if (error) return res.status(500).json({ error: error.message });
+    await invalidateTags(['notifications', `user:${req.user.userId}`]);
     res.json({ ok: true });
   } catch (e) {
     console.error('Dashboard mark all read error:', e);
@@ -264,6 +287,7 @@ r.put('/notifications/:id/read', async (req, res) => {
       .eq('user_id', req.user.userId);
     
     if (error) return res.status(500).json({ error: error.message });
+    await invalidateTags(['notifications', `user:${req.user.userId}`]);
     res.json({ ok: true });
   } catch (e) {
     console.error('Dashboard mark read error:', e);

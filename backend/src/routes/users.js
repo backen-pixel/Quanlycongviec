@@ -8,9 +8,22 @@ const { syncUserOrgToEcosystem } = require('../helpers/ecosystemSync');
 const { recordUserPing, getPresenceForUserIds, listUsersWithActivity, ONLINE_THRESHOLD_MS } = require('../helpers/userPresence');
 const { getCurrentLocationForUser } = require('../helpers/userCurrentLocation');
 const { parseScopeFromQuery } = require('../helpers/scopeQueryParams');
+const { pgUsersActivityStats } = require('../helpers/pgHotQueries');
+const { responseCache, invalidateTags } = require('../middleware/responseCache');
 
 const r = Router();
 r.use(auth);
+
+r.use((req, res, next) => {
+  if (req.method === 'GET') return next();
+  if (req.path === '/presence' || req.path === '/ping') return next();
+  const origJson = res.json.bind(res);
+  res.json = function usersInvalidate(body) {
+    void invalidateTags(['users', 'presence']);
+    return origJson(body);
+  };
+  next();
+});
 
 // ════════════════════════════════════════════════════
 // STATIC ROUTES FIRST (before /:id param catch-all)
@@ -139,6 +152,7 @@ r.post('/ping', async (req, res) => {
         error: result.error || 'Không ghi được ping — chạy migration database/67_user_activity_and_messenger_pins.sql',
       });
     }
+    void invalidateTags(['users', 'presence']);
     res.json({ ok: true, persisted: true, last_ping_at: result.last_ping_at });
   } catch (e) {
     console.warn('[users/ping]', e.message);
@@ -182,7 +196,7 @@ r.delete('/me/location', async (req, res) => {
 });
 
 /** Danh sách vị trí nhân viên (cho bản đồ admin) */
-r.get('/locations', async (req, res) => {
+r.get('/locations', responseCache({ ttl: 30, scope: 'role', tags: ['users', 'presence'] }), async (req, res) => {
   try {
     let { company_id: companyId, department_id: departmentId, search } = req.query;
     const role = req.user.role;
@@ -217,7 +231,7 @@ r.get('/locations', async (req, res) => {
 });
 
 /** Danh sách nhân viên + ai đang hoạt động (ping trong 2 phút) */
-r.get('/activity', async (req, res) => {
+r.get('/activity', responseCache({ ttl: 30, scope: 'role', tags: ['users', 'presence'] }), async (req, res) => {
   try {
     const scope = parseScopeFromQuery(req, { forceUserCompany: true });
     const { online_only: onlineOnly } = req.query;
@@ -227,9 +241,18 @@ r.get('/activity', async (req, res) => {
       search: scope.search || '',
       onlineOnly: onlineOnly === '1' || onlineOnly === 'true',
     });
+
+    const pgStats = await pgUsersActivityStats({
+      companyId: scope.companyId,
+      departmentId: scope.departmentId,
+    });
+    const mergedStats = pgStats
+      ? { ...stats, online: pgStats.online, total: pgStats.total }
+      : stats;
+
     res.json({
       users,
-      stats,
+      stats: mergedStats,
       online_threshold_minutes: Math.round(ONLINE_THRESHOLD_MS / 60000),
     });
   } catch (e) {

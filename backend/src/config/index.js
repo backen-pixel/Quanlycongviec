@@ -12,6 +12,10 @@ module.exports = {
   supabaseAnonKey: process.env.SUPABASE_ANON_KEY,
   supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
   redisUrl: process.env.REDIS_URL || '',
+  supabaseDbUrl: process.env.SUPABASE_DB_URL || '',
+  supabaseDbDirectUrl: process.env.SUPABASE_DB_DIRECT_URL || '',
+  pgPoolDisabled: process.env.PG_POOL_DISABLED === '1',
+  responseCacheDisabled: process.env.RESPONSE_CACHE_DISABLED === '1',
   // URL gốc của frontend web — dùng để tạo deep-link trong tin nhắn AI / push.
   // VD: https://crm.tubeppro.com  hoặc  http://localhost:5173 (dev).
   frontendUrl:

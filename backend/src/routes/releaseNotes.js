@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { notifyMultiple } = require('../helpers/notifications');
+const { responseCache, invalidateTags } = require('../middleware/responseCache');
 const r = Router();
 
 r.use(auth);
@@ -9,7 +10,7 @@ r.use(auth);
 const NOTE_SELECT = `*, creator:users!release_notes_created_by_fkey(id, full_name, avatar)`;
 
 // GET /release-notes — Danh sách (published cho user, tất cả cho admin)
-r.get('/', async (req, res) => {
+r.get('/', responseCache({ ttl: 120, scope: 'user', tags: ['releaseNotes'] }), async (req, res) => {
   try {
     const { all } = req.query;
     let q = supabase.from('release_notes').select(NOTE_SELECT, { count: 'exact' });
@@ -39,7 +40,7 @@ r.get('/', async (req, res) => {
 });
 
 // GET /release-notes/unread-count
-r.get('/unread-count', async (req, res) => {
+r.get('/unread-count', responseCache({ ttl: 60, scope: 'user', tags: ['releaseNotes'] }), async (req, res) => {
   try {
     const { data: published } = await supabase.from('release_notes')
       .select('id').eq('is_published', true);
@@ -57,7 +58,7 @@ r.get('/unread-count', async (req, res) => {
 });
 
 // GET /release-notes/login-banner — chỉ bản cập nhật mới nhất (đã xuất bản); popup nếu user chưa đọc đúng bản đó (không xếp hàng các bản cũ)
-r.get('/login-banner', async (req, res) => {
+r.get('/login-banner', responseCache({ ttl: 120, scope: 'user', tags: ['releaseNotes'] }), async (req, res) => {
   try {
     const { data: rows, error } = await supabase.from('release_notes')
       .select(NOTE_SELECT)
@@ -134,6 +135,7 @@ r.post('/', async (req, res) => {
       } catch (ne) { console.warn('[RELEASE] Notification error:', ne.message); }
     }
 
+    await invalidateTags(['releaseNotes']);
     res.status(201).json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -171,6 +173,7 @@ r.put('/:id', async (req, res) => {
     const { data, error } = await supabase.from('release_notes')
       .update(update).eq('id', req.params.id).select(NOTE_SELECT).single();
     if (error) throw error;
+    await invalidateTags(['releaseNotes', `user:${req.user.userId}`]);
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -181,6 +184,7 @@ r.delete('/:id', async (req, res) => {
     await supabase.from('release_note_reads').delete().eq('release_note_id', req.params.id);
     const { error } = await supabase.from('release_notes').delete().eq('id', req.params.id);
     if (error) throw error;
+    await invalidateTags(['releaseNotes']);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -191,6 +195,7 @@ r.put('/:id/mark-read', async (req, res) => {
     await supabase.from('release_note_reads').upsert({
       release_note_id: req.params.id, user_id: req.user.userId,
     }, { onConflict: 'release_note_id,user_id' });
+    await invalidateTags(['releaseNotes', `user:${req.user.userId}`]);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

@@ -1,11 +1,22 @@
 const express = require('express');
 const { supabase } = require('../config/supabase');
+const { responseCache, invalidateTags } = require('../middleware/responseCache');
 const r = express.Router();
+
+r.use((req, res, next) => {
+  if (req.method === 'GET') return next();
+  const origJson = res.json.bind(res);
+  res.json = function permissionsInvalidate(body) {
+    void invalidateTags(['permissions']);
+    return origJson(body);
+  };
+  next();
+});
 
 // ═══════════════════════════════════════════════
 // PERMISSIONS - Get all available permissions
 // ═══════════════════════════════════════════════
-r.get('/permissions', async (req, res) => {
+r.get('/permissions', responseCache({ ttl: 300, scope: 'global', tags: ['permissions'] }), async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('permissions')
@@ -35,7 +46,7 @@ r.get('/permissions', async (req, res) => {
 // ═══════════════════════════════════════════════
 
 // Get all roles with permission counts
-r.get('/roles', async (req, res) => {
+r.get('/roles', responseCache({ ttl: 300, scope: 'global', tags: ['permissions'] }), async (req, res) => {
   try {
     const { data: roles, error } = await supabase
       .from('roles')

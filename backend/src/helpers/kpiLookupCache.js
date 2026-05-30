@@ -88,15 +88,31 @@ async function getCompanyDepartmentIdsCached(companyId) {
 
 function invalidateKpiDefinitions() {
   kpiLookupCache.invalidateRemote('defs').catch(() => {});
+  try {
+    const { invalidateTags } = require('../middleware/responseCache');
+    void invalidateTags(['kpi']);
+  } catch { /* ignore */ }
 }
 function invalidateKpiBusinessHours() {
   kpiLookupCache.invalidateRemote('bizhours:', { isPrefix: true }).catch(() => {});
+  try {
+    const { invalidateTags } = require('../middleware/responseCache');
+    void invalidateTags(['kpi']);
+  } catch { /* ignore */ }
 }
 function invalidateKpiHolidays() {
   kpiLookupCache.invalidateRemote('holidays:', { isPrefix: true }).catch(() => {});
+  try {
+    const { invalidateTags } = require('../middleware/responseCache');
+    void invalidateTags(['kpi']);
+  } catch { /* ignore */ }
 }
 function invalidateAllKpiLookup() {
   kpiLookupCache.invalidateRemote(null).catch(() => {});
+  try {
+    const { invalidateTags } = require('../middleware/responseCache');
+    void invalidateTags(['kpi']);
+  } catch { /* ignore */ }
 }
 
 module.exports = {

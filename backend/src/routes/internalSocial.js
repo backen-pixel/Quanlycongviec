@@ -3,9 +3,20 @@ const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { isCrmSystemAdminUser } = require('../helpers/crmAccessRoles');
 const { emitNotifyBadge } = require('../helpers/notifyBadge');
+const { responseCache, invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
 
 const r = Router();
 r.use(auth);
+
+r.use((req, res, next) => {
+  if (req.method === 'GET') return next();
+  const origJson = res.json.bind(res);
+  res.json = function internalSocialInvalidate(body) {
+    if (res.statusCode < 400) void rcInvalidateTags(['internal-social']);
+    return origJson(body);
+  };
+  next();
+});
 
 const MAX_BODY = 8000;
 const MAX_COMMENT = 4000;
@@ -644,7 +655,7 @@ async function upsertLastRead(userId, companyId) {
 }
 
 /** GET /api/internal-social/unread-count — badge sidebar */
-r.get('/unread-count', async (req, res) => {
+r.get('/unread-count', responseCache({ ttl: 30, scope: 'user', tags: ['internal-social'] }), async (req, res) => {
   try {
     const me = req.user.userId || req.user.id;
     const canMod = canModerate(req);

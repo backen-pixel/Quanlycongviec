@@ -4,7 +4,7 @@
  * Tài liệu: https://www.misa.vn/154989/
  */
 
-const axios = require('axios');
+const { externalAxios } = require('../config/httpAgents');
 const fs = require('fs');
 const path = require('path');
 const _envConfig = require('../config/misaConfig');
@@ -56,7 +56,7 @@ async function getMisaToken(config) {
     return _tokenCache.token;
   }
 
-  const resp = await axios.post(
+  const resp = await externalAxios.post(
     `${config.baseUrl}/auth/token`,
     {
       appid: config.appId,
@@ -220,7 +220,7 @@ async function publishInvoice(invoice, items, config) {
     InvoiceData: [invoiceData],
   };
 
-  const resp = await axios.post(
+  const resp = await externalAxios.post(
     `${config.baseUrl}/invoice`,
     payload,
     {
@@ -259,7 +259,7 @@ async function sendEmailInvoice(invoiceNo, email, customerName = '', config) {
 
   const token = await getMisaToken(config);
 
-  const resp = await axios.post(
+  const resp = await externalAxios.post(
     `${config.baseUrl}/invoice/sendemail`,
     {
       SendEmailDatas: [
@@ -296,7 +296,7 @@ async function getInvoiceStatus(refId, config) {
 
   const token = await getMisaToken(config);
 
-  const resp = await axios.get(`${config.baseUrl}/invoice/status`, {
+  const resp = await externalAxios.get(`${config.baseUrl}/invoice/status`, {
     params: { RefID: refId },
     headers: { Authorization: `Bearer ${token}` },
   });

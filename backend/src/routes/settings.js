@@ -8,6 +8,16 @@ try { misaService = require('../services/misaService'); } catch (e) { console.wa
 const r = Router();
 r.use(auth);
 
+r.use((req, res, next) => {
+  if (req.method === 'GET') return next();
+  const origJson = res.json.bind(res);
+  res.json = function settingsInvalidate(body) {
+    void invalidateTags(['settings']);
+    return origJson(body);
+  };
+  next();
+});
+
 const DATA_DIR = path.join(__dirname, '../../data');
 const COMPANY_FILE = path.join(DATA_DIR, 'company-info.json');
 const THEME_DIR = path.join(DATA_DIR, 'themes');
@@ -15,6 +25,7 @@ const THEME_DIR = path.join(DATA_DIR, 'themes');
 // Ensure theme dir exists
 if (!fs.existsSync(THEME_DIR)) fs.mkdirSync(THEME_DIR, { recursive: true });
 const defaultCompanyInfo = require('../config/companyInfo');
+const { responseCache, invalidateTags } = require('../middleware/responseCache');
 
 function getCompanyInfo() {
   try {
@@ -34,7 +45,7 @@ function saveCompanyInfo(data) {
 }
 
 // GET /api/settings/company
-r.get('/company', async (req, res) => {
+r.get('/company', responseCache({ ttl: 300, scope: 'global', tags: ['settings'] }), async (req, res) => {
   try {
     res.json(getCompanyInfo());
   } catch (e) {

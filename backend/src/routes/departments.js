@@ -7,6 +7,7 @@ const { requirePermission } = require('../middleware/newPermission');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { syncDepartmentToEcosystem, syncUserToEcosystem, removeUserFromEcosystem } = require('../helpers/ecosystemSync');
+const { responseCache, invalidateTags } = require('../middleware/responseCache');
 
 // Upload storage for department chat
 const uploadDir = 'uploads/dept-chat/';
@@ -21,6 +22,16 @@ const deptChatUpload = multer({
 
 const r = Router();
 r.use(auth);
+
+r.use((req, res, next) => {
+  if (req.method === 'GET') return next();
+  const origJson = res.json.bind(res);
+  res.json = function orgtreeInvalidate(body) {
+    void invalidateTags(['orgtree']);
+    return origJson(body);
+  };
+  next();
+});
 
 async function assertDivisionAllowedForCompany(companyId, divisionUnitId) {
   if (!companyId || !divisionUnitId) return { ok: true };
@@ -74,7 +85,7 @@ r.get('/my/list', async (req, res) => {
 });
 
 // LIST departments with member count
-r.get('/', async (req, res) => {
+r.get('/', responseCache({ ttl: 120, scope: 'company', tags: ['orgtree'] }), async (req, res) => {
   try {
     const { company_id, company_unit_id } = req.query;
     
