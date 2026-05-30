@@ -1,7 +1,7 @@
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
 import { useAuth } from '../lib/auth';
-import { isAdminLike } from '../lib/adminRole';
+import { isAdminLike, isStrictAdmin } from '../lib/adminRole';
 import NotificationCenter from './NotificationCenter';
 import SidebarTooltip from './SidebarTooltip';
 import { getInitials, avatarColor } from '../lib/utils';
@@ -184,7 +184,7 @@ const CRM_MENU_BOTTOM_GROUPS = [
       { to: '/crm/sources-settings', icon: Tags, label: 'Nguồn & phân loại', adminOnly: true },
       { to: '/crm/task-templates', icon: ListChecks, label: 'Bộ mẫu CRM', adminOnly: true },
       { to: '/crm/auto-project-config', icon: Settings, label: 'Auto tạo dự án', adminOnly: true },
-      { to: '/admin/trash', icon: Trash2, label: 'Thùng rác (tổng hợp)', adminOnly: true },
+      { to: '/admin/trash', icon: Trash2, label: 'Thùng rác (tổng hợp)', adminOnly: true, strictAdminOnly: true },
     ],
   },
   {
@@ -247,7 +247,7 @@ const SX_MENU_GROUPS = [
       { to: '/sx/pipeline-settings', icon: Settings, label: 'Pipeline xưởng' },
       { to: '/sx/task-templates', icon: ListChecks, label: 'Bộ mẫu nhiệm vụ xưởng' },
       { to: '/sx/handover-settings', icon: UserCog, label: 'Bàn giao CRM → SX', adminOnly: true },
-      { to: { pathname: '/admin/trash', search: '?tab=sx' }, icon: Trash2, label: 'Thùng rác SX', adminOnly: true },
+      { to: { pathname: '/admin/trash', search: '?tab=sx' }, icon: Trash2, label: 'Thùng rác SX', adminOnly: true, strictAdminOnly: true },
     ]
   },
 ];
@@ -302,7 +302,7 @@ const VC_MENU_GROUPS = [
       { to: '/vc/dashboard', icon: FolderKanban, label: 'Dự án vận chuyển' },
       { to: '/vc/teams', icon: Users, label: 'Quản lý Đội nhóm' },
       { to: '/vc/task-templates', icon: ListChecks, label: 'Bộ nhiệm vụ VC/LĐ' },
-      { to: { pathname: '/admin/trash', search: '?tab=vc' }, icon: Trash2, label: 'Thùng rác VC', adminOnly: true },
+      { to: { pathname: '/admin/trash', search: '?tab=vc' }, icon: Trash2, label: 'Thùng rác VC', adminOnly: true, strictAdminOnly: true },
     ]
   },
 ];
@@ -366,7 +366,7 @@ function SideLink({ to, icon: Icon, label, collapsed, end, badge, moduleContext 
   );
 }
 
-function MenuGroup({ group, collapsed, isAdmin, isExecutive, canAccessModule, userRole, updatesUnread = 0, assignmentsUnread = 0, socialUnread = 0 }) {
+function MenuGroup({ group, collapsed, isAdmin, isStrictAdminUser, isExecutive, canAccessModule, userRole, updatesUnread = 0, assignmentsUnread = 0, socialUnread = 0 }) {
   const [open, setOpen] = useState(true);
   const moduleContext = resolveGroupModuleContext(group);
 
@@ -377,6 +377,7 @@ function MenuGroup({ group, collapsed, isAdmin, isExecutive, canAccessModule, us
   // Filter items based on role + ecosystem module scope
   const items = group.items.filter((item) => {
     if (item.adminOnly && !isAdmin) return false;
+    if (item.strictAdminOnly && !isStrictAdminUser) return false;
     if (item.executiveOnly && !isExecutive) return false;
     if (item.moduleKey && canAccessModule && !canAccessModule(item.moduleKey)) return false;
     if (item.hideForRoles?.length && r && item.hideForRoles.map((x) => String(x).toLowerCase()).includes(r)) return false;
@@ -446,6 +447,7 @@ export default function Sidebar() {
   }, [location.pathname]);
 
   const isAdmin = isAdminLike(user) || user?.role === 'manager';
+  const isStrictAdminUser = isStrictAdmin(user);
   /** Sidebar CRM: role admin/sales_admin (admin hệ thống, admin công ty, sales_admin) thấy đủ mục cài đặt CRM; dữ liệu vẫn khóa theo API. */
   const isCrmMenuAdmin = isAdminLike(user);
   const isExecutive = ['admin', 'manager', 'director', 'supervisor', 'sales_admin'].includes(user?.role);
@@ -691,6 +693,7 @@ export default function Sidebar() {
                 group={CRM_MENU_TOP_GROUP}
                 collapsed={collapsed}
                 isAdmin={isAdmin}
+                isStrictAdminUser={isStrictAdminUser}
                 isExecutive={isExecutive}
                 canAccessModule={canAccessModule}
                 userRole={user?.role}
@@ -709,6 +712,7 @@ export default function Sidebar() {
                     group={group}
                     collapsed={collapsed}
                     isAdmin={isCrmMenuAdmin}
+                    isStrictAdminUser={isStrictAdminUser}
                     isExecutive={isExecutive}
                     canAccessModule={canAccessModule}
                     userRole={user?.role}
@@ -729,6 +733,7 @@ export default function Sidebar() {
                 group={group}
                 collapsed={collapsed}
                 isAdmin={isAdmin}
+                isStrictAdminUser={isStrictAdminUser}
                 isExecutive={isExecutive}
                 canAccessModule={canAccessModule}
                 userRole={user?.role}

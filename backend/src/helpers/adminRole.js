@@ -26,6 +26,11 @@ function isAdminLike(user) {
   return r === 'admin' || r === 'sales_admin';
 }
 
+/** Chỉ true với role `admin` (hệ thống hoặc admin công ty). */
+function isStrictAdmin(user) {
+  return normalizeRole(user?.role) === 'admin';
+}
+
 function isSystemAdmin(user) {
   return normalizeRole(user?.role) === 'admin' && !hasCompanyId(user);
 }
@@ -52,29 +57,23 @@ function isModuleAdmin(user, moduleKey) {
 }
 
 /**
- * Tab thùng rác gộp: crm | sx | vc
- * - crm: admin-like
- * - sx: admin-like hoặc production_admin
- * - vc: admin-like hoặc logistics_admin
+ * Tab thùng rác gộp (crm | sx | vc) — chỉ role `admin` (hệ thống / admin công ty)
+ * được vào trang Thùng rác và xem mọi tab module.
+ * Sales_admin, production_admin, logistics_admin, manager đều bị chặn.
  */
-function canViewTrashTab(user, tab) {
-  const t = String(tab || '').trim().toLowerCase();
-  if (isSystemAdmin(user) || isAdminLike(user)) return true;
-  if (t === 'crm' || t === '') return false;
-  if (t === 'sx') return isProductionAdmin(user);
-  if (t === 'vc') return isLogisticsAdmin(user);
-  return false;
+function canViewTrashTab(user /* , _tab */) {
+  return isStrictAdmin(user);
 }
 
 function canAccessTrash(user) {
-  if (isSystemAdmin(user) || isAdminLike(user)) return true;
-  return isProductionAdmin(user) || isLogisticsAdmin(user);
+  return isStrictAdmin(user);
 }
 
 module.exports = {
   normalizeRole,
   hasCompanyId,
   isAdminLike,
+  isStrictAdmin,
   isSystemAdmin,
   isCompanyScopedAdmin,
   isProductionAdmin,

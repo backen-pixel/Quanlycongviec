@@ -2,13 +2,16 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../lib/api';
 import Modal from '../components/Modal';
 import UserRolesModal from '../components/UserRolesModal';
-import { Plus, Search, Mail, Phone, Trash2, Edit, Users as UsersIcon, MoreVertical, Building2, Layers, UsersRound, Shield, MapPin, Camera } from 'lucide-react';
+import { useAuth } from '../lib/auth';
+import { Plus, Search, Mail, Phone, Trash2, Edit, Users as UsersIcon, MoreVertical, Building2, Layers, UsersRound, Shield, MapPin, Camera, AlertTriangle } from 'lucide-react';
 import { formatDate, getInitials, avatarColor } from '../lib/utils';
 
 const ROLES = { admin: 'Admin', manager: 'Quản lý', region_admin: 'Admin khu vực', sales_admin: 'Sales Admin', sales: 'Kinh doanh (SAE)', designer: 'Thiết kế', production: 'Sản xuất', driver: 'Tài xế', installer: 'Lắp đặt', customer_care: 'CSKH', staff: 'Nhân viên' };
 const ROLE_COLORS = { admin: 'bg-red-100 text-red-700', manager: 'bg-purple-100 text-purple-700', region_admin: 'bg-rose-100 text-rose-800', sales_admin: 'bg-indigo-100 text-indigo-700', sales: 'bg-blue-100 text-blue-700', designer: 'bg-pink-100 text-pink-700', production: 'bg-orange-100 text-orange-700', installer: 'bg-cyan-100 text-cyan-700', customer_care: 'bg-green-100 text-green-700', driver: 'bg-amber-100 text-amber-700', staff: 'bg-gray-100 text-gray-600' };
 
 export default function UsersPage() {
+  const { user: currentUser } = useAuth();
+  const isAdmin = currentUser?.role === 'admin';
   const [users, setUsers] = useState([]);
   const [stats, setStats] = useState({});
   const [departments, setDepartments] = useState([]);
@@ -25,6 +28,7 @@ export default function UsersPage() {
   const [showDetail, setShowDetail] = useState(null);
   const [menuUser, setMenuUser] = useState(null);
   const [showRolesModal, setShowRolesModal] = useState(null); // { userId, userName }
+  const [hardDeleteTarget, setHardDeleteTarget] = useState(null); // { id, full_name, email, role }
 
   const load = useCallback(() => {
     setLoading(true);
@@ -75,6 +79,12 @@ export default function UsersPage() {
     if (!confirm(`Vô hiệu hóa nhân viên "${name}"?`)) return;
     await api.delete(`/users/${id}`);
     setMenuUser(null); load();
+  };
+
+  const onHardDeleted = () => {
+    setHardDeleteTarget(null);
+    setMenuUser(null);
+    load();
   };
 
   return (
@@ -258,13 +268,25 @@ export default function UsersPage() {
                 {menuUser === u.id && (
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setMenuUser(null)} />
-                    <div className="absolute right-0 top-full mt-1 w-36 bg-white rounded-lg shadow-lg border z-50 py-1">
+                    <div className="absolute right-0 top-full mt-1 w-44 bg-white rounded-lg shadow-lg border z-50 py-1">
                       <button onClick={() => { setMenuUser(null); setShowRolesModal({ userId: u.id, userName: u.full_name }); }}
                         className="w-full px-3 py-2 text-xs text-left hover:bg-purple-50 flex items-center gap-2 cursor-pointer text-purple-700"><Shield className="h-3 w-3" /> Phân quyền</button>
                       <button onClick={() => { setMenuUser(null); setEditUser(u); setShowCreate(true); }}
                         className="w-full px-3 py-2 text-xs text-left hover:bg-gray-50 flex items-center gap-2 cursor-pointer text-gray-700"><Edit className="h-3 w-3" /> Chỉnh sửa</button>
                       <button onClick={() => deactivate(u.id, u.full_name)}
                         className="w-full px-3 py-2 text-xs text-left hover:bg-red-50 flex items-center gap-2 cursor-pointer text-red-600"><Trash2 className="h-3 w-3" /> Vô hiệu hóa</button>
+                      {isAdmin && String(u.id) !== String(currentUser?.id) && (
+                        <>
+                          <div className="border-t border-gray-100 my-1" />
+                          <button
+                            onClick={() => { setMenuUser(null); setHardDeleteTarget(u); }}
+                            className="w-full px-3 py-2 text-xs text-left hover:bg-red-50 flex items-center gap-2 cursor-pointer text-red-700 font-semibold"
+                            title="Xóa vĩnh viễn — không thể hoàn tác"
+                          >
+                            <AlertTriangle className="h-3 w-3" /> Xóa vĩnh viễn
+                          </button>
+                        </>
+                      )}
                     </div>
                   </>
                 )}
@@ -285,7 +307,96 @@ export default function UsersPage() {
         />
       )}
       <StaffDetailModal userId={showDetail} open={!!showDetail} onClose={() => setShowDetail(null)} />
+      <HardDeleteUserModal target={hardDeleteTarget} onClose={() => setHardDeleteTarget(null)} onDeleted={onHardDeleted} />
     </div>
+  );
+}
+
+// ═══ Hard delete confirmation modal — gõ tên để xác nhận ═══
+function HardDeleteUserModal({ target, onClose, onDeleted }) {
+  const [confirmText, setConfirmText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const open = !!target;
+
+  useEffect(() => {
+    if (open) { setConfirmText(''); setErr(''); }
+  }, [open]);
+
+  if (!open) return null;
+  const expected = (target.full_name || target.email || '').trim();
+  const ok = confirmText.trim() === expected && expected.length > 0;
+
+  const submit = async () => {
+    if (!ok || busy) return;
+    setBusy(true); setErr('');
+    try {
+      await api.delete(`/users/${target.id}/permanent`);
+      onDeleted?.();
+    } catch (e) {
+      setErr(e.response?.data?.error || e.message || 'Lỗi xóa nhân viên');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open={open} onClose={busy ? undefined : onClose} title="Xóa vĩnh viễn nhân viên" size="md">
+      <div className="space-y-4">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex gap-3">
+          <AlertTriangle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
+          <div className="text-sm text-red-900 space-y-1.5">
+            <p className="font-semibold">Hành động KHÔNG THỂ hoàn tác</p>
+            <p className="text-xs text-red-800">
+              Xóa vĩnh viễn <strong>«{target.full_name}»</strong> ({target.email}) khỏi hệ thống.
+              Các nhiệm vụ / lead / dự án mà nhân viên này được giao hoặc tạo sẽ
+              <strong> bị bỏ trống người phụ trách</strong> (set null), riêng các bình luận,
+              ghi chú, log hoạt động cá nhân của họ sẽ bị xóa hẳn.
+            </p>
+            <p className="text-xs text-red-800">
+              Nên cân nhắc dùng <strong>«Vô hiệu hóa»</strong> để chặn đăng nhập mà vẫn giữ lại lịch sử.
+            </p>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">
+            Để xác nhận, nhập đúng họ tên: <span className="font-mono text-red-600">{expected}</span>
+          </label>
+          <input
+            type="text"
+            autoFocus
+            value={confirmText}
+            onChange={(e) => setConfirmText(e.target.value)}
+            placeholder={expected}
+            className="w-full h-10 px-3 border-2 rounded-lg text-sm outline-none focus:border-red-500"
+            disabled={busy}
+          />
+        </div>
+
+        {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">{err}</p>}
+
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="h-10 px-4 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm cursor-pointer disabled:opacity-50"
+          >
+            Hủy
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={!ok || busy}
+            className="h-10 px-4 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            <Trash2 className="h-4 w-4" />
+            {busy ? 'Đang xóa…' : 'Xóa vĩnh viễn'}
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
