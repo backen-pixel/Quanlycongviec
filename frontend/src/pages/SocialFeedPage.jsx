@@ -10,6 +10,8 @@ import {
   Image as ImageIcon, Link2, RefreshCw, Heart, FileText, X,
   Video, Smile, MapPin, ImagePlus, Globe, MoreHorizontal,
   ChevronLeft, ChevronRight, Maximize2, Pencil, Share2, EyeOff, Search, User,
+  Plus, Users, Megaphone, BarChart3, FolderOpen, TrendingUp, Cake,
+  Sparkles, Filter,
 } from 'lucide-react';
 
 import ScopeFilterBar from '../shared/components/ScopeFilterBar';
@@ -1788,6 +1790,55 @@ export default function SocialFeedPage() {
     setComposerOpen(true);
   };
 
+  /* ── Derived sidebar / KPI data ──
+     Tính số liệu thuần phía client từ posts đã load (rẻ, không cần API mới).
+     Khi BE bổ sung endpoint /social/stats sau có thể thay thế. */
+  const postsTodayCount = useMemo(() => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    return posts.filter((p) => p.created_at && new Date(p.created_at) >= today).length;
+  }, [posts]);
+
+  const sidebarOnline = useMemo(() => {
+    const map = new Map();
+    posts.forEach((p) => {
+      const u = p.author;
+      if (u?.id && !map.has(u.id)) map.set(u.id, u);
+    });
+    return Array.from(map.values());
+  }, [posts]);
+
+  const onlineMemberCount = sidebarOnline.length;
+
+  const sidebarTrendingTags = useMemo(() => {
+    const counts = new Map();
+    posts.forEach((p) => {
+      const body = String(p.body || '');
+      const tags = body.match(/#[\p{L}\d_]+/gu) || [];
+      tags.forEach((t) => {
+        const key = t.slice(1);
+        if (key) counts.set(key, (counts.get(key) || 0) + 1);
+      });
+    });
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([tag, count]) => ({ tag, count }));
+  }, [posts]);
+
+  const sidebarRecentFiles = useMemo(() => {
+    const files = [];
+    for (const p of posts) {
+      for (const a of (p.attachments || [])) {
+        if (!a?.file_url) continue;
+        files.push({ url: a.file_url, name: a.file_name || 'Tệp', size: a.file_size || 0, created_at: p.created_at });
+      }
+      if (files.length >= 20) break;
+    }
+    return files;
+  }, [posts]);
+
+  const recentFilesCount = sidebarRecentFiles.length;
+
   return (
     <div className="min-h-screen">
       {toast && (
@@ -1795,32 +1846,161 @@ export default function SocialFeedPage() {
           {toast}
         </div>
       )}
-      <div className="max-w-[816px] mx-auto px-3 py-4 md:py-6 space-y-4">
-        {/* Header — hero card glass */}
-        <header className="relative overflow-hidden rounded-2xl border border-white/50 bg-white/55 backdrop-blur-xl shadow-lg">
-          <div className="absolute inset-0 bg-gradient-to-r from-blue-500/10 via-indigo-500/5 to-fuchsia-500/10 pointer-events-none" />
-          <div className="relative flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 sm:p-5">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-600 via-indigo-600 to-fuchsia-600 flex items-center justify-center shadow-lg ring-4 ring-white/40">
-                <Heart className="w-6 h-6 text-white fill-white/40" />
+      <div className="max-w-[1280px] mx-auto px-3 py-4 md:py-6">
+        {/* ──────────── HERO HEADER — Cover gradient + KPI tiles + 2 buttons ──────────── */}
+        <header className="relative overflow-hidden rounded-3xl shadow-[0_20px_50px_-15px_rgba(76,29,149,0.45)] mb-5">
+          {/* Lớp đáy: gradient sao đêm */}
+          <div className="relative w-full bg-gradient-to-br from-indigo-900 via-purple-800 to-blue-900 min-h-[14rem] sm:min-h-[15rem]">
+            {/* Decorative blobs */}
+            <div className="absolute inset-0 opacity-70 pointer-events-none">
+              <div className="absolute -top-20 -right-16 w-80 h-80 rounded-full bg-gradient-to-br from-pink-400/30 via-fuchsia-500/25 to-indigo-500/20 blur-3xl" />
+              <div className="absolute -bottom-24 -left-20 w-96 h-96 rounded-full bg-gradient-to-br from-blue-400/30 via-cyan-500/25 to-indigo-500/20 blur-3xl" />
+              {[
+                { l: '12%', t: '18%', s: 2 }, { l: '32%', t: '38%', s: 1 }, { l: '48%', t: '14%', s: 3 },
+                { l: '58%', t: '55%', s: 2 }, { l: '70%', t: '24%', s: 1 }, { l: '80%', t: '46%', s: 2 },
+                { l: '88%', t: '70%', s: 1 }, { l: '20%', t: '74%', s: 2 }, { l: '44%', t: '82%', s: 1 },
+              ].map((p, i) => (
+                <span
+                  key={i}
+                  className="absolute rounded-full bg-white animate-pulse"
+                  style={{ left: p.l, top: p.t, width: p.s, height: p.s, opacity: 0.9 }}
+                  aria-hidden
+                />
+              ))}
+            </div>
+
+            {/* Top buttons */}
+            <div className="absolute right-4 top-4 z-20 flex gap-2">
+              {effectiveCompanyId && (
+                <button
+                  type="button"
+                  onClick={openComposerModal}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-fuchsia-500 to-purple-600 text-white text-sm font-semibold shadow-lg hover:shadow-xl hover:from-fuchsia-600 hover:to-purple-700 transition-all"
+                  style={{ color: '#ffffff' }}
+                >
+                  <Plus className="h-4 w-4" /> Tạo bài viết
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => { offsetRef.current = 0; fetchFeed(false); }}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/90 backdrop-blur border border-white/60 text-sm font-semibold text-slate-800 shadow-md hover:bg-white transition-all"
+              >
+                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin text-indigo-600' : 'text-indigo-600'}`} />
+                Làm mới
+              </button>
+            </div>
+
+            {/* MAIN CONTENT — 2 column layout fills hero */}
+            <div className="relative z-10 grid grid-cols-1 lg:grid-cols-[1fr_1.1fr] gap-5 px-5 py-5 sm:px-7 sm:py-6 pt-16 sm:pt-14">
+              {/* LEFT — Logo + Title + Tagline + Welcome chip */}
+              <div className="flex flex-col gap-3 justify-center">
+                <div className="flex items-center gap-3">
+                  <div className="h-12 w-12 sm:h-14 sm:w-14 rounded-2xl bg-gradient-to-br from-fuchsia-400 via-purple-500 to-indigo-500 shadow-xl ring-2 ring-white/40 flex items-center justify-center shrink-0">
+                    <Heart className="h-6 w-6 sm:h-7 sm:w-7 text-white fill-white/30" />
+                  </div>
+                  <div className="min-w-0">
+                    <h1
+                      className="text-force-white text-2xl sm:text-3xl font-extrabold tracking-tight drop-shadow-[0_2px_8px_rgba(0,0,0,0.7)] leading-tight"
+                      style={{ color: '#ffffff' }}
+                    >
+                      Bảng tin nội bộ
+                    </h1>
+                    <p
+                      className="text-force-white text-xs sm:text-sm font-medium drop-shadow opacity-95"
+                      style={{ color: '#e2e8f0' }}
+                    >
+                      Kết nối – Chia sẻ – Phát triển cùng nhau
+                    </p>
+                  </div>
+                </div>
+
+                {/* Welcome chip with date */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/15 backdrop-blur-md border border-white/30 shadow-md">
+                    <Sparkles className="h-3.5 w-3.5 text-amber-300 drop-shadow" aria-hidden />
+                    <span className="text-force-white text-xs sm:text-[13px] font-semibold drop-shadow" style={{ color: '#ffffff' }}>
+                      Chào {(user?.full_name || 'bạn').split(' ').slice(-1).join(' ')} 👋 — {new Date().toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit' })}
+                    </span>
+                  </span>
+                  {postsTodayCount > 0 && (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-500/30 backdrop-blur-md border border-emerald-300/50 shadow">
+                      <span className="h-2 w-2 rounded-full bg-emerald-300 animate-pulse" />
+                      <span className="text-force-white text-xs sm:text-[13px] font-semibold drop-shadow" style={{ color: '#ffffff' }}>
+                        {postsTodayCount} bài mới hôm nay
+                      </span>
+                    </span>
+                  )}
+                </div>
+
+                {/* Quick action chips */}
+                {effectiveCompanyId && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={openComposerModal}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/12 hover:bg-white/25 backdrop-blur border border-white/25 transition-colors"
+                    >
+                      <ImagePlus className="h-3.5 w-3.5 text-emerald-300" />
+                      <span className="text-force-white text-[11px] font-semibold" style={{ color: '#ffffff' }}>Ảnh / File</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openComposerAndPickFiles}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/12 hover:bg-white/25 backdrop-blur border border-white/25 transition-colors"
+                    >
+                      <Video className="h-3.5 w-3.5 text-rose-300" />
+                      <span className="text-force-white text-[11px] font-semibold" style={{ color: '#ffffff' }}>Video</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openComposerModal}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/12 hover:bg-white/25 backdrop-blur border border-white/25 transition-colors"
+                    >
+                      <Megaphone className="h-3.5 w-3.5 text-amber-300" />
+                      <span className="text-force-white text-[11px] font-semibold" style={{ color: '#ffffff' }}>Thông báo</span>
+                    </button>
+                  </div>
+                )}
               </div>
-              <div>
-                <h1 className="text-xl md:text-2xl font-bold tracking-tight" style={{ color: '#0f172a' }}>Bảng tin nội bộ</h1>
-                <p className="text-xs mt-0.5" style={{ color: '#475569' }}>
-                  Chia sẻ nội dung, ảnh/video/file — upload lên kho của công ty.
-                </p>
+
+              {/* RIGHT — 2×2 KPI grid */}
+              <div className="grid grid-cols-2 gap-2.5 self-center">
+                {[
+                  { icon: Users, label: 'Thành viên online', value: onlineMemberCount, color: 'from-cyan-400 to-blue-500', accent: 'text-cyan-200' },
+                  { icon: FileText, label: 'Bài viết hôm nay', value: postsTodayCount, color: 'from-violet-400 to-purple-500', accent: 'text-violet-200' },
+                  { icon: Building2, label: 'Công ty', value: companies?.length || 0, color: 'from-amber-400 to-orange-500', accent: 'text-amber-200' },
+                  { icon: FolderOpen, label: 'Tài liệu mới', value: recentFilesCount, color: 'from-pink-400 to-rose-500', accent: 'text-pink-200' },
+                ].map((k, i) => {
+                  const Icon = k.icon;
+                  return (
+                    <div
+                      key={i}
+                      className="group relative flex items-center gap-3 rounded-2xl bg-white/12 hover:bg-white/20 backdrop-blur-md border border-white/30 px-3.5 py-3 shadow-lg transition-all hover:scale-[1.02] hover:shadow-xl overflow-hidden"
+                    >
+                      <div className={`shrink-0 h-11 w-11 rounded-xl bg-gradient-to-br ${k.color} flex items-center justify-center shadow-md ring-1 ring-white/40`}>
+                        <Icon className="h-5 w-5 text-white" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-force-white text-2xl font-extrabold leading-none tabular-nums drop-shadow" style={{ color: '#ffffff' }}>
+                          {k.value}
+                        </p>
+                        <p className={`text-force-white text-[11px] font-semibold mt-0.5 truncate drop-shadow ${k.accent}`} style={{ color: '#ffffff' }}>
+                          {k.label}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => { offsetRef.current = 0; fetchFeed(false); }}
-              className="self-start sm:self-center flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/80 backdrop-blur border border-white/70 text-sm font-semibold text-slate-700 hover:bg-white hover:shadow-md transition shadow-sm"
-            >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-blue-600' : 'text-blue-600'}`} />
-              Làm mới
-            </button>
           </div>
         </header>
+
+        {/* ──────────── 2-COLUMN LAYOUT ──────────── */}
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5">
+          {/* LEFT — main feed */}
+          <div className="space-y-4 min-w-0">
 
         {/* Thanh tìm thành viên — glass */}
         <div className="relative">
@@ -2391,6 +2571,96 @@ export default function SocialFeedPage() {
             )}
           </div>
         )}
+          </div>
+          {/* ──────────── RIGHT SIDEBAR ──────────── */}
+          <aside className="hidden lg:block space-y-4">
+            <div className="sticky top-4 space-y-4">
+              {/* THÀNH VIÊN ONLINE */}
+              <section className="rounded-2xl bg-white/75 backdrop-blur-md border border-white/60 shadow-sm overflow-hidden">
+                <header className="flex items-center justify-between px-4 py-3 border-b border-slate-100/80">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 inline-flex items-center gap-1.5">
+                    <Users className="h-3.5 w-3.5 text-emerald-600" />
+                    Thành viên online ({sidebarOnline.length})
+                  </h3>
+                  {sidebarOnline.length > 5 && (
+                    <button type="button" className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-700">Xem tất cả</button>
+                  )}
+                </header>
+                <ul className="divide-y divide-slate-100/70">
+                  {sidebarOnline.slice(0, 6).map((u) => (
+                    <li key={u.id}>
+                      <Link
+                        to={`/social/u/${u.id}`}
+                        className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50/80 transition-colors"
+                      >
+                        <Avatar user={u} />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold text-slate-800 truncate">{u.full_name || u.email}</p>
+                          <p className="text-[11px] text-slate-500 truncate">{u.position || u.role || 'Thành viên'}</p>
+                        </div>
+                      </Link>
+                    </li>
+                  ))}
+                  {sidebarOnline.length === 0 && (
+                    <li className="px-4 py-6 text-center text-xs text-slate-400">Chưa có thành viên online</li>
+                  )}
+                </ul>
+              </section>
+
+              {/* XU HƯỚNG (hashtag từ bài viết) */}
+              <section className="rounded-2xl bg-white/75 backdrop-blur-md border border-white/60 shadow-sm overflow-hidden">
+                <header className="flex items-center justify-between px-4 py-3 border-b border-slate-100/80">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 inline-flex items-center gap-1.5">
+                    <TrendingUp className="h-3.5 w-3.5 text-fuchsia-600" />
+                    Xu hướng
+                  </h3>
+                </header>
+                <ul className="divide-y divide-slate-100/70">
+                  {sidebarTrendingTags.length > 0 ? sidebarTrendingTags.map((t) => (
+                    <li key={t.tag} className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50/80 transition-colors">
+                      <span className="text-sm font-semibold text-indigo-600 truncate">#{t.tag}</span>
+                      <span className="text-[11px] text-slate-500 shrink-0">{t.count} bài viết</span>
+                    </li>
+                  )) : (
+                    <li className="px-4 py-6 text-center text-xs text-slate-400">Chưa có hashtag nổi bật</li>
+                  )}
+                </ul>
+              </section>
+
+              {/* TÀI LIỆU MỚI (từ attachments) */}
+              <section className="rounded-2xl bg-white/75 backdrop-blur-md border border-white/60 shadow-sm overflow-hidden">
+                <header className="flex items-center justify-between px-4 py-3 border-b border-slate-100/80">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 inline-flex items-center gap-1.5">
+                    <FolderOpen className="h-3.5 w-3.5 text-amber-600" />
+                    Tài liệu mới
+                  </h3>
+                </header>
+                <ul className="divide-y divide-slate-100/70">
+                  {sidebarRecentFiles.length > 0 ? sidebarRecentFiles.slice(0, 4).map((f, i) => (
+                    <li key={i}>
+                      <a
+                        href={f.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50/80 transition-colors"
+                      >
+                        <div className="h-9 w-9 shrink-0 rounded-lg bg-gradient-to-br from-rose-100 to-pink-100 border border-rose-200 flex items-center justify-center">
+                          <FileText className="h-4 w-4 text-rose-600" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-semibold text-slate-800 truncate">{f.name}</p>
+                          <p className="text-[10px] text-slate-500">{f.size ? `${(f.size / (1024 * 1024)).toFixed(1)} MB` : '—'}</p>
+                        </div>
+                      </a>
+                    </li>
+                  )) : (
+                    <li className="px-4 py-6 text-center text-xs text-slate-400">Chưa có tài liệu mới</li>
+                  )}
+                </ul>
+              </section>
+            </div>
+          </aside>
+        </div>
       </div>
       {reactionModalPostId && (
         <PostReactorsModal postId={reactionModalPostId} onClose={() => setReactionModalPostId(null)} />
