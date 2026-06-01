@@ -161,17 +161,20 @@ function LessonCard({ lesson, idx }) {
   const status = lesson.progress_status;
   const color = pickColor(idx);
   const hasVideo = !!lesson.video_url;
-  const locked = !!lesson.is_locked;
-  const Wrapper = locked ? 'div' : Link;
-  const wrapperProps = locked
+  const showLock = !!lesson.is_locked;
+  const blocked = showLock && !lesson.lock_bypass;
+  const Wrapper = blocked ? 'div' : Link;
+  const wrapperProps = blocked
     ? { title: lesson.unlock_reason || 'Bài học đang khoá — cần hoàn thành bài trước' }
     : { to: `/knowledge/lessons/${lesson.id}` };
   return (
     <Wrapper
       {...wrapperProps}
       className={`group bg-white rounded-2xl border overflow-hidden transition-all flex flex-col ${
-        locked
-          ? 'border-amber-200 opacity-80 cursor-not-allowed'
+        showLock
+          ? blocked
+            ? 'border-amber-200 opacity-80 cursor-not-allowed'
+            : 'border-amber-300 hover:border-amber-400 hover:shadow-lg'
           : 'border-gray-200 hover:border-violet-300 hover:shadow-lg'
       }`}
     >
@@ -180,7 +183,7 @@ function LessonCard({ lesson, idx }) {
           <img
             src={publicFileUrl(lesson.cover_image_url)}
             alt={lesson.title}
-            className={`absolute inset-0 w-full h-full object-cover transition-transform ${locked ? 'grayscale' : 'group-hover:scale-105'}`}
+            className={`absolute inset-0 w-full h-full object-cover transition-transform ${showLock && blocked ? 'grayscale' : 'group-hover:scale-105'}`}
             loading="lazy"
           />
         ) : (
@@ -188,18 +191,21 @@ function LessonCard({ lesson, idx }) {
             {lesson.category?.icon || '📖'}
           </span>
         )}
-        {hasVideo && !locked && (
+        {hasVideo && !blocked && (
           <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
             <PlayCircle className="h-12 w-12 text-white" />
           </div>
         )}
-        {locked && (
-          <div className="absolute inset-0 bg-black/50 flex items-center justify-center backdrop-blur-[1px]">
+        {showLock && (
+          <div className={`absolute inset-0 flex items-center justify-center backdrop-blur-[1px] ${blocked ? 'bg-black/50' : 'bg-black/35'}`}>
             <div className="text-center text-white px-3">
               <div className="text-3xl mb-1">🔒</div>
               <p className="text-[11px] font-semibold leading-tight line-clamp-2">
                 {lesson.unlock_reason || 'Hoàn thành bài học trước để mở khoá'}
               </p>
+              {lesson.lock_bypass && (
+                <p className="text-[10px] text-white/80 mt-1">Quản trị: bấm để xem thử</p>
+              )}
             </div>
           </div>
         )}
@@ -223,7 +229,7 @@ function LessonCard({ lesson, idx }) {
               <CheckCircle2 className="h-3 w-3" /> Đã học
             </span>
           )}
-          {status === 'in_progress' && !locked && (
+          {status === 'in_progress' && !blocked && (
             <span className="px-2 py-1 bg-amber-400 text-amber-900 rounded-full text-[10px] font-bold">
               Đang học
             </span>
@@ -355,12 +361,20 @@ export default function KnowledgeLibraryPage() {
   );
 
   const filteredLessons = useMemo(() => {
-    if (!search.trim()) return lessons;
-    const s = search.toLowerCase();
-    return lessons.filter(
-      (l) => l.title?.toLowerCase().includes(s) || l.summary?.toLowerCase().includes(s),
-    );
-  }, [lessons, search]);
+    let list = lessons;
+    if (search.trim()) {
+      const s = search.toLowerCase();
+      list = list.filter(
+        (l) => l.title?.toLowerCase().includes(s) || l.summary?.toLowerCase().includes(s),
+      );
+    }
+    const catOrder = Object.fromEntries(categoriesFlat.map((c, i) => [c.id, c.sort_order ?? i]));
+    return [...list].sort((a, b) => {
+      const co = (catOrder[a.category_id] ?? 999) - (catOrder[b.category_id] ?? 999);
+      if (co !== 0) return co;
+      return (a.sort_order ?? 0) - (b.sort_order ?? 0);
+    });
+  }, [lessons, search, categoriesFlat]);
 
   return (
     <div className="max-w-7xl mx-auto pb-12">

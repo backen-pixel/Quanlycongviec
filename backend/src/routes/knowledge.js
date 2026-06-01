@@ -548,14 +548,15 @@ function attachExerciseUserProgress(exercises, bestByEx) {
   });
 }
 
-async function enrichNextLessonWithLock(categoryId, nextLesson, userId, userObj, skipLock = false) {
-  if (!nextLesson || !categoryId || skipLock) return nextLesson;
+async function enrichNextLessonWithLock(categoryId, nextLesson, userId, userObj, lockBypass = false) {
+  if (!nextLesson || !categoryId) return nextLesson;
   const lockMap = await computeLessonLockMap(categoryId, userId, userObj);
   const lk = lockMap.get(nextLesson.id) || { locked: false, reason: null };
   return {
     ...nextLesson,
     is_locked: !!lk.locked,
     unlock_reason: lk.reason || null,
+    lock_bypass: lockBypass,
   };
 }
 
@@ -838,16 +839,13 @@ r.get('/lessons', async (req, res) => {
       });
     }
 
-    // Tính trạng thái khoá tuần tự (theo từng category) — admin/manager bỏ qua khoá
+    // Trạng thái khoá tuần tự — luôn tính để hiển thị UI (admin vẫn mở được qua lock_bypass)
     const lockMap = new Map();
-    if (!canManage(req) && lessons.length) {
-      const byCat = new Map();
-      lessons.forEach((l) => {
-        if (!byCat.has(l.category_id)) byCat.set(l.category_id, []);
-        byCat.get(l.category_id).push(l);
-      });
-      for (const [catId, catLessons] of byCat) {
-        const m = await computeLessonLockMap(catId, req.user.userId, req.user, catLessons);
+    const bypassLock = canManage(req);
+    if (lessons.length) {
+      const catIds = [...new Set(lessons.map((l) => l.category_id).filter(Boolean))];
+      for (const catId of catIds) {
+        const m = await computeLessonLockMap(catId, req.user.userId, req.user);
         m.forEach((v, k) => lockMap.set(k, v));
       }
     }
@@ -864,6 +862,7 @@ r.get('/lessons', async (req, res) => {
         is_locked: lock.locked,
         unlock_reason: lock.reason,
         prev_lesson_id: lock.prev_lesson_id,
+        lock_bypass: bypassLock,
       };
     });
 

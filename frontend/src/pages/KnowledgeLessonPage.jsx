@@ -279,8 +279,8 @@ export default function KnowledgeLessonPage() {
     const target = apiNextLesson || nextLesson;
     if (!target) return { target: null, locked: false, reason: null };
     const locked = apiNextLesson
-      ? !!apiNextLesson.is_locked
-      : !!nextLesson?.is_locked;
+      ? !!apiNextLesson.is_locked && !apiNextLesson.lock_bypass
+      : !!nextLesson?.is_locked && !nextLesson?.lock_bypass;
     const reason = apiNextLesson?.unlock_reason || nextLesson?.unlock_reason || null;
     return { target, locked, reason };
   };
@@ -589,7 +589,7 @@ export default function KnowledgeLessonPage() {
               </Link>
             ) : <span />}
             {nextLesson && (
-              nextLesson.is_locked ? (
+              nextLesson.is_locked && !nextLesson.lock_bypass ? (
                 <div
                   className="text-gray-400 flex items-center gap-1 cursor-not-allowed"
                   title={nextLesson.unlock_reason || 'Bài tiếp theo đang khoá'}
@@ -618,7 +618,7 @@ export default function KnowledgeLessonPage() {
               ) : (
                 <ul className="space-y-1">
                   {siblingLessons.map((l) => {
-                    const locked = !!l.is_locked && l.id !== lesson.id;
+                    const locked = !!l.is_locked && !l.lock_bypass && l.id !== lesson.id;
                     const inner = (
                       <>
                         <span className="mt-0.5 shrink-0">
