@@ -258,15 +258,26 @@ export default function NotificationCenter({ socket }) {
     const anchor = rootRef.current;
     if (!anchor) return;
     const rect = anchor.getBoundingClientRect();
-    let left = rect.right + 8;
+    const sidebar = anchor.closest('aside');
+    const sidebarRect = sidebar?.getBoundingClientRect();
+
+    // Sidebar: đặt panel ngay bên phải sidebar (không dính sát nút chuông bên trái).
+    // TopNavBar / không có aside: đặt bên phải anchor.
+    let left = sidebarRect ? sidebarRect.right + 8 : rect.right + 8;
     let top = rect.top;
-    if (left + PANEL_WIDTH > window.innerWidth - 12) {
-      left = Math.max(12, rect.left - PANEL_WIDTH - 8);
+
+    const margin = 12;
+    const maxH = Math.min(520, window.innerHeight - margin * 2);
+
+    // Tràn phải viewport → căn panel sát mép phải màn hình (không flip sang trái anchor).
+    if (left + PANEL_WIDTH > window.innerWidth - margin) {
+      left = Math.max(margin, window.innerWidth - PANEL_WIDTH - margin);
     }
-    const maxH = Math.min(520, window.innerHeight - 24);
-    if (top + maxH > window.innerHeight - 12) {
-      top = Math.max(12, window.innerHeight - maxH - 12);
+    if (top + maxH > window.innerHeight - margin) {
+      top = Math.max(margin, window.innerHeight - maxH - margin);
     }
+    if (top < margin) top = margin;
+
     setPanelPos({ top, left });
   }, []);
 
@@ -502,9 +513,16 @@ export default function NotificationCenter({ socket }) {
     updatePanelPosition();
     window.addEventListener('resize', updatePanelPosition);
     window.addEventListener('scroll', updatePanelPosition, true);
+    const sidebar = rootRef.current?.closest('aside');
+    let ro;
+    if (sidebar && typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => updatePanelPosition());
+      ro.observe(sidebar);
+    }
     return () => {
       window.removeEventListener('resize', updatePanelPosition);
       window.removeEventListener('scroll', updatePanelPosition, true);
+      ro?.disconnect();
     };
   }, [open, updatePanelPosition]);
 
@@ -569,8 +587,8 @@ export default function NotificationCenter({ socket }) {
 
   return (
     <div className="relative" ref={rootRef}>
-      {/* Toast Notification */}
-      {toastNotification && (
+      {/* Toast — portal ra body để fixed không bị sidebar backdropFilter ảnh hưởng */}
+      {toastNotification && createPortal(
         <NotificationToast
           notification={toastNotification}
           onDismiss={() => setToastNotification(null)}
@@ -602,7 +620,8 @@ export default function NotificationCenter({ socket }) {
             }
             setOpen(false);
           }}
-        />
+        />,
+        document.body
       )}
 
       {/* Settings side panel — docked to the right of Notification Center */}
