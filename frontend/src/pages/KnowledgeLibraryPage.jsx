@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { publicFileUrl } from '../lib/publicFileUrl';
 import {
@@ -157,23 +157,27 @@ function CategoryGrid({ categories, selectedId, onSelect }) {
   );
 }
 
-function LessonCard({ lesson, idx }) {
+function LessonCard({ lesson, idx, onBlockedClick }) {
   const status = lesson.progress_status;
   const color = pickColor(idx);
   const hasVideo = !!lesson.video_url;
   const showLock = !!lesson.is_locked;
   const blocked = showLock && !lesson.lock_bypass;
-  const Wrapper = blocked ? 'div' : Link;
+  const Wrapper = blocked ? 'button' : Link;
   const wrapperProps = blocked
-    ? { title: lesson.unlock_reason || 'Bài học đang khoá — cần hoàn thành bài trước' }
+    ? {
+      type: 'button',
+      title: lesson.unlock_reason || 'Bài học đang khoá — cần hoàn thành bài trước',
+      onClick: (e) => { e.preventDefault(); onBlockedClick?.(lesson); },
+    }
     : { to: `/knowledge/lessons/${lesson.id}` };
   return (
     <Wrapper
       {...wrapperProps}
-      className={`group bg-white rounded-2xl border overflow-hidden transition-all flex flex-col ${
+      className={`group bg-white rounded-2xl border overflow-hidden transition-all flex flex-col text-left w-full ${
         showLock
           ? blocked
-            ? 'border-amber-200 opacity-80 cursor-not-allowed'
+            ? 'border-amber-200 cursor-pointer hover:border-amber-400 hover:shadow-md'
             : 'border-amber-300 hover:border-amber-400 hover:shadow-lg'
           : 'border-gray-200 hover:border-violet-300 hover:shadow-lg'
       }`}
@@ -295,6 +299,8 @@ export default function KnowledgeLibraryPage() {
   const [progress, setProgress] = useState({ progress: [], completed: 0, total: 0 });
   const [categoryDeadline, setCategoryDeadline] = useState(null);
   const [showCategoryTimeline, setShowCategoryTimeline] = useState(false);
+  const [lockToast, setLockToast] = useState(null);
+  const navigate = useNavigate();
   const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
   const isAdmin = ['admin', 'sales_admin', 'manager'].includes(currentUser.role);
 
@@ -317,6 +323,12 @@ export default function KnowledgeLibraryPage() {
       .then((r) => setCategoryDeadline(r.data?.deadline || null))
       .catch(() => setCategoryDeadline(null));
   }, [selectedCategory]);
+
+  useEffect(() => {
+    if (!lockToast) return undefined;
+    const t = setTimeout(() => setLockToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [lockToast]);
 
   const loadCategories = async () => {
     try {
@@ -556,11 +568,49 @@ export default function KnowledgeLibraryPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredLessons.map((l, idx) => (
-              <LessonCard key={l.id} lesson={l} idx={idx} />
+              <LessonCard
+                key={l.id}
+                lesson={l}
+                idx={idx}
+                onBlockedClick={(lesson) => {
+                  const targetId = lesson.current_open_lesson_id;
+                  setLockToast({
+                    title: lesson.title,
+                    reason: lesson.unlock_reason || 'Bài học đang khoá — cần hoàn thành bài trước',
+                    targetId,
+                  });
+                  if (targetId) {
+                    setTimeout(() => {
+                      navigate(`/knowledge/lessons/${targetId}`);
+                    }, 1400);
+                  }
+                }}
+              />
             ))}
           </div>
         )}
       </section>
+      {lockToast && (
+        <div className="fixed bottom-6 right-6 z-50 max-w-sm animate-in slide-in-from-right-4 fade-in duration-200">
+          <div className="rounded-2xl border-2 border-amber-300 bg-gradient-to-br from-amber-50 to-orange-50 shadow-2xl p-4 flex gap-3">
+            <div className="text-3xl shrink-0 leading-none">🔒</div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-amber-900 line-clamp-1">Bài học đang khoá</p>
+              <p className="text-xs text-amber-800 mt-1 leading-snug">{lockToast.reason}</p>
+              {lockToast.targetId
+                ? <p className="text-[11px] text-amber-700 mt-1.5 italic">Đang chuyển bạn đến bài cần học...</p>
+                : <p className="text-[11px] text-amber-700 mt-1.5 italic">Hãy hoàn thành các bài trước trong khoá.</p>}
+            </div>
+            <button
+              type="button"
+              onClick={() => setLockToast(null)}
+              className="shrink-0 w-6 h-6 rounded-full bg-white/60 text-amber-700 hover:bg-white text-xs font-bold cursor-pointer"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

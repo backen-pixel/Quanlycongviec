@@ -480,6 +480,23 @@ async function computeLessonLockMap(categoryId, userId, userObj, lessonsInCatego
     map.set(l.id, lockInfo);
     prev = l;
   }
+
+  // Bài đang mở khoá hiện tại trong khoá: bài đầu tiên không bị khoá và chưa hoàn thành.
+  // Dùng để khi user bấm vào bài khoá, redirect tới bài cần học.
+  let currentOpenId = null;
+  for (const l of visible) {
+    const lk = map.get(l.id);
+    if (lk && !lk.locked && !completedSet.has(l.id)) {
+      currentOpenId = l.id;
+      break;
+    }
+  }
+  if (currentOpenId) {
+    for (const lk of map.values()) {
+      lk.current_open_lesson_id = currentOpenId;
+    }
+  }
+
   return map;
 }
 
@@ -862,6 +879,7 @@ r.get('/lessons', async (req, res) => {
         is_locked: lock.locked,
         unlock_reason: lock.reason,
         prev_lesson_id: lock.prev_lesson_id,
+        current_open_lesson_id: lock.current_open_lesson_id || null,
         lock_bypass: bypassLock,
       };
     });
@@ -897,6 +915,7 @@ r.get('/lessons/:id', async (req, res) => {
           error: lockInfo.reason || 'Bài học đang khoá, cần hoàn thành bài học trước đó',
           locked: true,
           prev_lesson_id: lockInfo.prev_lesson_id,
+          current_open_lesson_id: lockInfo.current_open_lesson_id || null,
         });
       }
     }
