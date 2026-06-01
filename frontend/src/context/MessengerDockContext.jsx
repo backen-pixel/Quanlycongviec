@@ -383,7 +383,12 @@ export function MessengerDockProvider({ children }) {
     (g) => {
       if (!g?.id) return;
       markGroupRead(g.id);
+      const isDirect = !!g.is_direct;
       const peerUserId = g.peer_id || g.peerUserId || null;
+      const title = isDirect
+        ? (g.display_name || g.title || g.name || 'Trò chuyện')
+        : (g.name || g.title || 'Nhóm');
+      const avatar = g.peer_avatar ?? g.avatar ?? null;
       const wk = winKeyGroup(g.id);
       setWindows((w) => {
         const exists = w.some((x) => x.windowKey === wk);
@@ -393,10 +398,10 @@ export function MessengerDockProvider({ children }) {
               ? {
                   ...x,
                   minimized: false,
-                  title: g.name || g.title || x.title,
-                  peerUserId: peerUserId || x.peerUserId || null,
-                  isDirect: g.is_direct ?? x.isDirect ?? false,
-                  avatar: g.avatar || g.peer_avatar || x.avatar || null,
+                  title,
+                  peerUserId: peerUserId ?? x.peerUserId ?? null,
+                  isDirect: isDirect || x.isDirect,
+                  avatar: avatar ?? x.avatar ?? null,
                 }
               : x,
           );
@@ -408,13 +413,13 @@ export function MessengerDockProvider({ children }) {
             chatType: 'messenger_group',
             leadId: null,
             groupId: g.id,
-            title: g.name || g.title || 'Nhóm',
+            title,
             code: '',
             type: 'group',
             minimized: false,
             peerUserId,
-            isDirect: !!g.is_direct,
-            avatar: g.avatar || g.peer_avatar || null,
+            isDirect,
+            avatar,
           },
         ];
       });
@@ -565,7 +570,17 @@ export function MessengerDockProvider({ children }) {
       const gid = msg.group_id;
       if (!gid) return;
       window.dispatchEvent(
-        new CustomEvent('messenger:group-chat-activity', { detail: { groupId: gid, created_at: msg.created_at } }),
+        new CustomEvent('messenger:group-chat-activity', {
+          detail: {
+            groupId: gid,
+            created_at: msg.created_at,
+            content: msg.content || '',
+            attachments: Array.isArray(msg.attachments) ? msg.attachments : [],
+            user_id: msg.user_id,
+            is_self: String(msg.user_id) === String(uid),
+            sender_name: msg.user?.full_name || '',
+          },
+        }),
       );
       const isSelf = String(msg.user_id) === String(uid);
       if (isSelf) {

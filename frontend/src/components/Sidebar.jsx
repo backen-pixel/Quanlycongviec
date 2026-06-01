@@ -8,7 +8,7 @@ import { getInitials, avatarColor } from '../lib/utils';
 import { publicFileUrl } from '../lib/publicFileUrl';
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut, Lock,
-  ChevronLeft, ChevronRight, ChevronDown, Inbox, UserCircle, Package, ClipboardList, 
+  ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X, UsersRound,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
   BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot,
@@ -433,6 +433,16 @@ export default function Sidebar() {
   const { updatesUnread, assignmentsUnread, socialUnread } = useSidebarUnreadBadges();
   const { canAccessModule, crmOnly } = useModuleAccess();
   const [collapsed, setCollapsed] = useState(false);
+  const [userPanelHidden, setUserPanelHidden] = useState(() => {
+    try { return localStorage.getItem('sidebar_user_panel_hidden') === '1'; } catch { return false; }
+  });
+  const toggleUserPanel = () => {
+    setUserPanelHidden((v) => {
+      const next = !v;
+      try { localStorage.setItem('sidebar_user_panel_hidden', next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  };
   const [showAppSwitcher, setShowAppSwitcher] = useState(false);
   const [pinnedModule, setPinnedModule] = useState(() => localStorage.getItem('pinned_module') || '/crm');
   const appSwitcherRef = useRef(null);
@@ -747,7 +757,22 @@ export default function Sidebar() {
       </div>
 
       {/* User section */}
-      <div className="border-t border-white/10 p-3 space-y-2">
+      <div className="border-t border-white/10">
+        <button
+          type="button"
+          onClick={toggleUserPanel}
+          title={userPanelHidden ? 'Hiện thông tin tài khoản' : 'Ẩn thông tin tài khoản'}
+          className={`w-full flex items-center ${collapsed ? 'justify-center' : 'justify-between'} px-3 py-1 text-[11px] font-medium text-white/50 hover:text-white hover:bg-white/5 transition-colors`}
+        >
+          {!collapsed && (
+            <span className="truncate">
+              {userPanelHidden ? 'Hiện thông tin tài khoản' : 'Tài khoản'}
+            </span>
+          )}
+          {userPanelHidden ? <ChevronUp className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
+        </button>
+      {!userPanelHidden && (
+      <div className="p-3 pt-1 space-y-2">
         {!collapsed ? (
           <>
             <NavLink
@@ -830,6 +855,8 @@ export default function Sidebar() {
           </SidebarTooltip>
           </>
         )}
+      </div>
+      )}
       </div>
 
       {/* Toggle button */}

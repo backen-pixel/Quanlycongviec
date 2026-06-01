@@ -301,6 +301,49 @@ io.on('connection', (socket) => {
     io.emit('task:updated', data);
   });
 
+  /* ─── WebRTC voice call signaling (1-1) ───
+   * Server chỉ relay event giữa caller ↔ callee dựa trên `user:<id>` room
+   * (đã join ở `if (userId) socket.join(...)` phía trên).
+   * - call:invite  → callee nhận `call:incoming`
+   * - call:accept  → caller nhận `call:accepted`
+   * - call:reject  → caller nhận `call:rejected`
+   * - call:end     → bên kia nhận `call:ended`
+   * - call:signal  → relay SDP offer/answer/ICE candidate
+   */
+  socket.on('call:invite', ({ callId, toUserId, kind = 'audio' } = {}) => {
+    if (!callId || !toUserId) return;
+    const uid = socket.user?.userId || socket.user?.id;
+    if (!uid) return;
+    io.to(`user:${toUserId}`).emit('call:incoming', {
+      callId,
+      kind,
+      fromUserId: uid,
+      fromName: socket.user?.fullName || socket.user?.full_name || 'Người gọi',
+    });
+  });
+
+  socket.on('call:accept', ({ callId, toUserId } = {}) => {
+    if (!callId || !toUserId) return;
+    io.to(`user:${toUserId}`).emit('call:accepted', { callId });
+  });
+
+  socket.on('call:reject', ({ callId, toUserId, reason = 'rejected' } = {}) => {
+    if (!callId || !toUserId) return;
+    io.to(`user:${toUserId}`).emit('call:rejected', { callId, reason });
+  });
+
+  socket.on('call:end', ({ callId, toUserId } = {}) => {
+    if (!callId || !toUserId) return;
+    io.to(`user:${toUserId}`).emit('call:ended', { callId });
+  });
+
+  socket.on('call:signal', ({ callId, toUserId, signal } = {}) => {
+    if (!callId || !toUserId || !signal) return;
+    const uid = socket.user?.userId || socket.user?.id;
+    if (!uid) return;
+    io.to(`user:${toUserId}`).emit('call:signal', { callId, fromUserId: uid, signal });
+  });
+
   socket.on('disconnect', () => {
     console.log('❌ Disconnected:', socket.id);
   });

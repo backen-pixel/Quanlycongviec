@@ -237,6 +237,105 @@ async function getPresenceForUserIds(userIds) {
 }
 
 /**
+ * Phòng ban thuộc công ty (kể cả inactive — khớp phạm vi bảng tin / tìm thành viên).
+ */
+async function loadCompanyDepartmentIds(companyId) {
+  const { data: depts, error } = await supabase
+    .from('departments')
+    .select('id')
+    .eq('company_id', companyId);
+  if (error) throw error;
+  return new Set((depts || []).map((d) => String(d.id)));
+}
+
+function userMatchesCompany(user, companyId, deptIdsSet) {
+  const companyEq = String(companyId);
+  if (user?.company_id && String(user.company_id) === companyEq) return true;
+  if (user?.department_id && deptIdsSet.has(String(user.department_id))) return true;
+  return false;
+}
+
+/**
+ * Danh sách NV thuộc công ty: users.company_id trực tiếp HOẶC department thuộc công ty.
+ */
+async function queryUsersInCompany(companyId, { search, userSelect }) {
+  const companyEq = String(companyId);
+  const deptIdsSet = await loadCompanyDepartmentIds(companyId);
+  const deptIds = [...deptIdsSet];
+
+  const byId = new Map();
+  const ingest = async (q) => {
+    const { data, error } = await q.order('full_name').limit(500);
+    if (error) throw error;
+    for (const u of data || []) byId.set(String(u.id), u);
+  };
+
+  {
+    let q = supabase.from('users').select(userSelect).eq('company_id', companyEq).neq('is_active', false);
+    if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
+    await ingest(q);
+  }
+  if (deptIds.length) {
+    let q = supabase.from('users').select(userSelect).in('department_id', deptIds).neq('is_active', false);
+    if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
+    await ingest(q);
+  }
+
+  return Array.from(byId.values());
+}
+
+/**
+ * NV đang online thuộc công ty — lấy từ user_last_activity trước, rồi lọc membership
+ * (tránh bỏ sót người online vì không nằm trong danh sách thành viên ban đầu).
+ */
+async function listOnlineUsersForCompany(companyId) {
+  const userSelect =
+    'id, full_name, email, phone, avatar, role, position, address, department_id, company_id, department:departments!users_department_id_fkey(id,name,color)';
+
+  const thresholdIso = new Date(Date.now() - ONLINE_THRESHOLD_MS).toISOString();
+  const { data: activityRows, error: actErr } = await supabase
+    .from('user_last_activity')
+    .select('user_id, last_ping_at')
+    .gte('last_ping_at', thresholdIso);
+  if (actErr) throw actErr;
+
+  const lastPingMap = new Map();
+  for (const row of activityRows || []) {
+    const id = String(row.user_id);
+    if (id) lastPingMap.set(id, row.last_ping_at);
+  }
+  const onlineIds = [...lastPingMap.keys()];
+  if (!onlineIds.length) return [];
+
+  const deptIdsSet = await loadCompanyDepartmentIds(companyId);
+  const byId = new Map();
+
+  for (let i = 0; i < onlineIds.length; i += 200) {
+    const batch = onlineIds.slice(i, i + 200);
+    const { data: users, error: uErr } = await supabase
+      .from('users')
+      .select(userSelect)
+      .in('id', batch)
+      .neq('is_active', false);
+    if (uErr) throw uErr;
+    for (const u of users || []) {
+      if (!userMatchesCompany(u, companyId, deptIdsSet)) continue;
+      const id = String(u.id);
+      byId.set(id, {
+        ...u,
+        online: true,
+        last_ping_at: lastPingMap.get(id) || null,
+        devices: [],
+        online_devices: 0,
+        current_location: null,
+      });
+    }
+  }
+
+  return Array.from(byId.values());
+}
+
+/**
  * Danh sách NV (theo công ty / phòng ban) kèm online + last_ping_at.
  */
 async function listUsersWithActivity({ companyId, departmentId, search, onlineOnly } = {}) {
@@ -252,19 +351,7 @@ async function listUsersWithActivity({ companyId, departmentId, search, onlineOn
     if (error) throw error;
     users = data || [];
   } else if (companyId) {
-    const { data: depts } = await supabase
-      .from('departments')
-      .select('id')
-      .eq('company_id', companyId)
-      .eq('is_active', true);
-    const deptIds = (depts || []).map((d) => d.id);
-    if (!deptIds.length) return { users: [], stats: { online: 0, total: 0 } };
-
-    let q = supabase.from('users').select(userSelect).in('department_id', deptIds).neq('is_active', false);
-    if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
-    const { data, error } = await q.order('full_name').limit(500);
-    if (error) throw error;
-    users = data || [];
+    users = await queryUsersInCompany(companyId, { search, userSelect });
   } else {
     let q = supabase.from('users').select(userSelect).neq('is_active', false);
     if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
@@ -317,5 +404,9 @@ module.exports = {
   setPresenceBroadcast,
   getPresenceForUserIds,
   getDevicesForUserIds,
+  queryUsersInCompany,
+  loadCompanyDepartmentIds,
+  userMatchesCompany,
+  listOnlineUsersForCompany,
   listUsersWithActivity,
 };

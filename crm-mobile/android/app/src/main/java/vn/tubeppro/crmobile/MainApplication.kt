@@ -23,7 +23,8 @@ class MainApplication : Application(), ReactApplication {
       object : DefaultReactNativeHost(this) {
         override fun getPackages(): List<ReactPackage> =
             PackageList(this).packages.apply {
-              add(VoiceDataSyncPackage())
+              // Native overlay bubble (SYSTEM_ALERT_WINDOW) — không autolink được vì
+              // do app tự maintain, không phải npm package.
               add(FloatingBubblePackage())
             }
 
@@ -47,10 +48,6 @@ class MainApplication : Application(), ReactApplication {
     }
     loadReactNative(this)
     ApplicationLifecycleDispatcher.onApplicationCreate(this)
-
-    // Phase 3: keep OverlayBubbleService alive ngay khi app process khởi tạo
-    // → đảm bảo Android 12+ không chặn `startForegroundService` khi FCM tới sau này.
-    try { OverlayBubbleService.startKeepAlive(this) } catch (_: Throwable) {}
   }
 
   override fun onConfigurationChanged(newConfig: Configuration) {

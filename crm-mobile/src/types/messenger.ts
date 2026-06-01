@@ -4,6 +4,8 @@ export type MessengerGroupListItem = {
   raw_name?: string | null;
   is_direct?: boolean;
   peer_id?: string | null;
+  /** Avatar URL/path của peer (chỉ chat 1-1). */
+  peer_avatar?: string | null;
   crm_lead_id?: string | null;
   my_role?: string | null;
   message_count?: number;

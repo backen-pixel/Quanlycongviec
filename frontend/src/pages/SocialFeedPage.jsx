@@ -11,7 +11,7 @@ import {
   Video, Smile, MapPin, ImagePlus, Globe, MoreHorizontal,
   ChevronLeft, ChevronRight, Maximize2, Pencil, Share2, EyeOff, Search, User,
   Plus, Users, Megaphone, BarChart3, FolderOpen, TrendingUp, Cake,
-  Sparkles, Filter,
+  Sparkles, Filter, MessageSquare,
 } from 'lucide-react';
 
 import ScopeFilterBar from '../shared/components/ScopeFilterBar';
@@ -26,6 +26,7 @@ import ReactionCircle from '../shared/components/ReactionCircle';
 import { PostReactionActions, ReactionSummary } from '../shared/components/EngagementBar';
 import { REACTION_OPTIONS, REACTION_EMOJI } from '../shared/lib/reactions';
 import ShareToMessengerModal from '../components/ShareToMessengerModal';
+import { useMessengerDock } from '../context/MessengerDockContext';
 
 function normalizeSocialPost(p) {
   if (!p || typeof p !== 'object') return p;
@@ -1126,6 +1127,32 @@ export default function SocialFeedPage() {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const isSystemAdmin = checkSystemAdmin(user);
+  const { openMessengerGroupChat } = useMessengerDock();
+  const [chatLoadingId, setChatLoadingId] = useState(null);
+
+  const openDirectChatWith = useCallback(async (member) => {
+    const peerId = member?.id || member?.user_id;
+    const myId = user?.userId || user?.id;
+    if (!peerId || String(peerId) === String(myId)) return;
+    setChatLoadingId(peerId);
+    try {
+      const { data } = await api.post('/messenger/direct', { peer_user_id: peerId });
+      if (data?.id) {
+        openMessengerGroupChat({
+          id: data.id,
+          name: data.display_name || member.full_name || member.email,
+          display_name: data.display_name || member.full_name || member.email,
+          is_direct: true,
+          peer_id: data.peer_id || peerId,
+          peer_avatar: data.peer_avatar || member.avatar || null,
+        });
+      }
+    } catch (e) {
+      alert(e?.response?.data?.error || e?.message || 'Không mở được chat');
+    } finally {
+      setChatLoadingId(null);
+    }
+  }, [openMessengerGroupChat, user?.id, user?.userId]);
 
   const scope = useScopeFilter({
     storageKey: 'internal_social',
@@ -1185,6 +1212,37 @@ export default function SocialFeedPage() {
 
   const [bodyExpanded, setBodyExpanded] = useState({});
   const sentinelRef = useRef(null);
+  const [onlineMembers, setOnlineMembers] = useState([]);
+  const [onlineMembersLoading, setOnlineMembersLoading] = useState(false);
+
+  const fetchOnlineMembers = useCallback(async () => {
+    if (!effectiveCompanyId) {
+      setOnlineMembers([]);
+      return;
+    }
+    setOnlineMembersLoading(true);
+    try {
+      const params = isSystemAdmin ? { company_id: effectiveCompanyId } : {};
+      const { data } = await api.get('/internal-social/online-members', { params });
+      setOnlineMembers(Array.isArray(data?.users) ? data.users : []);
+    } catch {
+      setOnlineMembers([]);
+    } finally {
+      setOnlineMembersLoading(false);
+    }
+  }, [effectiveCompanyId, isSystemAdmin]);
+
+  useEffect(() => {
+    void fetchOnlineMembers();
+  }, [fetchOnlineMembers]);
+
+  useEffect(() => {
+    if (!effectiveCompanyId) return undefined;
+    const id = setInterval(() => {
+      if (!document.hidden) void fetchOnlineMembers();
+    }, 45_000);
+    return () => clearInterval(id);
+  }, [effectiveCompanyId, fetchOnlineMembers]);
 
   const fetchFeed = useCallback(async (append) => {
     if (!effectiveCompanyId && isSystemAdmin) {
@@ -1776,23 +1834,13 @@ export default function SocialFeedPage() {
     setComposerOpen(true);
   };
 
-  /* ── Derived sidebar / KPI data ──
-     Tính số liệu thuần phía client từ posts đã load (rẻ, không cần API mới).
-     Khi BE bổ sung endpoint /social/stats sau có thể thay thế. */
+  /* ── Derived sidebar / KPI data ── */
   const postsTodayCount = useMemo(() => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     return posts.filter((p) => p.created_at && new Date(p.created_at) >= today).length;
   }, [posts]);
 
-  const sidebarOnline = useMemo(() => {
-    const map = new Map();
-    posts.forEach((p) => {
-      const u = p.author;
-      if (u?.id && !map.has(u.id)) map.set(u.id, u);
-    });
-    return Array.from(map.values());
-  }, [posts]);
-
+  const sidebarOnline = onlineMembers;
   const onlineMemberCount = sidebarOnline.length;
 
   const sidebarTrendingTags = useMemo(() => {
@@ -2576,25 +2624,52 @@ export default function SocialFeedPage() {
                     Thành viên online ({sidebarOnline.length})
                   </h3>
                   {sidebarOnline.length > 5 && (
-                    <button type="button" className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-700">Xem tất cả</button>
+                    <Link to="/crm/activity" className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-700">Xem tất cả</Link>
                   )}
                 </header>
                 <ul className="divide-y divide-slate-100/70">
-                  {sidebarOnline.slice(0, 6).map((u) => (
-                    <li key={u.id}>
-                      <Link
-                        to={`/social/u/${u.id}`}
-                        className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50/80 transition-colors"
-                      >
-                        <Avatar user={u} />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold text-slate-800 truncate">{u.full_name || u.email}</p>
-                          <p className="text-[11px] text-slate-500 truncate">{u.position || u.role || 'Thành viên'}</p>
-                        </div>
-                      </Link>
+                  {onlineMembersLoading && sidebarOnline.length === 0 && (
+                    <li className="px-4 py-6 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang tải…
                     </li>
-                  ))}
-                  {sidebarOnline.length === 0 && (
+                  )}
+                  {sidebarOnline.slice(0, 6).map((u) => {
+                    const myId = user?.userId || user?.id;
+                    const isMe = String(u.id) === String(myId);
+                    return (
+                    <li key={u.id} className="group">
+                      <div className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50/80 transition-colors">
+                        <Link to={`/social/u/${u.id}`} className="flex items-center gap-3 min-w-0 flex-1">
+                          <Avatar user={u} />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-slate-800 truncate">
+                              {u.full_name || u.email}
+                              {isMe && <span className="ml-1 text-[10px] font-medium text-slate-400">(bạn)</span>}
+                            </p>
+                            <p className="text-[11px] text-slate-500 truncate">{u.position || u.role || 'Thành viên'}</p>
+                          </div>
+                        </Link>
+                        {!isMe && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); openDirectChatWith(u); }}
+                            disabled={chatLoadingId === u.id}
+                            className="shrink-0 inline-flex items-center justify-center w-8 h-8 rounded-full bg-emerald-50 text-emerald-600 hover:bg-emerald-100 hover:text-emerald-700 transition-colors disabled:opacity-60 disabled:cursor-wait"
+                            title={`Chat với ${u.full_name || u.email}`}
+                            aria-label={`Chat với ${u.full_name || u.email}`}
+                          >
+                            {chatLoadingId === u.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <MessageSquare className="h-4 w-4" />
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    </li>
+                    );
+                  })}
+                  {!onlineMembersLoading && sidebarOnline.length === 0 && (
                     <li className="px-4 py-6 text-center text-xs text-slate-400">Chưa có thành viên online</li>
                   )}
                 </ul>

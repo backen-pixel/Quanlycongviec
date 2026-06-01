@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { isCrmSystemAdminUser } = require('../helpers/crmAccessRoles');
+const { getPresenceForUserIds, listOnlineUsersForCompany } = require('../helpers/userPresence');
 const { emitNotifyBadge } = require('../helpers/notifyBadge');
 const { responseCache, invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
 
@@ -708,6 +709,66 @@ r.post('/mark-read', async (req, res) => {
   } catch (e) {
     console.error('POST /internal-social/mark-read:', e);
     res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
+/** GET /api/internal-social/online-members — thành viên đang online trong phạm vi công ty bảng tin */
+r.get('/online-members', async (req, res) => {
+  try {
+    const companyId = resolveListCompanyId(req, res);
+    if (!companyId) return;
+
+    const byId = new Map();
+    for (const u of await listOnlineUsersForCompany(companyId)) {
+      if (u?.id) byId.set(String(u.id), u);
+    }
+
+    // Admin hệ thống (role admin, không gắn company_id) — hiển thị khi đang online
+    const { data: sysAdmins, error: saErr } = await supabase
+      .from('users')
+      .select('id, full_name, email, phone, avatar, role, position, department_id')
+      .eq('role', 'admin')
+      .is('company_id', null)
+      .neq('is_active', false)
+      .limit(50);
+    if (saErr) throw saErr;
+
+    const sysIds = (sysAdmins || []).map((u) => u.id).filter(Boolean);
+    if (sysIds.length) {
+      const presence = await getPresenceForUserIds(sysIds);
+      for (const u of sysAdmins || []) {
+        const id = String(u.id);
+        const pres = presence[id] || { online: false, last_ping_at: null };
+        if (!pres.online || byId.has(id)) continue;
+        byId.set(id, {
+          ...u,
+          online: true,
+          last_ping_at: pres.last_ping_at,
+          devices: [],
+          online_devices: 0,
+          current_location: null,
+        });
+      }
+    }
+
+    const users = Array.from(byId.values()).sort((a, b) =>
+      String(a.full_name || a.email || '').localeCompare(String(b.full_name || b.email || ''), 'vi'),
+    );
+
+    res.json({
+      users,
+      count: users.length,
+      company_id: companyId,
+    });
+  } catch (e) {
+    console.error('GET /internal-social/online-members:', e);
+    const msg = String(e.message || e);
+    if (msg.includes('user_last_activity') || msg.includes('does not exist')) {
+      return res.status(503).json({
+        error: 'Bảng user_last_activity chưa có — chạy migration database/67_user_activity_and_messenger_pins.sql',
+      });
+    }
+    res.status(500).json({ error: msg || 'Lỗi' });
   }
 });
 

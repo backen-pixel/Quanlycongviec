@@ -24,6 +24,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { Audio } from 'expo-av';
 import { io, type Socket } from 'socket.io-client';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { api, getStoredToken, postMultipart } from '../api/client';
 import { API_ORIGIN } from '../config';
 import { useAuth } from '../context/AuthContext';
@@ -33,11 +34,20 @@ import { CrmColors, CrmRadii } from '../theme/crmTheme';
 import { formatDateTime } from '../lib/formatUtils';
 import { chatDebugClear, chatDebugLog, chatDebugSnapshot, chatDebugSubscribe } from '../lib/chatDebug';
 import { useNotifications } from '../context/NotificationContext';
+import {
+  ensureOverlayPermissionInteractive,
+  hideBubbleForConversation,
+  minimizeApp,
+  showBubbleForConversation,
+} from '../lib/floatingBubbleOverlay';
 
 const { width: SW } = Dimensions.get('window');
-const CHAT_BG = '#EAE6DF';
-const BUBBLE_ME = '#005CE8';
+/** Nền chat sáng, sạch — tone trung tính, dễ đọc trên màn hình lớn / nhỏ. */
+const CHAT_BG = '#F2F4F8';
+const BUBBLE_ME = '#2563EB';
+const BUBBLE_ME_DARK = '#1D4ED8';
 const BUBBLE_OTHER = '#FFFFFF';
+const BUBBLE_OTHER_BORDER = '#E5E7EB';
 
 /* ─── helpers ─────────────────────────────────────────────────── */
 function mediaUrl(u: string | null | undefined): string | null {
@@ -268,8 +278,38 @@ export default function MessengerGroupChatScreen({
       void refreshUnread();
       void loadAll();
       void api.patch(`/messenger/groups/${groupId}/read`).catch(() => {});
+      // Khi user đang xem chat này → ẩn bong bóng của chính nhóm (nếu đang nổi)
+      // để khỏi đè nội dung. Bubble sẽ tự xuất hiện lại khi user nhấn nút
+      // "Thu nhỏ" hoặc khi có tin mới mà app đang ở nền.
+      hideBubbleForConversation(groupId);
     }, [refreshUnread, loadAll, groupId]),
   );
+
+  /**
+   * Thu nhỏ chat thành bong bóng nổi trên màn hình ngoài app:
+   *  1) Kiểm tra quyền `SYSTEM_ALERT_WINDOW`. Nếu chưa có → hỏi user mở
+   *     Cài đặt (ensureOverlayPermissionInteractive xử lý alert + intent).
+   *  2) Bật bubble cho group hiện hành (avatar = chữ cái đầu tên nhóm).
+   *  3) Đẩy app về nền — UX giống Messenger "Nhỏ thành chat head".
+   */
+  const onMinimizeToBubble = useCallback(async () => {
+    if (Platform.OS !== 'android') {
+      Alert.alert('iOS', 'Bong bóng nổi chỉ hỗ trợ trên Android.');
+      return;
+    }
+    const ok = await ensureOverlayPermissionInteractive({
+      title: 'Cấp quyền hiện bong bóng',
+      message:
+        'Để hiện bong bóng chat ngoài app (giống Messenger), TuBep CRM cần quyền "Hiển thị trên các ứng dụng khác". Mở Cài đặt để bật ngay?',
+    });
+    if (!ok) return;
+    showBubbleForConversation({
+      groupId,
+      title: displayTitle,
+      letter: displayTitle.trim().slice(0, 1).toUpperCase() || '?',
+    });
+    setTimeout(() => minimizeApp(), 80);
+  }, [groupId, displayTitle]);
 
   useEffect(() => { listRef.current?.scrollToEnd({ animated: true }); }, [messages.length]);
   useEffect(() => { navigation.setOptions({ title: displayTitle }); }, [navigation, displayTitle]);
@@ -617,24 +657,48 @@ export default function MessengerGroupChatScreen({
   return (
     <ChatRoot style={s.flex} {...chatRootProps}>
       {/* Header info bar */}
-      <TouchableOpacity
-        style={s.headerBar}
-        onPress={() => { setInfoOpen(true); setInfoTab('members'); }}
-        activeOpacity={0.85}
-      >
-        <View style={[s.headerAvatar, { backgroundColor: avatarColor(displayTitle) }]}>
-          <Text style={s.headerAvatarTxt}>{initials(displayTitle)}</Text>
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={s.headerName} numberOfLines={1}>{displayTitle}</Text>
-          <Text style={s.headerSub}>
-            {isDirectChat ? 'Chat 1–1' : `${group?.members?.length ?? 0} thành viên · Xem chi tiết`}
-          </Text>
-        </View>
-        <TouchableOpacity onPress={() => setDebugOpen(true)} style={s.debugPill}>
-          <Text style={s.debugPillTxt}>Log</Text>
+      <View style={s.headerBar}>
+        <TouchableOpacity
+          style={s.headerLeft}
+          onPress={() => { setInfoOpen(true); setInfoTab('members'); }}
+          activeOpacity={0.85}
+        >
+          <View style={s.headerAvatarWrap}>
+            <View style={[s.headerAvatar, { backgroundColor: avatarColor(displayTitle) }]}>
+              <Text style={s.headerAvatarTxt}>{initials(displayTitle)}</Text>
+            </View>
+            {isDirectChat ? <View style={s.headerStatusDot} /> : null}
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={s.headerName} numberOfLines={1}>{displayTitle}</Text>
+            <Text style={s.headerSub} numberOfLines={1}>
+              {isDirectChat ? 'Đang hoạt động' : `${group?.members?.length ?? 0} thành viên`}
+            </Text>
+          </View>
         </TouchableOpacity>
-      </TouchableOpacity>
+        <View style={s.headerActions}>
+          {Platform.OS === 'android' ? (
+            <TouchableOpacity
+              onPress={() => void onMinimizeToBubble()}
+              style={s.headerIconBtn}
+              hitSlop={8}
+              accessibilityLabel="Thu nhỏ thành bong bóng"
+            >
+              <Ionicons name="ellipse-outline" size={22} color={CrmColors.blue600} />
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity
+            onPress={() => { setInfoOpen(true); setInfoTab('members'); }}
+            style={s.headerIconBtn}
+            hitSlop={8}
+          >
+            <Ionicons name="information-circle-outline" size={22} color={CrmColors.gray700} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setDebugOpen(true)} style={s.headerIconBtn} hitSlop={8}>
+            <Ionicons name="bug-outline" size={18} color={CrmColors.gray500} />
+          </TouchableOpacity>
+        </View>
+      </View>
 
       {/* Message list */}
       <FlatList
@@ -652,9 +716,13 @@ export default function MessengerGroupChatScreen({
       {/* Reply chip */}
       {replyTo ? (
         <View style={s.replyChip}>
-          <Text style={s.replyChipTxt} numberOfLines={1}>↩ {replyLabel}</Text>
-          <TouchableOpacity onPress={() => setReplyTo(null)}>
-            <Text style={s.replyChipX}>✕</Text>
+          <View style={s.replyChipBar} />
+          <View style={{ flex: 1 }}>
+            <Text style={s.replyChipLabel}>Trả lời tin nhắn</Text>
+            <Text style={s.replyChipTxt} numberOfLines={1}>{replyLabel}</Text>
+          </View>
+          <TouchableOpacity onPress={() => setReplyTo(null)} hitSlop={8}>
+            <Ionicons name="close" size={18} color={CrmColors.gray500} />
           </TouchableOpacity>
         </View>
       ) : null}
@@ -683,7 +751,7 @@ export default function MessengerGroupChatScreen({
                   style={s.pendingDel}
                   onPress={() => setPendingFiles((p) => p.filter((_, j) => j !== i))}
                 >
-                  <Text style={s.pendingDelTxt}>✕</Text>
+                  <Ionicons name="close" size={12} color="#fff" />
                 </TouchableOpacity>
               </View>
             );
@@ -700,17 +768,20 @@ export default function MessengerGroupChatScreen({
             <Text style={s.recCancelTxt}>Hủy</Text>
           </TouchableOpacity>
           <TouchableOpacity style={s.recStop} onPress={() => void stopRecording()}>
-            <Text style={s.recStopTxt}>⏹ Dừng</Text>
+            <Ionicons name="stop" size={14} color="#fff" />
+            <Text style={s.recStopTxt}>Dừng</Text>
           </TouchableOpacity>
         </View>
       ) : recState === 'done' ? (
-        <View style={s.recBar}>
-          <Text style={s.recDurTxt}>🎵 Đã ghi {fmtSecs(recDur)} giây</Text>
+        <View style={[s.recBar, s.recBarDone]}>
+          <Ionicons name="musical-notes" size={16} color="#0ea5a4" />
+          <Text style={[s.recDurTxt, s.recDurTxtDone]}>Đã ghi {fmtSecs(recDur)} giây</Text>
           <TouchableOpacity style={s.recCancel} onPress={() => void cancelRecording()}>
             <Text style={s.recCancelTxt}>Hủy</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[s.recStop, { backgroundColor: BUBBLE_ME }]} onPress={() => void sendVoice()}>
-            <Text style={s.recStopTxt}>Gửi ▲</Text>
+            <Ionicons name="send" size={13} color="#fff" />
+            <Text style={s.recStopTxt}>Gửi</Text>
           </TouchableOpacity>
         </View>
       ) : null}
@@ -719,33 +790,49 @@ export default function MessengerGroupChatScreen({
       {recState === 'idle' ? (
         <View style={[s.composer, { paddingBottom: composerPadBottom }]}>
           <TouchableOpacity
-            style={s.composerIcon}
+            style={[s.composerIcon, mediaOpen && s.composerIconOn]}
             onPress={() => setMediaOpen((v) => !v)}
+            activeOpacity={0.7}
           >
-            <Text style={s.composerIconTxt}>{mediaOpen ? '✕' : '＋'}</Text>
+            <Ionicons
+              name={mediaOpen ? 'close' : 'add'}
+              size={22}
+              color={mediaOpen ? '#fff' : CrmColors.gray700}
+            />
           </TouchableOpacity>
 
-          <TextInput
-            style={s.input}
-            value={draft}
-            onChangeText={setDraft}
-            placeholder="Tin nhắn…"
-            placeholderTextColor="#A0A8B0"
-            multiline
-            maxLength={8000}
-          />
+          <View style={s.inputWrap}>
+            <TextInput
+              style={s.input}
+              value={draft}
+              onChangeText={setDraft}
+              placeholder="Tin nhắn…"
+              placeholderTextColor="#9CA3AF"
+              multiline
+              maxLength={8000}
+            />
+          </View>
 
           {draft.trim() || pendingFiles.length > 0 ? (
             <TouchableOpacity
               style={[s.sendBtn, sending && s.sendBtnOff]}
               onPress={() => void sendMessage()}
               disabled={sending}
+              activeOpacity={0.85}
             >
-              <Text style={s.sendTxt}>{sending ? '…' : '▶'}</Text>
+              {sending ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <Ionicons name="send" size={18} color="#fff" />
+              )}
             </TouchableOpacity>
           ) : (
-            <TouchableOpacity style={s.composerIcon} onPress={() => void startRecording()}>
-              <Text style={s.composerIconTxt}>🎙</Text>
+            <TouchableOpacity
+              style={s.composerIcon}
+              onPress={() => void startRecording()}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="mic" size={20} color={BUBBLE_ME} />
             </TouchableOpacity>
           )}
         </View>
@@ -753,28 +840,32 @@ export default function MessengerGroupChatScreen({
 
       {/* Media panel */}
       {mediaOpen && recState === 'idle' ? (
-        <View style={[s.mediaPanel, { paddingBottom: composerPadBottom }]}>
-          <TouchableOpacity style={s.mediaBtn} onPress={() => void pickGallery()}>
-            <View style={[s.mediaIconWrap, { backgroundColor: '#0068FF' }]}>
-              <Text style={s.mediaIcon}>🖼</Text>
+        <View style={[s.mediaPanel, { paddingBottom: composerPadBottom + 6 }]}>
+          <TouchableOpacity style={s.mediaBtn} onPress={() => void pickGallery()} activeOpacity={0.85}>
+            <View style={[s.mediaIconWrap, { backgroundColor: '#2563EB' }]}>
+              <Ionicons name="images" size={22} color="#fff" />
             </View>
             <Text style={s.mediaBtnTxt}>Thư viện</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={s.mediaBtn} onPress={() => void takePhoto()}>
-            <View style={[s.mediaIconWrap, { backgroundColor: '#FF5B5B' }]}>
-              <Text style={s.mediaIcon}>📷</Text>
+          <TouchableOpacity style={s.mediaBtn} onPress={() => void takePhoto()} activeOpacity={0.85}>
+            <View style={[s.mediaIconWrap, { backgroundColor: '#EF4444' }]}>
+              <Ionicons name="camera" size={22} color="#fff" />
             </View>
             <Text style={s.mediaBtnTxt}>Máy ảnh</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={s.mediaBtn} onPress={() => void pickFile()}>
-            <View style={[s.mediaIconWrap, { backgroundColor: '#FF9F1C' }]}>
-              <Text style={s.mediaIcon}>📎</Text>
+          <TouchableOpacity style={s.mediaBtn} onPress={() => void pickFile()} activeOpacity={0.85}>
+            <View style={[s.mediaIconWrap, { backgroundColor: '#F59E0B' }]}>
+              <Ionicons name="document-attach" size={22} color="#fff" />
             </View>
             <Text style={s.mediaBtnTxt}>Tệp tin</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={s.mediaBtn} onPress={() => { setMediaOpen(false); void startRecording(); }}>
-            <View style={[s.mediaIconWrap, { backgroundColor: '#2EC4B6' }]}>
-              <Text style={s.mediaIcon}>🎙</Text>
+          <TouchableOpacity
+            style={s.mediaBtn}
+            onPress={() => { setMediaOpen(false); void startRecording(); }}
+            activeOpacity={0.85}
+          >
+            <View style={[s.mediaIconWrap, { backgroundColor: '#0EA5A4' }]}>
+              <Ionicons name="mic" size={22} color="#fff" />
             </View>
             <Text style={s.mediaBtnTxt}>Ghi âm</Text>
           </TouchableOpacity>
@@ -966,28 +1057,41 @@ const s = StyleSheet.create({
 
   // Header
   headerBar: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    paddingVertical: 8, paddingHorizontal: 12,
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: 10, paddingHorizontal: 12,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: CrmColors.gray200,
+    gap: 8,
   },
-  headerAvatar: { width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center' },
-  headerAvatarTxt: { fontSize: 13, fontWeight: '700', color: '#fff' },
-  headerName: { fontSize: 15, fontWeight: '700', color: CrmColors.gray900 },
-  headerSub: { fontSize: 11, color: CrmColors.gray500, marginTop: 1 },
-  debugPill: { paddingVertical: 5, paddingHorizontal: 8, borderRadius: 8, backgroundColor: CrmColors.gray200 },
-  debugPillTxt: { fontSize: 11, fontWeight: '700', color: CrmColors.gray700 },
+  headerLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 0 },
+  headerAvatarWrap: { width: 40, height: 40, position: 'relative' },
+  headerAvatar: {
+    width: 40, height: 40, borderRadius: 20,
+    justifyContent: 'center', alignItems: 'center',
+  },
+  headerAvatarTxt: { fontSize: 14, fontWeight: '800', color: '#fff' },
+  headerStatusDot: {
+    position: 'absolute', right: 0, bottom: 0,
+    width: 12, height: 12, borderRadius: 6,
+    backgroundColor: '#22c55e', borderWidth: 2, borderColor: '#fff',
+  },
+  headerName: { fontSize: 15, fontWeight: '800', color: CrmColors.gray900 },
+  headerSub: { fontSize: 11, color: CrmColors.gray500, marginTop: 2, fontWeight: '600' },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  headerIconBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
 
   // Messages
   msgList: { flex: 1 },
   msgPad: { padding: 10, paddingBottom: 8 },
 
   // Date separator
-  dateSep: { alignSelf: 'center', marginVertical: 10 },
+  dateSep: { alignSelf: 'center', marginVertical: 12 },
   dateSepTxt: {
-    fontSize: 11, color: CrmColors.gray500, fontWeight: '600',
-    backgroundColor: 'rgba(0,0,0,0.06)', paddingHorizontal: 10, paddingVertical: 3,
-    borderRadius: 10,
+    fontSize: 11, color: CrmColors.gray600, fontWeight: '700',
+    backgroundColor: 'rgba(15,23,42,0.05)',
+    paddingHorizontal: 14, paddingVertical: 5,
+    borderRadius: 999,
+    overflow: 'hidden',
   },
 
   // System message
@@ -1007,14 +1111,28 @@ const s = StyleSheet.create({
   msgName: { fontSize: 11, fontWeight: '700', color: CrmColors.gray600, marginBottom: 2, marginLeft: 2 },
 
   // Bubbles
-  bubble: { borderRadius: 18, paddingHorizontal: 12, paddingVertical: 8, maxWidth: '100%' },
-  bubbleOther: { backgroundColor: BUBBLE_OTHER, borderBottomLeftRadius: 4 },
-  bubbleBot: { backgroundColor: '#EEF2FF', borderBottomLeftRadius: 4, borderWidth: 1, borderColor: '#C7D2FE' },
-  bubbleMine: { backgroundColor: BUBBLE_ME, borderBottomRightRadius: 4 },
-  bubbleTxt: { fontSize: 15, color: '#1A1A2E', lineHeight: 22 },
+  bubble: {
+    borderRadius: 18, paddingHorizontal: 13, paddingVertical: 9, maxWidth: '100%',
+    shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2,
+    elevation: 1,
+  },
+  bubbleOther: {
+    backgroundColor: BUBBLE_OTHER,
+    borderBottomLeftRadius: 6,
+    borderWidth: 1, borderColor: BUBBLE_OTHER_BORDER,
+  },
+  bubbleBot: {
+    backgroundColor: '#EEF2FF', borderBottomLeftRadius: 6,
+    borderWidth: 1, borderColor: '#C7D2FE',
+  },
+  bubbleMine: {
+    backgroundColor: BUBBLE_ME, borderBottomRightRadius: 6,
+    borderWidth: 1, borderColor: BUBBLE_ME_DARK,
+  },
+  bubbleTxt: { fontSize: 15, color: '#0F172A', lineHeight: 22 },
   bubbleTxtMine: { color: '#FFFFFF' },
-  bubbleTime: { fontSize: 10, color: CrmColors.gray400, marginTop: 4, alignSelf: 'flex-end' },
-  bubbleTimeMine: { color: 'rgba(255,255,255,0.6)' },
+  bubbleTime: { fontSize: 10, color: CrmColors.gray400, marginTop: 4, alignSelf: 'flex-end', fontWeight: '600' },
+  bubbleTimeMine: { color: 'rgba(255,255,255,0.7)' },
 
   // Reply
   replyBar: { borderLeftWidth: 3, borderLeftColor: CrmColors.blue100, paddingLeft: 8, marginBottom: 6, opacity: 0.85 },
@@ -1046,12 +1164,14 @@ const s = StyleSheet.create({
 
   // Reply chip
   replyChip: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8,
-    backgroundColor: '#EFF3FF',
-    borderTopWidth: 1, borderTopColor: '#C8D4FF',
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingHorizontal: 14, paddingVertical: 10,
+    backgroundColor: '#EFF6FF',
+    borderTopWidth: 1, borderTopColor: '#BFDBFE',
   },
-  replyChipTxt: { flex: 1, fontSize: 12, color: CrmColors.gray700 },
-  replyChipX: { fontSize: 18, color: CrmColors.gray400, paddingLeft: 8 },
+  replyChipBar: { width: 3, alignSelf: 'stretch', borderRadius: 2, backgroundColor: BUBBLE_ME },
+  replyChipLabel: { fontSize: 11, color: BUBBLE_ME, fontWeight: '800' },
+  replyChipTxt: { fontSize: 12, color: CrmColors.gray700, marginTop: 2 },
 
   // Pending files
   pendingRow: { maxHeight: 90, backgroundColor: '#FAFAFA', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: CrmColors.gray200 },
@@ -1068,47 +1188,70 @@ const s = StyleSheet.create({
 
   // Recording bar
   recBar: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10,
-    backgroundColor: '#FFF5F5', borderTopWidth: 1, borderTopColor: '#FFD0D0', gap: 8,
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12,
+    backgroundColor: '#FEF2F2', borderTopWidth: 1, borderTopColor: '#FECACA', gap: 8,
   },
-  recDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#FF3B30' },
-  recDurTxt: { flex: 1, fontSize: 14, color: '#FF3B30', fontWeight: '600' },
-  recCancel: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: CrmColors.gray200 },
+  recBarDone: { backgroundColor: '#ECFDF5', borderTopColor: '#A7F3D0' },
+  recDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#EF4444' },
+  recDurTxt: { flex: 1, fontSize: 14, color: '#EF4444', fontWeight: '800' },
+  recDurTxtDone: { color: '#0EA5A4' },
+  recCancel: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 10, backgroundColor: CrmColors.gray200 },
   recCancelTxt: { fontSize: 13, color: CrmColors.gray700, fontWeight: '700' },
-  recStop: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: '#FF3B30' },
-  recStopTxt: { fontSize: 13, color: '#fff', fontWeight: '700' },
+  recStop: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 14, paddingVertical: 7, borderRadius: 10, backgroundColor: '#EF4444',
+  },
+  recStopTxt: { fontSize: 13, color: '#fff', fontWeight: '800' },
 
   // Composer
   composer: {
-    flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 8, paddingTop: 8, gap: 6,
+    flexDirection: 'row', alignItems: 'flex-end',
+    paddingHorizontal: 10, paddingTop: 10, gap: 8,
     backgroundColor: '#FFFFFF',
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: CrmColors.gray200,
   },
-  composerIcon: { width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center', backgroundColor: CrmColors.gray100 },
-  composerIconTxt: { fontSize: 18 },
+  composerIcon: {
+    width: 40, height: 40, borderRadius: 20,
+    justifyContent: 'center', alignItems: 'center',
+    backgroundColor: CrmColors.gray100,
+  },
+  composerIconOn: { backgroundColor: BUBBLE_ME },
+  inputWrap: {
+    flex: 1,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 22,
+    paddingHorizontal: 4,
+    minHeight: 40,
+    maxHeight: 130,
+    justifyContent: 'center',
+  },
   input: {
-    flex: 1, minHeight: 38, maxHeight: 120,
-    borderWidth: 1, borderColor: CrmColors.gray200, borderRadius: 20,
-    paddingHorizontal: 14, paddingVertical: 8,
-    fontSize: 15, color: CrmColors.gray900, backgroundColor: '#F8F9FA',
+    flex: 1, minHeight: 40, maxHeight: 120,
+    paddingHorizontal: 14, paddingVertical: 10,
+    fontSize: 15, color: CrmColors.gray900,
   },
   sendBtn: {
-    width: 38, height: 38, borderRadius: 19,
+    width: 40, height: 40, borderRadius: 20,
     backgroundColor: BUBBLE_ME, justifyContent: 'center', alignItems: 'center',
+    shadowColor: BUBBLE_ME, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3,
+    shadowRadius: 4, elevation: 3,
   },
   sendBtnOff: { opacity: 0.5 },
-  sendTxt: { fontSize: 16, color: '#fff', fontWeight: '900' },
 
   // Media panel
   mediaPanel: {
     flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-around',
-    paddingVertical: 12, paddingHorizontal: 16, backgroundColor: '#FFFFFF',
+    paddingVertical: 16, paddingHorizontal: 16, backgroundColor: '#FFFFFF',
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: CrmColors.gray200,
   },
-  mediaBtn: { alignItems: 'center', gap: 6, paddingVertical: 6, width: 70 },
-  mediaIconWrap: { width: 52, height: 52, borderRadius: 26, justifyContent: 'center', alignItems: 'center' },
-  mediaIcon: { fontSize: 24 },
-  mediaBtnTxt: { fontSize: 11, color: CrmColors.gray700, fontWeight: '600' },
+  mediaBtn: { alignItems: 'center', gap: 8, paddingVertical: 4, width: 76 },
+  mediaIconWrap: {
+    width: 56, height: 56, borderRadius: 18,
+    justifyContent: 'center', alignItems: 'center',
+    shadowColor: '#0F172A', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12, shadowRadius: 4, elevation: 2,
+  },
+  mediaBtnTxt: { fontSize: 11, color: CrmColors.gray700, fontWeight: '700' },
 
   // Modal
   modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },

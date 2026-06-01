@@ -412,9 +412,11 @@ export default function ActiveUsersPage() {
         markGroupRead(data.id);
         openMessengerGroupChat({
           id: data.id,
-          name: data.name || data.display_name || u.full_name || u.email,
+          name: data.display_name || u.full_name || u.email,
+          display_name: data.display_name || u.full_name || u.email,
           is_direct: true,
-          peer_id: peerId,
+          peer_id: data.peer_id || peerId,
+          peer_avatar: data.peer_avatar || u.avatar || null,
         });
       }
     } catch (e) {
