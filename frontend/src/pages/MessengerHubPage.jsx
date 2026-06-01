@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import { useCall } from '../context/CallContext';
+import GroupCallMemberPickerModal from '../components/GroupCallMemberPickerModal';
 import { MessengerGroupChatTab } from '../components/LeadChatTabs';
 import { useAuth } from '../lib/auth';
 import { messengerThreadKey } from '../lib/messengerHubStorage';
@@ -227,7 +228,9 @@ export default function MessengerHubPage() {
   const uid = user?.userId || user?.id;
   const { markGroupRead, syncHubThreadLeadIds, syncHubMessengerGroupIds, unreadByGroupId } =
     useMessengerDock();
-  const { startCall, status: callStatus } = useCall();
+  const { startCall, startGroupCall, status: callStatus } = useCall();
+  /** Modal chọn thành viên trước khi bắt đầu cuộc gọi nhóm. */
+  const [groupCallPicker, setGroupCallPicker] = useState(null); // null | { kind: 'audio'|'video' }
   const [searchParams] = useSearchParams();
 
   const [threads, setThreads] = useState([]);
@@ -1180,22 +1183,35 @@ export default function MessengerHubPage() {
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   {(() => {
-                    const canCall = !!selected?.is_direct && !!selected?.peer_id && callStatus === 'idle';
-                    const disabledReason = !selected?.is_direct
-                      ? 'Chỉ gọi được trong hội thoại 1-1'
-                      : callStatus !== 'idle'
-                        ? 'Đang có cuộc gọi khác'
-                        : 'Gọi thoại';
+                    const isIdle = callStatus === 'idle';
+                    const isDirect = !!selected?.is_direct && !!selected?.peer_id;
+                    const otherMembers = !isDirect
+                      ? groupMembers.filter((m) => String(m.user_id) !== String(uid))
+                      : [];
+                    const isGroupCallable = !isDirect && !!selectedGroupId && otherMembers.length > 0;
+                    const canCall = isIdle && (isDirect || isGroupCallable);
+                    const disabledReason = !isIdle
+                      ? 'Đang có cuộc gọi khác'
+                      : (!isDirect && !isGroupCallable)
+                        ? 'Nhóm chưa có thành viên khác'
+                        : isDirect
+                          ? 'Gọi thoại'
+                          : 'Gọi nhóm';
                     return (
                       <button
                         type="button"
                         onClick={() => {
                           if (!canCall) return;
-                          startCall({
-                            id: selected.peer_id,
-                            name: selected.title,
-                            avatar: selected.peer_avatar,
-                          });
+                          if (isDirect) {
+                            startCall({
+                              id: selected.peer_id,
+                              name: selected.title,
+                              avatar: selected.peer_avatar,
+                            });
+                          } else {
+                            // Nhóm → mở modal chọn thành viên trước
+                            setGroupCallPicker({ kind: 'audio' });
+                          }
                         }}
                         disabled={!canCall}
                         className={`w-9 h-9 rounded-full transition flex items-center justify-center ${
@@ -1209,9 +1225,49 @@ export default function MessengerHubPage() {
                       </button>
                     );
                   })()}
-                  <button type="button" className="w-9 h-9 rounded-full text-slate-400 bg-slate-100/80 cursor-not-allowed flex items-center justify-center" title="Gọi video (sắp có)" disabled>
-                    <Video className="h-4 w-4" />
-                  </button>
+                  {(() => {
+                    const isIdle = callStatus === 'idle';
+                    const isDirect = !!selected?.is_direct && !!selected?.peer_id;
+                    const otherMembers = !isDirect
+                      ? groupMembers.filter((m) => String(m.user_id) !== String(uid))
+                      : [];
+                    const isGroupCallable = !isDirect && !!selectedGroupId && otherMembers.length > 0;
+                    const canVideo = isIdle && (isDirect || isGroupCallable);
+                    const disabledReason = !isIdle
+                      ? 'Đang có cuộc gọi khác'
+                      : (!isDirect && !isGroupCallable)
+                        ? 'Nhóm chưa có thành viên khác'
+                        : isDirect
+                          ? 'Gọi video'
+                          : 'Gọi video nhóm';
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!canVideo) return;
+                          if (isDirect) {
+                            startCall({
+                              id: selected.peer_id,
+                              name: selected.title,
+                              avatar: selected.peer_avatar,
+                            }, { video: true });
+                          } else {
+                            // Nhóm → mở modal chọn thành viên trước
+                            setGroupCallPicker({ kind: 'video' });
+                          }
+                        }}
+                        disabled={!canVideo}
+                        className={`w-9 h-9 rounded-full transition flex items-center justify-center ${
+                          canVideo
+                            ? 'text-sky-700 bg-sky-50 hover:bg-sky-100'
+                            : 'text-slate-400 bg-slate-100/80 cursor-not-allowed'
+                        }`}
+                        title={disabledReason}
+                      >
+                        <Video className="h-4 w-4" />
+                      </button>
+                    );
+                  })()}
                   <button
                     type="button"
                     className="w-9 h-9 rounded-full text-slate-600 bg-slate-100/80 hover:bg-violet-100 hover:text-violet-700 transition flex items-center justify-center"
@@ -1726,6 +1782,30 @@ export default function MessengerHubPage() {
           </div>
         </div>
       )}
+
+      {/* Modal chọn thành viên trước khi gọi nhóm */}
+      <GroupCallMemberPickerModal
+        open={!!groupCallPicker}
+        kind={groupCallPicker?.kind || 'audio'}
+        groupName={selected?.title || 'Nhóm chat'}
+        members={groupMembers
+          .filter((m) => String(m.user_id) !== String(uid))
+          .map((m) => ({
+            id: m.user_id,
+            name: m.user?.full_name || m.user?.fullName || 'Thành viên',
+            avatar: m.user?.avatar || null,
+          }))}
+        onCancel={() => setGroupCallPicker(null)}
+        onConfirm={(pickedMembers) => {
+          const opts = groupCallPicker?.kind === 'video' ? { video: true } : {};
+          setGroupCallPicker(null);
+          startGroupCall({
+            id: selectedGroupId,
+            name: selected?.title || 'Nhóm chat',
+            members: pickedMembers,
+          }, opts);
+        }}
+      />
     </div>
   );
 }

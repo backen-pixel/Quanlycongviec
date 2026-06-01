@@ -1,16 +1,19 @@
 /**
- * CallContext — quản lý cuộc gọi thoại 1-1 qua WebRTC.
+ * CallContext — quản lý cuộc gọi thoại qua WebRTC.
+ *
+ * Hỗ trợ 2 chế độ:
+ *   - 1-1 (mode='direct'): 1 RTCPeerConnection duy nhất giữa 2 user.
+ *   - Nhóm (mode='group'): topology MESH — mỗi cặp người 1 RTCPeerConnection.
+ *     Thích hợp ≤ 6 người. Trên 6 người cần SFU server (chưa hỗ trợ).
  *
  * Trạng thái:
  *   - idle:        không có cuộc gọi
- *   - outgoing:    mình đang gọi đi, chờ peer chấp nhận
+ *   - outgoing:    mình bắt đầu cuộc gọi đi (direct chờ peer / group chờ ai đó accept)
  *   - incoming:    có cuộc gọi đến, đang chờ mình bấm chấp nhận/từ chối
  *   - connecting:  đã chấp nhận, đang trao đổi SDP/ICE
- *   - active:      đã kết nối, đang nói chuyện
+ *   - active:      đã có ít nhất 1 remote audio stream — đang nói chuyện
  *
- * Signaling chạy qua socket.io:
- *   client → server: call:invite | call:accept | call:reject | call:end | call:signal
- *   server → client: call:incoming | call:accepted | call:rejected | call:ended | call:signal
+ * Signaling chạy qua socket.io. Xem `backend/src/server.js` để biết các event.
  *
  * STUN miễn phí của Google cho NAT traversal. Trong cùng LAN/Wi-Fi sẽ luôn kết nối thẳng.
  * Khi 2 bên ở 2 mạng khác nhau qua NAT khắt khe có thể cần TURN — chưa cấu hình.
@@ -37,71 +40,59 @@ export function CallProvider({ children }) {
   const { socket, user } = useAuth();
   const uid = user?.userId || user?.id || null;
 
-  const [status, setStatus] = useState('idle');         // idle | outgoing | incoming | connecting | active
+  /* ── Shared state cho cả direct lẫn group ── */
+  const [status, setStatus] = useState('idle');     // idle | outgoing | incoming | connecting | active
+  const [mode, setMode] = useState('direct');       // direct | group
   const [callId, setCallId] = useState(null);
-  const [peer, setPeer] = useState(null);               // { id, name, avatar }
-  const [kind, setKind] = useState('audio');
+  const [kind, setKind] = useState('audio');        // 'audio' | 'video'
   const [isMuted, setIsMuted] = useState(false);
+  const [cameraOn, setCameraOn] = useState(true);   // chỉ ý nghĩa khi kind='video'
   const [startedAt, setStartedAt] = useState(null);
   const [error, setError] = useState(null);
+  const [localStream, setLocalStream] = useState(null);   // expose ra UI để render <video> self-preview
 
-  const pcRef = useRef(null);
+  /* ── Direct call ── */
+  const [peer, setPeer] = useState(null);           // { id, name, avatar }
+  const [directRemoteStream, setDirectRemoteStream] = useState(null);
+  const directPcRef = useRef(null);
+  const directRemoteAudioRef = useRef(null);
+  const directPendingCandidatesRef = useRef([]);
+
+  /* ── Group call ── */
+  const [groupInfo, setGroupInfo] = useState(null); // { id, name, hostId }
+  /**
+   * Object thay vì Map để React diff dễ. Key = userId.
+   * Value: { name, avatar, joined: boolean, hasStream: boolean, muted?: boolean }
+   * `joined=false` nghĩa là đang được mời / chờ accept (chỉ host biết trước).
+   */
+  const [participants, setParticipants] = useState({});
+  /** Map<userId, { pc, audioEl, pendingCandidates: [], iceQueue: [], makingOffer: false }> */
+  const groupPeersRef = useRef(new Map());
+
+  /* ── Resources ── */
   const localStreamRef = useRef(null);
-  const remoteAudioRef = useRef(null);
-  const pendingCandidatesRef = useRef([]);              // ICE đến trước khi setRemoteDescription
   const timeoutRef = useRef(null);
-  const ringbackAudioRef = useRef(null);                // chuông gọi đi (tone)
-  const ringtoneAudioRef = useRef(null);                // chuông cuộc gọi đến
+  const ringbackAudioRef = useRef(null);
+  const ringtoneAudioRef = useRef(null);
+  const callIdRef = useRef(null);                   // sync ref cho dùng trong handler socket
+  const modeRef = useRef('direct');
+  const peerRef = useRef(null);
 
-  /** Trả về phần tử <audio> ẩn để phát remote stream — tạo lazy 1 lần. */
-  const ensureRemoteAudioEl = useCallback(() => {
-    if (remoteAudioRef.current) return remoteAudioRef.current;
+  useEffect(() => { callIdRef.current = callId; }, [callId]);
+  useEffect(() => { modeRef.current = mode; }, [mode]);
+  useEffect(() => { peerRef.current = peer; }, [peer]);
+
+  /* ── Helpers ── */
+
+  /** Tạo element <audio> ẩn để phát remote stream. */
+  const createAudioElement = useCallback(() => {
     const el = document.createElement('audio');
     el.autoplay = true;
     el.setAttribute('playsinline', '');
     el.style.display = 'none';
     document.body.appendChild(el);
-    remoteAudioRef.current = el;
     return el;
   }, []);
-
-  const cleanup = useCallback(() => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-    if (pcRef.current) {
-      try { pcRef.current.onicecandidate = null; pcRef.current.ontrack = null; pcRef.current.close(); } catch { /* noop */ }
-      pcRef.current = null;
-    }
-    if (localStreamRef.current) {
-      try { localStreamRef.current.getTracks().forEach((t) => t.stop()); } catch { /* noop */ }
-      localStreamRef.current = null;
-    }
-    if (remoteAudioRef.current) {
-      try { remoteAudioRef.current.srcObject = null; } catch { /* noop */ }
-    }
-    if (ringbackAudioRef.current) {
-      try { ringbackAudioRef.current.pause(); } catch { /* noop */ }
-      ringbackAudioRef.current = null;
-    }
-    if (ringtoneAudioRef.current) {
-      try { ringtoneAudioRef.current.pause(); } catch { /* noop */ }
-      ringtoneAudioRef.current = null;
-    }
-    pendingCandidatesRef.current = [];
-  }, []);
-
-  const resetState = useCallback(() => {
-    cleanup();
-    setStatus('idle');
-    setCallId(null);
-    setPeer(null);
-    setKind('audio');
-    setIsMuted(false);
-    setStartedAt(null);
-    setError(null);
-  }, [cleanup]);
 
   /** Phát chuông đơn giản bằng Web Audio (không cần file mp3). */
   const playTone = useCallback((variant) => {
@@ -135,8 +126,118 @@ export function CallProvider({ children }) {
     }
   }, []);
 
-  /** Tạo RTCPeerConnection, gắn local stream, đăng ký các sự kiện. */
-  const createPeerConnection = useCallback((thisCallId, toUserId) => {
+  /**
+   * Lấy microphone (và camera nếu `opts.video=true`).
+   * Nếu đã có stream nhưng yêu cầu video mà chưa có track video → cố mở camera
+   * và replaceTrack trên các peer connection (cho phép bật camera trong lúc đang gọi).
+   */
+  const getLocalStream = useCallback(async (opts = {}) => {
+    const wantVideo = !!opts.video;
+    const cur = localStreamRef.current;
+
+    if (cur) {
+      const hasVideo = cur.getVideoTracks().length > 0;
+      if (wantVideo && !hasVideo) {
+        try {
+          const vStream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+          const vTrack = vStream.getVideoTracks()[0];
+          if (vTrack) {
+            cur.addTrack(vTrack);
+            // Push track vào mọi peer connection hiện có
+            if (directPcRef.current) {
+              try { directPcRef.current.addTrack(vTrack, cur); } catch { /* noop */ }
+            }
+            for (const { pc } of groupPeersRef.current.values()) {
+              try { pc.addTrack(vTrack, cur); } catch { /* noop */ }
+            }
+            setLocalStream(cur);
+            setCameraOn(true);
+          }
+        } catch (e) {
+          console.warn('Không bật được camera:', e);
+        }
+      }
+      return cur;
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: wantVideo ? { width: 640, height: 480 } : false,
+    });
+    localStreamRef.current = stream;
+    setLocalStream(stream);
+    // Đồng bộ trạng thái muted / cameraOn hiện tại
+    setIsMuted((curM) => {
+      stream.getAudioTracks().forEach((t) => { t.enabled = !curM; });
+      return curM;
+    });
+    setCameraOn((curC) => {
+      stream.getVideoTracks().forEach((t) => { t.enabled = curC; });
+      return curC;
+    });
+    return stream;
+  }, []);
+
+  /** Đóng + dọn 1 peer-entry trong groupPeersRef. */
+  const closeGroupPeer = useCallback((userId) => {
+    const entry = groupPeersRef.current.get(userId);
+    if (!entry) return;
+    try { entry.pc.onicecandidate = null; entry.pc.ontrack = null; entry.pc.close(); } catch { /* noop */ }
+    if (entry.audioEl) {
+      try { entry.audioEl.srcObject = null; entry.audioEl.remove(); } catch { /* noop */ }
+    }
+    groupPeersRef.current.delete(userId);
+  }, []);
+
+  /** Dọn toàn bộ: peer connections, audio elements, local stream, timer, chuông. */
+  const cleanup = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    // Direct
+    if (directPcRef.current) {
+      try { directPcRef.current.onicecandidate = null; directPcRef.current.ontrack = null; directPcRef.current.close(); } catch { /* noop */ }
+      directPcRef.current = null;
+    }
+    if (directRemoteAudioRef.current) {
+      try { directRemoteAudioRef.current.srcObject = null; directRemoteAudioRef.current.remove(); } catch { /* noop */ }
+      directRemoteAudioRef.current = null;
+    }
+    directPendingCandidatesRef.current = [];
+    // Group
+    for (const userId of [...groupPeersRef.current.keys()]) closeGroupPeer(userId);
+    // Local mic & camera
+    if (localStreamRef.current) {
+      try { localStreamRef.current.getTracks().forEach((t) => t.stop()); } catch { /* noop */ }
+      localStreamRef.current = null;
+    }
+    setLocalStream(null);
+    setDirectRemoteStream(null);
+    // Chuông
+    if (ringbackAudioRef.current) { try { ringbackAudioRef.current.pause(); } catch { /* noop */ } ringbackAudioRef.current = null; }
+    if (ringtoneAudioRef.current) { try { ringtoneAudioRef.current.pause(); } catch { /* noop */ } ringtoneAudioRef.current = null; }
+  }, [closeGroupPeer]);
+
+  const resetState = useCallback(() => {
+    cleanup();
+    setStatus('idle');
+    setMode('direct');
+    setCallId(null);
+    setPeer(null);
+    setGroupInfo(null);
+    setParticipants({});
+    setKind('audio');
+    setIsMuted(false);
+    setCameraOn(true);
+    setStartedAt(null);
+    setError(null);
+  }, [cleanup]);
+
+  /* ─── DIRECT call helpers ─── */
+
+  /** Tạo RTCPeerConnection cho cuộc gọi 1-1. */
+  const createDirectPeerConnection = useCallback((thisCallId, toUserId) => {
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
 
     pc.onicecandidate = (e) => {
@@ -151,12 +252,18 @@ export function CallProvider({ children }) {
 
     pc.ontrack = (e) => {
       const [stream] = e.streams;
-      const el = ensureRemoteAudioEl();
-      el.srcObject = stream;
-      el.play?.().catch(() => { /* autoplay có thể bị chặn — user sẽ thấy giao diện gọi, tự bấm nút unmute */ });
+      setDirectRemoteStream(stream);
+      // Chỉ dùng <audio> ẩn khi không có video track (UI sẽ render <video> nếu có)
+      const hasVideo = stream.getVideoTracks().length > 0;
+      if (!hasVideo) {
+        if (!directRemoteAudioRef.current) directRemoteAudioRef.current = createAudioElement();
+        directRemoteAudioRef.current.srcObject = stream;
+        directRemoteAudioRef.current.play?.().catch(() => { /* autoplay có thể bị chặn */ });
+      } else if (directRemoteAudioRef.current) {
+        try { directRemoteAudioRef.current.srcObject = null; } catch { /* noop */ }
+      }
       setStatus('active');
       setStartedAt((cur) => cur || Date.now());
-      // Tắt chuông khi đã kết nối
       if (ringbackAudioRef.current) { ringbackAudioRef.current.pause(); ringbackAudioRef.current = null; }
       if (ringtoneAudioRef.current) { ringtoneAudioRef.current.pause(); ringtoneAudioRef.current = null; }
     };
@@ -169,87 +276,243 @@ export function CallProvider({ children }) {
       }
     };
 
-    pcRef.current = pc;
+    directPcRef.current = pc;
     return pc;
-  }, [socket, ensureRemoteAudioEl, resetState]);
+  }, [socket, createAudioElement, resetState]);
 
-  /** Lấy microphone (mặc định audio-only). */
-  const getLocalStream = useCallback(async () => {
-    if (localStreamRef.current) return localStreamRef.current;
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    localStreamRef.current = stream;
-    return stream;
-  }, []);
+  /* ─── GROUP call helpers ─── */
 
-  /** Mình gọi đi cho `peerUser`. */
-  const startCall = useCallback(async (peerUser) => {
+  /**
+   * Tạo (hoặc lấy) RTCPeerConnection với 1 peer trong group call.
+   * @param {string} thisCallId
+   * @param {string} peerUserId
+   * @returns {{pc: RTCPeerConnection, audioEl: HTMLAudioElement, pendingCandidates: RTCIceCandidateInit[]}}
+   */
+  const getOrCreateGroupPeer = useCallback((thisCallId, peerUserId) => {
+    const existing = groupPeersRef.current.get(peerUserId);
+    if (existing) return existing;
+
+    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    const audioEl = createAudioElement();
+    const entry = { pc, audioEl, pendingCandidates: [] };
+
+    pc.onicecandidate = (e) => {
+      if (e.candidate && socket) {
+        socket.emit('call:signal', {
+          callId: thisCallId,
+          toUserId: peerUserId,
+          signal: { type: 'candidate', candidate: e.candidate },
+        });
+      }
+    };
+
+    pc.ontrack = (e) => {
+      const [stream] = e.streams;
+      const hasVideo = stream.getVideoTracks().length > 0;
+      // Audio playback: dùng <audio> ẩn khi không có video; nếu có video thì UI sẽ render <video>
+      if (!hasVideo) {
+        audioEl.srcObject = stream;
+        audioEl.play?.().catch(() => { /* autoplay có thể bị chặn */ });
+      } else {
+        try { audioEl.srcObject = null; } catch { /* noop */ }
+      }
+      setStatus('active');
+      setStartedAt((cur) => cur || Date.now());
+      setParticipants((cur) => {
+        if (!cur[peerUserId]) return cur;
+        return { ...cur, [peerUserId]: { ...cur[peerUserId], hasStream: true, stream, hasVideo } };
+      });
+      if (ringbackAudioRef.current) { ringbackAudioRef.current.pause(); ringbackAudioRef.current = null; }
+      if (ringtoneAudioRef.current) { ringtoneAudioRef.current.pause(); ringtoneAudioRef.current = null; }
+    };
+
+    pc.onconnectionstatechange = () => {
+      const state = pc.connectionState;
+      if (state === 'failed' || state === 'closed' || state === 'disconnected') {
+        closeGroupPeer(peerUserId);
+        setParticipants((cur) => {
+          if (!cur[peerUserId]) return cur;
+          return { ...cur, [peerUserId]: { ...cur[peerUserId], hasStream: false, stream: null, hasVideo: false } };
+        });
+      }
+    };
+
+    // Gắn local stream nếu đã có
+    if (localStreamRef.current) {
+      try {
+        localStreamRef.current.getTracks().forEach((t) => pc.addTrack(t, localStreamRef.current));
+      } catch { /* noop */ }
+    }
+
+    groupPeersRef.current.set(peerUserId, entry);
+    return entry;
+  }, [socket, createAudioElement, closeGroupPeer]);
+
+  /* ─── PUBLIC: bắt đầu cuộc gọi ─── */
+
+  /**
+   * Mình gọi đi 1-1.
+   * @param {{id, name, avatar}} peerUser
+   * @param {{video?: boolean}} [opts]
+   */
+  const startCall = useCallback(async (peerUser, opts = {}) => {
     if (!socket || !peerUser?.id) {
       setError('Không thể bắt đầu cuộc gọi');
       return;
     }
-    if (status !== 'idle') return; // đang có cuộc khác
+    if (status !== 'idle') return;
+    const wantVideo = !!opts.video;
     setError(null);
     const newCallId = genCallId();
     setCallId(newCallId);
+    setMode('direct');
     setPeer({ id: peerUser.id, name: peerUser.name || 'Người dùng', avatar: peerUser.avatar || null });
-    setKind('audio');
+    setKind(wantVideo ? 'video' : 'audio');
+    setCameraOn(wantVideo);
     setStatus('outgoing');
 
     try {
-      const stream = await getLocalStream();
-      const pc = createPeerConnection(newCallId, peerUser.id);
+      const stream = await getLocalStream({ video: wantVideo });
+      const pc = createDirectPeerConnection(newCallId, peerUser.id);
       stream.getTracks().forEach((t) => pc.addTrack(t, stream));
-
-      socket.emit('call:invite', { callId: newCallId, toUserId: peerUser.id, kind: 'audio' });
-
-      // Chuông gọi đi cho người dùng
+      socket.emit('call:invite', { callId: newCallId, toUserId: peerUser.id, kind: wantVideo ? 'video' : 'audio' });
       ringbackAudioRef.current = playTone('ringback');
-
-      // Timeout 60s không trả lời → tự huỷ
       timeoutRef.current = setTimeout(() => {
         setError('Không có phản hồi');
         socket.emit('call:end', { callId: newCallId, toUserId: peerUser.id });
         resetState();
       }, CALL_TIMEOUT_MS);
     } catch (e) {
-      setError(e.message || 'Không truy cập được micro');
+      setError(e.message || (wantVideo ? 'Không truy cập được camera/micro' : 'Không truy cập được micro'));
       resetState();
     }
-  }, [socket, status, getLocalStream, createPeerConnection, playTone, resetState]);
+  }, [socket, status, getLocalStream, createDirectPeerConnection, playTone, resetState]);
 
-  /** Mình chấp nhận cuộc gọi đến — bắt đầu tạo peer connection và emit accept. */
-  const acceptCall = useCallback(async () => {
-    if (status !== 'incoming' || !peer?.id || !callId || !socket) return;
-    setStatus('connecting');
+  /**
+   * Bắt đầu cuộc gọi nhóm.
+   * @param {{id: string, name: string, members: Array<{id: string, name?: string, avatar?: string}>}} group
+   * @param {{video?: boolean}} [opts]
+   */
+  const startGroupCall = useCallback(async (group, opts = {}) => {
+    if (!socket || !group?.id || !uid) {
+      setError('Không thể bắt đầu cuộc gọi nhóm');
+      return;
+    }
+    if (status !== 'idle') return;
+    const members = Array.isArray(group.members) ? group.members.filter((m) => m && m.id && m.id !== uid) : [];
+    if (members.length === 0) {
+      setError('Nhóm không có thành viên khác');
+      return;
+    }
+
+    const wantVideo = !!opts.video;
+    setError(null);
+    const newCallId = genCallId();
+    setCallId(newCallId);
+    setMode('group');
+    setGroupInfo({ id: group.id, name: group.name || 'Nhóm chat', hostId: uid });
+    setKind(wantVideo ? 'video' : 'audio');
+    setCameraOn(wantVideo);
+    setStatus('outgoing');
+
+    // Khởi tạo participants: bản thân = joined; thành viên khác = invited
+    const myName = user?.fullName || user?.full_name || 'Bạn';
+    const initial = { [uid]: { name: myName, avatar: user?.avatar || null, joined: true, hasStream: false, isMe: true } };
+    members.forEach((m) => {
+      initial[m.id] = { name: m.name || 'Thành viên', avatar: m.avatar || null, joined: false, hasStream: false };
+    });
+    setParticipants(initial);
+
     try {
-      const stream = await getLocalStream();
-      const pc = createPeerConnection(callId, peer.id);
-      stream.getTracks().forEach((t) => pc.addTrack(t, stream));
-      socket.emit('call:accept', { callId, toUserId: peer.id });
-      // Tắt chuông cuộc gọi đến
-      if (ringtoneAudioRef.current) { ringtoneAudioRef.current.pause(); ringtoneAudioRef.current = null; }
+      await getLocalStream({ video: wantVideo });
+      socket.emit('call:group_start', {
+        callId: newCallId,
+        groupId: group.id,
+        groupName: group.name,
+        memberIds: members.map((m) => m.id),
+        kind: wantVideo ? 'video' : 'audio',
+      });
+      ringbackAudioRef.current = playTone('ringback');
+
+      // Timeout: nếu sau 60s không ai accept → tự huỷ
+      timeoutRef.current = setTimeout(() => {
+        const joinedCount = [...groupPeersRef.current.values()].length;
+        if (joinedCount === 0) {
+          setError('Không có ai phản hồi');
+          socket.emit('call:end', { callId: newCallId });
+          resetState();
+        }
+      }, CALL_TIMEOUT_MS);
     } catch (e) {
       setError(e.message || 'Không truy cập được micro');
-      socket.emit('call:reject', { callId, toUserId: peer.id, reason: 'mic_error' });
+      socket.emit('call:end', { callId: newCallId });
       resetState();
     }
-  }, [status, peer, callId, socket, getLocalStream, createPeerConnection, resetState]);
+  }, [socket, uid, user, status, getLocalStream, playTone, resetState]);
+
+  /* ─── PUBLIC: chấp nhận / từ chối / kết thúc ─── */
+
+  const acceptCall = useCallback(async () => {
+    if (status !== 'incoming' || !callId || !socket) return;
+    if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+    if (ringtoneAudioRef.current) { ringtoneAudioRef.current.pause(); ringtoneAudioRef.current = null; }
+    setStatus('connecting');
+
+    try {
+      const wantVideo = kind === 'video';
+      setCameraOn(wantVideo);
+      await getLocalStream({ video: wantVideo });
+      if (mode === 'group') {
+        // Khi join, các participants hiện có sẽ tạo offer tới mình.
+        // Mình chỉ cần báo server và đợi `call:group_participants` + offers qua `call:signal`.
+        socket.emit('call:group_join', { callId });
+        // Bản thân mình = joined
+        setParticipants((cur) => ({
+          ...cur,
+          [uid]: { name: user?.fullName || 'Bạn', avatar: user?.avatar || null, joined: true, hasStream: false, isMe: true },
+        }));
+      } else {
+        // Direct: tạo PC, emit accept; caller sẽ tạo offer
+        if (!peer?.id) return;
+        const stream = localStreamRef.current;
+        const pc = createDirectPeerConnection(callId, peer.id);
+        if (stream) stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+        socket.emit('call:accept', { callId, toUserId: peer.id });
+      }
+    } catch (e) {
+      setError(e.message || (kind === 'video' ? 'Không truy cập được camera/micro' : 'Không truy cập được micro'));
+      if (mode === 'group') {
+        socket.emit('call:reject', { callId, reason: 'mic_error' });
+      } else if (peer?.id) {
+        socket.emit('call:reject', { callId, toUserId: peer.id, reason: 'mic_error' });
+      }
+      resetState();
+    }
+  }, [status, callId, socket, mode, kind, peer, uid, user, getLocalStream, createDirectPeerConnection, resetState]);
 
   const rejectCall = useCallback(() => {
-    if (!socket || !callId || !peer?.id) {
+    if (!socket || !callId) {
       resetState();
       return;
     }
-    socket.emit('call:reject', { callId, toUserId: peer.id, reason: 'rejected' });
-    resetState();
-  }, [socket, callId, peer, resetState]);
-
-  const endCall = useCallback(() => {
-    if (socket && callId && peer?.id) {
-      socket.emit('call:end', { callId, toUserId: peer.id });
+    if (mode === 'group') {
+      socket.emit('call:reject', { callId, reason: 'rejected' });
+    } else if (peer?.id) {
+      socket.emit('call:reject', { callId, toUserId: peer.id, reason: 'rejected' });
     }
     resetState();
-  }, [socket, callId, peer, resetState]);
+  }, [socket, callId, mode, peer, resetState]);
+
+  const endCall = useCallback(() => {
+    if (socket && callId) {
+      if (mode === 'group') {
+        socket.emit('call:end', { callId });
+      } else if (peer?.id) {
+        socket.emit('call:end', { callId, toUserId: peer.id });
+      }
+    }
+    resetState();
+  }, [socket, callId, mode, peer, resetState]);
 
   const toggleMute = useCallback(() => {
     setIsMuted((cur) => {
@@ -261,43 +524,81 @@ export function CallProvider({ children }) {
     });
   }, []);
 
-  /* ── Lắng nghe các event từ server ── */
+  /**
+   * Bật/tắt camera.
+   * - Nếu local stream đã có video track → chỉ enable/disable.
+   * - Nếu chưa có (cuộc gọi bắt đầu audio-only) và bật lên → cố mở camera + addTrack
+   *   nhưng các peer connection sẽ cần renegotiate (createOffer mới) — chưa tự động làm cho
+   *   group call. Cho v1, đề nghị bật camera ngay từ đầu khi gọi.
+   */
+  const toggleCamera = useCallback(async () => {
+    const stream = localStreamRef.current;
+    if (!stream) return;
+    const tracks = stream.getVideoTracks();
+    if (tracks.length === 0) {
+      // Cố mở camera; KHÔNG addTrack vào PC để tránh phải renegotiate.
+      // Chỉ hữu ích cho self-preview. Cuộc gọi audio-only thì khuyên bấm "Gọi video" thay vì toggle.
+      try {
+        await getLocalStream({ video: true });
+        setCameraOn(true);
+      } catch { /* noop */ }
+      return;
+    }
+    setCameraOn((cur) => {
+      const next = !cur;
+      tracks.forEach((t) => { t.enabled = next; });
+      return next;
+    });
+  }, [getLocalStream]);
+
+  /* ─── Lắng nghe các event từ server ─── */
   useEffect(() => {
     if (!socket || !uid) return undefined;
 
-    const onIncoming = ({ callId: incomingId, kind: incomingKind, fromUserId, fromName }) => {
+    /** Cuộc gọi đến (1-1 hoặc nhóm) */
+    const onIncoming = ({ callId: incomingId, kind: incomingKind, fromUserId, fromName, isGroup, groupId, groupName }) => {
       if (!incomingId || !fromUserId) return;
       // Đang trong cuộc khác → tự reject để không làm phiền
-      if (status !== 'idle' || pcRef.current) {
-        socket.emit('call:reject', { callId: incomingId, toUserId: fromUserId, reason: 'busy' });
+      if (status !== 'idle' || directPcRef.current || groupPeersRef.current.size > 0) {
+        if (isGroup) socket.emit('call:reject', { callId: incomingId, reason: 'busy' });
+        else socket.emit('call:reject', { callId: incomingId, toUserId: fromUserId, reason: 'busy' });
         return;
       }
       setCallId(incomingId);
-      setPeer({ id: fromUserId, name: fromName || 'Người gọi', avatar: null });
       setKind(incomingKind || 'audio');
       setStatus('incoming');
       setError(null);
+      if (isGroup) {
+        setMode('group');
+        setGroupInfo({ id: groupId, name: groupName || 'Cuộc gọi nhóm', hostId: fromUserId });
+        setParticipants({
+          [fromUserId]: { name: fromName || 'Người gọi', avatar: null, joined: true, hasStream: false, isHost: true },
+        });
+        setPeer({ id: fromUserId, name: fromName || 'Người gọi', avatar: null });
+      } else {
+        setMode('direct');
+        setPeer({ id: fromUserId, name: fromName || 'Người gọi', avatar: null });
+      }
       ringtoneAudioRef.current = playTone('ringtone');
-
-      // Người gọi đến cũng có timeout 60s
       timeoutRef.current = setTimeout(() => {
-        socket.emit('call:reject', { callId: incomingId, toUserId: fromUserId, reason: 'no_answer' });
+        if (isGroup) socket.emit('call:reject', { callId: incomingId, reason: 'no_answer' });
+        else socket.emit('call:reject', { callId: incomingId, toUserId: fromUserId, reason: 'no_answer' });
         resetState();
       }, CALL_TIMEOUT_MS);
     };
 
+    /** Direct: peer accept → mình tạo offer. */
     const onAccepted = async ({ callId: acceptedId }) => {
-      if (acceptedId !== callId || !pcRef.current || !peer?.id) return;
-      // Người gọi sau khi nhận accepted → tạo offer
+      if (acceptedId !== callIdRef.current || modeRef.current !== 'direct' || !directPcRef.current || !peerRef.current?.id) return;
       if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
       setStatus('connecting');
       if (ringbackAudioRef.current) { ringbackAudioRef.current.pause(); ringbackAudioRef.current = null; }
       try {
-        const offer = await pcRef.current.createOffer({ offerToReceiveAudio: true });
-        await pcRef.current.setLocalDescription(offer);
+        const offer = await directPcRef.current.createOffer({ offerToReceiveAudio: true });
+        await directPcRef.current.setLocalDescription(offer);
         socket.emit('call:signal', {
           callId: acceptedId,
-          toUserId: peer.id,
+          toUserId: peerRef.current.id,
           signal: { type: 'offer', sdp: offer.sdp },
         });
       } catch (e) {
@@ -306,46 +607,84 @@ export function CallProvider({ children }) {
       }
     };
 
+    /** Direct: peer từ chối */
     const onRejected = ({ callId: rejectedId, reason }) => {
-      if (rejectedId !== callId) return;
+      if (rejectedId !== callIdRef.current) return;
       const map = { busy: 'Người được gọi đang bận', no_answer: 'Không có phản hồi' };
       setError(map[reason] || 'Cuộc gọi bị từ chối');
       resetState();
     };
 
+    /** Direct: bên kia kết thúc */
     const onEnded = ({ callId: endedId }) => {
-      if (endedId !== callId) return;
+      if (endedId !== callIdRef.current) return;
       resetState();
     };
 
-    const onSignal = async ({ callId: sigCallId, signal }) => {
-      if (sigCallId !== callId || !pcRef.current || !peer?.id) return;
+    /**
+     * SDP/ICE — relay từ server. Áp dụng cho cả direct và group.
+     * Trong group, dùng `fromUserId` để xác định kết nối với participant nào.
+     */
+    const onSignal = async ({ callId: sigCallId, fromUserId, signal }) => {
+      if (sigCallId !== callIdRef.current || !signal) return;
       try {
-        if (signal.type === 'offer') {
-          await pcRef.current.setRemoteDescription({ type: 'offer', sdp: signal.sdp });
-          // Xử lý các candidate đã đến trước
-          for (const c of pendingCandidatesRef.current) {
-            try { await pcRef.current.addIceCandidate(c); } catch { /* noop */ }
+        if (modeRef.current === 'group') {
+          if (!fromUserId) return;
+          const { pc, pendingCandidates } = getOrCreateGroupPeer(sigCallId, fromUserId);
+          if (signal.type === 'offer') {
+            await pc.setRemoteDescription({ type: 'offer', sdp: signal.sdp });
+            for (const c of pendingCandidates) {
+              try { await pc.addIceCandidate(c); } catch { /* noop */ }
+            }
+            pendingCandidates.length = 0;
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            socket.emit('call:signal', {
+              callId: sigCallId,
+              toUserId: fromUserId,
+              signal: { type: 'answer', sdp: answer.sdp },
+            });
+          } else if (signal.type === 'answer') {
+            await pc.setRemoteDescription({ type: 'answer', sdp: signal.sdp });
+            for (const c of pendingCandidates) {
+              try { await pc.addIceCandidate(c); } catch { /* noop */ }
+            }
+            pendingCandidates.length = 0;
+          } else if (signal.type === 'candidate' && signal.candidate) {
+            if (pc.remoteDescription && pc.remoteDescription.type) {
+              try { await pc.addIceCandidate(signal.candidate); } catch { /* noop */ }
+            } else {
+              pendingCandidates.push(signal.candidate);
+            }
           }
-          pendingCandidatesRef.current = [];
-          const answer = await pcRef.current.createAnswer();
-          await pcRef.current.setLocalDescription(answer);
-          socket.emit('call:signal', {
-            callId,
-            toUserId: peer.id,
-            signal: { type: 'answer', sdp: answer.sdp },
-          });
-        } else if (signal.type === 'answer') {
-          await pcRef.current.setRemoteDescription({ type: 'answer', sdp: signal.sdp });
-          for (const c of pendingCandidatesRef.current) {
-            try { await pcRef.current.addIceCandidate(c); } catch { /* noop */ }
-          }
-          pendingCandidatesRef.current = [];
-        } else if (signal.type === 'candidate' && signal.candidate) {
-          if (pcRef.current.remoteDescription && pcRef.current.remoteDescription.type) {
-            try { await pcRef.current.addIceCandidate(signal.candidate); } catch { /* noop */ }
-          } else {
-            pendingCandidatesRef.current.push(signal.candidate);
+        } else {
+          // Direct
+          if (!directPcRef.current || !peerRef.current?.id) return;
+          if (signal.type === 'offer') {
+            await directPcRef.current.setRemoteDescription({ type: 'offer', sdp: signal.sdp });
+            for (const c of directPendingCandidatesRef.current) {
+              try { await directPcRef.current.addIceCandidate(c); } catch { /* noop */ }
+            }
+            directPendingCandidatesRef.current = [];
+            const answer = await directPcRef.current.createAnswer();
+            await directPcRef.current.setLocalDescription(answer);
+            socket.emit('call:signal', {
+              callId: sigCallId,
+              toUserId: peerRef.current.id,
+              signal: { type: 'answer', sdp: answer.sdp },
+            });
+          } else if (signal.type === 'answer') {
+            await directPcRef.current.setRemoteDescription({ type: 'answer', sdp: signal.sdp });
+            for (const c of directPendingCandidatesRef.current) {
+              try { await directPcRef.current.addIceCandidate(c); } catch { /* noop */ }
+            }
+            directPendingCandidatesRef.current = [];
+          } else if (signal.type === 'candidate' && signal.candidate) {
+            if (directPcRef.current.remoteDescription && directPcRef.current.remoteDescription.type) {
+              try { await directPcRef.current.addIceCandidate(signal.candidate); } catch { /* noop */ }
+            } else {
+              directPendingCandidatesRef.current.push(signal.candidate);
+            }
           }
         }
       } catch (e) {
@@ -353,19 +692,106 @@ export function CallProvider({ children }) {
       }
     };
 
+    /** Group: server gửi list participants hiện có khi mình join. */
+    const onGroupParticipants = ({ callId: cid, participants: existing }) => {
+      if (cid !== callIdRef.current || modeRef.current !== 'group') return;
+      setStatus('connecting');
+      if (ringbackAudioRef.current) { ringbackAudioRef.current.pause(); ringbackAudioRef.current = null; }
+      setParticipants((cur) => {
+        const next = { ...cur };
+        (existing || []).forEach((p) => {
+          next[p.userId] = {
+            ...(cur[p.userId] || {}),
+            name: p.name || cur[p.userId]?.name || 'Thành viên',
+            joined: true,
+            hasStream: false,
+          };
+        });
+        return next;
+      });
+      // Các participants đã có sẽ tự gửi offer tới mình → mình chờ ở `onSignal`
+    };
+
+    /**
+     * Group: có thành viên mới join. Nếu mình đã ở trong cuộc → mình tạo offer tới họ.
+     * (Người mới chỉ nhận, không chủ động → tránh race condition glare).
+     */
+    const onGroupMemberJoined = async ({ callId: cid, userId: newUid, name }) => {
+      if (cid !== callIdRef.current || modeRef.current !== 'group' || !newUid || newUid === uid) return;
+      if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+      setParticipants((cur) => ({
+        ...cur,
+        [newUid]: {
+          ...(cur[newUid] || {}),
+          name: name || cur[newUid]?.name || 'Thành viên',
+          joined: true,
+          hasStream: false,
+        },
+      }));
+      if (ringbackAudioRef.current) { ringbackAudioRef.current.pause(); ringbackAudioRef.current = null; }
+      // Tạo PC và gửi offer
+      try {
+        const { pc } = getOrCreateGroupPeer(cid, newUid);
+        const offer = await pc.createOffer({ offerToReceiveAudio: true });
+        await pc.setLocalDescription(offer);
+        socket.emit('call:signal', {
+          callId: cid,
+          toUserId: newUid,
+          signal: { type: 'offer', sdp: offer.sdp },
+        });
+      } catch (e) {
+        console.error('group offer error', e);
+      }
+    };
+
+    /** Group: 1 thành viên rời cuộc */
+    const onGroupMemberLeft = ({ callId: cid, userId: leftUid }) => {
+      if (cid !== callIdRef.current || modeRef.current !== 'group') return;
+      closeGroupPeer(leftUid);
+      setParticipants((cur) => {
+        const next = { ...cur };
+        delete next[leftUid];
+        // Còn lại chỉ mình → kết thúc cuộc
+        const remaining = Object.keys(next).filter((k) => k !== uid);
+        if (remaining.length === 0) {
+          setTimeout(() => resetState(), 100);
+        }
+        return next;
+      });
+    };
+
+    /** Group: thành viên từ chối — chỉ thông báo cho host */
+    const onGroupMemberRejected = ({ callId: cid, userId: rejUid }) => {
+      if (cid !== callIdRef.current || modeRef.current !== 'group') return;
+      setParticipants((cur) => {
+        if (!cur[rejUid] || cur[rejUid].joined) return cur;
+        const next = { ...cur };
+        delete next[rejUid];
+        return next;
+      });
+    };
+
     socket.on('call:incoming', onIncoming);
     socket.on('call:accepted', onAccepted);
     socket.on('call:rejected', onRejected);
     socket.on('call:ended', onEnded);
     socket.on('call:signal', onSignal);
+    socket.on('call:group_participants', onGroupParticipants);
+    socket.on('call:group_member_joined', onGroupMemberJoined);
+    socket.on('call:group_member_left', onGroupMemberLeft);
+    socket.on('call:group_member_rejected', onGroupMemberRejected);
     return () => {
       socket.off('call:incoming', onIncoming);
       socket.off('call:accepted', onAccepted);
       socket.off('call:rejected', onRejected);
       socket.off('call:ended', onEnded);
       socket.off('call:signal', onSignal);
+      socket.off('call:group_participants', onGroupParticipants);
+      socket.off('call:group_member_joined', onGroupMemberJoined);
+      socket.off('call:group_member_left', onGroupMemberLeft);
+      socket.off('call:group_member_rejected', onGroupMemberRejected);
     };
-  }, [socket, uid, status, callId, peer, endCall, resetState, playTone]);
+  }, [socket, uid, status, getOrCreateGroupPeer, closeGroupPeer, endCall, resetState, playTone]);
 
   // Cleanup khi unmount toàn bộ provider
   useEffect(() => () => { cleanup(); }, [cleanup]);
@@ -373,19 +799,29 @@ export function CallProvider({ children }) {
   const value = useMemo(
     () => ({
       status,
+      mode,
       callId,
       peer,
+      groupInfo,
+      participants,
       kind,
       isMuted,
+      cameraOn,
       startedAt,
       error,
+      localStream,
+      directRemoteStream,
       startCall,
+      startGroupCall,
       acceptCall,
       rejectCall,
       endCall,
       toggleMute,
+      toggleCamera,
     }),
-    [status, callId, peer, kind, isMuted, startedAt, error, startCall, acceptCall, rejectCall, endCall, toggleMute],
+    [status, mode, callId, peer, groupInfo, participants, kind, isMuted, cameraOn, startedAt, error,
+     localStream, directRemoteStream,
+     startCall, startGroupCall, acceptCall, rejectCall, endCall, toggleMute, toggleCamera],
   );
 
   return <CallCtx.Provider value={value}>{children}</CallCtx.Provider>;

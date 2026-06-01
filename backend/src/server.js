@@ -247,6 +247,9 @@ if (fs.existsSync(frontendDist)) {
   console.log('🌐 Serving frontend from', frontendDist);
 }
 
+/** State in-memory cho group call — map<callId, {groupId, groupName, hostId, kind, participants: Map<uid, {name}>}> */
+const activeGroupCalls = new Map();
+
 // ─── Socket.IO with Auth ──
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
@@ -344,8 +347,123 @@ io.on('connection', (socket) => {
     io.to(`user:${toUserId}`).emit('call:signal', { callId, fromUserId: uid, signal });
   });
 
+  /* ─── Group call signaling (mesh topology) ───
+   * Server giữ in-memory state: callId → { groupId, hostId, kind, participants: Map<userId, {name}> }.
+   * Khi server restart, mọi cuộc gọi nhóm đang diễn ra sẽ bị mất kết nối — chấp nhận được cho 1-1 mesh.
+   *
+   * Sự kiện:
+   * - call:group_start  { callId, groupId, groupName, memberIds, kind } → mỗi member (≠ host) nhận `call:incoming` với isGroup=true
+   * - call:group_join   { callId } → server thêm user vào participants; user nhận `call:group_participants` (danh sách hiện tại),
+   *                                  tất cả thành viên đã có nhận `call:group_member_joined`
+   * - call:end          { callId } cho group → xoá khỏi participants, broadcast `call:group_member_left`
+   * - call:signal       relay như cũ (mỗi cặp 1 peer connection)
+   */
+  socket.on('call:group_start', ({ callId, groupId, groupName, memberIds = [], kind = 'audio' } = {}) => {
+    if (!callId || !groupId || !Array.isArray(memberIds) || memberIds.length === 0) return;
+    const uid = socket.user?.userId || socket.user?.id;
+    if (!uid) return;
+    const hostName = socket.user?.fullName || socket.user?.full_name || 'Người gọi';
+    activeGroupCalls.set(callId, {
+      groupId,
+      groupName: groupName || 'Cuộc gọi nhóm',
+      hostId: uid,
+      kind,
+      participants: new Map([[uid, { name: hostName }]]),
+    });
+    const uniqueMembers = [...new Set(memberIds.map(String))].filter((mid) => mid !== String(uid));
+    uniqueMembers.forEach((mid) => {
+      io.to(`user:${mid}`).emit('call:incoming', {
+        callId,
+        kind,
+        isGroup: true,
+        groupId,
+        groupName: groupName || 'Cuộc gọi nhóm',
+        fromUserId: uid,
+        fromName: hostName,
+      });
+    });
+  });
+
+  socket.on('call:group_join', ({ callId } = {}) => {
+    if (!callId) return;
+    const uid = socket.user?.userId || socket.user?.id;
+    if (!uid) return;
+    const call = activeGroupCalls.get(callId);
+    if (!call) return;
+    const myName = socket.user?.fullName || socket.user?.full_name || 'Thành viên';
+    const existingIds = [...call.participants.keys()].filter((id) => id !== uid);
+    const existing = existingIds.map((id) => ({ userId: id, name: call.participants.get(id)?.name || '' }));
+    call.participants.set(uid, { name: myName });
+    // Báo cho người mới biết ai đang có trong cuộc — để họ chờ offer từ các participants này
+    socket.emit('call:group_participants', { callId, participants: existing });
+    // Báo cho mọi người khác biết có thành viên mới → họ sẽ tạo offer
+    existingIds.forEach((pid) => {
+      io.to(`user:${pid}`).emit('call:group_member_joined', { callId, userId: uid, name: myName });
+    });
+  });
+
+  /** Khi user rời cuộc gọi nhóm. Hỗ trợ cả reject (chưa join) lẫn leave (đã join). */
+  function leaveGroupCall(callId, uid) {
+    const call = activeGroupCalls.get(callId);
+    if (!call) return;
+    const wasParticipant = call.participants.has(uid);
+    call.participants.delete(uid);
+    if (call.participants.size === 0) {
+      activeGroupCalls.delete(callId);
+      return;
+    }
+    if (wasParticipant) {
+      call.participants.forEach((_v, pid) => {
+        io.to(`user:${pid}`).emit('call:group_member_left', { callId, userId: uid });
+      });
+    }
+  }
+
+  // Override call:end để hỗ trợ cả 1-1 lẫn group
+  socket.removeAllListeners('call:end');
+  socket.on('call:end', ({ callId, toUserId } = {}) => {
+    if (!callId) return;
+    const uid = socket.user?.userId || socket.user?.id;
+    if (!uid) return;
+    // Group call?
+    if (activeGroupCalls.has(callId)) {
+      leaveGroupCall(callId, uid);
+      return;
+    }
+    // 1-1
+    if (toUserId) io.to(`user:${toUserId}`).emit('call:ended', { callId });
+  });
+
+  // Override call:reject để xử lý reject group (chỉ huỷ phía mình, không kill cuộc)
+  socket.removeAllListeners('call:reject');
+  socket.on('call:reject', ({ callId, toUserId, reason = 'rejected' } = {}) => {
+    if (!callId) return;
+    if (activeGroupCalls.has(callId)) {
+      // Group: chỉ báo cho host biết ai đó từ chối — không kết thúc cuộc
+      const call = activeGroupCalls.get(callId);
+      const uid = socket.user?.userId || socket.user?.id;
+      if (call?.hostId && uid) {
+        io.to(`user:${call.hostId}`).emit('call:group_member_rejected', {
+          callId,
+          userId: uid,
+          name: socket.user?.fullName || socket.user?.full_name || '',
+          reason,
+        });
+      }
+      return;
+    }
+    // 1-1
+    if (toUserId) io.to(`user:${toUserId}`).emit('call:rejected', { callId, reason });
+  });
+
   socket.on('disconnect', () => {
     console.log('❌ Disconnected:', socket.id);
+    // Auto-leave mọi group call mà user đang tham gia
+    const uid = socket.user?.userId || socket.user?.id;
+    if (!uid) return;
+    for (const [cid, call] of activeGroupCalls) {
+      if (call.participants.has(uid)) leaveGroupCall(cid, uid);
+    }
   });
 });
 
