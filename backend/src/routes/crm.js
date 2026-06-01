@@ -12434,6 +12434,21 @@ const FOLLOWUP_TIME_BUCKETS = [
   { key: 'w4', label: '28–34 ngày trước', daysFrom: 34, daysTo: 28 },
 ];
 
+/** Hết hạn dismissal vào 23:59:59 hôm nay (giờ VN, UTC+7). */
+function followupDismissExpiresAt() {
+  const nowVn = new Date(Date.now() + 7 * 60 * 60 * 1000);
+  const todayUtcMidnight = new Date(Date.UTC(
+    nowVn.getUTCFullYear(),
+    nowVn.getUTCMonth(),
+    nowVn.getUTCDate(),
+    16, 59, 59, 999,
+  ));
+  if (todayUtcMidnight.getTime() < Date.now()) {
+    todayUtcMidnight.setUTCDate(todayUtcMidnight.getUTCDate() + 1);
+  }
+  return todayUtcMidnight;
+}
+
 r.get('/followup-care/notifications', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
   try {
     const userId = req.user?.userId;
@@ -12611,18 +12626,7 @@ r.post('/followup-care/dismiss', async (req, res) => {
     const { pipeline_id, stage_id, company_id, time_bucket } = req.body;
     if (!time_bucket) return res.status(400).json({ error: 'Thiếu time_bucket' });
 
-    // Hết hạn vào 23:59:59 hôm nay (giờ VN, UTC+7) — sang ngày mới sẽ tự động hiện lại.
-    const nowVn = new Date(Date.now() + 7 * 60 * 60 * 1000);
-    const todayUtcMidnight = new Date(Date.UTC(
-      nowVn.getUTCFullYear(),
-      nowVn.getUTCMonth(),
-      nowVn.getUTCDate(),
-      16, 59, 59, 999, // 16:59:59 UTC = 23:59:59 VN
-    ));
-    if (todayUtcMidnight.getTime() < Date.now()) {
-      todayUtcMidnight.setUTCDate(todayUtcMidnight.getUTCDate() + 1);
-    }
-    const expiresAt = todayUtcMidnight;
+    const expiresAt = followupDismissExpiresAt();
 
     const { data, error } = await supabase
       .from('crm_followup_care_dismissals')
@@ -12649,6 +12653,45 @@ r.post('/followup-care/dismiss', async (req, res) => {
     res.json({ ok: true, dismissal: data });
   } catch (e) {
     console.error('POST /crm/followup-care/dismiss:', e);
+    res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+r.post('/followup-care/dismiss-all', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    if (!items.length) return res.json({ ok: true, dismissed: 0 });
+
+    const expiresAt = followupDismissExpiresAt().toISOString();
+    const rows = items
+      .filter((i) => i?.time_bucket)
+      .map((i) => ({
+        user_id: userId,
+        pipeline_id: i.pipeline_id || null,
+        stage_id: i.stage_id || null,
+        company_id: i.company_id || null,
+        time_bucket: i.time_bucket,
+        expires_at: expiresAt,
+      }));
+
+    if (!rows.length) return res.json({ ok: true, dismissed: 0 });
+
+    const { error } = await supabase.from('crm_followup_care_dismissals').insert(rows);
+    if (error) {
+      const msg = String(error.message || '');
+      if (msg.includes('does not exist') || msg.includes('schema cache')) {
+        return res.status(503).json({
+          error: 'Bảng crm_followup_care_dismissals chưa tạo. Chạy file database/153_crm_followup_care_dismissals.sql trong Supabase SQL Editor.',
+        });
+      }
+      throw error;
+    }
+    res.json({ ok: true, dismissed: rows.length });
+  } catch (e) {
+    console.error('POST /crm/followup-care/dismiss-all:', e);
     res.status(500).json({ error: e.message || 'Lỗi server' });
   }
 });

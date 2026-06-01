@@ -235,6 +235,7 @@ export default function NotificationCenter({ socket }) {
   const [cskhNotifs, setCskhNotifs] = useState([]);
   const [cskhCount, setCskhCount] = useState(0);
   const [cskhLoading, setCskhLoading] = useState(false);
+  const [cskhDismissingAll, setCskhDismissingAll] = useState(false);
   const [dismissingKeys, setDismissingKeys] = useState(new Set());
   const bellBadgeCount = useMemo(
     () => unreadActivity + unreadDeadlines + unreadEvents + unreadAssignments + cskhCount,
@@ -314,6 +315,26 @@ export default function NotificationCenter({ socket }) {
     } catch (e) {
       console.error('Undo CSKH dismissals failed:', e);
     }
+  };
+
+  const dismissAllCskh = async () => {
+    if (!cskhNotifs.length || cskhDismissingAll) return;
+    setCskhDismissingAll(true);
+    try {
+      await api.post('/crm/followup-care/dismiss-all', {
+        items: cskhNotifs.map((n) => ({
+          pipeline_id: n.pipeline_id,
+          stage_id: n.stage_id,
+          company_id: n.company_id || null,
+          time_bucket: n.time_bucket,
+        })),
+      });
+      setCskhNotifs([]);
+      setCskhCount(0);
+    } catch (e) {
+      console.error('Dismiss all CSKH failed:', e);
+    }
+    setCskhDismissingAll(false);
   };
 
   const navigateToCskh = (notif) => {
@@ -628,17 +649,19 @@ export default function NotificationCenter({ socket }) {
                 </div>
               </div>
               <div className="flex items-center gap-1 shrink-0">
-                {(tab === 'activity' ? unreadActivity
-                  : tab === 'events' ? unreadEvents
-                    : tab === 'messages' ? unreadChat
-                      : tab === 'assignments' ? unreadAssignments
-                        : unreadDeadlines) > 0 && (
+                {(tab === 'cskh' ? cskhCount
+                  : tab === 'activity' ? unreadActivity
+                    : tab === 'events' ? unreadEvents
+                      : tab === 'messages' ? unreadChat
+                        : tab === 'assignments' ? unreadAssignments
+                          : unreadDeadlines) > 0 && (
                   <button
-                    onClick={markAllRead}
-                    className="text-[11px] text-white font-semibold cursor-pointer flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/15 backdrop-blur-md border border-white/20 hover:bg-white/25 transition-colors"
-                    title="Đánh dấu đã đọc tất cả"
+                    onClick={tab === 'cskh' ? dismissAllCskh : markAllRead}
+                    disabled={tab === 'cskh' && cskhDismissingAll}
+                    className="text-[11px] text-white font-semibold cursor-pointer flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/15 backdrop-blur-md border border-white/20 hover:bg-white/25 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                    title={tab === 'cskh' ? 'Tích đã xem tất cả thông báo CSKH' : 'Đánh dấu đã đọc tất cả'}
                   >
-                    <CheckCheck className="h-3.5 w-3.5" /> Đọc hết
+                    <CheckCheck className="h-3.5 w-3.5" /> {tab === 'cskh' ? 'Đã xem tất cả' : 'Đọc hết'}
                   </button>
                 )}
                 <button
@@ -783,7 +806,34 @@ export default function NotificationCenter({ socket }) {
                   </button>
                 </div>
               ) : (
-                cskhNotifs.map((n) => {
+                <>
+                <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-emerald-100 bg-emerald-50/50">
+                  <p className="text-[11px] text-emerald-800">
+                    {cskhNotifs.length} nhóm lead cần chăm · ẩn đến hết ngày
+                  </p>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={dismissAllCskh}
+                      disabled={cskhDismissingAll}
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60 cursor-pointer"
+                      title="Tích đã xem tất cả"
+                    >
+                      <CheckCheck className="h-3.5 w-3.5" />
+                      {cskhDismissingAll ? 'Đang xử lý...' : 'Đã xem tất cả'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={undoCskhDismissals}
+                      className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md bg-white text-emerald-700 hover:bg-emerald-100 border border-emerald-200 cursor-pointer"
+                      title="Khôi phục các thông báo lỡ tích nhầm"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      Hoàn tác
+                    </button>
+                  </div>
+                </div>
+                {cskhNotifs.map((n) => {
                   const key = `${n.pipeline_id}|${n.stage_id}|${n.company_id || ''}|${n.time_bucket}`;
                   const isDismissing = dismissingKeys.has(key);
                   return (
@@ -834,7 +884,8 @@ export default function NotificationCenter({ socket }) {
                       </div>
                     </div>
                   );
-                })
+                })}
+                </>
               )
             ) : loading ? (
               <div className="flex flex-col items-center justify-center py-10 gap-2">
