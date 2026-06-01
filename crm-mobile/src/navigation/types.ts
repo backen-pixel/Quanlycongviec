@@ -58,11 +58,19 @@ export type MoreStackParamList = {
   WorkTaskForm: { mode: 'create' | 'edit'; id?: string };
 };
 
+/** Stack riêng cho tab "Tin nhắn" trên thanh dưới — có same screens với MoreStack
+ *  nhưng được mount trong tab khác để icon active đúng khi user tap tab. */
+export type MessengerStackParamList = {
+  MessengerGroupList: undefined;
+  MessengerGroupChat: { groupId: string; title?: string; isDirect?: boolean; fromBubble?: boolean };
+  MessengerCompose: { mode: 'group' | 'direct' };
+  MessengerAddMembers: { groupId: string };
+};
+
 export type MainTabParamList = {
   CrmTab: NavigatorScreenParams<CrmStackParamList> | undefined;
   VoiceTab: NavigatorScreenParams<VoiceStackParamList> | undefined;
-  /** Shortcut → MoreTab/MessengerGroupList. Placeholder, không render nội dung riêng. */
-  MessengerTab: undefined;
+  MessengerTab: NavigatorScreenParams<MessengerStackParamList> | undefined;
   NotificationsTab: undefined;
   MoreTab: NavigatorScreenParams<MoreStackParamList> | undefined;
 };
