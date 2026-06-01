@@ -24,6 +24,8 @@ import {
   Shield,
   X,
   Check,
+  Camera,
+  PhoneCall,
 } from 'lucide-react';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import { useCall } from '../context/CallContext';
@@ -169,6 +171,7 @@ function HubAvatar({
 
 function threadAvatarSrc(t) {
   if (t?.is_direct && t?.peer_avatar) return t.peer_avatar;
+  if (!t?.is_direct && t?.avatar) return t.avatar;
   return null;
 }
 
@@ -204,6 +207,7 @@ function buildMessengerThreads(apiList, lsMessengerRows, pinnedGroupIds) {
       is_direct: !!g.is_direct,
       peer_id: g.peer_id || null,
       peer_avatar: g.peer_avatar || null,
+      avatar: g.avatar || null,
       code: '',
       type: 'group',
       pinned: pinSet.has(g.id),
@@ -228,9 +232,11 @@ export default function MessengerHubPage() {
   const uid = user?.userId || user?.id;
   const { markGroupRead, syncHubThreadLeadIds, syncHubMessengerGroupIds, unreadByGroupId } =
     useMessengerDock();
-  const { startCall, startGroupCall, status: callStatus } = useCall();
+  const { startCall, startGroupCall, joinGroupCall, status: callStatus, callId: currentCallId } = useCall();
   /** Modal chọn thành viên trước khi bắt đầu cuộc gọi nhóm. */
   const [groupCallPicker, setGroupCallPicker] = useState(null); // null | { kind: 'audio'|'video' }
+  /** Map<groupId, { callId, kind, hostName, hostId, groupName, startedAt }> — các cuộc gọi nhóm đang diễn ra. */
+  const [activeCallByGroup, setActiveCallByGroup] = useState({});
   const [searchParams] = useSearchParams();
 
   const [threads, setThreads] = useState([]);
@@ -270,6 +276,8 @@ export default function MessengerHubPage() {
   const [addMemberPicks, setAddMemberPicks] = useState([]); // [{ user_id, role }]
   const [addMemberQ, setAddMemberQ] = useState('');
   const [busyMember, setBusyMember] = useState(null);       // user_id đang xử lý
+  const [busyAvatar, setBusyAvatar] = useState(false);      // đang upload avatar nhóm
+  const groupAvatarInputRef = useRef(null);
 
   const reloadMessengerThreads = useCallback(() => {
     let lsMessenger = [];
@@ -518,19 +526,117 @@ export default function MessengerHubPage() {
     }
   }, [selected?.is_direct, rightSection]);
 
-  // Realtime: ai đó thêm/xóa thành viên → reload
+  // Realtime: ai đó thêm/xóa thành viên → reload; nhóm đổi avatar → cập nhật threads + group detail
   useEffect(() => {
-    if (!socket || !selectedGroupId) return undefined;
+    if (!socket) return undefined;
     const onMembers = (payload) => {
       if (payload?.group_id && String(payload.group_id) === String(selectedGroupId)) {
         void reloadGroupMembers(selectedGroupId);
       }
     };
+    const onUpdated = (payload) => {
+      const gid = payload?.group_id;
+      if (!gid) return;
+      setThreads((cur) => cur.map((t) => (
+        t.kind === 'messenger' && String(t.groupId) === String(gid)
+          ? { ...t, avatar: payload.avatar ?? null, title: payload.name ?? t.title }
+          : t
+      )));
+      if (String(gid) === String(selectedGroupId)) {
+        setGroupDetail((cur) => (cur ? { ...cur, avatar: payload.avatar ?? cur.avatar, name: payload.name ?? cur.name } : cur));
+      }
+    };
     socket.on('messenger_group:members', onMembers);
+    socket.on('messenger_group:updated', onUpdated);
     return () => {
       socket.off('messenger_group:members', onMembers);
+      socket.off('messenger_group:updated', onUpdated);
     };
   }, [socket, selectedGroupId, reloadGroupMembers]);
+
+  /* ── Cuộc gọi nhóm đang diễn ra: lắng nghe broadcast + query khi mở 1 nhóm. ── */
+  useEffect(() => {
+    if (!socket) return undefined;
+    const onStarted = (info) => {
+      if (!info?.groupId || !info?.callId) return;
+      setActiveCallByGroup((cur) => ({ ...cur, [String(info.groupId)]: info }));
+    };
+    const onEnded = ({ groupId, callId }) => {
+      if (!groupId && !callId) return;
+      setActiveCallByGroup((cur) => {
+        const next = { ...cur };
+        if (groupId) {
+          const existing = next[String(groupId)];
+          if (!existing || !callId || existing.callId === callId) delete next[String(groupId)];
+        } else if (callId) {
+          for (const [gid, info] of Object.entries(next)) {
+            if (info.callId === callId) delete next[gid];
+          }
+        }
+        return next;
+      });
+    };
+    socket.on('call:group_room_started', onStarted);
+    socket.on('call:group_room_ended', onEnded);
+    return () => {
+      socket.off('call:group_room_started', onStarted);
+      socket.off('call:group_room_ended', onEnded);
+    };
+  }, [socket]);
+
+  // Khi mở 1 nhóm → hỏi backend có cuộc gọi đang diễn ra không.
+  useEffect(() => {
+    if (!socket || !selectedGroupId) return;
+    socket.emit('call:group_room_query', { groupId: selectedGroupId });
+  }, [socket, selectedGroupId]);
+
+  /** Upload file ảnh làm avatar nhóm. Cần leader/deputy/admin. */
+  const onChangeGroupAvatar = useCallback(async (file) => {
+    if (!file || !selectedGroupId) return;
+    if (!/^image\//i.test(file.type)) {
+      alert('Vui lòng chọn file ảnh');
+      return;
+    }
+    try {
+      setBusyAvatar(true);
+      const fd = new FormData();
+      fd.append('file', file);
+      const { data } = await api.patch(`/messenger/groups/${selectedGroupId}/avatar`, fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      const newAvatar = data?.avatar || null;
+      setThreads((cur) => cur.map((t) => (
+        t.kind === 'messenger' && String(t.groupId) === String(selectedGroupId)
+          ? { ...t, avatar: newAvatar }
+          : t
+      )));
+      setGroupDetail((cur) => (cur ? { ...cur, avatar: newAvatar } : cur));
+    } catch (e) {
+      alert(e?.response?.data?.error || e.message || 'Không đổi được avatar');
+    } finally {
+      setBusyAvatar(false);
+      if (groupAvatarInputRef.current) groupAvatarInputRef.current.value = '';
+    }
+  }, [selectedGroupId]);
+
+  const onRemoveGroupAvatar = useCallback(async () => {
+    if (!selectedGroupId) return;
+    if (!confirm('Xoá avatar nhóm?')) return;
+    try {
+      setBusyAvatar(true);
+      await api.delete(`/messenger/groups/${selectedGroupId}/avatar`);
+      setThreads((cur) => cur.map((t) => (
+        t.kind === 'messenger' && String(t.groupId) === String(selectedGroupId)
+          ? { ...t, avatar: null }
+          : t
+      )));
+      setGroupDetail((cur) => (cur ? { ...cur, avatar: null } : cur));
+    } catch (e) {
+      alert(e?.response?.data?.error || e.message || 'Không xoá được avatar');
+    } finally {
+      setBusyAvatar(false);
+    }
+  }, [selectedGroupId]);
 
   /* Quyền quản trị nhóm: leader/deputy hoặc admin hệ thống */
   const myMember = useMemo(
@@ -1294,6 +1400,59 @@ export default function MessengerHubPage() {
                   )}
                 </div>
               </header>
+              {/* Banner: có cuộc gọi nhóm đang diễn ra → cho phép user tham gia */}
+              {!selected?.is_direct && selectedGroupId && activeCallByGroup[String(selectedGroupId)] && (() => {
+                const info = activeCallByGroup[String(selectedGroupId)];
+                // Đã trong cuộc gọi này (status active/connecting) → ẩn banner
+                if (currentCallId === info.callId && callStatus !== 'outgoing') return null;
+                const isVideo = info.kind === 'video';
+                const isWaiting = currentCallId === info.callId && callStatus === 'outgoing';
+                const isBusy = !isWaiting && callStatus !== 'idle';
+                return (
+                  <div className={`shrink-0 flex items-center gap-3 px-4 py-2.5 border-b ${
+                    isVideo ? 'bg-gradient-to-r from-sky-500/10 to-indigo-500/10 border-sky-200' : 'bg-gradient-to-r from-emerald-500/10 to-teal-500/10 border-emerald-200'
+                  }`}>
+                    <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white shadow-sm ${
+                      isVideo ? 'bg-sky-600' : 'bg-emerald-600'
+                    }`}>
+                      {isVideo ? <Video className="h-4 w-4" /> : <PhoneCall className="h-4 w-4" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] font-semibold text-slate-800 truncate">
+                        {isWaiting
+                          ? 'Đang chờ chủ phòng duyệt…'
+                          : `Cuộc gọi ${isVideo ? 'video' : 'thoại'} đang diễn ra`}
+                      </p>
+                      <p className="text-[11px] text-slate-500 truncate">
+                        {isWaiting
+                          ? `${info.hostName || 'Chủ phòng'} đang xem xét yêu cầu tham gia của bạn`
+                          : info.hostName
+                            ? `${info.hostName} đã bắt đầu cuộc gọi`
+                            : 'Có cuộc gọi đang diễn ra trong nhóm'}
+                      </p>
+                    </div>
+                    {isWaiting ? (
+                      <span className="shrink-0 inline-flex items-center gap-1.5 px-4 h-9 rounded-full bg-amber-100 text-amber-700 text-[12px] font-semibold">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Đang chờ
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => joinGroupCall(info)}
+                        className={`shrink-0 inline-flex items-center gap-1.5 px-4 h-9 rounded-full text-white text-[12px] font-semibold shadow-md transition disabled:opacity-50 disabled:cursor-not-allowed ${
+                          isVideo ? 'bg-sky-600 hover:bg-sky-700' : 'bg-emerald-600 hover:bg-emerald-700'
+                        }`}
+                        title={isBusy ? 'Đang có cuộc gọi khác' : 'Yêu cầu tham gia (chủ phòng duyệt)'}
+                      >
+                        {isVideo ? <Video className="h-3.5 w-3.5" /> : <PhoneCall className="h-3.5 w-3.5" />}
+                        Xin tham gia
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
               <div className="flex min-h-0 flex-1">
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white/50 backdrop-blur-sm">
                   <MessengerGroupChatTab
@@ -1354,6 +1513,52 @@ export default function MessengerHubPage() {
                     <div className="flex-1 overflow-y-auto p-2 text-xs">
                       {rightSection === 'members' && !selected?.is_direct && (
                         <div className="space-y-2">
+                          {/* Avatar nhóm — chỉ leader/deputy/admin được sửa */}
+                          <div className="flex flex-col items-center py-3 px-2 rounded-2xl bg-white/70 border border-white/60">
+                            <div className="relative">
+                              <HubAvatar
+                                src={groupDetail?.avatar || selected?.avatar}
+                                name={selected?.title}
+                                className="h-20 w-20"
+                                textClass="text-2xl"
+                                rounded="rounded-full"
+                                ringClass="ring-2 ring-white"
+                              />
+                              {canManageGroup && (
+                                <button
+                                  type="button"
+                                  disabled={busyAvatar}
+                                  onClick={() => groupAvatarInputRef.current?.click()}
+                                  className="absolute bottom-0 right-0 h-7 w-7 rounded-full bg-sky-600 hover:bg-sky-700 text-white shadow-md flex items-center justify-center ring-2 ring-white disabled:opacity-50"
+                                  title="Đổi avatar nhóm"
+                                >
+                                  {busyAvatar ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
+                                </button>
+                              )}
+                            </div>
+                            <p className="mt-2 text-[13px] font-semibold text-slate-800 truncate max-w-full">{selected?.title}</p>
+                            {canManageGroup && (groupDetail?.avatar || selected?.avatar) && (
+                              <button
+                                type="button"
+                                disabled={busyAvatar}
+                                onClick={onRemoveGroupAvatar}
+                                className="mt-1 text-[11px] text-rose-600 hover:text-rose-700 hover:underline disabled:opacity-50"
+                              >
+                                Xoá avatar
+                              </button>
+                            )}
+                            <input
+                              ref={groupAvatarInputRef}
+                              type="file"
+                              accept="image/*"
+                              hidden
+                              onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (f) void onChangeGroupAvatar(f);
+                              }}
+                            />
+                          </div>
+
                           {canManageGroup && (
                             <button
                               type="button"
