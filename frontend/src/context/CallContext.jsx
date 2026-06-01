@@ -36,6 +36,59 @@ function genCallId() {
   return `call_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/** Tuỳ chọn createOffer/createAnswer — bật recv video khi cuộc gọi video. */
+function buildOfferOptions(isVideo) {
+  return isVideo
+    ? { offerToReceiveAudio: true, offerToReceiveVideo: true }
+    : { offerToReceiveAudio: true };
+}
+
+async function flushIceCandidates(pc, pendingCandidates) {
+  const list = pendingCandidates.splice(0);
+  for (const c of list) {
+    try { await pc.addIceCandidate(c); } catch { /* noop */ }
+  }
+}
+
+/**
+ * Xử lý SDP/ICE an toàn — tránh lỗi "Called in wrong state: stable".
+ * - answer: chỉ apply khi signalingState === 'have-local-offer'
+ * - offer: rollback nếu đang have-local-offer (glare), bỏ qua nếu state không hợp lệ
+ */
+async function applyPeerSignal(pc, pendingCandidates, signal, replyFn) {
+  if (!pc || !signal) return;
+  if (signal.type === 'offer') {
+    const state = pc.signalingState;
+    if (state === 'have-local-offer') {
+      try {
+        await pc.setLocalDescription({ type: 'rollback' });
+      } catch {
+        return;
+      }
+    } else if (state !== 'stable') {
+      return;
+    }
+    await pc.setRemoteDescription({ type: 'offer', sdp: signal.sdp });
+    await flushIceCandidates(pc, pendingCandidates);
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    replyFn?.({ type: 'answer', sdp: answer.sdp });
+  } else if (signal.type === 'answer') {
+    if (pc.signalingState !== 'have-local-offer') {
+      console.warn('[Call] Bỏ qua answer — signalingState=', pc.signalingState);
+      return;
+    }
+    await pc.setRemoteDescription({ type: 'answer', sdp: signal.sdp });
+    await flushIceCandidates(pc, pendingCandidates);
+  } else if (signal.type === 'candidate' && signal.candidate) {
+    if (pc.remoteDescription?.type) {
+      try { await pc.addIceCandidate(signal.candidate); } catch { /* noop */ }
+    } else {
+      pendingCandidates.push(signal.candidate);
+    }
+  }
+}
+
 export function CallProvider({ children }) {
   const { socket, user } = useAuth();
   const uid = user?.userId || user?.id || null;
@@ -83,13 +136,21 @@ export function CallProvider({ children }) {
   const ringtoneAudioRef = useRef(null);
   const callIdRef = useRef(null);                   // sync ref cho dùng trong handler socket
   const modeRef = useRef('direct');
+  const kindRef = useRef('audio');
+  const statusRef = useRef('idle');
   const peerRef = useRef(null);
+  /** Offer đến trước khi callee kịp tạo PC (acceptCall async). */
+  const directPendingOfferRef = useRef(null);
+  /** Tránh tạo offer trùng lặp phía caller. */
+  const directMakingOfferRef = useRef(false);
   /** Khi user bấm "Tham gia" banner → emit request_join, lưu callId vào đây.
    *  Khi nhận `call:incoming` cho callId này → auto-accept (host đã duyệt). */
   const pendingApproveCallIdRef = useRef(null);
 
   useEffect(() => { callIdRef.current = callId; }, [callId]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
+  useEffect(() => { kindRef.current = kind; }, [kind]);
+  useEffect(() => { statusRef.current = status; }, [status]);
   useEffect(() => { peerRef.current = peer; }, [peer]);
 
   /* ── Helpers ── */
@@ -185,6 +246,18 @@ export function CallProvider({ children }) {
       stream.getVideoTracks().forEach((t) => { t.enabled = curC; });
       return curC;
     });
+    // Safety: nếu có PC đã được tạo trước getUserMedia (race) → bổ sung tracks ngay.
+    const tracks = stream.getTracks();
+    const addTracksToPc = (pc) => {
+      const existingKinds = new Set(pc.getSenders().filter((s) => s.track).map((s) => s.track.kind));
+      tracks.forEach((t) => {
+        if (!existingKinds.has(t.kind)) {
+          try { pc.addTrack(t, stream); } catch { /* noop */ }
+        }
+      });
+    };
+    if (directPcRef.current) addTracksToPc(directPcRef.current);
+    for (const { pc } of groupPeersRef.current.values()) addTracksToPc(pc);
     return stream;
   }, []);
 
@@ -215,6 +288,8 @@ export function CallProvider({ children }) {
       directRemoteAudioRef.current = null;
     }
     directPendingCandidatesRef.current = [];
+    directPendingOfferRef.current = null;
+    directMakingOfferRef.current = false;
     // Group
     for (const userId of [...groupPeersRef.current.keys()]) closeGroupPeer(userId);
     // Local mic & camera
@@ -310,11 +385,24 @@ export function CallProvider({ children }) {
    */
   const getOrCreateGroupPeer = useCallback((thisCallId, peerUserId) => {
     const existing = groupPeersRef.current.get(peerUserId);
-    if (existing) return existing;
+    if (existing) {
+      // Safety: nếu PC chưa có tracks gửi đi (race) → bổ sung
+      if (localStreamRef.current) {
+        const existingKinds = new Set(
+          existing.pc.getSenders().filter((s) => s.track).map((s) => s.track.kind),
+        );
+        for (const t of localStreamRef.current.getTracks()) {
+          if (!existingKinds.has(t.kind)) {
+            try { existing.pc.addTrack(t, localStreamRef.current); } catch { /* noop */ }
+          }
+        }
+      }
+      return existing;
+    }
 
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     const audioEl = createAudioElement();
-    const entry = { pc, audioEl, pendingCandidates: [] };
+    const entry = { pc, audioEl, pendingCandidates: [], makingOffer: false };
 
     pc.onicecandidate = (e) => {
       if (e.candidate && socket) {
@@ -557,6 +645,18 @@ export function CallProvider({ children }) {
         const pc = createDirectPeerConnection(callId, peer.id);
         if (stream) stream.getTracks().forEach((t) => pc.addTrack(t, stream));
         socket.emit('call:accept', { callId, toUserId: peer.id });
+        // Offer có thể đến trước khi acceptCall hoàn tất — xử lý nếu đã queue
+        const pendingOffer = directPendingOfferRef.current;
+        if (pendingOffer?.type === 'offer') {
+          directPendingOfferRef.current = null;
+          await applyPeerSignal(pc, directPendingCandidatesRef.current, pendingOffer, (reply) => {
+            socket.emit('call:signal', {
+              callId,
+              toUserId: peer.id,
+              signal: reply,
+            });
+          });
+        }
       }
     } catch (e) {
       setError(e.message || (kind === 'video' ? 'Không truy cập được camera/micro' : 'Không truy cập được micro'));
@@ -814,7 +914,7 @@ export function CallProvider({ children }) {
       }
 
       // Đang trong cuộc khác → tự reject để không làm phiền
-      if (status !== 'idle' || directPcRef.current || groupPeersRef.current.size > 0) {
+      if (statusRef.current !== 'idle' || directPcRef.current || groupPeersRef.current.size > 0) {
         if (isGroup) socket.emit('call:reject', { callId: incomingId, reason: 'busy' });
         else socket.emit('call:reject', { callId: incomingId, toUserId: fromUserId, reason: 'busy' });
         return;
@@ -845,11 +945,14 @@ export function CallProvider({ children }) {
     /** Direct: peer accept → mình tạo offer. */
     const onAccepted = async ({ callId: acceptedId }) => {
       if (acceptedId !== callIdRef.current || modeRef.current !== 'direct' || !directPcRef.current || !peerRef.current?.id) return;
+      if (directPcRef.current.signalingState !== 'stable' || directMakingOfferRef.current) return;
       if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
       setStatus('connecting');
       if (ringbackAudioRef.current) { ringbackAudioRef.current.pause(); ringbackAudioRef.current = null; }
+      directMakingOfferRef.current = true;
       try {
-        const offer = await directPcRef.current.createOffer({ offerToReceiveAudio: true });
+        const isVideo = kindRef.current === 'video';
+        const offer = await directPcRef.current.createOffer(buildOfferOptions(isVideo));
         await directPcRef.current.setLocalDescription(offer);
         socket.emit('call:signal', {
           callId: acceptedId,
@@ -859,6 +962,8 @@ export function CallProvider({ children }) {
       } catch (e) {
         setError(e.message || 'Lỗi tạo offer');
         endCall();
+      } finally {
+        directMakingOfferRef.current = false;
       }
     };
 
@@ -878,7 +983,7 @@ export function CallProvider({ children }) {
 
     /**
      * SDP/ICE — relay từ server. Áp dụng cho cả direct và group.
-     * Trong group, dùng `fromUserId` để xác định kết nối với participant nào.
+     * Dùng applyPeerSignal để kiểm tra signalingState trước khi setRemoteDescription.
      */
     const onSignal = async ({ callId: sigCallId, fromUserId, signal }) => {
       if (sigCallId !== callIdRef.current || !signal) return;
@@ -886,63 +991,35 @@ export function CallProvider({ children }) {
         if (modeRef.current === 'group') {
           if (!fromUserId) return;
           const { pc, pendingCandidates } = getOrCreateGroupPeer(sigCallId, fromUserId);
-          if (signal.type === 'offer') {
-            await pc.setRemoteDescription({ type: 'offer', sdp: signal.sdp });
-            for (const c of pendingCandidates) {
-              try { await pc.addIceCandidate(c); } catch { /* noop */ }
-            }
-            pendingCandidates.length = 0;
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
+          await applyPeerSignal(pc, pendingCandidates, signal, (reply) => {
             socket.emit('call:signal', {
               callId: sigCallId,
               toUserId: fromUserId,
-              signal: { type: 'answer', sdp: answer.sdp },
+              signal: reply,
             });
-          } else if (signal.type === 'answer') {
-            await pc.setRemoteDescription({ type: 'answer', sdp: signal.sdp });
-            for (const c of pendingCandidates) {
-              try { await pc.addIceCandidate(c); } catch { /* noop */ }
-            }
-            pendingCandidates.length = 0;
-          } else if (signal.type === 'candidate' && signal.candidate) {
-            if (pc.remoteDescription && pc.remoteDescription.type) {
-              try { await pc.addIceCandidate(signal.candidate); } catch { /* noop */ }
-            } else {
-              pendingCandidates.push(signal.candidate);
-            }
-          }
+          });
         } else {
-          // Direct
-          if (!directPcRef.current || !peerRef.current?.id) return;
-          if (signal.type === 'offer') {
-            await directPcRef.current.setRemoteDescription({ type: 'offer', sdp: signal.sdp });
-            for (const c of directPendingCandidatesRef.current) {
-              try { await directPcRef.current.addIceCandidate(c); } catch { /* noop */ }
-            }
-            directPendingCandidatesRef.current = [];
-            const answer = await directPcRef.current.createAnswer();
-            await directPcRef.current.setLocalDescription(answer);
-            socket.emit('call:signal', {
-              callId: sigCallId,
-              toUserId: peerRef.current.id,
-              signal: { type: 'answer', sdp: answer.sdp },
-            });
-          } else if (signal.type === 'answer') {
-            await directPcRef.current.setRemoteDescription({ type: 'answer', sdp: signal.sdp });
-            for (const c of directPendingCandidatesRef.current) {
-              try { await directPcRef.current.addIceCandidate(c); } catch { /* noop */ }
-            }
-            directPendingCandidatesRef.current = [];
-          } else if (signal.type === 'candidate' && signal.candidate) {
-            if (directPcRef.current.remoteDescription && directPcRef.current.remoteDescription.type) {
-              try { await directPcRef.current.addIceCandidate(signal.candidate); } catch { /* noop */ }
-            } else {
-              directPendingCandidatesRef.current.push(signal.candidate);
-            }
+          // Direct — offer có thể đến trước khi callee tạo PC
+          if (signal.type === 'offer' && !directPcRef.current) {
+            directPendingOfferRef.current = signal;
+            return;
           }
+          if (!directPcRef.current || !peerRef.current?.id) return;
+          await applyPeerSignal(
+            directPcRef.current,
+            directPendingCandidatesRef.current,
+            signal,
+            (reply) => {
+              socket.emit('call:signal', {
+                callId: sigCallId,
+                toUserId: peerRef.current.id,
+                signal: reply,
+              });
+            },
+          );
         }
       } catch (e) {
+        console.error('[Call] signal error:', e);
         setError(e.message || 'Lỗi xử lý tín hiệu');
       }
     };
@@ -984,10 +1061,14 @@ export function CallProvider({ children }) {
         },
       }));
       if (ringbackAudioRef.current) { ringbackAudioRef.current.pause(); ringbackAudioRef.current = null; }
-      // Tạo PC và gửi offer
+      // Tạo PC và gửi offer (chỉ khi PC đang stable — tránh offer trùng)
       try {
-        const { pc } = getOrCreateGroupPeer(cid, newUid);
-        const offer = await pc.createOffer({ offerToReceiveAudio: true });
+        const entry = getOrCreateGroupPeer(cid, newUid);
+        const { pc } = entry;
+        if (entry.makingOffer || pc.signalingState !== 'stable') return;
+        entry.makingOffer = true;
+        const isVideo = kindRef.current === 'video';
+        const offer = await pc.createOffer(buildOfferOptions(isVideo));
         await pc.setLocalDescription(offer);
         socket.emit('call:signal', {
           callId: cid,
@@ -996,21 +1077,19 @@ export function CallProvider({ children }) {
         });
       } catch (e) {
         console.error('group offer error', e);
+      } finally {
+        const entry = groupPeersRef.current.get(newUid);
+        if (entry) entry.makingOffer = false;
       }
     };
 
-    /** Group: 1 thành viên rời cuộc */
+    /** Group: 1 thành viên rời cuộc. Không tự huỷ khi còn 1 mình — để có thể chờ người khác join thêm. */
     const onGroupMemberLeft = ({ callId: cid, userId: leftUid }) => {
       if (cid !== callIdRef.current || modeRef.current !== 'group') return;
       closeGroupPeer(leftUid);
       setParticipants((cur) => {
         const next = { ...cur };
         delete next[leftUid];
-        // Còn lại chỉ mình → kết thúc cuộc
-        const remaining = Object.keys(next).filter((k) => k !== uid);
-        if (remaining.length === 0) {
-          setTimeout(() => resetState(), 100);
-        }
         return next;
       });
     };
@@ -1128,7 +1207,7 @@ export function CallProvider({ children }) {
       socket.off('call:group_screen_share', onGroupScreenShare);
       socket.off('call:screen_share', onDirectScreenShare);
     };
-  }, [socket, uid, user, status, getOrCreateGroupPeer, closeGroupPeer, getLocalStream, endCall, resetState, playTone]);
+  }, [socket, uid, user, getOrCreateGroupPeer, closeGroupPeer, getLocalStream, endCall, resetState, playTone]);
 
   // Cleanup khi unmount toàn bộ provider
   useEffect(() => () => { cleanup(); }, [cleanup]);
