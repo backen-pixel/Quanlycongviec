@@ -69,7 +69,11 @@ export default function MoreStackNavigator() {
       />
       <Stack.Screen name="AccountSettings" component={AccountScreen} options={{ title: 'Tài khoản' }} />
       <Stack.Screen name="MessengerGroupList" component={MessengerGroupListScreen} options={{ title: 'Tin nhắn' }} />
-      <Stack.Screen name="MessengerGroupChat" component={MessengerGroupChatScreen} options={{ title: 'Chat' }} />
+      <Stack.Screen
+        name="MessengerGroupChat"
+        component={MessengerGroupChatScreen}
+        options={{ headerShown: false }}
+      />
       <Stack.Screen name="MessengerCompose" component={MessengerComposeScreen} options={{ title: 'Tạo chat' }} />
       <Stack.Screen name="MessengerAddMembers" component={MessengerAddMembersScreen} options={{ title: 'Thêm thành viên' }} />
       <Stack.Screen name="SalesHub" component={SalesHubScreen} options={{ title: 'Bán hàng' }} />

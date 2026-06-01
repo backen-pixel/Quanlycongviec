@@ -42,12 +42,30 @@ import {
 } from '../lib/floatingBubbleOverlay';
 
 const { width: SW } = Dimensions.get('window');
-/** Nền chat sáng, sạch — tone trung tính, dễ đọc trên màn hình lớn / nhỏ. */
+/** Tone Messenger-Violet — nền sáng, bubble mình tím-xanh, bubble người khác trắng. */
 const CHAT_BG = '#F2F4F8';
-const BUBBLE_ME = '#2563EB';
-const BUBBLE_ME_DARK = '#1D4ED8';
+const BUBBLE_ME = '#6C5CE7';
+const BUBBLE_ME_DARK = '#5848D2';
 const BUBBLE_OTHER = '#FFFFFF';
 const BUBBLE_OTHER_BORDER = '#E5E7EB';
+
+/** Câu trả lời nhanh — chips trên composer, tap để chèn vào ô soạn. */
+const QUICK_REPLIES: { icon: keyof typeof Ionicons.glyphMap | null; text: string }[] = [
+  { icon: 'flash', text: 'Đã nhận' },
+  { icon: null, text: 'Sẽ phản hồi sau' },
+  { icon: null, text: 'Cần thêm info?' },
+];
+
+/** Regex unicode pictographic — phát hiện tin nhắn chỉ gồm emoji. */
+const EMOJI_RE = /\p{Extended_Pictographic}/u;
+const NON_EMOJI_RE = /[\p{L}\p{N}_]/u;
+function isEmojiOnly(text: string): boolean {
+  const t = (text || '').trim();
+  if (!t) return false;
+  if (t.length > 12) return false;
+  if (NON_EMOJI_RE.test(t)) return false;
+  return EMOJI_RE.test(t);
+}
 
 /* ─── helpers ─────────────────────────────────────────────────── */
 function mediaUrl(u: string | null | undefined): string | null {
@@ -546,6 +564,25 @@ export default function MessengerGroupChatScreen({
         item.message_type === 'image' ||
         (item.attachment_mime || '').startsWith('image/') ||
         (imgUrl && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(imgUrl));
+      const text = item.content || '';
+      const stickerMode =
+        !!text && !imgUrl && atts.length === 0 && !isAudioMsg(item) && isEmojiOnly(text);
+      const reactions = Array.isArray(item.reactions) ? item.reactions : [];
+      const reactionGroups = (() => {
+        if (!reactions.length) return [] as { emoji: string; count: number }[];
+        const m = new Map<string, number>();
+        for (const r of reactions) {
+          const e = (r?.emoji || '').trim();
+          if (!e) continue;
+          m.set(e, (m.get(e) || 0) + 1);
+        }
+        return Array.from(m.entries()).map(([emoji, count]) => ({ emoji, count }));
+      })();
+      const timeStr = (() => {
+        const d = item.created_at ? new Date(item.created_at) : null;
+        if (!d || Number.isNaN(d.getTime())) return formatDateTime(item.created_at);
+        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      })();
 
       return (
         <View>
@@ -573,60 +610,78 @@ export default function MessengerGroupChatScreen({
                   {isBot ? '  · BOT' : ''}
                 </Text>
               ) : null}
-              <Pressable
-                style={[s.bubble, mine ? s.bubbleMine : isBot ? s.bubbleBot : s.bubbleOther]}
-                onLongPress={() => setReplyTo(item)}
-              >
-                {item.reply_to ? (
-                  <View style={[s.replyBar, mine && s.replyBarMine]}>
-                    <Text style={[s.replyTxt, mine && s.replyTxtMine]} numberOfLines={1}>
-                      ↩ Trả lời tin nhắn
-                    </Text>
-                  </View>
-                ) : null}
 
-                {/* Audio message */}
-                {isAudioMsg(item) && imgUrl ? (
-                  <AudioPlayer url={imgUrl} mine={mine} />
-                ) : null}
+              {stickerMode ? (
+                /* Emoji-only → sticker (không bubble, chữ to, time bên dưới) */
+                <Pressable style={s.stickerWrap} onLongPress={() => setReplyTo(item)}>
+                  <Text style={s.stickerTxt}>{text}</Text>
+                  <Text style={s.stickerTime}>{timeStr}</Text>
+                </Pressable>
+              ) : (
+                <Pressable
+                  style={[s.bubble, mine ? s.bubbleMine : isBot ? s.bubbleBot : s.bubbleOther]}
+                  onLongPress={() => setReplyTo(item)}
+                >
+                  {item.reply_to ? (
+                    <View style={[s.replyBar, mine && s.replyBarMine]}>
+                      <Text style={[s.replyTxt, mine && s.replyTxtMine]} numberOfLines={1}>
+                        ↩ Trả lời tin nhắn
+                      </Text>
+                    </View>
+                  ) : null}
 
-                {/* Text */}
-                {item.content ? (
-                  <Text style={[s.bubbleTxt, mine && s.bubbleTxtMine]}>{item.content}</Text>
-                ) : null}
+                  {/* Audio message */}
+                  {isAudioMsg(item) && imgUrl ? (
+                    <AudioPlayer url={imgUrl} mine={mine} />
+                  ) : null}
 
-                {/* Image/file attachment */}
-                {!isAudioMsg(item) && imgUrl && isImg ? (
-                  <TouchableOpacity onPress={() => void Linking.openURL(imgUrl as string)}>
-                    <Image source={{ uri: imgUrl }} style={s.imgAtt} resizeMode="cover" />
-                  </TouchableOpacity>
-                ) : !isAudioMsg(item) && imgUrl && !isImg ? (
-                  <TouchableOpacity onPress={() => void Linking.openURL(imgUrl as string)}>
-                    <Text style={[s.fileLink, mine && s.fileLinkMine]}>
-                      📎 {item.attachment_name || 'Tệp'}
-                    </Text>
-                  </TouchableOpacity>
-                ) : null}
+                  {/* Text */}
+                  {item.content ? (
+                    <Text style={[s.bubbleTxt, mine && s.bubbleTxtMine]}>{item.content}</Text>
+                  ) : null}
 
-                {/* Multiple attachments */}
-                {atts.map((a, i) => {
-                  const u = mediaUrl(a.url);
-                  const im = (a.type || '').startsWith('image/') && u;
-                  return im ? (
-                    <TouchableOpacity key={i} onPress={() => u && void Linking.openURL(u)}>
-                      <Image source={{ uri: u! }} style={s.imgAtt} resizeMode="cover" />
+                  {/* Image/file attachment */}
+                  {!isAudioMsg(item) && imgUrl && isImg ? (
+                    <TouchableOpacity onPress={() => void Linking.openURL(imgUrl as string)}>
+                      <Image source={{ uri: imgUrl }} style={s.imgAtt} resizeMode="cover" />
                     </TouchableOpacity>
-                  ) : (
-                    <TouchableOpacity key={i} onPress={() => u && void Linking.openURL(u)}>
-                      <Text style={[s.fileLink, mine && s.fileLinkMine]}>📎 {a.name || 'Tệp'}</Text>
+                  ) : !isAudioMsg(item) && imgUrl && !isImg ? (
+                    <TouchableOpacity onPress={() => void Linking.openURL(imgUrl as string)}>
+                      <Text style={[s.fileLink, mine && s.fileLinkMine]}>
+                        📎 {item.attachment_name || 'Tệp'}
+                      </Text>
                     </TouchableOpacity>
-                  );
-                })}
+                  ) : null}
 
-                <Text style={[s.bubbleTime, mine && s.bubbleTimeMine]}>
-                  {formatDateTime(item.created_at)}
-                </Text>
-              </Pressable>
+                  {/* Multiple attachments */}
+                  {atts.map((a, i) => {
+                    const u = mediaUrl(a.url);
+                    const im = (a.type || '').startsWith('image/') && u;
+                    return im ? (
+                      <TouchableOpacity key={i} onPress={() => u && void Linking.openURL(u)}>
+                        <Image source={{ uri: u! }} style={s.imgAtt} resizeMode="cover" />
+                      </TouchableOpacity>
+                    ) : (
+                      <TouchableOpacity key={i} onPress={() => u && void Linking.openURL(u)}>
+                        <Text style={[s.fileLink, mine && s.fileLinkMine]}>📎 {a.name || 'Tệp'}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+
+                  <Text style={[s.bubbleTime, mine && s.bubbleTimeMine]}>{timeStr}</Text>
+                </Pressable>
+              )}
+
+              {reactionGroups.length ? (
+                <View style={[s.reactionRow, mine && s.reactionRowMine]}>
+                  {reactionGroups.map((r) => (
+                    <View key={r.emoji} style={s.reactionPill}>
+                      <Text style={s.reactionEmoji}>{r.emoji}</Text>
+                      {r.count > 1 ? <Text style={s.reactionCount}>{r.count}</Text> : null}
+                    </View>
+                  ))}
+                </View>
+              ) : null}
             </View>
           </View>
         </View>
@@ -657,7 +712,16 @@ export default function MessengerGroupChatScreen({
   return (
     <ChatRoot style={s.flex} {...chatRootProps}>
       {/* Header info bar */}
-      <View style={s.headerBar}>
+      <View style={[s.headerBar, { paddingTop: Math.max(insets.top, 6) + 8 }]}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={s.headerBackBtn}
+          hitSlop={8}
+          accessibilityLabel="Quay lại"
+        >
+          <Ionicons name="arrow-back" size={22} color={CrmColors.gray800} />
+        </TouchableOpacity>
+
         <TouchableOpacity
           style={s.headerLeft}
           onPress={() => { setInfoOpen(true); setInfoTab('members'); }}
@@ -667,35 +731,47 @@ export default function MessengerGroupChatScreen({
             <View style={[s.headerAvatar, { backgroundColor: avatarColor(displayTitle) }]}>
               <Text style={s.headerAvatarTxt}>{initials(displayTitle)}</Text>
             </View>
-            {isDirectChat ? <View style={s.headerStatusDot} /> : null}
+            <View style={s.headerStatusDot} />
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={s.headerName} numberOfLines={1}>{displayTitle}</Text>
-            <Text style={s.headerSub} numberOfLines={1}>
-              {isDirectChat ? 'Đang hoạt động' : `${group?.members?.length ?? 0} thành viên`}
-            </Text>
+            <View style={s.headerSubRow}>
+              <View style={s.headerSubDot} />
+              <Text style={s.headerSub} numberOfLines={1}>
+                {isDirectChat ? 'Đang hoạt động' : `${group?.members?.length ?? 0} thành viên`}
+              </Text>
+            </View>
           </View>
         </TouchableOpacity>
+
         <View style={s.headerActions}>
-          {Platform.OS === 'android' ? (
-            <TouchableOpacity
-              onPress={() => void onMinimizeToBubble()}
-              style={s.headerIconBtn}
-              hitSlop={8}
-              accessibilityLabel="Thu nhỏ thành bong bóng"
-            >
-              <Ionicons name="ellipse-outline" size={22} color={CrmColors.blue600} />
-            </TouchableOpacity>
-          ) : null}
           <TouchableOpacity
-            onPress={() => { setInfoOpen(true); setInfoTab('members'); }}
-            style={s.headerIconBtn}
-            hitSlop={8}
+            onPress={() =>
+              Alert.alert('Gọi thoại', 'Tính năng cuộc gọi đang được hoàn thiện.', [{ text: 'OK' }])
+            }
+            style={s.headerActionBtn}
+            hitSlop={6}
+            accessibilityLabel="Gọi thoại"
           >
-            <Ionicons name="information-circle-outline" size={22} color={CrmColors.gray700} />
+            <Ionicons name="call" size={18} color={CrmColors.gray800} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => setDebugOpen(true)} style={s.headerIconBtn} hitSlop={8}>
-            <Ionicons name="bug-outline" size={18} color={CrmColors.gray500} />
+          <TouchableOpacity
+            onPress={() => {
+              const opts: { text: string; style?: 'cancel' | 'destructive'; onPress?: () => void }[] = [
+                { text: 'Thông tin nhóm', onPress: () => { setInfoOpen(true); setInfoTab('members'); } },
+              ];
+              if (Platform.OS === 'android') {
+                opts.push({ text: 'Thu nhỏ thành bong bóng', onPress: () => void onMinimizeToBubble() });
+              }
+              opts.push({ text: 'Log debug', onPress: () => setDebugOpen(true) });
+              opts.push({ text: 'Đóng', style: 'cancel' });
+              Alert.alert(displayTitle || 'Tuỳ chọn', undefined, opts);
+            }}
+            style={s.headerActionBtn}
+            hitSlop={6}
+            accessibilityLabel="Tuỳ chọn"
+          >
+            <Ionicons name="ellipsis-horizontal" size={18} color={CrmColors.gray800} />
           </TouchableOpacity>
         </View>
       </View>
@@ -786,6 +862,28 @@ export default function MessengerGroupChatScreen({
         </View>
       ) : null}
 
+      {/* Quick replies — chips chèn nhanh vào ô soạn */}
+      {recState === 'idle' && !replyTo && pendingFiles.length === 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={s.quickRow}
+          keyboardShouldPersistTaps="handled"
+        >
+          {QUICK_REPLIES.map((q) => (
+            <TouchableOpacity
+              key={q.text}
+              style={s.quickChip}
+              activeOpacity={0.85}
+              onPress={() => setDraft((d) => (d ? `${d} ${q.text}` : q.text))}
+            >
+              {q.icon ? <Ionicons name={q.icon} size={12} color={BUBBLE_ME} /> : null}
+              <Text style={s.quickChipTxt}>{q.text}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      ) : null}
+
       {/* Composer */}
       {recState === 'idle' ? (
         <View style={[s.composer, { paddingBottom: composerPadBottom }]}>
@@ -811,6 +909,14 @@ export default function MessengerGroupChatScreen({
               multiline
               maxLength={8000}
             />
+            <TouchableOpacity
+              style={s.inputEmojiBtn}
+              activeOpacity={0.7}
+              onPress={() => setDraft((d) => `${d}😊`)}
+              accessibilityLabel="Chèn emoji"
+            >
+              <Ionicons name="happy-outline" size={20} color={CrmColors.gray500} />
+            </TouchableOpacity>
           </View>
 
           {draft.trim() || pendingFiles.length > 0 ? (
@@ -1058,27 +1164,38 @@ const s = StyleSheet.create({
   // Header
   headerBar: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 10, paddingHorizontal: 12,
+    paddingBottom: 10, paddingHorizontal: 10,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: CrmColors.gray200,
-    gap: 8,
+    gap: 4,
   },
-  headerLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 0 },
-  headerAvatarWrap: { width: 40, height: 40, position: 'relative' },
+  headerBackBtn: {
+    width: 38, height: 38, borderRadius: 19,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#F3F4F6',
+  },
+  headerLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 0, paddingLeft: 6 },
+  headerAvatarWrap: { width: 38, height: 38, position: 'relative' },
   headerAvatar: {
-    width: 40, height: 40, borderRadius: 20,
+    width: 38, height: 38, borderRadius: 19,
     justifyContent: 'center', alignItems: 'center',
   },
-  headerAvatarTxt: { fontSize: 14, fontWeight: '800', color: '#fff' },
+  headerAvatarTxt: { fontSize: 13, fontWeight: '800', color: '#fff' },
   headerStatusDot: {
-    position: 'absolute', right: 0, bottom: 0,
+    position: 'absolute', right: -1, bottom: -1,
     width: 12, height: 12, borderRadius: 6,
     backgroundColor: '#22c55e', borderWidth: 2, borderColor: '#fff',
   },
   headerName: { fontSize: 15, fontWeight: '800', color: CrmColors.gray900 },
-  headerSub: { fontSize: 11, color: CrmColors.gray500, marginTop: 2, fontWeight: '600' },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  headerIconBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  headerSubRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
+  headerSubDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#10B981' },
+  headerSub: { fontSize: 11, color: CrmColors.gray500, fontWeight: '600' },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingRight: 4 },
+  headerActionBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#F3F4F6',
+  },
 
   // Messages
   msgList: { flex: 1 },
@@ -1133,6 +1250,48 @@ const s = StyleSheet.create({
   bubbleTxtMine: { color: '#FFFFFF' },
   bubbleTime: { fontSize: 10, color: CrmColors.gray400, marginTop: 4, alignSelf: 'flex-end', fontWeight: '600' },
   bubbleTimeMine: { color: 'rgba(255,255,255,0.7)' },
+
+  // Sticker (emoji-only message)
+  stickerWrap: { paddingVertical: 4, paddingHorizontal: 2 },
+  stickerTxt: { fontSize: 44, lineHeight: 52, textAlign: 'center' },
+  stickerTime: {
+    fontSize: 10, color: CrmColors.gray400, marginTop: 2, fontWeight: '600',
+    textAlign: 'center',
+  },
+
+  // Reactions
+  reactionRow: {
+    flexDirection: 'row', gap: 4, marginTop: 4, marginLeft: 6,
+  },
+  reactionRowMine: { marginLeft: 0, marginRight: 6, justifyContent: 'flex-end' },
+  reactionPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    backgroundColor: '#FFFFFF', borderRadius: 999,
+    paddingHorizontal: 6, paddingVertical: 2,
+    borderWidth: 1, borderColor: CrmColors.gray200,
+    shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05, shadowRadius: 2, elevation: 1,
+  },
+  reactionEmoji: { fontSize: 12 },
+  reactionCount: { fontSize: 10, fontWeight: '700', color: CrmColors.gray700 },
+
+  // Quick reply chips (trên composer)
+  quickRow: { paddingHorizontal: 10, paddingTop: 8, paddingBottom: 6, gap: 8 },
+  quickChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 999,
+    paddingHorizontal: 12, paddingVertical: 7,
+    borderWidth: 1, borderColor: '#E5E7EB',
+  },
+  quickChipTxt: { fontSize: 12.5, color: CrmColors.gray800, fontWeight: '600' },
+
+  // Input emoji button
+  inputEmojiBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: 'center', justifyContent: 'center',
+    marginRight: 2,
+  },
 
   // Reply
   replyBar: { borderLeftWidth: 3, borderLeftColor: CrmColors.blue100, paddingLeft: 8, marginBottom: 6, opacity: 0.85 },
@@ -1218,12 +1377,13 @@ const s = StyleSheet.create({
   composerIconOn: { backgroundColor: BUBBLE_ME },
   inputWrap: {
     flex: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
     backgroundColor: '#F3F4F6',
     borderRadius: 22,
     paddingHorizontal: 4,
     minHeight: 40,
     maxHeight: 130,
-    justifyContent: 'center',
   },
   input: {
     flex: 1, minHeight: 40, maxHeight: 120,

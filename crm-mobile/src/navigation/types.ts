@@ -61,6 +61,8 @@ export type MoreStackParamList = {
 export type MainTabParamList = {
   CrmTab: NavigatorScreenParams<CrmStackParamList> | undefined;
   VoiceTab: NavigatorScreenParams<VoiceStackParamList> | undefined;
+  /** Shortcut → MoreTab/MessengerGroupList. Placeholder, không render nội dung riêng. */
+  MessengerTab: undefined;
   NotificationsTab: undefined;
   MoreTab: NavigatorScreenParams<MoreStackParamList> | undefined;
 };
