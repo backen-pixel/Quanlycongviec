@@ -620,8 +620,6 @@ export default function CRMDashboard() {
   const [filterStage, setFilterStage] = useState(() => P?.filterStage ?? '');
   /** Lọc pipeline theo khu vực CRM (company_regions); `__none__` = chưa gán khu vực */
   const [filterRegion, setFilterRegion] = useState(() => P?.filterRegion ?? '');
-  /** Khi chọn 1 khu vực cụ thể: cho phép gộp thêm lead/deal chưa gán khu vực */
-  const [filterRegionIncludeNone, setFilterRegionIncludeNone] = useState(() => !!P?.filterRegionIncludeNone);
   const [companyRegions, setCompanyRegions] = useState([]);
   const [filterLeadType, setFilterLeadType] = useState(() => P?.filterLeadType ?? '');
   const companyFilterFromLsRef = useRef(false);
@@ -1664,7 +1662,6 @@ export default function CRMDashboard() {
     const ok = companyRegions.some((reg) => String(reg.id) === String(filterRegion));
     if (!ok) {
       setFilterRegion('');
-      setFilterRegionIncludeNone(false);
     }
   }, [companyRegions, filterRegion]);
 
@@ -2032,12 +2029,9 @@ export default function CRMDashboard() {
     const fr = String(filterRegion);
     return list.filter((u) => {
       const ids = (u.crm_region_ids || []).map(String);
-      if (ids.includes(fr)) return true;
-      // Tuỳ chọn: bao gồm cả NV chưa gán khu vực để ghép với lead/deal chưa gán
-      if (filterRegionIncludeNone && ids.length === 0) return true;
-      return false;
+      return ids.includes(fr);
     });
-  }, [employeeFilterList, filterRegion, filterRegionIncludeNone, companyEmployees.length]);
+  }, [employeeFilterList, filterRegion, companyEmployees.length]);
 
   const employeeOptionsFiltered = useMemo(() => {
     const q = assigneeListSearch.trim().toLowerCase();
@@ -2104,7 +2098,6 @@ export default function CRMDashboard() {
     if (snapshotHasProperty(snap, 'filterSource')) setFilterSource(snap.filterSource ?? '');
     if (snapshotHasProperty(snap, 'filterStage')) setFilterStage(snap.filterStage ?? '');
     if (snapshotHasProperty(snap, 'filterRegion')) setFilterRegion(snap.filterRegion ?? '');
-    if (snapshotHasProperty(snap, 'filterRegionIncludeNone')) setFilterRegionIncludeNone(!!snap.filterRegionIncludeNone);
     if (snapshotHasProperty(snap, 'filterLeadType')) setFilterLeadType(snap.filterLeadType ?? '');
     if (snapshotHasProperty(snap, 'filterPhone')) {
       const v = snap.filterPhone;
@@ -2240,12 +2233,7 @@ export default function CRMDashboard() {
         result = result.filter((l) => l.region_id == null || String(l.region_id).trim() === '');
       } else {
         const rid = String(filterRegion);
-        result = result.filter((l) => {
-          const lid = String(l.region_id || '');
-          if (lid === rid) return true;
-          if (filterRegionIncludeNone && (l.region_id == null || lid === '')) return true;
-          return false;
-        });
+        result = result.filter((l) => String(l.region_id || '') === rid);
       }
     }
 
@@ -2303,7 +2291,6 @@ export default function CRMDashboard() {
     filterSource,
     filterStage,
     filterRegion,
-    filterRegionIncludeNone,
     filterPhone,
     fbPageLeadIds,
     hasPhoneNumber,
@@ -2606,7 +2593,6 @@ export default function CRMDashboard() {
     filterSource,
     filterStage,
     filterRegion,
-    filterRegionIncludeNone,
     filterLeadType,
     filterPhone,
     showAdvSearch,
@@ -2628,7 +2614,6 @@ export default function CRMDashboard() {
     filterSource,
     filterStage,
     filterRegion,
-    filterRegionIncludeNone,
     filterLeadType,
     filterPhone,
     showAdvSearch,
@@ -3394,7 +3379,6 @@ export default function CRMDashboard() {
               setFilterSource('');
               setFilterStage('');
               setFilterRegion('');
-              setFilterRegionIncludeNone(false);
               setFilterLeadType('');
               setFilterPhone('has_phone');
               handleTimePresetChange('');
@@ -3565,7 +3549,6 @@ export default function CRMDashboard() {
                       onChange={(e) => {
                         setFilterCompany(e.target.value);
                         setFilterRegion('');
-                        setFilterRegionIncludeNone(false);
                         setFilterAssignee('');
                         setFilterAssigneeName('');
                       }}
@@ -3637,24 +3620,6 @@ export default function CRMDashboard() {
                       );
                     })}
                   </select>
-                  {/* Checkbox bao gồm cả lead/deal chưa gán khu vực — chỉ enable khi đã chọn 1 khu vực cụ thể */}
-                  <label
-                    className={`mt-1 inline-flex items-center gap-1.5 text-[10px] select-none ${
-                      filterRegion && filterRegion !== '__none__'
-                        ? 'text-slate-700 cursor-pointer hover:text-slate-900'
-                        : 'text-slate-400 cursor-not-allowed'
-                    }`}
-                    title="Khi bật: hiển thị thêm các lead/deal & nhân viên chưa được gán khu vực"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={filterRegionIncludeNone}
-                      disabled={!filterRegion || filterRegion === '__none__'}
-                      onChange={(e) => setFilterRegionIncludeNone(e.target.checked)}
-                      className="h-3 w-3 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                    />
-                    + Bao gồm chưa gán khu vực
-                  </label>
                 </div>
 
                 {/* 3. NV */}
