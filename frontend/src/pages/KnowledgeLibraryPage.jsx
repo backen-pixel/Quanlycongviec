@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
+import { publicFileUrl } from '../lib/publicFileUrl';
 import {
   BookOpen, Search, CheckCircle2, Clock, PlayCircle, Settings,
   Sparkles, TrendingUp, Award, ArrowRight, Flame, Library,
@@ -177,7 +178,7 @@ function LessonCard({ lesson, idx }) {
       <div className={`relative h-32 bg-gradient-to-br ${color.bg} flex items-center justify-center overflow-hidden`}>
         {lesson.cover_image_url ? (
           <img
-            src={lesson.cover_image_url}
+            src={publicFileUrl(lesson.cover_image_url)}
             alt={lesson.title}
             className={`absolute inset-0 w-full h-full object-cover transition-transform ${locked ? 'grayscale' : 'group-hover:scale-105'}`}
             loading="lazy"
@@ -204,6 +205,11 @@ function LessonCard({ lesson, idx }) {
         )}
 
         <div className="absolute top-2 left-2 flex gap-1 flex-wrap max-w-[60%]">
+          {lesson.is_final_exam && (
+            <span className="px-2 py-1 bg-purple-600 text-white rounded-full text-[10px] font-bold">
+              Thi tổng kết
+            </span>
+          )}
           {lesson.is_required && (
             <span className="px-2 py-1 bg-red-500 text-white rounded-full text-[10px] font-bold flex items-center gap-1">
               <AlertCircle className="h-3 w-3" /> Bắt buộc
@@ -276,6 +282,7 @@ export default function KnowledgeLibraryPage() {
   const [categoriesFlat, setCategoriesFlat] = useState([]);
   const [lessons, setLessons] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all'); // all | bookmarked | required
@@ -325,6 +332,7 @@ export default function KnowledgeLibraryPage() {
 
   const loadLessons = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const params = {};
       if (selectedCategory) params.category_id = selectedCategory;
@@ -335,6 +343,8 @@ export default function KnowledgeLibraryPage() {
       setLessons(data.lessons || []);
     } catch (e) {
       console.error(e);
+      setLessons([]);
+      setLoadError(e.response?.data?.error || e.message || 'Không tải được danh sách bài học');
     }
     setLoading(false);
   };
@@ -359,6 +369,17 @@ export default function KnowledgeLibraryPage() {
         inProgressCount={inProgressLessons.length}
         totalLessons={lessons.length}
       />
+
+      <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 flex gap-3 items-start">
+        <AlertCircle className="h-5 w-5 shrink-0 mt-0.5 text-amber-600" />
+        <div>
+          <p className="font-semibold">Học theo thứ tự — bài bị khoá cho đến khi bạn hoàn thành bài trước</p>
+          <p className="mt-1 text-amber-800">
+            Mỗi bài: đọc nội dung → làm và <strong>đạt bài tập</strong> → mở bài tiếp theo.
+            Bài <strong>thi tổng kết</strong> chỉ mở khi đã đạt toàn bộ bài tập các bài trước trong khoá.
+          </p>
+        </div>
+      </div>
 
       <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
         <div className="flex gap-2 flex-wrap">
@@ -471,13 +492,45 @@ export default function KnowledgeLibraryPage() {
               </div>
             ))}
           </div>
+        ) : loadError ? (
+          <div className="bg-white rounded-2xl border border-red-200 py-16 text-center px-4">
+            <div className="w-16 h-16 mx-auto rounded-full bg-red-50 flex items-center justify-center mb-3">
+              <AlertCircle className="h-8 w-8 text-red-400" />
+            </div>
+            <p className="text-gray-900 font-medium">Không tải được bài học</p>
+            <p className="text-sm text-gray-500 mt-2 max-w-md mx-auto">{loadError}</p>
+            <button
+              type="button"
+              onClick={() => { setFilter('all'); setSearch(''); setSelectedCategory(null); loadLessons(); }}
+              className="inline-flex items-center gap-1 text-violet-600 text-sm mt-4 hover:underline"
+            >
+              Thử lại
+            </button>
+          </div>
         ) : filteredLessons.length === 0 ? (
           <div className="bg-white rounded-2xl border border-dashed border-gray-300 py-16 text-center">
             <div className="w-16 h-16 mx-auto rounded-full bg-violet-50 flex items-center justify-center mb-3">
               <BookOpen className="h-8 w-8 text-violet-400" />
             </div>
-            <p className="text-gray-500">Chưa có bài học nào trong mục này.</p>
-            {isAdmin && (
+            <p className="text-gray-500">
+              {filter === 'bookmarked'
+                ? 'Chưa có bài học nào được lưu.'
+                : filter === 'required'
+                  ? 'Chưa có bài học bắt buộc.'
+                  : search.trim()
+                    ? 'Không tìm thấy bài học phù hợp.'
+                    : 'Chưa có bài học nào trong mục này.'}
+            </p>
+            {(filter !== 'all' || search.trim() || selectedCategory) && (
+              <button
+                type="button"
+                onClick={() => { setFilter('all'); setSearch(''); setSelectedCategory(null); }}
+                className="inline-flex items-center gap-1 text-violet-600 text-sm mt-3 hover:underline"
+              >
+                Xem tất cả bài học
+              </button>
+            )}
+            {isAdmin && filter === 'all' && !search.trim() && !selectedCategory && (
               <Link
                 to="/knowledge/admin"
                 className="inline-flex items-center gap-1 text-violet-600 text-sm mt-3 hover:underline"

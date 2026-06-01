@@ -66,10 +66,15 @@ function exerciseInsert(ex) {
   const timeLimit = ex.time_limit_minutes != null ? ex.time_limit_minutes : 'NULL';
   const maxAttempts = ex.max_attempts != null ? ex.max_attempts : 'NULL';
   const passing = ex.passing_score ?? 70;
+  const imageUrl = ex.image_url ? escSql(ex.image_url) : 'NULL';
+  const attachments = ex.attachments?.length
+    ? jsonDollar(`eax_${ex.id.replace(/-/g, '_')}`, ex.attachments) + '::jsonb'
+    : "'[]'::jsonb";
 
   return `INSERT INTO knowledge_exercises (
   id, lesson_id, title, instructions, type, questions,
-  passing_score, max_attempts, time_limit_minutes, sort_order
+  passing_score, max_attempts, time_limit_minutes, sort_order,
+  image_url, attachments
 ) VALUES (
   ${escSql(ex.id)},
   ${escSql(ex.lesson_id)},
@@ -80,12 +85,15 @@ function exerciseInsert(ex) {
   ${passing},
   ${maxAttempts},
   ${timeLimit},
-  ${ex.sort_order ?? 1}
+  ${ex.sort_order ?? 1},
+  ${imageUrl},
+  ${attachments}
 ) ON CONFLICT (id) DO UPDATE SET
   title = EXCLUDED.title, instructions = EXCLUDED.instructions, type = EXCLUDED.type,
   questions = EXCLUDED.questions, passing_score = EXCLUDED.passing_score,
   max_attempts = EXCLUDED.max_attempts, time_limit_minutes = EXCLUDED.time_limit_minutes,
-  sort_order = EXCLUDED.sort_order, updated_at = now();`;
+  sort_order = EXCLUDED.sort_order, image_url = EXCLUDED.image_url,
+  attachments = EXCLUDED.attachments, updated_at = now();`;
 }
 
 function quizItem(id, question, options, correct, explanation, type = 'single') {

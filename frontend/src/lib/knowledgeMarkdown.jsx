@@ -1,10 +1,12 @@
+import { publicFileUrl } from './publicFileUrl';
+
 function renderInline(text, keyPrefix) {
   if (!text) return text;
   const parts = [];
   let remaining = text;
   let idx = 0;
 
-  const pattern = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\))/;
+  const pattern = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\)|!\[[^\]]*\]\([^)]+\))/;
   while (remaining.length) {
     const m = remaining.match(pattern);
     if (!m) {
@@ -24,6 +26,26 @@ function renderInline(text, keyPrefix) {
           <a key={`${keyPrefix}-l-${idx}`} href={linkMatch[2]} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">
             {linkMatch[1]}
           </a>,
+        );
+      } else {
+        parts.push(token);
+      }
+    } else if (token.startsWith('![')) {
+      const imgMatch = token.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+      if (imgMatch) {
+        parts.push(
+          <span key={`${keyPrefix}-img-${idx}`} className="block my-4">
+            <img
+              src={publicFileUrl(imgMatch[2])}
+              alt={imgMatch[1] || 'Minh họa'}
+              referrerPolicy="no-referrer"
+              className="w-full rounded-xl border border-gray-200 shadow-sm"
+              loading="lazy"
+            />
+            {imgMatch[1] ? (
+              <span className="block text-center text-xs text-gray-500 mt-2">{imgMatch[1]}</span>
+            ) : null}
+          </span>,
         );
       } else {
         parts.push(token);

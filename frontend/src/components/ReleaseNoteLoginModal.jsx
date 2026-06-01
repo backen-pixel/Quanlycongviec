@@ -4,6 +4,9 @@ import { Megaphone, X, Loader2 } from 'lucide-react';
 import api from '../lib/api';
 import { builtinToNoteShape, getLatestUnreadBuiltinUpdate, markNoteRead } from '../lib/releaseNotesRead';
 
+/** Tạm tắt popup «Có gì mới» khi mở web — đặt true để bật lại */
+const SHOW_RELEASE_NOTE_LOGIN_MODAL = false;
+
 const CATEGORIES = {
   feature: { label: 'Tính năng mới', icon: '✨', color: 'bg-blue-100 text-blue-700' },
   improvement: { label: 'Cải thiện', icon: '⚡', color: 'bg-amber-100 text-amber-700' },
@@ -38,6 +41,8 @@ function ReleaseNoteBody({ content }) {
  * Popup cho đúng bản cập nhật mới nhất (đã xuất bản): đóng → mark-read → không hiện lại cho bản đó.
  */
 export default function ReleaseNoteLoginModal() {
+  if (!SHOW_RELEASE_NOTE_LOGIN_MODAL) return null;
+
   const navigate = useNavigate();
   const [note, setNote] = useState(null);
   const [loading, setLoading] = useState(true);

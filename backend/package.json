@@ -11,7 +11,7 @@
     "dev": "node --watch src/server.js",
     "fb:rescan-inbound-phones": "node scripts/rescan-fb-inbound-phones.js",
     "fb:validate-contact-phones": "node scripts/validate-fb-contact-phones.js",
-    "build:frontend": "cd ../frontend && npm ci --prefer-offline --no-audit && npm run build",
+    "build:frontend": "node ../scripts/knowledge/sync-screenshots-deploy.js && cd ../frontend && npm ci --prefer-offline --no-audit && npm run build",
     "db:migrate:180": "node scripts/run-sql-migration.js ../database/180_internal_social_schedule_visibility_hide_share.sql",
     "test:cache": "node tests/response-cache-smoke.js"
   },

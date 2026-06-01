@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { youtubeEmbedUrl } from '../lib/knowledgeMarkdown';
+import { publicFileUrl } from '../lib/publicFileUrl';
 import { Image as ImageIcon, PlayCircle, FileText, ExternalLink, X, Maximize2 } from 'lucide-react';
 
 export function detectMediaType(url) {
@@ -13,26 +14,45 @@ export function detectMediaType(url) {
   return 'link';
 }
 
+function resolveMediaUrl(url) {
+  return publicFileUrl(url);
+}
+
 function MediaTile({ item, onOpen }) {
   const type = item.type || detectMediaType(item.url);
+  const src = resolveMediaUrl(item.url);
 
   if (type === 'image') {
     return (
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => onOpen({ ...item, type })}
-        className="group relative aspect-video rounded-xl overflow-hidden bg-gray-100 border border-gray-200 hover:border-violet-300 transition-all"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onOpen({ ...item, type });
+          }
+        }}
+        className="group relative aspect-video rounded-xl overflow-hidden bg-gray-100 border border-gray-200 hover:border-violet-300 transition-all cursor-pointer"
       >
-        <img src={item.url} alt={item.caption || 'Hình ảnh'} className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform" loading="lazy" />
-        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+        <img
+          src={src}
+          alt={item.caption || 'Hình ảnh'}
+          referrerPolicy="no-referrer"
+          className="absolute inset-0 z-0 w-full h-full object-cover transition-transform group-hover:scale-105"
+          loading="lazy"
+          decoding="async"
+        />
+        <div className="absolute inset-0 z-10 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center pointer-events-none">
           <Maximize2 className="h-6 w-6 text-white opacity-0 group-hover:opacity-100" />
         </div>
         {item.caption && (
-          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-2">
+          <div className="absolute bottom-0 left-0 right-0 z-20 bg-gradient-to-t from-black/70 to-transparent p-2 pointer-events-none">
             <p className="text-white text-xs truncate text-left">{item.caption}</p>
           </div>
         )}
-      </button>
+      </div>
     );
   }
 
@@ -66,7 +86,7 @@ function MediaTile({ item, onOpen }) {
     return (
       <div className="relative aspect-video rounded-xl overflow-hidden bg-black border border-gray-200">
         <video controls className="absolute inset-0 w-full h-full" preload="metadata">
-          <source src={item.url} />
+          <source src={src} />
         </video>
         {item.caption && (
           <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/70 to-transparent p-2">
@@ -80,7 +100,7 @@ function MediaTile({ item, onOpen }) {
   if (type === 'file') {
     return (
       <a
-        href={item.url}
+        href={src}
         target="_blank"
         rel="noreferrer"
         className="flex items-center gap-3 p-4 rounded-xl bg-gray-50 border border-gray-200 hover:border-violet-300 hover:bg-white transition-all"
@@ -126,7 +146,13 @@ function Lightbox({ item, onClose }) {
       >
         <X className="h-6 w-6" />
       </button>
-      <img src={item.url} alt={item.caption || ''} className="max-w-full max-h-full object-contain rounded-lg" onClick={(e) => e.stopPropagation()} />
+      <img
+        src={resolveMediaUrl(item.url)}
+        alt={item.caption || ''}
+        referrerPolicy="no-referrer"
+        className="max-w-full max-h-full object-contain rounded-lg"
+        onClick={(e) => e.stopPropagation()}
+      />
       {item.caption && (
         <p className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/50 text-white px-4 py-2 rounded-lg text-sm">
           {item.caption}
