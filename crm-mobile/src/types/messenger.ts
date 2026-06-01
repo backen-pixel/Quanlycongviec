@@ -35,6 +35,12 @@ export type MessengerAttachment = {
   size?: number;
 };
 
+export type MessengerReaction = {
+  emoji?: string | null;
+  user_id?: string | null;
+  user?: { id?: string | null; full_name?: string | null } | null;
+};
+
 export type MessengerMessage = {
   id: string;
   group_id?: string;
@@ -49,4 +55,5 @@ export type MessengerMessage = {
   attachment_mime?: string | null;
   reply_to?: string | null;
   user?: { id?: string; full_name?: string | null; avatar?: string | null; is_bot?: boolean | null } | null;
+  reactions?: MessengerReaction[] | null;
 };
