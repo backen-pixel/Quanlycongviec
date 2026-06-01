@@ -17,6 +17,25 @@ function userRole(req) {
   return String(req.user?.role ?? '').trim().toLowerCase();
 }
 
+/** Bỏ qua lỗi khi migration 221 chưa chạy (bảng bookmark/rating chưa tồn tại). */
+function isMissingTableError(err) {
+  if (!err) return false;
+  const msg = String(err.message || err.details || '');
+  return err.code === 'PGRST205'
+    || err.code === '42P01'
+    || msg.includes('schema cache')
+    || /relation .* does not exist/i.test(msg);
+}
+
+async function safeTableSelect(queryPromise) {
+  const { data, error } = await queryPromise;
+  if (error) {
+    if (isMissingTableError(error)) return [];
+    throw error;
+  }
+  return data || [];
+}
+
 function lessonVisibleToUser(lesson, req) {
   if (!lesson.is_published && !canManage(req)) return false;
   const roles = lesson.target_roles;
@@ -464,6 +483,82 @@ async function computeLessonLockMap(categoryId, userId, userObj, lessonsInCatego
   return map;
 }
 
+/** Trạng thái nộp bài tập tốt nhất của user (passed / score). */
+async function getExercisePassMapForUser(userId, exerciseIds) {
+  const passedSet = new Set();
+  const bestByEx = new Map();
+  if (!userId || !exerciseIds?.length) return { passedSet, bestByEx };
+  const { data: subs } = await supabase
+    .from('knowledge_exercise_submissions')
+    .select('exercise_id, status, score, attempt_number')
+    .eq('user_id', userId)
+    .in('exercise_id', exerciseIds);
+  (subs || []).forEach((s) => {
+    const prev = bestByEx.get(s.exercise_id);
+    if (!prev || (s.score ?? -1) > (prev.score ?? -1)) bestByEx.set(s.exercise_id, s);
+  });
+  [...bestByEx.values()].forEach((s) => {
+    if (s.status === 'passed') passedSet.add(s.exercise_id);
+  });
+  return { passedSet, bestByEx };
+}
+
+/** Tất cả bài tập của một bài học đã đạt (hoặc bài không có bài tập → true). */
+async function areAllLessonExercisesPassed(lessonId, userId) {
+  if (!lessonId || !userId) return true;
+  const { data: exRows } = await supabase
+    .from('knowledge_exercises')
+    .select('id')
+    .eq('lesson_id', lessonId);
+  const ids = (exRows || []).map((e) => e.id);
+  if (!ids.length) return true;
+  const { passedSet } = await getExercisePassMapForUser(userId, ids);
+  return ids.every((id) => passedSet.has(id));
+}
+
+async function markLessonCompleted(userId, lessonId) {
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('knowledge_lesson_progress')
+    .upsert(
+      {
+        user_id: userId,
+        lesson_id: lessonId,
+        status: 'completed',
+        completed_at: now,
+        last_viewed_at: now,
+      },
+      { onConflict: 'user_id,lesson_id' },
+    )
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+function attachExerciseUserProgress(exercises, bestByEx) {
+  return (exercises || []).map((ex) => {
+    const best = bestByEx.get(ex.id);
+    return {
+      ...ex,
+      user_best_score: best?.score ?? null,
+      user_status: best?.status ?? null,
+      user_passed: best?.status === 'passed',
+    };
+  });
+}
+
+async function enrichNextLessonWithLock(categoryId, nextLesson, userId, userObj, skipLock = false) {
+  if (!nextLesson || !categoryId || skipLock) return nextLesson;
+  const lockMap = await computeLessonLockMap(categoryId, userId, userObj);
+  const lk = lockMap.get(nextLesson.id) || { locked: false, reason: null };
+  return {
+    ...nextLesson,
+    is_locked: !!lk.locked,
+    unlock_reason: lk.reason || null,
+  };
+}
+
 // Tính bài học TIẾP THEO (sort_order liền sau) trong cùng danh mục, có thể null.
 async function getNextLessonInCategory(currentLessonId) {
   const { data: cur } = await supabase
@@ -721,18 +816,22 @@ r.get('/lessons', async (req, res) => {
         .in('lesson_id', lessonIds);
       progressMap = Object.fromEntries((prog || []).map((p) => [p.lesson_id, p.status]));
 
-      const { data: bms } = await supabase
-        .from('knowledge_lesson_bookmarks')
-        .select('lesson_id')
-        .eq('user_id', req.user.userId)
-        .in('lesson_id', lessonIds);
-      bookmarkSet = new Set((bms || []).map((b) => b.lesson_id));
+      const bms = await safeTableSelect(
+        supabase
+          .from('knowledge_lesson_bookmarks')
+          .select('lesson_id')
+          .eq('user_id', req.user.userId)
+          .in('lesson_id', lessonIds),
+      );
+      bookmarkSet = new Set(bms.map((b) => b.lesson_id));
 
-      const { data: ratings } = await supabase
-        .from('knowledge_lesson_ratings')
-        .select('lesson_id, rating')
-        .in('lesson_id', lessonIds);
-      (ratings || []).forEach((r2) => {
+      const ratings = await safeTableSelect(
+        supabase
+          .from('knowledge_lesson_ratings')
+          .select('lesson_id, rating')
+          .in('lesson_id', lessonIds),
+      );
+      ratings.forEach((r2) => {
         if (!ratingMap[r2.lesson_id]) ratingMap[r2.lesson_id] = { sum: 0, count: 0 };
         ratingMap[r2.lesson_id].sum += r2.rating;
         ratingMap[r2.lesson_id].count += 1;
@@ -827,47 +926,72 @@ r.get('/lessons/:id', async (req, res) => {
       { onConflict: 'user_id,lesson_id' },
     );
 
-    const nextLesson = await getNextLessonInCategory(req.params.id);
     const deadlineInfo = lesson.category_id
       ? await computeUserDeadline(lesson.category_id, req.user.userId)
       : null;
 
+    const exercisePassMap = await getExercisePassMapForUser(
+      req.user.userId,
+      (exercises || []).map((e) => e.id),
+    );
+
     const safeExercises = canManage(req)
       ? exercises
-      : (exercises || []).map(({ id, title, instructions, type, passing_score, max_attempts, time_limit_minutes, image_url, video_url, video_type, attachments, sort_order }) => ({
-          id,
-          title,
-          instructions,
-          type,
-          passing_score,
-          max_attempts,
-          time_limit_minutes,
-          image_url,
-          video_url,
-          video_type,
-          attachments,
-          sort_order,
-        }));
+      : attachExerciseUserProgress(
+          (exercises || []).map(({ id, title, instructions, type, passing_score, max_attempts, time_limit_minutes, image_url, video_url, video_type, attachments, sort_order }) => ({
+            id,
+            title,
+            instructions,
+            type,
+            passing_score,
+            max_attempts,
+            time_limit_minutes,
+            image_url,
+            video_url,
+            video_type,
+            attachments,
+            sort_order,
+          })),
+          exercisePassMap.bestByEx,
+        );
 
-    const { data: bookmark } = await supabase
-      .from('knowledge_lesson_bookmarks')
-      .select('id')
-      .eq('user_id', req.user.userId)
-      .eq('lesson_id', req.params.id)
-      .maybeSingle();
+    const allExercisesPassed = canManage(req)
+      || await areAllLessonExercisesPassed(req.params.id, req.user.userId);
 
-    const { data: myRating } = await supabase
-      .from('knowledge_lesson_ratings')
-      .select('*')
-      .eq('user_id', req.user.userId)
-      .eq('lesson_id', req.params.id)
-      .maybeSingle();
+    let nextLesson = await getNextLessonInCategory(req.params.id);
+    if (nextLesson && lesson.category_id) {
+      nextLesson = await enrichNextLessonWithLock(
+        lesson.category_id,
+        nextLesson,
+        req.user.userId,
+        req.user,
+        canManage(req),
+      );
+    }
 
-    const { data: ratings } = await supabase
-      .from('knowledge_lesson_ratings')
-      .select('rating, comment, created_at, user:users(id, full_name, avatar)')
-      .eq('lesson_id', req.params.id)
-      .order('created_at', { ascending: false });
+    const bookmark = await safeTableSelect(
+      supabase
+        .from('knowledge_lesson_bookmarks')
+        .select('id')
+        .eq('user_id', req.user.userId)
+        .eq('lesson_id', req.params.id),
+    ).then((rows) => rows[0] || null);
+
+    const myRating = await safeTableSelect(
+      supabase
+        .from('knowledge_lesson_ratings')
+        .select('*')
+        .eq('user_id', req.user.userId)
+        .eq('lesson_id', req.params.id),
+    ).then((rows) => rows[0] || null);
+
+    const ratings = await safeTableSelect(
+      supabase
+        .from('knowledge_lesson_ratings')
+        .select('rating, comment, created_at, user:users(id, full_name, avatar)')
+        .eq('lesson_id', req.params.id)
+        .order('created_at', { ascending: false }),
+    );
 
     const ratingCount = (ratings || []).length;
     const ratingAvg = ratingCount ? Math.round(((ratings.reduce((a, b) => a + b.rating, 0)) / ratingCount) * 10) / 10 : null;
@@ -883,6 +1007,7 @@ r.get('/lessons/:id', async (req, res) => {
       rating_avg: ratingAvg,
       rating_count: ratingCount,
       next_lesson: nextLesson || null,
+      all_exercises_passed: allExercisesPassed,
       deadline: deadlineInfo || null,
     });
   } catch (e) {
@@ -982,8 +1107,28 @@ r.delete('/lessons/:id', async (req, res) => {
 // POST /knowledge/lessons/:id/complete
 r.post('/lessons/:id/complete', async (req, res) => {
   try {
-    const { data: lesson } = await supabase.from('knowledge_lessons').select('is_published, target_roles, category_id').eq('id', req.params.id).single();
+    const { data: lesson } = await supabase.from('knowledge_lessons').select('is_published, target_roles, category_id, title').eq('id', req.params.id).single();
     if (!lesson || !lessonVisibleToUser(lesson, req)) return res.status(404).json({ error: 'Không tìm thấy' });
+
+    if (!canManage(req) && lesson.category_id) {
+      const lockMap = await computeLessonLockMap(lesson.category_id, req.user.userId, req.user);
+      const lk = lockMap.get(req.params.id);
+      if (lk?.locked) {
+        return res.status(423).json({
+          error: lk.reason || 'Bài học đang khoá',
+          locked: true,
+          prev_lesson_id: lk.prev_lesson_id || null,
+        });
+      }
+      const exercisesPassed = await areAllLessonExercisesPassed(req.params.id, req.user.userId);
+      if (!exercisesPassed) {
+        return res.status(400).json({
+          error: 'Cần đạt tất cả bài tập của bài học này trước khi đánh dấu hoàn thành',
+          requires_exercises: true,
+        });
+      }
+    }
+
     const now = new Date().toISOString();
     const { data, error } = await supabase
       .from('knowledge_lesson_progress')
@@ -1010,10 +1155,14 @@ r.post('/lessons/:id/complete', async (req, res) => {
       : null;
 
     let nextLesson = await getNextLessonInCategory(req.params.id);
-    if (nextLesson && !canManage(req) && lesson.category_id) {
-      const lockMap = await computeLessonLockMap(lesson.category_id, req.user.userId, req.user);
-      const lk = lockMap.get(nextLesson.id);
-      nextLesson = { ...nextLesson, is_locked: !!lk?.locked, unlock_reason: lk?.reason || null };
+    if (nextLesson && lesson.category_id) {
+      nextLesson = await enrichNextLessonWithLock(
+        lesson.category_id,
+        nextLesson,
+        req.user.userId,
+        req.user,
+        canManage(req),
+      );
     }
 
     res.json({
@@ -1253,6 +1402,14 @@ r.post('/exercises/:id/submit', async (req, res) => {
 
     let newCert = null;
     if (status === 'passed' && ex.lesson?.id) {
+      const allPassed = await areAllLessonExercisesPassed(ex.lesson.id, req.user.userId);
+      if (allPassed) {
+        try {
+          await markLessonCompleted(req.user.userId, ex.lesson.id);
+        } catch (e) {
+          console.error('auto-complete lesson after exercises', e);
+        }
+      }
       newCert = await maybeIssueCertificateForLesson(req, ex.lesson.id);
     }
 
@@ -1260,16 +1417,20 @@ r.post('/exercises/:id/submit', async (req, res) => {
     let nextLesson = null;
     if (ex.lesson?.id) {
       nextLesson = await getNextLessonInCategory(ex.lesson.id);
-      if (nextLesson && !canManage(req)) {
+      if (nextLesson) {
         const { data: parentLesson } = await supabase
           .from('knowledge_lessons')
           .select('category_id')
           .eq('id', ex.lesson.id)
           .maybeSingle();
         if (parentLesson?.category_id) {
-          const lockMap = await computeLessonLockMap(parentLesson.category_id, req.user.userId, req.user);
-          const lk = lockMap.get(nextLesson.id);
-          nextLesson = { ...nextLesson, is_locked: !!lk?.locked, unlock_reason: lk?.reason || null };
+          nextLesson = await enrichNextLessonWithLock(
+            parentLesson.category_id,
+            nextLesson,
+            req.user.userId,
+            req.user,
+            canManage(req),
+          );
         }
       }
     }

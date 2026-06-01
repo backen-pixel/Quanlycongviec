@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import api from '../lib/api';
+import { publicFileUrl } from '../lib/publicFileUrl';
 import KnowledgeMediaGallery from '../components/KnowledgeMediaGallery';
 import { youtubeEmbedUrl } from '../lib/knowledgeMarkdown';
 import {
@@ -27,7 +27,7 @@ function ExerciseMediaHeader({ exercise }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
       {hasImage && (
-        <img src={exercise.image_url} alt="" className="w-full aspect-video object-cover rounded-xl border border-gray-200" />
+        <img src={publicFileUrl(exercise.image_url)} alt="" className="w-full aspect-video object-cover rounded-xl border border-gray-200" />
       )}
       {hasVideo && (
         <div className="aspect-video rounded-xl overflow-hidden bg-black border border-gray-200">
@@ -108,7 +108,7 @@ function QuizPlayer({ exercise, onSubmit, submitting, onAnswersChange }) {
         )}
 
         {current.image_url && (
-          <img src={current.image_url} alt="Minh họa câu hỏi" className="w-full max-h-80 object-contain rounded-lg border bg-gray-50 mb-4" />
+          <img src={publicFileUrl(current.image_url)} alt="Minh họa câu hỏi" className="w-full max-h-80 object-contain rounded-lg border bg-gray-50 mb-4" />
         )}
 
         <div className="space-y-2">

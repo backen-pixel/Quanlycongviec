@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { renderMarkdownLines, youtubeEmbedUrl, estimateReadingTime } from '../lib/knowledgeMarkdown';
+import { publicFileUrl } from '../lib/publicFileUrl';
 import KnowledgeMediaGallery from '../components/KnowledgeMediaGallery';
 import { KnowledgeDeadlineBanner } from '../components/KnowledgeDeadline';
 import {
@@ -186,8 +187,8 @@ export default function KnowledgeLessonPage() {
       if (data?.certificate_issued) {
         setNewCertificate(data.certificate_issued);
       }
-    } catch {
-      alert('Lỗi');
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi');
     }
     setCompleting(false);
   };
@@ -271,6 +272,19 @@ export default function KnowledgeLessonPage() {
   });
 
   const hasExercises = (lesson.exercises || []).length > 0;
+  const allExercisesPassed = lesson.all_exercises_passed ?? !hasExercises;
+  const canMarkComplete = !hasExercises || allExercisesPassed;
+
+  const resolveNextTarget = () => {
+    const target = apiNextLesson || nextLesson;
+    if (!target) return { target: null, locked: false, reason: null };
+    const locked = apiNextLesson
+      ? !!apiNextLesson.is_locked
+      : !!nextLesson?.is_locked;
+    const reason = apiNextLesson?.unlock_reason || nextLesson?.unlock_reason || null;
+    return { target, locked, reason };
+  };
+  const nextNav = resolveNextTarget();
 
   return (
     <div className="max-w-7xl mx-auto">
@@ -324,12 +338,22 @@ export default function KnowledgeLessonPage() {
 
       {lesson.deadline && <KnowledgeDeadlineBanner deadline={lesson.deadline} />}
 
+      <div className="mb-4 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-900">
+        <p className="font-semibold flex items-center gap-2">
+          <ListChecks className="h-4 w-4" /> Lộ trình học tuần tự
+        </p>
+        <p className="mt-1 text-violet-800">
+          Hoàn thành bài hiện tại và <strong>đạt tất cả bài tập</strong> mới mở bài tiếp theo.
+          {lesson.is_final_exam && ' Bài thi tổng kết chỉ mở khi bạn đã đạt toàn bộ bài tập các bài trước.'}
+        </p>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-6">
         <article ref={contentRef} className="min-w-0">
           <header className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-violet-600 via-purple-600 to-fuchsia-600 text-white p-8 mb-6 shadow-lg">
             {lesson.cover_image_url && (
               <>
-                <img src={lesson.cover_image_url} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                <img src={publicFileUrl(lesson.cover_image_url)} alt="" className="absolute inset-0 w-full h-full object-cover" />
                 <div className="absolute inset-0 bg-gradient-to-br from-violet-900/80 via-purple-900/70 to-fuchsia-900/80" />
               </>
             )}
@@ -484,19 +508,29 @@ export default function KnowledgeLessonPage() {
                     key={ex.id}
                     type="button"
                     onClick={() => navigate(`/knowledge/exercises/${ex.id}`)}
-                    className="text-left bg-white rounded-xl border border-gray-200 p-4 hover:border-purple-300 hover:shadow-md transition-all flex items-start gap-3"
+                    className={`text-left bg-white rounded-xl border p-4 hover:shadow-md transition-all flex items-start gap-3 ${
+                      ex.user_passed ? 'border-green-200 hover:border-green-300' : 'border-gray-200 hover:border-purple-300'
+                    }`}
                   >
-                    <div className="w-10 h-10 rounded-lg bg-purple-50 text-purple-700 font-bold flex items-center justify-center shrink-0">
-                      {i + 1}
+                    <div className={`w-10 h-10 rounded-lg font-bold flex items-center justify-center shrink-0 ${
+                      ex.user_passed ? 'bg-green-50 text-green-700' : 'bg-purple-50 text-purple-700'
+                    }`}>
+                      {ex.user_passed ? <CheckCircle2 className="h-5 w-5" /> : i + 1}
                     </div>
                     <div className="flex-1">
                       <p className="font-semibold" style={{ color: '#000000' }}>{ex.title}</p>
-                      <p className="text-xs text-gray-500 mt-1 flex items-center gap-2">
+                      <p className="text-xs text-gray-500 mt-1 flex items-center gap-2 flex-wrap">
                         <span className="px-2 py-0.5 bg-gray-100 rounded">
                           {ex.type === 'quiz' ? 'Trắc nghiệm' : ex.type === 'checklist' ? 'Checklist' : 'Tự luận'}
                         </span>
-                        {ex.passing_score != null && (
-                          <span className="flex items-center gap-1"><Award className="h-3 w-3" />Đạt {ex.passing_score}%</span>
+                        {ex.user_passed && (
+                          <span className="text-green-700 font-medium">Đã đạt{ex.user_best_score != null ? ` · ${ex.user_best_score}%` : ''}</span>
+                        )}
+                        {!ex.user_passed && ex.user_best_score != null && (
+                          <span className="text-amber-700">Chưa đạt · {ex.user_best_score}%</span>
+                        )}
+                        {ex.passing_score != null && !ex.user_passed && (
+                          <span className="flex items-center gap-1"><Award className="h-3 w-3" />Cần {ex.passing_score}%</span>
                         )}
                         {ex.max_attempts && <span>Tối đa {ex.max_attempts} lượt</span>}
                       </p>
@@ -517,37 +551,32 @@ export default function KnowledgeLessonPage() {
               <button
                 type="button"
                 onClick={markComplete}
-                disabled={completing}
-                className="flex-1 px-5 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+                disabled={completing || !canMarkComplete}
+                title={!canMarkComplete ? 'Hãy đạt tất cả bài tập trước' : undefined}
+                className="flex-1 px-5 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {completing ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                Đánh dấu hoàn thành
+                {canMarkComplete ? 'Đánh dấu hoàn thành' : 'Cần đạt bài tập trước'}
               </button>
             )}
-            {(() => {
-              const target = apiNextLesson || nextLesson;
-              if (!target) return null;
-              const locked = apiNextLesson ? apiNextLesson.is_locked : (hasExercises && !isCompleted);
-              if (locked) {
-                return (
-                  <div
-                    className="px-4 py-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm font-medium flex items-center gap-2 cursor-not-allowed"
-                    title={apiNextLesson?.unlock_reason || 'Hãy hoàn thành bài học (và bài tập) trước khi sang bài kế tiếp'}
-                  >
-                    🔒 Cần hoàn thành bài học hiện tại
-                  </div>
-                );
-              }
-              return (
+            {nextNav.target && (
+              nextNav.locked ? (
+                <div
+                  className="px-4 py-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm font-medium flex items-center gap-2 cursor-not-allowed"
+                  title={nextNav.reason || 'Hãy hoàn thành bài học và bài tập trước khi sang bài kế tiếp'}
+                >
+                  🔒 Bài tiếp theo đang khoá
+                </div>
+              ) : (
                 <Link
-                  to={`/knowledge/lessons/${target.id}`}
+                  to={`/knowledge/lessons/${nextNav.target.id}`}
                   className="px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium flex items-center justify-center gap-2"
                 >
                   Học bài tiếp theo
                   <ChevronRight className="h-4 w-4" />
                 </Link>
-              );
-            })()}
+              )
+            )}
           </div>
 
           <RatingSection lesson={lesson} onChange={loadLesson} />
@@ -560,10 +589,20 @@ export default function KnowledgeLessonPage() {
               </Link>
             ) : <span />}
             {nextLesson && (
-              <Link to={`/knowledge/lessons/${nextLesson.id}`} className="text-gray-500 hover:text-blue-600 flex items-center gap-1">
-                <span className="line-clamp-1 max-w-[200px]">{nextLesson.title}</span>
-                <ChevronRight className="h-4 w-4" />
-              </Link>
+              nextLesson.is_locked ? (
+                <div
+                  className="text-gray-400 flex items-center gap-1 cursor-not-allowed"
+                  title={nextLesson.unlock_reason || 'Bài tiếp theo đang khoá'}
+                >
+                  <span className="line-clamp-1 max-w-[200px]">🔒 {nextLesson.title}</span>
+                  <ChevronRight className="h-4 w-4" />
+                </div>
+              ) : (
+                <Link to={`/knowledge/lessons/${nextLesson.id}`} className="text-gray-500 hover:text-blue-600 flex items-center gap-1">
+                  <span className="line-clamp-1 max-w-[200px]">{nextLesson.title}</span>
+                  <ChevronRight className="h-4 w-4" />
+                </Link>
+              )
             )}
           </nav>
         </article>

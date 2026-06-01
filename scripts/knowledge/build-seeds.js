@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 /**
- * Sinh file SQL seed Kiến thức: 259 (Lead), 262 (Deal), 263 (Hướng dẫn CRM).
+ * Sinh file SQL seed Kiến thức: 259 (Lead), 262 (Deal), 263 (CRM guide), 278 (Collab).
  * Chạy: node scripts/knowledge/build-seeds.js
  */
 const fs = require('fs');
 const path = require('path');
 const { lessonInsert, exerciseInsert } = require('./lib');
+const { scanCoverage } = require('./screenshots/attach');
 const guide = require('./courses/guide');
 const lead = require('./courses/lead');
 const deal = require('./courses/deal');
+const collab = require('./courses/collab');
 
 const DB = path.join(__dirname, '../../database');
 
@@ -91,6 +93,13 @@ function main() {
   buildCourse('263', '263_knowledge_seed_crm_software_guide.sql', guide);
   buildCourse('259', '259_knowledge_seed_lead_course.sql', lead);
   buildCourse('262', '262_knowledge_seed_deal_course.sql', deal);
+  buildCourse('278', '278_knowledge_seed_collab_guide.sql', collab);
+
+  const { have, missing, total } = scanCoverage();
+  console.log(`Screenshots: ${have.length}/${total} lessons có ảnh (${missing.length} thiếu)`);
+  if (missing.length) {
+    console.log('  Thiếu:', missing.map((k) => `${k}.png`).join(', '));
+  }
 
   const stub264 = `-- 264_knowledge_crm_guide_extra_features.sql
 -- DEPRECATED: Nội dung đã gộp vào 263 (scripts/knowledge/build-seeds.js).

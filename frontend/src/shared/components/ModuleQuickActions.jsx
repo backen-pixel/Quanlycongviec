@@ -47,7 +47,7 @@ export default function ModuleQuickActions({
       hover: 'hover:bg-amber-50 border-amber-200',
     },
     {
-      to: '/messenger-hub',
+      to: '/crm/messenger',
       icon: MessageSquare,
       label: 'Tin nhắn',
       title: 'Tin nhắn / Hội nhóm',
