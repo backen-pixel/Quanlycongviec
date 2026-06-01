@@ -158,6 +158,7 @@ export default function KnowledgeLessonPage() {
         setLockInfo({
           reason: e.response.data.error || 'Bài học đang khoá',
           prev_lesson_id: e.response.data.prev_lesson_id || null,
+          current_open_lesson_id: e.response.data.current_open_lesson_id || null,
         });
       } else {
         console.error(e);
@@ -233,15 +234,23 @@ export default function KnowledgeLessonPage() {
           </div>
           <h2 className="text-2xl font-bold text-amber-900 mb-2">Bài học đang khoá</h2>
           <p className="text-amber-700 mb-6">{lockInfo.reason}</p>
+          <p className="text-sm text-amber-800 -mt-4 mb-6">Hãy hoàn thành bài đang mở khoá trong khoá học để mở khoá bài này.</p>
           <div className="flex flex-col sm:flex-row gap-2 justify-center">
-            {lockInfo.prev_lesson_id && (
+            {lockInfo.current_open_lesson_id ? (
+              <Link
+                to={`/knowledge/lessons/${lockInfo.current_open_lesson_id}`}
+                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 text-white rounded-xl text-sm font-semibold hover:from-emerald-600 hover:to-teal-600 shadow"
+              >
+                ▶ Đi đến bài đang mở khoá
+              </Link>
+            ) : lockInfo.prev_lesson_id ? (
               <Link
                 to={`/knowledge/lessons/${lockInfo.prev_lesson_id}`}
                 className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-xl text-sm font-semibold hover:from-amber-600 hover:to-orange-600 shadow"
               >
                 <ChevronLeft className="h-4 w-4" /> Đi đến bài học cần hoàn thành
               </Link>
-            )}
+            ) : null}
             <Link
               to="/knowledge"
               className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-white border border-amber-200 text-amber-700 rounded-xl text-sm font-medium hover:bg-amber-50"
