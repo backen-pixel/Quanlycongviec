@@ -285,7 +285,7 @@ export default function MessengerDock() {
           style={{
             zIndex: Z_BUBBLE,
             width: BUBBLE_W,
-            height: 480,
+            height: 'min(520px, calc(100vh - 32px))',
             right: DOCK_W + BUBBLE_GAP + i * (BUBBLE_W + BUBBLE_GAP),
             bottom: 16,
           }}
@@ -381,11 +381,11 @@ export default function MessengerDock() {
           </div>
           <div className="flex-1 min-h-0 flex flex-col bg-gradient-to-b from-slate-50/80 to-white/60">
             {w.chatType === 'messenger_group' && w.groupId ? (
-              <MessengerGroupChatTab groupId={w.groupId} socket={socket} fillParent />
+              <MessengerGroupChatTab groupId={w.groupId} socket={socket} fillParent compact />
             ) : w.chatType === 'department' && w.deptId ? (
               <DepartmentChatBubble deptId={w.deptId} socket={socket} fillParent />
             ) : w.leadId ? (
-              <LeadChatTab leadId={w.leadId} socket={socket} fillParent />
+              <LeadChatTab leadId={w.leadId} socket={socket} fillParent compact />
             ) : null}
           </div>
         </div>

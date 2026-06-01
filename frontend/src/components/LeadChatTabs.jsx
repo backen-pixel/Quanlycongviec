@@ -622,7 +622,7 @@ export function LeadMembersTab({ leadId }) {
 // ═══════════════════════════════════════════════════════════════
 // Tab Chat realtime
 // ═══════════════════════════════════════════════════════════════
-export function LeadChatTab({ leadId, socket, fillParent, onMessagesChange }) {
+export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMessagesChange }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -814,7 +814,7 @@ export function LeadChatTab({ leadId, socket, fillParent, onMessagesChange }) {
       )}
 
       {/* Messages */}
-      <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-2 bg-gray-50 rounded-t-xl">
+      <div ref={scrollContainerRef} className={`flex-1 min-h-0 overflow-y-auto ${compact ? 'px-2.5 py-2' : 'px-4 py-3'} space-y-2 bg-gray-50 rounded-t-xl`}>
         {messages.map((m) => {
           const isMe = String(m.user_id) === String(user?.userId || user?.id);
           if (m.is_system) {
@@ -880,9 +880,9 @@ export function LeadChatTab({ leadId, socket, fillParent, onMessagesChange }) {
       </div>
 
       {/* Input */}
-      <div className="p-3 border-t bg-white rounded-b-xl shrink-0">
+      <div className={`${compact ? 'p-2' : 'p-3'} border-t bg-white rounded-b-xl shrink-0`}>
         <ReplyComposerBar replyTo={replyTo} onCancel={() => setReplyTo(null)} />
-        <div className="flex gap-2">
+        <div className={`flex items-center ${compact ? 'gap-1' : 'gap-2'}`}>
           <input type="file" multiple className="hidden" ref={fileInputRef} onChange={e => send(e.target.files)} />
           <input
             type="file"
@@ -894,19 +894,23 @@ export function LeadChatTab({ leadId, socket, fillParent, onMessagesChange }) {
               e.target.value = '';
             }}
           />
-          <button type="button" onClick={() => fileInputRef.current?.click()} className="text-gray-400 hover:text-blue-500 cursor-pointer p-2" title="Đính kèm">
-            <Paperclip size={18} />
+          <button type="button" onClick={() => fileInputRef.current?.click()} className={`text-gray-400 hover:text-blue-500 cursor-pointer ${compact ? 'p-1.5' : 'p-2'}`} title="Đính kèm">
+            <Paperclip size={compact ? 16 : 18} />
           </button>
-          <button type="button" onClick={() => audioInputRef.current?.click()} className="text-gray-400 hover:text-violet-600 cursor-pointer p-2" title="Ghi âm / file âm thanh">
-            <Mic size={18} />
+          <button type="button" onClick={() => audioInputRef.current?.click()} className={`text-gray-400 hover:text-violet-600 cursor-pointer ${compact ? 'p-1.5' : 'p-2'}`} title="Ghi âm / file âm thanh">
+            <Mic size={compact ? 16 : 18} />
           </button>
           <input value={text} onChange={e => setText(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && !e.shiftKey && send()}
             placeholder={replyTo ? 'Trả lời tin nhắn…' : 'Nhập tin nhắn...'}
-            className="flex-1 px-4 py-2.5 border border-gray-200 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50" />
+            className={`flex-1 min-w-0 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 ${
+              compact ? 'px-3 py-1.5 text-[13px]' : 'px-4 py-2.5 text-sm'
+            }`} />
           <button type="button" onClick={() => send()} disabled={sending || (!text.trim())}
-            className="bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl w-10 h-10 flex items-center justify-center hover:from-blue-600 hover:to-blue-700 disabled:opacity-40 cursor-pointer transition shadow-sm">
-            <Send size={16} />
+            className={`bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl flex items-center justify-center hover:from-blue-600 hover:to-blue-700 disabled:opacity-40 cursor-pointer transition shadow-sm shrink-0 ${
+              compact ? 'w-9 h-9' : 'w-10 h-10'
+            }`}>
+            <Send size={compact ? 14 : 16} />
           </button>
         </div>
       </div>
@@ -1006,7 +1010,7 @@ function renderMessengerTextContent(content, isMe) {
 // ═══════════════════════════════════════════════════════════════
 // Chat nhóm nội bộ (Messenger) — không phải Lead/Deal
 // ═══════════════════════════════════════════════════════════════
-export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesChange }) {
+export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = false, onMessagesChange }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -1441,7 +1445,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
         </div>
       ) : null}
 
-      <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-1 bg-gradient-to-b from-slate-50/60 via-white/40 to-violet-50/40 rounded-t-xl">
+      <div ref={scrollContainerRef} className={`flex-1 min-h-0 overflow-y-auto ${compact ? 'px-2.5 py-2' : 'px-4 py-3'} space-y-1 bg-gradient-to-b from-slate-50/60 via-white/40 to-violet-50/40 rounded-t-xl`}>
         {messages.map((m, idx) => {
           const isMe = String(m.user_id) === String(uid);
           const isBot = !!m.user?.is_bot;
@@ -1527,7 +1531,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
                           </p>
                         )}
                         <div className={isMe ? 'text-right' : 'text-left'}>
-                          <StickerImage emoji={stripStickerPrefix(contentStr)} size={128} />
+                          <StickerImage emoji={stripStickerPrefix(contentStr)} size={compact ? 84 : 128} />
                         </div>
                       </>
                     ) : (
@@ -1591,23 +1595,27 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="px-3 pt-2 pb-3 border-t border-slate-200/70 bg-white/85 backdrop-blur-xl rounded-b-xl shrink-0 relative">
+      <div className={`${compact ? 'px-2.5 pt-1.5 pb-2' : 'px-3 pt-2 pb-3'} border-t border-slate-200/70 bg-white/85 backdrop-blur-xl rounded-b-xl shrink-0 relative`}>
         <ReplyComposerBar replyTo={replyTo} onCancel={() => setReplyTo(null)} />
 
         {/* Quick reply chips — phản hồi 1 chạm */}
         {!text.trim() && !replyTo && (
-          <div className="flex items-center gap-1.5 mb-2 overflow-x-auto pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-violet-600 shrink-0 pl-1">
-              <Zap className="h-3 w-3 fill-violet-500" />
-              Trả lời nhanh:
-            </span>
+          <div className={`flex items-center gap-1.5 ${compact ? 'mb-1.5' : 'mb-2'} overflow-x-auto pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden`}>
+            {!compact && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-violet-600 shrink-0 pl-1">
+                <Zap className="h-3 w-3 fill-violet-500" />
+                Trả lời nhanh:
+              </span>
+            )}
             {QUICK_REPLIES.map((q) => (
               <button
                 key={q}
                 type="button"
                 disabled={sending}
                 onClick={() => void send(null, q)}
-                className="shrink-0 px-3 py-1 rounded-full bg-violet-50 hover:bg-violet-100 active:bg-violet-200 text-violet-700 text-[11px] font-medium border border-violet-200/70 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className={`shrink-0 rounded-full bg-violet-50 hover:bg-violet-100 active:bg-violet-200 text-violet-700 font-medium border border-violet-200/70 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                  compact ? 'px-2.5 py-0.5 text-[10.5px]' : 'px-3 py-1 text-[11px]'
+                }`}
                 title="Gửi nhanh"
               >
                 {q}
@@ -1647,14 +1655,14 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
           />
 
           {/* Input pill — bao gọn paperclip + textarea + mic + emoji */}
-          <div className="flex-1 flex items-center gap-1 px-2 py-1 rounded-full bg-slate-100/90 border border-slate-200/80 focus-within:border-violet-400 focus-within:bg-white focus-within:ring-2 focus-within:ring-violet-200/60 transition-all min-h-[42px]">
+          <div className={`flex-1 flex items-center gap-1 ${compact ? 'px-1.5 py-0.5 min-h-[36px]' : 'px-2 py-1 min-h-[42px]'} rounded-full bg-slate-100/90 border border-slate-200/80 focus-within:border-violet-400 focus-within:bg-white focus-within:ring-2 focus-within:ring-violet-200/60 transition-all`}>
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="shrink-0 w-8 h-8 rounded-full text-slate-500 hover:text-violet-600 hover:bg-white/80 flex items-center justify-center transition-colors"
+              className={`shrink-0 ${compact ? 'w-7 h-7' : 'w-8 h-8'} rounded-full text-slate-500 hover:text-violet-600 hover:bg-white/80 flex items-center justify-center transition-colors`}
               title="Đính kèm"
             >
-              <Paperclip size={16} />
+              <Paperclip size={compact ? 14 : 16} />
             </button>
             <textarea
               ref={textareaRef}
@@ -1697,28 +1705,30 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
                   void send();
                 }
               }}
-              placeholder="Nhập tin nhắn… Gõ @ để nhắc tên thành viên"
-              className="flex-1 min-w-0 bg-transparent border-0 outline-none focus:ring-0 text-sm resize-none py-1.5 max-h-32 placeholder:text-slate-400"
+              placeholder={compact ? 'Nhập tin nhắn…' : 'Nhập tin nhắn… Gõ @ để nhắc tên thành viên'}
+              className={`flex-1 min-w-0 bg-transparent border-0 outline-none focus:ring-0 resize-none placeholder:text-slate-400 ${
+                compact ? 'text-[13px] py-1 max-h-24' : 'text-sm py-1.5 max-h-32'
+              }`}
               style={{ color: '#111827' }}
             />
             <button
               type="button"
               onClick={() => audioInputRef.current?.click()}
-              className="shrink-0 w-8 h-8 rounded-full text-slate-500 hover:text-violet-600 hover:bg-white/80 flex items-center justify-center transition-colors"
+              className={`shrink-0 ${compact ? 'w-7 h-7' : 'w-8 h-8'} rounded-full text-slate-500 hover:text-violet-600 hover:bg-white/80 flex items-center justify-center transition-colors`}
               title="Ghi âm / file âm thanh"
             >
-              <Mic size={16} />
+              <Mic size={compact ? 14 : 16} />
             </button>
             <div className="relative shrink-0">
               <button
                 type="button"
                 onClick={() => setPickerOpen((v) => !v)}
-                className={`w-8 h-8 rounded-full hover:bg-white/80 flex items-center justify-center transition-colors ${
+                className={`${compact ? 'w-7 h-7' : 'w-8 h-8'} rounded-full hover:bg-white/80 flex items-center justify-center transition-colors ${
                   pickerOpen ? 'text-amber-500 bg-white/80' : 'text-slate-500 hover:text-amber-500'
                 }`}
                 title="Icon & Sticker"
               >
-                <Smile size={16} />
+                <Smile size={compact ? 14 : 16} />
               </button>
               {pickerOpen && (
                 <EmojiStickerPicker
@@ -1750,10 +1760,12 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
             type="button"
             onClick={() => void send()}
             disabled={sending || !text.trim()}
-            className="bg-gradient-to-br from-violet-500 to-violet-600 hover:from-violet-600 hover:to-violet-700 text-white rounded-full w-11 h-11 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition shadow-md shrink-0"
+            className={`bg-gradient-to-br from-violet-500 to-violet-600 hover:from-violet-600 hover:to-violet-700 text-white rounded-full flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition shadow-md shrink-0 ${
+              compact ? 'w-9 h-9' : 'w-11 h-11'
+            }`}
             title="Gửi"
           >
-            <Send size={16} className="-rotate-12" />
+            <Send size={compact ? 14 : 16} className="-rotate-12" />
           </button>
         </div>
       </div>
