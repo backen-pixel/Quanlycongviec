@@ -17,6 +17,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Phone, PhoneOff, Mic, MicOff, Video, VideoOff, Users, Maximize2, Minimize2,
+  Crown, UserPlus, Check, X, MonitorUp, MonitorOff,
 } from 'lucide-react';
 import { useCall } from '../context/CallContext';
 import { publicFileUrl } from '../lib/publicFileUrl';
@@ -84,6 +85,55 @@ function Avatar({ name, avatar, size = 120, ring = true, status: pStatus }) {
   );
 }
 
+/* ─── Panel yêu cầu join (chỉ host nhìn thấy) ─── */
+function JoinRequestsPanel({ floating = true }) {
+  const { isHost, pendingJoinRequests, approveJoinRequest, denyJoinRequest } = useCall();
+  const list = Object.entries(pendingJoinRequests || {}).map(([id, info]) => ({ id, ...info }));
+  if (!isHost || list.length === 0) return null;
+
+  const containerClass = floating
+    ? 'fixed top-20 right-4 z-[101] w-80 bg-slate-900/95 backdrop-blur-xl text-white rounded-2xl shadow-2xl border border-white/10 overflow-hidden'
+    : 'w-full bg-slate-800/80 backdrop-blur-xl text-white rounded-2xl shadow-xl border border-white/10 overflow-hidden';
+
+  return (
+    <div className={containerClass}>
+      <div className="px-4 py-3 bg-gradient-to-r from-amber-500/20 to-orange-500/20 border-b border-white/10 flex items-center gap-2">
+        <UserPlus size={16} className="text-amber-300" />
+        <p className="text-xs font-semibold uppercase tracking-wider">
+          Yêu cầu tham gia · {list.length}
+        </p>
+      </div>
+      <ul className="divide-y divide-white/5 max-h-64 overflow-y-auto">
+        {list.map((req) => (
+          <li key={req.id} className="px-3 py-2 flex items-center gap-2">
+            <Avatar name={req.name} avatar={null} size={32} ring={false} />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold truncate">{req.name}</p>
+              <p className="text-[10px] text-white/50">Xin tham gia cuộc gọi</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => denyJoinRequest(req.id)}
+              className="w-8 h-8 rounded-full bg-rose-600/80 hover:bg-rose-600 flex items-center justify-center transition"
+              title="Từ chối"
+            >
+              <X size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={() => approveJoinRequest(req.id)}
+              className="w-8 h-8 rounded-full bg-emerald-600/80 hover:bg-emerald-600 flex items-center justify-center transition"
+              title="Duyệt"
+            >
+              <Check size={14} />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /* ─── Self-preview PiP (góc dưới-phải) ─── */
 function SelfPreview({ stream, cameraOn }) {
   if (!stream || !cameraOn) return null;
@@ -95,17 +145,35 @@ function SelfPreview({ stream, cameraOn }) {
 }
 
 /* ─── Video tile cho 1 participant trong group (có thể có stream hoặc không) ─── */
-function ParticipantVideoTile({ name, avatar, stream, hasVideo, joined, isMe, large = false }) {
+function ParticipantVideoTile({ name, avatar, stream, hasVideo, joined, isMe, isHost, isScreenSharing, spotlight = false }) {
+  const showVideo = !!(stream && hasVideo);
+  // Screen-share: KHÔNG mirror (sẽ ngược chiều khi đọc), và contain để không bị crop chữ
+  const videoFit = isScreenSharing ? 'object-contain bg-black' : 'object-cover';
+  const mirror = isMe && !isScreenSharing;
   return (
-    <div className={`relative rounded-2xl overflow-hidden bg-slate-800 ring-1 ring-white/10 ${large ? 'aspect-video' : 'aspect-square'}`}>
-      {stream && hasVideo ? (
-        <StreamVideo stream={stream} muted={isMe} mirror={isMe} className="w-full h-full object-cover" />
+    <div className={`relative rounded-2xl overflow-hidden bg-slate-800 ring-1 ring-white/10 ${
+      spotlight ? 'h-full w-full' : 'aspect-video'
+    } ${isScreenSharing ? 'ring-2 ring-sky-400' : ''}`}>
+      {showVideo ? (
+        <StreamVideo stream={stream} muted={isMe} mirror={mirror} className={`w-full h-full ${videoFit}`} />
       ) : (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-gradient-to-br from-slate-800 to-slate-900">
-          <Avatar name={name} avatar={avatar} size={large ? 96 : 64} ring={false} />
+          <Avatar name={name} avatar={avatar} size={spotlight ? 140 : 64} ring={false} />
           {!joined && <span className="text-amber-300 text-[11px]">Đang gọi…</span>}
         </div>
       )}
+      <div className="absolute top-2 left-2 flex items-center gap-1.5">
+        {isHost && (
+          <span className="px-2 py-0.5 rounded-full bg-amber-500/90 text-white text-[10px] font-bold flex items-center gap-1 shadow">
+            <Crown size={10} /> Chủ phòng
+          </span>
+        )}
+        {isScreenSharing && (
+          <span className="px-2 py-0.5 rounded-full bg-sky-500/90 text-white text-[10px] font-bold flex items-center gap-1 shadow">
+            <MonitorUp size={10} /> Chia sẻ
+          </span>
+        )}
+      </div>
       <div className="absolute bottom-2 left-2 right-2 flex items-center gap-2 text-white text-xs pointer-events-none">
         <span className={`w-2 h-2 rounded-full ${joined ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'}`} />
         <span className="font-semibold truncate flex-1 bg-black/40 px-2 py-0.5 rounded-md backdrop-blur-sm">
@@ -116,11 +184,106 @@ function ParticipantVideoTile({ name, avatar, stream, hasVideo, joined, isMe, la
   );
 }
 
+/**
+ * Tính số cột tối ưu cho gallery view (không có screen share).
+ * Đảm bảo tile vừa vặn — không quá nhỏ.
+ */
+function optimalGridCols(n) {
+  if (n <= 1) return 1;
+  if (n <= 2) return 2;
+  if (n <= 4) return 2;
+  if (n <= 6) return 3;
+  if (n <= 9) return 3;
+  if (n <= 12) return 4;
+  if (n <= 20) return 5;
+  return 6;
+}
+
+/** Render khu vực participants — spotlight nếu có screen-share, ngược lại gallery auto. */
+function ParticipantsLayout({ participants, localStream, cameraOn, isMeScreenSharing }) {
+  const list = Object.entries(participants || {}).map(([id, p]) => ({
+    id,
+    ...p,
+    stream: p.isMe ? localStream : p.stream,
+    hasVideo: p.isMe ? cameraOn : p.hasVideo,
+    isScreenSharing: p.isMe ? isMeScreenSharing : p.isScreenSharing,
+  }));
+  const spotlight = list.find((p) => p.isScreenSharing) || null;
+
+  if (spotlight) {
+    const others = list.filter((p) => p.id !== spotlight.id);
+    return (
+      <div className="h-full flex flex-col gap-3">
+        <div className="flex-[5] min-h-0">
+          <ParticipantVideoTile
+            name={spotlight.name}
+            avatar={spotlight.avatar}
+            stream={spotlight.stream}
+            hasVideo={spotlight.hasVideo}
+            joined={spotlight.joined}
+            isMe={spotlight.isMe}
+            isHost={spotlight.isHost}
+            isScreenSharing
+            spotlight
+          />
+        </div>
+        {others.length > 0 && (
+          <div className="flex-[1] min-h-0">
+            <div className="h-full flex gap-2 overflow-x-auto pb-1">
+              {others.map((p) => (
+                <div key={p.id} className="h-full aspect-video shrink-0">
+                  <ParticipantVideoTile
+                    name={p.name}
+                    avatar={p.avatar}
+                    stream={p.stream}
+                    hasVideo={p.hasVideo}
+                    joined={p.joined}
+                    isMe={p.isMe}
+                    isHost={p.isHost}
+                    isScreenSharing={p.isScreenSharing}
+                    spotlight
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Gallery auto-fit: tile lớn khi ít người, nhỏ dần khi nhiều
+  const cols = optimalGridCols(list.length);
+  return (
+    <div
+      className="h-full grid gap-3 content-center"
+      style={{
+        gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+      }}
+    >
+      {list.map((p) => (
+        <ParticipantVideoTile
+          key={p.id}
+          name={p.name}
+          avatar={p.avatar}
+          stream={p.stream}
+          hasVideo={p.hasVideo}
+          joined={p.joined}
+          isMe={p.isMe}
+          isHost={p.isHost}
+          isScreenSharing={p.isScreenSharing}
+        />
+      ))}
+    </div>
+  );
+}
+
 /* ─── 1-1 VIDEO ACTIVE ─── */
 function DirectVideoActive() {
   const {
-    peer, localStream, directRemoteStream,
+    peer, participants, localStream, directRemoteStream,
     isMuted, cameraOn, startedAt, toggleMute, toggleCamera, endCall,
+    isScreenSharing, toggleScreenShare,
   } = useCall();
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -130,6 +293,8 @@ function DirectVideoActive() {
   }, [startedAt]);
 
   const hasRemoteVideo = directRemoteStream && directRemoteStream.getVideoTracks().some((t) => t.enabled);
+  const peerIsSharing = !!(peer?.id && participants?.[peer.id]?.isScreenSharing);
+  const remoteFit = peerIsSharing ? 'object-contain bg-black' : 'object-cover';
 
   return createPortal(
     <div className="fixed inset-0 z-[100] bg-black flex flex-col">
@@ -142,10 +307,15 @@ function DirectVideoActive() {
         <span className="text-sm font-mono bg-white/10 px-3 py-1 rounded-full">{formatDuration(now - (startedAt || now))}</span>
       </div>
 
-      {/* Remote video — full screen */}
+      {/* Remote video — full screen. Khi peer share màn hình → object-contain để không crop. */}
       <div className="flex-1 relative">
+        {peerIsSharing && (
+          <span className="absolute top-4 left-1/2 -translate-x-1/2 z-20 px-3 py-1 rounded-full bg-sky-500/90 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg">
+            <MonitorUp size={12} /> Đối phương đang chia sẻ màn hình
+          </span>
+        )}
         {hasRemoteVideo && directRemoteStream ? (
-          <StreamVideo stream={directRemoteStream} className="w-full h-full object-cover" />
+          <StreamVideo stream={directRemoteStream} className={`w-full h-full ${remoteFit}`} />
         ) : (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-gradient-to-br from-slate-900 via-violet-900 to-slate-900">
             <Avatar name={peer?.name} avatar={peer?.avatar} size={140} />
@@ -182,6 +352,16 @@ function DirectVideoActive() {
         </button>
         <button
           type="button"
+          onClick={toggleScreenShare}
+          className={`w-14 h-14 rounded-full flex items-center justify-center transition shadow-xl ${
+            isScreenSharing ? 'bg-sky-500 text-white' : 'bg-white/15 hover:bg-white/25 text-white backdrop-blur'
+          }`}
+          title={isScreenSharing ? 'Dừng chia sẻ màn hình' : 'Chia sẻ màn hình'}
+        >
+          {isScreenSharing ? <MonitorOff size={22} /> : <MonitorUp size={22} />}
+        </button>
+        <button
+          type="button"
           onClick={endCall}
           className="w-16 h-16 rounded-full bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center shadow-2xl transition"
           title="Kết thúc"
@@ -199,6 +379,7 @@ function GroupCallActive() {
   const {
     groupInfo, participants, isMuted, cameraOn, kind, startedAt,
     localStream, toggleMute, toggleCamera, endCall,
+    isScreenSharing, toggleScreenShare,
   } = useCall();
   const [now, setNow] = useState(Date.now());
   const [expanded, setExpanded] = useState(kind === 'video'); // video group → tự động expand
@@ -214,11 +395,10 @@ function GroupCallActive() {
 
   if (expanded) {
     const isVideo = kind === 'video';
-    // Tính số cột dựa trên số participants
-    const cols = list.length <= 1 ? 1 : list.length <= 4 ? 2 : list.length <= 9 ? 3 : 4;
 
     return createPortal(
       <div className="fixed inset-0 z-[100] bg-gradient-to-br from-slate-900 via-violet-900 to-slate-900 flex flex-col p-6 backdrop-blur-xl">
+        <JoinRequestsPanel />
         {/* Header */}
         <div className="flex items-center justify-between text-white mb-6">
           <div>
@@ -243,25 +423,17 @@ function GroupCallActive() {
           </div>
         </div>
 
-        {/* Body: grid videos hoặc avatars */}
-        <div className="flex-1 overflow-y-auto">
+        {/* Body: gallery hoặc spotlight (khi có screen share) cho video; avatars cho audio */}
+        <div className="flex-1 min-h-0 px-2">
           {isVideo ? (
-            <div className={`grid gap-4 px-2`} style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
-              {list.map((p) => (
-                <ParticipantVideoTile
-                  key={p.id}
-                  name={p.name}
-                  avatar={p.avatar}
-                  stream={p.isMe ? localStream : p.stream}
-                  hasVideo={p.isMe ? cameraOn : p.hasVideo}
-                  joined={p.joined}
-                  isMe={p.isMe}
-                  large
-                />
-              ))}
-            </div>
+            <ParticipantsLayout
+              participants={participants}
+              localStream={localStream}
+              cameraOn={cameraOn}
+              isMeScreenSharing={isScreenSharing}
+            />
           ) : (
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 px-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 px-4 overflow-y-auto h-full content-center">
               {list.map((p) => (
                 <div key={p.id} className="flex flex-col items-center text-white">
                   <Avatar name={p.name} avatar={p.avatar} size={120} status={p.joined ? 'connected' : 'inviting'} />
@@ -299,6 +471,18 @@ function GroupCallActive() {
               {cameraOn ? <Video size={22} /> : <VideoOff size={22} />}
             </button>
           )}
+          {isVideo && (
+            <button
+              type="button"
+              onClick={toggleScreenShare}
+              className={`w-14 h-14 rounded-full flex items-center justify-center transition shadow-xl ${
+                isScreenSharing ? 'bg-sky-500 text-white' : 'bg-white/10 hover:bg-white/20 text-white'
+              }`}
+              title={isScreenSharing ? 'Dừng chia sẻ màn hình' : 'Chia sẻ màn hình'}
+            >
+              {isScreenSharing ? <MonitorOff size={22} /> : <MonitorUp size={22} />}
+            </button>
+          )}
           <button
             type="button"
             onClick={endCall}
@@ -318,6 +502,8 @@ function GroupCallActive() {
   const extraCount = Math.max(0, joinedCount - visible.length);
 
   return createPortal(
+    <>
+    <JoinRequestsPanel />
     <div className="fixed top-4 right-4 z-[100] bg-slate-900/95 backdrop-blur-xl text-white rounded-2xl shadow-2xl px-3 py-2 flex items-center gap-3 min-w-[280px] border border-white/10">
       <div className="flex -space-x-2">
         {visible.map((p) => (
@@ -363,7 +549,8 @@ function GroupCallActive() {
       >
         <PhoneOff size={16} />
       </button>
-    </div>,
+    </div>
+    </>,
     document.body,
   );
 }
@@ -426,7 +613,9 @@ export default function CallOverlay() {
   const subtitle = isIncoming
     ? (isGroup ? `Cuộc gọi nhóm${isVideo ? ' video' : ''} đến` : `Cuộc gọi${isVideo ? ' video' : ''} đến`)
     : status === 'outgoing'
-      ? 'Đang gọi…'
+      ? (isGroup && Object.keys(participants || {}).length === 0
+          ? 'Đang chờ chủ phòng duyệt…'
+          : 'Đang gọi…')
       : 'Đang kết nối…';
 
   const title = isGroup ? (groupInfo?.name || 'Nhóm chat') : (peer?.name || 'Người dùng');
@@ -438,6 +627,7 @@ export default function CallOverlay() {
 
   return createPortal(
     <div className="fixed inset-0 z-[100] bg-gradient-to-br from-slate-900 via-violet-900 to-slate-900 flex flex-col items-center justify-center p-6 backdrop-blur-xl">
+      {isGroup && <JoinRequestsPanel />}
       {isGroup && status !== 'incoming' ? (
         <div className="w-full max-w-3xl mb-8">
           <div className="text-center text-white mb-6">

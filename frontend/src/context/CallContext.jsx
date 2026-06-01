@@ -47,6 +47,7 @@ export function CallProvider({ children }) {
   const [kind, setKind] = useState('audio');        // 'audio' | 'video'
   const [isMuted, setIsMuted] = useState(false);
   const [cameraOn, setCameraOn] = useState(true);   // chỉ ý nghĩa khi kind='video'
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [startedAt, setStartedAt] = useState(null);
   const [error, setError] = useState(null);
   const [localStream, setLocalStream] = useState(null);   // expose ra UI để render <video> self-preview
@@ -60,6 +61,8 @@ export function CallProvider({ children }) {
 
   /* ── Group call ── */
   const [groupInfo, setGroupInfo] = useState(null); // { id, name, hostId }
+  /** Map<requesterId, { name, requestedAt }> — yêu cầu join chờ duyệt (chỉ host nhìn thấy). */
+  const [pendingJoinRequests, setPendingJoinRequests] = useState({});
   /**
    * Object thay vì Map để React diff dễ. Key = userId.
    * Value: { name, avatar, joined: boolean, hasStream: boolean, muted?: boolean }
@@ -71,12 +74,19 @@ export function CallProvider({ children }) {
 
   /* ── Resources ── */
   const localStreamRef = useRef(null);
+  /** Lưu camera video track gốc trước khi replace bằng screen-share, để khi dừng share thì revert. */
+  const originalCameraTrackRef = useRef(null);
+  /** Screen-share stream hiện tại (nếu mình đang share). Dùng để stop khi end call hoặc toggle. */
+  const screenStreamRef = useRef(null);
   const timeoutRef = useRef(null);
   const ringbackAudioRef = useRef(null);
   const ringtoneAudioRef = useRef(null);
   const callIdRef = useRef(null);                   // sync ref cho dùng trong handler socket
   const modeRef = useRef('direct');
   const peerRef = useRef(null);
+  /** Khi user bấm "Tham gia" banner → emit request_join, lưu callId vào đây.
+   *  Khi nhận `call:incoming` cho callId này → auto-accept (host đã duyệt). */
+  const pendingApproveCallIdRef = useRef(null);
 
   useEffect(() => { callIdRef.current = callId; }, [callId]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
@@ -212,6 +222,14 @@ export function CallProvider({ children }) {
       try { localStreamRef.current.getTracks().forEach((t) => t.stop()); } catch { /* noop */ }
       localStreamRef.current = null;
     }
+    if (screenStreamRef.current) {
+      try { screenStreamRef.current.getTracks().forEach((t) => t.stop()); } catch { /* noop */ }
+      screenStreamRef.current = null;
+    }
+    if (originalCameraTrackRef.current) {
+      try { originalCameraTrackRef.current.stop(); } catch { /* noop */ }
+      originalCameraTrackRef.current = null;
+    }
     setLocalStream(null);
     setDirectRemoteStream(null);
     // Chuông
@@ -227,9 +245,11 @@ export function CallProvider({ children }) {
     setPeer(null);
     setGroupInfo(null);
     setParticipants({});
+    setPendingJoinRequests({});
     setKind('audio');
     setIsMuted(false);
     setCameraOn(true);
+    setIsScreenSharing(false);
     setStartedAt(null);
     setError(null);
   }, [cleanup]);
@@ -450,6 +470,65 @@ export function CallProvider({ children }) {
     }
   }, [socket, uid, user, status, getLocalStream, playTone, resetState]);
 
+  /**
+   * Yêu cầu tham gia 1 cuộc gọi nhóm đang diễn ra. Host phải duyệt trước khi user vào được.
+   * Trạng thái sẽ là `outgoing` (giống "đang chờ phản hồi"), khi host approve → backend gửi
+   * `call:incoming` → onIncoming auto-accept (vì đã set `pendingApproveCallIdRef`).
+   *
+   * @param {{ callId, groupId, groupName, kind, hostId, hostName }} info
+   */
+  const joinGroupCall = useCallback((info) => {
+    if (!socket || !info?.callId || !info?.groupId) {
+      setError('Không thể tham gia cuộc gọi');
+      return;
+    }
+    if (status !== 'idle') return;
+    const wantVideo = info.kind === 'video';
+    setError(null);
+    setCallId(info.callId);
+    setMode('group');
+    setKind(wantVideo ? 'video' : 'audio');
+    setCameraOn(wantVideo);
+    setGroupInfo({ id: info.groupId, name: info.groupName || 'Nhóm chat', hostId: info.hostId });
+    setPeer({ id: info.hostId, name: info.hostName || 'Người gọi', avatar: null });
+    setParticipants({}); // chưa join chính thức, chưa biết participants
+    setStatus('outgoing'); // sẽ đổi thành 'connecting' khi host approve
+    pendingApproveCallIdRef.current = info.callId;
+    socket.emit('call:group_request_join', { callId: info.callId });
+    // Timeout: nếu host không duyệt trong 60s → tự huỷ
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => {
+      if (pendingApproveCallIdRef.current === info.callId) {
+        pendingApproveCallIdRef.current = null;
+        try { socket.emit('call:group_cancel_join', { callId: info.callId }); } catch { /* noop */ }
+        setError('Chủ phòng không phản hồi yêu cầu tham gia');
+        resetState();
+      }
+    }, CALL_TIMEOUT_MS);
+  }, [socket, status, resetState]);
+
+  /** Host approve 1 yêu cầu tham gia. */
+  const approveJoinRequest = useCallback((requesterId) => {
+    if (!socket || !callId) return;
+    socket.emit('call:group_approve_join', { callId, requesterId });
+    setPendingJoinRequests((cur) => {
+      const next = { ...cur };
+      delete next[requesterId];
+      return next;
+    });
+  }, [socket, callId]);
+
+  /** Host từ chối 1 yêu cầu tham gia. */
+  const denyJoinRequest = useCallback((requesterId) => {
+    if (!socket || !callId) return;
+    socket.emit('call:group_deny_join', { callId, requesterId });
+    setPendingJoinRequests((cur) => {
+      const next = { ...cur };
+      delete next[requesterId];
+      return next;
+    });
+  }, [socket, callId]);
+
   /* ─── PUBLIC: chấp nhận / từ chối / kết thúc ─── */
 
   const acceptCall = useCallback(async () => {
@@ -551,13 +630,189 @@ export function CallProvider({ children }) {
     });
   }, [getLocalStream]);
 
+  /**
+   * Bắt đầu chia sẻ màn hình. Dùng `getDisplayMedia` rồi `replaceTrack` trên TẤT CẢ
+   * peer connection (1-1 + group mesh). Track camera gốc được lưu để revert khi stop.
+   *
+   * Lưu ý:
+   * - Cuộc gọi audio-only chưa có video transceiver → cần addTrack + renegotiate (chưa hỗ trợ v1).
+   *   Vì vậy chỉ cho phép share khi `kind === 'video'`.
+   * - Cùng lúc CHỈ 1 người trong cuộc có thể là "spotlight" trên UI (hiện theo `participants.{id}.isScreenSharing`),
+   *   nhưng technically nhiều người có thể share song song — UI sẽ ưu tiên người share gần nhất.
+   */
+  const startScreenShare = useCallback(async () => {
+    if (kind !== 'video') {
+      setError('Chỉ chia sẻ màn hình trong cuộc gọi video');
+      return;
+    }
+    if (isScreenSharing) return;
+    if (!localStreamRef.current) {
+      setError('Chưa có local stream');
+      return;
+    }
+    let displayStream;
+    try {
+      displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 15 },
+        audio: false,
+      });
+    } catch (e) {
+      // User cancel hoặc browser không hỗ trợ
+      if (e?.name !== 'NotAllowedError') setError(e.message || 'Không thể chia sẻ màn hình');
+      return;
+    }
+    const screenTrack = displayStream.getVideoTracks()[0];
+    if (!screenTrack) {
+      setError('Không có video track từ màn hình');
+      try { displayStream.getTracks().forEach((t) => t.stop()); } catch { /* noop */ }
+      return;
+    }
+
+    // Lưu camera track gốc để revert (nếu chưa có)
+    const cameraTrack = localStreamRef.current.getVideoTracks()[0] || null;
+    if (cameraTrack && !originalCameraTrackRef.current) {
+      originalCameraTrackRef.current = cameraTrack;
+    }
+
+    // Replace track trên mọi peer connection
+    const replaceOnPc = (pc) => {
+      const sender = pc.getSenders().find((s) => s.track && s.track.kind === 'video');
+      if (sender) return sender.replaceTrack(screenTrack);
+      return pc.addTrack(screenTrack, localStreamRef.current);
+    };
+    try {
+      if (directPcRef.current) await replaceOnPc(directPcRef.current);
+      for (const { pc } of groupPeersRef.current.values()) await replaceOnPc(pc);
+    } catch (e) {
+      console.warn('screen-share replaceTrack error', e);
+    }
+
+    // Update localStream: remove camera video, add screen track
+    if (cameraTrack) {
+      try { localStreamRef.current.removeTrack(cameraTrack); } catch { /* noop */ }
+    }
+    localStreamRef.current.addTrack(screenTrack);
+    setLocalStream(localStreamRef.current);
+    screenStreamRef.current = displayStream;
+    setIsScreenSharing(true);
+    setCameraOn(true); // screen track luôn enabled
+    if (cameraTrack) cameraTrack.enabled = false; // tạm tắt camera (không stop để revert được)
+
+    // Khi user dừng share từ browser → tự động stopScreenShare
+    screenTrack.onended = () => { void stopScreenShare(); }; // eslint-disable-line no-use-before-define
+
+    // Broadcast cho người khác
+    if (socket && callId) {
+      if (mode === 'group') {
+        socket.emit('call:group_screen_share', { callId, sharing: true });
+      } else if (peer?.id) {
+        socket.emit('call:screen_share', { callId, toUserId: peer.id, sharing: true });
+      }
+    }
+    // Cập nhật participants của chính mình để UI biết
+    if (mode === 'group') {
+      setParticipants((cur) => ({
+        ...cur,
+        [uid]: { ...(cur[uid] || {}), isScreenSharing: true },
+      }));
+    }
+  }, [kind, isScreenSharing, socket, callId, mode, peer, uid]);
+
+  /** Dừng chia sẻ màn hình, revert về camera track (nếu có). */
+  const stopScreenShare = useCallback(async () => {
+    if (!isScreenSharing) return;
+    const display = screenStreamRef.current;
+    const screenTrack = display?.getVideoTracks()[0];
+    const cameraTrack = originalCameraTrackRef.current;
+
+    // Replace lại camera track trên mọi peer connection
+    const replaceOnPc = async (pc) => {
+      const sender = pc.getSenders().find((s) => s.track && s.track.kind === 'video');
+      if (!sender) return;
+      try {
+        if (cameraTrack) await sender.replaceTrack(cameraTrack);
+        else await sender.replaceTrack(null);
+      } catch (e) {
+        console.warn('stopScreenShare replaceTrack error', e);
+      }
+    };
+    if (directPcRef.current) await replaceOnPc(directPcRef.current);
+    for (const { pc } of groupPeersRef.current.values()) await replaceOnPc(pc);
+
+    // Stop screen tracks
+    if (display) {
+      try { display.getTracks().forEach((t) => t.stop()); } catch { /* noop */ }
+    }
+    screenStreamRef.current = null;
+
+    // Update localStream
+    if (localStreamRef.current) {
+      if (screenTrack) {
+        try { localStreamRef.current.removeTrack(screenTrack); } catch { /* noop */ }
+      }
+      if (cameraTrack) {
+        cameraTrack.enabled = true;
+        if (!localStreamRef.current.getVideoTracks().includes(cameraTrack)) {
+          try { localStreamRef.current.addTrack(cameraTrack); } catch { /* noop */ }
+        }
+      }
+    }
+    setLocalStream(localStreamRef.current);
+    originalCameraTrackRef.current = null;
+    setIsScreenSharing(false);
+
+    if (socket && callId) {
+      if (mode === 'group') {
+        socket.emit('call:group_screen_share', { callId, sharing: false });
+      } else if (peer?.id) {
+        socket.emit('call:screen_share', { callId, toUserId: peer.id, sharing: false });
+      }
+    }
+    if (mode === 'group') {
+      setParticipants((cur) => ({
+        ...cur,
+        [uid]: { ...(cur[uid] || {}), isScreenSharing: false },
+      }));
+    }
+  }, [isScreenSharing, socket, callId, mode, peer, uid]);
+
+  const toggleScreenShare = useCallback(() => {
+    if (isScreenSharing) void stopScreenShare();
+    else void startScreenShare();
+  }, [isScreenSharing, startScreenShare, stopScreenShare]);
+
   /* ─── Lắng nghe các event từ server ─── */
   useEffect(() => {
     if (!socket || !uid) return undefined;
 
     /** Cuộc gọi đến (1-1 hoặc nhóm) */
-    const onIncoming = ({ callId: incomingId, kind: incomingKind, fromUserId, fromName, isGroup, groupId, groupName }) => {
+    const onIncoming = async ({ callId: incomingId, kind: incomingKind, fromUserId, fromName, isGroup, groupId, groupName }) => {
       if (!incomingId || !fromUserId) return;
+
+      // Trường hợp đặc biệt: user đã chủ động bấm "Tham gia" trên banner → đã set state outgoing.
+      // Backend giờ approve → server gửi incoming. Auto-accept không cần hỏi.
+      if (isGroup && pendingApproveCallIdRef.current === incomingId && callIdRef.current === incomingId) {
+        pendingApproveCallIdRef.current = null;
+        if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+        try {
+          const wantVideo = (incomingKind || 'audio') === 'video';
+          await getLocalStream({ video: wantVideo });
+          setStatus('connecting');
+          // Khởi tạo participants chỉ với host (sẽ được mở rộng qua `call:group_participants`)
+          setParticipants((cur) => ({
+            ...cur,
+            [uid]: { name: user?.fullName || user?.full_name || 'Bạn', avatar: user?.avatar || null, joined: true, hasStream: false, isMe: true },
+            [fromUserId]: { ...(cur[fromUserId] || {}), name: fromName || cur[fromUserId]?.name || 'Người gọi', joined: true, hasStream: false, isHost: true },
+          }));
+          socket.emit('call:group_join', { callId: incomingId });
+        } catch (e) {
+          setError(e.message || 'Không truy cập được micro');
+          try { socket.emit('call:end', { callId: incomingId }); } catch { /* noop */ }
+          resetState();
+        }
+        return;
+      }
+
       // Đang trong cuộc khác → tự reject để không làm phiền
       if (status !== 'idle' || directPcRef.current || groupPeersRef.current.size > 0) {
         if (isGroup) socket.emit('call:reject', { callId: incomingId, reason: 'busy' });
@@ -771,6 +1026,74 @@ export function CallProvider({ children }) {
       });
     };
 
+    /** Group: host cũ rời → server đã tự chọn host mới. */
+    const onHostChanged = ({ callId: cid, newHostId, newHostName }) => {
+      if (cid !== callIdRef.current || modeRef.current !== 'group' || !newHostId) return;
+      setGroupInfo((cur) => (cur ? { ...cur, hostId: newHostId } : cur));
+      setParticipants((cur) => {
+        const next = { ...cur };
+        Object.keys(next).forEach((id) => {
+          next[id] = { ...next[id], isHost: String(id) === String(newHostId) };
+          if (String(id) === String(newHostId) && newHostName) next[id].name = newHostName;
+        });
+        return next;
+      });
+    };
+
+    /** Host nhận yêu cầu join. */
+    const onJoinRequest = ({ callId: cid, requesterId, requesterName, requestedAt }) => {
+      if (cid !== callIdRef.current || modeRef.current !== 'group' || !requesterId) return;
+      setPendingJoinRequests((cur) => ({
+        ...cur,
+        [requesterId]: { name: requesterName || 'Thành viên', requestedAt: requestedAt || Date.now() },
+      }));
+    };
+
+    /** Host: requester rút yêu cầu */
+    const onJoinCancelled = ({ callId: cid, requesterId }) => {
+      if (cid !== callIdRef.current || !requesterId) return;
+      setPendingJoinRequests((cur) => {
+        const next = { ...cur };
+        delete next[requesterId];
+        return next;
+      });
+    };
+
+    /** Requester: được host duyệt → backend đã gửi `call:incoming`, onIncoming handle. Đây chỉ là tín hiệu pending. */
+    const onJoinPending = () => {
+      // setStatus('outgoing') đã set ở joinGroupCall → giữ nguyên, chỉ cập nhật error/text nếu cần
+    };
+
+    /** Group: ai đó bật/tắt chia sẻ màn hình → cập nhật flag để UI spotlight. */
+    const onGroupScreenShare = ({ callId: cid, userId: shareUid, sharing }) => {
+      if (cid !== callIdRef.current || modeRef.current !== 'group' || !shareUid) return;
+      setParticipants((cur) => {
+        if (!cur[shareUid]) return cur;
+        return { ...cur, [shareUid]: { ...cur[shareUid], isScreenSharing: !!sharing } };
+      });
+    };
+
+    /** 1-1: bên kia bật/tắt chia sẻ màn hình. */
+    const onDirectScreenShare = ({ callId: cid, sharing }) => {
+      if (cid !== callIdRef.current || modeRef.current !== 'direct') return;
+      // Direct: lưu vào participants với key = peer.id để UI dùng chung
+      const pid = peerRef.current?.id;
+      if (!pid) return;
+      setParticipants((cur) => ({
+        ...cur,
+        [pid]: { ...(cur[pid] || {}), isScreenSharing: !!sharing },
+      }));
+    };
+
+    /** Requester: bị host từ chối */
+    const onJoinDenied = ({ callId: cid, reason }) => {
+      if (cid !== pendingApproveCallIdRef.current && cid !== callIdRef.current) return;
+      pendingApproveCallIdRef.current = null;
+      const map = { denied: 'Chủ phòng đã từ chối yêu cầu' };
+      setError(map[reason] || 'Yêu cầu tham gia bị từ chối');
+      resetState();
+    };
+
     socket.on('call:incoming', onIncoming);
     socket.on('call:accepted', onAccepted);
     socket.on('call:rejected', onRejected);
@@ -780,6 +1103,13 @@ export function CallProvider({ children }) {
     socket.on('call:group_member_joined', onGroupMemberJoined);
     socket.on('call:group_member_left', onGroupMemberLeft);
     socket.on('call:group_member_rejected', onGroupMemberRejected);
+    socket.on('call:group_host_changed', onHostChanged);
+    socket.on('call:group_join_request', onJoinRequest);
+    socket.on('call:group_join_cancelled', onJoinCancelled);
+    socket.on('call:group_join_pending', onJoinPending);
+    socket.on('call:group_join_denied', onJoinDenied);
+    socket.on('call:group_screen_share', onGroupScreenShare);
+    socket.on('call:screen_share', onDirectScreenShare);
     return () => {
       socket.off('call:incoming', onIncoming);
       socket.off('call:accepted', onAccepted);
@@ -790,8 +1120,15 @@ export function CallProvider({ children }) {
       socket.off('call:group_member_joined', onGroupMemberJoined);
       socket.off('call:group_member_left', onGroupMemberLeft);
       socket.off('call:group_member_rejected', onGroupMemberRejected);
+      socket.off('call:group_host_changed', onHostChanged);
+      socket.off('call:group_join_request', onJoinRequest);
+      socket.off('call:group_join_cancelled', onJoinCancelled);
+      socket.off('call:group_join_pending', onJoinPending);
+      socket.off('call:group_join_denied', onJoinDenied);
+      socket.off('call:group_screen_share', onGroupScreenShare);
+      socket.off('call:screen_share', onDirectScreenShare);
     };
-  }, [socket, uid, status, getOrCreateGroupPeer, closeGroupPeer, endCall, resetState, playTone]);
+  }, [socket, uid, user, status, getOrCreateGroupPeer, closeGroupPeer, getLocalStream, endCall, resetState, playTone]);
 
   // Cleanup khi unmount toàn bộ provider
   useEffect(() => () => { cleanup(); }, [cleanup]);
@@ -811,17 +1148,28 @@ export function CallProvider({ children }) {
       error,
       localStream,
       directRemoteStream,
+      pendingJoinRequests,
+      isHost: mode === 'group' && !!groupInfo && String(groupInfo.hostId) === String(uid),
+      isScreenSharing,
       startCall,
       startGroupCall,
+      joinGroupCall,
       acceptCall,
       rejectCall,
       endCall,
       toggleMute,
       toggleCamera,
+      startScreenShare,
+      stopScreenShare,
+      toggleScreenShare,
+      approveJoinRequest,
+      denyJoinRequest,
     }),
-    [status, mode, callId, peer, groupInfo, participants, kind, isMuted, cameraOn, startedAt, error,
-     localStream, directRemoteStream,
-     startCall, startGroupCall, acceptCall, rejectCall, endCall, toggleMute, toggleCamera],
+    [status, mode, callId, peer, groupInfo, participants, kind, isMuted, cameraOn, isScreenSharing, startedAt, error,
+     localStream, directRemoteStream, pendingJoinRequests, uid,
+     startCall, startGroupCall, joinGroupCall, acceptCall, rejectCall, endCall, toggleMute, toggleCamera,
+     startScreenShare, stopScreenShare, toggleScreenShare,
+     approveJoinRequest, denyJoinRequest],
   );
 
   return <CallCtx.Provider value={value}>{children}</CallCtx.Provider>;

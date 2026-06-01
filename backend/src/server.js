@@ -363,12 +363,18 @@ io.on('connection', (socket) => {
     const uid = socket.user?.userId || socket.user?.id;
     if (!uid) return;
     const hostName = socket.user?.fullName || socket.user?.full_name || 'Người gọi';
+    const now = Date.now();
     activeGroupCalls.set(callId, {
       groupId,
       groupName: groupName || 'Cuộc gọi nhóm',
       hostId: uid,
       kind,
-      participants: new Map([[uid, { name: hostName }]]),
+      startedAt: now,
+      participants: new Map([[uid, { name: hostName, joinedAt: now }]]),
+      /** invited khi host_start: cho phép join ngay không cần duyệt */
+      invitedIds: new Set([...new Set(memberIds.map(String))]),
+      /** Map<requesterId, { name, requestedAt }> — yêu cầu join đang chờ host duyệt */
+      pendingJoinRequests: new Map(),
     });
     const uniqueMembers = [...new Set(memberIds.map(String))].filter((mid) => mid !== String(uid));
     uniqueMembers.forEach((mid) => {
@@ -382,6 +388,17 @@ io.on('connection', (socket) => {
         fromName: hostName,
       });
     });
+    // Broadcast cho TẤT CẢ thành viên nhóm (kể cả người không nằm trong danh sách mời)
+    // → họ sẽ thấy banner "Có cuộc gọi đang diễn ra" với nút Tham gia.
+    io.to(`messenger_group:${groupId}`).emit('call:group_room_started', {
+      callId,
+      groupId,
+      groupName: groupName || 'Cuộc gọi nhóm',
+      kind,
+      hostId: uid,
+      hostName,
+      startedAt: Date.now(),
+    });
   });
 
   socket.on('call:group_join', ({ callId } = {}) => {
@@ -393,31 +410,227 @@ io.on('connection', (socket) => {
     const myName = socket.user?.fullName || socket.user?.full_name || 'Thành viên';
     const existingIds = [...call.participants.keys()].filter((id) => id !== uid);
     const existing = existingIds.map((id) => ({ userId: id, name: call.participants.get(id)?.name || '' }));
-    call.participants.set(uid, { name: myName });
+    call.participants.set(uid, { name: myName, joinedAt: Date.now() });
     // Báo cho người mới biết ai đang có trong cuộc — để họ chờ offer từ các participants này
-    socket.emit('call:group_participants', { callId, participants: existing });
+    socket.emit('call:group_participants', { callId, participants: existing, hostId: call.hostId });
     // Báo cho mọi người khác biết có thành viên mới → họ sẽ tạo offer
     existingIds.forEach((pid) => {
       io.to(`user:${pid}`).emit('call:group_member_joined', { callId, userId: uid, name: myName });
     });
   });
 
-  /** Khi user rời cuộc gọi nhóm. Hỗ trợ cả reject (chưa join) lẫn leave (đã join). */
+  /**
+   * Khi user rời cuộc gọi nhóm. Hỗ trợ cả reject (chưa join) lẫn leave (đã join).
+   * Nếu user rời là host → tự động chuyển host sang participant join sớm nhất kế tiếp
+   * và emit `call:group_host_changed` tới mọi người trong cuộc + về phòng nhóm
+   * (để banner của các member khác cập nhật hostName).
+   */
   function leaveGroupCall(callId, uid) {
     const call = activeGroupCalls.get(callId);
     if (!call) return;
     const wasParticipant = call.participants.has(uid);
+    const wasHost = String(call.hostId) === String(uid);
     call.participants.delete(uid);
+    // Huỷ luôn các pending join request người này (nếu là requester)
+    if (call.pendingJoinRequests?.has(uid)) call.pendingJoinRequests.delete(uid);
+
     if (call.participants.size === 0) {
+      const { groupId } = call;
       activeGroupCalls.delete(callId);
+      if (groupId) {
+        io.to(`messenger_group:${groupId}`).emit('call:group_room_ended', { callId, groupId });
+      }
       return;
     }
+
+    if (wasHost) {
+      // Chọn host mới = participant join sớm nhất
+      let newHostId = null;
+      let earliest = Infinity;
+      call.participants.forEach((p, pid) => {
+        const t = p?.joinedAt || 0;
+        if (t < earliest) { earliest = t; newHostId = pid; }
+      });
+      if (newHostId) {
+        call.hostId = newHostId;
+        const newHostName = call.participants.get(newHostId)?.name || '';
+        // Báo cho mọi participant trong cuộc
+        call.participants.forEach((_v, pid) => {
+          io.to(`user:${pid}`).emit('call:group_host_changed', {
+            callId,
+            newHostId,
+            newHostName,
+          });
+        });
+        // Báo về phòng nhóm để banner cập nhật
+        if (call.groupId) {
+          io.to(`messenger_group:${call.groupId}`).emit('call:group_room_started', {
+            callId,
+            groupId: call.groupId,
+            groupName: call.groupName,
+            kind: call.kind,
+            hostId: newHostId,
+            hostName: newHostName,
+            startedAt: call.startedAt,
+          });
+        }
+        // Bàn giao luôn các pending request sang host mới
+        if (call.pendingJoinRequests?.size > 0) {
+          for (const [reqId, info] of call.pendingJoinRequests) {
+            io.to(`user:${newHostId}`).emit('call:group_join_request', {
+              callId,
+              requesterId: reqId,
+              requesterName: info.name,
+              requestedAt: info.requestedAt,
+            });
+          }
+        }
+      }
+    }
+
     if (wasParticipant) {
       call.participants.forEach((_v, pid) => {
         io.to(`user:${pid}`).emit('call:group_member_left', { callId, userId: uid });
       });
     }
   }
+
+  /** Khi member mở chat → hỏi xem nhóm có cuộc gọi đang diễn ra không. */
+  socket.on('call:group_room_query', ({ groupId } = {}) => {
+    if (!groupId) return;
+    for (const [callId, call] of activeGroupCalls) {
+      if (String(call.groupId) === String(groupId)) {
+        socket.emit('call:group_room_started', {
+          callId,
+          groupId: call.groupId,
+          groupName: call.groupName,
+          kind: call.kind,
+          hostId: call.hostId,
+          hostName: call.participants.get(call.hostId)?.name || '',
+          startedAt: call.startedAt || Date.now(),
+        });
+        return;
+      }
+    }
+    socket.emit('call:group_room_ended', { groupId });
+  });
+
+  /**
+   * User chủ động xin tham gia cuộc gọi nhóm đang diễn ra.
+   * - Nếu user nằm trong `invitedIds` ban đầu (đã được host mời từ trước) → cho join thẳng.
+   * - Nếu chưa được mời → ghi vào `pendingJoinRequests`, báo cho host duyệt.
+   */
+  socket.on('call:group_request_join', ({ callId } = {}) => {
+    if (!callId) return;
+    const uid = socket.user?.userId || socket.user?.id;
+    if (!uid) return;
+    const call = activeGroupCalls.get(callId);
+    if (!call) {
+      socket.emit('call:group_room_ended', { callId });
+      return;
+    }
+    const myName = socket.user?.fullName || socket.user?.full_name || 'Thành viên';
+    const isInvited = call.invitedIds?.has(String(uid));
+
+    if (isInvited) {
+      // Đã được host mời từ đầu nhưng từng từ chối / chưa kịp accept → cho vào thẳng.
+      socket.emit('call:incoming', {
+        callId,
+        kind: call.kind,
+        isGroup: true,
+        groupId: call.groupId,
+        groupName: call.groupName,
+        fromUserId: call.hostId,
+        fromName: call.participants.get(call.hostId)?.name || 'Người gọi',
+      });
+      return;
+    }
+
+    // Chưa được mời → cần host duyệt
+    call.pendingJoinRequests.set(uid, { name: myName, requestedAt: Date.now() });
+    io.to(`user:${call.hostId}`).emit('call:group_join_request', {
+      callId,
+      requesterId: uid,
+      requesterName: myName,
+      requestedAt: Date.now(),
+    });
+    // Báo lại cho requester biết đang chờ
+    socket.emit('call:group_join_pending', { callId });
+  });
+
+  /** Host duyệt 1 yêu cầu join. */
+  socket.on('call:group_approve_join', ({ callId, requesterId } = {}) => {
+    if (!callId || !requesterId) return;
+    const uid = socket.user?.userId || socket.user?.id;
+    const call = activeGroupCalls.get(callId);
+    if (!call || String(call.hostId) !== String(uid)) return; // chỉ host được duyệt
+    if (!call.pendingJoinRequests?.has(requesterId)) return;
+    call.pendingJoinRequests.delete(requesterId);
+    // Mời requester vào → họ nhận incoming, sẽ joinGroupCall
+    io.to(`user:${requesterId}`).emit('call:incoming', {
+      callId,
+      kind: call.kind,
+      isGroup: true,
+      groupId: call.groupId,
+      groupName: call.groupName,
+      fromUserId: call.hostId,
+      fromName: call.participants.get(call.hostId)?.name || 'Người gọi',
+    });
+  });
+
+  /** Host từ chối 1 yêu cầu join. */
+  socket.on('call:group_deny_join', ({ callId, requesterId, reason = 'denied' } = {}) => {
+    if (!callId || !requesterId) return;
+    const uid = socket.user?.userId || socket.user?.id;
+    const call = activeGroupCalls.get(callId);
+    if (!call || String(call.hostId) !== String(uid)) return;
+    if (call.pendingJoinRequests?.has(requesterId)) call.pendingJoinRequests.delete(requesterId);
+    io.to(`user:${requesterId}`).emit('call:group_join_denied', { callId, reason });
+  });
+
+  /**
+   * Báo cho mọi người trong cuộc gọi nhóm biết mình đã bật/tắt chia sẻ màn hình.
+   * Frontend đã replaceTrack video → server chỉ cần relay flag để UI hiển thị label/spotlight.
+   */
+  socket.on('call:group_screen_share', ({ callId, sharing } = {}) => {
+    if (!callId) return;
+    const uid = socket.user?.userId || socket.user?.id;
+    const call = activeGroupCalls.get(callId);
+    if (!call || !uid) return;
+    call.participants.forEach((_v, pid) => {
+      if (pid !== uid) {
+        io.to(`user:${pid}`).emit('call:group_screen_share', {
+          callId,
+          userId: uid,
+          sharing: !!sharing,
+        });
+      }
+    });
+  });
+
+  /** Tương đương cho cuộc gọi 1-1. */
+  socket.on('call:screen_share', ({ callId, toUserId, sharing } = {}) => {
+    if (!callId || !toUserId) return;
+    const uid = socket.user?.userId || socket.user?.id;
+    if (!uid) return;
+    io.to(`user:${toUserId}`).emit('call:screen_share', {
+      callId,
+      fromUserId: uid,
+      sharing: !!sharing,
+    });
+  });
+
+  /** Requester rút lại yêu cầu join (đóng banner hoặc rời chat). */
+  socket.on('call:group_cancel_join', ({ callId } = {}) => {
+    if (!callId) return;
+    const uid = socket.user?.userId || socket.user?.id;
+    const call = activeGroupCalls.get(callId);
+    if (!call) return;
+    if (call.pendingJoinRequests?.has(uid)) {
+      call.pendingJoinRequests.delete(uid);
+      io.to(`user:${call.hostId}`).emit('call:group_join_cancelled', { callId, requesterId: uid });
+    }
+  });
 
   // Override call:end để hỗ trợ cả 1-1 lẫn group
   socket.removeAllListeners('call:end');

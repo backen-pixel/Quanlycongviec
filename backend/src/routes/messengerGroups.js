@@ -688,6 +688,55 @@ r.get('/groups/:id/read-receipts', async (req, res) => {
   }
 });
 
+/**
+ * Đổi avatar nhóm — yêu cầu là leader/deputy (hoặc admin hệ thống).
+ * Upload qua multipart `file`; lưu vào Supabase Storage hoặc /uploads.
+ * Trả về `{ avatar }` URL public mới và emit socket `messenger_group:updated`.
+ */
+r.patch('/groups/:id/avatar', messengerMemoryUpload.single('file'), async (req, res) => {
+  try {
+    const gid = req.params.id;
+    const ok = await assertGroupLeader(gid, req.authUserId);
+    if (!ok) return res.status(403).json({ error: 'Chỉ trưởng/phó nhóm mới được đổi avatar' });
+    if (!req.file) return res.status(400).json({ error: 'Thiếu file ảnh' });
+    const mime = (req.file.mimetype || '').toLowerCase();
+    if (!mime.startsWith('image/')) return res.status(400).json({ error: 'Chỉ chấp nhận file ảnh' });
+
+    const stored = await storeMessengerUploadedFile(gid, req.file);
+    const avatarUrl = stored.url;
+
+    const { error: uErr } = await supabase
+      .from('messenger_groups')
+      .update({ avatar: avatarUrl })
+      .eq('id', gid);
+    if (uErr) return res.status(400).json({ error: uErr.message });
+
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`messenger_group:${gid}`).emit('messenger_group:updated', { group_id: gid, avatar: avatarUrl });
+    }
+    res.json({ avatar: avatarUrl });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Xoá avatar nhóm — set NULL. */
+r.delete('/groups/:id/avatar', async (req, res) => {
+  try {
+    const gid = req.params.id;
+    const ok = await assertGroupLeader(gid, req.authUserId);
+    if (!ok) return res.status(403).json({ error: 'Chỉ trưởng/phó nhóm mới được đổi avatar' });
+    const { error: uErr } = await supabase.from('messenger_groups').update({ avatar: null }).eq('id', gid);
+    if (uErr) return res.status(400).json({ error: uErr.message });
+    const io = req.app.get('io');
+    if (io) io.to(`messenger_group:${gid}`).emit('messenger_group:updated', { group_id: gid, avatar: null });
+    res.json({ avatar: null });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 /** Chi tiết nhóm + thành viên */
 r.get('/groups/:id', async (req, res) => {
   try {
