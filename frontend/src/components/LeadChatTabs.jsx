@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Fragment, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import api from '../lib/api';
 import { resolveMediaUrl, BROKEN_MEDIA_PLACEHOLDER } from '../lib/mediaUrl';
-import { Trash2, Send, Users, Crown, Shield, Building2, Eye, Paperclip, X, Mic, Reply, CornerDownRight } from 'lucide-react';
+import { Trash2, Send, Users, Crown, Shield, Building2, Eye, Paperclip, X, Mic, Reply, CornerDownRight, Smile, Zap } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import EmployeePicker from './EmployeePicker';
@@ -25,6 +25,358 @@ function Avatar({ name, url, size = 8 }) {
   const colors = ['bg-blue-500', 'bg-green-500', 'bg-purple-500', 'bg-orange-500', 'bg-pink-500', 'bg-teal-500'];
   const color = colors[letter.charCodeAt(0) % colors.length];
   return <div className={`w-${size} h-${size} rounded-full ${color} flex items-center justify-center text-white text-xs font-bold`}>{letter}</div>;
+}
+
+function isSameDay(a, b) {
+  if (!a || !b) return false;
+  const da = new Date(a);
+  const db = new Date(b);
+  return da.toDateString() === db.toDateString();
+}
+
+function formatDateSeparator(d) {
+  if (!d) return '';
+  const date = new Date(d);
+  const now = new Date();
+  const isToday = date.toDateString() === now.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const isYesterday = date.toDateString() === yesterday.toDateString();
+  const time = date.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  if (isToday) return `Hôm nay · ${time}`;
+  if (isYesterday) return `Hôm qua · ${time}`;
+  return date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+/** Gợi ý trả lời nhanh — chip dưới composer giúp phản hồi 1 chạm. */
+const QUICK_REPLIES = [
+  'Đã nhận ✓',
+  'Sẽ phản hồi sau',
+  'Cần thêm thông tin?',
+  'Cảm ơn bạn!',
+];
+
+/** Bộ emoji được nhóm thành danh mục cho picker. */
+const EMOJI_CATEGORIES = [
+  {
+    id: 'smileys',
+    icon: '😀',
+    label: 'Cảm xúc',
+    emojis: ['😀','😃','😄','😁','😆','😅','🤣','😂','🙂','🙃','😉','😊','😇','🥰','😍','🤩','😘','😗','😚','😙','🥲','😋','😛','😜','🤪','😝','🤑','🤗','🤭','🤫','🤔','🤐','🤨','😐','😑','😶','😏','😒','🙄','😬','🤥','😌','😔','😪','🤤','😴','😷','🤒','🤕','🤢','🤮','🤧','🥵','🥶','🥴','😵','🤯','🤠','🥳','🥸','😎','🤓','🧐','😕','😟','🙁','☹️','😮','😯','😲','😳','🥺','😦','😧','😨','😰','😥','😢','😭','😱','😖','😣','😞','😓','😩','😫','🥱','😤','😡','😠','🤬','😈','👿','💀','☠️','💩','🤡','👹','👺','👻','👽','🤖'],
+  },
+  {
+    id: 'gestures',
+    icon: '👋',
+    label: 'Cử chỉ',
+    emojis: ['👋','🤚','🖐️','✋','🖖','👌','🤏','✌️','🤞','🤟','🤘','🤙','👈','👉','👆','👇','☝️','👍','👎','✊','👊','🤛','🤜','👏','🙌','👐','🤲','🤝','🙏','✍️','💅','🤳','💪','🦾','🦵','🦿','🦶','👣','👀','👂','👃','👄','👅','🧠','🦴','🦷','💋','👁️'],
+  },
+  {
+    id: 'hearts',
+    icon: '❤️',
+    label: 'Trái tim',
+    emojis: ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','♥️','💌','💋','💯','💢','💥','💫','💦','💨'],
+  },
+  {
+    id: 'animals',
+    icon: '🐶',
+    label: 'Động vật',
+    emojis: ['🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🙊','🙉','🙈','🐒','🐔','🐧','🐦','🐤','🦆','🦅','🦉','🦇','🐺','🐗','🐴','🦄','🐝','🐛','🦋','🐌','🐞','🐢','🐍','🦎','🐙','🦑','🦞','🦀','🐠','🐟','🐡','🐬','🦈','🐳','🐋','🐊','🐅','🐆','🦓','🦍','🦧','🐘','🦏','🦛','🐪','🐫','🦒','🐂','🐃','🐄','🐎','🐖','🐏','🐑','🐐','🦌','🐕','🐩','🦮','🐕‍🦺','🐈','🐓','🦃','🦚','🦜','🦢','🕊️','🐇','🦝','🦨','🦡','🦦','🦥','🐁','🐀','🐿️','🦔'],
+  },
+  {
+    id: 'food',
+    icon: '🍕',
+    label: 'Đồ ăn',
+    emojis: ['🍎','🍐','🍊','🍋','🍌','🍉','🍇','🍓','🫐','🍈','🍒','🍑','🥭','🍍','🥥','🥝','🍅','🍆','🥑','🥦','🥬','🥒','🌶️','🫑','🌽','🥕','🥔','🍠','🥐','🥯','🍞','🥖','🧀','🥚','🍳','🥞','🧇','🥓','🥩','🍗','🍖','🌭','🍔','🍟','🍕','🥪','🌮','🌯','🥗','🥘','🍝','🍜','🍲','🍣','🍤','🍱','🍙','🍚','🍘','🍢','🍡','🍧','🍨','🍦','🥧','🧁','🍰','🎂','🍮','🍭','🍬','🍫','🍩','🍪','🌰','🥜','🍯','🥛','🍼','☕','🍵','🧃','🥤','🧋','🍶','🍺','🍻','🥂','🍷','🥃','🍸','🍹','🍾','🧉','🥄','🍴','🍽️','🥢','🧂'],
+  },
+  {
+    id: 'activities',
+    icon: '⚽',
+    label: 'Hoạt động',
+    emojis: ['⚽','🏀','🏈','⚾','🥎','🎾','🏐','🏉','🎱','🪀','🏓','🏸','🥍','🥌','🥊','🥋','🎯','🎳','🎮','🎲','♟️','🎰','🎺','🎷','🪗','🎸','🎻','🪕','🥁','🎬','🎤','🎧','🎼','🎹','🪘','🏆','🥇','🥈','🥉','🏅','🎖️','🏵️','🎗️','🎫','🎟️','🎪','🤹','🎭','🩰','🎨','🎬','🎤','🚴','🏊','🏄','🚣','🧗','🤺','🤸','🧘'],
+  },
+  {
+    id: 'objects',
+    icon: '💡',
+    label: 'Đồ vật',
+    emojis: ['💡','🔦','🕯️','💰','💴','💵','💶','💷','💸','💳','🧾','📱','💻','⌨️','🖥️','🖨️','🖱️','💾','💿','📷','📸','🎥','📺','📻','📡','💎','⌚','📞','☎️','📠','🔋','🔌','🔍','🔎','🔒','🔓','🔑','🗝️','🔨','🪓','⛏️','⚒️','🛠️','🗡️','⚔️','🔫','🏹','🛡️','🔧','🔩','⚙️','🗜️','⚖️','🦯','🔗','⛓️','🧰','🧲','🪜','📚','📖','📝','📌','📍','📎','🖇️','📏','📐','✂️','🗃️','🗄️','📂','📁','📰','🗞️'],
+  },
+  {
+    id: 'symbols',
+    icon: '🔣',
+    label: 'Ký hiệu',
+    emojis: ['✨','⭐','🌟','💫','💥','💯','🚫','⛔','📛','🔞','📵','🚭','❗','❕','❓','❔','‼️','⁉️','💱','💲','🆎','🅰️','🅱️','🆑','🆘','✅','✔️','☑️','❌','❎','🆔','🚸','⚠️','🚹','🚺','🚻','🆒','🆓','🆕','🆖','🆗','🆙','🆚','✳️','✴️','❇️','♻️','⚜️','🔱','📛','🔰','♾️','♀️','♂️','⚧️','⚕️','♻️','🔆','🔅','🔇','🔈','🔉','🔊','🎵','🎶','📢','📣','📯'],
+  },
+];
+
+/**
+ * Bộ sticker — sử dụng Microsoft Fluent Emoji 3D (open source, MIT).
+ * Render qua jsDelivr CDN, mỗi sticker là 1 ảnh PNG 3D nhân vật phong cách Facebook/Zalo/TikTok.
+ * `name` = đúng tên thư mục trong repo `microsoft/fluentui-emoji`.
+ */
+const STICKER_PACK = [
+  { emoji: '😀', name: 'Grinning face' },
+  { emoji: '😃', name: 'Grinning face with big eyes' },
+  { emoji: '😄', name: 'Grinning face with smiling eyes' },
+  { emoji: '😁', name: 'Beaming face with smiling eyes' },
+  { emoji: '😂', name: 'Face with tears of joy' },
+  { emoji: '🤣', name: 'Rolling on the floor laughing' },
+  { emoji: '😅', name: 'Grinning face with sweat' },
+  { emoji: '😊', name: 'Smiling face with smiling eyes' },
+  { emoji: '😍', name: 'Smiling face with heart-eyes' },
+  { emoji: '🥰', name: 'Smiling face with hearts' },
+  { emoji: '😘', name: 'Face blowing a kiss' },
+  { emoji: '🤩', name: 'Star-struck' },
+  { emoji: '🥳', name: 'Partying face' },
+  { emoji: '😎', name: 'Smiling face with sunglasses' },
+  { emoji: '🤓', name: 'Nerd face' },
+  { emoji: '🥸', name: 'Disguised face' },
+  { emoji: '🤔', name: 'Thinking face' },
+  { emoji: '🙄', name: 'Face with rolling eyes' },
+  { emoji: '😏', name: 'Smirking face' },
+  { emoji: '😴', name: 'Sleeping face' },
+  { emoji: '😪', name: 'Sleepy face' },
+  { emoji: '🥱', name: 'Yawning face' },
+  { emoji: '🤤', name: 'Drooling face' },
+  { emoji: '😭', name: 'Loudly crying face' },
+  { emoji: '😢', name: 'Crying face' },
+  { emoji: '😱', name: 'Face screaming in fear' },
+  { emoji: '🥺', name: 'Pleading face' },
+  { emoji: '😡', name: 'Pouting face' },
+  { emoji: '🤬', name: 'Face with symbols on mouth' },
+  { emoji: '🤯', name: 'Exploding head' },
+  { emoji: '🥵', name: 'Hot face' },
+  { emoji: '🥶', name: 'Cold face' },
+  { emoji: '🤢', name: 'Nauseated face' },
+  { emoji: '🤮', name: 'Face vomiting' },
+  { emoji: '🤧', name: 'Sneezing face' },
+  { emoji: '😷', name: 'Face with medical mask' },
+  { emoji: '🤒', name: 'Face with thermometer' },
+  { emoji: '😈', name: 'Smiling face with horns' },
+  { emoji: '👹', name: 'Ogre' },
+  { emoji: '👻', name: 'Ghost' },
+  { emoji: '💀', name: 'Skull' },
+  { emoji: '🤡', name: 'Clown face' },
+  { emoji: '🤖', name: 'Robot' },
+  { emoji: '👽', name: 'Alien' },
+  { emoji: '👍', name: 'Thumbs up' },
+  { emoji: '👎', name: 'Thumbs down' },
+  { emoji: '👏', name: 'Clapping hands' },
+  { emoji: '🙏', name: 'Folded hands' },
+  { emoji: '🙌', name: 'Raising hands' },
+  { emoji: '💪', name: 'Flexed biceps' },
+  { emoji: '🤝', name: 'Handshake' },
+  { emoji: '🤞', name: 'Crossed fingers' },
+  { emoji: '👌', name: 'OK hand' },
+  { emoji: '🤙', name: 'Call me hand' },
+  { emoji: '✌️', name: 'Victory hand' },
+  { emoji: '❤️', name: 'Red heart' },
+  { emoji: '💔', name: 'Broken heart' },
+  { emoji: '💖', name: 'Sparkling heart' },
+  { emoji: '💕', name: 'Two hearts' },
+  { emoji: '💝', name: 'Heart with ribbon' },
+  { emoji: '💯', name: 'Hundred points' },
+  { emoji: '🔥', name: 'Fire' },
+  { emoji: '✨', name: 'Sparkles' },
+  { emoji: '🌟', name: 'Glowing star' },
+  { emoji: '⭐', name: 'Star' },
+  { emoji: '🎉', name: 'Party popper' },
+  { emoji: '🎊', name: 'Confetti ball' },
+  { emoji: '🎁', name: 'Wrapped gift' },
+  { emoji: '🎂', name: 'Birthday cake' },
+  { emoji: '🍰', name: 'Shortcake' },
+  { emoji: '🎈', name: 'Balloon' },
+  { emoji: '🌹', name: 'Rose' },
+  { emoji: '🌸', name: 'Cherry blossom' },
+  { emoji: '☕', name: 'Hot beverage' },
+  { emoji: '🍵', name: 'Teacup without handle' },
+  { emoji: '🍻', name: 'Clinking beer mugs' },
+  { emoji: '🥂', name: 'Clinking glasses' },
+  { emoji: '🍕', name: 'Pizza' },
+  { emoji: '🍔', name: 'Hamburger' },
+  { emoji: '🍦', name: 'Soft ice cream' },
+  { emoji: '🚀', name: 'Rocket' },
+  { emoji: '🏆', name: 'Trophy' },
+  { emoji: '🥇', name: '1st place medal' },
+  { emoji: '🎯', name: 'Bullseye' },
+  { emoji: '🌈', name: 'Rainbow' },
+  { emoji: '☀️', name: 'Sun' },
+  { emoji: '🌙', name: 'Crescent moon' },
+  { emoji: '❄️', name: 'Snowflake' },
+];
+
+/** Tạo URL Microsoft Fluent Emoji 3D từ tên gốc trong repo. */
+function fluentStickerUrl(name) {
+  const folder = encodeURIComponent(name);
+  const file = name.toLowerCase().replace(/\s+/g, '_');
+  return `https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/${folder}/3D/${file}_3d.png`;
+}
+
+const STICKER_BY_EMOJI = new Map(STICKER_PACK.map((s) => [s.emoji, s]));
+
+/**
+ * Render 1 sticker: ưu tiên ảnh 3D (Fluent Emoji), tự fallback về emoji Unicode lớn nếu lỗi/không có map.
+ */
+function StickerImage({ emoji, size = 128 }) {
+  const sticker = STICKER_BY_EMOJI.get(emoji);
+  const [errored, setErrored] = useState(false);
+  if (!sticker || errored) {
+    return (
+      <span
+        className="inline-block leading-none select-none"
+        style={{ fontSize: Math.round(size * 0.85), lineHeight: 1 }}
+      >
+        {emoji}
+      </span>
+    );
+  }
+  return (
+    <img
+      src={fluentStickerUrl(sticker.name)}
+      alt={emoji}
+      className="object-contain select-none"
+      style={{ width: size, height: size }}
+      draggable={false}
+      loading="lazy"
+      onError={() => setErrored(true)}
+    />
+  );
+}
+
+/** Marker để phân biệt tin sticker với tin emoji thường. */
+const STICKER_PREFIX = ':sticker:';
+
+function isStickerContent(text) {
+  return typeof text === 'string' && text.startsWith(STICKER_PREFIX);
+}
+function stripStickerPrefix(text) {
+  return String(text || '').slice(STICKER_PREFIX.length).trim();
+}
+
+/**
+ * Tin chỉ chứa emoji (1–3 emoji, không có chữ) → render không bubble, font lớn.
+ * Dựa trên Unicode property `Extended_Pictographic` + các biến thể/skin tone.
+ */
+function isEmojiOnlyContent(text) {
+  if (!text) return false;
+  const s = String(text).trim();
+  if (!s || s.length > 30) return false;
+  let stripped;
+  try {
+    stripped = s.replace(/[\p{Extended_Pictographic}\p{Emoji_Component}\u200D\uFE0F\u20E3]/gu, '');
+  } catch {
+    return false;
+  }
+  return stripped.trim() === '';
+}
+
+/** Picker icon & sticker — popover hiển thị trên nút Smile, hỗ trợ click-outside để đóng. */
+function EmojiStickerPicker({ onPickEmoji, onPickSticker, onClose }) {
+  const [tab, setTab] = useState('emoji');
+  const [catId, setCatId] = useState(EMOJI_CATEGORIES[0].id);
+  const panelRef = useRef(null);
+
+  useEffect(() => {
+    const onDocDown = (e) => {
+      if (panelRef.current && !panelRef.current.contains(e.target)) onClose?.();
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose?.();
+    };
+    document.addEventListener('mousedown', onDocDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+
+  const cat = EMOJI_CATEGORIES.find((c) => c.id === catId) || EMOJI_CATEGORIES[0];
+
+  return (
+    <div
+      ref={panelRef}
+      className="absolute bottom-full right-0 mb-2 w-[340px] max-h-[380px] flex flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl z-30 overflow-hidden"
+      role="dialog"
+    >
+      <div className="flex border-b border-slate-100 bg-slate-50/60">
+        <button
+          type="button"
+          onClick={() => setTab('emoji')}
+          className={`flex-1 py-2 text-xs font-semibold transition ${tab === 'emoji' ? 'text-violet-700 border-b-2 border-violet-500 bg-white' : 'text-slate-500 hover:bg-white/60'}`}
+        >
+          Icon
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('sticker')}
+          className={`flex-1 py-2 text-xs font-semibold transition ${tab === 'sticker' ? 'text-violet-700 border-b-2 border-violet-500 bg-white' : 'text-slate-500 hover:bg-white/60'}`}
+        >
+          Sticker
+        </button>
+      </div>
+
+      {tab === 'emoji' ? (
+        <>
+          <div className="flex gap-1 px-2 py-1.5 border-b border-slate-100 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+            {EMOJI_CATEGORIES.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => setCatId(c.id)}
+                title={c.label}
+                className={`shrink-0 w-9 h-9 rounded-lg text-[18px] flex items-center justify-center transition ${catId === c.id ? 'bg-violet-100 ring-1 ring-violet-300' : 'hover:bg-slate-100'}`}
+              >
+                {c.icon}
+              </button>
+            ))}
+          </div>
+          <div className="flex-1 overflow-y-auto p-2 grid grid-cols-8 gap-0.5">
+            {cat.emojis.map((e, i) => (
+              <button
+                key={`${e}-${i}`}
+                type="button"
+                onClick={() => onPickEmoji?.(e)}
+                className="w-9 h-9 flex items-center justify-center text-[22px] rounded-lg hover:bg-slate-100 active:scale-95 transition"
+              >
+                {e}
+              </button>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div className="flex-1 overflow-y-auto p-3 grid grid-cols-3 gap-2">
+          {STICKER_PACK.map((s) => (
+            <button
+              key={s.emoji}
+              type="button"
+              onClick={() => onPickSticker?.(s.emoji)}
+              title={s.name}
+              className="aspect-square flex items-center justify-center rounded-2xl bg-slate-50 hover:bg-violet-50 hover:ring-2 hover:ring-violet-200 hover:scale-105 active:scale-95 transition p-2"
+            >
+              <StickerImage emoji={s.emoji} size={84} />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Kiểm tra xem tin nhắn `msg` đã được ít nhất một thành viên khác (≠ self) đọc chưa.
+ * Dựa vào `readReceipts: Map<userId, last_read_at ISO>`.
+ */
+function hasAnyOtherSeen(msg, readReceipts, selfUid) {
+  if (!msg?.created_at || !readReceipts || readReceipts.size === 0) return false;
+  const ts = new Date(msg.created_at).getTime();
+  if (!Number.isFinite(ts)) return false;
+  const selfStr = String(selfUid || '');
+  for (const [userId, lastReadAt] of readReceipts) {
+    if (String(userId) === selfStr) continue;
+    const readTs = new Date(lastReadAt).getTime();
+    if (Number.isFinite(readTs) && readTs >= ts) return true;
+  }
+  return false;
 }
 
 const formatTime = (d) => {
@@ -280,6 +632,8 @@ export function LeadChatTab({ leadId, socket, fillParent, onMessagesChange }) {
   const fileInputRef = useRef(null);
   const audioInputRef = useRef(null);
   const messagesEndRef = useRef(null);
+  const scrollContainerRef = useRef(null);
+  const initialScrolledRef = useRef(false);
   const messageRefs = useRef(new Map());
   const { user } = useAuth();
   const { registerLeadChatPresence } = useMessengerDock();
@@ -302,7 +656,6 @@ export function LeadChatTab({ leadId, socket, fillParent, onMessagesChange }) {
     try {
       const r = await api.get(`/crm/leads/${leadId}/chat`);
       setMessages(r.data || []);
-      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 200);
     } catch (e) {
       console.error(e);
     }
@@ -310,6 +663,7 @@ export function LeadChatTab({ leadId, socket, fillParent, onMessagesChange }) {
 
   useEffect(() => {
     setMessages([]);
+    initialScrolledRef.current = false;
     void load();
     if (socket) {
       socket.emit('join:lead', leadId);
@@ -317,7 +671,6 @@ export function LeadChatTab({ leadId, socket, fillParent, onMessagesChange }) {
         const lid = msg?.lead_id ?? msg?.leadId;
         if (lid == null || String(lid) !== String(leadId)) return;
         setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
-        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
       };
       socket.on('lead:chat', handler);
       return () => {
@@ -326,6 +679,28 @@ export function LeadChatTab({ leadId, socket, fillParent, onMessagesChange }) {
       };
     }
   }, [leadId, socket, load]);
+
+  // Tự động cuộn xuống đáy.
+  // - Lần đầu khi load tin: nhảy thẳng (instant) để người dùng thấy luôn tin mới nhất.
+  // - Khi có tin mới: chỉ cuộn mượt nếu user đang ở gần đáy (không giật khỏi vị trí đọc cũ).
+  useEffect(() => {
+    if (!messages.length) return;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    if (!initialScrolledRef.current) {
+      initialScrolledRef.current = true;
+      requestAnimationFrame(() => {
+        container.scrollTop = container.scrollHeight;
+      });
+      return;
+    }
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (distanceFromBottom < 160) {
+      requestAnimationFrame(() => {
+        container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+      });
+    }
+  }, [messages]);
 
   const send = async (files = null) => {
     const pickedFiles = files ? Array.from(files).filter(Boolean) : [];
@@ -439,7 +814,7 @@ export function LeadChatTab({ leadId, socket, fillParent, onMessagesChange }) {
       )}
 
       {/* Messages */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-2 bg-gray-50 rounded-t-xl">
+      <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-2 bg-gray-50 rounded-t-xl">
         {messages.map((m) => {
           const isMe = String(m.user_id) === String(user?.userId || user?.id);
           if (m.is_system) {
@@ -642,6 +1017,9 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
   const [mentionPickIdx, setMentionPickIdx] = useState(0);
   const [replyTo, setReplyTo] = useState(null);
   const [highlightId, setHighlightId] = useState(null);
+  // Map<userId, last_read_at ISO> — của các thành viên khác (không phải mình)
+  const [readReceipts, setReadReceipts] = useState(() => new Map());
+  const [pickerOpen, setPickerOpen] = useState(false);
   // Typing indicator: Map<userId, { name, isBot, ts }>
   const [typingMap, setTypingMap] = useState(() => new Map());
   const typingThrottleRef = useRef(0);
@@ -649,10 +1027,12 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
   const fileInputRef = useRef(null);
   const audioInputRef = useRef(null);
   const messagesEndRef = useRef(null);
+  const scrollContainerRef = useRef(null);
+  const initialScrolledRef = useRef(false);
   const textareaRef = useRef(null);
   const messageRefs = useRef(new Map());
   const { user } = useAuth();
-  const { registerMessengerGroupPresence } = useMessengerDock();
+  const { registerMessengerGroupPresence, markGroupRead } = useMessengerDock();
   const onMessagesChangeRef = useRef(onMessagesChange);
   onMessagesChangeRef.current = onMessagesChange;
 
@@ -663,6 +1043,16 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
   useEffect(() => {
     emitMessages(messages);
   }, [messages, emitMessages]);
+
+  // Tự đánh dấu đã đọc mỗi khi danh sách tin nhắn thay đổi (mở tab hoặc nhận tin mới
+  // trong khi tab đang hiển thị) — để phía gửi nhận được trạng thái "Đã xem".
+  useEffect(() => {
+    if (!groupId || !messages.length) return;
+    const last = messages[messages.length - 1];
+    const uidStr = String(user?.userId || user?.id || '');
+    if (last && String(last.user_id) === uidStr) return;
+    markGroupRead?.(groupId);
+  }, [groupId, messages, markGroupRead, user]);
 
   useEffect(() => {
     return registerMessengerGroupPresence(groupId);
@@ -684,17 +1074,54 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
     try {
       const r = await api.get(`/messenger/groups/${groupId}/chat`);
       setMessages(r.data || []);
-      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 200);
     } catch (e) {
       console.error(e);
+    }
+  }, [groupId]);
+
+  // Tự động cuộn xuống đáy.
+  // - Lần đầu khi load tin: nhảy thẳng (instant) để người dùng thấy luôn tin mới nhất.
+  // - Khi có tin mới sau đó: chỉ cuộn mượt nếu user đang ở gần đáy (không giật khỏi vị trí đọc cũ).
+  useEffect(() => {
+    if (!messages.length) return;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    if (!initialScrolledRef.current) {
+      initialScrolledRef.current = true;
+      requestAnimationFrame(() => {
+        container.scrollTop = container.scrollHeight;
+      });
+      return;
+    }
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (distanceFromBottom < 160) {
+      requestAnimationFrame(() => {
+        container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+      });
+    }
+  }, [messages]);
+
+  const loadReceipts = useCallback(async () => {
+    try {
+      const r = await api.get(`/messenger/groups/${groupId}/read-receipts`);
+      const next = new Map();
+      (r.data || []).forEach((row) => {
+        if (row?.user_id && row?.last_read_at) next.set(String(row.user_id), row.last_read_at);
+      });
+      setReadReceipts(next);
+    } catch {
+      setReadReceipts(new Map());
     }
   }, [groupId]);
 
   useEffect(() => {
     setMessages([]);
     setMentionOpen(false);
+    setReadReceipts(new Map());
+    initialScrolledRef.current = false;
     void loadGroupMeta();
     load();
+    void loadReceipts();
     if (socket) {
       socket.emit('join:messenger_group', groupId);
       const onChat = (msg) => {
@@ -710,7 +1137,15 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
             return next;
           });
         }
-        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+      };
+      const onRead = (payload) => {
+        if (String(payload?.group_id) !== String(groupId)) return;
+        if (!payload?.user_id || !payload?.last_read_at) return;
+        setReadReceipts((prev) => {
+          const next = new Map(prev);
+          next.set(String(payload.user_id), payload.last_read_at);
+          return next;
+        });
       };
       const onMembers = (payload) => {
         if (String(payload?.group_id) !== String(groupId)) return;
@@ -742,15 +1177,17 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
       socket.on('messenger_group:chat', onChat);
       socket.on('messenger_group:members', onMembers);
       socket.on('messenger_group:typing', onTyping);
+      socket.on('messenger_group:read', onRead);
       return () => {
         socket.emit('leave:messenger_group', groupId);
         socket.off('messenger_group:chat', onChat);
         socket.off('messenger_group:members', onMembers);
         socket.off('messenger_group:typing', onTyping);
+        socket.off('messenger_group:read', onRead);
       };
     }
     return undefined;
-  }, [groupId, socket, loadGroupMeta, load, user]);
+  }, [groupId, socket, loadGroupMeta, load, loadReceipts, user]);
 
   // Auto cleanup typing entries quá 5s không refresh (client tự stop nếu server không emit stop kịp)
   useEffect(() => {
@@ -855,20 +1292,22 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
     });
   };
 
-  const send = async (files = null) => {
+  const send = async (files = null, overrideText = null) => {
     const pickedFiles = files ? Array.from(files).filter(Boolean) : [];
-    if ((!text.trim() && pickedFiles.length === 0) || sending) return;
+    const rawText = overrideText != null ? String(overrideText) : text;
+    const trimmed = rawText.trim();
+    if ((!trimmed && pickedFiles.length === 0) || sending) return;
     setSending(true);
     const members = groupMeta?.members || [];
-    const mentionIds = resolveMentionIdsFromContent(text.trim(), members);
+    const mentionIds = resolveMentionIdsFromContent(trimmed, members);
     const replyId = replyTo?.id || null;
     try {
       if (pickedFiles.length > 0) {
         for (let i = 0; i < pickedFiles.length; i++) {
           const fd = new FormData();
           fd.append('file', pickedFiles[i]);
-          if (i === 0 && text.trim()) {
-            fd.append('content', text.trim());
+          if (i === 0 && trimmed) {
+            fd.append('content', trimmed);
             if (mentionIds.length) fd.append('mention_user_ids', JSON.stringify(mentionIds));
           }
           if (i === 0 && replyId) fd.append('reply_to', replyId);
@@ -878,12 +1317,12 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
         }
       } else {
         await api.post(`/messenger/groups/${groupId}/chat`, {
-          content: text.trim(),
+          content: trimmed,
           mention_user_ids: mentionIds,
           reply_to: replyId,
         });
       }
-      setText('');
+      if (overrideText == null) setText('');
       setReplyTo(null);
       emitStopTyping();
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -962,6 +1401,15 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
 
   const uid = user?.userId || user?.id;
 
+  // Index của tin nhắn cuối cùng mình gửi — dùng để gắn nhãn Đã gửi/Đã xem
+  const lastMyMessageIndex = useMemo(() => {
+    const uidStr = String(uid || '');
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (String(messages[i]?.user_id) === uidStr) return i;
+    }
+    return -1;
+  }, [messages, uid]);
+
   return (
     <div className={fillParent ? 'flex flex-col flex-1 min-h-0' : 'flex flex-col'} style={fillParent ? undefined : { height: '450px' }}>
       {mediaPreview && (
@@ -993,13 +1441,12 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
         </div>
       ) : null}
 
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-2 bg-gray-50 rounded-t-xl">
-        {messages.map((m) => {
+      <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-1 bg-gradient-to-b from-slate-50/60 via-white/40 to-violet-50/40 rounded-t-xl">
+        {messages.map((m, idx) => {
           const isMe = String(m.user_id) === String(uid);
           const isBot = !!m.user?.is_bot;
           const mentioned =
             Array.isArray(m.mention_user_ids) && m.mention_user_ids.map(String).includes(String(uid));
-          // System join/leave/etc — bot AI hiển thị như tin nhân viên (is_system=false, is_bot=true).
           if (m.is_system && !isBot && m.message_type === 'system') {
             return (
               <div key={m.id} className="flex justify-center my-2">
@@ -1013,97 +1460,169 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
           const senderName = m.user?.full_name || m.user?.email || 'Thành viên';
           const parent = m.reply_to_message || m.reply || null;
           const isHighlight = String(highlightId || '') === String(m.id);
+
+          const prev = messages[idx - 1];
+          const showDateSep = !prev || !isSameDay(prev.created_at, m.created_at);
+          // Chỉ hiển thị trạng thái "Đã gửi/Đã xem" cho tin nhắn cuối cùng của mình trong toàn bộ luồng
+          const lastMineIdx = lastMyMessageIndex;
+          const isLastFromMe = isMe && idx === lastMineIdx;
+          let deliveryStatus = '';
+          if (isLastFromMe) {
+            const seenByOther = hasAnyOtherSeen(m, readReceipts, uid);
+            deliveryStatus = seenByOther ? ' · Đã xem' : ' · Đã gửi';
+          }
+
+          // Chỉ sticker mới render không bubble, cỡ lớn — emoji thường vẫn hiển thị trong bubble bình thường
+          const contentStr = String(m.content || '');
+          const isSticker = isStickerContent(contentStr);
+          const bubbleless = isSticker;
+
           return (
-            <div
-              key={m.id}
-              ref={(el) => {
-                if (el) messageRefs.current.set(String(m.id), el);
-                else messageRefs.current.delete(String(m.id));
-              }}
-              className={`group/msg flex ${isMe ? 'justify-end' : 'justify-start'} gap-2 transition-colors rounded-lg ${
-                isHighlight ? 'ring-2 ring-amber-300 bg-amber-50/60' : ''
-              }`}
-            >
-              {!isMe && (
-                isBot ? (
-                  <div className="h-7 w-7 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-md ring-2 ring-white shrink-0">
-                    <span className="text-white text-sm">🤖</span>
-                  </div>
-                ) : (
-                  <Avatar name={senderName} url={m.user?.avatar} size={7} />
-                )
-              )}
-              <div className="flex items-center gap-1 max-w-[78%]">
-                {isMe && (
-                  <button
-                    type="button"
-                    onClick={() => setReplyTo(m)}
-                    className="shrink-0 opacity-70 hover:opacity-100 transition-all text-slate-500 hover:text-blue-600 hover:bg-slate-100 p-1.5 rounded-full"
-                    title="Trả lời tin nhắn"
-                    aria-label="Trả lời"
-                  >
-                    <Reply className="h-4 w-4" />
-                  </button>
-                )}
-                <div
-                  className={`rounded-2xl px-3.5 py-2 shadow-sm ${
-                    isBot
-                      ? 'bg-gradient-to-br from-indigo-50 to-purple-50 text-gray-900 rounded-bl-md border border-indigo-200'
-                      : isMe
-                        ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-br-md'
-                        : 'bg-white text-gray-800 rounded-bl-md border border-gray-100'
-                  }`}
-                >
-                  {!isMe && (
-                    <p className={`text-[10px] font-medium mb-0.5 flex items-center gap-1 ${isBot ? 'text-indigo-600' : 'text-blue-600'}`}>
-                      {senderName}
-                      {isBot && (
-                        <span className="px-1.5 py-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-[8px] font-bold">
-                          BOT
-                        </span>
-                      )}
-                    </p>
-                  )}
-                  {mentioned && (
-                    <p className="text-[9px] font-semibold mb-1 text-amber-700 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5 inline-block">
-                      Bạn được nhắc (@)
-                    </p>
-                  )}
-                  {parent && <ReplyQuoteInBubble parent={parent} isMe={isMe} onJump={jumpToMessage} />}
-                  <div className="text-[13px] leading-relaxed whitespace-pre-wrap break-words">
-                    {renderMessengerTextContent(m.content, isMe)}
-                  </div>
-                  {renderAttachmentsGrouped(m)}
-                  <p className={`text-[9px] mt-1 ${isBot ? 'text-indigo-400' : isMe ? 'text-blue-200' : 'text-gray-400'}`}>{formatTime(m.created_at)}</p>
+            <Fragment key={m.id}>
+              {showDateSep && (
+                <div className="flex justify-center pt-2 pb-1">
+                  <span className="text-[10px] font-medium text-slate-500 bg-white/70 backdrop-blur px-3 py-0.5 rounded-full border border-slate-200/70">
+                    {formatDateSeparator(m.created_at)}
+                  </span>
                 </div>
+              )}
+              <div
+                ref={(el) => {
+                  if (el) messageRefs.current.set(String(m.id), el);
+                  else messageRefs.current.delete(String(m.id));
+                }}
+                className={`group/msg flex ${isMe ? 'justify-end' : 'justify-start'} gap-2 transition-colors rounded-lg ${
+                  isHighlight ? 'ring-2 ring-amber-300 bg-amber-50/60' : ''
+                }`}
+              >
                 {!isMe && (
-                  <button
-                    type="button"
-                    onClick={() => setReplyTo(m)}
-                    className="shrink-0 opacity-70 hover:opacity-100 transition-all text-slate-500 hover:text-blue-600 hover:bg-slate-100 p-1.5 rounded-full"
-                    title="Trả lời tin nhắn"
-                    aria-label="Trả lời"
-                  >
-                    <Reply className="h-4 w-4" />
-                  </button>
+                  isBot ? (
+                    <div className="h-7 w-7 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-md ring-2 ring-white shrink-0 self-end">
+                      <span className="text-white text-sm">🤖</span>
+                    </div>
+                  ) : (
+                    <div className="self-end">
+                      <Avatar name={senderName} url={m.user?.avatar} size={7} />
+                    </div>
+                  )
                 )}
+                <div className={`flex items-center gap-1 max-w-[78%] ${isMe ? 'flex-row' : 'flex-row'}`}>
+                  {isMe && (
+                    <button
+                      type="button"
+                      onClick={() => setReplyTo(m)}
+                      className="shrink-0 opacity-0 group-hover/msg:opacity-100 transition-all text-slate-500 hover:text-violet-600 hover:bg-slate-100 p-1.5 rounded-full"
+                      title="Trả lời tin nhắn"
+                      aria-label="Trả lời"
+                    >
+                      <Reply className="h-4 w-4" />
+                    </button>
+                  )}
+                  <div className="flex flex-col">
+                    {bubbleless ? (
+                      <>
+                        {!isMe && (
+                          <p className={`text-[10px] font-semibold mb-1 px-1 ${isBot ? 'text-indigo-600' : 'text-violet-600'}`}>
+                            {senderName}
+                          </p>
+                        )}
+                        <div className={isMe ? 'text-right' : 'text-left'}>
+                          <StickerImage emoji={stripStickerPrefix(contentStr)} size={128} />
+                        </div>
+                      </>
+                    ) : (
+                      <div
+                        className={`rounded-3xl px-4 py-2.5 shadow-sm ${
+                          isBot
+                            ? 'bg-gradient-to-br from-indigo-50 to-purple-50 text-gray-900 rounded-bl-md border border-indigo-200'
+                            : isMe
+                              ? 'bg-gradient-to-br from-violet-500 to-violet-600 text-white rounded-br-md'
+                              : 'bg-white text-gray-800 rounded-bl-md border border-slate-200/80'
+                        }`}
+                      >
+                        {!isMe && (
+                          <p className={`text-[10px] font-semibold mb-0.5 flex items-center gap-1 ${isBot ? 'text-indigo-600' : 'text-violet-600'}`}>
+                            {senderName}
+                            {isBot && (
+                              <span className="px-1.5 py-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-[8px] font-bold">
+                                BOT
+                              </span>
+                            )}
+                          </p>
+                        )}
+                        {mentioned && (
+                          <p className="text-[9px] font-semibold mb-1 text-amber-700 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5 inline-block">
+                            Bạn được nhắc (@)
+                          </p>
+                        )}
+                        {parent && <ReplyQuoteInBubble parent={parent} isMe={isMe} onJump={jumpToMessage} />}
+                        <div className="text-[13.5px] leading-relaxed whitespace-pre-wrap break-words">
+                          {renderMessengerTextContent(m.content, isMe)}
+                        </div>
+                        {renderAttachmentsGrouped(m)}
+                      </div>
+                    )}
+                    <p
+                      className={`text-[10px] mt-1 px-1 ${
+                        isMe ? 'text-right text-slate-400' : 'text-left text-slate-400'
+                      }`}
+                    >
+                      {formatTime(m.created_at)}
+                      {deliveryStatus}
+                    </p>
+                  </div>
+                  {!isMe && (
+                    <button
+                      type="button"
+                      onClick={() => setReplyTo(m)}
+                      className="shrink-0 opacity-0 group-hover/msg:opacity-100 transition-all text-slate-500 hover:text-violet-600 hover:bg-slate-100 p-1.5 rounded-full"
+                      title="Trả lời tin nhắn"
+                      aria-label="Trả lời"
+                    >
+                      <Reply className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
+            </Fragment>
           );
         })}
         <TypingIndicators typingMap={typingMap} />
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="p-3 border-t bg-white rounded-b-xl shrink-0 relative">
+      <div className="px-3 pt-2 pb-3 border-t border-slate-200/70 bg-white/85 backdrop-blur-xl rounded-b-xl shrink-0 relative">
         <ReplyComposerBar replyTo={replyTo} onCancel={() => setReplyTo(null)} />
+
+        {/* Quick reply chips — phản hồi 1 chạm */}
+        {!text.trim() && !replyTo && (
+          <div className="flex items-center gap-1.5 mb-2 overflow-x-auto pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-violet-600 shrink-0 pl-1">
+              <Zap className="h-3 w-3 fill-violet-500" />
+              Trả lời nhanh:
+            </span>
+            {QUICK_REPLIES.map((q) => (
+              <button
+                key={q}
+                type="button"
+                disabled={sending}
+                onClick={() => void send(null, q)}
+                className="shrink-0 px-3 py-1 rounded-full bg-violet-50 hover:bg-violet-100 active:bg-violet-200 text-violet-700 text-[11px] font-medium border border-violet-200/70 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Gửi nhanh"
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+        )}
+
         {mentionOpen && mentionCandidates.length > 0 && (
           <ul className="absolute bottom-full left-3 right-14 mb-1 max-h-36 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg text-xs z-10">
             {mentionCandidates.map((mem, idx) => (
               <li key={mem.user_id}>
                 <button
                   type="button"
-                  className={`w-full text-left px-2 py-1.5 hover:bg-sky-50 ${idx === mentionPickIdx ? 'bg-sky-50' : ''}`}
+                  className={`w-full text-left px-2 py-1.5 hover:bg-violet-50 ${idx === mentionPickIdx ? 'bg-violet-50' : ''}`}
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => applyMentionPick(mem)}
                 >
@@ -1113,7 +1632,8 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
             ))}
           </ul>
         )}
-        <div className="flex gap-2 items-end">
+
+        <div className="flex gap-2 items-center">
           <input type="file" multiple className="hidden" ref={fileInputRef} onChange={(e) => send(e.target.files)} />
           <input
             type="file"
@@ -1125,63 +1645,115 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, onMessagesC
               e.target.value = '';
             }}
           />
-          <button type="button" onClick={() => fileInputRef.current?.click()} className="text-gray-400 hover:text-blue-500 cursor-pointer p-2 shrink-0" title="Đính kèm">
-            <Paperclip size={18} />
-          </button>
-          <button type="button" onClick={() => audioInputRef.current?.click()} className="text-gray-400 hover:text-violet-600 cursor-pointer p-2 shrink-0" title="Ghi âm / file âm thanh">
-            <Mic size={18} />
-          </button>
-          <textarea
-            ref={textareaRef}
-            value={text}
-            rows={2}
-            onChange={(e) => {
-              setText(e.target.value);
-              requestAnimationFrame(syncMentionUi);
-              if (e.target.value.trim()) emitTyping();
-              else emitStopTyping();
-            }}
-            onBlur={() => {
-              emitStopTyping();
-              setTimeout(() => setMentionOpen(false), 200);
-            }}
-            onKeyDown={(e) => {
-              if (mentionOpen && mentionCandidates.length > 0) {
-                if (e.key === 'ArrowDown') {
+
+          {/* Input pill — bao gọn paperclip + textarea + mic + emoji */}
+          <div className="flex-1 flex items-center gap-1 px-2 py-1 rounded-full bg-slate-100/90 border border-slate-200/80 focus-within:border-violet-400 focus-within:bg-white focus-within:ring-2 focus-within:ring-violet-200/60 transition-all min-h-[42px]">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="shrink-0 w-8 h-8 rounded-full text-slate-500 hover:text-violet-600 hover:bg-white/80 flex items-center justify-center transition-colors"
+              title="Đính kèm"
+            >
+              <Paperclip size={16} />
+            </button>
+            <textarea
+              ref={textareaRef}
+              value={text}
+              rows={1}
+              onChange={(e) => {
+                setText(e.target.value);
+                requestAnimationFrame(syncMentionUi);
+                if (e.target.value.trim()) emitTyping();
+                else emitStopTyping();
+              }}
+              onBlur={() => {
+                emitStopTyping();
+                setTimeout(() => setMentionOpen(false), 200);
+              }}
+              onKeyDown={(e) => {
+                if (mentionOpen && mentionCandidates.length > 0) {
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setMentionPickIdx((i) => Math.min(i + 1, mentionCandidates.length - 1));
+                    return;
+                  }
+                  if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setMentionPickIdx((i) => Math.max(i - 1, 0));
+                    return;
+                  }
+                  if (e.key === 'Enter' || e.key === 'Tab') {
+                    e.preventDefault();
+                    applyMentionPick(mentionCandidates[mentionPickIdx] || mentionCandidates[0]);
+                    return;
+                  }
+                  if (e.key === 'Escape') {
+                    setMentionOpen(false);
+                    return;
+                  }
+                }
+                if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
-                  setMentionPickIdx((i) => Math.min(i + 1, mentionCandidates.length - 1));
-                  return;
+                  void send();
                 }
-                if (e.key === 'ArrowUp') {
-                  e.preventDefault();
-                  setMentionPickIdx((i) => Math.max(i - 1, 0));
-                  return;
-                }
-                if (e.key === 'Enter' || e.key === 'Tab') {
-                  e.preventDefault();
-                  applyMentionPick(mentionCandidates[mentionPickIdx] || mentionCandidates[0]);
-                  return;
-                }
-                if (e.key === 'Escape') {
-                  setMentionOpen(false);
-                  return;
-                }
-              }
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-            placeholder="Nhập tin nhắn… Gõ @ để nhắc tên thành viên"
-            className="flex-1 min-h-[44px] px-4 py-2 border border-gray-200 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 resize-y max-h-32"
-          />
+              }}
+              placeholder="Nhập tin nhắn… Gõ @ để nhắc tên thành viên"
+              className="flex-1 min-w-0 bg-transparent border-0 outline-none focus:ring-0 text-sm resize-none py-1.5 max-h-32 placeholder:text-slate-400"
+              style={{ color: '#111827' }}
+            />
+            <button
+              type="button"
+              onClick={() => audioInputRef.current?.click()}
+              className="shrink-0 w-8 h-8 rounded-full text-slate-500 hover:text-violet-600 hover:bg-white/80 flex items-center justify-center transition-colors"
+              title="Ghi âm / file âm thanh"
+            >
+              <Mic size={16} />
+            </button>
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => setPickerOpen((v) => !v)}
+                className={`w-8 h-8 rounded-full hover:bg-white/80 flex items-center justify-center transition-colors ${
+                  pickerOpen ? 'text-amber-500 bg-white/80' : 'text-slate-500 hover:text-amber-500'
+                }`}
+                title="Icon & Sticker"
+              >
+                <Smile size={16} />
+              </button>
+              {pickerOpen && (
+                <EmojiStickerPicker
+                  onClose={() => setPickerOpen(false)}
+                  onPickEmoji={(emoji) => {
+                    const el = textareaRef.current;
+                    const start = el?.selectionStart ?? text.length;
+                    const end = el?.selectionEnd ?? text.length;
+                    const next = text.slice(0, start) + emoji + text.slice(end);
+                    setText(next);
+                    requestAnimationFrame(() => {
+                      if (textareaRef.current) {
+                        const pos = start + emoji.length;
+                        textareaRef.current.focus();
+                        textareaRef.current.setSelectionRange(pos, pos);
+                      }
+                    });
+                  }}
+                  onPickSticker={(emoji) => {
+                    setPickerOpen(false);
+                    void send(null, `${STICKER_PREFIX}${emoji}`);
+                  }}
+                />
+              )}
+            </div>
+          </div>
+
           <button
             type="button"
             onClick={() => void send()}
             disabled={sending || !text.trim()}
-            className="bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl w-10 h-10 flex items-center justify-center hover:from-blue-600 hover:to-blue-700 disabled:opacity-40 cursor-pointer transition shadow-sm shrink-0"
+            className="bg-gradient-to-br from-violet-500 to-violet-600 hover:from-violet-600 hover:to-violet-700 text-white rounded-full w-11 h-11 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition shadow-md shrink-0"
+            title="Gửi"
           >
-            <Send size={16} />
+            <Send size={16} className="-rotate-12" />
           </button>
         </div>
       </div>

@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, AppState } from 'react-native';
+import { useIsFocused } from '@react-navigation/native';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { api } from '../api/client';
-import { CrmColors, CrmRadii } from '../theme/crmTheme';
+import { CrmColors, CrmShadow } from '../theme/crmTheme';
 
 type AutoState = {
   running?: boolean;
@@ -18,6 +20,7 @@ type Props = {
 export default function CrmAutoPipelineStrip({ onPress }: Props) {
   const [state, setState] = useState<AutoState | null>(null);
   const [err, setErr] = useState(false);
+  const isFocused = useIsFocused();
 
   const load = useCallback(async () => {
     try {
@@ -30,22 +33,41 @@ export default function CrmAutoPipelineStrip({ onPress }: Props) {
     }
   }, []);
 
+  /**
+   * Chỉ poll khi screen đang focus + app đang active. Trước đây poll mỗi 8s
+   * cho cả vòng đời mount, kể cả khi user ở tab khác → mất CPU/mạng vô ích,
+   * dễ làm app đơ trên máy yếu. Tần suất 15s vừa đủ với UX.
+   */
   useEffect(() => {
+    if (!isFocused) return;
+    if (AppState.currentState !== 'active') return;
     void load();
-    const t = setInterval(() => void load(), 8000);
+    const t = setInterval(() => void load(), 15000);
     return () => clearInterval(t);
-  }, [load]);
+  }, [isFocused, load]);
 
   const running = !!state?.running;
-  const line = running
-    ? state?.stepLabel || state?.phase || 'Đang chạy công cụ tự động…'
-    : state?.enabled === false
-      ? 'Công cụ tự động đang tắt'
-      : 'Công cụ tự động: rảnh';
+  const disabled = state?.enabled === false;
+
+  const dotColor = err
+    ? '#f59e0b'
+    : running
+      ? '#22c55e'
+      : disabled
+        ? '#94a3b8'
+        : '#22c55e';
+
+  const text = err
+    ? 'Không tải được trạng thái — chạm để thử lại'
+    : running
+      ? state?.stepLabel || state?.phase || 'Đang chạy công cụ tự động Facebook…'
+      : disabled
+        ? 'Công cụ tự động Facebook đang tắt'
+        : 'Công cụ tự động Facebook đang rảnh';
 
   return (
     <TouchableOpacity
-      style={[styles.wrap, running && styles.wrapRun, err && styles.wrapErr]}
+      style={[styles.wrap, CrmShadow.sm, running && styles.wrapRun, err && styles.wrapErr]}
       onPress={onPress}
       activeOpacity={0.88}
     >
@@ -53,14 +75,13 @@ export default function CrmAutoPipelineStrip({ onPress }: Props) {
         <ActivityIndicator size="small" color={CrmColors.blue600} />
       ) : (
         <>
-          <Text style={styles.dot}>{running ? '●' : '○'}</Text>
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={styles.k}>Công cụ tự động Facebook</Text>
-            <Text style={styles.t} numberOfLines={2}>
-              {err ? 'Không tải được trạng thái — chạm để thử lại' : line}
-            </Text>
+          <View style={[styles.dotOuter, { backgroundColor: `${dotColor}26` }]}>
+            <View style={[styles.dotInner, { backgroundColor: dotColor }]} />
           </View>
-          <Text style={styles.chev}>›</Text>
+          <Text style={styles.txt} numberOfLines={1}>
+            {text}
+          </Text>
+          <Ionicons name="chevron-forward" size={16} color={CrmColors.gray300} />
         </>
       )}
     </TouchableOpacity>
@@ -72,12 +93,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    marginHorizontal: 16,
-    marginTop: 10,
+    marginHorizontal: 14,
+    marginTop: 14,
     marginBottom: 4,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: CrmRadii.md,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 14,
     backgroundColor: CrmColors.white,
     borderWidth: 1,
     borderColor: CrmColors.gray200,
@@ -87,11 +108,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#f0fdf4',
   },
   wrapErr: {
-    borderColor: CrmColors.gray200,
+    borderColor: '#fed7aa',
     backgroundColor: '#fff7ed',
   },
-  dot: { fontSize: 12, color: '#16a34a', width: 14, textAlign: 'center' },
-  k: { fontSize: 10, fontWeight: '800', color: CrmColors.gray500, textTransform: 'uppercase' },
-  t: { fontSize: 13, fontWeight: '600', color: CrmColors.gray800, marginTop: 2 },
-  chev: { fontSize: 18, color: CrmColors.gray300, fontWeight: '700' },
+  dotOuter: {
+    width: 18,
+    height: 18,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dotInner: { width: 8, height: 8, borderRadius: 999 },
+  txt: { flex: 1, fontSize: 13, fontWeight: '600', color: CrmColors.gray800 },
 });

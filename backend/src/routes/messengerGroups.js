@@ -260,6 +260,33 @@ function directPairKey(userIdA, userIdB) {
   return a < b ? `${a}:${b}` : `${b}:${a}`;
 }
 
+/** Bổ sung peer_id / display_name / peer_avatar cho chat 1-1 (header dock hiển thị đúng người). */
+async function enrichDirectGroupResponse(group, authUserId) {
+  if (!group?.id || !group.is_direct) return group;
+  const { data: mems, error: mErr } = await supabase
+    .from('messenger_group_members')
+    .select('user_id')
+    .eq('group_id', group.id);
+  if (mErr) throw mErr;
+  const other = (mems || [])
+    .map((m) => m.user_id)
+    .find((id) => String(id) !== String(authUserId));
+  if (!other) {
+    return { ...group, peer_id: null, display_name: group.name, peer_avatar: null };
+  }
+  const { data: pu } = await supabase
+    .from('users')
+    .select('id, full_name, email, avatar')
+    .eq('id', other)
+    .maybeSingle();
+  return {
+    ...group,
+    peer_id: other,
+    display_name: pu?.full_name || pu?.email || 'Đồng nghiệp',
+    peer_avatar: pu?.avatar || null,
+  };
+}
+
 function parseUuidParam(s) {
   if (s == null || typeof s !== 'string') return null;
   const t = String(s).trim();
@@ -402,7 +429,9 @@ r.post('/direct', async (req, res) => {
     if (String(peer) === String(req.authUserId)) return res.status(400).json({ error: 'Không thể chat với chính mình' });
     const key = directPairKey(req.authUserId, peer);
     const { data: existing } = await supabase.from('messenger_groups').select('*').eq('direct_pair_key', key).maybeSingle();
-    if (existing?.id) return res.status(200).json(existing);
+    if (existing?.id) {
+      return res.status(200).json(await enrichDirectGroupResponse(existing, req.authUserId));
+    }
 
     const { data: me } = await supabase.from('users').select('full_name').eq('id', req.authUserId).single();
     const { data: them } = await supabase.from('users').select('full_name').eq('id', peer).single();
@@ -437,7 +466,7 @@ r.post('/direct', async (req, res) => {
       is_system: true,
     });
 
-    res.status(201).json(group);
+    res.status(201).json(await enrichDirectGroupResponse(group, req.authUserId));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -629,12 +658,31 @@ r.patch('/groups/:id/read', async (req, res) => {
     const gid = req.params.id;
     const ok = await assertGroupMember(gid, uid);
     if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
+    const last_read_at = new Date().toISOString();
     const { error } = await supabase.from('messenger_read_receipts').upsert(
-      { group_id: gid, user_id: uid, last_read_at: new Date().toISOString() },
+      { group_id: gid, user_id: uid, last_read_at },
       { onConflict: 'group_id,user_id' },
     );
     if (error) throw error;
-    res.json({ ok: true });
+    const io = req.app.get('io');
+    if (io) io.to(`messenger_group:${gid}`).emit('messenger_group:read', { group_id: gid, user_id: uid, last_read_at });
+    res.json({ ok: true, last_read_at });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Danh sách read receipts của nhóm — dùng để hiển thị Đã gửi / Đã xem cho từng tin nhắn */
+r.get('/groups/:id/read-receipts', async (req, res) => {
+  try {
+    const ok = await assertGroupMember(req.params.id, req.authUserId);
+    if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
+    const { data, error } = await supabase
+      .from('messenger_read_receipts')
+      .select('user_id, last_read_at')
+      .eq('group_id', req.params.id);
+    if (error) throw error;
+    res.json(data || []);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

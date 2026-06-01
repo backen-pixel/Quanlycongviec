@@ -339,6 +339,18 @@ export default function AccountScreen() {
               </Text>
             </TouchableOpacity>
 
+            <Text style={styles.sectionH}>Bong bóng chat nổi</Text>
+            <TouchableOpacity
+              style={[styles.onboardBubbleBtn, CrmShadow.card]}
+              onPress={() => navigation.navigate('BubblePermissionOnboard')}
+            >
+              <Text style={styles.onboardBubbleTitle}>Cấp quyền & cài đặt bong bóng</Text>
+              <Text style={styles.onboardBubbleSub}>
+                Cho phép hiện bong bóng chat nổi trên app khác (giống Messenger). Bao gồm quyền
+                "Hiển thị trên ứng dụng khác", thông báo, và tắt tối ưu pin.
+              </Text>
+            </TouchableOpacity>
+
             <Text style={styles.sectionH}>Bảo mật & thiết bị</Text>
             <TouchableOpacity
               style={[styles.onboardBubbleBtn, CrmShadow.card]}

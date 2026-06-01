@@ -26,10 +26,12 @@ import {
   Check,
 } from 'lucide-react';
 import { useMessengerDock } from '../context/MessengerDockContext';
+import { useCall } from '../context/CallContext';
 import { MessengerGroupChatTab } from '../components/LeadChatTabs';
 import { useAuth } from '../lib/auth';
 import { messengerThreadKey } from '../lib/messengerHubStorage';
 import { resolveMediaUrl, BROKEN_MEDIA_PLACEHOLDER } from '../lib/mediaUrl';
+import { publicFileUrl } from '../lib/publicFileUrl';
 
 const URL_IN_TEXT = /(https?:\/\/[^\s<]+[^<.,:;"')\]\s])/gi;
 
@@ -130,6 +132,58 @@ function avatarGradientFor(name) {
   return AVATAR_GRADIENTS[h % AVATAR_GRADIENTS.length];
 }
 
+/** Avatar hội thoại / thành viên — ảnh thật nếu có, fallback gradient + chữ cái. */
+function HubAvatar({
+  src,
+  name,
+  className = 'w-11 h-11',
+  textClass = 'text-sm',
+  rounded = 'rounded-2xl',
+  ringClass = 'ring-2 ring-white/70',
+}) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const url = src && !imgFailed ? publicFileUrl(src) : '';
+  const gradient = avatarGradientFor(name);
+  const initial = (name || '?').slice(0, 1).toUpperCase();
+  const base = `relative shrink-0 overflow-hidden flex items-center justify-center font-bold text-white shadow-md ${rounded} ${ringClass} ${className}`;
+
+  if (url) {
+    return (
+      <div className={base} style={{ background: '#e2e8f0' }}>
+        <img
+          src={url}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover"
+          onError={() => setImgFailed(true)}
+        />
+      </div>
+    );
+  }
+  return (
+    <div className={base} style={{ background: gradient }}>
+      <span className={textClass}>{initial}</span>
+    </div>
+  );
+}
+
+function threadAvatarSrc(t) {
+  if (t?.is_direct && t?.peer_avatar) return t.peer_avatar;
+  return null;
+}
+
+/** Chuẩn hóa preview tin nhắn cuối: cắt ngắn + thay placeholder khi nội dung trống. */
+function normalizeMessengerPreview(text) {
+  let raw = (text || '').toString().trim();
+  if (!raw) return '';
+  // Tin sticker được lưu dạng `:sticker:<emoji>` → preview hiển thị "Sticker <emoji>"
+  if (raw.startsWith(':sticker:')) {
+    const emoji = raw.slice(':sticker:'.length).trim();
+    raw = emoji ? `Sticker ${emoji}` : 'Sticker';
+  }
+  const oneLine = raw.replace(/\s+/g, ' ');
+  return oneLine.length > 80 ? `${oneLine.slice(0, 80)}…` : oneLine;
+}
+
 /** Gộp API /messenger/groups với preview local; ghim lấy từ DB (pinnedGroupIds). */
 function buildMessengerThreads(apiList, lsMessengerRows, pinnedGroupIds) {
   const pinSet = new Set(pinnedGroupIds || []);
@@ -137,6 +191,10 @@ function buildMessengerThreads(apiList, lsMessengerRows, pinnedGroupIds) {
   const groups = Array.isArray(apiList) ? apiList : [];
   const mergedMessenger = groups.map((g) => {
     const hit = lsByGid.get(g.id);
+    // Ưu tiên preview API (đến từ RPC v2 — `last_message`), fallback localStorage cuối cùng dùng placeholder.
+    const apiPreview = normalizeMessengerPreview(g.last_message);
+    const lsPreview = normalizeMessengerPreview(hit?.lastPreview);
+    const preview = apiPreview || lsPreview || '';
     return {
       kind: 'messenger',
       groupId: g.id,
@@ -144,10 +202,11 @@ function buildMessengerThreads(apiList, lsMessengerRows, pinnedGroupIds) {
       title: g.name,
       is_direct: !!g.is_direct,
       peer_id: g.peer_id || null,
+      peer_avatar: g.peer_avatar || null,
       code: '',
       type: 'group',
       pinned: pinSet.has(g.id),
-      lastPreview: hit?.lastPreview,
+      lastPreview: preview,
       messageCount: typeof g.message_count === 'number' ? g.message_count : 0,
       lastMessageAt: g.last_message_at || g.created_at,
       updatedAt: hit?.updatedAt || g.last_message_at || g.created_at,
@@ -166,8 +225,9 @@ function buildMessengerThreads(apiList, lsMessengerRows, pinnedGroupIds) {
 export default function MessengerHubPage() {
   const { user, socket } = useAuth();
   const uid = user?.userId || user?.id;
-  const { openMessengerGroupChat, markGroupRead, syncHubThreadLeadIds, syncHubMessengerGroupIds, unreadByGroupId } =
+  const { markGroupRead, syncHubThreadLeadIds, syncHubMessengerGroupIds, unreadByGroupId } =
     useMessengerDock();
+  const { startCall, status: callStatus } = useCall();
   const [searchParams] = useSearchParams();
 
   const [threads, setThreads] = useState([]);
@@ -175,7 +235,7 @@ export default function MessengerHubPage() {
   const [threadFilter, setThreadFilter] = useState('');
   const [selectedGroupId, setSelectedGroupId] = useState(() => searchParams.get('openGroup') || null);
   const [messages, setMessages] = useState([]);
-  const [rightOpen, setRightOpen] = useState(true);
+  const [rightOpen, setRightOpen] = useState(false);
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightSection, setRightSection] = useState('media');
   const [createOpen, setCreateOpen] = useState(false);
@@ -273,8 +333,13 @@ export default function MessengerHubPage() {
   useEffect(() => {
     let reloadT;
     const onGroupActivity = (e) => {
-      const { groupId, created_at } = e.detail || {};
+      const { groupId, created_at, content, attachments, is_self, sender_name } = e.detail || {};
       if (!groupId || !created_at) return;
+      // Tự dựng preview tức thì (không chờ reload API)
+      const rawPreview = (content || '').toString().trim()
+        || (Array.isArray(attachments) && attachments.length ? '[Tệp đính kèm]' : '');
+      const prefix = is_self ? 'Bạn: ' : (sender_name ? `${sender_name}: ` : '');
+      const livePreview = rawPreview ? normalizeMessengerPreview(`${prefix}${rawPreview}`) : '';
       setThreads((prev) => {
         const idx = prev.findIndex((t) => t.kind === 'messenger' && t.groupId === groupId);
         if (idx === -1) return prev;
@@ -287,6 +352,7 @@ export default function MessengerHubPage() {
             ...t,
             updatedAt: bumpTime || t.updatedAt,
             lastMessageAt: bumpTime || t.lastMessageAt,
+            lastPreview: livePreview || t.lastPreview,
           };
         });
       });
@@ -333,11 +399,10 @@ export default function MessengerHubPage() {
       const ids = users.map((u) => u.id || u.user_id).filter(Boolean);
       if (ids.length) {
         const pr = await api.post('/users/presence', { user_ids: ids }).catch(() => ({ data: { presence: {} } }));
-        setPresenceByUser(pr.data?.presence || {});
-      } else setPresenceByUser({});
+        setPresenceByUser((prev) => ({ ...prev, ...(pr.data?.presence || {}) }));
+      }
     } catch {
       setStaffRows([]);
-      setPresenceByUser({});
     }
     setStaffLoading(false);
   }, [staffCompanyId, staffDepartmentId]);
@@ -348,18 +413,46 @@ export default function MessengerHubPage() {
     if (!staffCompanyId && !staffDepartmentId) {
       setStaffRows([]);
       setStaffListLoaded(false);
-      setPresenceByUser({});
       return;
     }
     void loadStaffList();
   }, [staffPanelOpen, staffCompanyId, staffDepartmentId, loadStaffList]);
+
+  // Fetch + poll presence cho tất cả peer của chat 1-1 trong sidebar — hiển thị chấm Online/Offline.
+  useEffect(() => {
+    const directPeerIds = [...new Set(
+      (threads || [])
+        .filter((t) => t.kind === 'messenger' && t.is_direct && t.peer_id)
+        .map((t) => String(t.peer_id)),
+    )];
+    if (directPeerIds.length === 0) return undefined;
+    let cancelled = false;
+    const fetchPresence = () => {
+      if (document.hidden) return;
+      api
+        .post('/users/presence', { user_ids: directPeerIds })
+        .then((r) => {
+          if (cancelled) return;
+          setPresenceByUser((prev) => ({ ...prev, ...(r.data?.presence || {}) }));
+        })
+        .catch(() => {});
+    };
+    fetchPresence();
+    const intervalId = setInterval(fetchPresence, 45 * 1000);
+    document.addEventListener('visibilitychange', fetchPresence);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', fetchPresence);
+    };
+  }, [threads]);
 
   useEffect(() => {
     if (!staffPanelOpen || !staffListLoaded || staffRows.length === 0) return undefined;
     const ids = staffRows.map((u) => u.id || u.user_id).filter(Boolean);
     const tick = () => {
       if (document.hidden) return;
-      api.post('/users/presence', { user_ids: ids }).then((r) => setPresenceByUser(r.data?.presence || {})).catch(() => {});
+      api.post('/users/presence', { user_ids: ids }).then((r) => setPresenceByUser((prev) => ({ ...prev, ...(r.data?.presence || {}) }))).catch(() => {});
     };
     const id = setInterval(tick, 45 * 1000);
     document.addEventListener('visibilitychange', tick);
@@ -448,10 +541,16 @@ export default function MessengerHubPage() {
     return myMember && (myMember.role === 'leader' || myMember.role === 'deputy');
   }, [groupDetail, myMember, user?.role]);
 
+  const totalUnreadCount = useMemo(
+    () => Object.values(unreadByGroupId || {}).reduce((a, b) => a + (Number(b) || 0), 0),
+    [unreadByGroupId],
+  );
+
   const filteredThreads = useMemo(() => {
     const f = threadFilter.trim().toLowerCase();
     let list = threads;
     if (listTab === 'pinned') list = list.filter((t) => t.pinned);
+    else if (listTab === 'unread') list = list.filter((t) => (t.groupId ? (unreadByGroupId[t.groupId] || 0) > 0 : false));
     if (f) {
       list = list.filter(
         (t) =>
@@ -468,7 +567,7 @@ export default function MessengerHubPage() {
       if (!a.pinned && b.pinned) return 1;
       return byActivity(a, b);
     });
-  }, [threads, listTab, threadFilter]);
+  }, [threads, listTab, threadFilter, unreadByGroupId]);
 
   const mediaBundle = useMemo(() => collectMediaAndFiles(messages), [messages]);
 
@@ -693,19 +792,24 @@ export default function MessengerHubPage() {
               {filteredThreads.map((t) => {
                 const isSel = t.groupId && selectedGroupId === t.groupId;
                 const unread = t.groupId ? unreadByGroupId[t.groupId] || 0 : 0;
-                const avatarGradient = avatarGradientFor(t.title);
                 return (
                   <button
                     key={threadRowKey(t)}
                     type="button"
                     title={t.title || 'Hội thoại'}
                     onClick={() => openMessengerThread(t)}
-                    className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-[13px] font-bold text-white shadow-md ring-2 ring-offset-2 ring-offset-white/40 transition hover:scale-105 hover:shadow-lg ${
-                      isSel ? 'ring-sky-500' : 'ring-transparent'
+                    className={`relative flex h-11 w-11 shrink-0 items-center justify-center transition hover:scale-105 hover:shadow-lg ${
+                      isSel ? 'ring-2 ring-sky-500 ring-offset-2 ring-offset-white/40 rounded-2xl' : ''
                     }`}
-                    style={{ background: avatarGradient }}
                   >
-                    {(t.title || '?').slice(0, 1).toUpperCase()}
+                    <HubAvatar
+                      src={threadAvatarSrc(t)}
+                      name={t.title}
+                      className="h-11 w-11"
+                      textClass="text-[13px]"
+                      rounded="rounded-2xl"
+                      ringClass={isSel ? 'ring-2 ring-sky-500' : 'ring-2 ring-transparent'}
+                    />
                     {unread > 0 ? (
                       <span className="absolute -right-1 -top-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full border-2 border-white bg-rose-500 px-0.5 text-[9px] font-bold text-white shadow">
                         {unread > 99 ? '…' : unread}
@@ -728,7 +832,14 @@ export default function MessengerHubPage() {
                   <MessageCircle className="h-4 w-4" />
                 </div>
                 <div>
-                  <h1 className="text-[15px] font-bold leading-none" style={{ color: '#0f172a' }}>Tin nhắn</h1>
+                  <h1 className="text-[15px] font-bold leading-none flex items-center gap-1.5" style={{ color: '#0f172a' }}>
+                    Tin nhắn
+                    {totalUnreadCount > 0 && (
+                      <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-violet-100 text-violet-700 text-[10px] font-bold">
+                        {totalUnreadCount > 99 ? '99+' : totalUnreadCount}
+                      </span>
+                    )}
+                  </h1>
                   <p className="text-[10px] text-slate-500 mt-0.5">{filteredThreads.length} hội thoại</p>
                 </div>
               </div>
@@ -767,6 +878,7 @@ export default function MessengerHubPage() {
               {[
                 { id: 'all', label: 'Tất cả' },
                 { id: 'pinned', label: 'Ưu tiên' },
+                { id: 'unread', label: 'Chưa đọc' },
               ].map((t) => (
                 <button
                   key={t.id}
@@ -878,8 +990,15 @@ export default function MessengerHubPage() {
                             key={id}
                             className="flex items-center gap-1.5 px-1 py-1 rounded-md text-[11px] hover:bg-white text-slate-700"
                           >
-                            <span className="relative shrink-0 w-6 h-6 rounded-full bg-gradient-to-br from-slate-300 to-slate-400 text-white flex items-center justify-center text-[9px] font-bold">
-                              {(u.full_name || u.email || '?')[0].toUpperCase()}
+                            <span className="relative shrink-0">
+                              <HubAvatar
+                                src={u.avatar}
+                                name={u.full_name || u.email}
+                                className="w-6 h-6"
+                                textClass="text-[9px]"
+                                rounded="rounded-full"
+                                ringClass=""
+                              />
                               <span
                                 className={`absolute bottom-0 right-0 w-2 h-2 rounded-full border border-white ${
                                   online ? 'bg-emerald-500' : 'bg-slate-300'
@@ -932,7 +1051,6 @@ export default function MessengerHubPage() {
             {filteredThreads.map((t) => {
               const isSel = t.groupId && selectedGroupId === t.groupId;
               const unread = t.groupId ? unreadByGroupId[t.groupId] || 0 : 0;
-              const avatarGradient = avatarGradientFor(t.title);
               return (
                 <div
                   key={threadRowKey(t)}
@@ -945,12 +1063,24 @@ export default function MessengerHubPage() {
                   }`}
                 >
                   <div className="relative shrink-0">
-                    <div
-                      className="w-11 h-11 rounded-2xl text-white flex items-center justify-center text-sm font-bold shadow-md ring-2 ring-white/70"
-                      style={{ background: avatarGradient }}
-                    >
-                      {(t.title || '?').slice(0, 1).toUpperCase()}
-                    </div>
+                    <HubAvatar
+                      src={threadAvatarSrc(t)}
+                      name={t.title}
+                      className="w-11 h-11"
+                      textClass="text-sm"
+                    />
+                    {t.is_direct && t.peer_id && (() => {
+                      const pres = presenceByUser[t.peer_id] || presenceByUser[String(t.peer_id)];
+                      const online = !!pres?.online;
+                      return (
+                        <span
+                          className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white shadow-sm ${
+                            online ? 'bg-emerald-500' : 'bg-slate-300'
+                          }`}
+                          title={online ? 'Đang hoạt động' : 'Không hoạt động'}
+                        />
+                      );
+                    })()}
                     {unread > 0 && (
                       <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-0.5 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center border-2 border-white shadow">
                         {unread > 99 ? '99+' : unread}
@@ -959,33 +1089,32 @@ export default function MessengerHubPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className={`text-sm truncate ${unread > 0 ? 'font-bold text-slate-900' : 'font-semibold text-slate-800'}`}>{t.title}</span>
-                      {t.is_direct ? (
-                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 shrink-0">1-1</span>
-                      ) : (
-                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-800 shrink-0">Nhóm</span>
+                      <span className={`text-[13px] truncate ${unread > 0 ? 'font-bold text-slate-900' : 'font-semibold text-slate-800'}`}>{t.title}</span>
+                      {!t.is_direct && (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 shrink-0">Nhóm</span>
                       )}
                       {t.pinned && <Pin className="h-3 w-3 text-amber-500 shrink-0 fill-amber-500" />}
                     </div>
-                    <p className={`text-xs truncate mt-0.5 ${unread > 0 ? 'text-slate-700 font-medium' : 'text-slate-500'}`}>{t.lastPreview || '—'}</p>
-                    {typeof t.messageCount === 'number' && t.messageCount > 0 ? (
-                      <p className="text-[10px] text-slate-400 mt-0.5">{t.messageCount} tin nhắn</p>
-                    ) : null}
+                    <p className={`text-[12px] truncate mt-0.5 ${unread > 0 ? 'text-slate-700 font-medium' : 'text-slate-500'}`}>{t.lastPreview || '—'}</p>
                   </div>
-                  <div className="flex flex-col items-end gap-1 shrink-0">
+                  <div className="flex flex-col items-end gap-1.5 shrink-0">
                     <span className="text-[10px] text-slate-400 whitespace-nowrap">
                       {formatRelativeTime(t.lastMessageAt || t.updatedAt)}
                     </span>
-                    <button
-                      type="button"
-                      className={`p-1 rounded-md transition ${
-                        t.pinned ? 'text-amber-500' : 'text-slate-300 hover:text-amber-500 opacity-0 group-hover:opacity-100'
-                      }`}
-                      title={t.pinned ? 'Bỏ ghim' : 'Ghim'}
-                      onClick={(e) => void togglePin(t, e)}
-                    >
-                      <Pin className={`h-3.5 w-3.5 ${t.pinned ? 'fill-amber-500' : ''}`} />
-                    </button>
+                    {unread > 0 ? (
+                      <span className="w-2 h-2 rounded-full bg-violet-500" title={`${unread} tin chưa đọc`} />
+                    ) : (
+                      <button
+                        type="button"
+                        className={`p-1 rounded-md transition ${
+                          t.pinned ? 'text-amber-500' : 'text-slate-300 hover:text-amber-500 opacity-0 group-hover:opacity-100'
+                        }`}
+                        title={t.pinned ? 'Bỏ ghim' : 'Ghim'}
+                        onClick={(e) => void togglePin(t, e)}
+                      >
+                        <Pin className={`h-3.5 w-3.5 ${t.pinned ? 'fill-amber-500' : ''}`} />
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -1009,33 +1138,83 @@ export default function MessengerHubPage() {
             </div>
           ) : (
             <>
-              <header className="h-14 shrink-0 flex items-center gap-2 px-4 bg-white/70 backdrop-blur-xl border-b border-white/40 shadow-sm">
-                <div
-                  className="w-10 h-10 rounded-2xl text-white flex items-center justify-center text-sm font-bold shadow-md ring-2 ring-white/70"
-                  style={{ background: avatarGradientFor(selected?.title) }}
-                >
-                  {(selected?.title || '?').slice(0, 1).toUpperCase()}
+              <header className="h-16 shrink-0 flex items-center gap-3 px-4 bg-white/80 backdrop-blur-xl border-b border-white/40 shadow-sm">
+                <div className="relative shrink-0">
+                  <HubAvatar
+                    src={threadAvatarSrc(selected)}
+                    name={selected?.title}
+                    className="w-11 h-11"
+                    textClass="text-sm"
+                  />
+                  {selected?.is_direct && selected?.peer_id && (() => {
+                    const pres = presenceByUser[selected.peer_id] || presenceByUser[String(selected.peer_id)];
+                    const online = !!pres?.online;
+                    return (
+                      <span
+                        className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white shadow-sm ${
+                          online ? 'bg-emerald-500' : 'bg-slate-300'
+                        }`}
+                        title={online ? 'Đang hoạt động' : 'Không hoạt động'}
+                      />
+                    );
+                  })()}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold truncate" style={{ color: '#0f172a' }}>{selected?.title}</p>
-                  <p className="text-[11px] text-slate-500 truncate flex items-center gap-1">
-                    {selected?.is_direct ? (
-                      <><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Chat trực tiếp</>
-                    ) : (
+                  <p className="text-[15px] font-bold truncate" style={{ color: '#0f172a' }}>{selected?.title}</p>
+                  <p className="text-[11px] text-slate-500 truncate flex items-center gap-1.5 mt-0.5">
+                    {selected?.is_direct ? (() => {
+                      const pres = presenceByUser[selected.peer_id] || presenceByUser[String(selected.peer_id)];
+                      const online = !!pres?.online;
+                      return (
+                        <span className="inline-flex items-center gap-1">
+                          <span className={`w-2 h-2 rounded-full ${online ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                          <span className={online ? 'text-emerald-600 font-medium' : 'text-slate-500 font-medium'}>
+                            {online ? 'Đang hoạt động' : 'Không hoạt động'}
+                          </span>
+                        </span>
+                      );
+                    })() : (
                       <><Users className="h-3 w-3" /> Nhóm chat · {groupMembers.length || '—'} thành viên</>
                     )}
                   </p>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                  <button type="button" className="p-2 rounded-xl text-slate-500 hover:bg-slate-200/70 hover:text-slate-700 transition" title="Gọi (sắp có)">
-                    <Phone className="h-4 w-4" />
-                  </button>
-                  <button type="button" className="p-2 rounded-xl text-slate-500 hover:bg-slate-200/70 hover:text-slate-700 transition" title="Video (sắp có)">
+                  {(() => {
+                    const canCall = !!selected?.is_direct && !!selected?.peer_id && callStatus === 'idle';
+                    const disabledReason = !selected?.is_direct
+                      ? 'Chỉ gọi được trong hội thoại 1-1'
+                      : callStatus !== 'idle'
+                        ? 'Đang có cuộc gọi khác'
+                        : 'Gọi thoại';
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!canCall) return;
+                          startCall({
+                            id: selected.peer_id,
+                            name: selected.title,
+                            avatar: selected.peer_avatar,
+                          });
+                        }}
+                        disabled={!canCall}
+                        className={`w-9 h-9 rounded-full transition flex items-center justify-center ${
+                          canCall
+                            ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
+                            : 'text-slate-400 bg-slate-100/80 cursor-not-allowed'
+                        }`}
+                        title={disabledReason}
+                      >
+                        <Phone className="h-4 w-4" />
+                      </button>
+                    );
+                  })()}
+                  <button type="button" className="w-9 h-9 rounded-full text-slate-400 bg-slate-100/80 cursor-not-allowed flex items-center justify-center" title="Gọi video (sắp có)" disabled>
                     <Video className="h-4 w-4" />
                   </button>
                   <button
                     type="button"
-                    className="p-2 rounded-xl text-slate-500 hover:bg-slate-200/70 hover:text-slate-700 transition"
+                    className="w-9 h-9 rounded-full text-slate-600 bg-slate-100/80 hover:bg-violet-100 hover:text-violet-700 transition flex items-center justify-center"
                     title={rightOpen ? 'Ẩn bảng phải' : 'Thông tin hội thoại'}
                     onClick={() => setRightOpen((v) => !v)}
                   >
@@ -1045,7 +1224,7 @@ export default function MessengerHubPage() {
                     <button
                       type="button"
                       onClick={() => { setRightOpen(true); setRightSection('members'); }}
-                      className="text-xs font-semibold px-3 py-1.5 rounded-xl bg-white/70 backdrop-blur border border-white/70 text-slate-700 hover:bg-white hover:shadow-sm inline-flex items-center gap-1.5 transition"
+                      className="text-xs font-semibold px-3 h-9 rounded-full bg-white/70 backdrop-blur border border-slate-200 text-slate-700 hover:bg-white hover:shadow-sm inline-flex items-center gap-1.5 transition"
                       title="Quản lý thành viên"
                     >
                       <Users className="h-3.5 w-3.5" />
@@ -1057,14 +1236,6 @@ export default function MessengerHubPage() {
                       )}
                     </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => openMessengerGroupChat({ id: selectedGroupId, name: selected?.title })}
-                    className="text-xs font-semibold px-3 py-1.5 rounded-xl bg-gradient-to-r from-sky-500 to-cyan-600 text-white hover:from-sky-600 hover:to-cyan-700 shadow-md hover:shadow-lg transition inline-flex items-center gap-1"
-                  >
-                    <PanelRightOpen className="h-3.5 w-3.5" />
-                    Chat nổi
-                  </button>
                 </div>
               </header>
               <div className="flex min-h-0 flex-1">
@@ -1079,12 +1250,14 @@ export default function MessengerHubPage() {
                 {rightOpen && (
                   <aside className="flex w-[288px] shrink-0 flex-col border-l border-white/40 bg-white/65 backdrop-blur-xl shadow-sm">
                     <div className="p-4 border-b border-white/40 text-center bg-gradient-to-b from-sky-50/60 to-transparent">
-                      <div
-                        className="w-20 h-20 mx-auto rounded-3xl text-white flex items-center justify-center text-2xl font-bold mb-2 shadow-lg ring-4 ring-white/70"
-                        style={{ background: avatarGradientFor(selected?.title) }}
-                      >
-                        {(selected?.title || '?').slice(0, 1).toUpperCase()}
-                      </div>
+                      <HubAvatar
+                        src={threadAvatarSrc(selected)}
+                        name={selected?.title}
+                        className="w-20 h-20 mx-auto mb-2"
+                        textClass="text-2xl"
+                        rounded="rounded-3xl"
+                        ringClass="ring-4 ring-white/70"
+                      />
                       <p className="text-sm font-bold truncate px-1" style={{ color: '#0f172a' }}>{selected?.title}</p>
                       <p className="text-[11px] text-slate-500 mt-0.5 inline-flex items-center gap-1 justify-center">
                         {selected?.is_direct ? (
@@ -1153,12 +1326,12 @@ export default function MessengerHubPage() {
                                   key={m.user_id}
                                   className="flex items-center gap-2 rounded-xl border border-white/60 p-2 bg-white/70 backdrop-blur hover:bg-white hover:shadow-sm transition"
                                 >
-                                  <div
-                                    className="h-9 w-9 shrink-0 rounded-2xl text-white flex items-center justify-center text-[12px] font-bold shadow-sm ring-2 ring-white/70"
-                                    style={{ background: avatarGradientFor(u.full_name || u.email) }}
-                                  >
-                                    {(u.full_name || '?').slice(0, 1).toUpperCase()}
-                                  </div>
+                                  <HubAvatar
+                                    src={u.avatar}
+                                    name={u.full_name || u.email}
+                                    className="h-9 w-9"
+                                    textClass="text-[12px]"
+                                  />
                                   <div className="min-w-0 flex-1">
                                     <p className="text-[12px] font-semibold text-slate-800 truncate flex items-center gap-1">
                                       {u.full_name || 'Người dùng'}
@@ -1510,9 +1683,14 @@ export default function MessengerHubPage() {
                             : 'border-slate-100 hover:bg-slate-50'
                         }`}
                       >
-                        <div className="h-8 w-8 shrink-0 rounded-full bg-gradient-to-br from-sky-400 to-cyan-600 text-white flex items-center justify-center text-[11px] font-bold">
-                          {(u.full_name || '?').slice(0, 1)}
-                        </div>
+                        <HubAvatar
+                          src={u.avatar}
+                          name={u.full_name || u.email}
+                          className="h-8 w-8"
+                          textClass="text-[11px]"
+                          rounded="rounded-full"
+                          ringClass=""
+                        />
                         <div className="min-w-0 flex-1">
                           <p className="text-[12px] font-semibold text-slate-800 truncate">{u.full_name}</p>
                           <p className="text-[10px] text-slate-500 truncate">{u.email}</p>

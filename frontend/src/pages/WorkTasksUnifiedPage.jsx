@@ -139,9 +139,6 @@ export default function WorkTasksUnifiedPage() {
             <Layers className="h-6 w-6 text-blue-600" />
             Tổng hợp nhiệm vụ
           </h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            Gom CRM, Sản xuất, Vận chuyển và Giao việc — CRUD trực tiếp từ module Công việc
-          </p>
         </div>
         {isAdmin && (
           <button

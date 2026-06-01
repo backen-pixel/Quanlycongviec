@@ -199,11 +199,6 @@ export default function CompanyCrmRegionsPage() {
             <MapPin className="h-7 w-7 text-blue-600" />
             Quản lý khu vực
           </h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Khu vực / chi nhánh CRM theo từng công ty — dùng khi phân lead, deal và nhân viên (
-            <span className="text-gray-700">module Công việc</span>
-            ).
-          </p>
         </div>
         <button
           type="button"

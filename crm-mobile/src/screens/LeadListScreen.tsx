@@ -8,18 +8,24 @@ import {
   TextInput,
   RefreshControl,
   ActivityIndicator,
+  InteractionManager,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   Alert,
+  Image,
 } from 'react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { LinearGradient } from 'expo-linear-gradient';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { useNotifications } from '../context/NotificationContext';
 import { canAssigneeFilterDeals, canAssigneeFilterLeads } from '../lib/crmMobilePrefs';
 import type { CrmLeadListItem } from '../types/crm';
 import type { CrmStackParamList } from '../navigation/types';
-import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
+import { CrmColors, CrmShadow } from '../theme/crmTheme';
 import { formatVND, formatDate, calculateDays, stageTintBg } from '../lib/formatUtils';
 import CreateCrmEntityModal from '../components/CreateCrmEntityModal';
 import { setLeadPin, setLeadInteracted } from '../lib/crmLeadFlags';
@@ -60,10 +66,22 @@ type StageRow = {
 };
 type SourceRow = { id: string; name?: string | null; icon?: string | null };
 
+const HERO_GRADIENT: readonly [string, string, string] = ['#1E40AF', '#4F46E5', '#7C3AED'];
+
+/**
+ * Cap an toàn để chống đơ:
+ *  - chunk = 500 (giữ nguyên: cân bằng round-trip / payload)
+ *  - hardLimit = 30 vòng = 15.000 bản ghi/tab — đủ dùng cho 99% công ty;
+ *    quá ngưỡng này user nên dùng bộ lọc / chuyển sang xem theo stage.
+ */
+const FETCH_CHUNK = 500;
+const FETCH_MAX_LOOPS = 30;
+
 async function fetchAllCrmLeadsChunked(
   type: 'lead' | 'deal',
   snapshot: CrmMobilePipelineSnapshot,
   sendAssignedTo: boolean,
+  signal?: AbortSignal,
 ): Promise<CrmLeadListItem[]> {
   const dateParams: Record<string, string> = {};
   if (snapshot.customDateFrom) dateParams.date_from = snapshot.customDateFrom;
@@ -76,11 +94,15 @@ async function fetchAllCrmLeadsChunked(
     type === 'lead' ? String(snapshot.filterStageLead || '').trim() : String(snapshot.filterStageDeal || '').trim();
   if (stageId) common.stage_id = stageId;
 
-  const chunk = 500;
   let offset = 0;
   const out: CrmLeadListItem[] = [];
-  for (let guard = 0; guard < 200; guard++) {
-    const { data } = await api.get('/crm/leads', { params: { ...common, limit: chunk, offset } });
+  for (let guard = 0; guard < FETCH_MAX_LOOPS; guard++) {
+    if (signal?.aborted) break;
+    const { data } = await api.get('/crm/leads', {
+      params: { ...common, limit: FETCH_CHUNK, offset },
+      signal,
+    });
+    if (signal?.aborted) break;
     const payload = data ?? {};
     const page = (Array.isArray(payload) ? payload : payload.data || []) as CrmLeadListItem[];
     out.push(...page);
@@ -93,26 +115,43 @@ async function fetchAllCrmLeadsChunked(
         ? payload.hasMore
         : totalKnown != null
           ? nextOffset < totalKnown
-          : page.length >= chunk;
+          : page.length >= FETCH_CHUNK;
     if (!hasMore) break;
     offset = nextOffset;
   }
   return out;
 }
 
-function LeadCard({
+/* -------------------------------------------------------------------------- */
+/*  Lead card                                                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `React.memo` để chỉ re-render khi item thật sự đổi (không phụ thuộc parent).
+ * `onPressItem`/`onLongPressItem` là callback ID-based (stable từ cha) → mỗi
+ * lần parent re-render, card sẽ không phải tạo lại closure nội bộ.
+ */
+const LeadCard = React.memo(LeadCardInner);
+
+function LeadCardInner({
   item,
-  onPress,
-  onLongPress,
+  onPressItem,
+  onLongPressItem,
 }: {
   item: CrmLeadListItem;
-  onPress: () => void;
-  onLongPress?: () => void;
+  onPressItem: (id: string) => void;
+  onLongPressItem: (item: CrmLeadListItem) => void;
 }) {
+  const onPress = useCallback(() => onPressItem(item.id), [onPressItem, item.id]);
+  const onLongPress = useCallback(() => onLongPressItem(item), [onLongPressItem, item]);
   const stageColor = item.stage?.color || '#94a3b8';
   const days = calculateDays(item.created_at);
   const dayStyle =
-    days > 30 ? styles.daysHot : days > 14 ? styles.daysWarm : styles.daysCool;
+    days > 30
+      ? { bg: styles.daysPillHot, txt: styles.daysHotTxt }
+      : days > 14
+        ? { bg: styles.daysPillWarm, txt: styles.daysWarmTxt }
+        : { bg: styles.daysPillCool, txt: styles.daysCoolTxt };
   const owner = item.assignee?.full_name || item.lead_owner?.full_name;
 
   return (
@@ -121,65 +160,145 @@ function LeadCard({
       onPress={onPress}
       onLongPress={onLongPress}
       delayLongPress={350}
-      activeOpacity={0.7}
+      activeOpacity={0.78}
     >
+      {/* Stage stripe ở mép trái — nổi bật giai đoạn */}
+      <View style={[styles.cardStripe, { backgroundColor: stageColor }]} />
+
       <View style={styles.cardTop}>
         <View style={styles.cardLeft}>
           <View style={styles.codeRow}>
-            <Text style={styles.cardCode}>{item.code || '—'}</Text>
-            {item.is_pinned ? <Text style={styles.pinIcon}>📌</Text> : null}
-            {item.is_interacted ? <Text style={styles.interactedIcon}>✅</Text> : null}
+            <View style={styles.codePill}>
+              <Text style={styles.cardCode}>{item.code || '—'}</Text>
+            </View>
+            {item.is_pinned ? (
+              <View style={styles.pinChip}>
+                <Ionicons name="bookmark" size={11} color="#b45309" />
+              </View>
+            ) : null}
+            {item.is_interacted ? (
+              <View style={styles.tickChip}>
+                <Ionicons name="checkmark-circle" size={11} color={CrmColors.emerald600} />
+              </View>
+            ) : null}
           </View>
           <View style={styles.titleRow}>
             <Text style={styles.cardTitle} numberOfLines={2}>
               {item.title || '—'}
             </Text>
-            {item.is_new_for_current_user ? (
-              <View style={styles.newBadge}>
-                <Text style={styles.newBadgeTxt}>MỚI</Text>
-              </View>
-            ) : null}
           </View>
           {item.customer?.full_name ? (
             <Text style={styles.cardCustomer} numberOfLines={1}>
               {item.customer.full_name}
             </Text>
           ) : null}
-          {item.customer?.phone ? (
-            <Text style={styles.cardPhone} numberOfLines={1}>
-              📞 {item.customer.phone}
-            </Text>
+        </View>
+
+        <View style={styles.cardRight}>
+          {item.is_new_for_current_user ? (
+            <View style={styles.newBadge}>
+              <Text style={styles.newBadgeTxt}>MỚI</Text>
+            </View>
+          ) : null}
+          {item.stage?.name ? (
+            <View style={[styles.stagePill, { backgroundColor: stageTintBg(stageColor), borderColor: stageColor }]}>
+              <Text style={[styles.stagePillTxt, { color: stageColor }]} numberOfLines={2}>
+                {(item.stage.icon ? `${item.stage.icon} ` : '') + item.stage.name}
+              </Text>
+            </View>
           ) : null}
         </View>
-        {item.stage?.name ? (
-          <View style={[styles.stagePill, { backgroundColor: stageTintBg(stageColor) }]}>
-            <Text style={[styles.stagePillTxt, { color: stageColor }]} numberOfLines={2}>
-              {(item.stage.icon ? `${item.stage.icon} ` : '') + item.stage.name}
-            </Text>
-          </View>
-        ) : null}
       </View>
-      {item.estimated_value != null && item.estimated_value > 0 ? (
-        <Text style={styles.cardValue}>{formatVND(item.estimated_value)}</Text>
+
+      {/* Highlighted info chips: phone + owner */}
+      {(item.customer?.phone || owner) ? (
+        <View style={styles.highlightRow}>
+          {item.customer?.phone ? (
+            <View style={[styles.highlightChip, styles.highlightChipPhone]}>
+              <Ionicons name="call" size={13} color={CrmColors.emerald700} />
+              <Text style={styles.highlightChipPhoneTxt} numberOfLines={1}>
+                {item.customer.phone}
+              </Text>
+            </View>
+          ) : null}
+          {owner ? (
+            <View style={[styles.highlightChip, styles.highlightChipOwner]}>
+              <Ionicons name="person-circle" size={14} color={CrmColors.blue700} />
+              <Text style={styles.highlightChipOwnerTxt} numberOfLines={1}>
+                {owner}
+              </Text>
+            </View>
+          ) : null}
+        </View>
       ) : null}
-      <View style={styles.cardMeta}>
-        <Text style={styles.cardMetaTxt} numberOfLines={1}>
-          {owner ? `🤝 ${owner}` : ' '}
-        </Text>
-        <Text style={styles.cardMetaTxt} numberOfLines={1}>
-          {item.source?.icon || item.source?.name
-            ? `${item.source?.icon || ''} ${item.source?.name || ''}`.trim()
-            : '—'}
-        </Text>
-        <Text style={styles.cardMetaTxt}>{formatDate(item.created_at)}</Text>
-        <Text style={dayStyle}>{days} ngày</Text>
+
+      {item.estimated_value != null && item.estimated_value > 0 ? (
+        <View style={styles.valueBlock}>
+          <Ionicons name="cash" size={14} color={CrmColors.emerald700} />
+          <Text style={styles.cardValueTxt}>{formatVND(item.estimated_value)}</Text>
+        </View>
+      ) : null}
+
+      <View style={styles.cardFooterRow}>
+        <View style={styles.metaInline}>
+          <Ionicons name="calendar-outline" size={12} color={CrmColors.gray500} />
+          <Text style={styles.cardMetaTxt}>{formatDate(item.created_at)}</Text>
+        </View>
+        <View style={[styles.daysPill, dayStyle.bg]}>
+          <Text style={dayStyle.txt}>{days} ngày</Text>
+        </View>
       </View>
     </TouchableOpacity>
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/*  Hero stat tile                                                             */
+/* -------------------------------------------------------------------------- */
+
+function StatTile({
+  icon,
+  iconColor,
+  iconBg,
+  value,
+  label,
+  active,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  iconColor: string;
+  iconBg: string;
+  value: string | number;
+  label: string;
+  active?: boolean;
+  onPress?: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      activeOpacity={onPress ? 0.85 : 1}
+      onPress={onPress}
+      style={[styles.statTile, active && styles.statTileActive]}
+    >
+      <View style={[styles.statIconWrap, { backgroundColor: iconBg }]}>
+        <Ionicons name={icon} size={14} color={iconColor} />
+      </View>
+      <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+        {value}
+      </Text>
+      <Text style={styles.statLabel} numberOfLines={1}>
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Main screen                                                                */
+/* -------------------------------------------------------------------------- */
+
 export default function LeadListScreen({ navigation }: Props) {
   const { user } = useAuth();
+  const { unreadCount } = useNotifications();
   const [createMode, setCreateMode] = useState<'lead' | 'deal' | null>(null);
   const [tab, setTab] = useState<'lead' | 'deal'>('lead');
   const [snapshot, setSnapshot] = useState<CrmMobilePipelineSnapshot | null>(null);
@@ -202,6 +321,7 @@ export default function LeadListScreen({ navigation }: Props) {
   const [assigneeModal, setAssigneeModal] = useState(false);
   const [pickerUsers, setPickerUsers] = useState<PickerUser[]>([]);
   const [pickerLoading, setPickerLoading] = useState(false);
+  const [sortNewestFirst, setSortNewestFirst] = useState(true);
 
   const canPickLead = canAssigneeFilterLeads(user?.role);
   const canPickDeal = canAssigneeFilterDeals(user?.role);
@@ -237,9 +357,13 @@ export default function LeadListScreen({ navigation }: Props) {
     };
   }, []);
 
-  const commitSnapshot = useCallback(async (next: CrmMobilePipelineSnapshot) => {
+  /** Cập nhật snapshot ngay (state), persist xuống AsyncStorage **không chặn**
+   *  UI — viết bất đồng bộ trong microtask kế tiếp. */
+  const commitSnapshot = useCallback((next: CrmMobilePipelineSnapshot) => {
     setSnapshot(next);
-    await saveCrmMobilePipelineSnapshot(next);
+    setTimeout(() => {
+      void saveCrmMobilePipelineSnapshot(next);
+    }, 0);
   }, []);
 
   const loadMeta = useCallback(async () => {
@@ -274,31 +398,66 @@ export default function LeadListScreen({ navigation }: Props) {
     void loadMeta();
   }, [loadMeta, snapshot?.filterCompany]);
 
+  /**
+   * Fetch lead + deal — chống đơ:
+   *  1) Tab đang xem load trước → user thấy data ngay, không chờ tab kia.
+   *  2) Tab còn lại fetch sau khi tương tác/animation lắng xuống
+   *     (InteractionManager) — không block first paint.
+   *  3) AbortController hủy request cũ khi params đổi → không nuốt CPU/mạng
+   *     cho dữ liệu sắp bị thay thế.
+   */
   useEffect(() => {
     if (snapshot == null) return;
+    const controller = new AbortController();
     let cancelled = false;
+    let secondaryHandle: ReturnType<typeof InteractionManager.runAfterInteractions> | null = null;
+
     (async () => {
       setLoading(true);
       try {
         const snap = snapshotRef.current!;
         const assignParam =
           (canAssigneeFilterLeads(user?.role) || canAssigneeFilterDeals(user?.role)) && !!snap.filterAssignee;
-        const [leads, deals] = await Promise.all([
-          fetchAllCrmLeadsChunked('lead', snap, assignParam),
-          fetchAllCrmLeadsChunked('deal', snap, assignParam),
-        ]);
-        if (!cancelled) {
-          setRawLead(leads);
-          setRawDeal(deals);
+
+        const primaryType: 'lead' | 'deal' = tab;
+        const secondaryType: 'lead' | 'deal' = tab === 'lead' ? 'deal' : 'lead';
+        const setPrimary = primaryType === 'lead' ? setRawLead : setRawDeal;
+        const setSecondary = secondaryType === 'lead' ? setRawLead : setRawDeal;
+
+        const primary = await fetchAllCrmLeadsChunked(primaryType, snap, assignParam, controller.signal);
+        if (cancelled || controller.signal.aborted) return;
+        setPrimary(primary);
+        setLoading(false);
+
+        secondaryHandle = InteractionManager.runAfterInteractions(() => {
+          if (cancelled || controller.signal.aborted) return;
+          void (async () => {
+            try {
+              const secondary = await fetchAllCrmLeadsChunked(
+                secondaryType,
+                snap,
+                assignParam,
+                controller.signal,
+              );
+              if (!cancelled && !controller.signal.aborted) setSecondary(secondary);
+            } catch {
+              /* ignore: secondary tab — không cần thông báo */
+            }
+          })();
+        });
+      } catch (e: unknown) {
+        if ((e as { name?: string })?.name !== 'CanceledError' && !cancelled) {
+          setLoading(false);
         }
-      } finally {
-        if (!cancelled) setLoading(false);
       }
     })();
+
     return () => {
       cancelled = true;
+      controller.abort();
+      if (secondaryHandle && 'cancel' in secondaryHandle) secondaryHandle.cancel();
     };
-  }, [apiKey, user?.role]);
+  }, [apiKey, user?.role, tab]);
 
   const fbKey = snapshot?.filterSource ?? '';
   useEffect(() => {
@@ -354,7 +513,18 @@ export default function LeadListScreen({ navigation }: Props) {
     return filterPipelineItemsWebLike(rawDeal, f, fbDeal);
   }, [rawDeal, clientBase, fbDeal, snapshot?.filterStageDeal]);
 
-  const items = tab === 'lead' ? filteredLead : filteredDeal;
+  const rawForTab = tab === 'lead' ? filteredLead : filteredDeal;
+
+  const items = useMemo(() => {
+    const arr = rawForTab.slice();
+    arr.sort((a, b) => {
+      const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return sortNewestFirst ? tb - ta : ta - tb;
+    });
+    arr.sort((a, b) => (b.is_pinned ? 1 : 0) - (a.is_pinned ? 1 : 0));
+    return arr;
+  }, [rawForTab, sortNewestFirst]);
 
   const sourceOptions = useMemo(
     () => buildSmartSourceOptions(sources, fbPages, rawLead, rawDeal),
@@ -375,6 +545,47 @@ export default function LeadListScreen({ navigation }: Props) {
     ].filter(Boolean).length;
   }, [snapshot]);
 
+  /** Đếm số lead/deal trong từng stage (đã qua lọc client) — hiển thị trên chip. */
+  const stageCountsLead = useMemo(() => {
+    const m = new Map<string, number>();
+    filteredLead.forEach((it) => {
+      const id = it.stage?.id || it.stage_id || '';
+      if (!id) return;
+      m.set(id, (m.get(id) || 0) + 1);
+    });
+    return m;
+  }, [filteredLead]);
+  const stageCountsDeal = useMemo(() => {
+    const m = new Map<string, number>();
+    filteredDeal.forEach((it) => {
+      const id = it.stage?.id || it.stage_id || '';
+      if (!id) return;
+      m.set(id, (m.get(id) || 0) + 1);
+    });
+    return m;
+  }, [filteredDeal]);
+
+  /** Số liệu cho hero. */
+  const heroStats = useMemo(() => {
+    const newPhones = new Set<string>();
+    const owners = new Set<string>();
+    rawLead.forEach((l) => {
+      if (l.customer?.phone) newPhones.add(l.customer.phone);
+      const oid = l.assignee?.id || l.lead_owner?.id;
+      if (oid) owners.add(oid);
+    });
+    rawDeal.forEach((d) => {
+      const oid = d.assignee?.id || d.lead_owner?.id;
+      if (oid) owners.add(oid);
+    });
+    return {
+      leadCount: filteredLead.length,
+      dealCount: filteredDeal.length,
+      newPhones: newPhones.size,
+      owners: owners.size,
+    };
+  }, [filteredLead.length, filteredDeal.length, rawLead, rawDeal]);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
@@ -384,6 +595,22 @@ export default function LeadListScreen({ navigation }: Props) {
       setRefreshing(false);
     }
   }, [loadMeta]);
+
+  /** Callback ID-based — ổn định qua nhiều lần render, kết hợp với React.memo
+   *  ở LeadCard giúp FlatList không phải re-render toàn bộ row mỗi khi cha thay
+   *  đổi state (vd. typing trong ô tìm kiếm). */
+  const onPressLeadItem = useCallback(
+    (id: string) => navigation.navigate('LeadDetail', { id }),
+    [navigation],
+  );
+  const onLongPressLeadItem = useCallback((it: CrmLeadListItem) => setFlagItem(it), []);
+  const renderLeadItem = useCallback(
+    ({ item }: { item: CrmLeadListItem }) => (
+      <LeadCard item={item} onPressItem={onPressLeadItem} onLongPressItem={onLongPressLeadItem} />
+    ),
+    [onPressLeadItem, onLongPressLeadItem],
+  );
+  const keyExtractor = useCallback((it: CrmLeadListItem) => it.id, []);
 
   /** Cập nhật optimistic cờ ghim / tương tác trong cả rawLead & rawDeal — đỡ phải refetch. */
   const patchLeadFlagsLocal = useCallback(
@@ -488,16 +715,32 @@ export default function LeadListScreen({ navigation }: Props) {
     navigation.setOptions({
       headerRight: () => (
         <View style={styles.headerIcons}>
-          <TouchableOpacity onPress={() => openMoreTab(navigation, 'CrmEvents', {})} hitSlop={12}>
-            <Text style={styles.headerIconTxt}>📅</Text>
+          <TouchableOpacity onPress={() => openMoreTab(navigation, 'FacebookInbox')} hitSlop={10} style={styles.headerBtn}>
+            <Ionicons name="search" size={20} color={CrmColors.gray700} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => openMoreTab(navigation, 'FacebookInbox')} hitSlop={12}>
-            <Text style={styles.headerIconTxt}>📘</Text>
+          <TouchableOpacity
+            onPress={() => navigation.getParent()?.navigate('NotificationsTab' as never)}
+            hitSlop={10}
+            style={styles.headerBtn}
+          >
+            <Ionicons name="notifications-outline" size={22} color={CrmColors.gray700} />
+            {unreadCount > 0 ? <View style={styles.headerDot} /> : null}
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => openMoreTab(navigation, 'AccountSettings')} hitSlop={10}>
+            {user?.avatar ? (
+              <Image source={{ uri: user.avatar }} style={styles.headerAvatar} />
+            ) : (
+              <View style={[styles.headerAvatar, styles.headerAvatarPlaceholder]}>
+                <Text style={styles.headerAvatarTxt}>
+                  {((user?.full_name || user?.fullName || user?.email || '?')[0] || '?').toUpperCase()}
+                </Text>
+              </View>
+            )}
           </TouchableOpacity>
         </View>
       ),
     });
-  }, [navigation]);
+  }, [navigation, unreadCount, user?.avatar, user?.full_name, user?.fullName, user?.email]);
 
   if (!snapshot) {
     return (
@@ -507,148 +750,240 @@ export default function LeadListScreen({ navigation }: Props) {
     );
   }
 
-  const listHeader = (
-    <View style={styles.headerBlock}>
-      <Text style={styles.kicker}>CRM / Quản lý khách hàng</Text>
-      <Text style={styles.h1}>{tab === 'lead' ? '💼 Quản lý Leads' : '🎯 Quản lý Deals'}</Text>
+  /* --------------------------------- HEADER (hero + filters) --------------- */
 
-      <CrmAutoPipelineStrip onPress={() => openMoreTab(navigation, 'AutoPipelineStatus')} />
-
-      <View style={styles.addRow}>
-        <TouchableOpacity style={styles.addLeadBtn} onPress={() => setCreateMode('lead')} activeOpacity={0.85}>
-          <Text style={styles.addLeadTxt}>+ Thêm Lead</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.addDealBtn} onPress={() => setCreateMode('deal')} activeOpacity={0.85}>
-          <Text style={styles.addDealTxt}>+ Thêm Deal</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.pillWrap}>
-        <View style={styles.pillOuter}>
-          <TouchableOpacity
-            onPress={() => setTab('lead')}
-            style={[styles.pillBtn, tab === 'lead' && styles.pillBtnOnLead]}
-            activeOpacity={0.85}
-          >
-            <Text style={[styles.pillTxt, tab === 'lead' && styles.pillTxtOnLead]}>
-              💼 Leads ({filteredLead.length})
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => setTab('deal')}
-            style={[styles.pillBtn, tab === 'deal' && styles.pillBtnOnDeal]}
-            activeOpacity={0.85}
-          >
-            <Text style={[styles.pillTxt, tab === 'deal' && styles.pillTxtOnDeal]}>
-              🎯 Deals ({filteredDeal.length})
-            </Text>
-          </TouchableOpacity>
+  const heroBlock = (
+    <LinearGradient
+      colors={HERO_GRADIENT}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={[styles.hero, CrmShadow.card]}
+    >
+      <View style={styles.heroTopRow}>
+        <View style={styles.heroIcon}>
+          <Ionicons name="briefcase" size={20} color="#fff" />
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={styles.heroTitle} numberOfLines={1}>
+            {tab === 'lead' ? 'Quản lý Leads' : 'Quản lý Deals'}
+          </Text>
+          <Text style={styles.heroSub} numberOfLines={1}>
+            Tìm kiếm, quản lý và chăm sóc khách hàng
+          </Text>
         </View>
       </View>
 
-      <Text style={styles.filterLabel}>Hiển thị (giống web CRM)</Text>
+      <View style={styles.statRow}>
+        <StatTile
+          icon="people"
+          iconColor="#1d4ed8"
+          iconBg="#dbeafe"
+          value={heroStats.leadCount.toLocaleString('vi-VN')}
+          label="Leads"
+          active={tab === 'lead'}
+          onPress={() => setTab('lead')}
+        />
+        <StatTile
+          icon="trophy"
+          iconColor="#dc2626"
+          iconBg="#fee2e2"
+          value={heroStats.dealCount.toLocaleString('vi-VN')}
+          label="Deals"
+          active={tab === 'deal'}
+          onPress={() => setTab('deal')}
+        />
+        <StatTile
+          icon="call"
+          iconColor="#059669"
+          iconBg="#d1fae5"
+          value={heroStats.newPhones.toLocaleString('vi-VN')}
+          label="SĐT mới"
+        />
+        <StatTile
+          icon="person"
+          iconColor="#ea580c"
+          iconBg="#ffedd5"
+          value={heroStats.owners.toLocaleString('vi-VN')}
+          label="NV phụ trách"
+        />
+      </View>
+
+      <View style={styles.heroBtnRow}>
+        <TouchableOpacity
+          style={[styles.heroBtn, styles.heroBtnLead]}
+          activeOpacity={0.88}
+          onPress={() => setCreateMode('lead')}
+        >
+          <Ionicons name="add" size={18} color="#fff" />
+          <Text style={styles.heroBtnTxt}>Thêm Lead</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.heroBtn, styles.heroBtnDeal]}
+          activeOpacity={0.88}
+          onPress={() => setCreateMode('deal')}
+        >
+          <Ionicons name="flag" size={16} color="#fff" />
+          <Text style={styles.heroBtnTxt}>Thêm Deal</Text>
+        </TouchableOpacity>
+      </View>
+    </LinearGradient>
+  );
+
+  const viewModeChips: { key: 'list' | 'kanban' | 'planner' | 'calendar'; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+    { key: 'list', label: 'Danh sách', icon: 'list' },
+    { key: 'kanban', label: 'Kanban', icon: 'grid' },
+    { key: 'planner', label: 'Planner', icon: 'calendar-clear-outline' },
+    { key: 'calendar', label: 'Lịch', icon: 'calendar-outline' },
+  ];
+
+  const stages = tab === 'lead' ? stagesLead : stagesDeal;
+  const stageCounts = tab === 'lead' ? stageCountsLead : stageCountsDeal;
+  const activeStage = tab === 'lead' ? snapshot.filterStageLead : snapshot.filterStageDeal;
+
+  const listHeader = (
+    <View style={styles.headerBlock}>
+      {heroBlock}
+
+      <CrmAutoPipelineStrip onPress={() => openMoreTab(navigation, 'AutoPipelineStatus')} />
+
+      {/* HIỂN THỊ */}
+      <View style={styles.sectionTitleRow}>
+        <Text style={styles.sectionTitle}>Hiển thị (giống web CRM)</Text>
+        <TouchableOpacity onPress={() => setAdvOpen(true)} hitSlop={6}>
+          <View style={styles.sectionTitleAction}>
+            <Ionicons name="options-outline" size={14} color={CrmColors.blue600} />
+            <Text style={styles.sectionTitleActionTxt}>Tùy chỉnh</Text>
+          </View>
+        </TouchableOpacity>
+      </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.hScrollPad}>
-        {(['list', 'kanban', 'planner', 'calendar'] as const).map((m) => (
-          <TouchableOpacity
-            key={m}
-            style={[styles.vmChip, snapshot.viewMode === m && styles.vmChipOn]}
-            onPress={() => void commitSnapshot({ ...snapshot, viewMode: m })}
-            activeOpacity={0.85}
-          >
-            <Text style={[styles.vmChipTxt, snapshot.viewMode === m && styles.vmChipTxtOn]}>
-              {m === 'list' ? 'Danh sách' : m === 'kanban' ? 'Kanban' : m === 'planner' ? 'Planner' : 'Lịch'}
-            </Text>
-          </TouchableOpacity>
-        ))}
+        {viewModeChips.map((m) => {
+          const on = snapshot.viewMode === m.key;
+          return (
+            <TouchableOpacity
+              key={m.key}
+              style={[styles.vmChip, on && styles.vmChipOn]}
+              activeOpacity={0.85}
+              onPress={() => void commitSnapshot({ ...snapshot, viewMode: m.key })}
+            >
+              <Ionicons name={m.icon} size={14} color={on ? CrmColors.blue700 : CrmColors.gray500} />
+              <Text style={[styles.vmChipTxt, on && styles.vmChipTxtOn]}>{m.label}</Text>
+            </TouchableOpacity>
+          );
+        })}
       </ScrollView>
 
-      <Text style={styles.filterLabel}>Giai đoạn ({tab === 'lead' ? 'Lead' : 'Deal'} — lọc API + danh sách)</Text>
+      {/* GIAI ĐOẠN */}
+      <Text style={styles.sectionTitle}>
+        Giai đoạn ({tab === 'lead' ? 'Lead' : 'Deal'} — lọc API + danh sách)
+      </Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.hScrollPad}>
         <TouchableOpacity
-          style={[styles.chip, (tab === 'lead' ? !snapshot.filterStageLead : !snapshot.filterStageDeal) && styles.chipOn]}
+          style={[styles.stageChip, !activeStage && styles.stageChipOn]}
           onPress={() =>
             void commitSnapshot(
               tab === 'lead' ? { ...snapshot, filterStageLead: '' } : { ...snapshot, filterStageDeal: '' },
             )
           }
         >
-          <Text
-            style={[
-              styles.chipTxt,
-              (tab === 'lead' ? !snapshot.filterStageLead : !snapshot.filterStageDeal) && styles.chipTxtOn,
-            ]}
-          >
-            Tất cả
-          </Text>
+          <Text style={[styles.stageChipTxt, !activeStage && styles.stageChipTxtOn]}>Tất cả</Text>
+          <View style={[styles.stageChipBadge, !activeStage && styles.stageChipBadgeOn]}>
+            <Text style={[styles.stageChipBadgeTxt, !activeStage && styles.stageChipBadgeTxtOn]}>
+              {(tab === 'lead' ? filteredLead.length : filteredDeal.length).toString()}
+            </Text>
+          </View>
         </TouchableOpacity>
-        {(tab === 'lead' ? stagesLead : stagesDeal).map((s) => {
-          const active = tab === 'lead' ? snapshot.filterStageLead === s.id : snapshot.filterStageDeal === s.id;
+        {stages.map((s) => {
+          const active = activeStage === s.id;
+          const color = s.color || CrmColors.blue600;
+          const count = stageCounts.get(s.id) || 0;
           return (
             <TouchableOpacity
               key={s.id}
-              style={[styles.chip, active && styles.chipOn]}
+              style={[
+                styles.stageChip,
+                active && { backgroundColor: stageTintBg(color), borderColor: color },
+              ]}
               onPress={() =>
                 void commitSnapshot(
                   tab === 'lead' ? { ...snapshot, filterStageLead: s.id } : { ...snapshot, filterStageDeal: s.id },
                 )
               }
             >
-              <Text style={[styles.chipTxt, active && styles.chipTxtOn]} numberOfLines={1}>
+              <Text
+                style={[styles.stageChipTxt, active && { color }]}
+                numberOfLines={1}
+              >
                 {(s.icon ? `${s.icon} ` : '') + (s.name || '—')}
               </Text>
+              <View
+                style={[
+                  styles.stageChipBadge,
+                  active && { backgroundColor: color },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.stageChipBadgeTxt,
+                    active && styles.stageChipBadgeTxtOn,
+                  ]}
+                >
+                  {count}
+                </Text>
+              </View>
             </TouchableOpacity>
           );
         })}
       </ScrollView>
 
-      <TouchableOpacity style={styles.filterAdvBtn} onPress={() => setAdvOpen(true)} activeOpacity={0.85}>
-        <Text style={styles.filterAdvBtnTxt}>Bộ lọc (giống web)</Text>
-        {advFilterCount > 0 ? (
-          <View style={styles.filterBadge}>
-            <Text style={styles.filterBadgeTxt}>{advFilterCount}</Text>
-          </View>
-        ) : null}
-      </TouchableOpacity>
-
-      <Text style={styles.filterLabel}>Số điện thoại (API)</Text>
+      {/* SỐ ĐIỆN THOẠI */}
+      <Text style={styles.sectionTitle}>Số điện thoại (API)</Text>
       <View style={styles.chipRow}>
         {(
           [
-            ['has_phone', 'Có SĐT'],
-            ['', 'Tất cả'],
-            ['no_phone', 'Chưa có SĐT'],
+            ['has_phone', 'Có SĐT', 'call' as const],
+            ['', 'Tất cả', 'apps-outline' as const],
+            ['no_phone', 'Chưa có SĐT', 'call-outline' as const],
           ] as const
-        ).map(([key, label]) => (
-          <TouchableOpacity
-            key={key || 'all'}
-            style={[styles.chip, snapshot.filterPhone === key && styles.chipOn]}
-            onPress={() => setPhoneQuick(key)}
-          >
-            <Text style={[styles.chipTxt, snapshot.filterPhone === key && styles.chipTxtOn]}>{label}</Text>
-          </TouchableOpacity>
-        ))}
+        ).map(([key, label, ic]) => {
+          const on = snapshot.filterPhone === key;
+          return (
+            <TouchableOpacity
+              key={key || 'all'}
+              style={[styles.phoneChip, on && styles.phoneChipOn]}
+              onPress={() => setPhoneQuick(key)}
+              activeOpacity={0.85}
+            >
+              <Ionicons name={ic} size={13} color={on ? CrmColors.blue700 : CrmColors.gray500} />
+              <Text style={[styles.phoneChipTxt, on && styles.phoneChipTxtOn]}>{label}</Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
+      {/* NHÂN VIÊN */}
       {canPickAssignee ? (
         <>
-          <Text style={styles.filterLabel}>Nhân viên phụ trách (chỉ quản trị / lãnh đạo)</Text>
+          <Text style={styles.sectionTitle}>Nhân viên phụ trách (chỉ quản trị / lãnh đạo)</Text>
           <TouchableOpacity style={styles.assigneeBtn} onPress={() => void openAssigneeModal()} activeOpacity={0.85}>
-            <Text style={styles.assigneeBtnTxt}>
+            <Ionicons name="person-outline" size={16} color={CrmColors.blue600} />
+            <Text style={styles.assigneeBtnTxt} numberOfLines={1}>
               {snapshot.filterAssignee
                 ? pickerUsers.find((u) => u.id === snapshot.filterAssignee)?.full_name ||
                   pickerUsers.find((u) => u.id === snapshot.filterAssignee)?.email ||
                   'Đã chọn'
                 : 'Tất cả nhân viên'}
             </Text>
-            <Text style={styles.assigneeBtnChev}>▾</Text>
+            <Ionicons name="chevron-down" size={14} color={CrmColors.gray400} />
           </TouchableOpacity>
         </>
       ) : (
         <Text style={styles.filterHint}>Bạn chỉ thấy {tab === 'deal' ? 'deal' : 'lead'} được giao cho mình.</Text>
       )}
 
+      {/* SEARCH BAR */}
       <View style={styles.searchWrap}>
-        <Text style={styles.searchIcon}>🔍</Text>
+        <Ionicons name="search" size={16} color={CrmColors.gray400} />
         <TextInput
           style={styles.searchInput}
           placeholder="Tìm nhanh: tên, SĐT, mã, mô tả, người phụ trách..."
@@ -659,47 +994,68 @@ export default function LeadListScreen({ navigation }: Props) {
           returnKeyType="search"
         />
         {draftQ.length > 0 ? (
-          <TouchableOpacity onPress={() => setDraftQ('')} style={styles.searchClear}>
-            <Text style={styles.searchClearTxt}>✕</Text>
+          <TouchableOpacity onPress={() => { setDraftQ(''); if (snapshot.searchText) void commitSnapshot({ ...snapshot, searchText: '' }); }} hitSlop={8}>
+            <Ionicons name="close-circle" size={16} color={CrmColors.gray400} />
           </TouchableOpacity>
         ) : null}
+        <TouchableOpacity onPress={() => setAdvOpen(true)} hitSlop={8} style={styles.searchFilterBtn}>
+          <Ionicons name="options" size={16} color={CrmColors.blue700} />
+          {advFilterCount > 0 ? (
+            <View style={styles.searchFilterDot}>
+              <Text style={styles.searchFilterDotTxt}>{advFilterCount}</Text>
+            </View>
+          ) : null}
+        </TouchableOpacity>
       </View>
-      <TouchableOpacity style={styles.searchGo} onPress={searchSubmit} activeOpacity={0.85}>
-        <Text style={styles.searchGoTxt}>Tìm</Text>
-      </TouchableOpacity>
+
+      {/* DANH SÁCH HEADER */}
+      <View style={styles.listHead}>
+        <Text style={styles.listHeadTitle}>
+          Danh sách {tab === 'lead' ? 'Leads' : 'Deals'}
+        </Text>
+        <TouchableOpacity
+          style={styles.sortBtn}
+          activeOpacity={0.85}
+          onPress={() => setSortNewestFirst((v) => !v)}
+        >
+          <Text style={styles.sortBtnTxt}>{sortNewestFirst ? 'Mới nhất' : 'Cũ nhất'}</Text>
+          <Ionicons name={sortNewestFirst ? 'arrow-down' : 'arrow-up'} size={12} color={CrmColors.blue700} />
+        </TouchableOpacity>
+      </View>
     </View>
   );
+
+  const footer =
+    !loading && items.length > 0 ? (
+      <View style={styles.tableFooter}>
+        <Text style={styles.tableFooterTxt}>
+          Hiển thị: {items.length} {tab === 'deal' ? 'deal' : 'lead'} (sau lọc giống web)
+        </Text>
+        <Text style={styles.tableFooterTxt}>
+          GT: {sumLoadedValue > 0 ? formatVND(sumLoadedValue) : '0đ'}
+        </Text>
+      </View>
+    ) : null;
 
   const listBody =
     snapshot.viewMode === 'list' ? (
       <FlatList
         data={items}
-        keyExtractor={(it) => it.id}
+        keyExtractor={keyExtractor}
         ListHeaderComponent={listHeader}
-        renderItem={({ item }) => (
-          <LeadCard
-            item={item}
-            onPress={() => navigation.navigate('LeadDetail', { id: item.id })}
-            onLongPress={() => setFlagItem(item)}
-          />
-        )}
+        renderItem={renderLeadItem}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={CrmColors.blue600} />
         }
         contentContainerStyle={styles.listContent}
         ListEmptyComponent={loading ? null : <Text style={styles.empty}>Không có dữ liệu</Text>}
-        ListFooterComponent={
-          !loading && items.length > 0 ? (
-            <View style={styles.tableFooter}>
-              <Text style={styles.tableFooterTxt}>
-                Hiển thị: {items.length} {tab === 'deal' ? 'deal' : 'lead'} (sau lọc giống web)
-              </Text>
-              <Text style={styles.tableFooterTxt}>
-                GT: {sumLoadedValue > 0 ? formatVND(sumLoadedValue) : '0đ'}
-              </Text>
-            </View>
-          ) : null
-        }
+        ListFooterComponent={footer}
+        /* Perf: chỉ render ~8 card đầu, mở rộng cửa sổ khi cuộn — tránh đơ ban đầu */
+        initialNumToRender={8}
+        maxToRenderPerBatch={10}
+        windowSize={10}
+        updateCellsBatchingPeriod={50}
+        removeClippedSubviews={Platform.OS === 'android'}
       />
     ) : (
       <ScrollView
@@ -730,16 +1086,7 @@ export default function LeadListScreen({ navigation }: Props) {
           />
         )}
         {!loading && items.length === 0 ? <Text style={styles.empty}>Không có dữ liệu</Text> : null}
-        {!loading && items.length > 0 ? (
-          <View style={styles.tableFooter}>
-            <Text style={styles.tableFooterTxt}>
-              Hiển thị: {items.length} {tab === 'deal' ? 'deal' : 'lead'}
-            </Text>
-            <Text style={styles.tableFooterTxt}>
-              GT: {sumLoadedValue > 0 ? formatVND(sumLoadedValue) : '0đ'}
-            </Text>
-          </View>
-        ) : null}
+        {footer}
         {loading && items.length === 0 ? (
           <View style={styles.altLoading}>
             <ActivityIndicator size="large" color={CrmColors.blue600} />
@@ -798,8 +1145,9 @@ export default function LeadListScreen({ navigation }: Props) {
               disabled={flagBusy || !flagItem}
               onPress={() => flagItem && void togglePin(flagItem)}
             >
+              <Ionicons name="bookmark" size={16} color="#f59e0b" />
               <Text style={styles.modalRowTxt}>
-                {flagItem?.is_pinned ? '📌 Bỏ ghim' : '📌 Ghim thẻ lên đầu'}
+                {flagItem?.is_pinned ? 'Bỏ ghim thẻ' : 'Ghim thẻ lên đầu'}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -807,8 +1155,9 @@ export default function LeadListScreen({ navigation }: Props) {
               disabled={flagBusy || !flagItem}
               onPress={() => flagItem && void toggleInteracted(flagItem)}
             >
+              <Ionicons name="checkmark-circle" size={16} color={CrmColors.emerald600} />
               <Text style={styles.modalRowTxt}>
-                {flagItem?.is_interacted ? '✅ Bỏ tick tương tác' : '✅ Đánh dấu đã tương tác'}
+                {flagItem?.is_interacted ? 'Bỏ tick tương tác' : 'Đánh dấu đã tương tác'}
               </Text>
             </TouchableOpacity>
             {flagBusy ? <ActivityIndicator style={{ marginVertical: 12 }} color={CrmColors.blue600} /> : null}
@@ -831,6 +1180,7 @@ export default function LeadListScreen({ navigation }: Props) {
                 setAssigneeModal(false);
               }}
             >
+              <Ionicons name="people-outline" size={16} color={CrmColors.blue600} />
               <Text style={styles.modalRowTxt}>Tất cả nhân viên</Text>
             </TouchableOpacity>
             {pickerLoading ? <ActivityIndicator style={{ marginVertical: 16 }} color={CrmColors.blue600} /> : null}
@@ -846,8 +1196,11 @@ export default function LeadListScreen({ navigation }: Props) {
                     setAssigneeModal(false);
                   }}
                 >
-                  <Text style={styles.modalRowTxt}>{u.full_name || u.email || u.id}</Text>
-                  {u.email && u.full_name ? <Text style={styles.modalRowEmail}>{u.email}</Text> : null}
+                  <Ionicons name="person-circle-outline" size={18} color={CrmColors.gray500} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.modalRowTxt}>{u.full_name || u.email || u.id}</Text>
+                    {u.email && u.full_name ? <Text style={styles.modalRowEmail}>{u.email}</Text> : null}
+                  </View>
                 </TouchableOpacity>
               )}
             />
@@ -861,6 +1214,10 @@ export default function LeadListScreen({ navigation }: Props) {
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/*  Styles                                                                     */
+/* -------------------------------------------------------------------------- */
+
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: CrmColors.pageBg },
   listContent: { paddingBottom: 24 },
@@ -870,246 +1227,128 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: CrmColors.pageBg,
   },
-  headerBlock: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 12 },
-  kicker: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: CrmColors.gray500,
-    textTransform: 'uppercase',
-    marginBottom: 4,
+
+  /* Header (navigation right) */
+  headerIcons: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingRight: 8 },
+  headerBtn: { padding: 6 },
+  headerDot: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#ef4444',
+    borderWidth: 1.5,
+    borderColor: '#fff',
   },
-  h1: { fontSize: 26, fontWeight: '700', color: CrmColors.gray900, marginBottom: 10 },
-  addRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
-  addLeadBtn: {
-    flex: 1,
-    backgroundColor: CrmColors.blue600,
-    paddingVertical: 10,
-    borderRadius: CrmRadii.md,
-    alignItems: 'center',
+  headerAvatar: { width: 32, height: 32, borderRadius: 16, marginLeft: 4 },
+  headerAvatarPlaceholder: { backgroundColor: CrmColors.blue100, alignItems: 'center', justifyContent: 'center' },
+  headerAvatarTxt: { fontSize: 13, fontWeight: '800', color: CrmColors.blue700 },
+
+  headerBlock: { paddingTop: 12, paddingBottom: 4 },
+
+  /* HERO --------------------------------------------------------------- */
+  hero: {
+    marginHorizontal: 14,
+    borderRadius: 18,
+    padding: 16,
+    paddingBottom: 14,
   },
-  addLeadTxt: { color: CrmColors.white, fontWeight: '700', fontSize: 13 },
-  addDealBtn: {
-    flex: 1,
-    backgroundColor: '#7c3aed',
-    paddingVertical: 10,
-    borderRadius: CrmRadii.md,
-    alignItems: 'center',
-  },
-  addDealTxt: { color: CrmColors.white, fontWeight: '700', fontSize: 13 },
-  filterAdvBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    gap: 8,
-    marginBottom: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: CrmRadii.md,
-    backgroundColor: CrmColors.blue50,
-    borderWidth: 1,
-    borderColor: CrmColors.blue100,
-  },
-  filterAdvBtnTxt: { fontSize: 13, fontWeight: '700', color: CrmColors.blue700 },
-  filterBadge: {
-    minWidth: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: CrmColors.blue600,
+  heroTopRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  heroIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.18)',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 6,
   },
-  filterBadgeTxt: { color: CrmColors.white, fontSize: 11, fontWeight: '800' },
-  filterLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: CrmColors.gray600,
-    marginBottom: 8,
-    marginTop: 4,
-  },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
-  chip: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: CrmRadii.full,
-    backgroundColor: CrmColors.white,
-    borderWidth: 1,
-    borderColor: CrmColors.gray200,
-  },
-  chipOn: {
-    backgroundColor: CrmColors.blue50,
-    borderColor: CrmColors.blue600,
-  },
-  chipTxt: { fontSize: 12, fontWeight: '600', color: CrmColors.gray600 },
-  chipTxtOn: { color: CrmColors.blue700 },
-  assigneeBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: CrmColors.white,
-    borderWidth: 1,
-    borderColor: CrmColors.gray200,
-    borderRadius: CrmRadii.md,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    marginBottom: 12,
-    ...CrmShadow.sm,
-  },
-  assigneeBtnTxt: { fontSize: 14, fontWeight: '600', color: CrmColors.gray900, flex: 1 },
-  assigneeBtnChev: { fontSize: 14, color: CrmColors.gray400 },
-  filterHint: { fontSize: 12, color: CrmColors.gray500, marginBottom: 12, lineHeight: 17 },
-  modalBackdrop: {
+  heroTitle: { fontSize: 18, fontWeight: '800', color: '#fff' },
+  heroSub: { fontSize: 12, color: 'rgba(255,255,255,0.85)', marginTop: 2 },
+  statRow: { flexDirection: 'row', gap: 8, marginTop: 14 },
+  statTile: {
     flex: 1,
-    backgroundColor: 'rgba(15,23,42,0.45)',
-    justifyContent: 'flex-end',
-  },
-  modalSheet: {
-    backgroundColor: CrmColors.white,
-    borderTopLeftRadius: CrmRadii.xl,
-    borderTopRightRadius: CrmRadii.xl,
-    padding: 20,
-    paddingBottom: 28,
-    maxHeight: '80%',
-  },
-  modalTitle: { fontSize: 18, fontWeight: '800', color: CrmColors.gray900 },
-  modalSub: { fontSize: 12, color: CrmColors.gray500, marginTop: 6, marginBottom: 12 },
-  modalRow: {
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: CrmColors.gray100,
-  },
-  modalRowTxt: { fontSize: 15, fontWeight: '600', color: CrmColors.gray900 },
-  modalRowEmail: { fontSize: 12, color: CrmColors.gray500, marginTop: 4 },
-  modalClose: {
-    marginTop: 16,
-    alignSelf: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-  },
-  modalCloseTxt: { fontSize: 15, fontWeight: '700', color: CrmColors.blue600 },
-  pillWrap: { marginBottom: 14 },
-  pillOuter: {
-    flexDirection: 'row',
-    alignSelf: 'flex-start',
-    backgroundColor: CrmColors.gray200,
-    borderRadius: CrmRadii.full,
-    padding: 4,
-    gap: 4,
-  },
-  pillBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 18,
-    borderRadius: CrmRadii.full,
-  },
-  pillBtnOnLead: {
-    backgroundColor: CrmColors.white,
-    ...CrmShadow.sm,
-  },
-  pillBtnOnDeal: {
-    backgroundColor: CrmColors.white,
-    ...CrmShadow.sm,
-  },
-  pillTxt: { fontSize: 13, fontWeight: '600', color: CrmColors.gray600 },
-  pillTxtOnLead: { color: CrmColors.blue600 },
-  pillTxtOnDeal: { color: CrmColors.emerald600 },
-  searchWrap: {
-    flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: CrmColors.white,
-    borderWidth: 1,
-    borderColor: CrmColors.gray200,
-    borderRadius: CrmRadii.xl,
-    paddingLeft: 12,
-    paddingRight: 8,
-    minHeight: 46,
-    ...CrmShadow.card,
-  },
-  searchIcon: { fontSize: 16, marginRight: 8 },
-  searchInput: { flex: 1, fontSize: 15, color: CrmColors.gray900, paddingVertical: 10 },
-  searchClear: { padding: 8 },
-  searchClearTxt: { color: CrmColors.gray400, fontSize: 14 },
-  searchGo: {
-    marginTop: 10,
-    alignSelf: 'flex-start',
-    backgroundColor: CrmColors.blue600,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: CrmRadii.md,
-  },
-  searchGoTxt: { color: CrmColors.white, fontWeight: '600', fontSize: 14 },
-  card: {
-    marginHorizontal: 16,
-    marginBottom: 10,
-    padding: 12,
-    backgroundColor: CrmColors.white,
-    borderRadius: CrmRadii.lg,
-    borderWidth: 1,
-    borderColor: CrmColors.gray200,
-  },
-  cardTop: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
-  cardLeft: { flex: 1, minWidth: 0 },
-  cardCode: { fontSize: 12, fontWeight: '600', color: CrmColors.blue600 },
-  codeRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  pinIcon: { fontSize: 13 },
-  interactedIcon: { fontSize: 13 },
-  cardPinned: {
-    borderColor: '#f59e0b',
-    backgroundColor: '#fffbeb',
-  },
-  titleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 2 },
-  cardTitle: { flex: 1, fontSize: 14, fontWeight: '600', color: CrmColors.gray900 },
-  newBadge: {
-    backgroundColor: CrmColors.rose500,
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    borderRadius: 12,
     paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  newBadgeTxt: { fontSize: 9, fontWeight: '800', color: CrmColors.white },
-  cardCustomer: { fontSize: 12, color: CrmColors.gray500, marginTop: 4 },
-  cardPhone: { fontSize: 11, color: CrmColors.emerald600, marginTop: 2 },
-  stagePill: {
-    maxWidth: 120,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: CrmRadii.full,
-    alignSelf: 'flex-start',
-  },
-  stagePillTxt: { fontSize: 11, fontWeight: '600' },
-  cardValue: { fontSize: 12, fontWeight: '700', color: CrmColors.gray900, marginTop: 10 },
-  cardMeta: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginTop: 8,
-    gap: 8,
-    alignItems: 'center',
-  },
-  cardMetaTxt: { fontSize: 11, color: CrmColors.gray500, flexShrink: 1 },
-  daysCool: { fontSize: 11, color: CrmColors.gray500 },
-  daysWarm: { fontSize: 11, color: CrmColors.amber600, fontWeight: '600' },
-  daysHot: { fontSize: 11, color: CrmColors.red700, fontWeight: '700' },
-  empty: { textAlign: 'center', color: CrmColors.gray400, paddingVertical: 40, fontSize: 14 },
-  tableFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginHorizontal: 16,
-    marginTop: 4,
-    paddingHorizontal: 14,
     paddingVertical: 10,
-    backgroundColor: CrmColors.gray50,
-    borderBottomLeftRadius: CrmRadii.xl,
-    borderBottomRightRadius: CrmRadii.xl,
-    borderWidth: 1,
-    borderTopWidth: 0,
-    borderColor: CrmColors.gray200,
+    minWidth: 0,
+    borderWidth: 2,
+    borderColor: 'transparent',
   },
-  tableFooterTxt: { fontSize: 12, color: CrmColors.gray500, fontWeight: '500' },
-  headerIcons: { flexDirection: 'row', alignItems: 'center', gap: 16, paddingRight: 8 },
-  headerIconTxt: { fontSize: 20 },
-  hScrollPad: { marginBottom: 10 },
+  statTileActive: {
+    borderColor: '#fde68a',
+    backgroundColor: '#fff',
+  },
+  statIconWrap: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  statValue: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: CrmColors.gray900,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  statLabel: {
+    fontSize: 11,
+    color: CrmColors.gray500,
+    fontWeight: '600',
+    marginTop: 2,
+    textAlign: 'center',
+  },
+
+  heroBtnRow: { flexDirection: 'row', gap: 10, marginTop: 14 },
+  heroBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  heroBtnLead: { backgroundColor: 'rgba(59,130,246,0.95)' },
+  heroBtnDeal: { backgroundColor: 'rgba(124,58,237,0.95)' },
+  heroBtnTxt: { color: '#fff', fontWeight: '800', fontSize: 14 },
+
+  /* SECTION TITLES ----------------------------------------------------- */
+  sectionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 18,
+    paddingHorizontal: 16,
+    marginBottom: 8,
+  },
+  sectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: CrmColors.gray700,
+    marginTop: 16,
+    marginBottom: 8,
+    paddingHorizontal: 16,
+  },
+  sectionTitleAction: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  sectionTitleActionTxt: { fontSize: 12, fontWeight: '700', color: CrmColors.blue600 },
+
+  hScrollPad: { paddingHorizontal: 14, marginBottom: 4 },
+
+  /* VIEW MODE CHIPS ---------------------------------------------------- */
   vmChip: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: CrmRadii.full,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 9,
+    paddingHorizontal: 13,
+    borderRadius: 999,
     backgroundColor: CrmColors.white,
     borderWidth: 1,
     borderColor: CrmColors.gray200,
@@ -1117,6 +1356,330 @@ const styles = StyleSheet.create({
   },
   vmChipOn: { backgroundColor: CrmColors.blue50, borderColor: CrmColors.blue600 },
   vmChipTxt: { fontSize: 12, fontWeight: '600', color: CrmColors.gray600 },
-  vmChipTxtOn: { color: CrmColors.blue700 },
+  vmChipTxtOn: { color: CrmColors.blue700, fontWeight: '700' },
+
+  /* STAGE CHIPS -------------------------------------------------------- */
+  stageChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+    paddingLeft: 12,
+    paddingRight: 6,
+    borderRadius: 999,
+    backgroundColor: CrmColors.white,
+    borderWidth: 1,
+    borderColor: CrmColors.gray200,
+    marginRight: 8,
+  },
+  stageChipOn: { backgroundColor: CrmColors.blue50, borderColor: CrmColors.blue600 },
+  stageChipTxt: { fontSize: 12, fontWeight: '700', color: CrmColors.gray700, maxWidth: 150 },
+  stageChipTxtOn: { color: CrmColors.blue700 },
+  stageChipBadge: {
+    minWidth: 24,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: CrmColors.gray100,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stageChipBadgeOn: { backgroundColor: CrmColors.blue600 },
+  stageChipBadgeTxt: { fontSize: 11, fontWeight: '800', color: CrmColors.gray600 },
+  stageChipBadgeTxtOn: { color: '#fff' },
+
+  /* PHONE CHIPS -------------------------------------------------------- */
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 10,
+    paddingHorizontal: 16,
+  },
+  phoneChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: CrmColors.white,
+    borderWidth: 1,
+    borderColor: CrmColors.gray200,
+  },
+  phoneChipOn: { backgroundColor: CrmColors.blue50, borderColor: CrmColors.blue600 },
+  phoneChipTxt: { fontSize: 12, fontWeight: '600', color: CrmColors.gray600 },
+  phoneChipTxtOn: { color: CrmColors.blue700, fontWeight: '700' },
+
+  /* ASSIGNEE ----------------------------------------------------------- */
+  assigneeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginHorizontal: 16,
+    backgroundColor: CrmColors.white,
+    borderWidth: 1,
+    borderColor: CrmColors.gray200,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 10,
+    ...CrmShadow.sm,
+  },
+  assigneeBtnTxt: { fontSize: 14, fontWeight: '600', color: CrmColors.gray900, flex: 1 },
+  filterHint: {
+    fontSize: 12,
+    color: CrmColors.gray500,
+    marginHorizontal: 16,
+    marginBottom: 10,
+    lineHeight: 17,
+  },
+
+  /* SEARCH ------------------------------------------------------------- */
+  searchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 4,
+    marginBottom: 10,
+    backgroundColor: CrmColors.white,
+    borderWidth: 1,
+    borderColor: CrmColors.gray200,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    minHeight: 46,
+    ...CrmShadow.sm,
+  },
+  searchInput: { flex: 1, fontSize: 14, color: CrmColors.gray900, paddingVertical: 10 },
+  searchFilterBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    backgroundColor: CrmColors.blue50,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  searchFilterDot: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    backgroundColor: CrmColors.blue600,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#fff',
+  },
+  searchFilterDotTxt: { color: '#fff', fontSize: 9, fontWeight: '800' },
+
+  /* LIST HEAD ---------------------------------------------------------- */
+  listHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  listHeadTitle: { fontSize: 15, fontWeight: '800', color: CrmColors.gray900 },
+  sortBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: CrmColors.blue50,
+    borderRadius: 999,
+  },
+  sortBtnTxt: { fontSize: 12, fontWeight: '700', color: CrmColors.blue700 },
+
+  /* CARD --------------------------------------------------------------- */
+  card: {
+    marginHorizontal: 14,
+    marginBottom: 10,
+    padding: 14,
+    paddingLeft: 16,
+    backgroundColor: CrmColors.white,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: CrmColors.gray200,
+    overflow: 'hidden',
+  },
+  cardStripe: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 4,
+  },
+  cardTop: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
+  cardLeft: { flex: 1, minWidth: 0 },
+  cardRight: { alignItems: 'flex-end', gap: 6 },
+  codeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  codePill: {
+    backgroundColor: CrmColors.blue50,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  cardCode: { fontSize: 11, fontWeight: '800', color: CrmColors.blue700, letterSpacing: 0.4 },
+  pinChip: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#fef3c7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tickChip: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: CrmColors.emerald50,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cardPinned: { borderColor: '#fcd34d', backgroundColor: '#fffbeb' },
+  titleRow: { marginTop: 6 },
+  cardTitle: { fontSize: 15, fontWeight: '800', color: CrmColors.gray900, lineHeight: 20 },
+  cardCustomer: { fontSize: 12, color: CrmColors.gray600, marginTop: 4, fontWeight: '600' },
+  metaInline: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+
+  /* highlight chips (phone / owner) */
+  highlightRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
+  highlightChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    maxWidth: '100%',
+  },
+  highlightChipPhone: {
+    backgroundColor: CrmColors.emerald50,
+    borderColor: CrmColors.emerald200,
+  },
+  highlightChipPhoneTxt: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: CrmColors.emerald700,
+    letterSpacing: 0.2,
+  },
+  highlightChipOwner: {
+    backgroundColor: CrmColors.blue50,
+    borderColor: CrmColors.blue100,
+    flexShrink: 1,
+  },
+  highlightChipOwnerTxt: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: CrmColors.blue700,
+    flexShrink: 1,
+  },
+
+  /* value */
+  valueBlock: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: CrmColors.emerald50,
+    alignSelf: 'flex-start',
+  },
+  cardValueTxt: { fontSize: 14, fontWeight: '800', color: CrmColors.emerald700 },
+
+  newBadge: {
+    backgroundColor: CrmColors.rose500,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  newBadgeTxt: { fontSize: 9, fontWeight: '900', color: CrmColors.white, letterSpacing: 0.5 },
+  stagePill: {
+    maxWidth: 140,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    alignSelf: 'flex-end',
+  },
+  stagePillTxt: { fontSize: 11, fontWeight: '800' },
+  cardFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: CrmColors.gray100,
+  },
+  cardMetaTxt: { fontSize: 11, color: CrmColors.gray500, fontWeight: '600' },
+
+  /* day pills */
+  daysPill: {
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  daysPillCool: { backgroundColor: CrmColors.gray100 },
+  daysPillWarm: { backgroundColor: '#fef3c7' },
+  daysPillHot: { backgroundColor: '#fee2e2' },
+  daysCoolTxt: { fontSize: 11, color: CrmColors.gray700, fontWeight: '700' },
+  daysWarmTxt: { fontSize: 11, color: '#b45309', fontWeight: '800' },
+  daysHotTxt: { fontSize: 11, color: CrmColors.red700, fontWeight: '800' },
+
+  /* FOOTER / EMPTY ----------------------------------------------------- */
+  empty: { textAlign: 'center', color: CrmColors.gray400, paddingVertical: 40, fontSize: 14 },
+  tableFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginHorizontal: 14,
+    marginTop: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: CrmColors.gray50,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: CrmColors.gray200,
+  },
+  tableFooterTxt: { fontSize: 12, color: CrmColors.gray500, fontWeight: '600' },
   altLoading: { paddingVertical: 48, alignItems: 'center' },
+
+  /* MODAL -------------------------------------------------------------- */
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15,23,42,0.45)',
+    justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    backgroundColor: CrmColors.white,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    padding: 20,
+    paddingBottom: 28,
+    maxHeight: '80%',
+  },
+  modalTitle: { fontSize: 18, fontWeight: '800', color: CrmColors.gray900 },
+  modalSub: { fontSize: 12, color: CrmColors.gray500, marginTop: 6, marginBottom: 12 },
+  modalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: CrmColors.gray100,
+  },
+  modalRowTxt: { fontSize: 15, fontWeight: '600', color: CrmColors.gray900 },
+  modalRowEmail: { fontSize: 12, color: CrmColors.gray500, marginTop: 4 },
+  modalClose: { marginTop: 16, alignSelf: 'center', paddingVertical: 12, paddingHorizontal: 24 },
+  modalCloseTxt: { fontSize: 15, fontWeight: '700', color: CrmColors.blue600 },
 });

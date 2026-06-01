@@ -125,6 +125,22 @@ function UserAvatarRing({
   );
 }
 
+/** Các tên route mà khi user đang ở đó thì bubble bị ẩn (tránh đè tin nhắn / nội dung chat). */
+const HIDE_BUBBLE_ON_ROUTES: ReadonlySet<string> = new Set([
+  'MessengerGroupChat',
+  'BubbleChat',
+  'BubbleChatMain',
+  'FacebookChat',
+]);
+
+function getCurrentRouteName(): string | undefined {
+  try {
+    return navigationRef.isReady() ? navigationRef.getCurrentRoute()?.name : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export default function FloatingChatBubble() {
   const { user } = useAuth();
   const { chatUnreadCount, toast, dismissToast, refreshUnread } = useNotifications();
@@ -133,6 +149,7 @@ export default function FloatingChatBubble() {
   const [prefs, setPrefs] = useState<CrmMobilePrefs | null>(null);
   const [dropHidden, setDropHidden] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [currentRoute, setCurrentRoute] = useState<string | undefined>(getCurrentRouteName);
   /** Android: có overlay hệ thống + đã cấp quyền → chỉ hiện bubble native, ẩn RN (tránh trùng hai bong bóng). */
   const [nativeOverlayActive, setNativeOverlayActive] = useState(false);
   const { width, height } = Dimensions.get('window');
@@ -213,6 +230,26 @@ export default function FloatingChatBubble() {
     return () => sub.remove();
   }, [refreshUnread, prefs]);
 
+  /** Theo dõi route hiện tại — bubble ẩn khi user đang trong chat screen. */
+  useEffect(() => {
+    if (!navigationRef.isReady()) return;
+    const update = () => setCurrentRoute(getCurrentRouteName());
+    update();
+    const unsub = navigationRef.addListener('state', update);
+    return () => {
+      try {
+        unsub();
+      } catch {
+        /* ignore */
+      }
+    };
+  }, []);
+
+  /**
+   * Pulse badge khi có tin chưa đọc, NHƯNG dừng hẳn khi bubble bị ẩn (ẩn vì
+   * ở trong chat screen / kéo đáy / pref tắt). Trước đây loop chạy mãi khi
+   * mount kể cả khi bubble không hiển thị → đốt CPU không cần thiết.
+   */
   useEffect(() => {
     if (badge <= 0) {
       badgePulse.setValue(1);
@@ -230,7 +267,7 @@ export default function FloatingChatBubble() {
           duration: 520,
           useNativeDriver: true,
         }),
-        Animated.delay(2400),
+        Animated.delay(3200),
       ]),
     );
     loop.start();
@@ -316,17 +353,31 @@ export default function FloatingChatBubble() {
           xy.flattenOffset();
           const nxRaw = drag.x + g.dx;
           const nyRaw = drag.y + g.dy;
-          const nx = snapX(clamp(nxRaw, EDGE, width - bubbleSize - EDGE), width, bubbleSize);
-          const ny = clamp(nyRaw, EDGE + 60, height - bubbleSize - EDGE - 40);
+          // Khi user kéo xuống, KHÔNG clamp Y trước khi kiểm tra ẩn — nếu không
+          // bubble luôn bị giữ ở trên dải đỏ và không bao giờ rơi vào vùng ẩn.
+          const bubbleCxRaw = nxRaw + bubbleSize / 2;
+          const bubbleCyRaw = nyRaw + bubbleSize / 2;
 
-          const bubbleCx = nx + bubbleSize / 2;
-          const bubbleCy = ny + bubbleSize / 2;
+          /**
+           * Ẩn bubble khi:
+           *  - Thả trong dải đỏ đáy (dragStrip cao 72 + insets.bottom) — chỉ
+           *    cần Y vào vùng đó là ẩn, bất kể X. Cách này dễ dùng hơn yêu
+           *    cầu rơi đúng tâm vòng tròn nhỏ ở giữa.
+           *  - HOẶC cách tâm vòng tròn drop <= bán kính cộng dồn (như cũ).
+           */
+          const dropStripTop = height - (72 + insets.bottom);
+          const droppedInStrip = bubbleCyRaw >= dropStripTop;
           const targetCx = width / 2;
           const targetCy =
             height - insets.bottom - DROP_MARGIN_ABOVE_HOME - DROP_TARGET_DIAM / 2;
-          const hideReach = DROP_TARGET_DIAM / 2 + bubbleSize / 2 + 8;
-          const dist = Math.hypot(bubbleCx - targetCx, bubbleCy - targetCy);
-          if (dist <= hideReach) {
+          const hideReach = DROP_TARGET_DIAM / 2 + bubbleSize / 2 + 24;
+          const distToCircle = Math.hypot(bubbleCxRaw - targetCx, bubbleCyRaw - targetCy);
+          const shouldHide = droppedInStrip || distToCircle <= hideReach;
+
+          const nx = snapX(clamp(nxRaw, EDGE, width - bubbleSize - EDGE), width, bubbleSize);
+          const ny = clamp(nyRaw, EDGE + 60, height - bubbleSize - EDGE - 40);
+
+          if (shouldHide) {
             void setFloatingBubbleHiddenByDrop();
             setDropHidden(true);
             drag.x = nx;
@@ -348,10 +399,12 @@ export default function FloatingChatBubble() {
   const onlyWhenUnread = prefs?.floatingChatBubbleOnlyWhenUnread ?? false;
   const hideRnBecauseNativeOverlay =
     Platform.OS === 'android' && !!prefs?.floatingChatBubbleSystemOverlay && nativeOverlayActive;
+  const onChatScreen = !!currentRoute && HIDE_BUBBLE_ON_ROUTES.has(currentRoute);
   const showBubble =
     !!user &&
     bubbleEnabled &&
     !dropHidden &&
+    !onChatScreen &&
     !(onlyWhenUnread && badge === 0) &&
     !hideRnBecauseNativeOverlay;
 
@@ -404,12 +457,10 @@ export default function FloatingChatBubble() {
     if (!navigationRef.isReady() || !toast?.entity_id) return;
     const meta = toast.metadata && typeof toast.metadata === 'object' ? toast.metadata : {};
     const gn = typeof (meta as { group_name?: unknown }).group_name === 'string' ? (meta as { group_name: string }).group_name : undefined;
-    navigationRef.navigate('Main', {
-      screen: 'MoreTab',
-      params: {
-        screen: 'MessengerGroupChat',
-        params: { groupId: toast.entity_id!, title: gn },
-      },
+    // Cùng lý do với tap bubble — dùng root BubbleChat để đóng trả về tab hiện tại.
+    navigationRef.navigate('BubbleChat', {
+      groupId: toast.entity_id!,
+      title: gn,
     });
   }
 
@@ -498,12 +549,12 @@ export default function FloatingChatBubble() {
                 const t = await getMessengerBubbleTarget();
                 if (!navigationRef.isReady()) return;
                 if (t?.groupId) {
-                  navigationRef.navigate('Main', {
-                    screen: 'MoreTab',
-                    params: {
-                      screen: 'MessengerGroupChat',
-                      params: { groupId: t.groupId, title: t.title },
-                    },
+                  // Mở chat ở root stack (modal slide-from-bottom) — khi user
+                  // đóng sẽ trả về đúng tab đang đứng (vd. CRM), không bị kẹt
+                  // trong MoreTab → AccountSettings như cách push qua tab.
+                  navigationRef.navigate('BubbleChat', {
+                    groupId: t.groupId,
+                    title: t.title,
                   });
                 } else {
                   navigateMoreTab('MessengerGroupList');

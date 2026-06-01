@@ -80,7 +80,6 @@ export default function MyTasks() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Việc của tôi</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Quản lý công việc cá nhân</p>
         </div>
       </div>
 

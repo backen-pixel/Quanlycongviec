@@ -152,10 +152,11 @@ export default function ShareToMessengerModal({ post, onClose, onSent }) {
           if (gid) {
             lastOpenedGroup = {
               id: gid,
-              name: data?.name || data?.display_name || target.name,
+              name: data?.display_name || target.name,
+              display_name: data?.display_name || target.name,
               is_direct: true,
-              peer_id: target.id,
-              peer_avatar: target.avatar || null,
+              peer_id: data?.peer_id || target.id,
+              peer_avatar: data?.peer_avatar || target.avatar || null,
             };
           }
         } else if (target.type === 'group') {

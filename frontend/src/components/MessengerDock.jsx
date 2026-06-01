@@ -229,10 +229,11 @@ export default function MessengerDock() {
       if (data?.id) {
         openMessengerGroupChat({
           id: data.id,
-          name: data.name || data.display_name || u.full_name,
+          name: data.display_name || u.full_name,
+          display_name: data.display_name || u.full_name,
           is_direct: true,
-          peer_id: u.id,
-          peer_avatar: u.avatar || null,
+          peer_id: data.peer_id || u.id,
+          peer_avatar: data.peer_avatar || u.avatar || null,
         });
       }
       setLauncherOpen(false);

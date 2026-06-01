@@ -167,6 +167,8 @@ import PinnedProjectsWidget from './components/PinnedProjectsWidget';
 import { ThemeProvider, useTheme } from './components/ThemeProvider';
 import { CrmNotesFabProvider } from './context/CrmNotesFabContext';
 import { MessengerDockProvider } from './context/MessengerDockContext';
+import { CallProvider } from './context/CallContext';
+import CallOverlay from './components/CallOverlay';
 import MessengerDock from './components/MessengerDock';
 import { RequireCrmElevated, RequireExecutive } from './components/RequireRole';
 import { useActivityRouteTracker } from './hooks/useActivityRouteTracker';
@@ -301,7 +303,9 @@ export default function App() {
         <SharedProviders>
         <ChunkReloadInit />
         <MessengerDockProvider>
+        <CallProvider>
         <ThemeProvider>
+        <CallOverlay />
         
         <Routes>
           <Route path="/login" element={<Login />} />
@@ -446,6 +450,7 @@ export default function App() {
         
         <MessengerDock />
         </ThemeProvider>
+        </CallProvider>
         </MessengerDockProvider>
         </SharedProviders>
       </BrowserRouter>
