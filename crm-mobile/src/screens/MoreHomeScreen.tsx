@@ -96,7 +96,17 @@ const sections: Section[] = [
         key: 'messenger',
         title: 'Chat nhóm nội bộ',
         emoji: '💬',
-        onPress: (n) => n.navigate('MessengerGroupList'),
+        // Đi qua MessengerTab để tab "Tin nhắn" được highlight đúng (thay vì
+        // ở lại MoreTab và làm tab "Menu" sáng lên).
+        onPress: (n) => {
+          const parent = (n as unknown as { getParent?: () => { navigate?: (route: string, params?: unknown) => void } | undefined })
+            .getParent?.();
+          if (parent?.navigate) {
+            parent.navigate('MessengerTab', { screen: 'MessengerGroupList' });
+          } else {
+            n.navigate('MessengerGroupList');
+          }
+        },
       },
       {
         key: 'fb',

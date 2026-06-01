@@ -1,24 +1,16 @@
 import React from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import CrmStackNavigator from './CrmStackNavigator';
 import VoiceStackNavigator from './VoiceStackNavigator';
 import MoreStackNavigator from './MoreStackNavigator';
+import MessengerStackNavigator from './MessengerStackNavigator';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import { useNotifications } from '../context/NotificationContext';
 import type { MainTabParamList } from './types';
 import { CrmColors } from '../theme/crmTheme';
-
-/**
- * Placeholder rỗng cho tab "Tin nhắn" — tab chỉ hoạt động như shortcut:
- * bấm vào sẽ navigate sang MoreTab → MessengerGroupList. Component chính
- * không bao giờ thực sự được mount thấy (tabPress preventDefault).
- */
-function MessengerTabPlaceholder() {
-  return <View style={{ flex: 1, backgroundColor: CrmColors.pageBg }} />;
-}
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
 
@@ -83,7 +75,7 @@ export default function MainTabNavigator() {
       />
       <Tab.Screen
         name="MessengerTab"
-        component={MessengerTabPlaceholder}
+        component={MessengerStackNavigator}
         options={{
           title: 'Tin nhắn',
           tabBarLabel: 'Tin nhắn',
@@ -101,7 +93,7 @@ export default function MainTabNavigator() {
         listeners={({ navigation }) => ({
           tabPress: (e) => {
             e.preventDefault();
-            navigation.navigate('MoreTab', { screen: 'MessengerGroupList' });
+            navigation.navigate('MessengerTab', { screen: 'MessengerGroupList' });
           },
         })}
       />

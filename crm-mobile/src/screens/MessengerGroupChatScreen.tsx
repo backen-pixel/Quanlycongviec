@@ -330,6 +330,12 @@ export default function MessengerGroupChatScreen({
   }, [groupId, displayTitle]);
 
   useEffect(() => { listRef.current?.scrollToEnd({ animated: true }); }, [messages.length]);
+  /** Khi xuất hiện reply chip / pending files / quick replies → layout list co lại;
+   *  ép scrollToEnd để tin cuối luôn nhìn thấy. */
+  useEffect(() => {
+    const t = setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 60);
+    return () => clearTimeout(t);
+  }, [replyTo, pendingFiles.length, recState]);
   useEffect(() => { navigation.setOptions({ title: displayTitle }); }, [navigation, displayTitle]);
 
   /* ── socket ────────────────────────────────────────── */
@@ -603,7 +609,7 @@ export default function MessengerGroupChatScreen({
               <View style={s.avatarSpace} />
             )}
 
-            <View style={{ maxWidth: SW * 0.72, alignItems: mine ? 'flex-end' : 'flex-start' }}>
+            <View style={{ maxWidth: SW * 0.78, alignItems: mine ? 'flex-end' : 'flex-start', minWidth: isAudioMsg(item) ? 220 : 0 }}>
               {!mine && (!isDirectChat || isBot) ? (
                 <Text style={s.msgName}>
                   {name}
@@ -864,24 +870,28 @@ export default function MessengerGroupChatScreen({
 
       {/* Quick replies — chips chèn nhanh vào ô soạn */}
       {recState === 'idle' && !replyTo && pendingFiles.length === 0 ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={s.quickRow}
-          keyboardShouldPersistTaps="handled"
-        >
-          {QUICK_REPLIES.map((q) => (
-            <TouchableOpacity
-              key={q.text}
-              style={s.quickChip}
-              activeOpacity={0.85}
-              onPress={() => setDraft((d) => (d ? `${d} ${q.text}` : q.text))}
-            >
-              {q.icon ? <Ionicons name={q.icon} size={12} color={BUBBLE_ME} /> : null}
-              <Text style={s.quickChipTxt}>{q.text}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        <View style={s.quickWrap}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={s.quickRow}
+            keyboardShouldPersistTaps="handled"
+          >
+            {QUICK_REPLIES.map((q) => (
+              <TouchableOpacity
+                key={q.text}
+                style={s.quickChip}
+                activeOpacity={0.85}
+                onPress={() => setDraft((d) => (d ? `${d} ${q.text}` : q.text))}
+              >
+                {q.icon ? <Ionicons name={q.icon} size={12} color={BUBBLE_ME} /> : null}
+                <Text style={s.quickChipTxt} numberOfLines={1}>
+                  {q.text}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
       ) : null}
 
       {/* Composer */}
@@ -978,133 +988,21 @@ export default function MessengerGroupChatScreen({
         </View>
       ) : null}
 
-      {/* ── Group Info Modal ── */}
-      <Modal visible={infoOpen} transparent animationType="slide" onRequestClose={() => setInfoOpen(false)}>
-        <Pressable style={s.modalBg} onPress={() => setInfoOpen(false)}>
-          <Pressable style={s.sheet} onPress={(e) => e.stopPropagation()}>
-            {/* Sheet header */}
-            <View style={s.sheetHeader}>
-              <View style={[s.sheetAvatar, { backgroundColor: avatarColor(displayTitle) }]}>
-                <Text style={s.sheetAvatarTxt}>{initials(displayTitle)}</Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={s.sheetTitle}>{displayTitle}</Text>
-                <Text style={s.sheetSub}>{isDirectChat ? 'Chat 1–1' : `${group?.members?.length ?? 0} thành viên`}</Text>
-              </View>
-            </View>
-
-            {/* Tabs */}
-            <View style={s.tabBar}>
-              {([['members', 'Thành viên'], ['images', 'Ảnh'], ['files', 'File'], ['audio', 'Ghi âm']] as [InfoTab, string][]).map(([key, label]) => (
-                <TouchableOpacity
-                  key={key}
-                  style={[s.tabBtn, infoTab === key && s.tabBtnOn]}
-                  onPress={() => setInfoTab(key)}
-                >
-                  <Text style={[s.tabTxt, infoTab === key && s.tabTxtOn]}>{label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {/* Tab content */}
-            {infoTab === 'members' ? (
-              <View style={{ flex: 1 }}>
-                <FlatList
-                  data={group?.members || []}
-                  keyExtractor={(m) => String(m.user_id)}
-                  style={s.tabContent}
-                  renderItem={({ item }) => (
-                    <View style={s.memberRow}>
-                      <View style={[s.memberAvatar, { backgroundColor: avatarColor(item.user?.full_name || String(item.user_id)) }]}>
-                        <Text style={s.memberAvatarTxt}>{initials(item.user?.full_name || String(item.user_id))}</Text>
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={s.memberName}>{item.user?.full_name || String(item.user_id)}</Text>
-                        {item.role ? <Text style={s.memberRole}>{item.role === 'admin' ? '⭐ Admin' : 'Thành viên'}</Text> : null}
-                      </View>
-                    </View>
-                  )}
-                  ListEmptyComponent={<Text style={s.tabEmpty}>Chưa có thành viên</Text>}
-                />
-                {!isDirectChat ? (
-                  <View style={s.sheetActions}>
-                    <TouchableOpacity
-                      style={s.sheetBtn}
-                      onPress={() => { setInfoOpen(false); navigation.navigate('MessengerAddMembers', { groupId }); }}
-                    >
-                      <Text style={s.sheetBtnTxt}>＋ Thêm thành viên</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={s.sheetBtnDanger} onPress={leaveGroup}>
-                      <Text style={s.sheetBtnDangerTxt}>Rời nhóm</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : null}
-              </View>
-            ) : infoTab === 'images' ? (
-              <FlatList
-                data={sharedImages}
-                keyExtractor={(m) => String(m.id)}
-                numColumns={3}
-                style={s.tabContent}
-                contentContainerStyle={{ gap: 2, padding: 2 }}
-                renderItem={({ item }) => {
-                  const u = mediaUrl(item.attachment_url);
-                  return u ? (
-                    <TouchableOpacity onPress={() => void Linking.openURL(u)}>
-                      <Image source={{ uri: u }} style={s.gridImg} />
-                    </TouchableOpacity>
-                  ) : null;
-                }}
-                ListEmptyComponent={<Text style={s.tabEmpty}>Chưa có ảnh nào</Text>}
-              />
-            ) : infoTab === 'files' ? (
-              <FlatList
-                data={sharedFiles}
-                keyExtractor={(m) => String(m.id)}
-                style={s.tabContent}
-                renderItem={({ item }) => {
-                  const u = mediaUrl(item.attachment_url);
-                  return (
-                    <TouchableOpacity
-                      style={s.fileRow}
-                      onPress={() => u && void Linking.openURL(u)}
-                    >
-                      <Text style={s.fileRowIcon}>📎</Text>
-                      <View style={{ flex: 1 }}>
-                        <Text style={s.fileRowName} numberOfLines={1}>
-                          {item.attachment_name || 'Tệp đính kèm'}
-                        </Text>
-                        <Text style={s.fileRowDate}>{formatDateTime(item.created_at)}</Text>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                }}
-                ListEmptyComponent={<Text style={s.tabEmpty}>Chưa có file nào</Text>}
-              />
-            ) : (
-              <FlatList
-                data={sharedAudio}
-                keyExtractor={(m) => String(m.id)}
-                style={s.tabContent}
-                renderItem={({ item }) => {
-                  const u = mediaUrl(item.attachment_url);
-                  return u ? (
-                    <View style={s.audioRow}>
-                      <AudioPlayer url={u} mine={false} />
-                      <Text style={s.audioRowMeta}>{item.user?.full_name ?? '?'} · {formatDateTime(item.created_at)}</Text>
-                    </View>
-                  ) : null;
-                }}
-                ListEmptyComponent={<Text style={s.tabEmpty}>Chưa có ghi âm nào</Text>}
-              />
-            )}
-
-            <TouchableOpacity style={s.sheetClose} onPress={() => setInfoOpen(false)}>
-              <Text style={s.sheetCloseTxt}>Đóng</Text>
-            </TouchableOpacity>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      {/* ── Group Info Modal (Messenger-style) ── */}
+      <GroupInfoSheet
+        visible={infoOpen}
+        onClose={() => setInfoOpen(false)}
+        displayTitle={displayTitle}
+        isDirectChat={isDirectChat}
+        group={group}
+        sharedImages={sharedImages}
+        sharedFiles={sharedFiles}
+        sharedAudio={sharedAudio}
+        infoTab={infoTab}
+        setInfoTab={setInfoTab}
+        onAddMembers={() => { setInfoOpen(false); navigation.navigate('MessengerAddMembers', { groupId }); }}
+        onLeave={leaveGroup}
+      />
 
       {/* Debug modal */}
       <Modal visible={debugOpen} transparent animationType="fade" onRequestClose={() => setDebugOpen(false)}>
@@ -1131,6 +1029,377 @@ export default function MessengerGroupChatScreen({
         </Pressable>
       </Modal>
     </ChatRoot>
+  );
+}
+
+/* ─── Group info sheet (Messenger-style) ───────────────────────── */
+
+interface GroupInfoSheetProps {
+  visible: boolean;
+  onClose: () => void;
+  displayTitle: string;
+  isDirectChat: boolean;
+  group: MessengerGroupDetail | null;
+  sharedImages: MessengerMessage[];
+  sharedFiles: MessengerMessage[];
+  sharedAudio: MessengerMessage[];
+  infoTab: InfoTab;
+  setInfoTab: (t: InfoTab) => void;
+  onAddMembers: () => void;
+  onLeave: () => void;
+}
+
+/**
+ * Sheet thông tin nhóm — bố cục giống Messenger:
+ *  • Khi chưa chọn "Xem tất cả": cuộn 1 trang chứa avatar lớn + các SECTION
+ *    (Thành viên · Phương tiện · File · Ghi âm) — mỗi section có preview
+ *    nhỏ và nút "Xem tất cả".
+ *  • Khi tap "Xem tất cả" của 1 section: chuyển sang chế độ list đầy đủ, có
+ *    nút back về trang chính.
+ */
+function GroupInfoSheet({
+  visible,
+  onClose,
+  displayTitle,
+  isDirectChat,
+  group,
+  sharedImages,
+  sharedFiles,
+  sharedAudio,
+  infoTab,
+  setInfoTab,
+  onAddMembers,
+  onLeave,
+}: GroupInfoSheetProps) {
+  const [mode, setMode] = useState<'home' | InfoTab>('home');
+
+  useEffect(() => {
+    if (visible) setMode('home');
+  }, [visible]);
+
+  const previewImages = sharedImages.slice(-9).reverse();
+  const previewFiles = sharedFiles.slice(-3).reverse();
+  const previewAudio = sharedAudio.slice(-3).reverse();
+  const members = group?.members ?? [];
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={s.modalBg} onPress={onClose}>
+        <Pressable style={s.sheet} onPress={(e) => e.stopPropagation()}>
+          {/* Sub-page header (chỉ hiện khi đang ở list đầy đủ) */}
+          {mode !== 'home' ? (
+            <View style={s.subHeader}>
+              <TouchableOpacity onPress={() => setMode('home')} hitSlop={8} style={s.subBack}>
+                <Ionicons name="chevron-back" size={22} color={CrmColors.gray800} />
+              </TouchableOpacity>
+              <Text style={s.subTitle}>
+                {mode === 'members'
+                  ? `Thành viên · ${members.length}`
+                  : mode === 'images'
+                    ? `Phương tiện · ${sharedImages.length}`
+                    : mode === 'files'
+                      ? `File · ${sharedFiles.length}`
+                      : `Ghi âm · ${sharedAudio.length}`}
+              </Text>
+              <View style={{ width: 28 }} />
+            </View>
+          ) : (
+            <View style={s.grabHandle} />
+          )}
+
+          {/* ── Trang chính ─────────────────────────── */}
+          {mode === 'home' ? (
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={s.infoScroll}>
+              {/* Khối top: avatar lớn + tên */}
+              <View style={s.infoTop}>
+                <View
+                  style={[s.infoAvatar, { backgroundColor: avatarColor(displayTitle) }]}
+                >
+                  <Text style={s.infoAvatarTxt}>{initials(displayTitle)}</Text>
+                </View>
+                <Text style={s.infoName}>{displayTitle}</Text>
+                <Text style={s.infoSub}>
+                  {isDirectChat ? 'Chat 1–1' : `${members.length} thành viên`}
+                </Text>
+              </View>
+
+              {/* Thành viên */}
+              {!isDirectChat ? (
+                <View style={s.infoSection}>
+                  <View style={s.infoSectionHead}>
+                    <View style={s.infoSectionHeadL}>
+                      <Ionicons name="people" size={18} color={CrmColors.gray700} />
+                      <Text style={s.infoSectionTitle}>Thành viên</Text>
+                      <Text style={s.infoSectionBadge}>{members.length}</Text>
+                    </View>
+                    {members.length > 4 ? (
+                      <TouchableOpacity onPress={() => { setInfoTab('members'); setMode('members'); }}>
+                        <Text style={s.infoSectionMore}>Xem tất cả</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                  <View style={s.memberPreviewRow}>
+                    {members.slice(0, 4).map((m) => {
+                      const nm = m.user?.full_name || String(m.user_id);
+                      return (
+                        <View key={String(m.user_id)} style={s.memberPreviewCell}>
+                          <View
+                            style={[
+                              s.memberPreviewAvatar,
+                              { backgroundColor: avatarColor(nm) },
+                            ]}
+                          >
+                            <Text style={s.memberPreviewAvatarTxt}>{initials(nm)}</Text>
+                          </View>
+                          <Text style={s.memberPreviewName} numberOfLines={1}>
+                            {nm.split(' ').slice(-1)[0] || nm}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                    <TouchableOpacity style={s.memberPreviewCell} onPress={onAddMembers}>
+                      <View style={[s.memberPreviewAvatar, s.memberPreviewAdd]}>
+                        <Ionicons name="add" size={22} color={CrmColors.blue600} />
+                      </View>
+                      <Text style={s.memberPreviewName} numberOfLines={1}>
+                        Thêm
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : null}
+
+              {/* Phương tiện (ảnh) */}
+              <View style={s.infoSection}>
+                <View style={s.infoSectionHead}>
+                  <View style={s.infoSectionHeadL}>
+                    <Ionicons name="images" size={18} color={CrmColors.gray700} />
+                    <Text style={s.infoSectionTitle}>Phương tiện</Text>
+                    <Text style={s.infoSectionBadge}>{sharedImages.length}</Text>
+                  </View>
+                  {sharedImages.length > 0 ? (
+                    <TouchableOpacity onPress={() => { setInfoTab('images'); setMode('images'); }}>
+                      <Text style={s.infoSectionMore}>Xem tất cả</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+                {previewImages.length === 0 ? (
+                  <Text style={s.infoEmpty}>Chưa có ảnh nào được chia sẻ.</Text>
+                ) : (
+                  <View style={s.mediaGridPreview}>
+                    {previewImages.map((it) => {
+                      const u = mediaUrl(it.attachment_url);
+                      if (!u) return null;
+                      return (
+                        <TouchableOpacity
+                          key={String(it.id)}
+                          style={s.mediaGridCell}
+                          onPress={() => void Linking.openURL(u)}
+                        >
+                          <Image source={{ uri: u }} style={s.mediaGridImg} />
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+
+              {/* File */}
+              <View style={s.infoSection}>
+                <View style={s.infoSectionHead}>
+                  <View style={s.infoSectionHeadL}>
+                    <Ionicons name="document-text" size={18} color={CrmColors.gray700} />
+                    <Text style={s.infoSectionTitle}>File</Text>
+                    <Text style={s.infoSectionBadge}>{sharedFiles.length}</Text>
+                  </View>
+                  {sharedFiles.length > 0 ? (
+                    <TouchableOpacity onPress={() => { setInfoTab('files'); setMode('files'); }}>
+                      <Text style={s.infoSectionMore}>Xem tất cả</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+                {previewFiles.length === 0 ? (
+                  <Text style={s.infoEmpty}>Chưa có file nào được chia sẻ.</Text>
+                ) : (
+                  previewFiles.map((it) => {
+                    const u = mediaUrl(it.attachment_url);
+                    return (
+                      <TouchableOpacity
+                        key={String(it.id)}
+                        style={s.fileItem}
+                        onPress={() => u && void Linking.openURL(u)}
+                      >
+                        <View style={s.fileIconBox}>
+                          <Ionicons name="document-text" size={20} color={CrmColors.blue600} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={s.fileItemName} numberOfLines={1}>
+                            {it.attachment_name || 'Tệp đính kèm'}
+                          </Text>
+                          <Text style={s.fileItemMeta}>
+                            {(it.user?.full_name || '?') + ' · ' + formatDateTime(it.created_at)}
+                          </Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={16} color={CrmColors.gray400} />
+                      </TouchableOpacity>
+                    );
+                  })
+                )}
+              </View>
+
+              {/* Ghi âm */}
+              <View style={s.infoSection}>
+                <View style={s.infoSectionHead}>
+                  <View style={s.infoSectionHeadL}>
+                    <Ionicons name="mic" size={18} color={CrmColors.gray700} />
+                    <Text style={s.infoSectionTitle}>Ghi âm</Text>
+                    <Text style={s.infoSectionBadge}>{sharedAudio.length}</Text>
+                  </View>
+                  {sharedAudio.length > 0 ? (
+                    <TouchableOpacity onPress={() => { setInfoTab('audio'); setMode('audio'); }}>
+                      <Text style={s.infoSectionMore}>Xem tất cả</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+                {previewAudio.length === 0 ? (
+                  <Text style={s.infoEmpty}>Chưa có ghi âm nào.</Text>
+                ) : (
+                  previewAudio.map((it) => {
+                    const u = mediaUrl(it.attachment_url);
+                    if (!u) return null;
+                    return (
+                      <View key={String(it.id)} style={s.audioItem}>
+                        <AudioPlayer url={u} mine={false} />
+                        <Text style={s.audioItemMeta}>
+                          {(it.user?.full_name || '?') + ' · ' + formatDateTime(it.created_at)}
+                        </Text>
+                      </View>
+                    );
+                  })
+                )}
+              </View>
+
+              {/* Hành động */}
+              {!isDirectChat ? (
+                <View style={s.infoActions}>
+                  <TouchableOpacity style={s.infoActBtn} onPress={onAddMembers}>
+                    <Ionicons name="person-add" size={18} color={CrmColors.blue600} />
+                    <Text style={s.infoActTxt}>Thêm thành viên</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[s.infoActBtn, s.infoActBtnDanger]} onPress={onLeave}>
+                    <Ionicons name="exit-outline" size={18} color="#DC2626" />
+                    <Text style={[s.infoActTxt, s.infoActTxtDanger]}>Rời nhóm</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+            </ScrollView>
+          ) : null}
+
+          {/* ── List đầy đủ Thành viên ───────────────── */}
+          {mode === 'members' ? (
+            <FlatList
+              data={members}
+              keyExtractor={(m) => String(m.user_id)}
+              renderItem={({ item }) => (
+                <View style={s.memberRow}>
+                  <View
+                    style={[
+                      s.memberAvatar,
+                      { backgroundColor: avatarColor(item.user?.full_name || String(item.user_id)) },
+                    ]}
+                  >
+                    <Text style={s.memberAvatarTxt}>
+                      {initials(item.user?.full_name || String(item.user_id))}
+                    </Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.memberName}>
+                      {item.user?.full_name || String(item.user_id)}
+                    </Text>
+                    {item.role ? (
+                      <Text style={s.memberRole}>
+                        {item.role === 'admin' ? '⭐ Admin' : 'Thành viên'}
+                      </Text>
+                    ) : null}
+                  </View>
+                </View>
+              )}
+              ListEmptyComponent={<Text style={s.tabEmpty}>Chưa có thành viên</Text>}
+            />
+          ) : null}
+
+          {/* ── Grid ảnh đầy đủ ────────────────────── */}
+          {mode === 'images' ? (
+            <FlatList
+              data={sharedImages.slice().reverse()}
+              keyExtractor={(m) => String(m.id)}
+              numColumns={3}
+              contentContainerStyle={{ gap: 2, padding: 2 }}
+              renderItem={({ item }) => {
+                const u = mediaUrl(item.attachment_url);
+                return u ? (
+                  <TouchableOpacity onPress={() => void Linking.openURL(u)} style={s.fullImgCell}>
+                    <Image source={{ uri: u }} style={s.fullImg} />
+                  </TouchableOpacity>
+                ) : null;
+              }}
+              ListEmptyComponent={<Text style={s.tabEmpty}>Chưa có ảnh nào</Text>}
+            />
+          ) : null}
+
+          {/* ── List file đầy đủ ───────────────────── */}
+          {mode === 'files' ? (
+            <FlatList
+              data={sharedFiles.slice().reverse()}
+              keyExtractor={(m) => String(m.id)}
+              renderItem={({ item }) => {
+                const u = mediaUrl(item.attachment_url);
+                return (
+                  <TouchableOpacity
+                    style={s.fileItem}
+                    onPress={() => u && void Linking.openURL(u)}
+                  >
+                    <View style={s.fileIconBox}>
+                      <Ionicons name="document-text" size={20} color={CrmColors.blue600} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.fileItemName} numberOfLines={1}>
+                        {item.attachment_name || 'Tệp đính kèm'}
+                      </Text>
+                      <Text style={s.fileItemMeta}>
+                        {(item.user?.full_name || '?') + ' · ' + formatDateTime(item.created_at)}
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={16} color={CrmColors.gray400} />
+                  </TouchableOpacity>
+                );
+              }}
+              ListEmptyComponent={<Text style={s.tabEmpty}>Chưa có file nào</Text>}
+            />
+          ) : null}
+
+          {/* ── List ghi âm đầy đủ ─────────────────── */}
+          {mode === 'audio' ? (
+            <FlatList
+              data={sharedAudio.slice().reverse()}
+              keyExtractor={(m) => String(m.id)}
+              renderItem={({ item }) => {
+                const u = mediaUrl(item.attachment_url);
+                return u ? (
+                  <View style={s.audioItem}>
+                    <AudioPlayer url={u} mine={false} />
+                    <Text style={s.audioItemMeta}>
+                      {(item.user?.full_name || '?') + ' · ' + formatDateTime(item.created_at)}
+                    </Text>
+                  </View>
+                ) : null;
+              }}
+              ListEmptyComponent={<Text style={s.tabEmpty}>Chưa có ghi âm nào</Text>}
+            />
+          ) : null}
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -1276,13 +1545,27 @@ const s = StyleSheet.create({
   reactionCount: { fontSize: 10, fontWeight: '700', color: CrmColors.gray700 },
 
   // Quick reply chips (trên composer)
-  quickRow: { paddingHorizontal: 10, paddingTop: 8, paddingBottom: 6, gap: 8 },
+  quickWrap: {
+    height: 44,
+    backgroundColor: CHAT_BG,
+  },
+  quickRow: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    gap: 8,
+    alignItems: 'center',
+  },
   quickChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
     backgroundColor: '#FFFFFF',
     borderRadius: 999,
-    paddingHorizontal: 12, paddingVertical: 7,
-    borderWidth: 1, borderColor: '#E5E7EB',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    height: 32,
   },
   quickChipTxt: { fontSize: 12.5, color: CrmColors.gray800, fontWeight: '600' },
 
@@ -1306,20 +1589,27 @@ const s = StyleSheet.create({
 
   // Audio player
   audioPlayer: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
+    flexDirection: 'row', alignItems: 'center', gap: 10,
     backgroundColor: 'rgba(0,0,0,0.06)', borderRadius: 22,
-    paddingHorizontal: 10, paddingVertical: 7, minWidth: 180,
+    paddingHorizontal: 12, paddingVertical: 9,
+    minWidth: 200, maxWidth: 260,
+    alignSelf: 'stretch',
   },
-  audioPlayerMine: { backgroundColor: 'rgba(255,255,255,0.15)' },
-  audioPlayBtn: { fontSize: 16, color: BUBBLE_ME },
-  audioPlayBtnMine: { color: '#fff' },
+  audioPlayerMine: { backgroundColor: 'rgba(255,255,255,0.18)' },
+  audioPlayBtn: {
+    fontSize: 14, color: BUBBLE_ME, width: 28, height: 28,
+    textAlign: 'center', lineHeight: 28, borderRadius: 14,
+    backgroundColor: '#FFFFFF', overflow: 'hidden', fontWeight: '700',
+  },
+  audioPlayBtnMine: { color: BUBBLE_ME, backgroundColor: '#FFFFFF' },
   audioTrack: {
-    flex: 1, flexDirection: 'row', alignItems: 'flex-end', gap: 2, height: 24, overflow: 'hidden', position: 'relative',
+    flex: 1, flexDirection: 'row', alignItems: 'center',
+    gap: 2, height: 26, position: 'relative',
   },
   audioFill: { position: 'absolute', left: 0, top: 0, bottom: 0, backgroundColor: 'transparent' },
   audioBar: { width: 3, borderRadius: 2 },
-  audioDur: { fontSize: 11, color: CrmColors.gray600, fontWeight: '600', minWidth: 32, textAlign: 'right' },
-  audioDurMine: { color: 'rgba(255,255,255,0.8)' },
+  audioDur: { fontSize: 11, color: CrmColors.gray600, fontWeight: '700', minWidth: 36, textAlign: 'right' },
+  audioDurMine: { color: 'rgba(255,255,255,0.9)' },
 
   // Reply chip
   replyChip: {
@@ -1417,8 +1707,104 @@ const s = StyleSheet.create({
   modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
   sheet: {
     backgroundColor: '#FFFFFF', borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    paddingTop: 16, maxHeight: '82%', flex: 0,
+    paddingTop: 8, maxHeight: '88%', flex: 0, minHeight: '60%',
   },
+  grabHandle: {
+    alignSelf: 'center', width: 36, height: 4, borderRadius: 2,
+    backgroundColor: CrmColors.gray300, marginBottom: 8,
+  },
+  subHeader: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 12, paddingBottom: 10, paddingTop: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: CrmColors.gray200,
+    gap: 8,
+  },
+  subBack: { width: 28, alignItems: 'flex-start' },
+  subTitle: { flex: 1, fontSize: 15, fontWeight: '800', color: CrmColors.gray900, textAlign: 'center' },
+
+  // Trang thông tin chính
+  infoScroll: { paddingBottom: 28 },
+  infoTop: { alignItems: 'center', paddingTop: 8, paddingBottom: 16 },
+  infoAvatar: {
+    width: 72, height: 72, borderRadius: 36,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 10,
+  },
+  infoAvatarTxt: { color: '#fff', fontSize: 26, fontWeight: '800' },
+  infoName: { fontSize: 18, fontWeight: '800', color: CrmColors.gray900 },
+  infoSub: { fontSize: 13, color: CrmColors.gray500, marginTop: 2 },
+
+  infoSection: {
+    borderTopWidth: 8, borderTopColor: '#F3F4F6',
+    paddingHorizontal: 16, paddingTop: 14, paddingBottom: 8,
+  },
+  infoSectionHead: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  infoSectionHeadL: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  infoSectionTitle: { fontSize: 14, fontWeight: '800', color: CrmColors.gray900 },
+  infoSectionBadge: {
+    fontSize: 12, color: CrmColors.gray500, fontWeight: '700',
+    backgroundColor: '#F3F4F6', paddingHorizontal: 7, paddingVertical: 1, borderRadius: 10,
+  },
+  infoSectionMore: { fontSize: 12.5, color: BUBBLE_ME, fontWeight: '700' },
+  infoEmpty: { fontSize: 12, color: CrmColors.gray400, fontStyle: 'italic', paddingVertical: 6 },
+
+  // Member preview row
+  memberPreviewRow: { flexDirection: 'row', gap: 12, paddingBottom: 4 },
+  memberPreviewCell: { alignItems: 'center', width: 56 },
+  memberPreviewAvatar: {
+    width: 48, height: 48, borderRadius: 24,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  memberPreviewAvatarTxt: { color: '#fff', fontSize: 15, fontWeight: '800' },
+  memberPreviewAdd: {
+    backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE',
+    borderStyle: 'dashed',
+  },
+  memberPreviewName: { marginTop: 4, fontSize: 11, color: CrmColors.gray700, textAlign: 'center', maxWidth: 56 },
+
+  // Media preview grid (3 cột)
+  mediaGridPreview: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 4,
+  },
+  mediaGridCell: { width: '32%', aspectRatio: 1, borderRadius: 6, overflow: 'hidden' },
+  mediaGridImg: { width: '100%', height: '100%' },
+
+  // File item (Messenger-style)
+  fileItem: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 10, paddingHorizontal: 4,
+  },
+  fileIconBox: {
+    width: 40, height: 40, borderRadius: 10,
+    backgroundColor: CrmColors.blue50, alignItems: 'center', justifyContent: 'center',
+  },
+  fileItemName: { fontSize: 14, color: CrmColors.gray900, fontWeight: '700' },
+  fileItemMeta: { fontSize: 11, color: CrmColors.gray500, marginTop: 2 },
+
+  // Audio item
+  audioItem: { paddingVertical: 8, paddingHorizontal: 4 },
+  audioItemMeta: { fontSize: 11, color: CrmColors.gray500, marginTop: 4 },
+
+  // Info actions (Thêm/Rời nhóm)
+  infoActions: {
+    paddingHorizontal: 16, paddingTop: 20, gap: 10,
+    borderTopWidth: 8, borderTopColor: '#F3F4F6',
+  },
+  infoActBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 8, paddingVertical: 12, borderRadius: 12,
+    backgroundColor: CrmColors.blue50,
+  },
+  infoActBtnDanger: { backgroundColor: '#FEF2F2' },
+  infoActTxt: { fontSize: 14, fontWeight: '800', color: CrmColors.blue600 },
+  infoActTxtDanger: { color: '#DC2626' },
+
+  // Full image grid cell
+  fullImgCell: { width: '33.33%', aspectRatio: 1 },
+  fullImg: { width: '100%', height: '100%' },
+
   sheetHeader: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
     paddingHorizontal: 16, paddingBottom: 12,
