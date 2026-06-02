@@ -1370,19 +1370,24 @@ r.post('/groups/:gid/messages/:mid/reactions', async (req, res) => {
     const emoji = (req.body?.emoji || '').toString().trim();
     if (!emoji) return res.status(400).json({ error: 'Thiếu emoji' });
 
+    // Đọc reactions hiện tại — nếu PostgREST trả error vì schema cache cũ,
+    // coi như list rỗng và để bước UPDATE tự fail (đỡ chặn user).
+    let list = [];
     const { data: rxRow, error: rxErr } = await supabase
       .from('messenger_group_messages')
       .select('reactions')
       .eq('id', loaded.mid)
       .maybeSingle();
     if (rxErr) {
-      if (isMissingColumnError(rxErr, 'reactions')) {
-        return res.status(503).json({ error: `Chưa có cột reactions. ${MESSENGER_290_HINT}` });
+      console.warn('[messenger] read reactions failed:', rxErr.message);
+      if (!isMissingColumnError(rxErr, 'reactions')) {
+        return res.status(500).json({ error: rxErr.message });
       }
-      return res.status(500).json({ error: rxErr.message });
+      // schema cache stale → bỏ qua read, để update tự retry & báo nếu thật sự thiếu cột
+    } else if (Array.isArray(rxRow?.reactions)) {
+      list = rxRow.reactions;
     }
 
-    const list = Array.isArray(rxRow?.reactions) ? rxRow.reactions : [];
     const existIdx = list.findIndex((r) => String(r.user_id) === String(uid));
     let next;
     if (existIdx >= 0 && list[existIdx].emoji === emoji) {
@@ -1398,8 +1403,14 @@ r.post('/groups/:gid/messages/:mid/reactions', async (req, res) => {
       .update({ reactions: next })
       .eq('id', loaded.mid);
     if (uErr) {
+      console.warn('[messenger] update reactions failed:', uErr.message);
       if (isMissingColumnError(uErr, 'reactions')) {
-        return res.status(503).json({ error: `Chưa có cột reactions. ${MESSENGER_290_HINT}` });
+        return res.status(503).json({
+          error:
+            'Cột reactions chưa được PostgREST nhận diện. Hãy chạy: '
+            + "NOTIFY pgrst, 'reload schema'; "
+            + 'hoặc restart Supabase project (Dashboard → Settings → API → Restart).',
+        });
       }
       return res.status(400).json({ error: uErr.message });
     }
@@ -1437,11 +1448,15 @@ r.delete('/groups/:gid/messages/:mid', async (req, res) => {
       .select('deleted_at')
       .eq('id', mid)
       .maybeSingle();
-    if (delErr && isMissingColumnError(delErr, 'deleted_at')) {
-      return res.status(503).json({ error: `Chưa có cột deleted_at. ${MESSENGER_290_HINT}` });
+    if (delErr) {
+      console.warn('[messenger] read deleted_at failed:', delErr.message);
+      if (!isMissingColumnError(delErr, 'deleted_at')) {
+        return res.status(500).json({ error: delErr.message });
+      }
+      // schema cache stale → coi như chưa thu hồi, để update phía dưới tự xử lý
+    } else if (delRow?.deleted_at) {
+      return res.json({ ok: true, already: true });
     }
-    if (delErr) return res.status(500).json({ error: delErr.message });
-    if (delRow?.deleted_at) return res.json({ ok: true, already: true });
 
     const { error: uErr } = await supabase
       .from('messenger_group_messages')
@@ -1457,8 +1472,14 @@ r.delete('/groups/:gid/messages/:mid', async (req, res) => {
       })
       .eq('id', mid);
     if (uErr) {
+      console.warn('[messenger] recall update failed:', uErr.message);
       if (isMissingColumnError(uErr, 'deleted_at') || isMissingColumnError(uErr, 'deleted_by')) {
-        return res.status(503).json({ error: `Chưa có cột thu hồi tin. ${MESSENGER_290_HINT}` });
+        return res.status(503).json({
+          error:
+            'Cột deleted_at/deleted_by chưa được PostgREST nhận diện. Chạy: '
+            + "NOTIFY pgrst, 'reload schema'; "
+            + 'hoặc restart Supabase project (Dashboard → Settings → API → Restart).',
+        });
       }
       return res.status(400).json({ error: uErr.message });
     }
