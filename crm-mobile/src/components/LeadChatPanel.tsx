@@ -491,16 +491,14 @@ export default function LeadChatPanel({ leadId }: Props) {
   const composerPadBottom =
     Platform.OS === 'ios' ? Math.max(insets.bottom, 8) : Math.max(insets.bottom, 4);
 
-  const Root = KeyboardAvoidingView;
+  const Root = Platform.OS === 'ios' ? KeyboardAvoidingView : View;
   const rootProps =
     Platform.OS === 'ios'
       ? ({
           behavior: 'padding' as const,
           keyboardVerticalOffset: 88,
         } as const)
-      : ({
-          behavior: 'height' as const,
-        } as const);
+      : {};
 
   return (
     <Root {...rootProps} style={styles.root}>

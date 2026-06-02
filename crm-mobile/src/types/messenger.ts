@@ -48,6 +48,7 @@ export type MessengerAttachment = {
 export type MessengerReaction = {
   emoji?: string | null;
   user_id?: string | null;
+  at?: string | null;
   user?: { id?: string | null; full_name?: string | null } | null;
 };
 
@@ -63,7 +64,11 @@ export type MessengerMessage = {
   attachment_url?: string | null;
   attachment_name?: string | null;
   attachment_mime?: string | null;
+  attachment_size?: number | null;
   reply_to?: string | null;
   user?: { id?: string; full_name?: string | null; avatar?: string | null; is_bot?: boolean | null } | null;
   reactions?: MessengerReaction[] | null;
+  /** Khi user thu hồi tin → server set deleted_at. UI hiển thị placeholder. */
+  deleted_at?: string | null;
+  deleted_by?: string | null;
 };

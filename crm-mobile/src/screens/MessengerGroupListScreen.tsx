@@ -193,23 +193,23 @@ function ConversationRow({
   /**
    * Preview tin mới nhất với prefix:
    *  • "Bạn: <nội dung>" — nếu tin cuối là do mình gửi.
+   *  • Marker `__RECALLED__` từ backend → dịch theo người xem.
    *  • Nội dung trống → fallback theo loại nhóm (giữ behaviour cũ).
    */
   const isMineLast = !!item.last_user_id && String(item.last_user_id) === myId;
-  let displayMessage = item.last_message || '';
-  if (displayMessage === 'Tin nhắn đã bị thu hồi') {
-    displayMessage = isMineLast ? 'Bạn đã thu hồi tin nhắn' : 'Tin nhắn đã bị thu hồi';
-  } else if (displayMessage) {
-    displayMessage = isMineLast ? `Bạn: ${displayMessage}` : displayMessage;
+  let preview: string;
+  if (item.last_message === '__RECALLED__') {
+    preview = isMineLast ? 'Bạn đã thu hồi tin nhắn' : 'Tin nhắn đã bị thu hồi';
+  } else if (item.last_message) {
+    preview = isMineLast ? `Bạn: ${item.last_message}` : item.last_message;
+  } else if (item.is_direct) {
+    preview = `Chat trực tiếp · ${item.message_count ?? 0} tin`;
+  } else if (item.crm_lead_id) {
+    preview = `Nhóm theo lead · ${item.message_count ?? 0} tin`;
+  } else {
+    preview = `Nhóm · ${item.message_count ?? 0} tin`;
   }
-
-  const subtitle = displayMessage
-    ? displayMessage
-    : item.is_direct
-      ? `Chat trực tiếp · ${item.message_count ?? 0} tin`
-      : item.crm_lead_id
-        ? `Nhóm theo lead · ${item.message_count ?? 0} tin`
-        : `Nhóm · ${item.message_count ?? 0} tin`;
+  const subtitle = preview;
 
   return (
     <TouchableOpacity
@@ -343,11 +343,7 @@ export default function MessengerGroupListScreen({ navigation }: { navigation: N
         n.metadata && typeof n.metadata === 'object' ? (n.metadata as Record<string, unknown>) : {};
       const groupName = typeof meta.group_name === 'string' ? meta.group_name : undefined;
       const senderId = typeof meta.sender_id === 'string' ? meta.sender_id : null;
-      const senderName = typeof meta.sender_name === 'string' ? meta.sender_name : '';
-      let msgContent = n.message ?? '';
-      if (senderName && msgContent.startsWith(`${senderName}: `)) {
-        msgContent = msgContent.slice(senderName.length + 2);
-      }
+      const msgContent = n.message ?? '';
 
       setGroups((prev) => {
         const idx = prev.findIndex((g) => String(g.id) === groupId);

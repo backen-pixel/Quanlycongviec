@@ -175,11 +175,11 @@ export default function FacebookChatScreen({ route, navigation }: Props) {
 
   const composerPadBottom =
     Platform.OS === 'ios' ? Math.max(insets.bottom, 8) : Math.max(insets.bottom, 4);
-  const ChatRoot = KeyboardAvoidingView;
+  const ChatRoot = Platform.OS === 'ios' ? KeyboardAvoidingView : View;
   const chatRootProps =
     Platform.OS === 'ios'
       ? ({ behavior: 'padding' as const, keyboardVerticalOffset: 88 } as const)
-      : ({ behavior: 'height' as const } as const);
+      : {};
 
   return (
     <ChatRoot style={styles.flex} {...chatRootProps}>
