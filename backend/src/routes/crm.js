@@ -17,6 +17,7 @@ const { generateFlowTasks, generateStepTasks } = require('../helpers/generateFlo
 const { autoCreateProjectFromWonDeal } = require('../helpers/autoDealWonProject');
 const {
   syncCrmLeadSxPipelineFromProject,
+  syncSxKanbanFromCrmProductionStage,
   emitCrmBadgeUpdateForProject,
   repairCrmDealPipelineDisplay,
 } = require('../helpers/workshopKanban');
@@ -6031,6 +6032,37 @@ r.put('/leads/:id', async (req, res) => {
       }
     }
 
+    if (
+      oldLead?.type === 'deal'
+      && data?.project_id
+      && Object.prototype.hasOwnProperty.call(safeBody, 'stage_id')
+      && String(safeBody.stage_id || '') !== String(oldLead?.stage_id || '')
+    ) {
+      try {
+        const { data: targetSxStage } = await supabase
+          .from('crm_pipeline_stages')
+          .select('sync_role')
+          .eq('id', safeBody.stage_id)
+          .maybeSingle();
+        if (targetSxStage?.sync_role === 'sx_production') {
+          await syncSxKanbanFromCrmProductionStage(id);
+          try {
+            await syncCrmLeadSxPipelineFromProject(data.project_id);
+          } catch (syncErr) {
+            console.warn('[crm PUT /leads/:id] syncCrmLeadSxPipelineFromProject:', syncErr.message);
+          }
+          try {
+            const io = req.app.get('io');
+            if (io) await emitCrmBadgeUpdateForProject(data.project_id, io);
+          } catch (emitErr) {
+            console.warn('[crm PUT /leads/:id] emitCrmBadgeUpdateForProject:', emitErr.message);
+          }
+        }
+      } catch (sxErr) {
+        console.warn('[crm PUT /leads/:id] syncSxKanbanFromCrmProductionStage:', sxErr.message);
+      }
+    }
+
     try {
       const ownerUpdated = Object.prototype.hasOwnProperty.call(req.body, 'assigned_to')
         || Object.prototype.hasOwnProperty.call(req.body, 'lead_owner_id');
@@ -6918,11 +6950,6 @@ r.patch('/leads/:id/stage', async (req, res) => {
             console.warn('[crm/stage] assign production company responsible:', respErr.message);
           }
         }
-        try {
-          await syncCrmLeadSxPipelineFromProject(auto.project_id);
-        } catch (se) {
-          console.warn('[crm/stage] sync sx_pipeline_stage_id:', se.message);
-        }
       } else {
         const { data: flows } = await supabase.from('workflow_flows')
           .select('id, name, description, is_default').eq('is_active', true).order('is_default', { ascending: false });
@@ -6956,6 +6983,18 @@ r.patch('/leads/:id/stage', async (req, res) => {
     });
 
     emitCrmDashboardChanged(req, { type: lead?.type, company_id: lead?.company_id, lead_id: req.params.id, action: 'stage_changed', stage_id });
+
+    // CRM → SX: Sale kéo deal sang cột «Sản xuất» (sync_role) → gán Kanban xưởng
+    if (lead?.type === 'deal' && stage?.sync_role === 'sx_production') {
+      const pidForSx = projectAutoCreated?.project_id || responseLead?.project_id || lead?.project_id;
+      if (pidForSx) {
+        try {
+          await syncSxKanbanFromCrmProductionStage(req.params.id);
+        } catch (sxErr) {
+          console.warn('[crm/stage] syncSxKanbanFromCrmProductionStage:', sxErr.message);
+        }
+      }
+    }
 
     // Cuối luồng: sync + refresh badge SX/VC (sau auto-create / gen sx_*) để response và socket không mất tag.
     if (lead?.type === 'deal') {
