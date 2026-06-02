@@ -1,7 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
   Animated,
   Dimensions,
   FlatList,
@@ -20,7 +18,10 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { RouteProp, useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -33,9 +34,8 @@ import { api, getStoredToken, postMultipart } from '../api/client';
 import { API_ORIGIN } from '../config';
 import { useAuth } from '../context/AuthContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Clipboard from 'expo-clipboard';
 import type { MoreStackParamList } from '../navigation/types';
-import type { MessengerGroupDetail, MessengerMessage, MessengerReadReceipt } from '../types/messenger';
+import type { MessengerGroupDetail, MessengerMessage, MessengerReaction, MessengerReadReceipt } from '../types/messenger';
 import { CrmColors, CrmRadii } from '../theme/crmTheme';
 import { formatDateTime } from '../lib/formatUtils';
 import { chatDebugClear, chatDebugLog, chatDebugSnapshot, chatDebugSubscribe } from '../lib/chatDebug';
@@ -279,28 +279,8 @@ export default function MessengerGroupChatScreen({
   // Emoji picker panel
   const [emojiOpen, setEmojiOpen] = useState(false);
 
-  // Theo dõi bàn phím để layout composer + auto scroll xuống cuối khi keyboard mở
-  const [keyboardVisible, setKeyboardVisible] = useState(false);
-  useEffect(() => {
-    const showSub = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
-      () => {
-        setKeyboardVisible(true);
-        setEmojiOpen(false);
-        setMediaOpen(false);
-        setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 60);
-      },
-    );
-    const hideSub = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
-      () => setKeyboardVisible(false),
-    );
-    return () => { showSub.remove(); hideSub.remove(); };
-  }, []);
-
-  // Reactions emoji bar (long-press tin nhắn)
-  const [reactionBarFor, setReactionBarFor] = useState<MessengerMessage | null>(null);
-  const QUICK_REACTIONS = ['❤️', '😆', '😮', '😢', '😡', '👍'] as const;
+  // Action sheet cho 1 message (long-press): hiển thị thanh emoji nhanh + actions
+  const [msgActionFor, setMsgActionFor] = useState<MessengerMessage | null>(null);
 
   // Pinned (sync với /messenger/pins)
   const [pinned, setPinned] = useState(false);
@@ -439,26 +419,45 @@ export default function MessengerGroupChatScreen({
    *  2) Bật bubble cho group hiện hành (avatar = chữ cái đầu tên nhóm).
    *  3) Đẩy app về nền — UX giống Messenger "Nhỏ thành chat head".
    */
-  /** Toggle reaction trên tin nhắn — optimistic update + sync server. */
+  /** Toggle reaction emoji cho 1 tin nhắn (gọi backend, cập nhật optimistic). */
   const toggleReaction = useCallback(
     async (messageId: string, emoji: string) => {
+      const target = messages.find((m) => String(m.id) === String(messageId));
+      const had = !!target?.reactions?.some(
+        (r) => String(r.user_id) === myId && (r.emoji || '') === emoji,
+      );
       // Optimistic update
       setMessages((prev) =>
         prev.map((m) => {
           if (String(m.id) !== String(messageId)) return m;
-          const list = Array.isArray(m.reactions) ? m.reactions : [];
-          const i = list.findIndex((r) => String(r.user_id) === myId);
-          let next;
-          if (i >= 0 && list[i].emoji === emoji) next = list.filter((_, j) => j !== i);
-          else if (i >= 0) next = list.map((r, j) => (j === i ? { ...r, emoji, at: new Date().toISOString() } : r));
-          else next = [...list, { user_id: myId, emoji, at: new Date().toISOString() }];
+          const cur = Array.isArray(m.reactions) ? m.reactions : [];
+          const next = had
+            ? cur.filter((r) => !(String(r.user_id) === myId && (r.emoji || '') === emoji))
+            : [...cur, { emoji, user_id: myId, user: null }];
           return { ...m, reactions: next };
         }),
       );
-      setReactionBarFor(null);
       try {
-        await api.post(`/messenger/groups/${groupId}/messages/${messageId}/reactions`, { emoji });
+        const r = await api.post<{ reactions: MessengerReaction[] }>(
+          `/messenger/groups/${groupId}/chat/${messageId}/react`,
+          { emoji },
+        );
+        const rxs = Array.isArray(r.data?.reactions) ? r.data.reactions : [];
+        setMessages((prev) =>
+          prev.map((m) => (String(m.id) === String(messageId) ? { ...m, reactions: rxs } : m)),
+        );
       } catch (e: unknown) {
+        // Rollback nếu lỗi
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (String(m.id) !== String(messageId)) return m;
+            const cur = Array.isArray(m.reactions) ? m.reactions : [];
+            const next = had
+              ? [...cur, { emoji, user_id: myId, user: null }]
+              : cur.filter((r) => !(String(r.user_id) === myId && (r.emoji || '') === emoji));
+            return { ...m, reactions: next };
+          }),
+        );
         Alert.alert(
           'Lỗi',
           (e as { response?: { data?: { error?: string } } })?.response?.data?.error ||
@@ -466,44 +465,53 @@ export default function MessengerGroupChatScreen({
         );
       }
     },
-    [groupId, myId],
+    [messages, myId, groupId],
   );
 
-  /** Thu hồi tin nhắn — chỉ tin của mình mới được thu hồi. */
+  /** Thu hồi (recall) 1 tin nhắn của mình. */
   const recallMessage = useCallback(
+    async (messageId: string) => {
+      try {
+        await api.delete(`/messenger/groups/${groupId}/chat/${messageId}`);
+        setMessages((prev) =>
+          prev.map((m) =>
+            String(m.id) === String(messageId)
+              ? {
+                  ...m,
+                  is_recalled: true,
+                  content: '',
+                  attachment_url: null,
+                  attachment_name: null,
+                  attachment_mime: null,
+                  attachments: null,
+                  reactions: [],
+                }
+              : m,
+          ),
+        );
+      } catch (e: unknown) {
+        Alert.alert(
+          'Lỗi',
+          (e as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+            'Không thu hồi được tin nhắn',
+        );
+      }
+    },
+    [groupId],
+  );
+
+  const confirmRecall = useCallback(
     (messageId: string) => {
       Alert.alert(
         'Thu hồi tin nhắn',
-        'Tin nhắn sẽ bị xoá ở mọi thiết bị. Hành động này không thể hoàn tác.',
+        'Tin này sẽ bị xoá với mọi người trong cuộc trò chuyện.',
         [
-          { text: 'Hủy', style: 'cancel' },
-          {
-            text: 'Thu hồi',
-            style: 'destructive',
-            onPress: async () => {
-              try {
-                await api.delete(`/messenger/groups/${groupId}/messages/${messageId}`);
-                // socket sẽ emit và auto cập nhật, nhưng cập nhật ngay cho UX
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    String(m.id) === String(messageId)
-                      ? { ...m, deleted_at: new Date().toISOString(), content: '', attachments: null, attachment_url: null }
-                      : m,
-                  ),
-                );
-              } catch (e: unknown) {
-                Alert.alert(
-                  'Lỗi',
-                  (e as { response?: { data?: { error?: string } } })?.response?.data?.error ||
-                    'Không thu hồi được',
-                );
-              }
-            },
-          },
+          { text: 'Huỷ', style: 'cancel' },
+          { text: 'Thu hồi', style: 'destructive', onPress: () => void recallMessage(messageId) },
         ],
       );
     },
-    [groupId],
+    [recallMessage],
   );
 
   /** Toggle ghim hội thoại — đồng bộ với /messenger/pins (dùng chung với list). */
@@ -638,6 +646,19 @@ export default function MessengerGroupChatScreen({
     const t = setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 60);
     return () => clearTimeout(t);
   }, [replyTo, pendingFiles.length, recState]);
+
+  /**
+   * Khi bàn phím mở → layout (resize trên Android) co lại; ép scrollToEnd
+   * để TextInput + tin cuối luôn nằm trên bàn phím. iOS dùng KAV nên cũng
+   * cần scroll lại lúc keyboardDidShow.
+   */
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const sub = Keyboard.addListener(showEvt, () => {
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 30);
+    });
+    return () => sub.remove();
+  }, []);
   useEffect(() => { navigation.setOptions({ title: displayTitle }); }, [navigation, displayTitle]);
 
   /* ── socket ────────────────────────────────────────── */
@@ -683,18 +704,55 @@ export default function MessengerGroupChatScreen({
       // Khi nhóm được cập nhật (đổi tên / avatar) → reload group detail
       socket.on('messenger_group:updated', (ev: { group_id?: string; name?: string; avatar?: string | null }) => {
         if (String(ev?.group_id || '') !== String(groupId)) return;
-        setGroup((prev) => (prev ? { ...prev, ...(ev.name ? { name: ev.name } : {}), ...('avatar' in ev ? { avatar: ev.avatar ?? null } : {}) } : prev));
+        setGroup((prev) =>
+          prev
+            ? {
+                ...prev,
+                ...(ev.name !== undefined ? { name: ev.name } : {}),
+                ...(ev.avatar !== undefined ? { avatar: ev.avatar } : {}),
+              }
+            : prev,
+        );
       });
-      // Reaction realtime — replace tin nhắn với phiên bản có reactions mới
-      socket.on('messenger_group:reaction', (msg: MessengerMessage) => {
-        if (!msg?.id) return;
-        setMessages((prev) => prev.map((p) => (String(p.id) === String(msg.id) ? { ...p, reactions: msg.reactions } : p)));
-      });
-      // Recall realtime
-      socket.on('messenger_group:recall', (msg: MessengerMessage) => {
-        if (!msg?.id) return;
-        setMessages((prev) => prev.map((p) => (String(p.id) === String(msg.id) ? { ...p, ...msg } : p)));
-      });
+      // Realtime reactions: backend emit khi có user thả/bỏ cảm xúc
+      socket.on(
+        'messenger_group:reactions',
+        (ev: { group_id?: string; message_id?: string; reactions?: MessengerReaction[] }) => {
+          if (String(ev?.group_id || '') !== String(groupId)) return;
+          if (!ev?.message_id) return;
+          setMessages((prev) =>
+            prev.map((m) =>
+              String(m.id) === String(ev.message_id)
+                ? { ...m, reactions: Array.isArray(ev.reactions) ? ev.reactions : [] }
+                : m,
+            ),
+          );
+        },
+      );
+      // Realtime recall — đổi tin nhắn về trạng thái đã thu hồi
+      socket.on(
+        'messenger_group:recalled',
+        (ev: { group_id?: string; message_id?: string }) => {
+          if (String(ev?.group_id || '') !== String(groupId)) return;
+          if (!ev?.message_id) return;
+          setMessages((prev) =>
+            prev.map((m) =>
+              String(m.id) === String(ev.message_id)
+                ? {
+                    ...m,
+                    is_recalled: true,
+                    content: '',
+                    attachment_url: null,
+                    attachment_name: null,
+                    attachment_mime: null,
+                    attachments: null,
+                    reactions: [],
+                  }
+                : m,
+            ),
+          );
+        },
+      );
     })();
     return () => {
       cancelled = true;
@@ -919,12 +977,8 @@ export default function MessengerGroupChatScreen({
   /* ── render message ────────────────────────────────── */
   const renderMsg = useCallback(
     ({ item, index }: { item: MessengerMessage; index: number }) => {
-      const mine = String(item.user_id) === myId;
-
-      // Date separator
       const prev = messages[index - 1];
       const showDate = !prev || !isSameDay(prev.created_at, item.created_at);
-
       if (item.is_system) {
         return (
           <View>
@@ -935,191 +989,23 @@ export default function MessengerGroupChatScreen({
           </View>
         );
       }
-
-      // ── Tin đã thu hồi ─────────────────────────────
-      if (item.deleted_at) {
-        const name = item.user?.full_name || '?';
-        return (
-          <View>
-            {showDate && <DateSep date={String(item.created_at || '')} />}
-            <View style={[s.row, mine && s.rowMine]}>
-              {!mine ? (
-                <View style={[s.avatar, { backgroundColor: avatarColor(name) }]}>
-                  <Text style={s.avatarTxt}>{initials(name)}</Text>
-                </View>
-              ) : (
-                <View style={s.avatarSpace} />
-              )}
-              <View style={{ alignItems: mine ? 'flex-end' : 'flex-start' }}>
-                {!mine && !isDirectChat ? <Text style={s.msgName}>{name}</Text> : null}
-                <View style={[s.bubble, s.bubbleRecalled, mine && s.bubbleRecalledMine]}>
-                  <Ionicons name="ban" size={13} color={CrmColors.gray500} style={{ marginRight: 4 }} />
-                  <Text style={s.bubbleRecalledTxt}>
-                    {mine ? 'Bạn đã thu hồi tin nhắn' : 'Tin nhắn đã bị thu hồi'}
-                  </Text>
-                </View>
-              </View>
-            </View>
-          </View>
-        );
-      }
-
-      const name = item.user?.full_name || '?';
-      const isBot = !!item.user?.is_bot;
-      const atts = Array.isArray(item.attachments) ? item.attachments : [];
-      const imgUrl = item.attachment_url ? mediaUrl(item.attachment_url) : null;
-      const isImg =
-        item.message_type === 'image' ||
-        (item.attachment_mime || '').startsWith('image/') ||
-        (imgUrl && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(imgUrl));
-      const text = item.content || '';
-      const stickerMode =
-        !!text && !imgUrl && atts.length === 0 && !isAudioMsg(item) && isEmojiOnly(text);
-      const reactions = Array.isArray(item.reactions) ? item.reactions : [];
-      const reactionGroups = (() => {
-        if (!reactions.length) return [] as { emoji: string; count: number }[];
-        const m = new Map<string, number>();
-        for (const r of reactions) {
-          const e = (r?.emoji || '').trim();
-          if (!e) continue;
-          m.set(e, (m.get(e) || 0) + 1);
-        }
-        return Array.from(m.entries()).map(([emoji, count]) => ({ emoji, count }));
-      })();
-      const timeStr = (() => {
-        const d = item.created_at ? new Date(item.created_at) : null;
-        if (!d || Number.isNaN(d.getTime())) return formatDateTime(item.created_at);
-        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-      })();
-
       return (
         <View>
           {showDate && <DateSep date={String(item.created_at || '')} />}
-          <View style={[s.row, mine && s.rowMine]}>
-            {/* Avatar — chỉ với người khác */}
-            {!mine ? (
-              isBot ? (
-                <View style={[s.avatar, s.avatarBot]}>
-                  <Text style={s.avatarTxt}>🤖</Text>
-                </View>
-              ) : (
-                <View style={[s.avatar, { backgroundColor: avatarColor(name) }]}>
-                  <Text style={s.avatarTxt}>{initials(name)}</Text>
-                </View>
-              )
-            ) : (
-              <View style={s.avatarSpace} />
-            )}
-
-            <View style={{ maxWidth: SW * 0.78, alignItems: mine ? 'flex-end' : 'flex-start', minWidth: isAudioMsg(item) ? 220 : 0 }}>
-              {!mine && (!isDirectChat || isBot) ? (
-                <Text style={s.msgName}>
-                  {name}
-                  {isBot ? '  · BOT' : ''}
-                </Text>
-              ) : null}
-
-              {stickerMode ? (
-                /* Emoji-only → sticker (không bubble, chữ to, time bên dưới) */
-                <SwipeReply onReply={() => setReplyTo(item)} mine={mine}>
-                  <Pressable style={s.stickerWrap} onLongPress={() => setReactionBarFor(item)}>
-                    <Text style={s.stickerTxt}>{text}</Text>
-                    <Text style={s.stickerTime}>{timeStr}</Text>
-                  </Pressable>
-                </SwipeReply>
-              ) : (
-                <SwipeReply onReply={() => setReplyTo(item)} mine={mine}>
-                <Pressable
-                  style={[s.bubble, mine ? s.bubbleMine : isBot ? s.bubbleBot : s.bubbleOther]}
-                  onLongPress={() => setReactionBarFor(item)}
-                >
-                  {item.reply_to ? (
-                    <View style={[s.replyBar, mine && s.replyBarMine]}>
-                      <Text style={[s.replyTxt, mine && s.replyTxtMine]} numberOfLines={1}>
-                        ↩ Trả lời tin nhắn
-                      </Text>
-                    </View>
-                  ) : null}
-
-                  {/* Audio message */}
-                  {isAudioMsg(item) && imgUrl ? (
-                    <AudioPlayer url={imgUrl} mine={mine} />
-                  ) : null}
-
-                  {/* Text */}
-                  {item.content ? (
-                    <Text style={[s.bubbleTxt, mine && s.bubbleTxtMine]}>{item.content}</Text>
-                  ) : null}
-
-                  {/* Image/file attachment */}
-                  {!isAudioMsg(item) && imgUrl && isImg ? (
-                    <TouchableOpacity onPress={() => void Linking.openURL(imgUrl as string)}>
-                      <Image source={{ uri: imgUrl }} style={s.imgAtt} resizeMode="cover" />
-                    </TouchableOpacity>
-                  ) : !isAudioMsg(item) && imgUrl && !isImg ? (
-                    <TouchableOpacity onPress={() => void Linking.openURL(imgUrl as string)}>
-                      <Text style={[s.fileLink, mine && s.fileLinkMine]}>
-                        📎 {item.attachment_name || 'Tệp'}
-                      </Text>
-                    </TouchableOpacity>
-                  ) : null}
-
-                  {/* Multiple attachments */}
-                  {atts.map((a, i) => {
-                    const u = mediaUrl(a.url);
-                    const im = (a.type || '').startsWith('image/') && u;
-                    return im ? (
-                      <TouchableOpacity key={i} onPress={() => u && void Linking.openURL(u)}>
-                        <Image source={{ uri: u! }} style={s.imgAtt} resizeMode="cover" />
-                      </TouchableOpacity>
-                    ) : (
-                      <TouchableOpacity key={i} onPress={() => u && void Linking.openURL(u)}>
-                        <Text style={[s.fileLink, mine && s.fileLinkMine]}>📎 {a.name || 'Tệp'}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-
-                  <Text style={[s.bubbleTime, mine && s.bubbleTimeMine]}>{timeStr}</Text>
-                </Pressable>
-                </SwipeReply>
-              )}
-
-              {reactionGroups.length ? (
-                <View style={[s.reactionRow, mine && s.reactionRowMine]}>
-                  {reactionGroups.map((r) => (
-                    <View key={r.emoji} style={s.reactionPill}>
-                      <Text style={s.reactionEmoji}>{r.emoji}</Text>
-                      {r.count > 1 ? <Text style={s.reactionCount}>{r.count}</Text> : null}
-                    </View>
-                  ))}
-                </View>
-              ) : null}
-
-              {/* Trạng thái Đã gửi / Đã xem — chỉ gắn vào tin cuối của mình */}
-              {mine && String(item.id) === lastMineId && lastMineSeenLabel ? (
-                <View style={s.readRow}>
-                  <Ionicons
-                    name={lastMineSeen && lastMineSeen.count > 0 ? 'checkmark-done' : 'checkmark'}
-                    size={13}
-                    color={lastMineSeen && lastMineSeen.count > 0 ? BUBBLE_ME : CrmColors.gray500}
-                  />
-                  <Text
-                    style={[
-                      s.readTxt,
-                      lastMineSeen && lastMineSeen.count > 0 && s.readTxtSeen,
-                    ]}
-                    numberOfLines={1}
-                  >
-                    {lastMineSeenLabel}
-                  </Text>
-                </View>
-              ) : null}
-            </View>
-          </View>
+          <MessageRow
+            item={item}
+            myId={myId}
+            isDirectChat={isDirectChat}
+            lastMineId={lastMineId}
+            lastMineSeen={lastMineSeen}
+            lastMineSeenLabel={lastMineSeenLabel}
+            onSwipeReply={(m) => setReplyTo(m)}
+            onLongPress={(m) => setMsgActionFor(m)}
+          />
         </View>
       );
     },
-    [myId, isDirectChat, messages, lastMineId, lastMineSeen, lastMineSeenLabel, setReactionBarFor],
+    [myId, isDirectChat, messages, lastMineId, lastMineSeen, lastMineSeenLabel],
   );
 
   const replyLabel = useMemo(() => {
@@ -1131,21 +1017,17 @@ export default function MessengerGroupChatScreen({
     return <View style={s.center}><ActivityIndicator color={BUBBLE_ME} size="large" /></View>;
   }
 
-  /** Padding đáy composer — chỉ áp dụng safe-area khi bàn phím KHÔNG hiển thị
-   *  (để tránh thừa khoảng trắng dưới input khi keyboard đang mở). */
-  const composerPadBottom = keyboardVisible
-    ? 4
-    : Platform.OS === 'ios'
-      ? Math.max(insets.bottom, 8)
-      : Math.max(insets.bottom, 4);
+  // Trên cả iOS & Android dùng KeyboardAvoidingView để composer luôn nổi trên
+  // bàn phím (Android softwareKeyboardLayoutMode=resize đôi khi không lifted
+  // đủ khi screen nằm trong tab navigator). behavior=padding hoạt động ổn cả 2.
+  const composerPadBottom =
+    Platform.OS === 'ios' ? Math.max(insets.bottom, 8) : Math.max(insets.bottom, 4);
 
-  // Cả iOS lẫn Android bọc KAV để ô nhập luôn hiển thị phía trên bàn phím.
-  // Android: behavior='height' + offset = top inset; iOS: behavior='padding'.
   const ChatRoot = KeyboardAvoidingView;
-  const chatRootProps =
-    Platform.OS === 'ios'
-      ? ({ behavior: 'padding' as const, keyboardVerticalOffset: 0 } as const)
-      : ({ behavior: 'height' as const, keyboardVerticalOffset: 0 } as const);
+  const chatRootProps = {
+    behavior: (Platform.OS === 'ios' ? 'padding' : 'height') as 'padding' | 'height',
+    keyboardVerticalOffset: Platform.OS === 'ios' ? 88 : 0,
+  } as const;
 
   return (
     <ChatRoot style={s.flex} {...chatRootProps}>
@@ -1350,6 +1232,7 @@ export default function MessengerGroupChatScreen({
               placeholderTextColor="#9CA3AF"
               multiline
               maxLength={8000}
+              onFocus={() => setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 80)}
             />
             <TouchableOpacity
               style={s.inputEmojiBtn}
@@ -1433,6 +1316,19 @@ export default function MessengerGroupChatScreen({
         </View>
       ) : null}
 
+      {/* ── Action sheet long-press: thanh emoji + reply/copy/recall ── */}
+      <MessageActionSheet
+        message={msgActionFor}
+        myId={myId}
+        onClose={() => setMsgActionFor(null)}
+        onReact={(e) => msgActionFor && void toggleReaction(String(msgActionFor.id), e)}
+        onReply={() => msgActionFor && setReplyTo(msgActionFor)}
+        onCopy={() => {
+          if (msgActionFor?.content) void Clipboard.setStringAsync(String(msgActionFor.content));
+        }}
+        onRecall={() => msgActionFor && confirmRecall(String(msgActionFor.id))}
+      />
+
       {/* ── Group Info Modal (Messenger-style) ── */}
       <GroupInfoSheet
         visible={infoOpen}
@@ -1457,67 +1353,6 @@ export default function MessengerGroupChatScreen({
         onMinimizeToBubble={onMinimizeToBubble}
         onOpenDebug={() => { setInfoOpen(false); setDebugOpen(true); }}
       />
-
-      {/* ── Reaction bar (long-press tin nhắn) ── */}
-      <Modal
-        visible={!!reactionBarFor}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setReactionBarFor(null)}
-      >
-        <Pressable style={s.reactBg} onPress={() => setReactionBarFor(null)}>
-          <Pressable style={s.reactCard} onPress={(e) => e.stopPropagation()}>
-            <View style={s.reactRow}>
-              {QUICK_REACTIONS.map((e) => (
-                <TouchableOpacity
-                  key={e}
-                  style={s.reactBtn}
-                  onPress={() => reactionBarFor && void toggleReaction(String(reactionBarFor.id), e)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={s.reactEmoji}>{e}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <View style={s.reactDivider} />
-            <TouchableOpacity
-              style={s.reactAction}
-              onPress={() => {
-                if (reactionBarFor) setReplyTo(reactionBarFor);
-                setReactionBarFor(null);
-              }}
-            >
-              <Ionicons name="arrow-undo" size={18} color={CrmColors.gray700} />
-              <Text style={s.reactActionTxt}>Trả lời</Text>
-            </TouchableOpacity>
-            {reactionBarFor && String(reactionBarFor.user_id) === myId ? (
-              <TouchableOpacity
-                style={s.reactAction}
-                onPress={() => {
-                  const id = String(reactionBarFor.id);
-                  setReactionBarFor(null);
-                  recallMessage(id);
-                }}
-              >
-                <Ionicons name="trash-outline" size={18} color="#DC2626" />
-                <Text style={[s.reactActionTxt, { color: '#DC2626' }]}>Thu hồi</Text>
-              </TouchableOpacity>
-            ) : null}
-            <TouchableOpacity
-              style={s.reactAction}
-              onPress={() => {
-                if (reactionBarFor?.content) {
-                  Clipboard.setStringAsync(String(reactionBarFor.content)).catch(() => {});
-                }
-                setReactionBarFor(null);
-              }}
-            >
-              <Ionicons name="copy-outline" size={18} color={CrmColors.gray700} />
-              <Text style={s.reactActionTxt}>Sao chép</Text>
-            </TouchableOpacity>
-          </Pressable>
-        </Pressable>
-      </Modal>
 
       {/* Modal đổi tên nhóm */}
       <Modal visible={renameOpen} transparent animationType="fade" onRequestClose={() => setRenameOpen(false)}>
@@ -1595,6 +1430,293 @@ export default function MessengerGroupChatScreen({
 }
 
 /* ─── Group info sheet (Messenger-style) ───────────────────────── */
+
+/* ─── MessageRow — render 1 tin nhắn + gesture swipe-to-reply ───── */
+
+interface MessageRowProps {
+  item: MessengerMessage;
+  myId: string;
+  isDirectChat: boolean;
+  lastMineId: string;
+  lastMineSeen: { count: number } | null;
+  lastMineSeenLabel: string;
+  onSwipeReply: (m: MessengerMessage) => void;
+  onLongPress: (m: MessengerMessage) => void;
+}
+
+const MessageRow = React.memo(function MessageRow({
+  item,
+  myId,
+  isDirectChat,
+  lastMineId,
+  lastMineSeen,
+  lastMineSeenLabel,
+  onSwipeReply,
+  onLongPress,
+}: MessageRowProps) {
+  const mine = String(item.user_id) === myId;
+  const isRecalled = !!item.is_recalled;
+
+  // Animated translate cho swipe-to-reply (kéo ngang 1 đoạn → set replyTo)
+  const tx = useRef(new Animated.Value(0)).current;
+  const swipeFiredRef = useRef(false);
+
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_e, g) =>
+          Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 1.4,
+        onPanResponderGrant: () => {
+          swipeFiredRef.current = false;
+        },
+        onPanResponderMove: (_e, g) => {
+          // Tin của mình: kéo sang trái (dx âm). Tin của người khác: kéo phải.
+          const allow = mine ? g.dx < 0 : g.dx > 0;
+          if (!allow) return;
+          const clamped = Math.max(-90, Math.min(90, g.dx));
+          tx.setValue(clamped);
+          if (!swipeFiredRef.current && Math.abs(clamped) > 60) {
+            swipeFiredRef.current = true;
+            onSwipeReply(item);
+          }
+        },
+        onPanResponderRelease: () => {
+          Animated.spring(tx, { toValue: 0, useNativeDriver: true, friction: 7 }).start();
+        },
+        onPanResponderTerminate: () => {
+          Animated.spring(tx, { toValue: 0, useNativeDriver: true }).start();
+        },
+      }),
+    [mine, item, onSwipeReply, tx],
+  );
+
+  // Tin đã thu hồi — placeholder gọn nhẹ
+  if (isRecalled) {
+    return (
+      <Animated.View
+        style={[s.row, mine && s.rowMine, { transform: [{ translateX: tx }] }]}
+        {...panResponder.panHandlers}
+      >
+        {!mine ? <View style={s.avatarSpace} /> : null}
+        <View style={s.recalledBubble}>
+          <Ionicons name="ban-outline" size={14} color={CrmColors.gray500} />
+          <Text style={s.recalledTxt}>
+            {mine ? 'Bạn đã thu hồi tin nhắn' : 'Tin nhắn đã bị thu hồi'}
+          </Text>
+        </View>
+      </Animated.View>
+    );
+  }
+
+  const name = item.user?.full_name || '?';
+  const isBot = !!item.user?.is_bot;
+  const atts = Array.isArray(item.attachments) ? item.attachments : [];
+  const imgUrl = item.attachment_url ? mediaUrl(item.attachment_url) : null;
+  const isImg =
+    item.message_type === 'image' ||
+    (item.attachment_mime || '').startsWith('image/') ||
+    (imgUrl && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(imgUrl));
+  const text = item.content || '';
+  const stickerMode =
+    !!text && !imgUrl && atts.length === 0 && !isAudioMsg(item) && isEmojiOnly(text);
+  const reactions = Array.isArray(item.reactions) ? item.reactions : [];
+  const reactionGroups = (() => {
+    if (!reactions.length) return [] as { emoji: string; count: number }[];
+    const map = new Map<string, number>();
+    for (const r of reactions) {
+      const e = (r?.emoji || '').trim();
+      if (!e) continue;
+      map.set(e, (map.get(e) || 0) + 1);
+    }
+    return Array.from(map.entries()).map(([emoji, count]) => ({ emoji, count }));
+  })();
+  const timeStr = (() => {
+    const d = item.created_at ? new Date(item.created_at) : null;
+    if (!d || Number.isNaN(d.getTime())) return formatDateTime(item.created_at);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  })();
+
+  return (
+    <Animated.View
+      style={[s.row, mine && s.rowMine, { transform: [{ translateX: tx }] }]}
+      {...panResponder.panHandlers}
+    >
+      {!mine ? (
+        isBot ? (
+          <View style={[s.avatar, s.avatarBot]}>
+            <Text style={s.avatarTxt}>🤖</Text>
+          </View>
+        ) : (
+          <View style={[s.avatar, { backgroundColor: avatarColor(name) }]}>
+            <Text style={s.avatarTxt}>{initials(name)}</Text>
+          </View>
+        )
+      ) : (
+        <View style={s.avatarSpace} />
+      )}
+
+      <View style={{ maxWidth: SW * 0.78, alignItems: mine ? 'flex-end' : 'flex-start', minWidth: isAudioMsg(item) ? 220 : 0 }}>
+        {!mine && (!isDirectChat || isBot) ? (
+          <Text style={s.msgName}>
+            {name}
+            {isBot ? '  · BOT' : ''}
+          </Text>
+        ) : null}
+
+        {stickerMode ? (
+          <Pressable style={s.stickerWrap} onLongPress={() => onLongPress(item)}>
+            <Text style={s.stickerTxt}>{text}</Text>
+            <Text style={s.stickerTime}>{timeStr}</Text>
+          </Pressable>
+        ) : (
+          <Pressable
+            style={[s.bubble, mine ? s.bubbleMine : isBot ? s.bubbleBot : s.bubbleOther]}
+            onLongPress={() => onLongPress(item)}
+          >
+            {item.reply_to ? (
+              <View style={[s.replyBar, mine && s.replyBarMine]}>
+                <Text style={[s.replyTxt, mine && s.replyTxtMine]} numberOfLines={1}>
+                  ↩ Trả lời tin nhắn
+                </Text>
+              </View>
+            ) : null}
+
+            {isAudioMsg(item) && imgUrl ? <AudioPlayer url={imgUrl} mine={mine} /> : null}
+
+            {item.content ? (
+              <Text style={[s.bubbleTxt, mine && s.bubbleTxtMine]}>{item.content}</Text>
+            ) : null}
+
+            {!isAudioMsg(item) && imgUrl && isImg ? (
+              <TouchableOpacity onPress={() => void Linking.openURL(imgUrl as string)}>
+                <Image source={{ uri: imgUrl }} style={s.imgAtt} resizeMode="cover" />
+              </TouchableOpacity>
+            ) : !isAudioMsg(item) && imgUrl && !isImg ? (
+              <TouchableOpacity onPress={() => void Linking.openURL(imgUrl as string)}>
+                <Text style={[s.fileLink, mine && s.fileLinkMine]}>
+                  📎 {item.attachment_name || 'Tệp'}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+
+            {atts.map((a, i) => {
+              const u = mediaUrl(a.url);
+              const im = (a.type || '').startsWith('image/') && u;
+              return im ? (
+                <TouchableOpacity key={i} onPress={() => u && void Linking.openURL(u)}>
+                  <Image source={{ uri: u! }} style={s.imgAtt} resizeMode="cover" />
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity key={i} onPress={() => u && void Linking.openURL(u)}>
+                  <Text style={[s.fileLink, mine && s.fileLinkMine]}>📎 {a.name || 'Tệp'}</Text>
+                </TouchableOpacity>
+              );
+            })}
+
+            <Text style={[s.bubbleTime, mine && s.bubbleTimeMine]}>{timeStr}</Text>
+          </Pressable>
+        )}
+
+        {reactionGroups.length ? (
+          <View style={[s.reactionRow, mine && s.reactionRowMine]}>
+            {reactionGroups.map((r) => (
+              <View key={r.emoji} style={s.reactionPill}>
+                <Text style={s.reactionEmoji}>{r.emoji}</Text>
+                {r.count > 1 ? <Text style={s.reactionCount}>{r.count}</Text> : null}
+              </View>
+            ))}
+          </View>
+        ) : null}
+
+        {mine && String(item.id) === lastMineId && lastMineSeenLabel ? (
+          <View style={s.readRow}>
+            <Ionicons
+              name={lastMineSeen && lastMineSeen.count > 0 ? 'checkmark-done' : 'checkmark'}
+              size={13}
+              color={lastMineSeen && lastMineSeen.count > 0 ? BUBBLE_ME : CrmColors.gray500}
+            />
+            <Text
+              style={[s.readTxt, lastMineSeen && lastMineSeen.count > 0 && s.readTxtSeen]}
+              numberOfLines={1}
+            >
+              {lastMineSeenLabel}
+            </Text>
+          </View>
+        ) : null}
+      </View>
+    </Animated.View>
+  );
+});
+
+/* ─── Message action sheet (long-press) ───────────────────────── */
+
+const QUICK_REACT_EMOJIS = ['👍', '❤️', '😆', '😮', '😢', '😡'];
+
+function MessageActionSheet({
+  message,
+  myId,
+  onClose,
+  onReact,
+  onReply,
+  onCopy,
+  onRecall,
+}: {
+  message: MessengerMessage | null;
+  myId: string;
+  onClose: () => void;
+  onReact: (emoji: string) => void;
+  onReply: () => void;
+  onCopy: () => void;
+  onRecall: () => void;
+}) {
+  if (!message) return null;
+  const mine = String(message.user_id) === myId;
+  const canCopy = !!message.content && !message.is_recalled;
+  return (
+    <Modal visible={!!message} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={s.actBg} onPress={onClose}>
+        <Pressable style={s.actSheet} onPress={(e) => e.stopPropagation()}>
+          {!message.is_recalled ? (
+            <View style={s.actEmojiRow}>
+              {QUICK_REACT_EMOJIS.map((e) => (
+                <TouchableOpacity
+                  key={e}
+                  style={s.actEmojiBtn}
+                  onPress={() => { onReact(e); onClose(); }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={s.actEmojiTxt}>{e}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : null}
+          <View style={s.actDivider} />
+          {!message.is_recalled ? (
+            <TouchableOpacity style={s.actRow} onPress={() => { onReply(); onClose(); }}>
+              <Ionicons name="return-up-back" size={20} color={CrmColors.gray700} />
+              <Text style={s.actRowTxt}>Trả lời</Text>
+            </TouchableOpacity>
+          ) : null}
+          {canCopy ? (
+            <TouchableOpacity style={s.actRow} onPress={() => { onCopy(); onClose(); }}>
+              <Ionicons name="copy-outline" size={20} color={CrmColors.gray700} />
+              <Text style={s.actRowTxt}>Sao chép</Text>
+            </TouchableOpacity>
+          ) : null}
+          {mine && !message.is_recalled ? (
+            <TouchableOpacity style={s.actRow} onPress={() => { onRecall(); onClose(); }}>
+              <Ionicons name="ban-outline" size={20} color="#DC2626" />
+              <Text style={[s.actRowTxt, { color: '#DC2626' }]}>Thu hồi tin nhắn</Text>
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity style={[s.actRow, s.actRowGhost]} onPress={onClose}>
+            <Text style={s.actCancelTxt}>Đóng</Text>
+          </TouchableOpacity>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
 
 interface GroupInfoSheetProps {
   visible: boolean;
@@ -2081,91 +2203,6 @@ function GroupInfoSheet({
   );
 }
 
-/* ─── SwipeReply: vuốt ngang tin nhắn để trả lời (Messenger-style) ── */
-
-/**
- * Wrap quanh bubble; cho phép user vuốt nhẹ ngang để trigger `onReply`.
- * - Tin của mình (`mine=true`) vuốt sang TRÁI;
- * - Tin của người khác vuốt sang PHẢI.
- * - Vuốt vượt ngưỡng 56dp + thả → gọi onReply, kèm haptic-ish feedback (icon mũi tên).
- */
-function SwipeReply({
-  children,
-  onReply,
-  mine,
-}: {
-  children: React.ReactNode;
-  onReply: () => void;
-  mine: boolean;
-}) {
-  const tx = useRef(new Animated.Value(0)).current;
-  const startedRef = useRef(false);
-  const THRESHOLD = 56;
-
-  const panResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onMoveShouldSetPanResponder: (_, g) =>
-          Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy) * 1.6 &&
-          (mine ? g.dx < 0 : g.dx > 0),
-        onPanResponderMove: (_, g) => {
-          let dx = g.dx;
-          if (mine && dx > 0) dx = 0;
-          if (!mine && dx < 0) dx = 0;
-          // dampen — giới hạn khoảng kéo
-          const capped = Math.max(-90, Math.min(90, dx));
-          tx.setValue(capped);
-          startedRef.current = true;
-        },
-        onPanResponderRelease: (_, g) => {
-          if (startedRef.current && Math.abs(g.dx) >= THRESHOLD) {
-            onReply();
-          }
-          startedRef.current = false;
-          Animated.spring(tx, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start();
-        },
-        onPanResponderTerminate: () => {
-          Animated.spring(tx, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start();
-        },
-      }),
-    [mine, onReply, tx],
-  );
-
-  const iconOpacity = tx.interpolate({
-    inputRange: mine ? [-90, 0] : [0, 90],
-    outputRange: mine ? [1, 0] : [0, 1],
-    extrapolate: 'clamp',
-  });
-
-  return (
-    <View {...panResponder.panHandlers} style={{ position: 'relative' }}>
-      <Animated.View
-        pointerEvents="none"
-        style={{
-          position: 'absolute',
-          top: 0, bottom: 0,
-          [mine ? 'right' : 'left']: -28,
-          alignItems: 'center', justifyContent: 'center',
-          opacity: iconOpacity,
-        }}
-      >
-        <View
-          style={{
-            width: 28, height: 28, borderRadius: 14,
-            backgroundColor: 'rgba(0,0,0,0.06)',
-            alignItems: 'center', justifyContent: 'center',
-          }}
-        >
-          <Ionicons name="arrow-undo" size={16} color={CrmColors.gray700} />
-        </View>
-      </Animated.View>
-      <Animated.View style={{ transform: [{ translateX: tx }] }}>
-        {children}
-      </Animated.View>
-    </View>
-  );
-}
-
 /* ─── Emoji picker (Messenger/TikTok-style) ────────────────────── */
 
 type EmojiCategory = {
@@ -2472,49 +2509,6 @@ const s = StyleSheet.create({
   bubbleTime: { fontSize: 10, color: CrmColors.gray400, marginTop: 4, alignSelf: 'flex-end', fontWeight: '600' },
   bubbleTimeMine: { color: 'rgba(255,255,255,0.7)' },
 
-  // Tin nhắn đã thu hồi (recalled)
-  bubbleRecalled: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#F3F4F6',
-    borderRadius: 18, paddingHorizontal: 12, paddingVertical: 8,
-    borderWidth: 1, borderColor: '#E5E7EB',
-    borderBottomLeftRadius: 6,
-  },
-  bubbleRecalledMine: {
-    backgroundColor: '#EEF2FF', borderColor: '#C7D2FE',
-    borderBottomLeftRadius: 18, borderBottomRightRadius: 6,
-  },
-  bubbleRecalledTxt: { fontSize: 13, fontStyle: 'italic', color: CrmColors.gray500, fontWeight: '600' },
-
-  // Reaction bar modal
-  reactBg: {
-    flex: 1, backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'flex-end',
-  },
-  reactCard: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    paddingHorizontal: 12, paddingTop: 12, paddingBottom: 24,
-  },
-  reactRow: {
-    flexDirection: 'row', justifyContent: 'space-around',
-    paddingVertical: 10,
-  },
-  reactBtn: {
-    width: 44, height: 44, borderRadius: 22,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  reactEmoji: { fontSize: 28 },
-  reactDivider: {
-    height: StyleSheet.hairlineWidth, backgroundColor: '#E5E7EB',
-    marginVertical: 6,
-  },
-  reactAction: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    paddingVertical: 12, paddingHorizontal: 6,
-  },
-  reactActionTxt: { fontSize: 15, fontWeight: '600', color: CrmColors.gray800 },
-
   // Sticker (emoji-only message)
   stickerWrap: { paddingVertical: 4, paddingHorizontal: 2 },
   stickerTxt: { fontSize: 44, lineHeight: 52, textAlign: 'center' },
@@ -2538,6 +2532,49 @@ const s = StyleSheet.create({
   },
   reactionEmoji: { fontSize: 12 },
   reactionCount: { fontSize: 10, fontWeight: '700', color: CrmColors.gray700 },
+
+  // Bubble "đã thu hồi"
+  recalledBubble: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: 'transparent',
+    borderWidth: 1, borderColor: CrmColors.gray300, borderStyle: 'dashed',
+    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 18,
+    maxWidth: SW * 0.78,
+  },
+  recalledTxt: { color: CrmColors.gray500, fontSize: 13, fontStyle: 'italic' },
+
+  // Action sheet long-press
+  actBg: {
+    flex: 1, backgroundColor: 'rgba(15,23,42,0.55)',
+    justifyContent: 'flex-end',
+  },
+  actSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    paddingTop: 14, paddingBottom: 24, paddingHorizontal: 12,
+  },
+  actEmojiRow: {
+    flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center',
+    paddingVertical: 8,
+    backgroundColor: '#F1F5F9', borderRadius: 999, marginHorizontal: 4,
+  },
+  actEmojiBtn: {
+    width: 44, height: 44, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 22,
+  },
+  actEmojiTxt: { fontSize: 26 },
+  actDivider: { height: 1, backgroundColor: CrmColors.gray100, marginVertical: 10, marginHorizontal: 4 },
+  actRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingHorizontal: 14, paddingVertical: 14,
+    borderRadius: 14,
+  },
+  actRowGhost: {
+    justifyContent: 'center', marginTop: 6,
+    backgroundColor: CrmColors.gray50,
+  },
+  actRowTxt: { fontSize: 15, color: CrmColors.gray800, fontWeight: '600' },
+  actCancelTxt: { fontSize: 15, color: CrmColors.gray600, fontWeight: '700' },
 
   // Quick reply chips (trên composer)
   quickWrap: {
