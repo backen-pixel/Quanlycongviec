@@ -20,3 +20,13 @@ CREATE TABLE IF NOT EXISTS messenger_message_reactions (
 
 CREATE INDEX IF NOT EXISTS idx_mmr_message ON messenger_message_reactions (message_id);
 CREATE INDEX IF NOT EXISTS idx_mmr_user    ON messenger_message_reactions (user_id);
+
+-- 3) Bắt buộc: nạp lại PostgREST schema cache (Supabase REST API).
+-- Nếu thiếu bước này, API vẫn báo "column ... not in schema cache"
+-- dù SQL Editor đã thấy cột is_recalled / bảng reactions.
+NOTIFY pgrst, 'reload schema';
+
+-- Kiểm tra nhanh (phải trả 2 cột + 1 bảng):
+-- SELECT column_name FROM information_schema.columns
+--   WHERE table_name = 'messenger_group_messages' AND column_name IN ('is_recalled','recalled_at');
+-- SELECT 1 FROM information_schema.tables WHERE table_name = 'messenger_message_reactions';

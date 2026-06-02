@@ -163,15 +163,44 @@ function mapIncomingRole(role) {
   return 'member';
 }
 
-/** Lỗi DB do chưa chạy migration recall/reactions. */
-function isMessengerRecallMigrationError(err) {
+/** PostgREST chưa reload schema sau khi ALTER TABLE (migration đã chạy). */
+function isPostgrestSchemaCacheError(err) {
   const m = String(err?.message || err || '').toLowerCase();
   return (
-    m.includes('is_recalled')
-    || m.includes('recalled_at')
-    || m.includes('messenger_message_reactions')
-    || (m.includes('does not exist') && (m.includes('column') || m.includes('relation')))
+    m.includes('schema cache')
+    || m.includes('pgrst204')
+    || m.includes('pgrst205')
+    || (m.includes('could not find') && m.includes('column'))
   );
+}
+
+/** Thật sự thiếu cột/bảng trong Postgres (chưa chạy migration). */
+function isMessengerRecallMigrationError(err) {
+  if (!err || isPostgrestSchemaCacheError(err)) return false;
+  const m = String(err?.message || err || '').toLowerCase();
+  return (
+    (m.includes('messenger_message_reactions') && (m.includes('does not exist') || m.includes('relation')))
+    || (m.includes('is_recalled') && m.includes('does not exist'))
+    || (m.includes('recalled_at') && m.includes('does not exist'))
+  );
+}
+
+/** Thông báo lỗi setup DB / schema cache cho mobile & log. */
+function messengerRecallSetupError(err) {
+  if (isPostgrestSchemaCacheError(err)) {
+    return (
+      'Database đã cập nhật nhưng Supabase API chưa làm mới schema cache. '
+      + 'Vào Supabase → SQL Editor, chạy: NOTIFY pgrst, \'reload schema\'; '
+      + '(hoặc Dashboard → Settings → API → Reload schema).'
+    );
+  }
+  if (isMessengerRecallMigrationError(err)) {
+    return (
+      'Chưa cập nhật database. Chạy migrations/39_messenger_recall_and_reactions.sql '
+      + 'trên đúng Supabase project (cùng SUPABASE_URL backend).'
+    );
+  }
+  return null;
 }
 
 /**
@@ -185,9 +214,8 @@ async function getMessengerMessageInGroup(mid, gid) {
     .eq('group_id', gid)
     .maybeSingle();
   if (error) {
-    if (isMessengerRecallMigrationError(error)) {
-      return { kind: 'migration', error };
-    }
+    const setup = messengerRecallSetupError(error);
+    if (setup) return { kind: 'setup', error, message: setup };
     return { kind: 'db', error };
   }
   if (!data) return { kind: 'not_found' };
@@ -1465,10 +1493,8 @@ r.delete('/groups/:id/chat/:msgId', async (req, res) => {
     if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
 
     const looked = await getMessengerMessageInGroup(mid, gid);
-    if (looked.kind === 'migration') {
-      return res.status(503).json({
-        error: 'Chưa cập nhật database. Chạy file migrations/39_messenger_recall_and_reactions.sql trên Supabase rồi restart backend.',
-      });
+    if (looked.kind === 'setup') {
+      return res.status(503).json({ error: looked.message });
     }
     if (looked.kind === 'db') {
       console.warn('[messenger] recall lookup:', looked.error?.message);
@@ -1482,13 +1508,18 @@ r.delete('/groups/:id/chat/:msgId', async (req, res) => {
       return res.status(403).json({ error: 'Chỉ người gửi mới được thu hồi' });
     }
 
-    // Đã thu hồi? (best-effort — bỏ qua nếu cột chưa có)
-    const { data: recalledRow } = await supabase
+    // Đã thu hồi? (best-effort — bỏ qua nếu schema cache chưa có cột)
+    const { data: recalledRow, error: recReadErr } = await supabase
       .from('messenger_group_messages')
       .select('is_recalled')
       .eq('id', mid)
       .maybeSingle();
-    if (recalledRow?.is_recalled) return res.json({ ok: true, already: true });
+    if (recReadErr) {
+      const setup = messengerRecallSetupError(recReadErr);
+      if (setup) return res.status(503).json({ error: setup });
+    } else if (recalledRow?.is_recalled) {
+      return res.json({ ok: true, already: true });
+    }
 
     const recalled_at = new Date().toISOString();
     const { error: uErr } = await supabase
@@ -1496,11 +1527,8 @@ r.delete('/groups/:id/chat/:msgId', async (req, res) => {
       .update({ is_recalled: true, recalled_at })
       .eq('id', mid);
     if (uErr) {
-      if (isMessengerRecallMigrationError(uErr)) {
-        return res.status(503).json({
-          error: 'Chưa cập nhật database. Chạy migrations/39_messenger_recall_and_reactions.sql trên Supabase.',
-        });
-      }
+      const setup = messengerRecallSetupError(uErr);
+      if (setup) return res.status(503).json({ error: setup });
       return res.status(400).json({ error: uErr.message });
     }
 
@@ -1536,10 +1564,8 @@ r.post('/groups/:id/chat/:msgId/react', async (req, res) => {
     if (emoji.length > 24) return res.status(400).json({ error: 'Emoji không hợp lệ' });
 
     const looked = await getMessengerMessageInGroup(mid, gid);
-    if (looked.kind === 'migration') {
-      return res.status(503).json({
-        error: 'Chưa cập nhật database. Chạy migrations/39_messenger_recall_and_reactions.sql trên Supabase rồi restart backend.',
-      });
+    if (looked.kind === 'setup') {
+      return res.status(503).json({ error: looked.message });
     }
     if (looked.kind === 'db') {
       console.warn('[messenger] react lookup:', looked.error?.message);
@@ -1549,12 +1575,17 @@ r.post('/groups/:id/chat/:msgId/react', async (req, res) => {
       return res.status(404).json({ error: 'Không tìm thấy tin nhắn trong nhóm này' });
     }
 
-    const { data: recalledRow } = await supabase
+    const { data: recalledRow, error: recReadErr } = await supabase
       .from('messenger_group_messages')
       .select('is_recalled')
       .eq('id', mid)
       .maybeSingle();
-    if (recalledRow?.is_recalled) return res.status(400).json({ error: 'Tin đã thu hồi' });
+    if (recReadErr) {
+      const setup = messengerRecallSetupError(recReadErr);
+      if (setup) return res.status(503).json({ error: setup });
+    } else if (recalledRow?.is_recalled) {
+      return res.status(400).json({ error: 'Tin đã thu hồi' });
+    }
 
     // Tìm record hiện có (user + message + emoji)
     const { data: existing, error: exErr } = await supabase
@@ -1564,10 +1595,10 @@ r.post('/groups/:id/chat/:msgId/react', async (req, res) => {
       .eq('user_id', uid)
       .eq('emoji', emoji)
       .maybeSingle();
-    if (exErr && isMessengerRecallMigrationError(exErr)) {
-      return res.status(503).json({
-        error: 'Chưa cập nhật database. Chạy migrations/39_messenger_recall_and_reactions.sql trên Supabase.',
-      });
+    if (exErr) {
+      const setup = messengerRecallSetupError(exErr);
+      if (setup) return res.status(503).json({ error: setup });
+      return res.status(400).json({ error: exErr.message });
     }
 
     if (existing?.id) {
@@ -1577,11 +1608,8 @@ r.post('/groups/:id/chat/:msgId/react', async (req, res) => {
         .from('messenger_message_reactions')
         .insert({ message_id: mid, user_id: uid, emoji });
       if (insErr) {
-        if (isMessengerRecallMigrationError(insErr)) {
-          return res.status(503).json({
-            error: 'Chưa cập nhật database. Chạy migrations/39_messenger_recall_and_reactions.sql trên Supabase.',
-          });
-        }
+        const setup = messengerRecallSetupError(insErr);
+        if (setup) return res.status(503).json({ error: setup });
         return res.status(400).json({ error: insErr.message });
       }
     }
@@ -1591,10 +1619,10 @@ r.post('/groups/:id/chat/:msgId/react', async (req, res) => {
       .from('messenger_message_reactions')
       .select('message_id, user_id, emoji')
       .eq('message_id', mid);
-    if (rxErr && isMessengerRecallMigrationError(rxErr)) {
-      return res.status(503).json({
-        error: 'Chưa cập nhật database. Chạy migrations/39_messenger_recall_and_reactions.sql trên Supabase.',
-      });
+    if (rxErr) {
+      const setup = messengerRecallSetupError(rxErr);
+      if (setup) return res.status(503).json({ error: setup });
+      return res.status(400).json({ error: rxErr.message });
     }
     const userIds = [...new Set((rxRows || []).map((r) => String(r.user_id)).filter(Boolean))];
     let userMap = new Map();
