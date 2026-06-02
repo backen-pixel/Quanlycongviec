@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import * as Clipboard from 'expo-clipboard';
 import {
   Dimensions,
   FlatList,
@@ -10,6 +11,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -28,8 +30,9 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { api, getStoredToken, postMultipart } from '../api/client';
 import { API_ORIGIN } from '../config';
 import { useAuth } from '../context/AuthContext';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { MoreStackParamList } from '../navigation/types';
-import type { MessengerGroupDetail, MessengerMessage } from '../types/messenger';
+import type { MessengerGroupDetail, MessengerMessage, MessengerReadReceipt } from '../types/messenger';
 import { CrmColors, CrmRadii } from '../theme/crmTheme';
 import { formatDateTime } from '../lib/formatUtils';
 import { chatDebugClear, chatDebugLog, chatDebugSnapshot, chatDebugSubscribe } from '../lib/chatDebug';
@@ -111,9 +114,30 @@ function isImageMsg(m: MessengerMessage): boolean {
   if ((m.attachment_mime || '').startsWith('image/')) return true;
   const u = mediaUrl(m.attachment_url);
   if (u && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(u)) return true;
-  return (Array.isArray(m.attachments) ? m.attachments : []).some((a) =>
-    (a.type || '').startsWith('image/'),
-  );
+  return (Array.isArray(m.attachments) ? m.attachments : []).some((a) => {
+    if ((a.type || '').startsWith('image/')) return true;
+    const au = mediaUrl(a.url);
+    return !!au && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(au);
+  });
+}
+
+/**
+ * Trả về URL ảnh đầu tiên của 1 message (ưu tiên attachment_url, sau đó tới
+ * attachments[]). Dùng cho preview ảnh trong sheet thông tin nhóm.
+ */
+function firstImageUrl(m: MessengerMessage): string | null {
+  const u1 = mediaUrl(m.attachment_url);
+  if (u1 && (/\.(jpe?g|png|gif|webp)(\?|$)/i.test(u1) || (m.attachment_mime || '').startsWith('image/') || m.message_type === 'image')) {
+    return u1;
+  }
+  const list = Array.isArray(m.attachments) ? m.attachments : [];
+  for (const a of list) {
+    const au = mediaUrl(a.url);
+    if (au && ((a.type || '').startsWith('image/') || /\.(jpe?g|png|gif|webp)(\?|$)/i.test(au))) {
+      return au;
+    }
+  }
+  return null;
 }
 
 /* ─── AudioPlayer mini-component ──────────────────────────────── */
@@ -240,9 +264,25 @@ export default function MessengerGroupChatScreen({
   const [infoOpen, setInfoOpen] = useState(false);
   const [infoTab, setInfoTab] = useState<InfoTab>('members');
   const [replyTo, setReplyTo] = useState<MessengerMessage | null>(null);
+  const [selectedMsg, setSelectedMsg] = useState<MessengerMessage | null>(null);
   const [mediaOpen, setMediaOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugText, setDebugText] = useState('');
+
+  // Rename group modal
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [renaming, setRenaming] = useState(false);
+
+  // Emoji picker panel
+  const [emojiOpen, setEmojiOpen] = useState(false);
+
+  // Pinned (sync với /messenger/pins)
+  const [pinned, setPinned] = useState(false);
+  const [pinBusy, setPinBusy] = useState(false);
+
+  // Read receipts của các thành viên trong group (Đã xem / Đã gửi)
+  const [readReceipts, setReadReceipts] = useState<MessengerReadReceipt[]>([]);
 
   // Voice recording
   const [recState, setRecState] = useState<RecState>('idle');
@@ -253,9 +293,48 @@ export default function MessengerGroupChatScreen({
 
   const listRef = useRef<FlatList<MessengerMessage>>(null);
   const seenIds = useRef<Set<string>>(new Set());
+  const isAtBottom = useRef(true);
 
-  const displayTitle = group?.name || titleParam || 'Chat nhóm';
+  const handleScroll = (event: any) => {
+    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+    const isCloseToBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 100;
+    isAtBottom.current = isCloseToBottom;
+  };
+
   const isDirectChat = !!(group?.is_direct ?? isDirectParam);
+
+  /** Đối tác trong chat 1-1 — null cho group chat. */
+  const peerMember = useMemo(() => {
+    if (!isDirectChat || !Array.isArray(group?.members)) return null;
+    return group!.members!.find((m) => String(m.user_id) !== myId) || null;
+  }, [isDirectChat, group, myId]);
+
+  /**
+   * Tên hiển thị trên header chat:
+   *  • Chat 1-1: lấy biệt danh (nếu user tự đặt) → fallback `full_name` của
+   *    thành viên KHÔNG phải mình. Cuối cùng mới fallback `group.name`
+   *    (vốn có prefix "Trò chuyện: …" backend tự sinh — dài và xấu).
+   *  • Group chat: dùng `group.name`.
+   */
+  const [peerNickname, setPeerNickname] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isDirectChat || !peerMember?.user_id) { setPeerNickname(null); return; }
+    void AsyncStorage.getItem(`messenger.nick.${peerMember.user_id}`).then(setPeerNickname).catch(() => {});
+  }, [isDirectChat, peerMember?.user_id]);
+
+  const displayTitle = useMemo(() => {
+    if (isDirectChat) {
+      const nm = peerNickname?.trim() || peerMember?.user?.full_name?.trim();
+      if (nm) return nm;
+    }
+    return group?.name || titleParam || 'Chat nhóm';
+  }, [isDirectChat, peerNickname, peerMember, group, titleParam]);
+
+  /** Avatar URL dùng cho header / sheet — peer cho 1-1, group.avatar cho nhóm. */
+  const displayAvatarUrl = useMemo(() => {
+    if (isDirectChat) return peerMember?.user?.avatar ? mediaUrl(peerMember.user.avatar) : null;
+    return group?.avatar ? mediaUrl(group.avatar) : null;
+  }, [isDirectChat, peerMember, group]);
 
   /* ── debug log ─────────────────────────────────────── */
   useEffect(() => {
@@ -271,6 +350,25 @@ export default function MessengerGroupChatScreen({
 
 
   /* ── load ──────────────────────────────────────────── */
+  const loadReceipts = useCallback(async () => {
+    try {
+      const r = await api.get<MessengerReadReceipt[]>(`/messenger/groups/${groupId}/read-receipts`);
+      setReadReceipts(Array.isArray(r.data) ? r.data : []);
+    } catch {
+      /* không critical, bỏ qua */
+    }
+  }, [groupId]);
+
+  const loadPinned = useCallback(async () => {
+    try {
+      const r = await api.get<{ group_ids?: string[] }>('/messenger/pins').catch(() => ({ data: { group_ids: [] } }));
+      const ids = new Set((r.data?.group_ids || []).map(String));
+      setPinned(ids.has(String(groupId)));
+    } catch {
+      setPinned(false);
+    }
+  }, [groupId]);
+
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
@@ -283,19 +381,25 @@ export default function MessengerGroupChatScreen({
       const rows = Array.isArray(mRes.data) ? mRes.data : [];
       setMessages(rows);
       seenIds.current = new Set(rows.map((r) => String(r.id)));
+      void loadReceipts();
+      void loadPinned();
     } catch (e: unknown) {
       Alert.alert('Lỗi', (e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Không tải được');
       setMessages([]);
     } finally {
       setLoading(false);
     }
-  }, [groupId]);
+  }, [groupId, loadReceipts, loadPinned]);
 
   useFocusEffect(
     useCallback(() => {
-      void refreshUnread();
       void loadAll();
-      void api.patch(`/messenger/groups/${groupId}/read`).catch(() => {});
+      // PATCH read trước → backend cũng đánh dấu các notification thuộc nhóm này
+      // là đã đọc → refreshUnread() sau đó sẽ lấy số chính xác cho badge tab.
+      void (async () => {
+        try { await api.patch(`/messenger/groups/${groupId}/read`); } catch { /* */ }
+        void refreshUnread();
+      })();
       // Khi user đang xem chat này → ẩn bong bóng của chính nhóm (nếu đang nổi)
       // để khỏi đè nội dung. Bubble sẽ tự xuất hiện lại khi user nhấn nút
       // "Thu nhỏ" hoặc khi có tin mới mà app đang ở nền.
@@ -310,6 +414,112 @@ export default function MessengerGroupChatScreen({
    *  2) Bật bubble cho group hiện hành (avatar = chữ cái đầu tên nhóm).
    *  3) Đẩy app về nền — UX giống Messenger "Nhỏ thành chat head".
    */
+  /** Toggle ghim hội thoại — đồng bộ với /messenger/pins (dùng chung với list). */
+  const togglePin = useCallback(async () => {
+    if (pinBusy) return;
+    const next = !pinned;
+    setPinBusy(true);
+    setPinned(next);
+    try {
+      await api.put(`/messenger/pins/${groupId}`, { pinned: next });
+    } catch (e: unknown) {
+      setPinned(!next);
+      Alert.alert(
+        'Lỗi',
+        (e as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+          'Không cập nhật được trạng thái ghim',
+      );
+    } finally {
+      setPinBusy(false);
+    }
+  }, [pinBusy, pinned, groupId]);
+
+  /** Mở modal đổi tên / biệt danh. */
+  const openRename = useCallback(() => {
+    if (isDirectChat) {
+      setRenameDraft(peerNickname || peerMember?.user?.full_name || '');
+    } else {
+      setRenameDraft(group?.name || displayTitle);
+    }
+    setRenameOpen(true);
+  }, [isDirectChat, peerNickname, peerMember, group?.name, displayTitle]);
+
+  const submitRename = useCallback(async () => {
+    const v = renameDraft.trim();
+    if (!v) {
+      Alert.alert('Lỗi', 'Tên không được để trống');
+      return;
+    }
+    // Chat 1-1 → lưu biệt danh local trong AsyncStorage (không gọi backend)
+    if (isDirectChat && peerMember?.user_id) {
+      setRenaming(true);
+      try {
+        await AsyncStorage.setItem(`messenger.nick.${peerMember.user_id}`, v);
+        setPeerNickname(v);
+        setRenameOpen(false);
+      } finally {
+        setRenaming(false);
+      }
+      return;
+    }
+    if (v === group?.name) {
+      setRenameOpen(false);
+      return;
+    }
+    setRenaming(true);
+    try {
+      await api.patch(`/messenger/groups/${groupId}`, { name: v });
+      setGroup((prev) => (prev ? { ...prev, name: v } : prev));
+      setRenameOpen(false);
+    } catch (e: unknown) {
+      Alert.alert(
+        'Lỗi',
+        (e as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+          'Không đổi được tên nhóm',
+      );
+    } finally {
+      setRenaming(false);
+    }
+  }, [renameDraft, groupId, group?.name, isDirectChat, peerMember]);
+
+  /** Upload avatar mới cho nhóm — chỉ leader/deputy. Cho 1-1 thì không cần
+   *  (avatar lấy trực tiếp từ user của peer). */
+  const onChangeGroupAvatar = useCallback(async () => {
+    if (isDirectChat) {
+      Alert.alert('Chat 1–1', 'Avatar lấy từ tài khoản đối tác, không đổi được tại đây.');
+      return;
+    }
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Cần quyền truy cập', 'Vui lòng cấp quyền truy cập thư viện ảnh.');
+        return;
+      }
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+      if (res.canceled || !res.assets?.[0]?.uri) return;
+      const asset = res.assets[0];
+      const form = new FormData();
+      // @ts-expect-error RN FormData
+      form.append('file', { uri: asset.uri, name: asset.fileName || 'avatar.jpg', type: asset.mimeType || 'image/jpeg' });
+      const r = await api.patch<{ avatar?: string }>(`/messenger/groups/${groupId}/avatar`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      const url = r.data?.avatar || null;
+      setGroup((prev) => (prev ? { ...prev, avatar: url } : prev));
+    } catch (e: unknown) {
+      Alert.alert(
+        'Lỗi',
+        (e as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+          'Không đổi được avatar',
+      );
+    }
+  }, [groupId, isDirectChat]);
+
   const onMinimizeToBubble = useCallback(async () => {
     if (Platform.OS !== 'android') {
       Alert.alert('iOS', 'Bong bóng nổi chỉ hỗ trợ trên Android.');
@@ -364,6 +574,25 @@ export default function MessengerGroupChatScreen({
         });
       });
       socket.on('messenger_group:members', () => void loadAll());
+      // Khi 1 thành viên đọc tin → cập nhật read receipts ngay (Đã xem)
+      socket.on(
+        'messenger_group:read',
+        (ev: { group_id?: string; user_id?: string; last_read_at?: string }) => {
+          if (String(ev?.group_id || '') !== String(groupId)) return;
+          if (!ev?.user_id || !ev?.last_read_at) return;
+          setReadReceipts((prev) => {
+            const idx = prev.findIndex((r) => String(r.user_id) === String(ev.user_id));
+            const next: MessengerReadReceipt = { user_id: String(ev.user_id), last_read_at: String(ev.last_read_at) };
+            if (idx < 0) return [...prev, next];
+            const copy = [...prev]; copy[idx] = next; return copy;
+          });
+        },
+      );
+      // Khi nhóm được cập nhật (đổi tên / avatar) → reload group detail
+      socket.on('messenger_group:updated', (ev: { group_id?: string; name?: string }) => {
+        if (String(ev?.group_id || '') !== String(groupId)) return;
+        setGroup((prev) => (prev ? { ...prev, ...(ev.name ? { name: ev.name } : {}) } : prev));
+      });
     })();
     return () => {
       cancelled = true;
@@ -415,6 +644,16 @@ export default function MessengerGroupChatScreen({
       Alert.alert('Lỗi gửi', err?.response?.data?.error || err?.response?.data?.message || err?.message || 'Thất bại');
     } finally {
       setSending(false);
+    }
+  };
+
+  const handleReactToMessage = async (msg: MessengerMessage, emoji: string) => {
+    try {
+      await api.put(`/messenger/messages/${msg.id}/reaction`, { emoji });
+    } catch (err: any) {
+      Alert.alert('Lỗi', err?.response?.data?.error || err.message || 'Không thể thực hiện phản ứng');
+    } finally {
+      setSelectedMsg(null);
     }
   };
 
@@ -542,6 +781,49 @@ export default function MessengerGroupChatScreen({
   );
   const sharedAudio = useMemo(() => messages.filter(isAudioMsg), [messages]);
 
+  /** ID tin nhắn cuối cùng do MÌNH gửi — dùng để gắn dòng "Đã gửi / Đã xem". */
+  const lastMineId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (!m.is_system && String(m.user_id) === myId) return String(m.id);
+    }
+    return '';
+  }, [messages, myId]);
+
+  /**
+   * Tính trạng thái đọc cho tin cuối của mình:
+   *  • Đã xem bởi N người: receipts có last_read_at ≥ created_at của tin và
+   *    user_id khác myId.
+   *  • Nếu chưa ai đọc → "Đã gửi".
+   */
+  const lastMineSeen = useMemo(() => {
+    if (!lastMineId) return null;
+    const msg = messages.find((m) => String(m.id) === lastMineId);
+    if (!msg?.created_at) return null;
+    const t = new Date(msg.created_at).getTime();
+    if (!Number.isFinite(t)) return null;
+    const seenBy = readReceipts.filter((r) => {
+      if (String(r.user_id) === myId) return false;
+      const rt = new Date(r.last_read_at).getTime();
+      return Number.isFinite(rt) && rt >= t;
+    });
+    return { count: seenBy.length, seenBy };
+  }, [lastMineId, messages, readReceipts, myId]);
+
+  /** Tìm tên người đã xem (rút gọn): "Đã xem · An, Bình" / "Đã xem bởi 5 người". */
+  const lastMineSeenLabel = useMemo(() => {
+    if (!lastMineSeen) return '';
+    if (lastMineSeen.count === 0) return 'Đã gửi';
+    const names = lastMineSeen.seenBy.map((r) => {
+      const mem = group?.members?.find((m) => String(m.user_id) === String(r.user_id));
+      return mem?.user?.full_name || '';
+    }).filter(Boolean);
+    if (isDirectChat || lastMineSeen.count <= 2) {
+      return names.length ? `Đã xem · ${names.join(', ')}` : `Đã xem`;
+    }
+    return `Đã xem bởi ${lastMineSeen.count} người`;
+  }, [lastMineSeen, group?.members, isDirectChat]);
+
   /* ── render message ────────────────────────────────── */
   const renderMsg = useCallback(
     ({ item, index }: { item: MessengerMessage; index: number }) => {
@@ -562,8 +844,43 @@ export default function MessengerGroupChatScreen({
         );
       }
 
+      const isRecalled = item.message_type === 'recalled';
+      const timeStr = (() => {
+        const d = item.created_at ? new Date(item.created_at) : null;
+        if (!d || Number.isNaN(d.getTime())) return formatDateTime(item.created_at);
+        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      })();
+
       const name = item.user?.full_name || '?';
       const isBot = !!item.user?.is_bot;
+
+      if (isRecalled) {
+        const recalledText = mine ? 'Bạn đã thu hồi tin nhắn' : 'Tin nhắn bị thu hồi';
+        return (
+          <View>
+            {showDate && <DateSep date={String(item.created_at || '')} />}
+            <View style={[s.row, mine && s.rowMine]}>
+              {!mine ? (
+                <View style={[s.avatar, { backgroundColor: avatarColor(name) }]}>
+                  <Text style={s.avatarTxt}>{initials(name)}</Text>
+                </View>
+              ) : (
+                <View style={s.avatarSpace} />
+              )}
+              <View style={{ maxWidth: SW * 0.78, alignItems: mine ? 'flex-end' : 'flex-start' }}>
+                {!mine && (!isDirectChat || isBot) && (
+                  <Text style={s.msgName}>{name}</Text>
+                )}
+                <View style={[s.bubble, { backgroundColor: '#F3F4F6', borderWidth: 1, borderColor: '#E5E7EB' }]}>
+                  <Text style={{ color: '#9CA3AF', fontStyle: 'italic', fontSize: 14 }}>{recalledText}</Text>
+                  <Text style={[s.bubbleTime, { color: '#9CA3AF' }]}>{timeStr}</Text>
+                </View>
+              </View>
+            </View>
+          </View>
+        );
+      }
+
       const atts = Array.isArray(item.attachments) ? item.attachments : [];
       const imgUrl = item.attachment_url ? mediaUrl(item.attachment_url) : null;
       const isImg =
@@ -584,11 +901,24 @@ export default function MessengerGroupChatScreen({
         }
         return Array.from(m.entries()).map(([emoji, count]) => ({ emoji, count }));
       })();
-      const timeStr = (() => {
-        const d = item.created_at ? new Date(item.created_at) : null;
-        if (!d || Number.isNaN(d.getTime())) return formatDateTime(item.created_at);
-        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-      })();
+
+      let touchStartX = 0;
+      let touchStartY = 0;
+
+      const handleTouchStart = (e: any) => {
+        touchStartX = e.nativeEvent.pageX;
+        touchStartY = e.nativeEvent.pageY;
+      };
+
+      const handleTouchEnd = (e: any) => {
+        const touchEndX = e.nativeEvent.pageX;
+        const touchEndY = e.nativeEvent.pageY;
+        const dx = touchEndX - touchStartX;
+        const dy = touchEndY - touchStartY;
+        if (dx > 60 && Math.abs(dy) < 30) {
+          setReplyTo(item);
+        }
+      };
 
       return (
         <View>
@@ -619,14 +949,21 @@ export default function MessengerGroupChatScreen({
 
               {stickerMode ? (
                 /* Emoji-only → sticker (không bubble, chữ to, time bên dưới) */
-                <Pressable style={s.stickerWrap} onLongPress={() => setReplyTo(item)}>
+                <Pressable
+                  style={s.stickerWrap}
+                  onTouchStart={handleTouchStart}
+                  onTouchEnd={handleTouchEnd}
+                  onLongPress={() => setSelectedMsg(item)}
+                >
                   <Text style={s.stickerTxt}>{text}</Text>
                   <Text style={s.stickerTime}>{timeStr}</Text>
                 </Pressable>
               ) : (
                 <Pressable
                   style={[s.bubble, mine ? s.bubbleMine : isBot ? s.bubbleBot : s.bubbleOther]}
-                  onLongPress={() => setReplyTo(item)}
+                  onTouchStart={handleTouchStart}
+                  onTouchEnd={handleTouchEnd}
+                  onLongPress={() => setSelectedMsg(item)}
                 >
                   {item.reply_to ? (
                     <View style={[s.replyBar, mine && s.replyBarMine]}>
@@ -688,12 +1025,32 @@ export default function MessengerGroupChatScreen({
                   ))}
                 </View>
               ) : null}
+
+              {/* Trạng thái Đã gửi / Đã xem — chỉ gắn vào tin cuối của mình */}
+              {mine && String(item.id) === lastMineId && lastMineSeenLabel ? (
+                <View style={s.readRow}>
+                  <Ionicons
+                    name={lastMineSeen && lastMineSeen.count > 0 ? 'checkmark-done' : 'checkmark'}
+                    size={13}
+                    color={lastMineSeen && lastMineSeen.count > 0 ? BUBBLE_ME : CrmColors.gray500}
+                  />
+                  <Text
+                    style={[
+                      s.readTxt,
+                      lastMineSeen && lastMineSeen.count > 0 && s.readTxtSeen,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {lastMineSeenLabel}
+                  </Text>
+                </View>
+              ) : null}
             </View>
           </View>
         </View>
       );
     },
-    [myId, isDirectChat, messages],
+    [myId, isDirectChat, messages, lastMineId, lastMineSeen, lastMineSeenLabel],
   );
 
   const replyLabel = useMemo(() => {
@@ -709,11 +1066,11 @@ export default function MessengerGroupChatScreen({
   const composerPadBottom =
     Platform.OS === 'ios' ? Math.max(insets.bottom, 8) : Math.max(insets.bottom, 4);
 
-  const ChatRoot = Platform.OS === 'ios' ? KeyboardAvoidingView : View;
+  const ChatRoot = KeyboardAvoidingView;
   const chatRootProps =
     Platform.OS === 'ios'
       ? ({ behavior: 'padding' as const, keyboardVerticalOffset: 88 } as const)
-      : {};
+      : ({ behavior: 'height' as const } as const);
 
   return (
     <ChatRoot style={s.flex} {...chatRootProps}>
@@ -734,9 +1091,13 @@ export default function MessengerGroupChatScreen({
           activeOpacity={0.85}
         >
           <View style={s.headerAvatarWrap}>
-            <View style={[s.headerAvatar, { backgroundColor: avatarColor(displayTitle) }]}>
-              <Text style={s.headerAvatarTxt}>{initials(displayTitle)}</Text>
-            </View>
+            {displayAvatarUrl ? (
+              <Image source={{ uri: displayAvatarUrl }} style={[s.headerAvatar, { backgroundColor: avatarColor(displayTitle) }]} />
+            ) : (
+              <View style={[s.headerAvatar, { backgroundColor: avatarColor(displayTitle) }]}>
+                <Text style={s.headerAvatarTxt}>{initials(displayTitle)}</Text>
+              </View>
+            )}
             <View style={s.headerStatusDot} />
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
@@ -762,20 +1123,10 @@ export default function MessengerGroupChatScreen({
             <Ionicons name="call" size={18} color={CrmColors.gray800} />
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => {
-              const opts: { text: string; style?: 'cancel' | 'destructive'; onPress?: () => void }[] = [
-                { text: 'Thông tin nhóm', onPress: () => { setInfoOpen(true); setInfoTab('members'); } },
-              ];
-              if (Platform.OS === 'android') {
-                opts.push({ text: 'Thu nhỏ thành bong bóng', onPress: () => void onMinimizeToBubble() });
-              }
-              opts.push({ text: 'Log debug', onPress: () => setDebugOpen(true) });
-              opts.push({ text: 'Đóng', style: 'cancel' });
-              Alert.alert(displayTitle || 'Tuỳ chọn', undefined, opts);
-            }}
+            onPress={() => { setInfoOpen(true); setInfoTab('members'); }}
             style={s.headerActionBtn}
             hitSlop={6}
-            accessibilityLabel="Tuỳ chọn"
+            accessibilityLabel="Tuỳ chọn nhóm"
           >
             <Ionicons name="ellipsis-horizontal" size={18} color={CrmColors.gray800} />
           </TouchableOpacity>
@@ -792,7 +1143,13 @@ export default function MessengerGroupChatScreen({
         contentContainerStyle={s.msgPad}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-        onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
+        onContentSizeChange={() => {
+          if (isAtBottom.current) {
+            listRef.current?.scrollToEnd({ animated: false });
+          }
+        }}
       />
 
       {/* Reply chip */}
@@ -922,10 +1279,14 @@ export default function MessengerGroupChatScreen({
             <TouchableOpacity
               style={s.inputEmojiBtn}
               activeOpacity={0.7}
-              onPress={() => setDraft((d) => `${d}😊`)}
+              onPress={() => { setEmojiOpen((v) => !v); setMediaOpen(false); }}
               accessibilityLabel="Chèn emoji"
             >
-              <Ionicons name="happy-outline" size={20} color={CrmColors.gray500} />
+              <Ionicons
+                name={emojiOpen ? 'happy' : 'happy-outline'}
+                size={20}
+                color={emojiOpen ? BUBBLE_ME : CrmColors.gray500}
+              />
             </TouchableOpacity>
           </View>
 
@@ -952,6 +1313,15 @@ export default function MessengerGroupChatScreen({
             </TouchableOpacity>
           )}
         </View>
+      ) : null}
+
+      {/* Emoji picker panel — bảng emoji/sticker theo nhóm */}
+      {emojiOpen && recState === 'idle' ? (
+        <EmojiPicker
+          onPick={(e) => setDraft((d) => `${d}${e}`)}
+          onClose={() => setEmojiOpen(false)}
+          paddingBottom={composerPadBottom + 6}
+        />
       ) : null}
 
       {/* Media panel */}
@@ -993,16 +1363,162 @@ export default function MessengerGroupChatScreen({
         visible={infoOpen}
         onClose={() => setInfoOpen(false)}
         displayTitle={displayTitle}
+        displayAvatarUrl={displayAvatarUrl}
         isDirectChat={isDirectChat}
         group={group}
+        myId={myId}
         sharedImages={sharedImages}
         sharedFiles={sharedFiles}
         sharedAudio={sharedAudio}
         infoTab={infoTab}
         setInfoTab={setInfoTab}
+        pinned={pinned}
+        onTogglePin={() => void togglePin()}
         onAddMembers={() => { setInfoOpen(false); navigation.navigate('MessengerAddMembers', { groupId }); }}
         onLeave={leaveGroup}
+        onRename={() => { setInfoOpen(false); openRename(); }}
+        onChangeAvatar={onChangeGroupAvatar}
+        onCall={() => Alert.alert('Gọi thoại', 'Tính năng cuộc gọi đang được hoàn thiện.', [{ text: 'OK' }])}
+        onMinimizeToBubble={onMinimizeToBubble}
+        onOpenDebug={() => { setInfoOpen(false); setDebugOpen(true); }}
       />
+
+      {/* 🌟 Message Options Context Modal (Long Press) 🌟 */}
+      <Modal
+        visible={!!selectedMsg}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSelectedMsg(null)}
+      >
+        <Pressable style={s.modalBg} onPress={() => setSelectedMsg(null)}>
+          <View style={s.optionsContainer}>
+            {/* Reaction Emojis Row */}
+            <View style={s.reactionsRow}>
+              {['👍', '❤️', '😂', '😮', '😢', '🙏'].map((emoji) => {
+                const hasReacted = selectedMsg?.reactions?.some(
+                  (r: any) => String(r.user_id) === myId && r.emoji === emoji
+                );
+                return (
+                  <TouchableOpacity
+                    key={emoji}
+                    onPress={() => selectedMsg && handleReactToMessage(selectedMsg, emoji)}
+                    style={[s.reactionBtn, hasReacted && s.reactionBtnActive]}
+                  >
+                    <Text style={s.reactionBtnTxt}>{emoji}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Menu Options */}
+            <View style={s.optionsMenu}>
+              <TouchableOpacity
+                style={s.optionsMenuItem}
+                onPress={() => {
+                  if (selectedMsg) {
+                    setReplyTo(selectedMsg);
+                    setSelectedMsg(null);
+                  }
+                }}
+              >
+                <Ionicons name="arrow-undo-outline" size={20} color={CrmColors.gray800} style={{ marginRight: 12 }} />
+                <Text style={s.optionsMenuText}>Trả lời</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={s.optionsMenuItem}
+                onPress={async () => {
+                  if (selectedMsg) {
+                    await Clipboard.setStringAsync(selectedMsg.content || '');
+                    setSelectedMsg(null);
+                  }
+                }}
+              >
+                <Ionicons name="copy-outline" size={20} color={CrmColors.gray800} style={{ marginRight: 12 }} />
+                <Text style={s.optionsMenuText}>Sao chép</Text>
+              </TouchableOpacity>
+
+              {selectedMsg && String(selectedMsg.user_id) === myId && selectedMsg.message_type !== 'recalled' ? (
+                <TouchableOpacity
+                  style={[s.optionsMenuItem, s.optionsMenuItemDelete]}
+                  onPress={() => {
+                    Alert.alert(
+                      'Thu hồi tin nhắn',
+                      'Bạn có chắc chắn muốn thu hồi tin nhắn này?',
+                      [
+                        { text: 'Hủy', style: 'cancel' },
+                        {
+                          text: 'Thu hồi',
+                          style: 'destructive',
+                          onPress: async () => {
+                            try {
+                              await api.delete(`/messenger/messages/${selectedMsg.id}`);
+                            } catch (err: any) {
+                              Alert.alert('Lỗi', err?.response?.data?.error || err.message || 'Không thể thu hồi tin nhắn');
+                            } finally {
+                              setSelectedMsg(null);
+                            }
+                          },
+                        },
+                      ]
+                    );
+                  }}
+                >
+                  <Ionicons name="trash-outline" size={20} color="#EF4444" style={{ marginRight: 12 }} />
+                  <Text style={[s.optionsMenuText, { color: '#EF4444' }]}>Thu hồi tin nhắn</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
+        </Pressable>
+      </Modal>
+
+      {/* Modal đổi tên nhóm */}
+      <Modal visible={renameOpen} transparent animationType="fade" onRequestClose={() => setRenameOpen(false)}>
+        <Pressable style={s.renameBg} onPress={() => setRenameOpen(false)}>
+          <Pressable style={s.renameCard} onPress={(e) => e.stopPropagation()}>
+            <Text style={s.renameTitle}>
+              {isDirectChat ? 'Đặt biệt danh' : 'Đổi tên nhóm'}
+            </Text>
+            <Text style={s.renameSub}>
+              {isDirectChat
+                ? 'Biệt danh chỉ hiển thị trên thiết bị này, người kia không thấy.'
+                : 'Chỉ trưởng / phó nhóm mới được đổi tên.'}
+            </Text>
+            <TextInput
+              value={renameDraft}
+              onChangeText={setRenameDraft}
+              placeholder={isDirectChat ? 'Biệt danh hiển thị' : 'Tên nhóm mới'}
+              placeholderTextColor={CrmColors.gray400}
+              style={s.renameInput}
+              maxLength={120}
+              autoFocus
+              returnKeyType="done"
+              onSubmitEditing={() => void submitRename()}
+            />
+            <View style={s.renameActions}>
+              <TouchableOpacity
+                style={[s.renameBtn, s.renameBtnGhost]}
+                onPress={() => setRenameOpen(false)}
+                disabled={renaming}
+              >
+                <Text style={s.renameBtnGhostTxt}>Hủy</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[s.renameBtn, s.renameBtnPrimary, renaming && s.renameBtnOff]}
+                onPress={() => void submitRename()}
+                disabled={renaming}
+              >
+                {renaming ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={s.renameBtnPrimaryTxt}>Lưu</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* Debug modal */}
       <Modal visible={debugOpen} transparent animationType="fade" onRequestClose={() => setDebugOpen(false)}>
@@ -1038,15 +1554,24 @@ interface GroupInfoSheetProps {
   visible: boolean;
   onClose: () => void;
   displayTitle: string;
+  displayAvatarUrl: string | null;
   isDirectChat: boolean;
   group: MessengerGroupDetail | null;
+  myId: string;
   sharedImages: MessengerMessage[];
   sharedFiles: MessengerMessage[];
   sharedAudio: MessengerMessage[];
   infoTab: InfoTab;
   setInfoTab: (t: InfoTab) => void;
+  pinned: boolean;
+  onTogglePin: () => void;
   onAddMembers: () => void;
   onLeave: () => void;
+  onRename: () => void;
+  onChangeAvatar: () => void;
+  onCall: () => void;
+  onMinimizeToBubble: () => Promise<void> | void;
+  onOpenDebug: () => void;
 }
 
 /**
@@ -1061,26 +1586,48 @@ function GroupInfoSheet({
   visible,
   onClose,
   displayTitle,
+  displayAvatarUrl,
   isDirectChat,
   group,
+  myId,
   sharedImages,
   sharedFiles,
   sharedAudio,
   infoTab,
   setInfoTab,
+  pinned,
+  onTogglePin,
   onAddMembers,
   onLeave,
+  onRename,
+  onChangeAvatar,
+  onCall,
+  onMinimizeToBubble,
+  onOpenDebug,
 }: GroupInfoSheetProps) {
   const [mode, setMode] = useState<'home' | InfoTab>('home');
+  const [notifOn, setNotifOn] = useState(true);
 
   useEffect(() => {
     if (visible) setMode('home');
   }, [visible]);
 
-  const previewImages = sharedImages.slice(-9).reverse();
+  const previewImages = sharedImages.slice(-4).reverse();
   const previewFiles = sharedFiles.slice(-3).reverse();
   const previewAudio = sharedAudio.slice(-3).reverse();
   const members = group?.members ?? [];
+  const remainingImages = Math.max(0, sharedImages.length - 4);
+
+  /** Lấy icon + màu theo extension file. */
+  const fileMeta = (name?: string | null): { icon: keyof typeof Ionicons.glyphMap; color: string; bg: string } => {
+    const ext = (name || '').toLowerCase().split('.').pop() || '';
+    if (['pdf'].includes(ext)) return { icon: 'document-text', color: '#DC2626', bg: '#FEF2F2' };
+    if (['doc', 'docx'].includes(ext)) return { icon: 'document', color: '#2563EB', bg: '#EFF6FF' };
+    if (['xls', 'xlsx', 'csv'].includes(ext)) return { icon: 'grid', color: '#16A34A', bg: '#F0FDF4' };
+    if (['ppt', 'pptx'].includes(ext)) return { icon: 'easel', color: '#EA580C', bg: '#FFF7ED' };
+    if (['zip', 'rar', '7z'].includes(ext)) return { icon: 'archive', color: '#7C3AED', bg: '#F5F3FF' };
+    return { icon: 'document-attach', color: CrmColors.gray700, bg: '#F3F4F6' };
+  };
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -1110,107 +1657,133 @@ function GroupInfoSheet({
           {/* ── Trang chính ─────────────────────────── */}
           {mode === 'home' ? (
             <ScrollView style={{ flex: 1 }} contentContainerStyle={s.infoScroll}>
-              {/* Khối top: avatar lớn + tên */}
-              <View style={s.infoTop}>
-                <View
-                  style={[s.infoAvatar, { backgroundColor: avatarColor(displayTitle) }]}
+              {/* Card header: avatar + tên + sub + nút sửa */}
+              <View style={s.infoHeaderCard}>
+                <TouchableOpacity
+                  onPress={isDirectChat ? undefined : onChangeAvatar}
+                  activeOpacity={isDirectChat ? 1 : 0.7}
+                  accessibilityLabel={isDirectChat ? 'Avatar đối tác' : 'Đổi avatar nhóm'}
                 >
-                  <Text style={s.infoAvatarTxt}>{initials(displayTitle)}</Text>
+                  {displayAvatarUrl ? (
+                    <Image source={{ uri: displayAvatarUrl }} style={[s.infoHeaderAvatar, { backgroundColor: avatarColor(displayTitle) }]} />
+                  ) : (
+                    <View style={[s.infoHeaderAvatar, { backgroundColor: avatarColor(displayTitle) }]}>
+                      <Text style={s.infoHeaderAvatarTxt}>{initials(displayTitle)}</Text>
+                    </View>
+                  )}
+                  <View style={s.infoHeaderDot} />
+                  {!isDirectChat ? (
+                    <View style={s.infoHeaderCameraBtn}>
+                      <Ionicons name="camera" size={11} color="#FFFFFF" />
+                    </View>
+                  ) : null}
+                </TouchableOpacity>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={s.infoHeaderName} numberOfLines={1}>{displayTitle}</Text>
+                  <View style={s.infoHeaderSubRow}>
+                    {!isDirectChat ? (
+                      <>
+                        <Text style={s.infoHeaderSub}>{members.length} thành viên</Text>
+                        <Text style={s.infoHeaderSubDot}>·</Text>
+                      </>
+                    ) : null}
+                    <View style={s.infoHeaderOnlineDot} />
+                    <Text style={s.infoHeaderSub}>Đang hoạt động</Text>
+                  </View>
                 </View>
-                <Text style={s.infoName}>{displayTitle}</Text>
-                <Text style={s.infoSub}>
-                  {isDirectChat ? 'Chat 1–1' : `${members.length} thành viên`}
-                </Text>
+                {/* Nút "Đổi tên" — group: đổi tên nhóm, 1-1: đặt biệt danh */}
+                <TouchableOpacity
+                  style={s.infoHeaderEditBtn}
+                  onPress={onRename}
+                  hitSlop={8}
+                  accessibilityLabel={isDirectChat ? 'Đặt biệt danh' : 'Đổi tên nhóm'}
+                >
+                  <Ionicons name="pencil" size={16} color={CrmColors.gray700} />
+                </TouchableOpacity>
               </View>
 
-              {/* Thành viên */}
-              {!isDirectChat ? (
-                <View style={s.infoSection}>
-                  <View style={s.infoSectionHead}>
-                    <View style={s.infoSectionHeadL}>
-                      <Ionicons name="people" size={18} color={CrmColors.gray700} />
-                      <Text style={s.infoSectionTitle}>Thành viên</Text>
-                      <Text style={s.infoSectionBadge}>{members.length}</Text>
-                    </View>
-                    {members.length > 4 ? (
-                      <TouchableOpacity onPress={() => { setInfoTab('members'); setMode('members'); }}>
-                        <Text style={s.infoSectionMore}>Xem tất cả</Text>
-                      </TouchableOpacity>
-                    ) : null}
-                  </View>
-                  <View style={s.memberPreviewRow}>
-                    {members.slice(0, 4).map((m) => {
-                      const nm = m.user?.full_name || String(m.user_id);
-                      return (
-                        <View key={String(m.user_id)} style={s.memberPreviewCell}>
-                          <View
-                            style={[
-                              s.memberPreviewAvatar,
-                              { backgroundColor: avatarColor(nm) },
-                            ]}
-                          >
-                            <Text style={s.memberPreviewAvatarTxt}>{initials(nm)}</Text>
-                          </View>
-                          <Text style={s.memberPreviewName} numberOfLines={1}>
-                            {nm.split(' ').slice(-1)[0] || nm}
-                          </Text>
-                        </View>
-                      );
-                    })}
-                    <TouchableOpacity style={s.memberPreviewCell} onPress={onAddMembers}>
-                      <View style={[s.memberPreviewAvatar, s.memberPreviewAdd]}>
-                        <Ionicons name="add" size={22} color={CrmColors.blue600} />
-                      </View>
-                      <Text style={s.memberPreviewName} numberOfLines={1}>
-                        Thêm
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ) : null}
+              {/* Quick actions row — bỏ "Rời" với chat 1-1 (không hợp ngữ cảnh) */}
+              <View style={s.quickActionsRow}>
+                <QuickAction icon="call" label="Gọi" tint="#3B82F6" bg="#EFF6FF" onPress={onCall} />
+                <QuickAction
+                  icon={notifOn ? 'notifications' : 'notifications-off'}
+                  label={notifOn ? 'Tắt TB' : 'Bật TB'}
+                  tint="#F59E0B"
+                  bg="#FFFBEB"
+                  onPress={() => setNotifOn((v) => !v)}
+                />
+                <QuickAction
+                  icon={pinned ? 'pin' : 'pin-outline'}
+                  label={pinned ? 'Đã ghim' : 'Ghim'}
+                  tint={pinned ? '#FFFFFF' : '#10B981'}
+                  bg={pinned ? '#10B981' : '#ECFDF5'}
+                  labelColor={pinned ? '#047857' : undefined}
+                  onPress={onTogglePin}
+                />
+                {!isDirectChat ? (
+                  <QuickAction
+                    icon="exit-outline"
+                    label="Rời"
+                    tint="#EF4444"
+                    bg="#FEF2F2"
+                    onPress={onLeave}
+                  />
+                ) : null}
+              </View>
 
-              {/* Phương tiện (ảnh) */}
-              <View style={s.infoSection}>
-                <View style={s.infoSectionHead}>
+              {/* ẢNH & VIDEO */}
+              <View style={s.infoSectionCard}>
+                <View style={s.infoSectionHeadX}>
                   <View style={s.infoSectionHeadL}>
-                    <Ionicons name="images" size={18} color={CrmColors.gray700} />
-                    <Text style={s.infoSectionTitle}>Phương tiện</Text>
-                    <Text style={s.infoSectionBadge}>{sharedImages.length}</Text>
+                    <Ionicons name="images" size={16} color="#8B5CF6" />
+                    <Text style={s.infoSectionTitleX}>ẢNH & VIDEO</Text>
                   </View>
-                  {sharedImages.length > 0 ? (
-                    <TouchableOpacity onPress={() => { setInfoTab('images'); setMode('images'); }}>
-                      <Text style={s.infoSectionMore}>Xem tất cả</Text>
-                    </TouchableOpacity>
-                  ) : null}
                 </View>
                 {previewImages.length === 0 ? (
                   <Text style={s.infoEmpty}>Chưa có ảnh nào được chia sẻ.</Text>
                 ) : (
-                  <View style={s.mediaGridPreview}>
-                    {previewImages.map((it) => {
-                      const u = mediaUrl(it.attachment_url);
+                  <View style={s.mediaGridX}>
+                    {previewImages.map((it, idx) => {
+                      const u = firstImageUrl(it);
                       if (!u) return null;
+                      const isLast = idx === previewImages.length - 1 && remainingImages > 0;
                       return (
                         <TouchableOpacity
                           key={String(it.id)}
-                          style={s.mediaGridCell}
-                          onPress={() => void Linking.openURL(u)}
+                          style={s.mediaGridCellX}
+                          onPress={() => {
+                            if (isLast) { setInfoTab('images'); setMode('images'); }
+                            else void Linking.openURL(u);
+                          }}
                         >
-                          <Image source={{ uri: u }} style={s.mediaGridImg} />
+                          <Image source={{ uri: u }} style={s.mediaGridImgX} />
+                          {isLast ? (
+                            <View style={s.mediaGridOverlay}>
+                              <Text style={s.mediaGridOverlayTxt}>+{remainingImages}</Text>
+                            </View>
+                          ) : null}
                         </TouchableOpacity>
                       );
                     })}
                   </View>
                 )}
+                {sharedImages.length > 0 ? (
+                  <TouchableOpacity
+                    style={s.viewAllBtn}
+                    onPress={() => { setInfoTab('images'); setMode('images'); }}
+                  >
+                    <Ionicons name="grid-outline" size={14} color={CrmColors.gray700} />
+                    <Text style={s.viewAllTxt}>Xem tất cả {sharedImages.length} ảnh</Text>
+                  </TouchableOpacity>
+                ) : null}
               </View>
 
-              {/* File */}
-              <View style={s.infoSection}>
-                <View style={s.infoSectionHead}>
+              {/* TỆP ĐÍNH KÈM */}
+              <View style={s.infoSectionCard}>
+                <View style={s.infoSectionHeadX}>
                   <View style={s.infoSectionHeadL}>
-                    <Ionicons name="document-text" size={18} color={CrmColors.gray700} />
-                    <Text style={s.infoSectionTitle}>File</Text>
-                    <Text style={s.infoSectionBadge}>{sharedFiles.length}</Text>
+                    <Ionicons name="document-attach" size={16} color="#8B5CF6" />
+                    <Text style={s.infoSectionTitleX}>TỆP ĐÍNH KÈM</Text>
                   </View>
                   {sharedFiles.length > 0 ? (
                     <TouchableOpacity onPress={() => { setInfoTab('files'); setMode('files'); }}>
@@ -1221,77 +1794,136 @@ function GroupInfoSheet({
                 {previewFiles.length === 0 ? (
                   <Text style={s.infoEmpty}>Chưa có file nào được chia sẻ.</Text>
                 ) : (
-                  previewFiles.map((it) => {
+                  previewFiles.map((it, idx) => {
                     const u = mediaUrl(it.attachment_url);
+                    const meta = fileMeta(it.attachment_name);
+                    const showDivider = idx < previewFiles.length - 1;
                     return (
                       <TouchableOpacity
                         key={String(it.id)}
-                        style={s.fileItem}
+                        style={[s.fileItemX, showDivider && s.fileItemDivider]}
                         onPress={() => u && void Linking.openURL(u)}
                       >
-                        <View style={s.fileIconBox}>
-                          <Ionicons name="document-text" size={20} color={CrmColors.blue600} />
+                        <View style={[s.fileIconBoxX, { backgroundColor: meta.bg }]}>
+                          <Ionicons name={meta.icon} size={20} color={meta.color} />
                         </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={s.fileItemName} numberOfLines={1}>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <Text style={s.fileItemNameX} numberOfLines={1}>
                             {it.attachment_name || 'Tệp đính kèm'}
                           </Text>
-                          <Text style={s.fileItemMeta}>
+                          <Text style={s.fileItemMetaX} numberOfLines={1}>
                             {(it.user?.full_name || '?') + ' · ' + formatDateTime(it.created_at)}
                           </Text>
                         </View>
-                        <Ionicons name="chevron-forward" size={16} color={CrmColors.gray400} />
+                        <TouchableOpacity
+                          hitSlop={8}
+                          onPress={() => u && void Linking.openURL(u)}
+                          style={s.fileDownloadBtn}
+                        >
+                          <Ionicons name="download-outline" size={18} color={CrmColors.blue600} />
+                        </TouchableOpacity>
                       </TouchableOpacity>
                     );
                   })
                 )}
               </View>
 
-              {/* Ghi âm */}
-              <View style={s.infoSection}>
-                <View style={s.infoSectionHead}>
-                  <View style={s.infoSectionHeadL}>
-                    <Ionicons name="mic" size={18} color={CrmColors.gray700} />
-                    <Text style={s.infoSectionTitle}>Ghi âm</Text>
-                    <Text style={s.infoSectionBadge}>{sharedAudio.length}</Text>
+              {/* THÀNH VIÊN */}
+              {!isDirectChat ? (
+                <View style={s.infoSectionCard}>
+                  <View style={s.infoSectionHeadX}>
+                    <View style={s.infoSectionHeadL}>
+                      <Ionicons name="people" size={16} color="#8B5CF6" />
+                      <Text style={s.infoSectionTitleX}>
+                        THÀNH VIÊN ({members.length})
+                      </Text>
+                    </View>
+                    {members.length > 3 ? (
+                      <TouchableOpacity onPress={() => { setInfoTab('members'); setMode('members'); }}>
+                        <Text style={s.infoSectionMore}>Xem tất cả</Text>
+                      </TouchableOpacity>
+                    ) : null}
                   </View>
-                  {sharedAudio.length > 0 ? (
-                    <TouchableOpacity onPress={() => { setInfoTab('audio'); setMode('audio'); }}>
-                      <Text style={s.infoSectionMore}>Xem tất cả</Text>
-                    </TouchableOpacity>
-                  ) : null}
-                </View>
-                {previewAudio.length === 0 ? (
-                  <Text style={s.infoEmpty}>Chưa có ghi âm nào.</Text>
-                ) : (
-                  previewAudio.map((it) => {
-                    const u = mediaUrl(it.attachment_url);
-                    if (!u) return null;
+                  {members.slice(0, 3).map((m, idx) => {
+                    const nm = m.user?.full_name || String(m.user_id);
+                    const showDivider = idx < Math.min(2, members.length - 1);
                     return (
-                      <View key={String(it.id)} style={s.audioItem}>
-                        <AudioPlayer url={u} mine={false} />
-                        <Text style={s.audioItemMeta}>
-                          {(it.user?.full_name || '?') + ' · ' + formatDateTime(it.created_at)}
-                        </Text>
+                      <View key={String(m.user_id)} style={[s.memberRowX, showDivider && s.fileItemDivider]}>
+                        <View style={[s.memberAvatarX, { backgroundColor: avatarColor(nm) }]}>
+                          <Text style={s.memberAvatarXTxt}>{initials(nm)}</Text>
+                        </View>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <Text style={s.memberNameX} numberOfLines={1}>{nm}</Text>
+                          <Text style={s.memberStatusX} numberOfLines={1}>Đang hoạt động</Text>
+                        </View>
+                        <View style={[s.memberRoleBadge, m.role === 'admin' && s.memberRoleBadgeAdmin]}>
+                          <Text style={[s.memberRoleTxt, m.role === 'admin' && s.memberRoleTxtAdmin]}>
+                            {m.role === 'admin' ? 'Admin' : 'Thành viên'}
+                          </Text>
+                        </View>
                       </View>
                     );
-                  })
-                )}
-              </View>
-
-              {/* Hành động */}
-              {!isDirectChat ? (
-                <View style={s.infoActions}>
-                  <TouchableOpacity style={s.infoActBtn} onPress={onAddMembers}>
-                    <Ionicons name="person-add" size={18} color={CrmColors.blue600} />
-                    <Text style={s.infoActTxt}>Thêm thành viên</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[s.infoActBtn, s.infoActBtnDanger]} onPress={onLeave}>
-                    <Ionicons name="exit-outline" size={18} color="#DC2626" />
-                    <Text style={[s.infoActTxt, s.infoActTxtDanger]}>Rời nhóm</Text>
+                  })}
+                  <TouchableOpacity style={s.addMemberBtn} onPress={onAddMembers}>
+                    <View style={s.addMemberIcon}>
+                      <Ionicons name="person-add" size={16} color={CrmColors.blue600} />
+                    </View>
+                    <Text style={s.addMemberTxt}>Thêm thành viên</Text>
                   </TouchableOpacity>
                 </View>
               ) : null}
+
+              {/* CÀI ĐẶT NHÓM */}
+              <View style={s.infoSectionCard}>
+                <View style={s.infoSectionHeadX}>
+                  <View style={s.infoSectionHeadL}>
+                    <Ionicons name="settings-sharp" size={16} color="#8B5CF6" />
+                    <Text style={s.infoSectionTitleX}>CÀI ĐẶT NHÓM</Text>
+                  </View>
+                </View>
+
+                <SettingsRow
+                  icon="notifications-outline"
+                  iconBg="#EFF6FF"
+                  iconColor="#3B82F6"
+                  label="Thông báo"
+                  type="switch"
+                  switchValue={notifOn}
+                  onSwitchChange={setNotifOn}
+                  divider
+                />
+                <SettingsRow
+                  icon="pin-outline"
+                  iconBg="#ECFDF5"
+                  iconColor="#10B981"
+                  label={pinned ? 'Đã ghim hội thoại' : 'Ghim hội thoại'}
+                  type="switch"
+                  switchValue={pinned}
+                  onSwitchChange={() => onTogglePin()}
+                  divider
+                />
+                {Platform.OS === 'android' ? (
+                  <SettingsRow
+                    icon="ellipse-outline"
+                    iconBg="#F5F3FF"
+                    iconColor="#8B5CF6"
+                    label="Thu nhỏ thành bong bóng"
+                    type="link"
+                    onPress={() => void onMinimizeToBubble()}
+                    divider
+                  />
+                ) : null}
+                <SettingsRow
+                  icon="bug-outline"
+                  iconBg="#F3F4F6"
+                  iconColor={CrmColors.gray700}
+                  label="Log debug"
+                  type="link"
+                  onPress={onOpenDebug}
+                />
+              </View>
+
+              <View style={{ height: 16 }} />
             </ScrollView>
           ) : null}
 
@@ -1336,7 +1968,7 @@ function GroupInfoSheet({
               numColumns={3}
               contentContainerStyle={{ gap: 2, padding: 2 }}
               renderItem={({ item }) => {
-                const u = mediaUrl(item.attachment_url);
+                const u = firstImageUrl(item);
                 return u ? (
                   <TouchableOpacity onPress={() => void Linking.openURL(u)} style={s.fullImgCell}>
                     <Image source={{ uri: u }} style={s.fullImg} />
@@ -1403,6 +2035,193 @@ function GroupInfoSheet({
   );
 }
 
+/* ─── Emoji picker (Messenger/TikTok-style) ────────────────────── */
+
+type EmojiCategory = {
+  key: string;
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  list: string[];
+};
+
+const EMOJI_CATEGORIES: EmojiCategory[] = [
+  {
+    key: 'smileys',
+    label: 'Mặt cười',
+    icon: 'happy-outline',
+    list: [
+      '😀','😃','😄','😁','😆','😅','🤣','😂','🙂','🙃','😉','😊','😇','🥰','😍','🤩',
+      '😘','😗','😚','😙','🥲','😋','😛','😜','🤪','😝','🤑','🤗','🤭','🤫','🤔','🤐',
+      '🤨','😐','😑','😶','😏','😒','🙄','😬','🤥','😌','😔','😪','🤤','😴','😷','🤒',
+      '🤕','🤢','🤮','🥵','🥶','🥴','😵','🤯','🤠','🥳','😎','🤓','🧐','😕','😟','🙁',
+      '☹️','😮','😯','😲','😳','🥺','😦','😧','😨','😰','😥','😢','😭','😱','😖','😣',
+      '😞','😓','😩','😫','🥱','😤','😡','😠','🤬','😈','👿','💀','☠️','💩','🤡','👻',
+    ],
+  },
+  {
+    key: 'gestures',
+    label: 'Tay & người',
+    icon: 'hand-left-outline',
+    list: [
+      '👍','👎','👌','🤌','🤏','✌️','🤞','🫰','🤟','🤘','🤙','👈','👉','👆','🖕','👇',
+      '☝️','👋','🤚','🖐️','✋','🖖','👏','🙌','👐','🤲','🤝','🙏','✍️','💅','🤳','💪',
+      '🦾','🦿','🦵','🦶','👂','🦻','👃','🧠','🦷','🦴','👀','👁️','👅','👄','💋','🩸',
+    ],
+  },
+  {
+    key: 'hearts',
+    label: 'Trái tim',
+    icon: 'heart-outline',
+    list: [
+      '❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖',
+      '💘','💝','💟','♥️','💌','💋','💯','💢','💥','💫','💦','💨','🕳️','💣','💬','💭',
+    ],
+  },
+  {
+    key: 'fun',
+    label: 'Vui nhộn',
+    icon: 'sparkles-outline',
+    list: [
+      '🎉','🎊','🥂','🍻','🎂','🍰','🧁','🍩','🍪','🍫','🍬','🍭','🍦','🍧','🍨','🍮',
+      '🎁','🎈','🎀','🎗️','🎟️','🎫','🎖️','🏆','🥇','🥈','🥉','⚽','🏀','🏈','⚾','🎾',
+      '🎯','🎰','🎲','🧩','🎮','🕹️','🎬','🎤','🎧','🎵','🎶','🎼','🎷','🎸','🎻','🥁',
+    ],
+  },
+  {
+    key: 'work',
+    label: 'Công việc',
+    icon: 'briefcase-outline',
+    list: [
+      '💼','📁','📂','🗂️','📅','📆','🗓️','📇','📈','📉','📊','📋','📌','📍','📎','🖇️',
+      '✅','❌','⚠️','🚀','💡','🔥','⭐','🌟','✨','💯','🎯','📞','☎️','📱','💻','🖥️',
+      '⌨️','🖱️','💾','📧','✉️','📨','📩','📤','📥','📭','📬','📦','✏️','🖊️','🖋️','📝',
+    ],
+  },
+];
+
+function EmojiPicker({
+  onPick,
+  onClose,
+  paddingBottom,
+}: {
+  onPick: (e: string) => void;
+  onClose: () => void;
+  paddingBottom: number;
+}) {
+  const [cat, setCat] = useState<string>(EMOJI_CATEGORIES[0].key);
+  const current = EMOJI_CATEGORIES.find((c) => c.key === cat) || EMOJI_CATEGORIES[0];
+  return (
+    <View style={[s.emojiPanel, { paddingBottom }]}>
+      <View style={s.emojiHead}>
+        <Text style={s.emojiHeadTitle}>{current.label}</Text>
+        <TouchableOpacity onPress={onClose} hitSlop={8} style={s.emojiCloseBtn}>
+          <Ionicons name="chevron-down" size={18} color={CrmColors.gray500} />
+        </TouchableOpacity>
+      </View>
+      <FlatList
+        data={current.list}
+        numColumns={8}
+        keyExtractor={(item, idx) => `${current.key}-${idx}-${item}`}
+        renderItem={({ item }) => (
+          <TouchableOpacity style={s.emojiCell} onPress={() => onPick(item)} activeOpacity={0.6}>
+            <Text style={s.emojiTxt}>{item}</Text>
+          </TouchableOpacity>
+        )}
+        contentContainerStyle={s.emojiGrid}
+        showsVerticalScrollIndicator={false}
+      />
+      <View style={s.emojiTabBar}>
+        {EMOJI_CATEGORIES.map((c) => (
+          <TouchableOpacity
+            key={c.key}
+            style={[s.emojiTabBtn, cat === c.key && s.emojiTabBtnOn]}
+            onPress={() => setCat(c.key)}
+          >
+            <Ionicons
+              name={c.icon}
+              size={20}
+              color={cat === c.key ? BUBBLE_ME : CrmColors.gray500}
+            />
+          </TouchableOpacity>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+/* ─── Quick action button (Gọi / Tắt TB / Ghim / Rời) ─────────── */
+function QuickAction({
+  icon,
+  label,
+  tint,
+  bg,
+  labelColor,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  tint: string;
+  bg: string;
+  labelColor?: string;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity style={s.quickActBtn} onPress={onPress} activeOpacity={0.85}>
+      <View style={[s.quickActIcon, { backgroundColor: bg }]}>
+        <Ionicons name={icon} size={22} color={tint} />
+      </View>
+      <Text style={[s.quickActLabel, labelColor ? { color: labelColor } : null]} numberOfLines={1}>
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+/* ─── Settings row (toggle / link) ─────────────────────────────── */
+function SettingsRow({
+  icon,
+  iconBg,
+  iconColor,
+  label,
+  type,
+  switchValue,
+  onSwitchChange,
+  onPress,
+  divider,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  iconBg: string;
+  iconColor: string;
+  label: string;
+  type: 'switch' | 'link';
+  switchValue?: boolean;
+  onSwitchChange?: (v: boolean) => void;
+  onPress?: () => void;
+  divider?: boolean;
+}) {
+  const inner = (
+    <View style={[s.settingsRow, divider && s.fileItemDivider]}>
+      <View style={[s.settingsIcon, { backgroundColor: iconBg }]}>
+        <Ionicons name={icon} size={18} color={iconColor} />
+      </View>
+      <Text style={s.settingsLabel}>{label}</Text>
+      {type === 'switch' ? (
+        <Switch
+          value={!!switchValue}
+          onValueChange={onSwitchChange}
+          trackColor={{ false: '#E5E7EB', true: BUBBLE_ME }}
+          thumbColor="#FFFFFF"
+        />
+      ) : (
+        <Ionicons name="chevron-forward" size={18} color={CrmColors.gray400} />
+      )}
+    </View>
+  );
+  return type === 'link' ? (
+    <TouchableOpacity onPress={onPress} activeOpacity={0.7}>{inner}</TouchableOpacity>
+  ) : inner;
+}
+
 /* ─── Date separator ───────────────────────────────────────────── */
 function DateSep({ date }: { date: string }) {
   const d = new Date(date);
@@ -1429,6 +2248,62 @@ function DateSep({ date }: { date: string }) {
 const s = StyleSheet.create({
   flex: { flex: 1, backgroundColor: CHAT_BG },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: CHAT_BG },
+  optionsContainer: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 16,
+    paddingBottom: 32,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.1,
+    shadowRadius: 5,
+    elevation: 10,
+  },
+  reactionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E5E7EB',
+    marginBottom: 8,
+  },
+  reactionBtn: {
+    padding: 8,
+    borderRadius: 20,
+    width: 44,
+    height: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  reactionBtnActive: {
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: '#6C5CE7',
+  },
+  reactionBtnTxt: {
+    fontSize: 24,
+  },
+  optionsMenu: {
+    marginTop: 8,
+  },
+  optionsMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+  },
+  optionsMenuItemDelete: {
+    marginTop: 4,
+  },
+  optionsMenuText: {
+    fontSize: 16,
+    color: '#1F2937',
+    marginLeft: 12,
+    fontWeight: '500',
+  },
 
   // Header
   headerBar: {
@@ -1485,14 +2360,16 @@ const s = StyleSheet.create({
   sysTxt: { fontSize: 12, color: CrmColors.gray500, textAlign: 'center', fontStyle: 'italic' },
 
   // Message rows
-  row: { flexDirection: 'row', marginVertical: 3, alignItems: 'flex-end', paddingHorizontal: 4 },
-  rowMine: { flexDirection: 'row-reverse' },
+  row: { flexDirection: 'row', marginVertical: 3, alignItems: 'flex-end', paddingHorizontal: 6 },
+  /** Tin của mình: đảo chiều flex, kéo sát phải bằng padding âm bên phải
+   *  (avatar trống chỉ chiếm 6dp thay vì 30dp như avatar người khác). */
+  rowMine: { flexDirection: 'row-reverse', paddingRight: 2 },
 
   // Avatar
   avatar: { width: 30, height: 30, borderRadius: 15, justifyContent: 'center', alignItems: 'center', marginHorizontal: 4, flexShrink: 0 },
   avatarBot: { backgroundColor: '#6366F1' },
   avatarTxt: { fontSize: 11, fontWeight: '700', color: '#fff' },
-  avatarSpace: { width: 30, marginHorizontal: 4 },
+  avatarSpace: { width: 0 },
 
   msgName: { fontSize: 11, fontWeight: '700', color: CrmColors.gray600, marginBottom: 2, marginLeft: 2 },
 
@@ -1688,6 +2565,45 @@ const s = StyleSheet.create({
   },
   sendBtnOff: { opacity: 0.5 },
 
+  // Emoji picker
+  emojiPanel: {
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1, borderTopColor: '#E5E7EB',
+    height: 320,
+    flexDirection: 'column',
+  },
+  emojiHead: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#F3F4F6',
+  },
+  emojiHeadTitle: { fontSize: 13, fontWeight: '800', color: CrmColors.gray700, letterSpacing: 0.5 },
+  emojiCloseBtn: {
+    width: 28, height: 28, borderRadius: 14,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  emojiGrid: { paddingHorizontal: 8, paddingVertical: 6 },
+  emojiCell: {
+    flex: 1, aspectRatio: 1,
+    alignItems: 'center', justifyContent: 'center',
+    margin: 1, borderRadius: 8,
+  },
+  emojiTxt: { fontSize: 26, lineHeight: 30 },
+  emojiTabBar: {
+    flexDirection: 'row',
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#E5E7EB',
+    backgroundColor: '#F9FAFB',
+  },
+  emojiTabBtn: {
+    flex: 1, paddingVertical: 10,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  emojiTabBtnOn: {
+    borderTopWidth: 2, borderTopColor: BUBBLE_ME,
+    backgroundColor: '#FFFFFF',
+  },
+
   // Media panel
   mediaPanel: {
     flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-around',
@@ -1722,33 +2638,194 @@ const s = StyleSheet.create({
   subBack: { width: 28, alignItems: 'flex-start' },
   subTitle: { flex: 1, fontSize: 15, fontWeight: '800', color: CrmColors.gray900, textAlign: 'center' },
 
-  // Trang thông tin chính
-  infoScroll: { paddingBottom: 28 },
-  infoTop: { alignItems: 'center', paddingTop: 8, paddingBottom: 16 },
-  infoAvatar: {
-    width: 72, height: 72, borderRadius: 36,
-    alignItems: 'center', justifyContent: 'center', marginBottom: 10,
-  },
-  infoAvatarTxt: { color: '#fff', fontSize: 26, fontWeight: '800' },
-  infoName: { fontSize: 18, fontWeight: '800', color: CrmColors.gray900 },
-  infoSub: { fontSize: 13, color: CrmColors.gray500, marginTop: 2 },
+  // Trang thông tin chính (Messenger-style 2026)
+  infoScroll: { paddingHorizontal: 12, paddingBottom: 28, backgroundColor: '#F3F4F6' },
 
-  infoSection: {
-    borderTopWidth: 8, borderTopColor: '#F3F4F6',
-    paddingHorizontal: 16, paddingTop: 14, paddingBottom: 8,
+  // Card header
+  infoHeaderCard: {
+    backgroundColor: '#FFFFFF', borderRadius: 16,
+    padding: 12, marginTop: 4, marginBottom: 12,
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06, shadowRadius: 6, elevation: 1,
   },
-  infoSectionHead: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    marginBottom: 10,
+  infoHeaderAvatar: {
+    width: 52, height: 52, borderRadius: 26,
+    alignItems: 'center', justifyContent: 'center', position: 'relative',
   },
-  infoSectionHeadL: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  infoSectionTitle: { fontSize: 14, fontWeight: '800', color: CrmColors.gray900 },
-  infoSectionBadge: {
-    fontSize: 12, color: CrmColors.gray500, fontWeight: '700',
-    backgroundColor: '#F3F4F6', paddingHorizontal: 7, paddingVertical: 1, borderRadius: 10,
+  infoHeaderAvatarTxt: { color: '#fff', fontSize: 20, fontWeight: '800' },
+  infoHeaderDot: {
+    position: 'absolute', right: -2, bottom: -2,
+    width: 14, height: 14, borderRadius: 7,
+    backgroundColor: '#22C55E', borderWidth: 2, borderColor: '#FFFFFF',
+  },
+  infoHeaderCameraBtn: {
+    position: 'absolute', right: -4, top: -4,
+    width: 20, height: 20, borderRadius: 10,
+    backgroundColor: BUBBLE_ME, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: '#FFFFFF',
+  },
+  infoHeaderName: { fontSize: 16, fontWeight: '800', color: CrmColors.gray900 },
+  infoHeaderSubRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 4 },
+  infoHeaderSub: { fontSize: 12, color: CrmColors.gray500, fontWeight: '600' },
+  infoHeaderSubDot: { fontSize: 12, color: CrmColors.gray400, marginHorizontal: 2 },
+  infoHeaderOnlineDot: {
+    width: 6, height: 6, borderRadius: 3, backgroundColor: '#22C55E', marginRight: 2,
+  },
+  infoHeaderEditBtn: {
+    width: 36, height: 36, borderRadius: 10,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center', justifyContent: 'center',
+  },
+
+  // Quick actions row
+  quickActionsRow: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF', borderRadius: 16,
+    paddingVertical: 14, paddingHorizontal: 6,
+    marginBottom: 12,
+    shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05, shadowRadius: 4, elevation: 1,
+  },
+  quickActBtn: { flex: 1, alignItems: 'center', gap: 6 },
+  quickActIcon: {
+    width: 44, height: 44, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  quickActLabel: { fontSize: 11.5, color: CrmColors.gray700, fontWeight: '700' },
+
+  // Section cards
+  infoSectionCard: {
+    backgroundColor: '#FFFFFF', borderRadius: 16,
+    paddingHorizontal: 14, paddingTop: 12, paddingBottom: 6,
+    marginBottom: 12,
+    shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05, shadowRadius: 4, elevation: 1,
+  },
+  infoSectionHeadX: {
+    flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'space-between', marginBottom: 10,
+  },
+  infoSectionHeadL: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  infoSectionTitleX: {
+    fontSize: 12, fontWeight: '800',
+    color: CrmColors.gray700, letterSpacing: 0.5,
   },
   infoSectionMore: { fontSize: 12.5, color: BUBBLE_ME, fontWeight: '700' },
-  infoEmpty: { fontSize: 12, color: CrmColors.gray400, fontStyle: 'italic', paddingVertical: 6 },
+  infoEmpty: { fontSize: 12, color: CrmColors.gray400, fontStyle: 'italic', paddingVertical: 8 },
+
+  // Ảnh & video grid (4 ô)
+  mediaGridX: { flexDirection: 'row', gap: 6, marginBottom: 10 },
+  mediaGridCellX: { flex: 1, aspectRatio: 1, borderRadius: 10, overflow: 'hidden', position: 'relative' },
+  mediaGridImgX: { width: '100%', height: '100%' },
+  mediaGridOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15,23,42,0.6)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  mediaGridOverlayTxt: { color: '#FFFFFF', fontSize: 18, fontWeight: '800' },
+  viewAllBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#E5E7EB',
+  },
+  viewAllTxt: { fontSize: 13, color: CrmColors.gray700, fontWeight: '700' },
+
+  // File item (Messenger 2026 style)
+  fileItemX: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 10,
+  },
+  fileItemDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#F3F4F6' },
+  fileIconBoxX: {
+    width: 40, height: 40, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  fileItemNameX: { fontSize: 13.5, color: CrmColors.gray900, fontWeight: '700' },
+  fileItemMetaX: { fontSize: 11, color: CrmColors.gray500, marginTop: 2 },
+  fileDownloadBtn: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: CrmColors.blue50,
+    alignItems: 'center', justifyContent: 'center',
+  },
+
+  // Thành viên row
+  memberRowX: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 10,
+  },
+  memberAvatarX: {
+    width: 40, height: 40, borderRadius: 20,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  memberAvatarXTxt: { color: '#fff', fontSize: 14, fontWeight: '800' },
+  memberNameX: { fontSize: 13.5, color: CrmColors.gray900, fontWeight: '700' },
+  memberStatusX: { fontSize: 11, color: CrmColors.gray500, marginTop: 2 },
+  memberRoleBadge: {
+    paddingHorizontal: 8, paddingVertical: 3,
+    borderRadius: 999, backgroundColor: '#F3F4F6',
+  },
+  memberRoleBadgeAdmin: { backgroundColor: '#FEF3C7' },
+  memberRoleTxt: { fontSize: 11, color: CrmColors.gray700, fontWeight: '700' },
+  memberRoleTxtAdmin: { color: '#B45309' },
+  addMemberBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 12, marginTop: 4,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#F3F4F6',
+  },
+  addMemberIcon: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: CrmColors.blue50,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  addMemberTxt: { fontSize: 13.5, color: CrmColors.blue600, fontWeight: '800' },
+
+  // Settings row
+  settingsRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 12,
+  },
+  settingsIcon: {
+    width: 36, height: 36, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  settingsLabel: { flex: 1, fontSize: 14, color: CrmColors.gray900, fontWeight: '600' },
+
+  // Read receipt row (Đã gửi / Đã xem) dưới bubble cuối của mình
+  readRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    marginTop: 3, paddingHorizontal: 2,
+  },
+  readTxt: { fontSize: 11, color: CrmColors.gray500, fontWeight: '600' },
+  readTxtSeen: { color: BUBBLE_ME, fontWeight: '700' },
+
+  // Rename modal
+  renameBg: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center', justifyContent: 'center', padding: 24,
+  },
+  renameCard: {
+    width: '100%', maxWidth: 420,
+    backgroundColor: '#FFFFFF', borderRadius: 16, padding: 20,
+  },
+  renameTitle: { fontSize: 17, fontWeight: '800', color: CrmColors.gray900 },
+  renameSub: { fontSize: 12.5, color: CrmColors.gray500, marginTop: 4, marginBottom: 14 },
+  renameInput: {
+    borderWidth: 1, borderColor: CrmColors.gray200, borderRadius: 12,
+    paddingHorizontal: 14, paddingVertical: 12,
+    fontSize: 15, color: CrmColors.gray900,
+    backgroundColor: '#F9FAFB',
+  },
+  renameActions: { flexDirection: 'row', gap: 10, marginTop: 14, justifyContent: 'flex-end' },
+  renameBtn: {
+    paddingHorizontal: 18, paddingVertical: 10, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center', minWidth: 84,
+  },
+  renameBtnGhost: { backgroundColor: '#F3F4F6' },
+  renameBtnGhostTxt: { fontSize: 14, fontWeight: '700', color: CrmColors.gray700 },
+  renameBtnPrimary: { backgroundColor: BUBBLE_ME },
+  renameBtnPrimaryTxt: { fontSize: 14, fontWeight: '800', color: '#FFFFFF' },
+  renameBtnOff: { opacity: 0.6 },
 
   // Member preview row
   memberPreviewRow: { flexDirection: 'row', gap: 12, paddingBottom: 4 },

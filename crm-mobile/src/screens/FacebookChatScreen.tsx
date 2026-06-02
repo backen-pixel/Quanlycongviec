@@ -47,6 +47,13 @@ export default function FacebookChatScreen({ route, navigation }: Props) {
   const [audioLoading, setAudioLoading] = useState(false);
   const soundRef = useRef<Audio.Sound | null>(null);
   const listRef = useRef<FlatList>(null);
+  const isAtBottom = useRef(true);
+
+  const handleScroll = (event: any) => {
+    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+    const isCloseToBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 100;
+    isAtBottom.current = isCloseToBottom;
+  };
 
   const unloadSound = useCallback(async () => {
     try {
@@ -168,11 +175,11 @@ export default function FacebookChatScreen({ route, navigation }: Props) {
 
   const composerPadBottom =
     Platform.OS === 'ios' ? Math.max(insets.bottom, 8) : Math.max(insets.bottom, 4);
-  const ChatRoot = Platform.OS === 'ios' ? KeyboardAvoidingView : View;
+  const ChatRoot = KeyboardAvoidingView;
   const chatRootProps =
     Platform.OS === 'ios'
       ? ({ behavior: 'padding' as const, keyboardVerticalOffset: 88 } as const)
-      : {};
+      : ({ behavior: 'height' as const } as const);
 
   return (
     <ChatRoot style={styles.flex} {...chatRootProps}>
@@ -186,7 +193,13 @@ export default function FacebookChatScreen({ route, navigation }: Props) {
           data={messages}
           keyExtractor={(m) => m.id}
           contentContainerStyle={styles.msgList}
-          onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
+          onContentSizeChange={() => {
+            if (isAtBottom.current) {
+              listRef.current?.scrollToEnd({ animated: false });
+            }
+          }}
           renderItem={({ item: m }) => {
             const out = m.direction === 'outbound';
             return (

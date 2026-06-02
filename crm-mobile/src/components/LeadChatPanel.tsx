@@ -92,6 +92,13 @@ export default function LeadChatPanel({ leadId }: Props) {
   const insets = useSafeAreaInsets();
   const socketRef = useRef<Socket | null>(null);
   const listRef = useRef<ScrollView>(null);
+  const isAtBottom = useRef(true);
+
+  const handleScroll = (event: any) => {
+    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+    const isCloseToBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 100;
+    isAtBottom.current = isCloseToBottom;
+  };
 
   // ── Voice recording ──────────────────────────────
   const [recState, setRecState] = useState<RecState>('idle');
@@ -484,14 +491,16 @@ export default function LeadChatPanel({ leadId }: Props) {
   const composerPadBottom =
     Platform.OS === 'ios' ? Math.max(insets.bottom, 8) : Math.max(insets.bottom, 4);
 
-  const Root = Platform.OS === 'ios' ? KeyboardAvoidingView : View;
+  const Root = KeyboardAvoidingView;
   const rootProps =
     Platform.OS === 'ios'
       ? ({
           behavior: 'padding' as const,
           keyboardVerticalOffset: 88,
         } as const)
-      : {};
+      : ({
+          behavior: 'height' as const,
+        } as const);
 
   return (
     <Root {...rootProps} style={styles.root}>
@@ -543,7 +552,13 @@ export default function LeadChatPanel({ leadId }: Props) {
               style={styles.list}
               contentContainerStyle={styles.listContent}
               nestedScrollEnabled
-              onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+              onScroll={handleScroll}
+              scrollEventThrottle={16}
+              onContentSizeChange={() => {
+                if (isAtBottom.current) {
+                  listRef.current?.scrollToEnd({ animated: false });
+                }
+              }}
             >
               {filtered.length === 0 ? (
                 <Text style={styles.muted}>Không có tin nhắn (hoặc bộ lọc trống).</Text>

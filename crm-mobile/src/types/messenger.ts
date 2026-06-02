@@ -2,6 +2,8 @@ export type MessengerGroupListItem = {
   id: string;
   name?: string | null;
   raw_name?: string | null;
+  /** Avatar nhóm (chỉ group chat, có thể null nếu chưa upload). */
+  avatar?: string | null;
   is_direct?: boolean;
   peer_id?: string | null;
   /** Avatar URL/path của peer (chỉ chat 1-1). */
@@ -12,8 +14,16 @@ export type MessengerGroupListItem = {
   last_message_at?: string | null;
   /** Preview nội dung tin nhắn cuối (tối đa 100 ký tự). */
   last_message?: string | null;
+  /** ID của user gửi tin cuối — dùng để hiển thị prefix "Bạn: " trong list. */
+  last_user_id?: string | null;
   /** Số tin chưa đọc của user hiện tại trong nhóm này. */
   unread_count?: number;
+};
+
+/** Read receipt của 1 user trong 1 group. */
+export type MessengerReadReceipt = {
+  user_id: string;
+  last_read_at: string;
 };
 
 export type MessengerMember = {
