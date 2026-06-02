@@ -22,6 +22,7 @@ import type { MoreStackParamList } from '../navigation/types';
 import type { MessengerGroupListItem } from '../types/messenger';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { useNotifications } from '../context/NotificationContext';
+import { useAuth } from '../context/AuthContext';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'MessengerGroupList'>;
 type TabKey = 'group' | 'direct';
@@ -174,11 +175,13 @@ function PresenceCell({
 function ConversationRow({
   item,
   pinned,
+  myId,
   onPress,
   onLongPress,
 }: {
   item: MessengerGroupListItem;
   pinned: boolean;
+  myId: string;
   onPress: () => void;
   onLongPress: () => void;
 }) {
@@ -187,8 +190,21 @@ function ConversationRow({
   const active = isRecentlyActive(item.last_message_at);
   const stripeColor = active ? '#10B981' : pinned ? CrmColors.amber500 : 'transparent';
 
-  const subtitle = item.last_message
-    ? item.last_message
+  /**
+   * Preview tin mới nhất với prefix:
+   *  • "Bạn: <nội dung>" — nếu tin cuối là do mình gửi.
+   *  • Nội dung trống → fallback theo loại nhóm (giữ behaviour cũ).
+   */
+  const isMineLast = !!item.last_user_id && String(item.last_user_id) === myId;
+  let displayMessage = item.last_message || '';
+  if (displayMessage === 'Tin nhắn đã bị thu hồi') {
+    displayMessage = isMineLast ? 'Bạn đã thu hồi tin nhắn' : 'Tin nhắn đã bị thu hồi';
+  } else if (displayMessage) {
+    displayMessage = isMineLast ? `Bạn: ${displayMessage}` : displayMessage;
+  }
+
+  const subtitle = displayMessage
+    ? displayMessage
     : item.is_direct
       ? `Chat trực tiếp · ${item.message_count ?? 0} tin`
       : item.crm_lead_id
@@ -207,7 +223,7 @@ function ConversationRow({
       <View style={styles.convAvatarWrap}>
         <Avatar
           name={item.name || (item.is_direct ? 'Trực tiếp' : 'Nhóm')}
-          url={item.is_direct ? absUrl(item.peer_avatar) : null}
+          url={item.is_direct ? absUrl(item.peer_avatar) : absUrl(item.avatar)}
           size={44}
         />
         {pinned ? (
@@ -261,6 +277,8 @@ function ConversationRow({
 
 export default function MessengerGroupListScreen({ navigation }: { navigation: Nav }) {
   const { refreshUnread, subscribeIncoming } = useNotifications();
+  const { user } = useAuth();
+  const myId = String(user?.id || user?.userId || '');
   const [groups, setGroups] = useState<MessengerGroupListItem[]>([]);
   const [pins, setPins] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -324,7 +342,12 @@ export default function MessengerGroupListScreen({ navigation }: { navigation: N
       const meta =
         n.metadata && typeof n.metadata === 'object' ? (n.metadata as Record<string, unknown>) : {};
       const groupName = typeof meta.group_name === 'string' ? meta.group_name : undefined;
-      const msgContent = n.message ?? '';
+      const senderId = typeof meta.sender_id === 'string' ? meta.sender_id : null;
+      const senderName = typeof meta.sender_name === 'string' ? meta.sender_name : '';
+      let msgContent = n.message ?? '';
+      if (senderName && msgContent.startsWith(`${senderName}: `)) {
+        msgContent = msgContent.slice(senderName.length + 2);
+      }
 
       setGroups((prev) => {
         const idx = prev.findIndex((g) => String(g.id) === groupId);
@@ -337,6 +360,7 @@ export default function MessengerGroupListScreen({ navigation }: { navigation: N
                   ...g,
                   last_message_at: new Date().toISOString(),
                   last_message: msgContent,
+                  last_user_id: senderId ?? g.last_user_id ?? null,
                   unread_count: (g.unread_count ?? 0) + 1,
                 },
           );
@@ -347,6 +371,7 @@ export default function MessengerGroupListScreen({ navigation }: { navigation: N
               name: groupName,
               last_message_at: new Date().toISOString(),
               last_message: msgContent,
+              last_user_id: senderId,
               unread_count: 1,
               message_count: 1,
             },
@@ -435,6 +460,7 @@ export default function MessengerGroupListScreen({ navigation }: { navigation: N
       <ConversationRow
         item={item}
         pinned={pins.has(String(item.id))}
+        myId={myId}
         onPress={() =>
           navigation.navigate('MessengerGroupChat', {
             groupId: String(item.id),
@@ -445,7 +471,7 @@ export default function MessengerGroupListScreen({ navigation }: { navigation: N
         onLongPress={() => togglePin(item)}
       />
     ),
-    [pins, navigation, togglePin],
+    [pins, navigation, togglePin, myId],
   );
 
   const keyExtractor = useCallback((it: MessengerGroupListItem) => String(it.id), []);
@@ -732,8 +758,9 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   convTitleUnread: { fontWeight: '800' },
-  convSub: { fontSize: 12.5, color: CrmColors.gray500, marginTop: 3 },
-  convSubUnread: { color: CrmColors.gray800, fontWeight: '600' },
+  // Preview tin nhắn mới nhất — luôn đậm hơn để dễ đọc (giống Messenger)
+  convSub: { fontSize: 13, color: CrmColors.gray700, marginTop: 3, fontWeight: '600' },
+  convSubUnread: { color: CrmColors.gray900, fontWeight: '800' },
 
   livePill: {
     backgroundColor: '#10B981',

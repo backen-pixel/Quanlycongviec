@@ -15,7 +15,7 @@ param(
   [switch]$Install
 )
 
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Continue'
 $Root = $PSScriptRoot
 $Backend  = Join-Path $Root 'backend'
 $Frontend = Join-Path $Root 'frontend'
