@@ -14,8 +14,11 @@ import { isoToDatetimeLocalValue, datetimeLocalValueToIso } from '../lib/datetim
 import {
   Calendar, List, Plus, Search, Filter, MapPin, Clock, Users, MessageSquare,
   Check, X, ChevronLeft, ChevronRight, Settings, Trash2, Edit3, Send, CheckCircle2,
-  XCircle, AlertCircle, Loader2, Building2, Ban, BarChart3,
+  XCircle, AlertCircle, Loader2, Building2, Ban, BarChart3, Table2, FileSpreadsheet,
+  CalendarRange,
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
+import DateRangePickerPopover from '../components/DateRangePickerPopover';
 
 import ScopeFilterBar from '../shared/components/ScopeFilterBar';
 import { useScopeFilter } from '../shared/hooks/useScopeFilter';
@@ -64,6 +67,68 @@ function isSameDay(d1, d2) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 function isToday(isoStr) { return isSameDay(isoStr, new Date()); }
+
+/** Khoảng ngày theo preset (đồng bộ style với CRM Dashboard). YYYY-MM-DD theo local. */
+function getEventsDateRange(preset) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  switch (preset) {
+    case 'today':
+      return { from: iso(today), to: iso(today) };
+    case 'this_week': {
+      const dow = today.getDay();
+      const monday = new Date(today);
+      monday.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1));
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      return { from: iso(monday), to: iso(sunday) };
+    }
+    case 'last_week': {
+      const dow = today.getDay();
+      const thisMon = new Date(today);
+      thisMon.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1));
+      const lastMon = new Date(thisMon);
+      lastMon.setDate(thisMon.getDate() - 7);
+      const lastSun = new Date(lastMon);
+      lastSun.setDate(lastMon.getDate() + 6);
+      return { from: iso(lastMon), to: iso(lastSun) };
+    }
+    case 'this_month': {
+      const first = new Date(now.getFullYear(), now.getMonth(), 1);
+      const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      return { from: iso(first), to: iso(last) };
+    }
+    case 'last_month': {
+      const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const last = new Date(now.getFullYear(), now.getMonth(), 0);
+      return { from: iso(first), to: iso(last) };
+    }
+    case 'this_quarter': {
+      const qm = Math.floor(now.getMonth() / 3) * 3;
+      const first = new Date(now.getFullYear(), qm, 1);
+      const last = new Date(now.getFullYear(), qm + 3, 0);
+      return { from: iso(first), to: iso(last) };
+    }
+    case 'this_year':
+      return { from: `${now.getFullYear()}-01-01`, to: `${now.getFullYear()}-12-31` };
+    default:
+      return { from: '', to: '' };
+  }
+}
+
+const EVENTS_TIME_PRESETS = [
+  { key: '', label: 'Tất cả' },
+  { key: 'today', label: 'Hôm nay' },
+  { key: 'this_week', label: 'Tuần này' },
+  { key: 'last_week', label: 'Tuần trước' },
+  { key: 'this_month', label: 'Tháng này' },
+  { key: 'last_month', label: 'Tháng trước' },
+  { key: 'this_quarter', label: 'Quý này' },
+  { key: 'this_year', label: 'Năm này' },
+  { key: 'custom', label: 'Tùy chỉnh…' },
+];
 
 // ═══════════════════════════════════════════════════════════════
 // MAIN PAGE
@@ -135,7 +200,7 @@ export default function EventsFeedPage() {
     return cid || '';
   }, [isSystemAdmin, filterCompanyId, user?.company_id]);
 
-  const [view, setView] = useState('calendar'); // feed | calendar | types — mặc định Lịch khi vào trang
+  const [view, setView] = useState('calendar'); // feed | calendar | list | types — mặc định Lịch khi vào trang
   const [events, setEvents] = useState([]);
   const [eventTypes, setEventTypes] = useState([]);
   const [users, setUsers] = useState([]);
@@ -149,6 +214,8 @@ export default function EventsFeedPage() {
   const [regions, setRegions] = useState([]);
   const [rangeFrom, setRangeFrom] = useState('');
   const [rangeTo, setRangeTo] = useState('');
+  const [timePreset, setTimePreset] = useState('');
+  const [showDateRangePicker, setShowDateRangePicker] = useState(false);
   const [totalEvents, setTotalEvents] = useState(0);
   const [showCreate, setShowCreate] = useState(false);
   const [editEvent, setEditEvent] = useState(null);
@@ -207,14 +274,14 @@ export default function EventsFeedPage() {
   }, [view, monthRangeBounds.from, monthRangeBounds.to]);
 
   useEffect(() => {
-    if (view !== 'feed' && view !== 'calendar') return;
+    if (view !== 'feed' && view !== 'calendar' && view !== 'list') return;
     loadFeed();
     if (view === 'calendar') loadCalendar();
   }, [view, filterType, filterStatus, filterUser, filterRegionId, calMonth, calYear, listParams, rangeFrom, rangeTo]);
 
   // Debounce search 300ms — tự tìm khi gõ, không cần Enter
   useEffect(() => {
-    if (view !== 'feed' && view !== 'calendar') return undefined;
+    if (view !== 'feed' && view !== 'calendar' && view !== 'list') return undefined;
     const t = setTimeout(() => { loadFeed(); }, 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -256,7 +323,7 @@ export default function EventsFeedPage() {
   };
 
   const refreshEventsData = () => {
-    if (view === 'feed' || view === 'calendar') {
+    if (view === 'feed' || view === 'calendar' || view === 'list') {
       loadFeed();
       if (view === 'calendar') loadCalendar();
     }
@@ -300,6 +367,7 @@ export default function EventsFeedPage() {
     setFilterStatus('');
     setFilterUser('');
     setFilterRegionId('');
+    setTimePreset('');
     if (view === 'calendar') {
       setRangeFrom(monthRangeBounds.from);
       setRangeTo(monthRangeBounds.to);
@@ -309,8 +377,138 @@ export default function EventsFeedPage() {
     }
   };
 
+  /**
+   * Đổi preset thời gian (giống CRM Dashboard).
+   * - 'custom' → mở popover lịch.
+   * - '' → xóa khoảng ngày.
+   * - khác → resolve preset → set rangeFrom/rangeTo.
+   */
+  const handleTimePresetChange = (preset) => {
+    setTimePreset(preset);
+    if (preset === 'custom') {
+      setShowDateRangePicker(true);
+      return;
+    }
+    if (preset === '') {
+      setRangeFrom('');
+      setRangeTo('');
+      return;
+    }
+    const range = getEventsDateRange(preset);
+    setRangeFrom(range.from);
+    setRangeTo(range.to);
+  };
+
+  /** Label hiển thị cho chip thời gian đang chọn (chỉ hiện khi không phải 'Tất cả'). */
+  const timeFilterLabel = useMemo(() => {
+    if (!timePreset && !(rangeFrom || rangeTo)) return '';
+    if (timePreset && timePreset !== 'custom') {
+      return EVENTS_TIME_PRESETS.find((p) => p.key === timePreset)?.label || '';
+    }
+    if (rangeFrom || rangeTo) {
+      return `${rangeFrom || '...'} → ${rangeTo || '...'}`;
+    }
+    return '';
+  }, [timePreset, rangeFrom, rangeTo]);
+
   const hasActiveFilters = !!(search || filterType || filterStatus || filterUser || filterRegionId
-    || (view === 'feed' && (rangeFrom || rangeTo)));
+    || ((view === 'feed' || view === 'list') && (rangeFrom || rangeTo)));
+
+  /**
+   * Xuất Excel danh sách sự kiện theo bộ lọc hiện tại (đặc biệt là khoảng thời gian).
+   * Mặc định kéo tối đa 5000 sự kiện cho 1 lần xuất — đủ cho hầu hết khoảng thời gian.
+   * File được đặt tên theo khoảng ngày + công ty (nếu có).
+   */
+  const [exporting, setExporting] = useState(false);
+  const handleExportExcel = async () => {
+    setExporting(true);
+    try {
+      const params = { limit: 5000, ...listParams };
+      if (filterType) params.type = filterType;
+      if (filterStatus) params.status = filterStatus;
+      if (filterUser) params.user_id = filterUser;
+      if (filterRegionId) params.region_id = filterRegionId;
+      if (rangeFrom) params.date_from = rangeFrom;
+      if (rangeTo) params.date_to = rangeTo;
+      if (search) params.search = search;
+      const { data } = await api.get('/events', { params });
+      const rows = data?.events || [];
+      if (rows.length === 0) {
+        alert('Không có sự kiện nào trong khoảng thời gian/bộ lọc để xuất.');
+        return;
+      }
+      const typeBySlug = new Map(eventTypes.map((t) => [t.slug, t]));
+      const fmtDT = (iso) => {
+        if (!iso) return '';
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return '';
+        return d.toLocaleString('vi-VN', {
+          day: '2-digit', month: '2-digit', year: 'numeric',
+          hour: '2-digit', minute: '2-digit',
+        });
+      };
+      const sheetRows = rows.map((ev, idx) => {
+        const typeInfo = typeBySlug.get(ev.event_type) || ev.event_type_ref || {};
+        const mm = moduleMeta(ev.module);
+        const statusInfo = STATUS_MAP[ev.status] || { label: ev.status || '' };
+        const parts = ev.participants || [];
+        const confirmed = parts.filter((p) => p.status === 'confirmed');
+        const declined = parts.filter((p) => p.status === 'declined');
+        const pending = parts.filter((p) => p.status === 'pending');
+        const partNames = parts.map((p) => p.user?.full_name).filter(Boolean).join(', ');
+        return {
+          'STT': idx + 1,
+          'Tiêu_đề': ev.title || '',
+          'Loại_sự_kiện': typeInfo.name || ev.event_type || '',
+          'Khối': mm.label || '',
+          'Trạng_thái': statusInfo.label || ev.status || '',
+          'Bắt_đầu': fmtDT(ev.start_time),
+          'Kết_thúc': fmtDT(ev.end_time),
+          'Địa_điểm': ev.location || '',
+          'Người_tạo': ev.creator?.full_name || '',
+          'Người_phụ_trách': ev.assignee?.full_name || '',
+          'Khách_hàng': ev.customer?.full_name || '',
+          'SĐT_KH': ev.customer?.phone || '',
+          'Mã_Deal_Lead': ev.lead?.code || '',
+          'Tên_Deal_Lead': ev.lead?.title || '',
+          'Dự_án': ev.project ? `${ev.project.code ? ev.project.code + ' — ' : ''}${ev.project.name || ''}` : '',
+          'Mô_tả': ev.description || '',
+          'Kết_quả': ev.result || '',
+          'Lý_do_hủy': ev.status === 'cancelled' ? (ev.cancel_reason || '') : '',
+          'Số_người_tham_dự': parts.length,
+          'Đã_xác_nhận': confirmed.length,
+          'Chờ_phản_hồi': pending.length,
+          'Đã_từ_chối': declined.length,
+          'Danh_sách_tham_dự': partNames,
+          'Ngày_tạo': fmtDT(ev.created_at),
+        };
+      });
+      const ws = XLSX.utils.json_to_sheet(sheetRows, { cellDates: false });
+      const headers = Object.keys(sheetRows[0] || {});
+      ws['!cols'] = headers.map((h) => {
+        if (h === 'STT') return { wch: 5 };
+        if (h === 'Tiêu_đề' || h === 'Mô_tả' || h === 'Kết_quả' || h === 'Lý_do_hủy' || h === 'Danh_sách_tham_dự') return { wch: 32 };
+        if (h.startsWith('Số_') || h.startsWith('Đã_') || h === 'Chờ_phản_hồi') return { wch: 12 };
+        if (h.includes('thời') || h === 'Bắt_đầu' || h === 'Kết_thúc' || h === 'Ngày_tạo') return { wch: 18 };
+        return { wch: 18 };
+      });
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Sự kiện');
+      const fromStamp = (rangeFrom || '').replace(/-/g, '') || 'all';
+      const toStamp = (rangeTo || '').replace(/-/g, '') || 'all';
+      const coName = isSystemAdmin && filterCompanyId
+        ? (companies?.find((c) => String(c.id) === String(filterCompanyId))?.short_name
+            || companies?.find((c) => String(c.id) === String(filterCompanyId))?.name)
+        : '';
+      const coPart = coName ? `_${String(coName).replace(/[^\p{L}\d_-]+/gu, '_')}` : '';
+      XLSX.writeFile(wb, `su_kien${coPart}_${fromStamp}_${toStamp}.xlsx`);
+    } catch (e) {
+      console.error(e);
+      alert(e?.response?.data?.error || 'Lỗi xuất Excel');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -320,12 +518,28 @@ export default function EventsFeedPage() {
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <Calendar className="h-6 w-6 text-blue-600" /> Sự kiện
           </h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            {totalEvents > (events || []).length && (events || []).length >= 500
-              ? `Hiển thị ${(events || []).length} / ${totalEvents} sự kiện (giới hạn 500)` 
-              : `${totalEvents || (events || []).length} sự kiện`}
-            {view === 'calendar' && (
-              <span className="text-gray-400"> — khoảng {monthRangeBounds.from} → {monthRangeBounds.to}</span>
+          <p className="text-sm text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
+            <span>
+              {totalEvents > (events || []).length && (events || []).length >= 500
+                ? `Hiển thị ${(events || []).length} / ${totalEvents} sự kiện (giới hạn 500)`
+                : `${totalEvents || (events || []).length} sự kiện`}
+              {view === 'calendar' && (
+                <span className="text-gray-400"> — khoảng {monthRangeBounds.from} → {monthRangeBounds.to}</span>
+              )}
+            </span>
+            {view !== 'calendar' && timeFilterLabel && (
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-purple-100 text-purple-700 rounded-md text-[11px] font-medium border border-purple-200">
+                <Clock className="h-3 w-3" />
+                {timeFilterLabel}
+                <button
+                  type="button"
+                  onClick={() => handleTimePresetChange('')}
+                  className="ml-0.5 hover:text-purple-900 cursor-pointer"
+                  title="Bỏ lọc thời gian"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
             )}
           </p>
         </div>
@@ -380,11 +594,25 @@ export default function EventsFeedPage() {
             <button onClick={() => setView('feed')} className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${view === 'feed' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
               <List className="h-4 w-4" /> Feed
             </button>
-            
+            <button onClick={() => setView('list')} className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${view === 'list' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
+              <Table2 className="h-4 w-4" /> Danh sách
+            </button>
             <button onClick={() => setView('types')} className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${view === 'types' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
               <Settings className="h-4 w-4" /> Loại
             </button>
           </div>
+          {(view === 'feed' || view === 'calendar' || view === 'list') && (
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              disabled={exporting}
+              title={`Xuất Excel sự kiện${rangeFrom || rangeTo ? ` (${rangeFrom || '...'} → ${rangeTo || '...'})` : ' (theo bộ lọc)'}`}
+              className="h-9 px-3 inline-flex items-center gap-1.5 text-sm font-medium border border-emerald-300 text-emerald-700 rounded-lg bg-white hover:bg-emerald-50 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            >
+              {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
+              Xuất Excel
+            </button>
+          )}
           <button onClick={() => { setEditEvent(null); setCreatePresetDay(null); setShowCreate(true); }}
             className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer">
             <Plus className="h-4 w-4" /> Tạo sự kiện
@@ -392,8 +620,8 @@ export default function EventsFeedPage() {
         </div>
       </div>
 
-      {/* Feed: chỉ bộ lọc + danh sách; Lịch: thêm khối lịch tháng phía trên */}
-      {(view === 'feed' || view === 'calendar') && (
+      {/* Feed: chỉ bộ lọc + danh sách; Lịch: thêm khối lịch tháng phía trên; List: bảng + xuất Excel */}
+      {(view === 'feed' || view === 'calendar' || view === 'list') && (
         <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
           {/* Toolbar bộ lọc — compact 1 hàng, scroll ngang nếu chật */}
           <details open className="border-b border-gray-100">
@@ -444,19 +672,93 @@ export default function EventsFeedPage() {
                     )}
                   </div>
                 </div>
-                <div>
-                  <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Từ ngày</label>
-                  <input type="date" value={rangeFrom} onChange={e => setRangeFrom(e.target.value)}
-                    disabled={view === 'calendar'}
-                    className={`h-9 px-2 border rounded-lg text-sm ${view === 'calendar' ? 'bg-gray-100 text-gray-600' : ''}`}
-                    title={view === 'calendar' ? 'Đổi tháng trên lịch để đổi khoảng ngày' : ''} />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Đến ngày</label>
-                  <input type="date" value={rangeTo} onChange={e => setRangeTo(e.target.value)}
-                    disabled={view === 'calendar'}
-                    className={`h-9 px-2 border rounded-lg text-sm ${view === 'calendar' ? 'bg-gray-100 text-gray-600' : ''}`} />
-                </div>
+                {view !== 'calendar' && (
+                  <>
+                    <div>
+                      <label className="block text-[10px] font-medium text-gray-500 mb-0.5 flex items-center gap-1">
+                        <Clock className="h-3 w-3" /> Thời gian
+                      </label>
+                      <div className="relative">
+                        <select
+                          value={timePreset}
+                          onChange={(e) => handleTimePresetChange(e.target.value)}
+                          className={`h-9 pl-9 pr-8 rounded-lg text-sm font-medium border appearance-none cursor-pointer transition min-w-[150px] ${
+                            timePreset || rangeFrom || rangeTo
+                              ? 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'
+                              : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+                          }`}
+                        >
+                          {EVENTS_TIME_PRESETS.map((p) => (
+                            <option key={p.key} value={p.key}>{p.label}</option>
+                          ))}
+                        </select>
+                        <Clock className={`absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 pointer-events-none ${timePreset || rangeFrom || rangeTo ? 'text-purple-500' : 'text-gray-400'}`} />
+                        <ChevronRight className="absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400 rotate-90 pointer-events-none" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-gray-500 mb-0.5 flex items-center gap-1">
+                        <CalendarRange className="h-3 w-3" /> Khoảng ngày
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setShowDateRangePicker(true)}
+                        className={`h-9 px-3 inline-flex items-center gap-1.5 rounded-lg text-sm font-medium border transition cursor-pointer ${
+                          rangeFrom || rangeTo
+                            ? 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'
+                            : 'bg-white text-gray-700 border-gray-200 hover:border-purple-300 hover:bg-gray-50'
+                        }`}
+                        title="Mở lịch chọn khoảng ngày"
+                      >
+                        <CalendarRange className="h-3.5 w-3.5" />
+                        {rangeFrom || rangeTo ? (
+                          <span className="tabular-nums">{rangeFrom || '...'} → {rangeTo || '...'}</span>
+                        ) : (
+                          <span className="text-gray-500">Chọn ngày…</span>
+                        )}
+                        {(rangeFrom || rangeTo) && (
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setTimePreset('');
+                              setRangeFrom('');
+                              setRangeTo('');
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setTimePreset('');
+                                setRangeFrom('');
+                                setRangeTo('');
+                              }
+                            }}
+                            className="ml-1 -mr-1 p-0.5 rounded hover:bg-purple-200 text-purple-600 cursor-pointer"
+                            title="Xóa khoảng ngày"
+                          >
+                            <X className="h-3 w-3" />
+                          </span>
+                        )}
+                      </button>
+                    </div>
+                  </>
+                )}
+                {view === 'calendar' && (
+                  <div>
+                    <label className="block text-[10px] font-medium text-gray-500 mb-0.5 flex items-center gap-1">
+                      <Calendar className="h-3 w-3" /> Tháng đang xem
+                    </label>
+                    <div
+                      className="h-9 px-3 inline-flex items-center gap-1.5 rounded-lg text-sm border bg-gray-100 text-gray-700 border-gray-200 tabular-nums"
+                      title="Đổi tháng trên lịch để đổi khoảng ngày"
+                    >
+                      <Calendar className="h-3.5 w-3.5 text-gray-500" />
+                      {monthRangeBounds.from} → {monthRangeBounds.to}
+                    </div>
+                  </div>
+                )}
                 <div>
                   <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Loại</label>
                   <select value={filterType} onChange={e => setFilterType(e.target.value)} className="h-9 px-3 border rounded-lg text-sm min-w-[120px]">
@@ -535,51 +837,66 @@ export default function EventsFeedPage() {
                 </div>
               </div>
             )}
-            <div>
-              <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
-                <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                  <List className="h-4 w-4 text-gray-500" /> Feed sự kiện
-                  <span className="text-xs font-normal text-gray-400">({events.length} sự kiện)</span>
-                </h2>
-                {events.length > 6 && (
-                  <span className="text-[11px] text-gray-400">Cuộn dọc để xem thêm</span>
-                )}
+            {view === 'list' ? (
+              <EventListView
+                events={events}
+                eventTypes={eventTypes}
+                loading={loading}
+                rangeFrom={rangeFrom}
+                rangeTo={rangeTo}
+                onEdit={(ev) => { setEditEvent(ev); setCreatePresetDay(null); setShowCreate(true); }}
+                onDelete={handleDelete}
+                onCancel={handleCancel}
+                onStatusChange={handleStatusChange}
+                currentUser={currentUser}
+              />
+            ) : (
+              <div>
+                <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+                  <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                    <List className="h-4 w-4 text-gray-500" /> Feed sự kiện
+                    <span className="text-xs font-normal text-gray-400">({events.length} sự kiện)</span>
+                  </h2>
+                  {events.length > 6 && (
+                    <span className="text-[11px] text-gray-400">Cuộn dọc để xem thêm</span>
+                  )}
+                </div>
+                {/* Vùng cuộn — chiều cao phụ thuộc chế độ lịch:
+                    hidden  → feed full (chừa 260px cho header/filter)
+                    compact → lịch chỉ ~280px (chừa 540px)
+                    full    → lịch ~720px (chừa 740px khi nhiều tuần)
+                    Layout: GRID 2 cột song song trên ≥lg để hiển thị nhiều sự kiện hơn 1 viewport. */}
+                <div
+                  className="overflow-y-auto pr-1 [scrollbar-width:thin]"
+                  style={{
+                    maxHeight: view === 'calendar'
+                      ? calendarMode === 'hidden' ? 'calc(100vh - 260px)'
+                        : calendarMode === 'compact' ? 'calc(100vh - 540px)'
+                          : 'calc(100vh - 740px)'
+                      : 'calc(100vh - 300px)',
+                    minHeight: 320,
+                  }}
+                >
+                  {loading ? (
+                    <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-blue-500" /></div>
+                  ) : events.length === 0 ? (
+                    <div className="text-center py-16 text-gray-400">
+                      <Calendar className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                      <p className="text-sm">Không có sự kiện phù hợp bộ lọc</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                      {events.map(ev => (
+                        <EventCard key={ev.id} event={ev} eventTypes={eventTypes} currentUser={currentUser}
+                          onRespond={handleRespond} onDelete={handleDelete} onCancel={handleCancel}
+                          onStatusChange={handleStatusChange}
+                          onEdit={() => { setEditEvent(ev); setShowCreate(true); }} />
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-              {/* Vùng cuộn — chiều cao phụ thuộc chế độ lịch:
-                  hidden  → feed full (chừa 260px cho header/filter)
-                  compact → lịch chỉ ~280px (chừa 540px)
-                  full    → lịch ~720px (chừa 740px khi nhiều tuần)
-                  Layout: GRID 2 cột song song trên ≥lg để hiển thị nhiều sự kiện hơn 1 viewport. */}
-              <div
-                className="overflow-y-auto pr-1 [scrollbar-width:thin]"
-                style={{
-                  maxHeight: view === 'calendar'
-                    ? calendarMode === 'hidden' ? 'calc(100vh - 260px)'
-                      : calendarMode === 'compact' ? 'calc(100vh - 540px)'
-                        : 'calc(100vh - 740px)'
-                    : 'calc(100vh - 300px)',
-                  minHeight: 320,
-                }}
-              >
-                {loading ? (
-                  <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-blue-500" /></div>
-                ) : events.length === 0 ? (
-                  <div className="text-center py-16 text-gray-400">
-                    <Calendar className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                    <p className="text-sm">Không có sự kiện phù hợp bộ lọc</p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                    {events.map(ev => (
-                      <EventCard key={ev.id} event={ev} eventTypes={eventTypes} currentUser={currentUser}
-                        onRespond={handleRespond} onDelete={handleDelete} onCancel={handleCancel}
-                        onStatusChange={handleStatusChange}
-                        onEdit={() => { setEditEvent(ev); setShowCreate(true); }} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
+            )}
           </div>
         </div>
       )}
@@ -603,6 +920,20 @@ export default function EventsFeedPage() {
           onSaved={() => { setShowCreate(false); setEditEvent(null); setCreatePresetDay(null); refreshEventsData(); }}
         />
       )}
+
+      {/* Date range picker — chung style với CRM Dashboard */}
+      <DateRangePickerPopover
+        open={showDateRangePicker}
+        title="Chọn khoảng thời gian sự kiện"
+        from={rangeFrom}
+        to={rangeTo}
+        onChange={({ from, to }) => {
+          setRangeFrom(from || '');
+          setRangeTo(to || '');
+          setTimePreset(from || to ? 'custom' : '');
+        }}
+        onClose={() => setShowDateRangePicker(false)}
+      />
     </div>
   );
 }
@@ -1289,6 +1620,294 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
               )}
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EVENT LIST VIEW — Bảng danh sách sự kiện kèm hành động nhanh
+// ═══════════════════════════════════════════════════════════════
+function EventListView({ events, eventTypes, loading, rangeFrom, rangeTo, onEdit, onDelete, onCancel, onStatusChange, currentUser }) {
+  const [sortKey, setSortKey] = useState('start_time');
+  const [sortDir, setSortDir] = useState('desc');
+  const [cancelTarget, setCancelTarget] = useState(null);
+  const [cancelReason, setCancelReason] = useState('');
+
+  const typeBySlug = useMemo(() => new Map(eventTypes.map((t) => [t.slug, t])), [eventTypes]);
+
+  const sorted = useMemo(() => {
+    const arr = [...events];
+    const dir = sortDir === 'asc' ? 1 : -1;
+    const cmpStr = (a, b) => String(a || '').localeCompare(String(b || ''), 'vi', { sensitivity: 'base' });
+    arr.sort((a, b) => {
+      let av; let bv;
+      switch (sortKey) {
+        case 'title': av = a.title; bv = b.title; return dir * cmpStr(av, bv);
+        case 'type':
+          av = (typeBySlug.get(a.event_type)?.name) || a.event_type || '';
+          bv = (typeBySlug.get(b.event_type)?.name) || b.event_type || '';
+          return dir * cmpStr(av, bv);
+        case 'status': return dir * cmpStr(a.status, b.status);
+        case 'module': return dir * cmpStr(a.module, b.module);
+        case 'assignee': return dir * cmpStr(a.assignee?.full_name, b.assignee?.full_name);
+        case 'creator': return dir * cmpStr(a.creator?.full_name, b.creator?.full_name);
+        case 'customer': return dir * cmpStr(a.customer?.full_name, b.customer?.full_name);
+        case 'location': return dir * cmpStr(a.location, b.location);
+        case 'start_time':
+        default: {
+          const at = a.start_time ? new Date(a.start_time).getTime() : 0;
+          const bt = b.start_time ? new Date(b.start_time).getTime() : 0;
+          return dir * (at - bt);
+        }
+      }
+    });
+    return arr;
+  }, [events, sortKey, sortDir, typeBySlug]);
+
+  const toggleSort = (key) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir(key === 'start_time' ? 'desc' : 'asc');
+    }
+  };
+  const sortIndicator = (key) => (sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '');
+
+  const headerBtn = (key, label, extra = '') => (
+    <button
+      type="button"
+      onClick={() => toggleSort(key)}
+      className={`inline-flex items-center gap-0.5 font-semibold uppercase tracking-wide ${sortKey === key ? 'text-blue-700' : 'text-gray-600'} hover:text-blue-700`}
+    >
+      {label}{sortIndicator(key)}{extra && <span className="ml-1">{extra}</span>}
+    </button>
+  );
+
+  const fmtDateTime = (iso) => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '—';
+    return `${d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: '2-digit' })} ${d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}`;
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+          <Table2 className="h-4 w-4 text-gray-500" /> Danh sách sự kiện
+          <span className="text-xs font-normal text-gray-400">
+            ({events.length} sự kiện{rangeFrom || rangeTo ? ` · ${rangeFrom || '...'} → ${rangeTo || '...'}` : ''})
+          </span>
+        </h2>
+        <span className="text-[11px] text-gray-400">Click tiêu đề cột để sắp xếp</span>
+      </div>
+
+      <div className="bg-white rounded-xl border overflow-hidden">
+        <div
+          className="overflow-auto"
+          style={{ maxHeight: 'calc(100vh - 340px)', minHeight: 320 }}
+        >
+          {loading ? (
+            <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-blue-500" /></div>
+          ) : sorted.length === 0 ? (
+            <div className="text-center py-16 text-gray-400">
+              <Calendar className="h-12 w-12 mx-auto mb-3 opacity-50" />
+              <p className="text-sm">Không có sự kiện phù hợp bộ lọc</p>
+            </div>
+          ) : (
+            <table className="w-full text-sm min-w-max border-separate border-spacing-0">
+              <thead>
+                <tr className="text-left text-[10px] uppercase tracking-wide">
+                  {[
+                    { k: 'start_time', label: 'Thời gian' },
+                    { k: 'title', label: 'Tiêu đề' },
+                    { k: 'type', label: 'Loại' },
+                    { k: 'module', label: 'Khối' },
+                    { k: 'status', label: 'Trạng thái' },
+                    { k: 'assignee', label: 'Phụ trách' },
+                    { k: 'creator', label: 'Người tạo' },
+                    { k: 'customer', label: 'Khách hàng' },
+                    { k: 'location', label: 'Địa điểm' },
+                  ].map((c) => (
+                    <th
+                      key={c.k}
+                      className="px-3 py-2.5 font-semibold whitespace-nowrap bg-gray-100 border-b border-gray-300 sticky top-0 z-20"
+                    >
+                      {headerBtn(c.k, c.label)}
+                    </th>
+                  ))}
+                  <th className="px-3 py-2.5 font-semibold whitespace-nowrap bg-gray-100 border-b border-gray-300 sticky top-0 z-20 text-right">
+                    Thao tác
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="[&_tr:not(:last-child)>td]:border-b [&_tr>td]:border-gray-200">
+                {sorted.map((ev) => {
+                  const typeInfo = typeBySlug.get(ev.event_type) || ev.event_type_ref
+                    || { icon: '📋', name: ev.event_type, color: '#6B7280' };
+                  const statusInfo = STATUS_MAP[ev.status] || STATUS_MAP.planned;
+                  const mm = moduleMeta(ev.module);
+                  const canManage = isAdminLike(currentUser)
+                    || String(ev.created_by || '') === String(currentUser?.id || '');
+                  return (
+                    <tr
+                      key={ev.id}
+                      onClick={() => onEdit(ev)}
+                      className="hover:bg-blue-50/60 cursor-pointer transition-colors"
+                    >
+                      <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-700 tabular-nums">
+                        <div className="font-medium text-gray-900">{fmtDateTime(ev.start_time)}</div>
+                        {ev.end_time && (
+                          <div className="text-[10px] text-gray-400">→ {fmtDateTime(ev.end_time)}</div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-gray-800 max-w-[320px]">
+                        <div className="font-semibold text-gray-900 truncate" title={ev.title}>
+                          <span className="mr-1">{typeInfo.icon}</span>{ev.title}
+                        </div>
+                        {ev.description && (
+                          <div className="text-[11px] text-gray-500 truncate" title={ev.description}>{ev.description}</div>
+                        )}
+                        {ev.lead && (
+                          <div className="text-[11px] text-blue-600 truncate" title={`${ev.lead.code} — ${ev.lead.title}`}>
+                            🔗 {ev.lead.code} — {ev.lead.title}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-xs">
+                        <span
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium text-[10px]"
+                          style={{ backgroundColor: `${typeInfo.color || '#6B7280'}22`, color: typeInfo.color || '#6B7280' }}
+                        >
+                          {typeInfo.icon} {typeInfo.name}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-xs">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium text-[10px] border ${mm.color}`}>
+                          {mm.emoji} {mm.label}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-xs">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium text-[10px] ${statusInfo.color}`}>
+                          {statusInfo.label}
+                        </span>
+                        {ev.status === 'cancelled' && ev.cancel_reason && (
+                          <div className="text-[10px] text-red-600 max-w-[200px] truncate mt-0.5" title={ev.cancel_reason}>
+                            Lý do: {ev.cancel_reason}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-700">
+                        {ev.assignee?.full_name || <span className="text-gray-400">—</span>}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-700">
+                        {ev.creator?.full_name || <span className="text-gray-400">—</span>}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-700 max-w-[200px] truncate" title={ev.customer?.full_name || ''}>
+                        {ev.customer?.full_name
+                          ? `${ev.customer.full_name}${ev.customer.phone ? ` · ${ev.customer.phone}` : ''}`
+                          : <span className="text-gray-400">—</span>}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-700 max-w-[200px] truncate" title={ev.location || ''}>
+                        {ev.location || <span className="text-gray-400">—</span>}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-xs text-right">
+                        <div className="inline-flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
+                          {ev.status === 'planned' && (
+                            <button
+                              onClick={() => onStatusChange(ev.id, 'in_progress')}
+                              title="Bắt đầu"
+                              className="p-1 text-amber-600 hover:bg-amber-50 rounded cursor-pointer"
+                            >▶</button>
+                          )}
+                          {ev.status === 'in_progress' && (
+                            <button
+                              onClick={() => onStatusChange(ev.id, 'completed')}
+                              title="Hoàn thành"
+                              className="p-1 text-emerald-600 hover:bg-emerald-50 rounded cursor-pointer"
+                            >
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          <button
+                            onClick={() => onEdit(ev)}
+                            title="Sửa"
+                            className="p-1 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded cursor-pointer"
+                          >
+                            <Edit3 className="h-3.5 w-3.5" />
+                          </button>
+                          {canManage && ev.status !== 'cancelled' && ev.status !== 'completed' && (
+                            <button
+                              onClick={() => { setCancelTarget(ev); setCancelReason(ev.cancel_reason || ''); }}
+                              title="Hủy sự kiện"
+                              className="p-1 text-gray-500 hover:text-amber-600 hover:bg-amber-50 rounded cursor-pointer"
+                            >
+                              <Ban className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          {canManage && (
+                            <button
+                              onClick={() => onDelete(ev.id)}
+                              title="Xóa sự kiện"
+                              className="p-1 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded cursor-pointer"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <div className="px-4 py-2 bg-gray-50 text-xs text-gray-500 flex flex-wrap justify-between gap-x-4 gap-y-1 border-t">
+          <span>Hiển thị: {sorted.length.toLocaleString('vi-VN')} sự kiện</span>
+          {(rangeFrom || rangeTo) && (
+            <span>Khoảng: {rangeFrom || '...'} → {rangeTo || '...'}</span>
+          )}
+        </div>
+      </div>
+
+      {cancelTarget && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setCancelTarget(null)}>
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+              <Ban className="h-4 w-4 text-amber-600" /> Hủy sự kiện
+            </h3>
+            <p className="text-xs text-gray-500">
+              Sự kiện «{cancelTarget.title}» sẽ chuyển sang trạng thái «Đã hủy» và lưu lý do — không bị xóa khỏi hệ thống.
+            </p>
+            <textarea
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              rows={4}
+              autoFocus
+              placeholder="Nhập lý do hủy (bắt buộc)…"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-amber-500 focus:ring-1 focus:ring-amber-400 outline-none"
+            />
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setCancelTarget(null)}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 cursor-pointer"
+              >Đóng</button>
+              <button
+                type="button"
+                disabled={!cancelReason.trim()}
+                onClick={async () => {
+                  await onCancel(cancelTarget.id, cancelReason);
+                  setCancelTarget(null);
+                }}
+                className="px-3 py-1.5 text-sm bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              >Xác nhận hủy</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

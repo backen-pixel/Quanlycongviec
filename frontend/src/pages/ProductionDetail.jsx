@@ -48,6 +48,48 @@ function calcProgressForTasks(taskList) {
   return Math.round((taskList.filter((t) => t.status === 'done').length / taskList.length) * 100);
 }
 
+/** Khớp cột Kanban SX — không fallback thẳng workflow_stages.id (namespace khác production_pipeline_stages). */
+function resolveSxKanbanCurrentStageId(project, stages) {
+  const list = Array.isArray(stages) ? stages : [];
+  const ids = new Set(list.map((s) => String(s.id)));
+  const inList = (id) => (id != null && ids.has(String(id)) ? id : null);
+  const sorted = [...list].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+  const firstCol = () => {
+    const intake = sorted.find(
+      (s) => s.bucket_slug === 'won_pending' || String(s.id).startsWith('__fb_'),
+    );
+    return intake?.id ?? sorted[0]?.id ?? null;
+  };
+
+  const primaryDeal = project?.crmDeals?.[0];
+  if (project?.sx_won_deal && !primaryDeal?.sx_handover_at) {
+    const fromSx = inList(project?.sx_kanban_column_id);
+    if (fromSx) return fromSx;
+    return firstCol();
+  }
+
+  const fromSx = inList(project?.sx_kanban_column_id);
+  if (fromSx) return fromSx;
+
+  const crmCol = primaryDeal?.sx_pipeline_stage?.id;
+  const fromCrm = inList(crmCol);
+  if (fromCrm) return fromCrm;
+
+  const wfId = project?.current_stage_id || project?.current_stage?.id;
+  if (wfId) {
+    const wfMatches = sorted.filter(
+      (s) => String(s.workflow_stage_id || s.workflow_stage?.id) === String(wfId),
+    );
+    if (wfMatches.length === 1) return wfMatches[0].id;
+  }
+
+  if (project?.sx_intake || project?.sx_won_deal) {
+    return firstCol();
+  }
+
+  return sorted[0]?.id ?? null;
+}
+
 const ACTIVITY_TYPES = [
   { value: 'call', label: 'Gọi điện', icon: '📞', color: 'bg-blue-100 text-blue-700' },
   { value: 'meeting', label: 'Gặp mặt', icon: '🤝', color: 'bg-purple-100 text-purple-700' },
@@ -681,25 +723,24 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
 
   /**
    * Pipeline SX/VC theo công ty dự án + phân loại (workshop_type_id).
-   * Nếu project chưa phân loại → 'global' (chỉ lấy cột không gắn loại).
-   * Có loại → BE trả về cột của loại đó + cột chung (fallback).
+   * GET /projects/:id đã trả sxKanbanStages — chỉ fetch thêm khi thiếu.
    */
   useEffect(() => {
+    const embedded = project?.[MOD.stagesKey];
+    if (Array.isArray(embedded) && embedded.length) return undefined;
     const cid = project?.company_id || project?.company?.id;
     if (!cid) return undefined;
     const wtId = project?.workshop_type_id || project?.workshop_type?.id || null;
     const params = { company_id: cid };
     if (wtId) params.workshop_type_id = wtId;
-    else params.workshop_type_id = 'global';
     let cancelled = false;
     api.get(`${MOD.apiPrefix}/pipeline-stages`, { params }).then((r) => {
       if (cancelled) return;
       const rows = r.data || [];
-      if (rows.length) setProductionStages(rows);
-      else setProductionStages([]);
+      setProductionStages(rows.length ? rows : []);
     }).catch(() => { if (!cancelled) setProductionStages([]); });
     return () => { cancelled = true; };
-  }, [MOD.apiPrefix, project?.company_id, project?.company?.id, project?.workshop_type_id, project?.workshop_type?.id]);
+  }, [MOD.apiPrefix, MOD.stagesKey, project?.company_id, project?.company?.id, project?.workshop_type_id, project?.workshop_type?.id, project?.[MOD.stagesKey]]);
 
   const loadProjectDocs = useCallback(async (projectId) => {
     try {
@@ -750,6 +791,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       const percent = total ? Math.round((completed / total) * 100) : 0;
       setProductionTaskSummary({ total, completed, percent });
       setProject(proj ? { ...proj, productionTaskProgress: percent } : proj);
+      if (Array.isArray(proj?.[MOD.stagesKey]) && proj[MOD.stagesKey].length) {
+        setProductionStages(proj[MOD.stagesKey]);
+      }
       setFallbackDealIdForTasks(null);
       try {
         const primaryDealId = proj?.crmDeals?.[0]?.id || null;
@@ -835,10 +879,13 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       const percent = total ? Math.round((completed / total) * 100) : 0;
       setProductionTaskSummary({ total, completed, percent });
       setProject(proj ? { ...proj, productionTaskProgress: percent } : proj);
+      if (Array.isArray(proj?.[MOD.stagesKey]) && proj[MOD.stagesKey].length) {
+        setProductionStages(proj[MOD.stagesKey]);
+      }
     } catch (_) {
       /* giữ state cũ */
     }
-  }, [id, MOD.apiPrefix, pickWorkshopTasksForSummary]);
+  }, [id, MOD.apiPrefix, MOD.stagesKey, pickWorkshopTasksForSummary]);
 
   useEffect(() => {
     if (!handoverModal) return;
@@ -1015,11 +1062,19 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
             current_stage: null,
           };
         } else {
-          // Click theo cột Kanban (production_pipeline_stages.id) → gửi workflow_stage_id để patch current_stage_id
-          const wid = sxStage?.workflow_stage_id || sxStage?.workflow_stage?.id || stageId;
-          body = { stage_id: wid };
+          // Cột Kanban SX (id riêng) — gửi production_pipeline_stages.id, không gửi workflow stage_id
+          // (nhiều cột Phúc Đạt dùng chung workflow «Sản xuất» → stage_id không phân biệt được cột).
+          const colId = sxStage?.id || stageId;
+          const wid = sxStage?.workflow_stage_id || sxStage?.workflow_stage?.id || null;
+          body = {
+            sx_pipeline_stage_id: colId,
+            current_sx_pipeline_stage_id:
+              project?.sx_kanban_column_id
+              || project?.crmDeals?.[0]?.sx_pipeline_stage?.id
+              || null,
+          };
           optimisticPatch = {
-            sx_kanban_column_id: sxStage?.id || stageId,
+            sx_kanban_column_id: colId,
             sx_intake: false,
             current_stage_id: wid,
             current_stage: wid ? {
@@ -1040,14 +1095,22 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
 
       const { data } = await api.patch(`${MOD.apiPrefix}/projects/${id}/stage`, body);
       const p = data.project || data;
+      const newSxCol = p.sx_kanban_column_id ?? data.pipeline_stage_id ?? null;
       setProject((prev) => (prev && p ? {
         ...prev,
         status: p.status,
         current_stage_id: p.current_stage_id,
         vc_kanban_column_id: p.vc_kanban_column_id ?? prev.vc_kanban_column_id,
-        sx_kanban_column_id: p.sx_kanban_column_id ?? prev.sx_kanban_column_id,
+        sx_kanban_column_id: newSxCol ?? prev.sx_kanban_column_id,
         sx_intake: p.sx_intake ?? prev.sx_intake,
         current_stage: p.current_stage || prev.current_stage,
+        crmDeals: newSxCol && prev.crmDeals?.length
+          ? prev.crmDeals.map((d, i) => (i === 0 ? {
+            ...d,
+            sx_pipeline_stage: pipelineStages.find((s) => String(s.id) === String(newSxCol))
+              || d.sx_pipeline_stage,
+          } : d))
+          : prev.crmDeals,
       } : prev));
 
       // Refresh nhẹ để đồng bộ sx_kanban_column_id/sx_intake (API patch không trả đủ field)
@@ -1253,19 +1316,22 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         { id: null, slug: 'production', name: 'Sản xuất', color: '#0f766e', icon: '🏭' },
         { id: null, slug: 'customer-care', name: 'CSKH', color: '#5eead4', icon: '🤝' },
       ];
-  const pipelineStages = productionStages.length
-    ? productionStages
-    : project.workshopPipeline?.length
-      ? project.workshopPipeline
-      : defaultPipelineStages;
+  const pipelineStages = (moduleKey !== 'vc' && project?.sxKanbanStages?.length)
+    ? project.sxKanbanStages
+    : (moduleKey === 'vc' && project?.vcKanbanStages?.length)
+      ? project.vcKanbanStages
+      : productionStages.length
+        ? productionStages
+        : project.workshopPipeline?.length
+          ? project.workshopPipeline
+          : defaultPipelineStages;
   const safePipelineStages = Array.isArray(pipelineStages) ? pipelineStages : [];
 
   // VC dùng vc_kanban_column_id (logistics_pipeline_stages.id) để match stepper
-  // SX phải dùng sx_kanban_column_id (production_pipeline_stages.id hoặc __fb_intake__) để match stepper + đúng cột/tag.
-  // current_stage_id chỉ là workflow_stages.id (khác namespace với id cột Kanban).
+  // SX phải dùng sx_kanban_column_id (production_pipeline_stages.id hoặc __fb_intake__) — không fallback workflow id.
   const currentStageId = moduleKey === 'vc'
     ? (project.vc_kanban_column_id || project.current_stage_id || project.current_stage?.id)
-    : (project.sx_kanban_column_id || project.current_stage_id || project.current_stage?.id);
+    : resolveSxKanbanCurrentStageId(project, safePipelineStages);
   const primaryCrmDeal = project.crmDeals?.[0];
   const crmLeadId = primaryCrmDeal?.id || fallbackDealIdForTasks;
   const displayCode = primaryCrmDeal?.code || project.code;

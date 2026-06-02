@@ -152,10 +152,10 @@ function calcTaskProgress(tasks) {
 }
 
 const CRM_DEALS_FOR_PROJECT_EMBED = `
-  id, code, title, type, estimated_value, created_at,
+  id, code, title, type, estimated_value, created_at, sx_handover_at,
   assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar),
   lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar),
-  sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug)
+  sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name))
 `;
 
 // Một số DB cũ chưa có các cột `status`, `lost_reason` trên crm_leads.
@@ -671,20 +671,64 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
 
 r.delete('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req, res) => {
   try {
-    const { data: row } = await supabase
+    const stageId = req.params.id;
+    const { data: row, error: fetchErr } = await supabase
       .from('production_pipeline_stages')
-      .select('bucket_slug')
-      .eq('id', req.params.id)
-      .single();
-    if (row?.bucket_slug === INTAKE_BUCKET) {
+      .select('id, name, bucket_slug, company_id, workshop_type_id')
+      .eq('id', stageId)
+      .maybeSingle();
+    if (fetchErr) throw fetchErr;
+    if (!row) return res.status(404).json({ error: 'Không tìm thấy cột pipeline' });
+    if (row.bucket_slug === INTAKE_BUCKET) {
       return res.status(400).json({ error: 'Không xóa cột deal thắng — chỉ có thể ẩn' });
     }
-    await supabase.from('production_pipeline_stages').delete().eq('id', req.params.id);
+
+    const [{ count: dealCount }, { count: tplCount }] = await Promise.all([
+      supabase
+        .from('crm_leads')
+        .select('id', { count: 'exact', head: true })
+        .eq('sx_pipeline_stage_id', stageId),
+      supabase
+        .from('workshop_task_templates')
+        .select('id', { count: 'exact', head: true })
+        .eq('production_stage_id', stageId),
+    ]);
+
+    if ((dealCount || 0) > 0) {
+      return res.status(400).json({
+        error: `Không xóa được — ${dealCount} deal đang ở cột «${row.name}». Chuyển deal sang cột khác trên Kanban SX trước.`,
+      });
+    }
+
+    // Gỡ liên kết mẫu nhiệm vụ (tránh CASCADE xóa nhầm bộ mẫu)
+    if ((tplCount || 0) > 0) {
+      await supabase
+        .from('workshop_task_templates')
+        .update({ production_stage_id: null, updated_at: new Date().toISOString() })
+        .eq('production_stage_id', stageId);
+    }
+
+    const { error: delErr } = await supabase
+      .from('production_pipeline_stages')
+      .delete()
+      .eq('id', stageId);
+    if (delErr) {
+      const msg = String(delErr.message || '');
+      if (msg.includes('foreign key') || delErr.code === '23503') {
+        return res.status(400).json({
+          error: 'Không xóa được — cột đang được tham chiếu bởi dữ liệu khác. Hãy ẩn cột thay vì xóa.',
+        });
+      }
+      throw delErr;
+    }
     invalidateAllowedWorkflowStageIdsCache();
-    res.json({ message: 'Đã xóa' });
+    const extra = (tplCount || 0) > 0
+      ? ` Đã gỡ ${tplCount} mẫu nhiệm vụ khỏi cột này.`
+      : '';
+    res.json({ message: `Đã xóa cột «${row.name}».${extra}` });
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message || 'Lỗi xóa cột pipeline' });
   }
 });
 
@@ -1354,12 +1398,55 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
     // lưu trên CRM deal (nguồn sự thật khi user kéo card trên Kanban) — chỉ dùng khi cột đó còn nằm
     // trong danh sách đã lọc theo workshop_type, tránh "rò" cột thuộc phân loại khác.
     const sortedKIdSet = new Set(sortedK.map((c) => String(c.id)));
+    const primaryDeal = (crmSummary || [])[0] || null;
+    const dealHasHandover = !!primaryDeal?.sx_handover_at;
     const crmStageId = (crmSummary || [])
       .map((d) => d?.sx_pipeline_stage?.id || null)
       .find((sid) => sid && sortedKIdSet.has(String(sid))) || null;
-    const finalSxKanbanColumnId = crmStageId || sxRow.sx_kanban_column_id;
-    const finalIntakeFromCrm = crmStageId
-      ? Boolean(sortedK.find((c) => String(c.id) === String(crmStageId))?.bucket_slug === INTAKE_BUCKET)
+    const intakeCol = sortedK.find((c) => c.bucket_slug === INTAKE_BUCKET);
+    const defaultFirstColId = intakeCol?.id || sortedK[0]?.id || null;
+
+    // Auto-fix dữ liệu cũ: deal lưu sx_pipeline_stage_id lệch khỏi pipeline phân loại
+    // hiện tại (vd. cột thuộc phân loại Tủ bếp nhưng project đã đổi sang phân loại Cửa).
+    // Reset về cột đầu để Kanban + stepper hiển thị đúng pipeline đang chọn.
+    const orphanDeals = (crmSummary || []).filter((d) => (
+      d?.sx_pipeline_stage?.id
+      && !sortedKIdSet.has(String(d.sx_pipeline_stage.id))
+    ));
+    if (orphanDeals.length && defaultFirstColId) {
+      try {
+        await supabase
+          .from('crm_leads')
+          .update({ sx_pipeline_stage_id: defaultFirstColId, updated_at: new Date().toISOString() })
+          .in('id', orphanDeals.map((d) => d.id));
+        for (const d of orphanDeals) {
+          d.sx_pipeline_stage = sortedK.find((c) => String(c.id) === String(defaultFirstColId)) || null;
+        }
+      } catch (e) {
+        console.warn('[production] auto-fix orphan sx_pipeline_stage_id:', e.message);
+      }
+    }
+
+    let finalSxKanbanColumnId = sxRow.sx_kanban_column_id;
+    const inSxIntake = !project.current_stage_id;
+    // Deal thắng chờ vào xưởng (chưa có workflow): ghim cột đầu. Đã producing → giữ cột CRM/enrich.
+    if (sxRow.sx_won_deal && !dealHasHandover && inSxIntake && defaultFirstColId) {
+      finalSxKanbanColumnId = defaultFirstColId;
+    } else {
+      const fixedCrmStageId = crmStageId
+        || (crmSummary || [])
+          .map((d) => d?.sx_pipeline_stage?.id || null)
+          .find((sid) => sid && sortedKIdSet.has(String(sid))) || null;
+      if (fixedCrmStageId) finalSxKanbanColumnId = fixedCrmStageId;
+      else if (sxRow.sx_kanban_column_id && sortedKIdSet.has(String(sxRow.sx_kanban_column_id))) {
+        finalSxKanbanColumnId = sxRow.sx_kanban_column_id;
+      }
+    }
+    if (finalSxKanbanColumnId && !sortedKIdSet.has(String(finalSxKanbanColumnId))) {
+      finalSxKanbanColumnId = defaultFirstColId;
+    }
+    const finalIntakeFromCrm = finalSxKanbanColumnId
+      ? Boolean(sortedK.find((c) => String(c.id) === String(finalSxKanbanColumnId))?.bucket_slug === INTAKE_BUCKET)
       : sxRow.sx_intake;
 
     res.json({
@@ -1388,9 +1475,11 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
           name: c.name,
           color: c.color,
           icon: c.icon,
+          order_index: c.order_index,
           bucket_slug: c.bucket_slug,
           workflow_stage_id: c.workflow_stage_id || c.workflow_stage?.id,
           slug: c.workflow_stage?.slug,
+          is_handover_to_logistics: c.is_handover_to_logistics ?? false,
         })),
       },
     });
@@ -1481,12 +1570,12 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
 
     const pipelineStageId = req.body?.production_pipeline_stage_id || req.body?.sx_pipeline_stage_id || null;
 
-    // Cột Kanban chỉ có production_pipeline_stages.id (không map workflow) — cập nhật badge + sync CRM.
-    if (pipelineStageId && !stage_id) {
+    // Cột Kanban (production_pipeline_stages.id) — ưu tiên trước stage_id workflow (nhiều cột có thể dùng chung workflow).
+    if (pipelineStageId) {
       const colId = String(pipelineStageId);
       const { data: colRow } = await supabase
         .from('production_pipeline_stages')
-        .select('id, workflow_stage_id, bucket_slug')
+        .select('id, workflow_stage_id, bucket_slug, crm_target_stage_id')
         .eq('id', colId)
         .maybeSingle();
       if (!colRow) return res.status(400).json({ error: 'Cột pipeline sản xuất không tồn tại' });
@@ -1511,12 +1600,48 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
       }
 
       const leadPatch = { sx_pipeline_stage_id: colId };
+      // Lần đầu SX bấm cột pipeline = Sale đã handover sang xưởng → mark sx_handover_at
+      // để các vòng sync (crm_target_stage_id, badge) chạy được mà không cần endpoint confirm thủ công.
+      const nowIso = new Date().toISOString();
+      const { data: existingLeads } = await supabase
+        .from('crm_leads')
+        .select('id, sx_handover_at, stage_id')
+        .eq('project_id', id)
+        .eq('type', 'deal');
+      const leadIdsToHandover = (existingLeads || [])
+        .filter((l) => !l.sx_handover_at)
+        .map((l) => l.id);
       const { error: leadUpdErr } = await supabase
         .from('crm_leads')
         .update(leadPatch)
         .eq('project_id', id)
         .eq('type', 'deal');
       if (leadUpdErr && !leadUpdErr.message?.includes('sx_pipeline_stage_id')) throw leadUpdErr;
+      if (leadIdsToHandover.length) {
+        try {
+          await supabase
+            .from('crm_leads')
+            .update({ sx_handover_at: nowIso })
+            .in('id', leadIdsToHandover);
+        } catch (e) {
+          console.warn('[production] auto sx_handover_at:', e.message);
+        }
+      }
+
+      // Trigger CRM stage_id theo crm_target_stage_id của cột (nếu cấu hình)
+      // — không yêu cầu sx_handover_at vì SX vừa explicit chọn cột này.
+      if (colRow.crm_target_stage_id) {
+        try {
+          await supabase
+            .from('crm_leads')
+            .update({ stage_id: colRow.crm_target_stage_id, updated_at: nowIso })
+            .eq('project_id', id)
+            .eq('type', 'deal')
+            .neq('stage_id', colRow.crm_target_stage_id);
+        } catch (e) {
+          console.warn('[production] crm_target_stage_id sync:', e.message);
+        }
+      }
 
       let projectUpd = {};
       if (colRow.workflow_stage_id) {
@@ -1544,7 +1669,14 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
         .eq('id', id)
         .single();
 
-      res.json({ project: updatedPipe, pipeline_stage_id: colId });
+      res.json({
+        project: {
+          ...updatedPipe,
+          sx_kanban_column_id: colId,
+          sx_intake: colRow.bucket_slug === INTAKE_BUCKET,
+        },
+        pipeline_stage_id: colId,
+      });
 
       const ioPipe = req.app.get('io');
       setImmediate(() => {
@@ -1604,14 +1736,18 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
           wktId = pj?.workshop_type_id || null;
         } catch (_) { /* DB chưa migration 97 → bỏ qua */ }
       }
-      let q = supabase
-        .from('production_pipeline_stages')
-        .select('id')
-        .eq('company_id', companyIdForPipeline)
-        .eq('workflow_stage_id', stage_id);
-      if (wktId) q = q.eq('workshop_type_id', wktId);
-      const { data: matched } = await q.limit(1);
-      const targetColId = matched?.[0]?.id || null;
+      const explicitColId = req.body?.production_pipeline_stage_id || req.body?.sx_pipeline_stage_id || null;
+      let targetColId = explicitColId ? String(explicitColId) : null;
+      if (!targetColId) {
+        let q = supabase
+          .from('production_pipeline_stages')
+          .select('id')
+          .eq('company_id', companyIdForPipeline)
+          .eq('workflow_stage_id', stage_id);
+        if (wktId) q = q.eq('workshop_type_id', wktId);
+        const { data: matched } = await q.order('order_index').limit(1);
+        targetColId = matched?.[0]?.id || null;
+      }
       if (targetColId) {
         const gate = await assertSxKanbanAdvanceAllowed({
           projectId: id,
@@ -1657,6 +1793,52 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
       transitioned_by: userId,
     });
 
+    const explicitSxColId = req.body?.production_pipeline_stage_id || req.body?.sx_pipeline_stage_id || null;
+    if (explicitSxColId) {
+      const colId = String(explicitSxColId);
+      const nowIsoStg = new Date().toISOString();
+      const { data: leadsBeforeStg } = await supabase
+        .from('crm_leads')
+        .select('id, sx_handover_at')
+        .eq('project_id', id)
+        .eq('type', 'deal');
+      const leadIdsHandoverStg = (leadsBeforeStg || [])
+        .filter((l) => !l.sx_handover_at)
+        .map((l) => l.id);
+      await supabase
+        .from('crm_leads')
+        .update({ sx_pipeline_stage_id: colId, updated_at: nowIsoStg })
+        .eq('project_id', id)
+        .eq('type', 'deal');
+      if (leadIdsHandoverStg.length) {
+        try {
+          await supabase
+            .from('crm_leads')
+            .update({ sx_handover_at: nowIsoStg })
+            .in('id', leadIdsHandoverStg);
+        } catch (e) {
+          console.warn('[production/stage] auto sx_handover_at:', e.message);
+        }
+      }
+      try {
+        const { data: colCfg } = await supabase
+          .from('production_pipeline_stages')
+          .select('crm_target_stage_id')
+          .eq('id', colId)
+          .maybeSingle();
+        if (colCfg?.crm_target_stage_id) {
+          await supabase
+            .from('crm_leads')
+            .update({ stage_id: colCfg.crm_target_stage_id, updated_at: nowIsoStg })
+            .eq('project_id', id)
+            .eq('type', 'deal')
+            .neq('stage_id', colCfg.crm_target_stage_id);
+        }
+      } catch (e) {
+        console.warn('[production/stage] crm_target_stage_id sync:', e.message);
+      }
+    }
+
     const { data: updated } = await supabase
       .from('projects')
       .select(`
@@ -1669,7 +1851,15 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
     const io = req.app.get('io');
     if (io) io.emit('project:stage_changed', updated);
 
-    res.json({ project: updated });
+    res.json({
+      project: {
+        ...updated,
+        ...(explicitSxColId ? {
+          sx_kanban_column_id: String(explicitSxColId),
+          sx_intake: false,
+        } : {}),
+      },
+    });
     const projectId = id;
     const toStageId = stage_id;
     const updatedSnapshot = updated;

@@ -29,6 +29,9 @@ export default function ProductionPipelineSettingsPage() {
   const [seeding, setSeeding] = useState(false);
   const [seedingDefault, setSeedingDefault] = useState(false);
   const [editId, setEditId] = useState(null);
+  const [bulkSelected, setBulkSelected] = useState(() => new Set());
+  const [bulkTargetCrm, setBulkTargetCrm] = useState('');
+  const [bulkSaving, setBulkSaving] = useState(false);
   const [form, setForm] = useState({
     name: '', color: COLORS[0], icon: '📋', is_active: true,
     is_handover_to_logistics: false, crm_sync_type: null, crm_target_stage_id: '',
@@ -63,6 +66,103 @@ export default function ProductionPipelineSettingsPage() {
   }, [settingsCompanyId, selectedTypeKey]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Reset bulk selection khi đổi công ty / phân loại
+  useEffect(() => {
+    setBulkSelected(new Set());
+    setBulkTargetCrm('');
+  }, [settingsCompanyId, selectedTypeKey]);
+
+  const toggleBulk = (id) => {
+    setBulkSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const bulkApplyCrmTarget = async () => {
+    if (!bulkSelected.size || !bulkTargetCrm) return;
+    setBulkSaving(true);
+    try {
+      await api.post(`/crm/pipeline-stages/${bulkTargetCrm}/assign-production-columns`, {
+        production_pipeline_stage_ids: Array.from(bulkSelected),
+        replace_existing: false,
+      });
+      setBulkSelected(new Set());
+      setBulkTargetCrm('');
+      await load();
+    } catch (e) {
+      alert('Lỗi gán: ' + (e.response?.data?.error || e.message));
+    } finally {
+      setBulkSaving(false);
+    }
+  };
+
+  const bulkClearCrmTarget = async () => {
+    if (!bulkSelected.size) return;
+    if (!confirm(`Bỏ liên kết CRM cho ${bulkSelected.size} cột đã chọn?`)) return;
+    setBulkSaving(true);
+    try {
+      await Promise.all(
+        Array.from(bulkSelected).map((id) =>
+          api.put(`/production/pipeline-stages/${id}`, { crm_target_stage_id: null }),
+        ),
+      );
+      setBulkSelected(new Set());
+      await load();
+    } catch (e) {
+      alert('Lỗi bỏ gán: ' + (e.response?.data?.error || e.message));
+    } finally {
+      setBulkSaving(false);
+    }
+  };
+
+  // Đánh dấu các cột đã chọn là «trigger SX» (crm_sync_type='production').
+  // Khi project chạm cột này → CRM tự đẩy deal về cột có sync_role='sx_production'
+  // (theo pipeline của deal) — không cần map thủ công từng cột.
+  const bulkSetTrigger = async () => {
+    if (!bulkSelected.size) return;
+    setBulkSaving(true);
+    try {
+      await Promise.all(
+        Array.from(bulkSelected).map((id) =>
+          api.put(`/production/pipeline-stages/${id}`, {
+            crm_sync_type: 'production',
+            crm_target_stage_id: null,
+          }),
+        ),
+      );
+      setBulkSelected(new Set());
+      await load();
+    } catch (e) {
+      alert('Lỗi đặt trigger: ' + (e.response?.data?.error || e.message));
+    } finally {
+      setBulkSaving(false);
+    }
+  };
+
+  const bulkUnsetTrigger = async () => {
+    if (!bulkSelected.size) return;
+    if (!confirm(`Bỏ trigger SX cho ${bulkSelected.size} cột đã chọn?`)) return;
+    setBulkSaving(true);
+    try {
+      await Promise.all(
+        Array.from(bulkSelected).map((id) =>
+          api.put(`/production/pipeline-stages/${id}`, {
+            crm_sync_type: null,
+          }),
+        ),
+      );
+      setBulkSelected(new Set());
+      await load();
+    } catch (e) {
+      alert('Lỗi bỏ trigger: ' + (e.response?.data?.error || e.message));
+    } finally {
+      setBulkSaving(false);
+    }
+  };
 
   const loadWorkshopTypes = useCallback(async () => {
     if (!settingsCompanyId) {
@@ -321,6 +421,61 @@ export default function ProductionPipelineSettingsPage() {
     }
   };
 
+  /** Kéo thả sắp xếp pipeline xưởng — cùng phân loại đang chọn. */
+  const [draggingId, setDraggingId] = useState(null);
+  const [dragOverId, setDragOverId] = useState(null);
+
+  const handleDragStart = (e, stage) => {
+    if (stage.bucket_slug === INTAKE) {
+      e.preventDefault();
+      return;
+    }
+    setDraggingId(stage.id);
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', stage.id); } catch { /* ignore */ }
+  };
+  const handleDragEnd = () => { setDraggingId(null); setDragOverId(null); };
+  const handleDragOver = (e, stage) => {
+    if (!draggingId || draggingId === stage.id) return;
+    if (stage.bucket_slug === INTAKE) return; // Không drop trước cột intake
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverId !== stage.id) setDragOverId(stage.id);
+  };
+  const handleDrop = async (e, target) => {
+    e.preventDefault();
+    const sourceId = draggingId || e.dataTransfer.getData('text/plain');
+    setDraggingId(null);
+    setDragOverId(null);
+    if (!sourceId || sourceId === target.id) return;
+    if (target.bucket_slug === INTAKE) return;
+
+    const list = [...stages].sort((a, b) => a.order_index - b.order_index);
+    const fromIdx = list.findIndex((s) => s.id === sourceId);
+    const toIdx = list.findIndex((s) => s.id === target.id);
+    if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return;
+    if (list[fromIdx]?.bucket_slug === INTAKE) return;
+
+    const newList = [...list];
+    const [moved] = newList.splice(fromIdx, 1);
+    newList.splice(toIdx, 0, moved);
+    const reorder = newList.map((s, i) => ({ id: s.id, order_index: i + 1 }));
+
+    // Optimistic update — cập nhật order_index trên UI ngay, rollback nếu API lỗi
+    const prevStages = stages;
+    setStages((prev) => prev.map((s) => {
+      const idx = newList.findIndex((x) => x.id === s.id);
+      return idx >= 0 ? { ...s, order_index: idx + 1 } : s;
+    }));
+    try {
+      await api.put('/production/pipeline-stages-reorder', { stages: reorder });
+      load();
+    } catch (err) {
+      setStages(prevStages);
+      alert('Lỗi sắp xếp: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
   const sorted = [...stages].sort((a, b) => a.order_index - b.order_index);
   const editingIntake = editId && sorted.find((s) => s.id === editId)?.bucket_slug === INTAKE;
 
@@ -543,73 +698,222 @@ export default function ProductionPipelineSettingsPage() {
             </div>
           </div>
 
-          <div className="border-t">
-            {sorted.map((s, i) => (
-              <div
-                key={s.id}
-                className={`flex items-center gap-3 px-4 py-2.5 border-b last:border-b-0 hover:bg-gray-50 ${!s.is_active ? 'opacity-50' : ''}`}
-              >
-                <div className="flex flex-col gap-0.5">
-                  <button type="button" onClick={() => moveStage(s, -1)}
-                    disabled={i === 0 || s.bucket_slug === INTAKE || sorted[i - 1]?.bucket_slug === INTAKE}
-                    className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]">▲</button>
-                  <button type="button" onClick={() => moveStage(s, 1)}
-                    disabled={i === sorted.length - 1 || s.bucket_slug === INTAKE}
-                    className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]">▼</button>
-                </div>
-                <div
-                  className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
-                  style={{ backgroundColor: s.color || '#0f766e' }}
+          {/* Thanh hành động hàng loạt — đặt nhiều cột pipeline SX là «trigger» (crm_sync_type='production').
+              Khi project chạm cột trigger → CRM tự đẩy deal về cột có sync_role='sx_production' của
+              pipeline tương ứng. Không cần map từng cột → từng cột CRM nữa. */}
+          {sorted.filter((s) => s.bucket_slug !== INTAKE).length > 0 && (() => {
+            const eligibleCols = sorted.filter((s) => s.bucket_slug !== INTAKE);
+            const eligibleIds = eligibleCols.map((s) => s.id);
+            const allSelected = eligibleIds.length > 0 && eligibleIds.every((id) => bulkSelected.has(id));
+            const someSelected = eligibleIds.some((id) => bulkSelected.has(id));
+            const sxRoleStages = crmStages.filter((cs) => !cs.is_lost && !cs.is_won && cs.sync_role === 'sx_production');
+            const triggerCount = eligibleCols.filter((s) => s.crm_sync_type === 'production').length;
+            return (
+              <div className="border-t bg-amber-50/50 px-4 py-2.5 flex flex-wrap items-center gap-3">
+                <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    ref={(el) => { if (el) el.indeterminate = !allSelected && someSelected; }}
+                    onChange={() => {
+                      if (allSelected) setBulkSelected(new Set());
+                      else setBulkSelected(new Set(eligibleIds));
+                    }}
+                    className="rounded border-gray-300"
+                  />
+                  Chọn nhiều ({bulkSelected.size}/{eligibleIds.length})
+                </label>
+                <span
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-orange-100 text-orange-700 border border-orange-200"
+                  title="Số cột đang là «trigger SX» — chạm cột này CRM sẽ tự nhảy về cột Sản xuất"
                 >
-                  {s.order_index}
-                </div>
-                <span className="text-lg shrink-0">{s.icon || '📋'}</span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-gray-900 flex items-center gap-2 flex-wrap">
-                    {s.name}
-                    {!s.workshop_type_id ? (
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200">
-                        <Globe className="h-2.5 w-2.5" /> Bộ chung
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-200">
-                        <Tags className="h-2.5 w-2.5" />
-                        {workshopTypes.find((t) => String(t.id) === String(s.workshop_type_id))?.name || 'Loại đã xóa'}
-                      </span>
-                    )}
-                    {s.crm_target_stage && (
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700 border border-blue-200">
-                        📋 → CRM: {s.crm_target_stage.icon ? `${s.crm_target_stage.icon} ` : ''}{s.crm_target_stage.name}
-                      </span>
-                    )}
-                    {!s.crm_target_stage && s.crm_sync_type === 'production' && (
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700 border border-blue-200">
-                        📋 → CRM Sản xuất
-                      </span>
-                    )}
-                    {s.is_handover_to_logistics && (
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-orange-100 text-orange-700">
-                        <Truck className="h-2.5 w-2.5" /> Bàn giao VC
-                      </span>
-                    )}
-                  </p>
-                  <p className="text-[10px] text-gray-400 truncate">
-                    {s.bucket_slug === INTAKE ? 'Deal thắng · chờ vào xưởng' : 'Cột pipeline xưởng'}
-                  </p>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <button type="button" onClick={() => toggleActive(s)} className="p-1.5 rounded hover:bg-gray-100 cursor-pointer text-[10px] text-gray-500" title={s.is_active ? 'Ẩn' : 'Hiện'}>
-                    {s.is_active ? 'Ẩn' : 'Hiện'}
-                  </button>
-                  <button type="button" onClick={() => startEdit(s)} className="p-1.5 rounded hover:bg-teal-50 text-teal-600 cursor-pointer">
-                    <Save className="h-3.5 w-3.5" />
-                  </button>
-                  <button type="button" onClick={() => del(s.id, s.bucket_slug)} className="p-1.5 rounded hover:bg-red-50 text-red-500 cursor-pointer">
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </div>
+                  🔥 {triggerCount} cột trigger
+                </span>
+                {bulkSelected.size > 0 && (
+                  <>
+                    <span className="text-xs text-gray-400">→</span>
+                    <button
+                      type="button"
+                      onClick={bulkSetTrigger}
+                      disabled={bulkSaving || sxRoleStages.length === 0}
+                      title={sxRoleStages.length === 0
+                        ? 'Chưa có cột CRM nào tích sync_role=sx_production — vào Cài đặt CRM gán trước'
+                        : 'Đặt các cột đã chọn làm «trigger SX». Khi project chạm 1 trong các cột này, CRM tự đẩy deal về cột Sản xuất của pipeline.'}
+                      className="h-8 px-3 bg-orange-600 text-white rounded-lg text-xs font-semibold hover:bg-orange-700 disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                    >
+                      {bulkSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : '🔥'}
+                      Đặt {bulkSelected.size} cột → Trigger SX
+                    </button>
+                    <button
+                      type="button"
+                      onClick={bulkUnsetTrigger}
+                      disabled={bulkSaving}
+                      className="h-8 px-3 bg-white border border-orange-300 text-orange-700 rounded-lg text-xs font-semibold hover:bg-orange-50 disabled:opacity-50 cursor-pointer"
+                      title="Bỏ trigger SX (đặt crm_sync_type = null) cho các cột đã chọn"
+                    >
+                      Bỏ trigger SX
+                    </button>
+                    <span className="w-px h-6 bg-gray-300 mx-1" />
+                    <details className="relative">
+                      <summary className="h-8 px-2 inline-flex items-center text-[11px] text-gray-500 hover:text-gray-700 cursor-pointer list-none">
+                        Nâng cao ▾
+                      </summary>
+                      <div className="absolute left-0 top-9 z-20 bg-white border border-gray-200 rounded-lg shadow-lg p-2 flex flex-wrap items-center gap-2 min-w-[320px]">
+                        <span className="text-[10px] text-gray-500 w-full">
+                          Gán cứng → 1 cột CRM cụ thể (1-1, ít dùng):
+                        </span>
+                        <select
+                          value={bulkTargetCrm}
+                          onChange={(e) => setBulkTargetCrm(e.target.value)}
+                          className="h-8 px-2 border rounded-lg text-xs bg-white border-blue-200 max-w-[240px]"
+                        >
+                          <option value="">— Chọn cột CRM —</option>
+                          {sxRoleStages.length === 0 ? (
+                            <option value="" disabled>Chưa có cột CRM tích sync_role=sx_production</option>
+                          ) : sxRoleStages.map((cs) => (
+                            <option key={cs.id} value={cs.id}>
+                              {cs.icon ? `${cs.icon} ` : ''}{cs.name}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={bulkApplyCrmTarget}
+                          disabled={!bulkTargetCrm || bulkSaving}
+                          className="h-8 px-3 bg-blue-600 text-white rounded-lg text-xs font-semibold hover:bg-blue-700 disabled:opacity-50 cursor-pointer"
+                        >
+                          Gán cứng
+                        </button>
+                        <button
+                          type="button"
+                          onClick={bulkClearCrmTarget}
+                          disabled={bulkSaving}
+                          className="h-8 px-3 bg-white border border-red-300 text-red-700 rounded-lg text-xs hover:bg-red-50 disabled:opacity-50 cursor-pointer"
+                        >
+                          Bỏ gán cứng
+                        </button>
+                      </div>
+                    </details>
+                    <button
+                      type="button"
+                      onClick={() => setBulkSelected(new Set())}
+                      className="h-8 px-2 text-gray-500 hover:text-gray-700 text-xs cursor-pointer"
+                    >
+                      Hủy chọn
+                    </button>
+                  </>
+                )}
+                {bulkSelected.size === 0 && (
+                  <span className="text-[11px] text-gray-500">
+                    Tick các cột → bấm <strong>«Đặt làm Trigger SX»</strong>. Khi project chạm cột trigger → CRM tự nhảy về cột «Sản xuất» của pipeline tương ứng.
+                  </span>
+                )}
               </div>
-            ))}
+            );
+          })()}
+
+          <div className="border-t">
+            {sorted.map((s, i) => {
+              const isIntake = s.bucket_slug === INTAKE;
+              const isDragging = draggingId === s.id;
+              const isDragOver = dragOverId === s.id && draggingId && draggingId !== s.id;
+              return (
+                <div
+                  key={s.id}
+                  draggable={!isIntake}
+                  onDragStart={(e) => handleDragStart(e, s)}
+                  onDragEnd={handleDragEnd}
+                  onDragOver={(e) => handleDragOver(e, s)}
+                  onDragLeave={() => setDragOverId(null)}
+                  onDrop={(e) => handleDrop(e, s)}
+                  className={`flex items-center gap-3 px-4 py-2.5 border-b last:border-b-0 transition-all
+                    ${isDragging ? 'opacity-40 bg-teal-50' : 'hover:bg-gray-50'}
+                    ${isDragOver ? 'border-t-2 border-t-teal-500 bg-teal-50/50' : ''}
+                    ${bulkSelected.has(s.id) ? 'bg-blue-50/60' : ''}
+                    ${!s.is_active ? 'opacity-50' : ''}`}
+                >
+                  <div className="flex items-center gap-1">
+                    <span
+                      className={`select-none px-0.5 text-gray-400 ${isIntake ? 'opacity-30 cursor-not-allowed' : 'cursor-grab active:cursor-grabbing hover:text-gray-700'}`}
+                      title={isIntake ? 'Cột chờ vào xưởng cố định ở đầu' : 'Kéo để sắp xếp lại'}
+                    >
+                      ⋮⋮
+                    </span>
+                    <div className="flex flex-col gap-0.5">
+                      <button type="button" onClick={() => moveStage(s, -1)}
+                        disabled={i === 0 || isIntake || sorted[i - 1]?.bucket_slug === INTAKE}
+                        className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]">▲</button>
+                      <button type="button" onClick={() => moveStage(s, 1)}
+                        disabled={i === sorted.length - 1 || isIntake}
+                        className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]">▼</button>
+                    </div>
+                  </div>
+                  <div
+                    className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
+                    style={{ backgroundColor: s.color || '#0f766e' }}
+                  >
+                    {s.order_index}
+                  </div>
+                  {!isIntake && (
+                    <input
+                      type="checkbox"
+                      checked={bulkSelected.has(s.id)}
+                      onChange={() => toggleBulk(s.id)}
+                      className="rounded border-gray-300 cursor-pointer"
+                      title="Chọn để gán hàng loạt cột CRM trigger"
+                    />
+                  )}
+                  <span className="text-lg shrink-0">{s.icon || '📋'}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-gray-900 flex items-center gap-2 flex-wrap">
+                      {s.name}
+                      {!s.workshop_type_id ? (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200">
+                          <Globe className="h-2.5 w-2.5" /> Bộ chung
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-200">
+                          <Tags className="h-2.5 w-2.5" />
+                          {workshopTypes.find((t) => String(t.id) === String(s.workshop_type_id))?.name || 'Loại đã xóa'}
+                        </span>
+                      )}
+                      {s.crm_target_stage && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700 border border-blue-200">
+                          📋 → CRM: {s.crm_target_stage.icon ? `${s.crm_target_stage.icon} ` : ''}{s.crm_target_stage.name}
+                        </span>
+                      )}
+                      {!s.crm_target_stage && s.crm_sync_type === 'production' && (
+                        <span
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-orange-100 text-orange-700 border border-orange-200"
+                          title="Cột TRIGGER SX — khi project chạm cột này, CRM tự đẩy deal về cột «Sản xuất» của pipeline tương ứng"
+                        >
+                          🔥 Trigger SX → CRM
+                        </span>
+                      )}
+                      {s.is_handover_to_logistics && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-orange-100 text-orange-700">
+                          <Truck className="h-2.5 w-2.5" /> Bàn giao VC
+                        </span>
+                      )}
+                    </p>
+                    <p className="text-[10px] text-gray-400 truncate">
+                      {isIntake ? 'Deal thắng · chờ vào xưởng' : 'Cột pipeline xưởng'}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button type="button" onClick={() => toggleActive(s)} className="p-1.5 rounded hover:bg-gray-100 cursor-pointer text-[10px] text-gray-500" title={s.is_active ? 'Ẩn' : 'Hiện'}>
+                      {s.is_active ? 'Ẩn' : 'Hiện'}
+                    </button>
+                    <button type="button" onClick={() => startEdit(s)} className="p-1.5 rounded hover:bg-teal-50 text-teal-600 cursor-pointer">
+                      <Save className="h-3.5 w-3.5" />
+                    </button>
+                    <button type="button" onClick={() => del(s.id, s.bucket_slug)} className="p-1.5 rounded hover:bg-red-50 text-red-500 cursor-pointer">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
           {(adding || editId) && (
@@ -673,23 +977,68 @@ export default function ProductionPipelineSettingsPage() {
                   Hiển thị trên Kanban
                 </label>
                 {!editingIntake && (
-                  <div className="w-full space-y-1">
-                    <label className="text-[10px] font-medium text-blue-700 block">
-                      📋 Đồng bộ CRM khi vào cột:
+                  <div className="w-full space-y-2 p-2.5 rounded-lg bg-orange-50 border border-orange-200">
+                    <label className="flex items-start gap-2 text-xs cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={form.crm_sync_type === 'production'}
+                        onChange={(e) => setForm((f) => ({
+                          ...f,
+                          crm_sync_type: e.target.checked ? 'production' : null,
+                        }))}
+                        className="mt-0.5 rounded border-orange-400 accent-orange-500"
+                      />
+                      <span>
+                        <span className="flex items-center gap-1 font-semibold text-orange-700">
+                          🔥 Cột Trigger SX → CRM
+                        </span>
+                        <span className="block text-[10px] text-orange-600 mt-0.5 leading-snug">
+                          Khi project chạm cột này → CRM tự đẩy deal về cột có
+                          <code className="mx-1 px-1 bg-white/70 rounded">sync_role=sx_production</code>
+                          của pipeline tương ứng (auto multi-pipeline, multi-company).
+                        </span>
+                      </span>
                     </label>
-                    <select
-                      value={form.crm_target_stage_id || ''}
-                      onChange={(e) => setForm((f) => ({ ...f, crm_target_stage_id: e.target.value, crm_sync_type: e.target.value ? null : f.crm_sync_type }))}
-                      className="w-full h-8 px-2 border rounded-lg text-sm bg-white border-blue-200 focus:border-blue-400"
-                    >
-                      <option value="">— Không —</option>
-                      {crmStages.filter((cs) => !cs.is_lost && !cs.is_won).map((cs) => (
-                        <option key={cs.id} value={cs.id}>
-                          {cs.icon ? `${cs.icon} ` : ''}{cs.name}
-                        </option>
-                      ))}
-                    </select>
                   </div>
+                )}
+                {!editingIntake && (
+                  <details className="w-full">
+                    <summary className="text-[10px] font-medium text-gray-500 cursor-pointer hover:text-gray-700">
+                      📋 Nâng cao: Gán cứng → 1 cột CRM cụ thể
+                    </summary>
+                    <div className="mt-1 space-y-1">
+                      <label className="text-[10px] font-medium text-blue-700 block">
+                        Đồng bộ CRM khi vào cột:
+                      </label>
+                      <select
+                        value={form.crm_target_stage_id || ''}
+                        onChange={(e) => setForm((f) => ({ ...f, crm_target_stage_id: e.target.value, crm_sync_type: e.target.value ? null : f.crm_sync_type }))}
+                        className="w-full h-8 px-2 border rounded-lg text-sm bg-white border-blue-200 focus:border-blue-400"
+                      >
+                        <option value="">— Không —</option>
+                        {(() => {
+                          const sxStages = crmStages.filter(
+                            (cs) => !cs.is_lost && !cs.is_won && cs.sync_role === 'sx_production',
+                          );
+                          if (sxStages.length === 0) {
+                            return (
+                              <option value="" disabled>
+                                Chưa có cột CRM nào tích «Sản xuất» — vào Cài đặt CRM gán sync_role=sx_production
+                              </option>
+                            );
+                          }
+                          return sxStages.map((cs) => (
+                            <option key={cs.id} value={cs.id}>
+                              {cs.icon ? `${cs.icon} ` : ''}{cs.name}
+                            </option>
+                          ));
+                        })()}
+                      </select>
+                      <p className="text-[10px] text-gray-500 leading-snug">
+                        Chỉ dùng khi cần đẩy về <em>chính xác 1 cột</em> (override checkbox trigger ở trên).
+                      </p>
+                    </div>
+                  </details>
                 )}
                 {!editingIntake && (
                   <label className="flex items-center gap-2 text-xs cursor-pointer">

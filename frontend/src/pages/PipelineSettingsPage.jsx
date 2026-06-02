@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
-import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2, Calendar, CheckCircle2, Clock } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2, Calendar, CheckCircle2, Clock, Factory, Search, X } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { resolveDefaultCrmAdminCompanyId, setStoredCrmFilterCompanyId } from '../lib/crmCompanyFilter';
@@ -73,6 +73,8 @@ export default function PipelineSettingsPage() {
   const [dragOverId, setDragOverId] = useState(null);
   const [activeType, setActiveType] = useState('lead');
   const [adding, setAdding] = useState(null);
+  // Modal «Gán cột SX» cho stage CRM có sync_role=sx_production (cross-company)
+  const [sxAssignModal, setSxAssignModal] = useState(null);
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({
     name: '',
@@ -790,6 +792,17 @@ export default function PipelineSettingsPage() {
               </div>
             </div>
             <div className="flex items-center gap-1 shrink-0">
+              {s.pipeline_type === 'deal' && s.sync_role === 'sx_production' && (
+                <button
+                  type="button"
+                  onClick={() => setSxAssignModal({ stageId: s.id, stageName: s.name })}
+                  className="h-7 px-2.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 cursor-pointer border bg-teal-600 text-white border-teal-700 hover:bg-teal-700 shadow-sm"
+                  title="Gán nhiều cột pipeline Sản xuất (đa công ty / đa phân loại) cùng map về cột CRM này"
+                >
+                  <Factory className="h-3.5 w-3.5" /> Gán cột SX
+                  <span className="bg-white/20 px-1 rounded">{linkedSx.length}</span>
+                </button>
+              )}
               {!s.is_won && !s.is_lost && (
                 <button
                   type="button"
@@ -1536,6 +1549,15 @@ export default function PipelineSettingsPage() {
           {renderPipeline('deal', stages.filter(s => s.pipeline_type === 'deal').sort((a, b) => a.order_index - b.order_index))}
         </div>
       )}
+
+      {sxAssignModal && (
+        <SxAssignModal
+          stageId={sxAssignModal.stageId}
+          stageName={sxAssignModal.stageName}
+          onClose={() => setSxAssignModal(null)}
+          onSaved={() => { setSxAssignModal(null); load(); }}
+        />
+      )}
     </div>
   );
 }
@@ -1802,6 +1824,242 @@ function StageForm({ form, setForm, onSave, onCancel, pipelineType = 'lead', edi
         <button onClick={onSave} className="h-8 px-4 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700 cursor-pointer flex items-center gap-1">
           <Save className="h-3.5 w-3.5" /> Lưu
         </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Modal «Gán cột Sản xuất» — bulk multi-select các cột production_pipeline_stages
+ * (đa công ty / đa phân loại) cùng map về 1 cột CRM (sync_role=sx_production).
+ */
+function SxAssignModal({ stageId, stageName, onClose, onSaved }) {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [columns, setColumns] = useState([]);
+  const [selected, setSelected] = useState(() => new Set());
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { data } = await api.get(`/crm/pipeline-stages/${stageId}/production-columns`);
+        if (!alive) return;
+        const cols = data?.production_columns || [];
+        setColumns(cols);
+        setSelected(new Set(cols.filter((c) => c.assigned).map((c) => c.id)));
+      } catch (e) {
+        alert('Lỗi tải cột SX: ' + (e.response?.data?.error || e.message));
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [stageId]);
+
+  const toggle = (id) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const groups = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const filtered = q
+      ? columns.filter((c) => (
+        (c.name || '').toLowerCase().includes(q)
+        || (c.company?.name || '').toLowerCase().includes(q)
+        || (c.workshop_type?.name || '').toLowerCase().includes(q)
+      ))
+      : columns;
+    const map = new Map();
+    for (const c of filtered) {
+      const compKey = c.company?.id || '__none__';
+      const compName = c.company?.name || '— Không thuộc công ty —';
+      if (!map.has(compKey)) map.set(compKey, { compName, types: new Map() });
+      const grp = map.get(compKey);
+      const typeKey = c.workshop_type?.id || '__none__';
+      const typeName = c.workshop_type?.name || '— Chung —';
+      if (!grp.types.has(typeKey)) grp.types.set(typeKey, { typeName, cols: [] });
+      grp.types.get(typeKey).cols.push(c);
+    }
+    return Array.from(map.values()).map((g) => ({
+      compName: g.compName,
+      types: Array.from(g.types.values()),
+    }));
+  }, [columns, search]);
+
+  const toggleGroup = (cols, on) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const c of cols) {
+        if (on) next.add(c.id);
+        else next.delete(c.id);
+      }
+      return next;
+    });
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.post(`/crm/pipeline-stages/${stageId}/assign-production-columns`, {
+        production_pipeline_stage_ids: Array.from(selected),
+        replace_existing: true,
+      });
+      onSaved?.();
+    } catch (e) {
+      alert('Lỗi lưu: ' + (e.response?.data?.error || e.message));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between p-4 border-b">
+          <div>
+            <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+              <Factory className="h-4 w-4 text-teal-600" /> Gán cột Sản xuất
+            </h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Tích các cột pipeline SX (đa công ty) sẽ đẩy deal về cột CRM <strong>«{stageName}»</strong> khi xưởng chuyển stage.
+            </p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-gray-100 cursor-pointer">
+            <X className="h-4 w-4 text-gray-500" />
+          </button>
+        </div>
+
+        <div className="p-3 border-b bg-gray-50">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Tìm theo tên cột / công ty / phân loại…"
+              className="w-full h-8 pl-8 pr-3 border rounded-lg text-sm bg-white"
+            />
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+          {loading ? (
+            <div className="text-center py-10 text-gray-400 text-sm">
+              <Loader2 className="h-5 w-5 animate-spin inline mr-2" /> Đang tải…
+            </div>
+          ) : groups.length === 0 ? (
+            <p className="text-center py-10 text-gray-400 text-sm">Không có cột pipeline SX phù hợp.</p>
+          ) : groups.map((g, gi) => {
+            const allCompanyCols = g.types.flatMap((t) => t.cols);
+            const compAllSelected = allCompanyCols.length > 0 && allCompanyCols.every((c) => selected.has(c.id));
+            const compSomeSelected = allCompanyCols.some((c) => selected.has(c.id));
+            return (
+            <div key={gi} className="border border-gray-200 rounded-lg overflow-hidden">
+              <div className="px-3 py-2 bg-gray-100 text-xs font-bold text-gray-700 flex items-center justify-between">
+                <span>🏢 {g.compName} <span className="text-gray-500 font-normal">({allCompanyCols.length} cột)</span></span>
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(allCompanyCols, !compAllSelected)}
+                  className={`text-[10px] px-2 py-0.5 rounded border font-semibold cursor-pointer ${
+                    compAllSelected
+                      ? 'bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700'
+                      : compSomeSelected
+                        ? 'bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-200'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                  }`}
+                  title={compAllSelected ? 'Bỏ chọn toàn bộ công ty' : 'Chọn toàn bộ cột pipeline SX của công ty này (mọi phân loại)'}
+                >
+                  {compAllSelected ? '✓ Đã chọn cả công ty — bấm để bỏ' : compSomeSelected ? `Chọn nốt (${allCompanyCols.length - allCompanyCols.filter((c) => selected.has(c.id)).length})` : 'Chọn cả công ty'}
+                </button>
+              </div>
+              {g.types.map((t, ti) => {
+                const allCols = t.cols;
+                const allSelected = allCols.every((c) => selected.has(c.id));
+                const someSelected = allCols.some((c) => selected.has(c.id));
+                return (
+                  <div key={ti} className="border-t border-gray-200">
+                    <div className="px-3 py-1.5 bg-teal-50/50 flex items-center justify-between">
+                      <span className="text-[11px] font-semibold text-teal-800">
+                        🏭 {t.typeName} <span className="text-gray-500 font-normal">({allCols.length} cột)</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => toggleGroup(allCols, !allSelected)}
+                        className="text-[10px] px-2 py-0.5 rounded border border-teal-300 text-teal-700 hover:bg-teal-100 cursor-pointer"
+                      >
+                        {allSelected ? 'Bỏ chọn nhóm' : 'Chọn cả phân loại'}
+                      </button>
+                    </div>
+                    <div className="p-2 grid grid-cols-2 md:grid-cols-3 gap-1.5">
+                      {allCols.map((c) => {
+                        const isOn = selected.has(c.id);
+                        const conflicts = c.crm_target_stage_id && String(c.crm_target_stage_id) !== String(stageId);
+                        return (
+                          <label
+                            key={c.id}
+                            className={`flex items-start gap-1.5 px-2 py-1.5 rounded border text-xs cursor-pointer transition-all ${
+                              isOn
+                                ? 'bg-teal-50 border-teal-400 text-teal-900'
+                                : 'bg-white border-gray-200 hover:border-teal-200'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isOn}
+                              onChange={() => toggle(c.id)}
+                              className="mt-0.5 rounded border-gray-300"
+                            />
+                            <span className="flex-1 min-w-0">
+                              <span className="font-medium block truncate">
+                                {c.icon || '📋'} {c.name}
+                              </span>
+                              {conflicts && !isOn && (
+                                <span className="text-[10px] text-amber-700 block">
+                                  ⚠ Đang map sang cột CRM khác — tick để chuyển về đây
+                                </span>
+                              )}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            );
+          })}
+        </div>
+
+        <div className="p-3 border-t bg-gray-50 flex items-center justify-between">
+          <p className="text-xs text-gray-600">
+            Đã chọn <strong className="text-teal-700">{selected.size}</strong> cột
+            <span className="text-gray-400 ml-2">(các cột không tick sẽ bị bỏ gán khỏi «{stageName}»)</span>
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={onClose}
+              className="h-8 px-3 bg-gray-100 text-gray-700 rounded-lg text-xs hover:bg-gray-200 cursor-pointer"
+            >
+              Hủy
+            </button>
+            <button
+              onClick={save}
+              disabled={loading || saving}
+              className="h-8 px-4 bg-teal-600 text-white rounded-lg text-xs hover:bg-teal-700 cursor-pointer disabled:opacity-50 flex items-center gap-1"
+            >
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              Lưu
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

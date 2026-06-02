@@ -99,7 +99,8 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
     company_id: coCheck.company.id,
     flow_id: flowId,
     status: 'consulting',
-    current_stage_id: firstStage?.id || null,
+    // null → Kanban xưởng gán deal thắng vào cột «Chờ vào xưởng» (won_pending), không nhảy workflow Tư vấn
+    current_stage_id: null,
     install_address: deal.install_address || deal.customer?.address || null,
     estimated_value: deal.estimated_value || null,
     priority: config?.default_priority || deal.priority || 'medium',
