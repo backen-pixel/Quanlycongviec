@@ -161,33 +161,38 @@ function LessonCard({ lesson, idx, onBlockedClick }) {
   const status = lesson.progress_status;
   const color = pickColor(idx);
   const hasVideo = !!lesson.video_url;
-  const showLock = !!lesson.is_locked;
-  const blocked = showLock && !lesson.lock_bypass;
-  const Wrapper = blocked ? 'button' : Link;
-  const wrapperProps = blocked
-    ? {
-      type: 'button',
-      title: lesson.unlock_reason || 'Bài học đang khoá — cần hoàn thành bài trước',
-      onClick: (e) => { e.preventDefault(); onBlockedClick?.(lesson); },
-    }
-    : { to: `/knowledge/lessons/${lesson.id}` };
+  const locked = !!lesson.is_locked;
+  if (locked) {
+    return (
+      <button
+        type="button"
+        title={lesson.unlock_reason || 'Bài học đang khoá — cần hoàn thành bài trước'}
+        onClick={() => onBlockedClick?.(lesson)}
+        className="group bg-white rounded-2xl border border-amber-200 overflow-hidden transition-all flex flex-col text-left w-full cursor-pointer hover:border-amber-400 hover:shadow-md"
+      >
+        {lessonCardInner({ lesson, idx, color, hasVideo, status, locked: true })}
+      </button>
+    );
+  }
   return (
-    <Wrapper
-      {...wrapperProps}
-      className={`group bg-white rounded-2xl border overflow-hidden transition-all flex flex-col text-left w-full ${
-        showLock
-          ? blocked
-            ? 'border-amber-200 cursor-pointer hover:border-amber-400 hover:shadow-md'
-            : 'border-amber-300 hover:border-amber-400 hover:shadow-lg'
-          : 'border-gray-200 hover:border-violet-300 hover:shadow-lg'
-      }`}
+    <Link
+      to={`/knowledge/lessons/${lesson.id}`}
+      className="group bg-white rounded-2xl border border-gray-200 overflow-hidden transition-all flex flex-col text-left w-full hover:border-violet-300 hover:shadow-lg"
     >
+      {lessonCardInner({ lesson, idx, color, hasVideo, status, locked: false })}
+    </Link>
+  );
+}
+
+function lessonCardInner({ lesson, idx, color, hasVideo, status, locked }) {
+  return (
+    <>
       <div className={`relative h-32 bg-gradient-to-br ${color.bg} flex items-center justify-center overflow-hidden`}>
         {lesson.cover_image_url ? (
           <img
             src={publicFileUrl(lesson.cover_image_url)}
             alt={lesson.title}
-            className={`absolute inset-0 w-full h-full object-cover transition-transform ${showLock && blocked ? 'grayscale' : 'group-hover:scale-105'}`}
+            className={`absolute inset-0 w-full h-full object-cover transition-transform ${locked ? 'grayscale' : 'group-hover:scale-105'}`}
             loading="lazy"
           />
         ) : (
@@ -195,21 +200,19 @@ function LessonCard({ lesson, idx, onBlockedClick }) {
             {lesson.category?.icon || '📖'}
           </span>
         )}
-        {hasVideo && !blocked && (
+        {hasVideo && !locked && (
           <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
             <PlayCircle className="h-12 w-12 text-white" />
           </div>
         )}
-        {showLock && (
-          <div className={`absolute inset-0 flex items-center justify-center backdrop-blur-[1px] ${blocked ? 'bg-black/50' : 'bg-black/35'}`}>
+        {locked && (
+          <div className="absolute inset-0 flex items-center justify-center backdrop-blur-[1px] bg-black/50">
             <div className="text-center text-white px-3">
               <div className="text-3xl mb-1">🔒</div>
               <p className="text-[11px] font-semibold leading-tight line-clamp-2">
                 {lesson.unlock_reason || 'Hoàn thành bài học trước để mở khoá'}
               </p>
-              {lesson.lock_bypass && (
-                <p className="text-[10px] text-white/80 mt-1">Quản trị: bấm để xem thử</p>
-              )}
+              <p className="text-[10px] text-white/80 mt-1">Bấm để xem bài cần học trước</p>
             </div>
           </div>
         )}
@@ -233,7 +236,7 @@ function LessonCard({ lesson, idx, onBlockedClick }) {
               <CheckCircle2 className="h-3 w-3" /> Đã học
             </span>
           )}
-          {status === 'in_progress' && !blocked && (
+          {status === 'in_progress' && !locked && (
             <span className="px-2 py-1 bg-amber-400 text-amber-900 rounded-full text-[10px] font-bold">
               Đang học
             </span>
@@ -284,7 +287,7 @@ function LessonCard({ lesson, idx, onBlockedClick }) {
           )}
         </div>
       </div>
-    </Wrapper>
+    </>
   );
 }
 
@@ -326,7 +329,7 @@ export default function KnowledgeLibraryPage() {
 
   useEffect(() => {
     if (!lockToast) return undefined;
-    const t = setTimeout(() => setLockToast(null), 4000);
+    const t = setTimeout(() => setLockToast(null), 8000);
     return () => clearTimeout(t);
   }, [lockToast]);
 
@@ -573,17 +576,14 @@ export default function KnowledgeLibraryPage() {
                 lesson={l}
                 idx={idx}
                 onBlockedClick={(lesson) => {
-                  const targetId = lesson.current_open_lesson_id;
                   setLockToast({
-                    title: lesson.title,
+                    lessonId: lesson.id,
+                    lessonTitle: lesson.title,
                     reason: lesson.unlock_reason || 'Bài học đang khoá — cần hoàn thành bài trước',
-                    targetId,
+                    targetId: lesson.current_open_lesson_id || null,
+                    targetTitle: lesson.current_open_lesson_title || null,
+                    lockBypass: !!lesson.lock_bypass,
                   });
-                  if (targetId) {
-                    setTimeout(() => {
-                      navigate(`/knowledge/lessons/${targetId}`);
-                    }, 1400);
-                  }
                 }}
               />
             ))}
@@ -591,23 +591,61 @@ export default function KnowledgeLibraryPage() {
         )}
       </section>
       {lockToast && (
-        <div className="fixed bottom-6 right-6 z-50 max-w-sm animate-in slide-in-from-right-4 fade-in duration-200">
-          <div className="rounded-2xl border-2 border-amber-300 bg-gradient-to-br from-amber-50 to-orange-50 shadow-2xl p-4 flex gap-3">
-            <div className="text-3xl shrink-0 leading-none">🔒</div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-bold text-amber-900 line-clamp-1">Bài học đang khoá</p>
-              <p className="text-xs text-amber-800 mt-1 leading-snug">{lockToast.reason}</p>
-              {lockToast.targetId
-                ? <p className="text-[11px] text-amber-700 mt-1.5 italic">Đang chuyển bạn đến bài cần học...</p>
-                : <p className="text-[11px] text-amber-700 mt-1.5 italic">Hãy hoàn thành các bài trước trong khoá.</p>}
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl border-2 border-amber-300 shadow-2xl max-w-md w-full p-6 text-center">
+            <div className="w-20 h-20 mx-auto rounded-full bg-gradient-to-br from-amber-400 to-orange-500 text-white flex items-center justify-center text-4xl mb-3 shadow-lg">
+              🔒
             </div>
-            <button
-              type="button"
-              onClick={() => setLockToast(null)}
-              className="shrink-0 w-6 h-6 rounded-full bg-white/60 text-amber-700 hover:bg-white text-xs font-bold cursor-pointer"
-            >
-              ×
-            </button>
+            <h2 className="text-xl font-bold text-amber-900 mb-1">Bài học chưa mở khoá</h2>
+            {lockToast.lessonTitle && (
+              <p className="text-sm text-gray-500 mb-3 line-clamp-2">{lockToast.lessonTitle}</p>
+            )}
+            <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-left mb-4">
+              <p className="text-sm text-amber-900 leading-relaxed">{lockToast.reason}</p>
+              {lockToast.targetTitle && (
+                <p className="text-xs text-amber-800 mt-2">
+                  <span className="font-semibold">Bài đang mở khoá mới nhất:</span>{' '}
+                  <span className="italic">{lockToast.targetTitle}</span>
+                </p>
+              )}
+            </div>
+            <div className="flex flex-col gap-2">
+              {lockToast.targetId ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const id = lockToast.targetId;
+                    setLockToast(null);
+                    navigate(`/knowledge/lessons/${id}`);
+                  }}
+                  className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 text-white rounded-xl text-sm font-semibold hover:from-emerald-600 hover:to-teal-600 shadow cursor-pointer"
+                >
+                  ▶ Học bài đang mở khoá
+                </button>
+              ) : (
+                <p className="text-xs text-amber-700 text-center">Hãy hoàn thành các bài trước trong khoá học.</p>
+              )}
+              {lockToast.lockBypass && lockToast.lessonId ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const id = lockToast.lessonId;
+                    setLockToast(null);
+                    navigate(`/knowledge/lessons/${id}`);
+                  }}
+                  className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-violet-100 text-violet-800 border border-violet-200 rounded-xl text-sm font-medium hover:bg-violet-200 cursor-pointer"
+                >
+                  Xem thử (quản trị)
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setLockToast(null)}
+                className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-50 cursor-pointer"
+              >
+                Đóng
+              </button>
+            </div>
           </div>
         </div>
       )}

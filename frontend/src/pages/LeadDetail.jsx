@@ -3135,6 +3135,11 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
                 <div className="flex-1 min-w-0">
                   <p className="text-[10px] font-bold uppercase tracking-wider mb-0.5" style={{ color: sx.color || '#0369a1' }}>
                     🏭 Sản xuất
+                    {(sx.company?.short_name || sx.company?.name) && (
+                      <span className="text-gray-500 normal-case ml-1 font-medium">
+                        · {sx.company.short_name || sx.company.name}
+                      </span>
+                    )}
                   </p>
                   <p className="text-sm font-semibold" style={{ color: sx.color || '#0c4a6e' }}>
                     {label}

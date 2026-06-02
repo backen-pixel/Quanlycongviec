@@ -2848,6 +2848,102 @@ r.put('/pipeline-stages/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/**
+ * Liệt kê các cột Production Pipeline đang map về cột CRM này (qua crm_target_stage_id).
+ * Phục vụ UI «Gán nhanh cột SX» trong CRM Settings.
+ */
+r.get('/pipeline-stages/:id/production-columns', async (req, res) => {
+  try {
+    const stageId = req.params.id;
+    const { data: stage } = await supabase
+      .from('crm_pipeline_stages')
+      .select('id, name, sync_role')
+      .eq('id', stageId)
+      .maybeSingle();
+    if (!stage) return res.status(404).json({ error: 'Stage không tồn tại' });
+
+    const { data: allCols, error } = await supabase
+      .from('production_pipeline_stages')
+      .select(`
+        id, name, color, icon, order_index, bucket_slug, is_active,
+        company_id, workshop_type_id, crm_target_stage_id,
+        company:companies(id, name),
+        workshop_type:workshop_project_types(id, name)
+      `)
+      .eq('is_active', true)
+      .order('order_index');
+    if (error) throw error;
+
+    const cols = (allCols || []).map((c) => ({
+      ...c,
+      assigned: String(c.crm_target_stage_id || '') === String(stageId),
+    }));
+
+    res.json({
+      stage: { id: stage.id, name: stage.name, sync_role: stage.sync_role || null },
+      production_columns: cols,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Bulk-gán nhiều cột production_pipeline_stages vào cột CRM này (set crm_target_stage_id).
+ * Body: { production_pipeline_stage_ids: string[], replace_existing?: boolean }
+ *  - replace_existing=true: cột nào trước đây gán về stage này nhưng KHÔNG có trong danh sách mới
+ *    sẽ được đặt lại crm_target_stage_id = null (bỏ gán).
+ */
+r.post('/pipeline-stages/:id/assign-production-columns', async (req, res) => {
+  try {
+    const stageId = req.params.id;
+    const ids = Array.isArray(req.body?.production_pipeline_stage_ids)
+      ? req.body.production_pipeline_stage_ids.filter(Boolean).map(String)
+      : [];
+    const replaceExisting = req.body?.replace_existing !== false;
+
+    const { data: stage } = await supabase
+      .from('crm_pipeline_stages')
+      .select('id, name')
+      .eq('id', stageId)
+      .maybeSingle();
+    if (!stage) return res.status(404).json({ error: 'Stage CRM không tồn tại' });
+
+    let assignedCount = 0;
+    let unassignedCount = 0;
+
+    if (ids.length) {
+      const { data: assigned, error: aErr } = await supabase
+        .from('production_pipeline_stages')
+        .update({ crm_target_stage_id: stageId, crm_sync_type: null })
+        .in('id', ids)
+        .select('id');
+      if (aErr) throw aErr;
+      assignedCount = (assigned || []).length;
+    }
+
+    if (replaceExisting) {
+      let q = supabase
+        .from('production_pipeline_stages')
+        .update({ crm_target_stage_id: null })
+        .eq('crm_target_stage_id', stageId);
+      if (ids.length) q = q.not('id', 'in', `(${ids.join(',')})`);
+      const { data: unassigned, error: uErr } = await q.select('id');
+      if (uErr) throw uErr;
+      unassignedCount = (unassigned || []).length;
+    }
+
+    res.json({
+      stage_id: stageId,
+      assigned_count: assignedCount,
+      unassigned_count: unassignedCount,
+      total_target_columns: ids.length,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 r.delete('/pipeline-stages/:id', async (req, res) => {
   try {
     const sacPsd = scopedAdminCompanyId(req);
@@ -4134,7 +4230,7 @@ r.get('/leads-by-fb-page', async (req, res) => {
 const CRM_LEAD_LIST_SELECT_EXTRA = ', linked_project:projects!crm_leads_project_id_fkey(id, production_deadline, production_note)';
 const CRM_LEAD_REGION_EMBED = ', crm_region:company_regions!crm_leads_region_id_fkey(id, name, code)';
 const CRM_LEAD_LIST_SELECT_BASE =
-  `*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type, sync_role, order_index), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies!crm_leads_company_id_fkey(id, name, short_name)${CRM_LEAD_REGION_EMBED}, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug), vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)`;
+  `*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type, sync_role, order_index), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies!crm_leads_company_id_fkey(id, name, short_name)${CRM_LEAD_REGION_EMBED}, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name)), vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)`;
 let CRM_LEAD_LIST_SELECT = CRM_LEAD_LIST_SELECT_BASE + CRM_LEAD_LIST_SELECT_EXTRA;
 let _crmLeadSelectMigrationChecked = false;
 let _vcPipelineStageAvailable = true; // migration 81
@@ -5578,7 +5674,7 @@ async function resolveCanonicalCrmLeadId(rawId) {
 async function fetchCrmLeadDetailRow(leadId) {
   const LEAD_DETAIL_EMBED_CORE = 'source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar), creator:users!crm_leads_created_by_fkey(id, full_name)';
   const LEAD_DETAIL_REGION_EMBED = CRM_LEAD_REGION_EMBED;
-  const sxE = ', sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug)';
+  const sxE = ', sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name))';
   const vcE = ', vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)';
   const combos = [
     { cust: 'customer:customers(id, full_name, phone, email, address, company, tax_code)', st: 'stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type)', sx: true },
@@ -5645,7 +5741,7 @@ async function fetchCrmLeadWithPipelineBadges(leadId) {
     : '';
   const { data, error } = await supabase
     .from('crm_leads')
-    .select(`*, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug)${patchVcJoin}`)
+    .select(`*, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name))${patchVcJoin}`)
     .eq('id', leadId)
     .single();
   if (error) throw error;
@@ -5914,7 +6010,7 @@ r.put('/leads/:id', async (req, res) => {
     let { data, error } = await supabase.from('crm_leads')
       .update({ ...safeBody, updated_at: new Date().toISOString() })
       .eq('id', id)
-      .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon), sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug)' + patchVcJoin)
+      .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon), sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name))' + patchVcJoin)
       .single();
     if (error && isVcRelationshipError(error)) {
       _vcPipelineStageAvailable = false;
@@ -5922,7 +6018,7 @@ r.put('/leads/:id', async (req, res) => {
       ({ data, error } = await supabase.from('crm_leads')
         .update({ ...safeBody, updated_at: new Date().toISOString() })
         .eq('id', id)
-        .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon), sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug)')
+        .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon), sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name))')
         .single());
     }
     if (error) throw error;
@@ -6746,7 +6842,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
         : '';
       const { data: refreshedWithBadges } = await supabase
         .from('crm_leads')
-        .select(`*, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug)${vcJoin}`)
+        .select(`*, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name))${vcJoin}`)
         .eq('id', req.params.id)
         .single();
       if (refreshedWithBadges) responseLead = refreshedWithBadges;
