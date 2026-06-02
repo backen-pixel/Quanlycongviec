@@ -27,48 +27,43 @@ function supabaseMessengerStorageEnabled() {
   return !!(config.supabaseUrl && config.supabaseServiceKey);
 }
 
-const EMOJI_RE = /\p{Extended_Pictographic}/u;
-const NON_EMOJI_RE = /[\p{L}\p{N}_]/u;
-function isEmojiOnly(text) {
-  const t = (text || '').trim();
-  if (!t) return false;
-  if (t.length > 12) return false;
-  if (NON_EMOJI_RE.test(t)) return false;
-  return EMOJI_RE.test(t);
-}
-
+/**
+ * Dựng chuỗi preview ngắn cho một message để hiển thị trong sidebar Messenger.
+ * Ưu tiên content; nếu rỗng, fallback theo tệp đính kèm. Trả null nếu cả 2 đều rỗng.
+ */
+/**
+ * Dựng chuỗi preview ngắn cho 1 message theo loại nội dung — dùng cho chat
+ * list (sidebar). Có 1 marker đặc biệt `__RECALLED__` để client tự dịch
+ * "Đã thu hồi tin nhắn" / "Tin nhắn bị thu hồi" theo người xem.
+ */
 function buildMessagePreviewNode(m) {
   if (!m) return null;
-  if (m.message_type === 'recalled') {
-    return 'Tin nhắn đã bị thu hồi';
-  }
+  if (m.deleted_at) return '__RECALLED__';
   const raw = (m.content == null ? '' : String(m.content)).trim();
   if (raw) {
     if (raw.startsWith(':sticker:')) {
       const emoji = raw.slice(':sticker:'.length).trim();
-      return emoji ? `[Nhãn dán] ${emoji}` : 'Nhãn dán';
+      return emoji ? `Sticker ${emoji}` : 'Sticker';
     }
-    if (isEmojiOnly(raw)) {
-      return `[Nhãn dán] ${raw}`;
-    }
-    if (/https?:\/\/[^\s<]+/gi.test(raw)) {
-      const displayUrl = raw.length > 60 ? raw.slice(0, 60) + '...' : raw;
-      return `🔗 [Liên kết] ${displayUrl}`;
+    // Detect link
+    if (/^https?:\/\/\S+/i.test(raw)) {
+      const noProto = raw.replace(/^https?:\/\//i, '').split(/[/?#]/)[0];
+      return `🔗 ${noProto}`;
     }
     return raw.length > 120 ? raw.slice(0, 120) : raw;
   }
   const mime = (m.attachment_mime || '').toLowerCase();
-  if (mime.startsWith('image/')) return '📷 Ảnh';
+  if (mime.startsWith('image/')) return '📷 Hình ảnh';
   if (mime.startsWith('video/')) return '🎬 Video';
-  if (mime.startsWith('audio/')) return '🎤 Ghi âm';
+  if (mime.startsWith('audio/')) return '🎤 Tin nhắn thoại';
   if (mime) return `📎 ${m.attachment_name || 'Tệp đính kèm'}`;
   const arr = Array.isArray(m.attachments) ? m.attachments : null;
   if (arr && arr.length) {
     const a0 = arr[0] || {};
     const t = (a0.type || '').toLowerCase();
-    if (t.startsWith('image/')) return '📷 Ảnh';
+    if (t.startsWith('image/')) return arr.length > 1 ? `📷 ${arr.length} hình ảnh` : '📷 Hình ảnh';
     if (t.startsWith('video/')) return '🎬 Video';
-    if (t.startsWith('audio/')) return '🎤 Ghi âm';
+    if (t.startsWith('audio/')) return '🎤 Tin nhắn thoại';
     return `📎 ${a0.name || 'Tệp đính kèm'}`;
   }
   return null;
@@ -217,7 +212,8 @@ async function notifyMessengerGroupChatRecipients(req, groupId, senderId, msgRow
   );
 }
 
-const MSG_USER_SELECT = '*, user:users!messenger_group_messages_user_id_fkey(id, full_name, avatar, is_bot), reactions:messenger_message_reactions(id, emoji, user_id, user:users(id, full_name))';
+// `*` đã bao gồm reactions/deleted_at/deleted_by (sau migration 290).
+const MSG_USER_SELECT = '*, user:users!messenger_group_messages_user_id_fkey(id, full_name, avatar, is_bot)';
 
 /**
  * Hydrate parent message (cho tin nhắn reply). Dùng query riêng thay vì
@@ -1318,6 +1314,105 @@ r.post('/groups/:id/chat', messengerChatJsonOrMultipart, async (req, res) => {
   }
 });
 
+/**
+ * Toggle reaction (thả/bỏ cảm xúc) cho 1 message.
+ * Body: { emoji: '👍' }
+ * - Nếu user đã thả emoji này → bỏ
+ * - Nếu chưa thả → thêm (mỗi user chỉ giữ 1 emoji active tại 1 thời điểm cho 1 message)
+ * Trả về row message đầy đủ.
+ */
+r.post('/groups/:gid/messages/:mid/reactions', async (req, res) => {
+  try {
+    const uid = req.authUserId;
+    const ok = await assertGroupMember(req.params.gid, uid);
+    if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
+    const emoji = (req.body?.emoji || '').toString().trim();
+    if (!emoji) return res.status(400).json({ error: 'Thiếu emoji' });
+
+    const { data: msg, error: mErr } = await supabase
+      .from('messenger_group_messages')
+      .select('id, reactions, group_id')
+      .eq('id', req.params.mid)
+      .eq('group_id', req.params.gid)
+      .single();
+    if (mErr || !msg) return res.status(404).json({ error: 'Không tìm thấy tin nhắn' });
+
+    const list = Array.isArray(msg.reactions) ? msg.reactions : [];
+    const existIdx = list.findIndex((r) => String(r.user_id) === String(uid));
+    let next;
+    if (existIdx >= 0 && list[existIdx].emoji === emoji) {
+      // Cùng emoji → bỏ
+      next = list.filter((_, i) => i !== existIdx);
+    } else if (existIdx >= 0) {
+      // Khác emoji → đổi
+      next = list.map((r, i) => (i === existIdx ? { ...r, emoji, at: new Date().toISOString() } : r));
+    } else {
+      // Chưa có → thêm
+      next = [...list, { user_id: uid, emoji, at: new Date().toISOString() }];
+    }
+
+    const { error: uErr } = await supabase
+      .from('messenger_group_messages')
+      .update({ reactions: next })
+      .eq('id', req.params.mid);
+    if (uErr) return res.status(400).json({ error: uErr.message });
+
+    const data = (await fetchMessengerMessageById(req.params.mid)) || { id: req.params.mid, reactions: next };
+    const io = req.app.get('io');
+    if (io) io.to(`messenger_group:${req.params.gid}`).emit('messenger_group:reaction', data);
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Thu hồi tin nhắn — chỉ chính chủ mới được thu hồi.
+ * Set deleted_at + deleted_by, clear content/attachments để không lộ nội dung
+ * cho client cache cũ.
+ */
+r.delete('/groups/:gid/messages/:mid', async (req, res) => {
+  try {
+    const uid = req.authUserId;
+    const ok = await assertGroupMember(req.params.gid, uid);
+    if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
+
+    const { data: msg, error: mErr } = await supabase
+      .from('messenger_group_messages')
+      .select('id, user_id, group_id, deleted_at')
+      .eq('id', req.params.mid)
+      .eq('group_id', req.params.gid)
+      .single();
+    if (mErr || !msg) return res.status(404).json({ error: 'Không tìm thấy tin nhắn' });
+    if (String(msg.user_id) !== String(uid)) {
+      return res.status(403).json({ error: 'Chỉ có thể thu hồi tin nhắn của chính bạn' });
+    }
+    if (msg.deleted_at) return res.json({ ok: true, already: true });
+
+    const { error: uErr } = await supabase
+      .from('messenger_group_messages')
+      .update({
+        deleted_at: new Date().toISOString(),
+        deleted_by: uid,
+        content: '',
+        attachments: null,
+        attachment_url: null,
+        attachment_name: null,
+        attachment_mime: null,
+        attachment_size: null,
+      })
+      .eq('id', req.params.mid);
+    if (uErr) return res.status(400).json({ error: uErr.message });
+
+    const data = (await fetchMessengerMessageById(req.params.mid)) || { id: req.params.mid, deleted_at: new Date().toISOString() };
+    const io = req.app.get('io');
+    if (io) io.to(`messenger_group:${req.params.gid}`).emit('messenger_group:recall', data);
+    res.json({ ok: true, message: data });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 r.post('/groups/:id/chat/upload', messengerMemoryUpload.single('file'), async (req, res) => {
   try {
     const ok = await assertGroupMember(req.params.id, req.authUserId);
@@ -1356,126 +1451,6 @@ r.post('/groups/:id/chat/upload', messengerMemoryUpload.single('file'), async (r
     await notifyMessengerGroupChatRecipients(req, req.params.id, req.authUserId, data, grpRow?.name || '');
     triggerAiHookIfNeeded(data, req.params.id, io);
     res.json(data);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-/** Thu hồi tin nhắn */
-r.delete('/messages/:messageId', async (req, res) => {
-  try {
-    const msgId = req.params.messageId;
-    const uid = req.authUserId;
-
-    // Tìm tin nhắn
-    const { data: msg, error: findErr } = await supabase
-      .from('messenger_group_messages')
-      .select('*')
-      .eq('id', msgId)
-      .maybeSingle();
-
-    if (findErr || !msg) return res.status(404).json({ error: 'Không tìm thấy tin nhắn' });
-    if (String(msg.user_id) !== uid) {
-      return res.status(403).json({ error: 'Bạn chỉ có thể thu hồi tin nhắn của chính mình' });
-    }
-
-    // Cập nhật tin nhắn thành recalled
-    const { error: updateErr } = await supabase
-      .from('messenger_group_messages')
-      .update({
-        content: '',
-        message_type: 'recalled',
-        attachments: null,
-        attachment_url: null,
-        attachment_name: null,
-        attachment_size: null,
-        attachment_mime: null
-      })
-      .eq('id', msgId);
-
-    if (updateErr) return res.status(400).json({ error: updateErr.message });
-
-    // Fetch lại tin nhắn đã cập nhật đầy đủ để emit socket
-    const updatedMsg = await fetchMessengerMessageById(msgId);
-    const io = req.app.get('io');
-    if (io && updatedMsg) {
-      io.to(`messenger_group:${msg.group_id}`).emit('messenger_group:chat', updatedMsg);
-    }
-
-    res.json({ ok: true, message: updatedMsg });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-/**
- * Thả cảm xúc / Phản ứng (Reaction) cho tin nhắn nhóm / cá nhân.
- * PUT /api/messenger/messages/:messageId/reaction
- */
-r.put('/messages/:messageId/reaction', async (req, res) => {
-  try {
-    const { messageId } = req.params;
-    const { emoji } = req.body;
-    const uid = req.authUserId;
-
-    if (!emoji) {
-      return res.status(400).json({ error: 'Emoji không được để trống.' });
-    }
-
-    // Kiểm tra xem user đã phản ứng với tin nhắn này chưa
-    const { data: existing, error: findErr } = await supabase
-      .from('messenger_message_reactions')
-      .select('*')
-      .eq('message_id', messageId)
-      .eq('user_id', uid)
-      .maybeSingle();
-
-    if (findErr) return res.status(400).json({ error: findErr.message });
-
-    if (existing) {
-      if (existing.emoji === emoji) {
-        // Tắt cảm xúc (nếu chọn trùng emoji đã thả)
-        const { error: delErr } = await supabase
-          .from('messenger_message_reactions')
-          .delete()
-          .eq('id', existing.id);
-        if (delErr) return res.status(400).json({ error: delErr.message });
-      } else {
-        // Cập nhật cảm xúc mới
-        const { error: updErr } = await supabase
-          .from('messenger_message_reactions')
-          .update({ emoji })
-          .eq('id', existing.id);
-        if (updErr) return res.status(400).json({ error: updErr.message });
-      }
-    } else {
-      // Thêm mới cảm xúc
-      const { error: insErr } = await supabase
-        .from('messenger_message_reactions')
-        .insert({
-          message_id: messageId,
-          user_id: uid,
-          emoji
-        });
-      if (insErr) return res.status(400).json({ error: insErr.message });
-    }
-
-    // Lấy tin nhắn đã cập nhật đầy đủ để emit socket realtime
-    const updatedMsg = await fetchMessengerMessageById(messageId);
-
-    // Lấy group_id để emit đúng phòng chat
-    const { data: msgRow } = await supabase
-      .from('messenger_group_messages')
-      .select('group_id')
-      .eq('id', messageId)
-      .maybeSingle();
-
-    const io = req.app.get('io');
-    if (io && updatedMsg && msgRow) {
-      io.to(`messenger_group:${msgRow.group_id}`).emit('messenger_group:chat', updatedMsg);
-    }
-
-    res.json({ ok: true, message: updatedMsg });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

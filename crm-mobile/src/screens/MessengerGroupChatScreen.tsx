@@ -1,12 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import * as Clipboard from 'expo-clipboard';
 import {
+  ActivityIndicator,
+  Alert,
+  Animated,
   Dimensions,
   FlatList,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Linking,
   Modal,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -16,8 +20,6 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  Alert,
-  ActivityIndicator,
 } from 'react-native';
 import { RouteProp, useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -31,6 +33,7 @@ import { api, getStoredToken, postMultipart } from '../api/client';
 import { API_ORIGIN } from '../config';
 import { useAuth } from '../context/AuthContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Clipboard from 'expo-clipboard';
 import type { MoreStackParamList } from '../navigation/types';
 import type { MessengerGroupDetail, MessengerMessage, MessengerReadReceipt } from '../types/messenger';
 import { CrmColors, CrmRadii } from '../theme/crmTheme';
@@ -264,7 +267,6 @@ export default function MessengerGroupChatScreen({
   const [infoOpen, setInfoOpen] = useState(false);
   const [infoTab, setInfoTab] = useState<InfoTab>('members');
   const [replyTo, setReplyTo] = useState<MessengerMessage | null>(null);
-  const [selectedMsg, setSelectedMsg] = useState<MessengerMessage | null>(null);
   const [mediaOpen, setMediaOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugText, setDebugText] = useState('');
@@ -276,6 +278,29 @@ export default function MessengerGroupChatScreen({
 
   // Emoji picker panel
   const [emojiOpen, setEmojiOpen] = useState(false);
+
+  // Theo dõi bàn phím để layout composer + auto scroll xuống cuối khi keyboard mở
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  useEffect(() => {
+    const showSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      () => {
+        setKeyboardVisible(true);
+        setEmojiOpen(false);
+        setMediaOpen(false);
+        setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 60);
+      },
+    );
+    const hideSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => setKeyboardVisible(false),
+    );
+    return () => { showSub.remove(); hideSub.remove(); };
+  }, []);
+
+  // Reactions emoji bar (long-press tin nhắn)
+  const [reactionBarFor, setReactionBarFor] = useState<MessengerMessage | null>(null);
+  const QUICK_REACTIONS = ['❤️', '😆', '😮', '😢', '😡', '👍'] as const;
 
   // Pinned (sync với /messenger/pins)
   const [pinned, setPinned] = useState(false);
@@ -414,6 +439,73 @@ export default function MessengerGroupChatScreen({
    *  2) Bật bubble cho group hiện hành (avatar = chữ cái đầu tên nhóm).
    *  3) Đẩy app về nền — UX giống Messenger "Nhỏ thành chat head".
    */
+  /** Toggle reaction trên tin nhắn — optimistic update + sync server. */
+  const toggleReaction = useCallback(
+    async (messageId: string, emoji: string) => {
+      // Optimistic update
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (String(m.id) !== String(messageId)) return m;
+          const list = Array.isArray(m.reactions) ? m.reactions : [];
+          const i = list.findIndex((r) => String(r.user_id) === myId);
+          let next;
+          if (i >= 0 && list[i].emoji === emoji) next = list.filter((_, j) => j !== i);
+          else if (i >= 0) next = list.map((r, j) => (j === i ? { ...r, emoji, at: new Date().toISOString() } : r));
+          else next = [...list, { user_id: myId, emoji, at: new Date().toISOString() }];
+          return { ...m, reactions: next };
+        }),
+      );
+      setReactionBarFor(null);
+      try {
+        await api.post(`/messenger/groups/${groupId}/messages/${messageId}/reactions`, { emoji });
+      } catch (e: unknown) {
+        Alert.alert(
+          'Lỗi',
+          (e as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+            'Không thả được cảm xúc',
+        );
+      }
+    },
+    [groupId, myId],
+  );
+
+  /** Thu hồi tin nhắn — chỉ tin của mình mới được thu hồi. */
+  const recallMessage = useCallback(
+    (messageId: string) => {
+      Alert.alert(
+        'Thu hồi tin nhắn',
+        'Tin nhắn sẽ bị xoá ở mọi thiết bị. Hành động này không thể hoàn tác.',
+        [
+          { text: 'Hủy', style: 'cancel' },
+          {
+            text: 'Thu hồi',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await api.delete(`/messenger/groups/${groupId}/messages/${messageId}`);
+                // socket sẽ emit và auto cập nhật, nhưng cập nhật ngay cho UX
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    String(m.id) === String(messageId)
+                      ? { ...m, deleted_at: new Date().toISOString(), content: '', attachments: null, attachment_url: null }
+                      : m,
+                  ),
+                );
+              } catch (e: unknown) {
+                Alert.alert(
+                  'Lỗi',
+                  (e as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+                    'Không thu hồi được',
+                );
+              }
+            },
+          },
+        ],
+      );
+    },
+    [groupId],
+  );
+
   /** Toggle ghim hội thoại — đồng bộ với /messenger/pins (dùng chung với list). */
   const togglePin = useCallback(async () => {
     if (pinBusy) return;
@@ -589,9 +681,19 @@ export default function MessengerGroupChatScreen({
         },
       );
       // Khi nhóm được cập nhật (đổi tên / avatar) → reload group detail
-      socket.on('messenger_group:updated', (ev: { group_id?: string; name?: string }) => {
+      socket.on('messenger_group:updated', (ev: { group_id?: string; name?: string; avatar?: string | null }) => {
         if (String(ev?.group_id || '') !== String(groupId)) return;
-        setGroup((prev) => (prev ? { ...prev, ...(ev.name ? { name: ev.name } : {}) } : prev));
+        setGroup((prev) => (prev ? { ...prev, ...(ev.name ? { name: ev.name } : {}), ...('avatar' in ev ? { avatar: ev.avatar ?? null } : {}) } : prev));
+      });
+      // Reaction realtime — replace tin nhắn với phiên bản có reactions mới
+      socket.on('messenger_group:reaction', (msg: MessengerMessage) => {
+        if (!msg?.id) return;
+        setMessages((prev) => prev.map((p) => (String(p.id) === String(msg.id) ? { ...p, reactions: msg.reactions } : p)));
+      });
+      // Recall realtime
+      socket.on('messenger_group:recall', (msg: MessengerMessage) => {
+        if (!msg?.id) return;
+        setMessages((prev) => prev.map((p) => (String(p.id) === String(msg.id) ? { ...p, ...msg } : p)));
       });
     })();
     return () => {
@@ -644,16 +746,6 @@ export default function MessengerGroupChatScreen({
       Alert.alert('Lỗi gửi', err?.response?.data?.error || err?.response?.data?.message || err?.message || 'Thất bại');
     } finally {
       setSending(false);
-    }
-  };
-
-  const handleReactToMessage = async (msg: MessengerMessage, emoji: string) => {
-    try {
-      await api.put(`/messenger/messages/${msg.id}/reaction`, { emoji });
-    } catch (err: any) {
-      Alert.alert('Lỗi', err?.response?.data?.error || err.message || 'Không thể thực hiện phản ứng');
-    } finally {
-      setSelectedMsg(null);
     }
   };
 
@@ -844,18 +936,9 @@ export default function MessengerGroupChatScreen({
         );
       }
 
-      const isRecalled = item.message_type === 'recalled';
-      const timeStr = (() => {
-        const d = item.created_at ? new Date(item.created_at) : null;
-        if (!d || Number.isNaN(d.getTime())) return formatDateTime(item.created_at);
-        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-      })();
-
-      const name = item.user?.full_name || '?';
-      const isBot = !!item.user?.is_bot;
-
-      if (isRecalled) {
-        const recalledText = mine ? 'Bạn đã thu hồi tin nhắn' : 'Tin nhắn bị thu hồi';
+      // ── Tin đã thu hồi ─────────────────────────────
+      if (item.deleted_at) {
+        const name = item.user?.full_name || '?';
         return (
           <View>
             {showDate && <DateSep date={String(item.created_at || '')} />}
@@ -867,13 +950,13 @@ export default function MessengerGroupChatScreen({
               ) : (
                 <View style={s.avatarSpace} />
               )}
-              <View style={{ maxWidth: SW * 0.78, alignItems: mine ? 'flex-end' : 'flex-start' }}>
-                {!mine && (!isDirectChat || isBot) && (
-                  <Text style={s.msgName}>{name}</Text>
-                )}
-                <View style={[s.bubble, { backgroundColor: '#F3F4F6', borderWidth: 1, borderColor: '#E5E7EB' }]}>
-                  <Text style={{ color: '#9CA3AF', fontStyle: 'italic', fontSize: 14 }}>{recalledText}</Text>
-                  <Text style={[s.bubbleTime, { color: '#9CA3AF' }]}>{timeStr}</Text>
+              <View style={{ alignItems: mine ? 'flex-end' : 'flex-start' }}>
+                {!mine && !isDirectChat ? <Text style={s.msgName}>{name}</Text> : null}
+                <View style={[s.bubble, s.bubbleRecalled, mine && s.bubbleRecalledMine]}>
+                  <Ionicons name="ban" size={13} color={CrmColors.gray500} style={{ marginRight: 4 }} />
+                  <Text style={s.bubbleRecalledTxt}>
+                    {mine ? 'Bạn đã thu hồi tin nhắn' : 'Tin nhắn đã bị thu hồi'}
+                  </Text>
                 </View>
               </View>
             </View>
@@ -881,6 +964,8 @@ export default function MessengerGroupChatScreen({
         );
       }
 
+      const name = item.user?.full_name || '?';
+      const isBot = !!item.user?.is_bot;
       const atts = Array.isArray(item.attachments) ? item.attachments : [];
       const imgUrl = item.attachment_url ? mediaUrl(item.attachment_url) : null;
       const isImg =
@@ -901,24 +986,11 @@ export default function MessengerGroupChatScreen({
         }
         return Array.from(m.entries()).map(([emoji, count]) => ({ emoji, count }));
       })();
-
-      let touchStartX = 0;
-      let touchStartY = 0;
-
-      const handleTouchStart = (e: any) => {
-        touchStartX = e.nativeEvent.pageX;
-        touchStartY = e.nativeEvent.pageY;
-      };
-
-      const handleTouchEnd = (e: any) => {
-        const touchEndX = e.nativeEvent.pageX;
-        const touchEndY = e.nativeEvent.pageY;
-        const dx = touchEndX - touchStartX;
-        const dy = touchEndY - touchStartY;
-        if (dx > 60 && Math.abs(dy) < 30) {
-          setReplyTo(item);
-        }
-      };
+      const timeStr = (() => {
+        const d = item.created_at ? new Date(item.created_at) : null;
+        if (!d || Number.isNaN(d.getTime())) return formatDateTime(item.created_at);
+        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      })();
 
       return (
         <View>
@@ -949,21 +1021,17 @@ export default function MessengerGroupChatScreen({
 
               {stickerMode ? (
                 /* Emoji-only → sticker (không bubble, chữ to, time bên dưới) */
-                <Pressable
-                  style={s.stickerWrap}
-                  onTouchStart={handleTouchStart}
-                  onTouchEnd={handleTouchEnd}
-                  onLongPress={() => setSelectedMsg(item)}
-                >
-                  <Text style={s.stickerTxt}>{text}</Text>
-                  <Text style={s.stickerTime}>{timeStr}</Text>
-                </Pressable>
+                <SwipeReply onReply={() => setReplyTo(item)} mine={mine}>
+                  <Pressable style={s.stickerWrap} onLongPress={() => setReactionBarFor(item)}>
+                    <Text style={s.stickerTxt}>{text}</Text>
+                    <Text style={s.stickerTime}>{timeStr}</Text>
+                  </Pressable>
+                </SwipeReply>
               ) : (
+                <SwipeReply onReply={() => setReplyTo(item)} mine={mine}>
                 <Pressable
                   style={[s.bubble, mine ? s.bubbleMine : isBot ? s.bubbleBot : s.bubbleOther]}
-                  onTouchStart={handleTouchStart}
-                  onTouchEnd={handleTouchEnd}
-                  onLongPress={() => setSelectedMsg(item)}
+                  onLongPress={() => setReactionBarFor(item)}
                 >
                   {item.reply_to ? (
                     <View style={[s.replyBar, mine && s.replyBarMine]}>
@@ -1013,6 +1081,7 @@ export default function MessengerGroupChatScreen({
 
                   <Text style={[s.bubbleTime, mine && s.bubbleTimeMine]}>{timeStr}</Text>
                 </Pressable>
+                </SwipeReply>
               )}
 
               {reactionGroups.length ? (
@@ -1050,7 +1119,7 @@ export default function MessengerGroupChatScreen({
         </View>
       );
     },
-    [myId, isDirectChat, messages, lastMineId, lastMineSeen, lastMineSeenLabel],
+    [myId, isDirectChat, messages, lastMineId, lastMineSeen, lastMineSeenLabel, setReactionBarFor],
   );
 
   const replyLabel = useMemo(() => {
@@ -1062,15 +1131,21 @@ export default function MessengerGroupChatScreen({
     return <View style={s.center}><ActivityIndicator color={BUBBLE_ME} size="large" /></View>;
   }
 
-  // Android: app.json softwareKeyboardLayoutMode=resize — cửa sổ tự co, không bọc KAV / không padding bàn phím thủ công.
-  const composerPadBottom =
-    Platform.OS === 'ios' ? Math.max(insets.bottom, 8) : Math.max(insets.bottom, 4);
+  /** Padding đáy composer — chỉ áp dụng safe-area khi bàn phím KHÔNG hiển thị
+   *  (để tránh thừa khoảng trắng dưới input khi keyboard đang mở). */
+  const composerPadBottom = keyboardVisible
+    ? 4
+    : Platform.OS === 'ios'
+      ? Math.max(insets.bottom, 8)
+      : Math.max(insets.bottom, 4);
 
+  // Cả iOS lẫn Android bọc KAV để ô nhập luôn hiển thị phía trên bàn phím.
+  // Android: behavior='height' + offset = top inset; iOS: behavior='padding'.
   const ChatRoot = KeyboardAvoidingView;
   const chatRootProps =
     Platform.OS === 'ios'
-      ? ({ behavior: 'padding' as const, keyboardVerticalOffset: 88 } as const)
-      : ({ behavior: 'height' as const } as const);
+      ? ({ behavior: 'padding' as const, keyboardVerticalOffset: 0 } as const)
+      : ({ behavior: 'height' as const, keyboardVerticalOffset: 0 } as const);
 
   return (
     <ChatRoot style={s.flex} {...chatRootProps}>
@@ -1383,93 +1458,64 @@ export default function MessengerGroupChatScreen({
         onOpenDebug={() => { setInfoOpen(false); setDebugOpen(true); }}
       />
 
-      {/* 🌟 Message Options Context Modal (Long Press) 🌟 */}
+      {/* ── Reaction bar (long-press tin nhắn) ── */}
       <Modal
-        visible={!!selectedMsg}
+        visible={!!reactionBarFor}
         transparent
         animationType="fade"
-        onRequestClose={() => setSelectedMsg(null)}
+        onRequestClose={() => setReactionBarFor(null)}
       >
-        <Pressable style={s.modalBg} onPress={() => setSelectedMsg(null)}>
-          <View style={s.optionsContainer}>
-            {/* Reaction Emojis Row */}
-            <View style={s.reactionsRow}>
-              {['👍', '❤️', '😂', '😮', '😢', '🙏'].map((emoji) => {
-                const hasReacted = selectedMsg?.reactions?.some(
-                  (r: any) => String(r.user_id) === myId && r.emoji === emoji
-                );
-                return (
-                  <TouchableOpacity
-                    key={emoji}
-                    onPress={() => selectedMsg && handleReactToMessage(selectedMsg, emoji)}
-                    style={[s.reactionBtn, hasReacted && s.reactionBtnActive]}
-                  >
-                    <Text style={s.reactionBtnTxt}>{emoji}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            {/* Menu Options */}
-            <View style={s.optionsMenu}>
-              <TouchableOpacity
-                style={s.optionsMenuItem}
-                onPress={() => {
-                  if (selectedMsg) {
-                    setReplyTo(selectedMsg);
-                    setSelectedMsg(null);
-                  }
-                }}
-              >
-                <Ionicons name="arrow-undo-outline" size={20} color={CrmColors.gray800} style={{ marginRight: 12 }} />
-                <Text style={s.optionsMenuText}>Trả lời</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={s.optionsMenuItem}
-                onPress={async () => {
-                  if (selectedMsg) {
-                    await Clipboard.setStringAsync(selectedMsg.content || '');
-                    setSelectedMsg(null);
-                  }
-                }}
-              >
-                <Ionicons name="copy-outline" size={20} color={CrmColors.gray800} style={{ marginRight: 12 }} />
-                <Text style={s.optionsMenuText}>Sao chép</Text>
-              </TouchableOpacity>
-
-              {selectedMsg && String(selectedMsg.user_id) === myId && selectedMsg.message_type !== 'recalled' ? (
+        <Pressable style={s.reactBg} onPress={() => setReactionBarFor(null)}>
+          <Pressable style={s.reactCard} onPress={(e) => e.stopPropagation()}>
+            <View style={s.reactRow}>
+              {QUICK_REACTIONS.map((e) => (
                 <TouchableOpacity
-                  style={[s.optionsMenuItem, s.optionsMenuItemDelete]}
-                  onPress={() => {
-                    Alert.alert(
-                      'Thu hồi tin nhắn',
-                      'Bạn có chắc chắn muốn thu hồi tin nhắn này?',
-                      [
-                        { text: 'Hủy', style: 'cancel' },
-                        {
-                          text: 'Thu hồi',
-                          style: 'destructive',
-                          onPress: async () => {
-                            try {
-                              await api.delete(`/messenger/messages/${selectedMsg.id}`);
-                            } catch (err: any) {
-                              Alert.alert('Lỗi', err?.response?.data?.error || err.message || 'Không thể thu hồi tin nhắn');
-                            } finally {
-                              setSelectedMsg(null);
-                            }
-                          },
-                        },
-                      ]
-                    );
-                  }}
+                  key={e}
+                  style={s.reactBtn}
+                  onPress={() => reactionBarFor && void toggleReaction(String(reactionBarFor.id), e)}
+                  activeOpacity={0.7}
                 >
-                  <Ionicons name="trash-outline" size={20} color="#EF4444" style={{ marginRight: 12 }} />
-                  <Text style={[s.optionsMenuText, { color: '#EF4444' }]}>Thu hồi tin nhắn</Text>
+                  <Text style={s.reactEmoji}>{e}</Text>
                 </TouchableOpacity>
-              ) : null}
+              ))}
             </View>
-          </View>
+            <View style={s.reactDivider} />
+            <TouchableOpacity
+              style={s.reactAction}
+              onPress={() => {
+                if (reactionBarFor) setReplyTo(reactionBarFor);
+                setReactionBarFor(null);
+              }}
+            >
+              <Ionicons name="arrow-undo" size={18} color={CrmColors.gray700} />
+              <Text style={s.reactActionTxt}>Trả lời</Text>
+            </TouchableOpacity>
+            {reactionBarFor && String(reactionBarFor.user_id) === myId ? (
+              <TouchableOpacity
+                style={s.reactAction}
+                onPress={() => {
+                  const id = String(reactionBarFor.id);
+                  setReactionBarFor(null);
+                  recallMessage(id);
+                }}
+              >
+                <Ionicons name="trash-outline" size={18} color="#DC2626" />
+                <Text style={[s.reactActionTxt, { color: '#DC2626' }]}>Thu hồi</Text>
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity
+              style={s.reactAction}
+              onPress={() => {
+                if (reactionBarFor?.content) {
+                  Clipboard.setStringAsync(String(reactionBarFor.content)).catch(() => {});
+                }
+                setReactionBarFor(null);
+              }}
+            >
+              <Ionicons name="copy-outline" size={18} color={CrmColors.gray700} />
+              <Text style={s.reactActionTxt}>Sao chép</Text>
+            </TouchableOpacity>
+          </Pressable>
         </Pressable>
       </Modal>
 
@@ -2035,6 +2081,91 @@ function GroupInfoSheet({
   );
 }
 
+/* ─── SwipeReply: vuốt ngang tin nhắn để trả lời (Messenger-style) ── */
+
+/**
+ * Wrap quanh bubble; cho phép user vuốt nhẹ ngang để trigger `onReply`.
+ * - Tin của mình (`mine=true`) vuốt sang TRÁI;
+ * - Tin của người khác vuốt sang PHẢI.
+ * - Vuốt vượt ngưỡng 56dp + thả → gọi onReply, kèm haptic-ish feedback (icon mũi tên).
+ */
+function SwipeReply({
+  children,
+  onReply,
+  mine,
+}: {
+  children: React.ReactNode;
+  onReply: () => void;
+  mine: boolean;
+}) {
+  const tx = useRef(new Animated.Value(0)).current;
+  const startedRef = useRef(false);
+  const THRESHOLD = 56;
+
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, g) =>
+          Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy) * 1.6 &&
+          (mine ? g.dx < 0 : g.dx > 0),
+        onPanResponderMove: (_, g) => {
+          let dx = g.dx;
+          if (mine && dx > 0) dx = 0;
+          if (!mine && dx < 0) dx = 0;
+          // dampen — giới hạn khoảng kéo
+          const capped = Math.max(-90, Math.min(90, dx));
+          tx.setValue(capped);
+          startedRef.current = true;
+        },
+        onPanResponderRelease: (_, g) => {
+          if (startedRef.current && Math.abs(g.dx) >= THRESHOLD) {
+            onReply();
+          }
+          startedRef.current = false;
+          Animated.spring(tx, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start();
+        },
+        onPanResponderTerminate: () => {
+          Animated.spring(tx, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start();
+        },
+      }),
+    [mine, onReply, tx],
+  );
+
+  const iconOpacity = tx.interpolate({
+    inputRange: mine ? [-90, 0] : [0, 90],
+    outputRange: mine ? [1, 0] : [0, 1],
+    extrapolate: 'clamp',
+  });
+
+  return (
+    <View {...panResponder.panHandlers} style={{ position: 'relative' }}>
+      <Animated.View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          top: 0, bottom: 0,
+          [mine ? 'right' : 'left']: -28,
+          alignItems: 'center', justifyContent: 'center',
+          opacity: iconOpacity,
+        }}
+      >
+        <View
+          style={{
+            width: 28, height: 28, borderRadius: 14,
+            backgroundColor: 'rgba(0,0,0,0.06)',
+            alignItems: 'center', justifyContent: 'center',
+          }}
+        >
+          <Ionicons name="arrow-undo" size={16} color={CrmColors.gray700} />
+        </View>
+      </Animated.View>
+      <Animated.View style={{ transform: [{ translateX: tx }] }}>
+        {children}
+      </Animated.View>
+    </View>
+  );
+}
+
 /* ─── Emoji picker (Messenger/TikTok-style) ────────────────────── */
 
 type EmojiCategory = {
@@ -2248,62 +2379,6 @@ function DateSep({ date }: { date: string }) {
 const s = StyleSheet.create({
   flex: { flex: 1, backgroundColor: CHAT_BG },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: CHAT_BG },
-  optionsContainer: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 16,
-    paddingBottom: 32,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -3 },
-    shadowOpacity: 0.1,
-    shadowRadius: 5,
-    elevation: 10,
-  },
-  reactionsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#E5E7EB',
-    marginBottom: 8,
-  },
-  reactionBtn: {
-    padding: 8,
-    borderRadius: 20,
-    width: 44,
-    height: 44,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  reactionBtnActive: {
-    backgroundColor: '#EEF2FF',
-    borderWidth: 1,
-    borderColor: '#6C5CE7',
-  },
-  reactionBtnTxt: {
-    fontSize: 24,
-  },
-  optionsMenu: {
-    marginTop: 8,
-  },
-  optionsMenuItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-  },
-  optionsMenuItemDelete: {
-    marginTop: 4,
-  },
-  optionsMenuText: {
-    fontSize: 16,
-    color: '#1F2937',
-    marginLeft: 12,
-    fontWeight: '500',
-  },
 
   // Header
   headerBar: {
@@ -2396,6 +2471,49 @@ const s = StyleSheet.create({
   bubbleTxtMine: { color: '#FFFFFF' },
   bubbleTime: { fontSize: 10, color: CrmColors.gray400, marginTop: 4, alignSelf: 'flex-end', fontWeight: '600' },
   bubbleTimeMine: { color: 'rgba(255,255,255,0.7)' },
+
+  // Tin nhắn đã thu hồi (recalled)
+  bubbleRecalled: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 18, paddingHorizontal: 12, paddingVertical: 8,
+    borderWidth: 1, borderColor: '#E5E7EB',
+    borderBottomLeftRadius: 6,
+  },
+  bubbleRecalledMine: {
+    backgroundColor: '#EEF2FF', borderColor: '#C7D2FE',
+    borderBottomLeftRadius: 18, borderBottomRightRadius: 6,
+  },
+  bubbleRecalledTxt: { fontSize: 13, fontStyle: 'italic', color: CrmColors.gray500, fontWeight: '600' },
+
+  // Reaction bar modal
+  reactBg: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  reactCard: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    paddingHorizontal: 12, paddingTop: 12, paddingBottom: 24,
+  },
+  reactRow: {
+    flexDirection: 'row', justifyContent: 'space-around',
+    paddingVertical: 10,
+  },
+  reactBtn: {
+    width: 44, height: 44, borderRadius: 22,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  reactEmoji: { fontSize: 28 },
+  reactDivider: {
+    height: StyleSheet.hairlineWidth, backgroundColor: '#E5E7EB',
+    marginVertical: 6,
+  },
+  reactAction: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 12, paddingHorizontal: 6,
+  },
+  reactActionTxt: { fontSize: 15, fontWeight: '600', color: CrmColors.gray800 },
 
   // Sticker (emoji-only message)
   stickerWrap: { paddingVertical: 4, paddingHorizontal: 2 },
