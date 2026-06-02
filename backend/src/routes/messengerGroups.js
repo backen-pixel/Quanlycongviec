@@ -343,6 +343,44 @@ function parseUuidParam(s) {
   return t;
 }
 
+const MESSENGER_290_HINT =
+  'Chạy migration database/290_messenger_reactions_recall.sql trên đúng Supabase project (cùng SUPABASE_URL backend).';
+
+function isMissingColumnError(err, column) {
+  const msg = String(err?.message || err || '').toLowerCase();
+  const col = String(column || '').toLowerCase();
+  return (
+    msg.includes(col)
+    && (msg.includes('column') || msg.includes('schema cache') || msg.includes('does not exist'))
+  );
+}
+
+/**
+ * Tải tin nhắn theo id — chỉ select cột cốt lõi (luôn có sau migration 65).
+ * Kiểm tra tin thuộc đúng group_id từ URL.
+ */
+async function loadMessengerMessageForMutation(groupId, messageId) {
+  const gid = parseUuidParam(groupId);
+  const mid = parseUuidParam(messageId);
+  if (!gid || !mid) return { error: 'ID nhóm hoặc tin nhắn không hợp lệ', status: 400 };
+
+  const { data: msg, error } = await supabase
+    .from('messenger_group_messages')
+    .select('id, group_id, user_id')
+    .eq('id', mid)
+    .maybeSingle();
+
+  if (error) {
+    console.warn('[messenger] loadMessengerMessageForMutation', error.message);
+    return { error: error.message, status: 500 };
+  }
+  if (!msg) return { error: 'Không tìm thấy tin nhắn', status: 404 };
+  if (String(msg.group_id) !== String(gid)) {
+    return { error: 'Tin nhắn không thuộc nhóm này', status: 404 };
+  }
+  return { msg, gid, mid };
+}
+
 function isDuplicateKeyError(err) {
   if (!err) return false;
   const code = String(err.code || '');
@@ -1324,42 +1362,51 @@ r.post('/groups/:id/chat', messengerChatJsonOrMultipart, async (req, res) => {
 r.post('/groups/:gid/messages/:mid/reactions', async (req, res) => {
   try {
     const uid = req.authUserId;
-    const ok = await assertGroupMember(req.params.gid, uid);
+    const loaded = await loadMessengerMessageForMutation(req.params.gid, req.params.mid);
+    if (loaded.error) return res.status(loaded.status || 400).json({ error: loaded.error });
+
+    const ok = await assertGroupMember(loaded.gid, uid);
     if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
     const emoji = (req.body?.emoji || '').toString().trim();
     if (!emoji) return res.status(400).json({ error: 'Thiếu emoji' });
 
-    const { data: msg, error: mErr } = await supabase
+    const { data: rxRow, error: rxErr } = await supabase
       .from('messenger_group_messages')
-      .select('id, reactions, group_id')
-      .eq('id', req.params.mid)
-      .eq('group_id', req.params.gid)
-      .single();
-    if (mErr || !msg) return res.status(404).json({ error: 'Không tìm thấy tin nhắn' });
+      .select('reactions')
+      .eq('id', loaded.mid)
+      .maybeSingle();
+    if (rxErr) {
+      if (isMissingColumnError(rxErr, 'reactions')) {
+        return res.status(503).json({ error: `Chưa có cột reactions. ${MESSENGER_290_HINT}` });
+      }
+      return res.status(500).json({ error: rxErr.message });
+    }
 
-    const list = Array.isArray(msg.reactions) ? msg.reactions : [];
+    const list = Array.isArray(rxRow?.reactions) ? rxRow.reactions : [];
     const existIdx = list.findIndex((r) => String(r.user_id) === String(uid));
     let next;
     if (existIdx >= 0 && list[existIdx].emoji === emoji) {
-      // Cùng emoji → bỏ
       next = list.filter((_, i) => i !== existIdx);
     } else if (existIdx >= 0) {
-      // Khác emoji → đổi
       next = list.map((r, i) => (i === existIdx ? { ...r, emoji, at: new Date().toISOString() } : r));
     } else {
-      // Chưa có → thêm
       next = [...list, { user_id: uid, emoji, at: new Date().toISOString() }];
     }
 
     const { error: uErr } = await supabase
       .from('messenger_group_messages')
       .update({ reactions: next })
-      .eq('id', req.params.mid);
-    if (uErr) return res.status(400).json({ error: uErr.message });
+      .eq('id', loaded.mid);
+    if (uErr) {
+      if (isMissingColumnError(uErr, 'reactions')) {
+        return res.status(503).json({ error: `Chưa có cột reactions. ${MESSENGER_290_HINT}` });
+      }
+      return res.status(400).json({ error: uErr.message });
+    }
 
-    const data = (await fetchMessengerMessageById(req.params.mid)) || { id: req.params.mid, reactions: next };
+    const data = (await fetchMessengerMessageById(loaded.mid)) || { id: loaded.mid, reactions: next };
     const io = req.app.get('io');
-    if (io) io.to(`messenger_group:${req.params.gid}`).emit('messenger_group:reaction', data);
+    if (io) io.to(`messenger_group:${loaded.gid}`).emit('messenger_group:reaction', data);
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1374,20 +1421,27 @@ r.post('/groups/:gid/messages/:mid/reactions', async (req, res) => {
 r.delete('/groups/:gid/messages/:mid', async (req, res) => {
   try {
     const uid = req.authUserId;
-    const ok = await assertGroupMember(req.params.gid, uid);
+    const loaded = await loadMessengerMessageForMutation(req.params.gid, req.params.mid);
+    if (loaded.error) return res.status(loaded.status || 400).json({ error: loaded.error });
+
+    const ok = await assertGroupMember(loaded.gid, uid);
     if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
 
-    const { data: msg, error: mErr } = await supabase
-      .from('messenger_group_messages')
-      .select('id, user_id, group_id, deleted_at')
-      .eq('id', req.params.mid)
-      .eq('group_id', req.params.gid)
-      .single();
-    if (mErr || !msg) return res.status(404).json({ error: 'Không tìm thấy tin nhắn' });
+    const { msg, mid, gid } = loaded;
     if (String(msg.user_id) !== String(uid)) {
       return res.status(403).json({ error: 'Chỉ có thể thu hồi tin nhắn của chính bạn' });
     }
-    if (msg.deleted_at) return res.json({ ok: true, already: true });
+
+    const { data: delRow, error: delErr } = await supabase
+      .from('messenger_group_messages')
+      .select('deleted_at')
+      .eq('id', mid)
+      .maybeSingle();
+    if (delErr && isMissingColumnError(delErr, 'deleted_at')) {
+      return res.status(503).json({ error: `Chưa có cột deleted_at. ${MESSENGER_290_HINT}` });
+    }
+    if (delErr) return res.status(500).json({ error: delErr.message });
+    if (delRow?.deleted_at) return res.json({ ok: true, already: true });
 
     const { error: uErr } = await supabase
       .from('messenger_group_messages')
@@ -1401,12 +1455,17 @@ r.delete('/groups/:gid/messages/:mid', async (req, res) => {
         attachment_mime: null,
         attachment_size: null,
       })
-      .eq('id', req.params.mid);
-    if (uErr) return res.status(400).json({ error: uErr.message });
+      .eq('id', mid);
+    if (uErr) {
+      if (isMissingColumnError(uErr, 'deleted_at') || isMissingColumnError(uErr, 'deleted_by')) {
+        return res.status(503).json({ error: `Chưa có cột thu hồi tin. ${MESSENGER_290_HINT}` });
+      }
+      return res.status(400).json({ error: uErr.message });
+    }
 
-    const data = (await fetchMessengerMessageById(req.params.mid)) || { id: req.params.mid, deleted_at: new Date().toISOString() };
+    const data = (await fetchMessengerMessageById(mid)) || { id: mid, deleted_at: new Date().toISOString() };
     const io = req.app.get('io');
-    if (io) io.to(`messenger_group:${req.params.gid}`).emit('messenger_group:recall', data);
+    if (io) io.to(`messenger_group:${gid}`).emit('messenger_group:recall', data);
     res.json({ ok: true, message: data });
   } catch (e) {
     res.status(500).json({ error: e.message });
