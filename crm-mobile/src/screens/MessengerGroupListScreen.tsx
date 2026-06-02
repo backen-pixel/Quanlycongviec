@@ -193,23 +193,16 @@ function ConversationRow({
   /**
    * Preview tin mới nhất với prefix:
    *  • "Bạn: <nội dung>" — nếu tin cuối là do mình gửi.
-   *  • Marker `__RECALLED__` từ backend → dịch theo người xem.
    *  • Nội dung trống → fallback theo loại nhóm (giữ behaviour cũ).
    */
   const isMineLast = !!item.last_user_id && String(item.last_user_id) === myId;
-  let preview: string;
-  if (item.last_message === '__RECALLED__') {
-    preview = isMineLast ? 'Bạn đã thu hồi tin nhắn' : 'Tin nhắn đã bị thu hồi';
-  } else if (item.last_message) {
-    preview = isMineLast ? `Bạn: ${item.last_message}` : item.last_message;
-  } else if (item.is_direct) {
-    preview = `Chat trực tiếp · ${item.message_count ?? 0} tin`;
-  } else if (item.crm_lead_id) {
-    preview = `Nhóm theo lead · ${item.message_count ?? 0} tin`;
-  } else {
-    preview = `Nhóm · ${item.message_count ?? 0} tin`;
-  }
-  const subtitle = preview;
+  const subtitle = item.last_message
+    ? (isMineLast ? `Bạn: ${item.last_message}` : item.last_message)
+    : item.is_direct
+      ? `Chat trực tiếp · ${item.message_count ?? 0} tin`
+      : item.crm_lead_id
+        ? `Nhóm theo lead · ${item.message_count ?? 0} tin`
+        : `Nhóm · ${item.message_count ?? 0} tin`;
 
   return (
     <TouchableOpacity
@@ -343,7 +336,11 @@ export default function MessengerGroupListScreen({ navigation }: { navigation: N
         n.metadata && typeof n.metadata === 'object' ? (n.metadata as Record<string, unknown>) : {};
       const groupName = typeof meta.group_name === 'string' ? meta.group_name : undefined;
       const senderId = typeof meta.sender_id === 'string' ? meta.sender_id : null;
-      const msgContent = n.message ?? '';
+      // Server format `n.message` = `"<senderName>: <preview>"`. Tách lấy
+      // preview để tránh hiển thị "Bạn: Sender: 📷 Ảnh" khi prefix lại bên dưới.
+      const raw = n.message ?? '';
+      const colonIdx = raw.indexOf(': ');
+      const msgContent = colonIdx > 0 ? raw.slice(colonIdx + 2) : raw;
 
       setGroups((prev) => {
         const idx = prev.findIndex((g) => String(g.id) === groupId);
