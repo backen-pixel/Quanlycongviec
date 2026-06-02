@@ -1345,7 +1345,7 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
           .from('crm_activities')
           .select(`
             id, lead_id, type, title, description, activity_date, created_at, shared_to_workshop,
-            allowed_share_modules, allowed_companies, allowed_departments,
+            allowed_share_modules,
             creator:users!crm_activities_created_by_fkey(id, full_name)
           `)
           .in('lead_id', leadIds)

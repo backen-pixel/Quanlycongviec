@@ -583,17 +583,131 @@ async function syncCrmLeadFromLogisticsStage(projectId, crmSyncTypeOrStageRow) {
 
 /**
  * Tìm ID stage "Thắng" trong CRM deal pipeline (is_won=true).
+ * @param {string|null} pipelineId — ưu tiên cột Thắng thuộc pipeline của deal
  */
-async function getCrmThangStageId() {
+async function getCrmThangStageId(pipelineId = null) {
+  if (pipelineId) {
+    const { data: inPipe } = await supabase
+      .from('crm_pipeline_stages')
+      .select('id')
+      .eq('pipeline_type', 'deal')
+      .eq('is_won', true)
+      .eq('is_active', true)
+      .eq('pipeline_id', pipelineId)
+      .order('order_index')
+      .limit(1)
+      .maybeSingle();
+    if (inPipe?.id) return inPipe.id;
+  }
   const { data } = await supabase
     .from('crm_pipeline_stages')
     .select('id')
     .eq('pipeline_type', 'deal')
     .eq('is_won', true)
     .eq('is_active', true)
+    .order('order_index')
     .limit(1)
     .maybeSingle();
   return data?.id || null;
+}
+
+/** Cột SX khi Sale kéo deal CRM sang «Sản xuất»: ưu tiên cột trigger, không thì cột đầu sau intake. */
+function pickSxColumnOnCrmProductionEntry(sortedStages) {
+  const sorted = [...(sortedStages || [])].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+  const real = (s) => s?.id && !String(s.id).startsWith('__fb_');
+  const triggerCol = sorted.find(
+    (s) => real(s) && s.crm_sync_type === 'production' && s.bucket_slug !== INTAKE_BUCKET,
+  );
+  if (triggerCol) return triggerCol.id;
+  const nonIntake = sorted.find((s) => real(s) && s.bucket_slug !== INTAKE_BUCKET);
+  if (nonIntake) return nonIntake.id;
+  return firstSxPipelineColumnId(sorted);
+}
+
+async function resolveSxColumnUuidForDb(colId, companyId) {
+  if (!colId) return null;
+  const s = String(colId);
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)) return s;
+  if (s.startsWith('__fb_')) return getDbIntakeStageId(companyId ? String(companyId) : null);
+  return null;
+}
+
+/**
+ * CRM → SX: deal vào cột sync_role='sx_production' → gán sx_pipeline_stage_id (+ workflow project nếu có).
+ */
+async function syncSxKanbanFromCrmProductionStage(leadId) {
+  const lid = String(leadId || '').trim();
+  if (!lid) return { ok: false, skipped: 'no_lead_id' };
+
+  const { data: lead, error: le } = await supabase
+    .from('crm_leads')
+    .select('id, type, project_id, pipeline_id, stage_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, sync_role)')
+    .eq('id', lid)
+    .maybeSingle();
+  if (le) throw le;
+  if (!lead || lead.type !== 'deal' || !lead.project_id) {
+    return { ok: false, skipped: 'no_project' };
+  }
+  const st = Array.isArray(lead.stage) ? lead.stage[0] : lead.stage;
+  if (String(st?.sync_role || '') !== 'sx_production') {
+    return { ok: false, skipped: 'not_sx_production_stage' };
+  }
+
+  const { data: project } = await supabase
+    .from('projects')
+    .select('id, company_id, workshop_type_id, current_stage_id, status')
+    .eq('id', lead.project_id)
+    .maybeSingle();
+  if (!project) return { ok: false, skipped: 'project_not_found' };
+
+  const wkt = project.workshop_type_id || 'none';
+  const { stages } = await getResolvedKanbanStages(
+    project.company_id ? String(project.company_id) : null,
+    { workshopTypeId: wkt },
+  );
+  const sorted = [...(stages || [])].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+  const pickedColId = pickSxColumnOnCrmProductionEntry(sorted);
+  const sxColUuid = await resolveSxColumnUuidForDb(pickedColId, project.company_id);
+  if (!sxColUuid) return { ok: false, skipped: 'no_pipeline_column' };
+
+  const colRow = sorted.find((s) => String(s.id) === String(pickedColId))
+    || (await supabase
+      .from('production_pipeline_stages')
+      .select('id, workflow_stage_id, bucket_slug')
+      .eq('id', sxColUuid)
+      .maybeSingle()).data;
+
+  const now = new Date().toISOString();
+  await supabase
+    .from('crm_leads')
+    .update({ sx_pipeline_stage_id: sxColUuid, updated_at: now })
+    .eq('id', lid);
+
+  const projectUpd = { updated_at: now };
+  const wfId = colRow?.workflow_stage_id || null;
+  if (wfId) {
+    projectUpd.current_stage_id = wfId;
+    const { data: targetStage } = await supabase
+      .from('workflow_stages')
+      .select('slug')
+      .eq('id', wfId)
+      .maybeSingle();
+    const statusMap = { production: 'producing', delivery: 'shipping', 'customer-care': 'warranty' };
+    if (targetStage?.slug && statusMap[targetStage.slug]) {
+      projectUpd.status = statusMap[targetStage.slug];
+    }
+  }
+
+  if (Object.keys(projectUpd).length > 1) {
+    await supabase.from('projects').update(projectUpd).eq('id', project.id);
+  }
+
+  return {
+    ok: true,
+    sx_pipeline_stage_id: sxColUuid,
+    project_id: project.id,
+    workflow_stage_id: wfId,
+  };
 }
 
 /**
@@ -782,46 +896,29 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
     return;
   }
 
-  // ── Fallback: dùng crm_sync_type='production' (hành vi cũ) ──
-  // Gồm cả cột bucket (workflow_stage_id null) — prodPipeList trước đây bỏ sót toàn bộ pipeline kiểu KCS.
-  const triggerRows = prodPipeAll.filter((r) => r.crm_sync_type === 'production');
-  let isInCrmProductionTriggerStage = isInRealProductionStage; // fallback hành vi cũ
-
+  // ── Trigger SX → CRM: chỉ cột đã tick crm_sync_type='production' (không theo order_index) ──
+  let isInCrmProductionTriggerStage = false;
   if (currentRow?.crm_sync_type === 'production') {
     isInCrmProductionTriggerStage = true;
-  } else if (triggerRows.length > 0 && currentRow) {
-    const minTriggerOrder = Math.min(...triggerRows.map((r) => r.order_index ?? 999));
-    isInCrmProductionTriggerStage = (currentRow.order_index ?? 999) >= minTriggerOrder;
-  } else if (triggerRows.length > 0 && project.current_stage_id) {
-    const minTriggerOrder = Math.min(...triggerRows.map((r) => r.order_index ?? 999));
+  } else if (project.current_stage_id) {
     const rowByWorkflow = prodPipeAll.find(
       (r) => r.workflow_stage_id && String(r.workflow_stage_id) === String(project.current_stage_id),
     );
-    if (rowByWorkflow) {
-      isInCrmProductionTriggerStage = (rowByWorkflow.order_index ?? 999) >= minTriggerOrder;
-    } else {
-      isInCrmProductionTriggerStage = false;
+    if (rowByWorkflow?.crm_sync_type === 'production') {
+      isInCrmProductionTriggerStage = true;
     }
   }
 
-  const [thangStageId] = await Promise.all([
-    getCrmThangStageId(),
-  ]);
-
   agentDebugLog(
     'workshopKanban.js:syncCrm:legacy',
-    'legacy production sync',
+    'production trigger sync',
     {
       projectId,
-      triggerRowCount: triggerRows.length,
-      minTriggerOrder: triggerRows.length
-        ? Math.min(...triggerRows.map((r) => r.order_index ?? 999))
-        : null,
       isInCrmProductionTriggerStage,
+      currentRowSyncType: currentRow?.crm_sync_type || null,
       isInRealProductionStage,
-      thangStageId: thangStageId || null,
     },
-    triggerRows.length ? 'D' : 'C',
+    isInCrmProductionTriggerStage ? 'D' : 'C',
   );
 
   const { data: leads } = await supabase
@@ -846,6 +943,9 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
       // Lookup cột «Sản xuất» CRM theo PIPELINE của deal (mỗi pipeline có cột riêng).
       const sanXuatStageId = isInCrmProductionTriggerStage
         ? await getCrmStageByRole('sx_production', lead.pipeline_id || null)
+        : null;
+      const thangStageId = !isInCrmProductionTriggerStage
+        ? await getCrmThangStageId(lead.pipeline_id || null)
         : null;
       if (!isInCrmProductionTriggerStage && !thangStageId) skipReasons.push('not_in_trigger_no_thang');
       if (isInCrmProductionTriggerStage && !sanXuatStageId) skipReasons.push('no_sx_production_crm_stage');
@@ -1033,6 +1133,8 @@ module.exports = {
   getDbIntakeStageId,
   resolveSxPipelineStageUuidForProject,
   syncCrmLeadSxPipelineFromProject,
+  syncSxKanbanFromCrmProductionStage,
+  pickSxColumnOnCrmProductionEntry,
   shouldAutoOverwriteCrmStage,
   repairCrmDealPipelineDisplay,
   syncVcPipelineStageToLead,
