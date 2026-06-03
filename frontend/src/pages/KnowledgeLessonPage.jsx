@@ -525,7 +525,7 @@ export default function KnowledgeLessonPage() {
                   <button
                     key={ex.id}
                     type="button"
-                    onClick={() => navigate(`/knowledge/exercises/${ex.id}`)}
+                    onClick={() => navigate(`/knowledge/exercises/${ex.id}`, { state: { lessonId: lesson.id } })}
                     className={`text-left bg-white rounded-xl border p-4 hover:shadow-md transition-all flex items-start gap-3 ${
                       ex.user_passed ? 'border-green-200 hover:border-green-300' : 'border-gray-200 hover:border-purple-300'
                     }`}
@@ -561,7 +561,12 @@ export default function KnowledgeLessonPage() {
           )}
 
           <div className="mt-8 flex flex-col sm:flex-row items-stretch sm:items-center gap-3 p-4 bg-gradient-to-r from-blue-50 to-emerald-50 rounded-xl border border-blue-100">
-            {isCompleted ? (
+            {isCompleted && hasExercises && !allExercisesPassed ? (
+              <span className="flex items-center gap-2 text-amber-800 font-medium flex-1">
+                <AlertCircle className="h-5 w-5 shrink-0" />
+                Đã hoàn thành nội dung — hãy làm và đạt bài tập bên dưới để củng cố kiến thức.
+              </span>
+            ) : isCompleted ? (
               <span className="flex items-center gap-2 text-green-700 font-medium flex-1">
                 <CheckCircle2 className="h-5 w-5" /> Bạn đã hoàn thành bài học này.
               </span>
@@ -685,7 +690,7 @@ export default function KnowledgeLessonPage() {
                 <p className="text-sm text-gray-700 mb-3">Có {lesson.exercises.length} bài tập để kiểm tra kiến thức.</p>
                 <button
                   type="button"
-                  onClick={() => navigate(`/knowledge/exercises/${lesson.exercises[0].id}`)}
+                  onClick={() => navigate(`/knowledge/exercises/${lesson.exercises[0].id}`, { state: { lessonId: lesson.id } })}
                   className="w-full px-3 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700"
                 >
                   Bắt đầu làm bài
