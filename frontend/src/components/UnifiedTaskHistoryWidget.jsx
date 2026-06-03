@@ -8,7 +8,14 @@ import { History } from 'lucide-react';
  * Widget lịch sử nhiệm vụ thống nhất — nhúng vào trang chi tiết.
  * @param {{ projectId?: string, leadId?: string, source?: string, sourceId?: string }} props
  */
-export default function UnifiedTaskHistoryWidget({ projectId, leadId, source, sourceId, title = 'Lịch sử nhiệm vụ' }) {
+export default function UnifiedTaskHistoryWidget({
+  projectId,
+  leadId,
+  source,
+  sourceId,
+  title = 'Lịch sử nhiệm vụ',
+  refreshKey = 0,
+}) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -36,7 +43,7 @@ export default function UnifiedTaskHistoryWidget({ projectId, leadId, source, so
       if (!cancelled) setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [projectId, leadId, source, sourceId]);
+  }, [projectId, leadId, source, sourceId, refreshKey]);
 
   if (!projectId && !leadId && !(source && sourceId)) return null;
 

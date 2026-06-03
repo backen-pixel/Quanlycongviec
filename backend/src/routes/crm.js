@@ -6,6 +6,7 @@ const PDFDocument = require('pdfkit');
 const multer = require('multer');
 const XLSX = require('xlsx');
 const { crmTaskMeetsCompletionRequirements, crmTaskRequiresCompletionEvidence } = require('../helpers/crmTaskCompletionEvidence');
+const { logKanbanDeadlineUnifiedHistory } = require('../helpers/crmKanbanDeadlineHistory');
 const {
   createCrmLeadTask,
   updateCrmLeadTask,
@@ -2776,7 +2777,7 @@ r.post('/pipeline-stages', async (req, res) => {
         : null;
     const slaInsert =
       b.sla_days !== undefined ? normalizePipelineStageSlaDaysForDb(b.sla_days) : undefined;
-    const { data, error } = await supabase.from('crm_pipeline_stages').insert({
+    const insertObj = {
       name: b.name, pipeline_type: b.pipeline_type, pipeline_id: b.pipeline_id || null,
       color: b.color || '#94A3B8', icon: b.icon || null, order_index: b.order_index ?? nextOrder,
       is_won: b.is_won || false, is_lost: b.is_lost || false, is_active: true,
@@ -2785,6 +2786,7 @@ r.post('/pipeline-stages', async (req, res) => {
       sync_role: b.sync_role || null,
       default_probability: defaultProbability,
       description: stageDesc,
+      ...(b.requires_deadline !== undefined ? { requires_deadline: !!b.requires_deadline } : {}),
       ...(slaInsert !== undefined ? { sla_days: slaInsert } : {}),
       ...(b.counts_as_won_revenue !== undefined
         ? { counts_as_won_revenue: b.counts_as_won_revenue == null ? null : !!b.counts_as_won_revenue }
@@ -2792,7 +2794,13 @@ r.post('/pipeline-stages', async (req, res) => {
       ...(b.counts_as_completed_revenue !== undefined
         ? { counts_as_completed_revenue: b.counts_as_completed_revenue == null ? null : !!b.counts_as_completed_revenue }
         : {}),
-    }).select().single();
+    };
+    let { data, error } = await supabase.from('crm_pipeline_stages').insert(insertObj).select().single();
+    // Chưa chạy migration requires_deadline → bỏ cột rồi thử lại để không vỡ tạo cột.
+    if (error && /requires_deadline/.test(error.message || '')) {
+      delete insertObj.requires_deadline;
+      ({ data, error } = await supabase.from('crm_pipeline_stages').insert(insertObj).select().single());
+    }
     if (error) throw error;
     invalidatePipelinesAndStages();
     res.status(201).json(data);
@@ -2818,6 +2826,7 @@ r.put('/pipeline-stages/:id', async (req, res) => {
     ['name', 'color', 'icon', 'order_index', 'is_won', 'is_lost', 'is_active', 'send_zalo_on_enter', 'create_event_on_enter', 'sync_role'].forEach(f => {
       if (b[f] !== undefined) update[f] = (f === 'send_zalo_on_enter' || f === 'create_event_on_enter') ? !!b[f] : b[f];
     });
+    if (b.requires_deadline !== undefined) update.requires_deadline = !!b.requires_deadline;
     if (b.counts_as_won_revenue !== undefined) {
       update.counts_as_won_revenue = b.counts_as_won_revenue == null ? null : !!b.counts_as_won_revenue;
     }
@@ -2841,8 +2850,13 @@ r.put('/pipeline-stages/:id', async (req, res) => {
         update.default_probability = Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : null;
       }
     }
-    const { data, error } = await supabase.from('crm_pipeline_stages').update(update)
+    let { data, error } = await supabase.from('crm_pipeline_stages').update(update)
       .eq('id', req.params.id).select().single();
+    if (error && /requires_deadline/.test(error.message || '')) {
+      delete update.requires_deadline;
+      ({ data, error } = await supabase.from('crm_pipeline_stages').update(update)
+        .eq('id', req.params.id).select().single());
+    }
     if (error) throw error;
     invalidatePipelinesAndStages();
     res.json(data);
@@ -6762,34 +6776,120 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PRE-CHECK chuyển giai đoạn: trả về nhiệm vụ chặn (nếu có) — KHÔNG thay đổi dữ liệu.
+// Dùng để frontend hiện hộp nhiệm vụ chặn TRƯỚC khi hỏi deadline.
+// ═══════════════════════════════════════════════════════════════════════════
+r.get('/leads/:id/stage-advance-check', async (req, res) => {
+  try {
+    const targetStageId = String(req.query.target_stage_id || '').trim();
+    if (!targetStageId) return res.status(400).json({ error: 'Thiếu target_stage_id' });
+
+    const { data: lead } = await supabase
+      .from('crm_leads')
+      .select('id, type, stage_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead/deal' });
+
+    const { data: targetStage } = await supabase
+      .from('crm_pipeline_stages')
+      .select('id, name, order_index, is_won, is_lost, pipeline_type')
+      .eq('id', targetStageId)
+      .maybeSingle();
+
+    // Không đổi cột → không cần kiểm tra.
+    if (String(lead.stage_id || '') === String(targetStageId)) {
+      return res.json({ ok: true, remaining_tasks: [] });
+    }
+
+    const { data: prevStage } = lead.stage_id
+      ? await supabase
+        .from('crm_pipeline_stages')
+        .select('id, name, order_index, is_won, is_lost, pipeline_type')
+        .eq('id', lead.stage_id)
+        .maybeSingle()
+      : { data: null };
+
+    const taskGate = await assertCrmStageAdvanceAllowed({
+      leadId: req.params.id,
+      leadType: lead.type,
+      currentStage: prevStage,
+      targetStage,
+    });
+
+    if (!taskGate.ok) {
+      return res.json({
+        ok: false,
+        code: taskGate.code,
+        error: taskGate.error,
+        remaining_tasks: taskGate.remaining_tasks || [],
+        current_stage_id: prevStage?.id || null,
+        target_stage_id: targetStageId,
+      });
+    }
+    res.json({ ok: true, remaining_tasks: [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MOVE LEAD/DEAL TO STAGE (with validation for deal pipeline)
 // ═══════════════════════════════════════════════════════════════════════════
 r.patch('/leads/:id/stage', async (req, res) => {
   try {
     const { stage_id, lost_reason, production_company_id, workshop_type_id: bodyWorkshopTypeId } = req.body;
-    const { data: lead } = await supabase
+    let { data: lead } = await supabase
       .from('crm_leads')
-      .select('type, project_id, company_id, assigned_to, lead_owner_id, lead_type_id, use_order_tasks, parent_lead_id, stage_id, sx_handover_at')
+      .select('type, project_id, company_id, assigned_to, lead_owner_id, lead_type_id, use_order_tasks, parent_lead_id, stage_id, sx_handover_at, kanban_deadline_at')
       .eq('id', req.params.id)
       .single();
+    if (!lead) {
+      // Fallback nếu chưa migrate cột kanban_deadline_at.
+      ({ data: lead } = await supabase
+        .from('crm_leads')
+        .select('type, project_id, company_id, assigned_to, lead_owner_id, lead_type_id, use_order_tasks, parent_lead_id, stage_id, sx_handover_at')
+        .eq('id', req.params.id)
+        .single());
+    }
     
-    const { data: stage } = await supabase
+    let { data: stage } = await supabase
       .from('crm_pipeline_stages')
-      .select('id, name, order_index, is_won, is_lost, pipeline_type, send_zalo_on_enter, default_probability, sync_role')
+      .select('id, name, order_index, is_won, is_lost, pipeline_type, send_zalo_on_enter, default_probability, sync_role, requires_deadline')
       .eq('id', stage_id)
       .single();
+    if (!stage) {
+      // Fallback nếu chưa migrate cột requires_deadline.
+      ({ data: stage } = await supabase
+        .from('crm_pipeline_stages')
+        .select('id, name, order_index, is_won, is_lost, pipeline_type, send_zalo_on_enter, default_probability, sync_role')
+        .eq('id', stage_id)
+        .single());
+    }
     
     // Validate: lead can only move to lead stages, deals to deal stages
     if (lead?.type !== stage?.pipeline_type) {
       return res.status(400).json({ error: `${lead?.type === 'lead' ? 'Lead' : 'Deal'} chỉ có thể di chuyển trong pipeline riêng của nó` });
     }
 
+    // Gate deadline: cột bật requires_deadline → bắt buộc chọn deadline khi chuyển sang (cột mới).
+    const isStageChange = String(lead?.stage_id || '') !== String(stage_id || '');
+    const rawDeadline = req.body?.kanban_deadline_at;
+    const hasDeadlineInput = rawDeadline !== undefined && rawDeadline !== null && rawDeadline !== '';
+    let parsedDeadlineTs = null;
+    if (hasDeadlineInput) {
+      parsedDeadlineTs = new Date(rawDeadline).getTime();
+      if (Number.isNaN(parsedDeadlineTs)) {
+        return res.status(400).json({ error: 'Deadline không hợp lệ' });
+      }
+    }
     const stageGate = assertDealCrmManualStageChange(lead, stage);
     if (!stageGate.ok) {
       return res.status(400).json({ error: stageGate.error, code: stageGate.code });
     }
 
-    // Gate: chặn chuyển giai đoạn khi còn nhiệm vụ blocking ở giai đoạn hiện tại
+    // Gate 1 (ưu tiên): chặn chuyển giai đoạn khi còn nhiệm vụ blocking ở giai đoạn hiện tại.
+    // Phải báo TRƯỚC gate deadline để UI hiện hộp nhiệm vụ trước, rồi mới tới hộp deadline.
     if (String(lead?.stage_id || '') !== String(stage_id || '')) {
       const { data: prevStage } = lead?.stage_id
         ? await supabase
@@ -6811,6 +6911,17 @@ r.patch('/leads/:id/stage', async (req, res) => {
           remaining_tasks: taskGate.remaining_tasks,
         });
       }
+    }
+
+    // Gate 2: cột bật requires_deadline → bắt buộc chọn deadline (sau khi đã qua gate nhiệm vụ).
+    if (isStageChange && stage?.requires_deadline && !hasDeadlineInput) {
+      return res.status(400).json({
+        error: 'Cột này yêu cầu đặt deadline khi chuyển thẻ tới.',
+        code: 'requires_deadline',
+        requires_deadline: true,
+        stage_id: stage.id,
+        stage_name: stage.name,
+      });
     }
 
     const requiresProductionPick = lead?.type === 'deal' && !lead?.project_id && !!stage?.is_won;
@@ -6835,6 +6946,12 @@ r.patch('/leads/:id/stage', async (req, res) => {
     const updates = { stage_id, updated_at: new Date().toISOString() };
     if (String(lead?.stage_id || '') !== String(stage_id || '')) {
       updates.stage_entered_at = new Date().toISOString();
+    }
+    // Deadline thủ công cho thẻ (đặt khi kéo sang cột yêu cầu deadline).
+    if (hasDeadlineInput) {
+      updates.kanban_deadline_at = new Date(parsedDeadlineTs).toISOString();
+      const reason = (req.body?.deadline_reason || '').toString().trim();
+      updates.kanban_deadline_reason = reason || null;
     }
     // Đồng bộ % xác suất theo cấu hình của cột pipeline (nếu có).
     // Mục tiêu: kéo lead/deal sang cột nào thì probability tự nhảy theo % của cột đó.
@@ -6863,9 +6980,48 @@ r.patch('/leads/:id/stage', async (req, res) => {
       }
     }
     
-    const { data: updatedLeadRow, error } = await supabase.from('crm_leads').update(updates).eq('id', req.params.id).select('*').single();
+    let { data: updatedLeadRow, error } = await supabase.from('crm_leads').update(updates).eq('id', req.params.id).select('*').single();
+    if (error && /kanban_deadline/.test(error.message || '')) {
+      delete updates.kanban_deadline_at;
+      delete updates.kanban_deadline_reason;
+      ({ data: updatedLeadRow, error } = await supabase.from('crm_leads').update(updates).eq('id', req.params.id).select('*').single());
+      if (!error && hasDeadlineInput) {
+        return res.status(503).json({
+          error: 'Chưa cài đặt cột deadline trên database. Chạy migration database/280_crm_kanban_deadline.sql',
+          code: 'migration_required',
+        });
+      }
+    }
     if (error) throw error;
     let responseLead = updatedLeadRow;
+
+    // Ghi lịch sử deadline khi đặt deadline lúc chuyển cột.
+    if (hasDeadlineInput) {
+      const dlReason = (req.body?.deadline_reason || '').toString().trim() || null;
+      const newDlIso = new Date(parsedDeadlineTs).toISOString();
+      try {
+        await supabase.from('crm_lead_deadline_history').insert({
+          lead_id: req.params.id,
+          stage_id,
+          old_deadline_at: lead?.kanban_deadline_at || null,
+          new_deadline_at: newDlIso,
+          reason: dlReason,
+          source: 'stage_move',
+          changed_by: req.user.userId,
+        });
+      } catch (histErr) {
+        console.warn('[crm/stage] deadline history:', histErr.message);
+      }
+      await logKanbanDeadlineUnifiedHistory({
+        leadId: req.params.id,
+        companyId: lead?.company_id,
+        actorUserId: req.user.userId,
+        oldDeadlineAt: lead?.kanban_deadline_at || null,
+        newDeadlineAt: newDlIso,
+        reason: dlReason,
+        source: 'stage_move',
+      });
+    }
 
     // Refresh kèm join SX/VC để frontend cập nhật badge ngay (không phải đợi silent reload).
     try {
@@ -7025,6 +7181,97 @@ r.patch('/leads/:id/stage', async (req, res) => {
     }
 
     res.json({ ...responseLead, deal_won: dealWonData, project_auto_created: projectAutoCreated });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DEADLINE THẺ CRM — đặt/sửa deadline thủ công (kèm lý do) + lịch sử
+// ═══════════════════════════════════════════════════════════════════════════
+/** PATCH /crm/leads/:id/deadline — đặt/sửa deadline; bắt buộc lý do nếu thẻ đã có deadline. */
+r.patch('/leads/:id/deadline', async (req, res) => {
+  try {
+    const leadId = String(req.params.id || '').trim();
+    const { data: lead } = await supabase
+      .from('crm_leads')
+      .select('id, type, company_id, stage_id, title, assigned_to, lead_owner_id, kanban_deadline_at')
+      .eq('id', leadId)
+      .maybeSingle();
+    if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead/deal' });
+
+    const raw = req.body?.kanban_deadline_at;
+    const clearing = raw === null || raw === '';
+    let newIso = null;
+    if (!clearing) {
+      const ts = new Date(raw).getTime();
+      if (Number.isNaN(ts)) return res.status(400).json({ error: 'Deadline không hợp lệ' });
+      newIso = new Date(ts).toISOString();
+    }
+
+    const reason = (req.body?.reason || '').toString().trim();
+    // Bắt buộc lý do khi thẻ ĐÃ có deadline (sửa/đổi/xóa).
+    if (lead.kanban_deadline_at && !reason) {
+      return res.status(400).json({ error: 'Vui lòng nhập lý do thay đổi deadline', code: 'reason_required' });
+    }
+    // Không đổi gì thì thôi.
+    if (String(lead.kanban_deadline_at || '') === String(newIso || '')) {
+      return res.json({ ok: true, unchanged: true, kanban_deadline_at: lead.kanban_deadline_at });
+    }
+
+    const { error: upErr } = await supabase
+      .from('crm_leads')
+      .update({
+        kanban_deadline_at: newIso,
+        kanban_deadline_reason: reason || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', leadId);
+    if (upErr) throw upErr;
+
+    try {
+      await supabase.from('crm_lead_deadline_history').insert({
+        lead_id: leadId,
+        stage_id: lead.stage_id || null,
+        old_deadline_at: lead.kanban_deadline_at || null,
+        new_deadline_at: newIso,
+        reason: reason || null,
+        source: 'manual_edit',
+        changed_by: req.user.userId,
+      });
+    } catch (histErr) {
+      console.warn('[crm/deadline] history:', histErr.message);
+    }
+
+    await logKanbanDeadlineUnifiedHistory({
+      leadId,
+      companyId: lead.company_id,
+      actorUserId: req.user.userId,
+      oldDeadlineAt: lead.kanban_deadline_at || null,
+      newDeadlineAt: newIso,
+      reason,
+      source: 'manual_edit',
+    });
+
+    emitCrmDashboardChanged(req, { type: lead.type, company_id: lead.company_id, lead_id: leadId, action: 'deadline_changed' });
+    res.json({ ok: true, kanban_deadline_at: newIso, kanban_deadline_reason: reason || null });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** GET /crm/leads/:id/deadline-history — lịch sử đặt/sửa deadline. */
+r.get('/leads/:id/deadline-history', async (req, res) => {
+  try {
+    const leadId = String(req.params.id || '').trim();
+    const { data, error } = await supabase
+      .from('crm_lead_deadline_history')
+      .select('id, old_deadline_at, new_deadline_at, reason, source, created_at, changed_by, changer:users!crm_lead_deadline_history_changed_by_fkey(id, full_name), stage:crm_pipeline_stages!crm_lead_deadline_history_stage_id_fkey(id, name, color, icon)')
+      .eq('lead_id', leadId)
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (error) throw error;
+    res.json(data || []);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

@@ -19,6 +19,7 @@ const EVENT_COLORS = {
   deleted: 'bg-red-500',
   completed: 'bg-emerald-500',
   status_changed: 'bg-blue-500',
+  deadline_changed: 'bg-rose-500',
   comment_added: 'bg-violet-500',
   default: 'bg-gray-400',
 };

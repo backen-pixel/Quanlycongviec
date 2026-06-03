@@ -767,6 +767,13 @@ server.listen(config.port, () => {
     console.warn('[crm-assignment-reminder] Failed to start:', e.message);
   }
 
+  // Cron nhắc hạn deadline thẻ CRM (mỗi 30') — disable: CRM_KANBAN_DEADLINE_REMINDER_DISABLED=1
+  try {
+    require('./jobs/crmKanbanDeadlineReminder').start(io);
+  } catch (e) {
+    console.warn('[crm-kanban-deadline] Failed to start:', e.message);
+  }
+
   // Cron AI Chat Bot — tick mỗi phút, gửi tin AI vào chat phòng ban/nhóm theo lịch admin cấu hình.
   // Disable: AI_CHAT_BOT_CRON_DISABLED=1
   try {
