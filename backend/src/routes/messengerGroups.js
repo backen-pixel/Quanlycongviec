@@ -62,19 +62,30 @@ async function fetchGroupMessageForAction(gid, mid) {
 }
 
 async function markMessageRecalled(mid, uid, recalled_at) {
-  const pg = await pgSessionQuery(
+  const sql =
     `UPDATE messenger_group_messages
      SET recalled_at = $1::timestamptz, recalled_by = $2::uuid
-     WHERE id = $3::uuid`,
-    [recalled_at, uid, mid],
-  );
-  if (pg) return;
+     WHERE id = $3::uuid`;
+  const params = [recalled_at, uid, mid];
+
+  // Ưu tiên Postgres trực tiếp — không phụ thuộc PostgREST schema cache
+  const pgResult = (await pgSessionQuery(sql, params)) ?? (await pgQuery(sql, params));
+  if (pgResult) return;
 
   const { error } = await supabase
     .from('messenger_group_messages')
     .update({ recalled_at, recalled_by: uid })
     .eq('id', mid);
-  if (error) throw error;
+  if (error) {
+    if (/schema cache/i.test(error.message || '')) {
+      throw new Error(
+        'Supabase schema cache chưa cập nhật cột recall. '
+          + 'Vào SQL Editor chạy: NOTIFY pgrst, \'reload schema\'; '
+          + 'Hoặc thêm SUPABASE_DB_URL vào backend/.env rồi restart server.',
+      );
+    }
+    throw error;
+  }
 }
 
 async function upsertMessageReaction(mid, uid, emoji) {
