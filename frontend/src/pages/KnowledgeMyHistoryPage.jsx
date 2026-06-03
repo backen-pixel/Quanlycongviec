@@ -4,6 +4,7 @@ import api from '../lib/api';
 import {
   ChevronLeft, History, CheckCircle2, XCircle, Award, Clock, ListChecks, Filter,
 } from 'lucide-react';
+import { KNOWLEDGE_BACK_LINK_CLASS, knowledgeBackLinkStyle } from '../lib/knowledgeNavStyles';
 
 const STATUS_BADGE = {
   passed:   { label: '✓ Đạt',    class: 'bg-green-100 text-green-700 border-green-200' },
@@ -51,7 +52,7 @@ export default function KnowledgeMyHistoryPage() {
 
   return (
     <div className="max-w-5xl mx-auto pb-12">
-      <Link to="/knowledge" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-violet-600 mb-4">
+      <Link to="/knowledge" className={`${KNOWLEDGE_BACK_LINK_CLASS} mb-4`} style={knowledgeBackLinkStyle}>
         <ChevronLeft className="h-4 w-4" /> Thư viện kiến thức
       </Link>
 

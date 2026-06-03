@@ -1008,10 +1008,10 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
         markWorkshopPipelineCardFocus(item.id, 'vc');
         navigate(`/vc/projects/${item.id}`);
       }}
-      className={`relative bg-white rounded-lg border p-3 pt-9 transition-all duration-200 cursor-pointer group hover:-translate-y-0.5 hover:shadow-lg ${
-        isSelected ? 'ring-2 ring-orange-400 ring-offset-1 border-orange-200 bg-orange-50/30' : 'border-gray-200'
+      className={`relative !bg-white rounded-lg border p-3 pt-9 transition-all duration-200 cursor-pointer group hover:-translate-y-0.5 hover:shadow-lg ${
+        isSelected ? 'ring-2 ring-orange-400 ring-offset-1 border-orange-300' : 'border-gray-200'
       }`}
-      style={{ borderLeft: `3px solid ${stageColor}` }}
+      style={{ backgroundColor: '#ffffff', borderLeft: `3px solid ${stageColor}` }}
     >
       {onToggleSelect && (
         <label

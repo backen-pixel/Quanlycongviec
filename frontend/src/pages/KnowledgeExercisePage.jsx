@@ -8,6 +8,7 @@ import {
   PartyPopper, RotateCcw, BookOpen, ListChecks, ArrowRight, Trophy,
   XCircle,
 } from 'lucide-react';
+import { KNOWLEDGE_BACK_LINK_CLASS, knowledgeBackLinkStyle } from '../lib/knowledgeNavStyles';
 
 function formatCorrectAnswer(q) {
   const indices = q.correct || [];
@@ -593,7 +594,7 @@ export default function KnowledgeExercisePage() {
 
     return (
       <div className="max-w-2xl mx-auto py-12">
-        <Link to={backUrl} className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-blue-600 mb-6">
+        <Link to={backUrl} className={`${KNOWLEDGE_BACK_LINK_CLASS} mb-6`} style={knowledgeBackLinkStyle}>
           <ChevronLeft className="h-4 w-4" /> Quay lại bài học
         </Link>
         <div className="bg-white rounded-2xl border border-gray-200 p-8 text-center">
@@ -655,7 +656,7 @@ export default function KnowledgeExercisePage() {
   return (
     <div className="max-w-5xl mx-auto py-4">
       <div className="flex items-center justify-between mb-6">
-        <Link to={backUrl} className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-blue-600">
+        <Link to={backUrl} className={KNOWLEDGE_BACK_LINK_CLASS} style={knowledgeBackLinkStyle}>
           <ChevronLeft className="h-4 w-4" /> Bài học
         </Link>
         <div className="flex items-center gap-3 text-sm">

@@ -8,6 +8,7 @@ import {
   ChevronLeft, BarChart3, Search, Users, CheckCircle2, XCircle, Clock,
   Filter, Download, TrendingUp, Loader2, Building2, RotateCcw,
 } from 'lucide-react';
+import { KNOWLEDGE_BACK_LINK_CLASS, knowledgeBackLinkStyle } from '../lib/knowledgeNavStyles';
 
 const STATUS_BADGE = {
   passed:    { label: 'Đạt',     class: 'bg-green-100 text-green-700 border-green-200' },
@@ -169,7 +170,7 @@ export default function KnowledgeScoreboardPage() {
 
   return (
     <div className="max-w-7xl mx-auto pb-12">
-      <Link to="/knowledge/admin" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-violet-600 mb-4">
+      <Link to="/knowledge/admin" className={`${KNOWLEDGE_BACK_LINK_CLASS} mb-4`} style={knowledgeBackLinkStyle}>
         <ChevronLeft className="h-4 w-4" /> Quản trị kiến thức
       </Link>
 

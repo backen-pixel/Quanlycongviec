@@ -5,13 +5,16 @@ import { useAuth } from '../lib/auth';
 import { markCrmPipelineCardFocus, persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
 import {
   CRM_DEADLINE_SOURCE_META,
+  formatCrmRemainingMs,
+  getCrmDeadlineUrgencyBadgeClass,
+  getCrmDeadlineUrgencyFromTs,
   isCrmPipelineStageLost,
   pickDeadlineConfigValueWithSource,
 } from '../lib/crmLeadDeadlineDisplay';
 import { FbCrmAvatar, FbCrmCommentComposer, formatCrmFbRelativeTime } from './crmFbCommentUi';
 import {
   Plus, X, Trash2, MessageSquare, GripVertical, Search, Edit2, Settings as SettingsIcon,
-  ChevronLeft, ChevronRight, CheckSquare, Eye,
+  ChevronLeft, ChevronRight, CheckSquare, Eye, Clock,
 } from 'lucide-react';
 
 function formatVND(v) {
@@ -170,7 +173,7 @@ function renderItemCard(item, navigate, extras = null, mergePick = null) {
       <div
         data-crm-pipeline-card={item.id}
         onClick={openDetail}
-        className="bg-white rounded-lg border p-3 hover:shadow-md transition-all cursor-pointer group">
+        className="!bg-white border border-gray-200 rounded-lg p-3 hover:shadow-md transition-all cursor-pointer group">
         {body}
       </div>
     );
@@ -179,15 +182,15 @@ function renderItemCard(item, navigate, extras = null, mergePick = null) {
   return (
     <div
       data-crm-pipeline-card={item.id}
-      className={`relative overflow-hidden rounded-lg border bg-white transition-all group/card hover:shadow-md ${
+      className={`relative overflow-hidden rounded-lg border border-gray-200 !bg-white transition-all group/card hover:shadow-md ${
         selected ? 'ring-2 ring-amber-400 ring-offset-1' : ''
       }`}>
       <div
         className="pointer-events-none absolute inset-0 z-[5] flex flex-col rounded-lg opacity-0 transition-opacity duration-150 group-hover/card:opacity-100"
         aria-hidden
       >
-        <div className="h-[30%] min-h-[2rem] shrink-0 border-b border-amber-200/60 bg-amber-100/65" />
-        <div className="min-h-0 flex-1 bg-sky-100/50" />
+        <div className="h-[30%] min-h-[2rem] shrink-0 border-b border-dashed border-amber-300/70 bg-white" />
+        <div className="min-h-0 flex-1 bg-white" />
       </div>
       <button
         type="button"
@@ -1006,14 +1009,29 @@ export function DeadlineView({
                   onDragEnd={() => { setDraggingId(null); setDragOverKey(null); }}
                   className={draggingId === it.id ? 'opacity-40' : ''}>
                   {renderItemCard(it, navigate, (
-                    it._deadlineTs != null && (
-                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                        <CrmDeadlineSourceBadge source={it._deadlineSource} />
-                        <p className="text-[10px] text-gray-600">
-                          Hạn: {formatDateTime(new Date(it._deadlineTs).toISOString())}
-                        </p>
-                      </div>
-                    )
+                    it._deadlineTs != null && (() => {
+                      const urg = getCrmDeadlineUrgencyFromTs(it._deadlineTs);
+                      const remainLabel = urg.level === 'overdue'
+                        ? formatCrmRemainingMs(Math.abs(urg.remainingMs))
+                        : formatCrmRemainingMs(urg.remainingMs);
+                      const isUrgent = urg.level === 'overdue' || urg.level === 'soon';
+                      return (
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          <CrmDeadlineSourceBadge source={it._deadlineSource} />
+                          {remainLabel && (
+                            <span className={`inline-flex items-center gap-1 rounded-md border tabular-nums leading-none ${
+                              isUrgent ? 'px-2 py-1 text-[11px]' : 'px-1.5 py-0.5 text-[10px]'
+                            } ${getCrmDeadlineUrgencyBadgeClass(urg.level)}`}>
+                              <Clock className={isUrgent ? 'h-3.5 w-3.5' : 'h-3 w-3'} strokeWidth={2.6} />
+                              {urg.level === 'overdue' ? <>Quá {remainLabel}</> : <>Còn {remainLabel}</>}
+                            </span>
+                          )}
+                          <p className={`text-[10px] ${isUrgent ? 'text-slate-700 font-medium' : 'text-gray-600'}`}>
+                            Hạn: {formatDateTime(new Date(it._deadlineTs).toISOString())}
+                          </p>
+                        </div>
+                      );
+                    })()
                   ), mergePick)}
                 </div>
               ))}

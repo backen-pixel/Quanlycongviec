@@ -5,6 +5,7 @@ import {
   Award, ChevronLeft, Loader2, Printer, Share2, ShieldCheck, ShieldAlert,
   Calendar, Hash, BookOpen, Trophy, Sparkles, Copy, CheckCircle2,
 } from 'lucide-react';
+import { KNOWLEDGE_BACK_LINK_CLASS, knowledgeBackLinkStyle } from '../lib/knowledgeNavStyles';
 
 function formatDate(iso, withTime = false) {
   if (!iso) return '—';
@@ -104,7 +105,7 @@ export default function KnowledgeCertificateDetailPage() {
       `}</style>
 
       <div className="print:hidden flex items-center justify-between mb-4 flex-wrap gap-3">
-        <Link to="/knowledge/certificates" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-amber-600">
+        <Link to="/knowledge/certificates" className={KNOWLEDGE_BACK_LINK_CLASS} style={knowledgeBackLinkStyle}>
           <ChevronLeft className="h-4 w-4" /> Bộ sưu tập chứng nhận
         </Link>
         <div className="flex items-center gap-2">
