@@ -11,6 +11,7 @@ import { AppState, DeviceEventEmitter, type AppStateStatus } from 'react-native'
 import { io, type Socket } from 'socket.io-client';
 import { api } from '../api/client';
 import { API_ORIGIN } from '../config';
+import { bindMessengerSocket } from '../lib/messengerRealtime';
 import { useAuth } from './AuthContext';
 import { isNotificationTypeEnabled } from '../lib/notificationPrefs';
 import { isExpiryDeadlineNotificationType } from '../lib/operationalNotifications';
@@ -160,6 +161,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     });
 
     socketRef.current = s;
+    bindMessengerSocket(s);
 
     const onNotif = (raw: unknown) => {
       const n = raw as AppNotification;

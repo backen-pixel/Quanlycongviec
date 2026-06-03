@@ -64,9 +64,11 @@ export type MessengerMessage = {
   attachment_name?: string | null;
   attachment_mime?: string | null;
   reply_to?: string | null;
+  /** ISO timestamp — tin đã thu hồi (null = còn hiệu lực). */
+  recalled_at?: string | null;
+  recalled_by?: string | null;
+  /** Boolean tương thích API cũ. */
+  is_recalled?: boolean | null;
   user?: { id?: string; full_name?: string | null; avatar?: string | null; is_bot?: boolean | null } | null;
   reactions?: MessengerReaction[] | null;
-  /** Tin đã thu hồi — content/attachments sẽ bị wipe phía server. */
-  is_recalled?: boolean | null;
-  recalled_at?: string | null;
 };

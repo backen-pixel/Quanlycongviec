@@ -23,6 +23,7 @@ import type { MessengerGroupListItem } from '../types/messenger';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { useNotifications } from '../context/NotificationContext';
 import { useAuth } from '../context/AuthContext';
+import { formatMessagePreview } from '../lib/messengerPreview';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'MessengerGroupList'>;
 type TabKey = 'group' | 'direct';
@@ -196,8 +197,11 @@ function ConversationRow({
    *  • Nội dung trống → fallback theo loại nhóm (giữ behaviour cũ).
    */
   const isMineLast = !!item.last_user_id && String(item.last_user_id) === myId;
-  const subtitle = item.last_message
-    ? (isMineLast ? `Bạn: ${item.last_message}` : item.last_message)
+  const previewRaw = item.last_message
+    ? formatMessagePreview(item.last_message, { mine: isMineLast })
+    : '';
+  const subtitle = previewRaw
+    ? (isMineLast ? `Bạn: ${previewRaw}` : previewRaw)
     : item.is_direct
       ? `Chat trực tiếp · ${item.message_count ?? 0} tin`
       : item.crm_lead_id
@@ -336,11 +340,10 @@ export default function MessengerGroupListScreen({ navigation }: { navigation: N
         n.metadata && typeof n.metadata === 'object' ? (n.metadata as Record<string, unknown>) : {};
       const groupName = typeof meta.group_name === 'string' ? meta.group_name : undefined;
       const senderId = typeof meta.sender_id === 'string' ? meta.sender_id : null;
-      // Server format `n.message` = `"<senderName>: <preview>"`. Tách lấy
-      // preview để tránh hiển thị "Bạn: Sender: 📷 Ảnh" khi prefix lại bên dưới.
-      const raw = n.message ?? '';
-      const colonIdx = raw.indexOf(': ');
-      const msgContent = colonIdx > 0 ? raw.slice(colonIdx + 2) : raw;
+      const msgContent = n.message ?? '';
+      const previewLine = formatMessagePreview(msgContent, {
+        mine: !!(senderId && String(senderId) === myId),
+      });
 
       setGroups((prev) => {
         const idx = prev.findIndex((g) => String(g.id) === groupId);
@@ -352,7 +355,7 @@ export default function MessengerGroupListScreen({ navigation }: { navigation: N
               : {
                   ...g,
                   last_message_at: new Date().toISOString(),
-                  last_message: msgContent,
+                  last_message: previewLine || msgContent,
                   last_user_id: senderId ?? g.last_user_id ?? null,
                   unread_count: (g.unread_count ?? 0) + 1,
                 },
@@ -363,7 +366,7 @@ export default function MessengerGroupListScreen({ navigation }: { navigation: N
               id: groupId,
               name: groupName,
               last_message_at: new Date().toISOString(),
-              last_message: msgContent,
+              last_message: previewLine || msgContent,
               last_user_id: senderId,
               unread_count: 1,
               message_count: 1,
