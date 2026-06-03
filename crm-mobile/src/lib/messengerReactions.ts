@@ -1,4 +1,4 @@
-import type { MessengerReaction } from '../types/messenger';
+import type { MessengerMessage, MessengerReaction } from '../types/messenger';
 
 /** Chuẩn hoá reactions từ API/socket (emoji / reaction). */
 export function normalizeReactions(raw: unknown): MessengerReaction[] {
@@ -32,4 +32,25 @@ export function groupReactions(reactions: MessengerReaction[] | null | undefined
     });
   }
   return Array.from(m.entries()).map(([emoji, v]) => ({ emoji, ...v }));
+}
+
+/** Gộp tin từ socket/API — giữ user/reactions cũ nếu payload thiếu field. */
+export function mergeMessengerMessage(
+  prev: MessengerMessage,
+  incoming: Partial<MessengerMessage>,
+): MessengerMessage {
+  const recalled_at = incoming.recalled_at ?? prev.recalled_at ?? null;
+  const is_recalled = !!(incoming.is_recalled || recalled_at || prev.is_recalled);
+  return {
+    ...prev,
+    ...incoming,
+    user: incoming.user ?? prev.user,
+    recalled_at,
+    recalled_by: incoming.recalled_by ?? prev.recalled_by ?? null,
+    is_recalled,
+    reactions:
+      incoming.reactions != null
+        ? normalizeReactions(incoming.reactions)
+        : prev.reactions,
+  };
 }

@@ -25,9 +25,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { Audio } from 'expo-av';
-import { io, type Socket } from 'socket.io-client';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { api, getStoredToken, postMultipart } from '../api/client';
+import { api, postMultipart } from '../api/client';
 import { API_ORIGIN } from '../config';
 import { useAuth } from '../context/AuthContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -45,7 +44,7 @@ import {
 } from '../lib/floatingBubbleOverlay';
 import { ChatMessageRow, ReactionPickerBar } from '../components/chat/ChatMessageRow';
 import { formatReplyPreview } from '../lib/messengerPreview';
-import { normalizeReactions } from '../lib/messengerReactions';
+import { normalizeReactions, mergeMessengerMessage } from '../lib/messengerReactions';
 import {
   joinMessengerGroup,
   leaveMessengerGroup,
@@ -609,7 +608,11 @@ export default function MessengerGroupChatScreen({
                 `/messenger/groups/${groupId}/chat/${msg.id}/recall`,
               );
               setMessages((prev) =>
-                prev.map((m) => (String(m.id) === String(msg.id) ? { ...m, ...r.data } : m)),
+                prev.map((m) =>
+                  String(m.id) === String(msg.id)
+                    ? mergeMessengerMessage(m, { ...r.data, is_recalled: true })
+                    : m,
+                ),
               );
               setActionMsg(null);
             } catch (e: unknown) {
@@ -655,73 +658,106 @@ export default function MessengerGroupChatScreen({
     [groupId],
   );
 
-  /** Socket app-wide (NotificationContext) — đảm bảo người nhận thấy reaction realtime. */
+  const applyRecallUpdate = useCallback(
+    (raw: unknown) => {
+      const ev = raw as {
+        group_id?: string;
+        message_id?: string;
+        recalled_at?: string;
+        recalled_by?: string;
+      };
+      if (String(ev?.group_id || '') !== String(groupId) || !ev?.message_id) return;
+      setMessages((prev) =>
+        prev.map((m) =>
+          String(m.id) === String(ev.message_id)
+            ? mergeMessengerMessage(m, {
+                recalled_at: ev.recalled_at || new Date().toISOString(),
+                recalled_by: ev.recalled_by ?? m.recalled_by,
+                is_recalled: true,
+              })
+            : m,
+        ),
+      );
+    },
+    [groupId],
+  );
+
+  const applyChatMessage = useCallback(
+    (raw: unknown) => {
+      const msg = raw as MessengerMessage;
+      if (!msg?.id || String(msg.group_id || '') !== String(groupId)) return;
+      const id = String(msg.id);
+      const normalized: MessengerMessage = {
+        ...msg,
+        reactions: normalizeReactions(msg.reactions),
+        is_recalled: !!(msg.recalled_at || msg.is_recalled),
+      };
+      setMessages((prev) => {
+        if (seenIds.current.has(id)) {
+          const i = prev.findIndex((p) => String(p.id) === id);
+          if (i >= 0) {
+            const n = [...prev];
+            n[i] = mergeMessengerMessage(prev[i], normalized);
+            return n;
+          }
+          return prev;
+        }
+        seenIds.current.add(id);
+        return [...prev, normalized];
+      });
+    },
+    [groupId],
+  );
+
+  /** Realtime qua socket app-wide — 1 kết nối, người nhận luôn thấy reaction + thu hồi. */
   useEffect(() => {
     joinMessengerGroup(groupId);
-    const unsub = subscribeMessengerEvent('messenger_group:reaction', (ev) => {
-      applyReactionUpdate(ev as { group_id?: string; message_id?: string; reactions?: MessengerMessage['reactions'] });
-    });
-    return () => {
-      leaveMessengerGroup(groupId);
-      unsub();
-    };
-  }, [groupId, applyReactionUpdate]);
 
-  /* ── socket ────────────────────────────────────────── */
-  useEffect(() => {
-    let socket: Socket | null = null;
-    let cancelled = false;
-    const onConnect = () => socket?.emit('join:messenger_group', groupId);
-    (async () => {
-      const token = await getStoredToken();
-      if (!token || cancelled) return;
-      socket = io(API_ORIGIN, { auth: { token }, transports: ['websocket', 'polling'], reconnection: true, reconnectionDelay: 1500 });
-      socket.on('connect', onConnect);
-      if (socket.connected) onConnect();
-      socket.on('messenger_group:chat', (msg: MessengerMessage) => {
-        if (!msg?.id) return;
-        if (String(msg.group_id || '') !== String(groupId)) return;
-        const id = String(msg.id);
-        setMessages((prev) => {
-          if (seenIds.current.has(id)) {
-            const i = prev.findIndex((p) => String(p.id) === id);
-            if (i >= 0) { const n = [...prev]; n[i] = msg; return n; }
-            return prev;
-          }
-          seenIds.current.add(id);
-          return [...prev, msg];
-        });
-      });
-      socket.on('messenger_group:members', () => void loadAll());
-      // Khi 1 thành viên đọc tin → cập nhật read receipts ngay (Đã xem)
-      socket.on(
+    const unsubs = [
+      subscribeMessengerEvent('messenger_group:chat', applyChatMessage),
+      subscribeMessengerEvent('messenger_group:reaction', (ev) => {
+        applyReactionUpdate(
+          ev as { group_id?: string; message_id?: string; reactions?: MessengerMessage['reactions'] },
+        );
+      }),
+      subscribeMessengerEvent('messenger_group:reactions', (ev) => {
+        applyReactionUpdate(
+          ev as { group_id?: string; message_id?: string; reactions?: MessengerMessage['reactions'] },
+        );
+      }),
+      subscribeMessengerEvent('messenger_group:recalled', applyRecallUpdate),
+      subscribeMessengerEvent(
         'messenger_group:read',
-        (ev: { group_id?: string; user_id?: string; last_read_at?: string }) => {
+        (raw) => {
+          const ev = raw as { group_id?: string; user_id?: string; last_read_at?: string };
           if (String(ev?.group_id || '') !== String(groupId)) return;
           if (!ev?.user_id || !ev?.last_read_at) return;
           setReadReceipts((prev) => {
             const idx = prev.findIndex((r) => String(r.user_id) === String(ev.user_id));
-            const next: MessengerReadReceipt = { user_id: String(ev.user_id), last_read_at: String(ev.last_read_at) };
+            const next: MessengerReadReceipt = {
+              user_id: String(ev.user_id),
+              last_read_at: String(ev.last_read_at),
+            };
             if (idx < 0) return [...prev, next];
-            const copy = [...prev]; copy[idx] = next; return copy;
+            const copy = [...prev];
+            copy[idx] = next;
+            return copy;
           });
         },
-      );
-      // Khi nhóm được cập nhật (đổi tên / avatar) → reload group detail
-      socket.on('messenger_group:updated', (ev: { group_id?: string; name?: string }) => {
+      ),
+      subscribeMessengerEvent('messenger_group:members', () => void loadAll()),
+      subscribeMessengerEvent('messenger_group:updated', (raw) => {
+        const ev = raw as { group_id?: string; name?: string };
         if (String(ev?.group_id || '') !== String(groupId)) return;
         setGroup((prev) => (prev ? { ...prev, ...(ev.name ? { name: ev.name } : {}) } : prev));
-      });
-      socket.on('messenger_group:reaction', applyReactionUpdate);
-      socket.on('messenger_group:reactions', applyReactionUpdate);
-    })();
+      }),
+    ];
+
     return () => {
-      cancelled = true;
-      try { socket?.off('connect', onConnect); } catch { /* */ }
-      try { socket?.emit('leave:messenger_group', groupId); } catch { /* */ }
-      socket?.disconnect();
+      leaveMessengerGroup(groupId);
+      unsubs.forEach((u) => u());
     };
-  }, [groupId, loadAll, applyReactionUpdate]);
+  }, [groupId, applyChatMessage, applyReactionUpdate, applyRecallUpdate, loadAll]);
 
   /* ── send ──────────────────────────────────────────── */
   const appendMsg = useCallback((msg: MessengerMessage) => {

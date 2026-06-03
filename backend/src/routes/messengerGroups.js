@@ -139,7 +139,8 @@ async function fetchReactionsForMessagePg(messageId) {
      FROM messenger_message_reactions WHERE message_id = $1::uuid`,
     [messageId],
   );
-  return r?.rows || null;
+  if (!r) return null;
+  return r.rows || [];
 }
 
 /**
@@ -368,14 +369,25 @@ async function attachReactionsToMessages(rows) {
   if (!Array.isArray(rows) || !rows.length) return rows;
   const ids = [...new Set(rows.map((m) => m?.id).filter(Boolean))];
   if (!ids.length) return rows;
-  const { data: rxRows, error } = await supabase
+
+  let rxRows = null;
+  const { data, error } = await supabase
     .from('messenger_message_reactions')
     .select('message_id, user_id, emoji, created_at')
     .in('message_id', ids);
-  if (error) {
-    console.warn('[messenger] attachReactionsToMessages:', error.message);
-    return rows.map((m) => ({ ...m, reactions: m.reactions || [] }));
+  if (!error && data) {
+    rxRows = data;
+  } else if (error) {
+    console.warn('[messenger] attachReactionsToMessages supabase:', error.message);
+    const pg = await pgQuery(
+      `SELECT message_id, user_id, emoji, created_at
+       FROM messenger_message_reactions
+       WHERE message_id = ANY($1::uuid[])`,
+      [ids],
+    );
+    rxRows = pg?.rows || [];
   }
+
   const byMsg = new Map();
   for (const rx of rxRows || []) {
     const mid = String(rx.message_id);
@@ -387,13 +399,29 @@ async function attachReactionsToMessages(rows) {
 
 async function fetchReactionsForMessage(messageId) {
   const pgRows = await fetchReactionsForMessagePg(messageId);
-  if (pgRows) return pgRows;
+  if (pgRows !== null) return pgRows;
   const { data, error } = await supabase
     .from('messenger_message_reactions')
     .select('message_id, user_id, emoji, created_at')
     .eq('message_id', messageId);
   if (error) throw error;
   return data || [];
+}
+
+function emitMessengerGroupEvent(io, gid, event, payload) {
+  if (!io || !gid) return;
+  io.to(`messenger_group:${gid}`).emit(event, payload);
+}
+
+function buildRecalledMessagePayload(base, { gid, mid, uid, recalled_at }) {
+  return {
+    ...(base || {}),
+    id: mid,
+    group_id: gid,
+    recalled_at,
+    recalled_by: uid,
+    is_recalled: true,
+  };
 }
 
 async function fetchMessengerMessageById(id) {
@@ -1528,8 +1556,8 @@ async function handleMessageReaction(req, res) {
     const io = req.app.get('io');
     if (io) {
       const payload = { group_id: gid, message_id: mid, reactions };
-      io.to(`messenger_group:${gid}`).emit('messenger_group:reaction', payload);
-      io.to(`messenger_group:${gid}`).emit('messenger_group:reactions', payload);
+      emitMessengerGroupEvent(io, gid, 'messenger_group:reaction', payload);
+      emitMessengerGroupEvent(io, gid, 'messenger_group:reactions', payload);
     }
     logMessengerAction({ action: 'reaction-ok', gid, mid, count: reactions.length });
     res.json({ message_id: mid, reactions });
@@ -1573,15 +1601,25 @@ r.post('/groups/:gid/chat/:mid/recall', async (req, res) => {
       throw uErr;
     }
 
-    const full = (await fetchMessengerMessageById(mid)) || {
-      ...msg,
+    const fetched = await fetchMessengerMessageById(mid);
+    const full = buildRecalledMessagePayload(fetched || msg, {
+      gid,
+      mid,
+      uid,
       recalled_at,
-      recalled_by: uid,
-    };
+    });
     full.reactions = await fetchReactionsForMessage(mid);
 
     const io = req.app.get('io');
-    if (io) io.to(`messenger_group:${gid}`).emit('messenger_group:chat', full);
+    if (io) {
+      emitMessengerGroupEvent(io, gid, 'messenger_group:chat', full);
+      emitMessengerGroupEvent(io, gid, 'messenger_group:recalled', {
+        group_id: gid,
+        message_id: mid,
+        recalled_at,
+        recalled_by: uid,
+      });
+    }
 
     logMessengerAction({ action: 'recall-ok', gid, mid });
     res.json(full);
