@@ -1,5 +1,5 @@
 -- Migration 39: thu hồi tin nhắn + thả cảm xúc cho messenger nhóm
--- Áp dụng idempotent — chạy lại không lỗi.
+-- Chạy trên Supabase SQL Editor (idempotent — chạy lại không lỗi).
 
 -- 1) Cờ "đã thu hồi" trên từng tin nhắn ----------------------------------
 ALTER TABLE messenger_group_messages
@@ -8,7 +8,7 @@ ALTER TABLE messenger_group_messages
 ALTER TABLE messenger_group_messages
   ADD COLUMN IF NOT EXISTS recalled_at TIMESTAMPTZ;
 
--- 2) Bảng cảm xúc (mỗi (message, user, emoji) là 1 hàng) ----------------
+-- 2) Bảng cảm xúc (mỗi message + user + emoji là 1 hàng) ----------------
 CREATE TABLE IF NOT EXISTS messenger_message_reactions (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   message_id  UUID NOT NULL REFERENCES messenger_group_messages(id) ON DELETE CASCADE,
@@ -21,12 +21,17 @@ CREATE TABLE IF NOT EXISTS messenger_message_reactions (
 CREATE INDEX IF NOT EXISTS idx_mmr_message ON messenger_message_reactions (message_id);
 CREATE INDEX IF NOT EXISTS idx_mmr_user    ON messenger_message_reactions (user_id);
 
--- 3) Bắt buộc: nạp lại PostgREST schema cache (Supabase REST API).
--- Nếu thiếu bước này, API vẫn báo "column ... not in schema cache"
--- dù SQL Editor đã thấy cột is_recalled / bảng reactions.
-NOTIFY pgrst, 'reload schema';
+-- 3) RLS (Supabase) — cho phép thành viên nhóm đọc/ghi reaction
+ALTER TABLE messenger_message_reactions ENABLE ROW LEVEL SECURITY;
 
--- Kiểm tra nhanh (phải trả 2 cột + 1 bảng):
--- SELECT column_name FROM information_schema.columns
---   WHERE table_name = 'messenger_group_messages' AND column_name IN ('is_recalled','recalled_at');
--- SELECT 1 FROM information_schema.tables WHERE table_name = 'messenger_message_reactions';
+DROP POLICY IF EXISTS mmr_select ON messenger_message_reactions;
+CREATE POLICY mmr_select ON messenger_message_reactions
+  FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS mmr_insert ON messenger_message_reactions;
+CREATE POLICY mmr_insert ON messenger_message_reactions
+  FOR INSERT WITH CHECK (true);
+
+DROP POLICY IF EXISTS mmr_delete ON messenger_message_reactions;
+CREATE POLICY mmr_delete ON messenger_message_reactions
+  FOR DELETE USING (true);

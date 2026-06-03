@@ -30,7 +30,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { Audio } from 'expo-av';
 import { io, type Socket } from 'socket.io-client';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { api, getStoredToken, postMultipart } from '../api/client';
+import { api, formatApiError, getStoredToken, postMultipart } from '../api/client';
 import { API_ORIGIN } from '../config';
 import { useAuth } from '../context/AuthContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -388,6 +388,15 @@ export default function MessengerGroupChatScreen({
       seenIds.current = new Set(rows.map((r) => String(r.id)));
       void loadReceipts();
       void loadPinned();
+      void api
+        .get<{ recall?: boolean; reactions?: boolean; apiVersion?: number }>('/messenger/capabilities')
+        .then((cap) => chatDebugLog('messenger', 'capabilities', cap.data))
+        .catch((capErr) =>
+          chatDebugLog('messenger', 'capabilities-fail', {
+            err: formatApiError(capErr),
+            hint: 'Restart backend Node nếu thiếu GET /messenger/capabilities',
+          }),
+        );
     } catch (e: unknown) {
       Alert.alert('Lỗi', (e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Không tải được');
       setMessages([]);
@@ -419,9 +428,32 @@ export default function MessengerGroupChatScreen({
    *  2) Bật bubble cho group hiện hành (avatar = chữ cái đầu tên nhóm).
    *  3) Đẩy app về nền — UX giống Messenger "Nhỏ thành chat head".
    */
+  /** Áp dụng trạng thái thu hồi lên state (dùng cho API + socket). */
+  const applyRecalledLocal = useCallback((messageId: string) => {
+    setMessages((prev) =>
+      prev.map((m) =>
+        String(m.id) === String(messageId)
+          ? {
+              ...m,
+              is_recalled: true,
+              content: '',
+              attachment_url: null,
+              attachment_name: null,
+              attachment_mime: null,
+              attachments: null,
+              reactions: [],
+            }
+          : m,
+      ),
+    );
+  }, []);
+
   /** Toggle reaction emoji cho 1 tin nhắn (gọi backend, cập nhật optimistic). */
   const toggleReaction = useCallback(
     async (messageId: string, emoji: string) => {
+      const url = `/messenger/groups/${groupId}/chat/${messageId}/react`;
+      chatDebugLog('messenger:react', 'start', { groupId, messageId, emoji, url });
+
       const target = messages.find((m) => String(m.id) === String(messageId));
       const had = !!target?.reactions?.some(
         (r) => String(r.user_id) === myId && (r.emoji || '') === emoji,
@@ -438,15 +470,27 @@ export default function MessengerGroupChatScreen({
         }),
       );
       try {
-        const r = await api.post<{ reactions: MessengerReaction[] }>(
-          `/messenger/groups/${groupId}/chat/${messageId}/react`,
-          { emoji },
-        );
+        const r = await api.post<{ reactions: MessengerReaction[]; code?: string }>(url, { emoji });
         const rxs = Array.isArray(r.data?.reactions) ? r.data.reactions : [];
+        const actionHdr = r.headers?.['x-messenger-action'];
+        chatDebugLog('messenger:react', 'ok', {
+          messageId,
+          count: rxs.length,
+          xMessengerAction: actionHdr,
+          code: r.data?.code,
+        });
         setMessages((prev) =>
           prev.map((m) => (String(m.id) === String(messageId) ? { ...m, reactions: rxs } : m)),
         );
       } catch (e: unknown) {
+        const ex = e as { response?: { status?: number; data?: { error?: string; code?: string } } };
+        chatDebugLog('messenger:react', 'error', {
+          messageId,
+          status: ex.response?.status,
+          code: ex.response?.data?.code,
+          body: ex.response?.data,
+          err: formatApiError(e),
+        });
         // Rollback nếu lỗi
         setMessages((prev) =>
           prev.map((m) => {
@@ -458,11 +502,15 @@ export default function MessengerGroupChatScreen({
             return { ...m, reactions: next };
           }),
         );
-        Alert.alert(
-          'Lỗi',
-          (e as { response?: { data?: { error?: string } } })?.response?.data?.error ||
-            'Không thả được cảm xúc',
-        );
+        const detail = ex.response?.data?.detail;
+        const hint =
+          ex.response?.status === 404 && !ex.response?.data?.code
+            ? '\n\nBackend chưa có route react — restart server Node sau khi cập nhật code.'
+            : ex.response?.data?.code === 'MIGRATION_REQUIRED' || ex.response?.status === 503
+              ? '\n\nChạy file backend/migrations/39_messenger_recall_and_reactions.sql trên Supabase SQL Editor, sau đó restart backend.'
+              : '';
+        const detailTxt = detail ? `\n\nChi tiết: ${String(detail)}` : '';
+        Alert.alert('Lỗi cảm xúc', formatApiError(e) + detailTxt + hint);
       }
     },
     [messages, myId, groupId],
@@ -471,33 +519,61 @@ export default function MessengerGroupChatScreen({
   /** Thu hồi (recall) 1 tin nhắn của mình. */
   const recallMessage = useCallback(
     async (messageId: string) => {
+      const delUrl = `/messenger/groups/${groupId}/chat/${messageId}`;
+      const postUrl = `${delUrl}/recall`;
+      chatDebugLog('messenger:recall', 'start', { groupId, messageId, delUrl, postUrl });
+
       try {
-        await api.delete(`/messenger/groups/${groupId}/chat/${messageId}`);
-        setMessages((prev) =>
-          prev.map((m) =>
-            String(m.id) === String(messageId)
-              ? {
-                  ...m,
-                  is_recalled: true,
-                  content: '',
-                  attachment_url: null,
-                  attachment_name: null,
-                  attachment_mime: null,
-                  attachments: null,
-                  reactions: [],
-                }
-              : m,
-          ),
-        );
+        let r;
+        try {
+          r = await api.delete<{ ok?: boolean; code?: string }>(delUrl);
+          chatDebugLog('messenger:recall', 'DELETE ok', {
+            messageId,
+            xMessengerAction: r.headers?.['x-messenger-action'],
+            data: r.data,
+          });
+        } catch (delErr: unknown) {
+          const dex = delErr as { response?: { status?: number; data?: { code?: string } } };
+          chatDebugLog('messenger:recall', 'DELETE failed', {
+            messageId,
+            status: dex.response?.status,
+            code: dex.response?.data?.code,
+            err: formatApiError(delErr),
+          });
+          if (dex.response?.status === 404 && !dex.response?.data?.code) {
+            chatDebugLog('messenger:recall', 'retry POST recall', { postUrl });
+            r = await api.post<{ ok?: boolean }>(postUrl);
+            chatDebugLog('messenger:recall', 'POST ok', {
+              messageId,
+              xMessengerAction: r.headers?.['x-messenger-action'],
+            });
+          } else {
+            throw delErr;
+          }
+        }
+        applyRecalledLocal(messageId);
+        chatDebugLog('messenger:recall', 'local state updated', { messageId });
       } catch (e: unknown) {
-        Alert.alert(
-          'Lỗi',
-          (e as { response?: { data?: { error?: string } } })?.response?.data?.error ||
-            'Không thu hồi được tin nhắn',
-        );
+        const ex = e as { response?: { status?: number; data?: { error?: string; code?: string } } };
+        chatDebugLog('messenger:recall', 'error', {
+          messageId,
+          status: ex.response?.status,
+          code: ex.response?.data?.code,
+          body: ex.response?.data,
+          err: formatApiError(e),
+        });
+        const detail = ex.response?.data?.detail;
+        const hint =
+          ex.response?.status === 404 && !ex.response?.data?.code
+            ? '\n\nBackend chưa có route thu hồi — restart server Node.'
+            : ex.response?.data?.code === 'MIGRATION_REQUIRED' || ex.response?.status === 503
+              ? '\n\nChạy file backend/migrations/39_messenger_recall_and_reactions.sql trên Supabase SQL Editor, sau đó restart backend.'
+              : '';
+        const detailTxt = detail ? `\n\nChi tiết: ${String(detail)}` : '';
+        Alert.alert('Lỗi thu hồi', formatApiError(e) + detailTxt + hint);
       }
     },
-    [groupId],
+    [groupId, applyRecalledLocal],
   );
 
   const confirmRecall = useCallback(
@@ -720,6 +796,10 @@ export default function MessengerGroupChatScreen({
         (ev: { group_id?: string; message_id?: string; reactions?: MessengerReaction[] }) => {
           if (String(ev?.group_id || '') !== String(groupId)) return;
           if (!ev?.message_id) return;
+          chatDebugLog('messenger:react', 'socket', {
+            messageId: ev.message_id,
+            count: Array.isArray(ev.reactions) ? ev.reactions.length : 0,
+          });
           setMessages((prev) =>
             prev.map((m) =>
               String(m.id) === String(ev.message_id)
@@ -729,28 +809,17 @@ export default function MessengerGroupChatScreen({
           );
         },
       );
-      // Realtime recall — đổi tin nhắn về trạng thái đã thu hồi
+      // Realtime recall — đổi tin nhắn về trạng thái đã thu hồi (mọi thành viên nhóm)
       socket.on(
         'messenger_group:recalled',
-        (ev: { group_id?: string; message_id?: string }) => {
+        (ev: { group_id?: string; message_id?: string; recalled_by?: string }) => {
           if (String(ev?.group_id || '') !== String(groupId)) return;
           if (!ev?.message_id) return;
-          setMessages((prev) =>
-            prev.map((m) =>
-              String(m.id) === String(ev.message_id)
-                ? {
-                    ...m,
-                    is_recalled: true,
-                    content: '',
-                    attachment_url: null,
-                    attachment_name: null,
-                    attachment_mime: null,
-                    attachments: null,
-                    reactions: [],
-                  }
-                : m,
-            ),
-          );
+          chatDebugLog('messenger:recall', 'socket', {
+            messageId: ev.message_id,
+            recalledBy: ev.recalled_by,
+          });
+          applyRecalledLocal(String(ev.message_id));
         },
       );
     })();
@@ -760,7 +829,7 @@ export default function MessengerGroupChatScreen({
       try { socket?.emit('leave:messenger_group', groupId); } catch { /* */ }
       socket?.disconnect();
     };
-  }, [groupId, loadAll]);
+  }, [groupId, loadAll, applyRecalledLocal]);
 
   /* ── send ──────────────────────────────────────────── */
   const appendMsg = useCallback((msg: MessengerMessage) => {
