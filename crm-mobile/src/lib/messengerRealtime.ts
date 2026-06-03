@@ -2,6 +2,7 @@ import type { Socket } from 'socket.io-client';
 
 export type MessengerRealtimeEvent =
   | 'messenger_group:chat'
+  | 'messenger_group:reaction'
   | 'messenger_group:reactions'
   | 'messenger_group:recalled'
   | 'messenger_group:read'
@@ -18,7 +19,6 @@ let bound = false;
 
 const EVENTS: MessengerRealtimeEvent[] = [
   'messenger_group:chat',
-  'messenger_group:reactions',
   'messenger_group:recalled',
   'messenger_group:read',
   'messenger_group:members',
@@ -58,6 +58,14 @@ export function bindMessengerSocket(s: Socket) {
     s.off(ev);
     s.on(ev, (payload: unknown) => dispatch(ev, payload));
   }
+  const onReaction = (payload: unknown) => {
+    dispatch('messenger_group:reaction', payload);
+    dispatch('messenger_group:reactions', payload);
+  };
+  s.off('messenger_group:reaction');
+  s.off('messenger_group:reactions');
+  s.on('messenger_group:reaction', onReaction);
+  s.on('messenger_group:reactions', onReaction);
 
   if (s.connected) rejoinAll();
 }
