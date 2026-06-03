@@ -115,8 +115,11 @@ function CategoryGrid({ categories, selectedId, onSelect }) {
   if (!categories.length) return null;
   return (
     <section className="mb-8">
-      <h2 className="text-xl font-bold text-gray-900 mb-3 flex items-center gap-2">
-        <Library className="h-5 w-5 text-violet-600" /> Danh mục
+      <h2
+        className="text-xl font-bold text-white mb-3 flex items-center gap-2"
+        style={{ color: '#ffffff' }}
+      >
+        <Library className="h-5 w-5 text-white/90" /> Danh mục
       </h2>
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
         <button
@@ -489,12 +492,15 @@ export default function KnowledgeLibraryPage() {
 
       <section>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-            <Award className="h-5 w-5 text-violet-600" />
+          <h2
+            className="text-xl font-bold text-white flex items-center gap-2"
+            style={{ color: '#ffffff' }}
+          >
+            <Award className="h-5 w-5 text-white/90" />
             {selectedCategory
               ? `Bài học: ${categoriesFlat.find((c) => c.id === selectedCategory)?.name || ''}`
               : 'Tất cả bài học'}
-            <span className="text-sm text-gray-400 font-normal">({filteredLessons.length})</span>
+            <span className="text-sm text-white/70 font-normal">({filteredLessons.length})</span>
           </h2>
           <div className="relative w-full sm:w-72">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />

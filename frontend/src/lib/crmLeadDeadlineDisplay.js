@@ -51,6 +51,52 @@ function fieldToDeadlineSource(field) {
   return null;
 }
 
+/** Định dạng thời gian còn lại / quá hạn (ms, dương). */
+export function formatCrmRemainingMs(ms) {
+  if (ms == null || !Number.isFinite(ms) || ms <= 0) return '';
+  const h = Math.floor(ms / 3600000);
+  const d = Math.floor(h / 24);
+  const hr = h % 24;
+  if (d > 0) return `${d} ngày ${hr} giờ`;
+  if (h > 0) return `${h} giờ`;
+  const m = Math.floor(ms / 60000);
+  return m > 0 ? `${m} phút` : '< 1 phút';
+}
+
+/** Mức urgency: overdue (<0) | soon (≤24h) | warn (≤3 ngày) | ok */
+export function getCrmDeadlineUrgencyFromTs(deadlineTs) {
+  if (deadlineTs == null || Number.isNaN(deadlineTs)) {
+    return { level: 'ok', remainingMs: null, deadlineTs: null };
+  }
+  const remainingMs = deadlineTs - Date.now();
+  if (remainingMs < 0) return { level: 'overdue', remainingMs, deadlineTs };
+  if (remainingMs <= 24 * 3600000) return { level: 'soon', remainingMs, deadlineTs };
+  if (remainingMs <= 3 * 24 * 3600000) return { level: 'warn', remainingMs, deadlineTs };
+  return { level: 'ok', remainingMs, deadlineTs };
+}
+
+export function getCrmDeadlineUrgencyFromIso(iso) {
+  if (iso == null || iso === '') return getCrmDeadlineUrgencyFromTs(null);
+  return getCrmDeadlineUrgencyFromTs(new Date(iso).getTime());
+}
+
+/** Class Tailwind cho badge Còn / Sắp / Quá hạn */
+export function getCrmDeadlineUrgencyBadgeClass(level, { pulseOverdue = true } = {}) {
+  switch (level) {
+    case 'overdue':
+      return [
+        'bg-red-600 text-white border-red-700 font-bold shadow-md shadow-red-500/40',
+        pulseOverdue ? 'animate-pulse ring-2 ring-red-400/60' : 'ring-1 ring-red-500/50',
+      ].join(' ');
+    case 'soon':
+      return 'bg-orange-500 text-white border-orange-600 font-bold shadow-md shadow-orange-500/35 ring-2 ring-orange-300/50';
+    case 'warn':
+      return 'bg-amber-300 text-amber-950 border-amber-500 font-semibold shadow-sm';
+    default:
+      return 'bg-emerald-50 text-emerald-800 border-emerald-300 font-semibold';
+  }
+}
+
 /** View Deadline: theo cấu hình primary / fallback công ty. */
 export function pickDeadlineConfigValueWithSource(item, primary, fallback) {
   const readTs = (field) => {

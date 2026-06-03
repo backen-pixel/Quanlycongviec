@@ -537,7 +537,8 @@ function ProductionByOwnerCard({ item, goProject }) {
   return (
     <div
       onClick={() => goProject(item.id)}
-      className="bg-white rounded-lg border border-gray-200 p-3 hover:shadow-md transition-all cursor-pointer group"
+      className="!bg-white rounded-lg border border-gray-200 p-3 hover:shadow-md transition-all cursor-pointer group"
+      style={{ backgroundColor: '#ffffff' }}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
@@ -753,7 +754,7 @@ function PlannerColumn({ topBarColor, title, subtitle, count, headerExtras, chil
         {subtitle && <p className="text-[10px] text-gray-500">{subtitle}</p>}
       </div>
       <div
-        className={`border border-white/30 border-t-0 overflow-y-auto p-2 space-y-2 ${isDragOver ? 'bg-blue-50/60' : ''}`}
+        className={`border border-gray-200 border-t-0 overflow-y-auto p-2 space-y-2 bg-transparent ${isDragOver ? 'bg-blue-50/40' : ''}`}
         style={{ maxHeight: '70vh', minHeight: '160px' }}
       >
         {children}
@@ -1165,7 +1166,8 @@ function DeadlineCard({ item, goProject }) {
     <div
       data-sx-deadline-card
       onClick={() => goProject(item.id)}
-      className="bg-white rounded-lg border border-gray-200 p-2.5 hover:shadow-md transition-all cursor-pointer"
+      className="!bg-white rounded-lg border border-gray-200 p-2.5 hover:shadow-md transition-all cursor-pointer"
+      style={{ backgroundColor: '#ffffff' }}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">

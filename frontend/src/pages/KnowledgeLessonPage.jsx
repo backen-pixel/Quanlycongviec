@@ -10,6 +10,7 @@ import {
   PlayCircle, Loader2, Clock, Award, ArrowRight, ListChecks,
   Bookmark, Star, Tag, AlertCircle, MessageSquare, Trophy, X,
 } from 'lucide-react';
+import { KNOWLEDGE_BACK_LINK_CLASS, knowledgeBackLinkStyle } from '../lib/knowledgeNavStyles';
 
 function StarRow({ value, onClick, size = 'h-5 w-5' }) {
   return (
@@ -349,7 +350,7 @@ export default function KnowledgeLessonPage() {
         </div>
       )}
 
-      <Link to="/knowledge" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-violet-600 mb-4">
+      <Link to="/knowledge" className={`${KNOWLEDGE_BACK_LINK_CLASS} mb-4`} style={knowledgeBackLinkStyle}>
         <ChevronLeft className="h-4 w-4" /> Thư viện kiến thức
       </Link>
 

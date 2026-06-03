@@ -574,7 +574,7 @@ export default function KpiMonthlyScorecard() {
         {/* Header */}
         <div className="flex items-start justify-between flex-wrap gap-3">
           <div>
-            <h1 className="text-2xl font-bold text-white">Bảng điểm KPI tháng</h1>
+            <h1 className="text-2xl font-bold text-white" style={{ color: '#ffffff' }}>Bảng điểm KPI tháng</h1>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <input
@@ -583,8 +583,8 @@ export default function KpiMonthlyScorecard() {
               onChange={(e) => setPeriodStart(`${e.target.value}-01`)}
               className="px-3 py-2 bg-white border border-slate-300 text-black rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/60 [color-scheme:light]"
             />
-            <button onClick={load} className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm flex items-center gap-1.5 transition-colors cursor-pointer">
-              <RefreshCw className="w-4 h-4" /> Tính lại
+            <button onClick={load} disabled={loading} className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed">
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Đang tính…' : 'Tính lại'}
             </button>
             <button
               onClick={handleExport}
@@ -691,9 +691,11 @@ export default function KpiMonthlyScorecard() {
                 </div>
                 <button
                   onClick={load}
-                  className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
+                  disabled={loading}
+                  className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  <Filter className="w-4 h-4" /> Lọc
+                  {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Filter className="w-4 h-4" />}
+                  {loading ? 'Đang tính…' : 'Lọc'}
                 </button>
               </div>
             </label>
@@ -730,7 +732,15 @@ export default function KpiMonthlyScorecard() {
         )}
 
         {loading ? (
-          <div className="text-center py-16 text-slate-500">Đang tính KPI cho tất cả nhân viên… (có thể mất 30-60s)</div>
+          <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-6 py-12 flex flex-col items-center justify-center gap-3 text-center">
+            <RefreshCw className="w-9 h-9 text-indigo-400 animate-spin" />
+            <div className="text-base font-semibold text-white">Đang tính toán KPI cho từng nhân viên…</div>
+            <div className="text-sm text-slate-400">Hệ thống đang tổng hợp dữ liệu và chấm điểm. Quá trình có thể mất 30–60 giây, vui lòng đợi.</div>
+            <div className="mt-1 flex items-center gap-1.5 text-xs text-indigo-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 animate-pulse" />
+              Vui lòng không đóng trang trong khi đang tính
+            </div>
+          </div>
         ) : data && activeTab === 'scorecard' ? (
           <div className={`rounded-xl border border-slate-800 bg-slate-900/70 overflow-x-auto ${usersSorted.length > 10 ? 'max-h-[640px] overflow-y-auto' : ''}`}>
             <table className="w-full text-sm border-separate border-spacing-0">

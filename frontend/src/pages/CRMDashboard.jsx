@@ -11,7 +11,7 @@ import {
   FileText, ShoppingCart, Receipt, ArrowRight, Eye, Percent, GripVertical,
   Zap, CheckCircle2, TrendingUp, TrendingDown, AlertTriangle, Building2, Rocket, Pin,
   Clock, List, LayoutGrid, GitMerge, UserCheck, Trash2, CheckSquare, BarChart3,
-  MessageSquare,
+  MessageSquare, MinusSquare,
 } from 'lucide-react';
 import { ListView, PlannerView, DeadlineView, CommentsView } from '../components/CRMViews';
 import { resolveCrmLeadKanbanScheduleSource } from '../lib/crmLeadDeadlineDisplay';
@@ -54,6 +54,11 @@ import {
 } from '../lib/crmDealStageGate';
 import DealStageEventModal from '../components/DealStageEventModal';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
+import {
+  formatCrmRemainingMs,
+  getCrmDeadlineUrgencyBadgeClass,
+  getCrmDeadlineUrgencyFromIso,
+} from '../lib/crmLeadDeadlineDisplay';
 import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import { logFilter } from '../lib/activityLogger';
@@ -285,19 +290,6 @@ function getCrmOpenTaskDeadlineTone(deadlineIso) {
   if (remainingMs <= 24 * 3600000) return { level: 'soon', remainingMs, deadlineTs };
   if (remainingMs <= 3 * 24 * 3600000) return { level: 'warn', remainingMs, deadlineTs };
   return { level: 'ok', remainingMs, deadlineTs };
-}
-
-function pipelineCardToneClasses(level) {
-  switch (level) {
-    case 'overdue':
-      return 'bg-red-100 border-red-300';
-    case 'soon':
-      return 'bg-orange-100 border-orange-300';
-    case 'warn':
-      return 'bg-orange-50 border-orange-200';
-    default:
-      return 'bg-white border-gray-200';
-  }
 }
 
 // ── HELPER: tính khoảng thời gian ──
@@ -4170,17 +4162,17 @@ export default function CRMDashboard() {
             {/* Chú thích màu sắc thẻ Kanban — chỉ hiện sau khi load xong dữ liệu */}
             {!firstLoading && (
               <div className="flex flex-wrap items-center gap-3 px-3 py-2 border-t border-gray-100 bg-white text-[11px] text-gray-600">
-                <span className="font-semibold text-gray-500 mr-1">Chú thích:</span>
+                <span className="font-semibold text-gray-500 mr-1">Chú thích badge hạn:</span>
                 <span className="inline-flex items-center gap-1.5">
-                  <span className="inline-block h-3 w-5 rounded border border-gray-300 bg-white" aria-hidden />
-                  Bình thường
+                  <span className="inline-block h-3.5 px-1.5 rounded border border-emerald-200 bg-emerald-50 text-[9px] text-emerald-700" aria-hidden>Còn</span>
+                  Còn hạn
                 </span>
                 <span className="inline-flex items-center gap-1.5">
-                  <span className="inline-block h-3 w-5 rounded border border-orange-300 bg-orange-100" aria-hidden />
+                  <span className="inline-block h-3.5 px-1.5 rounded border border-orange-500 bg-orange-500 text-[9px] text-white" aria-hidden>Sắp</span>
                   Sắp tới hạn
                 </span>
                 <span className="inline-flex items-center gap-1.5">
-                  <span className="inline-block h-3 w-5 rounded border border-red-300 bg-red-100" aria-hidden />
+                  <span className="inline-block h-3.5 px-1.5 rounded border border-red-600 bg-red-600 text-[9px] text-white" aria-hidden>Quá</span>
                   Quá hạn
                 </span>
               </div>
@@ -5535,12 +5527,19 @@ function KanbanStageCard({
               <button
                 type="button"
                 onClick={() => onToggleSelectAllInColumn(columnItemIds)}
-                className={`px-2 py-1 rounded-lg border border-gray-200 bg-white font-semibold text-gray-700 hover:bg-amber-50 hover:border-amber-300 transition-colors ${
-                  compact ? 'text-[10px]' : 'text-xs'
+                aria-label={allInColumnSelected ? 'Bỏ chọn mọi lead/deal trong cột này' : 'Chọn tất cả trong cột'}
+                className={`inline-flex items-center justify-center rounded-lg border transition-colors ${
+                  compact ? 'h-6 w-6' : 'h-7 w-7'
+                } ${
+                  allInColumnSelected
+                    ? 'border-amber-300 bg-amber-50 text-amber-600 hover:bg-amber-100'
+                    : 'border-gray-200 bg-white text-gray-500 hover:bg-amber-50 hover:border-amber-300 hover:text-amber-600'
                 }`}
                 title={allInColumnSelected ? 'Bỏ chọn mọi lead/deal trong cột này' : 'Chọn tất cả trong cột'}
               >
-                {allInColumnSelected ? 'Bỏ chọn cột' : 'Chọn tất cả'}
+                {allInColumnSelected
+                  ? <MinusSquare className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} strokeWidth={2.2} />
+                  : <CheckSquare className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} strokeWidth={2.2} />}
               </button>
             )}
             <span className={`px-2 py-1 bg-gray-100 text-gray-700 font-bold rounded ${compact ? 'text-[10px]' : 'text-xs'}`}>
@@ -5639,7 +5638,6 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
   const scheduleSource = manualDeadlineTone ? 'deadline' : (taskTone ? 'task' : 'sla');
   const cardToneLevel = (manualDeadlineTone || taskTone || slaTone).level;
   const scheduleTone = manualDeadlineTone || taskTone || slaTone;
-  const cardSurface = pipelineCardToneClasses(cardToneLevel);
 
   // SLA badge phía bên phải giá trị tiền
   const slaBadge = (() => {
@@ -5649,25 +5647,24 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
       ? formatRemainingMs(Math.abs(scheduleTone.remainingMs))
       : formatRemainingMs(scheduleTone.remainingMs);
     if (!remainingLabel) return null;
-    const tonePalette =
-      cardToneLevel === 'overdue' ? 'bg-red-50 text-red-700 border-red-200'
-      : cardToneLevel === 'soon'  ? 'bg-orange-50 text-orange-700 border-orange-200'
-      : cardToneLevel === 'warn'  ? 'bg-amber-50 text-amber-800 border-amber-200'
-      : 'bg-slate-50 text-slate-600 border-slate-200';
+    const tonePalette = getCrmDeadlineUrgencyBadgeClass(cardToneLevel);
     const sourceLabel =
       scheduleSource === 'deadline' ? 'Deadline thẻ'
       : scheduleSource === 'task' ? 'NV CRM mở'
       : 'SLA cột';
+    const isUrgent = cardToneLevel === 'overdue' || cardToneLevel === 'soon';
     return (
       <span
-        className={`shrink-0 inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${tonePalette}`}
+        className={`shrink-0 inline-flex items-center gap-1 rounded-md border tabular-nums leading-none ${
+          isUrgent ? 'px-2 py-1 text-[11px]' : 'px-1.5 py-0.5 text-[10px] font-semibold'
+        } ${tonePalette}`}
         title={[
           `Hạn: ${new Date(scheduleTone.deadlineTs).toLocaleString('vi-VN')}`,
           `Nguồn: ${sourceLabel}`,
           isOverdue ? `Đã quá ${remainingLabel}` : `Còn ${remainingLabel}`,
         ].join('\n')}
       >
-        <Clock className="h-3 w-3" strokeWidth={2.4} />
+        <Clock className={isUrgent ? 'h-3.5 w-3.5' : 'h-3 w-3'} strokeWidth={2.6} />
         {isOverdue ? <>Quá {remainingLabel}</> : <>Còn {remainingLabel}</>}
       </span>
     );
@@ -5759,7 +5756,7 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
         }
         openLeadDetail();
       }}
-      className={`relative overflow-hidden rounded-lg border transition-all duration-200 group/card hover:-translate-y-0.5 hover:shadow-md ${cardSurface} ${
+      className={`relative overflow-hidden rounded-lg border border-gray-200 !bg-white transition-all duration-200 group/card hover:-translate-y-0.5 hover:shadow-md ${
         dealDragLocked ? 'cursor-default' : 'cursor-pointer'
       } ${selectedForMerge ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
       style={{ borderTop: `3px solid ${stageColor}` }}
@@ -5807,7 +5804,10 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
             </span>
           )}
           {cardToneLevel === 'overdue' && (
-            <AlertTriangle className="h-3 w-3 text-red-500 shrink-0" aria-hidden />
+            <AlertTriangle className="h-3.5 w-3.5 text-red-600 shrink-0 animate-pulse" aria-hidden />
+          )}
+          {cardToneLevel === 'soon' && (
+            <AlertTriangle className="h-3.5 w-3.5 text-orange-500 shrink-0" aria-hidden />
           )}
           {item.is_new_for_current_user && (
             <span className="ml-auto shrink-0 inline-flex items-center rounded bg-rose-500 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white leading-none">
@@ -5824,14 +5824,18 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
           {item.title || <span className="italic text-slate-400">(Không tiêu đề)</span>}
         </p>
 
-        {/* 3. Giá trị tiền (lớn, xanh) + SLA badge bên phải */}
-        {(item.estimated_value > 0 || slaBadge) && (
-          <div className="flex items-center justify-between gap-2">
-            {item.estimated_value > 0 ? (
-              <p className={`font-bold tabular-nums leading-none text-emerald-600 ${compact ? 'text-[15px]' : 'text-[16px]'}`}>
-                {formatVND(item.estimated_value)}
-              </p>
-            ) : <span className="text-[11px] text-slate-400 italic">Chưa định giá</span>}
+        {/* 3. Giá trị tiền (lớn, xanh) */}
+        {item.estimated_value > 0 && (
+          <p className={`font-bold tabular-nums leading-none text-emerald-600 ${compact ? 'text-[15px]' : 'text-[16px]'}`}>
+            {formatVND(item.estimated_value)}
+          </p>
+        )}
+        {item.estimated_value <= 0 && !slaBadge && (
+          <span className="text-[11px] text-slate-400 italic">Chưa định giá</span>
+        )}
+        {/* Badge hạn — full width khi quá hạn / sắp quá hạn để dễ nhìn */}
+        {slaBadge && (
+          <div className={`flex ${cardToneLevel === 'overdue' || cardToneLevel === 'soon' ? 'w-full' : 'justify-end'}`}>
             {slaBadge}
           </div>
         )}
@@ -5884,18 +5888,15 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
         {typeof onOpenDeadline === 'function' && item.kanban_deadline_at && (() => {
           const ts = new Date(item.kanban_deadline_at).getTime();
           if (Number.isNaN(ts)) return null;
-          const remain = ts - Date.now();
-          const overdue = remain < 0;
-          const soon = !overdue && remain <= 24 * 3600000;
-          const tone = overdue ? 'bg-red-100 text-red-700 border-red-200 hover:bg-red-200/80'
-            : soon ? 'bg-orange-100 text-orange-700 border-orange-200 hover:bg-orange-200/80'
-            : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100';
+          const { level } = getCrmDeadlineUrgencyFromIso(item.kanban_deadline_at);
+          const tone = `${getCrmDeadlineUrgencyBadgeClass(level)} hover:opacity-90 cursor-pointer`;
+          const urgent = level === 'overdue' || level === 'soon';
           return (
             <button
               type="button"
               data-kanban-deadline-btn
               onClick={(ev) => { ev.stopPropagation(); onOpenDeadline(item); }}
-              className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold cursor-pointer transition-colors ${tone}`}
+              className={`inline-flex items-center gap-1 rounded-md border transition-opacity ${urgent ? 'px-2 py-1 text-[11px]' : 'px-1.5 py-0.5 text-[10px] font-semibold'} ${tone}`}
               title={`Deadline thẻ — bấm để sửa (${new Date(item.kanban_deadline_at).toLocaleString('vi-VN')})`}
             >
               <Clock className="h-3 w-3" strokeWidth={2.4} />
@@ -5906,13 +5907,13 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
 
         {/* 7. Deadline kỳ vọng (expected_close_date) */}
         {item.expected_close_date && (() => {
-          const isOverdue = new Date(item.expected_close_date) < new Date();
-          const isSoon = !isOverdue && new Date(item.expected_close_date) < new Date(Date.now() + 3 * 86400000);
-          const tone = isOverdue ? 'bg-red-100 text-red-700 border-red-200'
-            : isSoon ? 'bg-amber-100 text-amber-700 border-amber-200'
-            : 'bg-purple-50 text-purple-700 border-purple-200';
+          const { level } = getCrmDeadlineUrgencyFromIso(item.expected_close_date);
+          const tone = level === 'ok'
+            ? 'bg-purple-50 text-purple-700 border-purple-200 font-medium'
+            : getCrmDeadlineUrgencyBadgeClass(level);
+          const urgent = level === 'overdue' || level === 'soon';
           return (
-            <div className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${tone}`}>
+            <div className={`inline-flex items-center gap-1 rounded-md border ${urgent ? 'px-2 py-1 text-[11px]' : 'px-1.5 py-0.5 text-[10px]'} ${tone}`}>
               <Calendar className="h-3 w-3" />
               Deadline: {new Date(item.expected_close_date).toLocaleDateString('vi-VN')}
             </div>

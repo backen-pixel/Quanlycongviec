@@ -4,6 +4,7 @@ import api from '../lib/api';
 import { isAdminLike } from '../lib/adminRole';
 import KnowledgeAttachmentEditor from '../components/KnowledgeAttachmentEditor';
 import { ChevronLeft, Plus, Trash2, Save, Loader2, Image as ImageIcon, BarChart3, AlertCircle, Tag, TrendingUp, Star, Users, ListChecks, Edit3, Search, Filter, ExternalLink, Award, ShieldCheck, Upload, X } from 'lucide-react';
+import { KNOWLEDGE_BACK_LINK_CLASS, knowledgeBackLinkStyle } from '../lib/knowledgeNavStyles';
 
 const VIDEO_TYPES = [
   { value: '', label: 'Không video' },
@@ -370,7 +371,7 @@ export default function KnowledgeAdminPage() {
 
   return (
     <div className="max-w-5xl mx-auto">
-      <Link to="/knowledge" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-blue-600 mb-4">
+      <Link to="/knowledge" className={`${KNOWLEDGE_BACK_LINK_CLASS} mb-4`} style={knowledgeBackLinkStyle}>
         <ChevronLeft className="h-4 w-4" /> Thư viện
       </Link>
       <h1 className="text-2xl font-bold mb-4">Quản lý kiến thức</h1>

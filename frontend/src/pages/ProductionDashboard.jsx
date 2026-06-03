@@ -1736,32 +1736,12 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
 
   const primaryDeadline = item.production_deadline || item.deadline || null;
   const primaryUrgency = getDeadlineUrgency(primaryDeadline);
-  const cardUrgent = primaryUrgency?.tone === 'overdue' || primaryUrgency?.tone === 'urgent';
   const customerInitials = getInitials(item.customer?.full_name || item.name || '');
   const progress = item.sx_pipeline_percent != null ? Math.max(0, Math.min(100, Number(item.sx_pipeline_percent) || 0)) : null;
 
-  // Thanh trạng thái 3px ở đầu card — chỉ tô màu khi cần chú ý.
-  // overdue=đỏ, urgent/soon=cam, còn lại (đúng hạn / chưa có deadline)=xám nhạt.
-  const statusStripClass = (() => {
-    const t = primaryUrgency?.tone;
-    if (t === 'overdue') return 'bg-red-500';
-    if (t === 'urgent' || t === 'soon') return 'bg-amber-500';
-    return 'bg-gray-200';
-  })();
-  // Nền card: chỉ tô đỏ/cam cho card cần chú ý, còn lại để trắng cho gọn mắt.
-  const cardBgClass = (() => {
-    const t = primaryUrgency?.tone;
-    if (t === 'overdue') return 'bg-red-50';
-    if (t === 'urgent' || t === 'soon') return 'bg-amber-50';
-    return 'bg-white';
-  })();
-  // Viền card đồng bộ với trạng thái (giảm khi bị chọn).
-  const cardBorderToneClass = (() => {
-    const t = primaryUrgency?.tone;
-    if (t === 'overdue') return 'border-red-200';
-    if (t === 'urgent' || t === 'soon') return 'border-amber-200';
-    return 'border-gray-200';
-  })();
+  // Thanh 3px trên đầu — xám nhạt (không tô màu cảnh báo lên nền card).
+  const statusStripClass = 'bg-gray-200';
+  const cardBorderToneClass = 'border-gray-200';
 
   return (
     <div
@@ -1774,13 +1754,14 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
         markWorkshopPipelineCardFocus(item.id, 'sx');
         navigate(`/sx/projects/${item.id}`);
       }}
-      className={`relative ${cardBgClass} rounded-lg border overflow-hidden px-3 pt-3 pb-2.5 transition-all duration-200 group hover:shadow-md ${
+      className={`relative !bg-white rounded-lg border overflow-hidden px-3 pt-3 pb-2.5 transition-all duration-200 group hover:shadow-md ${
         lockedInVc ? 'cursor-default' : 'cursor-pointer'
       } ${
         isSelected
           ? 'ring-2 ring-blue-400 ring-offset-1 border-blue-200'
           : cardBorderToneClass
       }`}
+      style={{ backgroundColor: '#ffffff' }}
     >
       {/* Thanh trạng thái 3px trên đầu — nhận biết deadline khi lướt */}
       <span
