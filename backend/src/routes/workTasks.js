@@ -24,6 +24,7 @@ const {
   deleteCrmAssignment,
   addCrmAssignmentComment,
 } = require('../helpers/crmAssignmentMutations');
+const { mergeDeadlineHistoryIntoUnified } = require('../helpers/crmKanbanDeadlineHistory');
 
 const r = Router();
 r.use(auth);
@@ -205,11 +206,37 @@ r.get('/history', async (req, res) => {
       }
     }
 
-    q = q.range(from, to);
-    const { data, error, count } = await q;
-    if (error) throw error;
+    let history;
+    let total;
+    if (lead_id) {
+      const { data: rows, error: eLead } = await q.limit(150);
+      if (eLead) throw eLead;
+      let merged = rows || [];
+      try {
+        const { data: dlRows } = await supabase
+          .from('crm_lead_deadline_history')
+          .select(`
+            id, old_deadline_at, new_deadline_at, reason, source, created_at,
+            changer:users!crm_lead_deadline_history_changed_by_fkey(id, full_name, avatar)
+          `)
+          .eq('lead_id', lead_id)
+          .order('created_at', { ascending: false })
+          .limit(100);
+        merged = mergeDeadlineHistoryIntoUnified(merged, dlRows || [], lead_id);
+      } catch (dlErr) {
+        console.warn('[work-tasks] merge deadline history:', dlErr.message);
+      }
+      total = merged.length;
+      history = merged.slice(from, to + 1);
+    } else {
+      q = q.range(from, to);
+      const { data, error, count } = await q;
+      if (error) throw error;
+      history = data || [];
+      total = count ?? history.length;
+    }
 
-    res.json({ history: data || [], total: count ?? data?.length ?? 0, page, page_size: pageSize });
+    res.json({ history, total, page, page_size: pageSize });
   } catch (e) {
     console.error('[work-tasks] history:', e);
     res.status(500).json({ error: e.message || 'Lỗi tải lịch sử' });

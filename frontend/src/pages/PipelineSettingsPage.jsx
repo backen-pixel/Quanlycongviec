@@ -89,6 +89,7 @@ export default function PipelineSettingsPage() {
     create_event_on_enter: false,
     sync_role: '',
     default_probability: '',
+    requires_deadline: false,
   });
   const isAdmin = isAdminLike(user);
   const [companies, setCompanies] = useState([]);
@@ -527,6 +528,7 @@ export default function PipelineSettingsPage() {
       sync_role: '',
       default_probability: '',
       sla_days: '',
+      requires_deadline: false,
     });
   };
 
@@ -547,6 +549,7 @@ export default function PipelineSettingsPage() {
       sync_role: stage.sync_role || '',
       default_probability: stage.default_probability != null && stage.default_probability !== '' ? String(stage.default_probability) : '',
       sla_days: stage.sla_days != null && stage.sla_days !== '' ? String(stage.sla_days) : '',
+      requires_deadline: !!stage.requires_deadline,
     });
   };
 
@@ -777,6 +780,11 @@ export default function PipelineSettingsPage() {
                 {s.sync_role && (
                   <span className="bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 rounded font-medium">
                     {syncRoleLabels[s.sync_role] || s.sync_role}
+                  </span>
+                )}
+                {s.requires_deadline && !s.is_won && !s.is_lost && (
+                  <span className="bg-rose-50 text-rose-700 border border-rose-200 px-1.5 py-0.5 rounded font-medium">
+                    ⏰ Bắt buộc deadline
                   </span>
                 )}
                 {linkedSx.map((sx) => (
@@ -1726,6 +1734,24 @@ function StageForm({ form, setForm, onSave, onCancel, pipelineType = 'lead', edi
               className="rounded border-emerald-400"
             />
             <Calendar className="h-3.5 w-3.5 shrink-0" /> Hỏi tạo sự kiện khi deal chuyển vào cột này (chỉ chọn giờ)
+          </label>
+        )}
+        {!form.is_won && !form.is_lost && (
+          <label className="flex items-start gap-2 text-xs cursor-pointer text-rose-900 bg-rose-50 px-2 py-1 rounded-lg border border-rose-200">
+            <input
+              type="checkbox"
+              checked={!!form.requires_deadline}
+              onChange={(e) => setForm((f) => ({ ...f, requires_deadline: e.target.checked }))}
+              className="mt-0.5 rounded border-rose-400 accent-rose-500"
+            />
+            <span>
+              <span className="flex items-center gap-1 font-semibold">
+                <Clock className="h-3.5 w-3.5 shrink-0" /> Bắt buộc đặt deadline khi kéo thẻ tới cột này
+              </span>
+              <span className="block text-[10px] text-rose-600 mt-0.5 leading-snug">
+                Mỗi lần thẻ chuyển vào cột này sẽ hiện hộp chọn deadline + lý do và ghi nhận vào lịch sử.
+              </span>
+            </span>
           </label>
         )}
       </div>

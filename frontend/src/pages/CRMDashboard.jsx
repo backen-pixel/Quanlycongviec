@@ -53,6 +53,7 @@ import {
   isDealCrmKanbanDragLocked,
 } from '../lib/crmDealStageGate';
 import DealStageEventModal from '../components/DealStageEventModal';
+import CrmDeadlineModal from '../components/CrmDeadlineModal';
 import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import { logFilter } from '../lib/activityLogger';
@@ -690,6 +691,9 @@ export default function CRMDashboard() {
   /** Deal pipeline: mở popup chọn giờ rồi POST /events sau PATCH stage (bật theo từng pipeline tại Cài đặt pipeline) */
   const [dealKanbanEventCtx, setDealKanbanEventCtx] = useState(null);
   const [dealKanbanEventBusy, setDealKanbanEventBusy] = useState(false);
+  /** Cột yêu cầu deadline: mở modal chọn deadline (+ lý do) trước khi PATCH stage */
+  const [deadlineCtx, setDeadlineCtx] = useState(null);
+  const [deadlineBusy, setDeadlineBusy] = useState(false);
   /** Deal kéo sang Thắng, chưa có dự án: chọn công ty SX trước khi PATCH stage */
   const [dealWonProductionCtx, setDealWonProductionCtx] = useState(null);
   const [dealWonProductionCompanyId, setDealWonProductionCompanyId] = useState('');
@@ -2728,6 +2732,8 @@ export default function CRMDashboard() {
           if (data.vc_pipeline_stage != null) mergePatch.vc_pipeline_stage = data.vc_pipeline_stage;
           if (data.project_id !== undefined) mergePatch.project_id = data.project_id;
           if (data.stage_entered_at) mergePatch.stage_entered_at = data.stage_entered_at;
+          if (data.kanban_deadline_at !== undefined) mergePatch.kanban_deadline_at = data.kanban_deadline_at;
+          if (data.kanban_deadline_reason !== undefined) mergePatch.kanban_deadline_reason = data.kanban_deadline_reason;
           if (mergePatch.project_id) {
             mergePatch = await hydrateCrmLeadBadgeFields(api, leadId, mergePatch);
           }
@@ -2768,6 +2774,7 @@ export default function CRMDashboard() {
           const tgtStg = stagesArr.find((s) => String(s.id) === String(e.response.data.target_stage_id));
           setBlockingModal({
             leadId,
+            targetStageId: e.response.data.target_stage_id || newStageId,
             currentStageName: curStg?.name || '',
             targetStageName: tgtStg?.name || '',
             remainingTasks: e.response.data.remaining_tasks || [],
@@ -2851,6 +2858,42 @@ export default function CRMDashboard() {
         setWonAssignRegionsLoading(false);
         setWonAssignModal(true);
         return;
+      }
+
+      // Chuyển sang cột mới (trừ Thắng/Thua): (1) kiểm tra nhiệm vụ chặn TRƯỚC,
+      // nếu còn → hiện hộp nhiệm vụ; xong mới (2) hiện hộp deadline.
+      if (targetStage && !targetStage.is_won && !targetStage.is_lost) {
+        const rows = pipelineType === 'lead' ? allLeads : allDeals;
+        const card = rows.find((x) => String(x.id) === String(leadId));
+        const isSameStage = card && String(card.stage_id || '') === String(newStageId);
+        if (!isSameStage) {
+          try {
+            const { data: chk } = await api.get(`/crm/leads/${leadId}/stage-advance-check`, {
+              params: { target_stage_id: newStageId },
+            });
+            if (chk && chk.ok === false && chk.code === 'CRM_BLOCKING_TASKS_INCOMPLETE') {
+              const stagesArr = pipelineType === 'lead' ? stagesLead : stagesDeal;
+              const curStg = stagesArr.find((s) => String(s.id) === String(chk.current_stage_id));
+              setBlockingModal({
+                leadId,
+                targetStageId: newStageId,
+                currentStageName: curStg?.name || '',
+                targetStageName: targetStage?.name || '',
+                remainingTasks: chk.remaining_tasks || [],
+              });
+              return;
+            }
+          } catch (_) { /* lỗi pre-check → bỏ qua, vẫn cho mở deadline */ }
+          setDeadlineCtx({
+            leadId,
+            newStageId,
+            extraData,
+            targetStage,
+            card: card || null,
+            mode: 'stage_move',
+          });
+          return;
+        }
       }
 
       if (pipelineType === 'deal' && targetStage && !targetStage.is_lost && targetStage.create_event_on_enter) {
@@ -3061,6 +3104,58 @@ export default function CRMDashboard() {
       alert(e.response?.data?.error || e.message || 'Lỗi cập nhật giai đoạn');
     } finally {
       setDealKanbanEventBusy(false);
+    }
+  };
+
+  /** Mở modal deadline từ nút trên thẻ (không đổi cột). */
+  const openDeadlineFromCard = useCallback((item) => {
+    setDeadlineCtx({
+      leadId: item.id,
+      newStageId: null,
+      extraData: {},
+      targetStage: null,
+      card: item,
+      mode: 'edit_only',
+    });
+  }, []);
+
+  /** Lưu deadline: kèm chuyển cột hoặc chỉ sửa deadline trên thẻ. */
+  const confirmDeadlineMove = async ({ deadlineIso, reason }) => {
+    const ctx = deadlineCtx;
+    if (!ctx) return;
+    setDeadlineBusy(true);
+    try {
+      if (ctx.mode === 'edit_only') {
+        await api.patch(`/crm/leads/${ctx.leadId}/deadline`, {
+          kanban_deadline_at: deadlineIso,
+          reason: reason || '',
+        });
+        const lid = String(ctx.leadId);
+        const patch = {
+          kanban_deadline_at: deadlineIso,
+          kanban_deadline_reason: reason || null,
+        };
+        if (pipelineType === 'lead') {
+          setAllLeads((prev) => prev.map((l) => (String(l.id) === lid ? { ...l, ...patch } : l)));
+        } else {
+          setAllDeals((prev) => prev.map((d) => (String(d.id) === lid ? { ...d, ...patch } : d)));
+        }
+        setDeadlineCtx(null);
+        load({ silent: true });
+        return;
+      }
+      await applyKanbanStageChange(
+        ctx.leadId,
+        ctx.newStageId,
+        { ...ctx.extraData, kanban_deadline_at: deadlineIso, deadline_reason: reason || '' },
+        { throwOnError: true },
+      );
+      setDeadlineCtx(null);
+      load({ silent: true });
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi cập nhật deadline');
+    } finally {
+      setDeadlineBusy(false);
     }
   };
 
@@ -4069,6 +4164,7 @@ export default function CRMDashboard() {
               }}
               onTogglePin={togglePinFlag}
               onToggleInteracted={toggleInteractedFlag}
+              onOpenDeadline={openDeadlineFromCard}
               remeasureToken={showAdvSearch ? 1 : 0}
             />
             {/* Chú thích màu sắc thẻ Kanban — chỉ hiện sau khi load xong dữ liệu */}
@@ -4595,12 +4691,41 @@ export default function CRMDashboard() {
         submitting={dealKanbanEventBusy}
       />
 
+      <CrmDeadlineModal
+        open={!!deadlineCtx}
+        title={deadlineCtx?.mode === 'edit_only' ? 'Deadline thẻ' : 'Đặt deadline khi chuyển cột'}
+        subtitle={
+          deadlineCtx?.mode === 'edit_only'
+            ? 'Mọi thay đổi đều được ghi vào lịch sử trong chi tiết lead/deal.'
+            : 'Chọn hạn xử lý cho thẻ ở cột mới. Mọi thay đổi đều được ghi vào lịch sử.'
+        }
+        stageName={deadlineCtx?.mode === 'stage_move' ? deadlineCtx?.targetStage?.name : ''}
+        initialDeadline={deadlineCtx?.card?.kanban_deadline_at || null}
+        currentDeadline={deadlineCtx?.card?.kanban_deadline_at || null}
+        mandatory={deadlineCtx?.mode === 'stage_move'}
+        requireReason={deadlineCtx?.mode === 'edit_only' && !!deadlineCtx?.card?.kanban_deadline_at}
+        allowClear={deadlineCtx?.mode === 'edit_only' && !!deadlineCtx?.card?.kanban_deadline_at}
+        submitting={deadlineBusy}
+        onClose={() => { if (!deadlineBusy) setDeadlineCtx(null); }}
+        onConfirm={confirmDeadlineMove}
+      />
+
       <BlockingTasksAlertModal
         open={!!blockingModal}
         onClose={() => setBlockingModal(null)}
+        leadId={blockingModal?.leadId}
         currentStageName={blockingModal?.currentStageName}
         targetStageName={blockingModal?.targetStageName}
         remainingTasks={blockingModal?.remainingTasks || []}
+        onChanged={() => load({ silent: true })}
+        onAllCleared={() => {
+          const bm = blockingModal;
+          setBlockingModal(null);
+          // Hết nhiệm vụ chặn → chạy lại luồng chuyển cột (sẽ hiện hộp deadline).
+          if (bm?.leadId && bm?.targetStageId) {
+            handleMoveStage(bm.leadId, bm.targetStageId);
+          }
+        }}
         onGoToTasks={() => {
           if (blockingModal?.leadId) {
             window.open(`/crm/leads/${blockingModal.leadId}?tab=tasks`, '_blank');
@@ -5336,6 +5461,7 @@ function KanbanStageCard({
   onOpenKanbanComment,
   onTogglePin,
   onToggleInteracted,
+  onOpenDeadline,
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
@@ -5458,6 +5584,7 @@ function KanbanStageCard({
               onOpenKanbanComment={onOpenKanbanComment}
               onTogglePin={onTogglePin}
               onToggleInteracted={onToggleInteracted}
+              onOpenDeadline={onOpenDeadline}
             />
           ))
         )}
@@ -5467,7 +5594,7 @@ function KanbanStageCard({
 }
 
 // Kanban Item Card - MISA style (redesign: header gọn, value lớn, footer phụ trách + actions)
-function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted }) {
+function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline }) {
   const navigate = useNavigate();
   const dealDragLocked = isDealCrmKanbanDragLocked(item, pipelineType);
   const openLeadDetail = () => {
@@ -5505,10 +5632,13 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
 
   const slaTone = getPipelineStageSlaTone(item.stage_entered_at, stage);
   const taskTone = getCrmOpenTaskDeadlineTone(item.crm_next_open_task_deadline);
+  // Deadline thủ công (kanban_deadline_at) ưu tiên cao nhất cho «còn/quá hạn».
+  const manualDeadlineTone = getCrmOpenTaskDeadlineTone(item.kanban_deadline_at);
   const scheduleResolved = resolveCrmLeadKanbanScheduleSource(item, stage);
-  // Ưu tiên hạn NV CRM mở (crm_next_open_task_deadline); chỉ dùng SLA cột khi không có NV hẹn
-  const cardToneLevel = taskTone ? taskTone.level : slaTone.level;
-  const scheduleTone = taskTone || slaTone;
+  // Ưu tiên: deadline thẻ → hạn NV CRM mở → SLA cột.
+  const scheduleSource = manualDeadlineTone ? 'deadline' : (taskTone ? 'task' : 'sla');
+  const cardToneLevel = (manualDeadlineTone || taskTone || slaTone).level;
+  const scheduleTone = manualDeadlineTone || taskTone || slaTone;
   const cardSurface = pipelineCardToneClasses(cardToneLevel);
 
   // SLA badge phía bên phải giá trị tiền
@@ -5524,12 +5654,16 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
       : cardToneLevel === 'soon'  ? 'bg-orange-50 text-orange-700 border-orange-200'
       : cardToneLevel === 'warn'  ? 'bg-amber-50 text-amber-800 border-amber-200'
       : 'bg-slate-50 text-slate-600 border-slate-200';
+    const sourceLabel =
+      scheduleSource === 'deadline' ? 'Deadline thẻ'
+      : scheduleSource === 'task' ? 'NV CRM mở'
+      : 'SLA cột';
     return (
       <span
         className={`shrink-0 inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${tonePalette}`}
         title={[
           `Hạn: ${new Date(scheduleTone.deadlineTs).toLocaleString('vi-VN')}`,
-          `Nguồn: ${scheduleResolved.source === 'task' ? 'NV CRM mở' : 'SLA cột'}`,
+          `Nguồn: ${sourceLabel}`,
           isOverdue ? `Đã quá ${remainingLabel}` : `Còn ${remainingLabel}`,
         ].join('\n')}
       >
@@ -5615,7 +5749,12 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
       onDragStart={handleDragStart}
       title={dealDragLocked ? 'Cột Sản xuất/Vận chuyển trên CRM — kéo về Thắng hoặc giai đoạn trước; tiến độ xưởng/VC qua badge' : undefined}
       onClick={(ev) => {
-        if (ev.target.closest?.('[data-kanban-flag-btn]') || ev.target.closest?.('[data-kanban-comment-btn]') || ev.target.closest?.('[data-kanban-select-zone]')) {
+        if (
+          ev.target.closest?.('[data-kanban-flag-btn]')
+          || ev.target.closest?.('[data-kanban-comment-btn]')
+          || ev.target.closest?.('[data-kanban-deadline-btn]')
+          || ev.target.closest?.('[data-kanban-select-zone]')
+        ) {
           return;
         }
         openLeadDetail();
@@ -5741,6 +5880,30 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
           </div>
         )}
 
+        {/* 6b. Deadline thẻ (kanban_deadline_at) — bấm để sửa; chỉ hiện khi đã đặt */}
+        {typeof onOpenDeadline === 'function' && item.kanban_deadline_at && (() => {
+          const ts = new Date(item.kanban_deadline_at).getTime();
+          if (Number.isNaN(ts)) return null;
+          const remain = ts - Date.now();
+          const overdue = remain < 0;
+          const soon = !overdue && remain <= 24 * 3600000;
+          const tone = overdue ? 'bg-red-100 text-red-700 border-red-200 hover:bg-red-200/80'
+            : soon ? 'bg-orange-100 text-orange-700 border-orange-200 hover:bg-orange-200/80'
+            : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100';
+          return (
+            <button
+              type="button"
+              data-kanban-deadline-btn
+              onClick={(ev) => { ev.stopPropagation(); onOpenDeadline(item); }}
+              className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold cursor-pointer transition-colors ${tone}`}
+              title={`Deadline thẻ — bấm để sửa (${new Date(item.kanban_deadline_at).toLocaleString('vi-VN')})`}
+            >
+              <Clock className="h-3 w-3" strokeWidth={2.4} />
+              Deadline: {new Date(item.kanban_deadline_at).toLocaleDateString('vi-VN')}
+            </button>
+          );
+        })()}
+
         {/* 7. Deadline kỳ vọng (expected_close_date) */}
         {item.expected_close_date && (() => {
           const isOverdue = new Date(item.expected_close_date) < new Date();
@@ -5793,6 +5956,21 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
             )}
           </div>
           <div className="flex items-center gap-1 shrink-0">
+            {typeof onOpenDeadline === 'function' && (
+              <button
+                type="button"
+                data-kanban-deadline-btn
+                title={item.kanban_deadline_at ? 'Sửa deadline thẻ' : 'Đặt deadline thẻ'}
+                onClick={(ev) => { ev.stopPropagation(); onOpenDeadline(item); }}
+                className={`flex h-6 w-6 items-center justify-center rounded-full transition-colors cursor-pointer ${
+                  item.kanban_deadline_at
+                    ? 'text-rose-600 hover:bg-rose-50'
+                    : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
+                }`}
+              >
+                <Clock className="h-3.5 w-3.5" strokeWidth={2.2} />
+              </button>
+            )}
             {typeof onOpenKanbanComment === 'function' && (
               <button
                 type="button"
@@ -5850,6 +6028,7 @@ function KanbanView({
   onOpenKanbanComment,
   onTogglePin,
   onToggleInteracted,
+  onOpenDeadline,
   remeasureToken,
 }) {
   const kanbanHScrollRef = useRef(null);
@@ -5885,6 +6064,7 @@ function KanbanView({
     const isOurCard = (e) => {
       const t = e.target;
       if (t?.closest?.('[data-kanban-comment-btn]')) return false;
+      if (t?.closest?.('[data-kanban-deadline-btn]')) return false;
       return !!t?.closest?.('[data-crm-pipeline-card]');
     };
 
@@ -6045,6 +6225,7 @@ function KanbanView({
               onOpenKanbanComment={onOpenKanbanComment}
               onTogglePin={onTogglePin}
               onToggleInteracted={onToggleInteracted}
+              onOpenDeadline={onOpenDeadline}
             />
           ))}
         </div>

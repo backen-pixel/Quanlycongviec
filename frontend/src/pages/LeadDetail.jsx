@@ -24,6 +24,7 @@ import CallLogsTab from '../components/CallLogsTab';
 import LeadVoiceRecordingsTab from '../components/LeadVoiceRecordingsTab';
 import FacebookChatTab from '../components/FacebookChatTab';
 import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
+import CrmDeadlineModal from '../components/CrmDeadlineModal';
 import Modal from '../components/Modal';
 import DealCrossScoresPanel from '../components/DealCrossScoresPanel';
 import LeadKpiLedgerPanel from '../components/LeadKpiLedgerPanel';
@@ -118,6 +119,9 @@ export default function LeadDetail() {
   const [zaloQuickSendLoading, setZaloQuickSendLoading] = useState(false);
   const [movingStage, setMovingStage] = useState(false);
   const [blockingModal, setBlockingModal] = useState(null);
+  /** Cột yêu cầu deadline khi đổi stage từ trang chi tiết */
+  const [stageDeadlineCtx, setStageDeadlineCtx] = useState(null);
+  const [stageDeadlineBusy, setStageDeadlineBusy] = useState(false);
   const [dealDetailEventCtx, setDealDetailEventCtx] = useState(null);
   const [dealDetailEventBusy, setDealDetailEventBusy] = useState(false);
   /** Kéo deal Thắng chưa có dự án: chọn công ty SX */
@@ -615,12 +619,18 @@ export default function LeadDetail() {
     } catch (e) {
       if (e.response?.data?.requires_conversion) {
         setShowConvertModal(true);
+      } else if (e.response?.data?.code === 'requires_deadline') {
+        const stagesArr = (lead?.type === 'deal') ? stagesDeal : stagesLead;
+        const tgtStg = stagesArr.find((s) => String(s.id) === String(stageId));
+        await loadRef.current?.({ silent: true });
+        setStageDeadlineCtx({ stageId, extraData, stageName: tgtStg?.name || e.response.data.stage_name || '' });
       } else if (e.response?.data?.code === 'CRM_BLOCKING_TASKS_INCOMPLETE') {
         const stagesArr = (lead?.type === 'deal') ? stagesDeal : stagesLead;
         const curStg = stagesArr.find((s) => String(s.id) === String(e.response.data.current_stage_id));
         const tgtStg = stagesArr.find((s) => String(s.id) === String(e.response.data.target_stage_id));
         setBlockingModal({
           leadId: id,
+          targetStageId: e.response.data.target_stage_id || stageId,
           currentStageName: curStg?.name || '',
           targetStageName: tgtStg?.name || '',
           remainingTasks: e.response.data.remaining_tasks || [],
@@ -633,6 +643,25 @@ export default function LeadDetail() {
       return null;
     } finally {
       setMovingStage(false);
+    }
+  };
+
+  const confirmStageDeadline = async ({ deadlineIso, reason }) => {
+    const ctx = stageDeadlineCtx;
+    if (!ctx) return;
+    setStageDeadlineBusy(true);
+    try {
+      const data = await patchLeadStage(ctx.stageId, {
+        ...ctx.extraData,
+        kanban_deadline_at: deadlineIso,
+        deadline_reason: reason || '',
+      });
+      if (data) {
+        setStageDeadlineCtx(null);
+        setCrmTasksRefreshKey((k) => k + 1);
+      }
+    } finally {
+      setStageDeadlineBusy(false);
     }
   };
 
@@ -722,6 +751,33 @@ export default function LeadDetail() {
           : (isAdminUser ? findDefaultAdminCompanyPhucDat(productionCompaniesSx) : ''),
       );
       setDealStageWonPick({ stageId, extraData, targetStage });
+      return;
+    }
+
+    // Chuyển sang cột mới (trừ Thắng/Thua): kiểm tra nhiệm vụ chặn TRƯỚC, rồi mới hỏi deadline.
+    if (
+      targetStage &&
+      !targetStage.is_won &&
+      !targetStage.is_lost &&
+      String(lead?.stage_id || '') !== String(stageId)
+    ) {
+      try {
+        const { data: chk } = await api.get(`/crm/leads/${id}/stage-advance-check`, {
+          params: { target_stage_id: stageId },
+        });
+        if (chk && chk.ok === false && chk.code === 'CRM_BLOCKING_TASKS_INCOMPLETE') {
+          const curStg = stages.find((s) => String(s.id) === String(chk.current_stage_id));
+          setBlockingModal({
+            leadId: id,
+            targetStageId: stageId,
+            currentStageName: curStg?.name || '',
+            targetStageName: targetStage?.name || '',
+            remainingTasks: chk.remaining_tasks || [],
+          });
+          return;
+        }
+      } catch (_) { /* lỗi pre-check → bỏ qua, vẫn mở deadline */ }
+      setStageDeadlineCtx({ stageId, extraData, stageName: targetStage.name });
       return;
     }
 
@@ -1388,7 +1444,10 @@ export default function LeadDetail() {
           <LeadInfoPanel
             lead={lead}
             allUsers={allUsers}
-            onUpdate={() => load({ silent: true })}
+            onUpdate={() => {
+              load({ silent: true });
+              setCrmTasksRefreshKey((k) => k + 1);
+            }}
             currentUser={user}
             productionCompaniesSx={productionCompaniesSx}
           />
@@ -1551,6 +1610,7 @@ export default function LeadDetail() {
                   <UnifiedTaskHistoryWidget
                     leadId={id}
                     projectId={lead?.project_id || undefined}
+                    refreshKey={crmTasksRefreshKey}
                   />
                 </div>
                 </>
@@ -2183,12 +2243,36 @@ export default function LeadDetail() {
         </div>
       )}
 
+      <CrmDeadlineModal
+        open={!!stageDeadlineCtx}
+        title="Đặt deadline cho thẻ"
+        subtitle="Cột này yêu cầu đặt deadline. Mọi thay đổi đều được ghi vào lịch sử."
+        stageName={stageDeadlineCtx?.stageName}
+        initialDeadline={lead?.kanban_deadline_at || null}
+        currentDeadline={lead?.kanban_deadline_at || null}
+        mandatory
+        submitting={stageDeadlineBusy}
+        onClose={() => { if (!stageDeadlineBusy) setStageDeadlineCtx(null); }}
+        onConfirm={confirmStageDeadline}
+      />
+
       <BlockingTasksAlertModal
         open={!!blockingModal}
         onClose={() => setBlockingModal(null)}
+        leadId={blockingModal?.leadId || id}
         currentStageName={blockingModal?.currentStageName}
         targetStageName={blockingModal?.targetStageName}
         remainingTasks={blockingModal?.remainingTasks || []}
+        onChanged={() => {
+          loadRef.current?.({ silent: true });
+          setCrmTasksRefreshKey((k) => k + 1);
+        }}
+        onAllCleared={() => {
+          const tgt = blockingModal?.targetStageId;
+          setBlockingModal(null);
+          // Hết nhiệm vụ chặn → chạy lại luồng chuyển cột (sẽ hiện hộp deadline).
+          if (tgt) moveStage(tgt);
+        }}
         onGoToTasks={() => {
           setActiveTab('tasks');
           setBlockingModal(null);
@@ -2622,6 +2706,11 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
   const [editVal, setEditVal] = useState('');
   const [saving, setSaving] = useState(false);
   const [companies, setCompanies] = useState([]);
+  const [deadlineModalOpen, setDeadlineModalOpen] = useState(false);
+  const [deadlineBusy, setDeadlineBusy] = useState(false);
+  const [deadlineHistory, setDeadlineHistory] = useState([]);
+  const [deadlineHistoryOpen, setDeadlineHistoryOpen] = useState(false);
+  const [deadlineHistoryLoading, setDeadlineHistoryLoading] = useState(false);
   const [sxHandoverForm, setSxHandoverForm] = useState({
     construction_start_date: '',
     expected_production_start_date: '',
@@ -2762,6 +2851,43 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
     setSaving(false);
   };
 
+  const loadDeadlineHistory = useCallback(async () => {
+    if (!lead?.id) return;
+    setDeadlineHistoryLoading(true);
+    try {
+      const { data } = await api.get(`/crm/leads/${lead.id}/deadline-history`);
+      setDeadlineHistory(Array.isArray(data) ? data : []);
+    } catch {
+      setDeadlineHistory([]);
+    } finally {
+      setDeadlineHistoryLoading(false);
+    }
+  }, [lead?.id]);
+
+  const saveKanbanDeadline = async ({ deadlineIso, reason }) => {
+    if (!lead?.id) return;
+    setDeadlineBusy(true);
+    try {
+      await api.patch(`/crm/leads/${lead.id}/deadline`, {
+        kanban_deadline_at: deadlineIso,
+        reason: reason || '',
+      });
+      setDeadlineModalOpen(false);
+      onUpdate();
+      if (deadlineHistoryOpen) loadDeadlineHistory();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi lưu deadline');
+    } finally {
+      setDeadlineBusy(false);
+    }
+  };
+
+  const toggleDeadlineHistory = () => {
+    const next = !deadlineHistoryOpen;
+    setDeadlineHistoryOpen(next);
+    if (next && deadlineHistory.length === 0) loadDeadlineHistory();
+  };
+
   const EditableRow = ({ icon, label, field, value, displayValue, type = 'text', options }) => {
     const isEditing = editing === field;
     const isSelectEmpty = type === 'select' && ((options || []).length === 0);
@@ -2854,11 +2980,99 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
         type="number" />
 
       {lead?.type === 'deal' && (
-        <EditableRow icon="📅" label="Deadline" field="expected_close_date"
+        <EditableRow icon="📅" label="Dự kiến chốt" field="expected_close_date"
           value={lead?.expected_close_date || ''}
           displayValue={lead?.expected_close_date ? formatDate(lead.expected_close_date) : null}
           type="date" />
       )}
+
+      {/* Deadline thẻ (kanban_deadline_at) — đặt/sửa kèm lý do + lịch sử */}
+      <div className="rounded-lg border border-rose-200 bg-rose-50/50 p-2.5 my-1.5">
+        <div className="flex items-start gap-2">
+          <span className="text-sm mt-0.5">⏰</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] text-rose-500 uppercase tracking-wider font-medium mb-0.5">Deadline thẻ</p>
+            {lead?.kanban_deadline_at ? (() => {
+              const ts = new Date(lead.kanban_deadline_at).getTime();
+              const remain = ts - Date.now();
+              const overdue = remain < 0;
+              const abs = Math.abs(remain);
+              const days = Math.floor(abs / 86400000);
+              const hours = Math.floor((abs % 86400000) / 3600000);
+              const label = days > 0 ? `${days} ngày ${hours} giờ` : `${hours} giờ`;
+              return (
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">
+                    {new Date(lead.kanban_deadline_at).toLocaleString('vi-VN')}
+                  </p>
+                  <p className={`text-xs font-medium ${overdue ? 'text-red-600' : 'text-emerald-600'}`}>
+                    {overdue ? `Đã quá hạn ${label}` : `Còn ${label}`}
+                  </p>
+                  {lead?.kanban_deadline_reason && (
+                    <p className="text-[11px] text-slate-500 mt-0.5 italic">Lý do: {lead.kanban_deadline_reason}</p>
+                  )}
+                </div>
+              );
+            })() : (
+              <p className="text-sm text-gray-400 italic">Chưa đặt deadline</p>
+            )}
+          </div>
+          <button
+            onClick={() => setDeadlineModalOpen(true)}
+            className="shrink-0 h-7 px-2.5 rounded-lg bg-rose-600 text-white text-xs font-semibold hover:bg-rose-700"
+          >
+            {lead?.kanban_deadline_at ? 'Sửa' : 'Đặt'}
+          </button>
+        </div>
+        <button
+          onClick={toggleDeadlineHistory}
+          className="mt-1.5 text-[11px] font-medium text-rose-600 hover:text-rose-800 hover:underline"
+        >
+          {deadlineHistoryOpen ? '▾ Ẩn lịch sử deadline' : '▸ Xem lịch sử deadline'}
+        </button>
+        {deadlineHistoryOpen && (
+          <div className="mt-2 space-y-1.5 border-t border-rose-100 pt-2">
+            {deadlineHistoryLoading ? (
+              <p className="text-[11px] text-slate-400">Đang tải…</p>
+            ) : deadlineHistory.length === 0 ? (
+              <p className="text-[11px] text-slate-400 italic">Chưa có thay đổi nào.</p>
+            ) : (
+              deadlineHistory.map((h) => (
+                <div key={h.id} className="rounded-md bg-white border border-slate-200 px-2 py-1.5 text-[11px]">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-slate-700">
+                      {h.new_deadline_at ? new Date(h.new_deadline_at).toLocaleString('vi-VN') : '— Xoá deadline —'}
+                    </span>
+                    <span className="text-slate-400">{new Date(h.created_at).toLocaleString('vi-VN')}</span>
+                  </div>
+                  {h.old_deadline_at && (
+                    <p className="text-slate-400 line-through">{new Date(h.old_deadline_at).toLocaleString('vi-VN')}</p>
+                  )}
+                  <p className="text-slate-600">
+                    {h.changer?.full_name || 'Hệ thống'}
+                    {h.source === 'stage_move' ? ' · khi chuyển cột' : ' · sửa thủ công'}
+                    {h.stage?.name ? ` · ${h.stage.name}` : ''}
+                  </p>
+                  {h.reason && <p className="text-slate-500 italic">Lý do: {h.reason}</p>}
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+
+      <CrmDeadlineModal
+        open={deadlineModalOpen}
+        title={lead?.kanban_deadline_at ? 'Sửa deadline thẻ' : 'Đặt deadline thẻ'}
+        subtitle={lead?.kanban_deadline_at ? 'Bắt buộc nhập lý do khi thay đổi deadline.' : 'Mọi thay đổi đều được ghi vào lịch sử.'}
+        initialDeadline={lead?.kanban_deadline_at || null}
+        currentDeadline={lead?.kanban_deadline_at || null}
+        requireReason={!!lead?.kanban_deadline_at}
+        allowClear={!!lead?.kanban_deadline_at}
+        submitting={deadlineBusy}
+        onClose={() => { if (!deadlineBusy) setDeadlineModalOpen(false); }}
+        onConfirm={saveKanbanDeadline}
+      />
 
       {lead?.lost_reason && (
         <div className="flex items-start gap-2 py-1.5 px-1">
