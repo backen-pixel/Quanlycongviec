@@ -575,10 +575,6 @@ export default function KpiMonthlyScorecard() {
         <div className="flex items-start justify-between flex-wrap gap-3">
           <div>
             <h1 className="text-2xl font-bold text-white">Bảng điểm KPI tháng</h1>
-            <p className="text-sm text-slate-400 mt-0.5 flex items-center gap-1.5">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-              Bộ phận Tủ bếp · Kinh doanh (SAE)
-            </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <input
