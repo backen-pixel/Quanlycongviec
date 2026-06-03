@@ -497,21 +497,22 @@ export default function ProductionDashboard() {
 
     const colIdFor = (project) => {
       if (VC_STATUSES.has(project.status) && handover) return handover.id;
+      // Ưu tiên cột Kanban đã gắn (CRM deal / enrich) — khớp logic BE khi nhiều cột dùng chung workflow.
+      if (project.sx_kanban_column_id && sortedStages.some((s) => String(s.id) === String(project.sx_kanban_column_id))) {
+        return project.sx_kanban_column_id;
+      }
       const cid = project.current_stage_id;
       if (cid) {
-        for (const col of sortedStages) {
+        const wfMatches = sortedStages.filter((col) => {
           const wid = col.workflow_stage_id || col.workflow_stage?.id;
-          if (wid && String(wid) === String(cid)) return col.id;
-        }
+          return wid && String(wid) === String(cid);
+        });
+        if (wfMatches.length === 1) return wfMatches[0].id;
       }
       // Won deal nhưng chưa map được workflow → cột intake hoặc cột đầu tiên
       if (project.sx_won_deal || project.sx_intake) {
         if (intake) return intake.id;
         return sortedStages[0]?.id || null;
-      }
-      // Fallback: dùng giá trị BE đã gắn (nếu vẫn hợp lệ trong pipeline mới)
-      if (project.sx_kanban_column_id && sortedStages.some((s) => s.id === project.sx_kanban_column_id)) {
-        return project.sx_kanban_column_id;
       }
       return null;
     };
@@ -726,43 +727,41 @@ export default function ProductionDashboard() {
       return;
     }
 
-    if (!wid) {
-      setProjects((prev) => prev.map((p) => (p.id === projectId
-        ? { ...p, sx_kanban_column_id: targetCol.id, sx_intake: false }
-        : p)));
-      try {
-        await api.patch(`/production/projects/${projectId}/stage`, {
-          production_pipeline_stage_id: targetCol.id,
-          company_id: companyParam || undefined,
-        });
-        scheduleCrmBadgeRefresh(projectId);
-      } catch (e) {
-        console.error(e);
-        load();
-      }
-      return;
-    }
-
-    const optimisticStage = {
+    // Luôn gửi production_pipeline_stages.id (không chỉ workflow stage_id) — giống chi tiết dự án.
+    // Nhiều cột cùng phân loại có thể dùng chung workflow «Sản xuất» → stage_id không phân biệt được cột.
+    const colId = targetCol?.id;
+    const currentColId = current?.sx_kanban_column_id || null;
+    const optimisticStage = wid ? {
       id: wid,
       slug: targetCol.slug,
       name: targetCol.name,
       color: targetCol.color,
       icon: targetCol.icon,
-    };
+    } : null;
 
     setProjects((prev) => prev.map((p) => (p.id === projectId
-      ? { ...p, current_stage: optimisticStage, sx_kanban_column_id: targetCol.id, sx_intake: false }
+      ? {
+        ...p,
+        current_stage: optimisticStage,
+        current_stage_id: wid || null,
+        sx_kanban_column_id: colId,
+        sx_intake: false,
+      }
       : p)));
 
     try {
-      await api.patch(`/production/projects/${projectId}/stage`, { stage_id: wid, company_id: companyParam || undefined });
+      await api.patch(`/production/projects/${projectId}/stage`, {
+        production_pipeline_stage_id: colId,
+        current_sx_pipeline_stage_id: currentColId,
+        company_id: companyParam || undefined,
+      });
       scheduleCrmBadgeRefresh(projectId);
     } catch (e) {
       console.error(e);
+      window.alert(e.response?.data?.error || e.message || 'Không chuyển được cột pipeline');
       load();
     }
-  }, [load, projects]);
+  }, [load, projects, companyParam]);
 
   const handleHandoverVC = useCallback(async (projectId, projectName, logisticsCompanyId) => {
     try {
