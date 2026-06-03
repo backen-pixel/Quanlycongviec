@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { Link, useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate, useLocation } from 'react-router-dom';
+import api from '../lib/api';
 import { publicFileUrl } from '../lib/publicFileUrl';
 import KnowledgeMediaGallery from '../components/KnowledgeMediaGallery';
 import { youtubeEmbedUrl } from '../lib/knowledgeMarkdown';
@@ -450,6 +451,8 @@ function ResultScreen({ result, exercise, onRetry, onBack, onGoNext }) {
 export default function KnowledgeExercisePage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const lessonIdFromNav = location.state?.lessonId || null;
   const [exercise, setExercise] = useState(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -487,6 +490,11 @@ export default function KnowledgeExercisePage() {
       const { data } = await api.get(`/knowledge/exercises/${id}`);
       setExercise(data);
     } catch (e) {
+      const backLesson = lessonIdFromNav || e.response?.data?.lesson_id || null;
+      const goBack = () => {
+        if (backLesson) navigate(`/knowledge/lessons/${backLesson}`);
+        else navigate('/knowledge');
+      };
       if (e.response?.status === 423 && e.response?.data?.locked) {
         const data = e.response.data;
         const msg = data.error || 'Bài tập đang khoá';
@@ -498,11 +506,15 @@ export default function KnowledgeExercisePage() {
           navigate(`/knowledge/lessons/${data.prev_lesson_id}`);
         } else {
           alert(msg);
-          navigate('/knowledge');
+          goBack();
         }
+      } else if (!e.response) {
+        console.error(e);
+        alert('Không thể tải bài tập. Vui lòng thử lại.');
+        goBack();
       } else {
         alert(e.response?.data?.error || 'Không tìm thấy bài tập');
-        navigate('/knowledge');
+        goBack();
       }
     }
     setLoading(false);

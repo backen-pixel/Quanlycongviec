@@ -586,7 +586,7 @@ export default function KnowledgeLibraryPage() {
                     lessonId: lesson.id,
                     lessonTitle: lesson.title,
                     reason: lesson.unlock_reason || 'Bài học đang khoá — cần hoàn thành bài trước',
-                    targetId: lesson.current_open_lesson_id || null,
+                    targetId: lesson.current_open_lesson_id || lesson.prev_lesson_id || null,
                     targetTitle: lesson.current_open_lesson_title || null,
                     lockBypass: !!lesson.lock_bypass,
                   });

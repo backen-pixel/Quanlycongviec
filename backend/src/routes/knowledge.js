@@ -70,6 +70,17 @@ function slugify(text) {
     .replace(/^-|-$/g, '') || 'danh-muc';
 }
 
+/** Thứ tự bài học ổn định khi sort_order trùng nhau. */
+function compareLessonOrder(a, b) {
+  const d = (a.sort_order ?? 0) - (b.sort_order ?? 0);
+  if (d !== 0) return d;
+  return String(a.id).localeCompare(String(b.id));
+}
+
+function sortLessonsByOrder(lessons) {
+  return [...lessons].sort(compareLessonOrder);
+}
+
 function extractYoutubeId(url) {
   if (!url) return null;
   const m = String(url).match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=))([^?&]+)/);
@@ -394,9 +405,10 @@ async function computeLessonLockMap(categoryId, userId, userObj, lessonsInCatego
     if (!roles || !Array.isArray(roles) || roles.length === 0) return true;
     const role = String(userObj?.role ?? '').trim().toLowerCase();
     return roles.map((x) => String(x).toLowerCase()).includes(role);
-  }).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  });
+  const visibleSorted = sortLessonsByOrder(visible);
 
-  const ids = visible.map((l) => l.id);
+  const ids = visibleSorted.map((l) => l.id);
   if (!ids.length) return new Map();
 
   // Lấy tiến độ học của user cho danh sách bài này
@@ -435,17 +447,20 @@ async function computeLessonLockMap(categoryId, userId, userObj, lessonsInCatego
   }
 
   const isPrevLessonDone = (lesson) => {
-    if (!completedSet.has(lesson.id)) return false;
+    // Đã hoàn thành → coi là xong để mở bài sau (tránh kẹt khi bài tập thêm sau hoặc dữ liệu cũ)
+    if (completedSet.has(lesson.id)) return true;
     const exs = exByLesson.get(lesson.id) || [];
-    if (exs.length === 0) return true;
+    if (!exs.length) return false;
     return exs.every((id) => passedSet.has(id));
   };
 
   const map = new Map();
   let prev = null;
-  for (const l of visible) {
+  for (const l of visibleSorted) {
     let lockInfo;
-    if (!prev) {
+    if (completedSet.has(l.id)) {
+      lockInfo = { locked: false, reason: null, prev_lesson_id: prev?.id ?? null };
+    } else if (!prev) {
       lockInfo = { locked: false, reason: null, prev_lesson_id: null };
     } else if (isPrevLessonDone(prev)) {
       lockInfo = { locked: false, reason: null, prev_lesson_id: prev.id };
@@ -462,7 +477,7 @@ async function computeLessonLockMap(categoryId, userId, userObj, lessonsInCatego
     }
 
     // Bài thi tổng kết: chỉ mở khi MỌI bài tập (ngoài bài thi) trong khoá đã đạt
-    if (l.is_final_exam && !lockInfo.locked) {
+    if (l.is_final_exam && !lockInfo.locked && !completedSet.has(l.id)) {
       const otherExIds = (exRows || [])
         .filter((e) => e.lesson_id !== l.id)
         .map((e) => e.id);
@@ -485,9 +500,12 @@ async function computeLessonLockMap(categoryId, userId, userObj, lessonsInCatego
   // Dùng để khi user bấm vào bài khoá, redirect tới bài cần học.
   let currentOpenId = null;
   let currentOpenTitle = null;
-  for (const l of visible) {
+  for (const l of visibleSorted) {
     const lk = map.get(l.id);
-    if (lk && !lk.locked && !completedSet.has(l.id)) {
+    if (!lk || lk.locked) continue;
+    const exs = exByLesson.get(l.id) || [];
+    const exPending = exs.length > 0 && !exs.every((id) => passedSet.has(id));
+    if (!completedSet.has(l.id) || exPending) {
       currentOpenId = l.id;
       currentOpenTitle = l.title || null;
       break;
@@ -580,23 +598,23 @@ async function enrichNextLessonWithLock(categoryId, nextLesson, userId, userObj,
   };
 }
 
-// Tính bài học TIẾP THEO (sort_order liền sau) trong cùng danh mục, có thể null.
+// Bài học tiếp theo trong danh mục (theo sort_order + id, tránh bỏ sót khi sort_order trùng).
 async function getNextLessonInCategory(currentLessonId) {
   const { data: cur } = await supabase
     .from('knowledge_lessons')
-    .select('category_id, sort_order')
+    .select('category_id')
     .eq('id', currentLessonId)
     .maybeSingle();
   if (!cur?.category_id) return null;
-  const { data: next } = await supabase
+  const { data: all } = await supabase
     .from('knowledge_lessons')
     .select('id, title, sort_order, cover_image_url, summary')
     .eq('category_id', cur.category_id)
-    .eq('is_published', true)
-    .gt('sort_order', cur.sort_order ?? 0)
-    .order('sort_order', { ascending: true })
-    .limit(1);
-  return (next && next[0]) || null;
+    .eq('is_published', true);
+  const sorted = sortLessonsByOrder(all || []);
+  const idx = sorted.findIndex((l) => l.id === currentLessonId);
+  if (idx < 0 || idx >= sorted.length - 1) return null;
+  return sorted[idx + 1];
 }
 
 // Wrapper an toàn — không bao giờ ném lỗi, dùng trong các route bất kỳ.
@@ -625,6 +643,23 @@ async function isLessonViewedByUser(userId, lessonId) {
     .maybeSingle();
   if (!data) return false;
   return data.status === 'in_progress' || data.status === 'completed';
+}
+
+/** Ghi nhận user đã mở bài học (khi vào bài tập từ bài không bị khoá). */
+async function ensureLessonViewedByUser(userId, lessonId, existingProg) {
+  if (!userId || !lessonId) return;
+  const now = new Date().toISOString();
+  const status = existingProg?.status === 'completed' ? 'completed' : 'in_progress';
+  await supabase.from('knowledge_lesson_progress').upsert(
+    {
+      user_id: userId,
+      lesson_id: lessonId,
+      status,
+      started_at: existingProg?.started_at || now,
+      last_viewed_at: now,
+    },
+    { onConflict: 'user_id,lesson_id' },
+  );
 }
 
 function gradeQuiz(questions, answers) {
@@ -1238,14 +1273,16 @@ r.get('/exercises/:id', async (req, res) => {
       }
 
       // Bắt buộc đã mở (đọc) bài học trước khi làm bài tập
-      const viewed = await isLessonViewedByUser(req.user.userId, ex.lesson.id);
+      let viewed = await isLessonViewedByUser(req.user.userId, ex.lesson.id);
       if (!viewed) {
-        return res.status(423).json({
-          error: 'Hãy mở và đọc bài học trước khi làm bài tập',
-          locked: true,
-          requires_lesson_view: true,
-          lesson_id: ex.lesson.id,
-        });
+        const { data: prog } = await supabase
+          .from('knowledge_lesson_progress')
+          .select('status')
+          .eq('user_id', req.user.userId)
+          .eq('lesson_id', ex.lesson.id)
+          .maybeSingle();
+        await ensureLessonViewedByUser(req.user.userId, ex.lesson.id, prog);
+        viewed = true;
       }
     }
 
@@ -1361,14 +1398,16 @@ r.post('/exercises/:id/submit', async (req, res) => {
       if (lk?.locked) {
         return res.status(423).json({ error: lk.reason || 'Bài học đang khoá', locked: true });
       }
-      const viewed = await isLessonViewedByUser(req.user.userId, ex.lesson.id);
+      let viewed = await isLessonViewedByUser(req.user.userId, ex.lesson.id);
       if (!viewed) {
-        return res.status(423).json({
-          error: 'Hãy mở và đọc bài học trước khi làm bài tập',
-          locked: true,
-          requires_lesson_view: true,
-          lesson_id: ex.lesson.id,
-        });
+        const { data: prog } = await supabase
+          .from('knowledge_lesson_progress')
+          .select('status')
+          .eq('user_id', req.user.userId)
+          .eq('lesson_id', ex.lesson.id)
+          .maybeSingle();
+        await ensureLessonViewedByUser(req.user.userId, ex.lesson.id, prog);
+        viewed = true;
       }
     }
 
