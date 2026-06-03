@@ -16,6 +16,7 @@ type PreviewInput =
       | 'attachment_url'
       | 'attachments'
       | 'recalled_at'
+      | 'is_recalled'
     >;
 
 /**

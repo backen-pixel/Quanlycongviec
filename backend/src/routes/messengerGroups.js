@@ -42,14 +42,14 @@ function isMessageRecalled(msg) {
 
 /** Lấy 1 tin trong nhóm — fallback select tối thiểu nếu schema cache chưa có cột recall. */
 async function fetchGroupMessageForAction(gid, mid) {
-  const fullSelect = 'id, group_id, user_id, created_at, recalled_at, is_recalled, is_system';
+  const fullSelect = 'id, group_id, user_id, created_at, recalled_at, is_system';
   let { data, error } = await supabase
     .from('messenger_group_messages')
     .select(fullSelect)
     .eq('id', mid)
     .eq('group_id', gid)
     .maybeSingle();
-  if (error && /recalled_at|is_recalled|schema cache/i.test(error.message || '')) {
+  if (error && /recalled_at|schema cache/i.test(error.message || '')) {
     ({ data, error } = await supabase
       .from('messenger_group_messages')
       .select('id, group_id, user_id, created_at, is_system')
@@ -64,14 +64,15 @@ async function fetchGroupMessageForAction(gid, mid) {
 async function markMessageRecalled(mid, uid, recalled_at) {
   const pg = await pgSessionQuery(
     `UPDATE messenger_group_messages
-     SET recalled_at = $1::timestamptz, recalled_by = $2::uuid, is_recalled = true
+     SET recalled_at = $1::timestamptz, recalled_by = $2::uuid
      WHERE id = $3::uuid`,
     [recalled_at, uid, mid],
   );
   if (pg) return;
+
   const { error } = await supabase
     .from('messenger_group_messages')
-    .update({ recalled_at, recalled_by: uid, is_recalled: true })
+    .update({ recalled_at, recalled_by: uid })
     .eq('id', mid);
   if (error) throw error;
 }
@@ -1515,11 +1516,9 @@ async function handleMessageReaction(req, res) {
     const reactions = await fetchReactionsForMessage(mid);
     const io = req.app.get('io');
     if (io) {
-      io.to(`messenger_group:${gid}`).emit('messenger_group:reaction', {
-        group_id: gid,
-        message_id: mid,
-        reactions,
-      });
+      const payload = { group_id: gid, message_id: mid, reactions };
+      io.to(`messenger_group:${gid}`).emit('messenger_group:reaction', payload);
+      io.to(`messenger_group:${gid}`).emit('messenger_group:reactions', payload);
     }
     logMessengerAction({ action: 'reaction-ok', gid, mid, count: reactions.length });
     res.json({ message_id: mid, reactions });
@@ -1567,7 +1566,6 @@ r.post('/groups/:gid/chat/:mid/recall', async (req, res) => {
       ...msg,
       recalled_at,
       recalled_by: uid,
-      is_recalled: true,
     };
     full.reactions = await fetchReactionsForMessage(mid);
 

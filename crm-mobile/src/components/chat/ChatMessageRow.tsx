@@ -15,6 +15,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import type { MessengerAttachment, MessengerMessage } from '../../types/messenger';
 import { CrmColors } from '../../theme/crmTheme';
 import { formatReplyPreview } from '../../lib/messengerPreview';
+import { groupReactions } from '../../lib/messengerReactions';
 
 const { width: SW } = Dimensions.get('window');
 const SWIPE_THRESHOLD = 56;
@@ -86,21 +87,10 @@ export function ChatMessageRow({
   const stickerMode =
     !recalled && !!text && !imgUrl && atts.length === 0 && !isAudioMsg(item) && isEmojiOnly(text);
 
-  const reactionGroups = useMemo(() => {
-    const reactions = Array.isArray(item.reactions) ? item.reactions : [];
-    if (!reactions.length) return [] as { emoji: string; count: number; mine: boolean }[];
-    const m = new Map<string, { count: number; mine: boolean }>();
-    for (const r of reactions) {
-      const e = (r?.emoji || '').trim();
-      if (!e) continue;
-      const prev = m.get(e) || { count: 0, mine: false };
-      m.set(e, {
-        count: prev.count + 1,
-        mine: prev.mine || String(r.user_id) === myId,
-      });
-    }
-    return Array.from(m.entries()).map(([emoji, v]) => ({ emoji, ...v }));
-  }, [item.reactions, myId]);
+  const reactionGroups = useMemo(
+    () => groupReactions(item.reactions, myId),
+    [item.reactions, myId],
+  );
 
   const panResponder = useRef(
     PanResponder.create({
@@ -223,7 +213,7 @@ export function ChatMessageRow({
                 onPress={() => onToggleReaction(item, r.emoji)}
                 activeOpacity={0.7}
               >
-                <Text style={s.reactionEmoji}>{r.emoji}</Text>
+                <Text style={s.reactionEmoji} allowFontScaling={false}>{r.emoji}</Text>
                 {r.count > 1 ? <Text style={s.reactionCount}>{r.count}</Text> : null}
               </TouchableOpacity>
             ))}
@@ -289,7 +279,7 @@ const s = StyleSheet.create({
     borderWidth: 1, borderColor: '#E5E7EB',
   },
   reactionPillMine: { borderColor: '#C4B5FD', backgroundColor: '#F5F3FF' },
-  reactionEmoji: { fontSize: 13 },
+  reactionEmoji: { fontSize: 18, lineHeight: 22, minWidth: 20, textAlign: 'center' },
   reactionCount: { fontSize: 10, fontWeight: '700', color: CrmColors.gray700 },
   readRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3, paddingHorizontal: 2 },
   readTxt: { fontSize: 11, color: CrmColors.gray500, fontWeight: '600' },

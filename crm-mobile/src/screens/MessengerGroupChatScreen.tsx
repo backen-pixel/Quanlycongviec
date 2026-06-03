@@ -45,6 +45,12 @@ import {
 } from '../lib/floatingBubbleOverlay';
 import { ChatMessageRow, ReactionPickerBar } from '../components/chat/ChatMessageRow';
 import { formatReplyPreview } from '../lib/messengerPreview';
+import { normalizeReactions } from '../lib/messengerReactions';
+import {
+  joinMessengerGroup,
+  leaveMessengerGroup,
+  subscribeMessengerEvent,
+} from '../lib/messengerRealtime';
 
 const { width: SW } = Dimensions.get('window');
 /** Tone Messenger-Violet — nền sáng, bubble mình tím-xanh, bubble người khác trắng. */
@@ -382,7 +388,10 @@ export default function MessengerGroupChatScreen({
         api.get<MessengerMessage[]>(`/messenger/groups/${groupId}/chat`),
       ]);
       setGroup(gRes.data);
-      const rows = Array.isArray(mRes.data) ? mRes.data : [];
+      const rows = (Array.isArray(mRes.data) ? mRes.data : []).map((m) => ({
+        ...m,
+        reactions: normalizeReactions(m.reactions),
+      }));
       setMessages(rows);
       seenIds.current = new Set(rows.map((r) => String(r.id)));
       void loadReceipts();
@@ -572,7 +581,7 @@ export default function MessengerGroupChatScreen({
           `/messenger/groups/${groupId}/chat/${msg.id}/reaction`,
           { emoji },
         );
-        const rx = r.data?.reactions || [];
+        const rx = normalizeReactions(r.data?.reactions);
         setMessages((prev) =>
           prev.map((m) => (String(m.id) === String(msg.id) ? { ...m, reactions: rx } : m)),
         );
@@ -633,6 +642,31 @@ export default function MessengerGroupChatScreen({
     [myId],
   );
 
+  const applyReactionUpdate = useCallback(
+    (ev: { group_id?: string; message_id?: string; reactions?: MessengerMessage['reactions'] }) => {
+      if (String(ev?.group_id || '') !== String(groupId) || !ev?.message_id) return;
+      const rx = normalizeReactions(ev.reactions);
+      setMessages((prev) =>
+        prev.map((m) =>
+          String(m.id) === String(ev.message_id) ? { ...m, reactions: rx } : m,
+        ),
+      );
+    },
+    [groupId],
+  );
+
+  /** Socket app-wide (NotificationContext) — đảm bảo người nhận thấy reaction realtime. */
+  useEffect(() => {
+    joinMessengerGroup(groupId);
+    const unsub = subscribeMessengerEvent('messenger_group:reaction', (ev) => {
+      applyReactionUpdate(ev as { group_id?: string; message_id?: string; reactions?: MessengerMessage['reactions'] });
+    });
+    return () => {
+      leaveMessengerGroup(groupId);
+      unsub();
+    };
+  }, [groupId, applyReactionUpdate]);
+
   /* ── socket ────────────────────────────────────────── */
   useEffect(() => {
     let socket: Socket | null = null;
@@ -678,17 +712,8 @@ export default function MessengerGroupChatScreen({
         if (String(ev?.group_id || '') !== String(groupId)) return;
         setGroup((prev) => (prev ? { ...prev, ...(ev.name ? { name: ev.name } : {}) } : prev));
       });
-      socket.on(
-        'messenger_group:reaction',
-        (ev: { group_id?: string; message_id?: string; reactions?: MessengerMessage['reactions'] }) => {
-          if (String(ev?.group_id || '') !== String(groupId) || !ev?.message_id) return;
-          setMessages((prev) =>
-            prev.map((m) =>
-              String(m.id) === String(ev.message_id) ? { ...m, reactions: ev.reactions || [] } : m,
-            ),
-          );
-        },
-      );
+      socket.on('messenger_group:reaction', applyReactionUpdate);
+      socket.on('messenger_group:reactions', applyReactionUpdate);
     })();
     return () => {
       cancelled = true;
@@ -696,7 +721,7 @@ export default function MessengerGroupChatScreen({
       try { socket?.emit('leave:messenger_group', groupId); } catch { /* */ }
       socket?.disconnect();
     };
-  }, [groupId, loadAll]);
+  }, [groupId, loadAll, applyReactionUpdate]);
 
   /* ── send ──────────────────────────────────────────── */
   const appendMsg = useCallback((msg: MessengerMessage) => {
