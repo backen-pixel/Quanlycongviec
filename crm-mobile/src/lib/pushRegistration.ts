@@ -60,9 +60,10 @@ export async function registerPushToken(): Promise<void> {
   if (Platform.OS === 'web') return;
   if (!Device.isDevice) return;
 
+  const granted = await ensurePermission();
+
   // 1) Expo push token (notification hiển thị)
   try {
-    const granted = await ensurePermission();
     if (granted) {
       const projectId = getProjectId();
       const tokenRes = projectId
@@ -84,9 +85,17 @@ export async function registerPushToken(): Promise<void> {
     /* ignore */
   }
 
-  // 2) FCM native token (cho BubbleFcmService wake overlay)
+  // 2) FCM native token — dùng cho push server khi app kill
   try {
-    const fcmToken = await Overlay?.consumeFcmToken?.();
+    let fcmToken = await Overlay?.consumeFcmToken?.();
+    if (!fcmToken && granted) {
+      try {
+        const device = await Notifications.getDevicePushTokenAsync();
+        fcmToken = device?.data || null;
+      } catch {
+        /* ignore */
+      }
+    }
     if (fcmToken) {
       const prev = await AsyncStorage.getItem(FCM_TOKEN_KEY);
       if (prev !== fcmToken) {

@@ -6,15 +6,20 @@ import {
   consumePendingIncomingCall,
   dismissIncomingCallNotification,
   parseIncomingCallData,
+  showIncomingCallNotification,
   storePendingIncomingCall,
   type IncomingCallPayload,
 } from '../../lib/incomingCallNotifications';
+import { consumeNativeCallIntent } from '../../lib/nativeCallNotification';
 
 /** Lắng nghe push/local notification cuộc gọi — mở app → hiện CallOverlay. */
 export default function CallNotificationBridge() {
   const { applyIncomingFromPush, rejectCall, acceptCall } = useCall();
 
   useEffect(() => {
+    void consumeNativeCallIntent().then((p) => {
+      if (p) applyIncomingFromPush(p);
+    });
     void consumePendingIncomingCall().then((p) => {
       if (p) applyIncomingFromPush(p);
     });
@@ -33,6 +38,7 @@ export default function CallNotificationBridge() {
       if (!payload) return;
       void storePendingIncomingCall(payload);
       if (AppState.currentState !== 'active') {
+        void showIncomingCallNotification(payload);
         applyIncomingFromPush(payload);
       }
     });

@@ -2,6 +2,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { CRM_NOTIF_CHANNELS } from './notificationChannels';
+import {
+  cancelNativeIncomingCallNotification,
+  postNativeIncomingCallNotification,
+} from './nativeCallNotification';
 
 export type IncomingCallPayload = {
   callId: string;
@@ -42,19 +46,47 @@ async function ensureCallCategories() {
 export function parseIncomingCallData(data: unknown): IncomingCallPayload | null {
   if (!data || typeof data !== 'object') return null;
   const d = data as Record<string, unknown>;
-  if (d.type !== 'incoming_call') return null;
-  const callId = String(d.call_id || d.callId || '');
-  const fromUserId = String(d.from_user_id || d.fromUserId || '');
+  const meta =
+    d.metadata && typeof d.metadata === 'object' ? (d.metadata as Record<string, unknown>) : null;
+  const type = String(d.type || meta?.type || '');
+  if (type !== 'incoming_call') return null;
+
+  const callId = String(d.call_id || d.callId || meta?.call_id || meta?.callId || '');
+  const fromUserId = String(d.from_user_id || d.fromUserId || meta?.from_user_id || meta?.fromUserId || '');
   if (!callId || !fromUserId) return null;
+
+  const isGroupRaw = d.is_group ?? d.isGroup ?? meta?.is_group ?? meta?.isGroup;
+  const isGroup = isGroupRaw === true || isGroupRaw === 'true';
+
   return {
     callId,
-    kind: typeof d.kind === 'string' ? d.kind : 'audio',
+    kind: typeof d.kind === 'string' ? d.kind : typeof meta?.kind === 'string' ? meta.kind : 'audio',
     fromUserId,
-    fromName: typeof d.from_name === 'string' ? d.from_name : typeof d.fromName === 'string' ? d.fromName : undefined,
-    isGroup: d.is_group === true || d.is_group === 'true' || d.isGroup === true,
-    groupId: typeof d.group_id === 'string' ? d.group_id : typeof d.groupId === 'string' ? d.groupId : undefined,
+    fromName:
+      typeof d.from_name === 'string'
+        ? d.from_name
+        : typeof d.fromName === 'string'
+          ? d.fromName
+          : typeof meta?.from_name === 'string'
+            ? meta.from_name
+            : undefined,
+    isGroup,
+    groupId:
+      typeof d.group_id === 'string'
+        ? d.group_id
+        : typeof d.groupId === 'string'
+          ? d.groupId
+          : typeof meta?.group_id === 'string'
+            ? meta.group_id
+            : undefined,
     groupName:
-      typeof d.group_name === 'string' ? d.group_name : typeof d.groupName === 'string' ? d.groupName : undefined,
+      typeof d.group_name === 'string'
+        ? d.group_name
+        : typeof d.groupName === 'string'
+          ? d.groupName
+          : typeof meta?.group_name === 'string'
+            ? meta.group_name
+            : undefined,
   };
 }
 
@@ -86,12 +118,22 @@ export async function clearPendingIncomingCall(): Promise<void> {
 }
 
 export async function showIncomingCallNotification(payload: IncomingCallPayload): Promise<void> {
+  // Android: native notification đáng tin cậy hơn khi app ở nền / màn hình khóa
+  if (postNativeIncomingCallNotification(payload)) return;
+
   await ensureCallCategories();
   const isGroup = !!payload.isGroup;
   const title = isGroup ? 'Cuộc gọi nhóm' : 'Cuộc gọi đến';
   const body = isGroup
     ? `${payload.fromName || 'Ai đó'} mời bạn tham gia «${payload.groupName || 'Nhóm'}»`
     : `${payload.fromName || 'Ai đó'} đang gọi bạn`;
+
+  try {
+    const perm = await Notifications.getPermissionsAsync();
+    if (perm.status !== 'granted') return;
+  } catch {
+    return;
+  }
 
   await Notifications.scheduleNotificationAsync({
     identifier: `incoming_call_${payload.callId}`,
@@ -123,6 +165,7 @@ export async function showIncomingCallNotification(payload: IncomingCallPayload)
 
 export async function dismissIncomingCallNotification(callId?: string | null): Promise<void> {
   if (!callId) return;
+  cancelNativeIncomingCallNotification(callId);
   try {
     await Notifications.dismissNotificationAsync(`incoming_call_${callId}`);
   } catch {
