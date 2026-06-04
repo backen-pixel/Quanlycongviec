@@ -3,6 +3,7 @@ import {
   isMessengerCallLogMessage,
   extractCallLogPayloadFromMessage,
   formatCallLogLine,
+  parseCallLogPayload,
 } from './messengerCallLog';
 
 function collectAtts(message) {
@@ -81,6 +82,19 @@ export function previewFromMessengerMessages(messages, { forUserId, maxLen = 80 
 export function normalizeMessengerPreviewText(text, { forUserId } = {}) {
   let raw = String(text ?? '').trim();
   if (!raw) return '';
+
+  if (raw.startsWith(':call_log:')) {
+    const parsed = parseCallLogPayload(raw);
+    const line = parsed ? formatCallLogLine(parsed, forUserId) : null;
+    if (line) {
+      const oneLine = line.replace(/\s+/g, ' ');
+      return oneLine.length > 80 ? `${oneLine.slice(0, 79)}…` : oneLine;
+    }
+  }
+  if (raw.startsWith('📞')) {
+    const oneLine = raw.replace(/\s+/g, ' ');
+    return oneLine.length > 80 ? `${oneLine.slice(0, 79)}…` : oneLine;
+  }
 
   if (/^Đã thu hồi tin nhắn$/i.test(raw)) return 'Đã thu hồi tin nhắn';
   if (/^Tin nhắn bị thu hồi$/i.test(raw)) return 'Tin nhắn bị thu hồi';

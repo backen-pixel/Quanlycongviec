@@ -41,6 +41,7 @@ import {
   previewFromMessengerMessages,
   resolveThreadPreviewLabel,
 } from '../lib/messengerPreview';
+import { isMessengerCallLogMessage } from '../lib/messengerCallLog';
 
 const URL_IN_TEXT = /(https?:\/\/[^\s<]+[^<.,:;"')\]\s])/gi;
 
@@ -320,15 +321,33 @@ export default function MessengerHubPage() {
   useEffect(() => {
     let reloadT;
     const onGroupActivity = (e) => {
-      const { groupId, created_at, content, attachments, is_self, sender_name, user_id, recalled_at, is_recalled } =
-        e.detail || {};
+      const {
+        groupId,
+        created_at,
+        content,
+        attachments,
+        message_type,
+        is_self,
+        sender_name,
+        user_id,
+        recalled_at,
+        is_recalled,
+      } = e.detail || {};
       if (!groupId || !created_at) return;
       const body = buildMessengerMessagePreview(
-        { content, attachments, user_id, recalled_at, is_recalled: !!(recalled_at || is_recalled) },
+        {
+          content,
+          attachments,
+          message_type,
+          user_id,
+          recalled_at,
+          is_recalled: !!(recalled_at || is_recalled),
+        },
         { forUserId: uid, maxLen: 80 },
       );
-      const prefix = is_self ? 'Bạn: ' : sender_name ? `${sender_name}: ` : '';
-      const livePreview = body ? normalizeMessengerPreviewText(`${prefix}${body}`) : '';
+      const isCallLog = isMessengerCallLogMessage({ content, message_type, attachments });
+      const prefix = isCallLog ? '' : is_self ? 'Bạn: ' : sender_name ? `${sender_name}: ` : '';
+      const livePreview = body ? normalizeMessengerPreviewText(isCallLog ? body : `${prefix}${body}`) : '';
       setThreads((prev) => {
         const idx = prev.findIndex((t) => t.kind === 'messenger' && t.groupId === groupId);
         if (idx === -1) return prev;
@@ -479,8 +498,8 @@ export default function MessengerHubPage() {
       if (selectedGroupId) setChatLoadingGroupId(null);
 
       const preview = previewFromMessengerMessages(msgs, { forUserId: uid, maxLen: 80 });
-      const meaningful = (msgs || []).filter((m) => !m.is_system);
-      const lastAt = meaningful.length ? meaningful[meaningful.length - 1].created_at : null;
+      const lastMsg = (msgs || []).length ? msgs[msgs.length - 1] : null;
+      const lastAt = lastMsg?.created_at || null;
       if (!selectedGroupId) return;
 
       setThreads((prev) =>
@@ -488,13 +507,13 @@ export default function MessengerHubPage() {
           if (t.kind !== 'messenger' || t.groupId !== selectedGroupId) return t;
           const nextPreview =
             preview ||
-            (meta.loaded && meaningful.length === 0 ? 'Chưa có tin nhắn' : t.lastPreview);
+            (meta.loaded && !msgs?.length ? 'Chưa có tin nhắn' : t.lastPreview);
           return {
             ...t,
             lastPreview: nextPreview,
             updatedAt: lastAt || t.updatedAt,
             lastMessageAt: lastAt || t.lastMessageAt,
-            messageCount: meaningful.length || t.messageCount,
+            messageCount: msgs?.length || t.messageCount,
           };
         }),
       );

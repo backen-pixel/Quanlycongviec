@@ -14,7 +14,17 @@ const {
   extractCallLogPayloadFromRow,
   hydrateMessengerCallLogRow,
   formatCallLogLine,
+  parseCallLogPayload,
 } = require('../helpers/messengerCallLog');
+
+function sanitizeStatsLastMessagePreview(text, forUserId) {
+  const raw = text == null ? '' : String(text).trim();
+  if (!raw) return null;
+  if (raw.startsWith(':call_log:')) {
+    return formatCallLogLine(parseCallLogPayload(raw), forUserId) || '📞 Cuộc gọi';
+  }
+  return text;
+}
 const { responseCache, invalidateTags: rcInvalidateTagsMessenger } = require('../middleware/responseCache');
 
 /** Bucket Supabase Storage (mặc định giống upload CRM). */
@@ -224,7 +234,7 @@ function buildMessagePreviewNode(m, opts = {}) {
 }
 
 const LAST_MSG_PREVIEW_SELECT =
-  'group_id, user_id, content, attachment_mime, attachment_name, attachments, is_system, created_at, recalled_at, is_recalled, recalled_by';
+  'group_id, user_id, content, message_type, attachment_mime, attachment_name, attachments, is_system, created_at, recalled_at, is_recalled, recalled_by';
 
 function isStatsPreviewMissing(stats) {
   if (!stats) return true;
@@ -241,6 +251,7 @@ async function fetchLastMessagesForGroupPreviews(groupIds, forUserId) {
       m.group_id,
       m.user_id,
       m.content,
+      m.message_type,
       m.attachment_mime,
       m.attachment_name,
       m.attachments,
@@ -251,7 +262,11 @@ async function fetchLastMessagesForGroupPreviews(groupIds, forUserId) {
       m.recalled_by
     FROM messenger_group_messages m
     WHERE m.group_id = ANY($1::uuid[])
-      AND COALESCE(m.is_system, false) = false
+      AND (
+        COALESCE(m.is_system, false) = false
+        OR m.message_type = 'call'
+        OR BTRIM(COALESCE(m.content, '')) LIKE ':call_log:%'
+      )
     ORDER BY m.group_id, m.created_at DESC`,
     [groupIds],
   );
@@ -271,14 +286,13 @@ async function fetchLastMessagesForGroupPreviews(groupIds, forUserId) {
     await Promise.all(
       chunk.map(async (gid) => {
         try {
-          const { data: m } = await supabase
+          const { data: recent } = await supabase
             .from('messenger_group_messages')
             .select(LAST_MSG_PREVIEW_SELECT)
             .eq('group_id', gid)
-            .eq('is_system', false)
             .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
+            .limit(8);
+          const m = (recent || []).find((row) => buildMessagePreviewNode(row, { forUserId }));
           if (!m) return;
           const preview = buildMessagePreviewNode(m, { forUserId });
           if (preview) {
@@ -1000,24 +1014,25 @@ r.get('/groups', responseCache({ ttl: 30, scope: 'user', tags: ['messenger'] }),
         }
       }
 
-      // Fallback: mỗi nhóm một tin cuối (ảnh/tệp/thu hồi — RPC v2 chỉ có content text).
+      // Bổ sung tin cuối thật (gồm log cuộc gọi — RPC v3 bỏ qua is_system).
       try {
-        const missing = ids.filter((gid) => isStatsPreviewMissing(statsMap.get(gid)));
-        if (missing.length) {
-          const picked = await fetchLastMessagesForGroupPreviews(missing, uid);
-          for (const [gid, row] of picked) {
-            const prev = statsMap.get(gid) || {
-              message_count: 0,
-              last_message_at: row.created_at,
-              last_message: null,
-              last_user_id: null,
-              unread_count: 0,
-            };
+        const picked = await fetchLastMessagesForGroupPreviews(ids, uid);
+        for (const [gid, row] of picked) {
+          const prev = statsMap.get(gid) || {
+            message_count: 0,
+            last_message_at: row.created_at,
+            last_message: null,
+            last_user_id: null,
+            unread_count: 0,
+          };
+          const pickTs = new Date(row.created_at || 0).getTime();
+          const statTs = new Date(prev.last_message_at || 0).getTime();
+          if (pickTs >= statTs || isStatsPreviewMissing(prev)) {
             statsMap.set(gid, {
               ...prev,
               last_message: row.preview,
-              last_user_id: prev.last_user_id || row.user_id || null,
-              last_message_at: prev.last_message_at || row.created_at,
+              last_user_id: row.user_id || prev.last_user_id || null,
+              last_message_at: pickTs >= statTs ? row.created_at : prev.last_message_at,
             });
           }
         }
@@ -1057,12 +1072,15 @@ r.get('/groups', responseCache({ ttl: 30, scope: 'user', tags: ['messenger'] }),
         }
       }
       const st = statsMap.get(g.id);
-      const last_message = formatGroupListPreview(st?.last_message, {
-        isDirect: !!g.is_direct,
-        lastUserId: st?.last_user_id,
-        viewerId: uid,
-        userNameById,
-      });
+      const last_message = formatGroupListPreview(
+        sanitizeStatsLastMessagePreview(st?.last_message, uid),
+        {
+          isDirect: !!g.is_direct,
+          lastUserId: st?.last_user_id,
+          viewerId: uid,
+          userNameById,
+        },
+      );
       return {
         id: g.id,
         name: display_name,
