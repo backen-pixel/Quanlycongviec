@@ -1327,7 +1327,7 @@ export default function MessengerHubPage() {
                               id: selected.peer_id,
                               name: selected.title,
                               avatar: selected.peer_avatar,
-                            });
+                            }, { groupId: selectedGroupId });
                           } else {
                             // Nhóm → mở modal chọn thành viên trước
                             setGroupCallPicker({ kind: 'audio' });
@@ -1370,7 +1370,7 @@ export default function MessengerHubPage() {
                               id: selected.peer_id,
                               name: selected.title,
                               avatar: selected.peer_avatar,
-                            }, { video: true });
+                            }, { video: true, groupId: selectedGroupId });
                           } else {
                             // Nhóm → mở modal chọn thành viên trước
                             setGroupCallPicker({ kind: 'video' });

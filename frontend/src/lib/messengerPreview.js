@@ -1,4 +1,5 @@
 import { isMessengerMessageRecalled } from './messengerReactions';
+import { parseCallLogPayload, formatCallLogLine } from './messengerCallLog';
 
 function collectAtts(message) {
   if (Array.isArray(message?.attachments) && message.attachments.length) return message.attachments;
@@ -18,7 +19,16 @@ function collectAtts(message) {
  * @returns {string|null} null nếu bỏ qua (system / không có nội dung hiển thị)
  */
 export function buildMessengerMessagePreview(message, { forUserId, maxLen = 80 } = {}) {
-  if (!message || message.is_system) return null;
+  if (!message) return null;
+  const callPayload = parseCallLogPayload(message.content);
+  if (callPayload || message.message_type === 'call') {
+    const line = formatCallLogLine(callPayload, forUserId);
+    if (line) {
+      const oneLine = line.replace(/\s+/g, ' ');
+      return oneLine.length > maxLen ? `${oneLine.slice(0, maxLen - 1)}…` : oneLine;
+    }
+  }
+  if (message.is_system && message.message_type !== 'call') return null;
 
   if (isMessengerMessageRecalled(message)) {
     const mine =

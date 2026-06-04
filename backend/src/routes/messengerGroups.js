@@ -10,6 +10,7 @@ const config = require('../config');
 const { notifyMultiple } = require('../helpers/notifications');
 const { isAdminLike } = require('../helpers/adminRole');
 const { handleIncomingMessage } = require('../helpers/aiConversation');
+const { parseCallLogPayload, formatCallLogLine } = require('../helpers/messengerCallLog');
 const { responseCache, invalidateTags: rcInvalidateTagsMessenger } = require('../middleware/responseCache');
 
 /** Bucket Supabase Storage (mặc định giống upload CRM). */
@@ -186,6 +187,11 @@ function buildMessagePreviewNode(m, opts = {}) {
   }
   const raw = (m.content == null ? '' : String(m.content)).trim();
   if (raw) {
+    const callPayload = parseCallLogPayload(raw);
+    if (callPayload || m.message_type === 'call') {
+      const line = formatCallLogLine(callPayload, forUserId);
+      if (line) return line.length > 120 ? line.slice(0, 120) : line;
+    }
     if (raw.startsWith(':sticker:')) {
       const emoji = raw.slice(':sticker:'.length).trim();
       return emoji ? `🏷️ ${emoji}` : '🏷️ Nhãn dán';

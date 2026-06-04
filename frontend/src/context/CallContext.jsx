@@ -488,7 +488,12 @@ export function CallProvider({ children }) {
       const stream = await getLocalStream({ video: wantVideo });
       const pc = createDirectPeerConnection(newCallId, peerUser.id);
       stream.getTracks().forEach((t) => pc.addTrack(t, stream));
-      socket.emit('call:invite', { callId: newCallId, toUserId: peerUser.id, kind: wantVideo ? 'video' : 'audio' });
+      socket.emit('call:invite', {
+        callId: newCallId,
+        toUserId: peerUser.id,
+        kind: wantVideo ? 'video' : 'audio',
+        groupId: opts.groupId || null,
+      });
       ringbackAudioRef.current = playTone('ringback');
       timeoutRef.current = setTimeout(() => {
         setError('Không có phản hồi');
