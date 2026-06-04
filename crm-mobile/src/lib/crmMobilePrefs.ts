@@ -51,7 +51,7 @@ export function createAllEnabledCrmMobilePrefs(): CrmMobilePrefs {
     floatingChatBubbleOnlyWhenUnread: false,
     floatingChatBubbleCompact: false,
     floatingChatBubbleSystemOverlay: true,
-    useAndroidBubblesWhenAvailable: true,
+    useAndroidBubblesWhenAvailable: false,
   };
 }
 

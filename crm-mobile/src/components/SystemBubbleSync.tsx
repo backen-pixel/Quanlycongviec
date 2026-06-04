@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AppState, type AppStateStatus, DeviceEventEmitter, NativeModules, Platform } from 'react-native';
+import * as Notifications from 'expo-notifications';
 import { useAuth } from '../context/AuthContext';
 import { isChatNotification, useNotifications } from '../context/NotificationContext';
 import { navigationRef } from '../navigation/navigationRef';
@@ -168,6 +169,99 @@ function noteOverlayConv(
   }
 }
 
+/** Hiện bong bóng overlay khi có tin chat (cần quyền «Hiển thị trên app khác»). */
+async function showChatBubbleForMessage(
+  n: AppNotification,
+  prefs: CrmMobilePrefs | null,
+  opts?: { isActive?: boolean },
+) {
+  if (Platform.OS !== 'android' || !Overlay) return;
+  if (!prefs?.floatingChatBubbleEnabled || !prefs?.floatingChatBubbleSystemOverlay) return;
+
+  const { bubbleKey, title, letter, senderName, senderLetter, senderAvatarUrl } =
+    displayTitleForChat(n);
+  if (!bubbleKey) return;
+
+  const bubbleAvatarLetter = senderLetter || letter;
+  const msgContent = n.message ?? '';
+  const meta = metaRecord(n);
+  const messageId =
+    typeof meta.message_id === 'string'
+      ? meta.message_id
+      : typeof n.id === 'string' || typeof n.id === 'number'
+        ? String(n.id)
+        : null;
+  const messageType = typeof meta.message_type === 'string' ? meta.message_type : null;
+  const isActive = opts?.isActive ?? AppState.currentState === 'active';
+
+  if (isActive) {
+    const fgLead = getForegroundLead();
+    if (fgLead && bubbleKey === `lead:${fgLead}`) {
+      try {
+        Overlay.cancelChatNotification?.(bubbleKey);
+      } catch {
+        /* */
+      }
+      return;
+    }
+  }
+
+  const can = await Overlay.canDrawOverlays?.().catch(() => false);
+  if (!can) return;
+
+  pushOverlayBubble(bubbleKey, title, bubbleAvatarLetter, senderAvatarUrl);
+  noteOverlayConv(bubbleKey, title, bubbleAvatarLetter, senderAvatarUrl);
+
+  if (isActive) {
+    try {
+      Overlay.postChatNotification?.(
+        bubbleKey,
+        title,
+        senderName,
+        senderAvatarUrl || null,
+        msgContent,
+        messageId,
+        messageType,
+      );
+    } catch {
+      /* ignore */
+    }
+  } else {
+    try {
+      Overlay.showPeek?.(senderName, msgContent, bubbleKey);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function notificationFromPushData(
+  data: Record<string, unknown>,
+  body: string,
+  title: string,
+): AppNotification | null {
+  const type = typeof data.type === 'string' ? data.type : '';
+  if (!isChatNotification({ type })) return null;
+  const meta =
+    data.metadata && typeof data.metadata === 'object'
+      ? (data.metadata as Record<string, unknown>)
+      : data;
+  return {
+    id: `push-${Date.now()}`,
+    type: type as AppNotification['type'],
+    entity_type: typeof data.entity_type === 'string' ? data.entity_type : null,
+    entity_id:
+      typeof data.entity_id === 'string' || typeof data.entity_id === 'number'
+        ? String(data.entity_id)
+        : null,
+    message: body,
+    title,
+    metadata: meta,
+    is_read: false,
+    created_at: new Date().toISOString(),
+  };
+}
+
 /**
  * Đồng bộ bong bóng native (Android overlay) với prefs + badge + mở chat khi chạm bubble.
  */
@@ -222,25 +316,6 @@ export default function SystemBubbleSync() {
         if (!master || !sys) {
           await Overlay.stopOverlay?.().catch(() => {});
           return;
-        }
-        // Ưu tiên Android Bubbles API — nếu thiết bị hỗ trợ + user đã bật
-        // pref + đã grant Bubbles permission → KHÔNG chạy overlay tự vẽ.
-        // Lý do: System UI sẽ tự render bubble và XẾP CHUNG STACK với
-        // Messenger/Zalo. Chạy overlay song song sẽ che mất bubble system
-        // → user không thấy bubble được gom với Mess/Zalo.
-        if (
-          prefs.useAndroidBubblesWhenAvailable &&
-          Overlay.areBubblesSupported
-        ) {
-          try {
-            const supported = await Overlay.areBubblesSupported();
-            if (supported) {
-              await Overlay.stopOverlay?.().catch(() => {});
-              return;
-            }
-          } catch {
-            /* fallback: vẫn chạy overlay */
-          }
         }
         if (onlyUnread && badge === 0) {
           await Overlay.stopOverlay?.().catch(() => {});
@@ -393,100 +468,29 @@ export default function SystemBubbleSync() {
     if (Platform.OS !== 'android' || !Overlay) return;
     const unsub = subscribeIncoming((n) => {
       if (!isChatNotification(n)) return;
-      const { bubbleKey, title, letter, senderName, senderLetter, senderAvatarUrl } =
-        displayTitleForChat(n);
-      if (!bubbleKey) return;
-
-      const msgContent = n.message ?? '';
-      // Avatar bong bóng = người gửi tin (giống Messenger), không phải avatar user đăng nhập.
-      const bubbleAvatarLetter = senderLetter || letter;
-
-      const isActive = AppState.currentState === 'active';
-      const fgLead = getForegroundLead();
-      const meta = metaRecord(n);
-      const messageId =
-        typeof meta.message_id === 'string'
-          ? meta.message_id
-          : typeof n.id === 'string' || typeof n.id === 'number'
-            ? String(n.id)
-            : null;
-      const messageType = typeof meta.message_type === 'string' ? meta.message_type : null;
-      if (isActive) {
-        const isLeadFg = fgLead && bubbleKey === `lead:${fgLead}`;
-        if (isLeadFg) {
-          // User đang xem → cancel notif cũ nếu có
-          try { Overlay.cancelChatNotification?.(bubbleKey); } catch { /* */ }
-          return;
-        }
-        // Foreground: chỉ ghi entry vào overlay stack KHI overlay tự vẽ là
-        // strategy hiện hành (tức user không bật Bubbles API). Nếu Bubbles API
-        // đang lo phần background, foreground không cần đẩy overlay nữa
-        // — bong bóng RN in-app đã hiển thị rồi.
-        const preferBubblesActive =
-          prefs?.useAndroidBubblesWhenAvailable === true &&
-          Overlay.areBubblesSupported &&
-          Overlay.postBubbleNotification;
-        if (!preferBubblesActive) {
-          noteOverlayConv(bubbleKey, title, bubbleAvatarLetter, senderAvatarUrl);
-        }
-        // Phase 4: FCM không deliver khi app foreground → tự post local heads-up
-        try {
-          Overlay.postChatNotification?.(
-            bubbleKey,
-            title,
-            senderName,
-            senderAvatarUrl || null,
-            msgContent,
-            messageId,
-            messageType,
-          );
-        } catch { /* ignore */ }
-        return;
-      }
-
-      // Ngoài app — quyết định bubble strategy theo prefs:
-      // 1) Ưu tiên Android Bubbles API (Android 11+, user không cấm) nếu prefs bật.
-      // 2) Fallback overlay tự vẽ (cần SYSTEM_ALERT_WINDOW).
-      void (async () => {
-        const preferBubbles =
-          prefs?.useAndroidBubblesWhenAvailable === true &&
-          Overlay.areBubblesSupported &&
-          Overlay.postBubbleNotification;
-        if (preferBubbles) {
-          try {
-            const supported = await Overlay.areBubblesSupported!();
-            if (supported) {
-              Overlay.postBubbleNotification!(
-                bubbleKey,
-                title,
-                senderName,
-                msgContent,
-                letter,
-                false,
-              );
-              return;
-            }
-          } catch {
-            /* rơi xuống overlay */
-          }
-        }
-        if (Overlay.pushIncomingMessage) {
-          Overlay.pushIncomingMessage(
-            bubbleKey,
-            title,
-            bubbleAvatarLetter,
-            senderAvatarUrl,
-            senderName,
-            msgContent,
-          );
-        } else {
-          pushOverlayBubble(bubbleKey, title, bubbleAvatarLetter, senderAvatarUrl);
-          Overlay.showPeek?.(senderName, msgContent, bubbleKey);
-        }
-      })();
+      void showChatBubbleForMessage(n, prefs, {
+        isActive: AppState.currentState === 'active',
+      });
     });
     return unsub;
   }, [subscribeIncoming, prefs]);
+
+  /** Push/FCM khi app nền — socket có thể đã ngắt. */
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const sub = Notifications.addNotificationReceivedListener((notification) => {
+      if (AppState.currentState === 'active') return;
+      const data = notification.request.content.data;
+      if (!data || typeof data !== 'object') return;
+      const n = notificationFromPushData(
+        data as Record<string, unknown>,
+        notification.request.content.body || '',
+        notification.request.content.title || '',
+      );
+      if (n) void showChatBubbleForMessage(n, prefs, { isActive: false });
+    });
+    return () => sub.remove();
+  }, [prefs]);
 
   useEffect(() => {
     if (Platform.OS !== 'android' || !Overlay) return;
