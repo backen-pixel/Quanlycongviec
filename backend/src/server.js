@@ -249,6 +249,13 @@ if (fs.existsSync(frontendDist)) {
 
 /** State in-memory cho group call — map<callId, {groupId, groupName, hostId, kind, participants: Map<uid, {name}>}> */
 const activeGroupCalls = new Map();
+/** Cuộc gọi 1-1 — ghi log vào messenger chat khi kết thúc */
+const activeDirectCalls = new Map();
+const {
+  resolveDirectMessengerGroupId,
+  finalizeDirectCallLog,
+  finalizeGroupCallLog,
+} = require('./helpers/messengerCallLog');
 
 /** Push thông báo cuộc gọi đến khi app đóng / socket ngắt. */
 async function pushIncomingCall(toUserId, payload) {
@@ -343,38 +350,68 @@ io.on('connection', (socket) => {
    * - call:end     → bên kia nhận `call:ended`
    * - call:signal  → relay SDP offer/answer/ICE candidate
    */
-  socket.on('call:invite', ({ callId, toUserId, kind = 'audio' } = {}) => {
+  socket.on('call:invite', ({ callId, toUserId, kind = 'audio', groupId: clientGroupId } = {}) => {
     if (!callId || !toUserId) return;
     const uid = socket.user?.userId || socket.user?.id;
     if (!uid) return;
-    io.to(`user:${toUserId}`).emit('call:incoming', {
-      callId,
-      kind,
-      fromUserId: uid,
-      fromName: socket.user?.fullName || socket.user?.full_name || 'Người gọi',
-    });
-    void pushIncomingCall(String(toUserId), {
-      callId,
-      kind,
-      fromUserId: uid,
-      fromName: socket.user?.fullName || socket.user?.full_name || 'Người gọi',
-      isGroup: false,
-    });
+    void (async () => {
+      let groupId = clientGroupId || null;
+      if (!groupId) groupId = await resolveDirectMessengerGroupId(uid, toUserId);
+      activeDirectCalls.set(callId, {
+        groupId,
+        callerId: uid,
+        calleeId: toUserId,
+        kind: kind === 'video' ? 'video' : 'audio',
+        startedAt: Date.now(),
+        answeredAt: null,
+        logged: false,
+      });
+      io.to(`user:${toUserId}`).emit('call:incoming', {
+        callId,
+        kind,
+        groupId,
+        fromUserId: uid,
+        fromName: socket.user?.fullName || socket.user?.full_name || 'Người gọi',
+      });
+      void pushIncomingCall(String(toUserId), {
+        callId,
+        kind,
+        groupId,
+        fromUserId: uid,
+        fromName: socket.user?.fullName || socket.user?.full_name || 'Người gọi',
+        isGroup: false,
+      });
+    })();
   });
 
   socket.on('call:accept', ({ callId, toUserId } = {}) => {
     if (!callId || !toUserId) return;
+    const session = activeDirectCalls.get(callId);
+    if (session && !session.answeredAt) session.answeredAt = Date.now();
     io.to(`user:${toUserId}`).emit('call:accepted', { callId });
   });
 
   socket.on('call:reject', ({ callId, toUserId, reason = 'rejected' } = {}) => {
-    if (!callId || !toUserId) return;
-    io.to(`user:${toUserId}`).emit('call:rejected', { callId, reason });
+    if (!callId) return;
+    const uid = socket.user?.userId || socket.user?.id;
+    const session = activeDirectCalls.get(callId);
+    if (session && !session.logged) {
+      void finalizeDirectCallLog(io, session, { endedByUserId: uid, reason });
+      activeDirectCalls.delete(callId);
+    }
+    if (toUserId) io.to(`user:${toUserId}`).emit('call:rejected', { callId, reason });
   });
 
   socket.on('call:end', ({ callId, toUserId } = {}) => {
-    if (!callId || !toUserId) return;
-    io.to(`user:${toUserId}`).emit('call:ended', { callId });
+    if (!callId) return;
+    const uid = socket.user?.userId || socket.user?.id;
+    const session = activeDirectCalls.get(callId);
+    if (session && !session.logged) {
+      const status = session.answeredAt ? 'completed' : null;
+      void finalizeDirectCallLog(io, session, { status, endedByUserId: uid });
+      activeDirectCalls.delete(callId);
+    }
+    if (toUserId) io.to(`user:${toUserId}`).emit('call:ended', { callId });
   });
 
   socket.on('call:signal', ({ callId, toUserId, signal } = {}) => {
@@ -407,6 +444,8 @@ io.on('connection', (socket) => {
       hostId: uid,
       kind,
       startedAt: now,
+      connectedAt: null,
+      logged: false,
       participants: new Map([[uid, { name: hostName, joinedAt: now }]]),
       /** invited khi host_start: cho phép join ngay không cần duyệt */
       invitedIds: new Set([...new Set(memberIds.map(String))]),
@@ -456,7 +495,11 @@ io.on('connection', (socket) => {
     const myName = socket.user?.fullName || socket.user?.full_name || 'Thành viên';
     const existingIds = [...call.participants.keys()].filter((id) => id !== uid);
     const existing = existingIds.map((id) => ({ userId: id, name: call.participants.get(id)?.name || '' }));
+    const prevSize = call.participants.size;
     call.participants.set(uid, { name: myName, joinedAt: Date.now() });
+    if (!call.connectedAt && call.participants.size >= 2 && prevSize < 2) {
+      call.connectedAt = Date.now();
+    }
     // Báo cho người mới biết ai đang có trong cuộc — để họ chờ offer từ các participants này
     socket.emit('call:group_participants', { callId, participants: existing, hostId: call.hostId });
     // Báo cho mọi người khác biết có thành viên mới → họ sẽ tạo offer
@@ -482,6 +525,7 @@ io.on('connection', (socket) => {
 
     if (call.participants.size === 0) {
       const { groupId } = call;
+      void finalizeGroupCallLog(io, call);
       activeGroupCalls.delete(callId);
       if (groupId) {
         io.to(`messenger_group:${groupId}`).emit('call:group_room_ended', { callId, groupId });
@@ -690,6 +734,12 @@ io.on('connection', (socket) => {
       return;
     }
     // 1-1
+    const session = activeDirectCalls.get(callId);
+    if (session && !session.logged) {
+      const status = session.answeredAt ? 'completed' : null;
+      void finalizeDirectCallLog(io, session, { status, endedByUserId: uid });
+      activeDirectCalls.delete(callId);
+    }
     if (toUserId) io.to(`user:${toUserId}`).emit('call:ended', { callId });
   });
 
@@ -697,10 +747,10 @@ io.on('connection', (socket) => {
   socket.removeAllListeners('call:reject');
   socket.on('call:reject', ({ callId, toUserId, reason = 'rejected' } = {}) => {
     if (!callId) return;
+    const uid = socket.user?.userId || socket.user?.id;
     if (activeGroupCalls.has(callId)) {
       // Group: chỉ báo cho host biết ai đó từ chối — không kết thúc cuộc
       const call = activeGroupCalls.get(callId);
-      const uid = socket.user?.userId || socket.user?.id;
       if (call?.hostId && uid) {
         io.to(`user:${call.hostId}`).emit('call:group_member_rejected', {
           callId,
@@ -712,6 +762,11 @@ io.on('connection', (socket) => {
       return;
     }
     // 1-1
+    const session = activeDirectCalls.get(callId);
+    if (session && !session.logged) {
+      void finalizeDirectCallLog(io, session, { endedByUserId: uid, reason });
+      activeDirectCalls.delete(callId);
+    }
     if (toUserId) io.to(`user:${toUserId}`).emit('call:rejected', { callId, reason });
   });
 

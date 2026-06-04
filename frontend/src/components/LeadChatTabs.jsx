@@ -1,7 +1,7 @@
 import { Fragment, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import api from '../lib/api';
 import { resolveMediaUrl, BROKEN_MEDIA_PLACEHOLDER } from '../lib/mediaUrl';
-import { Trash2, Send, Users, Crown, Shield, Building2, Eye, Paperclip, X, Mic, Reply, CornerDownRight, Smile, Zap, Undo2, Check } from 'lucide-react';
+import { Trash2, Send, Users, Crown, Shield, Building2, Eye, Paperclip, X, Mic, Reply, CornerDownRight, Smile, Zap, Undo2, Check, Phone } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import EmployeePicker from './EmployeePicker';
@@ -15,6 +15,7 @@ import {
   normalizeForwardDisplayContent,
 } from '../lib/messengerMessageActions';
 import { buildMessengerMessagePreview } from '../lib/messengerPreview';
+import { callLogDisplayText, parseCallLogPayload } from '../lib/messengerCallLog';
 import {
   groupMessengerReactions,
   isMessengerMessageRecalled,
@@ -1723,7 +1724,9 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
           if (hiddenMsgIds.has(String(m.id))) return null;
           const isMe = String(m.user_id) === String(uid);
           const msgSelected = selectedMsgIds.has(String(m.id));
-          const selectable = !m.is_system && m.message_type !== 'system' && !isMessengerMessageRecalled(m);
+          const callLogPayload = parseCallLogPayload(m.content);
+          const isCallLog = m.message_type === 'call' || !!callLogPayload;
+          const selectable = !m.is_system && m.message_type !== 'system' && !isCallLog && !isMessengerMessageRecalled(m);
           const isBot = !!m.user?.is_bot;
           const mentionedIds = !groupMeta?.is_direct
             ? [
@@ -1732,12 +1735,18 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
               ]
             : [];
           const mentioned = mentionedIds.map(String).includes(String(uid));
-          if (m.is_system && !isBot && m.message_type === 'system') {
+          if (m.is_system && !isBot && (m.message_type === 'system' || isCallLog)) {
+            const sysText = isCallLog ? callLogDisplayText(m, uid) : (m.content || '');
             return (
               <div key={m.id} className="flex justify-center my-2">
-                <span className="text-[10px] text-violet-700 bg-violet-50 px-3 py-1.5 rounded-full shadow-sm border border-violet-100 max-w-[95%] text-center leading-snug">
-                  {m.content}
-                  <span className="text-violet-400"> · {formatTime(m.created_at)}</span>
+                <span className={`text-[10px] px-3 py-1.5 rounded-full shadow-sm border max-w-[95%] text-center leading-snug inline-flex items-center gap-1.5 ${
+                  isCallLog
+                    ? 'text-emerald-800 bg-emerald-50 border-emerald-100'
+                    : 'text-violet-700 bg-violet-50 border-violet-100'
+                }`}>
+                  {isCallLog && <Phone className="h-3 w-3 shrink-0 opacity-80" aria-hidden />}
+                  <span>{sysText}</span>
+                  <span className={isCallLog ? 'text-emerald-500' : 'text-violet-400'}> · {formatTime(m.created_at)}</span>
                 </span>
               </div>
             );
