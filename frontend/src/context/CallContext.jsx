@@ -22,6 +22,10 @@ import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from 'react';
 import { useAuth } from '../lib/auth';
+import {
+  dismissIncomingCallDesktopAlert,
+  showIncomingCallDesktopAlert,
+} from '../lib/incomingCallNotify';
 
 const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -313,6 +317,7 @@ export function CallProvider({ children }) {
   }, [closeGroupPeer]);
 
   const resetState = useCallback(() => {
+    dismissIncomingCallDesktopAlert();
     cleanup();
     setStatus('idle');
     setMode('direct');
@@ -621,6 +626,7 @@ export function CallProvider({ children }) {
 
   const acceptCall = useCallback(async () => {
     if (status !== 'incoming' || !callId || !socket) return;
+    dismissIncomingCallDesktopAlert();
     if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
     if (ringtoneAudioRef.current) { ringtoneAudioRef.current.pause(); ringtoneAudioRef.current = null; }
     setStatus('connecting');
@@ -935,6 +941,13 @@ export function CallProvider({ children }) {
         setPeer({ id: fromUserId, name: fromName || 'Người gọi', avatar: null });
       }
       ringtoneAudioRef.current = playTone('ringtone');
+      showIncomingCallDesktopAlert({
+        callId: incomingId,
+        fromName,
+        kind: incomingKind || 'audio',
+        isGroup: !!isGroup,
+        groupName: groupName || '',
+      });
       timeoutRef.current = setTimeout(() => {
         if (isGroup) socket.emit('call:reject', { callId: incomingId, reason: 'no_answer' });
         else socket.emit('call:reject', { callId: incomingId, toUserId: fromUserId, reason: 'no_answer' });

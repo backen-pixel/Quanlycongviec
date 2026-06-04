@@ -12,6 +12,7 @@ import { io, type Socket } from 'socket.io-client';
 import { api } from '../api/client';
 import { API_ORIGIN } from '../config';
 import { bindMessengerSocket } from '../lib/messengerRealtime';
+import { setAppSocket } from '../lib/appSocket';
 import { useAuth } from './AuthContext';
 import { isNotificationTypeEnabled } from '../lib/notificationPrefs';
 import { isExpiryDeadlineNotificationType } from '../lib/operationalNotifications';
@@ -148,6 +149,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       if (socketRef.current) {
         socketRef.current.disconnect();
         socketRef.current = null;
+        setAppSocket(null);
       }
       return;
     }
@@ -161,6 +163,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     });
 
     socketRef.current = s;
+    setAppSocket(s);
     bindMessengerSocket(s);
 
     const onNotif = (raw: unknown) => {
@@ -199,7 +202,10 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       appSub.remove();
       s.off('notification', onNotif);
       s.disconnect();
-      if (socketRef.current === s) socketRef.current = null;
+      if (socketRef.current === s) {
+        socketRef.current = null;
+        setAppSocket(null);
+      }
     };
   }, [authLoading, token]);
 

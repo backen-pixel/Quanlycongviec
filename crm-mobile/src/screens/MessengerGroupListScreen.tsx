@@ -24,9 +24,11 @@ import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { useNotifications } from '../context/NotificationContext';
 import { useAuth } from '../context/AuthContext';
 import { formatMessagePreview } from '../lib/messengerPreview';
+import { getMessengerGroupsCache, setMessengerGroupsCache } from '../lib/messengerGroupsCache';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'MessengerGroupList'>;
 type TabKey = 'group' | 'direct';
+type ListFilter = 'all' | 'pinned' | 'unread';
 
 /* ─── helpers ─────────────────────────────────────────────────── */
 
@@ -276,11 +278,12 @@ export default function MessengerGroupListScreen({ navigation }: { navigation: N
   const { refreshUnread, subscribeIncoming } = useNotifications();
   const { user } = useAuth();
   const myId = String(user?.id || user?.userId || '');
-  const [groups, setGroups] = useState<MessengerGroupListItem[]>([]);
+  const [groups, setGroups] = useState<MessengerGroupListItem[]>(() => getMessengerGroupsCache() || []);
   const [pins, setPins] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !getMessengerGroupsCache()?.length);
   const [refreshing, setRefreshing] = useState(false);
   const [tab, setTab] = useState<TabKey>('group');
+  const [listFilter, setListFilter] = useState<ListFilter>('all');
   const [draftSearch, setDraftSearch] = useState('');
   const [search, setSearch] = useState('');
   const pinsRef = useRef<Set<string>>(new Set());
@@ -311,6 +314,7 @@ export default function MessengerGroupListScreen({ navigation }: { navigation: N
           .catch(() => ({ data: { group_ids: [] } })),
       ]);
       const list = Array.isArray(gRes.data) ? gRes.data : [];
+      setMessengerGroupsCache(list);
       const ids = (pRes.data?.group_ids || []).filter(Boolean);
       const pinSet = new Set(ids.map(String));
       setPins(pinSet);
@@ -420,10 +424,15 @@ export default function MessengerGroupListScreen({ navigation }: { navigation: N
   }, [groups]);
 
   const filteredAll = useMemo(() => {
-    const byTab = groups.filter((it) => (tab === 'group' ? !it.is_direct : !!it.is_direct));
+    let byTab = groups.filter((it) => (tab === 'group' ? !it.is_direct : !!it.is_direct));
+    if (listFilter === 'pinned') {
+      byTab = byTab.filter((it) => pins.has(String(it.id)));
+    } else if (listFilter === 'unread') {
+      byTab = byTab.filter((it) => (it.unread_count ?? 0) > 0);
+    }
     if (!search) return byTab;
     return byTab.filter((it) => (it.name || '').toLowerCase().includes(search));
-  }, [groups, tab, search]);
+  }, [groups, tab, search, listFilter, pins]);
 
   /** "Đang trực tuyến": đối tác chat 1-1 có hoạt động <24h, max 8 cell. */
   const onlinePeers = useMemo(() => {
@@ -531,6 +540,28 @@ export default function MessengerGroupListScreen({ navigation }: { navigation: N
           </TouchableOpacity>
         </View>
 
+        {/* Bộ lọc — đồng bộ web Hub */}
+        <View style={styles.filterRow}>
+          {(
+            [
+              { id: 'all' as ListFilter, label: 'Tất cả' },
+              { id: 'pinned' as ListFilter, label: 'Ghim' },
+              { id: 'unread' as ListFilter, label: 'Chưa đọc' },
+            ] as const
+          ).map((f) => (
+            <TouchableOpacity
+              key={f.id}
+              style={[styles.filterChip, listFilter === f.id && styles.filterChipOn]}
+              onPress={() => setListFilter(f.id)}
+              activeOpacity={0.85}
+            >
+              <Text style={[styles.filterChipTxt, listFilter === f.id && styles.filterChipTxtOn]}>
+                {f.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
         {/* Online row */}
         {onlinePeers.length > 0 ? (
           <View style={styles.section}>
@@ -560,7 +591,7 @@ export default function MessengerGroupListScreen({ navigation }: { navigation: N
         <Text style={[styles.sectionH, { marginTop: 4, marginBottom: 8 }]}>HỘI THOẠI GẦN ĐÂY</Text>
       </View>
     ),
-    [draftSearch, tab, counts, onlinePeers, navigation],
+    [draftSearch, tab, counts, onlinePeers, navigation, listFilter],
   );
 
   if (loading && groups.length === 0) {
@@ -650,6 +681,25 @@ const styles = StyleSheet.create({
 
   /* tabs */
   tabRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  filterRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+    backgroundColor: '#fff',
+    borderRadius: CrmRadii.lg,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: CrmColors.gray200,
+  },
+  filterChip: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: CrmRadii.md,
+    alignItems: 'center',
+  },
+  filterChipOn: { backgroundColor: '#EFF6FF' },
+  filterChipTxt: { fontSize: 12, fontWeight: '700', color: CrmColors.gray600 },
+  filterChipTxtOn: { color: CrmColors.blue700 },
   tabPill: {
     flex: 1,
     flexDirection: 'row',

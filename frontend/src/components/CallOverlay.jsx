@@ -20,6 +20,7 @@ import {
   Crown, UserPlus, Check, X, MonitorUp, MonitorOff,
 } from 'lucide-react';
 import { useCall } from '../context/CallContext';
+import { callOverlayZ } from '../lib/callOverlayZIndex';
 import { publicFileUrl } from '../lib/publicFileUrl';
 
 function formatDuration(ms) {
@@ -92,11 +93,11 @@ function JoinRequestsPanel({ floating = true }) {
   if (!isHost || list.length === 0) return null;
 
   const containerClass = floating
-    ? 'fixed top-20 right-4 z-[101] w-80 bg-slate-900/95 backdrop-blur-xl text-white rounded-2xl shadow-2xl border border-white/10 overflow-hidden'
+    ? 'fixed top-20 right-4 w-80 bg-slate-900/95 backdrop-blur-xl text-white rounded-2xl shadow-2xl border border-white/10 overflow-hidden'
     : 'w-full bg-slate-800/80 backdrop-blur-xl text-white rounded-2xl shadow-xl border border-white/10 overflow-hidden';
 
   return (
-    <div className={containerClass}>
+    <div className={containerClass} style={floating ? callOverlayZ(1) : undefined}>
       <div className="px-4 py-3 bg-gradient-to-r from-amber-500/20 to-orange-500/20 border-b border-white/10 flex items-center gap-2">
         <UserPlus size={16} className="text-amber-300" />
         <p className="text-xs font-semibold uppercase tracking-wider">
@@ -138,7 +139,10 @@ function JoinRequestsPanel({ floating = true }) {
 function SelfPreview({ stream, cameraOn }) {
   if (!stream || !cameraOn) return null;
   return (
-    <div className="fixed bottom-24 right-6 z-[101] w-40 h-28 rounded-xl overflow-hidden shadow-2xl ring-2 ring-white/40 bg-black">
+    <div
+      className="fixed bottom-24 right-6 w-40 h-28 rounded-xl overflow-hidden shadow-2xl ring-2 ring-white/40 bg-black"
+      style={callOverlayZ(1)}
+    >
       <StreamVideo stream={stream} muted mirror className="w-full h-full object-cover" />
     </div>
   );
@@ -297,7 +301,7 @@ function DirectVideoActive() {
   const remoteFit = peerIsSharing ? 'object-contain bg-black' : 'object-cover';
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] bg-black flex flex-col">
+    <div className="fixed inset-0 bg-black flex flex-col" style={callOverlayZ()}>
       {/* Header */}
       <div className="absolute top-0 left-0 right-0 z-10 px-6 py-4 bg-gradient-to-b from-black/70 to-transparent flex items-center justify-between text-white">
         <div>
@@ -397,7 +401,10 @@ function GroupCallActive() {
     const isVideo = kind === 'video';
 
     return createPortal(
-      <div className="fixed inset-0 z-[100] bg-gradient-to-br from-slate-900 via-violet-900 to-slate-900 flex flex-col p-6 backdrop-blur-xl">
+      <div
+        className="fixed inset-0 bg-gradient-to-br from-slate-900 via-violet-900 to-slate-900 flex flex-col p-6 backdrop-blur-xl"
+        style={callOverlayZ()}
+      >
         <JoinRequestsPanel />
         {/* Header */}
         <div className="flex items-center justify-between text-white mb-6">
@@ -504,7 +511,10 @@ function GroupCallActive() {
   return createPortal(
     <>
     <JoinRequestsPanel />
-    <div className="fixed top-4 right-4 z-[100] bg-slate-900/95 backdrop-blur-xl text-white rounded-2xl shadow-2xl px-3 py-2 flex items-center gap-3 min-w-[280px] border border-white/10">
+    <div
+      className="fixed top-4 right-4 bg-slate-900/95 backdrop-blur-xl text-white rounded-2xl shadow-2xl px-3 py-2 flex items-center gap-3 min-w-[280px] border border-white/10"
+      style={callOverlayZ()}
+    >
       <div className="flex -space-x-2">
         {visible.map((p) => (
           <div key={p.id} className="ring-2 ring-slate-900 rounded-full">
@@ -577,7 +587,10 @@ export default function CallOverlay() {
     if (kind === 'video') return <DirectVideoActive />;
     // Direct audio: pill nhỏ
     return createPortal(
-      <div className="fixed top-4 right-4 z-[100] bg-slate-900/95 backdrop-blur-xl text-white rounded-2xl shadow-2xl px-3 py-2 flex items-center gap-3 min-w-[260px] border border-white/10">
+      <div
+        className="fixed top-4 right-4 bg-slate-900/95 backdrop-blur-xl text-white rounded-2xl shadow-2xl px-3 py-2 flex items-center gap-3 min-w-[260px] border border-white/10"
+        style={callOverlayZ()}
+      >
         <Avatar name={peer?.name} avatar={peer?.avatar} size={36} ring={false} />
         <div className="flex-1 min-w-0">
           <p className="text-xs font-semibold truncate">{peer?.name || 'Cuộc gọi'}</p>
@@ -626,7 +639,10 @@ export default function CallOverlay() {
     : null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] bg-gradient-to-br from-slate-900 via-violet-900 to-slate-900 flex flex-col items-center justify-center p-6 backdrop-blur-xl">
+    <div
+      className="fixed inset-0 bg-gradient-to-br from-slate-900 via-violet-900 to-slate-900 flex flex-col items-center justify-center p-6 backdrop-blur-xl"
+      style={callOverlayZ()}
+    >
       {isGroup && <JoinRequestsPanel />}
       {isGroup && status !== 'incoming' ? (
         <div className="w-full max-w-3xl mb-8">

@@ -17,6 +17,7 @@ export const CRM_NOTIF_CHANNELS = {
   chat: 'crm_chat',
   system: 'crm_system_tray_v3',
   bubbleWake: 'crm_bubble_wake',
+  call: 'crm_call',
 } as const;
 
 export async function setupNotificationChannels(): Promise<void> {
@@ -54,6 +55,19 @@ export async function setupNotificationChannels(): Promise<void> {
       enableVibrate: false,
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.SECRET,
       showBadge: false,
+    });
+    await Notifications.setNotificationChannelAsync(CRM_NOTIF_CHANNELS.call, {
+      name: 'Cuộc gọi',
+      description: 'Thông báo cuộc gọi đến từ Messenger CRM',
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 400, 200, 400, 200, 400],
+      lightColor: '#0068FF',
+      enableLights: true,
+      enableVibrate: true,
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      sound: 'default',
+      showBadge: true,
+      bypassDnd: true,
     });
   } catch {
     /* ignore — re-tries không cần */

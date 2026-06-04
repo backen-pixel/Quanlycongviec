@@ -13,6 +13,7 @@ import { useAuth } from '../context/AuthContext';
 import {
   getAppPermissionGaps,
   grantAllPermissionsQuick,
+  openOverlaySettings,
   type AppPermissionGap,
 } from '../lib/appPermissions';
 import { syncVoiceBackgroundTaskWithPrefs } from '../lib/voiceBackgroundSync';
@@ -78,11 +79,20 @@ export default function PermissionBootstrap() {
 
   if (!visible || gaps.length === 0 || Platform.OS !== 'android') return null;
 
+  const needsOverlay = gaps.includes('systemOverlay');
+
   return (
     <Modal visible animationType="fade" transparent statusBarTranslucent onRequestClose={handleSkip}>
       <View style={styles.backdrop}>
         <View style={[styles.card, CrmShadow.card]}>
           <Text style={styles.title}>Cấp quyền cần thiết</Text>
+
+          {needsOverlay ? (
+            <Text style={styles.overlayNote}>
+              Để hiện bong bóng chat nổi trên màn hình (khi dùng app khác), bạn cần bật quyền
+              «Hiển thị trên các ứng dụng khác» trong Cài đặt Android.
+            </Text>
+          ) : null}
 
           {/* Chỉ hiển thị các quyền còn thiếu */}
           <View style={styles.list}>
@@ -106,6 +116,16 @@ export default function PermissionBootstrap() {
               <Text style={styles.btnTxt}>Cấp quyền</Text>
             )}
           </TouchableOpacity>
+
+          {needsOverlay ? (
+            <TouchableOpacity
+              style={styles.overlayBtn}
+              disabled={busy}
+              onPress={() => openOverlaySettings()}
+            >
+              <Text style={styles.overlayBtnTxt}>Mở cài đặt bong bóng nổi</Text>
+            </TouchableOpacity>
+          ) : null}
 
           <TouchableOpacity style={styles.skip} disabled={busy} onPress={handleSkip}>
             <Text style={styles.skipTxt}>Bỏ qua</Text>
@@ -155,6 +175,16 @@ const styles = StyleSheet.create({
   },
   btnDisabled: { opacity: 0.6 },
   btnTxt: { color: CrmColors.white, fontWeight: '700', fontSize: 15 },
+  overlayBtn: {
+    marginTop: 10,
+    paddingVertical: 12,
+    borderRadius: CrmRadii.md,
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  overlayBtnTxt: { color: CrmColors.blue700, fontWeight: '700', fontSize: 14 },
   skip: { marginTop: 10, paddingVertical: 8, alignItems: 'center' },
   skipTxt: { color: CrmColors.gray400, fontSize: 13 },
 });
