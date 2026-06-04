@@ -291,11 +291,23 @@ export function ReactionPickerBar({
   onReply,
   onRecall,
   canRecall,
+  onShare,
+  onCopy,
+  onCopyImage,
+  onDownload,
+  showCopyImage,
+  showDownload,
 }: {
   onPick: (emoji: string) => void;
   onReply: () => void;
   onRecall?: () => void;
   canRecall?: boolean;
+  onShare?: () => void;
+  onCopy?: () => void;
+  onCopyImage?: () => void;
+  onDownload?: () => void;
+  showCopyImage?: boolean;
+  showDownload?: boolean;
 }) {
   return (
     <View style={bar.wrap}>
@@ -306,17 +318,43 @@ export function ReactionPickerBar({
           </TouchableOpacity>
         ))}
       </View>
-      <View style={bar.actions}>
-        <TouchableOpacity style={bar.actBtn} onPress={onReply}>
-          <Ionicons name="arrow-undo" size={16} color={CrmColors.gray700} />
-          <Text style={bar.actTxt}>Trả lời</Text>
-        </TouchableOpacity>
-        {canRecall && onRecall ? (
-          <TouchableOpacity style={bar.actBtn} onPress={onRecall}>
-            <Ionicons name="trash-outline" size={16} color="#DC2626" />
-            <Text style={[bar.actTxt, { color: '#DC2626' }]}>Thu hồi</Text>
+      <View style={bar.actionsWrap}>
+        <View style={bar.actions}>
+          <TouchableOpacity style={bar.actBtn} onPress={onReply}>
+            <Ionicons name="arrow-undo" size={16} color={CrmColors.gray700} />
+            <Text style={bar.actTxt}>Trả lời</Text>
           </TouchableOpacity>
-        ) : null}
+          {onShare ? (
+            <TouchableOpacity style={bar.actBtn} onPress={onShare}>
+              <Ionicons name="share-outline" size={16} color={CrmColors.gray700} />
+              <Text style={bar.actTxt}>Chia sẻ</Text>
+            </TouchableOpacity>
+          ) : null}
+          {onCopy ? (
+            <TouchableOpacity style={bar.actBtn} onPress={onCopy}>
+              <Ionicons name="copy-outline" size={16} color={CrmColors.gray700} />
+              <Text style={bar.actTxt}>Sao chép</Text>
+            </TouchableOpacity>
+          ) : null}
+          {showCopyImage && onCopyImage ? (
+            <TouchableOpacity style={bar.actBtn} onPress={onCopyImage}>
+              <Ionicons name="image-outline" size={16} color={CrmColors.gray700} />
+              <Text style={bar.actTxt}>Copy ảnh</Text>
+            </TouchableOpacity>
+          ) : null}
+          {showDownload && onDownload ? (
+            <TouchableOpacity style={bar.actBtn} onPress={onDownload}>
+              <Ionicons name="download-outline" size={16} color={CrmColors.blue600} />
+              <Text style={[bar.actTxt, { color: CrmColors.blue600 }]}>Tải xuống</Text>
+            </TouchableOpacity>
+          ) : null}
+          {canRecall && onRecall ? (
+            <TouchableOpacity style={bar.actBtn} onPress={onRecall}>
+              <Ionicons name="trash-outline" size={16} color="#DC2626" />
+              <Text style={[bar.actTxt, { color: '#DC2626' }]}>Thu hồi</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
       </View>
     </View>
   );
@@ -336,7 +374,8 @@ const bar = StyleSheet.create({
     backgroundColor: '#F3F4F6', alignItems: 'center', justifyContent: 'center',
   },
   emojiTxt: { fontSize: 22 },
-  actions: { flexDirection: 'row', gap: 16, justifyContent: 'center' },
-  actBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6, paddingHorizontal: 12 },
-  actTxt: { fontSize: 13, fontWeight: '700', color: CrmColors.gray700 },
+  actionsWrap: { maxHeight: 88 },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center', paddingBottom: 4 },
+  actBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6, paddingHorizontal: 10 },
+  actTxt: { fontSize: 12, fontWeight: '700', color: CrmColors.gray700 },
 });

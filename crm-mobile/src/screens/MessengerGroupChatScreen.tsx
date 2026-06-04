@@ -46,6 +46,14 @@ import { ChatMessageRow, ReactionPickerBar } from '../components/chat/ChatMessag
 import { formatReplyPreview } from '../lib/messengerPreview';
 import { normalizeReactions, mergeMessengerMessage } from '../lib/messengerReactions';
 import {
+  copyMessengerImage,
+  copyMessengerText,
+  downloadMessengerMedia,
+  getDownloadTarget,
+  getFirstImage,
+  shareMessengerMessage,
+} from '../lib/messengerMessageActions';
+import {
   joinMessengerGroup,
   leaveMessengerGroup,
   subscribeMessengerEvent,
@@ -597,7 +605,7 @@ export default function MessengerGroupChatScreen({
 
   const recallMessage = useCallback(
     async (msg: MessengerMessage) => {
-      Alert.alert('Thu hồi tin nhắn', 'Bạn có chắc muốn thu hồi tin này?', [
+      Alert.alert('Thu hồi tin nhắn', 'Nội dung tin sẽ bị xóa. Vẫn hiển thị "Đã thu hồi tin nhắn".', [
         { text: 'Hủy', style: 'cancel' },
         {
           text: 'Thu hồi',
@@ -663,10 +671,15 @@ export default function MessengerGroupChatScreen({
       const ev = raw as {
         group_id?: string;
         message_id?: string;
+        deleted?: boolean;
         recalled_at?: string;
         recalled_by?: string;
       };
       if (String(ev?.group_id || '') !== String(groupId) || !ev?.message_id) return;
+      if (ev.deleted) {
+        setMessages((prev) => prev.filter((m) => String(m.id) !== String(ev.message_id)));
+        return;
+      }
       setMessages((prev) =>
         prev.map((m) =>
           String(m.id) === String(ev.message_id)
@@ -1158,6 +1171,26 @@ export default function MessengerGroupChatScreen({
               ? () => void recallMessage(actionMsg)
               : undefined
           }
+          onShare={() => {
+            void shareMessengerMessage(actionMsg, displayTitle);
+            setActionMsg(null);
+          }}
+          onCopy={() => {
+            void copyMessengerText(actionMsg, displayTitle);
+            setActionMsg(null);
+          }}
+          onCopyImage={() => {
+            const img = getFirstImage(actionMsg);
+            void copyMessengerImage(img?.url);
+            setActionMsg(null);
+          }}
+          showCopyImage={!!getFirstImage(actionMsg)}
+          onDownload={() => {
+            const t = getDownloadTarget(actionMsg);
+            void downloadMessengerMedia(t?.url, t?.name);
+            setActionMsg(null);
+          }}
+          showDownload={!!getDownloadTarget(actionMsg)?.url}
         />
       ) : null}
 

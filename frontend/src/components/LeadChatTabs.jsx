@@ -1,10 +1,26 @@
 import { Fragment, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import api from '../lib/api';
 import { resolveMediaUrl, BROKEN_MEDIA_PLACEHOLDER } from '../lib/mediaUrl';
-import { Trash2, Send, Users, Crown, Shield, Building2, Eye, Paperclip, X, Mic, Reply, CornerDownRight, Smile, Zap } from 'lucide-react';
+import { Trash2, Send, Users, Crown, Shield, Building2, Eye, Paperclip, X, Mic, Reply, CornerDownRight, Smile, Zap, Undo2, Check } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import EmployeePicker from './EmployeePicker';
+import MessengerMessageHoverActions from './MessengerMessageHoverActions';
+import MessengerMessageSelectionBar from './MessengerMessageSelectionBar';
+import MessengerForwardMessageModal from './MessengerForwardMessageModal';
+import MessengerFileAttachmentCard from './MessengerFileAttachmentCard';
+import {
+  buildBulkMessengerShareText,
+  copyTextToClipboard,
+  normalizeForwardDisplayContent,
+} from '../lib/messengerMessageActions';
+import { buildMessengerMessagePreview } from '../lib/messengerPreview';
+import {
+  groupMessengerReactions,
+  isMessengerMessageRecalled,
+  mergeMessengerMessage,
+  normalizeMessengerReactions,
+} from '../lib/messengerReactions';
 
 function Avatar({ name, url, size = 8 }) {
   if (url) {
@@ -389,15 +405,7 @@ const formatTime = (d) => {
 };
 
 function previewOfMessage(parent) {
-  if (!parent) return '';
-  const txt = String(parent.content || '').trim();
-  if (txt) return txt.length > 120 ? txt.slice(0, 120) + '…' : txt;
-  const type = parent.message_type;
-  if (type === 'image') return '🖼️ Hình ảnh';
-  if (type === 'video') return '🎬 Video';
-  if (type === 'audio') return '🎙️ Ghi âm';
-  if (parent.attachment_url || parent.attachment_name) return `📎 ${parent.attachment_name || 'Tệp đính kèm'}`;
-  return '[tin nhắn]';
+  return buildMessengerMessagePreview(parent, { maxLen: 120 }) || '[tin nhắn]';
 }
 
 /**
@@ -941,12 +949,58 @@ function groupMessengerAttachments(items) {
   return { images, videos, audios, files };
 }
 
-function resolveMentionIdsFromContent(content, members) {
+/** Tin chỉ có ảnh (không text / không file khác) → hiển thị ảnh trần, không bọc bubble. */
+function isImageOnlyMessengerMessage(message, contentStr = '') {
+  const text = String(contentStr || message?.content || '').trim();
+  if (text && !isStickerContent(text)) return false;
+  const items = collectMessengerAttachments(message);
+  if (!items.length) return false;
+  const { images, videos, audios, files } = groupMessengerAttachments(items);
+  return images.length > 0 && !videos.length && !audios.length && !files.length;
+}
+
+/** Tin chỉ có file tài liệu → thẻ file trần, không bọc bubble tím/trắng. */
+function isFileOnlyMessengerMessage(message, contentStr = '') {
+  const text = String(contentStr || message?.content || '').trim();
+  if (text && !isStickerContent(text)) return false;
+  const items = collectMessengerAttachments(message);
+  if (!items.length) return false;
+  const { images, videos, audios, files } = groupMessengerAttachments(items);
+  return files.length > 0 && !images.length && !videos.length && !audios.length;
+}
+
+/** Nhãn @mention gọi toàn bộ thành viên nhóm (không dùng chat 1-1). */
+export const MESSENGER_MENTION_ALL_LABEL = 'Tất cả';
+
+function normalizeMentionSearch(s) {
+  return String(s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function contentHasMentionAll(content) {
+  return /@(tất\s*cả|tat\s*ca|all)\b/i.test(String(content || ''));
+}
+
+function resolveMentionIdsFromContent(content, members, { excludeUserId } = {}) {
   const ids = [];
   if (!content?.trim() || !members?.length) return ids;
+  const ex = excludeUserId != null ? String(excludeUserId) : '';
+
+  if (contentHasMentionAll(content)) {
+    for (const mem of members) {
+      const id = mem.user_id;
+      if (id && String(id) !== ex && !ids.includes(id)) ids.push(id);
+    }
+  }
+
+  const stripped = String(content).replace(/@(tất\s*cả|tat\s*ca|all)\b/gi, ' ');
   const re = /@([^\s\n@]+)/g;
   let m;
-  while ((m = re.exec(content))) {
+  while ((m = re.exec(stripped))) {
     const piece = m[1].toLowerCase();
     const pieceCompact = piece.replace(/\s/g, '');
     for (const mem of members) {
@@ -956,7 +1010,7 @@ function resolveMentionIdsFromContent(content, members) {
       const lowCompact = low.replace(/\s/g, '');
       if (low.startsWith(piece) || lowCompact.startsWith(pieceCompact)) {
         const id = mem.user_id;
-        if (id && !ids.includes(id)) ids.push(id);
+        if (id && String(id) !== ex && !ids.includes(id)) ids.push(id);
         break;
       }
     }
@@ -964,12 +1018,20 @@ function resolveMentionIdsFromContent(content, members) {
   return ids;
 }
 
-// Inline tokens: @mention, [label](url) markdown, bare http(s) URL
-const INLINE_TOKEN_RE = /(@[^\s\n@]+|\[[^\]]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s]+)/g;
+function mentionAllPickerMatchesQuery(frag) {
+  const q = normalizeMentionSearch(frag);
+  if (!q) return true;
+  const all = normalizeMentionSearch(MESSENGER_MENTION_ALL_LABEL);
+  return all.startsWith(q) || q.startsWith(all) || q === 'tat' || q === 'ta' || q === 't';
+}
+
+// Inline tokens: @mention (gồm @Tất cả), [label](url) markdown, bare http(s) URL
+const INLINE_TOKEN_RE = /(@(?:tất\s*cả|[^\s\n@]+)|\[[^\]]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s]+)/gi;
 
 function renderMessengerTextContent(content, isMe) {
   if (!content) return null;
-  const parts = content.split(INLINE_TOKEN_RE);
+  const display = normalizeForwardDisplayContent(content);
+  const parts = display.split(INLINE_TOKEN_RE);
   const linkCls = isMe
     ? 'underline decoration-sky-100 text-sky-50 hover:text-white break-all'
     : 'underline decoration-sky-400 text-sky-700 hover:text-sky-900 break-all';
@@ -1010,7 +1072,7 @@ function renderMessengerTextContent(content, isMe) {
 // ═══════════════════════════════════════════════════════════════
 // Chat nhóm nội bộ (Messenger) — không phải Lead/Deal
 // ═══════════════════════════════════════════════════════════════
-export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = false, onMessagesChange }) {
+export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = false, onMessagesChange, groupTitle = '' }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -1024,6 +1086,12 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
   // Map<userId, last_read_at ISO> — của các thành viên khác (không phải mình)
   const [readReceipts, setReadReceipts] = useState(() => new Map());
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [moreMenuMsgId, setMoreMenuMsgId] = useState(null);
+  const [forwardMsg, setForwardMsg] = useState(null);
+  const [forwardMsgs, setForwardMsgs] = useState(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedMsgIds, setSelectedMsgIds] = useState(() => new Set());
+  const [hiddenMsgIds, setHiddenMsgIds] = useState(() => new Set());
   // Typing indicator: Map<userId, { name, isBot, ts }>
   const [typingMap, setTypingMap] = useState(() => new Map());
   const typingThrottleRef = useRef(0);
@@ -1039,13 +1107,15 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
   const { registerMessengerGroupPresence, markGroupRead } = useMessengerDock();
   const onMessagesChangeRef = useRef(onMessagesChange);
   onMessagesChangeRef.current = onMessagesChange;
+  const historyLoadedRef = useRef(false);
 
-  const emitMessages = useCallback((list) => {
-    onMessagesChangeRef.current?.(list);
+  const emitMessages = useCallback((list, meta) => {
+    onMessagesChangeRef.current?.(list, meta);
   }, []);
 
   useEffect(() => {
-    emitMessages(messages);
+    if (!historyLoadedRef.current) return;
+    emitMessages(messages, { loaded: true });
   }, [messages, emitMessages]);
 
   // Tự đánh dấu đã đọc mỗi khi danh sách tin nhắn thay đổi (mở tab hoặc nhận tin mới
@@ -1062,6 +1132,50 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
     return registerMessengerGroupPresence(groupId);
   }, [groupId, registerMessengerGroupPresence]);
 
+  useEffect(() => {
+    if (!groupId) return;
+    try {
+      const raw = localStorage.getItem(`messenger_hidden_${groupId}`);
+      const ids = raw ? JSON.parse(raw) : [];
+      setHiddenMsgIds(new Set(Array.isArray(ids) ? ids.map(String) : []));
+    } catch {
+      setHiddenMsgIds(new Set());
+    }
+    setSelectMode(false);
+    setSelectedMsgIds(new Set());
+    setMoreMenuMsgId(null);
+  }, [groupId]);
+
+  const persistHidden = useCallback(
+    (ids) => {
+      if (!groupId) return;
+      localStorage.setItem(`messenger_hidden_${groupId}`, JSON.stringify([...ids]));
+    },
+    [groupId],
+  );
+
+  const exitSelectMode = useCallback(() => {
+    setSelectMode(false);
+    setSelectedMsgIds(new Set());
+    setMoreMenuMsgId(null);
+  }, []);
+
+  const startSelectMode = useCallback((seedId) => {
+    setSelectMode(true);
+    setMoreMenuMsgId(null);
+    setSelectedMsgIds(seedId != null ? new Set([String(seedId)]) : new Set());
+  }, []);
+
+  const toggleMsgSelected = useCallback((id) => {
+    const sid = String(id);
+    setSelectedMsgIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sid)) next.delete(sid);
+      else next.add(sid);
+      return next;
+    });
+  }, []);
+
   const loadGroupMeta = useCallback(async () => {
     try {
       const { data } = await api.get(`/messenger/groups/${groupId}`);
@@ -1077,11 +1191,20 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
   const load = useCallback(async () => {
     try {
       const r = await api.get(`/messenger/groups/${groupId}/chat`);
-      setMessages(r.data || []);
+      const rows = (Array.isArray(r.data) ? r.data : []).map((m) => ({
+        ...m,
+        reactions: normalizeMessengerReactions(m.reactions),
+        is_recalled: !!(m.recalled_at || m.is_recalled),
+      }));
+      historyLoadedRef.current = true;
+      setMessages(rows);
+      emitMessages(rows, { loaded: true });
     } catch (e) {
       console.error(e);
+      historyLoadedRef.current = true;
+      emitMessages([], { loaded: true });
     }
-  }, [groupId]);
+  }, [groupId, emitMessages]);
 
   // Tự động cuộn xuống đáy.
   // - Lần đầu khi load tin: nhảy thẳng (instant) để người dùng thấy luôn tin mới nhất.
@@ -1118,21 +1241,132 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
     }
   }, [groupId]);
 
+  const toggleReaction = useCallback(
+    async (msg, emoji) => {
+      try {
+        const { data } = await api.put(`/messenger/groups/${groupId}/chat/${msg.id}/reaction`, { emoji });
+        const rx = normalizeMessengerReactions(data?.reactions);
+        setMessages((prev) =>
+          prev.map((m) => (String(m.id) === String(msg.id) ? { ...m, reactions: rx } : m)),
+        );
+      } catch (e) {
+        alert(e.response?.data?.error || e.message || 'Không gửi được cảm xúc');
+      }
+    },
+    [groupId],
+  );
+
+  const recallMessage = useCallback(
+    async (msg) => {
+      if (!window.confirm('Thu hồi tin nhắn này? Nội dung sẽ bị xóa và không thể khôi phục.')) return;
+      try {
+        const { data } = await api.post(`/messenger/groups/${groupId}/chat/${msg.id}/recall`);
+        setMessages((prev) =>
+          prev.map((m) =>
+            String(m.id) === String(msg.id) ? mergeMessengerMessage(m, { ...data, is_recalled: true }) : m,
+          ),
+        );
+      } catch (e) {
+        alert(e.response?.data?.error || e.message || 'Không thu hồi được tin');
+      }
+    },
+    [groupId],
+  );
+
+  const canRecallMessage = useCallback(
+    (msg) => {
+      const me = String(user?.userId || user?.id || '');
+      if (!msg || String(msg.user_id) !== me || isMessengerMessageRecalled(msg) || msg.is_system) return false;
+      const t = msg.created_at ? new Date(msg.created_at).getTime() : 0;
+      return Number.isFinite(t) && Date.now() - t <= 24 * 60 * 60 * 1000;
+    },
+    [user],
+  );
+
+  const selectedMessages = useMemo(() => {
+    if (!selectedMsgIds.size) return [];
+    const idSet = selectedMsgIds;
+    return messages.filter((m) => idSet.has(String(m.id)) && !hiddenMsgIds.has(String(m.id)));
+  }, [messages, selectedMsgIds, hiddenMsgIds]);
+
+  const bulkRecallEligible = useMemo(
+    () => selectedMessages.filter((m) => canRecallMessage(m)),
+    [selectedMessages, canRecallMessage],
+  );
+
+  const hideMessagesForMe = useCallback(
+    (ids) => {
+      const list = [...ids].map(String);
+      if (!list.length) return;
+      setHiddenMsgIds((prev) => {
+        const next = new Set(prev);
+        list.forEach((id) => next.add(id));
+        persistHidden(next);
+        return next;
+      });
+      exitSelectMode();
+    },
+    [persistHidden, exitSelectMode],
+  );
+
+  const applyReactionUpdate = useCallback((ev) => {
+    if (String(ev?.group_id) !== String(groupId) || !ev?.message_id) return;
+    const rx = normalizeMessengerReactions(ev.reactions);
+    setMessages((prev) =>
+      prev.map((m) => (String(m.id) === String(ev.message_id) ? { ...m, reactions: rx } : m)),
+    );
+  }, [groupId]);
+
+  const applyRecallUpdate = useCallback((ev) => {
+    if (String(ev?.group_id) !== String(groupId) || !ev?.message_id) return;
+    if (ev.deleted) {
+      setMessages((prev) => prev.filter((m) => String(m.id) !== String(ev.message_id)));
+      return;
+    }
+    // Tin cũ soft-recall (trước khi đổi sang xóa thật) — giữ hiển thị placeholder
+    setMessages((prev) =>
+      prev.map((m) =>
+        String(m.id) === String(ev.message_id)
+          ? mergeMessengerMessage(m, {
+              recalled_at: ev.recalled_at || new Date().toISOString(),
+              recalled_by: ev.recalled_by ?? m.recalled_by,
+              is_recalled: true,
+            })
+          : m,
+      ),
+    );
+  }, [groupId]);
+
+  const mergeIncomingChat = useCallback((msg) => {
+    const normalized = {
+      ...msg,
+      reactions: normalizeMessengerReactions(msg.reactions),
+      is_recalled: !!(msg.recalled_at || msg.is_recalled),
+    };
+    setMessages((prev) => {
+      const idx = prev.findIndex((m) => String(m.id) === String(msg.id));
+      if (idx >= 0) {
+        return prev.map((m, i) => (i === idx ? mergeMessengerMessage(m, normalized) : m));
+      }
+      return [...prev, normalized];
+    });
+  }, []);
+
   useEffect(() => {
+    historyLoadedRef.current = false;
     setMessages([]);
     setMentionOpen(false);
     setReadReceipts(new Map());
     initialScrolledRef.current = false;
     void loadGroupMeta();
-    load();
+    void load();
     void loadReceipts();
     if (socket) {
       socket.emit('join:messenger_group', groupId);
       const onChat = (msg) => {
         const gid = msg?.group_id ?? msg?.groupId;
         if (gid == null || String(gid) !== String(groupId)) return;
-        setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
-        // Khi tin nhắn mới vào (đặc biệt từ bot) → xóa typing của user gửi
+        mergeIncomingChat(msg);
         if (msg?.user_id) {
           setTypingMap((prev) => {
             if (!prev.has(msg.user_id)) return prev;
@@ -1142,6 +1376,8 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
           });
         }
       };
+      const onReaction = (payload) => applyReactionUpdate(payload);
+      const onRecalled = (payload) => applyRecallUpdate(payload);
       const onRead = (payload) => {
         if (String(payload?.group_id) !== String(groupId)) return;
         if (!payload?.user_id || !payload?.last_read_at) return;
@@ -1179,19 +1415,25 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
         });
       };
       socket.on('messenger_group:chat', onChat);
+      socket.on('messenger_group:reaction', onReaction);
+      socket.on('messenger_group:reactions', onReaction);
+      socket.on('messenger_group:recalled', onRecalled);
       socket.on('messenger_group:members', onMembers);
       socket.on('messenger_group:typing', onTyping);
       socket.on('messenger_group:read', onRead);
       return () => {
         socket.emit('leave:messenger_group', groupId);
         socket.off('messenger_group:chat', onChat);
+        socket.off('messenger_group:reaction', onReaction);
+        socket.off('messenger_group:reactions', onReaction);
+        socket.off('messenger_group:recalled', onRecalled);
         socket.off('messenger_group:members', onMembers);
         socket.off('messenger_group:typing', onTyping);
         socket.off('messenger_group:read', onRead);
       };
     }
     return undefined;
-  }, [groupId, socket, loadGroupMeta, load, loadReceipts, user]);
+  }, [groupId, socket, loadGroupMeta, load, loadReceipts, user, mergeIncomingChat, applyReactionUpdate, applyRecallUpdate]);
 
   // Auto cleanup typing entries quá 5s không refresh (client tự stop nếu server không emit stop kịp)
   useEffect(() => {
@@ -1239,7 +1481,10 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
     }
   };
 
-  const mentionCandidates = useMemo(() => {
+  const isGroupMentionEnabled = !!(groupMeta && !groupMeta.is_direct);
+
+  const mentionPickerItems = useMemo(() => {
+    if (!isGroupMentionEnabled) return [];
     const members = groupMeta?.members || [];
     const pos = textareaRef.current?.selectionStart ?? text.length;
     const before = text.slice(0, pos);
@@ -1248,17 +1493,27 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
     const frag = before.slice(at + 1);
     if (frag.includes('\n')) return [];
     const q = frag.toLowerCase();
-    return members
+    const items = [];
+    if (mentionAllPickerMatchesQuery(frag)) {
+      items.push({ type: 'all', key: '__mention_all__' });
+    }
+    members
       .filter((mem) => String(mem.user_id) !== String(user?.userId || user?.id))
       .filter((mem) => {
         const name = (mem.user?.full_name || mem.user?.email || String(mem.user_id || '')).toLowerCase();
         if (!q) return true;
         return name.includes(q);
       })
-      .slice(0, 8);
-  }, [groupMeta, text, user]);
+      .slice(0, 8)
+      .forEach((mem) => items.push({ type: 'member', key: String(mem.user_id), mem }));
+    return items;
+  }, [groupMeta, isGroupMentionEnabled, text, user]);
 
   const syncMentionUi = useCallback(() => {
+    if (!isGroupMentionEnabled) {
+      setMentionOpen(false);
+      return;
+    }
     const el = textareaRef.current;
     const pos = el?.selectionStart ?? text.length;
     const before = text.slice(0, pos);
@@ -1275,15 +1530,21 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
     setMentionStart(at);
     setMentionOpen(true);
     setMentionPickIdx(0);
-  }, [text]);
+  }, [text, isGroupMentionEnabled]);
 
-  const applyMentionPick = (mem) => {
+  const applyMentionPick = (item) => {
     const el = textareaRef.current;
     const pos = el?.selectionStart ?? text.length;
-    const name = (mem.user?.full_name || mem.user?.email || `Thành viên ${String(mem.user_id || '').slice(0, 8)}`).trim();
     const before = text.slice(0, mentionStart);
     const after = text.slice(pos);
-    const insert = `@${name} `;
+    let insert = '';
+    if (item?.type === 'all') {
+      insert = `@${MESSENGER_MENTION_ALL_LABEL} `;
+    } else {
+      const mem = item?.mem;
+      const name = (mem?.user?.full_name || mem?.user?.email || `Thành viên ${String(mem?.user_id || '').slice(0, 8)}`).trim();
+      insert = `@${name} `;
+    }
     const next = before + insert + after;
     setText(next);
     setMentionOpen(false);
@@ -1303,7 +1564,10 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
     if ((!trimmed && pickedFiles.length === 0) || sending) return;
     setSending(true);
     const members = groupMeta?.members || [];
-    const mentionIds = resolveMentionIdsFromContent(trimmed, members);
+    const meId = user?.userId || user?.id;
+    const mentionIds = isGroupMentionEnabled
+      ? resolveMentionIdsFromContent(trimmed, members, { excludeUserId: meId })
+      : [];
     const replyId = replyTo?.id || null;
     try {
       if (pickedFiles.length > 0) {
@@ -1345,7 +1609,9 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
     setTimeout(() => setHighlightId(null), 1600);
   }, []);
 
-  const renderAttachmentsGrouped = (message) => {
+  const renderAttachmentsGrouped = (message, opts = {}) => {
+    const bare = !!opts.bare;
+    const alignEnd = !!opts.alignEnd;
     const items = collectMessengerAttachments(message);
     if (!items.length) return null;
     const { images, videos, audios, files } = groupMessengerAttachments(items);
@@ -1354,53 +1620,60 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
     if (videos.length) sections.push({ key: 'vid', label: 'Video', items: videos });
     if (audios.length) sections.push({ key: 'aud', label: 'Âm thanh', items: audios });
     if (files.length) sections.push({ key: 'fil', label: 'Tệp', items: files });
-    return sections.map((sec) => (
-      <div key={sec.key} className="mt-2 space-y-1">
-        <p className="text-[9px] font-bold uppercase tracking-wide text-gray-400">{sec.label}</p>
-        <div className="space-y-1.5">
-          {sec.items.map((att, i) => {
-            const isImg = att.type?.startsWith('image/');
-            const isVideo = att.type?.startsWith('video/');
-            const isAudio = att.type?.startsWith('audio/');
-            const fileUrl = resolveMediaUrl(att.url);
-            return (
-              <div key={`${sec.key}-${i}`}>
-                {isImg ? (
-                  <img
-                    src={fileUrl}
-                    className="rounded-lg max-w-full max-h-48 cursor-pointer bg-slate-100 object-contain"
-                    alt={att.name}
-                    onError={(e) => {
-                      e.currentTarget.onerror = null;
-                      e.currentTarget.src = BROKEN_MEDIA_PLACEHOLDER;
-                    }}
-                    onClick={() => setMediaPreview({ ...att, url: fileUrl })}
-                  />
-                ) : isVideo ? (
-                  <video
-                    src={fileUrl}
-                    controls
-                    className="rounded-lg max-w-full max-h-48 cursor-pointer bg-black/5"
-                    onClick={() => setMediaPreview({ ...att, url: fileUrl })}
-                  />
-                ) : isAudio ? (
-                  <audio src={fileUrl} controls className="w-full max-w-xs" />
-                ) : (
-                  <a
-                    href={fileUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="bg-gray-100 p-2 rounded-lg flex items-center gap-2 text-xs text-blue-600 hover:bg-gray-200"
-                  >
-                    <Paperclip size={12} /> {att.name || 'Tệp đính kèm'}
-                  </a>
-                )}
-              </div>
-            );
-          })}
+    return sections.map((sec) => {
+      const hideLabel = bare && (sec.key === 'img' || sec.key === 'fil');
+      return (
+        <div
+          key={sec.key}
+          className={hideLabel ? 'space-y-1.5' : 'mt-2 space-y-1'}
+        >
+          {!hideLabel ? (
+            <p className="text-[9px] font-bold uppercase tracking-wide text-gray-400">{sec.label}</p>
+          ) : null}
+          <div className="space-y-1.5">
+            {sec.items.map((att, i) => {
+              const isImg = att.type?.startsWith('image/');
+              const isVideo = att.type?.startsWith('video/');
+              const isAudio = att.type?.startsWith('audio/');
+              const fileUrl = resolveMediaUrl(att.url);
+              return (
+                <div key={`${sec.key}-${i}`}>
+                  {isImg ? (
+                    <img
+                      src={fileUrl}
+                      className={`${
+                        bare && alignEnd ? 'ml-auto ' : ''
+                      }${
+                        bare
+                          ? 'rounded-2xl max-w-full max-h-72 cursor-pointer shadow-md object-cover block'
+                          : 'rounded-lg max-w-full max-h-48 cursor-pointer bg-slate-100 object-contain'
+                      }`}
+                      alt={att.name}
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = BROKEN_MEDIA_PLACEHOLDER;
+                      }}
+                      onClick={() => setMediaPreview({ ...att, url: fileUrl })}
+                    />
+                  ) : isVideo ? (
+                    <video
+                      src={fileUrl}
+                      controls
+                      className="rounded-lg max-w-full max-h-48 cursor-pointer bg-black/5"
+                      onClick={() => setMediaPreview({ ...att, url: fileUrl })}
+                    />
+                  ) : isAudio ? (
+                    <audio src={fileUrl} controls className="w-full max-w-xs" />
+                  ) : (
+                    <MessengerFileAttachmentCard attachment={att} compact={bare} alignEnd={alignEnd} />
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
-      </div>
-    ));
+      );
+    });
   };
 
   const uid = user?.userId || user?.id;
@@ -1447,10 +1720,18 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
 
       <div ref={scrollContainerRef} className={`flex-1 min-h-0 overflow-y-auto ${compact ? 'px-2.5 py-2' : 'px-4 py-3'} space-y-1 bg-gradient-to-b from-slate-50/60 via-white/40 to-violet-50/40 rounded-t-xl`}>
         {messages.map((m, idx) => {
+          if (hiddenMsgIds.has(String(m.id))) return null;
           const isMe = String(m.user_id) === String(uid);
+          const msgSelected = selectedMsgIds.has(String(m.id));
+          const selectable = !m.is_system && m.message_type !== 'system' && !isMessengerMessageRecalled(m);
           const isBot = !!m.user?.is_bot;
-          const mentioned =
-            Array.isArray(m.mention_user_ids) && m.mention_user_ids.map(String).includes(String(uid));
+          const mentionedIds = !groupMeta?.is_direct
+            ? [
+                ...(Array.isArray(m.mention_user_ids) ? m.mention_user_ids : []),
+                ...resolveMentionIdsFromContent(m.content || '', groupMeta?.members || [], { excludeUserId: uid }),
+              ]
+            : [];
+          const mentioned = mentionedIds.map(String).includes(String(uid));
           if (m.is_system && !isBot && m.message_type === 'system') {
             return (
               <div key={m.id} className="flex justify-center my-2">
@@ -1476,10 +1757,32 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
             deliveryStatus = seenByOther ? ' · Đã xem' : ' · Đã gửi';
           }
 
-          // Chỉ sticker mới render không bubble, cỡ lớn — emoji thường vẫn hiển thị trong bubble bình thường
+          const recalled = isMessengerMessageRecalled(m);
+          const reactionGroups = groupMessengerReactions(m.reactions, uid);
           const contentStr = String(m.content || '');
-          const isSticker = isStickerContent(contentStr);
-          const bubbleless = isSticker;
+          const isSticker = !recalled && isStickerContent(contentStr);
+          const isImageOnly = !recalled && isImageOnlyMessengerMessage(m, contentStr);
+          const isFileOnly = !recalled && isFileOnlyMessengerMessage(m, contentStr);
+          const bubbleless = isSticker || isImageOnly || isFileOnly;
+          const recalledLabel = isMe ? 'Đã thu hồi tin nhắn' : 'Tin nhắn bị thu hồi';
+
+          const bareMediaBlock = (align) => (
+            <>
+              {!isMe && (
+                <p className={`text-[10px] font-semibold mb-1 px-1 ${isBot ? 'text-indigo-600' : 'text-violet-600'}`}>
+                  {senderName}
+                </p>
+              )}
+              {parent ? <ReplyQuoteInBubble parent={parent} isMe={isMe} onJump={jumpToMessage} /> : null}
+              <div
+                className={`flex flex-col gap-1.5 w-full ${
+                  align === 'end' ? 'items-end' : 'items-start'
+                }`}
+              >
+                {renderAttachmentsGrouped(m, { bare: true, alignEnd: align === 'end' })}
+              </div>
+            </>
+          );
 
           return (
             <Fragment key={m.id}>
@@ -1495,77 +1798,165 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                   if (el) messageRefs.current.set(String(m.id), el);
                   else messageRefs.current.delete(String(m.id));
                 }}
-                className={`group/msg flex ${isMe ? 'justify-end' : 'justify-start'} gap-2 transition-colors rounded-lg ${
+                className={`group/msg flex items-start ${isMe ? 'justify-end' : 'justify-start'} gap-2 transition-colors rounded-lg ${
                   isHighlight ? 'ring-2 ring-amber-300 bg-amber-50/60' : ''
-                }`}
+                } ${selectMode && msgSelected ? 'bg-violet-50/70 ring-1 ring-violet-200/80' : ''}`}
               >
+                {selectMode && selectable ? (
+                  <button
+                    type="button"
+                    onClick={() => toggleMsgSelected(m.id)}
+                    className={`self-center shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition ${
+                      msgSelected
+                        ? 'bg-violet-600 border-violet-600 text-white'
+                        : 'border-slate-300 bg-white hover:border-violet-400'
+                    }`}
+                    aria-label={msgSelected ? 'Bỏ chọn' : 'Chọn tin'}
+                  >
+                    {msgSelected ? <Check className="h-3 w-3" strokeWidth={3} /> : null}
+                  </button>
+                ) : null}
                 {!isMe && (
                   isBot ? (
-                    <div className="h-7 w-7 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-md ring-2 ring-white shrink-0 self-end">
+                    <div className="h-7 w-7 mt-1 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-md ring-2 ring-white shrink-0">
                       <span className="text-white text-sm">🤖</span>
                     </div>
                   ) : (
-                    <div className="self-end">
+                    <div className="shrink-0 mt-1">
                       <Avatar name={senderName} url={m.user?.avatar} size={7} />
                     </div>
                   )
                 )}
-                <div className={`flex items-center gap-1 max-w-[78%] ${isMe ? 'flex-row' : 'flex-row'}`}>
-                  {isMe && (
-                    <button
-                      type="button"
-                      onClick={() => setReplyTo(m)}
-                      className="shrink-0 opacity-0 group-hover/msg:opacity-100 transition-all text-slate-500 hover:text-violet-600 hover:bg-slate-100 p-1.5 rounded-full"
-                      title="Trả lời tin nhắn"
-                      aria-label="Trả lời"
+                <div className="max-w-[78%] min-w-0">
+                  {recalled ? (
+                    <div
+                      className={`flex items-center gap-2 px-3 py-2 rounded-2xl border text-[13px] italic text-slate-500 ${
+                        isMe ? 'bg-violet-50/80 border-violet-200/60' : 'bg-slate-50 border-slate-200'
+                      }`}
                     >
-                      <Reply className="h-4 w-4" />
-                    </button>
+                      <Undo2 className="h-3.5 w-3.5 shrink-0" />
+                      {recalledLabel}
+                    </div>
+                  ) : selectMode ? (
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => selectable && toggleMsgSelected(m.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          if (selectable) toggleMsgSelected(m.id);
+                        }
+                      }}
+                      className="max-w-full cursor-pointer"
+                    >
+                      {isSticker ? (
+                        <>
+                          {!isMe && (
+                            <p className={`text-[10px] font-semibold mb-1 px-1 ${isBot ? 'text-indigo-600' : 'text-violet-600'}`}>
+                              {senderName}
+                            </p>
+                          )}
+                          <div className={isMe ? 'text-right' : 'text-left'}>
+                            <StickerImage emoji={stripStickerPrefix(contentStr)} size={compact ? 84 : 128} />
+                          </div>
+                        </>
+                      ) : isImageOnly || isFileOnly ? (
+                        bareMediaBlock(isMe ? 'end' : 'start')
+                      ) : (
+                        <div
+                          className={`rounded-3xl px-4 py-2.5 shadow-sm ${
+                            isBot
+                              ? 'bg-gradient-to-br from-indigo-50 to-purple-50 text-gray-900 rounded-bl-md border border-indigo-200'
+                              : isMe
+                                ? 'bg-gradient-to-br from-violet-500 to-violet-600 text-white rounded-br-md'
+                                : 'bg-white text-gray-800 rounded-bl-md border border-slate-200/80'
+                          }`}
+                        >
+                          {!isMe && (
+                            <p className={`text-[10px] font-semibold mb-0.5 ${isBot ? 'text-indigo-600' : 'text-violet-600'}`}>
+                              {senderName}
+                            </p>
+                          )}
+                          {parent && <ReplyQuoteInBubble parent={parent} isMe={isMe} onJump={jumpToMessage} />}
+                          <div className="text-[13.5px] leading-relaxed whitespace-pre-wrap break-words">
+                            {renderMessengerTextContent(m.content, isMe)}
+                          </div>
+                          {renderAttachmentsGrouped(m)}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <MessengerMessageHoverActions
+                      message={m}
+                      isMe={isMe}
+                      groupTitle={groupTitle || groupMeta?.name || ''}
+                      canRecall={canRecallMessage(m)}
+                      reactionGroups={reactionGroups}
+                      alignEnd={isMe}
+                      onReply={() => {
+                        setReplyTo(m);
+                        setMoreMenuMsgId(null);
+                      }}
+                      onToggleReaction={(emoji) => void toggleReaction(m, emoji)}
+                      onRecall={() => void recallMessage(m)}
+                      onForward={() => {
+                        setForwardMsg(m);
+                        setForwardMsgs(null);
+                        setMoreMenuMsgId(null);
+                      }}
+                      onStartSelectMode={(id) => startSelectMode(id)}
+                      moreMenuOpen={moreMenuMsgId === m.id}
+                      onMoreMenuOpen={(open) => setMoreMenuMsgId(open ? m.id : null)}
+                    >
+                      {isSticker ? (
+                        <>
+                          {!isMe && (
+                            <p className={`text-[10px] font-semibold mb-1 px-1 ${isBot ? 'text-indigo-600' : 'text-violet-600'}`}>
+                              {senderName}
+                            </p>
+                          )}
+                          <div className={isMe ? 'text-right' : 'text-left'}>
+                            <StickerImage emoji={stripStickerPrefix(contentStr)} size={compact ? 84 : 128} />
+                          </div>
+                        </>
+                      ) : isImageOnly || isFileOnly ? (
+                        bareMediaBlock(isMe ? 'end' : 'start')
+                      ) : (
+                        <div
+                          className={`rounded-3xl px-4 py-2.5 shadow-sm ${
+                            isBot
+                              ? 'bg-gradient-to-br from-indigo-50 to-purple-50 text-gray-900 rounded-bl-md border border-indigo-200'
+                              : isMe
+                                ? 'bg-gradient-to-br from-violet-500 to-violet-600 text-white rounded-br-md'
+                                : 'bg-white text-gray-800 rounded-bl-md border border-slate-200/80'
+                          }`}
+                        >
+                          {!isMe && (
+                            <p className={`text-[10px] font-semibold mb-0.5 flex items-center gap-1 ${isBot ? 'text-indigo-600' : 'text-violet-600'}`}>
+                              {senderName}
+                              {isBot && (
+                                <span className="px-1.5 py-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-[8px] font-bold">
+                                  BOT
+                                </span>
+                              )}
+                            </p>
+                          )}
+                          {mentioned && (
+                            <p className="text-[9px] font-semibold mb-1 text-amber-700 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5 inline-block">
+                              Bạn được nhắc (@)
+                            </p>
+                          )}
+                          {parent && <ReplyQuoteInBubble parent={parent} isMe={isMe} onJump={jumpToMessage} />}
+                          <div className="text-[13.5px] leading-relaxed whitespace-pre-wrap break-words">
+                            {renderMessengerTextContent(m.content, isMe)}
+                          </div>
+                          {renderAttachmentsGrouped(m)}
+                        </div>
+                      )}
+                    </MessengerMessageHoverActions>
                   )}
-                  <div className="flex flex-col">
-                    {bubbleless ? (
-                      <>
-                        {!isMe && (
-                          <p className={`text-[10px] font-semibold mb-1 px-1 ${isBot ? 'text-indigo-600' : 'text-violet-600'}`}>
-                            {senderName}
-                          </p>
-                        )}
-                        <div className={isMe ? 'text-right' : 'text-left'}>
-                          <StickerImage emoji={stripStickerPrefix(contentStr)} size={compact ? 84 : 128} />
-                        </div>
-                      </>
-                    ) : (
-                      <div
-                        className={`rounded-3xl px-4 py-2.5 shadow-sm ${
-                          isBot
-                            ? 'bg-gradient-to-br from-indigo-50 to-purple-50 text-gray-900 rounded-bl-md border border-indigo-200'
-                            : isMe
-                              ? 'bg-gradient-to-br from-violet-500 to-violet-600 text-white rounded-br-md'
-                              : 'bg-white text-gray-800 rounded-bl-md border border-slate-200/80'
-                        }`}
-                      >
-                        {!isMe && (
-                          <p className={`text-[10px] font-semibold mb-0.5 flex items-center gap-1 ${isBot ? 'text-indigo-600' : 'text-violet-600'}`}>
-                            {senderName}
-                            {isBot && (
-                              <span className="px-1.5 py-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-[8px] font-bold">
-                                BOT
-                              </span>
-                            )}
-                          </p>
-                        )}
-                        {mentioned && (
-                          <p className="text-[9px] font-semibold mb-1 text-amber-700 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5 inline-block">
-                            Bạn được nhắc (@)
-                          </p>
-                        )}
-                        {parent && <ReplyQuoteInBubble parent={parent} isMe={isMe} onJump={jumpToMessage} />}
-                        <div className="text-[13.5px] leading-relaxed whitespace-pre-wrap break-words">
-                          {renderMessengerTextContent(m.content, isMe)}
-                        </div>
-                        {renderAttachmentsGrouped(m)}
-                      </div>
-                    )}
+                  {!recalled ? (
                     <p
                       className={`text-[10px] mt-1 px-1 ${
                         isMe ? 'text-right text-slate-400' : 'text-left text-slate-400'
@@ -1574,18 +1965,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                       {formatTime(m.created_at)}
                       {deliveryStatus}
                     </p>
-                  </div>
-                  {!isMe && (
-                    <button
-                      type="button"
-                      onClick={() => setReplyTo(m)}
-                      className="shrink-0 opacity-0 group-hover/msg:opacity-100 transition-all text-slate-500 hover:text-violet-600 hover:bg-slate-100 p-1.5 rounded-full"
-                      title="Trả lời tin nhắn"
-                      aria-label="Trả lời"
-                    >
-                      <Reply className="h-4 w-4" />
-                    </button>
-                  )}
+                  ) : null}
                 </div>
               </div>
             </Fragment>
@@ -1594,6 +1974,80 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
         <TypingIndicators typingMap={typingMap} />
         <div ref={messagesEndRef} />
       </div>
+
+      {forwardMsg || (forwardMsgs && forwardMsgs.length) ? (
+        <MessengerForwardMessageModal
+          message={forwardMsg}
+          messages={forwardMsgs?.length ? forwardMsgs : undefined}
+          sourceTitle={groupTitle || groupMeta?.name || ''}
+          excludeGroupId={groupId}
+          onClose={() => {
+            setForwardMsg(null);
+            setForwardMsgs(null);
+          }}
+        />
+      ) : null}
+
+      {selectMode ? (
+        <MessengerMessageSelectionBar
+          count={selectedMessages.length}
+          canRecallCount={bulkRecallEligible.length}
+          onCancel={exitSelectMode}
+          onCopy={async () => {
+            if (!selectedMessages.length) {
+              alert('Chọn ít nhất một tin nhắn');
+              return;
+            }
+            try {
+              await copyTextToClipboard(
+                buildBulkMessengerShareText(selectedMessages, {
+                  groupTitle: groupTitle || groupMeta?.name || '',
+                }),
+              );
+              alert(`Đã sao chép ${selectedMessages.length} tin`);
+            } catch (e) {
+              alert(e?.message || 'Không sao chép được');
+            }
+          }}
+          onForward={() => {
+            if (!selectedMessages.length) {
+              alert('Chọn ít nhất một tin nhắn');
+              return;
+            }
+            setForwardMsgs([...selectedMessages]);
+            setForwardMsg(null);
+          }}
+          onRecall={async () => {
+            if (!bulkRecallEligible.length) {
+              alert('Không có tin nào của bạn (trong 24h) để thu hồi');
+              return;
+            }
+            if (!window.confirm(`Thu hồi ${bulkRecallEligible.length} tin đã chọn? Nội dung sẽ bị xóa.`)) return;
+            for (const msg of bulkRecallEligible) {
+              try {
+                const { data } = await api.post(`/messenger/groups/${groupId}/chat/${msg.id}/recall`);
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    String(m.id) === String(msg.id) ? mergeMessengerMessage(m, { ...data, is_recalled: true }) : m,
+                  ),
+                );
+              } catch (e) {
+                alert(e.response?.data?.error || e.message || 'Thu hồi thất bại');
+                break;
+              }
+            }
+            exitSelectMode();
+          }}
+          onDeleteForMe={() => {
+            if (!selectedMessages.length) {
+              alert('Chọn ít nhất một tin nhắn');
+              return;
+            }
+            if (!window.confirm(`Ẩn ${selectedMessages.length} tin chỉ ở phía bạn?`)) return;
+            hideMessagesForMe(selectedMessages.map((m) => m.id));
+          }}
+        />
+      ) : null}
 
       <div className={`${compact ? 'px-2.5 pt-1.5 pb-2' : 'px-3 pt-2 pb-3'} border-t border-slate-200/70 bg-white/85 backdrop-blur-xl rounded-b-xl shrink-0 relative`}>
         <ReplyComposerBar replyTo={replyTo} onCancel={() => setReplyTo(null)} />
@@ -1624,17 +2078,21 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
           </div>
         )}
 
-        {mentionOpen && mentionCandidates.length > 0 && (
+        {mentionOpen && mentionPickerItems.length > 0 && (
           <ul className="absolute bottom-full left-3 right-14 mb-1 max-h-36 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg text-xs z-10">
-            {mentionCandidates.map((mem, idx) => (
-              <li key={mem.user_id}>
+            {mentionPickerItems.map((item, idx) => (
+              <li key={item.key}>
                 <button
                   type="button"
                   className={`w-full text-left px-2 py-1.5 hover:bg-violet-50 ${idx === mentionPickIdx ? 'bg-violet-50' : ''}`}
                   onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => applyMentionPick(mem)}
+                  onClick={() => applyMentionPick(item)}
                 >
-                  @{mem.user?.full_name || mem.user?.email || mem.user_id}
+                  {item.type === 'all' ? (
+                    <span className="font-semibold text-violet-700">@{MESSENGER_MENTION_ALL_LABEL}</span>
+                  ) : (
+                    <>@{item.mem?.user?.full_name || item.mem?.user?.email || item.mem?.user_id}</>
+                  )}
                 </button>
               </li>
             ))}
@@ -1679,10 +2137,10 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                 setTimeout(() => setMentionOpen(false), 200);
               }}
               onKeyDown={(e) => {
-                if (mentionOpen && mentionCandidates.length > 0) {
+                if (mentionOpen && mentionPickerItems.length > 0) {
                   if (e.key === 'ArrowDown') {
                     e.preventDefault();
-                    setMentionPickIdx((i) => Math.min(i + 1, mentionCandidates.length - 1));
+                    setMentionPickIdx((i) => Math.min(i + 1, mentionPickerItems.length - 1));
                     return;
                   }
                   if (e.key === 'ArrowUp') {
@@ -1692,7 +2150,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                   }
                   if (e.key === 'Enter' || e.key === 'Tab') {
                     e.preventDefault();
-                    applyMentionPick(mentionCandidates[mentionPickIdx] || mentionCandidates[0]);
+                    applyMentionPick(mentionPickerItems[mentionPickIdx] || mentionPickerItems[0]);
                     return;
                   }
                   if (e.key === 'Escape') {
@@ -1705,7 +2163,13 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                   void send();
                 }
               }}
-              placeholder={compact ? 'Nhập tin nhắn…' : 'Nhập tin nhắn… Gõ @ để nhắc tên thành viên'}
+              placeholder={
+                compact
+                  ? 'Nhập tin nhắn…'
+                  : isGroupMentionEnabled
+                    ? 'Nhập tin nhắn… Gõ @ để nhắc tên hoặc @Tất cả'
+                    : 'Nhập tin nhắn…'
+              }
               className={`flex-1 min-w-0 bg-transparent border-0 outline-none focus:ring-0 resize-none placeholder:text-slate-400 ${
                 compact ? 'text-[13px] py-1 max-h-24' : 'text-sm py-1.5 max-h-32'
               }`}

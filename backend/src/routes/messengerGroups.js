@@ -61,31 +61,61 @@ async function fetchGroupMessageForAction(gid, mid) {
   return data;
 }
 
-async function markMessageRecalled(mid, uid, recalled_at) {
-  const sql =
+/**
+ * Thu hồi: xóa nội dung/file khỏi DB, giữ dòng tin (tombstone) để UI hiện "Đã thu hồi…".
+ */
+async function purgeAndRecallMessage(mid, uid, recalled_at) {
+  const purgeReactionsSql =
+    'DELETE FROM messenger_message_reactions WHERE message_id = $1::uuid';
+  const purgeSql =
     `UPDATE messenger_group_messages
-     SET recalled_at = $1::timestamptz, recalled_by = $2::uuid
+     SET recalled_at = $1::timestamptz,
+         recalled_by = $2::uuid,
+         is_recalled = true,
+         content = NULL,
+         attachments = NULL,
+         attachment_url = NULL,
+         attachment_name = NULL,
+         attachment_size = NULL,
+         attachment_mime = NULL
      WHERE id = $3::uuid`;
   const params = [recalled_at, uid, mid];
 
-  // Ưu tiên Postgres trực tiếp — không phụ thuộc PostgREST schema cache
-  const pgResult = (await pgSessionQuery(sql, params)) ?? (await pgQuery(sql, params));
-  if (pgResult) return;
+  const pgRecall = (await pgSessionQuery(purgeSql, params)) ?? (await pgQuery(purgeSql, params));
+  if (pgRecall) {
+    if ((pgRecall.rowCount ?? 0) < 1) throw new Error('Không tìm thấy tin nhắn');
+    if (!(await pgSessionQuery(purgeReactionsSql, [mid]))) {
+      await pgQuery(purgeReactionsSql, [mid]);
+    }
+    return;
+  }
 
-  const { error } = await supabase
+  await supabase.from('messenger_message_reactions').delete().eq('message_id', mid);
+
+  const { error, count } = await supabase
     .from('messenger_group_messages')
-    .update({ recalled_at, recalled_by: uid })
+    .update({
+      recalled_at,
+      recalled_by: uid,
+      is_recalled: true,
+      content: null,
+      attachments: null,
+      attachment_url: null,
+      attachment_name: null,
+      attachment_size: null,
+      attachment_mime: null,
+    })
     .eq('id', mid);
   if (error) {
-    if (/schema cache/i.test(error.message || '')) {
+    if (/schema cache|recalled_at|is_recalled/i.test(error.message || '')) {
       throw new Error(
         'Supabase schema cache chưa cập nhật cột recall. '
-          + 'Vào SQL Editor chạy: NOTIFY pgrst, \'reload schema\'; '
-          + 'Hoặc thêm SUPABASE_DB_URL vào backend/.env rồi restart server.',
+          + 'Chạy migration 39_messenger_recall_and_reactions.sql và NOTIFY pgrst, \'reload schema\';',
       );
     }
     throw error;
   }
+  if (count === 0) throw new Error('Không tìm thấy tin nhắn');
 }
 
 async function upsertMessageReaction(mid, uid, emoji) {
@@ -183,6 +213,85 @@ function buildMessagePreviewNode(m, opts = {}) {
   return null;
 }
 
+const LAST_MSG_PREVIEW_SELECT =
+  'group_id, user_id, content, attachment_mime, attachment_name, attachments, is_system, created_at, recalled_at, is_recalled, recalled_by';
+
+function isStatsPreviewMissing(stats) {
+  if (!stats) return true;
+  return !String(stats.last_message ?? '').trim();
+}
+
+/** Lấy tin nhắn cuối (một row / nhóm) để dựng preview sidebar — không dùng LIMIT chung toàn bảng. */
+async function fetchLastMessagesForGroupPreviews(groupIds, forUserId) {
+  const out = new Map();
+  if (!Array.isArray(groupIds) || !groupIds.length) return out;
+
+  const pg = await pgQuery(
+    `SELECT DISTINCT ON (m.group_id)
+      m.group_id,
+      m.user_id,
+      m.content,
+      m.attachment_mime,
+      m.attachment_name,
+      m.attachments,
+      m.is_system,
+      m.created_at,
+      m.recalled_at,
+      m.is_recalled,
+      m.recalled_by
+    FROM messenger_group_messages m
+    WHERE m.group_id = ANY($1::uuid[])
+      AND COALESCE(m.is_system, false) = false
+    ORDER BY m.group_id, m.created_at DESC`,
+    [groupIds],
+  );
+  if (pg?.rows?.length) {
+    for (const m of pg.rows) {
+      const preview = buildMessagePreviewNode(m, { forUserId });
+      if (preview) {
+        out.set(m.group_id, { preview, user_id: m.user_id, created_at: m.created_at });
+      }
+    }
+    return out;
+  }
+
+  const BATCH = 6;
+  for (let i = 0; i < groupIds.length; i += BATCH) {
+    const chunk = groupIds.slice(i, i + BATCH);
+    await Promise.all(
+      chunk.map(async (gid) => {
+        try {
+          const { data: m } = await supabase
+            .from('messenger_group_messages')
+            .select(LAST_MSG_PREVIEW_SELECT)
+            .eq('group_id', gid)
+            .eq('is_system', false)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (!m) return;
+          const preview = buildMessagePreviewNode(m, { forUserId });
+          if (preview) {
+            out.set(gid, { preview, user_id: m.user_id, created_at: m.created_at });
+          }
+        } catch {
+          /* best-effort */
+        }
+      }),
+    );
+  }
+  return out;
+}
+
+function formatGroupListPreview(preview, { isDirect, lastUserId, viewerId, userNameById }) {
+  const text = String(preview ?? '').trim();
+  if (!text || isDirect) return text || null;
+  if (!lastUserId) return text;
+  if (String(lastUserId) === String(viewerId)) return `Bạn: ${text}`;
+  const name = userNameById?.get(lastUserId) ?? userNameById?.get(String(lastUserId));
+  return name ? `${name}: ${text}` : text;
+}
+
 function writeMessengerBufferLocal(buffer, originalName) {
   fs.mkdirSync(MESSENGER_CHAT_UPLOAD, { recursive: true });
   const ext = path.extname(originalName || '') || '';
@@ -278,7 +387,7 @@ async function assertGroupMember(groupId, userId) {
 /**
  * Thông báo + socket cho thành viên khác (tin user, không gồm system) — badge / toast mobile.
  */
-async function notifyMessengerGroupChatRecipients(req, groupId, senderId, msgRow, groupName) {
+async function notifyMessengerGroupChatRecipients(req, groupId, senderId, msgRow, groupName, extraMentionIds = []) {
   if (!msgRow || msgRow.is_system) return;
   const { data: members } = await supabase
     .from('messenger_group_members')
@@ -302,28 +411,51 @@ async function notifyMessengerGroupChatRecipients(req, groupId, senderId, msgRow
   if (preview.length > 140) preview = `${preview.slice(0, 137)}…`;
 
   const titleBase = groupName ? `Messenger · ${groupName}` : 'Tin nhắn Messenger';
-
-  await notifyMultiple(
-    req,
-    targets,
-    'messenger_chat',
-    titleBase,
-    `${senderName}: ${preview}`,
-    'messenger_group',
-    groupId,
-    {
-      group_name: groupName || null,
-      sender_name: senderName,
-      sender_avatar: msgRow.user?.avatar || null,
-      group_avatar: null,
-      // Phase 1 (mobile): cho native FCM build heads-up notif + bubble wake
-      bubble_key: String(groupId),
-      bubble_wake: true,
-      message_id: msgRow?.id ? String(msgRow.id) : '',
-      sender_id: sid,
-      message_type: msgRow?.message_type || 'text',
-    },
+  const mentionSet = new Set(
+    [
+      ...(Array.isArray(msgRow.mention_user_ids) ? msgRow.mention_user_ids : []),
+      ...(Array.isArray(extraMentionIds) ? extraMentionIds : []),
+    ].map(String),
   );
+  const mentionedTargets = mentionSet.size ? targets.filter((id) => mentionSet.has(id)) : [];
+  const otherTargets = mentionSet.size ? targets.filter((id) => !mentionSet.has(id)) : targets;
+
+  const baseMeta = {
+    group_name: groupName || null,
+    sender_name: senderName,
+    sender_avatar: msgRow.user?.avatar || null,
+    group_avatar: null,
+    bubble_key: String(groupId),
+    bubble_wake: true,
+    message_id: msgRow?.id ? String(msgRow.id) : '',
+    sender_id: sid,
+    message_type: msgRow?.message_type || 'text',
+  };
+
+  if (mentionedTargets.length) {
+    await notifyMultiple(
+      req,
+      mentionedTargets,
+      'messenger_chat',
+      `${titleBase} · Nhắc bạn`,
+      `${senderName} đã nhắc bạn: ${preview}`,
+      'messenger_group',
+      groupId,
+      { ...baseMeta, mentioned: true },
+    );
+  }
+  if (otherTargets.length) {
+    await notifyMultiple(
+      req,
+      otherTargets,
+      'messenger_chat',
+      titleBase,
+      `${senderName}: ${preview}`,
+      'messenger_group',
+      groupId,
+      baseMeta,
+    );
+  }
 }
 
 const MSG_USER_SELECT = '*, user:users!messenger_group_messages_user_id_fkey(id, full_name, avatar, is_bot)';
@@ -467,7 +599,90 @@ function parseMentionUserIds(body) {
     }
   }
   if (!Array.isArray(raw)) return [];
-  return [...new Set(raw.filter(Boolean).map(String))].slice(0, 40);
+  return [...new Set(raw.filter(Boolean).map(String))].slice(0, 500);
+}
+
+function contentHasMentionAll(content) {
+  return /@(tất\s*cả|tat\s*ca|all)\b/i.test(String(content || ''));
+}
+
+/** @mention chỉ áp dụng nhóm (không chat 1-1); hỗ trợ @Tất cả. */
+async function resolveGroupMentionIds(groupId, senderId, body) {
+  const { data: grp } = await supabase.from('messenger_groups').select('is_direct').eq('id', groupId).maybeSingle();
+  if (grp?.is_direct) return [];
+
+  let ids = parseMentionUserIds(body);
+  const content = String(body?.content ?? '');
+  if (contentHasMentionAll(content)) {
+    const { data: mems } = await supabase
+      .from('messenger_group_members')
+      .select('user_id')
+      .eq('group_id', groupId);
+    for (const m of mems || []) {
+      const id = String(m.user_id);
+      if (id && id !== String(senderId) && !ids.includes(id)) ids.push(id);
+    }
+  }
+  return ids.slice(0, 500);
+}
+
+function isMentionColumnSchemaError(err) {
+  const msg = String(err?.message || err || '').toLowerCase();
+  return (
+    msg.includes('mention_user_ids') &&
+    (msg.includes('schema cache') || msg.includes('could not find') || msg.includes('does not exist'))
+  );
+}
+
+let mentionColumnAvailable = null;
+
+async function tryEnsureMentionColumn() {
+  const r = await pgQuery(
+    `ALTER TABLE messenger_group_messages
+     ADD COLUMN IF NOT EXISTS mention_user_ids uuid[] NOT NULL DEFAULT '{}'`,
+  );
+  if (r) mentionColumnAvailable = true;
+  return !!r;
+}
+
+/**
+ * Insert tin nhắn nhóm — tự thử thêm cột mention (PG) hoặc gửi không mention nếu schema chưa migrate.
+ * @returns {{ id: string, mentionIds: string[] }}
+ */
+async function insertMessengerGroupMessage(row, { mentionIds = [] } = {}) {
+  const payload = { ...row };
+  const ids = [...new Set((mentionIds || []).filter(Boolean).map(String))].slice(0, 500);
+
+  const insertOnce = async (includeMention) => {
+    const body = { ...payload };
+    if (includeMention && ids.length) body.mention_user_ids = ids;
+    return supabase.from('messenger_group_messages').insert(body).select('id').single();
+  };
+
+  if (!ids.length || mentionColumnAvailable === false) {
+    const { data, error } = await insertOnce(false);
+    if (error) throw error;
+    return { id: data.id, mentionIds: [] };
+  }
+
+  let { data, error } = await insertOnce(true);
+  if (!error) {
+    mentionColumnAvailable = true;
+    return { id: data.id, mentionIds: ids };
+  }
+  if (!isMentionColumnSchemaError(error)) throw error;
+
+  if (mentionColumnAvailable !== false) await tryEnsureMentionColumn();
+  if (mentionColumnAvailable === true) {
+    ({ data, error } = await insertOnce(true));
+    if (!error) return { id: data.id, mentionIds: ids };
+    if (!isMentionColumnSchemaError(error)) throw error;
+  }
+
+  mentionColumnAvailable = false;
+  ({ data, error } = await insertOnce(false));
+  if (error) throw error;
+  return { id: data.id, mentionIds: [] };
 }
 
 function directPairKey(userIdA, userIdB) {
@@ -775,48 +990,45 @@ r.get('/groups', responseCache({ ttl: 30, scope: 'user', tags: ['messenger'] }),
         }
       }
 
-      // Fallback Node: với mọi nhóm thiếu preview (do RPC chưa migrate, hoặc tin cuối chỉ có
-      // tệp đính kèm), tự truy vấn tin cuối và dựng preview ngay tại Node — đảm bảo MỌI đoạn
-      // chat đều có dòng "tin mới nhất".
+      // Fallback: mỗi nhóm một tin cuối (ảnh/tệp/thu hồi — RPC v2 chỉ có content text).
       try {
-        const missing = ids.filter((gid) => {
-          const s = statsMap.get(gid);
-          return !s || !s.last_message;
-        });
+        const missing = ids.filter((gid) => isStatsPreviewMissing(statsMap.get(gid)));
         if (missing.length) {
-          const { data: recentRows } = await supabase
-            .from('messenger_group_messages')
-            .select('group_id, user_id, content, attachment_mime, attachment_name, attachments, is_system, created_at')
-            .in('group_id', missing)
-            .order('created_at', { ascending: false })
-            .limit(Math.min(missing.length * 5, 250));
-          const picked = new Map();
-          for (const m of recentRows || []) {
-            if (m.is_system) continue;
-            if (!picked.has(m.group_id)) picked.set(m.group_id, m);
-            if (picked.size === missing.length) break;
-          }
-          for (const [gid, m] of picked) {
+          const picked = await fetchLastMessagesForGroupPreviews(missing, uid);
+          for (const [gid, row] of picked) {
             const prev = statsMap.get(gid) || {
               message_count: 0,
-              last_message_at: m.created_at,
+              last_message_at: row.created_at,
               last_message: null,
               last_user_id: null,
               unread_count: 0,
             };
-            const preview = buildMessagePreviewNode(m, { forUserId: uid });
-            if (preview) {
-              statsMap.set(gid, {
-                ...prev,
-                last_message: preview,
-                last_user_id: prev.last_user_id || m.user_id || null,
-                last_message_at: prev.last_message_at || m.created_at,
-              });
-            }
+            statsMap.set(gid, {
+              ...prev,
+              last_message: row.preview,
+              last_user_id: prev.last_user_id || row.user_id || null,
+              last_message_at: prev.last_message_at || row.created_at,
+            });
           }
         }
       } catch (_) {
-        /* best-effort, bỏ qua nếu lỗi */
+        /* best-effort */
+      }
+    }
+
+    const lastSenderIds = [
+      ...new Set(
+        (groupsFiltered || [])
+          .filter((g) => !g.is_direct)
+          .map((g) => statsMap.get(g.id)?.last_user_id)
+          .filter(Boolean),
+      ),
+    ];
+    const userNameById = new Map();
+    if (lastSenderIds.length) {
+      const { data: senderUsers } = await supabase.from('users').select('id, full_name').in('id', lastSenderIds);
+      for (const u of senderUsers || []) {
+        if (u?.id && u?.full_name) userNameById.set(u.id, u.full_name);
       }
     }
 
@@ -835,6 +1047,12 @@ r.get('/groups', responseCache({ ttl: 30, scope: 'user', tags: ['messenger'] }),
         }
       }
       const st = statsMap.get(g.id);
+      const last_message = formatGroupListPreview(st?.last_message, {
+        isDirect: !!g.is_direct,
+        lastUserId: st?.last_user_id,
+        viewerId: uid,
+        userNameById,
+      });
       return {
         id: g.id,
         name: display_name,
@@ -849,7 +1067,7 @@ r.get('/groups', responseCache({ ttl: 30, scope: 'user', tags: ['messenger'] }),
         my_role: roleByGid.get(g.id),
         message_count: st?.message_count ?? 0,
         last_message_at: st?.last_message_at || g.created_at,
-        last_message: st?.last_message ?? null,
+        last_message,
         last_user_id: st?.last_user_id ?? null,
         unread_count: st?.unread_count ?? 0,
       };
@@ -1461,26 +1679,30 @@ r.post('/groups/:id/chat', messengerChatJsonOrMultipart, async (req, res) => {
       attachments.push(await storeMessengerUploadedFile(req.params.id, f));
     }
     if (!content && !attachments.length) return res.status(400).json({ error: 'Thiếu nội dung' });
-    const mentionIds = parseMentionUserIds(req.body);
-    const insertRow = {
-      group_id: req.params.id,
-      user_id: req.authUserId,
-      content: content || '',
-      attachments: attachments.length ? attachments : null,
-      reply_to: reply_to || null,
-    };
-    if (mentionIds.length) insertRow.mention_user_ids = mentionIds;
-    const { data: inserted, error } = await supabase
-      .from('messenger_group_messages')
-      .insert(insertRow)
-      .select('id')
-      .single();
-    if (error) return res.status(400).json({ error: error.message });
-    const data = (await fetchMessengerMessageById(inserted.id)) || inserted;
+    const mentionIds = await resolveGroupMentionIds(req.params.id, req.authUserId, req.body);
+    const { id: insertedId, mentionIds: storedMentions } = await insertMessengerGroupMessage(
+      {
+        group_id: req.params.id,
+        user_id: req.authUserId,
+        content: content || '',
+        attachments: attachments.length ? attachments : null,
+        reply_to: reply_to || null,
+      },
+      { mentionIds },
+    );
+    let data = (await fetchMessengerMessageById(insertedId)) || { id: insertedId };
+    if (storedMentions.length) data = { ...data, mention_user_ids: storedMentions };
     const io = req.app.get('io');
     if (io) io.to(`messenger_group:${req.params.id}`).emit('messenger_group:chat', data);
     const { data: grpRow } = await supabase.from('messenger_groups').select('name').eq('id', req.params.id).maybeSingle();
-    await notifyMessengerGroupChatRecipients(req, req.params.id, req.authUserId, data, grpRow?.name || '');
+    await notifyMessengerGroupChatRecipients(
+      req,
+      req.params.id,
+      req.authUserId,
+      data,
+      grpRow?.name || '',
+      storedMentions,
+    );
     triggerAiHookIfNeeded(data, req.params.id, io);
     res.json(data);
   } catch (e) {
@@ -1500,30 +1722,34 @@ r.post('/groups/:id/chat/upload', messengerMemoryUpload.single('file'), async (r
     else if (mime.startsWith('audio/')) message_type = 'audio';
     const stored = await storeMessengerUploadedFile(req.params.id, req.file);
     const attachment_url = stored.url;
-    const mentionIds = parseMentionUserIds(req.body);
-    const insertRow = {
-      group_id: req.params.id,
-      user_id: req.authUserId,
-      content: req.body.content || '',
-      message_type,
-      attachment_url,
-      attachment_name: req.file.originalname,
-      attachment_size: req.file.size,
-      attachment_mime: mime,
-      reply_to: req.body.reply_to || null,
-    };
-    if (mentionIds.length) insertRow.mention_user_ids = mentionIds;
-    const { data: inserted, error } = await supabase
-      .from('messenger_group_messages')
-      .insert(insertRow)
-      .select('id')
-      .single();
-    if (error) return res.status(400).json({ error: error.message });
-    const data = (await fetchMessengerMessageById(inserted.id)) || inserted;
+    const mentionIds = await resolveGroupMentionIds(req.params.id, req.authUserId, req.body);
+    const { id: insertedId, mentionIds: storedMentions } = await insertMessengerGroupMessage(
+      {
+        group_id: req.params.id,
+        user_id: req.authUserId,
+        content: req.body.content || '',
+        message_type,
+        attachment_url,
+        attachment_name: req.file.originalname,
+        attachment_size: req.file.size,
+        attachment_mime: mime,
+        reply_to: req.body.reply_to || null,
+      },
+      { mentionIds },
+    );
+    let data = (await fetchMessengerMessageById(insertedId)) || { id: insertedId };
+    if (storedMentions.length) data = { ...data, mention_user_ids: storedMentions };
     const io = req.app.get('io');
     if (io) io.to(`messenger_group:${req.params.id}`).emit('messenger_group:chat', data);
     const { data: grpRow } = await supabase.from('messenger_groups').select('name').eq('id', req.params.id).maybeSingle();
-    await notifyMessengerGroupChatRecipients(req, req.params.id, req.authUserId, data, grpRow?.name || '');
+    await notifyMessengerGroupChatRecipients(
+      req,
+      req.params.id,
+      req.authUserId,
+      data,
+      grpRow?.name || '',
+      storedMentions,
+    );
     triggerAiHookIfNeeded(data, req.params.id, io);
     res.json(data);
   } catch (e) {
@@ -1570,7 +1796,7 @@ async function handleMessageReaction(req, res) {
 r.put('/groups/:gid/chat/:mid/reaction', handleMessageReaction);
 r.post('/groups/:gid/chat/:mid/reaction', handleMessageReaction);
 
-/** Thu hồi tin nhắn — chỉ người gửi, trong vòng 24h. */
+/** Thu hồi tin nhắn — xóa nội dung/file, giữ dòng tombstone; chỉ người gửi, trong 24h. */
 r.post('/groups/:gid/chat/:mid/recall', async (req, res) => {
   try {
     const { gid, mid } = req.params;
@@ -1595,9 +1821,9 @@ r.post('/groups/:gid/chat/:mid/recall', async (req, res) => {
 
     const recalled_at = new Date().toISOString();
     try {
-      await markMessageRecalled(mid, uid, recalled_at);
+      await purgeAndRecallMessage(mid, uid, recalled_at);
     } catch (uErr) {
-      logMessengerAction({ action: 'recall-update-failed', gid, mid, err: uErr.message });
+      logMessengerAction({ action: 'recall-failed', gid, mid, err: uErr.message });
       throw uErr;
     }
 
@@ -1608,7 +1834,10 @@ r.post('/groups/:gid/chat/:mid/recall', async (req, res) => {
       uid,
       recalled_at,
     });
-    full.reactions = await fetchReactionsForMessage(mid);
+    full.reactions = [];
+    full.content = null;
+    full.attachments = null;
+    full.attachment_url = null;
 
     const io = req.app.get('io');
     if (io) {
