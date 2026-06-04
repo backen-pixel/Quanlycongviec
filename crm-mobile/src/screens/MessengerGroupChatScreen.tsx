@@ -54,6 +54,14 @@ import {
   shareMessengerMessage,
 } from '../lib/messengerMessageActions';
 import {
+  applyMentionPickToDraft,
+  buildMentionPickerItems,
+  isUserMentionedInMessage,
+  resolveMentionIdsFromContent,
+  MESSENGER_MENTION_ALL_LABEL,
+  type MentionPickerItem,
+} from '../lib/messengerMentions';
+import {
   joinMessengerGroup,
   leaveMessengerGroup,
   subscribeMessengerEvent,
@@ -293,6 +301,15 @@ export default function MessengerGroupChatScreen({
 
   // Long-press → reaction / reply / recall bar
   const [actionMsg, setActionMsg] = useState<MessengerMessage | null>(null);
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [mentionUi, setMentionUi] = useState<{
+    open: boolean;
+    start: number;
+    items: MentionPickerItem[];
+  }>({ open: false, start: 0, items: [] });
+  const [draftSel, setDraftSel] = useState({ start: 0, end: 0 });
 
   // Pinned (sync với /messenger/pins)
   const [pinned, setPinned] = useState(false);
@@ -319,6 +336,48 @@ export default function MessengerGroupChatScreen({
   };
 
   const isDirectChat = !!(group?.is_direct ?? isDirectParam);
+  const isGroupMentionEnabled = !!(group && !group.is_direct);
+
+  useEffect(() => {
+    void AsyncStorage.getItem(`messenger_hidden_${groupId}`)
+      .then((raw) => {
+        try {
+          const ids = raw ? JSON.parse(raw) : [];
+          setHiddenIds(new Set(Array.isArray(ids) ? ids.map(String) : []));
+        } catch {
+          setHiddenIds(new Set());
+        }
+      })
+      .catch(() => setHiddenIds(new Set()));
+    setSelectMode(false);
+    setSelectedIds(new Set());
+    setMentionUi({ open: false, start: 0, items: [] });
+  }, [groupId]);
+
+  const persistHidden = useCallback(
+    (next: Set<string>) => {
+      setHiddenIds(next);
+      void AsyncStorage.setItem(`messenger_hidden_${groupId}`, JSON.stringify([...next]));
+    },
+    [groupId],
+  );
+
+  const visibleMessages = useMemo(
+    () => messages.filter((m) => !hiddenIds.has(String(m.id))),
+    [messages, hiddenIds],
+  );
+
+  const syncMentionPicker = useCallback(
+    (text: string, cursor: number) => {
+      if (!isGroupMentionEnabled) {
+        setMentionUi({ open: false, start: 0, items: [] });
+        return;
+      }
+      const r = buildMentionPickerItems(text, cursor, group?.members || [], myId);
+      setMentionUi({ open: r.open, start: r.start, items: r.items });
+    },
+    [isGroupMentionEnabled, group?.members, myId],
+  );
 
   /** Đối tác trong chat 1-1 — null cho group chat. */
   const peerMember = useMemo(() => {
@@ -644,6 +703,46 @@ export default function MessengerGroupChatScreen({
     setMediaOpen(false);
   }, []);
 
+  const hideMessagesForMe = useCallback(
+    (ids: string[]) => {
+      if (!ids.length) return;
+      persistHidden(new Set([...hiddenIds, ...ids.map(String)]));
+      setSelectMode(false);
+      setSelectedIds(new Set());
+      setActionMsg(null);
+    },
+    [hiddenIds, persistHidden],
+  );
+
+  const toggleMsgSelected = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const selectedMessages = useMemo(
+    () => visibleMessages.filter((m) => selectedIds.has(String(m.id))),
+    [visibleMessages, selectedIds],
+  );
+
+  const navigateForward = useCallback(
+    (msgs: MessengerMessage[]) => {
+      if (!msgs.length) return;
+      setActionMsg(null);
+      setSelectMode(false);
+      setSelectedIds(new Set());
+      navigation.navigate('MessengerForward', {
+        excludeGroupId: String(groupId),
+        sourceTitle: displayTitle,
+        messagesJson: JSON.stringify(msgs),
+      });
+    },
+    [navigation, groupId, displayTitle],
+  );
+
   const canRecallMessage = useCallback(
     (msg: MessengerMessage) => {
       if (String(msg.user_id) !== myId || msg.recalled_at || msg.is_recalled || msg.is_system) return false;
@@ -785,22 +884,30 @@ export default function MessengerGroupChatScreen({
     const text = draft.trim();
     if (!text && pendingFiles.length === 0) return;
     setSending(true);
+    const mentionIds = isGroupMentionEnabled
+      ? resolveMentionIdsFromContent(text, group?.members || [], { excludeUserId: myId })
+      : [];
     try {
       if (!pendingFiles.length) {
-        const body: { content: string; reply_to?: string } = { content: text };
+        const body: { content: string; reply_to?: string; mention_user_ids?: string[] } = { content: text };
         if (replyTo?.id) body.reply_to = String(replyTo.id);
+        if (mentionIds.length) body.mention_user_ids = mentionIds;
         const { data } = await api.post<MessengerMessage>(
           `/messenger/groups/${groupId}/chat`,
           body,
           { timeout: 120000, headers: { 'Content-Type': 'application/json' } },
         );
-        setDraft(''); setPendingFiles([]); setReplyTo(null);
+        setDraft('');
+        setPendingFiles([]);
+        setReplyTo(null);
+        setMentionUi({ open: false, start: 0, items: [] });
         appendMsg(data);
         return;
       }
       const form = new FormData();
       form.append('content', text);
       if (replyTo?.id) form.append('reply_to', String(replyTo.id));
+      if (mentionIds.length) form.append('mention_user_ids', JSON.stringify(mentionIds));
       pendingFiles.forEach((f, i) => {
         const safeName = (f.name || '').trim() || `file_${Date.now()}_${i}.bin`;
         form.append('files', { uri: f.uri, name: safeName, type: f.type || 'application/octet-stream' } as unknown as Blob);
@@ -988,7 +1095,7 @@ export default function MessengerGroupChatScreen({
   const renderMsg = useCallback(
     ({ item, index }: { item: MessengerMessage; index: number }) => {
       const mine = String(item.user_id) === myId;
-      const prev = messages[index - 1];
+      const prev = visibleMessages[index - 1];
       const showDate = !prev || !isSameDay(prev.created_at, item.created_at);
 
       if (item.is_system) {
@@ -1010,6 +1117,14 @@ export default function MessengerGroupChatScreen({
       })();
 
       const replyParent = item.reply_to ? messageById.get(String(item.reply_to)) || null : null;
+      const mentionedMe =
+        !isDirectChat &&
+        isUserMentionedInMessage(
+          item.content || '',
+          item.mention_user_ids,
+          group?.members || [],
+          myId,
+        );
 
       return (
         <View>
@@ -1019,7 +1134,7 @@ export default function MessengerGroupChatScreen({
             mine={mine}
             myId={myId}
             isDirectChat={isDirectChat}
-            showName={!mine && (!isDirectChat || isBot)}
+            showName={!mine && !isDirectChat}
             timeStr={timeStr}
             bubbleMe={BUBBLE_ME}
             bubbleMeDark={BUBBLE_ME_DARK}
@@ -1038,6 +1153,10 @@ export default function MessengerGroupChatScreen({
             onOpenActions={openMessageActions}
             onToggleReaction={toggleReaction}
             replyParent={replyParent}
+            mentionedMe={mentionedMe}
+            selectMode={selectMode}
+            msgSelected={selectedIds.has(String(item.id))}
+            onToggleSelect={() => toggleMsgSelected(String(item.id))}
           />
         </View>
       );
@@ -1045,13 +1164,17 @@ export default function MessengerGroupChatScreen({
     [
       myId,
       isDirectChat,
-      messages,
+      visibleMessages,
       messageById,
+      group?.members,
       lastMineId,
       lastMineSeen,
       lastMineSeenLabel,
       openMessageActions,
       toggleReaction,
+      selectMode,
+      selectedIds,
+      toggleMsgSelected,
     ],
   );
 
@@ -1138,7 +1261,7 @@ export default function MessengerGroupChatScreen({
       {/* Message list */}
       <FlatList
         ref={listRef}
-        data={messages}
+        data={visibleMessages}
         keyExtractor={(m) => String(m.id)}
         renderItem={renderMsg}
         style={s.msgList}
@@ -1155,7 +1278,7 @@ export default function MessengerGroupChatScreen({
       />
 
       {/* Reaction / reply / recall bar (long-press tin nhắn) */}
-      {actionMsg && recState === 'idle' ? (
+      {actionMsg && recState === 'idle' && !selectMode ? (
         <ReactionPickerBar
           onPick={(emoji) => {
             void toggleReaction(actionMsg, emoji);
@@ -1171,6 +1294,7 @@ export default function MessengerGroupChatScreen({
               ? () => void recallMessage(actionMsg)
               : undefined
           }
+          onForwardInApp={() => navigateForward([actionMsg])}
           onShare={() => {
             void shareMessengerMessage(actionMsg, displayTitle);
             setActionMsg(null);
@@ -1191,7 +1315,73 @@ export default function MessengerGroupChatScreen({
             setActionMsg(null);
           }}
           showDownload={!!getDownloadTarget(actionMsg)?.url}
+          onSelectMultiple={() => {
+            setSelectMode(true);
+            setSelectedIds(new Set([String(actionMsg.id)]));
+            setActionMsg(null);
+          }}
+          onHideForMe={() => hideMessagesForMe([String(actionMsg.id)])}
         />
+      ) : null}
+
+      {selectMode ? (
+        <View style={s.selectBar}>
+          <TouchableOpacity
+            onPress={() => {
+              setSelectMode(false);
+              setSelectedIds(new Set());
+            }}
+            hitSlop={8}
+          >
+            <Text style={s.selectBarCancel}>Huỷ</Text>
+          </TouchableOpacity>
+          <Text style={s.selectBarTitle}>{selectedIds.size} đã chọn</Text>
+          <TouchableOpacity
+            disabled={!selectedIds.size}
+            onPress={() => navigateForward(selectedMessages)}
+          >
+            <Ionicons name="arrow-redo" size={22} color={selectedIds.size ? BUBBLE_ME : CrmColors.gray400} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            disabled={!selectedIds.size}
+            onPress={() => {
+              const mine = selectedMessages.filter((m) => canRecallMessage(m));
+              if (!mine.length) {
+                Alert.alert('Thu hồi', 'Không có tin nào bạn có thể thu hồi.');
+                return;
+              }
+              Alert.alert('Thu hồi', `Thu hồi ${mine.length} tin?`, [
+                { text: 'Hủy', style: 'cancel' },
+                {
+                  text: 'Thu hồi',
+                  style: 'destructive',
+                  onPress: async () => {
+                    try {
+                      await Promise.all(
+                        mine.map((m) =>
+                          api.post(`/messenger/groups/${groupId}/chat/${m.id}/recall`),
+                        ),
+                      );
+                      void loadAll();
+                    } catch {
+                      Alert.alert('Lỗi', 'Không thu hồi được một số tin.');
+                    }
+                    setSelectMode(false);
+                    setSelectedIds(new Set());
+                  },
+                },
+              ]);
+            }}
+          >
+            <Ionicons name="trash-outline" size={22} color={selectedIds.size ? '#DC2626' : CrmColors.gray400} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            disabled={!selectedIds.size}
+            onPress={() => hideMessagesForMe([...selectedIds])}
+          >
+            <Ionicons name="eye-off-outline" size={22} color={selectedIds.size ? CrmColors.gray700 : CrmColors.gray400} />
+          </TouchableOpacity>
+        </View>
       ) : null}
 
       {/* Reply chip */}
@@ -1293,8 +1483,38 @@ export default function MessengerGroupChatScreen({
         </View>
       ) : null}
 
+      {mentionUi.open && mentionUi.items.length > 0 && recState === 'idle' && !selectMode ? (
+        <View style={s.mentionPanel}>
+          <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 140 }}>
+            {mentionUi.items.map((item) => (
+              <TouchableOpacity
+                key={item.key}
+                style={s.mentionRow}
+                onPress={() => {
+                  const { text, cursor } = applyMentionPickToDraft(
+                    draft,
+                    draftSel.end,
+                    mentionUi.start,
+                    item,
+                  );
+                  setDraft(text);
+                  setDraftSel({ start: cursor, end: cursor });
+                  syncMentionPicker(text, cursor);
+                }}
+              >
+                <Text style={item.type === 'all' ? s.mentionAllTxt : s.mentionRowTxt}>
+                  {item.type === 'all'
+                    ? `@${MESSENGER_MENTION_ALL_LABEL}`
+                    : `@${item.mem.user?.full_name || item.mem.user?.email || item.mem.user_id}`}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      ) : null}
+
       {/* Composer */}
-      {recState === 'idle' ? (
+      {recState === 'idle' && !selectMode ? (
         <View style={[s.composer, { paddingBottom: composerPadBottom }]}>
           <TouchableOpacity
             style={[s.composerIcon, mediaOpen && s.composerIconOn]}
@@ -1312,8 +1532,18 @@ export default function MessengerGroupChatScreen({
             <TextInput
               style={s.input}
               value={draft}
-              onChangeText={setDraft}
-              placeholder="Tin nhắn…"
+              onChangeText={(t) => {
+                setDraft(t);
+                syncMentionPicker(t, draftSel.end);
+              }}
+              onSelectionChange={(e) => {
+                const { start, end } = e.nativeEvent.selection;
+                setDraftSel({ start, end });
+                syncMentionPicker(draft, end);
+              }}
+              placeholder={
+                isGroupMentionEnabled ? 'Tin nhắn… (@ nhắc tên, @Tất cả)' : 'Tin nhắn…'
+              }
               placeholderTextColor="#9CA3AF"
               multiline
               maxLength={8000}
@@ -2430,6 +2660,28 @@ const s = StyleSheet.create({
     paddingHorizontal: 14, paddingVertical: 7, borderRadius: 10, backgroundColor: '#EF4444',
   },
   recStopTxt: { fontSize: 13, color: '#fff', fontWeight: '800' },
+
+  mentionPanel: {
+    backgroundColor: '#fff',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: CrmColors.gray200,
+    paddingVertical: 4,
+  },
+  mentionRow: { paddingHorizontal: 14, paddingVertical: 10 },
+  mentionRowTxt: { fontSize: 14, color: CrmColors.gray800, fontWeight: '600' },
+  mentionAllTxt: { fontSize: 14, color: BUBBLE_ME, fontWeight: '800' },
+  selectBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: CrmColors.gray200,
+  },
+  selectBarCancel: { fontSize: 14, fontWeight: '700', color: CrmColors.gray600 },
+  selectBarTitle: { flex: 1, fontSize: 14, fontWeight: '800', color: CrmColors.gray900, textAlign: 'center' },
 
   // Composer
   composer: {

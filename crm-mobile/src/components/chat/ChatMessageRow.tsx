@@ -16,6 +16,13 @@ import type { MessengerAttachment, MessengerMessage } from '../../types/messenge
 import { CrmColors } from '../../theme/crmTheme';
 import { formatReplyPreview } from '../../lib/messengerPreview';
 import { groupReactions } from '../../lib/messengerReactions';
+import {
+  collectAttachments,
+  isFileOnlyMessengerMessage,
+  isImageOnlyMessengerMessage,
+  normalizeForwardDisplayContent,
+} from '../../lib/messengerMessageActions';
+import { MessengerFileCard } from './MessengerFileCard';
 
 const { width: SW } = Dimensions.get('window');
 const SWIPE_THRESHOLD = 56;
@@ -46,7 +53,36 @@ type Props = {
   onOpenActions: (m: MessengerMessage) => void;
   onToggleReaction: (m: MessengerMessage, emoji: string) => void;
   replyParent?: MessengerMessage | null;
+  mentionedMe?: boolean;
+  selectMode?: boolean;
+  msgSelected?: boolean;
+  onToggleSelect?: () => void;
 };
+
+const TEXT_TOKEN_RE = /(@(?:tất\s*cả|[^\s\n@]+))/gi;
+
+function renderMessageText(content: string, mine: boolean) {
+  const display = normalizeForwardDisplayContent(content);
+  const parts = display.split(TEXT_TOKEN_RE);
+  return (
+    <Text style={[s.bubbleTxt, mine && s.bubbleTxtMine]}>
+      {parts.map((part, i) => {
+        if (!part) return null;
+        if (part.startsWith('@')) {
+          return (
+            <Text
+              key={`${i}-${part}`}
+              style={mine ? s.mentionMine : s.mentionOther}
+            >
+              {part}
+            </Text>
+          );
+        }
+        return <Text key={`${i}-t`}>{part}</Text>;
+      })}
+    </Text>
+  );
+}
 
 export function ChatMessageRow({
   item,
@@ -72,6 +108,10 @@ export function ChatMessageRow({
   onOpenActions,
   onToggleReaction,
   replyParent,
+  mentionedMe = false,
+  selectMode = false,
+  msgSelected = false,
+  onToggleSelect,
 }: Props) {
   const translateX = useRef(new Animated.Value(0)).current;
   const name = item.user?.full_name || '?';
@@ -84,8 +124,11 @@ export function ChatMessageRow({
     (item.attachment_mime || '').startsWith('image/') ||
     (imgUrl && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(imgUrl));
   const text = item.content || '';
+  const fileOnly = !recalled && isFileOnlyMessengerMessage(item);
+  const imageOnly = !recalled && isImageOnlyMessengerMessage(item);
   const stickerMode =
     !recalled && !!text && !imgUrl && atts.length === 0 && !isAudioMsg(item) && isEmojiOnly(text);
+  const forwardHeader = /^↪ Chia sẻ/i.test(String(text || '').trim());
 
   const reactionGroups = useMemo(
     () => groupReactions(item.reactions, myId),
@@ -113,8 +156,22 @@ export function ChatMessageRow({
 
   const recalledLabel = mine ? 'Đã thu hồi tin nhắn' : 'Tin nhắn bị thu hồi';
 
+  const openActions = () => {
+    if (selectMode && onToggleSelect) onToggleSelect();
+    else onOpenActions(item);
+  };
+
   return (
     <View style={[s.row, mine && s.rowMine]}>
+      {selectMode ? (
+        <TouchableOpacity style={s.selectBox} onPress={onToggleSelect} hitSlop={8}>
+          <Ionicons
+            name={msgSelected ? 'checkbox' : 'ellipse-outline'}
+            size={22}
+            color={msgSelected ? '#6C5CE7' : CrmColors.gray400}
+          />
+        </TouchableOpacity>
+      ) : null}
       {!mine ? (
         isBot ? (
           <View style={[s.avatar, s.avatarBot]}>
@@ -137,29 +194,69 @@ export function ChatMessageRow({
         {...panResponder.panHandlers}
       >
         {showName ? (
-          <Text style={s.msgName}>
-            {name}
-            {isBot ? '  · BOT' : ''}
-          </Text>
+          <View style={s.nameRow}>
+            <Text style={s.msgName}>
+              {name}
+              {isBot ? '  · BOT' : ''}
+            </Text>
+            {mentionedMe ? (
+              <View style={s.mentionBadge}>
+                <Text style={s.mentionBadgeTxt}>@ bạn</Text>
+              </View>
+            ) : null}
+          </View>
+        ) : mentionedMe ? (
+          <View style={[s.mentionBadge, { marginBottom: 4, marginLeft: 4 }]}>
+            <Text style={s.mentionBadgeTxt}>@ bạn</Text>
+          </View>
         ) : null}
 
         {recalled ? (
           <Pressable
             style={[s.recalledBubble, mine ? s.recalledMine : s.recalledOther]}
-            onLongPress={() => onOpenActions(item)}
+            onLongPress={openActions}
           >
             <Ionicons name="arrow-undo-outline" size={14} color={CrmColors.gray500} />
             <Text style={s.recalledTxt}>{recalledLabel}</Text>
           </Pressable>
         ) : stickerMode ? (
-          <Pressable style={s.stickerWrap} onLongPress={() => onOpenActions(item)}>
+          <Pressable style={s.stickerWrap} onLongPress={openActions}>
             <Text style={s.stickerTxt}>{text}</Text>
             <Text style={s.stickerTime}>{timeStr}</Text>
+          </Pressable>
+        ) : imageOnly && imgUrl ? (
+          <Pressable onLongPress={openActions}>
+            <TouchableOpacity onPress={() => void Linking.openURL(imgUrl)}>
+              <Image
+                source={{ uri: imgUrl }}
+                style={[s.imgAttBare, mine && s.imgAttBareMine]}
+                resizeMode="cover"
+              />
+            </TouchableOpacity>
+            <Text style={[s.bareTime, mine && s.bareTimeMine]}>{timeStr}</Text>
+          </Pressable>
+        ) : fileOnly ? (
+          <Pressable onLongPress={openActions}>
+            {item.reply_to && replyParent ? (
+              <View style={[s.replyBarBare, { borderLeftColor: bubbleMe }]}>
+                <Text style={s.replyTxt} numberOfLines={2}>
+                  ↩ {formatReplyPreview(replyParent)}
+                </Text>
+              </View>
+            ) : null}
+            <MessengerFileCard
+              name={item.attachment_name || collectAttachments(item)[0]?.name || undefined}
+              mime={item.attachment_mime || collectAttachments(item)[0]?.type || undefined}
+              size={item.attachment_size ?? undefined}
+              url={mediaUrl(collectAttachments(item)[0]?.url || item.attachment_url)}
+              mine={mine}
+            />
+            <Text style={[s.bareTime, mine && s.bareTimeMine]}>{timeStr}</Text>
           </Pressable>
         ) : (
           <Pressable
             style={[s.bubble, mine ? { backgroundColor: bubbleMe, borderColor: bubbleMeDark } : { backgroundColor: bubbleOther, borderColor: bubbleOtherBorder }]}
-            onLongPress={() => onOpenActions(item)}
+            onLongPress={openActions}
           >
             {item.reply_to && replyParent ? (
               <View style={[s.replyBar, { borderLeftColor: mine ? '#fff' : bubbleMe }]}>
@@ -169,34 +266,50 @@ export function ChatMessageRow({
               </View>
             ) : null}
 
-            {isAudioMsg(item) && imgUrl ? renderAudio(imgUrl) : null}
-            {item.content ? (
-              <Text style={[s.bubbleTxt, mine && s.bubbleTxtMine]}>{item.content}</Text>
+            {forwardHeader ? (
+              <Text style={[s.forwardHdr, mine && s.forwardHdrMine]} numberOfLines={2}>
+                {text.split('\n')[0]}
+              </Text>
             ) : null}
 
-            {!isAudioMsg(item) && imgUrl && isImg ? (
+            {isAudioMsg(item) && imgUrl ? renderAudio(imgUrl) : null}
+            {item.content && !forwardHeader
+              ? renderMessageText(item.content, mine)
+              : item.content && forwardHeader
+                ? renderMessageText(text.split('\n').slice(1).join('\n'), mine)
+                : null}
+
+            {!isAudioMsg(item) && imgUrl && isImg && !imageOnly ? (
               <TouchableOpacity onPress={() => void Linking.openURL(imgUrl)}>
                 <Image source={{ uri: imgUrl }} style={s.imgAtt} resizeMode="cover" />
               </TouchableOpacity>
-            ) : !isAudioMsg(item) && imgUrl && !isImg ? (
-              <TouchableOpacity onPress={() => void Linking.openURL(imgUrl)}>
-                <Text style={[s.fileLink, mine && s.fileLinkMine]}>
-                  📎 {item.attachment_name || 'Tệp'}
-                </Text>
-              </TouchableOpacity>
+            ) : !isAudioMsg(item) && imgUrl && !isImg && !fileOnly ? (
+              <MessengerFileCard
+                name={item.attachment_name || undefined}
+                mime={item.attachment_mime || undefined}
+                size={item.attachment_size ?? undefined}
+                url={imgUrl}
+                mine={mine}
+              />
             ) : null}
 
             {atts.map((a: MessengerAttachment, i: number) => {
               const u = mediaUrl(a.url);
               const im = (a.type || '').startsWith('image/') && u;
+              if (imageOnly || fileOnly) return null;
               return im ? (
                 <TouchableOpacity key={i} onPress={() => u && void Linking.openURL(u)}>
                   <Image source={{ uri: u! }} style={s.imgAtt} resizeMode="cover" />
                 </TouchableOpacity>
               ) : (
-                <TouchableOpacity key={i} onPress={() => u && void Linking.openURL(u)}>
-                  <Text style={[s.fileLink, mine && s.fileLinkMine]}>📎 {a.name || 'Tệp'}</Text>
-                </TouchableOpacity>
+                <MessengerFileCard
+                  key={i}
+                  name={a.name || undefined}
+                  mime={a.type || undefined}
+                  size={a.size ?? undefined}
+                  url={u}
+                  mine={mine}
+                />
               );
             })}
 
@@ -244,7 +357,27 @@ const s = StyleSheet.create({
   avatarBot: { backgroundColor: '#EEF2FF' },
   avatarTxt: { fontSize: 11, fontWeight: '800', color: '#fff' },
   avatarSpace: { width: 0 },
-  msgName: { fontSize: 11, color: CrmColors.gray500, fontWeight: '700', marginBottom: 2, marginLeft: 4 },
+  selectBox: { marginRight: 4, marginBottom: 4, justifyContent: 'flex-end' },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2, marginLeft: 4, flexWrap: 'wrap' },
+  msgName: { fontSize: 11, color: CrmColors.gray500, fontWeight: '700' },
+  mentionBadge: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  mentionBadgeTxt: { fontSize: 9, fontWeight: '800', color: '#92400E' },
+  mentionMine: { fontWeight: '800', color: '#FDE68A' },
+  mentionOther: { fontWeight: '800', color: '#B45309', backgroundColor: '#FEF3C7' },
+  forwardHdr: { fontSize: 12, fontWeight: '700', color: CrmColors.gray600, marginBottom: 6 },
+  forwardHdrMine: { color: 'rgba(255,255,255,0.9)' },
+  imgAttBare: { width: 220, height: 220, borderRadius: 16, marginTop: 2 },
+  imgAttBareMine: { alignSelf: 'flex-end' },
+  bareTime: { fontSize: 10, color: CrmColors.gray400, marginTop: 4, marginLeft: 4, fontWeight: '600' },
+  bareTimeMine: { alignSelf: 'flex-end', marginRight: 4, color: 'rgba(255,255,255,0.65)' },
+  replyBarBare: { borderLeftWidth: 3, paddingLeft: 8, marginBottom: 6, maxWidth: 260 },
   stickerWrap: { paddingVertical: 4, paddingHorizontal: 2 },
   stickerTxt: { fontSize: 44, lineHeight: 52, textAlign: 'center' },
   stickerTime: { fontSize: 10, color: CrmColors.gray400, textAlign: 'center', marginTop: 2 },
@@ -292,9 +425,12 @@ export function ReactionPickerBar({
   onRecall,
   canRecall,
   onShare,
+  onForwardInApp,
   onCopy,
   onCopyImage,
   onDownload,
+  onSelectMultiple,
+  onHideForMe,
   showCopyImage,
   showDownload,
 }: {
@@ -303,9 +439,12 @@ export function ReactionPickerBar({
   onRecall?: () => void;
   canRecall?: boolean;
   onShare?: () => void;
+  onForwardInApp?: () => void;
   onCopy?: () => void;
   onCopyImage?: () => void;
   onDownload?: () => void;
+  onSelectMultiple?: () => void;
+  onHideForMe?: () => void;
   showCopyImage?: boolean;
   showDownload?: boolean;
 }) {
@@ -324,10 +463,22 @@ export function ReactionPickerBar({
             <Ionicons name="arrow-undo" size={16} color={CrmColors.gray700} />
             <Text style={bar.actTxt}>Trả lời</Text>
           </TouchableOpacity>
+          {onForwardInApp ? (
+            <TouchableOpacity style={bar.actBtn} onPress={onForwardInApp}>
+              <Ionicons name="arrow-redo-outline" size={16} color={CrmColors.gray700} />
+              <Text style={bar.actTxt}>Chuyển tiếp</Text>
+            </TouchableOpacity>
+          ) : null}
           {onShare ? (
             <TouchableOpacity style={bar.actBtn} onPress={onShare}>
               <Ionicons name="share-outline" size={16} color={CrmColors.gray700} />
               <Text style={bar.actTxt}>Chia sẻ</Text>
+            </TouchableOpacity>
+          ) : null}
+          {onSelectMultiple ? (
+            <TouchableOpacity style={bar.actBtn} onPress={onSelectMultiple}>
+              <Ionicons name="checkbox-outline" size={16} color={CrmColors.gray700} />
+              <Text style={bar.actTxt}>Chọn nhiều</Text>
             </TouchableOpacity>
           ) : null}
           {onCopy ? (
@@ -346,6 +497,12 @@ export function ReactionPickerBar({
             <TouchableOpacity style={bar.actBtn} onPress={onDownload}>
               <Ionicons name="download-outline" size={16} color={CrmColors.blue600} />
               <Text style={[bar.actTxt, { color: CrmColors.blue600 }]}>Tải xuống</Text>
+            </TouchableOpacity>
+          ) : null}
+          {onHideForMe ? (
+            <TouchableOpacity style={bar.actBtn} onPress={onHideForMe}>
+              <Ionicons name="eye-off-outline" size={16} color={CrmColors.gray700} />
+              <Text style={bar.actTxt}>Ẩn với tôi</Text>
             </TouchableOpacity>
           ) : null}
           {canRecall && onRecall ? (

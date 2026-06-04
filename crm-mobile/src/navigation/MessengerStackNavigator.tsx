@@ -4,6 +4,7 @@ import MessengerGroupListScreen from '../screens/MessengerGroupListScreen';
 import MessengerGroupChatScreen from '../screens/MessengerGroupChatScreen';
 import MessengerComposeScreen from '../screens/MessengerComposeScreen';
 import MessengerAddMembersScreen from '../screens/MessengerAddMembersScreen';
+import MessengerForwardScreen from '../screens/MessengerForwardScreen';
 import type { MessengerStackParamList } from './types';
 import { CrmColors } from '../theme/crmTheme';
 
@@ -51,6 +52,11 @@ export default function MessengerStackNavigator() {
         name="MessengerAddMembers"
         component={MessengerAddMembersScreen}
         options={{ title: 'Thêm thành viên' }}
+      />
+      <Stack.Screen
+        name="MessengerForward"
+        component={MessengerForwardScreen}
+        options={{ title: 'Chuyển tiếp tin' }}
       />
     </Stack.Navigator>
   );
