@@ -42,6 +42,48 @@ function parseCallLogPayload(content) {
   }
 }
 
+function parseCallLogFromAttachments(attachments) {
+  const arr = Array.isArray(attachments) ? attachments : [];
+  const hit = arr.find((a) => a && (a.type === 'call_log' || a.kind === 'call_log'));
+  if (!hit) return null;
+  const p = hit.payload || hit.data || hit;
+  if (p && typeof p === 'object' && (p.v === 1 || p.status)) return { v: 1, ...p };
+  return null;
+}
+
+/** Lấy payload từ nội dung DB (prefix) hoặc attachments. */
+function extractCallLogPayloadFromRow(row) {
+  if (!row) return null;
+  if (row.message_type === 'call' || parseCallLogPayload(row.content)) {
+    return parseCallLogPayload(row.content) || parseCallLogFromAttachments(row.attachments);
+  }
+  return parseCallLogPayload(row.content) || parseCallLogFromAttachments(row.attachments);
+}
+
+function isMessengerCallLogRow(row) {
+  if (!row) return false;
+  if (row.message_type === 'call') return true;
+  return !!extractCallLogPayloadFromRow(row);
+}
+
+/**
+ * Chuẩn hoá tin log cuộc gọi trước khi trả API / socket — tránh client cũ hiện raw JSON.
+ * Giữ nguyên bản ghi DB; chỉ thay `content` hiển thị.
+ */
+function hydrateMessengerCallLogRow(row, viewerUserId) {
+  if (!row || !isMessengerCallLogRow(row)) return row;
+  const payload = extractCallLogPayloadFromRow(row);
+  if (!payload) return row;
+  const line = formatCallLogLine(payload, viewerUserId);
+  if (!line) return row;
+  return {
+    ...row,
+    content: line,
+    message_type: 'call',
+    is_system: true,
+  };
+}
+
 function formatDuration(sec) {
   const n = Math.max(0, Math.floor(Number(sec) || 0));
   if (n < 1) return '0:00';
@@ -106,6 +148,32 @@ function buildCallLogStorageContent(payload) {
   return `${CALL_LOG_PREFIX}${JSON.stringify({ v: 1, ...payload })}`;
 }
 
+function buildCallLogAttachments(payload) {
+  return [{ type: 'call_log', payload: { v: 1, ...payload } }];
+}
+
+async function emitMessengerCallLogChat(io, groupId, baseRow) {
+  if (!io || !groupId || !baseRow) return;
+  const { data: mems, error } = await supabase
+    .from('messenger_group_members')
+    .select('user_id')
+    .eq('group_id', groupId);
+  const ids = error
+    ? []
+    : [...new Set((mems || []).map((m) => String(m.user_id)).filter(Boolean))];
+  if (!ids.length) {
+    io.to(`messenger_group:${groupId}`).emit(
+      'messenger_group:chat',
+      hydrateMessengerCallLogRow(baseRow, baseRow.user_id),
+    );
+    return;
+  }
+  // Chỉ gửi theo từng user — tránh broadcast nhóm ghi đè nhãn "gọi đến/đi" sai người.
+  for (const uid of ids) {
+    io.to(`user:${uid}`).emit('messenger_group:chat', hydrateMessengerCallLogRow(baseRow, uid));
+  }
+}
+
 async function fetchMessengerMessageById(id) {
   const { data, error } = await supabase
     .from('messenger_group_messages')
@@ -131,6 +199,7 @@ async function persistMessengerCallLog(io, { groupId, actorUserId, payload }) {
     content,
     message_type: 'call',
     is_system: true,
+    attachments: buildCallLogAttachments(payload),
   };
 
   let { data, error } = await supabase
@@ -141,9 +210,10 @@ async function persistMessengerCallLog(io, { groupId, actorUserId, payload }) {
 
   if (error) {
     console.warn('[messenger-call-log] insert (call) failed, retry text:', error.message);
+    const { attachments: _a, ...withoutAtt } = baseRow;
     ({ data, error } = await supabase
       .from('messenger_group_messages')
-      .insert({ ...baseRow, message_type: 'text' })
+      .insert({ ...withoutAtt, message_type: 'text' })
       .select('id')
       .single());
   }
@@ -160,11 +230,10 @@ async function persistMessengerCallLog(io, { groupId, actorUserId, payload }) {
     content,
     message_type: 'call',
     is_system: true,
+    attachments: buildCallLogAttachments(payload),
     created_at: new Date().toISOString(),
   };
-  if (io) {
-    io.to(`messenger_group:${groupId}`).emit('messenger_group:chat', emitRow);
-  }
+  if (io) await emitMessengerCallLogChat(io, groupId, emitRow);
   return emitRow;
 }
 
@@ -253,10 +322,14 @@ module.exports = {
   directPairKey,
   resolveDirectMessengerGroupId,
   parseCallLogPayload,
+  extractCallLogPayloadFromRow,
+  isMessengerCallLogRow,
+  hydrateMessengerCallLogRow,
   formatCallLogLine,
   formatDuration,
   buildCallLogStorageContent,
   persistMessengerCallLog,
+  emitMessengerCallLogChat,
   fetchUserNames,
   mapRejectReasonToStatus,
   finalizeDirectCallLog,

@@ -10,7 +10,11 @@ const config = require('../config');
 const { notifyMultiple } = require('../helpers/notifications');
 const { isAdminLike } = require('../helpers/adminRole');
 const { handleIncomingMessage } = require('../helpers/aiConversation');
-const { parseCallLogPayload, formatCallLogLine } = require('../helpers/messengerCallLog');
+const {
+  extractCallLogPayloadFromRow,
+  hydrateMessengerCallLogRow,
+  formatCallLogLine,
+} = require('../helpers/messengerCallLog');
 const { responseCache, invalidateTags: rcInvalidateTagsMessenger } = require('../middleware/responseCache');
 
 /** Bucket Supabase Storage (mặc định giống upload CRM). */
@@ -187,7 +191,7 @@ function buildMessagePreviewNode(m, opts = {}) {
   }
   const raw = (m.content == null ? '' : String(m.content)).trim();
   if (raw) {
-    const callPayload = parseCallLogPayload(raw);
+    const callPayload = extractCallLogPayloadFromRow(m);
     if (callPayload || m.message_type === 'call') {
       const line = formatCallLogLine(callPayload, forUserId);
       if (line) return line.length > 120 ? line.slice(0, 120) : line;
@@ -1661,6 +1665,8 @@ r.get('/groups/:id/chat', async (req, res) => {
     }
     rows = await attachReplyParents(rows);
     rows = await attachReactionsToMessages(rows);
+    const viewerId = req.authUserId;
+    rows = rows.map((m) => hydrateMessengerCallLogRow(m, viewerId));
     res.json(rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
