@@ -5,6 +5,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -219,6 +221,76 @@ class FloatingBubbleOverlayModule(private val reactContext: ReactApplicationCont
     NotificationManagerCompat.from(reactContext).cancel(bubbleKey.hashCode())
   }
 
+  /** Thông báo cuộc gọi đến — hiện trên màn hình khóa / ngoài app. */
+  @ReactMethod
+  fun postIncomingCallNotification(
+    callId: String,
+    title: String,
+    body: String,
+    fromUserId: String,
+    fromName: String,
+    isGroup: Boolean,
+    groupId: String,
+    groupName: String,
+  ) {
+    ensureCallChannel()
+    val nm = NotificationManagerCompat.from(reactContext)
+    val intent = Intent(reactContext, MainActivity::class.java).apply {
+      flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+      putExtra("incoming_call", true)
+      putExtra("call_id", callId)
+      putExtra("from_user_id", fromUserId)
+      putExtra("from_name", fromName)
+      putExtra("is_group", isGroup)
+      putExtra("group_id", groupId)
+      putExtra("group_name", groupName)
+    }
+    val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    val contentPending = PendingIntent.getActivity(reactContext, callId.hashCode(), intent, pendingFlags)
+    val fullScreenPending = PendingIntent.getActivity(
+      reactContext,
+      callId.hashCode() + 1,
+      intent,
+      pendingFlags,
+    )
+    val ringtone = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+    val notification = NotificationCompat.Builder(reactContext, CALL_CHANNEL)
+      .setSmallIcon(android.R.drawable.stat_sys_phone_call)
+      .setContentTitle(title.ifBlank { "Cuộc gọi đến" })
+      .setContentText(body)
+      .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+      .setPriority(NotificationCompat.PRIORITY_MAX)
+      .setCategory(NotificationCompat.CATEGORY_CALL)
+      .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+      .setOngoing(true)
+      .setAutoCancel(false)
+      .setOnlyAlertOnce(false)
+      .setContentIntent(contentPending)
+      .setFullScreenIntent(fullScreenPending, true)
+      .setVibrate(longArrayOf(0, 600, 200, 600, 200, 600))
+      .setSound(ringtone)
+      .build()
+    nm.notify(callId.hashCode(), notification)
+  }
+
+  @ReactMethod
+  fun cancelIncomingCallNotification(callId: String) {
+    NotificationManagerCompat.from(reactContext).cancel(callId.hashCode())
+  }
+
+  /** Đọc intent mở app từ thông báo cuộc gọi native. */
+  @ReactMethod
+  fun consumePendingCallIntent(promise: Promise) {
+    try {
+      val prefs = reactContext.getSharedPreferences("crm_call_intent", Context.MODE_PRIVATE)
+      val json = prefs.getString("pending_call_json", null)
+      prefs.edit().remove("pending_call_json").apply()
+      promise.resolve(json)
+    } catch (e: Exception) {
+      promise.resolve(null)
+    }
+  }
+
   private fun ensureChatChannel() {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     val nm = reactContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -232,7 +304,32 @@ class FloatingBubbleOverlayModule(private val reactContext: ReactApplicationCont
     nm.createNotificationChannel(channel)
   }
 
+  private fun ensureCallChannel() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+    val nm = reactContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    if (nm.getNotificationChannel(CALL_CHANNEL) != null) return
+    val ringtone = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+    val channel = NotificationChannel(
+      CALL_CHANNEL,
+      "Cuộc gọi",
+      NotificationManager.IMPORTANCE_HIGH,
+    )
+    channel.description = "Thông báo cuộc gọi đến từ Messenger CRM"
+    channel.enableVibration(true)
+    channel.vibrationPattern = longArrayOf(0, 600, 200, 600, 200, 600)
+    channel.lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
+    channel.setSound(
+      ringtone,
+      AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+        .build(),
+    )
+    nm.createNotificationChannel(channel)
+  }
+
   companion object {
     private const val CHAT_CHANNEL = "crm_chat"
+    private const val CALL_CHANNEL = "crm_call"
   }
 }

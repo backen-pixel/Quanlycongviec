@@ -282,6 +282,69 @@ async function sendFcmDataOnly(tokens, notification) {
   }
 }
 
+async function sendFcmIncomingCall(tokens, notification) {
+  if (!tokens.length) return;
+  const auth = await getFcmAccessToken();
+  if (!auth) return;
+  const meta = (notification.metadata && typeof notification.metadata === 'object')
+    ? notification.metadata
+    : {};
+  const payload = buildPushPayload(notification);
+  const url = `https://fcm.googleapis.com/v1/projects/${auth.projectId}/messages:send`;
+  const data = {
+    type: 'incoming_call',
+    call_id: String(meta.call_id || ''),
+    kind: String(meta.kind || 'audio'),
+    from_user_id: String(meta.from_user_id || ''),
+    from_name: String(meta.from_name || ''),
+    is_group: meta.is_group ? 'true' : 'false',
+    group_id: String(meta.group_id || ''),
+    group_name: String(meta.group_name || ''),
+  };
+  for (const row of tokens) {
+    try {
+      const body = {
+        message: {
+          token: row.token,
+          notification: {
+            title: payload.title,
+            body: payload.body,
+          },
+          data,
+          android: {
+            priority: 'HIGH',
+            ttl: '60s',
+            notification: {
+              channel_id: CHANNEL_CALL,
+              sound: 'default',
+              notification_priority: 'PRIORITY_MAX',
+              visibility: 'PUBLIC',
+            },
+          },
+        },
+      };
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${auth.accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const txt = await r.text().catch(() => '');
+        if (r.status === 404 || /UNREGISTERED|NOT_FOUND/i.test(txt)) {
+          await supabase.from('push_device_tokens').delete().eq('token', row.token).catch(() => {});
+        } else {
+          console.warn('[pushSender] FCM call error:', r.status, txt.slice(0, 200));
+        }
+      }
+    } catch (e) {
+      console.warn('[pushSender] FCM call send error:', e.message || e);
+    }
+  }
+}
+
 /**
  * Gửi push mobile cho user (chủ yếu chat khi app kill).
  * @param {string} userId
@@ -290,20 +353,26 @@ async function sendFcmDataOnly(tokens, notification) {
 async function sendMobilePush(userId, notification) {
   if (!userId || !notification) return;
   if (isExpiryDeadlineNotificationType(notification.type)) return;
+  const isCall = isIncomingCallType(notification.type);
 
   try {
-    const allowed = await isNotificationAllowedForUser(
-      userId,
-      notification.type,
-      notification.entity_type,
-      notification.metadata,
-    );
-    if (!allowed) return;
+    if (!isCall) {
+      const allowed = await isNotificationAllowedForUser(
+        userId,
+        notification.type,
+        notification.entity_type,
+        notification.metadata,
+      );
+      if (!allowed) return;
+    }
 
     const rows = await fetchUserTokens(userId);
     const expoRows = rows.expo;
     const fcmRows = rows.fcm;
-    if (!expoRows.length && !fcmRows.length) return;
+    if (!expoRows.length && !fcmRows.length) {
+      if (isCall) console.warn('[pushSender] incoming_call: no device tokens for user', userId);
+      return;
+    }
 
     const payload = buildPushPayload(notification);
     const messages = expoRows.map((r) => ({
@@ -324,8 +393,10 @@ async function sendMobilePush(userId, notification) {
       await sendExpoChunk(messages.slice(i, i + CHUNK_SIZE));
     }
 
-    // Song song: FCM data-only để wake bubble overlay (Android)
-    if (fcmRows.length && isChatType(notification.type)) {
+    // FCM: cuộc gọi đến (notification hiển thị) hoặc chat (data-only wake bubble)
+    if (fcmRows.length && isCall) {
+      await sendFcmIncomingCall(fcmRows, notification);
+    } else if (fcmRows.length && isChatType(notification.type)) {
       await sendFcmDataOnly(fcmRows, notification);
     }
   } catch (e) {
