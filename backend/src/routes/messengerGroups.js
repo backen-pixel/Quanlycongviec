@@ -7,6 +7,7 @@ const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { pgQuery, pgSessionQuery } = require('../config/db');
 const config = require('../config');
+const { MESSENGER_MAX_UPLOAD_MB, MESSENGER_MAX_FILE_BYTES } = require('../config/messengerUpload');
 const { notifyMultiple } = require('../helpers/notifications');
 const { isAdminLike } = require('../helpers/adminRole');
 const { handleIncomingMessage } = require('../helpers/aiConversation');
@@ -366,7 +367,7 @@ async function storeMessengerUploadedFile(groupId, file) {
 
 const messengerMemoryUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 },
+  limits: { fileSize: MESSENGER_MAX_FILE_BYTES },
 });
 
 const r = Router();
@@ -1886,6 +1887,27 @@ r.post('/groups/:gid/chat/:mid/recall', async (req, res) => {
     logMessengerAction({ action: 'recall-failed', gid: req.params.gid, mid: req.params.mid, err: e.message });
     res.status(500).json({ error: e.message });
   }
+});
+
+/** Giới hạn upload file Messenger (cho client hiển thị). */
+r.get('/upload-limits', (_req, res) => {
+  res.json({
+    max_upload_mb: MESSENGER_MAX_UPLOAD_MB,
+    max_file_bytes: MESSENGER_MAX_FILE_BYTES,
+    max_files_per_message: 20,
+  });
+});
+
+r.use((err, req, res, next) => {
+  if (err?.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({
+      error: `File quá lớn. Tối đa ${MESSENGER_MAX_UPLOAD_MB} MB mỗi file.`,
+    });
+  }
+  if (err?.code === 'LIMIT_UNEXPECTED_FILE') {
+    return res.status(400).json({ error: 'Trường file không hợp lệ' });
+  }
+  next(err);
 });
 
 module.exports = r;

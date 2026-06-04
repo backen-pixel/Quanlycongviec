@@ -1,7 +1,7 @@
 import { Fragment, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import api from '../lib/api';
 import { resolveMediaUrl, BROKEN_MEDIA_PLACEHOLDER } from '../lib/mediaUrl';
-import { Trash2, Send, Users, Crown, Shield, Building2, Eye, Paperclip, X, Mic, Reply, CornerDownRight, Smile, Zap, Undo2, Check, Phone } from 'lucide-react';
+import { Trash2, Send, Users, Crown, Shield, Building2, Eye, Paperclip, X, Mic, Reply, CornerDownRight, Smile, Zap, Undo2, Check, Phone, Loader2 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import EmployeePicker from './EmployeePicker';
@@ -21,6 +21,11 @@ import {
   isMessengerCallLogMessage,
   parseCallLogPayload,
 } from '../lib/messengerCallLog';
+import {
+  MESSENGER_ATTACH_HINT,
+  validateMessengerFiles,
+  formatFileSize,
+} from '../lib/messengerUploadLimits';
 import {
   groupMessengerReactions,
   isMessengerMessageRecalled,
@@ -1087,6 +1092,8 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  /** { fileIndex, fileTotal, fileName, percent } khi đang upload file */
+  const [uploadState, setUploadState] = useState(null);
   const [mediaPreview, setMediaPreview] = useState(null);
   const [groupMeta, setGroupMeta] = useState(null);
   const [mentionOpen, setMentionOpen] = useState(false);
@@ -1238,6 +1245,15 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
       });
     }
   }, [messages]);
+
+  useEffect(() => {
+    if (!uploadState) return;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    requestAnimationFrame(() => {
+      container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+    });
+  }, [uploadState]);
 
   const loadReceipts = useCallback(async () => {
     try {
@@ -1569,10 +1585,20 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
   };
 
   const send = async (files = null, overrideText = null) => {
-    const pickedFiles = files ? Array.from(files).filter(Boolean) : [];
+    const rawPicked = files ? Array.from(files).filter(Boolean) : [];
     const rawText = overrideText != null ? String(overrideText) : text;
     const trimmed = rawText.trim();
-    if ((!trimmed && pickedFiles.length === 0) || sending) return;
+    if ((!trimmed && rawPicked.length === 0) || sending) return;
+
+    const validation = rawPicked.length ? validateMessengerFiles(rawPicked) : { ok: true, valid: [], error: null };
+    if (!validation.ok) {
+      alert(validation.error);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      if (audioInputRef.current) audioInputRef.current.value = '';
+      return;
+    }
+    const pickedFiles = validation.valid;
+
     setSending(true);
     const members = groupMeta?.members || [];
     const meId = user?.userId || user?.id;
@@ -1583,8 +1609,16 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
     try {
       if (pickedFiles.length > 0) {
         for (let i = 0; i < pickedFiles.length; i++) {
+          const file = pickedFiles[i];
+          setUploadState({
+            fileIndex: i + 1,
+            fileTotal: pickedFiles.length,
+            fileName: file.name,
+            fileSize: file.size,
+            percent: 0,
+          });
           const fd = new FormData();
-          fd.append('file', pickedFiles[i]);
+          fd.append('file', file);
           if (i === 0 && trimmed) {
             fd.append('content', trimmed);
             if (mentionIds.length) fd.append('mention_user_ids', JSON.stringify(mentionIds));
@@ -1592,7 +1626,14 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
           if (i === 0 && replyId) fd.append('reply_to', replyId);
           await api.post(`/messenger/groups/${groupId}/chat/upload`, fd, {
             headers: { 'Content-Type': 'multipart/form-data' },
+            onUploadProgress: (ev) => {
+              const percent = ev.total
+                ? Math.min(99, Math.round((ev.loaded * 100) / ev.total))
+                : 0;
+              setUploadState((prev) => (prev ? { ...prev, percent } : prev));
+            },
           });
+          setUploadState((prev) => (prev ? { ...prev, percent: 100 } : prev));
         }
       } else {
         await api.post(`/messenger/groups/${groupId}/chat`, {
@@ -1605,10 +1646,13 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
       setReplyTo(null);
       emitStopTyping();
       if (fileInputRef.current) fileInputRef.current.value = '';
+      if (audioInputRef.current) audioInputRef.current.value = '';
     } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi gửi tin nhắn');
+      alert(e.response?.data?.error || e.message || 'Lỗi gửi tin nhắn');
+    } finally {
+      setUploadState(null);
+      setSending(false);
     }
-    setSending(false);
   };
 
   const jumpToMessage = useCallback((id) => {
@@ -1996,6 +2040,9 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
           );
         })}
         <TypingIndicators typingMap={typingMap} />
+        {uploadState ? (
+          <MessengerUploadProgress uploadState={uploadState} compact={compact} />
+        ) : null}
         <div ref={messagesEndRef} />
       </div>
 
@@ -2142,7 +2189,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
               type="button"
               onClick={() => fileInputRef.current?.click()}
               className={`shrink-0 ${compact ? 'w-7 h-7' : 'w-8 h-8'} rounded-full text-slate-500 hover:text-violet-600 hover:bg-white/80 flex items-center justify-center transition-colors`}
-              title="Đính kèm"
+              title={`Đính kèm — ${MESSENGER_ATTACH_HINT}`}
             >
               <Paperclip size={compact ? 14 : 16} />
             </button>
@@ -2247,15 +2294,54 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
           <button
             type="button"
             onClick={() => void send()}
-            disabled={sending || !text.trim()}
+            disabled={sending || (!text.trim() && !uploadState)}
             className={`bg-gradient-to-br from-violet-500 to-violet-600 hover:from-violet-600 hover:to-violet-700 text-white rounded-full flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition shadow-md shrink-0 ${
               compact ? 'w-9 h-9' : 'w-11 h-11'
             }`}
-            title="Gửi"
+            title={sending ? 'Đang gửi…' : 'Gửi'}
           >
-            <Send size={compact ? 14 : 16} className="-rotate-12" />
+            {sending && !uploadState ? (
+              <Loader2 size={compact ? 14 : 16} className="animate-spin" />
+            ) : (
+              <Send size={compact ? 14 : 16} className="-rotate-12" />
+            )}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** Bubble “đang gửi file” trong luồng chat. */
+function MessengerUploadProgress({ uploadState, compact }) {
+  if (!uploadState) return null;
+  const { fileIndex, fileTotal, fileName, fileSize, percent } = uploadState;
+  return (
+    <div className="flex justify-end my-2 px-1">
+      <div
+        className={`max-w-[min(92%,320px)] rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 to-white shadow-sm ${
+          compact ? 'px-3 py-2' : 'px-4 py-3'
+        }`}
+      >
+        <div className="flex items-center gap-2 text-violet-800">
+          <Loader2 className={`shrink-0 animate-spin ${compact ? 'h-3.5 w-3.5' : 'h-4 w-4'}`} />
+          <span className={compact ? 'text-[11px] font-medium' : 'text-sm font-medium'}>
+            Đang gửi file{fileTotal > 1 ? ` ${fileIndex}/${fileTotal}` : ''}…
+          </span>
+        </div>
+        <p className={`mt-1 text-violet-700/90 truncate ${compact ? 'text-[10px]' : 'text-xs'}`} title={fileName}>
+          {fileName}
+          {fileSize ? ` · ${formatFileSize(fileSize)}` : ''}
+        </p>
+        <div className="mt-2 h-1.5 rounded-full bg-violet-100 overflow-hidden">
+          <div
+            className="h-full rounded-full bg-violet-500 transition-[width] duration-200 ease-out"
+            style={{ width: `${Math.max(8, percent || 0)}%` }}
+          />
+        </div>
+        <p className={`mt-1 text-violet-500 ${compact ? 'text-[9px]' : 'text-[10px]'}`}>
+          {percent >= 99 ? 'Đang xử lý trên server…' : `${percent || 0}%`}
+        </p>
       </div>
     </div>
   );
