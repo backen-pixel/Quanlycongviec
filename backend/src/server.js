@@ -72,7 +72,7 @@ app.use(morgan(isProd ? 'tiny' : 'dev'));
 // Upload routes need large bodies; everything else stays small to bound memory.
 const UPLOAD_BODY_LIMIT = '256mb';
 const STANDARD_BODY_LIMIT = '2mb';
-const largeBodyRoutes = ['/api/upload', '/api/voice-recordings', '/api/external'];
+const largeBodyRoutes = ['/api/upload', '/api/voice-recordings', '/api/external', '/api/messenger'];
 
 app.use((req, res, next) => {
   const isLarge = largeBodyRoutes.some((p) => req.path.startsWith(p));
