@@ -1,4 +1,5 @@
 const { supabase } = require('../config/supabase');
+const { invalidateTags } = require('../middleware/responseCache');
 
 const CALL_LOG_PREFIX = ':call_log:';
 const MSG_USER_SELECT =
@@ -234,6 +235,7 @@ async function persistMessengerCallLog(io, { groupId, actorUserId, payload }) {
     created_at: new Date().toISOString(),
   };
   if (io) await emitMessengerCallLogChat(io, groupId, emitRow);
+  void invalidateTags(['messenger']).catch(() => {});
   return emitRow;
 }
 
