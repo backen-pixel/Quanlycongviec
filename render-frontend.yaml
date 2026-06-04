@@ -1,0 +1,13 @@
+# Static Site — SPA Messenger/CRM (tubep-frontend-*.onrender.com)
+# Tạo service trên Render Dashboard → Blueprint hoặc copy cấu hình dưới.
+# Quan trọng: mỗi lần push main phải trigger deploy để bundle mới có UI log cuộc gọi.
+services:
+  - type: web
+    name: tubep-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci --prefer-offline --no-audit && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://tubep-backend.onrender.com

@@ -11,6 +11,20 @@ export function parseCallLogPayload(content) {
   }
 }
 
+export function parseCallLogFromAttachments(attachments) {
+  const arr = Array.isArray(attachments) ? attachments : [];
+  const hit = arr.find((a) => a && (a.type === 'call_log' || a.kind === 'call_log'));
+  if (!hit) return null;
+  const p = hit.payload || hit.data || hit;
+  if (p && typeof p === 'object' && (p.v === 1 || p.status)) return { v: 1, ...p };
+  return null;
+}
+
+export function extractCallLogPayloadFromMessage(message) {
+  if (!message) return null;
+  return parseCallLogPayload(message.content) || parseCallLogFromAttachments(message.attachments);
+}
+
 export function formatDuration(sec) {
   const n = Math.max(0, Math.floor(Number(sec) || 0));
   if (n < 1) return '0:00';
@@ -71,12 +85,16 @@ export function formatCallLogLine(payload, viewerUserId) {
 export function isMessengerCallLogMessage(message) {
   if (!message) return false;
   if (message.message_type === 'call') return true;
-  return !!parseCallLogPayload(message.content);
+  return !!extractCallLogPayloadFromMessage(message);
 }
 
 export function callLogDisplayText(message, viewerUserId) {
   if (!message) return '';
-  const parsed = parseCallLogPayload(message.content);
-  if (parsed) return formatCallLogLine(parsed, viewerUserId) || message.content || '';
+  const parsed = extractCallLogPayloadFromMessage(message);
+  if (parsed) return formatCallLogLine(parsed, viewerUserId) || '';
+  if (message.message_type === 'call' && message.content) {
+    const raw = String(message.content).trim();
+    if (raw && !raw.startsWith(CALL_LOG_PREFIX)) return raw;
+  }
   return message.content || '';
 }
