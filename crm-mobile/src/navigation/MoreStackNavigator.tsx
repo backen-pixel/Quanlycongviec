@@ -10,6 +10,7 @@ import MessengerGroupListScreen from '../screens/MessengerGroupListScreen';
 import MessengerGroupChatScreen from '../screens/MessengerGroupChatScreen';
 import MessengerComposeScreen from '../screens/MessengerComposeScreen';
 import MessengerAddMembersScreen from '../screens/MessengerAddMembersScreen';
+import MessengerForwardScreen from '../screens/MessengerForwardScreen';
 import SalesHubScreen from '../screens/SalesHubScreen';
 import QuotationListScreen from '../screens/QuotationListScreen';
 import QuotationDetailScreen from '../screens/QuotationDetailScreen';
@@ -76,6 +77,7 @@ export default function MoreStackNavigator() {
       />
       <Stack.Screen name="MessengerCompose" component={MessengerComposeScreen} options={{ title: 'Tạo chat' }} />
       <Stack.Screen name="MessengerAddMembers" component={MessengerAddMembersScreen} options={{ title: 'Thêm thành viên' }} />
+      <Stack.Screen name="MessengerForward" component={MessengerForwardScreen} options={{ title: 'Chuyển tiếp tin' }} />
       <Stack.Screen name="SalesHub" component={SalesHubScreen} options={{ title: 'Bán hàng' }} />
       <Stack.Screen name="QuotationList" component={QuotationListScreen} options={{ title: 'Báo giá' }} />
       <Stack.Screen name="QuotationDetail" component={QuotationDetailScreen} options={{ title: 'Chi tiết' }} />

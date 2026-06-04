@@ -23,6 +23,11 @@ export type MoreStackParamList = {
   MessengerGroupChat: { groupId: string; title?: string; isDirect?: boolean; fromBubble?: boolean };
   MessengerCompose: { mode: 'group' | 'direct' };
   MessengerAddMembers: { groupId: string };
+  MessengerForward: {
+    excludeGroupId: string;
+    sourceTitle: string;
+    messagesJson: string;
+  };
   SalesHub: undefined;
   QuotationList: undefined;
   QuotationDetail: { id: string };
@@ -65,6 +70,11 @@ export type MessengerStackParamList = {
   MessengerGroupChat: { groupId: string; title?: string; isDirect?: boolean; fromBubble?: boolean };
   MessengerCompose: { mode: 'group' | 'direct' };
   MessengerAddMembers: { groupId: string };
+  MessengerForward: {
+    excludeGroupId: string;
+    sourceTitle: string;
+    messagesJson: string;
+  };
 };
 
 export type MainTabParamList = {
