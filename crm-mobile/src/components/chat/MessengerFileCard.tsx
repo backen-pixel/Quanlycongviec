@@ -1,5 +1,5 @@
 import React from 'react';
-import { Linking, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { CrmColors } from '../../theme/crmTheme';
 
@@ -29,33 +29,36 @@ type Props = {
   url?: string | null;
   mine?: boolean;
   onOpen?: () => void;
+  onLongPress?: () => void;
 };
 
-export function MessengerFileCard({ name, mime, size, url, mine, onOpen }: Props) {
+export function MessengerFileCard({ name, mime, size, url, mine, onOpen, onLongPress }: Props) {
   const badge = fileBadge(name, mime || '');
   const sizeLabel = formatFileSize(size);
+  const displayName = (name || '').trim() || 'Tệp đính kèm';
   const open = () => {
     if (onOpen) onOpen();
     else if (url) void Linking.openURL(url);
   };
 
   return (
-    <TouchableOpacity
+    <Pressable
       style={[s.card, mine ? s.cardMine : s.cardOther]}
       onPress={open}
-      activeOpacity={0.85}
+      onLongPress={onLongPress}
+      delayLongPress={400}
     >
       <View style={[s.badge, { backgroundColor: badge.bg }]}>
         <Text style={s.badgeLetter}>{badge.letter}</Text>
       </View>
       <View style={s.meta}>
-        <Text style={[s.name, mine && s.nameMine]} numberOfLines={2}>
-          {name || 'Tệp đính kèm'}
+        <Text style={s.name} numberOfLines={2}>
+          {displayName}
         </Text>
-        {sizeLabel ? <Text style={[s.size, mine && s.sizeMine]}>{sizeLabel}</Text> : null}
+        {sizeLabel ? <Text style={s.size}>{sizeLabel}</Text> : null}
       </View>
-      <Ionicons name="download-outline" size={20} color={mine ? '#E0E7FF' : CrmColors.blue600} />
-    </TouchableOpacity>
+      <Ionicons name="download-outline" size={20} color={mine ? '#6C5CE7' : CrmColors.blue600} />
+    </Pressable>
   );
 }
 
@@ -69,13 +72,14 @@ const s = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     borderColor: '#BAE6FD',
-    backgroundColor: '#F0F9FF',
-    maxWidth: 260,
+    backgroundColor: '#FFFFFF',
+    minWidth: 220,
+    maxWidth: 280,
     marginTop: 4,
   },
   cardMine: {
-    borderColor: 'rgba(255,255,255,0.25)',
-    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderColor: '#C4B5FD',
+    backgroundColor: '#FFFFFF',
   },
   cardOther: {},
   badge: {
@@ -84,11 +88,10 @@ const s = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   },
   badgeLetter: { color: '#fff', fontSize: 18, fontWeight: '800' },
-  meta: { flex: 1, minWidth: 0 },
+  meta: { flex: 1, minWidth: 80 },
   name: { fontSize: 13, fontWeight: '700', color: '#0F172A' },
-  nameMine: { color: '#FFFFFF' },
   size: { fontSize: 11, color: CrmColors.gray500, marginTop: 2 },
-  sizeMine: { color: 'rgba(255,255,255,0.75)' },
 });

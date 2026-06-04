@@ -10,12 +10,17 @@ const { isExpiryDeadlineNotificationType } = require('../helpers/notificationOpe
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 const CHUNK_SIZE = 100;
 
-// ⚠️ Phải khớp với hằng số ở crm-mobile/src/lib/appPermissions.ts
+// ⚠️ Phải khớp với hằng số ở crm-mobile/src/lib/notificationChannels.ts
 const CHANNEL_CHAT = 'crm_chat';
 const CHANNEL_SYSTEM = 'crm_system_tray_v3';
+const CHANNEL_CALL = 'crm_call';
 
 function isChatType(type) {
   return type === 'messenger_chat' || type === 'lead_chat' || type === 'department_chat';
+}
+
+function isIncomingCallType(type) {
+  return type === 'incoming_call';
 }
 
 function buildPushPayload(notification) {
@@ -41,10 +46,19 @@ function buildPushPayload(notification) {
       : (typeof meta.group_name === 'string' ? meta.group_name : title);
     title = dept || 'Chat phòng ban';
     body = sender ? `${sender}: ${body}` : body;
+  } else if (isIncomingCallType(notification.type)) {
+    const fromName = typeof meta.from_name === 'string' ? meta.from_name : 'Ai đó';
+    const isGroup = meta.is_group === true || meta.is_group === 'true';
+    const groupName = typeof meta.group_name === 'string' ? meta.group_name : 'Nhóm';
+    title = isGroup ? 'Cuộc gọi nhóm' : 'Cuộc gọi đến';
+    body = isGroup
+      ? `${fromName} mời bạn tham gia «${groupName}»`
+      : `${fromName} đang gọi bạn`;
   }
 
   const chat = isChatType(notification.type);
-  const channelId = chat ? CHANNEL_CHAT : CHANNEL_SYSTEM;
+  const isCall = isIncomingCallType(notification.type);
+  const channelId = isCall ? CHANNEL_CALL : chat ? CHANNEL_CHAT : CHANNEL_SYSTEM;
 
   return {
     title: String(title).slice(0, 120),
@@ -56,14 +70,25 @@ function buildPushPayload(notification) {
       entity_id: notification.entity_id,
       metadata: notification.metadata,
       channelId,
+      ...(isCall && meta && typeof meta === 'object'
+        ? {
+            call_id: meta.call_id || meta.callId,
+            kind: meta.kind || 'audio',
+            from_user_id: meta.from_user_id || meta.fromUserId,
+            from_name: meta.from_name || meta.fromName,
+            is_group: meta.is_group ? 'true' : 'false',
+            group_id: meta.group_id || meta.groupId || '',
+            group_name: meta.group_name || meta.groupName || '',
+          }
+        : {}),
     },
     channelId,
-    priority: 'high',
+    priority: isCall ? 'high' : 'high',
     sound: 'default',
     _displayInForeground: true,
     badge: notification.badge_count || undefined,
-    ttl: chat ? 60 * 60 * 24 : 60 * 60 * 24 * 7,
-    interruptionLevel: chat ? 'time-sensitive' : 'active',
+    ttl: isCall ? 60 : chat ? 60 * 60 * 24 : 60 * 60 * 24 * 7,
+    interruptionLevel: isCall ? 'time-sensitive' : chat ? 'time-sensitive' : 'active',
   };
 }
 

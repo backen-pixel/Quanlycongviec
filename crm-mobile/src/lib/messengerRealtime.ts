@@ -49,6 +49,7 @@ export function bindMessengerSocket(s: Socket) {
   if (socket === s && bound) return;
   socket = s;
   bound = true;
+  typingBound = false;
 
   const onConnect = () => rejoinAll();
   s.off('connect', onConnect);
@@ -93,4 +94,46 @@ export function subscribeMessengerEvent(event: MessengerRealtimeEvent, fn: Handl
 
 export function getJoinedMessengerGroups() {
   return [...joinedGroups];
+}
+
+export function getMessengerSocket() {
+  return socket;
+}
+
+export type MessengerTypingPayload = {
+  group_id?: string;
+  user_id?: string;
+  is_typing?: boolean;
+  full_name?: string;
+};
+
+type TypingHandler = (payload: MessengerTypingPayload) => void;
+const typingHandlers = new Set<TypingHandler>();
+let typingBound = false;
+
+function bindTypingListener() {
+  if (!socket || typingBound) return;
+  typingBound = true;
+  socket.on('messenger_group:typing', (payload: MessengerTypingPayload) => {
+    for (const fn of typingHandlers) {
+      try {
+        fn(payload);
+      } catch {
+        /* ignore */
+      }
+    }
+  });
+}
+
+export function subscribeMessengerTyping(fn: TypingHandler) {
+  bindTypingListener();
+  typingHandlers.add(fn);
+  return () => {
+    typingHandlers.delete(fn);
+  };
+}
+
+export function emitMessengerTyping(groupId: string, isTyping: boolean) {
+  if (!socket?.connected || !groupId) return;
+  socket.emit('messenger_group:typing', { group_id: groupId, is_typing: isTyping });
 }

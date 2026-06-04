@@ -250,6 +250,36 @@ if (fs.existsSync(frontendDist)) {
 /** State in-memory cho group call — map<callId, {groupId, groupName, hostId, kind, participants: Map<uid, {name}>}> */
 const activeGroupCalls = new Map();
 
+/** Push thông báo cuộc gọi đến khi app đóng / socket ngắt. */
+async function pushIncomingCall(toUserId, payload) {
+  if (!toUserId || !payload?.callId) return;
+  try {
+    const { sendMobilePush } = require('./services/pushSender');
+    const isGroup = !!payload.isGroup;
+    await sendMobilePush(String(toUserId), {
+      id: `call-${payload.callId}`,
+      type: 'incoming_call',
+      title: isGroup ? 'Cuộc gọi nhóm' : 'Cuộc gọi đến',
+      message: isGroup
+        ? `${payload.fromName || 'Ai đó'} mời bạn tham gia`
+        : `${payload.fromName || 'Ai đó'} đang gọi bạn`,
+      entity_type: isGroup ? 'messenger_group' : 'user',
+      entity_id: isGroup ? payload.groupId : payload.fromUserId,
+      metadata: {
+        call_id: payload.callId,
+        kind: payload.kind || 'audio',
+        from_user_id: payload.fromUserId,
+        from_name: payload.fromName || 'Người gọi',
+        is_group: isGroup,
+        group_id: payload.groupId || null,
+        group_name: payload.groupName || null,
+      },
+    });
+  } catch (e) {
+    console.warn('[pushIncomingCall]', e.message || e);
+  }
+}
+
 // ─── Socket.IO with Auth ──
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
@@ -323,6 +353,13 @@ io.on('connection', (socket) => {
       fromUserId: uid,
       fromName: socket.user?.fullName || socket.user?.full_name || 'Người gọi',
     });
+    void pushIncomingCall(String(toUserId), {
+      callId,
+      kind,
+      fromUserId: uid,
+      fromName: socket.user?.fullName || socket.user?.full_name || 'Người gọi',
+      isGroup: false,
+    });
   });
 
   socket.on('call:accept', ({ callId, toUserId } = {}) => {
@@ -386,6 +423,15 @@ io.on('connection', (socket) => {
         groupName: groupName || 'Cuộc gọi nhóm',
         fromUserId: uid,
         fromName: hostName,
+      });
+      void pushIncomingCall(mid, {
+        callId,
+        kind,
+        fromUserId: uid,
+        fromName: hostName,
+        isGroup: true,
+        groupId,
+        groupName: groupName || 'Cuộc gọi nhóm',
       });
     });
     // Broadcast cho TẤT CẢ thành viên nhóm (kể cả người không nằm trong danh sách mời)

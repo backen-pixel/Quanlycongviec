@@ -31,7 +31,7 @@ import { API_ORIGIN } from '../config';
 import { useAuth } from '../context/AuthContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { MoreStackParamList } from '../navigation/types';
-import type { MessengerGroupDetail, MessengerMessage, MessengerReadReceipt } from '../types/messenger';
+import type { MessengerGroupDetail, MessengerMessage, MessengerReadReceipt, MessengerGroupListItem } from '../types/messenger';
 import { CrmColors, CrmRadii } from '../theme/crmTheme';
 import { formatDateTime } from '../lib/formatUtils';
 import { chatDebugClear, chatDebugLog, chatDebugSnapshot, chatDebugSubscribe } from '../lib/chatDebug';
@@ -46,13 +46,18 @@ import { ChatMessageRow, ReactionPickerBar } from '../components/chat/ChatMessag
 import { formatReplyPreview } from '../lib/messengerPreview';
 import { normalizeReactions, mergeMessengerMessage } from '../lib/messengerReactions';
 import {
+  copyBulkMessengerMessages,
   copyMessengerImage,
   copyMessengerText,
   downloadMessengerMedia,
+  extractLinksFromMessages,
   getDownloadTarget,
   getFirstImage,
   shareMessengerMessage,
+  type MessengerLinkItem,
 } from '../lib/messengerMessageActions';
+import { buildStickerContent, STICKER_PACK } from '../lib/messengerStickers';
+import { StickerImage } from '../components/chat/StickerImage';
 import {
   applyMentionPickToDraft,
   buildMentionPickerItems,
@@ -65,7 +70,11 @@ import {
   joinMessengerGroup,
   leaveMessengerGroup,
   subscribeMessengerEvent,
+  subscribeMessengerTyping,
+  emitMessengerTyping,
 } from '../lib/messengerRealtime';
+import { prefetchMessengerGroups } from '../lib/messengerGroupsCache';
+import { useCall } from '../context/CallContext';
 
 const { width: SW } = Dimensions.get('window');
 /** Tone Messenger-Violet — nền sáng, bubble mình tím-xanh, bubble người khác trắng. */
@@ -75,11 +84,12 @@ const BUBBLE_ME_DARK = '#5848D2';
 const BUBBLE_OTHER = '#FFFFFF';
 const BUBBLE_OTHER_BORDER = '#E5E7EB';
 
-/** Câu trả lời nhanh — chips trên composer, tap để chèn vào ô soạn. */
+/** Câu trả lời nhanh — tap gửi ngay (đồng bộ web). */
 const QUICK_REPLIES: { icon: keyof typeof Ionicons.glyphMap | null; text: string }[] = [
-  { icon: 'flash', text: 'Đã nhận' },
+  { icon: 'flash', text: 'Đã nhận ✓' },
   { icon: null, text: 'Sẽ phản hồi sau' },
-  { icon: null, text: 'Cần thêm info?' },
+  { icon: null, text: 'Cần thêm thông tin?' },
+  { icon: 'heart', text: 'Cảm ơn bạn!' },
 ];
 
 /** Regex unicode pictographic — phát hiện tin nhắn chỉ gồm emoji. */
@@ -133,34 +143,12 @@ function isAudioMsg(m: MessengerMessage): boolean {
   return m.message_type === 'voice' || (m.attachment_mime || '').startsWith('audio/');
 }
 function isImageMsg(m: MessengerMessage): boolean {
-  if (m.message_type === 'image') return true;
-  if ((m.attachment_mime || '').startsWith('image/')) return true;
-  const u = mediaUrl(m.attachment_url);
-  if (u && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(u)) return true;
-  return (Array.isArray(m.attachments) ? m.attachments : []).some((a) => {
-    if ((a.type || '').startsWith('image/')) return true;
-    const au = mediaUrl(a.url);
-    return !!au && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(au);
-  });
+  return !!getFirstImage(m);
 }
 
-/**
- * Trả về URL ảnh đầu tiên của 1 message (ưu tiên attachment_url, sau đó tới
- * attachments[]). Dùng cho preview ảnh trong sheet thông tin nhóm.
- */
 function firstImageUrl(m: MessengerMessage): string | null {
-  const u1 = mediaUrl(m.attachment_url);
-  if (u1 && (/\.(jpe?g|png|gif|webp)(\?|$)/i.test(u1) || (m.attachment_mime || '').startsWith('image/') || m.message_type === 'image')) {
-    return u1;
-  }
-  const list = Array.isArray(m.attachments) ? m.attachments : [];
-  for (const a of list) {
-    const au = mediaUrl(a.url);
-    if (au && ((a.type || '').startsWith('image/') || /\.(jpe?g|png|gif|webp)(\?|$)/i.test(au))) {
-      return au;
-    }
-  }
-  return null;
+  const img = getFirstImage(m);
+  return img?.url ? mediaUrl(img.url) : null;
 }
 
 /* ─── AudioPlayer mini-component ──────────────────────────────── */
@@ -251,8 +239,10 @@ function AudioPlayer({ url, mine }: { url: string; mine: boolean }) {
 /* ─── types ────────────────────────────────────────────────────── */
 type R = RouteProp<MoreStackParamList, 'MessengerGroupChat'>;
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'MessengerGroupChat'>;
-type InfoTab = 'members' | 'images' | 'files' | 'audio';
+type InfoTab = 'members' | 'images' | 'files' | 'audio' | 'links';
 type RecState = 'idle' | 'recording' | 'done';
+type TypingEntry = { name: string; isBot: boolean; ts: number };
+const BOT_USER_ID = '00000000-0000-0000-0000-0000000000a1';
 
 interface Props {
   overrideGroupId?: string;
@@ -275,6 +265,7 @@ export default function MessengerGroupChatScreen({
   const myId = String(user?.id || user?.userId || '');
   const insets = useSafeAreaInsets();
   const { refreshUnread } = useNotifications();
+  const { startCall, startGroupCall } = useCall();
 
   const { groupId, title: titleParam, isDirect: isDirectParam } = params;
 
@@ -310,6 +301,10 @@ export default function MessengerGroupChatScreen({
     items: MentionPickerItem[];
   }>({ open: false, start: 0, items: [] });
   const [draftSel, setDraftSel] = useState({ start: 0, end: 0 });
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [typingMap, setTypingMap] = useState<Map<string, TypingEntry>>(new Map());
+  const typingThrottleRef = useRef(0);
+  const groupMetaRef = useRef<MessengerGroupDetail | null>(null);
 
   // Pinned (sync với /messenger/pins)
   const [pinned, setPinned] = useState(false);
@@ -734,6 +729,10 @@ export default function MessengerGroupChatScreen({
       setActionMsg(null);
       setSelectMode(false);
       setSelectedIds(new Set());
+      void prefetchMessengerGroups(async () => {
+        const { data } = await api.get<MessengerGroupListItem[]>('/messenger/groups');
+        return Array.isArray(data) ? data : [];
+      });
       navigation.navigate('MessengerForward', {
         excludeGroupId: String(groupId),
         sourceTitle: displayTitle,
@@ -742,6 +741,39 @@ export default function MessengerGroupChatScreen({
     },
     [navigation, groupId, displayTitle],
   );
+
+  const handleStartCall = useCallback(() => {
+    if (isDirectChat) {
+      const peer = group?.members?.find((m) => String(m.user_id) !== myId);
+      const peerUser = peer?.user;
+      if (!peerUser?.id && !peer?.user_id) {
+        Alert.alert('Gọi thoại', 'Không xác định được đối tác.');
+        return;
+      }
+      void startCall({
+        id: String(peerUser?.id || peer?.user_id),
+        name: peerUser?.full_name || displayTitle,
+        avatar: peerUser?.avatar || null,
+      });
+      return;
+    }
+    const members = (group?.members || [])
+      .filter((m) => String(m.user_id) !== myId)
+      .map((m) => ({
+        id: String(m.user_id),
+        name: m.user?.full_name || m.user?.email || 'Thành viên',
+        avatar: m.user?.avatar || null,
+      }));
+    if (!members.length) {
+      Alert.alert('Gọi nhóm', 'Nhóm không có thành viên khác.');
+      return;
+    }
+    void startGroupCall({
+      id: String(groupId),
+      name: displayTitle,
+      members,
+    });
+  }, [isDirectChat, group, myId, displayTitle, groupId, startCall, startGroupCall]);
 
   const canRecallMessage = useCallback(
     (msg: MessengerMessage) => {
@@ -871,6 +903,66 @@ export default function MessengerGroupChatScreen({
     };
   }, [groupId, applyChatMessage, applyReactionUpdate, applyRecallUpdate, loadAll]);
 
+  useEffect(() => {
+    groupMetaRef.current = group;
+  }, [group]);
+
+  useEffect(() => {
+    const unsub = subscribeMessengerTyping((payload) => {
+      if (!payload || String(payload.group_id) !== String(groupId)) return;
+      const uid = String(payload.user_id || '');
+      if (uid === myId) return;
+      setTypingMap((prev) => {
+        const next = new Map(prev);
+        if (payload.is_typing) {
+          const isBot = uid === BOT_USER_ID;
+          let name = payload.full_name || '';
+          if (!name) {
+            const mem = (groupMetaRef.current?.members || []).find(
+              (m) => String(m.user_id) === uid,
+            );
+            name = mem?.user?.full_name || mem?.user?.email || (isBot ? '🤖 AI' : 'Ai đó');
+          }
+          next.set(uid, { name, isBot, ts: Date.now() });
+        } else {
+          next.delete(uid);
+        }
+        return next;
+      });
+    });
+    return unsub;
+  }, [groupId, myId]);
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      setTypingMap((prev) => {
+        const now = Date.now();
+        let changed = false;
+        const next = new Map(prev);
+        for (const [uid, entry] of prev) {
+          if (now - entry.ts > 5000) {
+            next.delete(uid);
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, 2000);
+    return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    if (!draft.trim()) {
+      emitMessengerTyping(groupId, false);
+      return;
+    }
+    const now = Date.now();
+    if (now - typingThrottleRef.current >= 2000) {
+      typingThrottleRef.current = now;
+      emitMessengerTyping(groupId, true);
+    }
+  }, [draft, groupId]);
+
   /* ── send ──────────────────────────────────────────── */
   const appendMsg = useCallback((msg: MessengerMessage) => {
     if (!msg?.id) return;
@@ -880,10 +972,72 @@ export default function MessengerGroupChatScreen({
     setMessages((prev) => [...prev, msg]);
   }, []);
 
+  const postTextMessage = useCallback(
+    async (text: string, opts?: { keepDraft?: boolean }) => {
+      const content = text.trim();
+      if (!content) return;
+      setSending(true);
+      emitMessengerTyping(groupId, false);
+      typingThrottleRef.current = 0;
+      const mentionIds = isGroupMentionEnabled
+        ? resolveMentionIdsFromContent(content, group?.members || [], { excludeUserId: myId })
+        : [];
+      try {
+        const body: { content: string; reply_to?: string; mention_user_ids?: string[] } = {
+          content,
+        };
+        if (replyTo?.id) body.reply_to = String(replyTo.id);
+        if (mentionIds.length) body.mention_user_ids = mentionIds;
+        const { data } = await api.post<MessengerMessage>(
+          `/messenger/groups/${groupId}/chat`,
+          body,
+          { timeout: 120000, headers: { 'Content-Type': 'application/json' } },
+        );
+        if (!opts?.keepDraft) {
+          setDraft('');
+          setReplyTo(null);
+          setMentionUi({ open: false, start: 0, items: [] });
+        }
+        appendMsg(data);
+      } catch (e: unknown) {
+        const err = e as {
+          response?: { data?: { error?: string; message?: string } };
+          message?: string;
+        };
+        Alert.alert(
+          'Lỗi gửi',
+          err?.response?.data?.error || err?.response?.data?.message || err?.message || 'Thất bại',
+        );
+      } finally {
+        setSending(false);
+      }
+    },
+    [appendMsg, group?.members, groupId, isGroupMentionEnabled, myId, replyTo],
+  );
+
+  const sendQuickReply = useCallback(
+    (text: string) => {
+      if (sending || recState !== 'idle' || replyTo || pendingFiles.length) return;
+      void postTextMessage(text);
+    },
+    [sending, recState, replyTo, pendingFiles.length, postTextMessage],
+  );
+
+  const sendSticker = useCallback(
+    (emoji: string) => {
+      if (sending || recState !== 'idle') return;
+      setEmojiOpen(false);
+      void postTextMessage(buildStickerContent(emoji));
+    },
+    [sending, recState, postTextMessage],
+  );
+
   const sendMessage = async () => {
     const text = draft.trim();
     if (!text && pendingFiles.length === 0) return;
     setSending(true);
+    emitMessengerTyping(groupId, false);
+    typingThrottleRef.current = 0;
     const mentionIds = isGroupMentionEnabled
       ? resolveMentionIdsFromContent(text, group?.members || [], { excludeUserId: myId })
       : [];
@@ -923,6 +1077,20 @@ export default function MessengerGroupChatScreen({
       setSending(false);
     }
   };
+
+  const jumpToMessage = useCallback(
+    (id: string) => {
+      const idx = visibleMessages.findIndex((m) => String(m.id) === String(id));
+      if (idx < 0) {
+        Alert.alert('Không tìm thấy', 'Tin nhắn có thể không còn trong danh sách hiện tại.');
+        return;
+      }
+      listRef.current?.scrollToIndex({ index: idx, viewPosition: 0.5, animated: true });
+      setHighlightId(String(id));
+      setTimeout(() => setHighlightId(null), 1600);
+    },
+    [visibleMessages],
+  );
 
   /* ── media pickers ─────────────────────────────────── */
   const pickGallery = async () => {
@@ -1047,6 +1215,7 @@ export default function MessengerGroupChatScreen({
     [messages],
   );
   const sharedAudio = useMemo(() => messages.filter(isAudioMsg), [messages]);
+  const sharedLinks = useMemo(() => extractLinksFromMessages(messages), [messages]);
 
   /** ID tin nhắn cuối cùng do MÌNH gửi — dùng để gắn dòng "Đã gửi / Đã xem". */
   const lastMineId = useMemo(() => {
@@ -1157,6 +1326,8 @@ export default function MessengerGroupChatScreen({
             selectMode={selectMode}
             msgSelected={selectedIds.has(String(item.id))}
             onToggleSelect={() => toggleMsgSelected(String(item.id))}
+            onJumpToReply={jumpToMessage}
+            highlighted={highlightId === String(item.id)}
           />
         </View>
       );
@@ -1174,7 +1345,8 @@ export default function MessengerGroupChatScreen({
       toggleReaction,
       selectMode,
       selectedIds,
-      toggleMsgSelected,
+      jumpToMessage,
+      highlightId,
     ],
   );
 
@@ -1233,9 +1405,7 @@ export default function MessengerGroupChatScreen({
 
         <View style={s.headerActions}>
           <TouchableOpacity
-            onPress={() =>
-              Alert.alert('Gọi thoại', 'Tính năng cuộc gọi đang được hoàn thiện.', [{ text: 'OK' }])
-            }
+            onPress={() => void handleStartCall()}
             style={s.headerActionBtn}
             hitSlop={6}
             accessibilityLabel="Gọi thoại"
@@ -1275,11 +1445,25 @@ export default function MessengerGroupChatScreen({
             listRef.current?.scrollToEnd({ animated: false });
           }
         }}
+        onScrollToIndexFailed={(info) => {
+          listRef.current?.scrollToOffset({
+            offset: Math.max(0, info.averageItemLength * info.index),
+            animated: true,
+          });
+          setTimeout(() => {
+            listRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 });
+          }, 120);
+        }}
       />
+
+      <TypingIndicators typingMap={typingMap} />
 
       {/* Reaction / reply / recall bar (long-press tin nhắn) */}
       {actionMsg && recState === 'idle' && !selectMode ? (
-        <ReactionPickerBar
+        <>
+          <Pressable style={s.actionBackdrop} onPress={() => setActionMsg(null)} />
+          <ReactionPickerBar
+          onDismiss={() => setActionMsg(null)}
           onPick={(emoji) => {
             void toggleReaction(actionMsg, emoji);
             setActionMsg(null);
@@ -1322,6 +1506,7 @@ export default function MessengerGroupChatScreen({
           }}
           onHideForMe={() => hideMessagesForMe([String(actionMsg.id)])}
         />
+        </>
       ) : null}
 
       {selectMode ? (
@@ -1336,6 +1521,14 @@ export default function MessengerGroupChatScreen({
             <Text style={s.selectBarCancel}>Huỷ</Text>
           </TouchableOpacity>
           <Text style={s.selectBarTitle}>{selectedIds.size} đã chọn</Text>
+          <TouchableOpacity
+            disabled={!selectedIds.size}
+            onPress={() => {
+              void copyBulkMessengerMessages(selectedMessages, displayTitle);
+            }}
+          >
+            <Ionicons name="copy-outline" size={22} color={selectedIds.size ? CrmColors.gray700 : CrmColors.gray400} />
+          </TouchableOpacity>
           <TouchableOpacity
             disabled={!selectedIds.size}
             onPress={() => navigateForward(selectedMessages)}
@@ -1457,8 +1650,8 @@ export default function MessengerGroupChatScreen({
         </View>
       ) : null}
 
-      {/* Quick replies — chips chèn nhanh vào ô soạn */}
-      {recState === 'idle' && !replyTo && pendingFiles.length === 0 ? (
+      {/* Quick replies — tap gửi ngay */}
+      {recState === 'idle' && !replyTo && pendingFiles.length === 0 && !draft.trim() ? (
         <View style={s.quickWrap}>
           <ScrollView
             horizontal
@@ -1466,12 +1659,17 @@ export default function MessengerGroupChatScreen({
             contentContainerStyle={s.quickRow}
             keyboardShouldPersistTaps="handled"
           >
+            <View style={s.quickLabelRow}>
+              <Ionicons name="flash" size={12} color={BUBBLE_ME} />
+              <Text style={s.quickLabelTxt}>Trả lời nhanh:</Text>
+            </View>
             {QUICK_REPLIES.map((q) => (
               <TouchableOpacity
                 key={q.text}
                 style={s.quickChip}
                 activeOpacity={0.85}
-                onPress={() => setDraft((d) => (d ? `${d} ${q.text}` : q.text))}
+                disabled={sending}
+                onPress={() => sendQuickReply(q.text)}
               >
                 {q.icon ? <Ionicons name={q.icon} size={12} color={BUBBLE_ME} /> : null}
                 <Text style={s.quickChipTxt} numberOfLines={1}>
@@ -1596,6 +1794,7 @@ export default function MessengerGroupChatScreen({
       {emojiOpen && recState === 'idle' ? (
         <EmojiPicker
           onPick={(e) => setDraft((d) => `${d}${e}`)}
+          onPickSticker={(emoji) => sendSticker(emoji)}
           onClose={() => setEmojiOpen(false)}
           paddingBottom={composerPadBottom + 6}
         />
@@ -1648,6 +1847,7 @@ export default function MessengerGroupChatScreen({
         sharedImages={sharedImages}
         sharedFiles={sharedFiles}
         sharedAudio={sharedAudio}
+        sharedLinks={sharedLinks}
         infoTab={infoTab}
         setInfoTab={setInfoTab}
         pinned={pinned}
@@ -1656,7 +1856,7 @@ export default function MessengerGroupChatScreen({
         onLeave={leaveGroup}
         onRename={() => { setInfoOpen(false); openRename(); }}
         onChangeAvatar={onChangeGroupAvatar}
-        onCall={() => Alert.alert('Gọi thoại', 'Tính năng cuộc gọi đang được hoàn thiện.', [{ text: 'OK' }])}
+        onCall={() => void handleStartCall()}
         onMinimizeToBubble={onMinimizeToBubble}
         onOpenDebug={() => { setInfoOpen(false); setDebugOpen(true); }}
       />
@@ -1749,6 +1949,7 @@ interface GroupInfoSheetProps {
   sharedImages: MessengerMessage[];
   sharedFiles: MessengerMessage[];
   sharedAudio: MessengerMessage[];
+  sharedLinks: MessengerLinkItem[];
   infoTab: InfoTab;
   setInfoTab: (t: InfoTab) => void;
   pinned: boolean;
@@ -1781,6 +1982,7 @@ function GroupInfoSheet({
   sharedImages,
   sharedFiles,
   sharedAudio,
+  sharedLinks,
   infoTab,
   setInfoTab,
   pinned,
@@ -1803,6 +2005,7 @@ function GroupInfoSheet({
   const previewImages = sharedImages.slice(-4).reverse();
   const previewFiles = sharedFiles.slice(-3).reverse();
   const previewAudio = sharedAudio.slice(-3).reverse();
+  const previewLinks = sharedLinks.slice(0, 3);
   const members = group?.members ?? [];
   const remainingImages = Math.max(0, sharedImages.length - 4);
 
@@ -1834,7 +2037,9 @@ function GroupInfoSheet({
                     ? `Phương tiện · ${sharedImages.length}`
                     : mode === 'files'
                       ? `File · ${sharedFiles.length}`
-                      : `Ghi âm · ${sharedAudio.length}`}
+                      : mode === 'links'
+                        ? `Liên kết · ${sharedLinks.length}`
+                        : `Ghi âm · ${sharedAudio.length}`}
               </Text>
               <View style={{ width: 28 }} />
             </View>
@@ -2010,6 +2215,46 @@ function GroupInfoSheet({
                         >
                           <Ionicons name="download-outline" size={18} color={CrmColors.blue600} />
                         </TouchableOpacity>
+                      </TouchableOpacity>
+                    );
+                  })
+                )}
+              </View>
+
+              {/* LIÊN KẾT */}
+              <View style={s.infoSectionCard}>
+                <View style={s.infoSectionHeadX}>
+                  <View style={s.infoSectionHeadL}>
+                    <Ionicons name="link" size={16} color="#8B5CF6" />
+                    <Text style={s.infoSectionTitleX}>LIÊN KẾT</Text>
+                  </View>
+                  {sharedLinks.length > 0 ? (
+                    <TouchableOpacity onPress={() => { setInfoTab('links'); setMode('links'); }}>
+                      <Text style={s.infoSectionMore}>Xem tất cả</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+                {previewLinks.length === 0 ? (
+                  <Text style={s.infoEmpty}>Chưa có liên kết nào được chia sẻ.</Text>
+                ) : (
+                  previewLinks.map((it, idx) => {
+                    const showDivider = idx < previewLinks.length - 1;
+                    return (
+                      <TouchableOpacity
+                        key={`${it.url}-${idx}`}
+                        style={[s.fileItemX, showDivider && s.fileItemDivider]}
+                        onPress={() => void Linking.openURL(it.url)}
+                      >
+                        <View style={[s.fileIconBoxX, { backgroundColor: '#EFF6FF' }]}>
+                          <Ionicons name="globe-outline" size={20} color={CrmColors.blue600} />
+                        </View>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <Text style={s.fileItemNameX} numberOfLines={2}>{it.url}</Text>
+                          <Text style={s.fileItemMetaX} numberOfLines={1}>
+                            {(it.message.user?.full_name || '?') + ' · ' + formatDateTime(it.message.created_at)}
+                          </Text>
+                        </View>
+                        <Ionicons name="open-outline" size={18} color={CrmColors.blue600} />
                       </TouchableOpacity>
                     );
                   })
@@ -2217,6 +2462,32 @@ function GroupInfoSheet({
               ListEmptyComponent={<Text style={s.tabEmpty}>Chưa có ghi âm nào</Text>}
             />
           ) : null}
+
+          {/* ── List liên kết đầy đủ ───────────────── */}
+          {mode === 'links' ? (
+            <FlatList
+              data={sharedLinks}
+              keyExtractor={(it, idx) => `${it.url}-${idx}`}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={s.fileItem}
+                  onPress={() => void Linking.openURL(item.url)}
+                >
+                  <View style={[s.fileIconBox, { backgroundColor: '#EFF6FF' }]}>
+                    <Ionicons name="link" size={20} color={CrmColors.blue600} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.fileItemName} numberOfLines={2}>{item.url}</Text>
+                    <Text style={s.fileItemMeta}>
+                      {(item.message.user?.full_name || '?') + ' · ' + formatDateTime(item.message.created_at)}
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color={CrmColors.gray400} />
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={<Text style={s.tabEmpty}>Chưa có liên kết nào</Text>}
+            />
+          ) : null}
         </Pressable>
       </Pressable>
     </Modal>
@@ -2289,50 +2560,115 @@ const EMOJI_CATEGORIES: EmojiCategory[] = [
 
 function EmojiPicker({
   onPick,
+  onPickSticker,
   onClose,
   paddingBottom,
 }: {
   onPick: (e: string) => void;
+  onPickSticker: (emoji: string) => void;
   onClose: () => void;
   paddingBottom: number;
 }) {
+  const [panel, setPanel] = useState<'emoji' | 'sticker'>('emoji');
   const [cat, setCat] = useState<string>(EMOJI_CATEGORIES[0].key);
   const current = EMOJI_CATEGORIES.find((c) => c.key === cat) || EMOJI_CATEGORIES[0];
   return (
     <View style={[s.emojiPanel, { paddingBottom }]}>
       <View style={s.emojiHead}>
-        <Text style={s.emojiHeadTitle}>{current.label}</Text>
+        <View style={s.emojiModeRow}>
+          <TouchableOpacity
+            style={[s.emojiModeBtn, panel === 'emoji' && s.emojiModeBtnOn]}
+            onPress={() => setPanel('emoji')}
+          >
+            <Text style={[s.emojiModeTxt, panel === 'emoji' && s.emojiModeTxtOn]}>Emoji</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[s.emojiModeBtn, panel === 'sticker' && s.emojiModeBtnOn]}
+            onPress={() => setPanel('sticker')}
+          >
+            <Text style={[s.emojiModeTxt, panel === 'sticker' && s.emojiModeTxtOn]}>Sticker</Text>
+          </TouchableOpacity>
+        </View>
         <TouchableOpacity onPress={onClose} hitSlop={8} style={s.emojiCloseBtn}>
           <Ionicons name="chevron-down" size={18} color={CrmColors.gray500} />
         </TouchableOpacity>
       </View>
-      <FlatList
-        data={current.list}
-        numColumns={8}
-        keyExtractor={(item, idx) => `${current.key}-${idx}-${item}`}
-        renderItem={({ item }) => (
-          <TouchableOpacity style={s.emojiCell} onPress={() => onPick(item)} activeOpacity={0.6}>
-            <Text style={s.emojiTxt}>{item}</Text>
-          </TouchableOpacity>
-        )}
-        contentContainerStyle={s.emojiGrid}
-        showsVerticalScrollIndicator={false}
-      />
-      <View style={s.emojiTabBar}>
-        {EMOJI_CATEGORIES.map((c) => (
-          <TouchableOpacity
-            key={c.key}
-            style={[s.emojiTabBtn, cat === c.key && s.emojiTabBtnOn]}
-            onPress={() => setCat(c.key)}
-          >
-            <Ionicons
-              name={c.icon}
-              size={20}
-              color={cat === c.key ? BUBBLE_ME : CrmColors.gray500}
-            />
-          </TouchableOpacity>
-        ))}
-      </View>
+      {panel === 'emoji' ? (
+        <>
+          <View style={s.emojiCatRow}>
+            {EMOJI_CATEGORIES.map((c) => (
+              <TouchableOpacity
+                key={c.key}
+                style={[s.emojiTabBtn, cat === c.key && s.emojiTabBtnOn]}
+                onPress={() => setCat(c.key)}
+              >
+                <Ionicons
+                  name={c.icon}
+                  size={18}
+                  color={cat === c.key ? BUBBLE_ME : CrmColors.gray500}
+                />
+              </TouchableOpacity>
+            ))}
+          </View>
+          <FlatList
+            data={current.list}
+            numColumns={8}
+            keyExtractor={(item, idx) => `${current.key}-${idx}-${item}`}
+            renderItem={({ item }) => (
+              <TouchableOpacity style={s.emojiCell} onPress={() => onPick(item)} activeOpacity={0.6}>
+                <Text style={s.emojiTxt}>{item}</Text>
+              </TouchableOpacity>
+            )}
+            contentContainerStyle={s.emojiGrid}
+            showsVerticalScrollIndicator={false}
+            ListHeaderComponent={<Text style={s.emojiHeadTitle}>{current.label}</Text>}
+          />
+        </>
+      ) : (
+        <FlatList
+          data={STICKER_PACK}
+          numColumns={3}
+          keyExtractor={(item) => item.emoji}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              style={s.stickerCell}
+              onPress={() => onPickSticker(item.emoji)}
+              activeOpacity={0.7}
+            >
+              <StickerImage emoji={item.emoji} size={72} />
+            </TouchableOpacity>
+          )}
+          contentContainerStyle={s.stickerGrid}
+          showsVerticalScrollIndicator={false}
+        />
+      )}
+    </View>
+  );
+}
+
+function TypingIndicators({ typingMap }: { typingMap: Map<string, TypingEntry> }) {
+  if (!typingMap.size) return null;
+  const entries = [...typingMap.values()];
+  const botEntry = entries.find((e) => e.isBot);
+  const humanEntries = entries.filter((e) => !e.isBot);
+  return (
+    <View style={s.typingWrap}>
+      {botEntry ? (
+        <View style={[s.typingPill, s.typingPillBot]}>
+          <Text style={s.typingBotTxt}>🤖 AI đang trả lời</Text>
+          <Text style={s.typingDots}>•••</Text>
+        </View>
+      ) : null}
+      {humanEntries.length > 0 ? (
+        <View style={s.typingPill}>
+          <Text style={s.typingTxt}>
+            {humanEntries.length === 1
+              ? `${humanEntries[0].name} đang nhập`
+              : `${humanEntries.length} người đang nhập`}
+          </Text>
+          <Text style={s.typingDots}>•••</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -2558,12 +2894,24 @@ const s = StyleSheet.create({
     height: 44,
     backgroundColor: CHAT_BG,
   },
+  actionBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15, 23, 42, 0.35)',
+    zIndex: 20,
+  },
   quickRow: {
     paddingHorizontal: 10,
     paddingVertical: 6,
     gap: 8,
     alignItems: 'center',
   },
+  quickLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingRight: 4,
+  },
+  quickLabelTxt: { fontSize: 10, fontWeight: '700', color: BUBBLE_ME },
   quickChip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2757,6 +3105,51 @@ const s = StyleSheet.create({
     borderTopWidth: 2, borderTopColor: BUBBLE_ME,
     backgroundColor: '#FFFFFF',
   },
+  emojiModeRow: { flexDirection: 'row', gap: 8 },
+  emojiModeBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: '#F3F4F6',
+  },
+  emojiModeBtnOn: { backgroundColor: '#EDE9FE' },
+  emojiModeTxt: { fontSize: 12, fontWeight: '700', color: CrmColors.gray600 },
+  emojiModeTxtOn: { color: BUBBLE_ME },
+  emojiCatRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    gap: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#F3F4F6',
+  },
+  stickerGrid: { padding: 10 },
+  stickerCell: {
+    flex: 1,
+    aspectRatio: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    margin: 4,
+    borderRadius: 16,
+    backgroundColor: '#F9FAFB',
+  },
+  typingWrap: { paddingHorizontal: 12, paddingVertical: 4, gap: 6 },
+  typingPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 6,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  typingPillBot: { backgroundColor: '#EEF2FF', borderColor: '#C7D2FE' },
+  typingTxt: { fontSize: 12, color: CrmColors.gray700, fontWeight: '600' },
+  typingBotTxt: { fontSize: 12, color: '#4338CA', fontWeight: '700' },
+  typingDots: { fontSize: 10, color: CrmColors.gray500, letterSpacing: 1 },
 
   // Media panel
   mediaPanel: {

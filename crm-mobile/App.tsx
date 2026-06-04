@@ -6,6 +6,7 @@ import { KeyboardAvoidingView, Platform, View } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { AuthProvider } from './src/context/AuthContext';
 import { setupNotificationChannels } from './src/lib/notificationChannels';
+import { setupIncomingCallNotificationCategories } from './src/lib/incomingCallNotifications';
 
 // Hiện notification ngay cả khi app foreground (kể cả tin chat).
 Notifications.setNotificationHandler({
@@ -18,6 +19,9 @@ Notifications.setNotificationHandler({
 });
 import { CrmCompanyFilterProvider } from './src/context/CrmCompanyFilterContext';
 import { NotificationProvider } from './src/context/NotificationContext';
+import { CallProvider } from './src/context/CallContext';
+import CallOverlay from './src/components/call/CallOverlay';
+import CallNotificationBridge from './src/components/call/CallNotificationBridge';
 import PermissionBootstrap from './src/components/PermissionBootstrap';
 import RootNavigator from './src/navigation/RootNavigator';
 import { navigationRef } from './src/navigation/navigationRef';
@@ -44,6 +48,7 @@ export default function App() {
   useCrmAndroidSystemUi();
   useEffect(() => {
     void setupNotificationChannels();
+    void setupIncomingCallNotificationCategories();
   }, []);
 
   return (
@@ -52,6 +57,7 @@ export default function App() {
         <CrmCompanyFilterProvider>
         <PermissionBootstrap />
         <NotificationProvider>
+          <CallProvider>
           <NavigationContainer ref={navigationRef} theme={NavTheme}>
             {/* Nền full màn — tránh khe đen đáy (KeyboardAvoidingView/Android). */}
             <View style={{ flex: 1, backgroundColor: CrmColors.pageBg }}>
@@ -73,9 +79,12 @@ export default function App() {
               <ChatNotificationToast />
               <SystemBubbleSync />
               <FloatingChatBubble />
+              <CallOverlay />
+              <CallNotificationBridge />
             </View>
             <StatusBar style="dark" />
           </NavigationContainer>
+          </CallProvider>
         </NotificationProvider>
         </CrmCompanyFilterProvider>
       </AuthProvider>

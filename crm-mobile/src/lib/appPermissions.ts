@@ -155,3 +155,13 @@ export function promptAppPermissionsIfNeeded(): void {
 export function openAppSettings(): void {
   void Linking.openSettings();
 }
+
+/** Mở cài đặt overlay Android (SYSTEM_ALERT_WINDOW). */
+export function openOverlaySettings(): void {
+  if (Platform.OS !== 'android') return;
+  try {
+    OverlayModule?.openOverlaySettings?.();
+  } catch {
+    openAppSettings();
+  }
+}

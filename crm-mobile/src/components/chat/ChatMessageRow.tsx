@@ -20,9 +20,14 @@ import {
   collectAttachments,
   isFileOnlyMessengerMessage,
   isImageOnlyMessengerMessage,
+  isImageMimeOrUrl,
+  isStickerContent,
   normalizeForwardDisplayContent,
+  resolvePrimaryAttachment,
 } from '../../lib/messengerMessageActions';
+import { stripStickerPrefix } from '../../lib/messengerStickers';
 import { MessengerFileCard } from './MessengerFileCard';
+import { StickerImage } from './StickerImage';
 
 const { width: SW } = Dimensions.get('window');
 const SWIPE_THRESHOLD = 56;
@@ -57,6 +62,8 @@ type Props = {
   selectMode?: boolean;
   msgSelected?: boolean;
   onToggleSelect?: () => void;
+  onJumpToReply?: (messageId: string) => void;
+  highlighted?: boolean;
 };
 
 const TEXT_TOKEN_RE = /(@(?:tất\s*cả|[^\s\n@]+))/gi;
@@ -112,22 +119,39 @@ export function ChatMessageRow({
   selectMode = false,
   msgSelected = false,
   onToggleSelect,
+  onJumpToReply,
+  highlighted = false,
 }: Props) {
   const translateX = useRef(new Animated.Value(0)).current;
   const name = item.user?.full_name || '?';
   const isBot = !!item.user?.is_bot;
   const recalled = !!(item.recalled_at || item.is_recalled);
-  const atts = Array.isArray(item.attachments) ? item.attachments : [];
-  const imgUrl = item.attachment_url ? mediaUrl(item.attachment_url) : null;
-  const isImg =
-    item.message_type === 'image' ||
-    (item.attachment_mime || '').startsWith('image/') ||
-    (imgUrl && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(imgUrl));
+  const atts = collectAttachments(item);
+  const primary = resolvePrimaryAttachment(item);
+  const primaryUrl = primary.url ? mediaUrl(primary.url) : null;
+  const imgUrl = primaryUrl && isImageMimeOrUrl(primary.type, primary.url, primary.name, item.message_type)
+    ? primaryUrl
+    : item.attachment_url && isImageMimeOrUrl(item.attachment_mime, item.attachment_url, item.attachment_name, item.message_type)
+      ? mediaUrl(item.attachment_url)
+      : null;
+  const imageAtts = atts.filter((a) =>
+    isImageMimeOrUrl(a.type, a.url, a.name, item.message_type),
+  );
+  const isImg = !!imgUrl || imageAtts.length > 0;
   const text = item.content || '';
   const fileOnly = !recalled && isFileOnlyMessengerMessage(item);
   const imageOnly = !recalled && isImageOnlyMessengerMessage(item);
+  const stickerEmoji = isStickerContent(text) ? stripStickerPrefix(text) : '';
   const stickerMode =
-    !recalled && !!text && !imgUrl && atts.length === 0 && !isAudioMsg(item) && isEmojiOnly(text);
+    !recalled && !!stickerEmoji && !imgUrl && atts.length === 0 && !isAudioMsg(item);
+  const emojiOnlyMode =
+    !recalled &&
+    !!text &&
+    !stickerMode &&
+    !imgUrl &&
+    atts.length === 0 &&
+    !isAudioMsg(item) &&
+    isEmojiOnly(text);
   const forwardHeader = /^↪ Chia sẻ/i.test(String(text || '').trim());
 
   const reactionGroups = useMemo(
@@ -161,8 +185,32 @@ export function ChatMessageRow({
     else onOpenActions(item);
   };
 
+  const replyQuote = item.reply_to && replyParent ? (
+    <TouchableOpacity
+      activeOpacity={onJumpToReply ? 0.7 : 1}
+      onPress={() => replyParent?.id && onJumpToReply?.(String(replyParent.id))}
+      style={[s.replyBar, { borderLeftColor: mine ? '#fff' : bubbleMe }]}
+    >
+      <Text style={[s.replyTxt, mine && s.replyTxtMine]} numberOfLines={2}>
+        ↩ {formatReplyPreview(replyParent)}
+      </Text>
+    </TouchableOpacity>
+  ) : null;
+
+  const replyQuoteBare = item.reply_to && replyParent ? (
+    <TouchableOpacity
+      activeOpacity={onJumpToReply ? 0.7 : 1}
+      onPress={() => replyParent?.id && onJumpToReply?.(String(replyParent.id))}
+      style={[s.replyBarBare, { borderLeftColor: bubbleMe }]}
+    >
+      <Text style={s.replyTxt} numberOfLines={2}>
+        ↩ {formatReplyPreview(replyParent)}
+      </Text>
+    </TouchableOpacity>
+  ) : null;
+
   return (
-    <View style={[s.row, mine && s.rowMine]}>
+    <View style={[s.row, mine && s.rowMine, highlighted && s.rowHighlight]}>
       {selectMode ? (
         <TouchableOpacity style={s.selectBox} onPress={onToggleSelect} hitSlop={8}>
           <Ionicons
@@ -221,50 +269,55 @@ export function ChatMessageRow({
           </Pressable>
         ) : stickerMode ? (
           <Pressable style={s.stickerWrap} onLongPress={openActions}>
+            <StickerImage emoji={stickerEmoji} size={120} />
+            <Text style={s.stickerTime}>{timeStr}</Text>
+          </Pressable>
+        ) : emojiOnlyMode ? (
+          <Pressable style={s.stickerWrap} onLongPress={openActions}>
             <Text style={s.stickerTxt}>{text}</Text>
             <Text style={s.stickerTime}>{timeStr}</Text>
           </Pressable>
-        ) : imageOnly && imgUrl ? (
+        ) : imageOnly && (imgUrl || imageAtts.length) ? (
           <Pressable onLongPress={openActions}>
-            <TouchableOpacity onPress={() => void Linking.openURL(imgUrl)}>
-              <Image
-                source={{ uri: imgUrl }}
-                style={[s.imgAttBare, mine && s.imgAttBareMine]}
-                resizeMode="cover"
-              />
-            </TouchableOpacity>
+            {(imageAtts.length ? imageAtts : [{ url: primary.url || undefined }]).map((a, i) => {
+              const u = mediaUrl(a.url);
+              if (!u) return null;
+              return (
+                <Pressable
+                  key={`${String(a.url)}-${i}`}
+                  onPress={() => void Linking.openURL(u)}
+                  onLongPress={openActions}
+                  delayLongPress={400}
+                >
+                  <Image
+                    source={{ uri: u }}
+                    style={[s.imgAttBare, mine && s.imgAttBareMine, i > 0 && { marginTop: 4 }]}
+                    resizeMode="cover"
+                  />
+                </Pressable>
+              );
+            })}
             <Text style={[s.bareTime, mine && s.bareTimeMine]}>{timeStr}</Text>
           </Pressable>
         ) : fileOnly ? (
-          <Pressable onLongPress={openActions}>
-            {item.reply_to && replyParent ? (
-              <View style={[s.replyBarBare, { borderLeftColor: bubbleMe }]}>
-                <Text style={s.replyTxt} numberOfLines={2}>
-                  ↩ {formatReplyPreview(replyParent)}
-                </Text>
-              </View>
-            ) : null}
+          <View>
+            {replyQuoteBare}
             <MessengerFileCard
-              name={item.attachment_name || collectAttachments(item)[0]?.name || undefined}
-              mime={item.attachment_mime || collectAttachments(item)[0]?.type || undefined}
-              size={item.attachment_size ?? undefined}
-              url={mediaUrl(collectAttachments(item)[0]?.url || item.attachment_url)}
+              name={primary.name || undefined}
+              mime={primary.type || undefined}
+              size={primary.size ?? undefined}
+              url={primaryUrl}
               mine={mine}
+              onLongPress={openActions}
             />
             <Text style={[s.bareTime, mine && s.bareTimeMine]}>{timeStr}</Text>
-          </Pressable>
+          </View>
         ) : (
           <Pressable
             style={[s.bubble, mine ? { backgroundColor: bubbleMe, borderColor: bubbleMeDark } : { backgroundColor: bubbleOther, borderColor: bubbleOtherBorder }]}
             onLongPress={openActions}
           >
-            {item.reply_to && replyParent ? (
-              <View style={[s.replyBar, { borderLeftColor: mine ? '#fff' : bubbleMe }]}>
-                <Text style={[s.replyTxt, mine && s.replyTxtMine]} numberOfLines={2}>
-                  ↩ {formatReplyPreview(replyParent)}
-                </Text>
-              </View>
-            ) : null}
+            {replyQuote}
 
             {forwardHeader ? (
               <Text style={[s.forwardHdr, mine && s.forwardHdrMine]} numberOfLines={2}>
@@ -280,27 +333,34 @@ export function ChatMessageRow({
                 : null}
 
             {!isAudioMsg(item) && imgUrl && isImg && !imageOnly ? (
-              <TouchableOpacity onPress={() => void Linking.openURL(imgUrl)}>
+              <Pressable onPress={() => void Linking.openURL(imgUrl)} onLongPress={openActions} delayLongPress={400}>
                 <Image source={{ uri: imgUrl }} style={s.imgAtt} resizeMode="cover" />
-              </TouchableOpacity>
-            ) : !isAudioMsg(item) && imgUrl && !isImg && !fileOnly ? (
+              </Pressable>
+            ) : !isAudioMsg(item) && primaryUrl && !isImg && !fileOnly ? (
               <MessengerFileCard
-                name={item.attachment_name || undefined}
-                mime={item.attachment_mime || undefined}
-                size={item.attachment_size ?? undefined}
-                url={imgUrl}
+                name={primary.name || undefined}
+                mime={primary.type || undefined}
+                size={primary.size ?? undefined}
+                url={primaryUrl}
                 mine={mine}
+                onLongPress={openActions}
               />
             ) : null}
 
             {atts.map((a: MessengerAttachment, i: number) => {
               const u = mediaUrl(a.url);
-              const im = (a.type || '').startsWith('image/') && u;
+              const im = u && isImageMimeOrUrl(a.type, a.url, a.name, item.message_type);
               if (imageOnly || fileOnly) return null;
+              if (a.url && primary.url && a.url === primary.url) return null;
               return im ? (
-                <TouchableOpacity key={i} onPress={() => u && void Linking.openURL(u)}>
+                <Pressable
+                  key={i}
+                  onPress={() => u && void Linking.openURL(u)}
+                  onLongPress={openActions}
+                  delayLongPress={400}
+                >
                   <Image source={{ uri: u! }} style={s.imgAtt} resizeMode="cover" />
-                </TouchableOpacity>
+                </Pressable>
               ) : (
                 <MessengerFileCard
                   key={i}
@@ -309,6 +369,7 @@ export function ChatMessageRow({
                   size={a.size ?? undefined}
                   url={u}
                   mine={mine}
+                  onLongPress={openActions}
                 />
               );
             })}
@@ -353,6 +414,11 @@ export function ChatMessageRow({
 const s = StyleSheet.create({
   row: { flexDirection: 'row', marginVertical: 3, alignItems: 'flex-end', paddingHorizontal: 6 },
   rowMine: { flexDirection: 'row-reverse', paddingRight: 2 },
+  rowHighlight: {
+    backgroundColor: 'rgba(108, 92, 231, 0.12)',
+    borderRadius: 12,
+    marginHorizontal: 2,
+  },
   avatar: { width: 30, height: 30, borderRadius: 15, justifyContent: 'center', alignItems: 'center', marginHorizontal: 4, flexShrink: 0 },
   avatarBot: { backgroundColor: '#EEF2FF' },
   avatarTxt: { fontSize: 11, fontWeight: '800', color: '#fff' },
@@ -433,6 +499,7 @@ export function ReactionPickerBar({
   onHideForMe,
   showCopyImage,
   showDownload,
+  onDismiss,
 }: {
   onPick: (emoji: string) => void;
   onReply: () => void;
@@ -447,9 +514,17 @@ export function ReactionPickerBar({
   onHideForMe?: () => void;
   showCopyImage?: boolean;
   showDownload?: boolean;
+  onDismiss?: () => void;
 }) {
   return (
     <View style={bar.wrap}>
+      <View style={bar.headRow}>
+        <Text style={bar.headTitle}>Tùy chọn tin nhắn</Text>
+        <TouchableOpacity style={bar.dismissBtn} onPress={onDismiss} hitSlop={8}>
+          <Ionicons name="close" size={20} color={CrmColors.gray600} />
+          <Text style={bar.dismissTxt}>Hủy</Text>
+        </TouchableOpacity>
+      </View>
       <View style={bar.emojiRow}>
         {QUICK_REACTIONS.map((e) => (
           <TouchableOpacity key={e} style={bar.emojiBtn} onPress={() => onPick(e)} activeOpacity={0.7}>
@@ -519,12 +594,26 @@ export function ReactionPickerBar({
 
 const bar = StyleSheet.create({
   wrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 21,
     backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
     borderTopColor: '#E5E7EB',
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
+  headRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  headTitle: { fontSize: 12, fontWeight: '800', color: CrmColors.gray600, letterSpacing: 0.3 },
+  dismissBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 8 },
+  dismissTxt: { fontSize: 13, fontWeight: '700', color: CrmColors.gray700 },
   emojiRow: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 10 },
   emojiBtn: {
     width: 40, height: 40, borderRadius: 20,
