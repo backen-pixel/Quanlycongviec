@@ -35,27 +35,14 @@ import { useAuth } from '../lib/auth';
 import { messengerThreadKey } from '../lib/messengerHubStorage';
 import { resolveMediaUrl, BROKEN_MEDIA_PLACEHOLDER } from '../lib/mediaUrl';
 import { publicFileUrl } from '../lib/publicFileUrl';
+import {
+  buildMessengerMessagePreview,
+  normalizeMessengerPreviewText,
+  previewFromMessengerMessages,
+  resolveThreadPreviewLabel,
+} from '../lib/messengerPreview';
 
 const URL_IN_TEXT = /(https?:\/\/[^\s<]+[^<.,:;"')\]\s])/gi;
-
-function previewFromMessages(messages) {
-  const list = Array.isArray(messages) ? messages : [];
-  for (let i = list.length - 1; i >= 0; i--) {
-    const m = list[i];
-    if (m.is_system) continue;
-    const t = (m.content || '').trim();
-    const atts = Array.isArray(m.attachments) ? m.attachments : [];
-    if (atts.length) {
-      const a0 = atts[0];
-      if (a0.type?.startsWith('image/')) return '📷 Ảnh';
-      if (a0.type?.startsWith('video/')) return '🎬 Video';
-      if (a0.type?.startsWith('audio/')) return '🎤 Âm thanh';
-      return `📎 ${a0.name || 'Tệp'}`;
-    }
-    if (t) return t.length > 48 ? `${t.slice(0, 48)}…` : t;
-  }
-  return 'Chưa có tin nhắn';
-}
 
 function collectMediaAndFiles(messages) {
   const images = [];
@@ -175,19 +162,6 @@ function threadAvatarSrc(t) {
   return null;
 }
 
-/** Chuẩn hóa preview tin nhắn cuối: cắt ngắn + thay placeholder khi nội dung trống. */
-function normalizeMessengerPreview(text) {
-  let raw = (text || '').toString().trim();
-  if (!raw) return '';
-  // Tin sticker được lưu dạng `:sticker:<emoji>` → preview hiển thị "Sticker <emoji>"
-  if (raw.startsWith(':sticker:')) {
-    const emoji = raw.slice(':sticker:'.length).trim();
-    raw = emoji ? `Sticker ${emoji}` : 'Sticker';
-  }
-  const oneLine = raw.replace(/\s+/g, ' ');
-  return oneLine.length > 80 ? `${oneLine.slice(0, 80)}…` : oneLine;
-}
-
 /** Gộp API /messenger/groups với preview local; ghim lấy từ DB (pinnedGroupIds). */
 function buildMessengerThreads(apiList, lsMessengerRows, pinnedGroupIds) {
   const pinSet = new Set(pinnedGroupIds || []);
@@ -196,8 +170,8 @@ function buildMessengerThreads(apiList, lsMessengerRows, pinnedGroupIds) {
   const mergedMessenger = groups.map((g) => {
     const hit = lsByGid.get(g.id);
     // Ưu tiên preview API (đến từ RPC v2 — `last_message`), fallback localStorage cuối cùng dùng placeholder.
-    const apiPreview = normalizeMessengerPreview(g.last_message);
-    const lsPreview = normalizeMessengerPreview(hit?.lastPreview);
+    const apiPreview = normalizeMessengerPreviewText(g.last_message);
+    const lsPreview = normalizeMessengerPreviewText(hit?.lastPreview);
     const preview = apiPreview || lsPreview || '';
     return {
       kind: 'messenger',
@@ -244,6 +218,8 @@ export default function MessengerHubPage() {
   const [threadFilter, setThreadFilter] = useState('');
   const [selectedGroupId, setSelectedGroupId] = useState(() => searchParams.get('openGroup') || null);
   const [messages, setMessages] = useState([]);
+  /** Nhóm đang mở chat nhưng tin chưa load xong — tránh flash "Chưa có tin nhắn". */
+  const [chatLoadingGroupId, setChatLoadingGroupId] = useState(null);
   const [rightOpen, setRightOpen] = useState(false);
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightSection, setRightSection] = useState('media');
@@ -344,13 +320,15 @@ export default function MessengerHubPage() {
   useEffect(() => {
     let reloadT;
     const onGroupActivity = (e) => {
-      const { groupId, created_at, content, attachments, is_self, sender_name } = e.detail || {};
+      const { groupId, created_at, content, attachments, is_self, sender_name, user_id, recalled_at, is_recalled } =
+        e.detail || {};
       if (!groupId || !created_at) return;
-      // Tự dựng preview tức thì (không chờ reload API)
-      const rawPreview = (content || '').toString().trim()
-        || (Array.isArray(attachments) && attachments.length ? '[Tệp đính kèm]' : '');
-      const prefix = is_self ? 'Bạn: ' : (sender_name ? `${sender_name}: ` : '');
-      const livePreview = rawPreview ? normalizeMessengerPreview(`${prefix}${rawPreview}`) : '';
+      const body = buildMessengerMessagePreview(
+        { content, attachments, user_id, recalled_at, is_recalled: !!(recalled_at || is_recalled) },
+        { forUserId: uid, maxLen: 80 },
+      );
+      const prefix = is_self ? 'Bạn: ' : sender_name ? `${sender_name}: ` : '';
+      const livePreview = body ? normalizeMessengerPreviewText(`${prefix}${body}`) : '';
       setThreads((prev) => {
         const idx = prev.findIndex((t) => t.kind === 'messenger' && t.groupId === groupId);
         if (idx === -1) return prev;
@@ -376,6 +354,20 @@ export default function MessengerHubPage() {
       window.removeEventListener('messenger:group-chat-activity', onGroupActivity);
     };
   }, [reloadMessengerThreads]);
+
+  useEffect(() => {
+    if (!socket) return undefined;
+    let recallReloadT;
+    const onRecalled = () => {
+      clearTimeout(recallReloadT);
+      recallReloadT = setTimeout(() => void reloadMessengerThreads(), 400);
+    };
+    socket.on('messenger_group:recalled', onRecalled);
+    return () => {
+      clearTimeout(recallReloadT);
+      socket.off('messenger_group:recalled', onRecalled);
+    };
+  }, [socket, reloadMessengerThreads]);
 
   useEffect(() => {
     api.get('/users').then((r) => setAllUsers(r.data?.users || r.data || [])).catch(() => setAllUsers([]));
@@ -470,27 +462,44 @@ export default function MessengerHubPage() {
     return () => { clearInterval(id); document.removeEventListener('visibilitychange', tick); };
   }, [staffPanelOpen, staffListLoaded, staffRows]);
 
+  useEffect(() => {
+    if (!selectedGroupId) {
+      setChatLoadingGroupId(null);
+      return;
+    }
+    const row = threads.find((t) => t.kind === 'messenger' && t.groupId === selectedGroupId);
+    const hasPreview = !!normalizeMessengerPreviewText(row?.lastPreview);
+    setChatLoadingGroupId(hasPreview ? null : selectedGroupId);
+  }, [selectedGroupId, threads]);
+
   const onMessagesChange = useCallback(
-    (msgs) => {
+    (msgs, meta) => {
       setMessages(msgs);
-      const preview = previewFromMessages(msgs);
+      if (!meta?.loaded) return;
+      if (selectedGroupId) setChatLoadingGroupId(null);
+
+      const preview = previewFromMessengerMessages(msgs, { forUserId: uid, maxLen: 80 });
       const meaningful = (msgs || []).filter((m) => !m.is_system);
       const lastAt = meaningful.length ? meaningful[meaningful.length - 1].created_at : null;
       if (!selectedGroupId) return;
+
       setThreads((prev) =>
-        prev.map((t) =>
-          t.kind === 'messenger' && t.groupId === selectedGroupId
-            ? {
-                ...t,
-                lastPreview: preview,
-                updatedAt: lastAt || t.updatedAt,
-                lastMessageAt: lastAt || t.lastMessageAt,
-              }
-            : t,
-        ),
+        prev.map((t) => {
+          if (t.kind !== 'messenger' || t.groupId !== selectedGroupId) return t;
+          const nextPreview =
+            preview ||
+            (meta.loaded && meaningful.length === 0 ? 'Chưa có tin nhắn' : t.lastPreview);
+          return {
+            ...t,
+            lastPreview: nextPreview,
+            updatedAt: lastAt || t.updatedAt,
+            lastMessageAt: lastAt || t.lastMessageAt,
+            messageCount: meaningful.length || t.messageCount,
+          };
+        }),
       );
     },
-    [selectedGroupId],
+    [selectedGroupId, uid],
   );
 
   const selected = useMemo(
@@ -1204,7 +1213,12 @@ export default function MessengerHubPage() {
                       )}
                       {t.pinned && <Pin className="h-3 w-3 text-amber-500 shrink-0 fill-amber-500" />}
                     </div>
-                    <p className={`text-[12px] truncate mt-0.5 ${unread > 0 ? 'text-slate-700 font-medium' : 'text-slate-500'}`}>{t.lastPreview || '—'}</p>
+                    <p className={`text-[12px] truncate mt-0.5 ${unread > 0 ? 'text-slate-700 font-medium' : 'text-slate-500'}`}>
+                      {resolveThreadPreviewLabel(t, {
+                        loadingGroupId: chatLoadingGroupId,
+                        forUserId: uid,
+                      }) || '—'}
+                    </p>
                   </div>
                   <div className="flex flex-col items-end gap-1.5 shrink-0">
                     <span className="text-[10px] text-slate-400 whitespace-nowrap">
@@ -1459,6 +1473,7 @@ export default function MessengerHubPage() {
                     groupId={selectedGroupId}
                     socket={socket}
                     fillParent
+                    groupTitle={selected?.title || ''}
                     onMessagesChange={onMessagesChange}
                   />
                 </div>

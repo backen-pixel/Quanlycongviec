@@ -577,6 +577,8 @@ export function MessengerDockProvider({ children }) {
             content: msg.content || '',
             attachments: Array.isArray(msg.attachments) ? msg.attachments : [],
             user_id: msg.user_id,
+            recalled_at: msg.recalled_at || null,
+            is_recalled: !!(msg.recalled_at || msg.is_recalled),
             is_self: String(msg.user_id) === String(uid),
             sender_name: msg.user?.full_name || '',
           },
