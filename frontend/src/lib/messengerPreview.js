@@ -1,5 +1,5 @@
 import { isMessengerMessageRecalled } from './messengerReactions';
-import { parseCallLogPayload, formatCallLogLine } from './messengerCallLog';
+import { isMessengerCallLogMessage, parseCallLogPayload, formatCallLogLine } from './messengerCallLog';
 
 function collectAtts(message) {
   if (Array.isArray(message?.attachments) && message.attachments.length) return message.attachments;
@@ -20,9 +20,8 @@ function collectAtts(message) {
  */
 export function buildMessengerMessagePreview(message, { forUserId, maxLen = 80 } = {}) {
   if (!message) return null;
-  const callPayload = parseCallLogPayload(message.content);
-  if (callPayload || message.message_type === 'call') {
-    const line = formatCallLogLine(callPayload, forUserId);
+  if (isMessengerCallLogMessage(message)) {
+    const line = formatCallLogLine(parseCallLogPayload(message.content), forUserId);
     if (line) {
       const oneLine = line.replace(/\s+/g, ' ');
       return oneLine.length > maxLen ? `${oneLine.slice(0, maxLen - 1)}…` : oneLine;

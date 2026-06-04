@@ -15,7 +15,12 @@ import {
   normalizeForwardDisplayContent,
 } from '../lib/messengerMessageActions';
 import { buildMessengerMessagePreview } from '../lib/messengerPreview';
-import { callLogDisplayText, parseCallLogPayload } from '../lib/messengerCallLog';
+import {
+  callLogDisplayText,
+  formatCallLogLine,
+  isMessengerCallLogMessage,
+  parseCallLogPayload,
+} from '../lib/messengerCallLog';
 import {
   groupMessengerReactions,
   isMessengerMessageRecalled,
@@ -1029,8 +1034,13 @@ function mentionAllPickerMatchesQuery(frag) {
 // Inline tokens: @mention (gồm @Tất cả), [label](url) markdown, bare http(s) URL
 const INLINE_TOKEN_RE = /(@(?:tất\s*cả|[^\s\n@]+)|\[[^\]]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s]+)/gi;
 
-function renderMessengerTextContent(content, isMe) {
+function renderMessengerTextContent(content, isMe, viewerUserId) {
   if (!content) return null;
+  const callParsed = parseCallLogPayload(content);
+  if (callParsed) {
+    const line = formatCallLogLine(callParsed, viewerUserId);
+    if (line) return <span>{line}</span>;
+  }
   const display = normalizeForwardDisplayContent(content);
   const parts = display.split(INLINE_TOKEN_RE);
   const linkCls = isMe
@@ -1724,8 +1734,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
           if (hiddenMsgIds.has(String(m.id))) return null;
           const isMe = String(m.user_id) === String(uid);
           const msgSelected = selectedMsgIds.has(String(m.id));
-          const callLogPayload = parseCallLogPayload(m.content);
-          const isCallLog = m.message_type === 'call' || !!callLogPayload;
+          const isCallLog = isMessengerCallLogMessage(m);
           const selectable = !m.is_system && m.message_type !== 'system' && !isCallLog && !isMessengerMessageRecalled(m);
           const isBot = !!m.user?.is_bot;
           const mentionedIds = !groupMeta?.is_direct
@@ -1735,18 +1744,24 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
               ]
             : [];
           const mentioned = mentionedIds.map(String).includes(String(uid));
-          if (m.is_system && !isBot && (m.message_type === 'system' || isCallLog)) {
-            const sysText = isCallLog ? callLogDisplayText(m, uid) : (m.content || '');
+          if (isCallLog && !isBot) {
+            const sysText = callLogDisplayText(m, uid);
             return (
               <div key={m.id} className="flex justify-center my-2">
-                <span className={`text-[10px] px-3 py-1.5 rounded-full shadow-sm border max-w-[95%] text-center leading-snug inline-flex items-center gap-1.5 ${
-                  isCallLog
-                    ? 'text-emerald-800 bg-emerald-50 border-emerald-100'
-                    : 'text-violet-700 bg-violet-50 border-violet-100'
-                }`}>
-                  {isCallLog && <Phone className="h-3 w-3 shrink-0 opacity-80" aria-hidden />}
+                <span className="text-[10px] text-emerald-800 bg-emerald-50 px-3 py-1.5 rounded-full shadow-sm border border-emerald-100 max-w-[95%] text-center leading-snug inline-flex items-center gap-1.5">
+                  <Phone className="h-3 w-3 shrink-0 opacity-80" aria-hidden />
                   <span>{sysText}</span>
-                  <span className={isCallLog ? 'text-emerald-500' : 'text-violet-400'}> · {formatTime(m.created_at)}</span>
+                  <span className="text-emerald-500"> · {formatTime(m.created_at)}</span>
+                </span>
+              </div>
+            );
+          }
+          if (m.is_system && !isBot && m.message_type === 'system') {
+            return (
+              <div key={m.id} className="flex justify-center my-2">
+                <span className="text-[10px] text-violet-700 bg-violet-50 px-3 py-1.5 rounded-full shadow-sm border border-violet-100 max-w-[95%] text-center leading-snug">
+                  {m.content}
+                  <span className="text-violet-400"> · {formatTime(m.created_at)}</span>
                 </span>
               </div>
             );
@@ -1889,7 +1904,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                           )}
                           {parent && <ReplyQuoteInBubble parent={parent} isMe={isMe} onJump={jumpToMessage} />}
                           <div className="text-[13.5px] leading-relaxed whitespace-pre-wrap break-words">
-                            {renderMessengerTextContent(m.content, isMe)}
+                            {renderMessengerTextContent(m.content, isMe, uid)}
                           </div>
                           {renderAttachmentsGrouped(m)}
                         </div>
@@ -1958,7 +1973,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                           )}
                           {parent && <ReplyQuoteInBubble parent={parent} isMe={isMe} onJump={jumpToMessage} />}
                           <div className="text-[13.5px] leading-relaxed whitespace-pre-wrap break-words">
-                            {renderMessengerTextContent(m.content, isMe)}
+                            {renderMessengerTextContent(m.content, isMe, uid)}
                           </div>
                           {renderAttachmentsGrouped(m)}
                         </div>

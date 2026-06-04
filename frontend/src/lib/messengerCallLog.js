@@ -67,6 +67,13 @@ export function formatCallLogLine(payload, viewerUserId) {
   }
 }
 
+/** Tin nhắn log cuộc gọi (theo prefix hoặc message_type). */
+export function isMessengerCallLogMessage(message) {
+  if (!message) return false;
+  if (message.message_type === 'call') return true;
+  return !!parseCallLogPayload(message.content);
+}
+
 export function callLogDisplayText(message, viewerUserId) {
   if (!message) return '';
   const parsed = parseCallLogPayload(message.content);

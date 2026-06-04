@@ -125,27 +125,47 @@ async function persistMessengerCallLog(io, { groupId, actorUserId, payload }) {
   const actor = actorUserId || payload.callerId || payload.hostId;
   if (!actor) return null;
 
-  const { data, error } = await supabase
+  const baseRow = {
+    group_id: groupId,
+    user_id: actor,
+    content,
+    message_type: 'call',
+    is_system: true,
+  };
+
+  let { data, error } = await supabase
     .from('messenger_group_messages')
-    .insert({
-      group_id: groupId,
-      user_id: actor,
-      content,
-      message_type: 'call',
-      is_system: true,
-    })
+    .insert(baseRow)
     .select('id')
     .single();
+
+  if (error) {
+    console.warn('[messenger-call-log] insert (call) failed, retry text:', error.message);
+    ({ data, error } = await supabase
+      .from('messenger_group_messages')
+      .insert({ ...baseRow, message_type: 'text' })
+      .select('id')
+      .single());
+  }
   if (error) {
     console.warn('[messenger-call-log] insert failed:', error.message);
     return null;
   }
 
   const full = await fetchMessengerMessageById(data.id);
-  if (io && full) {
-    io.to(`messenger_group:${groupId}`).emit('messenger_group:chat', full);
+  const emitRow = full || {
+    id: data.id,
+    group_id: groupId,
+    user_id: actor,
+    content,
+    message_type: 'call',
+    is_system: true,
+    created_at: new Date().toISOString(),
+  };
+  if (io) {
+    io.to(`messenger_group:${groupId}`).emit('messenger_group:chat', emitRow);
   }
-  return full;
+  return emitRow;
 }
 
 function mapRejectReasonToStatus(reason, { endedByUserId, callerId, answeredAt } = {}) {
@@ -159,15 +179,15 @@ function mapRejectReasonToStatus(reason, { endedByUserId, callerId, answeredAt }
 }
 
 async function finalizeDirectCallLog(io, session, { status, endedByUserId, reason } = {}) {
-  if (!session || session.logged) return;
-  if (!session.groupId) {
-    console.warn('[messenger-call-log] skip 1-1: chưa có nhóm chat messenger', {
-      callerId: session.callerId,
-      calleeId: session.calleeId,
-    });
+  if (!session || !session.groupId) {
+    if (session && !session.groupId) {
+      console.warn('[messenger-call-log] skip 1-1: chưa có nhóm chat messenger', {
+        callerId: session.callerId,
+        calleeId: session.calleeId,
+      });
+    }
     return;
   }
-  session.logged = true;
 
   let finalStatus = status;
   if (!finalStatus) {

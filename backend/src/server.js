@@ -396,8 +396,9 @@ io.on('connection', (socket) => {
     const uid = socket.user?.userId || socket.user?.id;
     const session = activeDirectCalls.get(callId);
     if (session && !session.logged) {
-      void finalizeDirectCallLog(io, session, { endedByUserId: uid, reason });
+      session.logged = true;
       activeDirectCalls.delete(callId);
+      void finalizeDirectCallLog(io, session, { endedByUserId: uid, reason });
     }
     if (toUserId) io.to(`user:${toUserId}`).emit('call:rejected', { callId, reason });
   });
@@ -408,8 +409,9 @@ io.on('connection', (socket) => {
     const session = activeDirectCalls.get(callId);
     if (session && !session.logged) {
       const status = session.answeredAt ? 'completed' : null;
-      void finalizeDirectCallLog(io, session, { status, endedByUserId: uid });
+      session.logged = true;
       activeDirectCalls.delete(callId);
+      void finalizeDirectCallLog(io, session, { status, endedByUserId: uid });
     }
     if (toUserId) io.to(`user:${toUserId}`).emit('call:ended', { callId });
   });
@@ -737,8 +739,9 @@ io.on('connection', (socket) => {
     const session = activeDirectCalls.get(callId);
     if (session && !session.logged) {
       const status = session.answeredAt ? 'completed' : null;
-      void finalizeDirectCallLog(io, session, { status, endedByUserId: uid });
+      session.logged = true;
       activeDirectCalls.delete(callId);
+      void finalizeDirectCallLog(io, session, { status, endedByUserId: uid });
     }
     if (toUserId) io.to(`user:${toUserId}`).emit('call:ended', { callId });
   });
@@ -764,8 +767,9 @@ io.on('connection', (socket) => {
     // 1-1
     const session = activeDirectCalls.get(callId);
     if (session && !session.logged) {
-      void finalizeDirectCallLog(io, session, { endedByUserId: uid, reason });
+      session.logged = true;
       activeDirectCalls.delete(callId);
+      void finalizeDirectCallLog(io, session, { endedByUserId: uid, reason });
     }
     if (toUserId) io.to(`user:${toUserId}`).emit('call:rejected', { callId, reason });
   });
