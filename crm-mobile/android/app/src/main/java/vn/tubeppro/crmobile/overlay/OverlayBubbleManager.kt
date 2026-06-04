@@ -55,12 +55,16 @@ object OverlayBubbleManager {
     val size = (56 * density).toInt()
 
     val container = FrameLayout(app)
+    container.background = android.graphics.drawable.GradientDrawable().apply {
+      shape = android.graphics.drawable.GradientDrawable.OVAL
+      setColor(Color.parseColor("#0068FF"))
+    }
     val label = TextView(app)
     label.text = letter.ifBlank { "?" }.take(1).uppercase()
     label.gravity = Gravity.CENTER
     label.setTextColor(Color.WHITE)
     label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
-    label.setBackgroundColor(Color.parseColor("#0068FF"))
+    label.setBackgroundColor(Color.TRANSPARENT)
     label.layoutParams = FrameLayout.LayoutParams(size, size)
 
     val params = WindowManager.LayoutParams(

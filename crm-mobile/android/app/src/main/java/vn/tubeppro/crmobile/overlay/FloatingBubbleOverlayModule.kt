@@ -156,7 +156,8 @@ class FloatingBubbleOverlayModule(private val reactContext: ReactApplicationCont
 
   @ReactMethod
   fun areBubblesSupported(promise: Promise) {
-    promise.resolve(Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+    // Chưa triển khai Android Bubbles API (BubbleMetadata) — tránh chặn overlay tự vẽ.
+    promise.resolve(false)
   }
 
   @ReactMethod
@@ -168,6 +169,7 @@ class FloatingBubbleOverlayModule(private val reactContext: ReactApplicationCont
     avatarLetter: String,
     autoExpand: Boolean,
   ) {
+    OverlayBubbleManager.showBubble(reactContext, bubbleKey, title, avatarLetter)
     postChatNotification(bubbleKey, title, senderName, null, message, null, null)
   }
 
