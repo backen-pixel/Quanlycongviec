@@ -68,6 +68,10 @@ export default function MyDevicesScreen() {
     void getPushSetupStatus().then(setPushStatus);
   }, []);
 
+  const refreshPushStatus = () => {
+    void getPushSetupStatus().then(setPushStatus);
+  };
+
   const load = useCallback(async (forcePing = false) => {
     setError(null);
     try {
@@ -101,6 +105,7 @@ export default function MyDevicesScreen() {
 
   const onRefresh = () => {
     setRefreshing(true);
+    refreshPushStatus();
     void load(true);
   };
 
@@ -161,20 +166,26 @@ export default function MyDevicesScreen() {
               <View
                 style={[
                   styles.pushStatusBox,
-                  pushStatus.hasPushToken && pushStatus.notificationPermission === 'granted'
+                  pushStatus.hasFcmToken &&
+                  pushStatus.notificationPermission === 'granted' &&
+                  pushStatus.serverTableOk !== false &&
+                  (pushStatus.serverFcmTokenCount == null || pushStatus.serverFcmTokenCount > 0)
                     ? styles.pushOk
                     : styles.pushWarn,
                 ]}
               >
                 <Text style={styles.pushStatusTitle}>
-                  {pushStatus.hasPushToken && pushStatus.notificationPermission === 'granted'
-                    ? '✓ Push đã sẵn sàng (khi tắt app vẫn nhận thông báo)'
-                    : '⚠ Push chưa hoàn tất — thông báo có thể không tới khi tắt app'}
+                  {pushStatus.hasFcmToken &&
+                  pushStatus.notificationPermission === 'granted' &&
+                  pushStatus.serverTableOk !== false &&
+                  (pushStatus.serverFcmTokenCount == null || pushStatus.serverFcmTokenCount > 0)
+                    ? '✓ Cuộc gọi khi tắt app đã sẵn sàng (FCM)'
+                    : '⚠ Cuộc gọi khi tắt app chưa hoạt động'}
                 </Text>
                 <Text style={styles.pushStatusLine}>
-                  Quyền: {pushStatus.notificationPermission} · projectId:{' '}
-                  {pushStatus.hasProjectId ? 'có' : 'thiếu'} · token:{' '}
-                  {pushStatus.hasPushToken ? 'có' : 'thiếu'}
+                  Quyền: {pushStatus.notificationPermission} · FCM máy:{' '}
+                  {pushStatus.hasFcmToken ? 'có' : 'thiếu'} · FCM server:{' '}
+                  {pushStatus.serverFcmTokenCount ?? '—'}
                 </Text>
                 {pushStatus.hint ? (
                   <Text style={styles.pushStatusHint}>{pushStatus.hint}</Text>
@@ -209,6 +220,44 @@ export default function MyDevicesScreen() {
                 }}
               >
                 <Text style={styles.testBtnTxt}>Gửi push thử (Chat)</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.testBtn, styles.testBtnAlt]}
+                onPress={async () => {
+                  try {
+                    const { data } = await api.post<{
+                      tokens_count?: number;
+                      fcm_tokens_count?: number;
+                      table_ok?: boolean;
+                      hint?: string;
+                    }>('/devices/test-push', { kind: 'call' });
+                    if (!data?.table_ok) {
+                      Alert.alert(
+                        'Thiếu bảng database',
+                        data?.hint ||
+                          'Admin cần chạy database/204_push_device_tokens.sql trên Supabase SQL Editor.',
+                      );
+                      return;
+                    }
+                    if (!data?.fcm_tokens_count) {
+                      Alert.alert(
+                        'Không có FCM token',
+                        data?.hint ||
+                          'Đăng xuất/đăng nhập lại, cấp quyền thông báo, cài APK 1.3.16+.',
+                      );
+                      return;
+                    }
+                    Alert.alert(
+                      'Đã gửi',
+                      'Push cuộc gọi thử đã gửi. Thoát app hẳn để kiểm tra thông báo.',
+                    );
+                  } catch (e: unknown) {
+                    const ax = e as { response?: { data?: { error?: string } } };
+                    Alert.alert('Lỗi', ax?.response?.data?.error || 'Không gửi được');
+                  }
+                }}
+              >
+                <Text style={styles.testBtnTxt}>Gửi push thử (Cuộc gọi)</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.testBtn, styles.testBtnAlt]}

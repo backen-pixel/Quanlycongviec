@@ -274,42 +274,77 @@ r.post('/test-push', async (req, res) => {
 
     const kind = String(req.body?.kind || 'system');
     const isChat = kind === 'chat';
+    const isCall = kind === 'call';
 
-    // Đếm token + trả về preview để mobile biết tình trạng đăng ký push.
     let tokens = [];
+    let tableOk = true;
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('push_device_tokens')
         .select('token, platform, device_id, last_seen_at')
         .eq('user_id', uid);
-      tokens = (data || []).filter((t) => t.platform === 'expo' && t.token);
-    } catch { tokens = []; }
+      if (error) throw error;
+      tokens = data || [];
+    } catch (e) {
+      tableOk = false;
+      tokens = [];
+    }
 
-    const fakeNotif = {
-      id: `test-${Date.now()}`,
-      type: isChat ? 'messenger_chat' : 'crm_deal',
-      title: isChat ? 'Tin nhắn thử nghiệm' : '🎯 Deal mới (thử)',
-      message: isChat
-        ? 'Push chat đang hoạt động — chạm để mở chat.'
-        : 'Push deal đang hoạt động — chạm để mở deal.',
-      entity_type: isChat ? 'messenger_group' : 'crm_deal',
-      entity_id: req.body?.entity_id || 'test',
-      metadata: isChat
-        ? { sender_name: 'Hệ thống', group_name: 'TuBep CRM' }
-        : {},
-    };
-    if (tokens.length) {
+    const expoTokens = tokens.filter((t) => t.platform === 'expo' && t.token);
+    const fcmTokens = tokens.filter((t) => t.platform === 'fcm' && t.token);
+
+    const fakeNotif = isCall
+      ? {
+          id: `test-call-${Date.now()}`,
+          type: 'incoming_call',
+          title: 'Cuộc gọi thử',
+          message: 'Đang gọi bạn (push test)',
+          entity_type: 'user',
+          entity_id: uid,
+          metadata: {
+            call_id: `test-${Date.now()}`,
+            kind: 'audio',
+            from_user_id: uid,
+            from_name: 'Hệ thống (test)',
+            is_group: false,
+          },
+        }
+      : {
+          id: `test-${Date.now()}`,
+          type: isChat ? 'messenger_chat' : 'crm_deal',
+          title: isChat ? 'Tin nhắn thử nghiệm' : '🎯 Deal mới (thử)',
+          message: isChat
+            ? 'Push chat đang hoạt động — chạm để mở chat.'
+            : 'Push deal đang hoạt động — chạm để mở deal.',
+          entity_type: isChat ? 'messenger_group' : 'crm_deal',
+          entity_id: req.body?.entity_id || 'test',
+          metadata: isChat
+            ? { sender_name: 'Hệ thống', group_name: 'TuBep CRM' }
+            : {},
+        };
+
+    if (tableOk && (expoTokens.length || fcmTokens.length)) {
       try { await sendMobilePush(uid, fakeNotif); } catch (e) { console.warn('[test-push]', e.message || e); }
     }
+
+    const relevantCount = isCall ? fcmTokens.length : expoTokens.length;
 
     res.json({
       ok: true,
       kind,
-      tokens_count: tokens.length,
-      hint: !tokens.length
-        ? 'Chưa có Expo push token cho user này. Mở app → Tài khoản → Thiết lập bong bóng & thông báo → cấp quyền, rồi thử lại. Nếu vẫn không có: cần cấu hình EAS projectId trong app.json và google-services.json (xem docs/PUSH_SETUP.md), build lại APK.'
-        : undefined,
+      table_ok: tableOk,
+      tokens_count: relevantCount,
+      fcm_tokens_count: fcmTokens.length,
+      expo_tokens_count: expoTokens.length,
+      hint: !tableOk
+        ? 'Bảng push_device_tokens chưa có — chạy database/204_push_device_tokens.sql trên Supabase SQL Editor.'
+        : isCall && !fcmTokens.length
+          ? 'Chưa có FCM token. Cài APK 1.3.16+, cấp quyền thông báo, đăng xuất/đăng nhập lại.'
+          : !isCall && !expoTokens.length && !fcmTokens.length
+            ? 'Chưa có push token. Mở app → cấp quyền thông báo → đăng nhập lại.'
+            : undefined,
       tokens: tokens.map((t) => ({
+        platform: t.platform,
         device_id: t.device_id,
         last_seen_at: t.last_seen_at,
         token_preview: String(t.token).slice(0, 30) + '…',

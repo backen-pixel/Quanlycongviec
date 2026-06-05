@@ -95,13 +95,18 @@ function buildPushPayload(notification) {
 }
 
 async function fetchUserTokens(userId) {
+  const empty = { expo: [], fcm: [] };
   const { data, error } = await supabase
     .from('push_device_tokens')
     .select('token, platform')
     .eq('user_id', userId);
   if (error) {
-    if (error.code === '42P01' || String(error.message || '').includes('push_device_tokens')) {
-      return [];
+    const msg = String(error.message || '');
+    if (error.code === '42P01' || /push_device_tokens/i.test(msg)) {
+      console.error(
+        '[pushSender] Bảng push_device_tokens chưa tồn tại — chạy database/204_push_device_tokens.sql trên Supabase',
+      );
+      return empty;
     }
     throw error;
   }
@@ -109,6 +114,32 @@ async function fetchUserTokens(userId) {
   return {
     expo: rows.filter((r) => r.platform === 'expo'),
     fcm: rows.filter((r) => r.platform === 'fcm'),
+  };
+}
+
+/** Kiểm tra DB + FCM credentials (diagnostic). */
+async function getPushInfraStatus(userId) {
+  const creds = loadFcmCredentials();
+  const { error: probeErr } = await supabase.from('push_device_tokens').select('id').limit(1);
+  if (probeErr) {
+    const missing = probeErr.code === '42P01'
+      || /push_device_tokens/i.test(String(probeErr.message || ''));
+    if (missing) {
+      return {
+        tableOk: false,
+        fcmConfigured: !!creds,
+        fcmProjectId: creds?.projectId || null,
+        tokens: { expo: 0, fcm: 0 },
+        error: 'push_device_tokens table missing',
+      };
+    }
+  }
+  const rows = userId ? await fetchUserTokens(userId) : { expo: [], fcm: [] };
+  return {
+    tableOk: true,
+    fcmConfigured: !!creds,
+    fcmProjectId: creds?.projectId || null,
+    tokens: { expo: rows.expo.length, fcm: rows.fcm.length },
   };
 }
 
@@ -458,4 +489,6 @@ module.exports = {
   sendMobilePush,
   buildPushPayload,
   sendFcmDataOnly,
+  getPushInfraStatus,
+  sendFcmIncomingCall,
 };
