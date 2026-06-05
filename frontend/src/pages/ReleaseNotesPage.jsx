@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import api from '../lib/api';
 import { BUILTIN_UPDATES } from '../content/builtinUpdates';
+import { renderReleaseNoteContent } from '../lib/renderReleaseNoteContent';
 import { markAllBuiltinUpdatesRead } from '../lib/releaseNotesRead';
 import { useReleaseNotesUnread } from '../hooks/useReleaseNotesUnread';
 import {
@@ -21,15 +22,7 @@ function formatDateVN(iso) {
 }
 
 function renderMarkdownLines(content) {
-  return content.split('\n').map((line, i) => {
-    if (line.startsWith('### ')) return <h4 key={i} className="text-sm font-bold mt-3 mb-1" style={{ color: '#000000' }}>{line.slice(4)}</h4>;
-    if (line.startsWith('## ')) return <h3 key={i} className="text-base font-bold mt-4 mb-1" style={{ color: '#000000' }}>{line.slice(3)}</h3>;
-    if (line.startsWith('# ')) return <h2 key={i} className="text-lg font-bold mt-4 mb-2" style={{ color: '#000000' }}>{line.slice(2)}</h2>;
-    if (line.startsWith('- ')) return <li key={i} className="ml-4 text-sm list-disc">{line.slice(2)}</li>;
-    if (line.startsWith('* ')) return <li key={i} className="ml-4 text-sm list-disc">{line.slice(2)}</li>;
-    if (line.trim() === '') return <br key={i} />;
-    return <p key={i} className="text-sm leading-relaxed">{line}</p>;
-  });
+  return renderReleaseNoteContent(content);
 }
 
 function BuiltinUpdateCard({ item, isExpanded, onToggle }) {

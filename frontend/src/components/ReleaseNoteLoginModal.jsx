@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Megaphone, X, Loader2 } from 'lucide-react';
 import api from '../lib/api';
 import { builtinToNoteShape, getLatestUnreadBuiltinUpdate, markNoteRead } from '../lib/releaseNotesRead';
+import { renderReleaseNoteContent } from '../lib/renderReleaseNoteContent';
 
 /** Popup «Có gì mới» — hiện 1 lần cho mỗi bản cập nhật mới (đóng → mark-read → không hiện lại). */
 const SHOW_RELEASE_NOTE_LOGIN_MODAL = true;
@@ -23,16 +24,8 @@ function formatDateVN(iso) {
 
 function ReleaseNoteBody({ content }) {
   return (
-    <div className="prose prose-sm max-w-none text-gray-700 whitespace-pre-wrap">
-      {content.split('\n').map((line, i) => {
-        if (line.startsWith('### ')) return <h4 key={i} className="text-sm font-bold text-gray-900 mt-3 mb-1">{line.slice(4)}</h4>;
-        if (line.startsWith('## ')) return <h3 key={i} className="text-base font-bold text-gray-900 mt-4 mb-1">{line.slice(3)}</h3>;
-        if (line.startsWith('# ')) return <h2 key={i} className="text-lg font-bold text-gray-900 mt-4 mb-2">{line.slice(2)}</h2>;
-        if (line.startsWith('- ')) return <li key={i} className="ml-4 text-sm">{line.slice(2)}</li>;
-        if (line.startsWith('* ')) return <li key={i} className="ml-4 text-sm">{line.slice(2)}</li>;
-        if (line.trim() === '') return <br key={i} />;
-        return <p key={i} className="text-sm leading-relaxed">{line}</p>;
-      })}
+    <div className="prose prose-sm max-w-none text-gray-700">
+      {renderReleaseNoteContent(content)}
     </div>
   );
 }
@@ -110,7 +103,7 @@ export default function ReleaseNoteLoginModal() {
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/50 backdrop-blur-[2px]" role="dialog" aria-modal="true" aria-labelledby="release-note-login-title">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[85vh] overflow-hidden flex flex-col border border-gray-200/80">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-[min(100%,56rem)] max-h-[92vh] overflow-hidden flex flex-col border border-gray-200/80">
         <div className="flex items-start gap-3 px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-blue-50/80 to-white shrink-0">
           <div className={`w-11 h-11 rounded-xl flex items-center justify-center text-lg shrink-0 ${cat.color}`}>
             {cat.icon}

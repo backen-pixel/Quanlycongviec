@@ -14,6 +14,14 @@ import {
   SubmitFilesCompact,
   StagedAttachmentsSection,
 } from '../components/crm/CrmAssignmentFiles';
+import {
+  loadPersonalColumns,
+  savePersonalColumns,
+  loadPersonalTaskMap,
+  savePersonalTaskMap,
+  setTaskPersonalColumn,
+  newPersonalColumnId,
+} from '../lib/crmAssignmentPersonalColumns';
 
 /**
  * Trang "Giao việc CRM" — độc lập với module Công việc và CRM tasks gắn lead.
@@ -39,6 +47,15 @@ const STATUS_MAP = Object.fromEntries(STATUS_OPTIONS.map((s) => [s.value, s]));
 const COLUMN_COLORS = ['#3B82F6', '#8B5CF6', '#F59E0B', '#10B981', '#EF4444', '#EC4899', '#6B7280', '#0EA5E9'];
 
 const LS_COMPANY = 'crm_assignments_company_id';
+const LS_VIEW_SCOPE = 'crm_assignments_view_scope';
+
+const DEADLINE_BUCKET_META = [
+  { key: 'overdue',    label: '🔴 Quá hạn',     color: '#EF4444' },
+  { key: 'today',      label: '🟡 Hôm nay',     color: '#F59E0B' },
+  { key: 'thisWeek',   label: '🔵 Tuần này',    color: '#3B82F6' },
+  { key: 'later',      label: '⚪ Sau đó',      color: '#94A3B8' },
+  { key: 'noDeadline', label: '⏳ Chưa có hạn', color: '#6B7280' },
+];
 
 function isAssignmentCreator(task, userId) {
   return String(task?.created_by_id || '') === String(userId || '');
@@ -183,6 +200,15 @@ export default function CRMAssignmentsPage() {
   const [showItemModal, setShowItemModal] = useState(false);
   const [viewingItem, setViewingItem] = useState(null);
   const [showColumnModal, setShowColumnModal] = useState(null); // null | { id?, name, color, is_done_column }
+  const [showPersonalColumnModal, setShowPersonalColumnModal] = useState(null); // null | { view, column? }
+  const [viewScope, setViewScope] = useState(() => {
+    try { return localStorage.getItem(LS_VIEW_SCOPE) || 'personal'; } catch { return 'personal'; }
+  });
+  const [showCompletedOpen, setShowCompletedOpen] = useState(false);
+  const [personalPlannerCols, setPersonalPlannerCols] = useState([]);
+  const [personalDeadlineCols, setPersonalDeadlineCols] = useState([]);
+  const [personalPlannerMap, setPersonalPlannerMap] = useState({});
+  const [personalDeadlineMap, setPersonalDeadlineMap] = useState({});
 
   // NV thường: mặc định lọc "việc giao cho tôi" để thấy nhiệm vụ được chỉ định
   useEffect(() => {
@@ -199,6 +225,18 @@ export default function CRMAssignmentsPage() {
       else localStorage.removeItem(LS_COMPANY);
     } catch { /* ignore */ }
   }, [filterCompanyId, isAdmin]);
+
+  useEffect(() => {
+    if (!uid) return;
+    setPersonalPlannerCols(loadPersonalColumns(uid, 'planner'));
+    setPersonalDeadlineCols(loadPersonalColumns(uid, 'deadline'));
+    setPersonalPlannerMap(loadPersonalTaskMap(uid, 'planner'));
+    setPersonalDeadlineMap(loadPersonalTaskMap(uid, 'deadline'));
+  }, [uid]);
+
+  useEffect(() => {
+    try { localStorage.setItem(LS_VIEW_SCOPE, viewScope); } catch { /* ignore */ }
+  }, [viewScope]);
 
   // ─── Load companies (admin) ──
   useEffect(() => {
@@ -303,11 +341,28 @@ export default function CRMAssignmentsPage() {
     return map;
   }, [columns, items]);
 
+  const openItems = useMemo(() => {
+    let list = items;
+    if (!showCompletedOpen) list = list.filter((t) => t.status !== 'completed');
+    if (viewScope === 'personal' && uid && (view === 'planner' || view === 'deadline')) {
+      list = list.filter((t) => isAssignmentAssignee(t, uid) || isAssignmentCreator(t, uid));
+    }
+    return list;
+  }, [items, showCompletedOpen, viewScope, uid, view]);
+
   // ─── Planner: group by assignee ──
   const plannerGroups = useMemo(() => {
     const map = new Map();
     const unassigned = [];
-    items.filter((t) => t.status !== 'completed').forEach((t) => {
+    const personalBuckets = new Map();
+    personalPlannerCols.forEach((c) => personalBuckets.set(c.id, []));
+
+    openItems.forEach((t) => {
+      const pinnedCol = personalPlannerMap[String(t.id)];
+      if (pinnedCol && personalBuckets.has(pinnedCol)) {
+        personalBuckets.get(pinnedCol).push(t);
+        return;
+      }
       const list = (t.assignees && t.assignees.length) ? t.assignees : (t.assignee ? [t.assignee] : []);
       if (!list.length) { unassigned.push(t); return; }
       list.forEach((u) => {
@@ -315,8 +370,12 @@ export default function CRMAssignmentsPage() {
         map.get(u.id).tasks.push(t);
       });
     });
-    return { assignees: [...map.values()], unassigned };
-  }, [items]);
+    return {
+      assignees: [...map.values()],
+      unassigned,
+      personal: personalPlannerCols.map((c) => ({ column: c, tasks: personalBuckets.get(c.id) || [] })),
+    };
+  }, [openItems, personalPlannerCols, personalPlannerMap]);
 
   // ─── Deadline groups ──
   const deadlineGroups = useMemo(() => {
@@ -324,7 +383,15 @@ export default function CRMAssignmentsPage() {
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const weekEnd = new Date(today); weekEnd.setDate(weekEnd.getDate() + 7);
     const g = { overdue: [], today: [], thisWeek: [], later: [], noDeadline: [] };
-    items.filter((t) => t.status !== 'completed').forEach((t) => {
+    const personalBuckets = new Map();
+    personalDeadlineCols.forEach((c) => personalBuckets.set(c.id, []));
+
+    openItems.forEach((t) => {
+      const pinnedCol = personalDeadlineMap[String(t.id)];
+      if (pinnedCol && personalBuckets.has(pinnedCol)) {
+        personalBuckets.get(pinnedCol).push(t);
+        return;
+      }
       if (!t.deadline) { g.noDeadline.push(t); return; }
       const d = new Date(t.deadline);
       if (d < today) g.overdue.push(t);
@@ -332,8 +399,11 @@ export default function CRMAssignmentsPage() {
       else if (d < weekEnd) g.thisWeek.push(t);
       else g.later.push(t);
     });
-    return g;
-  }, [items]);
+    return {
+      ...g,
+      personal: personalDeadlineCols.map((c) => ({ column: c, tasks: personalBuckets.get(c.id) || [] })),
+    };
+  }, [openItems, personalDeadlineCols, personalDeadlineMap]);
 
   // ─── Mutations ──
   const upsertItem = async (payload, stagedFiles = []) => {
@@ -436,6 +506,44 @@ export default function CRMAssignmentsPage() {
     try { await api.delete(`/crm/assignments/columns/${id}`); void load(); } catch {}
   };
 
+  const upsertPersonalColumn = (payload) => {
+    const targetView = payload.view || showPersonalColumnModal?.view || view;
+    if (!uid || !targetView) return;
+    const setter = targetView === 'planner' ? setPersonalPlannerCols : setPersonalDeadlineCols;
+    const current = targetView === 'planner' ? personalPlannerCols : personalDeadlineCols;
+    const next = payload.id
+      ? current.map((c) => (c.id === payload.id ? { ...c, name: payload.name.trim(), color: payload.color } : c))
+      : [...current, { id: newPersonalColumnId(), name: payload.name.trim(), color: payload.color, position: current.length }];
+    setter(next);
+    savePersonalColumns(uid, targetView, next);
+    setShowPersonalColumnModal(null);
+  };
+
+  const removePersonalColumn = (targetView, colId) => {
+    if (!uid || !confirm('Xoá cột cá nhân này? Việc trong cột sẽ quay về nhóm mặc định.')) return;
+    const cols = targetView === 'planner' ? personalPlannerCols : personalDeadlineCols;
+    const map = targetView === 'planner' ? personalPlannerMap : personalDeadlineMap;
+    const nextCols = cols.filter((c) => c.id !== colId);
+    const nextMap = { ...map };
+    Object.keys(nextMap).forEach((k) => { if (nextMap[k] === colId) delete nextMap[k]; });
+    if (targetView === 'planner') {
+      setPersonalPlannerCols(nextCols);
+      setPersonalPlannerMap(nextMap);
+    } else {
+      setPersonalDeadlineCols(nextCols);
+      setPersonalDeadlineMap(nextMap);
+    }
+    savePersonalColumns(uid, targetView, nextCols);
+    savePersonalTaskMap(uid, targetView, nextMap);
+  };
+
+  const pinTaskToPersonalColumn = (targetView, taskId, colId) => {
+    if (!uid) return;
+    const nextMap = setTaskPersonalColumn(uid, targetView, taskId, colId);
+    if (targetView === 'planner') setPersonalPlannerMap(nextMap);
+    else setPersonalDeadlineMap(nextMap);
+  };
+
   // ─── DnD ──
   const [dragId, setDragId] = useState(null);
   const onDragStart = (id) => () => setDragId(id);
@@ -472,7 +580,7 @@ export default function CRMAssignmentsPage() {
             {stats.total} nhiệm vụ — {stats.completed} hoàn thành — {stats.inProgress} đang làm
           </p>
           <p className="text-[11px] text-gray-400 mt-0.5">
-            Cột Kanban dùng chung toàn hệ thống; bộ lọc công ty chỉ áp dụng cho nhiệm vụ.
+            Kanban: cột dùng chung. Planner / Deadline: cột cá nhân (chỉ bạn thấy) — bấm <strong>Thêm cột</strong>.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -652,12 +760,50 @@ export default function CRMAssignmentsPage() {
         />
       )}
 
+      {(view === 'planner' || view === 'deadline') && (
+        <PersonalViewToolbar
+          view={view}
+          viewScope={viewScope}
+          onViewScopeChange={setViewScope}
+          showCompletedOpen={showCompletedOpen}
+          onShowCompletedOpenChange={setShowCompletedOpen}
+          onAddColumn={() => setShowPersonalColumnModal({ view, column: null })}
+        />
+      )}
+
       {view === 'planner' && (
-        <PlannerView groups={plannerGroups} onOpen={(t) => setViewingItem(t)} onEdit={(t) => { if (!canManageTask(t)) return; setEditingItem(t); setShowItemModal(true); }} onDelete={removeItem} onUpdate={updateItem} columns={columns} canManageTask={canManageTask} canMoveTask={canMoveTask} />
+        <PlannerView
+          groups={plannerGroups}
+          viewScope={viewScope}
+          personalColumns={personalPlannerCols}
+          onOpen={(t) => setViewingItem(t)}
+          onEdit={(t) => { if (!canManageTask(t)) return; setEditingItem(t); setShowItemModal(true); }}
+          onDelete={removeItem}
+          onUpdate={updateItem}
+          columns={columns}
+          canManageTask={canManageTask}
+          canMoveTask={canMoveTask}
+          onEditPersonalColumn={(col) => setShowPersonalColumnModal({ view: 'planner', column: col })}
+          onDeletePersonalColumn={(colId) => removePersonalColumn('planner', colId)}
+          onDropPersonalColumn={(taskId, colId) => pinTaskToPersonalColumn('planner', taskId, colId)}
+        />
       )}
 
       {view === 'deadline' && (
-        <DeadlineView groups={deadlineGroups} onOpen={(t) => setViewingItem(t)} onEdit={(t) => { if (!canManageTask(t)) return; setEditingItem(t); setShowItemModal(true); }} onDelete={removeItem} onUpdate={updateItem} columns={columns} canManageTask={canManageTask} canMoveTask={canMoveTask} />
+        <DeadlineView
+          groups={deadlineGroups}
+          personalColumns={personalDeadlineCols}
+          onOpen={(t) => setViewingItem(t)}
+          onEdit={(t) => { if (!canManageTask(t)) return; setEditingItem(t); setShowItemModal(true); }}
+          onDelete={removeItem}
+          onUpdate={updateItem}
+          columns={columns}
+          canManageTask={canManageTask}
+          canMoveTask={canMoveTask}
+          onEditPersonalColumn={(col) => setShowPersonalColumnModal({ view: 'deadline', column: col })}
+          onDeletePersonalColumn={(colId) => removePersonalColumn('deadline', colId)}
+          onDropPersonalColumn={(taskId, colId) => pinTaskToPersonalColumn('deadline', taskId, colId)}
+        />
       )}
 
       {showItemModal && (
@@ -677,6 +823,14 @@ export default function CRMAssignmentsPage() {
           column={showColumnModal}
           onClose={() => setShowColumnModal(null)}
           onSave={upsertColumn}
+        />
+      )}
+      {showPersonalColumnModal && (
+        <PersonalColumnModal
+          column={showPersonalColumnModal.column}
+          viewLabel={showPersonalColumnModal.view === 'deadline' ? 'Deadline' : 'Planner'}
+          onClose={() => setShowPersonalColumnModal(null)}
+          onSave={(form) => upsertPersonalColumn({ ...form, view: showPersonalColumnModal.view })}
         />
       )}
       {viewingItem && (
@@ -934,31 +1088,260 @@ function ListView({ items, columns, onOpen, onEdit, onDelete, onUpdate, canManag
   );
 }
 
-function PlannerView({ groups, onOpen, onEdit, onDelete, onUpdate, columns, canManageTask, canMoveTask }) {
-  if (!groups.assignees.length && !groups.unassigned.length) {
-    return <p className="text-center text-sm text-gray-400 py-12">Không có nhiệm vụ đang mở</p>;
-  }
+function PersonalViewToolbar({
+  view, viewScope, onViewScopeChange, showCompletedOpen, onShowCompletedOpenChange, onAddColumn,
+}) {
   return (
-    <div className="space-y-3">
-      {groups.assignees.map((g) => (
-        <div key={g.user.id} className="border rounded-xl">
-          <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 rounded-t-xl">
-            <div className="h-7 w-7 rounded-full bg-blue-500 flex items-center justify-center text-white text-xs font-bold">
-              {g.user.full_name?.charAt(0)}
-            </div>
-            <span className="text-sm font-semibold">{g.user.full_name}</span>
-            <span className="text-xs text-gray-400">({g.tasks.length} việc)</span>
-          </div>
-          <div className="bg-white rounded-b-xl divide-y">
-            {g.tasks.map((t) => <TaskRow key={t.id} task={t} canManage={canManageTask(t)} canMove={canMoveTask(t)} columns={columns} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onUpdate={onUpdate} />)}
-          </div>
-        </div>
+    <div className="flex flex-wrap items-center gap-2 px-3 py-2 rounded-xl border border-indigo-100 bg-indigo-50/60">
+      <span className="text-[11px] font-semibold text-indigo-800 uppercase tracking-wide">
+        {view === 'deadline' ? 'Deadline' : 'Planner'} — giao diện cá nhân
+      </span>
+      <div className="flex items-center gap-1 rounded-lg border border-indigo-200 bg-white p-0.5">
+        <button
+          type="button"
+          onClick={() => onViewScopeChange('personal')}
+          className={`h-7 px-2.5 rounded-md text-[11px] font-medium cursor-pointer ${viewScope === 'personal' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+        >
+          Của tôi
+        </button>
+        <button
+          type="button"
+          onClick={() => onViewScopeChange('team')}
+          className={`h-7 px-2.5 rounded-md text-[11px] font-medium cursor-pointer ${viewScope === 'team' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+        >
+          Toàn team
+        </button>
+      </div>
+      <label className="flex items-center gap-1.5 text-[11px] text-gray-600 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={showCompletedOpen}
+          onChange={(e) => onShowCompletedOpenChange(e.target.checked)}
+          className="rounded border-gray-300"
+        />
+        Hiện việc đã xong
+      </label>
+      <button
+        type="button"
+        onClick={onAddColumn}
+        className="ml-auto h-8 px-3 rounded-lg border-2 border-dashed border-indigo-300 hover:border-indigo-500 hover:bg-white text-xs text-indigo-700 font-medium flex items-center gap-1.5 cursor-pointer"
+      >
+        <Plus className="h-3.5 w-3.5" />Thêm cột cá nhân
+      </button>
+    </div>
+  );
+}
+
+function PersonalColumnBoard({
+  column, tasks, onEditColumn, onDeleteColumn, onDropTask, droppable = true, onOpen, onEdit, onDelete, onUpdate,
+  columns, canManageTask, canMoveTask, dragId, setDragId,
+}) {
+  const allowDrop = droppable ? (e) => e.preventDefault() : undefined;
+  const onDrop = droppable ? (e) => {
+    e.preventDefault();
+    if (dragId && onDropTask) {
+      onDropTask(dragId, column.id);
+      setDragId(null);
+    }
+  } : undefined;
+  const onDragStart = (id) => () => setDragId(id);
+
+  return (
+    <div
+      className="w-72 shrink-0 rounded-xl border border-white/40 flex flex-col shadow-sm backdrop-blur-md"
+      style={{ background: 'rgba(255,255,255,0.35)' }}
+      onDragOver={allowDrop}
+      onDrop={onDrop}
+    >
+      <div
+        className="px-3 py-2 flex items-center gap-2 border-b border-white/40 rounded-t-xl"
+        style={{ borderTopColor: column.color, borderTopWidth: 3, background: 'rgba(255,255,255,0.45)' }}
+      >
+        <span className="text-sm font-semibold flex-1 truncate" style={{ color: column.color }}>{column.name}</span>
+        <span className="text-[11px] text-gray-400">{tasks.length}</span>
+        {onEditColumn && (
+          <button type="button" onClick={() => onEditColumn(column)} className="text-gray-400 hover:text-blue-600 cursor-pointer">
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+        )}
+        {onDeleteColumn && (
+          <button type="button" onClick={() => onDeleteColumn(column.id)} className="text-gray-400 hover:text-red-500 cursor-pointer">
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+      <div className="flex-1 p-2 space-y-2 min-h-[80px]">
+        {tasks.map((t) => (
+          <Card
+            key={t.id}
+            task={t}
+            canManage={canManageTask(t)}
+            canMove={canMoveTask(t)}
+            onDragStart={onDragStart}
+            onOpen={onOpen}
+            onEdit={onEdit}
+            onDelete={onDelete}
+            onUpdate={onUpdate}
+          />
+        ))}
+        {!tasks.length && (
+          <p className="text-[10px] text-gray-400 text-center py-4 px-1">Kéo việc vào đây</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PlannerView({
+  groups, viewScope, personalColumns, onOpen, onEdit, onDelete, onUpdate, columns,
+  canManageTask, canMoveTask, onEditPersonalColumn, onDeletePersonalColumn, onDropPersonalColumn,
+}) {
+  const [dragId, setDragId] = useState(null);
+  const teamCols = [
+    ...groups.assignees.map((g) => ({
+      id: `user_${g.user.id}`,
+      name: g.user.full_name,
+      color: '#3B82F6',
+      tasks: g.tasks,
+      fixed: true,
+    })),
+    ...(groups.unassigned.length ? [{
+      id: '__unassigned',
+      name: 'Chưa giao',
+      color: '#94A3B8',
+      tasks: groups.unassigned,
+      fixed: true,
+    }] : []),
+  ];
+  const personalCols = (groups.personal || []).map((g) => ({
+    id: g.column.id,
+    name: g.column.name,
+    color: g.column.color,
+    tasks: g.tasks,
+    fixed: false,
+  }));
+  const allMineTasks = [
+    ...groups.assignees.flatMap((g) => g.tasks),
+    ...groups.unassigned,
+  ];
+  const personalDisplayCols = personalCols.length
+    ? personalCols
+    : [{
+      id: '__mine',
+      name: 'Việc của tôi',
+      color: '#3B82F6',
+      tasks: allMineTasks,
+      fixed: true,
+    }];
+  const displayCols = viewScope === 'personal'
+    ? personalDisplayCols
+    : [...teamCols, ...personalCols];
+
+  if (viewScope === 'team' && !displayCols.length) {
+    return (
+      <div className="text-center py-12 space-y-3">
+        <p className="text-sm text-gray-500">Chưa có nhiệm vụ đang mở trong Planner.</p>
+        <p className="text-xs text-gray-400">Bật «Hiện việc đã xong», chuyển sang <strong>Của tôi</strong>, hoặc bấm <strong>Thêm cột cá nhân</strong>.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex gap-3 overflow-x-auto pb-3" style={{ minHeight: 360 }}>
+      {displayCols.map((col) => (
+        <PersonalColumnBoard
+          key={col.id}
+          column={col}
+          tasks={col.tasks}
+          droppable={!col.fixed || String(col.id).startsWith('pc_')}
+          onEditColumn={col.fixed ? null : onEditPersonalColumn}
+          onDeleteColumn={col.fixed ? null : onDeletePersonalColumn}
+          onDropTask={onDropPersonalColumn}
+          onOpen={onOpen}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          onUpdate={onUpdate}
+          columns={columns}
+          canManageTask={canManageTask}
+          canMoveTask={canMoveTask}
+          dragId={dragId}
+          setDragId={setDragId}
+        />
       ))}
-      {groups.unassigned.length > 0 && (
-        <div className="border rounded-xl border-dashed">
-          <div className="px-4 py-3 bg-gray-50 rounded-t-xl text-sm font-semibold text-gray-500">Chưa giao ({groups.unassigned.length})</div>
-          <div className="bg-white rounded-b-xl divide-y">
-            {groups.unassigned.map((t) => <TaskRow key={t.id} task={t} canManage={canManageTask(t)} canMove={canMoveTask(t)} columns={columns} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onUpdate={onUpdate} />)}
+    </div>
+  );
+}
+
+function DeadlineView({
+  groups, personalColumns, onOpen, onEdit, onDelete, onUpdate, columns,
+  canManageTask, canMoveTask, onEditPersonalColumn, onDeletePersonalColumn, onDropPersonalColumn,
+}) {
+  const [dragId, setDragId] = useState(null);
+  const bucketCols = DEADLINE_BUCKET_META.map((b) => ({
+    id: b.key,
+    name: b.label,
+    color: b.color,
+    tasks: groups[b.key] || [],
+    fixed: true,
+  }));
+  const personalCols = (groups.personal || []).map((g) => ({
+    id: g.column.id,
+    name: g.column.name,
+    color: g.column.color,
+    tasks: g.tasks,
+    fixed: false,
+  }));
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-2">Nhóm theo hạn</p>
+        <div className="flex gap-3 overflow-x-auto pb-2" style={{ minHeight: 280 }}>
+          {bucketCols.map((col) => (
+            <PersonalColumnBoard
+              key={col.id}
+              column={col}
+              tasks={col.tasks}
+              droppable={false}
+              onEditColumn={null}
+              onDeleteColumn={null}
+              onDropTask={null}
+              onOpen={onOpen}
+              onEdit={onEdit}
+              onDelete={onDelete}
+              onUpdate={onUpdate}
+              columns={columns}
+              canManageTask={canManageTask}
+              canMoveTask={canMoveTask}
+              dragId={dragId}
+              setDragId={setDragId}
+            />
+          ))}
+        </div>
+      </div>
+      {(personalCols.length > 0 || personalColumns.length > 0) && (
+        <div>
+          <p className="text-[11px] font-semibold text-indigo-600 uppercase tracking-wide mb-2">Cột cá nhân</p>
+          <div className="flex gap-3 overflow-x-auto pb-3" style={{ minHeight: 200 }}>
+            {personalCols.map((col) => (
+              <PersonalColumnBoard
+                key={col.id}
+                column={col}
+                tasks={col.tasks}
+                onEditColumn={onEditPersonalColumn}
+                onDeleteColumn={onDeletePersonalColumn}
+                onDropTask={onDropPersonalColumn}
+                onOpen={onOpen}
+                onEdit={onEdit}
+                onDelete={onDelete}
+                onUpdate={onUpdate}
+                columns={columns}
+                canManageTask={canManageTask}
+                canMoveTask={canMoveTask}
+                dragId={dragId}
+                setDragId={setDragId}
+              />
+            ))}
           </div>
         </div>
       )}
@@ -966,28 +1349,55 @@ function PlannerView({ groups, onOpen, onEdit, onDelete, onUpdate, columns, canM
   );
 }
 
-function DeadlineView({ groups, onOpen, onEdit, onDelete, onUpdate, columns, canManageTask, canMoveTask }) {
-  const order = [
-    { key: 'overdue',    label: '🔴 Quá hạn',     color: 'border-red-300 bg-red-50' },
-    { key: 'today',      label: '🟡 Hôm nay',     color: 'border-amber-300 bg-amber-50' },
-    { key: 'thisWeek',   label: '🔵 Tuần này',    color: 'border-blue-300 bg-blue-50' },
-    { key: 'later',      label: '⚪ Sau đó',      color: 'border-gray-200 bg-gray-50' },
-    { key: 'noDeadline', label: '⏳ Chưa có hạn', color: 'border-gray-200 bg-gray-50' },
-  ];
-  const visible = order.filter((g) => (groups[g.key] || []).length > 0);
-  if (!visible.length) return <p className="text-center text-sm text-gray-400 py-12">Không có nhiệm vụ đang mở</p>;
+function PersonalColumnModal({ column, viewLabel, onClose, onSave }) {
+  const [form, setForm] = useState({
+    id: column?.id,
+    name: column?.name || '',
+    color: column?.color || COLUMN_COLORS[0],
+  });
+  const submit = (e) => {
+    e.preventDefault();
+    if (!form.name.trim()) return;
+    onSave(form);
+  };
   return (
-    <div className="space-y-3">
-      {visible.map((g) => (
-        <div key={g.key} className={`border rounded-xl ${g.color}`}>
-          <div className="px-4 py-2 font-semibold text-sm">
-            {g.label} <span className="text-gray-400 font-normal">({groups[g.key].length})</span>
-          </div>
-          <div className="bg-white rounded-b-xl divide-y">
-            {groups[g.key].map((t) => <TaskRow key={t.id} task={t} canManage={canManageTask(t)} canMove={canMoveTask(t)} columns={columns} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onUpdate={onUpdate} />)}
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <form onClick={(e) => e.stopPropagation()} onSubmit={submit} className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-bold">{form.id ? 'Sửa cột cá nhân' : `Thêm cột ${viewLabel}`}</h3>
+          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600 cursor-pointer"><X className="h-5 w-5" /></button>
+        </div>
+        <p className="text-xs text-gray-500">Cột chỉ hiển thị với bạn — dùng để nhóm việc theo ý (kéo thả nhiệm vụ vào cột).</p>
+        <div>
+          <label className="text-xs text-gray-600 block mb-1">Tên cột <span className="text-red-500">*</span></label>
+          <input
+            value={form.name}
+            onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
+            className="w-full h-9 px-3 border rounded-lg text-sm outline-none focus:border-blue-500"
+            placeholder="VD: Việc khẩn, Chờ duyệt…"
+            autoFocus
+            required
+          />
+        </div>
+        <div>
+          <label className="text-xs text-gray-600 block mb-1">Màu</label>
+          <div className="flex gap-1.5 flex-wrap">
+            {COLUMN_COLORS.map((c) => (
+              <button
+                type="button"
+                key={c}
+                onClick={() => setForm((p) => ({ ...p, color: c }))}
+                style={{ background: c }}
+                className={`h-7 w-7 rounded-full border-2 cursor-pointer ${form.color === c ? 'border-gray-900' : 'border-white'}`}
+              />
+            ))}
           </div>
         </div>
-      ))}
+        <div className="flex justify-end gap-2 pt-2">
+          <button type="button" onClick={onClose} className="h-9 px-4 rounded-lg border text-sm cursor-pointer">Huỷ</button>
+          <button type="submit" className="h-9 px-4 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium cursor-pointer">Lưu</button>
+        </div>
+      </form>
     </div>
   );
 }
