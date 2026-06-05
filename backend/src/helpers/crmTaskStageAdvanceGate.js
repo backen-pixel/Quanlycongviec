@@ -2,20 +2,16 @@
  * Gate "chặn chuyển giai đoạn theo nhiệm vụ CRM".
  *
  * Quy tắc:
- *  - Mỗi crm_tasks có cờ `blocks_stage_advance` (kế thừa từ crm_task_template_items).
- *  - CHỈ chặn khi giai đoạn hiện tại còn tồn tại task thỏa MỌI điều kiện:
- *      blocks_stage_advance = true
- *      AND status NOT IN ('completed','cancelled')
- *  - Task KHÔNG tick blocks_stage_advance → KHÔNG chặn, dù chưa hoàn thành.
+ *  - blocks_stage_advance = true + chưa completed/cancelled → chặn.
+ *  - completion_requires_file_or_note = true + thiếu ghi chú/đính kèm → chặn.
  *  - KHÔNG chặn khi giai đoạn đích là Thắng (is_won) hoặc Thua (is_lost).
  *  - KHÔNG chặn khi giai đoạn đích "lùi lại" (order_index <= current order_index).
- *  - KHÔNG chặn khi không xác định được template-slug cho giai đoạn hiện tại
- *    (vì pipeline có thể không có nhiệm vụ mẫu mapping).
  *
  * Áp dụng cho cả Lead và Deal.
  */
 
 const { supabase } = require('../config/supabase');
+const { crmTaskHasCompletionEvidence } = require('./crmTaskCompletionEvidence');
 
 /** Mapping từ tên giai đoạn (đã chuẩn hoá) → template-slug của bộ nhiệm vụ Lead. */
 const LEAD_STAGE_NAME_TO_SLUG = [
@@ -80,72 +76,118 @@ function shouldSkipGate(currentStage, targetStage) {
   return false;
 }
 
+const TASK_SELECT =
+  'id, title, status, blocks_stage_advance, completion_requires_file_or_note, notes';
+
+async function fetchStageTasks(leadId, currentStage, leadType) {
+  if (currentStage?.id) {
+    const { data, error } = await supabase
+      .from('crm_tasks')
+      .select(TASK_SELECT)
+      .eq('lead_id', leadId)
+      .eq('pipeline_stage_id', currentStage.id)
+      .neq('status', 'cancelled')
+      .limit(100);
+    if (!error) return data || [];
+    if (!String(error.message || '').includes('pipeline_stage_id')) {
+      console.warn('[crmTaskStageAdvanceGate] query (pipeline_stage_id) error:', error.message);
+    }
+  }
+
+  const slug = inferTaskStageSlugForPipelineStage(currentStage, leadType);
+  if (!slug) return [];
+  const { data: blockingTasks, error } = await supabase
+    .from('crm_tasks')
+    .select(TASK_SELECT)
+    .eq('lead_id', leadId)
+    .eq('stage_slug', slug)
+    .neq('status', 'cancelled')
+    .limit(100);
+  if (error) {
+    console.warn('[crmTaskStageAdvanceGate] query (slug) error:', error.message);
+    return [];
+  }
+  return blockingTasks || [];
+}
+
+/**
+ * @returns {Promise<Array<{ id, title, status, blocks_stage_advance, completion_requires_file_or_note, block_reason }>>}
+ */
+async function collectBlockingTasks(tasks) {
+  const blocking = [];
+  const seen = new Set();
+
+  const push = (task, blockReason) => {
+    if (!task?.id || seen.has(task.id)) return;
+    seen.add(task.id);
+    blocking.push({
+      id: task.id,
+      title: task.title,
+      status: task.status,
+      blocks_stage_advance: !!task.blocks_stage_advance,
+      completion_requires_file_or_note: !!task.completion_requires_file_or_note,
+      block_reason: blockReason,
+    });
+  };
+
+  for (const task of tasks) {
+    if (task.blocks_stage_advance && task.status !== 'completed') {
+      push(task, 'incomplete');
+    }
+  }
+
+  for (const task of tasks) {
+    if (!task.completion_requires_file_or_note) continue;
+    try {
+      const hasEvidence = await crmTaskHasCompletionEvidence(supabase, task.id, task.notes);
+      if (!hasEvidence) push(task, 'missing_evidence');
+    } catch (e) {
+      console.warn('[crmTaskStageAdvanceGate] evidence check error:', e.message);
+    }
+  }
+
+  return blocking;
+}
+
+function buildBlockResponse(tasks, currentStage, targetStage) {
+  const names = tasks.map((t) => {
+    if (t.block_reason === 'missing_evidence') return `• ${t.title} (thiếu ghi chú hoặc file đính kèm)`;
+    return `• ${t.title} (chưa hoàn thành)`;
+  }).join('\n');
+  const hasEvidenceBlock = tasks.some((t) => t.block_reason === 'missing_evidence');
+  const hasIncompleteBlock = tasks.some((t) => t.block_reason === 'incomplete');
+  const hintParts = [];
+  if (hasIncompleteBlock) hintParts.push('hoàn thành các nhiệm vụ có cờ «Chặn chuyển giai đoạn»');
+  if (hasEvidenceBlock) hintParts.push('bổ sung ghi chú hoặc file đính kèm cho nhiệm vụ có cờ «Bắt buộc file/ghi chú»');
+  const hint = hintParts.length ? `👉 ${hintParts.join(' và ')} rồi chuyển giai đoạn lại.` : '';
+
+  return {
+    ok: false,
+    code: 'CRM_BLOCKING_TASKS_INCOMPLETE',
+    error:
+      `⛔ Không thể chuyển sang "${targetStage?.name || 'giai đoạn mới'}"\n\n`
+      + `Còn ${tasks.length} nhiệm vụ chặn chuyển giai đoạn ở "${currentStage?.name || ''}":\n${names}\n\n`
+      + hint,
+    remaining_tasks: tasks,
+    current_stage_id: currentStage?.id || null,
+    target_stage_id: targetStage?.id || null,
+  };
+}
+
 /**
  * @returns {Promise<{ ok: true } | { ok: false, error: string, code: string, remaining_tasks: Array }>}
- *
- * CHỈ CHẶN khi còn task tick `blocks_stage_advance = true` ở giai đoạn hiện tại
- * chưa hoàn thành/hủy. Task không tick cờ → cho qua tự do.
  */
 async function assertCrmStageAdvanceAllowed({ leadId, leadType, currentStage, targetStage }) {
   try {
     if (shouldSkipGate(currentStage, targetStage)) return { ok: true };
 
-    const buildBlockResponse = (tasks) => {
-      const names = tasks.map((t) => `• ${t.title}`).join('\n');
-      return {
-        ok: false,
-        code: 'CRM_BLOCKING_TASKS_INCOMPLETE',
-        error:
-          `⛔ Không thể chuyển sang "${targetStage?.name || 'giai đoạn mới'}"\n\n`
-          + `Còn ${tasks.length} nhiệm vụ chặn chuyển giai đoạn chưa hoàn thành ở "${currentStage?.name || ''}":\n${names}\n\n`
-          + `👉 Hãy hoàn thành (hoặc đánh dấu hủy) các nhiệm vụ trên rồi chuyển giai đoạn lại.\n`
-          + `Mẹo: nhiệm vụ không tick "Chặn chuyển giai đoạn" có thể bỏ qua, không cản trở.`,
-        remaining_tasks: tasks,
-        current_stage_id: currentStage?.id || null,
-        target_stage_id: targetStage?.id || null,
-      };
-    };
+    const tasks = await fetchStageTasks(leadId, currentStage, leadType);
+    if (!tasks.length) return { ok: true };
 
-    // (1) Ưu tiên match theo pipeline_stage_id (chính xác).
-    //     CHỈ tính task có blocks_stage_advance = true.
-    if (currentStage?.id) {
-      const { data: byStageId, error: errStageId } = await supabase
-        .from('crm_tasks')
-        .select('id, title, status, blocks_stage_advance')
-        .eq('lead_id', leadId)
-        .eq('pipeline_stage_id', currentStage.id)
-        .eq('blocks_stage_advance', true)
-        .not('status', 'in', '(completed,cancelled)')
-        .limit(50);
-      if (errStageId) {
-        if (!String(errStageId.message || '').includes('pipeline_stage_id')) {
-          console.warn('[crmTaskStageAdvanceGate] query (pipeline_stage_id) error:', errStageId.message);
-        }
-      } else if (byStageId?.length) {
-        return buildBlockResponse(byStageId);
-      } else {
-        // Có check theo pipeline_stage_id và rỗng → cho phép qua, không cần fallback slug.
-        return { ok: true };
-      }
-    }
+    const blocking = await collectBlockingTasks(tasks);
+    if (!blocking.length) return { ok: true };
 
-    // (2) Fallback theo stage_slug (data cũ không có pipeline_stage_id).
-    const slug = inferTaskStageSlugForPipelineStage(currentStage, leadType);
-    if (!slug) return { ok: true };
-    const { data: blockingTasks, error } = await supabase
-      .from('crm_tasks')
-      .select('id, title, status, blocks_stage_advance')
-      .eq('lead_id', leadId)
-      .eq('stage_slug', slug)
-      .eq('blocks_stage_advance', true)
-      .not('status', 'in', '(completed,cancelled)')
-      .limit(50);
-    if (error) {
-      console.warn('[crmTaskStageAdvanceGate] query (slug) error:', error.message);
-      return { ok: true };
-    }
-    if (!blockingTasks?.length) return { ok: true };
-    return buildBlockResponse(blockingTasks);
+    return buildBlockResponse(blocking, currentStage, targetStage);
   } catch (e) {
     console.warn('[crmTaskStageAdvanceGate] unexpected:', e.message);
     return { ok: true };
@@ -159,4 +201,6 @@ module.exports = {
   foldVi,
   LEAD_STAGE_NAME_TO_SLUG,
   DEAL_STAGE_NAME_TO_SLUG,
+  collectBlockingTasks,
+  fetchStageTasks,
 };

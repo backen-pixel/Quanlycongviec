@@ -239,6 +239,15 @@ export default function BlockingTasksAlertModal({
     });
   };
 
+  /** Chỉ còn chặn vì thiếu minh chứng — sau khi thêm ghi chú/file có thể bỏ khỏi danh sách. */
+  const tryClearAfterEvidence = (task) => {
+    const stillNeedsComplete =
+      task.blocks_stage_advance && task.status !== 'completed' && task.status !== 'cancelled';
+    if (!stillNeedsComplete && task.block_reason === 'missing_evidence') {
+      removeTask(task.id);
+    }
+  };
+
   const setTaskError = (taskId, msg) => {
     setErrById((prev) => ({ ...prev, [taskId]: msg }));
   };
@@ -280,6 +289,7 @@ export default function BlockingTasksAlertModal({
       setNoteText('');
       await loadRecords(task.id);
       onChanged?.();
+      tryClearAfterEvidence(task);
     } catch (e) {
       setTaskError(task.id, e.response?.data?.error || 'Lỗi lưu ghi chú');
     } finally {
@@ -336,6 +346,7 @@ export default function BlockingTasksAlertModal({
         await loadRecords(task.id);
         onChanged?.();
         setTaskError(task.id, '');
+        tryClearAfterEvidence(task);
       } catch (err) {
         setTaskError(task.id, err.response?.data?.error || err.message || 'Upload lỗi');
       } finally {
@@ -368,8 +379,11 @@ export default function BlockingTasksAlertModal({
               <>
                 <h3 className="text-base font-bold">⛔ Không thể chuyển giai đoạn</h3>
                 <p className="text-xs mt-0.5 text-amber-50">
-                  Còn <b>{tasks.length}</b> nhiệm vụ chưa hoàn thành ở giai đoạn
+                  Còn <b>{tasks.length}</b> nhiệm vụ chặn chuyển giai đoạn ở
                   {' '}<b>"{currentStageName || '—'}"</b>
+                  {tasks.some((t) => t.block_reason === 'missing_evidence') && (
+                    <span className="block mt-0.5">Một số nhiệm vụ cần ghi chú hoặc file đính kèm.</span>
+                  )}
                 </p>
               </>
             )}
@@ -388,7 +402,7 @@ export default function BlockingTasksAlertModal({
           ) : (
             <>
               <p className="text-sm text-gray-700 mb-3">
-                Hoàn thành (hoặc bổ sung minh chứng) các nhiệm vụ dưới đây để chuyển sang
+                Hoàn thành, thêm ghi chú hoặc đính kèm file cho các nhiệm vụ dưới đây để chuyển sang
                 {' '}<b className="text-emerald-700">"{targetStageName || 'giai đoạn mới'}"</b>:
               </p>
               <div className="space-y-2">
@@ -404,6 +418,11 @@ export default function BlockingTasksAlertModal({
                         {t.blocks_stage_advance && (
                           <span className="shrink-0 text-[10px] text-red-700 bg-red-100 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-semibold">
                             <Lock className="h-2.5 w-2.5" /> Chặn
+                          </span>
+                        )}
+                        {t.block_reason === 'missing_evidence' && (
+                          <span className="shrink-0 text-[10px] text-violet-700 bg-violet-100 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-semibold">
+                            <Paperclip className="h-2.5 w-2.5" /> Thiếu file/GC
                           </span>
                         )}
                       </div>
