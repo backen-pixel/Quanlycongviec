@@ -167,7 +167,7 @@ export async function getPushSetupStatus(): Promise<PushSetupStatus> {
 
   let hint: string | undefined;
   if (serverTableOk === false) {
-    hint = 'Server chưa có bảng push_device_tokens — admin chạy migration 204 trên Supabase';
+    hint = 'Server chưa thấy bảng push_device_tokens — admin chạy NOTIFY pgrst, \'reload schema\'; trên Supabase (bảng có nhưng API chưa reload cache)';
   } else if (perm !== 'granted') hint = 'Chưa cấp quyền thông báo';
   else if (!fcmToken) hint = 'Chưa có FCM token trên máy — đăng xuất/đăng nhập lại';
   else if (serverFcmTokenCount === 0) hint = 'FCM token chưa lưu server — bấm Tải lại hoặc đăng nhập lại';
