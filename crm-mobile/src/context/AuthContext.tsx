@@ -2,7 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api, getStoredToken, setStoredToken, setUnauthorizedHandler } from '../api/client';
 import { stopVoiceForegroundSyncLogout } from '../lib/voiceBackgroundSync';
-import { registerPushToken, unregisterPushToken } from '../lib/pushRegistration';
+import { registerPushToken, registerFcmTokenOnly, unregisterPushToken } from '../lib/pushRegistration';
 import { startDeviceHeartbeat, stopDeviceHeartbeat } from '../lib/deviceHeartbeat';
 
 const USER_KEY = 'crm_user_json';
@@ -45,6 +45,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           fetch('http://127.0.0.1:7754/ingest/c6417520-0159-4c13-a5f9-ac15886b2276',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'3b09d7'},body:JSON.stringify({sessionId:'3b09d7',runId:'pre-fix',hypothesisId:'H1',location:'AuthContext.tsx:bootstrap',message:'auth restored from storage',data:{tokenLength:t.length,hasUserJson:!!u},timestamp:Date.now()})}).catch(()=>{});
           // #endregion
           void registerPushToken();
+          setTimeout(() => { void registerFcmTokenOnly(); }, 2500);
           startDeviceHeartbeat();
         }
       } catch {
@@ -100,6 +101,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     fetch('http://127.0.0.1:7754/ingest/c6417520-0159-4c13-a5f9-ac15886b2276',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'3b09d7'},body:JSON.stringify({sessionId:'3b09d7',runId:'pre-fix',hypothesisId:'H1',location:'AuthContext.tsx:login',message:'login persisted token+user',data:{tokenLength:data.token?.length??0,userId:data.user?.id??data.user?.userId??null},timestamp:Date.now()})}).catch(()=>{});
     // #endregion
     void registerPushToken();
+    setTimeout(() => { void registerFcmTokenOnly(); }, 2500);
     startDeviceHeartbeat();
   }, []);
 

@@ -13,10 +13,23 @@ export type AppPermissionGap =
   | 'camera'
   | 'location'
   | 'notification'
+  | 'fullScreenCall'
+  | 'batteryOptimization'
   | 'systemOverlay';
 
 const OverlayModule = NativeModules.FloatingBubbleOverlay as
   | { canDrawOverlays?: () => Promise<boolean>; openOverlaySettings?: () => void }
+  | undefined;
+
+const BatteryModule = NativeModules.CrmBatteryOptimization as
+  | {
+      isIgnoringBatteryOptimizations?: () => Promise<boolean>;
+      requestIgnoreBatteryOptimizations?: () => void;
+      canUseFullScreenIntent?: () => Promise<boolean>;
+      openFullScreenIntentSettings?: () => void;
+      openAppNotificationSettings?: () => void;
+      openOemAutoStartSettings?: () => Promise<boolean>;
+    }
   | undefined;
 
 export async function getAppPermissionGaps(): Promise<AppPermissionGap[]> {
@@ -50,6 +63,24 @@ export async function getAppPermissionGaps(): Promise<AppPermissionGap[]> {
     if (notif.status !== 'granted') gaps.push('notification');
   } catch {
     /* ignore */
+  }
+
+  if (Platform.OS === 'android' && BatteryModule?.canUseFullScreenIntent) {
+    try {
+      const ok = await BatteryModule.canUseFullScreenIntent();
+      if (!ok) gaps.push('fullScreenCall');
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (Platform.OS === 'android' && BatteryModule?.isIgnoringBatteryOptimizations) {
+    try {
+      const ok = await BatteryModule.isIgnoringBatteryOptimizations();
+      if (!ok) gaps.push('batteryOptimization');
+    } catch {
+      /* ignore */
+    }
   }
 
   if (Platform.OS === 'android' && OverlayModule?.canDrawOverlays) {
@@ -103,6 +134,20 @@ export async function requestAppPermissionsForGaps(gaps: AppPermissionGap[]): Pr
       /* ignore */
     }
   }
+  if (gaps.includes('fullScreenCall') && Platform.OS === 'android') {
+    try {
+      BatteryModule?.openFullScreenIntentSettings?.();
+    } catch {
+      /* ignore */
+    }
+  }
+  if (gaps.includes('batteryOptimization') && Platform.OS === 'android') {
+    try {
+      BatteryModule?.requestIgnoreBatteryOptimizations?.();
+    } catch {
+      /* ignore */
+    }
+  }
   // systemOverlay phải mở Settings — không có dialog hệ thống.
   if (gaps.includes('systemOverlay') && Platform.OS === 'android') {
     try { OverlayModule?.openOverlaySettings?.(); } catch { /* ignore */ }
@@ -117,6 +162,20 @@ export async function grantAllPermissionsQuick(): Promise<void> {
     ImagePicker.requestCameraPermissionsAsync().catch(() => {}),
     Notifications.requestPermissionsAsync().catch(() => {}),
   ]);
+  if (Platform.OS === 'android') {
+    try {
+      const fsOk = await BatteryModule?.canUseFullScreenIntent?.();
+      if (fsOk === false) BatteryModule?.openFullScreenIntentSettings?.();
+    } catch {
+      /* ignore */
+    }
+    try {
+      const batOk = await BatteryModule?.isIgnoringBatteryOptimizations?.();
+      if (batOk === false) BatteryModule?.requestIgnoreBatteryOptimizations?.();
+    } catch {
+      /* ignore */
+    }
+  }
   // SYSTEM_ALERT_WINDOW: mở Settings nếu chưa có (Android hiển thị toggle, user tự bật).
   if (Platform.OS === 'android' && OverlayModule?.canDrawOverlays) {
     try {
@@ -154,6 +213,26 @@ export function promptAppPermissionsIfNeeded(): void {
 /** Mở App Settings (dùng khi user từ chối permissions). */
 export function openAppSettings(): void {
   void Linking.openSettings();
+}
+
+/** Mở cài đặt thông báo / full-screen cuộc gọi. */
+export function openCallNotificationSettings(): void {
+  if (Platform.OS !== 'android') return;
+  try {
+    BatteryModule?.openFullScreenIntentSettings?.();
+  } catch {
+    openAppSettings();
+  }
+}
+
+/** Mở cài đặt tắt tối ưu pin cho app. */
+export function openBatteryOptimizationSettings(): void {
+  if (Platform.OS !== 'android') return;
+  try {
+    BatteryModule?.requestIgnoreBatteryOptimizations?.();
+  } catch {
+    openAppSettings();
+  }
 }
 
 /** Mở cài đặt overlay Android (SYSTEM_ALERT_WINDOW). */
