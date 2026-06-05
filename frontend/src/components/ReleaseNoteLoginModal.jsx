@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Megaphone, X, Loader2 } from 'lucide-react';
 import api from '../lib/api';
 import { builtinToNoteShape, getLatestUnreadBuiltinUpdate, markNoteRead } from '../lib/releaseNotesRead';
-import { renderReleaseNoteContent } from '../lib/renderReleaseNoteContent';
+import { ReleaseNoteContent } from '../lib/renderReleaseNoteContent';
 
 /** Popup «Có gì mới» — hiện 1 lần cho mỗi bản cập nhật mới (đóng → mark-read → không hiện lại). */
 const SHOW_RELEASE_NOTE_LOGIN_MODAL = true;
@@ -25,7 +25,7 @@ function formatDateVN(iso) {
 function ReleaseNoteBody({ content }) {
   return (
     <div className="prose prose-sm max-w-none text-gray-700">
-      {renderReleaseNoteContent(content)}
+      <ReleaseNoteContent content={content} />
     </div>
   );
 }
