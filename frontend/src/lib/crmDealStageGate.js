@@ -37,9 +37,9 @@ export function isDealCrmStageLocked(item) {
   return false;
 }
 
-/** Không cho kéo thẻ deal trên Kanban CRM. */
-export function isDealCrmKanbanDragLocked(item, pipelineType) {
-  return pipelineType === 'deal' && isDealCrmStageLocked(item);
+/** CRM Kanban: cho phép kéo deal ở mọi cột (kể cả Sản xuất / Vận chuyển). */
+export function isDealCrmKanbanDragLocked(_item, _pipelineType) {
+  return false;
 }
 
 /**
