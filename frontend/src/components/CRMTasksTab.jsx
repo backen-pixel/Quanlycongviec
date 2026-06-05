@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useLayoutEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -71,6 +72,14 @@ const PRIORITY_COLORS = { low: 'bg-gray-100 text-gray-600', medium: 'bg-blue-100
 const PRIORITY_LABELS = { low: 'Thấp', medium: 'TB', high: 'Cao', urgent: 'Gấp' };
 const STATUS_ICONS = { pending: Circle, in_progress: Clock, completed: CheckCircle2 };
 
+const LEAD_MEMBER_ROLES = [
+  { value: 'responsible', label: 'Chịu trách nhiệm' },
+  { value: 'member', label: 'Tham gia' },
+  { value: 'supervisor', label: 'Giám sát' },
+  { value: 'viewer', label: 'Xem' },
+];
+const LEAD_MEMBER_ROLE_LABEL = Object.fromEntries(LEAD_MEMBER_ROLES.map((r) => [r.value, r.label]));
+
 function taskAssigneeList(task) {
   if (task?.assignees?.length) return task.assignees;
   return task?.assignee ? [task.assignee] : [];
@@ -82,57 +91,164 @@ function AssigneePickerBlock({
   selectedIds,
   onToggle,
   onSelectAll,
-  membersMode,
-  compact = true,
+  /** inline = trong form sửa NV; modal = hộp gán riêng (rộng hơn) */
+  layout = 'inline',
+  showRolePicker = false,
+  roleById = {},
+  onRoleChange,
+  defaultNewRole = 'member',
+  onDefaultNewRoleChange,
 }) {
+  const [search, setSearch] = useState('');
+  const isModal = layout === 'modal';
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const list = pickList || [];
+    if (!q) return list;
+    return list.filter((u) => {
+      const name = String(u.full_name || '').toLowerCase();
+      const email = String(u.email || '').toLowerCase();
+      return name.includes(q) || email.includes(q);
+    });
+  }, [pickList, search]);
+
+  const memberRows = filtered.filter((u) => u.isLeadMember);
+  const otherRows = filtered.filter((u) => !u.isLeadMember);
+  const hasMembers = (pickList || []).some((u) => u.isLeadMember);
+
   const selectedNames = (pickList || [])
     .filter((u) => selectedIds.has(String(u.id)))
     .map((u) => u.full_name)
     .filter(Boolean);
 
+  const rowTextClass = isModal ? 'text-sm' : 'text-xs';
+  const rowPadClass = isModal ? 'px-3 py-3' : 'px-2.5 py-2.5';
+
+  const renderRow = (u) => {
+    const checked = selectedIds.has(String(u.id));
+    const sid = String(u.id);
+    const isNewMember = !u.isLeadMember;
+    return (
+      <div
+        key={u.id}
+        className={`flex flex-col ${checked ? 'bg-indigo-50' : 'hover:bg-gray-50'}`}
+      >
+        <label className={`flex items-center gap-2.5 ${rowPadClass} cursor-pointer ${rowTextClass}`}>
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={() => onToggle(u.id)}
+            className={`rounded border-indigo-300 text-indigo-600 ${isModal ? 'h-4 w-4' : ''}`}
+          />
+          <span className="truncate font-medium text-gray-800 flex-1 min-w-0">{u.full_name}</span>
+          {u.isLeadMember ? (
+            <span className={`shrink-0 font-semibold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full ${isModal ? 'text-[10px]' : 'text-[9px]'}`}>
+              {LEAD_MEMBER_ROLE_LABEL[u.memberRole] || 'Thành viên'}
+            </span>
+          ) : (
+            <span className={`shrink-0 font-semibold text-sky-700 bg-sky-50 border border-sky-100 px-2 py-0.5 rounded-full ${isModal ? 'text-[10px]' : 'text-[9px]'}`}>
+              + Mới
+            </span>
+          )}
+        </label>
+        {showRolePicker && checked && isNewMember && (
+          <div className={`${isModal ? 'px-3 pb-3 pl-10' : 'px-2.5 pb-2.5 pl-8'}`}>
+            <label className={`flex items-center gap-2 ${isModal ? 'text-xs' : 'text-[10px]'} text-slate-600`}>
+              <span className="shrink-0 font-medium">Vai trò:</span>
+              <select
+                value={roleById[sid] || defaultNewRole}
+                onChange={(e) => onRoleChange?.(u.id, e.target.value)}
+                className={`flex-1 min-w-0 rounded-lg border border-indigo-200 bg-white px-2 py-1.5 outline-none focus:ring-2 focus:ring-indigo-300 ${isModal ? 'text-xs' : 'text-[10px]'}`}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {LEAD_MEMBER_ROLES.map((r) => (
+                  <option key={r.value} value={r.value}>{r.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <div className={`border border-indigo-200 bg-indigo-50/60 rounded-xl space-y-2 ${compact ? 'p-3' : 'p-0 border-0 bg-transparent'}`}>
+    <div className={`border border-indigo-200 bg-indigo-50/60 rounded-xl space-y-3 ${isModal ? 'p-4' : 'p-3'}`}>
       <div className="flex items-center justify-between gap-2">
-        <label className="text-[11px] font-semibold text-indigo-900 uppercase flex items-center gap-1">
-          <UserPlus className="h-3.5 w-3.5" /> Gán nhân viên ({count})
+        <label className={`font-semibold text-indigo-900 uppercase flex items-center gap-1.5 ${isModal ? 'text-xs' : 'text-[11px]'}`}>
+          <UserPlus className={isModal ? 'h-4 w-4' : 'h-3.5 w-3.5'} /> Gán nhân viên ({count})
         </label>
         <button
           type="button"
           onClick={onSelectAll}
-          className="h-7 px-2.5 rounded-lg bg-indigo-600 text-white text-[10px] font-semibold hover:bg-indigo-700 cursor-pointer"
+          className={`rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 cursor-pointer ${isModal ? 'h-8 px-3 text-xs' : 'h-7 px-2.5 text-[10px]'}`}
         >
           Chọn tất cả
         </button>
       </div>
       {selectedNames.length > 0 && (
-        <p className="text-[10px] text-indigo-800 bg-white/70 rounded-lg px-2 py-1.5 border border-indigo-100">
+        <p className={`text-indigo-800 bg-white/70 rounded-lg px-2.5 py-2 border border-indigo-100 ${isModal ? 'text-xs' : 'text-[10px]'}`}>
           Đã chọn: {selectedNames.join(', ')}
         </p>
       )}
-      <p className="text-[10px] text-slate-600">
-        {membersMode ? 'Thành viên đang tham gia lead/deal' : 'Danh sách nhân viên công ty'}
-        {!pickList?.length && ' — thêm thành viên ở tab Thành viên để gán nhanh hơn'}
+      <p className={isModal ? 'text-xs text-slate-600' : 'text-[10px] text-slate-600'}>
+        {hasMembers
+          ? 'Chọn thành viên hiện có hoặc NV mới — NV mới sẽ được thêm vào nhóm khi gán.'
+          : 'Chọn nhân viên — sẽ tự thêm vào nhóm lead/deal và gán nhiệm vụ cùng lúc.'}
       </p>
-      <div className="max-h-44 overflow-y-auto rounded-lg border border-indigo-100 bg-white divide-y">
-        {!pickList?.length ? (
-          <p className="text-[10px] text-gray-400 p-3 text-center">Chưa có nhân viên để gán</p>
-        ) : pickList.map((u) => {
-          const checked = selectedIds.has(String(u.id));
-          return (
-            <label
-              key={u.id}
-              className={`flex items-center gap-2 px-2.5 py-2.5 cursor-pointer text-xs ${checked ? 'bg-indigo-50' : 'hover:bg-gray-50'}`}
-            >
-              <input
-                type="checkbox"
-                checked={checked}
-                onChange={() => onToggle(u.id)}
-                className="rounded border-indigo-300 text-indigo-600"
-              />
-              <span className="truncate font-medium text-gray-800">{u.full_name}</span>
-            </label>
-          );
-        })}
+      {showRolePicker && (
+        <label className={`flex items-center gap-2 ${isModal ? 'text-xs' : 'text-[10px]'} text-slate-700`}>
+          <span className="font-semibold shrink-0">Vai trò mặc định (NV mới):</span>
+          <select
+            value={defaultNewRole}
+            onChange={(e) => onDefaultNewRoleChange?.(e.target.value)}
+            className={`flex-1 rounded-lg border border-indigo-200 bg-white px-2 py-1.5 outline-none focus:ring-2 focus:ring-indigo-300 ${isModal ? 'text-xs' : 'text-[10px]'}`}
+          >
+            {LEAD_MEMBER_ROLES.map((r) => (
+              <option key={r.value} value={r.value}>{r.label}</option>
+            ))}
+          </select>
+        </label>
+      )}
+      {(isModal || (pickList?.length || 0) > 8) && (
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Tìm theo tên hoặc email..."
+          className={`w-full rounded-lg border border-indigo-100 bg-white outline-none focus:ring-2 focus:ring-indigo-300 ${isModal ? 'h-10 px-3 text-sm' : 'h-8 px-2.5 text-xs'}`}
+        />
+      )}
+      <div className={`overflow-y-auto rounded-lg border border-indigo-100 bg-white ${isModal ? 'min-h-[200px] max-h-[min(340px,45vh)]' : 'max-h-52'}`}>
+        {!filtered.length ? (
+          <p className="text-[10px] text-gray-400 p-3 text-center">
+            {search.trim() ? 'Không tìm thấy nhân viên phù hợp' : 'Chưa có nhân viên để gán'}
+          </p>
+        ) : (
+          <>
+            {memberRows.length > 0 && (
+              <div>
+                {hasMembers && otherRows.length > 0 && (
+                  <p className="text-[9px] font-bold uppercase tracking-wide text-emerald-700 bg-emerald-50/80 px-2.5 py-1 border-b border-emerald-100">
+                    Thành viên lead/deal
+                  </p>
+                )}
+                <div className="divide-y divide-gray-100">{memberRows.map(renderRow)}</div>
+              </div>
+            )}
+            {otherRows.length > 0 && (
+              <div>
+                {hasMembers && (
+                  <p className="text-[9px] font-bold uppercase tracking-wide text-sky-700 bg-sky-50/80 px-2.5 py-1 border-b border-sky-100">
+                    Nhân viên khác (tự thêm vào nhóm)
+                  </p>
+                )}
+                <div className="divide-y divide-gray-100">{otherRows.map(renderRow)}</div>
+              </div>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
@@ -263,8 +379,13 @@ export default function CRMTasksTab({
   const [editingTask, setEditingTask] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [editAssigneeIds, setEditAssigneeIds] = useState(new Set());
+  const [assigneeRoleById, setAssigneeRoleById] = useState({});
+  const [defaultNewMemberRole, setDefaultNewMemberRole] = useState('member');
   const [leadMembersForAssign, setLeadMembersForAssign] = useState([]);
   const [assigningTask, setAssigningTask] = useState(null);
+  const [assignPopoverStyle, setAssignPopoverStyle] = useState({});
+  const assignPopoverRef = useRef(null);
+  const assignAnchorElRef = useRef(null);
   const [lastAssignmentLink, setLastAssignmentLink] = useState(null);
   const [shareModal, setShareModal] = useState(null);
   const [showTemplatePanel, setShowTemplatePanel] = useState(false);
@@ -530,13 +651,49 @@ export default function CRMTasksTab({
   };
 
   const assignPickList = useMemo(() => {
-    if (leadMembersForAssign.length) {
-      return leadMembersForAssign
-        .map((m) => m.user)
-        .filter((u) => u?.id);
-    }
-    return users || [];
+    const memberIdSet = new Set(
+      leadMembersForAssign.map((m) => String(m.user_id)).filter(Boolean),
+    );
+    const memberUsers = leadMembersForAssign
+      .map((m) => m.user)
+      .filter((u) => u?.id)
+      .map((u) => ({
+        ...u,
+        isLeadMember: true,
+        memberRole: leadMembersForAssign.find((m) => String(m.user_id) === String(u.id))?.role || 'member',
+      }));
+    const extraUsers = (users || [])
+      .filter((u) => u?.id && !memberIdSet.has(String(u.id)))
+      .map((u) => ({ ...u, isLeadMember: false }));
+    return [...memberUsers, ...extraUsers];
   }, [leadMembersForAssign, users]);
+
+  const ensureLeadMembersBeforeAssign = async (lid, assigneeIds, roleMap = {}, fallbackRole = 'member') => {
+    const existing = new Set(leadMembersForAssign.map((m) => String(m.user_id)));
+    const toAdd = [...assigneeIds].map(String).filter((id) => id && !existing.has(id));
+    if (!toAdd.length) return;
+    const { data } = await api.post(`/crm/leads/${lid}/members`, {
+      members: toAdd.map((user_id) => ({
+        user_id,
+        role: roleMap[String(user_id)] || fallbackRole || 'member',
+      })),
+    });
+    const addedRows = Array.isArray(data) ? data : data ? [data] : [];
+    if (addedRows.length) {
+      setLeadMembersForAssign((prev) => {
+        const seen = new Set(prev.map((m) => String(m.user_id)));
+        const merged = [...prev];
+        for (const row of addedRows) {
+          const uid = row?.user_id || row?.user?.id;
+          if (uid && !seen.has(String(uid))) {
+            seen.add(String(uid));
+            merged.push(row);
+          }
+        }
+        return merged;
+      });
+    }
+  };
 
   const loadLeadMembersForAssign = async (task) => {
     try {
@@ -552,14 +709,77 @@ export default function CRMTasksTab({
     setEditAssigneeIds(new Set(ids));
   };
 
-  const openAssignModal = async (task) => {
+  const closeAssignPopover = () => {
+    setAssigningTask(null);
+    assignAnchorElRef.current = null;
+    setAssignPopoverStyle({});
+    setAssigneeRoleById({});
+    setDefaultNewMemberRole('member');
+  };
+
+  const updateAssignPopoverPosition = useCallback(() => {
+    const rect = assignAnchorElRef.current?.getBoundingClientRect?.();
+    if (!rect) return;
+    const pad = 8;
+    const gap = 6;
+    const popoverWidth = Math.min(560, window.innerWidth - pad * 2);
+    let maxHeight = Math.min(520, window.innerHeight - pad * 2);
+
+    let left = rect.right - popoverWidth;
+    if (left < pad) left = Math.max(pad, rect.left);
+    left = Math.min(left, window.innerWidth - popoverWidth - pad);
+
+    let top = rect.bottom + gap;
+    if (top + maxHeight > window.innerHeight - pad) {
+      const aboveTop = rect.top - gap - maxHeight;
+      if (aboveTop >= pad) {
+        top = aboveTop;
+      } else {
+        top = pad;
+        maxHeight = window.innerHeight - pad * 2;
+      }
+    }
+
+    setAssignPopoverStyle({
+      position: 'fixed',
+      top,
+      left,
+      width: popoverWidth,
+      maxHeight,
+      zIndex: 10050,
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!assigningTask) return;
+    updateAssignPopoverPosition();
+  }, [assigningTask, assignPickList.length, updateAssignPopoverPosition]);
+
+  useEffect(() => {
+    if (!assigningTask) return;
+    const onReflow = () => updateAssignPopoverPosition();
+    window.addEventListener('resize', onReflow);
+    window.addEventListener('scroll', onReflow, true);
+    return () => {
+      window.removeEventListener('resize', onReflow);
+      window.removeEventListener('scroll', onReflow, true);
+    };
+  }, [assigningTask, updateAssignPopoverPosition]);
+
+  const openAssignModal = async (task, anchorEl) => {
+    assignAnchorElRef.current = anchorEl || null;
+    setAssigneeRoleById({});
+    setDefaultNewMemberRole('member');
     setAssigningTask(task);
     primeAssigneeSelection(task);
     await loadLeadMembersForAssign(task);
+    requestAnimationFrame(() => updateAssignPopoverPosition());
   };
 
   const openEditModal = async (task) => {
     setEditingTask(task);
+    setAssigneeRoleById({});
+    setDefaultNewMemberRole('member');
     primeAssigneeSelection(task);
     setEditForm({
       title: task.title || '',
@@ -575,16 +795,39 @@ export default function CRMTasksTab({
 
   const toggleEditAssignee = (userId) => {
     const sid = String(userId);
+    const pick = assignPickList.find((u) => String(u.id) === sid);
+    const wasSelected = editAssigneeIds.has(sid);
     setEditAssigneeIds((prev) => {
       const next = new Set(prev);
-      if (next.has(sid)) next.delete(sid);
+      if (wasSelected) next.delete(sid);
       else next.add(sid);
       return next;
     });
+    if (wasSelected) {
+      setAssigneeRoleById((roles) => {
+        const copy = { ...roles };
+        delete copy[sid];
+        return copy;
+      });
+    } else if (pick && !pick.isLeadMember) {
+      setAssigneeRoleById((roles) => ({ ...roles, [sid]: defaultNewMemberRole }));
+    }
+  };
+
+  const setAssigneeRole = (userId, role) => {
+    setAssigneeRoleById((prev) => ({ ...prev, [String(userId)]: role }));
   };
 
   const selectAllEditAssignees = () => {
-    setEditAssigneeIds(new Set(assignPickList.map((u) => String(u.id))));
+    const allIds = assignPickList.map((u) => String(u.id));
+    setEditAssigneeIds(new Set(allIds));
+    setAssigneeRoleById((prev) => {
+      const next = { ...prev };
+      for (const u of assignPickList) {
+        if (!u.isLeadMember) next[String(u.id)] = next[String(u.id)] || defaultNewMemberRole;
+      }
+      return next;
+    });
   };
 
   const saveEdit = async () => {
@@ -592,6 +835,7 @@ export default function CRMTasksTab({
     const taskId = editingTask.id;
     try {
       const lid = apiLeadIdForTaskId(taskId);
+      await ensureLeadMembersBeforeAssign(lid, editAssigneeIds, assigneeRoleById, defaultNewMemberRole);
       const payload = {
         title: editForm.title,
         description: editForm.description,
@@ -614,10 +858,11 @@ export default function CRMTasksTab({
     const taskId = assigningTask.id;
     try {
       const lid = apiLeadIdForTaskId(taskId);
+      await ensureLeadMembersBeforeAssign(lid, editAssigneeIds, assigneeRoleById, defaultNewMemberRole);
       const { data } = await api.put(`/crm/leads/${lid}/tasks/${taskId}`, {
         assignee_ids: [...editAssigneeIds],
       });
-      setAssigningTask(null);
+      closeAssignPopover();
       setTasks((p) => p.map((t) => (t.id === taskId ? { ...t, ...data } : t)));
       if (data?.crm_assignment_id) {
         setLastAssignmentLink({
@@ -1176,7 +1421,7 @@ export default function CRMTasksTab({
             </button>
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); openAssignModal(task); }}
+              onClick={(e) => { e.stopPropagation(); openAssignModal(task, e.currentTarget); }}
               className={`p-1.5 rounded-md cursor-pointer ${
                 taskAssigneeList(task).length
                   ? 'text-indigo-600 bg-indigo-50 hover:bg-indigo-100'
@@ -1812,7 +2057,11 @@ export default function CRMTasksTab({
                 selectedIds={editAssigneeIds}
                 onToggle={toggleEditAssignee}
                 onSelectAll={selectAllEditAssignees}
-                membersMode={leadMembersForAssign.length > 0}
+                showRolePicker
+                roleById={assigneeRoleById}
+                onRoleChange={setAssigneeRole}
+                defaultNewRole={defaultNewMemberRole}
+                onDefaultNewRoleChange={setDefaultNewMemberRole}
               />
               <div>
                 <label className="text-[11px] font-semibold text-gray-500 uppercase">Độ ưu tiên</label>
@@ -1857,45 +2106,56 @@ export default function CRMTasksTab({
         </div>
       )}
 
-      {assigningTask && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setAssigningTask(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-4 border-b">
+      {assigningTask && typeof document !== 'undefined' && createPortal(
+        <>
+          <div className="fixed inset-0 z-[10049]" onClick={closeAssignPopover} aria-hidden />
+          <div
+            ref={assignPopoverRef}
+            style={assignPopoverStyle}
+            className="bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b shrink-0 bg-indigo-50/40">
               <div className="flex items-center gap-2 min-w-0">
                 <UserPlus className="h-4 w-4 text-indigo-600 shrink-0" />
                 <div className="min-w-0">
                   <h3 className="text-sm font-bold text-gray-900">Gán nhân viên</h3>
-                  <p className="text-[11px] text-gray-500 truncate">{assigningTask.title}</p>
+                  <p className="text-[11px] text-gray-500 line-clamp-1">{assigningTask.title}</p>
                 </div>
               </div>
-              <button onClick={() => setAssigningTask(null)} className="p-1 hover:bg-gray-100 rounded-lg cursor-pointer">
+              <button type="button" onClick={closeAssignPopover} className="p-1 hover:bg-gray-100 rounded-lg cursor-pointer shrink-0">
                 <X className="h-4 w-4 text-gray-500" />
               </button>
             </div>
-            <div className="p-5">
+            <div className="p-4 overflow-y-auto flex-1 min-h-0">
               <AssigneePickerBlock
                 count={editAssigneeIds.size}
                 pickList={assignPickList}
                 selectedIds={editAssigneeIds}
                 onToggle={toggleEditAssignee}
                 onSelectAll={selectAllEditAssignees}
-                membersMode={leadMembersForAssign.length > 0}
-                compact={false}
+                layout="modal"
+                showRolePicker
+                roleById={assigneeRoleById}
+                onRoleChange={setAssigneeRole}
+                defaultNewRole={defaultNewMemberRole}
+                onDefaultNewRoleChange={setDefaultNewMemberRole}
               />
             </div>
-            <div className="px-5 py-4 border-t bg-gray-50 rounded-b-2xl flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="px-4 py-3 border-t bg-gray-50 flex flex-col gap-2 shrink-0">
               <p className="text-[10px] text-indigo-700">
-                Nhiệm vụ sẽ hiển thị trên trang <strong>Giao việc CRM</strong> để NV tương tác đầy đủ.
+                NV mới sẽ được thêm vào nhóm với vai trò đã chọn, rồi gán nhiệm vụ.
               </p>
               <div className="flex items-center justify-end gap-2">
-                <button onClick={() => setAssigningTask(null)} className="h-9 px-4 text-gray-600 hover:bg-gray-200 rounded-lg text-sm font-medium cursor-pointer">Hủy</button>
-                <button onClick={saveAssign} className="h-9 px-5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold flex items-center gap-1.5 cursor-pointer">
+                <button type="button" onClick={closeAssignPopover} className="h-9 px-3 text-gray-600 hover:bg-gray-200 rounded-lg text-sm font-medium cursor-pointer">Hủy</button>
+                <button type="button" onClick={saveAssign} className="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold flex items-center gap-1.5 cursor-pointer">
                   <UserPlus className="h-3.5 w-3.5" /> Gán {editAssigneeIds.size || 0} NV
                 </button>
               </div>
             </div>
           </div>
-        </div>
+        </>,
+        document.body,
       )}
 
       {lastAssignmentLink && (
