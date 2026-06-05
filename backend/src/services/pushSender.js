@@ -192,44 +192,62 @@ async function sendExpoChunk(messages) {
  * Không bắt buộc — nếu thiếu env thì hàm này im lặng return (Expo nhánh vẫn chạy).
  */
 let cachedFcmAuth = null; // { accessToken, exp, projectId }
+let fcmCredentialsHint = null;
+
+function saJsonToCreds(sa) {
+  if (!sa?.project_id || !sa?.client_email || !sa?.private_key) {
+    throw new Error('JSON thiếu project_id / client_email / private_key');
+  }
+  return {
+    projectId: sa.project_id,
+    clientEmail: sa.client_email,
+    privateKey: sa.private_key,
+  };
+}
+
+function readFcmSaFile(abs) {
+  const raw = fs.readFileSync(abs, 'utf8');
+  return saJsonToCreds(JSON.parse(raw));
+}
 
 function loadFcmCredentials() {
+  fcmCredentialsHint = null;
   const fromEnv = process.env.FCM_SA_JSON;
   if (fromEnv) {
     try {
-      const sa = JSON.parse(fromEnv);
-      return {
-        projectId: sa.project_id,
-        clientEmail: sa.client_email,
-        privateKey: sa.private_key,
-      };
-    } catch {
-      /* thử file path bên dưới */
+      return saJsonToCreds(JSON.parse(fromEnv));
+    } catch (e) {
+      fcmCredentialsHint = `FCM_SA_JSON không parse được: ${e.message || e}`;
+      console.warn('[pushSender]', fcmCredentialsHint);
     }
   }
+  const fileCandidates = [];
   const jsonPath = process.env.FCM_SA_JSON_PATH;
   if (jsonPath) {
+    fileCandidates.push(path.isAbsolute(jsonPath)
+      ? jsonPath
+      : path.join(__dirname, '../../', jsonPath));
+  }
+  fileCandidates.push(path.join(__dirname, '../../secrets/firebase-sa.json'));
+  for (const abs of fileCandidates) {
     try {
-      const abs = path.isAbsolute(jsonPath)
-        ? jsonPath
-        : path.join(__dirname, '../../', jsonPath);
-      const raw = fs.readFileSync(abs, 'utf8');
-      const sa = JSON.parse(raw);
-      return {
-        projectId: sa.project_id,
-        clientEmail: sa.client_email,
-        privateKey: sa.private_key,
-      };
+      if (!fs.existsSync(abs)) continue;
+      return readFcmSaFile(abs);
     } catch (e) {
-      console.warn('[pushSender] FCM_SA_JSON_PATH:', e.message || e);
-      return null;
+      fcmCredentialsHint = `FCM file ${abs}: ${e.message || e}`;
+      console.warn('[pushSender]', fcmCredentialsHint);
     }
   }
   const projectId = process.env.FCM_PROJECT_ID;
   const clientEmail = process.env.FCM_CLIENT_EMAIL;
   const privateKey = (process.env.FCM_PRIVATE_KEY || '').replace(/\\n/g, '\n');
-  if (!projectId || !clientEmail || !privateKey) return null;
-  return { projectId, clientEmail, privateKey };
+  if (projectId && clientEmail && privateKey) {
+    return { projectId, clientEmail, privateKey };
+  }
+  if (!fcmCredentialsHint) {
+    fcmCredentialsHint = 'Thiếu FCM_SA_JSON, FCM_SA_JSON_PATH, secrets/firebase-sa.json hoặc FCM_PROJECT_ID + FCM_CLIENT_EMAIL + FCM_PRIVATE_KEY';
+  }
+  return null;
 }
 
 async function getFcmAccessToken() {
@@ -366,7 +384,7 @@ async function sendFcmIncomingCall(tokens, notification) {
   if (!tokens.length) return;
   const auth = await getFcmAccessToken();
   if (!auth) {
-    console.warn('[pushSender] incoming_call: thiếu FCM credentials (FCM_SA_JSON)');
+    console.warn('[pushSender] incoming_call: thiếu FCM credentials —', fcmCredentialsHint || 'FCM_SA_JSON');
     return;
   }
   const meta = (notification.metadata && typeof notification.metadata === 'object')
