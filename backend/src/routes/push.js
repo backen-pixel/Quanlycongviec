@@ -4,6 +4,7 @@ const { supabase } = require('../config/supabase');
 const { isNotificationTypeAllowed } = require('../helpers/notificationPrefTypes');
 const { DEFAULT_PREFS, invalidateNotificationPrefsCache } = require('../helpers/notificationPrefsUser');
 const { isExpiryDeadlineNotificationType } = require('../helpers/notificationOperationalFilter');
+const { isRestTableMissingError } = require('../helpers/pushDeviceTokensPg');
 let webpush;
 try { webpush = require('web-push'); } catch { webpush = null; }
 
@@ -243,7 +244,7 @@ r.get('/status', async (req, res) => {
       ok: status.tableOk && status.fcmConfigured,
       ...status,
       hint: !status.tableOk
-        ? 'Chạy SQL database/204_push_device_tokens.sql trên Supabase SQL Editor'
+        ? 'Chạy NOTIFY pgrst, \'reload schema\'; trên Supabase SQL Editor (bảng có nhưng API chưa reload cache)'
         : !status.fcmConfigured
           ? 'Backend thiếu FCM_SA_JSON (Render Environment)'
           : status.tokens.fcm === 0
@@ -285,9 +286,12 @@ r.post('/device-token', async (req, res) => {
     ).select('id, platform, last_seen_at').single();
 
     if (error) {
-      if (error.code === '42P01' || String(error.message || '').includes('push_device_tokens')) {
+      if (isRestTableMissingError(error)) {
+        const { upsertDeviceTokenPg } = require('../helpers/pushDeviceTokensPg');
+        const row = await upsertDeviceTokenPg(uid, token, platform, deviceId);
+        if (row) return res.json({ ok: true, registration: row });
         return res.status(503).json({
-          error: 'Chạy migration database/204_push_device_tokens.sql',
+          error: 'PostgREST chưa thấy bảng push_device_tokens — chạy NOTIFY pgrst, \'reload schema\'; hoặc thêm SUPABASE_DB_URL trên server',
         });
       }
       throw error;

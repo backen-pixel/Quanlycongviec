@@ -16,3 +16,6 @@ create index if not exists idx_push_device_tokens_user on public.push_device_tok
 create index if not exists idx_push_device_tokens_token on public.push_device_tokens(token);
 
 comment on table public.push_device_tokens is 'Expo/FCM/APNs device tokens cho push khi app không chạy';
+
+-- Reload PostgREST schema cache (Supabase API)
+NOTIFY pgrst, 'reload schema';

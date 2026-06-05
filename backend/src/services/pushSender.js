@@ -6,6 +6,12 @@
 const fs = require('fs');
 const path = require('path');
 const { supabase } = require('../config/supabase');
+const {
+  isRestTableMissingError,
+  probePushTokensTablePg,
+  fetchUserTokensPg,
+  deleteTokenByValuePg,
+} = require('../helpers/pushDeviceTokensPg');
 const { isNotificationAllowedForUser } = require('../helpers/notificationPrefsUser');
 const { isExpiryDeadlineNotificationType } = require('../helpers/notificationOperationalFilter');
 
@@ -101,10 +107,11 @@ async function fetchUserTokens(userId) {
     .select('token, platform')
     .eq('user_id', userId);
   if (error) {
-    const msg = String(error.message || '');
-    if (error.code === '42P01' || /push_device_tokens/i.test(msg)) {
+    if (isRestTableMissingError(error)) {
+      const pgRows = await fetchUserTokensPg(userId);
+      if (pgRows) return pgRows;
       console.error(
-        '[pushSender] Bảng push_device_tokens chưa tồn tại — chạy database/204_push_device_tokens.sql trên Supabase',
+        '[pushSender] Bảng push_device_tokens — PostgREST chưa reload schema. Chạy: NOTIFY pgrst, \'reload schema\';',
       );
       return empty;
     }
@@ -121,18 +128,21 @@ async function fetchUserTokens(userId) {
 async function getPushInfraStatus(userId) {
   const creds = loadFcmCredentials();
   const { error: probeErr } = await supabase.from('push_device_tokens').select('id').limit(1);
-  if (probeErr) {
-    const missing = probeErr.code === '42P01'
-      || /push_device_tokens/i.test(String(probeErr.message || ''));
-    if (missing) {
+  let tableOk = !probeErr;
+  if (probeErr && isRestTableMissingError(probeErr)) {
+    tableOk = await probePushTokensTablePg();
+    if (!tableOk) {
       return {
         tableOk: false,
         fcmConfigured: !!creds,
         fcmProjectId: creds?.projectId || null,
         tokens: { expo: 0, fcm: 0 },
-        error: 'push_device_tokens table missing',
+        error: 'push_device_tokens table missing or schema cache stale',
+        hint: 'Chạy NOTIFY pgrst, \'reload schema\'; trên Supabase SQL Editor',
       };
     }
+  } else if (probeErr) {
+    throw probeErr;
   }
   const rows = userId ? await fetchUserTokens(userId) : { expo: [], fcm: [] };
   return {
