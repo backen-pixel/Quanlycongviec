@@ -42,6 +42,18 @@ async function runMigrations() {
     console.log('⚠️ deadline check error:', e.message);
   }
 
+  // ═══ 4. push_device_tokens (FCM khi app kill) ═══
+  try {
+    const { error } = await supabase.from('push_device_tokens').select('id').limit(1);
+    if (error && (error.code === 'PGRST205' || error.message.includes('push_device_tokens'))) {
+      console.log('⚠️ Table push_device_tokens not found. Chạy migrations/204_push_device_tokens.sql trên Supabase SQL Editor.');
+    } else {
+      console.log('✅ push_device_tokens OK');
+    }
+  } catch (e) {
+    console.log('⚠️ push_device_tokens check error:', e.message);
+  }
+
   console.log('🔄 Migration check complete.');
 }
 
