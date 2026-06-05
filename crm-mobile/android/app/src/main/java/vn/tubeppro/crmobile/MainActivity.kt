@@ -38,6 +38,8 @@ class MainActivity : ReactActivity() {
       obj.put("groupId", intent.getStringExtra("group_id") ?: "")
       obj.put("groupName", intent.getStringExtra("group_name") ?: "")
       obj.put("kind", "audio")
+      val callAction = intent.getStringExtra("call_action")?.trim().orEmpty()
+      if (callAction.isNotBlank()) obj.put("callAction", callAction)
       getSharedPreferences("crm_call_intent", MODE_PRIVATE)
         .edit()
         .putString("pending_call_json", obj.toString())

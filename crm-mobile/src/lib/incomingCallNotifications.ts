@@ -15,6 +15,8 @@ export type IncomingCallPayload = {
   isGroup?: boolean;
   groupId?: string;
   groupName?: string;
+  /** accept — mở app từ native sau khi user bấm Trả lời */
+  callAction?: 'accept' | 'reject';
 };
 
 const PENDING_CALL_KEY = 'crm_pending_incoming_call_v1';

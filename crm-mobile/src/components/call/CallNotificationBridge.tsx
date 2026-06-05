@@ -18,7 +18,11 @@ export default function CallNotificationBridge() {
 
   useEffect(() => {
     void consumeNativeCallIntent().then((p) => {
-      if (p) applyIncomingFromPush(p);
+      if (!p) return;
+      applyIncomingFromPush(p);
+      if (p.callAction === 'accept') {
+        void acceptCall();
+      }
     });
     void consumePendingIncomingCall().then((p) => {
       if (p) applyIncomingFromPush(p);

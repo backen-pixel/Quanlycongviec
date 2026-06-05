@@ -141,7 +141,12 @@ class FloatingBubbleOverlayModule(private val reactContext: ReactApplicationCont
 
   @ReactMethod
   fun consumeFcmToken(promise: Promise) {
-    promise.resolve(null)
+    try {
+      val token = prefs.getString(vn.tubeppro.crmobile.call.IncomingCallHelper.FCM_TOKEN_KEY, null)
+      promise.resolve(token)
+    } catch (e: Exception) {
+      promise.resolve(null)
+    }
   }
 
   @ReactMethod
@@ -235,49 +240,22 @@ class FloatingBubbleOverlayModule(private val reactContext: ReactApplicationCont
     groupId: String,
     groupName: String,
   ) {
-    ensureCallChannel()
-    val nm = NotificationManagerCompat.from(reactContext)
-    val intent = Intent(reactContext, MainActivity::class.java).apply {
-      flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-      putExtra("incoming_call", true)
-      putExtra("call_id", callId)
-      putExtra("from_user_id", fromUserId)
-      putExtra("from_name", fromName)
-      putExtra("is_group", isGroup)
-      putExtra("group_id", groupId)
-      putExtra("group_name", groupName)
-    }
-    val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-    val contentPending = PendingIntent.getActivity(reactContext, callId.hashCode(), intent, pendingFlags)
-    val fullScreenPending = PendingIntent.getActivity(
-      reactContext,
-      callId.hashCode() + 1,
-      intent,
-      pendingFlags,
+    val data = vn.tubeppro.crmobile.call.IncomingCallHelper.CallData(
+      callId = callId,
+      fromUserId = fromUserId,
+      fromName = fromName.ifBlank { "Người gọi" },
+      isGroup = isGroup,
+      groupId = groupId,
+      groupName = groupName,
+      title = title.ifBlank { if (isGroup) "Cuộc gọi nhóm" else "Cuộc gọi đến" },
+      body = body,
     )
-    val ringtone = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-    val notification = NotificationCompat.Builder(reactContext, CALL_CHANNEL)
-      .setSmallIcon(android.R.drawable.stat_sys_phone_call)
-      .setContentTitle(title.ifBlank { "Cuộc gọi đến" })
-      .setContentText(body)
-      .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-      .setPriority(NotificationCompat.PRIORITY_MAX)
-      .setCategory(NotificationCompat.CATEGORY_CALL)
-      .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-      .setOngoing(true)
-      .setAutoCancel(false)
-      .setOnlyAlertOnce(false)
-      .setContentIntent(contentPending)
-      .setFullScreenIntent(fullScreenPending, true)
-      .setVibrate(longArrayOf(0, 600, 200, 600, 200, 600))
-      .setSound(ringtone)
-      .build()
-    nm.notify(callId.hashCode(), notification)
+    vn.tubeppro.crmobile.call.IncomingCallHelper.showIncomingCall(reactContext, data)
   }
 
   @ReactMethod
   fun cancelIncomingCallNotification(callId: String) {
-    NotificationManagerCompat.from(reactContext).cancel(callId.hashCode())
+    vn.tubeppro.crmobile.call.IncomingCallHelper.cancelCallNotification(reactContext, callId)
   }
 
   /** Đọc intent mở app từ thông báo cuộc gọi native. */
