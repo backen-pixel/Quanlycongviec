@@ -228,6 +228,7 @@ export function useWorkshopStaffFilter({
     companyEmployees,
     companyDepts,
     employeeFilterListByRegion,
+    employeeOptionsFiltered,
     employeeOptionsForSelect,
     personRegionMap,
     resetStaffFilters,

@@ -166,7 +166,7 @@ r.get('/notifications', responseCache({ ttl: 20, scope: 'user', tags: ['notifica
     } else if (ch === 'events') {
       q = q.in('type', EVENT_NOTIFICATION_TYPES);
     } else if (ch === 'assignments') {
-      q = q.in('type', ASSIGNMENT_NOTIFICATION_TYPES);
+      q = q.or(`type.in.(${ASSIGNMENT_NOTIFICATION_TYPES.join(',')}),entity_type.eq.crm_assignment`);
     } else if (ch === 'activity') {
       q = q.not('type', 'in', postgrestInTypesList([
         ...EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST,
@@ -260,7 +260,7 @@ r.put('/notifications/read-all', async (req, res) => {
     } else if (channel === 'events') {
       q = q.in('type', EVENT_NOTIFICATION_TYPES);
     } else if (channel === 'assignments') {
-      q = q.in('type', ASSIGNMENT_NOTIFICATION_TYPES);
+      q = q.or(`type.in.(${ASSIGNMENT_NOTIFICATION_TYPES.join(',')}),entity_type.eq.crm_assignment`);
     } else if (channel === 'deadlines') {
       q = q.in('type', EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST);
     }

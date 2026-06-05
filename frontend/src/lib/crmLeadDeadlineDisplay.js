@@ -1,5 +1,13 @@
 import { effectivePipelineStageSlaDays } from './crmPipelineSla';
 
+/**
+ * Ẩn badge deadline trên thẻ Kanban khi user tick «đã tương tác».
+ * Chuyển cột vẫn bắt buộc đặt deadline nếu cột đích bật requires_deadline.
+ */
+export function shouldHideCrmKanbanDeadlineOnCard(item) {
+  return !!item?.is_interacted;
+}
+
 /** Cột pipeline Thua / Mất — không đưa vào view Deadline. */
 export function isCrmPipelineStageLost(stage) {
   if (!stage) return false;

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { formatDate } from '../lib/utils';
@@ -55,6 +55,104 @@ function isAssignmentAssignee(task, userId) {
 /** Kéo cột / đổi trạng thái: người tạo hoặc người được giao (chung một cột cho cả nhóm). */
 function canMoveAssignment(task, userId) {
   return isAssignmentCreator(task, userId) || isAssignmentAssignee(task, userId);
+}
+
+const PIPELINE_STATUS_STAGES = [
+  { value: 'pending', label: 'Chưa làm', icon: Circle, activeClass: 'bg-gray-100 border-gray-300 text-gray-700' },
+  { value: 'in_progress', label: 'Đang làm', icon: Clock, activeClass: 'bg-blue-100 border-blue-400 text-blue-800' },
+  { value: 'completed', label: 'Hoàn thành', icon: CheckCircle2, activeClass: 'bg-emerald-100 border-emerald-400 text-emerald-800' },
+];
+
+function AssignmentStatusStages({ status, canEdit, onChange, compact = false }) {
+  return (
+    <div className={`flex flex-wrap gap-1.5 ${compact ? '' : 'mt-1'}`}>
+      {PIPELINE_STATUS_STAGES.map((st) => {
+        const Icon = st.icon;
+        const active = status === st.value;
+        return (
+          <button
+            key={st.value}
+            type="button"
+            disabled={!canEdit}
+            onClick={() => canEdit && onChange(st.value)}
+            className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors ${
+              active ? st.activeClass + ' ring-1 ring-offset-1' : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
+            } ${!canEdit ? 'opacity-60 cursor-default' : 'cursor-pointer'}`}
+            title={canEdit ? `Đặt: ${st.label}` : st.label}
+          >
+            <Icon className={`h-3.5 w-3.5 ${active ? '' : 'opacity-50'}`} />
+            {st.label}
+            {active && <CheckCircle2 className="h-3 w-3 ml-0.5" />}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function PipelineTaskNotesSection({ item, canEdit, onNotesSaved }) {
+  const [text, setText] = useState(item.crm_task?.notes || '');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setText(item.crm_task?.notes || '');
+  }, [item.id, item.crm_task?.notes]);
+
+  if (!item.crm_task_id || !item.lead?.id) return null;
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.put(`/crm/leads/${item.lead.id}/tasks/${item.crm_task_id}/notes`, { notes: text });
+      onNotesSaved?.(text);
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi lưu ghi chú');
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div className="border border-amber-200 bg-amber-50/60 rounded-xl p-3 space-y-2">
+      <h4 className="text-sm font-semibold text-amber-900 flex items-center gap-1.5">
+        <MessageSquare className="h-4 w-4" /> Ghi chú (đồng bộ tab Nhiệm vụ lead/deal)
+      </h4>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        readOnly={!canEdit}
+        rows={3}
+        placeholder={canEdit ? 'Nhập ghi chú tiến độ, kết quả làm việc…' : 'Chưa có ghi chú'}
+        className="w-full px-3 py-2 border border-amber-200 rounded-lg text-sm bg-white resize-y outline-none focus:ring-2 focus:ring-amber-300"
+      />
+      {canEdit && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            disabled={saving}
+            onClick={save}
+            className="h-8 px-4 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold cursor-pointer disabled:opacity-50"
+          >
+            {saving ? 'Đang lưu…' : 'Lưu ghi chú'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LeadAssignmentLink({ lead, className = '' }) {
+  if (!lead?.id) return null;
+  const label = [lead.code, lead.title].filter(Boolean).join(' — ') || (lead.type === 'deal' ? 'Deal' : 'Lead');
+  return (
+    <Link
+      to={`/crm/leads/${lead.id}`}
+      onClick={(e) => e.stopPropagation()}
+      className={`inline-flex items-center gap-0.5 rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-800 hover:bg-indigo-100 ${className}`}
+      title="Mở lead/deal gốc"
+    >
+      🔗 {label}
+    </Link>
+  );
 }
 
 export default function CRMAssignmentsPage() {
@@ -285,14 +383,21 @@ export default function CRMAssignmentsPage() {
   };
   const updateItem = async (id, patch) => {
     const task = items.find((t) => String(t.id) === String(id));
-    const progressOnly = patch && Object.keys(patch).every((k) => k === 'status');
+    const progressKeys = new Set(['status', 'column_id', 'position']);
+    const progressOnly = patch && Object.keys(patch).every((k) => progressKeys.has(k));
     if (progressOnly && task && !canMoveTask(task)) {
       alert('Chỉ người tạo hoặc người được giao mới được cập nhật tiến độ công việc này.');
       return;
     }
     try {
-      await api.put(`/crm/assignments/${id}`, patch);
-      void load();
+      const { data } = await api.put(`/crm/assignments/${id}`, patch);
+      const updated = data?.assignment;
+      if (updated) {
+        setItems((prev) => prev.map((t) => (String(t.id) === String(id) ? { ...t, ...updated } : t)));
+        setViewingItem((prev) => (prev && String(prev.id) === String(id) ? { ...prev, ...updated } : prev));
+      } else {
+        void load();
+      }
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Không cập nhật được nhiệm vụ');
     }
@@ -304,8 +409,14 @@ export default function CRMAssignmentsPage() {
       return;
     }
     try {
-      await api.post(`/crm/assignments/${id}/move`, { column_id, position });
-      void load();
+      const { data } = await api.post(`/crm/assignments/${id}/move`, { column_id, position });
+      const updated = data?.assignment;
+      if (updated) {
+        setItems((prev) => prev.map((t) => (String(t.id) === String(id) ? { ...t, ...updated } : t)));
+        setViewingItem((prev) => (prev && String(prev.id) === String(id) ? { ...prev, ...updated } : prev));
+      } else {
+        void load();
+      }
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Không di chuyển được nhiệm vụ');
     }
@@ -661,23 +772,24 @@ function Card({ task, canManage, canMove, onDragStart, onOpen, onEdit, onDelete,
     >
       <div className="flex items-start gap-1.5">
         {canMove ? (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            const next = task.status === 'completed' ? 'pending' : (task.status === 'pending' ? 'in_progress' : 'completed');
-            onUpdate(task.id, { status: next });
-          }}
-          className="mt-0.5 shrink-0 cursor-pointer"
-          title="Đổi trạng thái"
-        >
-          {task.status === 'completed' ? (
-            <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-          ) : task.status === 'in_progress' ? (
-            <Clock className="h-4 w-4 text-blue-500" />
-          ) : (
-            <Circle className="h-4 w-4 text-gray-300" />
-          )}
-        </button>
+        <div className="mt-0.5 shrink-0 flex flex-col gap-0.5" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            onClick={() => onUpdate(task.id, { status: task.status === 'in_progress' ? 'pending' : 'in_progress' })}
+            className={`p-0.5 rounded cursor-pointer ${task.status === 'in_progress' ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:text-blue-500'}`}
+            title="Đang làm"
+          >
+            <Clock className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => onUpdate(task.id, { status: task.status === 'completed' ? 'pending' : 'completed' })}
+            className={`p-0.5 rounded cursor-pointer ${task.status === 'completed' ? 'text-emerald-600 bg-emerald-50' : 'text-gray-400 hover:text-emerald-500'}`}
+            title="Hoàn thành"
+          >
+            <CheckCircle2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
         ) : (
           <span className="mt-0.5 shrink-0" title="Chỉ người tạo / người được giao đổi trạng thái">
             {task.status === 'completed' ? (
@@ -695,6 +807,7 @@ function Card({ task, canManage, canMove, onDragStart, onOpen, onEdit, onDelete,
           </p>
           {task.description && <p className="text-[11px] text-gray-500 mt-0.5 line-clamp-2">{task.description}</p>}
           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+            <LeadAssignmentLink lead={task.lead} />
             <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${pri.color}`}>{pri.label}</span>
             {task.deadline && (
               <span className={`text-[10px] flex items-center gap-0.5 ${overdue ? 'text-red-600 font-bold' : 'text-gray-500'}`}>
@@ -758,17 +871,24 @@ function TaskRow({ task, canManage, canMove, onOpen, onEdit, onDelete, onUpdate,
   return (
     <div className="flex items-center gap-2 py-2 px-3 hover:bg-gray-50 border-b last:border-0">
       {canMove ? (
-      <button
-        onClick={() => {
-          const next = task.status === 'completed' ? 'pending' : (task.status === 'pending' ? 'in_progress' : 'completed');
-          onUpdate(task.id, { status: next });
-        }}
-        className="shrink-0 cursor-pointer"
-      >
-        {task.status === 'completed' ? <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-          : task.status === 'in_progress' ? <Clock className="h-4 w-4 text-blue-500" />
-          : <Circle className="h-4 w-4 text-gray-300" />}
-      </button>
+      <div className="shrink-0 flex items-center gap-0.5">
+        <button
+          type="button"
+          onClick={() => onUpdate(task.id, { status: task.status === 'in_progress' ? 'pending' : 'in_progress' })}
+          className={`p-1 rounded cursor-pointer ${task.status === 'in_progress' ? 'text-blue-600 bg-blue-50' : 'text-gray-300 hover:text-blue-500'}`}
+          title="Đang làm"
+        >
+          <Clock className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => onUpdate(task.id, { status: task.status === 'completed' ? 'pending' : 'completed' })}
+          className={`p-1 rounded cursor-pointer ${task.status === 'completed' ? 'text-emerald-600 bg-emerald-50' : 'text-gray-300 hover:text-emerald-500'}`}
+          title="Hoàn thành"
+        >
+          <CheckCircle2 className="h-4 w-4" />
+        </button>
+      </div>
       ) : (
         <span className="shrink-0">
           {task.status === 'completed' ? <CheckCircle2 className="h-4 w-4 text-emerald-500" />
@@ -779,6 +899,7 @@ function TaskRow({ task, canManage, canMove, onOpen, onEdit, onDelete, onUpdate,
       <div className="flex-1 min-w-0 cursor-pointer" onClick={() => (onOpen || onEdit)?.(task)}>
         <p className={`text-sm hover:text-blue-700 ${task.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}>{task.title}</p>
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+          <LeadAssignmentLink lead={task.lead} />
           {col && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ backgroundColor: (col.color || '#999') + '20', color: col.color }}>{col.name}</span>}
           {task.deadline && (
             <span className={`text-[10px] flex items-center gap-0.5 ${overdue ? 'text-red-600 font-bold' : 'text-gray-400'}`}>
@@ -1285,10 +1406,13 @@ function DetailModal({ item, columns, onClose, onEdit, onUpdate, onDelete }) {
   const isAssignee = assigneeList.some((a) => String(a.id) === uid);
   const canMove = isCreator || isAssignee;
 
-  const pri = PRIORITY_MAP[item.priority] || PRIORITY_MAP.medium;
-  const status = STATUS_MAP[item.status] || STATUS_MAP.pending;
-  const col = columns.find((c) => c.id === item.column_id);
-  const overdue = item.deadline && new Date(item.deadline) < new Date() && item.status !== 'completed';
+  const [localItem, setLocalItem] = useState(item);
+  useEffect(() => { setLocalItem(item); }, [item]);
+
+  const pri = PRIORITY_MAP[localItem.priority] || PRIORITY_MAP.medium;
+  const status = STATUS_MAP[localItem.status] || STATUS_MAP.pending;
+  const col = columns.find((c) => c.id === localItem.column_id);
+  const overdue = localItem.deadline && new Date(localItem.deadline) < new Date() && localItem.status !== 'completed';
 
   const fmtDt = (iso) => {
     if (!iso) return '—';
@@ -1296,10 +1420,16 @@ function DetailModal({ item, columns, onClose, onEdit, onUpdate, onDelete }) {
     catch { return iso; }
   };
 
-  const toggleStatus = () => {
-    const next = item.status === 'completed' ? 'pending' : (item.status === 'pending' ? 'in_progress' : 'completed');
-    onUpdate(item.id, { status: next });
-    onClose();
+  const setStatus = (nextStatus) => {
+    onUpdate(localItem.id, { status: nextStatus });
+    setLocalItem((prev) => ({ ...prev, status: nextStatus }));
+  };
+
+  const onNotesSaved = (notes) => {
+    setLocalItem((prev) => ({
+      ...prev,
+      crm_task: { ...(prev.crm_task || {}), notes },
+    }));
   };
 
   return (
@@ -1316,20 +1446,18 @@ function DetailModal({ item, columns, onClose, onEdit, onUpdate, onDelete }) {
               </span>
               {overdue && <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-red-100 text-red-700">🚨 Quá hạn</span>}
             </div>
-            <h2 className={`text-xl font-bold ${item.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}>{item.title}</h2>
+            <h2 className={`text-xl font-bold ${localItem.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}>{localItem.title}</h2>
+            {canMove && (
+              <AssignmentStatusStages status={localItem.status} canEdit onChange={setStatus} />
+            )}
           </div>
           <div className="flex items-center gap-1 shrink-0">
-            {canMove && (
-            <button onClick={toggleStatus} className="h-8 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium cursor-pointer">
-              {item.status === 'completed' ? 'Mở lại' : 'Đánh dấu xong'}
-            </button>
-            )}
             {isCreator && (
               <>
-                <button onClick={() => onEdit(item)} title="Sửa" className="h-8 w-8 rounded-lg border hover:bg-gray-50 flex items-center justify-center cursor-pointer">
+                <button onClick={() => onEdit(localItem)} title="Sửa" className="h-8 w-8 rounded-lg border hover:bg-gray-50 flex items-center justify-center cursor-pointer">
                   <Pencil className="h-4 w-4 text-gray-600" />
                 </button>
-                <button onClick={() => onDelete(item.id)} title="Xoá" className="h-8 w-8 rounded-lg border hover:bg-red-50 flex items-center justify-center cursor-pointer">
+                <button onClick={() => onDelete(localItem.id)} title="Xoá" className="h-8 w-8 rounded-lg border hover:bg-red-50 flex items-center justify-center cursor-pointer">
                   <Trash2 className="h-4 w-4 text-red-500" />
                 </button>
               </>
@@ -1346,28 +1474,47 @@ function DetailModal({ item, columns, onClose, onEdit, onUpdate, onDelete }) {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
             <div>
               <p className="text-[11px] text-gray-500">Người giao</p>
-              <p className="font-medium">{item.created_by?.full_name || '—'}</p>
+              <p className="font-medium">{localItem.created_by?.full_name || '—'}</p>
             </div>
             <div>
               <p className="text-[11px] text-gray-500">Công ty</p>
-              <p className="font-medium">{item.company?.short_name || item.company?.name || '—'}</p>
+              <p className="font-medium">{localItem.company?.short_name || localItem.company?.name || '—'}</p>
             </div>
+            {localItem.lead && (
+              <div className="md:col-span-2">
+                <p className="text-[11px] text-gray-500">Lead / Deal gốc</p>
+                <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                  <LeadAssignmentLink lead={localItem.lead} />
+                  {localItem.crm_task_id && (
+                    <Link
+                      to={`/crm/leads/${localItem.lead.id}?tab=tasks`}
+                      className="inline-flex items-center gap-0.5 rounded border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-800 hover:bg-violet-100"
+                      title="Nhiệm vụ pipeline trên lead/deal"
+                    >
+                      📋 Nhiệm vụ pipeline
+                    </Link>
+                  )}
+                </div>
+              </div>
+            )}
             <div>
               <p className="text-[11px] text-gray-500">Tạo lúc</p>
-              <p className="font-medium">{fmtDt(item.created_at)}</p>
+              <p className="font-medium">{fmtDt(localItem.created_at)}</p>
             </div>
             <div>
               <p className={`text-[11px] ${overdue ? 'text-red-500' : 'text-gray-500'}`}>Deadline</p>
-              <p className={`font-medium ${overdue ? 'text-red-600' : ''}`}>{fmtDt(item.deadline)}</p>
+              <p className={`font-medium ${overdue ? 'text-red-600' : ''}`}>{fmtDt(localItem.deadline)}</p>
             </div>
           </div>
 
-          {item.description && (
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
-              <p className="text-[11px] text-amber-700 font-semibold mb-1">📝 Mô tả công việc</p>
-              <p className="text-sm text-gray-800 whitespace-pre-wrap">{item.description}</p>
+          {localItem.description && (
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+              <p className="text-[11px] text-slate-600 font-semibold mb-1">📋 Mô tả công việc</p>
+              <p className="text-sm text-gray-800 whitespace-pre-wrap">{localItem.description}</p>
             </div>
           )}
+
+          <PipelineTaskNotesSection item={localItem} canEdit={canMove} onNotesSaved={onNotesSaved} />
 
           {/* Assignees */}
           <div>
@@ -1385,11 +1532,11 @@ function DetailModal({ item, columns, onClose, onEdit, onUpdate, onDelete }) {
             </div>
           </div>
 
-          <RequirementFilesGallery assignmentId={item.id} canUpload={isCreator} />
+          <RequirementFilesGallery assignmentId={localItem.id} canUpload={isCreator} />
 
-          <CommentSection assignmentId={item.id} />
+          <CommentSection assignmentId={localItem.id} />
 
-          <SubmitFilesCompact assignmentId={item.id} canUpload={isAssignee || isCreator} />
+          <SubmitFilesCompact assignmentId={localItem.id} canUpload={isAssignee || isCreator} />
         </div>
 
         <div className="px-5 py-3 border-t bg-gray-50 rounded-b-2xl flex justify-end gap-2">

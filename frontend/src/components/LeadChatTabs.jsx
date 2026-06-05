@@ -1,10 +1,18 @@
 import { Fragment, useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { resolveMediaUrl, BROKEN_MEDIA_PLACEHOLDER } from '../lib/mediaUrl';
-import { Trash2, Send, Users, Crown, Shield, Building2, Eye, Paperclip, X, Mic, Reply, CornerDownRight, Smile, Zap, Undo2, Check, Phone, Loader2 } from 'lucide-react';
+import { formatDate } from '../lib/utils';
+import {
+  Trash2, Send, Users, Crown, Shield, Building2, Eye, Paperclip, X, Mic, Reply,
+  CornerDownRight, Smile, Zap, Undo2, Check, Phone, Loader2, ClipboardList,
+  Calendar, CheckCircle2, Circle, Clock, Plus,
+} from 'lucide-react';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
+import { useWorkshopStaffFilter } from '../hooks/useWorkshopStaffFilter';
+import WorkshopStaffFilterPanel from './WorkshopStaffFilterPanel';
 import { useMessengerDock } from '../context/MessengerDockContext';
-import EmployeePicker from './EmployeePicker';
 import MessengerMessageHoverActions from './MessengerMessageHoverActions';
 import MessengerMessageSelectionBar from './MessengerMessageSelectionBar';
 import MessengerForwardMessageModal from './MessengerForwardMessageModal';
@@ -470,17 +478,71 @@ function ReplyComposerBar({ replyTo, onCancel }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Tab Thành viên — dùng EmployeePicker lọc theo Công ty + Phòng ban
+// Tab Thành viên — bộ lọc NV giống CRM Dashboard + chọn nhiều người
 // ═══════════════════════════════════════════════════════════════
 export function LeadMembersTab({ leadId }) {
   const [members, setMembers] = useState([]);
   const [companies, setCompanies] = useState([]);
-  const [companyId, setCompanyId] = useState('');
+  const [filterCompany, setFilterCompany] = useState('');
   const [selectedUsers, setSelectedUsers] = useState([]); // [{user_id, role, name}]
-  const [pickUserId, setPickUserId] = useState(null);
+  const [checkedUserIds, setCheckedUserIds] = useState(() => new Set());
   const [pickRole, setPickRole] = useState('member');
   const [loading, setLoading] = useState(false);
+  const [leadAssignments, setLeadAssignments] = useState([]);
+  const [assignColumns, setAssignColumns] = useState([]);
+  const [assignLoading, setAssignLoading] = useState(false);
+  const [showAssignForm, setShowAssignForm] = useState(false);
+  const [assignTitle, setAssignTitle] = useState('');
+  const [assignDesc, setAssignDesc] = useState('');
+  const [assignDeadline, setAssignDeadline] = useState('');
+  const [assignPriority, setAssignPriority] = useState('medium');
+  const [assignColumnId, setAssignColumnId] = useState('');
+  const [assignMemberIds, setAssignMemberIds] = useState(() => new Set());
   const { user } = useAuth();
+  const isAdmin = isAdminLike(user);
+
+  const ASSIGN_PRIORITIES = [
+    { value: 'low', label: 'Thấp' },
+    { value: 'medium', label: 'TB' },
+    { value: 'high', label: 'Cao' },
+    { value: 'urgent', label: 'Gấp' },
+  ];
+  const ASSIGN_STATUS_ICON = {
+    pending: Circle,
+    in_progress: Clock,
+    completed: CheckCircle2,
+    cancelled: X,
+  };
+
+  const staffFilter = useWorkshopStaffFilter({
+    user,
+    isAdmin,
+    companies,
+    filterCompany,
+    setFilterCompany,
+    forModule: 'crm',
+  });
+
+  const {
+    isCompanyScopedAdmin,
+    userCompanyId,
+    dashboardScopeCompanyId,
+    filterRegion,
+    setFilterRegion,
+    filterPersonId,
+    setFilterPersonId,
+    filterPersonName,
+    setFilterPersonName,
+    assigneeListSearch,
+    setAssigneeListSearch,
+    companyRegions,
+    companyEmployees,
+    companyDepts,
+    employeeFilterListByRegion,
+    employeeOptionsFiltered,
+    employeeOptionsForSelect,
+    onCompanyChange,
+  } = staffFilter;
 
   const MEMBER_ROLES = [
     { value: 'responsible', label: 'Chịu trách nhiệm', icon: <Crown size={12} className="text-red-500" />, color: 'text-red-600 bg-red-50' },
@@ -498,16 +560,120 @@ export function LeadMembersTab({ leadId }) {
     }
   }, [leadId]);
 
+  const loadAssignments = useCallback(async () => {
+    try {
+      const { data } = await api.get(`/crm/leads/${leadId}/assignments`);
+      setLeadAssignments(data?.assignments || []);
+    } catch {
+      setLeadAssignments([]);
+    }
+  }, [leadId]);
+
   useEffect(() => {
     void load();
-    api.get('/companies', { params: { for_module: 'crm' } }).then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {});
-  }, [leadId, load]);
+    void loadAssignments();
+    api.get('/companies', { params: { for_module: 'crm' } }).then((r) => {
+      const cos = r.data?.companies || r.data || [];
+      setCompanies(Array.isArray(cos) ? cos : []);
+    }).catch(() => {});
+    api.get('/crm/assignments/columns').then((r) => {
+      const cols = r.data?.columns || [];
+      setAssignColumns(cols);
+      if (cols.length && !assignColumnId) {
+        setAssignColumnId(String(cols[0].id));
+      }
+    }).catch(() => setAssignColumns([]));
+  }, [leadId, load, loadAssignments]);
 
-  const addToQueue = () => {
-    if (!pickUserId) return;
-    if (selectedUsers.find(u => u.user_id === pickUserId)) return;
-    setSelectedUsers(prev => [...prev, { user_id: pickUserId, role: pickRole }]);
-    setPickUserId(null);
+  const toggleAssignMember = (userId) => {
+    const sid = String(userId);
+    setAssignMemberIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sid)) next.delete(sid);
+      else next.add(sid);
+      return next;
+    });
+  };
+
+  const selectAllMembersForAssign = () => {
+    setAssignMemberIds(new Set(members.map((m) => String(m.user_id)).filter(Boolean)));
+  };
+
+  const submitMemberAssignment = async () => {
+    if (!assignTitle.trim()) return alert('Nhập tiêu đề nhiệm vụ');
+    if (!assignMemberIds.size) return alert('Chọn ít nhất một thành viên');
+    setAssignLoading(true);
+    try {
+      await api.post(`/crm/leads/${leadId}/assignments`, {
+        title: assignTitle.trim(),
+        description: assignDesc.trim() || null,
+        priority: assignPriority,
+        column_id: assignColumnId || null,
+        deadline: assignDeadline ? new Date(assignDeadline).toISOString() : null,
+        assignee_ids: [...assignMemberIds],
+      });
+      setAssignTitle('');
+      setAssignDesc('');
+      setAssignDeadline('');
+      setAssignPriority('medium');
+      setAssignMemberIds(new Set());
+      setShowAssignForm(false);
+      await loadAssignments();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi giao việc');
+    } finally {
+      setAssignLoading(false);
+    }
+  };
+
+  const blockedUserIds = useMemo(() => {
+    const ids = new Set();
+    for (const m of members) {
+      if (m?.user_id) ids.add(String(m.user_id));
+    }
+    for (const s of selectedUsers) {
+      if (s?.user_id) ids.add(String(s.user_id));
+    }
+    return ids;
+  }, [members, selectedUsers]);
+
+  const pickableEmployees = useMemo(
+    () => (employeeOptionsFiltered || []).filter((u) => u?.id && !blockedUserIds.has(String(u.id))),
+    [employeeOptionsFiltered, blockedUserIds],
+  );
+
+  const toggleCheckedUser = (userId) => {
+    const sid = String(userId);
+    setCheckedUserIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sid)) next.delete(sid);
+      else next.add(sid);
+      return next;
+    });
+  };
+
+  const selectAllPickable = () => {
+    setCheckedUserIds(new Set(pickableEmployees.map((u) => String(u.id))));
+  };
+
+  const clearChecked = () => setCheckedUserIds(new Set());
+
+  const addCheckedToQueue = () => {
+    if (!checkedUserIds.size) return;
+    const toAdd = pickableEmployees.filter((u) => checkedUserIds.has(String(u.id)));
+    if (!toAdd.length) return;
+    setSelectedUsers((prev) => {
+      const seen = new Set(prev.map((x) => String(x.user_id)));
+      const merged = [...prev];
+      for (const u of toAdd) {
+        const id = String(u.id);
+        if (seen.has(id)) continue;
+        seen.add(id);
+        merged.push({ user_id: u.id, role: pickRole, name: u.full_name || u.email || id });
+      }
+      return merged;
+    });
+    setCheckedUserIds(new Set());
   };
 
   const removeFromQueue = (uid) => setSelectedUsers(prev => prev.filter(u => u.user_id !== uid));
@@ -545,49 +711,147 @@ export function LeadMembersTab({ leadId }) {
   return (
     <div className="space-y-4">
       {/* Thêm thành viên */}
-      <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 space-y-2">
-        <p className="text-xs font-medium text-blue-700 flex items-center gap-1"><Building2 size={12} /> Thêm thành viên</p>
-        <div className="grid grid-cols-3 gap-2">
-          <select value={companyId} onChange={e => { setCompanyId(e.target.value); setPickUserId(null); }}
-            className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-400">
-            <option value="">Chọn công ty...</option>
-            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+      <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 space-y-3">
+        <p className="text-xs font-medium text-blue-700 flex items-center gap-1">
+          <Building2 size={12} /> Thêm thành viên
+        </p>
+
+        <WorkshopStaffFilterPanel
+          isAdmin={isAdmin}
+          isCompanyScopedAdmin={isCompanyScopedAdmin}
+          userCompanyId={userCompanyId}
+          companies={companies}
+          filterCompany={filterCompany}
+          onCompanyChange={onCompanyChange}
+          dashboardScopeCompanyId={dashboardScopeCompanyId}
+          companyRegions={companyRegions}
+          filterRegion={filterRegion}
+          setFilterRegion={setFilterRegion}
+          assigneeListSearch={assigneeListSearch}
+          setAssigneeListSearch={setAssigneeListSearch}
+          filterPersonId={filterPersonId}
+          setFilterPersonId={setFilterPersonId}
+          setFilterPersonName={setFilterPersonName}
+          employeeOptionsForSelect={employeeOptionsForSelect}
+          companyDepts={companyDepts}
+          filterPersonName={filterPersonName}
+          employeeFilterListByRegion={employeeFilterListByRegion}
+          companyEmployees={companyEmployees}
+          hidePersonSelect
+          hidePersonName
+        />
+
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="text-[10px] font-semibold text-slate-600">Quyền mặc định</label>
+          <select
+            value={pickRole}
+            onChange={(e) => setPickRole(e.target.value)}
+            className="h-8 px-2 border border-gray-200 rounded-lg text-xs bg-white focus:ring-2 focus:ring-blue-400"
+          >
+            {MEMBER_ROLES.map((r) => (
+              <option key={r.value} value={r.value}>{r.label}</option>
+            ))}
           </select>
-          <EmployeePicker
-            companyId={companyId}
-            value={pickUserId}
-            onChange={(id) => setPickUserId(id)}
-            placeholder="Chọn nhân viên..."
-            size="md"
-          />
-          <select value={pickRole} onChange={e => setPickRole(e.target.value)}
-            className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-400">
-            {MEMBER_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-          </select>
+          <span className="text-[10px] text-slate-500">
+            {pickableEmployees.length} NV khả dụng
+            {checkedUserIds.size > 0 ? ` · đã chọn ${checkedUserIds.size}` : ''}
+          </span>
+          <div className="ml-auto flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={selectAllPickable}
+              disabled={!pickableEmployees.length}
+              className="text-[10px] px-2 py-1 rounded-md border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
+            >
+              Chọn tất cả
+            </button>
+            <button
+              type="button"
+              onClick={clearChecked}
+              disabled={!checkedUserIds.size}
+              className="text-[10px] px-2 py-1 rounded-md border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
+            >
+              Bỏ chọn
+            </button>
+          </div>
         </div>
-        <button onClick={addToQueue} disabled={!pickUserId}
-          className="w-full py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-lg text-sm font-medium transition cursor-pointer disabled:opacity-40">
-          + Thêm vào danh sách
+
+        <div className="max-h-52 overflow-y-auto rounded-lg border border-blue-100 bg-white divide-y divide-slate-100">
+          {!dashboardScopeCompanyId && isAdmin && !isCompanyScopedAdmin ? (
+            <p className="text-xs text-amber-700 px-3 py-4 text-center">Chọn công ty để hiện danh sách nhân viên</p>
+          ) : pickableEmployees.length === 0 ? (
+            <p className="text-xs text-gray-400 px-3 py-4 text-center">
+              {employeeFilterListByRegion.length === 0
+                ? 'Công ty chưa có nhân viên CRM'
+                : 'Không còn NV phù hợp (đã là thành viên hoặc đã chọn)'}
+            </p>
+          ) : (
+            pickableEmployees.map((u) => {
+              const checked = checkedUserIds.has(String(u.id));
+              const deptName = companyDepts.find((d) => d.id === u.department_id)?.name || '';
+              return (
+                <label
+                  key={u.id}
+                  className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-blue-50/60 ${checked ? 'bg-blue-50' : ''}`}
+                >
+                  <input
+                    type="checkbox"
+                    className="rounded border-slate-300 text-blue-600"
+                    checked={checked}
+                    onChange={() => toggleCheckedUser(u.id)}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-gray-800 truncate">{u.full_name}</p>
+                    <p className="text-[10px] text-gray-400 truncate">
+                      {[deptName, u.position, u.email].filter(Boolean).join(' · ')}
+                    </p>
+                  </div>
+                </label>
+              );
+            })
+          )}
+        </div>
+
+        <button
+          type="button"
+          onClick={addCheckedToQueue}
+          disabled={!checkedUserIds.size}
+          className="w-full py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-lg text-sm font-medium transition cursor-pointer disabled:opacity-40"
+        >
+          + Thêm {checkedUserIds.size || ''} người vào danh sách
         </button>
 
         {/* Queue */}
         {selectedUsers.length > 0 && (
           <div className="space-y-1.5 pt-2 border-t border-blue-200">
             <p className="text-[10px] text-blue-600 font-medium">Đang chọn {selectedUsers.length} người:</p>
-            {selectedUsers.map(su => (
+            {selectedUsers.map((su) => (
               <div key={su.user_id} className="flex items-center gap-2 bg-white rounded-lg px-2 py-1.5 border border-blue-100">
-                <span className="flex-1 text-xs text-gray-700 truncate">{su.user_id.slice(0, 8)}...</span>
-                <select value={su.role} onChange={e => updateQueueRole(su.user_id, e.target.value)}
-                  className="text-[10px] border rounded px-1 py-0.5 bg-white">
-                  {MEMBER_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                <span className="flex-1 text-xs text-gray-700 truncate">{su.name || su.user_id}</span>
+                <select
+                  value={su.role}
+                  onChange={(e) => updateQueueRole(su.user_id, e.target.value)}
+                  className="text-[10px] border rounded px-1 py-0.5 bg-white"
+                >
+                  {MEMBER_ROLES.map((r) => (
+                    <option key={r.value} value={r.value}>{r.label}</option>
+                  ))}
                 </select>
-                <button onClick={() => removeFromQueue(su.user_id)} className="text-red-400 hover:text-red-600 cursor-pointer">
+                <button
+                  type="button"
+                  onClick={() => removeFromQueue(su.user_id)}
+                  className="text-red-400 hover:text-red-600 cursor-pointer"
+                >
                   <Trash2 size={12} />
                 </button>
               </div>
             ))}
-            <button onClick={submitAll} disabled={loading}
-              className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition cursor-pointer disabled:opacity-40">
+            <button
+              type="button"
+              onClick={submitAll}
+              disabled={loading}
+              className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition cursor-pointer disabled:opacity-40"
+            >
               {loading ? 'Đang thêm...' : `Thêm ${selectedUsers.length} thành viên`}
             </button>
           </div>
@@ -630,7 +894,169 @@ export function LeadMembersTab({ leadId }) {
           <div className="text-center py-8">
             <Users size={36} className="mx-auto text-gray-200 mb-2" />
             <p className="text-sm text-gray-400">Chưa có thành viên nào</p>
-            <p className="text-xs text-gray-300 mt-1">Chọn công ty → nhân viên → quyền để thêm vào nhóm</p>
+            <p className="text-xs text-gray-300 mt-1">Lọc công ty → khu vực → tick nhiều NV → chọn quyền → thêm</p>
+          </div>
+        )}
+      </div>
+
+      {/* Giao việc CRM cho thành viên */}
+      <div className="bg-violet-50 border border-violet-100 rounded-xl p-3 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-semibold text-violet-800 flex items-center gap-1">
+            <ClipboardList size={14} /> Giao việc CRM ({leadAssignments.length})
+          </p>
+          <div className="flex items-center gap-2">
+            <Link
+              to="/crm/assignments"
+              className="text-[10px] text-violet-700 hover:underline"
+            >
+              Mở trang Giao việc
+            </Link>
+            <button
+              type="button"
+              disabled={!members.length}
+              onClick={() => {
+                setShowAssignForm((v) => !v);
+                if (!showAssignForm && members.length) selectAllMembersForAssign();
+              }}
+              className="h-7 px-2.5 rounded-lg bg-violet-600 text-white text-[10px] font-semibold hover:bg-violet-700 disabled:opacity-40 cursor-pointer flex items-center gap-1"
+            >
+              <Plus size={12} /> Giao việc
+            </button>
+          </div>
+        </div>
+
+        {showAssignForm && (
+          <div className="bg-white border border-violet-100 rounded-lg p-3 space-y-2">
+            <input
+              value={assignTitle}
+              onChange={(e) => setAssignTitle(e.target.value)}
+              placeholder="Tiêu đề nhiệm vụ *"
+              className="w-full h-8 px-2 border border-gray-200 rounded-lg text-sm"
+            />
+            <textarea
+              value={assignDesc}
+              onChange={(e) => setAssignDesc(e.target.value)}
+              placeholder="Mô tả (tùy chọn)"
+              rows={2}
+              className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-sm resize-y"
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <select
+                value={assignPriority}
+                onChange={(e) => setAssignPriority(e.target.value)}
+                className="h-8 px-2 border border-gray-200 rounded-lg text-xs bg-white"
+              >
+                {ASSIGN_PRIORITIES.map((p) => (
+                  <option key={p.value} value={p.value}>{p.label}</option>
+                ))}
+              </select>
+              <select
+                value={assignColumnId}
+                onChange={(e) => setAssignColumnId(e.target.value)}
+                className="h-8 px-2 border border-gray-200 rounded-lg text-xs bg-white"
+              >
+                {assignColumns.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+            <input
+              type="datetime-local"
+              value={assignDeadline}
+              onChange={(e) => setAssignDeadline(e.target.value)}
+              className="w-full h-8 px-2 border border-gray-200 rounded-lg text-xs"
+            />
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-semibold text-slate-600">Giao cho thành viên</span>
+              <button
+                type="button"
+                onClick={selectAllMembersForAssign}
+                className="text-[10px] text-violet-700 hover:underline cursor-pointer"
+              >
+                Chọn tất cả ({members.length})
+              </button>
+            </div>
+            <div className="max-h-36 overflow-y-auto rounded border border-gray-100 divide-y">
+              {members.map((m) => {
+                const checked = assignMemberIds.has(String(m.user_id));
+                return (
+                  <label
+                    key={m.user_id}
+                    className={`flex items-center gap-2 px-2 py-1.5 cursor-pointer text-xs ${checked ? 'bg-violet-50' : ''}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleAssignMember(m.user_id)}
+                      className="rounded border-violet-300 text-violet-600"
+                    />
+                    <span className="truncate">{m.user?.full_name || m.user_id}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowAssignForm(false)}
+                className="h-8 px-3 text-xs text-gray-600 hover:bg-gray-100 rounded-lg cursor-pointer"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                disabled={assignLoading}
+                onClick={submitMemberAssignment}
+                className="h-8 px-4 bg-violet-600 text-white text-xs font-semibold rounded-lg hover:bg-violet-700 disabled:opacity-50 cursor-pointer"
+              >
+                {assignLoading ? 'Đang giao…' : `Giao cho ${assignMemberIds.size || 0} NV`}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {leadAssignments.length === 0 ? (
+          <p className="text-[11px] text-violet-700/70 text-center py-2">
+            Chưa có nhiệm vụ giao việc CRM cho lead/deal này
+          </p>
+        ) : (
+          <div className="space-y-1.5">
+            {leadAssignments.map((a) => {
+              const StIcon = ASSIGN_STATUS_ICON[a.status] || Circle;
+              const col = assignColumns.find((c) => String(c.id) === String(a.column_id));
+              const assigneeNames = (a.assignees?.length
+                ? a.assignees
+                : (a.assignee ? [a.assignee] : [])
+              ).map((u) => u.full_name).filter(Boolean).join(', ');
+              return (
+                <Link
+                  key={a.id}
+                  to={`/crm/assignments?open=${a.id}`}
+                  className="flex items-start gap-2 p-2.5 bg-white border border-violet-100 rounded-lg hover:border-violet-300 hover:shadow-sm transition"
+                >
+                  <StIcon className={`h-4 w-4 shrink-0 mt-0.5 ${
+                    a.status === 'completed' ? 'text-emerald-500'
+                      : a.status === 'in_progress' ? 'text-blue-500'
+                      : 'text-gray-300'
+                  }`} />
+                  <div className="min-w-0 flex-1">
+                    <p className={`text-sm font-medium truncate ${a.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}>
+                      {a.title}
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2 mt-0.5 text-[10px] text-gray-500">
+                      {col && <span style={{ color: col.color }}>{col.name}</span>}
+                      {assigneeNames && <span>👤 {assigneeNames}</span>}
+                      {a.deadline && (
+                        <span className="inline-flex items-center gap-0.5">
+                          <Calendar size={10} />{formatDate(a.deadline)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </Link>
+              );
+            })}
           </div>
         )}
       </div>

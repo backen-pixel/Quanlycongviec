@@ -4,8 +4,8 @@ import { Megaphone, X, Loader2 } from 'lucide-react';
 import api from '../lib/api';
 import { builtinToNoteShape, getLatestUnreadBuiltinUpdate, markNoteRead } from '../lib/releaseNotesRead';
 
-/** Tạm tắt popup «Có gì mới» khi mở web — đặt true để bật lại */
-const SHOW_RELEASE_NOTE_LOGIN_MODAL = false;
+/** Popup «Có gì mới» — hiện 1 lần cho mỗi bản cập nhật mới (đóng → mark-read → không hiện lại). */
+const SHOW_RELEASE_NOTE_LOGIN_MODAL = true;
 
 const CATEGORIES = {
   feature: { label: 'Tính năng mới', icon: '✨', color: 'bg-blue-100 text-blue-700' },

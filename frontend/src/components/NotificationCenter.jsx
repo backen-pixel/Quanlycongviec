@@ -416,7 +416,13 @@ export default function NotificationCenter({ socket }) {
     const tick = () => { if (!document.hidden) loadCount(); };
     const interval = setInterval(tick, 120_000);
     document.addEventListener('visibilitychange', tick);
-    return () => { clearInterval(interval); document.removeEventListener('visibilitychange', tick); };
+    const onAssignBadge = () => loadCount();
+    window.addEventListener('badge:refresh:assignments', onAssignBadge);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', tick);
+      window.removeEventListener('badge:refresh:assignments', onAssignBadge);
+    };
   }, []);
 
   useEffect(() => {
@@ -607,8 +613,12 @@ export default function NotificationCenter({ socket }) {
             } else if (notif.entity_type === 'invoice') {
               navigate(`/crm/invoices/${notif.entity_id}`);
             } else if (notif.entity_type === 'crm_task') {
-              const lid = notif.metadata?.lead_id;
-              navigate(lid ? `/crm/leads/${lid}?tab=tasks` : '/crm/tasks');
+              const aid = notif.metadata?.open || notif.metadata?.assignment_id;
+              if (aid) navigateCrmAssignment(navigate, aid);
+              else {
+                const lid = notif.metadata?.lead_id;
+                navigate(lid ? `/crm/leads/${lid}?tab=tasks` : '/crm/tasks');
+              }
             } else if (isAssignmentNotification(notif)) {
               navigateCrmAssignment(navigate, notif);
             } else if (notif.entity_type === 'event') {
@@ -939,7 +949,9 @@ export default function NotificationCenter({ socket }) {
                 const isApproval = n.metadata?.type === 'approval_request';
                 const isAssignNotif = isAssignmentNotification(n);
                 const Icon = isApproval ? FolderKanban : (isAssignNotif ? ClipboardList : (ICON_MAP[n.type] || Bell));
-                const color = isApproval ? 'bg-orange-100 text-orange-600' : (COLOR_MAP[n.type] || 'bg-gray-100 text-gray-600');
+                const color = isApproval
+                  ? 'bg-orange-100 text-orange-600'
+                  : (isAssignNotif ? 'bg-indigo-100 text-indigo-700' : (COLOR_MAP[n.type] || 'bg-gray-100 text-gray-600'));
                 const approvalStatus = n.metadata?.status; // pending | approved | rejected
 
                 return (
@@ -991,8 +1003,12 @@ export default function NotificationCenter({ socket }) {
                       } else if (n.entity_type === 'invoice') {
                         navigate(`/crm/invoices/${n.entity_id}`);
                       } else if (n.entity_type === 'crm_task') {
-                        const lid = n.metadata?.lead_id;
-                        navigate(lid ? `/crm/leads/${lid}?tab=tasks` : '/crm/tasks');
+                        const aid = n.metadata?.open || n.metadata?.assignment_id;
+                        if (aid) navigateCrmAssignment(navigate, aid);
+                        else {
+                          const lid = n.metadata?.lead_id;
+                          navigate(lid ? `/crm/leads/${lid}?tab=tasks` : '/crm/tasks');
+                        }
                       } else if (n.entity_type === 'event') {
                         navigate(`/crm/events`);
                       } else if (n.entity_type === 'release_note') {

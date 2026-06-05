@@ -1,5 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../lib/api';
+import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
 import { formatDateTime, formatVND } from '../lib/utils';
 import { isoToDatetimeLocalValue, datetimeLocalValueToIso } from '../lib/datetimeLocal';
@@ -7,7 +10,7 @@ import {
   Plus, CheckCircle2, Circle, Clock, User, Eye, Trash2, ChevronDown, ChevronRight,
   Calendar, List, Users, Target, AlertTriangle, X, Save, ListChecks, ClipboardList,
   Paperclip, FileUp, MessageSquare, FileText, Image as ImageIcon, Share2, Lock, Film,
-  FileSpreadsheet, Edit3, RefreshCw,
+  FileSpreadsheet, Edit3, RefreshCw, UserPlus,
 } from 'lucide-react';
 import ExcelQuotationImport from './ExcelQuotationImport';
 import CrmArtifactShareModal from './CrmArtifactShareModal';
@@ -68,6 +71,73 @@ const PRIORITY_COLORS = { low: 'bg-gray-100 text-gray-600', medium: 'bg-blue-100
 const PRIORITY_LABELS = { low: 'Thấp', medium: 'TB', high: 'Cao', urgent: 'Gấp' };
 const STATUS_ICONS = { pending: Circle, in_progress: Clock, completed: CheckCircle2 };
 
+function taskAssigneeList(task) {
+  if (task?.assignees?.length) return task.assignees;
+  return task?.assignee ? [task.assignee] : [];
+}
+
+function AssigneePickerBlock({
+  count,
+  pickList,
+  selectedIds,
+  onToggle,
+  onSelectAll,
+  membersMode,
+  compact = true,
+}) {
+  const selectedNames = (pickList || [])
+    .filter((u) => selectedIds.has(String(u.id)))
+    .map((u) => u.full_name)
+    .filter(Boolean);
+
+  return (
+    <div className={`border border-indigo-200 bg-indigo-50/60 rounded-xl space-y-2 ${compact ? 'p-3' : 'p-0 border-0 bg-transparent'}`}>
+      <div className="flex items-center justify-between gap-2">
+        <label className="text-[11px] font-semibold text-indigo-900 uppercase flex items-center gap-1">
+          <UserPlus className="h-3.5 w-3.5" /> Gán nhân viên ({count})
+        </label>
+        <button
+          type="button"
+          onClick={onSelectAll}
+          className="h-7 px-2.5 rounded-lg bg-indigo-600 text-white text-[10px] font-semibold hover:bg-indigo-700 cursor-pointer"
+        >
+          Chọn tất cả
+        </button>
+      </div>
+      {selectedNames.length > 0 && (
+        <p className="text-[10px] text-indigo-800 bg-white/70 rounded-lg px-2 py-1.5 border border-indigo-100">
+          Đã chọn: {selectedNames.join(', ')}
+        </p>
+      )}
+      <p className="text-[10px] text-slate-600">
+        {membersMode ? 'Thành viên đang tham gia lead/deal' : 'Danh sách nhân viên công ty'}
+        {!pickList?.length && ' — thêm thành viên ở tab Thành viên để gán nhanh hơn'}
+      </p>
+      <div className="max-h-44 overflow-y-auto rounded-lg border border-indigo-100 bg-white divide-y">
+        {!pickList?.length ? (
+          <p className="text-[10px] text-gray-400 p-3 text-center">Chưa có nhân viên để gán</p>
+        ) : pickList.map((u) => {
+          const checked = selectedIds.has(String(u.id));
+          return (
+            <label
+              key={u.id}
+              className={`flex items-center gap-2 px-2.5 py-2.5 cursor-pointer text-xs ${checked ? 'bg-indigo-50' : 'hover:bg-gray-50'}`}
+            >
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => onToggle(u.id)}
+                className="rounded border-indigo-300 text-indigo-600"
+              />
+              <span className="truncate font-medium text-gray-800">{u.full_name}</span>
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function CRMTasksTab({
   leadId,
   leadType = 'lead',
@@ -78,6 +148,8 @@ export default function CRMTasksTab({
   /** Công ty xưởng đã gắn với deal (sx_template_company_id) — gửi khi Gen bộ nhiệm vụ SX */
   sxTemplateCompanyId = null,
 }) {
+  const { user } = useAuth();
+  const isAdmin = isAdminLike(user);
   const [tasks, setTasks] = useState([]);
   const isSxStageSlug = useMemo(() => (slug) => String(slug || '').startsWith('sx_'), []);
   const hasSxTasks = useMemo(() => tasks.some((t) => isSxStageSlug(t.stage_slug)), [tasks, isSxStageSlug]);
@@ -190,6 +262,10 @@ export default function CRMTasksTab({
   const [newTask, setNewTask] = useState({ title: '', priority: 'medium', deadline: '', assignee_id: '', supervisor_id: '' });
   const [editingTask, setEditingTask] = useState(null);
   const [editForm, setEditForm] = useState({});
+  const [editAssigneeIds, setEditAssigneeIds] = useState(new Set());
+  const [leadMembersForAssign, setLeadMembersForAssign] = useState([]);
+  const [assigningTask, setAssigningTask] = useState(null);
+  const [lastAssignmentLink, setLastAssignmentLink] = useState(null);
   const [shareModal, setShareModal] = useState(null);
   const [showTemplatePanel, setShowTemplatePanel] = useState(false);
   /** Task có thể thuộc deal con (fulfillment) khi deal gốc dùng đơn — API đính kèm/ghi chú cần đúng lead_id */
@@ -453,19 +529,62 @@ export default function CRMTasksTab({
     }
   };
 
-  const openEditModal = (task) => {
+  const assignPickList = useMemo(() => {
+    if (leadMembersForAssign.length) {
+      return leadMembersForAssign
+        .map((m) => m.user)
+        .filter((u) => u?.id);
+    }
+    return users || [];
+  }, [leadMembersForAssign, users]);
+
+  const loadLeadMembersForAssign = async (task) => {
+    try {
+      const r = await api.get(`/crm/leads/${apiLeadIdForTaskId(task.id)}/members`);
+      setLeadMembersForAssign(r.data || []);
+    } catch {
+      setLeadMembersForAssign([]);
+    }
+  };
+
+  const primeAssigneeSelection = (task) => {
+    const ids = taskAssigneeList(task).map((u) => String(u.id));
+    setEditAssigneeIds(new Set(ids));
+  };
+
+  const openAssignModal = async (task) => {
+    setAssigningTask(task);
+    primeAssigneeSelection(task);
+    await loadLeadMembersForAssign(task);
+  };
+
+  const openEditModal = async (task) => {
     setEditingTask(task);
+    primeAssigneeSelection(task);
     setEditForm({
       title: task.title || '',
       description: task.description || '',
       priority: task.priority || 'medium',
       deadline: task.deadline ? isoToDatetimeLocalValue(task.deadline) : '',
-      assignee_id: task.assignee_id || '',
       supervisor_id: task.supervisor_id || '',
       stage_slug: task.stage_slug || '',
-      blocks_stage_advance: !!task.blocks_stage_advance,
       show_excel_quotation_upload: !!task.show_excel_quotation_upload,
     });
+    await loadLeadMembersForAssign(task);
+  };
+
+  const toggleEditAssignee = (userId) => {
+    const sid = String(userId);
+    setEditAssigneeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sid)) next.delete(sid);
+      else next.add(sid);
+      return next;
+    });
+  };
+
+  const selectAllEditAssignees = () => {
+    setEditAssigneeIds(new Set(assignPickList.map((u) => String(u.id))));
   };
 
   const saveEdit = async () => {
@@ -473,20 +592,43 @@ export default function CRMTasksTab({
     const taskId = editingTask.id;
     try {
       const lid = apiLeadIdForTaskId(taskId);
-      const { data } = await api.put(`/crm/leads/${lid}/tasks/${taskId}`, {
+      const payload = {
         title: editForm.title,
         description: editForm.description,
         priority: editForm.priority,
         deadline: editForm.deadline ? datetimeLocalValueToIso(editForm.deadline) : null,
-        assignee_id: editForm.assignee_id || null,
+        assignee_ids: [...editAssigneeIds],
         supervisor_id: editForm.supervisor_id || null,
         stage_slug: editForm.stage_slug,
-        blocks_stage_advance: !!editForm.blocks_stage_advance,
         show_excel_quotation_upload: !!editForm.show_excel_quotation_upload,
-      });
+      };
+      const { data } = await api.put(`/crm/leads/${lid}/tasks/${taskId}`, payload);
       setEditingTask(null);
       setTasks((p) => p.map((t) => (t.id === taskId ? { ...t, ...data } : t)));
     } catch (e) { alert(e.response?.data?.error || 'Lỗi lưu'); }
+  };
+
+  const saveAssign = async () => {
+    if (!assigningTask) return;
+    if (!editAssigneeIds.size) return alert('Chọn ít nhất một nhân viên');
+    const taskId = assigningTask.id;
+    try {
+      const lid = apiLeadIdForTaskId(taskId);
+      const { data } = await api.put(`/crm/leads/${lid}/tasks/${taskId}`, {
+        assignee_ids: [...editAssigneeIds],
+      });
+      setAssigningTask(null);
+      setTasks((p) => p.map((t) => (t.id === taskId ? { ...t, ...data } : t)));
+      if (data?.crm_assignment_id) {
+        setLastAssignmentLink({
+          taskId,
+          assignmentId: data.crm_assignment_id,
+          title: data.title || assigningTask.title,
+        });
+      }
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi gán nhân viên');
+    }
   };
 
   const openShareModal = (taskId, attachmentId = null) => {
@@ -627,9 +769,12 @@ export default function CRMTasksTab({
   const plannerGroups = useMemo(() => {
     const map = {}; const unassigned = [];
     uiTasks.filter(t => t.status !== 'completed').forEach(t => {
-      if (t.assignee_id && t.assignee) {
-        if (!map[t.assignee_id]) map[t.assignee_id] = { user: t.assignee, tasks: [] };
-        map[t.assignee_id].tasks.push(t);
+      const list = taskAssigneeList(t);
+      if (list.length) {
+        list.forEach((u) => {
+          if (!map[u.id]) map[u.id] = { user: u, tasks: [] };
+          map[u.id].tasks.push(t);
+        });
       } else { unassigned.push(t); }
     });
     return { assignees: Object.values(map), unassigned };
@@ -943,7 +1088,21 @@ export default function CRMTasksTab({
                   )}
                 </span>
               )}
-              {task.assignee && <span className="text-[10px] text-blue-600 flex items-center gap-0.5"><User className="h-2.5 w-2.5" />{task.assignee.full_name}</span>}
+              {taskAssigneeList(task).map((u) => (
+                <span key={u.id} className="text-[10px] text-blue-600 flex items-center gap-0.5">
+                  <User className="h-2.5 w-2.5" />{u.full_name}
+                </span>
+              ))}
+              {task.crm_assignment_id && (
+                <Link
+                  to={`/crm/assignments?open=${task.crm_assignment_id}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-[10px] text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-medium"
+                  title="Mở trên trang Giao việc CRM"
+                >
+                  <ClipboardList className="h-2.5 w-2.5" /> Giao việc CRM
+                </Link>
+              )}
               {task.supervisor && <span className="text-[10px] text-purple-600 flex items-center gap-0.5"><Eye className="h-2.5 w-2.5" />{task.supervisor.full_name}</span>}
               {/* File & Note count badges — always visible */}
               {fileCount > 0 && (
@@ -1014,6 +1173,18 @@ export default function CRMTasksTab({
             </button>
             <button type="button" onClick={(e) => { e.stopPropagation(); toggleExpand(task); }} className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer" title="Ghi chú & file">
               <Paperclip className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); openAssignModal(task); }}
+              className={`p-1.5 rounded-md cursor-pointer ${
+                taskAssigneeList(task).length
+                  ? 'text-indigo-600 bg-indigo-50 hover:bg-indigo-100'
+                  : 'text-gray-500 hover:text-indigo-600 hover:bg-indigo-50'
+              }`}
+              title="Gán nhân viên (1 hoặc nhiều)"
+            >
+              <UserPlus className="h-3.5 w-3.5" />
             </button>
             <button type="button" onClick={(e) => { e.stopPropagation(); openEditModal(task); }} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer" title="Chỉnh sửa nhiệm vụ">
               <Edit3 className="h-3.5 w-3.5" />
@@ -1627,24 +1798,22 @@ export default function CRMTasksTab({
                     className="mt-1 w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none" />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[11px] font-semibold text-gray-500 uppercase">Người phụ trách</label>
-                  <select value={editForm.assignee_id} onChange={e => setEditForm(f => ({ ...f, assignee_id: e.target.value }))}
-                    className="mt-1 w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none">
-                    <option value="">— Chưa giao —</option>
-                    {(users || []).map(u => (<option key={u.id} value={u.id}>{u.full_name}</option>))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[11px] font-semibold text-gray-500 uppercase">Giám sát</label>
-                  <select value={editForm.supervisor_id} onChange={e => setEditForm(f => ({ ...f, supervisor_id: e.target.value }))}
-                    className="mt-1 w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none">
-                    <option value="">— Không giám sát —</option>
-                    {(users || []).map(u => (<option key={u.id} value={u.id}>{u.full_name}</option>))}
-                  </select>
-                </div>
+              <div>
+                <label className="text-[11px] font-semibold text-gray-500 uppercase">Giám sát</label>
+                <select value={editForm.supervisor_id} onChange={e => setEditForm(f => ({ ...f, supervisor_id: e.target.value }))}
+                  className="mt-1 w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none">
+                  <option value="">— Không giám sát —</option>
+                  {(users || []).map(u => (<option key={u.id} value={u.id}>{u.full_name}</option>))}
+                </select>
               </div>
+              <AssigneePickerBlock
+                count={editAssigneeIds.size}
+                pickList={assignPickList}
+                selectedIds={editAssigneeIds}
+                onToggle={toggleEditAssignee}
+                onSelectAll={selectAllEditAssignees}
+                membersMode={leadMembersForAssign.length > 0}
+              />
               <div>
                 <label className="text-[11px] font-semibold text-gray-500 uppercase">Độ ưu tiên</label>
                 <div className="mt-1 flex gap-2">
@@ -1656,27 +1825,9 @@ export default function CRMTasksTab({
                   ))}
                 </div>
               </div>
-              <div>
-                <label className="text-[11px] font-semibold text-gray-500 uppercase">Điều kiện chuyển giai đoạn</label>
-                <label className="mt-1 flex items-start gap-2 p-2.5 border border-amber-200 bg-amber-50 rounded-lg cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={!!editForm.blocks_stage_advance}
-                    onChange={(e) => setEditForm((f) => ({ ...f, blocks_stage_advance: e.target.checked }))}
-                    className="mt-0.5 accent-amber-600"
-                  />
-                  <span className="flex-1">
-                    <span className="text-xs font-semibold text-amber-800 flex items-center gap-1">
-                      <Lock className="h-3 w-3" /> Chặn chuyển giai đoạn khi chưa hoàn thành
-                    </span>
-                    <span className="block text-[10px] text-amber-700 mt-0.5">
-                      Khi bật, {leadType === 'deal' ? 'deal' : 'lead'} không thể được kéo sang giai đoạn khác cho tới khi nhiệm vụ này hoàn thành (không áp dụng khi kéo Thắng/Thua).
-                    </span>
-                  </span>
-                </label>
-              </div>
-              <div>
-                <label className="text-[11px] font-semibold text-gray-500 uppercase">Tiện ích</label>
+              {isAdmin && (
+                <div>
+                  <label className="text-[11px] font-semibold text-gray-500 uppercase">Tiện ích (admin)</label>
                 <label className="mt-1 flex items-start gap-2 p-2.5 border border-emerald-200 bg-emerald-50 rounded-lg cursor-pointer select-none">
                   <input
                     type="checkbox"
@@ -1693,7 +1844,8 @@ export default function CRMTasksTab({
                     </span>
                   </span>
                 </label>
-              </div>
+                </div>
+              )}
             </div>
             <div className="px-5 py-4 border-t bg-gray-50 rounded-b-2xl flex items-center justify-end gap-2">
               <button onClick={() => setEditingTask(null)} className="h-9 px-4 text-gray-600 hover:bg-gray-200 rounded-lg text-sm font-medium cursor-pointer transition-colors">Hủy</button>
@@ -1701,6 +1853,66 @@ export default function CRMTasksTab({
                 <Save className="h-3.5 w-3.5" /> Lưu
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {assigningTask && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setAssigningTask(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b">
+              <div className="flex items-center gap-2 min-w-0">
+                <UserPlus className="h-4 w-4 text-indigo-600 shrink-0" />
+                <div className="min-w-0">
+                  <h3 className="text-sm font-bold text-gray-900">Gán nhân viên</h3>
+                  <p className="text-[11px] text-gray-500 truncate">{assigningTask.title}</p>
+                </div>
+              </div>
+              <button onClick={() => setAssigningTask(null)} className="p-1 hover:bg-gray-100 rounded-lg cursor-pointer">
+                <X className="h-4 w-4 text-gray-500" />
+              </button>
+            </div>
+            <div className="p-5">
+              <AssigneePickerBlock
+                count={editAssigneeIds.size}
+                pickList={assignPickList}
+                selectedIds={editAssigneeIds}
+                onToggle={toggleEditAssignee}
+                onSelectAll={selectAllEditAssignees}
+                membersMode={leadMembersForAssign.length > 0}
+                compact={false}
+              />
+            </div>
+            <div className="px-5 py-4 border-t bg-gray-50 rounded-b-2xl flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-[10px] text-indigo-700">
+                Nhiệm vụ sẽ hiển thị trên trang <strong>Giao việc CRM</strong> để NV tương tác đầy đủ.
+              </p>
+              <div className="flex items-center justify-end gap-2">
+                <button onClick={() => setAssigningTask(null)} className="h-9 px-4 text-gray-600 hover:bg-gray-200 rounded-lg text-sm font-medium cursor-pointer">Hủy</button>
+                <button onClick={saveAssign} className="h-9 px-5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold flex items-center gap-1.5 cursor-pointer">
+                  <UserPlus className="h-3.5 w-3.5" /> Gán {editAssigneeIds.size || 0} NV
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {lastAssignmentLink && (
+        <div className="fixed bottom-6 right-6 z-50 max-w-sm px-4 py-3 rounded-xl shadow-lg bg-indigo-600 text-white text-sm">
+          <p className="font-semibold">Đã gán nhân viên</p>
+          <p className="text-indigo-100 text-xs mt-0.5 truncate">{lastAssignmentLink.title}</p>
+          <div className="flex items-center gap-2 mt-2">
+            <Link
+              to={`/crm/assignments?open=${lastAssignmentLink.assignmentId}`}
+              className="text-xs font-bold bg-white text-indigo-700 px-3 py-1.5 rounded-lg hover:bg-indigo-50"
+              onClick={() => setLastAssignmentLink(null)}
+            >
+              Mở Giao việc CRM →
+            </Link>
+            <button type="button" onClick={() => setLastAssignmentLink(null)} className="text-indigo-200 hover:text-white text-xs cursor-pointer">
+              Đóng
+            </button>
           </div>
         </div>
       )}

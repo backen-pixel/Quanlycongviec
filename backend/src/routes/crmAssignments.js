@@ -17,6 +17,11 @@ const {
   addCrmAssignmentComment: addCrmAssignmentCommentCore,
 } = require('../helpers/crmAssignmentMutations');
 const { createTTLCache } = require('../helpers/ttlCache');
+const {
+  syncCrmTaskFromAssignment,
+  attachCrmTaskMetaToAssignments,
+  applyAssignmentStatusColumn,
+} = require('../helpers/crmTaskAssignmentSync');
 const { responseCache, invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
 
 const assignColsCache = createTTLCache({
@@ -222,12 +227,13 @@ async function getVisibleAssignmentIdsForNonAdmin(req) {
 }
 
 const ASSIGNMENT_SELECT = `
-  id, company_id, column_id, title, description,
+  id, company_id, column_id, lead_id, crm_task_id, title, description,
   assignee_id, created_by_id, priority, status, deadline,
   position, created_at, updated_at, completed_at,
   assignee:users!crm_assignments_assignee_id_fkey(id, full_name, email, avatar),
   created_by:users!crm_assignments_created_by_id_fkey(id, full_name, email, avatar),
-  company:companies(id, name, short_name)
+  company:companies(id, name, short_name),
+  lead:crm_leads(id, code, title, type)
 `;
 
 async function attachAssigneesToAssignments(list) {
@@ -307,8 +313,10 @@ async function replaceAssignees(assignmentId, userIds) {
 const { emitNotifyBadge } = require('../helpers/notifyBadge');
 
 function pushNotif(req, userId, payload) {
-  if (!userId) return;
+  if (!userId || !payload) return;
   try {
+    const io = req.app.get('io');
+    if (io) io.to(`user:${userId}`).emit('notification', payload);
     const push = req.app.get('pushNotification');
     if (typeof push === 'function') void push(userId, payload);
     emitNotifyBadge(req.app, 'assignments');
@@ -456,6 +464,7 @@ r.get('/', async (req, res) => {
     if (req.query.status) q = q.eq('status', req.query.status);
     if (req.query.priority) q = q.eq('priority', req.query.priority);
     if (req.query.column_id) q = q.eq('column_id', req.query.column_id);
+    if (req.query.lead_id) q = q.eq('lead_id', String(req.query.lead_id).trim());
     if (req.query.q) {
       const s = String(req.query.q).replace(/[%,]/g, ' ').trim();
       if (s) q = q.ilike('title', `%${s}%`);
@@ -465,6 +474,7 @@ r.get('/', async (req, res) => {
     const { data, error } = await q;
     if (error) throw error;
     await attachAssigneesToAssignments(data || []);
+    await attachCrmTaskMetaToAssignments(data || []);
     res.json({ assignments: data || [] });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi tải nhiệm vụ' }); }
 });
@@ -475,8 +485,9 @@ r.post('/', async (req, res) => {
     const result = await createCrmAssignmentCore(req, req.body || {});
     if (result.error) return res.status(result.status || 500).json({ error: result.error });
     const data = result.data?.assignment;
-    // Thông báo cho từng người được giao (giữ logic route gốc)
-    const finalAssignees = data?.assignee_id ? [data.assignee_id] : [];
+    const finalAssignees = result.data?.assignee_ids?.length
+      ? result.data.assignee_ids
+      : (data?.assignee_id ? [data.assignee_id] : []);
     for (const uid of finalAssignees) {
       if (String(uid) === String(req.user.userId)) continue;
       const notif = await persistNotification(uid, {
@@ -552,10 +563,8 @@ r.put('/:id', async (req, res) => {
       newAssignees = req.body.assignee_id ? [req.body.assignee_id] : [];
     }
 
-    if (update.status === 'completed' && before?.status !== 'completed') {
-      update.completed_at = new Date().toISOString();
-    } else if (update.status && update.status !== 'completed' && before?.status === 'completed') {
-      update.completed_at = null;
+    if (update.status !== undefined) {
+      await applyAssignmentStatusColumn(update, update.status);
     }
 
     const { data, error } = await supabase
@@ -588,6 +597,12 @@ r.put('/:id', async (req, res) => {
     }
 
     await attachAssigneesToAssignments([data]);
+    await attachCrmTaskMetaToAssignments([data]);
+    try {
+      await syncCrmTaskFromAssignment(data);
+    } catch (syncErr) {
+      console.warn('[sync] assignment→crm_task PUT:', syncErr.message);
+    }
     res.json({ assignment: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi cập nhật nhiệm vụ' }); }
 });
@@ -611,16 +626,22 @@ r.post('/:id/move', async (req, res) => {
     if (column_id !== undefined) update.column_id = column_id;
     if (position !== undefined) update.position = position;
 
-    // Auto status khi rớt vào cột Done
+    // Auto status khi rớt vào cột Done / Doing / Todo
     if (column_id) {
       const { data: col } = await supabase
         .from('crm_assignment_columns')
-        .select('is_done_column')
+        .select('is_done_column, position')
         .eq('id', column_id)
         .maybeSingle();
       if (col?.is_done_column) {
         update.status = 'completed';
         update.completed_at = new Date().toISOString();
+      } else if ((col?.position ?? 0) >= 1) {
+        update.status = 'in_progress';
+        update.completed_at = null;
+      } else {
+        update.status = 'pending';
+        update.completed_at = null;
       }
     }
 
@@ -632,6 +653,12 @@ r.post('/:id/move', async (req, res) => {
       .single();
     if (error) throw error;
     await attachAssigneesToAssignments([data]);
+    await attachCrmTaskMetaToAssignments([data]);
+    try {
+      await syncCrmTaskFromAssignment(data);
+    } catch (syncErr) {
+      console.warn('[sync] assignment→crm_task move:', syncErr.message);
+    }
     res.json({ assignment: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi chuyển cột' }); }
 });
@@ -1056,6 +1083,7 @@ r.get('/:id', async (req, res, next) => {
       return res.status(403).json({ error: 'Không có quyền xem nhiệm vụ này' });
     }
     await attachAssigneesToAssignments([data]);
+    await attachCrmTaskMetaToAssignments([data]);
     res.json({ assignment: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi tải nhiệm vụ' }); }
 });

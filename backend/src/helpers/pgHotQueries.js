@@ -157,7 +157,7 @@ async function pgDashboardNotificationsList(userId, {
   } else if (ch === 'events') {
     conditions.push(`type IN ('event_created', 'event_completed')`);
   } else if (ch === 'assignments') {
-    conditions.push(`type IN ('crm_assignment_assigned','crm_assignment_comment','crm_assignment_due_soon','crm_assignment_overdue')`);
+    conditions.push(`(type IN ('crm_assignment_assigned','crm_assignment_comment','crm_assignment_due_soon','crm_assignment_overdue') OR entity_type = 'crm_assignment')`);
   } else if (ch === 'activity') {
     conditions.push(`type NOT IN (${expiryList},'lead_chat','messenger_chat','event_created','event_completed','crm_assignment_assigned','crm_assignment_comment','crm_assignment_due_soon','crm_assignment_overdue')`);
   } else {
