@@ -13,6 +13,9 @@ type NativeCallModule = {
     groupName: string,
   ) => void;
   cancelIncomingCallNotification?: (callId: string) => void;
+  markIncomingCallAnswered?: (callId: string) => void;
+  setIncomingCallClaim?: (callId: string) => void;
+  clearIncomingCallClaim?: (callId: string) => void;
   consumePendingCallIntent?: () => Promise<string | null>;
 };
 
@@ -50,6 +53,34 @@ export function cancelNativeIncomingCallNotification(callId?: string | null): vo
   if (!callId || !Native?.cancelIncomingCallNotification) return;
   try {
     Native.cancelIncomingCallNotification(callId);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Dừng chuông native ngay khi user bấm Trả lời (trước khi WebRTC kết nối xong). */
+export function markNativeCallAnswered(callId?: string | null): void {
+  if (!callId || !Native?.markIncomingCallAnswered) return;
+  try {
+    Native.markIncomingCallAnswered(callId);
+  } catch {
+    cancelNativeIncomingCallNotification(callId);
+  }
+}
+
+export function setNativeIncomingCallClaim(callId?: string | null): void {
+  if (!callId || !Native?.setIncomingCallClaim) return;
+  try {
+    Native.setIncomingCallClaim(callId);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function clearNativeIncomingCallClaim(callId?: string | null): void {
+  if (!Native?.clearIncomingCallClaim) return;
+  try {
+    Native.clearIncomingCallClaim(callId || '');
   } catch {
     /* ignore */
   }

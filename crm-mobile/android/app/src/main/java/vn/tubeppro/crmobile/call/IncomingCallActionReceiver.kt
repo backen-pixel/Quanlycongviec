@@ -12,7 +12,7 @@ class IncomingCallActionReceiver : BroadcastReceiver() {
 
     when (intent.action) {
       IncomingCallHelper.ACTION_ACCEPT -> {
-        IncomingCallHelper.launchMainWithCall(context, data, "accept")
+        IncomingCallActivity.launchForAccept(context, data)
       }
       IncomingCallHelper.ACTION_REJECT -> {
         CallRejectApi.rejectAsync(context, data.callId, data.fromUserId)

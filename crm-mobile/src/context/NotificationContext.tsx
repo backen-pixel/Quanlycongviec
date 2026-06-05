@@ -13,11 +13,7 @@ import { api } from '../api/client';
 import { API_ORIGIN } from '../config';
 import { bindMessengerSocket } from '../lib/messengerRealtime';
 import { setAppSocket } from '../lib/appSocket';
-import {
-  showIncomingCallNotification,
-  storePendingIncomingCall,
-  type IncomingCallPayload,
-} from '../lib/incomingCallNotifications';
+import { isCallInProgress } from '../lib/callSessionGuard';
 import { useAuth } from './AuthContext';
 import { isNotificationTypeEnabled } from '../lib/notificationPrefs';
 import { isExpiryDeadlineNotificationType } from '../lib/operationalNotifications';
@@ -191,41 +187,13 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
     s.on('notification', onNotif);
 
-    const onCallIncoming = (raw: unknown) => {
-      const p = raw as {
-        callId?: string;
-        kind?: string;
-        fromUserId?: string;
-        fromName?: string;
-        isGroup?: boolean;
-        groupId?: string;
-        groupName?: string;
-      };
-      const callId = p?.callId;
-      const fromUserId = p?.fromUserId;
-      if (!callId || !fromUserId) return;
-      const payload: IncomingCallPayload = {
-        callId: String(callId),
-        kind: p.kind,
-        fromUserId: String(fromUserId),
-        fromName: p.fromName,
-        isGroup: p.isGroup,
-        groupId: p.groupId,
-        groupName: p.groupName,
-      };
-      // Luôn hiện thông báo hệ thống khi không ở foreground — CallContext có thể chưa kịp chạy
-      if (AppState.currentState !== 'active') {
-        void storePendingIncomingCall(payload);
-        void showIncomingCallNotification(payload);
-      }
-    };
-    s.on('call:incoming', onCallIncoming);
-
     const onAppState = (next: AppStateStatus) => {
       if (next === 'active') {
         if (!s.connected) s.connect();
         return;
       }
+      // Giữ socket khi đang cuộc gọi — tránh reconnect → sync call:incoming → chuông reo lại.
+      if (isCallInProgress()) return;
       if (!backgroundRealtimeRef.current) {
         s.disconnect();
       }
@@ -236,7 +204,6 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     return () => {
       appSub.remove();
       s.off('notification', onNotif);
-      s.off('call:incoming', onCallIncoming);
       s.disconnect();
       if (socketRef.current === s) {
         socketRef.current = null;

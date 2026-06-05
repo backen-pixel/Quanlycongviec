@@ -17,6 +17,7 @@ import expo.modules.ApplicationLifecycleDispatcher
 import expo.modules.ReactNativeHostWrapper
 import vn.tubeppro.crmobile.battery.CrmBatteryOptimizationPackage
 import vn.tubeppro.crmobile.overlay.FloatingBubbleOverlayPackage
+import vn.tubeppro.crmobile.call.LockScreenCallPackage
 
 class MainApplication : Application(), ReactApplication {
 
@@ -27,6 +28,7 @@ class MainApplication : Application(), ReactApplication {
             PackageList(this).packages.apply {
               add(FloatingBubbleOverlayPackage())
               add(CrmBatteryOptimizationPackage())
+              add(LockScreenCallPackage())
             }
 
           override fun getJSMainModuleName(): String = ".expo/.virtual-metro-entry"

@@ -286,6 +286,21 @@ class FloatingBubbleOverlayModule(private val reactContext: ReactApplicationCont
     vn.tubeppro.crmobile.call.IncomingCallHelper.cancelCallNotification(reactContext, callId)
   }
 
+  @ReactMethod
+  fun markIncomingCallAnswered(callId: String) {
+    vn.tubeppro.crmobile.call.IncomingCallHelper.markCallAnswered(reactContext, callId)
+  }
+
+  @ReactMethod
+  fun setIncomingCallClaim(callId: String) {
+    vn.tubeppro.crmobile.call.IncomingCallHelper.setJsIncomingCallClaim(reactContext, callId)
+  }
+
+  @ReactMethod
+  fun clearIncomingCallClaim(callId: String) {
+    vn.tubeppro.crmobile.call.IncomingCallHelper.clearJsIncomingCallClaim(reactContext)
+  }
+
   /** Đọc intent mở app từ thông báo cuộc gọi native. */
   @ReactMethod
   fun consumePendingCallIntent(promise: Promise) {

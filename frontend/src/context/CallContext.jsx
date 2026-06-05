@@ -667,24 +667,27 @@ export function CallProvider({ children }) {
     try {
       const wantVideo = kind === 'video';
       setCameraOn(wantVideo);
-      await getLocalStream({ video: wantVideo });
       if (mode === 'group') {
-        // Khi join, các participants hiện có sẽ tạo offer tới mình.
-        // Mình chỉ cần báo server và đợi `call:group_participants` + offers qua `call:signal`.
         socket.emit('call:group_join', { callId });
-        // Bản thân mình = joined
         setParticipants((cur) => ({
           ...cur,
           [uid]: { name: user?.fullName || 'Bạn', avatar: user?.avatar || null, joined: true, hasStream: false, isMe: true },
         }));
+      } else if (peer?.id) {
+        socket.emit('call:accept', { callId, toUserId: peer.id });
       } else {
-        // Direct: tạo PC, emit accept; caller sẽ tạo offer
+        return;
+      }
+
+      await getLocalStream({ video: wantVideo });
+      if (mode === 'group') {
+        // group_join đã emit ở trên
+      } else {
+        // Direct: tạo PC; caller sẽ tạo offer sau call:accepted
         if (!peer?.id) return;
         const stream = localStreamRef.current;
         const pc = createDirectPeerConnection(callId, peer.id);
         if (stream) stream.getTracks().forEach((t) => pc.addTrack(t, stream));
-        socket.emit('call:accept', { callId, toUserId: peer.id });
-        // Offer có thể đến trước khi acceptCall hoàn tất — xử lý nếu đã queue
         const pendingOffer = directPendingOfferRef.current;
         if (pendingOffer?.type === 'offer') {
           directPendingOfferRef.current = null;
@@ -952,8 +955,16 @@ export function CallProvider({ children }) {
         return;
       }
 
-      // Đang trong cuộc khác → tự reject để không làm phiền
-      if (statusRef.current !== 'idle' || directPcRef.current || groupPeersRef.current.size > 0) {
+      // Đang trong cuộc khác → tự reject; trùng callId đang trả lời thì bỏ qua.
+      const curStatus = statusRef.current;
+      const curCallId = callIdRef.current;
+      if (curStatus !== 'idle' || directPcRef.current || groupPeersRef.current.size > 0) {
+        if (
+          incomingId === curCallId
+          && (curStatus === 'incoming' || curStatus === 'connecting' || curStatus === 'active')
+        ) {
+          return;
+        }
         if (isGroup) socket.emit('call:reject', { callId: incomingId, reason: 'busy' });
         else socket.emit('call:reject', { callId: incomingId, toUserId: fromUserId, reason: 'busy' });
         return;

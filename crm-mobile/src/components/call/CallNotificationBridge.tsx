@@ -1,16 +1,14 @@
 import { useEffect } from 'react';
-import { AppState } from 'react-native';
-import * as Notifications from 'expo-notifications';
-import { useCall } from '../../context/CallContext';
+import * as Notifications from 'expo-notifications';import { useCall } from '../../context/CallContext';
 import {
   consumePendingIncomingCall,
   dismissIncomingCallNotification,
   parseIncomingCallData,
-  showIncomingCallNotification,
   storePendingIncomingCall,
   type IncomingCallPayload,
 } from '../../lib/incomingCallNotifications';
 import { consumeNativeCallIntent } from '../../lib/nativeCallNotification';
+import { shouldSuppressIncomingRing } from '../../lib/callSessionGuard';
 
 /** Bước 8–10: nhận intent từ native (Trả lời) → kết nối WebRTC. */
 export default function CallNotificationBridge() {
@@ -36,11 +34,9 @@ export default function CallNotificationBridge() {
     const subReceived = Notifications.addNotificationReceivedListener((notification) => {
       const payload = parseIncomingCallData(notification.request.content.data);
       if (!payload) return;
+      if (shouldSuppressIncomingRing(payload.callId)) return;
       void storePendingIncomingCall(payload);
-      if (AppState.currentState !== 'active') {
-        void showIncomingCallNotification(payload);
-        applyIncomingFromPush(payload);
-      }
+      applyIncomingFromPush(payload);
     });
 
     return () => {
