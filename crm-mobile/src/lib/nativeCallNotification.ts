@@ -61,8 +61,12 @@ export async function consumeNativeCallIntent(): Promise<IncomingCallPayload | n
   try {
     const raw = await Native.consumePendingCallIntent();
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as IncomingCallPayload;
+    const parsed = JSON.parse(raw) as IncomingCallPayload & { callAction?: string };
     if (!parsed?.callId || !parsed?.fromUserId) return null;
+    const action = parsed.callAction;
+    if (action === 'accept' || action === 'reject') {
+      parsed.callAction = action;
+    }
     return parsed;
   } catch {
     return null;

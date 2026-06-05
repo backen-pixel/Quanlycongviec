@@ -291,5 +291,30 @@ r.delete('/device-token', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /push/call-reject — Từ chối cuộc gọi từ native (app kill, không có socket)
+// ═══════════════════════════════════════════════════════════════════════════
+r.post('/call-reject', async (req, res) => {
+  try {
+    const uid = currentUserId(req);
+    if (!uid) return res.status(401).json({ error: 'Token không có user id' });
+
+    const callId = String(req.body?.callId || req.body?.call_id || '').trim();
+    const toUserId = String(req.body?.toUserId || req.body?.to_user_id || '').trim();
+    if (!callId || !toUserId) {
+      return res.status(400).json({ error: 'Thiếu callId hoặc toUserId' });
+    }
+
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`user:${toUserId}`).emit('call:rejected', { callId, reason: 'rejected' });
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('POST /push/call-reject:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = r;
 module.exports.sendWebPush = sendWebPush;

@@ -3,6 +3,8 @@
  * Cần migration database/204_push_device_tokens.sql
  */
 
+const fs = require('fs');
+const path = require('path');
 const { supabase } = require('../config/supabase');
 const { isNotificationAllowedForUser } = require('../helpers/notificationPrefsUser');
 const { isExpiryDeadlineNotificationType } = require('../helpers/notificationOperationalFilter');
@@ -151,15 +153,34 @@ async function sendExpoChunk(messages) {
 let cachedFcmAuth = null; // { accessToken, exp, projectId }
 
 function loadFcmCredentials() {
-  if (process.env.FCM_SA_JSON) {
+  const fromEnv = process.env.FCM_SA_JSON;
+  if (fromEnv) {
     try {
-      const sa = JSON.parse(process.env.FCM_SA_JSON);
+      const sa = JSON.parse(fromEnv);
       return {
         projectId: sa.project_id,
         clientEmail: sa.client_email,
         privateKey: sa.private_key,
       };
     } catch {
+      /* thử file path bên dưới */
+    }
+  }
+  const jsonPath = process.env.FCM_SA_JSON_PATH;
+  if (jsonPath) {
+    try {
+      const abs = path.isAbsolute(jsonPath)
+        ? jsonPath
+        : path.join(__dirname, '../../', jsonPath);
+      const raw = fs.readFileSync(abs, 'utf8');
+      const sa = JSON.parse(raw);
+      return {
+        projectId: sa.project_id,
+        clientEmail: sa.client_email,
+        privateKey: sa.private_key,
+      };
+    } catch (e) {
+      console.warn('[pushSender] FCM_SA_JSON_PATH:', e.message || e);
       return null;
     }
   }
@@ -300,26 +321,19 @@ async function sendFcmIncomingCall(tokens, notification) {
     is_group: meta.is_group ? 'true' : 'false',
     group_id: String(meta.group_id || ''),
     group_name: String(meta.group_name || ''),
+    title: payload.title,
+    body: payload.body,
   };
   for (const row of tokens) {
     try {
+      // Data-only + HIGH priority → CrmFirebaseMessagingService.onMessageReceived khi app kill
       const body = {
         message: {
           token: row.token,
-          notification: {
-            title: payload.title,
-            body: payload.body,
-          },
           data,
           android: {
             priority: 'HIGH',
             ttl: '60s',
-            notification: {
-              channel_id: CHANNEL_CALL,
-              sound: 'default',
-              notification_priority: 'PRIORITY_MAX',
-              visibility: 'PUBLIC',
-            },
           },
         },
       };
