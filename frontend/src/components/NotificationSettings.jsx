@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Bell, X } from 'lucide-react';
+import { Bell, Phone, X } from 'lucide-react';
 import api from '../lib/api';
+import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import {
   setNotificationPrefsCache,
   setNotificationVolumePercent,
@@ -19,6 +21,28 @@ import {
 } from '../lib/notificationSoundIdb';
 import { playLoudNotificationSound, invalidateNotificationSoundCache, playPresetBell } from '../lib/notificationAlert';
 import { NOTIFICATION_PRESETS } from '../lib/notificationPresets';
+import {
+  saveCustomCallRingtone,
+  clearCustomCallRingtone,
+} from '../lib/callRingtoneIdb';
+import {
+  getCallRingtoneVolumePercent,
+  setCallRingtoneVolumePercent,
+  setUseCustomCallRingtone,
+  getUseCustomCallRingtone,
+  getCallRingtoneFileName,
+  setCallRingtoneFileName,
+  clearCallRingtonePrefs,
+} from '../lib/callRingtonePrefs';
+import {
+  invalidateCallRingtoneCache,
+  previewCallRingtone,
+  previewGlobalCallRingtone,
+} from '../lib/callRingtonePlayer';
+import {
+  fetchGlobalCallRingtoneConfig,
+  invalidateGlobalCallRingtoneCache,
+} from '../lib/callRingtoneServer';
 
 const PREFS_FALLBACK = {
   browser_push: true,
@@ -183,6 +207,8 @@ const MODULE_SECTIONS = [
  * NotificationSettings — âm lượng, chuông tùy chỉnh, web push
  */
 export default function NotificationSettings({ isOpen, onClose, anchorPanel = null }) {
+  const { user } = useAuth();
+  const canManageGlobalCallRing = isAdminLike(user);
   const [modulePrefs, setModulePrefs] = useState(() => ({ ...PREFS_FALLBACK }));
   const [savingPrefKey, setSavingPrefKey] = useState(null);
   const [pushSupported, setPushSupported] = useState(false);
@@ -197,6 +223,11 @@ export default function NotificationSettings({ isOpen, onClose, anchorPanel = nu
   const [presetId, setPresetId] = useState(() => {
     try { return getNotificationPresetId() || 'classic'; } catch { return 'classic'; }
   });
+  const [callRingVolume, setCallRingVolume] = useState(85);
+  const [hasCallRing, setHasCallRing] = useState(false);
+  const [callRingHint, setCallRingHint] = useState('');
+  const [globalCallRing, setGlobalCallRing] = useState(null);
+  const [globalCallRingUploading, setGlobalCallRingUploading] = useState(false);
 
   const syncTrimFromStorage = (duration) => {
     const dur = Number(duration) || 0;
@@ -251,6 +282,22 @@ export default function NotificationSettings({ isOpen, onClose, anchorPanel = nu
     } catch {
       /* ignore */
     }
+    try {
+      setCallRingVolume(getCallRingtoneVolumePercent());
+      const useCall = getUseCustomCallRingtone();
+      setHasCallRing(useCall);
+      const name = getCallRingtoneFileName();
+      if (useCall && name) {
+        setCallRingHint(`Ghi đè cá nhân: ${name}`);
+      } else if (useCall) {
+        setCallRingHint('Đang ghi đè bằng file trên máy bạn (chỉ trình duyệt này).');
+      } else {
+        setCallRingHint('');
+      }
+    } catch {
+      /* ignore */
+    }
+    void fetchGlobalCallRingtoneConfig(true).then((g) => setGlobalCallRing(g));
     setPushHint('');
   }, [isOpen]);
 
@@ -432,6 +479,126 @@ export default function NotificationSettings({ isOpen, onClose, anchorPanel = nu
     setHasCustomBell(false);
     setTrimStartSec(0);
     setTrimPlaySec(15);
+  };
+
+  const applyCallRingVolume = (n) => {
+    const v = Math.min(150, Math.max(0, Math.round(Number(n) || 0)));
+    setCallRingVolume(v);
+    setCallRingtoneVolumePercent(v);
+  };
+
+  const handleCallRingFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > 8 * 1024 * 1024) {
+      alert('File quá lớn (tối đa 8 MB). Hãy chọn file ngắn hơn hoặc nén MP3.');
+      return;
+    }
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) {
+      alert('Trình duyệt không hỗ trợ Web Audio.');
+      return;
+    }
+    const ctx = new Ctx();
+    try {
+      const raw = await file.arrayBuffer();
+      const copy = raw.slice(0);
+      const audioBuf = await ctx.decodeAudioData(copy);
+      const mime = file.type || 'audio/mpeg';
+      await saveCustomCallRingtone({ buffer: raw.slice(0), mime, fileName: file.name });
+      setUseCustomCallRingtone(true);
+      setHasCallRing(true);
+      setCallRingtoneFileName(file.name);
+      invalidateCallRingtoneCache();
+      setCallRingHint(
+        `Đã lưu ${file.name} — ${audioBuf.duration.toFixed(1)}s. Dùng cho cuộc gọi đến và khi bạn gọi đi (lặp đến khi trả lời / huỷ).`,
+      );
+    } catch (err) {
+      alert('Không đọc được file âm thanh (thử MP3/WAV). ' + (err?.message || String(err)));
+    } finally {
+      await ctx.close().catch(() => {});
+    }
+  };
+
+  const clearCallRing = async () => {
+    await clearCustomCallRingtone();
+    clearCallRingtonePrefs();
+    invalidateCallRingtoneCache();
+    setHasCallRing(false);
+    setCallRingHint('');
+  };
+
+  const handleGlobalCallRingFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > 8 * 1024 * 1024) {
+      alert('File quá lớn (tối đa 8 MB).');
+      return;
+    }
+    setGlobalCallRingUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const { data } = await api.post('/settings/call-ringtone', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      invalidateGlobalCallRingtoneCache();
+      const refreshed = await fetchGlobalCallRingtoneConfig(true);
+      setGlobalCallRing(refreshed || (data?.url ? data : null));
+      alert(`Đã đặt nhạc chuông mặc định cho toàn bộ người dùng: ${data.fileName || file.name}`);
+    } catch (err) {
+      alert(err?.response?.data?.error || err?.message || 'Upload thất bại');
+    } finally {
+      setGlobalCallRingUploading(false);
+    }
+  };
+
+  const clearGlobalCallRing = async () => {
+    if (!window.confirm('Xóa nhạc chuông mặc định toàn hệ thống? Mọi user sẽ nghe tiếng bíp.')) return;
+    try {
+      await api.delete('/settings/call-ringtone');
+      invalidateGlobalCallRingtoneCache();
+      setGlobalCallRing(null);
+    } catch (err) {
+      alert(err?.response?.data?.error || err?.message || 'Không xóa được');
+    }
+  };
+
+  const makeCallTonePreview = () => (variant) => {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return null;
+      const actx = new AudioCtx();
+      const gain = actx.createGain();
+      gain.gain.value = 0.05;
+      gain.connect(actx.destination);
+      let stopped = false;
+      const loop = () => {
+        if (stopped) return;
+        const osc = actx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = variant === 'ringtone' ? 520 : 440;
+        osc.connect(gain);
+        osc.start();
+        osc.stop(actx.currentTime + 0.4);
+        setTimeout(loop, 1100);
+      };
+      loop();
+      return {
+        pause: () => {
+          stopped = true;
+          try { actx.close(); } catch { /* noop */ }
+        },
+      };
+    } catch {
+      return null;
+    }
+  };
+
+  const previewCallRing = () => {
+    void previewCallRingtone(makeCallTonePreview());
   };
 
   const PANEL_WIDTH = 460;
@@ -737,6 +904,108 @@ export default function NotificationSettings({ isOpen, onClose, anchorPanel = nu
             <p className="text-[10px] text-gray-400 px-1">
               Thông báo trong app chỉ kèm chuông, không đọc giọng. Chuông mặc định phát tối đa 15 giây từ đầu file (hoặc đoạn bạn chọn nếu dùng file tùy chỉnh).
             </p>
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="font-semibold text-xs text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+              <Phone className="h-3.5 w-3.5" />
+              Nhạc chuông cuộc gọi
+            </h3>
+            <p className="text-[10px] text-gray-500 px-1">
+              Cuộc gọi audio/video Messenger. Ưu tiên: <strong>file cá nhân</strong> (nếu bật bên dưới) → <strong>nhạc mặc định hệ thống</strong> (admin upload) → tiếng bíp.
+            </p>
+            {canManageGlobalCallRing ? (
+              <div className="px-3 py-2 rounded-lg border border-amber-200 bg-amber-50/80 space-y-2">
+                <p className="text-xs font-semibold text-amber-900">Nhạc chuông mặc định — toàn hệ thống (admin)</p>
+                <p className="text-[10px] text-amber-800/90">
+                  Upload một lần: mọi người dùng nghe cùng file khi có cuộc gọi (lưu trên server).
+                </p>
+                {globalCallRing?.fileName ? (
+                  <p className="text-[10px] text-emerald-800">
+                    Đang dùng: <strong>{globalCallRing.fileName}</strong>
+                    {globalCallRing.updatedAt ? ` · ${new Date(globalCallRing.updatedAt).toLocaleString('vi-VN')}` : ''}
+                  </p>
+                ) : (
+                  <p className="text-[10px] text-gray-600">Chưa có file mặc định trên server.</p>
+                )}
+                <input
+                  type="file"
+                  accept="audio/mpeg,audio/mp3,.mp3,audio/*,.wav,.ogg,.m4a,.webm"
+                  disabled={globalCallRingUploading}
+                  onChange={handleGlobalCallRingFile}
+                  className="block w-full text-xs text-gray-600 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:bg-amber-100 file:text-amber-900 cursor-pointer disabled:opacity-50"
+                />
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={!globalCallRing?.url}
+                    onClick={() => {
+                      void fetchGlobalCallRingtoneConfig(true).then(() => previewGlobalCallRing(makeCallTonePreview()));
+                    }}
+                    className="h-8 px-3 rounded-lg bg-amber-100 text-amber-900 text-xs font-medium hover:bg-amber-200 cursor-pointer disabled:opacity-50"
+                  >
+                    Nghe thử (mặc định HT)
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!globalCallRing?.url || globalCallRingUploading}
+                    onClick={() => void clearGlobalCallRing()}
+                    className="h-8 px-3 rounded-lg border border-amber-300 text-amber-900 text-xs hover:bg-amber-100 cursor-pointer disabled:opacity-50"
+                  >
+                    Xóa mặc định HT
+                  </button>
+                </div>
+              </div>
+            ) : globalCallRing?.fileName ? (
+              <p className="text-[10px] text-emerald-700 px-1">
+                Hệ thống: <strong>{globalCallRing.fileName}</strong> (do admin cấu hình).
+              </p>
+            ) : null}
+            <div className="px-3 py-2 rounded-lg bg-gray-50 space-y-1">
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-sm text-gray-700">Âm lượng cuộc gọi</label>
+                <span className="text-xs font-mono text-gray-500">{callRingVolume}%</span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={150}
+                value={callRingVolume}
+                onChange={(ev) => applyCallRingVolume(Number(ev.target.value))}
+                className="w-full accent-violet-600 cursor-pointer"
+              />
+            </div>
+            <div className="px-3 py-2 rounded-lg border border-violet-100 space-y-3 bg-violet-50/30">
+              <p className="text-xs font-medium text-gray-800">Ghi đè cá nhân (chỉ trình duyệt này)</p>
+              <input
+                type="file"
+                accept="audio/mpeg,audio/mp3,.mp3,audio/*,.wav,.ogg,.m4a,.webm"
+                onChange={handleCallRingFile}
+                className="block w-full text-xs text-gray-600 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:bg-violet-100 file:text-violet-800 cursor-pointer"
+              />
+              {callRingHint ? (
+                <p className="text-[10px] text-emerald-700 leading-snug">{callRingHint}</p>
+              ) : (
+                <p className="text-[10px] text-gray-500">Chưa chọn file — dùng tiếng bíp mặc định của hệ thống.</p>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={previewCallRing}
+                  className="h-8 px-3 rounded-lg bg-violet-100 text-violet-900 text-xs font-medium hover:bg-violet-200 cursor-pointer"
+                >
+                  Nghe thử
+                </button>
+                <button
+                  type="button"
+                  disabled={!hasCallRing}
+                  onClick={() => void clearCallRing()}
+                  className="h-8 px-3 rounded-lg border border-gray-200 text-gray-700 text-xs hover:bg-gray-50 cursor-pointer disabled:opacity-50"
+                >
+                  Xóa / dùng bíp mặc định
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
