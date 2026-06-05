@@ -3,7 +3,7 @@ import api from '../lib/api';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Lock, Building2, Workflow, Globe, MapPin, RefreshCw, FileSpreadsheet } from 'lucide-react';
+import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Lock, Building2, Workflow, Globe, MapPin, RefreshCw, FileSpreadsheet, Paperclip } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -1234,7 +1234,15 @@ function TemplateCard({
   companyPipelinesAll = [], activeTab = 'deal',
 }) {
   const [editingItemId, setEditingItemId] = useState(null);
-  const [itemEditForm, setItemEditForm] = useState({ title: '', description: '', priority: 'medium', deadline_days: 0, blocks_stage_advance: false, show_excel_quotation_upload: false });
+  const [itemEditForm, setItemEditForm] = useState({
+    title: '',
+    description: '',
+    priority: 'medium',
+    deadline_days: 0,
+    blocks_stage_advance: false,
+    completion_requires_file_or_note: false,
+    show_excel_quotation_upload: false,
+  });
 
   const sortedItems = [...(tpl.items || [])].sort((a, b) => a.order_index - b.order_index);
 
@@ -1246,6 +1254,7 @@ function TemplateCard({
       priority: item.priority || 'medium',
       deadline_days: item.deadline_days ?? 0,
       blocks_stage_advance: !!item.blocks_stage_advance,
+      completion_requires_file_or_note: !!item.completion_requires_file_or_note,
       show_excel_quotation_upload: !!item.show_excel_quotation_upload,
     });
   };
@@ -1262,6 +1271,7 @@ function TemplateCard({
         priority: itemEditForm.priority,
         deadline_days: 0,
         blocks_stage_advance: !!itemEditForm.blocks_stage_advance,
+        completion_requires_file_or_note: !!itemEditForm.completion_requires_file_or_note,
         show_excel_quotation_upload: !!itemEditForm.show_excel_quotation_upload,
       });
       setEditingItemId(null);
@@ -1280,6 +1290,14 @@ function TemplateCard({
     try {
       await updateTemplateItemFields(tpl.id, item.id, {
         show_excel_quotation_upload: !item.show_excel_quotation_upload,
+      });
+    } catch { /* alert trong updateTemplateItemFields */ }
+  };
+
+  const toggleItemFileEvidence = async (item) => {
+    try {
+      await updateTemplateItemFields(tpl.id, item.id, {
+        completion_requires_file_or_note: !item.completion_requires_file_or_note,
       });
     } catch { /* alert trong updateTemplateItemFields */ }
   };
@@ -1435,6 +1453,14 @@ function TemplateCard({
                             <Lock className="h-2.5 w-2.5" /> Chặn
                           </span>
                         )}
+                        {item.completion_requires_file_or_note && (
+                          <span
+                            className="text-[9px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
+                            title="Bắt buộc ghi chú hoặc file đính kèm trước khi chuyển giai đoạn"
+                          >
+                            <Paperclip className="h-2.5 w-2.5" /> File/GC
+                          </span>
+                        )}
                         {item.show_excel_quotation_upload && (
                           <span
                             className="text-[9px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
@@ -1447,6 +1473,10 @@ function TemplateCard({
                           className={`p-1 rounded cursor-pointer shrink-0 ${item.blocks_stage_advance ? 'text-amber-600 bg-amber-50 hover:bg-amber-100' : 'text-gray-400 hover:bg-amber-50 hover:text-amber-600'}`}
                           title={item.blocks_stage_advance ? 'Đang chặn chuyển giai đoạn — bấm để tắt' : 'Bật chặn: bắt buộc hoàn thành trước khi chuyển giai đoạn'}>
                           <Lock className="h-3.5 w-3.5" /></button>
+                        <button type="button" onClick={() => toggleItemFileEvidence(item)}
+                          className={`p-1 rounded cursor-pointer shrink-0 ${item.completion_requires_file_or_note ? 'text-violet-600 bg-violet-50 hover:bg-violet-100' : 'text-gray-400 hover:bg-violet-50 hover:text-violet-600'}`}
+                          title={item.completion_requires_file_or_note ? 'Đang bắt buộc file/ghi chú — bấm để tắt' : 'Bật: bắt buộc ghi chú hoặc file đính kèm trước khi chuyển giai đoạn'}>
+                          <Paperclip className="h-3.5 w-3.5" /></button>
                         <button type="button" onClick={() => toggleItemExcelUpload(item)}
                           className={`p-1 rounded cursor-pointer shrink-0 ${item.show_excel_quotation_upload ? 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100' : 'text-gray-400 hover:bg-emerald-50 hover:text-emerald-600'}`}
                           title={item.show_excel_quotation_upload ? 'Đang hiển thị nút Upload Excel BG — bấm để tắt' : 'Bật: hiển thị nút Upload Excel Báo giá trên tab Nhiệm vụ'}>
@@ -1504,6 +1534,16 @@ function TemplateCard({
                             <label className="flex items-center gap-1.5 h-8 px-2 rounded border bg-white text-xs cursor-pointer select-none">
                               <input
                                 type="checkbox"
+                                checked={!!itemEditForm.completion_requires_file_or_note}
+                                onChange={e => setItemEditForm(f => ({ ...f, completion_requires_file_or_note: e.target.checked }))}
+                                className="accent-violet-600"
+                              />
+                              <Paperclip className="h-3 w-3 text-violet-600" />
+                              Bắt buộc file/ghi chú
+                            </label>
+                            <label className="flex items-center gap-1.5 h-8 px-2 rounded border bg-white text-xs cursor-pointer select-none">
+                              <input
+                                type="checkbox"
                                 checked={!!itemEditForm.show_excel_quotation_upload}
                                 onChange={e => setItemEditForm(f => ({ ...f, show_excel_quotation_upload: e.target.checked }))}
                                 className="accent-emerald-600"
@@ -1521,6 +1561,9 @@ function TemplateCard({
                           </div>
                           <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
                             <Lock className="h-2.5 w-2.5 inline mr-1" /> Khi bật: lead/deal không thể chuyển sang giai đoạn khác (trừ Thắng/Thua) đến khi nhiệm vụ này hoàn thành.
+                          </p>
+                          <p className="text-[10px] text-violet-700 bg-violet-50 border border-violet-200 rounded-md px-2 py-1">
+                            <Paperclip className="h-2.5 w-2.5 inline mr-1" /> Khi bật: phải có ghi chú trên nhiệm vụ hoặc file đính kèm trước khi chuyển giai đoạn (và khi đánh dấu hoàn thành).
                           </p>
                           <p className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1">
                             <FileSpreadsheet className="h-2.5 w-2.5 inline mr-1" /> Khi bật: nhiệm vụ sinh ra ở tab Nhiệm vụ sẽ có nút <b>Upload Excel BG</b> để tải file báo giá Excel và tạo báo giá tự động.

@@ -1032,7 +1032,7 @@ export default function CRMTasksTab({
                 task.status !== 'completed' && (
                 <span
                   className="shrink-0 text-[10px] font-medium text-violet-900 bg-violet-50 border border-violet-100 px-1.5 py-0.5 rounded"
-                  title="Cần ghi chú / minh chứng liên hệ trước khi hoàn thành (Cấu hình KPI → Bộ NV CRM)"
+                  title="Cần ghi chú hoặc file đính kèm trước khi hoàn thành / chuyển giai đoạn (Bộ mẫu CRM)"
                 >
                   {(() => {
                     const n = !!task.completion_requires_customer_note;
