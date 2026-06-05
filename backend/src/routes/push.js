@@ -231,6 +231,32 @@ async function sendWebPush(userId, notification) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// GET /push/status — Trạng thái push (bảng DB, FCM, token của user)
+// ═══════════════════════════════════════════════════════════════════════════
+r.get('/status', async (req, res) => {
+  try {
+    const uid = currentUserId(req);
+    if (!uid) return res.status(401).json({ error: 'Token không có user id' });
+    const { getPushInfraStatus } = require('../services/pushSender');
+    const status = await getPushInfraStatus(uid);
+    res.json({
+      ok: status.tableOk && status.fcmConfigured,
+      ...status,
+      hint: !status.tableOk
+        ? 'Chạy SQL database/204_push_device_tokens.sql trên Supabase SQL Editor'
+        : !status.fcmConfigured
+          ? 'Backend thiếu FCM_SA_JSON (Render Environment)'
+          : status.tokens.fcm === 0
+            ? 'App chưa đăng ký FCM token — mở app, đăng nhập lại, cấp quyền thông báo'
+            : null,
+    });
+  } catch (e) {
+    console.error('GET /push/status:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // POST /push/device-token — Đăng ký token Expo/FCM/APNs (mobile)
 // ═══════════════════════════════════════════════════════════════════════════
 r.post('/device-token', async (req, res) => {

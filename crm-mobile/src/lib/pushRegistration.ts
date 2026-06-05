@@ -46,11 +46,15 @@ async function ensurePermission(): Promise<boolean> {
   }
 }
 
-async function postDeviceToken(token: string, platform: 'expo' | 'fcm'): Promise<void> {
+async function postDeviceToken(token: string, platform: 'expo' | 'fcm'): Promise<{ ok: boolean; error?: string }> {
   try {
     await api.post('/push/device-token', { token, platform });
-  } catch {
-    /* offline / 401 → sẽ thử lại lần sau */
+    return { ok: true };
+  } catch (e: unknown) {
+    const ax = e as { response?: { data?: { error?: string }; status?: number } };
+    const error = ax?.response?.data?.error || `HTTP ${ax?.response?.status || '?'}`;
+    console.warn('[pushRegistration]', platform, error);
+    return { ok: false, error };
   }
 }
 
@@ -106,7 +110,10 @@ export async function registerPushToken(): Promise<void> {
       if (prev !== fcmToken) {
         await AsyncStorage.setItem(FCM_TOKEN_KEY, fcmToken);
       }
-      await postDeviceToken(fcmToken, 'fcm');
+      const reg = await postDeviceToken(fcmToken, 'fcm');
+      if (!reg.ok && reg.error) {
+        console.warn('[pushRegistration] FCM server:', reg.error);
+      }
     }
   } catch {
     /* ignore */
@@ -118,6 +125,10 @@ export type PushSetupStatus = {
   hasProjectId: boolean;
   hasPushToken: boolean;
   hasFcmToken: boolean;
+  serverTableOk?: boolean;
+  serverFcmConfigured?: boolean;
+  serverFcmTokenCount?: number;
+  serverRegistrationError?: string;
   hint?: string;
 };
 
@@ -133,16 +144,53 @@ export async function getPushSetupStatus(): Promise<PushSetupStatus> {
   const expoToken = await AsyncStorage.getItem(EXPO_TOKEN_KEY);
   const fcmToken = await AsyncStorage.getItem(FCM_TOKEN_KEY);
   const hasProject = !!getProjectId();
+
+  let serverTableOk: boolean | undefined;
+  let serverFcmConfigured: boolean | undefined;
+  let serverFcmTokenCount: number | undefined;
+  let serverRegistrationError: string | undefined;
+  try {
+    const { data } = await api.get<{
+      tableOk?: boolean;
+      fcmConfigured?: boolean;
+      tokens?: { fcm?: number };
+      hint?: string;
+    }>('/push/status');
+    serverTableOk = data?.tableOk;
+    serverFcmConfigured = data?.fcmConfigured;
+    serverFcmTokenCount = data?.tokens?.fcm;
+    if (data?.hint) serverRegistrationError = data.hint;
+  } catch {
+    /* offline */
+  }
+
   let hint: string | undefined;
-  if (perm !== 'granted') hint = 'Chưa cấp quyền thông báo';
-  else if (!hasProject) hint = 'Thiếu EAS projectId trong app.json';
-  else if (!expoToken && !fcmToken) hint = 'Chưa đăng ký token';
+  if (serverTableOk === false) {
+    hint = 'Server chưa có bảng push_device_tokens — admin chạy migration 204 trên Supabase';
+  } else if (perm !== 'granted') hint = 'Chưa cấp quyền thông báo';
+  else if (!fcmToken) hint = 'Chưa có FCM token trên máy — đăng xuất/đăng nhập lại';
+  else if (serverFcmTokenCount === 0) hint = 'FCM token chưa lưu server — bấm Tải lại hoặc đăng nhập lại';
+  else if (serverFcmConfigured === false) hint = 'Server thiếu FCM_SA_JSON trên Render';
+  else if (!hasFcmToken && !expoToken) hint = 'Chưa đăng ký token';
+  else if (serverRegistrationError) hint = serverRegistrationError;
+
+  const callReady =
+    perm === 'granted' &&
+    !!fcmToken &&
+    serverTableOk !== false &&
+    serverFcmConfigured !== false &&
+    (serverFcmTokenCount == null || serverFcmTokenCount > 0);
+
   return {
     notificationPermission: perm,
     hasProjectId: hasProject,
-    hasPushToken: !!expoToken,
+    hasPushToken: !!expoToken || !!fcmToken,
     hasFcmToken: !!fcmToken,
-    hint,
+    serverTableOk,
+    serverFcmConfigured,
+    serverFcmTokenCount,
+    serverRegistrationError,
+    hint: callReady ? undefined : hint,
   };
 }
 
