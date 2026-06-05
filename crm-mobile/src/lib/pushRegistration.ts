@@ -22,6 +22,7 @@ const FCM_TOKEN_KEY = 'crm_fcm_push_token_v1';
 
 type FloatingBubbleOverlayModule = {
   consumeFcmToken?: () => Promise<string | null>;
+  fetchFcmToken?: () => Promise<string | null>;
 };
 
 const Overlay = NativeModules.FloatingBubbleOverlay as FloatingBubbleOverlayModule | undefined;
@@ -85,13 +86,17 @@ export async function registerPushToken(): Promise<void> {
     /* ignore */
   }
 
-  // 2) FCM native token — dùng cho push server khi app kill
+  // 2) FCM native token — bắt buộc cho cuộc gọi khi app kill
   try {
-    let fcmToken = await Overlay?.consumeFcmToken?.();
+    let fcmToken: string | null = null;
+    if (Platform.OS === 'android') {
+      fcmToken = (await Overlay?.fetchFcmToken?.()) || null;
+      if (!fcmToken) fcmToken = (await Overlay?.consumeFcmToken?.()) || null;
+    }
     if (!fcmToken && granted) {
       try {
         const device = await Notifications.getDevicePushTokenAsync();
-        fcmToken = device?.data || null;
+        fcmToken = typeof device?.data === 'string' ? device.data : null;
       } catch {
         /* ignore */
       }
@@ -100,10 +105,8 @@ export async function registerPushToken(): Promise<void> {
       const prev = await AsyncStorage.getItem(FCM_TOKEN_KEY);
       if (prev !== fcmToken) {
         await AsyncStorage.setItem(FCM_TOKEN_KEY, fcmToken);
-        await postDeviceToken(fcmToken, 'fcm');
-      } else {
-        await postDeviceToken(fcmToken, 'fcm');
       }
+      await postDeviceToken(fcmToken, 'fcm');
     }
   } catch {
     /* ignore */

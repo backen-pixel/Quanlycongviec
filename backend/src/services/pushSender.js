@@ -303,10 +303,31 @@ async function sendFcmDataOnly(tokens, notification) {
   }
 }
 
+function isExpoPushToken(token) {
+  return typeof token === 'string' && token.startsWith('ExponentPushToken[');
+}
+
+function pickFcmTokens(rows) {
+  const list = rows.fcm || [];
+  const seen = new Set(list.map((r) => r.token));
+  // Gộp token native lưu nhầm platform expo (hoặc ngược lại)
+  for (const row of rows.expo || []) {
+    if (!row?.token || isExpoPushToken(row.token)) continue;
+    if (!seen.has(row.token)) {
+      list.push(row);
+      seen.add(row.token);
+    }
+  }
+  return list;
+}
+
 async function sendFcmIncomingCall(tokens, notification) {
   if (!tokens.length) return;
   const auth = await getFcmAccessToken();
-  if (!auth) return;
+  if (!auth) {
+    console.warn('[pushSender] incoming_call: thiếu FCM credentials (FCM_SA_JSON)');
+    return;
+  }
   const meta = (notification.metadata && typeof notification.metadata === 'object')
     ? notification.metadata
     : {};
@@ -326,14 +347,24 @@ async function sendFcmIncomingCall(tokens, notification) {
   };
   for (const row of tokens) {
     try {
-      // Data-only + HIGH priority → CrmFirebaseMessagingService.onMessageReceived khi app kill
+      // notification + data: app kill → hệ thống hiện tray; data-only → onMessageReceived full-screen
       const body = {
         message: {
           token: row.token,
+          notification: {
+            title: payload.title,
+            body: payload.body,
+          },
           data,
           android: {
             priority: 'HIGH',
             ttl: '60s',
+            notification: {
+              channel_id: CHANNEL_CALL,
+              sound: 'default',
+              notification_priority: 'PRIORITY_MAX',
+              visibility: 'PUBLIC',
+            },
           },
         },
       };
@@ -352,6 +383,8 @@ async function sendFcmIncomingCall(tokens, notification) {
         } else {
           console.warn('[pushSender] FCM call error:', r.status, txt.slice(0, 200));
         }
+      } else if (isIncomingCallType(notification.type)) {
+        console.log('[pushSender] FCM incoming_call sent to token', row.token.slice(0, 12) + '…');
       }
     } catch (e) {
       console.warn('[pushSender] FCM call send error:', e.message || e);
@@ -381,11 +414,14 @@ async function sendMobilePush(userId, notification) {
     }
 
     const rows = await fetchUserTokens(userId);
-    const expoRows = rows.expo;
-    const fcmRows = rows.fcm;
+    const expoRows = rows.expo.filter((r) => isExpoPushToken(r.token));
+    const fcmRows = isCall ? pickFcmTokens(rows) : rows.fcm;
     if (!expoRows.length && !fcmRows.length) {
       if (isCall) console.warn('[pushSender] incoming_call: no device tokens for user', userId);
       return;
+    }
+    if (isCall && !fcmRows.length) {
+      console.warn('[pushSender] incoming_call: no FCM token for user', userId, '— chỉ gửi Expo (cần EAS projectId)');
     }
 
     const payload = buildPushPayload(notification);
