@@ -12,17 +12,13 @@ import {
 } from '../../lib/incomingCallNotifications';
 import { consumeNativeCallIntent } from '../../lib/nativeCallNotification';
 
-/** Lắng nghe push/local notification cuộc gọi — mở app → hiện CallOverlay. */
+/** Bước 8–10: nhận intent từ native (Trả lời) → kết nối WebRTC. */
 export default function CallNotificationBridge() {
-  const { applyIncomingFromPush, rejectCall, acceptCall } = useCall();
+  const { applyIncomingFromPush, handleNativeCallIntent, rejectCall, acceptCall } = useCall();
 
   useEffect(() => {
     void consumeNativeCallIntent().then((p) => {
-      if (!p) return;
-      applyIncomingFromPush(p);
-      if (p.callAction === 'accept') {
-        void acceptCall();
-      }
+      if (p) handleNativeCallIntent(p);
     });
     void consumePendingIncomingCall().then((p) => {
       if (p) applyIncomingFromPush(p);
@@ -51,7 +47,7 @@ export default function CallNotificationBridge() {
       subResponse.remove();
       subReceived.remove();
     };
-  }, [applyIncomingFromPush, rejectCall, acceptCall]);
+  }, [applyIncomingFromPush, handleNativeCallIntent, rejectCall, acceptCall]);
 
   return null;
 }

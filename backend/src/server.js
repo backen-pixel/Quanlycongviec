@@ -297,6 +297,38 @@ async function pushIncomingCall(toUserId, payload) {
   }
 }
 
+const CALL_RING_MS = 65_000;
+
+/** Khi callee mở app / reconnect socket — gửi lại call:incoming + FCM nếu cuộc gọi vẫn đang reo. */
+function syncPendingIncomingCalls(userId, socket) {
+  if (!userId || !socket) return;
+  const uid = String(userId);
+  for (const [callId, session] of activeDirectCalls.entries()) {
+    if (String(session.calleeId) !== uid) continue;
+    if (session.answeredAt) continue;
+    const age = Date.now() - (session.startedAt || 0);
+    if (age > CALL_RING_MS) {
+      activeDirectCalls.delete(callId);
+      continue;
+    }
+    socket.emit('call:incoming', {
+      callId,
+      kind: session.kind || 'audio',
+      groupId: session.groupId || null,
+      fromUserId: session.callerId,
+      fromName: session.fromName || 'Người gọi',
+    });
+    void pushIncomingCall(uid, {
+      callId,
+      kind: session.kind || 'audio',
+      groupId: session.groupId,
+      fromUserId: session.callerId,
+      fromName: session.fromName || 'Người gọi',
+      isGroup: false,
+    });
+  }
+}
+
 // ─── Socket.IO with Auth ──
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
@@ -312,7 +344,10 @@ io.on('connection', (socket) => {
   console.log('🔌 Connected:', socket.id, '| User:', socket.user?.fullName);
 
   // Join personal room for targeted notifications
-  if (userId) socket.join(`user:${userId}`);
+  if (userId) {
+    socket.join(`user:${userId}`);
+    syncPendingIncomingCalls(userId, socket);
+  }
 
   // Presence: ping ngay khi kết nối socket (bổ sung HTTP POST /users/ping)
   if (userId) {
@@ -371,6 +406,7 @@ io.on('connection', (socket) => {
         groupId,
         callerId: uid,
         calleeId: toUserId,
+        fromName: socket.user?.fullName || socket.user?.full_name || 'Người gọi',
         kind: kind === 'video' ? 'video' : 'audio',
         startedAt: Date.now(),
         answeredAt: null,

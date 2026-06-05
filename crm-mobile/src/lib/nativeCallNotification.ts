@@ -56,13 +56,17 @@ export function cancelNativeIncomingCallNotification(callId?: string | null): vo
 }
 
 /** Intent mở app từ thông báo cuộc gọi native (Android). */
+const STALE_CALL_MS = 90_000;
+
 export async function consumeNativeCallIntent(): Promise<IncomingCallPayload | null> {
   if (Platform.OS !== 'android' || !Native?.consumePendingCallIntent) return null;
   try {
     const raw = await Native.consumePendingCallIntent();
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as IncomingCallPayload & { callAction?: string };
+    const parsed = JSON.parse(raw) as IncomingCallPayload & { callAction?: string; stashedAt?: number };
     if (!parsed?.callId || !parsed?.fromUserId) return null;
+    const stashedAt = Number(parsed.stashedAt || 0);
+    if (stashedAt > 0 && Date.now() - stashedAt > STALE_CALL_MS) return null;
     const action = parsed.callAction;
     if (action === 'accept' || action === 'reject') {
       parsed.callAction = action;
