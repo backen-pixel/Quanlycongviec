@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import api from '../lib/api';
 import { BUILTIN_UPDATES } from '../content/builtinUpdates';
-import { renderReleaseNoteContent } from '../lib/renderReleaseNoteContent';
+import { ReleaseNoteContent } from '../lib/renderReleaseNoteContent';
 import { markAllBuiltinUpdatesRead } from '../lib/releaseNotesRead';
 import { useReleaseNotesUnread } from '../hooks/useReleaseNotesUnread';
 import {
@@ -22,7 +22,7 @@ function formatDateVN(iso) {
 }
 
 function renderMarkdownLines(content) {
-  return renderReleaseNoteContent(content);
+  return <ReleaseNoteContent content={content} />;
 }
 
 function BuiltinUpdateCard({ item, isExpanded, onToggle }) {
