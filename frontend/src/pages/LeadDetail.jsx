@@ -30,10 +30,7 @@ import DealCrossScoresPanel from '../components/DealCrossScoresPanel';
 import LeadKpiLedgerPanel from '../components/LeadKpiLedgerPanel';
 import { useCrmNotesFab } from '../context/CrmNotesFabContext';
 import PipelineStepper from '../components/PipelineStepper';
-import {
-  crmDealStageMoveBlockedMessage,
-  isDealCrmStageLocked,
-} from '../lib/crmDealStageGate';
+import { crmDealStageMoveBlockedMessage } from '../lib/crmDealStageGate';
 import { sortAndDedupePipelineStages } from '../lib/crmPipelineStages';
 import DealStageEventModal from '../components/DealStageEventModal';
 import {
@@ -1348,14 +1345,9 @@ export default function LeadDetail() {
       )}
 
       {/* Pipeline Progress - MISA Style Stepper */}
-      {lead?.type === 'deal' && lead?.project_id && !isDealCrmStageLocked(lead) && (
+      {lead?.type === 'deal' && lead?.project_id && (
         <p className="text-xs text-sky-800 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2 mb-2">
-          Deal đã có dự án — bạn có thể đổi lại giai đoạn trước Thắng / Thắng / Thua trên thanh bước. Tiến độ xưởng và vận chuyển hiển thị qua badge SX/VC (không kéo cột Sản xuất/Vận chuyển trên Kanban CRM).
-        </p>
-      )}
-      {lead?.type === 'deal' && isDealCrmStageLocked(lead) && (
-        <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
-          Deal đang ở cột do module Sản xuất/Vận chuyển quản lý — chọn lại Thắng hoặc giai đoạn trước đó trên thanh bước, hoặc cập nhật tiến độ tại Kanban xưởng/VC.
+          Deal đã có dự án — đổi giai đoạn trên thanh bước hoặc kéo thả trên Kanban CRM. Tiến độ xưởng/vận chuyển vẫn hiển thị qua badge SX/VC và có thể cập nhật tại module xưởng/VC.
         </p>
       )}
       <PipelineStepper
