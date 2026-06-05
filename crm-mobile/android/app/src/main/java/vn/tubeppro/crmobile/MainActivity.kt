@@ -61,6 +61,7 @@ class MainActivity : ReactActivity() {
       obj.put("groupId", groupId)
       obj.put("groupName", groupName)
       obj.put("kind", "audio")
+      obj.put("stashedAt", System.currentTimeMillis())
       if (callAction.isNotBlank()) obj.put("callAction", callAction)
       getSharedPreferences("crm_call_intent", MODE_PRIVATE)
         .edit()

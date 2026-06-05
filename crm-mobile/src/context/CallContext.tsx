@@ -55,6 +55,8 @@ type Ctx = {
   endCall: () => void;
   toggleMute: () => void;
   applyIncomingFromPush: (payload: IncomingCallPayload) => void;
+  handleNativeCallIntent: (payload: IncomingCallPayload) => void;
+  nativeAcceptPending: boolean;
 };
 
 const CallCtx = createContext<Ctx | null>(null);
@@ -141,6 +143,11 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     new Map<string, { pc: RTCPeerConnection; pending: RTCIceCandidateInit[] }>(),
   );
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const nativeAcceptTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingNativeAcceptRef = useRef(false);
+  const tryRunPendingNativeAcceptRef = useRef<() => void>(() => {});
+  const [nativeAcceptPending, setNativeAcceptPending] = useState(false);
 
   useEffect(() => {
     statusRef.current = status;
@@ -160,6 +167,14 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
     }
+    if (connectingTimeoutRef.current) {
+      clearTimeout(connectingTimeoutRef.current);
+      connectingTimeoutRef.current = null;
+    }
+    if (nativeAcceptTimeoutRef.current) {
+      clearTimeout(nativeAcceptTimeoutRef.current);
+      nativeAcceptTimeoutRef.current = null;
+    }
     directPcRef.current?.close();
     directPcRef.current = null;
     directPendingRef.current = [];
@@ -170,6 +185,8 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     localStreamRef.current = null;
     void dismissIncomingCallNotification(callIdRef.current);
+    pendingNativeAcceptRef.current = false;
+    setNativeAcceptPending(false);
     setStatus('idle');
     setMode('direct');
     setCallId(null);
@@ -193,6 +210,10 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const markActive = useCallback(() => {
+    if (connectingTimeoutRef.current) {
+      clearTimeout(connectingTimeoutRef.current);
+      connectingTimeoutRef.current = null;
+    }
     setStatus('active');
     setStartedAt((t) => t || Date.now());
   }, []);
@@ -329,6 +350,21 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     [getLocalStream, resetState],
   );
 
+  const rejectCall = useCallback(() => {
+    const socket = socketRef.current;
+    const cid = callIdRef.current;
+    void dismissIncomingCallNotification(cid);
+    void clearPendingIncomingCall();
+    if (socket && cid) {
+      if (modeRef.current === 'group') {
+        socket.emit('call:reject', { callId: cid, reason: 'rejected' });
+      } else if (peerRef.current?.id) {
+        socket.emit('call:reject', { callId: cid, toUserId: peerRef.current.id, reason: 'rejected' });
+      }
+    }
+    resetState();
+  }, [resetState]);
+
   const acceptCall = useCallback(async () => {
     const socket = socketRef.current;
     const cid = callIdRef.current;
@@ -340,13 +376,23 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       timeoutRef.current = null;
     }
     setStatus('connecting');
+    if (connectingTimeoutRef.current) clearTimeout(connectingTimeoutRef.current);
+    connectingTimeoutRef.current = setTimeout(() => {
+      if (statusRef.current === 'connecting') {
+        setError('Không kết nối được cuộc gọi');
+        resetState();
+      }
+    }, 45_000);
     try {
       const stream = await getLocalStream();
       if (modeRef.current === 'group') {
         socket.emit('call:group_join', { callId: cid });
       } else {
         const p = peerRef.current;
-        if (!p?.id) return;
+        if (!p?.id) {
+          resetState();
+          return;
+        }
         const pc = createDirectPc(cid, p.id);
         stream.getTracks().forEach((t) => pc.addTrack(t as never, stream as never));
         socket.emit('call:accept', { callId: cid, toUserId: p.id });
@@ -362,22 +408,40 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       setError((e as Error)?.message || 'Không truy cập được micro');
       rejectCall();
     }
-  }, [createDirectPc, getLocalStream]);
+  }, [createDirectPc, getLocalStream, rejectCall, resetState]);
 
-  const rejectCall = useCallback(() => {
+  const clearNativeAcceptPending = useCallback(() => {
+    pendingNativeAcceptRef.current = false;
+    setNativeAcceptPending(false);
+    if (nativeAcceptTimeoutRef.current) {
+      clearTimeout(nativeAcceptTimeoutRef.current);
+      nativeAcceptTimeoutRef.current = null;
+    }
+  }, []);
+
+  const scheduleNativeAcceptPending = useCallback(() => {
+    pendingNativeAcceptRef.current = true;
+    setNativeAcceptPending(true);
+    if (nativeAcceptTimeoutRef.current) clearTimeout(nativeAcceptTimeoutRef.current);
+    nativeAcceptTimeoutRef.current = setTimeout(() => {
+      if (!pendingNativeAcceptRef.current) return;
+      clearNativeAcceptPending();
+      if (statusRef.current === 'incoming') resetState();
+    }, 20_000);
+  }, [clearNativeAcceptPending, resetState]);
+
+  const tryRunPendingNativeAccept = useCallback(async () => {
+    if (!pendingNativeAcceptRef.current) return;
     const socket = socketRef.current;
     const cid = callIdRef.current;
-    void dismissIncomingCallNotification(cid);
-    void clearPendingIncomingCall();
-    if (socket && cid) {
-      if (modeRef.current === 'group') {
-        socket.emit('call:reject', { callId: cid, reason: 'rejected' });
-      } else if (peerRef.current?.id) {
-        socket.emit('call:reject', { callId: cid, toUserId: peerRef.current.id, reason: 'rejected' });
-      }
-    }
-    resetState();
-  }, [resetState]);
+    if (!socket?.connected || !cid || statusRef.current !== 'incoming') return;
+    clearNativeAcceptPending();
+    await acceptCall();
+  }, [acceptCall, clearNativeAcceptPending]);
+
+  tryRunPendingNativeAcceptRef.current = () => {
+    void tryRunPendingNativeAccept();
+  };
 
   const endCall = useCallback(() => {
     const socket = socketRef.current;
@@ -447,6 +511,29 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     },
     [applyIncomingCall],
   );
+
+  const handleNativeCallIntent = useCallback(
+    (payload: IncomingCallPayload) => {
+      if (payload.callAction === 'reject') {
+        applyIncomingFromPush(payload);
+        rejectCall();
+        return;
+      }
+      applyIncomingFromPush(payload);
+      if (payload.callAction === 'accept') {
+        scheduleNativeAcceptPending();
+        void tryRunPendingNativeAccept();
+      }
+    },
+    [applyIncomingFromPush, rejectCall, scheduleNativeAcceptPending, tryRunPendingNativeAccept],
+  );
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') tryRunPendingNativeAcceptRef.current();
+    });
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     let detachSocket: (() => void) | undefined;
@@ -629,7 +716,13 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       socket.on('call:group_participants', onGroupParticipants);
       socket.on('call:group_member_joined', onGroupMemberJoined);
 
+      const onSocketConnect = () => {
+        tryRunPendingNativeAcceptRef.current();
+      };
+      socket.on('connect', onSocketConnect);
+
       detachSocket = () => {
+        socket.off('connect', onSocketConnect);
         socket.off('call:incoming', onIncoming);
         socket.off('call:accepted', onAccepted);
         socket.off('call:signal', onSignal);
@@ -661,6 +754,8 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       endCall,
       toggleMute,
       applyIncomingFromPush,
+      handleNativeCallIntent,
+      nativeAcceptPending,
     }),
     [
       status,
@@ -677,6 +772,8 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       endCall,
       toggleMute,
       applyIncomingFromPush,
+      handleNativeCallIntent,
+      nativeAcceptPending,
     ],
   );
 

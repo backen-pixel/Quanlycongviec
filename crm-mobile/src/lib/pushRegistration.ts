@@ -58,6 +58,33 @@ async function postDeviceToken(token: string, platform: 'expo' | 'fcm'): Promise
   }
 }
 
+/** Đăng ký FCM token lên server — không phụ thuộc quyền thông báo. */
+export async function registerFcmTokenOnly(): Promise<boolean> {
+  if (Platform.OS === 'web' || !Device.isDevice) return false;
+  try {
+    let fcmToken: string | null = null;
+    if (Platform.OS === 'android') {
+      fcmToken = (await Overlay?.fetchFcmToken?.()) || null;
+      if (!fcmToken) fcmToken = (await Overlay?.consumeFcmToken?.()) || null;
+    }
+    if (!fcmToken) {
+      try {
+        const device = await Notifications.getDevicePushTokenAsync();
+        fcmToken = typeof device?.data === 'string' ? device.data : null;
+      } catch {
+        /* ignore */
+      }
+    }
+    if (!fcmToken) return false;
+    await AsyncStorage.setItem(FCM_TOKEN_KEY, fcmToken);
+    const reg = await postDeviceToken(fcmToken, 'fcm');
+    if (!reg.ok && reg.error) console.warn('[pushRegistration] FCM server:', reg.error);
+    return reg.ok;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Gọi sau login + bootstrap. Idempotent — token cũ không gửi lại.
  */
@@ -66,6 +93,9 @@ export async function registerPushToken(): Promise<void> {
   if (!Device.isDevice) return;
 
   const granted = await ensurePermission();
+
+  // 0) FCM trước — quan trọng nhất cho cuộc gọi khi app kill
+  await registerFcmTokenOnly();
 
   // 1) Expo push token (notification hiển thị)
   try {
@@ -84,35 +114,6 @@ export async function registerPushToken(): Promise<void> {
           // Vẫn ping nhẹ để backend cập nhật last_seen_at (mỗi 24h là đủ)
           await postDeviceToken(expoToken, 'expo');
         }
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-
-  // 2) FCM native token — bắt buộc cho cuộc gọi khi app kill
-  try {
-    let fcmToken: string | null = null;
-    if (Platform.OS === 'android') {
-      fcmToken = (await Overlay?.fetchFcmToken?.()) || null;
-      if (!fcmToken) fcmToken = (await Overlay?.consumeFcmToken?.()) || null;
-    }
-    if (!fcmToken && granted) {
-      try {
-        const device = await Notifications.getDevicePushTokenAsync();
-        fcmToken = typeof device?.data === 'string' ? device.data : null;
-      } catch {
-        /* ignore */
-      }
-    }
-    if (fcmToken) {
-      const prev = await AsyncStorage.getItem(FCM_TOKEN_KEY);
-      if (prev !== fcmToken) {
-        await AsyncStorage.setItem(FCM_TOKEN_KEY, fcmToken);
-      }
-      const reg = await postDeviceToken(fcmToken, 'fcm');
-      if (!reg.ok && reg.error) {
-        console.warn('[pushRegistration] FCM server:', reg.error);
       }
     }
   } catch {
@@ -171,7 +172,7 @@ export async function getPushSetupStatus(): Promise<PushSetupStatus> {
   else if (!fcmToken) hint = 'Chưa có FCM token trên máy — đăng xuất/đăng nhập lại';
   else if (serverFcmTokenCount === 0) hint = 'FCM token chưa lưu server — bấm Tải lại hoặc đăng nhập lại';
   else if (serverFcmConfigured === false) hint = 'Server thiếu FCM_SA_JSON trên Render';
-  else if (!hasFcmToken && !expoToken) hint = 'Chưa đăng ký token';
+  else if (!fcmToken && !expoToken) hint = 'Chưa đăng ký token';
   else if (serverRegistrationError) hint = serverRegistrationError;
 
   const callReady =

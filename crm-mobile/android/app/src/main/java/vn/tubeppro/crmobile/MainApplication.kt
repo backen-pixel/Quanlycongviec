@@ -64,6 +64,7 @@ class MainApplication : Application(), ReactApplication {
             .edit()
             .putString(vn.tubeppro.crmobile.call.IncomingCallHelper.FCM_TOKEN_KEY, token)
             .apply()
+          vn.tubeppro.crmobile.call.PushTokenRegistrar.registerAsync(this, token)
         }
     } catch (_: Exception) { }
   }
