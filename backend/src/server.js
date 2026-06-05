@@ -883,6 +883,14 @@ server.listen(config.port, () => {
   console.log(`🚀 TuBep Pro Backend: http://localhost:${config.port}/api`);
   console.log(`⏱️ Server ready in ${process.uptime().toFixed(1)}s`);
 
+  // FCM cuộc gọi (app kill): cần bảng push_device_tokens
+  try {
+    const { ensurePushDeviceTokensTable } = require('./helpers/ensurePushDeviceTokens');
+    void ensurePushDeviceTokensTable();
+  } catch (e) {
+    console.warn('[push] ensurePushDeviceTokensTable:', e.message);
+  }
+
   // 🤖 Bot AI luôn online: ping last_activity mỗi 60s (kèm 1 ping ngay khi server start)
   try {
     const { recordUserPing } = require('./helpers/userPresence');

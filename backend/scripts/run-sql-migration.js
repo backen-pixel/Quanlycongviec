@@ -19,12 +19,15 @@ async function main() {
     console.error('File not found:', sqlPath);
     process.exit(1);
   }
-  const url = process.env.DATABASE_URL || process.env.DIRECT_URL;
+  const url = process.env.DATABASE_URL
+    || process.env.DIRECT_URL
+    || process.env.SUPABASE_DB_DIRECT_URL
+    || process.env.SUPABASE_DB_URL;
   if (!url) {
     console.error(
       'Thiếu DATABASE_URL trong backend/.env.\n'
         + 'Vào Supabase → Project Settings → Database → copy "Connection string" (URI, có mật khẩu DB),\n'
-        + 'thêm một dòng: DATABASE_URL=postgresql://... rồi chạy lại lệnh này.',
+        + 'thêm một dòng: DATABASE_URL=postgresql://... (hoặc SUPABASE_DB_DIRECT_URL) rồi chạy lại lệnh này.',
     );
     process.exit(1);
   }

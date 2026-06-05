@@ -7,6 +7,7 @@ const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { sendMobilePush } = require('../services/pushSender');
+const { isRestTableMissingError, fetchUserTokensPg, probePushTokensTablePg } = require('../helpers/pushDeviceTokensPg');
 const { recordUserPing } = require('../helpers/userPresence');
 const { reverseGeocodeWithTimeout } = require('../helpers/reverseGeocode');
 const { upsertUserCurrentLocation } = require('../helpers/userCurrentLocation');
@@ -286,8 +287,22 @@ r.post('/test-push', async (req, res) => {
       if (error) throw error;
       tokens = data || [];
     } catch (e) {
-      tableOk = false;
-      tokens = [];
+      if (isRestTableMissingError(e)) {
+        tableOk = await probePushTokensTablePg();
+        const pgRows = await fetchUserTokensPg(uid);
+        if (pgRows) {
+          tokens = [
+            ...pgRows.expo.map((r) => ({ ...r, device_id: null, last_seen_at: null })),
+            ...pgRows.fcm.map((r) => ({ ...r, device_id: null, last_seen_at: null })),
+          ];
+        } else {
+          tableOk = false;
+          tokens = [];
+        }
+      } else {
+        tableOk = false;
+        tokens = [];
+      }
     }
 
     const expoTokens = tokens.filter((t) => t.platform === 'expo' && t.token);
@@ -337,7 +352,7 @@ r.post('/test-push', async (req, res) => {
       fcm_tokens_count: fcmTokens.length,
       expo_tokens_count: expoTokens.length,
       hint: !tableOk
-        ? 'Bảng push_device_tokens chưa có — chạy database/204_push_device_tokens.sql trên Supabase SQL Editor.'
+        ? 'Bảng push_device_tokens chưa có hoặc PostgREST chưa reload — chạy NOTIFY pgrst, \'reload schema\'; trên Supabase SQL Editor.'
         : isCall && !fcmTokens.length
           ? 'Chưa có FCM token. Cài APK 1.3.16+, cấp quyền thông báo, đăng xuất/đăng nhập lại.'
           : !isCall && !expoTokens.length && !fcmTokens.length
