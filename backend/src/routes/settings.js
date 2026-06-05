@@ -1,5 +1,12 @@
 const { Router } = require('express');
+const multer = require('multer');
 const { auth } = require('../middleware/auth');
+const { isAdminLike } = require('../helpers/adminRole');
+const { supabase } = require('../config/supabase');
+const {
+  getAppSettingValue,
+  invalidateAppSettingKey,
+} = require('../helpers/appSettingsCache');
 const fs = require('fs');
 const path = require('path');
 let misaService = null;
@@ -346,6 +353,128 @@ r.post('/api-keys/:id/rotate', async (req, res) => {
       rotated_at: updated.rotated_at,
       _note: 'Key mới chỉ hiển thị 1 lần. Sao chép và lưu ở nơi an toàn.',
     });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Nhạc chuông cuộc gọi Messenger (mặc định toàn hệ thống) ─────────────────
+const CALL_RING_SETTINGS_KEY = 'messenger_call_ringtone';
+const CALL_RING_UPLOAD_DIR = path.join(__dirname, '../../uploads/call-ringtone');
+const CALL_RING_MAX_BYTES = 8 * 1024 * 1024;
+
+if (!fs.existsSync(CALL_RING_UPLOAD_DIR)) {
+  fs.mkdirSync(CALL_RING_UPLOAD_DIR, { recursive: true });
+}
+
+const callRingStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, CALL_RING_UPLOAD_DIR),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || '').toLowerCase() || '.mp3';
+    const safe = ['.mp3', '.wav', '.ogg', '.m4a', '.webm', '.aac'].includes(ext) ? ext : '.mp3';
+    cb(null, `default${safe}`);
+  },
+});
+
+const callRingUpload = multer({
+  storage: callRingStorage,
+  limits: { fileSize: CALL_RING_MAX_BYTES },
+  fileFilter: (_req, file, cb) => {
+    const ok = /^audio\//i.test(file.mimetype || '') || /\.(mp3|wav|ogg|m4a|webm|aac)$/i.test(file.originalname || '');
+    if (!ok) return cb(new Error('Chỉ chấp nhận file âm thanh (MP3, WAV, OGG…)'));
+    cb(null, true);
+  },
+});
+
+async function readCallRingtoneMeta() {
+  const value = await getAppSettingValue(CALL_RING_SETTINGS_KEY, null);
+  if (!value || typeof value !== 'object' || !value.url) return null;
+  const diskPath = path.join(__dirname, '../..', String(value.url).replace(/^\//, ''));
+  if (!fs.existsSync(diskPath)) return null;
+  return value;
+}
+
+function wipeCallRingtoneFiles() {
+  try {
+    for (const name of fs.readdirSync(CALL_RING_UPLOAD_DIR)) {
+      if (name.startsWith('default.')) {
+        fs.unlinkSync(path.join(CALL_RING_UPLOAD_DIR, name));
+      }
+    }
+  } catch { /* ignore */ }
+}
+
+// GET /api/settings/call-ringtone — mọi user đăng nhập
+r.get('/call-ringtone', responseCache({ ttl: 60, scope: 'global', tags: ['settings'] }), async (req, res) => {
+  try {
+    const meta = await readCallRingtoneMeta();
+    if (!meta) return res.json({ url: null });
+    res.json({
+      url: meta.url,
+      fileName: meta.fileName || null,
+      mime: meta.mime || 'audio/mpeg',
+      updatedAt: meta.updatedAt || null,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/settings/call-ringtone — admin upload nhạc chuông mặc định
+r.post('/call-ringtone', (req, res) => {
+  if (!isAdminLike(req.user)) {
+    return res.status(403).json({ error: 'Chỉ quản trị viên mới đặt nhạc chuông mặc định' });
+  }
+  callRingUpload.single('file')(req, res, async (err) => {
+    if (err) {
+      const msg = err.code === 'LIMIT_FILE_SIZE'
+        ? `File quá lớn (tối đa ${CALL_RING_MAX_BYTES / (1024 * 1024)} MB)`
+        : (err.message || 'Upload thất bại');
+      return res.status(400).json({ error: msg });
+    }
+    if (!req.file) return res.status(400).json({ error: 'Thiếu file âm thanh' });
+    try {
+      const finalName = req.file.filename || 'default.mp3';
+      try {
+        for (const name of fs.readdirSync(CALL_RING_UPLOAD_DIR)) {
+          if (name.startsWith('default.') && name !== finalName) {
+            fs.unlinkSync(path.join(CALL_RING_UPLOAD_DIR, name));
+          }
+        }
+      } catch { /* ignore */ }
+      const url = `/uploads/call-ringtone/${finalName}`;
+      const meta = {
+        url,
+        fileName: req.file.originalname || finalName,
+        mime: req.file.mimetype || 'audio/mpeg',
+        size: req.file.size,
+        updatedAt: new Date().toISOString(),
+        uploadedBy: req.user.userId || req.user.id || null,
+      };
+      const { error } = await supabase.from('app_settings').upsert({
+        key: CALL_RING_SETTINGS_KEY,
+        value: meta,
+        updated_at: new Date().toISOString(),
+      });
+      if (error) throw error;
+      invalidateAppSettingKey(CALL_RING_SETTINGS_KEY);
+      res.json(meta);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+});
+
+// DELETE /api/settings/call-ringtone — admin xóa nhạc mặc định
+r.delete('/call-ringtone', async (req, res) => {
+  if (!isAdminLike(req.user)) {
+    return res.status(403).json({ error: 'Chỉ quản trị viên mới xóa nhạc chuông mặc định' });
+  }
+  try {
+    wipeCallRingtoneFiles();
+    await supabase.from('app_settings').delete().eq('key', CALL_RING_SETTINGS_KEY);
+    invalidateAppSettingKey(CALL_RING_SETTINGS_KEY);
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

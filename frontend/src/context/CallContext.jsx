@@ -26,6 +26,8 @@ import {
   dismissIncomingCallDesktopAlert,
   showIncomingCallDesktopAlert,
 } from '../lib/incomingCallNotify';
+import { playCallRingtone, stopCallRingtone } from '../lib/callRingtonePlayer';
+import { fetchGlobalCallRingtoneConfig } from '../lib/callRingtoneServer';
 
 const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -157,6 +159,10 @@ export function CallProvider({ children }) {
   useEffect(() => { statusRef.current = status; }, [status]);
   useEffect(() => { peerRef.current = peer; }, [peer]);
 
+  useEffect(() => {
+    if (uid) void fetchGlobalCallRingtoneConfig();
+  }, [uid]);
+
   /* ── Helpers ── */
 
   /** Tạo element <audio> ẩn để phát remote stream. */
@@ -169,7 +175,7 @@ export function CallProvider({ children }) {
     return el;
   }, []);
 
-  /** Phát chuông đơn giản bằng Web Audio (không cần file mp3). */
+  /** Phát chuông đơn giản bằng Web Audio (fallback khi chưa chọn file từ máy). */
   const playTone = useCallback((variant) => {
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -200,6 +206,27 @@ export function CallProvider({ children }) {
       return null;
     }
   }, []);
+
+  /** Chuông cuộc gọi: file tùy chỉnh (IndexedDB) hoặc fallback playTone. */
+  const startCallSound = useCallback((variant) => {
+    let inner = null;
+    let stopped = false;
+    const handle = {
+      pause: () => {
+        stopped = true;
+        inner?.pause?.();
+        stopCallRingtone();
+      },
+    };
+    void playCallRingtone(variant, playTone).then((ctrl) => {
+      if (stopped) {
+        ctrl?.pause?.();
+        return;
+      }
+      inner = ctrl;
+    });
+    return handle;
+  }, [playTone]);
 
   /**
    * Lấy microphone (và camera nếu `opts.video=true`).
@@ -314,6 +341,7 @@ export function CallProvider({ children }) {
     // Chuông
     if (ringbackAudioRef.current) { try { ringbackAudioRef.current.pause(); } catch { /* noop */ } ringbackAudioRef.current = null; }
     if (ringtoneAudioRef.current) { try { ringtoneAudioRef.current.pause(); } catch { /* noop */ } ringtoneAudioRef.current = null; }
+    stopCallRingtone();
   }, [closeGroupPeer]);
 
   const resetState = useCallback(() => {
@@ -494,7 +522,7 @@ export function CallProvider({ children }) {
         kind: wantVideo ? 'video' : 'audio',
         groupId: opts.groupId || null,
       });
-      ringbackAudioRef.current = playTone('ringback');
+      ringbackAudioRef.current = startCallSound('ringback');
       timeoutRef.current = setTimeout(() => {
         setError('Không có phản hồi');
         socket.emit('call:end', { callId: newCallId, toUserId: peerUser.id });
@@ -504,7 +532,7 @@ export function CallProvider({ children }) {
       setError(e.message || (wantVideo ? 'Không truy cập được camera/micro' : 'Không truy cập được micro'));
       resetState();
     }
-  }, [socket, status, getLocalStream, createDirectPeerConnection, playTone, resetState]);
+  }, [socket, status, getLocalStream, createDirectPeerConnection, startCallSound, resetState]);
 
   /**
    * Bắt đầu cuộc gọi nhóm.
@@ -550,7 +578,7 @@ export function CallProvider({ children }) {
         memberIds: members.map((m) => m.id),
         kind: wantVideo ? 'video' : 'audio',
       });
-      ringbackAudioRef.current = playTone('ringback');
+      ringbackAudioRef.current = startCallSound('ringback');
 
       // Timeout: nếu sau 60s không ai accept → tự huỷ
       timeoutRef.current = setTimeout(() => {
@@ -566,7 +594,7 @@ export function CallProvider({ children }) {
       socket.emit('call:end', { callId: newCallId });
       resetState();
     }
-  }, [socket, uid, user, status, getLocalStream, playTone, resetState]);
+  }, [socket, uid, user, status, getLocalStream, startCallSound, resetState]);
 
   /**
    * Yêu cầu tham gia 1 cuộc gọi nhóm đang diễn ra. Host phải duyệt trước khi user vào được.
@@ -945,7 +973,7 @@ export function CallProvider({ children }) {
         setMode('direct');
         setPeer({ id: fromUserId, name: fromName || 'Người gọi', avatar: null });
       }
-      ringtoneAudioRef.current = playTone('ringtone');
+      ringtoneAudioRef.current = startCallSound('ringtone');
       showIncomingCallDesktopAlert({
         callId: incomingId,
         fromName,
@@ -1225,7 +1253,7 @@ export function CallProvider({ children }) {
       socket.off('call:group_screen_share', onGroupScreenShare);
       socket.off('call:screen_share', onDirectScreenShare);
     };
-  }, [socket, uid, user, getOrCreateGroupPeer, closeGroupPeer, getLocalStream, endCall, resetState, playTone]);
+  }, [socket, uid, user, getOrCreateGroupPeer, closeGroupPeer, getLocalStream, endCall, resetState, startCallSound]);
 
   // Cleanup khi unmount toàn bộ provider
   useEffect(() => () => { cleanup(); }, [cleanup]);
