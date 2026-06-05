@@ -233,6 +233,12 @@ try { app.use('/api/integrations/stringee', require('./routes/stringee')); } cat
 const frontendDist = path.join(__dirname, '../../frontend/dist');
 const fs = require('fs');
 if (fs.existsSync(frontendDist)) {
+  const releaseNotesDir = path.join(frontendDist, 'release-notes');
+  if (fs.existsSync(releaseNotesDir)) {
+    app.use('/release-notes', express.static(releaseNotesDir, {
+      maxAge: '7d',
+    }));
+  }
   app.use(express.static(frontendDist, {
     setHeaders(res, filePath) {
       if (filePath.replace(/\\/g, '/').endsWith('/index.html')) {

@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1280" />
+  <title>Planner</title>
+  <style>
+    * { box-sizing: border-box; font-family: 'Segoe UI', system-ui, sans-serif; }
+    html, body { width: 1280px; height: 720px; margin: 0; overflow: hidden; }
+    body { background: #f1f5f9; padding: 36px 40px; color: #0f172a; }
+    .page { max-width: 920px; margin: 0 auto; }
+    .title { font-size: 24px; font-weight: 800; margin: 0; }
+    .sub { color: #64748b; font-size: 13px; margin: 4px 0 16px; }
+    .views { display: flex; gap: 6px; margin-bottom: 14px; }
+    .v { padding: 7px 14px; border-radius: 10px; font-size: 12px; font-weight: 600; background: #e2e8f0; color: #475569; }
+    .v.on { background: #2563eb; color: #fff; box-shadow: 0 4px 12px rgba(37,99,235,.3); }
+    .bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 12px 14px; background: linear-gradient(90deg, #eef2ff, #f5f3ff); border: 1px solid #c7d2fe; border-radius: 14px; margin-bottom: 16px; font-size: 11px; }
+    .bar strong { color: #3730a3; }
+    .pill { padding: 5px 12px; border-radius: 8px; font-weight: 700; background: #4f46e5; color: #fff; }
+    .pill.off { background: #fff; color: #64748b; border: 1px solid #cbd5e1; }
+    .add { margin-left: auto; border: 2px dashed #6366f1; color: #4338ca; background: #fff; padding: 7px 14px; border-radius: 10px; font-weight: 700; }
+    .board { display: flex; gap: 14px; }
+    .col { width: 220px; flex-shrink: 0; background: rgba(255,255,255,.92); border-radius: 14px; border: 1px solid #e2e8f0; box-shadow: 0 4px 16px rgba(15,23,42,.06); }
+    .ch { padding: 12px 14px; font-weight: 700; font-size: 13px; border-bottom: 1px solid #f1f5f9; border-top: 4px solid; border-radius: 14px 14px 0 0; }
+    .cards { padding: 10px; }
+    .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px; margin-bottom: 8px; font-size: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
+    .tag { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 6px; display: inline-block; margin-bottom: 5px; }
+    .tag.r { background: #fee2e2; color: #b91c1c; }
+    .tag.b { background: #dbeafe; color: #1d4ed8; }
+    .tag.p { background: #f3e8ff; color: #7c3aed; }
+    .ghost-col { border: 2px dashed #cbd5e1; background: transparent; box-shadow: none; display: flex; align-items: center; justify-content: center; min-height: 180px; color: #94a3b8; font-size: 12px; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1 class="title">📋 Giao việc CRM</h1>
+    <p class="sub">Planner — nhóm việc theo cột cá nhân</p>
+    <div class="views">
+      <span class="v">Kanban</span><span class="v">List</span><span class="v on">Planner</span><span class="v">Deadline</span>
+    </div>
+    <div class="bar">
+      <strong>PLANNER</strong>
+      <span class="pill">Của tôi</span>
+      <span class="pill off">Toàn team</span>
+      <span>☐ Hiện việc đã xong</span>
+      <span class="add">+ Thêm cột cá nhân</span>
+    </div>
+    <div class="board">
+      <div class="col">
+        <div class="ch" style="border-color:#3b82f6;color:#1d4ed8">Việc của tôi · 2</div>
+        <div class="cards">
+          <div class="card"><span class="tag b">Đang làm</span><div>Đo đạc thực tế căn hộ</div></div>
+          <div class="card"><span class="tag">Chờ</span><div>Gửi báo giá sơ bộ</div></div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="ch" style="border-color:#8b5cf6;color:#6d28d9">Việc khẩn · 1</div>
+        <div class="cards">
+          <div class="card"><span class="tag r">Gấp</span><div>Gọi khách hẹn khảo sát</div></div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="ch" style="border-color:#10b981;color:#047857">Chờ duyệt · 1</div>
+        <div class="cards">
+          <div class="card"><span class="tag p">TB</span><div>Chờ leader duyệt báo giá</div></div>
+        </div>
+      </div>
+      <div class="col ghost-col">+ Thêm cột cá nhân</div>
+    </div>
+  </div>
+</body>
+</html>

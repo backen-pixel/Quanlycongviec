@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1280" />
+  <title>Gán NV</title>
+  <style>
+    * { box-sizing: border-box; font-family: 'Segoe UI', system-ui, sans-serif; }
+    html, body { width: 1280px; height: 720px; margin: 0; overflow: hidden; }
+    body { background: linear-gradient(135deg, #e0e7ff 0%, #f8fafc 50%, #ecfdf5 100%); display: flex; align-items: center; justify-content: center; padding: 48px; }
+    .wrap { width: 100%; max-width: 860px; }
+    .ctx { font-size: 12px; color: #64748b; margin-bottom: 10px; display: flex; gap: 8px; align-items: center; }
+    .ctx span { background: #fff; border: 1px solid #e2e8f0; padding: 4px 10px; border-radius: 8px; }
+    .modal { background: #fff; border-radius: 20px; box-shadow: 0 25px 60px rgba(15,23,42,.18); border: 1px solid #e2e8f0; overflow: hidden; }
+    .head { padding: 18px 24px; background: linear-gradient(90deg, #f8fafc, #fff); border-bottom: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center; }
+    .head h2 { margin: 0; font-size: 17px; color: #0f172a; }
+    .badge { font-size: 10px; font-weight: 700; color: #4338ca; background: #eef2ff; border: 1px solid #c7d2fe; padding: 4px 10px; border-radius: 999px; }
+    .body { padding: 20px 24px 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .field label { display: block; font-size: 11px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: .03em; }
+    .field input { width: 100%; height: 38px; border: 1px solid #cbd5e1; border-radius: 10px; padding: 0 12px; font-size: 13px; background: #f8fafc; }
+    .full { grid-column: 1 / -1; }
+    .panel { border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; background: #fafafa; }
+    .user { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; margin-bottom: 6px; font-size: 13px; }
+    .user.on { background: #eff6ff; border: 1px solid #bfdbfe; }
+    .avatar { width: 32px; height: 32px; border-radius: 50%; background: #3b82f6; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+    .avatar.g { background: #8b5cf6; }
+    .avatar.o { background: #f59e0b; }
+    .link { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; padding: 8px 12px; background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 10px; font-size: 12px; color: #3730a3; font-weight: 600; }
+    .foot { padding: 14px 24px 18px; display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #f1f5f9; }
+    .btn { height: 38px; padding: 0 18px; border-radius: 10px; font-size: 13px; font-weight: 600; border: none; cursor: default; }
+    .ghost { background: #fff; border: 1px solid #cbd5e1; color: #475569; }
+    .primary { background: linear-gradient(135deg, #2563eb, #4f46e5); color: #fff; box-shadow: 0 4px 14px rgba(37,99,235,.35); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="ctx">
+      <span>CRM → Lead LD-2048</span>
+      <span>Tab Nhiệm vụ</span>
+      <span>Sửa nhiệm vụ</span>
+    </div>
+    <div class="modal">
+      <div class="head">
+        <h2>Gán nhân viên cho nhiệm vụ</h2>
+        <span class="badge">Đồng bộ Giao việc CRM</span>
+      </div>
+      <div class="body">
+        <div class="field full">
+          <label>Tiêu đề nhiệm vụ</label>
+          <input value="Khảo sát & đo đạc hiện trạng tủ bếp" readonly />
+        </div>
+        <div class="field">
+          <label>Ưu tiên</label>
+          <input value="Cao" readonly />
+        </div>
+        <div class="field">
+          <label>Deadline</label>
+          <input value="12/06/2026 17:00" readonly />
+        </div>
+        <div class="field full">
+          <label>Chọn nhân viên (nhiều người)</label>
+          <div class="panel">
+            <div class="user on"><div class="avatar">NA</div><div><strong>Nguyễn An</strong><div style="font-size:11px;color:#64748b">Sale — đã chọn</div></div><div style="margin-left:auto;color:#2563eb">✓</div></div>
+            <div class="user on"><div class="avatar g">TB</div><div><strong>Trần Bình</strong><div style="font-size:11px;color:#64748b">Kỹ thuật — đã chọn</div></div><div style="margin-left:auto;color:#2563eb">✓</div></div>
+            <div class="user"><div class="avatar o">LC</div><div><strong>Lê Chi</strong><div style="font-size:11px;color:#64748b">Sale</div></div></div>
+          </div>
+          <div class="link">📋 Mở trên Giao việc CRM sau khi lưu</div>
+        </div>
+      </div>
+      <div class="foot">
+        <button class="btn ghost">Huỷ</button>
+        <button class="btn primary">Lưu & gửi thông báo</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

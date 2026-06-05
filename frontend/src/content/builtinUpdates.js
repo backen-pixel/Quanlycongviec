@@ -10,25 +10,24 @@ export const BUILTIN_UPDATES = [
     publishedAt: '2026-06-05T12:00:00.000Z',
     title: 'Giao việc CRM — gán NV từ Lead/Deal, đồng bộ pipeline & thông báo tab Giao việc',
     content: `## Gán nhân viên từ Lead / Deal
-- Tab **Nhiệm vụ**: gán **một hoặc nhiều NV**; badge **Giao việc CRM** mở thẳng \`/crm/assignments?open=id\`.
+- Tab **Nhiệm vụ**: gán **một hoặc nhiều NV**; badge **Giao việc CRM** mở thẳng trang Giao việc.
 - Tab **Thành viên**: tạo nhiệm vụ CRM cho NV đang tham gia lead/deal.
 - Form sửa nhiệm vụ: ẩn **Chặn chuyển giai đoạn** với NV thường (chỉ admin cấu hình mẫu).
 
+![Gán một hoặc nhiều nhân viên — đồng bộ sang Giao việc CRM](/release-notes/crm-assign-nv.png)
+
 ## Đồng bộ Pipeline ↔ Giao việc CRM
 - Gán NV trên nhiệm vụ pipeline tự tạo/cập nhật thẻ trên **Giao việc CRM**.
-- Trên Giao việc: **ghi chú**, nút **Đang làm** / **Hoàn thành**, kéo cột Kanban — đồng bộ ngược về \`crm_tasks\`.
-- Liên kết lead/deal gốc hiển thị trên thẻ và modal chi tiết.
+- Trên Giao việc: **ghi chú**, nút **Đang làm** / **Hoàn thành**, kéo cột Kanban — đồng bộ ngược pipeline.
+- **Planner / Deadline**: giao diện **cá nhân**, tự **Thêm cột cá nhân** để nhóm việc theo ý.
+
+![Planner — cột cá nhân, thêm cột theo từng người](/release-notes/crm-assignments-planner.png)
 
 ## Thông báo
 - NV được giao nhận TB **«Bạn vừa được giao nhiệm vụ CRM»**.
-- Nút chuông → tab **Giao việc** (badge riêng); bấm TB mở đúng nhiệm vụ trên Giao việc CRM.
+- Nút chuông → tab **Giao việc** (badge riêng); bấm TB mở đúng nhiệm vụ.
 
-## Migration Supabase (admin)
-Chạy theo thứ tự nếu chưa có:
-- \`database/284_crm_assignments_lead_id.sql\`
-- \`database/285_crm_task_assignees.sql\`
-- \`database/286_crm_assignments_crm_task_id.sql\`
-- \`database/197_notifications_entity_id_text.sql\` (lưu id giao việc vào thông báo)`,
+![Tab Giao việc trong Trung tâm thông báo](/release-notes/crm-notification-giao-viec.png)`,
   },
   {
     id: '2026-05-unified-work-tasks',

@@ -49,7 +49,13 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': 'http://localhost:4000',
-      '/uploads': 'http://localhost:4000',
+      '/uploads': {
+        target: 'http://localhost:4000',
+        bypass(req) {
+          // Ảnh tĩnh release-notes nằm trong frontend/public — không proxy sang backend
+          if (req.url?.startsWith('/uploads/release-notes/')) return req.url;
+        },
+      },
     },
   },
   esbuild: {
