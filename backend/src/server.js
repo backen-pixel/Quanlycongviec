@@ -120,9 +120,13 @@ app.use((err, req, res, next) => {
 const { metricsMiddleware, getSnapshot, resetMetrics } = require('./helpers/requestMetrics');
 app.use(metricsMiddleware);
 
-// Serve uploaded files
+// Serve uploaded files (cho phép frontend khác origin tải audio/video)
 const path = require('path');
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+app.use('/uploads', (req, res, next) => {
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  next();
+}, express.static(path.join(__dirname, '../uploads')));
 
 // Root + Health
 app.get('/', (_, res) => res.json({ app: 'TuBep Pro API', status: 'ok' }));

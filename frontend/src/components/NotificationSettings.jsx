@@ -918,15 +918,19 @@ export default function NotificationSettings({ isOpen, onClose, anchorPanel = nu
               <div className="px-3 py-2 rounded-lg border border-amber-200 bg-amber-50/80 space-y-2">
                 <p className="text-xs font-semibold text-amber-900">Nhạc chuông mặc định — toàn hệ thống (admin)</p>
                 <p className="text-[10px] text-amber-800/90">
-                  Upload một lần: mọi người dùng nghe cùng file khi có cuộc gọi (lưu trên server).
+                  Upload trên <strong>host production</strong> (tubep-backend): file lưu Supabase Storage, không mất khi redeploy.
+                  Upload localhost chỉ có hiệu lực trên máy dev.
                 </p>
                 {globalCallRing?.fileName ? (
                   <p className="text-[10px] text-emerald-800">
                     Đang dùng: <strong>{globalCallRing.fileName}</strong>
+                    {globalCallRing.source === 'supabase' ? ' · Supabase Storage' : ''}
                     {globalCallRing.updatedAt ? ` · ${new Date(globalCallRing.updatedAt).toLocaleString('vi-VN')}` : ''}
                   </p>
                 ) : (
-                  <p className="text-[10px] text-gray-600">Chưa có file mặc định trên server.</p>
+                  <p className="text-[10px] text-gray-600">
+                    Chưa có file trên server — dùng <code className="text-[9px]">/call-ringtone.wav</code> trong bản build (nếu có).
+                  </p>
                 )}
                 <input
                   type="file"

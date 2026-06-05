@@ -31,7 +31,13 @@ export function publicFileUrl(pathOrUrl) {
   const knowledgeUrl = resolveKnowledgeScreenshotUrl(s);
   if (knowledgeUrl) return knowledgeUrl;
 
-  const base = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+  let base = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+  if (!base && typeof window !== 'undefined') {
+    const { hostname } = window.location;
+    if (hostname.includes('tubep-frontend') && hostname.endsWith('.onrender.com')) {
+      base = 'https://tubep-backend.onrender.com';
+    }
+  }
   if (base && s.startsWith('/')) return `${base}${s}`;
   if (base && !s.startsWith('//')) {
     const path = s.startsWith('/') ? s : `/${s.replace(/^\//, '')}`;

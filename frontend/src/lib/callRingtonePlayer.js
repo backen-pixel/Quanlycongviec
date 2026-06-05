@@ -8,6 +8,7 @@ import {
 import {
   fetchGlobalCallRingtoneConfig,
   getCachedGlobalCallRingtone,
+  resolveSystemCallRingtonePlayUrl,
 } from './callRingtoneServer';
 
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -44,11 +45,7 @@ async function resolvePlayUrl() {
     const local = await resolveBlobUrl();
     if (local) return local;
   }
-  let global = getCachedGlobalCallRingtone();
-  if (!global?.playUrl) {
-    global = await fetchGlobalCallRingtoneConfig();
-  }
-  return global?.playUrl || null;
+  return resolveSystemCallRingtonePlayUrl();
 }
 
 function playUrlLoop(url, volPct, playToneFallback, variant) {
@@ -68,7 +65,8 @@ function playUrlLoop(url, volPct, playToneFallback, variant) {
     },
   };
   activePlayback = ctrl;
-  audio.play().catch(() => {
+  audio.play().catch((err) => {
+    console.warn('[call-ringtone] Không phát được file:', url, err?.message || err);
     ctrl.pause();
     const fb = playToneFallback?.(variant);
     if (fb) activePlayback = fb;
@@ -99,11 +97,7 @@ export async function playCallRingtone(variant, playToneFallback) {
 /** Nghe thử nhạc mặc định hệ thống (bỏ qua ghi đè cá nhân). */
 export async function previewGlobalCallRingtone(playToneFallback) {
   stopCallRingtone();
-  let global = getCachedGlobalCallRingtone();
-  if (!global?.playUrl) {
-    global = await fetchGlobalCallRingtoneConfig(true);
-  }
-  const url = global?.playUrl || null;
+  const url = await resolveSystemCallRingtonePlayUrl();
   if (!url) {
     const fb = playToneFallback?.('ringtone');
     if (fb) {
