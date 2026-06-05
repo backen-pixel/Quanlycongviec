@@ -149,6 +149,30 @@ class FloatingBubbleOverlayModule(private val reactContext: ReactApplicationCont
     }
   }
 
+  /** Lấy FCM token từ Firebase và lưu prefs — gọi sau login để đăng ký push server. */
+  @ReactMethod
+  fun fetchFcmToken(promise: Promise) {
+    try {
+      com.google.firebase.messaging.FirebaseMessaging.getInstance().token
+        .addOnCompleteListener { task ->
+          if (!task.isSuccessful) {
+            val cached = prefs.getString(vn.tubeppro.crmobile.call.IncomingCallHelper.FCM_TOKEN_KEY, null)
+            promise.resolve(cached)
+            return@addOnCompleteListener
+          }
+          val token = task.result?.trim().orEmpty()
+          if (token.isNotBlank()) {
+            prefs.edit()
+              .putString(vn.tubeppro.crmobile.call.IncomingCallHelper.FCM_TOKEN_KEY, token)
+              .apply()
+          }
+          promise.resolve(token.ifBlank { null })
+        }
+    } catch (e: Exception) {
+      promise.resolve(null)
+    }
+  }
+
   @ReactMethod
   fun seedConversationMessages(bubbleKey: String, msgsJson: String) {
     /* noop */

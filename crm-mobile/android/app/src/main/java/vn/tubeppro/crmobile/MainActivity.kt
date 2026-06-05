@@ -27,18 +27,40 @@ class MainActivity : ReactActivity() {
   }
 
   private fun stashIncomingCallIntent(intent: android.content.Intent?) {
-    if (intent?.getBooleanExtra("incoming_call", false) != true) return
-    val callId = intent.getStringExtra("call_id") ?: return
+    if (intent == null) return
+
+    // Intent từ notification native / MainActivity
+    var callId = intent.getStringExtra("call_id")
+    var fromUserId = intent.getStringExtra("from_user_id")
+    var fromName = intent.getStringExtra("from_name") ?: ""
+    var isGroup = intent.getBooleanExtra("is_group", false)
+    var groupId = intent.getStringExtra("group_id") ?: ""
+    var groupName = intent.getStringExtra("group_name") ?: ""
+    var callAction = intent.getStringExtra("call_action")?.trim().orEmpty()
+
+    // FCM notification tap — data payload thành intent extras (call_id, type, …)
+    if (callId.isNullOrBlank() && intent.getStringExtra("type") == "incoming_call") {
+      callId = intent.getStringExtra("call_id")
+      fromUserId = intent.getStringExtra("from_user_id")
+      fromName = intent.getStringExtra("from_name") ?: fromName
+      isGroup = intent.getStringExtra("is_group") == "true"
+      groupId = intent.getStringExtra("group_id") ?: groupId
+      groupName = intent.getStringExtra("group_name") ?: groupName
+    }
+
+    if (intent.getBooleanExtra("incoming_call", false) != true && callId.isNullOrBlank()) return
+    if (callId.isNullOrBlank()) return
+    if (fromUserId.isNullOrBlank()) fromUserId = ""
+
     try {
       val obj = org.json.JSONObject()
       obj.put("callId", callId)
-      obj.put("fromUserId", intent.getStringExtra("from_user_id") ?: "")
-      obj.put("fromName", intent.getStringExtra("from_name") ?: "")
-      obj.put("isGroup", intent.getBooleanExtra("is_group", false))
-      obj.put("groupId", intent.getStringExtra("group_id") ?: "")
-      obj.put("groupName", intent.getStringExtra("group_name") ?: "")
+      obj.put("fromUserId", fromUserId)
+      obj.put("fromName", fromName)
+      obj.put("isGroup", isGroup)
+      obj.put("groupId", groupId)
+      obj.put("groupName", groupName)
       obj.put("kind", "audio")
-      val callAction = intent.getStringExtra("call_action")?.trim().orEmpty()
       if (callAction.isNotBlank()) obj.put("callAction", callAction)
       getSharedPreferences("crm_call_intent", MODE_PRIVATE)
         .edit()
