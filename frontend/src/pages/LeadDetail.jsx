@@ -754,7 +754,8 @@ export default function LeadDetail() {
       return;
     }
 
-    // Chuyển sang cột mới (trừ Thắng/Thua): kiểm tra nhiệm vụ chặn TRƯỚC, rồi mới hỏi deadline.
+    // Chuyển sang cột mới (trừ Thắng/Thua): kiểm tra nhiệm vụ chặn TRƯỚC;
+    // hỏi deadline chỉ khi cột đích bật requires_deadline trong Cài đặt Pipeline.
     if (
       targetStage &&
       !targetStage.is_won &&
@@ -776,9 +777,11 @@ export default function LeadDetail() {
           });
           return;
         }
-      } catch (_) { /* lỗi pre-check → bỏ qua, vẫn mở deadline */ }
-      setStageDeadlineCtx({ stageId, extraData, stageName: targetStage.name });
-      return;
+      } catch (_) { /* lỗi pre-check → bỏ qua */ }
+      if (targetStage.requires_deadline) {
+        setStageDeadlineCtx({ stageId, extraData, stageName: targetStage.name });
+        return;
+      }
     }
 
     if (
@@ -2270,7 +2273,7 @@ export default function LeadDetail() {
         onAllCleared={() => {
           const tgt = blockingModal?.targetStageId;
           setBlockingModal(null);
-          // Hết nhiệm vụ chặn → chạy lại luồng chuyển cột (sẽ hiện hộp deadline).
+          // Hết nhiệm vụ chặn → chạy lại luồng chuyển cột (hộp deadline chỉ khi cột bật requires_deadline).
           if (tgt) moveStage(tgt);
         }}
         onGoToTasks={() => {

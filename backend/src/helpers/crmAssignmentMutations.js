@@ -11,11 +11,12 @@ const ADMIN_ROLES = new Set(['admin', 'manager', 'sales_admin']);
 const isAdmin = (req) => ADMIN_ROLES.has(String(req.user?.role || '').toLowerCase());
 
 const ASSIGNMENT_SELECT = `
-  id, company_id, column_id, title, description,
+  id, company_id, column_id, lead_id, crm_task_id, title, description,
   assignee_id, created_by_id, priority, status, deadline,
   position, created_at, updated_at, completed_at,
   assignee:users!crm_assignments_assignee_id_fkey(id, full_name, email, avatar),
-  created_by:users!crm_assignments_created_by_id_fkey(id, full_name, email, avatar)
+  created_by:users!crm_assignments_created_by_id_fkey(id, full_name, email, avatar),
+  lead:crm_leads(id, code, title, type)
 `;
 
 async function expandAssigneeIds({ assignee_ids, department_ids, region_ids, company_id }) {
@@ -68,13 +69,24 @@ function pushNotif(req, userId, notif) {
 async function createCrmAssignment(req, body) {
   const {
     title, description, assignee_id, assignee_ids, department_ids, region_ids,
-    column_id, company_id, priority, status, deadline,
+    column_id, company_id, priority, status, deadline, lead_id,
   } = body || {};
   if (!title || !title.trim()) return { error: 'Cần tiêu đề', status: 400 };
 
-  const effectiveCompany = isAdmin(req)
+  let effectiveCompany = isAdmin(req)
     ? (company_id || req.user?.company_id || null)
     : (req.user?.company_id || null);
+
+  let resolvedLeadId = lead_id || null;
+  if (resolvedLeadId) {
+    const { data: leadRow } = await supabase
+      .from('crm_leads')
+      .select('id, company_id')
+      .eq('id', resolvedLeadId)
+      .maybeSingle();
+    if (!leadRow) return { error: 'Lead/deal không tồn tại', status: 404 };
+    if (!effectiveCompany && leadRow.company_id) effectiveCompany = leadRow.company_id;
+  }
 
   const finalAssignees = await expandAssigneeIds({
     assignee_ids: assignee_ids?.length ? assignee_ids : (assignee_id ? [assignee_id] : []),
@@ -89,7 +101,7 @@ async function createCrmAssignment(req, body) {
     posBase = ((maxRow?.position ?? -1) + 1);
   }
 
-  const { data, error } = await supabase.from('crm_assignments').insert({
+  const insertRow = {
     title: title.trim(),
     description: description || null,
     assignee_id: primaryAssignee,
@@ -100,11 +112,18 @@ async function createCrmAssignment(req, body) {
     status: status || 'pending',
     deadline: deadline || null,
     position: posBase,
-  }).select(ASSIGNMENT_SELECT).single();
+    ...(resolvedLeadId ? { lead_id: resolvedLeadId } : {}),
+  };
+
+  let { data, error } = await supabase.from('crm_assignments').insert(insertRow).select(ASSIGNMENT_SELECT).single();
+  if (error && /lead_id/.test(error.message || '')) {
+    delete insertRow.lead_id;
+    ({ data, error } = await supabase.from('crm_assignments').insert(insertRow).select(ASSIGNMENT_SELECT).single());
+  }
   if (error) return { error: error.message, status: 500 };
 
   await replaceAssignees(data.id, finalAssignees);
-  return { data: { assignment: data }, status: 201 };
+  return { data: { assignment: data, assignee_ids: finalAssignees }, status: 201 };
 }
 
 async function updateCrmAssignment(req, assignmentId, body) {

@@ -12,6 +12,16 @@ const {
   updateCrmLeadTask,
   deleteCrmLeadTask,
 } = require('../helpers/crmLeadTaskMutations');
+const { attachAssigneesToCrmTasks } = require('../helpers/crmTaskAssignees');
+const { attachAssignmentIdsToCrmTasks } = require('../helpers/crmTaskAssignmentSync');
+const { createCrmAssignment } = require('../helpers/crmAssignmentMutations');
+const {
+  persistAssignmentNotification,
+  buildAssignmentNotificationInsert,
+  notifyNewCrmAssignmentAssignees,
+  resolveAssignmentIdForTask,
+} = require('../helpers/crmAssignmentNotifications');
+const { emitNotifyBadge } = require('../helpers/notifyBadge');
 const { createNotification: createNotif, notifyMultiple: notifyMultipleShared } = require('../helpers/notifications');
 const { DEFAULT_CHECKLISTS } = require('../helpers/defaultChecklists');
 const { generateFlowTasks, generateStepTasks } = require('../helpers/generateFlowTasks');
@@ -11127,6 +11137,11 @@ r.get('/leads/:id/tasks', async (req, res) => {
       data = (data || []).filter((t) => !String(t.stage_slug || '').startsWith('sx_'));
     }
 
+    if (data?.length) {
+      data = await attachAssigneesToCrmTasks(data);
+      data = await attachAssignmentIdsToCrmTasks(data);
+    }
+
     res.json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -11351,23 +11366,12 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
       }
     }
 
-    const update = { updated_at: new Date().toISOString() };
-    const fields = ['title','description','status','priority','stage_slug','order_index','assignee_id','supervisor_id','deadline','shared_to_project','blocks_stage_advance','show_excel_quotation_upload'];
-    fields.forEach((f) => {
-      if (b[f] === undefined) return;
-      if (f === 'deadline' && b[f] != null && b[f] !== '') {
-        update[f] = normalizeTimestamp(b[f]);
-      } else {
-        update[f] = b[f];
-      }
-    });
-    if (b.status === 'completed' && !b.completed_at) update.completed_at = new Date().toISOString();
-    if (b.status && b.status !== 'completed') update.completed_at = null;
-
-    const { data, error } = await supabase.from('crm_tasks').update(update)
-      .eq('id', req.params.taskId)
-      .select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)').single();
-    if (error) throw error;
+    const result = await updateCrmLeadTask(req, req.params.leadId, req.params.taskId, b);
+    if (result.error) {
+      if (result.code) return res.status(result.status || 400).json({ error: result.error, code: result.code });
+      return res.status(result.status || 500).json({ error: result.error });
+    }
+    const data = result.data;
 
     // 🔔 NOTIFICATION: Task CRM cập nhật
     try {
@@ -11390,23 +11394,89 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
             'crm_task', data.id);
         }
       }
-      if (b.assignee_id && b.assignee_id !== data.assignee_id) {
-        const { data: leadPut } = await supabase.from('crm_leads')
-          .select('company_id, region_id')
-          .eq('id', req.params.leadId)
-          .maybeSingle();
-        const ecoPut = ecosystemModuleKeyForCrmDeadline(crmTaskDeadlineModuleKey(data.stage_slug));
-        const okNew = await filterUserIdsForCrmLeadScopedNotification(
-          supabase,
-          leadPut || {},
-          [b.assignee_id],
-          ecoPut,
+      const priorSet = new Set((result.priorAssigneeIds || []).map(String));
+      if (!priorSet.size && result.priorAssigneeId) priorSet.add(String(result.priorAssigneeId));
+      const addedAssigneeIds = (result.newAssigneeIds || [])
+        .map(String)
+        .filter((uid) => uid !== String(req.user.userId) && !priorSet.has(uid));
+      if (addedAssigneeIds.length && !data.crm_assignment_id) {
+        const fallbackAssignmentId = await resolveAssignmentIdForTask(
+          data.id,
+          req.params.leadId,
+          data.title,
         );
-        if (okNew.some((x) => String(x) === String(b.assignee_id))) {
-          await createNotification(req, b.assignee_id, 'crm_task_assigned',
-            '📌 Được giao nhiệm vụ CRM',
-            `Bạn được giao: "${data.title}"`,
-            'crm_task', data.id);
+        if (fallbackAssignmentId) {
+          const { data: leadPut } = await supabase.from('crm_leads')
+            .select('id, code, title, company_id, region_id')
+            .eq('id', req.params.leadId)
+            .maybeSingle();
+          await notifyNewCrmAssignmentAssignees(req, {
+            assignmentId: fallbackAssignmentId,
+            title: data.title,
+            userIds: addedAssigneeIds,
+            lead: leadPut,
+            deadline: data.deadline,
+            stageSlug: data.stage_slug,
+            crmTaskId: data.id,
+          });
+        } else {
+          const { data: leadPut } = await supabase.from('crm_leads')
+            .select('company_id, region_id')
+            .eq('id', req.params.leadId)
+            .maybeSingle();
+          const ecoPut = ecosystemModuleKeyForCrmDeadline(crmTaskDeadlineModuleKey(data.stage_slug));
+          const okNew = await filterUserIdsForCrmLeadScopedNotification(
+            supabase,
+            leadPut || {},
+            addedAssigneeIds,
+            ecoPut,
+          );
+          for (const uid of okNew) {
+            await createNotification(req, uid, 'crm_task_assigned',
+              '📌 Được giao nhiệm vụ CRM',
+              `Bạn được giao: "${data.title}"`,
+              'crm_task', data.id,
+              { lead_id: req.params.leadId, nav_tab: 'tasks' });
+          }
+        }
+      } else if (b.assignee_id && String(b.assignee_id) !== String(result.priorAssigneeId || '') && !data.crm_assignment_id) {
+        const fallbackAssignmentId = await resolveAssignmentIdForTask(
+          data.id,
+          req.params.leadId,
+          data.title,
+        );
+        if (fallbackAssignmentId) {
+          const { data: leadPut } = await supabase.from('crm_leads')
+            .select('id, code, title, company_id, region_id')
+            .eq('id', req.params.leadId)
+            .maybeSingle();
+          await notifyNewCrmAssignmentAssignees(req, {
+            assignmentId: fallbackAssignmentId,
+            title: data.title,
+            userIds: [b.assignee_id],
+            lead: leadPut,
+            deadline: data.deadline,
+            stageSlug: data.stage_slug,
+            crmTaskId: data.id,
+          });
+        } else {
+          const { data: leadPut } = await supabase.from('crm_leads')
+            .select('company_id, region_id')
+            .eq('id', req.params.leadId)
+            .maybeSingle();
+          const ecoPut = ecosystemModuleKeyForCrmDeadline(crmTaskDeadlineModuleKey(data.stage_slug));
+          const okNew = await filterUserIdsForCrmLeadScopedNotification(
+            supabase,
+            leadPut || {},
+            [b.assignee_id],
+            ecoPut,
+          );
+          if (okNew.some((x) => String(x) === String(b.assignee_id))) {
+            await createNotification(req, b.assignee_id, 'crm_task_assigned',
+              '📌 Được giao nhiệm vụ CRM',
+              `Bạn được giao: "${data.title}"`,
+              'crm_task', data.id);
+          }
         }
       }
       // 📅 Notify khi set/thay đổi deadline (lọc NV đúng khối/khu vực — createNotification có thể chặn loại deadline)
@@ -12521,6 +12591,132 @@ r.post('/leads/:id/members', async (req, res) => {
 
     res.json(results.length === 1 ? results[0] : results);
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /leads/:id/assignments — nhiệm vụ «Giao việc CRM» gắn lead/deal này
+r.get('/leads/:id/assignments', async (req, res) => {
+  try {
+    let q = supabase
+      .from('crm_assignments')
+      .select(`
+        id, company_id, column_id, lead_id, title, description,
+        assignee_id, created_by_id, priority, status, deadline,
+        position, created_at, updated_at, completed_at,
+        assignee:users!crm_assignments_assignee_id_fkey(id, full_name, email, avatar),
+        created_by:users!crm_assignments_created_by_id_fkey(id, full_name, email, avatar),
+        lead:crm_leads(id, code, title, type)
+      `)
+      .eq('lead_id', req.params.id)
+      .order('created_at', { ascending: false });
+    let { data, error } = await q;
+    if (error && /lead_id/.test(error.message || '')) {
+      return res.json({ assignments: [] });
+    }
+    if (error) throw error;
+    const list = data || [];
+    if (list.length) {
+      const ids = list.map((x) => x.id);
+      const { data: rows } = await supabase
+        .from('crm_assignment_assignees')
+        .select('assignment_id, user_id, user:users(id, full_name, email, avatar)')
+        .in('assignment_id', ids);
+      const byId = new Map();
+      (rows || []).forEach((r) => {
+        if (!byId.has(r.assignment_id)) byId.set(r.assignment_id, []);
+        if (r.user) byId.get(r.assignment_id).push(r.user);
+      });
+      list.forEach((a) => {
+        a.assignees = byId.get(a.id) || (a.assignee ? [a.assignee] : []);
+      });
+    }
+    res.json({ assignments: list });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /leads/:id/assignments — giao việc CRM cho thành viên tham gia lead/deal
+r.post('/leads/:id/assignments', async (req, res) => {
+  try {
+    const leadId = req.params.id;
+    const b = req.body || {};
+    const rawIds = Array.isArray(b.assignee_ids) ? b.assignee_ids.filter(Boolean) : [];
+    if (!rawIds.length) {
+      return res.status(400).json({ error: 'Chọn ít nhất một thành viên để giao việc' });
+    }
+
+    const { data: memRows } = await supabase
+      .from('lead_members')
+      .select('user_id')
+      .eq('lead_id', leadId);
+    const memberSet = new Set((memRows || []).map((m) => String(m.user_id)));
+    const invalid = rawIds.filter((id) => !memberSet.has(String(id)));
+    if (invalid.length) {
+      return res.status(400).json({
+        error: 'Chỉ gán nhiệm vụ cho nhân viên đang tham gia lead/deal này',
+        invalid_user_ids: invalid,
+      });
+    }
+
+    const { data: leadInfo } = await supabase
+      .from('crm_leads')
+      .select('code, title, type')
+      .eq('id', leadId)
+      .maybeSingle();
+    const leadLabel = leadInfo
+      ? `${leadInfo.code || ''} ${leadInfo.title || ''}`.trim()
+      : 'lead/deal';
+
+    const result = await createCrmAssignment(req, {
+      title: b.title,
+      description: b.description,
+      assignee_ids: rawIds,
+      column_id: b.column_id,
+      company_id: b.company_id,
+      priority: b.priority,
+      status: b.status,
+      deadline: b.deadline,
+      lead_id: leadId,
+    });
+    if (result.error) return res.status(result.status || 500).json({ error: result.error });
+
+    const data = result.data?.assignment;
+    const assigneeIds = result.data?.assignee_ids || [];
+    const leadSuffix = leadLabel ? ` (${leadLabel})` : '';
+    for (const uid of assigneeIds) {
+      if (String(uid) === String(req.user.userId)) continue;
+      const notif = await persistAssignmentNotification(supabase, uid, {
+        type: 'crm_assignment_assigned',
+        title: '📋 Bạn vừa được giao nhiệm vụ CRM',
+        message: `"${data.title}"${leadSuffix}${data.deadline ? ' — hạn ' + new Date(data.deadline).toLocaleString('vi-VN') : ''}`,
+        assignmentId: data.id,
+        metadata: { lead_id: leadId, nav_path: '/crm/assignments', open: data.id },
+      });
+      try {
+        const io = req.app.get('io');
+        if (io) io.to(`user:${uid}`).emit('notification', notif || buildAssignmentNotificationInsert(uid, {
+          type: 'crm_assignment_assigned',
+          title: '📋 Bạn vừa được giao nhiệm vụ CRM',
+          message: `"${data.title}"${leadSuffix}`,
+          assignmentId: data.id,
+        }));
+      } catch { /* ignore */ }
+    }
+    if (assigneeIds.length) emitNotifyBadge(req.app, 'assignments');
+
+    if (assigneeIds.length) {
+      const { data: asnRows } = await supabase
+        .from('crm_assignment_assignees')
+        .select('user:users(id, full_name, email, avatar)')
+        .eq('assignment_id', data.id);
+      data.assignees = (asnRows || []).map((r) => r.user).filter(Boolean);
+    }
+
+    void rcInvalidateTags(['crm:assignments']);
+    res.status(result.status).json({ assignment: data });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // DELETE /leads/:id/members/:userId — xóa thành viên

@@ -4,6 +4,13 @@
 const { supabase } = require('../config/supabase');
 const { crmTaskMeetsCompletionRequirements, crmTaskRequiresCompletionEvidence } = require('./crmTaskCompletionEvidence');
 const { createNotification } = require('./notifications');
+const { attachAssigneesToCrmTasks, replaceCrmTaskAssignees } = require('./crmTaskAssignees');
+const { syncAssignmentFromCrmTask } = require('./crmTaskAssignmentSync');
+const {
+  notifyNewCrmAssignmentAssignees,
+  resolveAssignmentIdForTask,
+} = require('./crmAssignmentNotifications');
+const { isAdminLike } = require('./adminRole');
 const {
   ecosystemModuleKeyForCrmDeadline,
   crmTaskDeadlineModuleKey,
@@ -44,7 +51,12 @@ async function createCrmLeadTask(req, leadId, body) {
     const { data: leadRow } = await supabase.from('crm_leads').select('stage_id').eq('id', targetLeadId).maybeSingle();
     pipelineStageId = leadRow?.stage_id || null;
   }
-  const { data, error } = await supabase.from('crm_tasks').insert({
+  const rawAssigneeIds = Array.isArray(b.assignee_ids)
+    ? b.assignee_ids.filter(Boolean).map(String)
+    : (b.assignee_id ? [String(b.assignee_id)] : []);
+  const primaryAssignee = rawAssigneeIds[0] || null;
+
+  let { data, error } = await supabase.from('crm_tasks').insert({
     lead_id: targetLeadId,
     title: b.title,
     description: b.description || null,
@@ -53,29 +65,61 @@ async function createCrmLeadTask(req, leadId, body) {
     stage_slug: b.stage_slug || null,
     pipeline_stage_id: pipelineStageId,
     order_index: b.order_index || 0,
-    assignee_id: b.assignee_id || null,
+    assignee_id: primaryAssignee,
     supervisor_id: b.supervisor_id || null,
     deadline: b.deadline ? normalizeTimestamp(b.deadline) : null,
     created_by: req.user.userId,
     completion_requires_file_or_note: !!b.completion_requires_file_or_note,
     completion_requires_customer_note: !!b.completion_requires_customer_note,
     completion_requires_customer_contact: !!b.completion_requires_customer_contact,
-    blocks_stage_advance: !!b.blocks_stage_advance,
+    blocks_stage_advance: isAdminLike(req.user) ? !!b.blocks_stage_advance : false,
     show_excel_quotation_upload: !!b.show_excel_quotation_upload,
   }).select(CRM_TASK_SELECT).single();
   if (error) return { error: error.message, status: 500 };
 
+  if (rawAssigneeIds.length) {
+    await replaceCrmTaskAssignees(data.id, rawAssigneeIds);
+    [data] = await attachAssigneesToCrmTasks([data]);
+  } else {
+    data.assignees = [];
+  }
+
+  let assignmentId = null;
   try {
-    if (data.assignee_id) {
-      const { data: leadSnap } = await supabase.from('crm_leads')
-        .select('company_id, region_id').eq('id', targetLeadId).maybeSingle();
+    const sync = await syncAssignmentFromCrmTask(req, data, rawAssigneeIds);
+    assignmentId = sync?.assignmentId || null;
+    if (assignmentId) data.crm_assignment_id = assignmentId;
+  } catch (syncErr) {
+    console.warn('[sync] crm_task→assignment create:', syncErr.message);
+  }
+
+  try {
+    const { data: leadSnap } = await supabase.from('crm_leads')
+      .select('id, code, title, company_id, region_id')
+      .eq('id', targetLeadId)
+      .maybeSingle();
+    const notifyAssignmentId = assignmentId
+      || await resolveAssignmentIdForTask(data.id, targetLeadId, data.title);
+    if (notifyAssignmentId && rawAssigneeIds.length) {
+      await notifyNewCrmAssignmentAssignees(req, {
+        assignmentId: notifyAssignmentId,
+        title: data.title,
+        userIds: rawAssigneeIds,
+        lead: leadSnap,
+        deadline: data.deadline,
+        stageSlug: data.stage_slug,
+        crmTaskId: data.id,
+      });
+    } else if (rawAssigneeIds.length) {
+      const notifyIds = rawAssigneeIds.filter((uid) => String(uid) !== String(req.user.userId));
       const eco = ecosystemModuleKeyForCrmDeadline(crmTaskDeadlineModuleKey(data.stage_slug));
       const okAssignees = await filterUserIdsForCrmLeadScopedNotification(
-        supabase, leadSnap || {}, [data.assignee_id], eco,
+        supabase, leadSnap || {}, notifyIds, eco,
       );
-      if (okAssignees.some((x) => String(x) === String(data.assignee_id))) {
-        await createNotification(req, data.assignee_id, 'crm_task_assigned',
-          '📌 Nhiệm vụ CRM mới', `Bạn được giao: "${data.title}"`, 'crm_task', data.id);
+      for (const uid of okAssignees) {
+        await createNotification(req, uid, 'crm_task_assigned',
+          '📌 Nhiệm vụ CRM mới', `Bạn được giao: "${data.title}"`, 'crm_task', data.id,
+          { lead_id: targetLeadId, nav_tab: 'tasks' });
       }
     }
   } catch (ne) { console.warn('[NOTIFY] crm_task_created:', ne.message); }
@@ -103,22 +147,95 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
     }
   }
 
+  const { data: priorRow } = await supabase.from('crm_tasks')
+    .select('assignee_id, blocks_stage_advance')
+    .eq('id', taskId).maybeSingle();
+  let priorAssigneeIds = [];
+  if (Array.isArray(b.assignee_ids)) {
+    const { data: priorRows } = await supabase
+      .from('crm_task_assignees')
+      .select('user_id')
+      .eq('task_id', taskId);
+    priorAssigneeIds = (priorRows || []).map((r) => String(r.user_id));
+    if (!priorAssigneeIds.length && priorRow?.assignee_id) {
+      priorAssigneeIds = [String(priorRow.assignee_id)];
+    }
+  }
+
   const update = { updated_at: new Date().toISOString() };
   const fields = ['title', 'description', 'status', 'priority', 'stage_slug', 'order_index',
-    'assignee_id', 'supervisor_id', 'deadline', 'shared_to_project', 'blocks_stage_advance', 'show_excel_quotation_upload'];
+    'assignee_id', 'supervisor_id', 'deadline', 'shared_to_project', 'show_excel_quotation_upload'];
   fields.forEach((f) => {
     if (b[f] === undefined) return;
     if (f === 'deadline' && b[f] != null && b[f] !== '') update[f] = normalizeTimestamp(b[f]);
     else update[f] = b[f];
   });
+  if (isAdminLike(req.user) && b.blocks_stage_advance !== undefined) {
+    update.blocks_stage_advance = !!b.blocks_stage_advance;
+  }
+  if (Array.isArray(b.assignee_ids)) {
+    const ids = b.assignee_ids.filter(Boolean).map(String);
+    update.assignee_id = ids[0] || null;
+  }
   if (b.status === 'completed' && !b.completed_at) update.completed_at = new Date().toISOString();
   if (b.status && b.status !== 'completed') update.completed_at = null;
 
-  const { data, error } = await supabase.from('crm_tasks').update(update)
+  let { data, error } = await supabase.from('crm_tasks').update(update)
     .eq('id', taskId).select(CRM_TASK_SELECT).single();
   if (error) return { error: error.message, status: 500 };
 
-  return { data, status: 200, leadId };
+  let newAssigneeIds = null;
+  if (Array.isArray(b.assignee_ids)) {
+    newAssigneeIds = await replaceCrmTaskAssignees(taskId, b.assignee_ids);
+    [data] = await attachAssigneesToCrmTasks([data]);
+  } else {
+    data.assignees = data.assignee ? [data.assignee] : [];
+  }
+
+  const assigneeIdsForSync = Array.isArray(b.assignee_ids)
+    ? b.assignee_ids.filter(Boolean).map(String)
+    : (data.assignees || []).map((u) => String(u.id)).filter(Boolean);
+  let assignmentId = null;
+  try {
+    const sync = await syncAssignmentFromCrmTask(req, data, assigneeIdsForSync);
+    assignmentId = sync?.assignmentId || null;
+    if (assignmentId) data.crm_assignment_id = assignmentId;
+  } catch (syncErr) {
+    console.warn('[sync] crm_task→assignment update:', syncErr.message);
+  }
+
+  if (Array.isArray(b.assignee_ids) && assignmentId) {
+    const priorSet = new Set(priorAssigneeIds.map(String));
+    const added = assigneeIdsForSync.filter((uid) => !priorSet.has(String(uid)));
+    if (added.length) {
+      try {
+        const { data: leadSnap } = await supabase.from('crm_leads')
+          .select('id, code, title, company_id, region_id')
+          .eq('id', data.lead_id)
+          .maybeSingle();
+        await notifyNewCrmAssignmentAssignees(req, {
+          assignmentId,
+          title: data.title,
+          userIds: added,
+          lead: leadSnap,
+          deadline: data.deadline,
+          stageSlug: data.stage_slug,
+          crmTaskId: data.id,
+        });
+      } catch (ne) {
+        console.warn('[NOTIFY] crm_assignment assignees:', ne.message);
+      }
+    }
+  }
+
+  return {
+    data,
+    status: 200,
+    leadId,
+    priorAssigneeId: priorRow?.assignee_id,
+    priorAssigneeIds,
+    newAssigneeIds,
+  };
 }
 
 async function deleteCrmLeadTask(req, taskId) {

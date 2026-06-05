@@ -24,6 +24,8 @@ export default function WorkshopStaffFilterPanel({
   companyEmployees = [],
   personSelectLabel = 'Chọn NV',
   ringFocusClass = 'focus:ring-blue-500',
+  hidePersonSelect = false,
+  hidePersonName = false,
 }) {
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50/90 p-3 space-y-3">
@@ -121,51 +123,55 @@ export default function WorkshopStaffFilterPanel({
               className={`h-9 w-36 px-2 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 ${ringFocusClass}`}
             />
           </div>
-          <div className="flex flex-col gap-0.5 min-w-[11rem] flex-1 sm:flex-initial sm:min-w-[12rem]">
-            <label className="text-[10px] text-slate-600 font-semibold">{personSelectLabel}</label>
-            <select
-              value={filterPersonId}
-              onChange={(e) => setFilterPersonId(e.target.value)}
-              title="Chỉ hiện NV thuộc công ty & khu vực đã chọn (khi có)"
-              className={`h-9 w-full min-w-0 px-2 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 ${ringFocusClass} cursor-pointer`}
-            >
-              <option value="">Tất cả nhân viên</option>
-              {companyDepts.length > 0 ? (
-                companyDepts.map((dept) => {
-                  const deptUsers = employeeOptionsForSelect.filter((u) => u.department_id === dept.id);
-                  if (!deptUsers.length) return null;
-                  return (
-                    <optgroup key={dept.id} label={`📁 ${dept.name}`}>
-                      {deptUsers.map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.full_name}
-                          {u.position ? ` (${u.position})` : ''}
-                        </option>
-                      ))}
-                    </optgroup>
-                  );
-                })
-              ) : (
-                employeeOptionsForSelect.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.full_name}
-                    {u.position ? ` (${u.position})` : ''}
-                  </option>
-                ))
-              )}
-            </select>
-          </div>
-          <div className="flex flex-col gap-0.5 min-w-[10rem]">
-            <label className="text-[10px] text-slate-600 font-semibold">Tên trên pipeline</label>
-            <input
-              type="search"
-              value={filterPersonName}
-              onChange={(e) => setFilterPersonName(e.target.value)}
-              placeholder="Tên người phụ trách…"
-              title="Lọc nhanh theo tên hiển thị trên thẻ"
-              className="h-9 w-40 px-2 bg-amber-50/90 border border-amber-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-amber-400"
-            />
-          </div>
+          {!hidePersonSelect && (
+            <div className="flex flex-col gap-0.5 min-w-[11rem] flex-1 sm:flex-initial sm:min-w-[12rem]">
+              <label className="text-[10px] text-slate-600 font-semibold">{personSelectLabel}</label>
+              <select
+                value={filterPersonId}
+                onChange={(e) => setFilterPersonId(e.target.value)}
+                title="Chỉ hiện NV thuộc công ty & khu vực đã chọn (khi có)"
+                className={`h-9 w-full min-w-0 px-2 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 ${ringFocusClass} cursor-pointer`}
+              >
+                <option value="">Tất cả nhân viên</option>
+                {companyDepts.length > 0 ? (
+                  companyDepts.map((dept) => {
+                    const deptUsers = employeeOptionsForSelect.filter((u) => u.department_id === dept.id);
+                    if (!deptUsers.length) return null;
+                    return (
+                      <optgroup key={dept.id} label={`📁 ${dept.name}`}>
+                        {deptUsers.map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {u.full_name}
+                            {u.position ? ` (${u.position})` : ''}
+                          </option>
+                        ))}
+                      </optgroup>
+                    );
+                  })
+                ) : (
+                  employeeOptionsForSelect.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.full_name}
+                      {u.position ? ` (${u.position})` : ''}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
+          )}
+          {!hidePersonName && (
+            <div className="flex flex-col gap-0.5 min-w-[10rem]">
+              <label className="text-[10px] text-slate-600 font-semibold">Tên trên pipeline</label>
+              <input
+                type="search"
+                value={filterPersonName}
+                onChange={(e) => setFilterPersonName(e.target.value)}
+                placeholder="Tên người phụ trách…"
+                title="Lọc nhanh theo tên hiển thị trên thẻ"
+                className="h-9 w-40 px-2 bg-amber-50/90 border border-amber-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-amber-400"
+              />
+            </div>
+          )}
           {companyEmployees.length > 0 && (
             <span
               className="text-[10px] text-emerald-800 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-100 self-end whitespace-nowrap"

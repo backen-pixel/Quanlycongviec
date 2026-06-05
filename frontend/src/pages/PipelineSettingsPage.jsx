@@ -447,6 +447,17 @@ export default function PipelineSettingsPage() {
     }
   };
 
+  /** Bật/tắt bắt buộc đặt deadline khi kéo thẻ tới cột này. */
+  const toggleRequiresDeadlineColumn = async (stage) => {
+    if (stage.is_won || stage.is_lost) return;
+    try {
+      await api.put(`/crm/pipeline-stages/${stage.id}`, { requires_deadline: !stage.requires_deadline });
+      load();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi');
+    }
+  };
+
   /** Bật/tắt ghi nhận quá hạn khi lead/deal không chuyển tiếp khỏi cột (sla_days=0). */
   const toggleSlaColumn = async (stage) => {
     if (stage.is_won || stage.is_lost) return;
@@ -812,23 +823,42 @@ export default function PipelineSettingsPage() {
                 </button>
               )}
               {!s.is_won && !s.is_lost && (
-                <button
-                  type="button"
-                  onClick={() => toggleSlaColumn(s)}
-                  className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
-                    isPipelineStageSlaDisabled(s.sla_days)
-                      ? 'bg-gray-200 text-gray-700 border-gray-300'
-                      : 'bg-gray-50 text-gray-500 border-gray-200 hover:border-violet-300 hover:text-violet-700'
-                  }`}
-                  title={
-                    isPipelineStageSlaDisabled(s.sla_days)
-                      ? 'Đang bỏ ghi nhận quá hạn khi lead/deal không chuyển tiếp khỏi cột này (Kanban, SLA watchlist, KPI A6). NV có ngày hẹn riêng vẫn hiện trên Kanban. Nhấn để bật lại SLA (mặc định 7 ngày).'
-                      : 'Bỏ ghi nhận quá hạn nếu deal/lead đứng cột quá hạn mà không chuyển tiếp — dùng cho cột chờ KH, chờ duyệt… NV có hạn riêng vẫn tính.'
-                  }
-                >
-                  <Clock className="h-3 w-3" />
-                  {isPipelineStageSlaDisabled(s.sla_days) ? 'Đã bỏ QH' : 'Bỏ quá hạn'}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => toggleRequiresDeadlineColumn(s)}
+                    className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
+                      s.requires_deadline
+                        ? 'bg-rose-100 text-rose-800 border-rose-300'
+                        : 'bg-gray-50 text-gray-500 border-gray-200 hover:border-rose-300 hover:text-rose-700'
+                    }`}
+                    title={
+                      s.requires_deadline
+                        ? 'Đang bắt buộc đặt deadline khi kéo thẻ tới cột này. Nhấn để tắt.'
+                        : 'Bật để mỗi lần thẻ chuyển vào cột này hiện hộp chọn deadline + lý do.'
+                    }
+                  >
+                    <Clock className="h-3 w-3" />
+                    {s.requires_deadline ? 'DL bắt buộc' : 'Deadline'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleSlaColumn(s)}
+                    className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
+                      isPipelineStageSlaDisabled(s.sla_days)
+                        ? 'bg-gray-200 text-gray-700 border-gray-300'
+                        : 'bg-gray-50 text-gray-500 border-gray-200 hover:border-violet-300 hover:text-violet-700'
+                    }`}
+                    title={
+                      isPipelineStageSlaDisabled(s.sla_days)
+                        ? 'Đang bỏ ghi nhận quá hạn khi lead/deal không chuyển tiếp khỏi cột này (Kanban, SLA watchlist, KPI A6). NV có ngày hẹn riêng vẫn hiện trên Kanban. Nhấn để bật lại SLA (mặc định 7 ngày).'
+                        : 'Bỏ ghi nhận quá hạn nếu deal/lead đứng cột quá hạn mà không chuyển tiếp — dùng cho cột chờ KH, chờ duyệt… NV có hạn riêng vẫn tính.'
+                    }
+                  >
+                    <Clock className="h-3 w-3" />
+                    {isPipelineStageSlaDisabled(s.sla_days) ? 'Đã bỏ QH' : 'Bỏ quá hạn'}
+                  </button>
+                </>
               )}
               <button
                 type="button"
