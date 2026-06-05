@@ -13,18 +13,23 @@ import { useAuth } from '../context/AuthContext';
 import {
   getAppPermissionGaps,
   grantAllPermissionsQuick,
+  openBatteryOptimizationSettings,
+  openCallNotificationSettings,
   openOverlaySettings,
   type AppPermissionGap,
 } from '../lib/appPermissions';
+import { registerPushToken } from '../lib/pushRegistration';
 import { syncVoiceBackgroundTaskWithPrefs } from '../lib/voiceBackgroundSync';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 
 const PERM_LABEL: Record<AppPermissionGap, string> = {
-  microphone: '🎙 Micro',
+  microphone: '🎙 Micro (cuộc gọi / ghi âm)',
   photos: '🖼 Ảnh / Thư viện',
   camera: '📷 Camera',
   location: '📍 Vị trí',
-  notification: '🔔 Thông báo',
+  notification: '🔔 Thông báo (cuộc gọi khi tắt app)',
+  fullScreenCall: '📞 Cuộc gọi toàn màn hình',
+  batteryOptimization: '🔋 Tắt tối ưu pin',
   systemOverlay: '💬 Bong bóng nổi trên app khác',
 };
 
@@ -59,6 +64,7 @@ export default function PermissionBootstrap() {
     setBusy(true);
     try {
       await grantAllPermissionsQuick();
+      void registerPushToken();
       void syncVoiceBackgroundTaskWithPrefs();
       setTimeout(async () => {
         const remaining = await getAppPermissionGaps();
@@ -80,12 +86,22 @@ export default function PermissionBootstrap() {
   if (!visible || gaps.length === 0 || Platform.OS !== 'android') return null;
 
   const needsOverlay = gaps.includes('systemOverlay');
+  const needsCall = gaps.some((g) =>
+    g === 'notification' || g === 'fullScreenCall' || g === 'batteryOptimization',
+  );
 
   return (
     <Modal visible animationType="fade" transparent statusBarTranslucent onRequestClose={handleSkip}>
       <View style={styles.backdrop}>
         <View style={[styles.card, CrmShadow.card]}>
           <Text style={styles.title}>Cấp quyền cần thiết</Text>
+
+          {needsCall ? (
+            <Text style={styles.callNote}>
+              Để nhận cuộc gọi khi không mở app (giống Zalo/Messenger), cần bật thông báo, cuộc gọi
+              toàn màn hình và tắt tối ưu pin cho TuBep CRM.
+            </Text>
+          ) : null}
 
           {needsOverlay ? (
             <Text style={styles.overlayNote}>
@@ -127,6 +143,26 @@ export default function PermissionBootstrap() {
             </TouchableOpacity>
           ) : null}
 
+          {gaps.includes('fullScreenCall') ? (
+            <TouchableOpacity
+              style={styles.overlayBtn}
+              disabled={busy}
+              onPress={() => openCallNotificationSettings()}
+            >
+              <Text style={styles.overlayBtnTxt}>Bật cuộc gọi toàn màn hình</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          {gaps.includes('batteryOptimization') ? (
+            <TouchableOpacity
+              style={styles.overlayBtn}
+              disabled={busy}
+              onPress={() => openBatteryOptimizationSettings()}
+            >
+              <Text style={styles.overlayBtnTxt}>Tắt tối ưu pin cho app</Text>
+            </TouchableOpacity>
+          ) : null}
+
           <TouchableOpacity style={styles.skip} disabled={busy} onPress={handleSkip}>
             <Text style={styles.skipTxt}>Bỏ qua</Text>
           </TouchableOpacity>
@@ -162,6 +198,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#92400E',
     backgroundColor: '#FFF7ED',
+    padding: 10,
+    borderRadius: CrmRadii.sm,
+    marginBottom: 14,
+    lineHeight: 17,
+  },
+  callNote: {
+    fontSize: 12,
+    color: '#1E40AF',
+    backgroundColor: '#EFF6FF',
     padding: 10,
     borderRadius: CrmRadii.sm,
     marginBottom: 14,

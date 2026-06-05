@@ -68,19 +68,103 @@ object IncomingCallHelper {
   fun showIncomingCall(context: Context, data: CallData) {
     wakeScreen(context)
     ensureCallChannel(context)
-    postCallNotification(context, data)
+    startRingServiceWithCall(context, data)
+    tryLaunchFullScreenActivity(context, data)
+  }
+
+  private fun tryLaunchFullScreenActivity(context: Context, data: CallData) {
     try {
-      val activityIntent = IncomingCallActivity.createIntent(context, data)
-      activityIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-      context.startActivity(activityIntent)
+      context.startActivity(
+        IncomingCallActivity.createIntent(context, data).apply {
+          addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK
+              or Intent.FLAG_ACTIVITY_SINGLE_TOP
+              or Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS,
+          )
+        },
+      )
     } catch (_: Exception) {
       /* fullScreenIntent trên notification sẽ mở activity */
     }
   }
 
+  private fun startRingServiceWithCall(context: Context, data: CallData) {
+    try {
+      val svc = Intent(context, IncomingCallRingService::class.java).apply {
+        putExtra("call_id", data.callId)
+        putExtra("from_user_id", data.fromUserId)
+        putExtra("from_name", data.fromName)
+        putExtra("is_group", data.isGroup)
+        putExtra("group_id", data.groupId)
+        putExtra("group_name", data.groupName)
+        putExtra("title", data.title)
+        putExtra("body", data.body)
+      }
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        context.startForegroundService(svc)
+      } else {
+        context.startService(svc)
+      }
+    } catch (_: Exception) { }
+  }
+
+  fun buildIncomingCallNotification(context: Context, data: CallData): android.app.Notification {
+    ensureCallChannel(context)
+    val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    val fullScreenIntent = IncomingCallActivity.createIntent(context, data).apply {
+      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+    }
+    val fullScreenPending = PendingIntent.getActivity(
+      context, data.callId.hashCode() + 1, fullScreenIntent, pendingFlags,
+    )
+    val acceptIntent = Intent(context, IncomingCallActionReceiver::class.java).apply {
+      action = ACTION_ACCEPT
+      putExtra("call_id", data.callId)
+      putExtra("from_user_id", data.fromUserId)
+      putExtra("from_name", data.fromName)
+      putExtra("is_group", data.isGroup)
+      putExtra("group_id", data.groupId)
+      putExtra("group_name", data.groupName)
+    }
+    val rejectIntent = Intent(context, IncomingCallActionReceiver::class.java).apply {
+      action = ACTION_REJECT
+      putExtra("call_id", data.callId)
+      putExtra("from_user_id", data.fromUserId)
+      putExtra("from_name", data.fromName)
+      putExtra("is_group", data.isGroup)
+      putExtra("group_id", data.groupId)
+      putExtra("group_name", data.groupName)
+    }
+    val acceptPending = PendingIntent.getBroadcast(
+      context, data.callId.hashCode() + 2, acceptIntent, pendingFlags,
+    )
+    val rejectPending = PendingIntent.getBroadcast(
+      context, data.callId.hashCode() + 3, rejectIntent, pendingFlags,
+    )
+    val ringtone = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+    return NotificationCompat.Builder(context, CALL_CHANNEL)
+      .setSmallIcon(android.R.drawable.stat_sys_phone_call)
+      .setContentTitle(data.title)
+      .setContentText(data.body)
+      .setStyle(NotificationCompat.BigTextStyle().bigText(data.body))
+      .setPriority(NotificationCompat.PRIORITY_MAX)
+      .setCategory(NotificationCompat.CATEGORY_CALL)
+      .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+      .setOngoing(true)
+      .setAutoCancel(false)
+      .setFullScreenIntent(fullScreenPending, true)
+      .setContentIntent(fullScreenPending)
+      .setVibrate(longArrayOf(0, 600, 200, 600, 200, 600))
+      .setSound(ringtone)
+      .addAction(android.R.drawable.ic_menu_call, "Trả lời", acceptPending)
+      .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Từ chối", rejectPending)
+      .build()
+  }
+
   fun stashPendingCall(context: Context, data: CallData, callAction: String?) {
     try {
       val obj = toJson(data)
+      obj.put("stashedAt", System.currentTimeMillis())
       if (!callAction.isNullOrBlank()) obj.put("callAction", callAction)
       context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         .edit()
@@ -114,84 +198,10 @@ object IncomingCallHelper {
   }
 
   fun postCallNotification(context: Context, data: CallData) {
-    ensureCallChannel(context)
-    val nm = NotificationManagerCompat.from(context)
-    val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-
-    val fullScreenIntent = IncomingCallActivity.createIntent(context, data).apply {
-      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-    }
-    val fullScreenPending = PendingIntent.getActivity(
-      context,
-      data.callId.hashCode() + 1,
-      fullScreenIntent,
-      pendingFlags,
+    NotificationManagerCompat.from(context).notify(
+      data.callId.hashCode(),
+      buildIncomingCallNotification(context, data),
     )
-
-    val acceptIntent = Intent(context, IncomingCallActionReceiver::class.java).apply {
-      action = ACTION_ACCEPT
-      putExtra("call_id", data.callId)
-      putExtra("from_user_id", data.fromUserId)
-      putExtra("from_name", data.fromName)
-      putExtra("is_group", data.isGroup)
-      putExtra("group_id", data.groupId)
-      putExtra("group_name", data.groupName)
-    }
-    val rejectIntent = Intent(context, IncomingCallActionReceiver::class.java).apply {
-      action = ACTION_REJECT
-      putExtra("call_id", data.callId)
-      putExtra("from_user_id", data.fromUserId)
-      putExtra("from_name", data.fromName)
-      putExtra("is_group", data.isGroup)
-      putExtra("group_id", data.groupId)
-      putExtra("group_name", data.groupName)
-    }
-
-    val acceptPending = PendingIntent.getBroadcast(
-      context,
-      data.callId.hashCode() + 2,
-      acceptIntent,
-      pendingFlags,
-    )
-    val rejectPending = PendingIntent.getBroadcast(
-      context,
-      data.callId.hashCode() + 3,
-      rejectIntent,
-      pendingFlags,
-    )
-
-    val ringtone = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-    val notification = NotificationCompat.Builder(context, CALL_CHANNEL)
-      .setSmallIcon(android.R.drawable.stat_sys_phone_call)
-      .setContentTitle(data.title)
-      .setContentText(data.body)
-      .setStyle(NotificationCompat.BigTextStyle().bigText(data.body))
-      .setPriority(NotificationCompat.PRIORITY_MAX)
-      .setCategory(NotificationCompat.CATEGORY_CALL)
-      .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-      .setOngoing(true)
-      .setAutoCancel(false)
-      .setOnlyAlertOnce(false)
-      .setFullScreenIntent(fullScreenPending, true)
-      .setContentIntent(fullScreenPending)
-      .setVibrate(longArrayOf(0, 600, 200, 600, 200, 600))
-      .setSound(ringtone)
-      .addAction(android.R.drawable.ic_menu_call, "Trả lời", acceptPending)
-      .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Từ chối", rejectPending)
-      .build()
-
-    nm.notify(data.callId.hashCode(), notification)
-
-    try {
-      val ringService = Intent(context, IncomingCallRingService::class.java).apply {
-        putExtra("call_id", data.callId)
-      }
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        context.startForegroundService(ringService)
-      } else {
-        context.startService(ringService)
-      }
-    } catch (_: Exception) { }
   }
 
   fun toJson(data: CallData): JSONObject {

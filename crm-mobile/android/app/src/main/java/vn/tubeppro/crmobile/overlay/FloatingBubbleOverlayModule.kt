@@ -102,6 +102,10 @@ class FloatingBubbleOverlayModule(private val reactContext: ReactApplicationCont
   @ReactMethod
   fun saveAuthToken(token: String) {
     prefs.edit().putString("auth_token", token).apply()
+    val fcm = prefs.getString(vn.tubeppro.crmobile.call.IncomingCallHelper.FCM_TOKEN_KEY, null)
+    if (!fcm.isNullOrBlank()) {
+      vn.tubeppro.crmobile.call.PushTokenRegistrar.registerAsync(reactContext, fcm)
+    }
   }
 
   @ReactMethod

@@ -378,24 +378,15 @@ async function sendFcmIncomingCall(tokens, notification) {
   };
   for (const row of tokens) {
     try {
-      // notification + data: app kill → hệ thống hiện tray; data-only → onMessageReceived full-screen
+      // Chỉ gửi data — app kill → CrmFirebaseMessagingService.onMessageReceived → hiện cuộc gọi.
       const body = {
         message: {
           token: row.token,
-          notification: {
-            title: payload.title,
-            body: payload.body,
-          },
           data,
           android: {
             priority: 'HIGH',
             ttl: '60s',
-            notification: {
-              channel_id: CHANNEL_CALL,
-              sound: 'default',
-              notification_priority: 'PRIORITY_MAX',
-              visibility: 'PUBLIC',
-            },
+            ...(data.call_id ? { collapse_key: `call_${data.call_id}` } : {}),
           },
         },
       };

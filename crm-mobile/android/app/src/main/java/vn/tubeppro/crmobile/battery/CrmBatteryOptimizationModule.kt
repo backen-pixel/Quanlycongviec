@@ -1,5 +1,6 @@
 package vn.tubeppro.crmobile.battery
 
+import android.app.NotificationManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -58,6 +59,38 @@ class CrmBatteryOptimizationModule(private val reactContext: ReactApplicationCon
       }
       reactContext.startActivity(intent)
     } catch (_: Exception) { }
+  }
+
+  /** Android 14+ — quyền hiện cuộc gọi toàn màn hình khi app tắt. */
+  @ReactMethod
+  fun canUseFullScreenIntent(promise: Promise) {
+    try {
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        promise.resolve(true)
+        return
+      }
+      val nm = reactContext.getSystemService(NotificationManager::class.java)
+      promise.resolve(nm?.canUseFullScreenIntent() == true)
+    } catch (e: Exception) {
+      promise.resolve(true)
+    }
+  }
+
+  @ReactMethod
+  fun openFullScreenIntentSettings() {
+    try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        val intent = Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+          data = Uri.parse("package:${reactContext.packageName}")
+          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        reactContext.startActivity(intent)
+        return
+      }
+      openAppNotificationSettings()
+    } catch (_: Exception) {
+      openAppNotificationSettings()
+    }
   }
 
   @ReactMethod

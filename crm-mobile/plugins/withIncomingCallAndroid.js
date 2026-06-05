@@ -13,6 +13,7 @@ const FILES = [
   'call/IncomingCallActionReceiver.kt',
   'call/IncomingCallRingService.kt',
   'call/CallRejectApi.kt',
+  'call/PushTokenRegistrar.kt',
   'call/CrmFirebaseMessagingService.kt',
 ];
 
