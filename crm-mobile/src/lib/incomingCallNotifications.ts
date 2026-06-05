@@ -4,8 +4,10 @@ import * as Notifications from 'expo-notifications';
 import { CRM_NOTIF_CHANNELS } from './notificationChannels';
 import {
   cancelNativeIncomingCallNotification,
+  markNativeCallAnswered,
   postNativeIncomingCallNotification,
 } from './nativeCallNotification';
+import { shouldSuppressIncomingRing } from './callSessionGuard';
 
 export type IncomingCallPayload = {
   callId: string;
@@ -121,6 +123,7 @@ export async function clearPendingIncomingCall(): Promise<void> {
 }
 
 export async function showIncomingCallNotification(payload: IncomingCallPayload): Promise<void> {
+  if (shouldSuppressIncomingRing(payload.callId)) return;
   // Android: native notification đáng tin cậy hơn khi app ở nền / màn hình khóa
   if (postNativeIncomingCallNotification(payload)) return;
 

@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { Modal, View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useCall } from '../../context/CallContext';
 import { CrmColors, CrmRadii } from '../../theme/crmTheme';
+import { isLockScreenCallUiActive } from '../../lib/lockScreenCall';
 
 function formatDuration(ms: number): string {
   const s = Math.floor(ms / 1000);
@@ -27,6 +28,15 @@ export default function CallOverlay() {
   } = useCall();
 
   const [tick, setTick] = useState(0);
+  const [lockScreenNativeUi, setLockScreenNativeUi] = useState(false);
+
+  useEffect(() => {
+    if (status === 'idle' || Platform.OS !== 'android') {
+      setLockScreenNativeUi(false);
+      return;
+    }
+    void isLockScreenCallUiActive().then(setLockScreenNativeUi);
+  }, [status]);
 
   useEffect(() => {
     if (status !== 'active' || !startedAt) return;
@@ -35,6 +45,7 @@ export default function CallOverlay() {
   }, [status, startedAt]);
 
   if (status === 'idle') return null;
+  if (lockScreenNativeUi) return null;
 
   const title =
     mode === 'group'

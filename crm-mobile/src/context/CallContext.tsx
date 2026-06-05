@@ -17,6 +17,7 @@ import {
 } from 'react-native-webrtc';
 import type { Socket } from 'socket.io-client';
 import { subscribeAppSocket } from '../lib/appSocket';
+import { useAuth } from './AuthContext';
 import {
   dismissIncomingCallNotification,
   showIncomingCallNotification,
@@ -24,7 +25,25 @@ import {
   clearPendingIncomingCall,
   type IncomingCallPayload,
 } from '../lib/incomingCallNotifications';
-import { useAuth } from './AuthContext';
+import {
+  cancelNativeIncomingCallNotification,
+  clearNativeIncomingCallClaim,
+  markNativeCallAnswered,
+  setNativeIncomingCallClaim,
+} from '../lib/nativeCallNotification';
+import {
+  dismissLockScreenCallUi,
+  subscribeLockScreenCallEnd,
+  subscribeLockScreenToggleMute,
+  syncLockScreenCallState,
+} from '../lib/lockScreenCall';
+import {
+  markCallAnswered,
+  releaseIncomingClaim,
+  setCallSession,
+  shouldSuppressIncomingRing,
+  tryClaimIncomingCall,
+} from '../lib/callSessionGuard';
 
 const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -185,8 +204,12 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     localStreamRef.current = null;
     void dismissIncomingCallNotification(callIdRef.current);
+    dismissLockScreenCallUi();
+    releaseIncomingClaim(callIdRef.current);
+    clearNativeIncomingCallClaim(callIdRef.current);
     pendingNativeAcceptRef.current = false;
     setNativeAcceptPending(false);
+    setCallSession(null, 'idle');
     setStatus('idle');
     setMode('direct');
     setCallId(null);
@@ -365,16 +388,48 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     resetState();
   }, [resetState]);
 
+  const clearNativeAcceptPending = useCallback(() => {
+    pendingNativeAcceptRef.current = false;
+    setNativeAcceptPending(false);
+    if (nativeAcceptTimeoutRef.current) {
+      clearTimeout(nativeAcceptTimeoutRef.current);
+      nativeAcceptTimeoutRef.current = null;
+    }
+  }, []);
+
   const acceptCall = useCallback(async () => {
     const socket = socketRef.current;
     const cid = callIdRef.current;
     if (!socket || !cid || statusRef.current !== 'incoming') return;
+
+    // Chặn reo lại ngay (sync socket / FCM trễ) — trước mọi thao tác async.
+    markCallAnswered(cid);
+    markNativeCallAnswered(cid);
+    setCallSession(cid, 'connecting');
+    statusRef.current = 'connecting';
+
     void dismissIncomingCallNotification(cid);
     void clearPendingIncomingCall();
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
     }
+    clearNativeAcceptPending();
+
+    const isGroup = modeRef.current === 'group';
+    const peerId = peerRef.current?.id;
+    if (!isGroup && !peerId) {
+      resetState();
+      return;
+    }
+
+    // Báo server ngay (trước getUserMedia) — syncPendingIncomingCalls sẽ không reo lại.
+    if (isGroup) {
+      socket.emit('call:group_join', { callId: cid });
+    } else {
+      socket.emit('call:accept', { callId: cid, toUserId: peerId });
+    }
+
     setStatus('connecting');
     if (connectingTimeoutRef.current) clearTimeout(connectingTimeoutRef.current);
     connectingTimeoutRef.current = setTimeout(() => {
@@ -386,16 +441,19 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     try {
       const stream = await getLocalStream();
       if (modeRef.current === 'group') {
-        socket.emit('call:group_join', { callId: cid });
+        /* group_join đã emit ở trên */
       } else {
         const p = peerRef.current;
         if (!p?.id) {
           resetState();
           return;
         }
-        const pc = createDirectPc(cid, p.id);
-        stream.getTracks().forEach((t) => pc.addTrack(t as never, stream as never));
-        socket.emit('call:accept', { callId: cid, toUserId: p.id });
+        // Giữ PC đã tạo nếu offer tới trước khi getUserMedia xong — tránh thay PC làm hỏng SDP.
+        let pc = directPcRef.current;
+        if (!pc) pc = createDirectPc(cid, p.id);
+        if (pc.getSenders().length === 0) {
+          stream.getTracks().forEach((t) => pc!.addTrack(t as never, stream as never));
+        }
         const pendingOffer = directPendingOfferRef.current;
         if (pendingOffer?.type === 'offer') {
           directPendingOfferRef.current = null;
@@ -408,16 +466,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       setError((e as Error)?.message || 'Không truy cập được micro');
       rejectCall();
     }
-  }, [createDirectPc, getLocalStream, rejectCall, resetState]);
-
-  const clearNativeAcceptPending = useCallback(() => {
-    pendingNativeAcceptRef.current = false;
-    setNativeAcceptPending(false);
-    if (nativeAcceptTimeoutRef.current) {
-      clearTimeout(nativeAcceptTimeoutRef.current);
-      nativeAcceptTimeoutRef.current = null;
-    }
-  }, []);
+  }, [clearNativeAcceptPending, createDirectPc, getLocalStream, rejectCall, resetState]);
 
   const scheduleNativeAcceptPending = useCallback(() => {
     pendingNativeAcceptRef.current = true;
@@ -472,6 +521,17 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       const fromUserId = payload.fromUserId;
       if (!incomingId || !fromUserId) return;
       if (statusRef.current !== 'idle') return;
+      if (!tryClaimIncomingCall(incomingId)) return;
+
+      // Cập nhật ref ngay — tránh race socket + FCM / pending tạo 2 cuộc gọi.
+      statusRef.current = 'incoming';
+      callIdRef.current = incomingId;
+      setCallSession(incomingId, 'incoming');
+      setNativeIncomingCallClaim(incomingId);
+
+      if (AppState.currentState === 'active') {
+        cancelNativeIncomingCallNotification(incomingId);
+      }
 
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
@@ -489,7 +549,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       setError(null);
 
       const shouldNotify = opts?.notify !== false && AppState.currentState !== 'active';
-      if (shouldNotify) {
+      if (shouldNotify && !shouldSuppressIncomingRing(incomingId)) {
         void storePendingIncomingCall(payload);
         void showIncomingCallNotification(payload);
       }
@@ -553,7 +613,16 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         const incomingId = payload?.callId;
         const fromUserId = payload?.fromUserId;
         if (!incomingId || !fromUserId) return;
-        if (statusRef.current !== 'idle') {
+        const curStatus = statusRef.current;
+        const curCallId = callIdRef.current;
+        if (curStatus !== 'idle') {
+          // Sync/FCM gửi lại cùng callId khi đang trả lời — bỏ qua, không reject "busy".
+          if (
+            incomingId === curCallId
+            && (curStatus === 'incoming' || curStatus === 'connecting' || curStatus === 'active')
+          ) {
+            return;
+          }
           if (payload.isGroup) socket.emit('call:reject', { callId: incomingId, reason: 'busy' });
           else socket.emit('call:reject', { callId: incomingId, toUserId: fromUserId, reason: 'busy' });
           return;
@@ -606,19 +675,15 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         if (!sigCallId || sigCallId !== callIdRef.current || !fromUserId || !signal) return;
         const uid = String(fromUserId);
         if (modeRef.current === 'direct') {
-          let pc = directPcRef.current;
-          if (!pc && statusRef.current === 'incoming') {
-            directPendingOfferRef.current =
-              signal.type === 'offer' ? { type: 'offer', sdp: signal.sdp } : directPendingOfferRef.current;
+          // Offer có thể tới trước khi callee tạo PC (acceptCall đang chờ getUserMedia).
+          if (signal.type === 'offer' && !directPcRef.current) {
+            directPendingOfferRef.current = { type: 'offer', sdp: signal.sdp };
             return;
           }
-          if (!pc) {
-            pc = createDirectPc(sigCallId, uid);
-            const stream = localStreamRef.current;
-            if (stream) stream.getTracks().forEach((t) => pc!.addTrack(t as never, stream as never));
-          }
+          const pc = directPcRef.current;
+          if (!pc || !peerRef.current?.id) return;
           await applyPeerSignal(pc, directPendingRef.current, signal, (reply) => {
-            socket.emit('call:signal', { callId: sigCallId, toUserId: uid, signal: reply });
+            socket.emit('call:signal', { callId: sigCallId, toUserId: peerRef.current!.id, signal: reply });
           });
         } else {
           const { pc, pending } = getOrCreateGroupPc(sigCallId, uid);
@@ -717,6 +782,18 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       socket.on('call:group_member_joined', onGroupMemberJoined);
 
       const onSocketConnect = () => {
+        const cid = callIdRef.current;
+        const phase = statusRef.current;
+        const peerId = peerRef.current?.id;
+        if (
+          cid
+          && peerId
+          && modeRef.current === 'direct'
+          && (phase === 'connecting' || phase === 'incoming')
+        ) {
+          markCallAnswered(cid);
+          socket.emit('call:accept', { callId: cid, toUserId: peerId });
+        }
         tryRunPendingNativeAcceptRef.current();
       };
       socket.on('connect', onSocketConnect);
@@ -737,6 +814,39 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       unsub();
     };
   }, [applyIncomingCall, createDirectPc, getOrCreateGroupPc, myId, resetState]);
+
+  useEffect(() => {
+    setCallSession(callId, status);
+  }, [callId, status]);
+
+  useEffect(() => {
+    if (status === 'idle' || !callId) {
+      dismissLockScreenCallUi();
+      return;
+    }
+    const peerName = mode === 'group' ? groupName || 'Nhóm' : peer?.name || '';
+    const durationMs = startedAt ? Date.now() - startedAt : 0;
+    syncLockScreenCallState({
+      callId,
+      status,
+      peerName,
+      durationMs,
+      isMuted,
+    });
+  }, [status, callId, peer, groupName, mode, isMuted, startedAt]);
+
+  useEffect(() => {
+    const unsubEnd = subscribeLockScreenCallEnd((id) => {
+      if (id === callIdRef.current) endCall();
+    });
+    const unsubMute = subscribeLockScreenToggleMute((id) => {
+      if (id === callIdRef.current) toggleMute();
+    });
+    return () => {
+      unsubEnd();
+      unsubMute();
+    };
+  }, [endCall, toggleMute]);
 
   const value = useMemo(
     () => ({

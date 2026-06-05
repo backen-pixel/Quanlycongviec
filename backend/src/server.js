@@ -267,6 +267,13 @@ const {
   finalizeGroupCallLog,
 } = require('./helpers/messengerCallLog');
 
+/** Callee đang có socket CRM mở — không cần FCM (tránh chuông reo lần 2). */
+function isUserSocketOnline(userId) {
+  if (!userId) return false;
+  const room = io.sockets.adapter.rooms.get(`user:${String(userId)}`);
+  return !!room && room.size > 0;
+}
+
 /** Push thông báo cuộc gọi đến khi app đóng / socket ngắt. */
 async function pushIncomingCall(toUserId, payload) {
   if (!toUserId || !payload?.callId) return;
@@ -318,14 +325,7 @@ function syncPendingIncomingCalls(userId, socket) {
       fromUserId: session.callerId,
       fromName: session.fromName || 'Người gọi',
     });
-    void pushIncomingCall(uid, {
-      callId,
-      kind: session.kind || 'audio',
-      groupId: session.groupId,
-      fromUserId: session.callerId,
-      fromName: session.fromName || 'Người gọi',
-      isGroup: false,
-    });
+    // Callee đã có socket — chỉ sync qua socket, không gửi lại FCM (tránh reo lần 2).
   }
 }
 
@@ -419,14 +419,16 @@ io.on('connection', (socket) => {
         fromUserId: uid,
         fromName: socket.user?.fullName || socket.user?.full_name || 'Người gọi',
       });
-      void pushIncomingCall(String(toUserId), {
-        callId,
-        kind,
-        groupId,
-        fromUserId: uid,
-        fromName: socket.user?.fullName || socket.user?.full_name || 'Người gọi',
-        isGroup: false,
-      });
+      if (!isUserSocketOnline(toUserId)) {
+        void pushIncomingCall(String(toUserId), {
+          callId,
+          kind,
+          groupId,
+          fromUserId: uid,
+          fromName: socket.user?.fullName || socket.user?.full_name || 'Người gọi',
+          isGroup: false,
+        });
+      }
     })();
   });
 
@@ -511,15 +513,17 @@ io.on('connection', (socket) => {
         fromUserId: uid,
         fromName: hostName,
       });
-      void pushIncomingCall(mid, {
-        callId,
-        kind,
-        fromUserId: uid,
-        fromName: hostName,
-        isGroup: true,
-        groupId,
-        groupName: groupName || 'Cuộc gọi nhóm',
-      });
+      if (!isUserSocketOnline(mid)) {
+        void pushIncomingCall(mid, {
+          callId,
+          kind,
+          fromUserId: uid,
+          fromName: hostName,
+          isGroup: true,
+          groupId,
+          groupName: groupName || 'Cuộc gọi nhóm',
+        });
+      }
     });
     // Broadcast cho TẤT CẢ thành viên nhóm (kể cả người không nằm trong danh sách mời)
     // → họ sẽ thấy banner "Có cuộc gọi đang diễn ra" với nút Tham gia.

@@ -22,6 +22,13 @@ object IncomingCallHelper {
   const val PENDING_JSON = "pending_call_json"
   const val FCM_TOKEN_KEY = "fcm_token"
 
+  private const val DISMISSED_PREFIX = "dismissed_call_"
+  private const val DISMISSED_TTL_MS = 120_000L
+  private const val JS_CLAIM_KEY = "js_incoming_call_id"
+
+  @Volatile
+  private var activeRingingCallId: String? = null
+
   const val ACTION_ACCEPT = "vn.tubeppro.crmobile.ACTION_ACCEPT_CALL"
   const val ACTION_REJECT = "vn.tubeppro.crmobile.ACTION_REJECT_CALL"
 
@@ -66,6 +73,12 @@ object IncomingCallHelper {
   }
 
   fun showIncomingCall(context: Context, data: CallData) {
+    val callId = data.callId.trim()
+    if (callId.isBlank()) return
+    if (isJsHandlingCall(context, callId)) return
+    if (wasRecentlyDismissed(context, callId)) return
+    if (activeRingingCallId == callId) return
+    activeRingingCallId = callId
     wakeScreen(context)
     ensureCallChannel(context)
     startRingServiceWithCall(context, data)
@@ -173,12 +186,14 @@ object IncomingCallHelper {
     } catch (_: Exception) { }
   }
 
-  fun launchMainWithCall(context: Context, data: CallData, callAction: String?) {
+  fun launchMainForCallBackground(context: Context, data: CallData, callAction: String?) {
     stashPendingCall(context, data, callAction)
     cancelCallNotification(context, data.callId)
+    LockScreenCallBridge.setUiActive(true)
     val intent = Intent(context, MainActivity::class.java).apply {
-      flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+      flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
       putExtra("incoming_call", true)
+      putExtra("lock_screen_call", true)
       putExtra("call_id", data.callId)
       putExtra("from_user_id", data.fromUserId)
       putExtra("from_name", data.fromName)
@@ -187,14 +202,77 @@ object IncomingCallHelper {
       putExtra("group_name", data.groupName)
       putExtra("call_action", callAction ?: "")
     }
-    context.startActivity(intent)
+    context.applicationContext.startActivity(intent)
   }
 
-  fun cancelCallNotification(context: Context, callId: String) {
+  /** @deprecated dùng launchMainForCallBackground khi trả lời từ màn khóa */
+  fun launchMainWithCall(context: Context, data: CallData, callAction: String?) {
+    launchMainForCallBackground(context, data, callAction)
+  }
+
+  fun markCallAnswered(context: Context, callId: String) {
+    if (callId.isBlank()) return
+    markCallDismissed(context, callId)
+    clearJsIncomingCallClaim(context)
+    if (activeRingingCallId == callId) activeRingingCallId = null
     NotificationManagerCompat.from(context).cancel(callId.hashCode())
     try {
       context.stopService(Intent(context, IncomingCallRingService::class.java))
     } catch (_: Exception) { }
+  }
+
+  fun setJsIncomingCallClaim(context: Context, callId: String) {
+    val id = callId.trim()
+    if (id.isBlank()) return
+    try {
+      context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .edit()
+        .putString(JS_CLAIM_KEY, id)
+        .apply()
+    } catch (_: Exception) { }
+  }
+
+  fun clearJsIncomingCallClaim(context: Context) {
+    try {
+      context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .edit()
+        .remove(JS_CLAIM_KEY)
+        .apply()
+    } catch (_: Exception) { }
+  }
+
+  private fun isJsHandlingCall(context: Context, callId: String): Boolean {
+    return try {
+      context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .getString(JS_CLAIM_KEY, "")
+        ?.trim() == callId.trim()
+    } catch (_: Exception) {
+      false
+    }
+  }
+
+  fun cancelCallNotification(context: Context, callId: String) {
+    markCallAnswered(context, callId)
+  }
+
+  private fun markCallDismissed(context: Context, callId: String) {
+    if (callId.isBlank()) return
+    try {
+      context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .edit()
+        .putLong("$DISMISSED_PREFIX$callId", System.currentTimeMillis())
+        .apply()
+    } catch (_: Exception) { }
+  }
+
+  private fun wasRecentlyDismissed(context: Context, callId: String): Boolean {
+    return try {
+      val at = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .getLong("$DISMISSED_PREFIX$callId", 0L)
+      at > 0L && System.currentTimeMillis() - at < DISMISSED_TTL_MS
+    } catch (_: Exception) {
+      false
+    }
   }
 
   fun postCallNotification(context: Context, data: CallData) {
