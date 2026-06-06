@@ -5984,20 +5984,20 @@ r.put('/leads/:id', async (req, res) => {
         .eq('id', safeBody.stage_id)
         .maybeSingle();
 
+      const { data: prevStage } = oldLead?.stage_id
+        ? await supabase
+          .from('crm_pipeline_stages')
+          .select('id, name, order_index, is_won, is_lost, pipeline_type, sync_role')
+          .eq('id', oldLead.stage_id)
+          .maybeSingle()
+        : { data: null };
+
       if (oldLead?.type === 'deal') {
-        const stageGatePut = assertDealCrmManualStageChange(oldLead, targetStage);
+        const stageGatePut = assertDealCrmManualStageChange(oldLead, targetStage, prevStage);
         if (!stageGatePut.ok) {
           return res.status(400).json({ error: stageGatePut.error, code: stageGatePut.code });
         }
       }
-
-      const { data: prevStage } = oldLead?.stage_id
-        ? await supabase
-          .from('crm_pipeline_stages')
-          .select('id, name, order_index, is_won, is_lost, pipeline_type')
-          .eq('id', oldLead.stage_id)
-          .maybeSingle()
-        : { data: null };
 
       const taskGate = await assertCrmStageAdvanceAllowed({
         leadId: req.params.id,
@@ -6893,21 +6893,24 @@ r.patch('/leads/:id/stage', async (req, res) => {
         return res.status(400).json({ error: 'Deadline không hợp lệ' });
       }
     }
-    const stageGate = assertDealCrmManualStageChange(lead, stage);
+    const isStageChangeEarly = String(lead?.stage_id || '') !== String(stage_id || '');
+    const { data: prevStageForGate } = isStageChangeEarly && lead?.stage_id
+      ? await supabase
+        .from('crm_pipeline_stages')
+        .select('id, name, order_index, is_won, is_lost, pipeline_type, sync_role')
+        .eq('id', lead.stage_id)
+        .maybeSingle()
+      : { data: null };
+
+    const stageGate = assertDealCrmManualStageChange(lead, stage, prevStageForGate);
     if (!stageGate.ok) {
       return res.status(400).json({ error: stageGate.error, code: stageGate.code });
     }
 
     // Gate 1 (ưu tiên): chặn chuyển giai đoạn khi còn nhiệm vụ blocking ở giai đoạn hiện tại.
     // Phải báo TRƯỚC gate deadline để UI hiện hộp nhiệm vụ trước, rồi mới tới hộp deadline.
-    if (String(lead?.stage_id || '') !== String(stage_id || '')) {
-      const { data: prevStage } = lead?.stage_id
-        ? await supabase
-          .from('crm_pipeline_stages')
-          .select('id, name, order_index, is_won, is_lost, pipeline_type')
-          .eq('id', lead.stage_id)
-          .maybeSingle()
-        : { data: null };
+    if (isStageChangeEarly) {
+      const prevStage = prevStageForGate;
       const taskGate = await assertCrmStageAdvanceAllowed({
         leadId: req.params.id,
         leadType: lead?.type,

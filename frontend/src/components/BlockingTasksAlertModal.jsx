@@ -357,6 +357,8 @@ export default function BlockingTasksAlertModal({
   };
 
   const allCleared = tasks.length === 0;
+  const stageNamesInTasks = [...new Set(tasks.map((t) => t.stage_name).filter(Boolean))];
+  const multiStageBlock = stageNamesInTasks.length > 1;
 
   return (
     <div
@@ -379,8 +381,12 @@ export default function BlockingTasksAlertModal({
               <>
                 <h3 className="text-base font-bold">⛔ Không thể chuyển giai đoạn</h3>
                 <p className="text-xs mt-0.5 text-amber-50">
-                  Còn <b>{tasks.length}</b> nhiệm vụ chặn chuyển giai đoạn ở
-                  {' '}<b>"{currentStageName || '—'}"</b>
+                  Còn <b>{tasks.length}</b> nhiệm vụ cần hoàn thành
+                  {multiStageBlock ? (
+                    <> ở <b>{stageNamesInTasks.length}</b> giai đoạn: {stageNamesInTasks.map((n) => `"${n}"`).join(', ')}</>
+                  ) : (
+                    <> ở <b>"{stageNamesInTasks[0] || currentStageName || '—'}"</b></>
+                  )}
                   {tasks.some((t) => t.block_reason === 'missing_evidence') && (
                     <span className="block mt-0.5">Một số nhiệm vụ cần ghi chú hoặc file đính kèm.</span>
                   )}
@@ -412,9 +418,14 @@ export default function BlockingTasksAlertModal({
                   const err = errById[t.id];
                   return (
                     <div key={t.id || i} className="px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-lg">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-xs font-bold text-amber-700 w-5 shrink-0">{i + 1}.</span>
-                        <span className="text-sm text-gray-800 flex-1 truncate" title={t.title}>{t.title}</span>
+                        {t.stage_name && (
+                          <span className="shrink-0 text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded-full max-w-[10rem] truncate" title={t.stage_name}>
+                            {t.stage_name}
+                          </span>
+                        )}
+                        <span className="text-sm text-gray-800 flex-1 min-w-0 truncate" title={t.title}>{t.title}</span>
                         {t.blocks_stage_advance && (
                           <span className="shrink-0 text-[10px] text-red-700 bg-red-100 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-semibold">
                             <Lock className="h-2.5 w-2.5" /> Chặn

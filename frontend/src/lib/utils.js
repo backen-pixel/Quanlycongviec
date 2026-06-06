@@ -93,8 +93,9 @@ export const avatarColor = (name) => {
 // ── ROLE → STAGE MAPPING (frontend fallback) ──
 export const ROLE_LABELS = {
   admin: 'Quản trị viên', manager: 'Quản lý', sales: 'Kinh doanh',
-  designer: 'Thiết kế', production: 'Sản xuất', driver: 'Vận chuyển & Lắp đặt',
-  customer_care: 'CSKH', staff: 'Nhân viên',
+  designer: 'Thiết kế', production: 'Sản xuất', production_staff: 'NV Sản xuất (Admin CV+SX)',
+  production_admin: 'Admin Sản xuất', logistics_admin: 'Admin Vận chuyển',
+  driver: 'Vận chuyển & Lắp đặt', customer_care: 'CSKH', staff: 'Nhân viên',
 };
 
 export const ROLE_STAGE_MAP = {
@@ -103,6 +104,8 @@ export const ROLE_STAGE_MAP = {
   sales: ['consulting','quotation','contract'],
   designer: ['design'],
   production: ['production'],
+  production_staff: ['production'],
+  production_admin: ['production'],
   driver: ['delivery'],
   customer_care: ['customer-care'],
   staff: ['consulting'],

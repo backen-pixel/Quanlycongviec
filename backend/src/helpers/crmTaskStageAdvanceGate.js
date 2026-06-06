@@ -113,7 +113,7 @@ async function fetchStageTasks(leadId, currentStage, leadType) {
 /**
  * @returns {Promise<Array<{ id, title, status, blocks_stage_advance, completion_requires_file_or_note, block_reason }>>}
  */
-async function collectBlockingTasks(tasks) {
+async function collectBlockingTasks(tasks, stageMeta = null) {
   const blocking = [];
   const seen = new Set();
 
@@ -127,6 +127,8 @@ async function collectBlockingTasks(tasks) {
       blocks_stage_advance: !!task.blocks_stage_advance,
       completion_requires_file_or_note: !!task.completion_requires_file_or_note,
       block_reason: blockReason,
+      stage_id: stageMeta?.id || null,
+      stage_name: stageMeta?.name || null,
     });
   };
 
@@ -149,11 +151,23 @@ async function collectBlockingTasks(tasks) {
   return blocking;
 }
 
+function formatBlockingTaskLine(t) {
+  const prefix = t.stage_name ? `[${t.stage_name}] ` : '';
+  if (t.block_reason === 'missing_evidence') {
+    return `• ${prefix}${t.title} (thiếu ghi chú hoặc file đính kèm)`;
+  }
+  return `• ${prefix}${t.title} (chưa hoàn thành)`;
+}
+
 function buildBlockResponse(tasks, currentStage, targetStage) {
-  const names = tasks.map((t) => {
-    if (t.block_reason === 'missing_evidence') return `• ${t.title} (thiếu ghi chú hoặc file đính kèm)`;
-    return `• ${t.title} (chưa hoàn thành)`;
-  }).join('\n');
+  const stageNames = [...new Set(
+    tasks.map((t) => t.stage_name).filter(Boolean),
+  )];
+  const stageLabel = stageNames.length > 1
+    ? stageNames.map((n) => `"${n}"`).join(', ')
+    : `"${stageNames[0] || currentStage?.name || ''}"`;
+
+  const names = tasks.map(formatBlockingTaskLine).join('\n');
   const hasEvidenceBlock = tasks.some((t) => t.block_reason === 'missing_evidence');
   const hasIncompleteBlock = tasks.some((t) => t.block_reason === 'incomplete');
   const hintParts = [];
@@ -161,17 +175,81 @@ function buildBlockResponse(tasks, currentStage, targetStage) {
   if (hasEvidenceBlock) hintParts.push('bổ sung ghi chú hoặc file đính kèm cho nhiệm vụ có cờ «Bắt buộc file/ghi chú»');
   const hint = hintParts.length ? `👉 ${hintParts.join(' và ')} rồi chuyển giai đoạn lại.` : '';
 
+  const multiHop = stageNames.length > 1;
+
   return {
     ok: false,
     code: 'CRM_BLOCKING_TASKS_INCOMPLETE',
     error:
       `⛔ Không thể chuyển sang "${targetStage?.name || 'giai đoạn mới'}"\n\n`
-      + `Còn ${tasks.length} nhiệm vụ chặn chuyển giai đoạn ở "${currentStage?.name || ''}":\n${names}\n\n`
+      + (multiHop
+        ? `Còn ${tasks.length} nhiệm vụ chặn ở ${stageNames.length} giai đoạn cần qua (${stageLabel}):\n`
+        : `Còn ${tasks.length} nhiệm vụ chặn chuyển giai đoạn ở ${stageLabel}:\n`)
+      + `${names}\n\n`
       + hint,
     remaining_tasks: tasks,
     current_stage_id: currentStage?.id || null,
     target_stage_id: targetStage?.id || null,
+    checked_stage_names: stageNames,
   };
+}
+
+async function resolvePipelineId(currentStage, targetStage) {
+  const direct = currentStage?.pipeline_id || targetStage?.pipeline_id;
+  if (direct) return direct;
+  const stageId = currentStage?.id || targetStage?.id;
+  if (!stageId) return null;
+  const { data } = await supabase
+    .from('crm_pipeline_stages')
+    .select('pipeline_id')
+    .eq('id', stageId)
+    .maybeSingle();
+  return data?.pipeline_id || null;
+}
+
+/** Các cột pipeline phải qua khi nhảy từ current → target (gồm cột hiện tại, không gồm cột đích). */
+async function listForwardStagesBetween(currentStage, targetStage) {
+  if (!currentStage?.id) return [];
+  const curIdx = Number(currentStage.order_index);
+  const tgtIdx = Number(targetStage?.order_index);
+  if (!Number.isFinite(curIdx) || !Number.isFinite(tgtIdx) || tgtIdx <= curIdx) {
+    return [currentStage];
+  }
+  const pipelineId = await resolvePipelineId(currentStage, targetStage);
+  if (!pipelineId) return [currentStage];
+
+  const { data: stages, error } = await supabase
+    .from('crm_pipeline_stages')
+    .select('id, name, order_index, is_won, is_lost, pipeline_type, pipeline_id')
+    .eq('pipeline_id', pipelineId)
+    .eq('is_active', true)
+    .gte('order_index', curIdx)
+    .lt('order_index', tgtIdx)
+    .order('order_index');
+  if (error) {
+    console.warn('[crmTaskStageAdvanceGate] listForwardStagesBetween:', error.message);
+    return [currentStage];
+  }
+  const list = Array.isArray(stages) ? stages : [];
+  return list.length ? list : [currentStage];
+}
+
+async function collectBlockingTasksAcrossStages(leadId, leadType, stages) {
+  const allBlocking = [];
+  const seen = new Set();
+
+  for (const stage of stages) {
+    const tasks = await fetchStageTasks(leadId, stage, leadType);
+    if (!tasks.length) continue;
+    const blocking = await collectBlockingTasks(tasks, stage);
+    for (const row of blocking) {
+      if (!row?.id || seen.has(row.id)) continue;
+      seen.add(row.id);
+      allBlocking.push(row);
+    }
+  }
+
+  return allBlocking;
 }
 
 /**
@@ -181,10 +259,8 @@ async function assertCrmStageAdvanceAllowed({ leadId, leadType, currentStage, ta
   try {
     if (shouldSkipGate(currentStage, targetStage)) return { ok: true };
 
-    const tasks = await fetchStageTasks(leadId, currentStage, leadType);
-    if (!tasks.length) return { ok: true };
-
-    const blocking = await collectBlockingTasks(tasks);
+    const stagesToCheck = await listForwardStagesBetween(currentStage, targetStage);
+    const blocking = await collectBlockingTasksAcrossStages(leadId, leadType, stagesToCheck);
     if (!blocking.length) return { ok: true };
 
     return buildBlockResponse(blocking, currentStage, targetStage);
@@ -203,4 +279,6 @@ module.exports = {
   DEAL_STAGE_NAME_TO_SLUG,
   collectBlockingTasks,
   fetchStageTasks,
+  listForwardStagesBetween,
+  collectBlockingTasksAcrossStages,
 };

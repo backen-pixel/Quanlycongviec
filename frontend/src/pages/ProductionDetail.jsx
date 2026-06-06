@@ -104,7 +104,14 @@ const ACTIVITY_FORM_TYPES = ACTIVITY_TYPES.filter((t) =>
 );
 
 /** Cột trái — inline-editable như LeadDetail */
-function WorkshopInfoPanel({ project, onUpdate, moduleKey = 'sx' }) {
+function WorkshopInfoPanel({
+  project,
+  onUpdate,
+  moduleKey = 'sx',
+  crmDeal = null,
+  companyRegions = [],
+  onDealUpdate,
+}) {
   const isVC = moduleKey === 'vc';
   const [editing, setEditing] = useState(null); // field name
   const [draft, setDraft] = useState('');
@@ -124,9 +131,82 @@ function WorkshopInfoPanel({ project, onUpdate, moduleKey = 'sx' }) {
     setSaving(false);
   };
 
+  const saveDealRegion = async (regionId) => {
+    if (!crmDeal?.id) return;
+    setSaving(true);
+    try {
+      const { data } = await api.put(`/crm/leads/${crmDeal.id}`, {
+        region_id: regionId || null,
+      });
+      const reg = regionId
+        ? companyRegions.find((r) => String(r.id) === String(regionId))
+        : null;
+      onDealUpdate?.({
+        ...data,
+        region_id: regionId || null,
+        crm_region: reg ? { id: reg.id, name: reg.name, code: reg.code } : null,
+      });
+      setEditing(null);
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi lưu khu vực');
+    }
+    setSaving(false);
+  };
+
+  const regionName = crmDeal?.crm_region?.name
+    || companyRegions.find((r) => String(r.id) === String(crmDeal?.region_id))?.name
+    || null;
+
   return (
     <div className="bg-white rounded-xl border p-5 space-y-1">
       <h3 className="text-sm font-bold text-gray-900 uppercase mb-2">Thông tin</h3>
+
+      {/* Khu vực (deal CRM) — chỉ module SX */}
+      {!isVC && crmDeal && (
+        <div
+          className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer"
+          onClick={() => editing !== 'region_id' && startEdit('region_id', crmDeal.region_id || '')}
+        >
+          <span className="text-sm mt-0.5 shrink-0">📍</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Khu vực</p>
+            {editing === 'region_id' ? (
+              <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                <select
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  autoFocus
+                  className="flex-1 px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400 bg-white"
+                >
+                  <option value="">— Chưa chọn —</option>
+                  {companyRegions.map((r) => (
+                    <option key={r.id} value={r.id}>{r.name}{r.code ? ` (${r.code})` : ''}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => saveDealRegion(draft || null)}
+                  disabled={saving}
+                  className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50"
+                >
+                  ✓
+                </button>
+                <button type="button" onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+              </div>
+            ) : (
+              <p className="text-sm font-medium text-gray-900 flex items-center gap-1">
+                {regionName || '—'}
+                <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" />
+              </p>
+            )}
+            {companyRegions.length === 0 && (
+              <p className="text-[10px] text-amber-600 mt-0.5">
+                Chưa có khu vực — thêm tại <Link to="/sx/regions" className="underline font-medium">Khu vực SX</Link>
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Giá trị */}
       <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'estimated_value' && startEdit('estimated_value', project.estimated_value || '')}>
@@ -543,6 +623,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const { setCrmNotesAnchor } = useCrmNotesFab();
   const [searchParams, setSearchParams] = useSearchParams();
   const [project, setProject] = useState(null);
+  const [companyRegions, setCompanyRegions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [fallbackDealIdForTasks, setFallbackDealIdForTasks] = useState(null);
   const [ensuringCrmDeal, setEnsuringCrmDeal] = useState(false);
@@ -556,6 +637,8 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [crmActivities, setCrmActivities] = useState([]);
   const [crmDealDocs, setCrmDealDocs] = useState([]);
   const [productionTaskSummary, setProductionTaskSummary] = useState({ total: 0, completed: 0, percent: 0 });
+  /** Nhiệm vụ trên deal CRM (crm_tasks) — khớp tab CRMTasksTab khi có deal gắn dự án */
+  const [crmDealTaskSummary, setCrmDealTaskSummary] = useState({ total: 0, completed: 0, percent: 0 });
   /** Danh sách thô từ GET /tasks?project_id= — dùng khi không có deal CRM để vẫn hiển thị nhiệm vụ xưởng */
   const [workshopTasksForProject, setWorkshopTasksForProject] = useState([]);
   const [savingProductionOwner, setSavingProductionOwner] = useState(false);
@@ -631,6 +714,22 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       /* giữ danh sách cũ */
     }
   }, [project?.crmDeals?.[0]?.id]);
+
+  useEffect(() => {
+    const cid = project?.company_id || project?.company?.id;
+    if (!cid || moduleKey === 'vc') {
+      setCompanyRegions([]);
+      return;
+    }
+    const forModule = moduleKey === 'vc' ? 'logistics' : 'production';
+    api
+      .get('/crm/company-regions', { params: { company_id: cid, for_module: forModule } })
+      .then((r) => {
+        const list = Array.isArray(r.data) ? r.data : [];
+        setCompanyRegions(list.filter((reg) => reg.is_active !== false));
+      })
+      .catch(() => setCompanyRegions([]));
+  }, [project?.company_id, project?.company?.id, moduleKey]);
 
   const crmFabDealId = project?.crmDeals?.[0]?.id;
 
@@ -764,6 +863,33 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     } catch (_) { setProjectActivities([]); }
   }, []);
 
+  const summarizeCrmTasks = useCallback((list) => {
+    const rows = Array.isArray(list) ? list : [];
+    const total = rows.length;
+    const completed = rows.filter((t) => t.status === 'completed').length;
+    const percent = total ? Math.round((completed / total) * 100) : 0;
+    return { total, completed, percent };
+  }, []);
+
+  const fetchCrmDealTaskSummary = useCallback(async (dealId) => {
+    if (!dealId) {
+      setCrmDealTaskSummary({ total: 0, completed: 0, percent: 0 });
+      return;
+    }
+    try {
+      const taskScope = moduleKey === 'vc' ? 'crm' : 'production';
+      const { data } = await api.get(`/crm/leads/${dealId}/tasks`, { params: { task_scope: taskScope } });
+      setCrmDealTaskSummary(summarizeCrmTasks(data));
+    } catch {
+      setCrmDealTaskSummary({ total: 0, completed: 0, percent: 0 });
+    }
+  }, [moduleKey, summarizeCrmTasks]);
+
+  const handleCrmTaskSummaryChange = useCallback((summary) => {
+    if (!summary || typeof summary.total !== 'number') return;
+    setCrmDealTaskSummary(summary);
+  }, []);
+
   useEffect(() => {
     setLoadError(null);
     load();
@@ -794,17 +920,21 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       if (Array.isArray(proj?.[MOD.stagesKey]) && proj[MOD.stagesKey].length) {
         setProductionStages(proj[MOD.stagesKey]);
       }
+      let dealIdForTasks = proj?.crmDeals?.[0]?.id || null;
       setFallbackDealIdForTasks(null);
       try {
-        const primaryDealId = proj?.crmDeals?.[0]?.id || null;
-        if (!primaryDealId && proj?.id) {
+        if (!dealIdForTasks && proj?.id) {
           // Fallback giống tab Đơn hàng: tìm deal đơn (fulfillment) theo orders của dự án để gen/hiển thị sx_*.
           const { data: ordData } = await api.get(`/projects/${proj.id}/orders`).catch(() => ({ data: null }));
           const orders = ordData?.orders || [];
           const fid = orders.find((o) => o?.fulfillment_lead_id)?.fulfillment_lead_id || null;
-          if (fid) setFallbackDealIdForTasks(String(fid));
+          if (fid) {
+            dealIdForTasks = String(fid);
+            setFallbackDealIdForTasks(dealIdForTasks);
+          }
         }
       } catch (_) { /* ignore */ }
+      await fetchCrmDealTaskSummary(dealIdForTasks);
       if (proj?.incidents) setIncidents(proj.incidents);
       loadProjectDocs(id);
       loadTaskFiles(id);
@@ -882,10 +1012,12 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       if (Array.isArray(proj?.[MOD.stagesKey]) && proj[MOD.stagesKey].length) {
         setProductionStages(proj[MOD.stagesKey]);
       }
+      const dealId = proj?.crmDeals?.[0]?.id || fallbackDealIdForTasks || null;
+      await fetchCrmDealTaskSummary(dealId);
     } catch (_) {
       /* giữ state cũ */
     }
-  }, [id, MOD.apiPrefix, MOD.stagesKey, pickWorkshopTasksForSummary]);
+  }, [id, MOD.apiPrefix, MOD.stagesKey, pickWorkshopTasksForSummary, fallbackDealIdForTasks, fetchCrmDealTaskSummary]);
 
   useEffect(() => {
     if (!handoverModal) return;
@@ -1336,7 +1468,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const crmLeadId = primaryCrmDeal?.id || fallbackDealIdForTasks;
   const displayCode = primaryCrmDeal?.code || project.code;
   const displayTitle = primaryCrmDeal?.title || project.name;
-  const taskCount = productionTaskSummary.total || 0;
+  const taskCount = crmLeadId
+    ? (crmDealTaskSummary.total || 0)
+    : (productionTaskSummary.total || 0);
   const taskUsers = safeTaskUsers;
 
   const tabBtn = (tab, label) => (
@@ -1447,6 +1581,11 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               ⚠️ Chưa phân loại — chỉ hiển thị cột chung
             </span>
           )}
+          {primaryCrmDeal?.crm_region?.name && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-800 font-medium border border-indigo-200">
+              📍 {primaryCrmDeal.crm_region.name}
+            </span>
+          )}
         </div>
       )}
 
@@ -1460,7 +1599,22 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         {/* Cột trái — giống LeadDetail */}
         <div className="lg:col-span-1 space-y-4">
-          <WorkshopInfoPanel project={project} onUpdate={refreshProjectSilently} moduleKey={moduleKey} />
+          <WorkshopInfoPanel
+            project={project}
+            onUpdate={refreshProjectSilently}
+            moduleKey={moduleKey}
+            crmDeal={primaryCrmDeal}
+            companyRegions={companyRegions}
+            onDealUpdate={(data) => {
+              if (!data?.id) return;
+              setProject((prev) => (prev ? {
+                ...prev,
+                crmDeals: prev.crmDeals?.map((d) => (
+                  String(d.id) === String(data.id) ? { ...d, ...data } : d
+                )),
+              } : prev));
+            }}
+          />
 
           <div className="grid grid-cols-3 gap-2">
             <div className="bg-blue-50 rounded-lg border border-blue-100 p-3 text-center">
@@ -1624,6 +1778,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     users={taskUsers}
                     taskScope={moduleKey === 'vc' ? 'crm' : 'production'}
                     onArtifactsSynced={refreshProjectSilently}
+                    onTaskSummaryChange={handleCrmTaskSummaryChange}
                   />
                 ) : scopedWorkshopTasksForTab.length > 0 ? (
                   <WorkshopTasksFallbackPanel

@@ -42,7 +42,10 @@ function parsePagination(req, defaultSize = 50, maxSize = 200) {
 
 function isManagerLike(req) {
   const role = String(req.user?.role || '').toLowerCase();
-  return isAdminLike(req.user) || role === 'manager';
+  return isAdminLike(req.user)
+    || role === 'manager'
+    || role === 'production_staff'
+    || role === 'production_admin';
 }
 
 /** Áp scope cho nhân viên thường — chỉ thấy NV mình liên quan. */

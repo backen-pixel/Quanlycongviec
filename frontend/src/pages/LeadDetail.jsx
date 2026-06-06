@@ -30,7 +30,11 @@ import DealCrossScoresPanel from '../components/DealCrossScoresPanel';
 import LeadKpiLedgerPanel from '../components/LeadKpiLedgerPanel';
 import { useCrmNotesFab } from '../context/CrmNotesFabContext';
 import PipelineStepper from '../components/PipelineStepper';
-import { crmDealStageMoveBlockedMessage } from '../lib/crmDealStageGate';
+import {
+  crmDealMoveToWonSxAlreadyCreatedMessage,
+  crmDealRevertFromPostWonBlockedMessage,
+  crmDealStageMoveBlockedMessage,
+} from '../lib/crmDealStageGate';
 import { sortAndDedupePipelineStages } from '../lib/crmPipelineStages';
 import DealStageEventModal from '../components/DealStageEventModal';
 import {
@@ -126,6 +130,8 @@ export default function LeadDetail() {
   const [dealStageWonCompanyId, setDealStageWonCompanyId] = useState('');
   const [dealStageWonWorkTypeId, setDealStageWonWorkTypeId] = useState('');
   const [dealStageWonErr, setDealStageWonErr] = useState('');
+  /** Deal đã có dự án SX — kéo lại Thắng: thông báo, không mở hộp chuyển */
+  const [dealWonSxExistsCtx, setDealWonSxExistsCtx] = useState(null);
   const [productionCompaniesSx, setProductionCompaniesSx] = useState([]);
   const projectCompanyPickRef = useRef(false);
   const [pickProjectCompanyOpen, setPickProjectCompanyOpen] = useState(false);
@@ -633,6 +639,9 @@ export default function LeadDetail() {
           remainingTasks: e.response.data.remaining_tasks || [],
         });
         await loadRef.current?.({ silent: true });
+      } else if (e.response?.data?.code === 'CRM_DEAL_SX_PROJECT_EXISTS') {
+        await loadRef.current?.({ silent: true });
+        alert(e.response?.data?.error || 'Deal đã tạo dự án Sản xuất — không thể kéo ngược.');
       } else {
         await loadRef.current?.({ silent: true });
         alert(e.response?.data?.error || 'Lỗi');
@@ -702,6 +711,12 @@ export default function LeadDetail() {
     const targetStage = stages.find(s => s.id === stageId);
 
     if (lead?.type === 'deal' && targetStage) {
+      const currentStage = stages.find((s) => String(s.id) === String(lead.stage_id)) || lead.stage;
+      const revertBlocked = crmDealRevertFromPostWonBlockedMessage(lead, currentStage, targetStage);
+      if (revertBlocked) {
+        alert(revertBlocked);
+        return;
+      }
       // Bỏ qua gate khi deal đang ở trạng thái «orphan» (chưa có giai đoạn hợp lệ trong pipeline,
       // hoặc có project nhưng thiếu badge SX/VC) — cho phép chữa dữ liệu bằng cách kéo về cột thường.
       const validStageIds = new Set((stages || []).map((s) => String(s.id)));
@@ -740,7 +755,13 @@ export default function LeadDetail() {
       return;
     }
 
-    if (lead?.type === 'deal' && targetStage?.is_won && !lead?.project_id) {
+    if (lead?.type === 'deal' && targetStage?.is_won) {
+      const alreadySx = crmDealMoveToWonSxAlreadyCreatedMessage(lead);
+      if (alreadySx) {
+        if (String(lead.stage_id) === String(stageId)) return;
+        setDealWonSxExistsCtx({ stageId, extraData, message: alreadySx });
+        return;
+      }
       setDealStageWonErr('');
       setDealStageWonCompanyId(
         lead.company_id
@@ -793,6 +814,13 @@ export default function LeadDetail() {
 
     if (movingStage) return;
     await patchLeadStage(stageId, extraData);
+  };
+
+  const confirmDealWonSxExistsOnlyStage = async () => {
+    const ctx = dealWonSxExistsCtx;
+    if (!ctx) return;
+    setDealWonSxExistsCtx(null);
+    await patchLeadStage(ctx.stageId, ctx.extraData);
   };
 
   const confirmDealStageWonProduction = async () => {
@@ -2054,6 +2082,49 @@ export default function LeadDetail() {
           }}
           onClose={() => setShowExcelImport(false)}
         />
+      )}
+
+      {dealWonSxExistsCtx && (
+        <div
+          className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4"
+          onClick={() => setDealWonSxExistsCtx(null)}
+        >
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 mb-2">
+              <Building2 className="h-6 w-6 text-teal-600" />
+              <h3 className="text-lg font-bold text-gray-900">Đã có dự án Sản xuất</h3>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">{dealWonSxExistsCtx.message}</p>
+            <div className="flex gap-2 mt-4">
+              <button
+                type="button"
+                className="flex-1 h-10 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50"
+                onClick={() => setDealWonSxExistsCtx(null)}
+              >
+                Hủy
+              </button>
+              {lead?.project_id && (
+                <button
+                  type="button"
+                  className="flex-1 h-10 border border-teal-200 text-teal-700 rounded-xl text-sm font-semibold hover:bg-teal-50"
+                  onClick={() => {
+                    setDealWonSxExistsCtx(null);
+                    navigate(`/sx/projects/${lead.project_id}`);
+                  }}
+                >
+                  Xem Sản xuất
+                </button>
+              )}
+              <button
+                type="button"
+                className="flex-1 h-10 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold"
+                onClick={() => confirmDealWonSxExistsOnlyStage()}
+              >
+                Cập nhật Thắng
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {dealStageWonPick && (

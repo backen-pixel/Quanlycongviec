@@ -260,6 +260,7 @@ export default function CRMTasksTab({
   users = [],
   taskScope = 'all',
   onArtifactsSynced = null,
+  onTaskSummaryChange = null,
   refreshKey = null,
   /** Công ty xưởng đã gắn với deal (sx_template_company_id) — gửi khi Gen bộ nhiệm vụ SX */
   sxTemplateCompanyId = null,
@@ -321,6 +322,14 @@ export default function CRMTasksTab({
     }
     return list;
   }, [leadType, tasks, showSxTasksInUi, isSxStageSlug]);
+
+  useEffect(() => {
+    if (!onTaskSummaryChange) return;
+    const total = uiTasks.length;
+    const completed = uiTasks.filter((t) => t.status === 'completed').length;
+    const percent = total ? Math.round((completed / total) * 100) : 0;
+    onTaskSummaryChange({ total, completed, percent });
+  }, [uiTasks, onTaskSummaryChange]);
 
   /** Lead/deal cũ: task không gắn pipeline hoặc gắn stage pipeline không còn hợp lệ */
   const isLegacyCrmTaskSet = useMemo(() => {

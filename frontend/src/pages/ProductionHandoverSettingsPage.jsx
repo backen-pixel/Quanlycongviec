@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isSystemAdmin } from '../lib/adminRole';
+import { Link } from 'react-router-dom';
 import { Factory, Users, Save, Loader2, Plus, UserCircle } from 'lucide-react';
 
 export default function ProductionHandoverSettingsPage() {
@@ -117,7 +118,9 @@ export default function ProductionHandoverSettingsPage() {
           <div>
             <h1 className="text-xl font-bold text-gray-900">Bàn giao CRM → Sản xuất</h1>
             <p className="text-sm text-gray-500">
-              Khi deal chọn công ty xưởng: gán người phụ trách, đội SX mặc định và phân công từng mục trong bộ mẫu nhiệm vụ cho thành viên.
+              Cấu hình nâng cao: đội SX mặc định và phân công từng mục mẫu nhiệm vụ.
+              Người nhận deal ở cột đầu (Chờ vào xưởng) cấu hình nhanh tại{' '}
+              <Link to="/sx/pipeline-settings" className="text-teal-700 hover:underline font-medium">Pipeline xưởng</Link>.
             </p>
           </div>
         </div>
@@ -169,7 +172,7 @@ export default function ProductionHandoverSettingsPage() {
                     <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
                   ))}
                 </select>
-                <span className="text-[11px] text-gray-400">Được gán làm «Sản xuất» trên dự án khi tạo từ deal thắng.</span>
+                <span className="text-[11px] text-gray-400">Gán «Phụ trách sản xuất» khi deal vào cột đầu Kanban. Cấu hình nhanh tại Pipeline xưởng.</span>
               </label>
 
               <label className="flex flex-col gap-1">

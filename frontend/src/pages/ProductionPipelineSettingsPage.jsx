@@ -3,8 +3,9 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { Settings, Plus, Trash2, Save, ChevronRight, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, ChevronRight, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe, Clock, Trophy, CheckCircle2, UserCircle } from 'lucide-react';
 import WorkshopTypeSettingsSection from '../components/WorkshopTypeSettingsSection';
+import { isPipelineStageSlaDisabled } from '../lib/crmPipelineSla';
 
 const INTAKE = 'won_pending';
 const LS_SX_PIPE_COMPANY = 'sx_pipeline_settings_company_id';
@@ -32,10 +33,19 @@ export default function ProductionPipelineSettingsPage() {
   const [bulkSelected, setBulkSelected] = useState(() => new Set());
   const [bulkTargetCrm, setBulkTargetCrm] = useState('');
   const [bulkSaving, setBulkSaving] = useState(false);
+  const [handoverData, setHandoverData] = useState(null);
+  const [intakeAssigneeId, setIntakeAssigneeId] = useState('');
+  const [intakeAssigneeLoading, setIntakeAssigneeLoading] = useState(false);
+  const [intakeAssigneeSaving, setIntakeAssigneeSaving] = useState(false);
   const [form, setForm] = useState({
     name: '', color: COLORS[0], icon: '📋', is_active: true,
     is_handover_to_logistics: false, crm_sync_type: null, crm_target_stage_id: '',
     progress_percent: '',
+    default_probability: '',
+    sla_days: '',
+    counts_as_won_revenue: false,
+    counts_as_completed_revenue: false,
+    requires_deadline: false,
   });
 
   const load = useCallback(async () => {
@@ -66,6 +76,51 @@ export default function ProductionPipelineSettingsPage() {
   }, [settingsCompanyId, selectedTypeKey]);
 
   useEffect(() => { load(); }, [load]);
+
+  const loadHandoverSettings = useCallback(async () => {
+    if (!settingsCompanyId) {
+      setHandoverData(null);
+      setIntakeAssigneeId('');
+      return;
+    }
+    setIntakeAssigneeLoading(true);
+    try {
+      const { data } = await api.get(`/production/handover-settings/${settingsCompanyId}`);
+      setHandoverData(data);
+      setIntakeAssigneeId(data?.settings?.responsible_user_id ? String(data.settings.responsible_user_id) : '');
+    } catch {
+      setHandoverData(null);
+      setIntakeAssigneeId('');
+    }
+    setIntakeAssigneeLoading(false);
+  }, [settingsCompanyId]);
+
+  useEffect(() => {
+    void loadHandoverSettings();
+  }, [loadHandoverSettings]);
+
+  const saveIntakeAssignee = async () => {
+    if (!settingsCompanyId) return;
+    setIntakeAssigneeSaving(true);
+    try {
+      const assignments = (handoverData?.assignments || [])
+        .filter((a) => a.template_item_id && a.assignee_user_id)
+        .map((a) => ({
+          template_item_id: a.template_item_id,
+          assignee_user_id: a.assignee_user_id,
+        }));
+      await api.put(`/production/handover-settings/${settingsCompanyId}`, {
+        responsible_user_id: intakeAssigneeId || null,
+        default_production_team_id: handoverData?.settings?.default_production_team_id || null,
+        assignments,
+      });
+      await loadHandoverSettings();
+      alert('Đã lưu nhân viên mặc định cho cột đầu.');
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi lưu');
+    }
+    setIntakeAssigneeSaving(false);
+  };
 
   // Reset bulk selection khi đổi công ty / phân loại
   useEffect(() => {
@@ -268,6 +323,14 @@ export default function ProductionPipelineSettingsPage() {
 
   const hasIntake = stages.some((s) => s.bucket_slug === INTAKE);
 
+  const kpiPayloadFromForm = () => ({
+    default_probability: form.default_probability === '' ? null : form.default_probability,
+    sla_days: form.sla_days === '' || form.sla_days == null ? null : Number(form.sla_days),
+    counts_as_won_revenue: !!form.counts_as_won_revenue,
+    counts_as_completed_revenue: !!form.counts_as_completed_revenue,
+    requires_deadline: !!form.requires_deadline,
+  });
+
   const startAdd = () => {
     setAdding(true);
     setEditId(null);
@@ -276,6 +339,11 @@ export default function ProductionPipelineSettingsPage() {
       is_active: true, is_handover_to_logistics: false,
       crm_sync_type: null, crm_target_stage_id: '',
       progress_percent: '',
+      default_probability: '',
+      sla_days: '',
+      counts_as_won_revenue: false,
+      counts_as_completed_revenue: false,
+      requires_deadline: false,
     });
   };
 
@@ -291,6 +359,11 @@ export default function ProductionPipelineSettingsPage() {
       crm_sync_type: stage.crm_sync_type || null,
       crm_target_stage_id: stage.crm_target_stage_id || '',
       progress_percent: stage.progress_percent ?? '',
+      default_probability: stage.default_probability != null && stage.default_probability !== '' ? String(stage.default_probability) : '',
+      sla_days: stage.sla_days != null && stage.sla_days !== '' ? String(stage.sla_days) : '',
+      counts_as_won_revenue: !!stage.counts_as_won_revenue,
+      counts_as_completed_revenue: !!stage.counts_as_completed_revenue,
+      requires_deadline: !!stage.requires_deadline,
     });
   };
 
@@ -310,6 +383,7 @@ export default function ProductionPipelineSettingsPage() {
         crm_target_stage_id: form.crm_target_stage_id || null,
         company_id: settingsCompanyId,
         workshop_type_id: currentWorkshopTypeId,
+        ...kpiPayloadFromForm(),
       });
       setAdding(false);
       load();
@@ -332,6 +406,7 @@ export default function ProductionPipelineSettingsPage() {
         is_handover_to_logistics: intakeRow ? false : form.is_handover_to_logistics,
         crm_sync_type: intakeRow ? null : (form.crm_target_stage_id ? null : (form.crm_sync_type || null)),
         crm_target_stage_id: intakeRow ? null : (form.crm_target_stage_id || null),
+        ...(intakeRow ? {} : kpiPayloadFromForm()),
       });
       setEditId(null);
       load();
@@ -357,6 +432,29 @@ export default function ProductionPipelineSettingsPage() {
       load();
     } catch {
       alert('Lỗi');
+    }
+  };
+
+  const toggleSlaColumn = async (stage) => {
+    const turningOff = !isPipelineStageSlaDisabled(stage.sla_days);
+    try {
+      await api.put(`/production/pipeline-stages/${stage.id}`, {
+        sla_days: turningOff ? 0 : null,
+      });
+      load();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi');
+    }
+  };
+
+  const toggleRequiresDeadlineColumn = async (stage) => {
+    try {
+      await api.put(`/production/pipeline-stages/${stage.id}`, {
+        requires_deadline: !stage.requires_deadline,
+      });
+      load();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi');
     }
   };
 
@@ -543,6 +641,68 @@ export default function ProductionPipelineSettingsPage() {
           )}
         </div>
       </div>
+
+      {settingsCompanyId && (
+        <div className="rounded-xl border border-indigo-200 bg-gradient-to-r from-indigo-50/70 to-white p-4 shadow-sm space-y-3">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="flex items-start gap-2.5 min-w-0">
+              <UserCircle className="h-5 w-5 text-indigo-600 shrink-0 mt-0.5" />
+              <div>
+                <h2 className="text-sm font-bold text-gray-900">Nhân viên mặc định — cột đầu (Chờ vào xưởng)</h2>
+                <p className="text-[11px] text-gray-600 mt-0.5 leading-snug max-w-xl">
+                  Deal thắng vào cột đầu Kanban SX sẽ tự gán người này làm phụ trách sản xuất trên dự án và deal CRM.
+                  Nếu để trống, hệ thống chọn admin công ty xưởng.
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2 shrink-0">
+              <Link
+                to="/sx/regions"
+                className="text-[11px] font-medium text-indigo-700 hover:text-indigo-900 border border-indigo-200 rounded-lg px-2.5 py-1.5 bg-white"
+              >
+                Khu vực →
+              </Link>
+              <Link
+                to="/sx/handover-settings"
+                className="text-[11px] font-medium text-indigo-700 hover:text-indigo-900 border border-indigo-200 rounded-lg px-2.5 py-1.5 bg-white"
+              >
+                Đội SX & phân công mẫu →
+              </Link>
+            </div>
+          </div>
+
+          {intakeAssigneeLoading ? (
+            <div className="flex items-center gap-2 text-xs text-gray-500 py-1">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang tải nhân sự…
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="flex flex-col gap-1 flex-1 min-w-[240px] max-w-md">
+                <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Người nhận deal</span>
+                <select
+                  value={intakeAssigneeId}
+                  onChange={(e) => setIntakeAssigneeId(e.target.value)}
+                  className="h-9 px-2.5 border border-gray-200 rounded-lg text-sm bg-white"
+                >
+                  <option value="">— Chưa chọn (admin công ty) —</option>
+                  {(handoverData?.users || []).map((u) => (
+                    <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                disabled={intakeAssigneeSaving}
+                onClick={() => saveIntakeAssignee()}
+                className="h-9 px-3.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                {intakeAssigneeSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                Lưu
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Bước 2: Chọn Phân loại */}
       {settingsCompanyId && (
@@ -896,11 +1056,73 @@ export default function ProductionPipelineSettingsPage() {
                         </span>
                       )}
                     </p>
-                    <p className="text-[10px] text-gray-400 truncate">
+                    <p className="text-[10px] text-gray-400 flex flex-wrap items-center gap-1.5 mt-0.5">
                       {isIntake ? 'Deal thắng · chờ vào xưởng' : 'Cột pipeline xưởng'}
+                      {!isIntake && s.default_probability != null && s.default_probability !== '' && (
+                        <span className="text-violet-600 font-medium">◎ {s.default_probability}% mặc định</span>
+                      )}
+                      {!isIntake && isPipelineStageSlaDisabled(s.sla_days) && (
+                        <span className="bg-gray-100 text-gray-600 border border-gray-200 px-1.5 py-0.5 rounded font-medium">
+                          ⏱ Bỏ quá hạn cột
+                        </span>
+                      )}
+                      {!isIntake && !isPipelineStageSlaDisabled(s.sla_days) && (
+                        <span className="text-gray-500">
+                          SLA {s.sla_days != null && s.sla_days !== '' ? `${s.sla_days} ngày` : '7 ngày (mặc định)'}
+                        </span>
+                      )}
+                      {!isIntake && s.counts_as_won_revenue && (
+                        <span className="bg-amber-50 text-amber-800 border border-amber-200 px-1.5 py-0.5 rounded font-medium">
+                          🏆 DT thắng
+                        </span>
+                      )}
+                      {!isIntake && s.counts_as_completed_revenue && (
+                        <span className="bg-teal-50 text-teal-800 border border-teal-200 px-1.5 py-0.5 rounded font-medium">
+                          ✓ DT hoàn thành
+                        </span>
+                      )}
+                      {!isIntake && s.requires_deadline && (
+                        <span className="bg-rose-50 text-rose-800 border border-rose-200 px-1.5 py-0.5 rounded font-medium">
+                          ⏰ DL bắt buộc
+                        </span>
+                      )}
                     </p>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
+                    {!isIntake && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => toggleRequiresDeadlineColumn(s)}
+                          className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
+                            s.requires_deadline
+                              ? 'bg-rose-100 text-rose-800 border-rose-300'
+                              : 'bg-gray-50 text-gray-500 border-gray-200 hover:border-rose-300 hover:text-rose-700'
+                          }`}
+                          title={
+                            s.requires_deadline
+                              ? 'Đang bắt buộc đặt deadline khi kéo thẻ tới cột này. Nhấn để tắt.'
+                              : 'Bật để mỗi lần thẻ chuyển vào cột này hiện hộp chọn deadline.'
+                          }
+                        >
+                          <Clock className="h-3 w-3" />
+                          {s.requires_deadline ? 'DL bắt buộc' : 'Deadline'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleSlaColumn(s)}
+                        className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
+                          isPipelineStageSlaDisabled(s.sla_days)
+                            ? 'bg-gray-200 text-gray-700 border-gray-300'
+                            : 'bg-gray-50 text-gray-500 border-gray-200 hover:border-violet-300 hover:text-violet-700'
+                        }`}
+                        title={isPipelineStageSlaDisabled(s.sla_days) ? 'Đang bỏ quá hạn cột — nhấn để bật SLA' : 'Bỏ ghi nhận quá hạn cột'}
+                      >
+                        <Clock className="h-3 w-3" />
+                        {isPipelineStageSlaDisabled(s.sla_days) ? 'Đã bỏ QH' : 'Bỏ quá hạn'}
+                      </button>
+                      </>
+                    )}
                     <button type="button" onClick={() => toggleActive(s)} className="p-1.5 rounded hover:bg-gray-100 cursor-pointer text-[10px] text-gray-500" title={s.is_active ? 'Ẩn' : 'Hiện'}>
                       {s.is_active ? 'Ẩn' : 'Hiện'}
                     </button>
@@ -966,6 +1188,89 @@ export default function ProductionPipelineSettingsPage() {
                   placeholder="VD: 60"
                 />
               </div>
+              {!editingIntake && (
+                <>
+                  <div>
+                    <label className="text-[10px] font-medium text-gray-500 block mb-1">
+                      Xác suất mặc định theo cột (%)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={form.default_probability ?? ''}
+                      onChange={(e) => setForm((f) => ({ ...f, default_probability: e.target.value }))}
+                      className="w-full max-w-[140px] h-8 px-3 border rounded-lg text-sm"
+                      placeholder="Để trống = không fallback"
+                    />
+                    <p className="text-[10px] text-gray-400 mt-1 leading-snug">
+                      Khi dự án/deal chưa có % riêng, dashboard SX dùng % này cho giá trị có trọng số.
+                    </p>
+                  </div>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2 mb-1">
+                      <label className="text-[10px] font-medium text-gray-500">SLA giai đoạn (ngày)</label>
+                      <button
+                        type="button"
+                        onClick={() => setForm((f) => ({
+                          ...f,
+                          sla_days: isPipelineStageSlaDisabled(f.sla_days) ? '' : '0',
+                        }))}
+                        className={`h-7 px-2.5 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
+                          isPipelineStageSlaDisabled(form.sla_days)
+                            ? 'bg-violet-100 text-violet-900 border-violet-300'
+                            : 'bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200'
+                        }`}
+                      >
+                        <Clock className="h-3 w-3" />
+                        {isPipelineStageSlaDisabled(form.sla_days) ? 'Đã bỏ quá hạn cột' : 'Bỏ quá hạn cột'}
+                      </button>
+                    </div>
+                    <input
+                      type="number"
+                      min={1}
+                      max={365}
+                      disabled={isPipelineStageSlaDisabled(form.sla_days)}
+                      value={isPipelineStageSlaDisabled(form.sla_days) ? '' : (form.sla_days ?? '')}
+                      onChange={(e) => setForm((f) => ({ ...f, sla_days: e.target.value }))}
+                      className="w-full max-w-[140px] h-8 px-3 border rounded-lg text-sm disabled:bg-gray-100 disabled:text-gray-400"
+                      placeholder={isPipelineStageSlaDisabled(form.sla_days) ? 'SLA tắt' : 'Trống = 7 ngày'}
+                    />
+                    <p className="text-[10px] text-gray-400 mt-1 leading-snug">
+                      Dự án không chuyển cột quá số ngày SLA → quá hạn trên Kanban SX. Trống = 7 ngày.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <label className="flex items-center gap-2 text-xs cursor-pointer text-rose-900 bg-rose-50 px-2 py-1 rounded-lg border border-rose-200">
+                      <input
+                        type="checkbox"
+                        checked={!!form.requires_deadline}
+                        onChange={(e) => setForm((f) => ({ ...f, requires_deadline: e.target.checked }))}
+                        className="rounded border-rose-400"
+                      />
+                      <Clock className="h-3.5 w-3.5 text-rose-600" /> Bắt buộc đặt deadline khi kéo thẻ tới cột
+                    </label>
+                    <label className="flex items-center gap-2 text-xs cursor-pointer text-amber-900 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200">
+                      <input
+                        type="checkbox"
+                        checked={!!form.counts_as_won_revenue}
+                        onChange={(e) => setForm((f) => ({ ...f, counts_as_won_revenue: e.target.checked }))}
+                        className="rounded border-amber-400"
+                      />
+                      <Trophy className="h-3.5 w-3.5 text-amber-600" /> Tính vào «Doanh thu thắng»
+                    </label>
+                    <label className="flex items-center gap-2 text-xs cursor-pointer text-teal-900 bg-teal-50 px-2 py-1 rounded-lg border border-teal-200">
+                      <input
+                        type="checkbox"
+                        checked={!!form.counts_as_completed_revenue}
+                        onChange={(e) => setForm((f) => ({ ...f, counts_as_completed_revenue: e.target.checked }))}
+                        className="rounded border-teal-400"
+                      />
+                      <CheckCircle2 className="h-3.5 w-3.5 text-teal-600" /> Tính vào «Doanh thu đã hoàn thành»
+                    </label>
+                  </div>
+                </>
+              )}
               <div className="flex flex-wrap gap-4">
                 <label className="flex items-center gap-2 text-xs cursor-pointer">
                   <input

@@ -20,6 +20,9 @@ import { useWorkshopStaffFilter } from '../hooks/useWorkshopStaffFilter';
 import {
   peekWorkshopPipelineCardFocus, clearWorkshopPipelineCardFocus, markWorkshopPipelineCardFocus,
 } from '../lib/workshopPipelineStorage';
+import { computeSxRevenueKpis, getSxPipelineStageSlaTone, isSxColumnSlaOverdue } from '../lib/sxPipelineRevenue';
+import CrmDeadlineModal from '../components/CrmDeadlineModal';
+import { getCrmDeadlineUrgencyFromIso, getCrmDeadlineUrgencyBadgeClass } from '../lib/crmLeadDeadlineDisplay';
 
 const INTAKE_BUCKET = 'won_pending';
 
@@ -209,7 +212,8 @@ export default function ProductionDashboard() {
   const [kanbanCommentItem, setKanbanCommentItem] = useState(null);
   const [kanbanCommentBody, setKanbanCommentBody] = useState('');
   const [kanbanCommentPosting, setKanbanCommentPosting] = useState(false);
-
+  const [deadlineCtx, setDeadlineCtx] = useState(null);
+  const [deadlineBusy, setDeadlineBusy] = useState(false);
   const navigate = useNavigate();
 
   const staffFilter = useWorkshopStaffFilter({
@@ -316,9 +320,10 @@ export default function ProductionDashboard() {
   }, [filterWorkTypeId, companyParam, loading]);
 
   useEffect(() => {
-    if (!isAdmin) return;
-    api.get('/companies', { params: { for_module: 'production' } }).then((r) => setCompanies(r.data?.companies || r.data || [])).catch(() => setCompanies([]));
-  }, [isAdmin]);
+    api.get('/companies', { params: { for_module: 'production' } })
+      .then((r) => setCompanies(r.data?.companies || r.data || []))
+      .catch(() => setCompanies([]));
+  }, []);
 
   useEffect(() => {
     if (!isAdmin || !filterCompany || !companies?.length) return;
@@ -662,10 +667,16 @@ export default function ProductionDashboard() {
 
   const scopeKpis = useMemo(() => {
     const list = scopeProjects;
+    const revenue = computeSxRevenueKpis(list, pipeline);
+    const columnSlaOverdue = list.filter((p) => isSxColumnSlaOverdue(p)).length;
     if (!list.length) {
       return {
         total: 0, producing: 0, completed: 0, overdue: 0, avg_progress: kpis?.avg_progress || 0,
         intake_pending: 0, delivering: 0, customer_care: 0,
+        won_revenue_value: kpis?.won_revenue_value || 0,
+        completed_revenue_value: kpis?.completed_revenue_value || 0,
+        weighted_pipeline_value: kpis?.weighted_pipeline_value || 0,
+        column_sla_overdue: 0,
       };
     }
     return {
@@ -677,8 +688,64 @@ export default function ProductionDashboard() {
       overdue: list.filter((p) => p.deadline && new Date(p.deadline) < new Date() && p.status !== 'completed').length,
       intake_pending: list.filter((p) => p.sx_intake).length,
       avg_progress: Math.round(list.reduce((s, p) => s + (p.progress || 0), 0) / list.length),
+      won_revenue_value: revenue.wonRevenue,
+      completed_revenue_value: revenue.completedRevenue,
+      weighted_pipeline_value: revenue.weightedPipeline,
+      column_sla_overdue: columnSlaOverdue,
     };
-  }, [scopeProjects, kpis]);
+  }, [scopeProjects, kpis, pipeline]);
+
+  const executeStageMove = useCallback(async (projectId, targetCol, { deadlineIso, reason } = {}) => {
+    const current = projects.find((p) => String(p.id) === String(projectId));
+    const wid = targetCol?.workflow_stage_id;
+    const colId = targetCol?.id;
+    const currentColId = current?.sx_kanban_column_id || null;
+    const optimisticStage = wid ? {
+      id: wid,
+      slug: targetCol.slug,
+      name: targetCol.name,
+      color: targetCol.color,
+      icon: targetCol.icon,
+    } : null;
+
+    setProjects((prev) => prev.map((p) => (p.id === projectId
+      ? {
+        ...p,
+        current_stage: optimisticStage,
+        current_stage_id: wid || null,
+        sx_kanban_column_id: colId,
+        sx_intake: false,
+        ...(deadlineIso ? {
+          sx_kanban_deadline_at: deadlineIso,
+          sx_kanban_deadline_reason: reason || null,
+        } : {}),
+      }
+      : p)));
+
+    try {
+      await api.patch(`/production/projects/${projectId}/stage`, {
+        production_pipeline_stage_id: colId,
+        current_sx_pipeline_stage_id: currentColId,
+        company_id: companyParam || undefined,
+        ...(deadlineIso ? { sx_kanban_deadline_at: deadlineIso, deadline_reason: reason || '' } : {}),
+      });
+      scheduleCrmBadgeRefresh(projectId);
+    } catch (e) {
+      console.error(e);
+      if (e.response?.data?.code === 'requires_deadline') {
+        setDeadlineCtx({
+          projectId,
+          targetCol,
+          project: current,
+          mode: 'stage_move',
+        });
+        load();
+        return;
+      }
+      window.alert(e.response?.data?.error || e.message || 'Không chuyển được cột pipeline');
+      load();
+    }
+  }, [load, projects, companyParam]);
 
   const handleMoveStage = useCallback(async (projectId, targetCol) => {
     const current = projects.find((p) => String(p.id) === String(projectId));
@@ -701,7 +768,6 @@ export default function ProductionDashboard() {
       return;
     }
 
-    const wid = targetCol?.workflow_stage_id;
     const isIntake = targetCol?.bucket_slug === INTAKE_BUCKET
       || String(targetCol?.id || '').startsWith('__fb_');
     const isHandover = targetCol?.is_handover_to_logistics === true;
@@ -722,46 +788,71 @@ export default function ProductionDashboard() {
 
     // Cột được đánh dấu "bàn giao VC" → gọi handover-vc, giữ card trong cột
     if (isHandover) {
-      // Không auto-call API khi kéo thả vào cột bàn giao VC vì cần chọn công ty VC + đội + người nhận.
-      openHandoverModal(projectId, current?.name || current?.code || projectId, targetCol?.id || '');
+      setHandoverModal({ projectId, projectName: current?.name || current?.code || projectId });
+      setHandoverTargetSxColId(targetCol?.id ? String(targetCol.id) : '');
+      setHandoverErr('');
+      setHandoverLogisticsCompanyId('');
+      setHandoverLogisticsCompanies([]);
+      setHandoverDeliveryTeamId('');
+      setHandoverInstallationTeamId('');
+      setHandoverDeliveryTeams([]);
+      setHandoverInstallationTeams([]);
       return;
     }
 
     // Luôn gửi production_pipeline_stages.id (không chỉ workflow stage_id) — giống chi tiết dự án.
-    // Nhiều cột cùng phân loại có thể dùng chung workflow «Sản xuất» → stage_id không phân biệt được cột.
     const colId = targetCol?.id;
     const currentColId = current?.sx_kanban_column_id || null;
-    const optimisticStage = wid ? {
-      id: wid,
-      slug: targetCol.slug,
-      name: targetCol.name,
-      color: targetCol.color,
-      icon: targetCol.icon,
-    } : null;
-
-    setProjects((prev) => prev.map((p) => (p.id === projectId
-      ? {
-        ...p,
-        current_stage: optimisticStage,
-        current_stage_id: wid || null,
-        sx_kanban_column_id: colId,
-        sx_intake: false,
-      }
-      : p)));
-
-    try {
-      await api.patch(`/production/projects/${projectId}/stage`, {
-        production_pipeline_stage_id: colId,
-        current_sx_pipeline_stage_id: currentColId,
-        company_id: companyParam || undefined,
+    const isSameCol = colId && currentColId && String(colId) === String(currentColId);
+    if (!isSameCol && targetCol?.requires_deadline) {
+      setDeadlineCtx({
+        projectId,
+        targetCol,
+        project: current,
+        mode: 'stage_move',
       });
-      scheduleCrmBadgeRefresh(projectId);
-    } catch (e) {
-      console.error(e);
-      window.alert(e.response?.data?.error || e.message || 'Không chuyển được cột pipeline');
-      load();
+      return;
     }
-  }, [load, projects, companyParam]);
+
+    await executeStageMove(projectId, targetCol);
+  }, [executeStageMove, projects]);
+
+  const openDeadlineFromCard = useCallback((item) => {
+    setDeadlineCtx({
+      projectId: item.id,
+      targetCol: null,
+      project: item,
+      mode: 'edit_only',
+    });
+  }, []);
+
+  const confirmDeadlineMove = async ({ deadlineIso, reason }) => {
+    const ctx = deadlineCtx;
+    if (!ctx) return;
+    setDeadlineBusy(true);
+    try {
+      if (ctx.mode === 'edit_only') {
+        await api.patch(`/production/projects/${ctx.projectId}/kanban-deadline`, {
+          sx_kanban_deadline_at: deadlineIso,
+          reason: reason || '',
+        });
+        const pid = String(ctx.projectId);
+        const patch = {
+          sx_kanban_deadline_at: deadlineIso,
+          sx_kanban_deadline_reason: reason || null,
+        };
+        setProjects((prev) => prev.map((p) => (String(p.id) === pid ? { ...p, ...patch } : p)));
+        setDeadlineCtx(null);
+        return;
+      }
+      await executeStageMove(ctx.projectId, ctx.targetCol, { deadlineIso, reason });
+      setDeadlineCtx(null);
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi cập nhật deadline');
+    } finally {
+      setDeadlineBusy(false);
+    }
+  };
 
   const handleHandoverVC = useCallback(async (projectId, projectName, logisticsCompanyId) => {
     try {
@@ -960,17 +1051,12 @@ export default function ProductionDashboard() {
       {/* KPI — thanh màu trên đầu + nhãn / số / descriptor (giống mockup) */}
       {(() => {
         const overdueProd = scopeProjects.filter((p) => p.is_production_overdue).length;
-        const soonProd = scopeProjects.filter((p) => {
-          if (!p.production_deadline || p.is_production_overdue) return false;
-          return new Date(p.production_deadline) < new Date(Date.now() + 3 * 86400000);
-        }).length;
         const total = scopeKpis.total;
-        // Tổng giá trị của các deal đang sản xuất (status producing hoặc current_stage='production')
         const producingValue = scopeProjects
           .filter((p) => p.current_stage?.slug === 'production' || p.status === 'producing')
           .reduce((sum, p) => sum + (Number(p.estimated_value) || 0), 0);
         return (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-8 gap-2">
             <KPICard accent="bg-violet-500" label="Tổng dự án" value={total} descriptor={total > 0 ? `↑ ${total} tuần này` : '—'} />
             <KPICard
               accent="bg-teal-500"
@@ -978,10 +1064,28 @@ export default function ProductionDashboard() {
               value={scopeKpis.producing}
               descriptor={scopeKpis.producing > 0 ? formatVND(producingValue) : '—'}
             />
+            <KPICard
+              accent="bg-amber-500"
+              label="DT thắng (SX)"
+              value={scopeKpis.won_revenue_value > 0 ? formatVND(scopeKpis.won_revenue_value) : '—'}
+              descriptor="theo cột pipeline"
+            />
+            <KPICard
+              accent="bg-emerald-600"
+              label="DT hoàn thành"
+              value={scopeKpis.completed_revenue_value > 0 ? formatVND(scopeKpis.completed_revenue_value) : '—'}
+              descriptor="theo cột pipeline"
+            />
             <KPICard accent="bg-emerald-500" label="Hoàn thành" value={scopeKpis.completed} descriptor="tuần này" />
             <KPICard accent="bg-red-500" label="Quá hạn" value={scopeKpis.overdue} descriptor={scopeKpis.overdue > 0 ? 'cần xử lý' : 'không có'} valueTone={scopeKpis.overdue > 0 ? 'danger' : undefined} />
+            <KPICard
+              accent="bg-rose-500"
+              label="Trễ SLA cột"
+              value={scopeKpis.column_sla_overdue}
+              descriptor={scopeKpis.column_sla_overdue > 0 ? 'cần xử lý' : 'không có'}
+              valueTone={scopeKpis.column_sla_overdue > 0 ? 'danger' : undefined}
+            />
             <KPICard accent="bg-orange-500" label="Trễ giao xưởng" value={overdueProd} descriptor={overdueProd > 0 ? 'cần xử lý' : 'không có'} valueTone={overdueProd > 0 ? 'danger' : undefined} />
-            <KPICard accent="bg-amber-500" label="Sắp giao (3 ngày)" value={soonProd} descriptor={soonProd > 0 ? 'sắp đến hạn' : '—'} valueTone={soonProd > 0 ? 'warning' : undefined} />
           </div>
         );
       })()}
@@ -1351,6 +1455,7 @@ export default function ProductionDashboard() {
                 alert(e.response?.data?.error || 'Lỗi đổi phân loại');
               }
             }}
+            onOpenDeadline={openDeadlineFromCard}
             remeasureToken={showAdvFilter ? 'adv-on' : 'adv-off'} />
         )}
 
@@ -1552,6 +1657,25 @@ export default function ProductionDashboard() {
           </div>
         </div>
       )}
+
+      <CrmDeadlineModal
+        open={!!deadlineCtx}
+        title={deadlineCtx?.mode === 'edit_only' ? 'Deadline thẻ SX' : 'Đặt deadline khi chuyển cột'}
+        subtitle={
+          deadlineCtx?.mode === 'edit_only'
+            ? (deadlineCtx?.project?.name || deadlineCtx?.project?.code || '')
+            : 'Chọn hạn hoàn thành cho thẻ trước khi chuyển sang cột mới.'
+        }
+        stageName={deadlineCtx?.mode === 'stage_move' ? deadlineCtx?.targetCol?.name : ''}
+        initialDeadline={deadlineCtx?.project?.sx_kanban_deadline_at || null}
+        currentDeadline={deadlineCtx?.project?.sx_kanban_deadline_at || null}
+        mandatory={deadlineCtx?.mode === 'stage_move'}
+        requireReason={deadlineCtx?.mode === 'edit_only' && !!deadlineCtx?.project?.sx_kanban_deadline_at}
+        allowClear={deadlineCtx?.mode === 'edit_only' && !!deadlineCtx?.project?.sx_kanban_deadline_at}
+        submitting={deadlineBusy}
+        onClose={() => !deadlineBusy && setDeadlineCtx(null)}
+        onConfirm={confirmDeadlineMove}
+      />
     </div>
   );
 }
@@ -1575,7 +1699,7 @@ function KPICard({ accent = 'bg-blue-500', label, value, descriptor, valueTone }
 }
 
 // ── KANBAN STAGE CARD — header tối giản (dot + tên + count + total) ────────
-function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType }) {
+function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const stageColor = stage.color || '#94a3b8';
   const totalValue = items.reduce((sum, p) => sum + (Number(p.estimated_value) || 0), 0);
@@ -1667,7 +1791,7 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
             <KanbanCard key={item.id} item={item} stage={stage} calculateDays={calculateDays}
               isSelected={selectedIds?.has(item.id)} onToggleSelect={onToggleSelect}
               onHandoverVC={onHandoverVC} onOpenKanbanComment={onOpenKanbanComment}
-              workTypes={workTypes} onSetWorkType={onSetWorkType} />
+              workTypes={workTypes} onSetWorkType={onSetWorkType} onOpenDeadline={onOpenDeadline} />
           ))
         )}
       </div>
@@ -1676,7 +1800,7 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
 }
 
 // ── KANBAN ITEM CARD (y hệt CRM KanbanCard) ─────────────────────────────────
-function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType }) {
+function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline }) {
   const navigate = useNavigate();
   const [handingOver, setHandingOver] = useState(false);
   const [localPinned, setLocalPinned] = useState(!!item.is_pinned);
@@ -1689,6 +1813,10 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
 
   const handleDragStart = (e) => {
     if (e.target.closest?.('[data-workshop-bulk-checkbox]')) {
+      e.preventDefault();
+      return;
+    }
+    if (e.target.closest?.('[data-sx-kanban-deadline-btn]')) {
       e.preventDefault();
       return;
     }
@@ -1705,7 +1833,12 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
   const deals = Array.isArray(item.crm_deals) ? item.crm_deals : [];
   const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
   const leadCreatedAt = primaryDeal?.created_at || item.created_at || null;
-  const stageEnteredAt = item.stage_entered_at || item.updated_at || item.created_at || null;
+  const columnEnteredAt = item.sx_pipeline_stage_entered_at || item.stage_entered_at || item.updated_at || item.created_at || null;
+  const columnSlaTone = getSxPipelineStageSlaTone(item.sx_pipeline_stage_entered_at, item.sx_pipeline_stage);
+  const manualDlUrgency = item.sx_kanban_deadline_at
+    ? getCrmDeadlineUrgencyFromIso(item.sx_kanban_deadline_at)
+    : null;
+  const manualDlLevel = manualDlUrgency && manualDlUrgency.level !== 'ok' ? manualDlUrgency.level : null;
   const companyName = item.company?.short_name || item.company?.name || null;
   const slaDeadlineTs = (() => {
     const raw = item.deadline || item.production_deadline || null;
@@ -1739,9 +1872,18 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
   const customerInitials = getInitials(item.customer?.full_name || item.name || '');
   const progress = item.sx_pipeline_percent != null ? Math.max(0, Math.min(100, Number(item.sx_pipeline_percent) || 0)) : null;
 
-  // Thanh 3px trên đầu — xám nhạt (không tô màu cảnh báo lên nền card).
-  const statusStripClass = 'bg-gray-200';
-  const cardBorderToneClass = 'border-gray-200';
+  const statusStripClass = manualDlLevel === 'overdue' || columnSlaTone?.level === 'overdue'
+    ? 'bg-red-500'
+    : manualDlLevel === 'soon' || columnSlaTone?.level === 'soon'
+      ? 'bg-amber-500'
+      : manualDlLevel === 'warn' || columnSlaTone?.level === 'warn'
+        ? 'bg-yellow-400'
+        : slaOverdue
+          ? 'bg-orange-400'
+          : 'bg-gray-200';
+  const cardBorderToneClass = (manualDlLevel === 'overdue' || columnSlaTone?.level === 'overdue')
+    ? 'border-red-300'
+    : 'border-gray-200';
 
   return (
     <div
@@ -1862,6 +2004,25 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
         </div>
       )}
 
+      {/* Deadline thẻ (sx_kanban_deadline_at) — bấm để sửa */}
+      {typeof onOpenDeadline === 'function' && item.sx_kanban_deadline_at && (() => {
+        const { level } = getCrmDeadlineUrgencyFromIso(item.sx_kanban_deadline_at);
+        const tone = `${getCrmDeadlineUrgencyBadgeClass(level)} hover:opacity-90 cursor-pointer`;
+        const urgent = level === 'overdue' || level === 'soon';
+        return (
+          <button
+            type="button"
+            data-sx-kanban-deadline-btn
+            onClick={(ev) => { ev.stopPropagation(); onOpenDeadline(item); }}
+            className={`inline-flex items-center gap-1 rounded-md border transition-opacity mb-1.5 ${urgent ? 'px-2 py-1 text-[11px]' : 'px-1.5 py-0.5 text-[10px] font-semibold'} ${tone}`}
+            title={`Deadline thẻ — bấm để sửa (${new Date(item.sx_kanban_deadline_at).toLocaleString('vi-VN')})`}
+          >
+            <Clock className="h-3 w-3" strokeWidth={2.4} />
+            Deadline: {new Date(item.sx_kanban_deadline_at).toLocaleDateString('vi-VN')}
+          </button>
+        );
+      })()}
+
       {/* Row 4: Khách hàng + Khu vực — 1 dòng với icon nhỏ */}
       {(item.customer?.full_name || crmRegionName) && (
         <div className="flex items-center gap-2 text-[11px] text-gray-600 mb-0.5 min-w-0">
@@ -1919,8 +2080,22 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
         {/* Time chip */}
         <span className="inline-flex items-center gap-0.5 text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
           <Clock className="h-2.5 w-2.5" />
-          {stageEnteredAt ? formatAgeDetailed(stageEnteredAt) : calculateDays(item.created_at)}
+          {columnEnteredAt ? formatAgeDetailed(columnEnteredAt) : calculateDays(item.created_at)}
         </span>
+        {columnSlaTone && columnSlaTone.level !== 'ok' && (
+          <span
+            className={`inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded font-medium ${
+              columnSlaTone.level === 'overdue'
+                ? 'bg-red-100 text-red-700'
+                : columnSlaTone.level === 'soon'
+                  ? 'bg-amber-100 text-amber-800'
+                  : 'bg-yellow-50 text-yellow-800'
+            }`}
+            title="SLA cột pipeline"
+          >
+            SLA {columnSlaTone.level === 'overdue' ? 'quá hạn' : 'sắp hết'}
+          </span>
+        )}
 
         {/* Spacer */}
         <span className="flex-1" />
@@ -1960,6 +2135,21 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
         >
           <MessageSquare className="h-3 w-3" />
         </button>
+        {typeof onOpenDeadline === 'function' && (
+          <button
+            type="button"
+            data-sx-kanban-deadline-btn
+            title={item.sx_kanban_deadline_at ? 'Sửa deadline thẻ' : 'Đặt deadline thẻ'}
+            onClick={(ev) => { ev.stopPropagation(); onOpenDeadline(item); }}
+            className={`h-5 w-5 inline-flex items-center justify-center rounded transition-colors cursor-pointer ${
+              item.sx_kanban_deadline_at
+                ? 'text-rose-600 hover:bg-rose-50'
+                : 'text-gray-400 hover:text-rose-600 hover:bg-rose-50'
+            }`}
+          >
+            <Clock className="h-3.5 w-3.5" strokeWidth={2.2} />
+          </button>
+        )}
         <button
           type="button"
           data-sx-quick-btn
@@ -2012,7 +2202,7 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
 }
 
 // ── KANBAN VIEW CONTAINER (y hệt CRM KanbanView) ─────────────────────────────
-function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, remeasureToken }) {
+function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline, remeasureToken }) {
   return (
     <WorkshopPipelineKanbanScroll
       cardSelector="[data-sx-kanban-card]"
@@ -2034,6 +2224,7 @@ function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggl
             onOpenKanbanComment={onOpenKanbanComment}
             workTypes={workTypes}
             onSetWorkType={onSetWorkType}
+            onOpenDeadline={onOpenDeadline}
           />
         ))}
       </div>

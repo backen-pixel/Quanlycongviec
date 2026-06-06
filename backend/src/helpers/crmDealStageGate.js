@@ -41,11 +41,32 @@ function isDealCrmStageLocked(lead) {
   return false;
 }
 
+function isDealOnCrmPostWonColumn(stage) {
+  if (!stage) return false;
+  if (stage.is_won) return true;
+  return isCrmPostWonManagedStage(stage);
+}
+
 /**
  * @returns {{ ok: true } | { ok: false, error: string, code: string }}
  */
-function assertDealCrmManualStageChange(_lead, _targetStage) {
-  // Đã mở khóa: không chặn chuyển cột thủ công trên CRM nữa.
+function assertDealCrmManualStageChange(lead, targetStage, prevStage) {
+  if (!lead || lead.type !== 'deal' || !lead.project_id || !prevStage || !targetStage) {
+    return { ok: true };
+  }
+  if (String(prevStage.id) === String(targetStage.id)) return { ok: true };
+  const leavingPostWon = isDealOnCrmPostWonColumn(prevStage);
+  const enteringPreWon =
+    !targetStage.is_won
+    && !targetStage.is_lost
+    && !isCrmPostWonManagedStage(targetStage);
+  if (leavingPostWon && enteringPreWon) {
+    return {
+      ok: false,
+      error: 'Deal đã tạo dự án Sản xuất — không thể kéo ngược về giai đoạn trước.',
+      code: 'CRM_DEAL_SX_PROJECT_EXISTS',
+    };
+  }
   return { ok: true };
 }
 
@@ -53,6 +74,7 @@ module.exports = {
   POST_WON_SYNC_ROLES,
   normalizeStageNameFold,
   isCrmPostWonManagedStage,
+  isDealOnCrmPostWonColumn,
   isDealCrmStageLocked,
   assertDealCrmManualStageChange,
 };

@@ -16,6 +16,7 @@ import {
 import { ListView, PlannerView, DeadlineView, CommentsView } from '../components/CRMViews';
 import { resolveCrmLeadKanbanScheduleSource } from '../lib/crmLeadDeadlineDisplay';
 import EmployeePicker from '../components/EmployeePicker';
+import NewDealModal from '../components/NewDealModal';
 import {
   loadCrmPipelineSnapshot,
   saveCrmPipelineSnapshot,
@@ -49,6 +50,8 @@ import { effectivePipelineStageSlaDays } from '../lib/crmPipelineSla';
 import { sortAndDedupePipelineStages } from '../lib/crmPipelineStages';
 import {
   canDropDealOnCrmKanbanStage,
+  crmDealMoveToWonSxAlreadyCreatedMessage,
+  crmDealRevertFromPostWonBlockedMessage,
   crmDealStageMoveBlockedMessage,
   isDealCrmKanbanDragLocked,
 } from '../lib/crmDealStageGate';
@@ -694,7 +697,39 @@ export default function CRMDashboard() {
   const [dealWonProductionWorkshopTypes, setDealWonProductionWorkshopTypes] = useState([]);
   const [dealWonProductionWorkshopLoading, setDealWonProductionWorkshopLoading] = useState(false);
   const [dealWonProductionError, setDealWonProductionError] = useState('');
+  /** Deal đã có dự án SX, kéo lại sang Thắng — chỉ thông báo, không mở hộp chuyển */
+  const [dealWonSxExistsCtx, setDealWonSxExistsCtx] = useState(null);
   const [productionCompaniesForSx, setProductionCompaniesForSx] = useState([]);
+
+  /** Tải phân loại SX khi mở hộp «Chuyển Deal sang Sản xuất» (kéo Kanban → Thắng). */
+  useEffect(() => {
+    if (!dealWonProductionCtx || !dealWonProductionCompanyId) {
+      if (!dealWonProductionCtx) setDealWonProductionWorkshopTypes([]);
+      return undefined;
+    }
+    let cancelled = false;
+    setDealWonProductionWorkshopLoading(true);
+    api.get('/workshop/project-types', {
+      params: { company_id: dealWonProductionCompanyId, module: 'production' },
+    })
+      .then((r) => {
+        if (cancelled) return;
+        const list = Array.isArray(r.data) ? r.data : [];
+        setDealWonProductionWorkshopTypes(list);
+        if (list.length === 1) {
+          setDealWonProductionWorkshopTypeId(String(list[0].id));
+        } else if (
+          dealWonProductionWorkshopTypeId
+          && !list.some((t) => String(t.id) === String(dealWonProductionWorkshopTypeId))
+        ) {
+          setDealWonProductionWorkshopTypeId('');
+        }
+      })
+      .catch(() => { if (!cancelled) setDealWonProductionWorkshopTypes([]); })
+      .finally(() => { if (!cancelled) setDealWonProductionWorkshopLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dealWonProductionCtx, dealWonProductionCompanyId]);
   /** Server trả deal_won (tạo dự án lỗi) hoặc cần tạo dự án sau khi đã Thắng */
   const [dealAutoCreatePick, setDealAutoCreatePick] = useState(null);
   const [dealAutoCreateCompanyId, setDealAutoCreateCompanyId] = useState('');
@@ -2773,6 +2808,8 @@ export default function CRMDashboard() {
             targetStageName: tgtStg?.name || '',
             remainingTasks: e.response.data.remaining_tasks || [],
           });
+        } else if (e?.response?.data?.code === 'CRM_DEAL_SX_PROJECT_EXISTS') {
+          window.alert(e.response?.data?.error || 'Deal đã tạo dự án Sản xuất — không thể kéo ngược.');
         }
         if (throwOnError) throw e;
       }
@@ -2793,7 +2830,17 @@ export default function CRMDashboard() {
       }
 
       if (pipelineType === 'deal') {
-        const deal = allDeals.find((d) => d.id === leadId);
+        let deal = allDeals.find((d) => d.id === leadId);
+        const currentStage = deal?.stage_id
+          ? stages.find((s) => String(s.id) === String(deal.stage_id))
+          : null;
+        const revertBlocked = deal && targetStage
+          ? crmDealRevertFromPostWonBlockedMessage(deal, currentStage, targetStage)
+          : null;
+        if (revertBlocked) {
+          window.alert(revertBlocked);
+          return;
+        }
         // Bỏ qua gate nếu deal đang nằm ở cột ảo «Chưa có giai đoạn»:
         //   stage_id rỗng / không thuộc stagesDeal hiện tại / có project_id nhưng thiếu badge SX & VC.
         // Mục đích: cho phép thả tự do về bất kỳ cột thường nào để chữa dữ liệu lệch.
@@ -2817,29 +2864,35 @@ export default function CRMDashboard() {
             return;
           }
         }
-      }
 
-      if (pipelineType === 'deal' && targetStage?.is_won) {
-        const deal = allDeals.find((d) => d.id === leadId);
-        if (deal && !deal.project_id) {
+        if (targetStage?.is_won && deal) {
           try {
-            await applyKanbanStageChange(leadId, newStageId, extraData, { throwOnError: true });
-            return;
-          } catch (e) {
-            const needsCo = e.response?.data?.requires_production_company;
-            if (!needsCo) {
-              console.error(e);
-              window.alert(e.response?.data?.error || e.message || 'Không chuyển được giai đoạn');
-              return;
-            }
-            setDealWonProductionError(e.response?.data?.error || '');
-            // Mặc định: không chọn công ty sản xuất nào — buộc user chủ động chọn cho từng deal
-            setDealWonProductionCompanyId('');
-            setDealWonProductionWorkshopTypeId('');
-            setDealWonProductionWorkshopTypes([]);
-            setDealWonProductionCtx({ leadId, newStageId, extraData, targetStage, deal });
+            const { data: fresh } = await api.get(`/crm/leads/${leadId}`);
+            if (fresh) deal = { ...deal, ...fresh };
+          } catch (_) { /* giữ snapshot Kanban */ }
+
+          const alreadySx = crmDealMoveToWonSxAlreadyCreatedMessage(deal);
+          if (alreadySx) {
+            if (String(deal.stage_id) === String(newStageId)) return;
+            setDealWonSxExistsCtx({
+              leadId,
+              newStageId,
+              extraData,
+              deal,
+              message: alreadySx,
+            });
             return;
           }
+
+          setDealWonProductionError('');
+          const prefCompany = deal.company_id
+            ? String(deal.company_id)
+            : (isAdmin ? findDefaultAdminCrmCompanyPhucDat(productionCompaniesForSx) : '');
+          setDealWonProductionCompanyId(prefCompany);
+          setDealWonProductionWorkshopTypeId('');
+          setDealWonProductionWorkshopTypes([]);
+          setDealWonProductionCtx({ leadId, newStageId, extraData, targetStage, deal });
+          return;
         }
       }
 
@@ -2909,6 +2962,8 @@ export default function CRMDashboard() {
       allLeads,
       allDeals,
       applyKanbanStageChange,
+      isAdmin,
+      productionCompaniesForSx,
     ],
   );
 
@@ -2984,6 +3039,13 @@ export default function CRMDashboard() {
     },
     [pipelineType, stagesLead, stagesDeal, manualMergeIds, applyKanbanStageChange],
   );
+
+  const confirmDealWonSxExistsOnlyStage = async () => {
+    const ctx = dealWonSxExistsCtx;
+    if (!ctx) return;
+    setDealWonSxExistsCtx(null);
+    await applyKanbanStageChange(ctx.leadId, ctx.newStageId, ctx.extraData);
+  };
 
   const confirmDealWonProduction = async () => {
     if (!dealWonProductionCompanyId) {
@@ -4457,6 +4519,50 @@ export default function CRMDashboard() {
         );
       })()}
 
+      {dealWonSxExistsCtx && (
+        <div
+          className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4"
+          onClick={() => setDealWonSxExistsCtx(null)}
+        >
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 mb-2">
+              <Building2 className="h-6 w-6 text-teal-600" />
+              <h3 className="text-lg font-bold text-gray-900">Đã có dự án Sản xuất</h3>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">{dealWonSxExistsCtx.message}</p>
+            <div className="flex gap-2 mt-4">
+              <button
+                type="button"
+                className="flex-1 h-10 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50"
+                onClick={() => setDealWonSxExistsCtx(null)}
+              >
+                Hủy
+              </button>
+              {dealWonSxExistsCtx.deal?.project_id && (
+                <button
+                  type="button"
+                  className="flex-1 h-10 border border-teal-200 text-teal-700 rounded-xl text-sm font-semibold hover:bg-teal-50"
+                  onClick={() => {
+                    const pid = dealWonSxExistsCtx.deal.project_id;
+                    setDealWonSxExistsCtx(null);
+                    navigate(`/sx/projects/${pid}`);
+                  }}
+                >
+                  Xem Sản xuất
+                </button>
+              )}
+              <button
+                type="button"
+                className="flex-1 h-10 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold"
+                onClick={() => confirmDealWonSxExistsOnlyStage()}
+              >
+                Cập nhật Thắng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {dealWonProductionCtx && (
         <div
           className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4"
@@ -4479,30 +4585,10 @@ export default function CRMDashboard() {
             <label className="block text-xs font-semibold text-gray-700 mb-1">Công ty Sản xuất <span className="text-red-500">*</span></label>
             <select
               value={dealWonProductionCompanyId}
-              onChange={async (e) => {
-                const newCid = e.target.value;
-                setDealWonProductionCompanyId(newCid);
+              onChange={(e) => {
+                setDealWonProductionCompanyId(e.target.value);
                 setDealWonProductionWorkshopTypeId('');
                 setDealWonProductionError('');
-                if (!newCid) {
-                  setDealWonProductionWorkshopTypes([]);
-                  return;
-                }
-                setDealWonProductionWorkshopLoading(true);
-                try {
-                  const { data } = await api.get('/workshop/project-types', {
-                    params: { company_id: newCid, module: 'production' },
-                  });
-                  const list = Array.isArray(data) ? data : [];
-                  setDealWonProductionWorkshopTypes(list);
-                  if (list.length === 1) {
-                    setDealWonProductionWorkshopTypeId(String(list[0].id));
-                  }
-                } catch {
-                  setDealWonProductionWorkshopTypes([]);
-                } finally {
-                  setDealWonProductionWorkshopLoading(false);
-                }
               }}
               className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white mb-3"
             >
@@ -6241,386 +6327,6 @@ function KanbanView({
             />
           ))}
         </div>
-      </div>
-    </div>
-  );
-}
-
-// ── NEW DEAL MODAL ─────────────────────────────────────────────────────────
-function NewDealModal({ onClose, onSuccess, leadTypes, companies, defaultCompanyId, currentUser }) {
-  const isAdmin = isAdminLike(currentUser);
-  const [formData, setFormData] = useState({
-    title: '',
-    customer_name: '',
-    customer_phone: '',
-    customer_email: '',
-    source_id: '',
-    company_id: defaultCompanyId || '',
-    region_id: '',
-    lead_type_id: '',
-    estimated_value: 0,
-    probability: 50,
-    install_address: '',
-    description: '',
-  });
-  const [saving, setSaving] = useState(false);
-  const [modalSources, setModalSources] = useState([]);
-  const [modalRegions, setModalRegions] = useState([]);
-
-  const visibleLeadTypes = useMemo(() => {
-    const cid = String(formData.company_id || '');
-    return (Array.isArray(leadTypes) ? leadTypes : [])
-      .filter((t) => String(t.company_id || '') === cid)
-      .filter((t) => t.applies_to === 'both' || t.applies_to === 'deal');
-  }, [leadTypes, formData.company_id]);
-
-  useEffect(() => {
-    const cid = String(formData.company_id || '').trim();
-    if (!cid) {
-      setModalSources([]);
-      return;
-    }
-    let cancelled = false;
-    api.get('/crm/sources', { params: { company_id: cid } })
-      .then((r) => {
-        if (cancelled) return;
-        const list = r.data?.sources || (Array.isArray(r.data) ? r.data : []);
-        setModalSources(Array.isArray(list) ? list : []);
-      })
-      .catch(() => { if (!cancelled) setModalSources([]); });
-    return () => { cancelled = true; };
-  }, [formData.company_id]);
-
-  useEffect(() => {
-    const cid = String(formData.company_id || '').trim();
-    if (!cid) {
-      setModalRegions([]);
-      return;
-    }
-    const selectedCo = (companies || []).find((c) => String(c.id) === cid);
-    const divId = selectedCo?.division_unit_id || null;
-    let cancelled = false;
-    const params = { company_id: cid };
-    if (divId) params.division_unit_id = divId;
-    api.get('/crm/company-regions', { params })
-      .then((r) => {
-        if (cancelled) return;
-        const list = Array.isArray(r.data) ? r.data : [];
-        setModalRegions(list.filter((x) => x.is_active !== false));
-      })
-      .catch(() => { if (!cancelled) setModalRegions([]); });
-    return () => { cancelled = true; };
-  }, [formData.company_id, companies]);
-
-  useEffect(() => {
-    const uidRegions = currentUser?.crm_region_ids;
-    if (!Array.isArray(uidRegions) || uidRegions.length !== 1) return;
-    const only = String(uidRegions[0]);
-    const ok = modalRegions.some((r) => String(r.id) === only);
-    if (ok && String(formData.region_id || '') !== only) {
-      setFormData((prev) => ({ ...prev, region_id: only }));
-    }
-  }, [modalRegions, currentUser?.crm_region_ids, formData.region_id]);
-
-  // Lock company for non-admin — ưu tiên company trên user, không lấy filter Kanban (có thể là admin/LS khác)
-  useEffect(() => {
-    if (isAdmin) return;
-    const cid = (currentUser?.company_id ? String(currentUser.company_id) : '') || (defaultCompanyId ? String(defaultCompanyId) : '');
-    if (cid && String(formData.company_id || '') !== String(cid)) {
-      setFormData((prev) => ({ ...prev, company_id: cid }));
-    }
-  }, [isAdmin, defaultCompanyId, currentUser?.company_id]);
-
-  // Reset lead_type when company changes
-  useEffect(() => {
-    if (!formData.lead_type_id) return;
-    const ok = visibleLeadTypes.some((t) => String(t.id) === String(formData.lead_type_id));
-    if (!ok) setFormData((prev) => ({ ...prev, lead_type_id: '' }));
-  }, [formData.company_id, visibleLeadTypes, formData.lead_type_id]);
-
-  useEffect(() => {
-    if (!formData.source_id) return;
-    const ok = modalSources.some((s) => String(s.id) === String(formData.source_id));
-    if (!ok) setFormData((prev) => ({ ...prev, source_id: '' }));
-  }, [modalSources, formData.source_id]);
-
-  useEffect(() => {
-    if (!formData.region_id) return;
-    const ok = modalRegions.some((r) => String(r.id) === String(formData.region_id));
-    if (!ok) setFormData((prev) => ({ ...prev, region_id: '' }));
-  }, [modalRegions, formData.region_id]);
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!formData.title) return alert('Nhập tên Deal');
-    if (!formData.company_id) return alert('Vui lòng chọn công ty');
-    if (!formData.customer_name) return alert('Nhập tên khách hàng');
-    if (!formData.customer_phone) return alert('Nhập số điện thoại khách hàng');
-    if (modalRegions.length > 0 && !formData.region_id) return alert('Chọn khu vực');
-
-    setSaving(true);
-    try {
-      // 1. Create customer
-      const { data: customer } = await api.post('/customers', {
-        full_name: formData.customer_name,
-        phone: formData.customer_phone,
-        email: formData.customer_email || null,
-        address: formData.install_address || null,
-        ...(formData.company_id ? { company_id: formData.company_id } : {}),
-      });
-      const customerId = customer?.id || customer?.customer?.id;
-
-      // 2. Create deal directly
-      await api.post('/crm/deals', {
-        title: formData.title,
-        customer_id: customerId || null,
-        source_id: formData.source_id || null,
-        company_id: formData.company_id || null,
-        region_id: formData.region_id || null,
-        lead_type_id: formData.lead_type_id || null,
-        estimated_value: parseFloat(formData.estimated_value) || 0,
-        probability: parseInt(formData.probability) || 50,
-        install_address: formData.install_address || null,
-        description: formData.description || null,
-      });
-      onSuccess?.();
-      onClose();
-    } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi tạo Deal');
-    }
-    setSaving(false);
-  };
-
-  const set = (field, value) => setFormData(prev => ({ ...prev, [field]: value }));
-
-  const companyName = companies.find((c) => String(c.id) === String(formData.company_id))?.short_name
-    || companies.find((c) => String(c.id) === String(formData.company_id))?.name || '';
-  const regionName = modalRegions.find((r) => String(r.id) === String(formData.region_id))?.name || '';
-  const sourceName = modalSources.find((s) => String(s.id) === String(formData.source_id))?.name || '';
-  const leadTypeName = visibleLeadTypes.find((t) => String(t.id) === String(formData.lead_type_id))?.name || '';
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl flex overflow-hidden max-h-[92vh]">
-
-        {/* ── LEFT: Form ── */}
-        <div className="flex-1 flex flex-col min-w-0 border-r border-gray-100">
-          {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
-            <div>
-              <h2 className="text-lg font-bold text-gray-900">🎯 Tạo Deal mới</h2>
-              <p className="text-xs text-gray-400 mt-0.5">Tạo deal trực tiếp — không cần qua Lead</p>
-            </div>
-            <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg transition cursor-pointer"><X className="h-5 w-5 text-gray-400" /></button>
-          </div>
-
-          {/* Scrollable form */}
-          <div className="flex-1 overflow-y-auto px-6 py-4">
-            <form id="deal-form" onSubmit={handleSubmit} className="space-y-3.5">
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1">Tên Deal <span className="text-red-500">*</span></label>
-                <input type="text" required value={formData.title} onChange={e => set('title', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 focus:border-transparent text-sm"
-                  placeholder="VD: Tủ bếp gỗ sồi nhà anh Minh" autoFocus />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">🏢 Công ty <span className="text-red-500">*</span></label>
-                  {isAdmin ? (
-                    <select value={formData.company_id} onChange={(e) => setFormData((prev) => ({ ...prev, company_id: e.target.value, region_id: '' }))} required
-                      className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-purple-400 text-sm ${!formData.company_id ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}>
-                      <option value="">-- Chọn --</option>
-                      {(companies || []).map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}</option>)}
-                    </select>
-                  ) : (
-                    <div className="px-3 py-2 rounded-lg border border-blue-200 bg-blue-50 text-sm text-blue-800">{companyName || 'Công ty của bạn'}</div>
-                  )}
-                </div>
-                {modalRegions.length > 0 && (
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-700 mb-1">📍 Khu vực <span className="text-red-500">*</span></label>
-                    <select required value={formData.region_id} onChange={(e) => set('region_id', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 text-sm">
-                      <option value="">-- Chọn --</option>
-                      {modalRegions.map((r) => <option key={r.id} value={r.id}>{r.name}{r.division?.short_name ? ` — ${r.division.short_name}` : ''}</option>)}
-                    </select>
-                  </div>
-                )}
-              </div>
-
-              <div className="bg-blue-50 rounded-xl p-3.5 space-y-2.5">
-                <p className="text-[11px] font-bold text-blue-700 uppercase tracking-wide">👤 Thông tin khách hàng</p>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Tên khách hàng <span className="text-red-500">*</span></label>
-                  <input type="text" required value={formData.customer_name} onChange={e => set('customer_name', e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 text-sm bg-white"
-                    placeholder="Nguyễn Văn A" />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Số điện thoại <span className="text-red-500">*</span></label>
-                    <input type="text" required value={formData.customer_phone} onChange={e => set('customer_phone', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 text-sm bg-white"
-                      placeholder="0901234567" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Email</label>
-                    <input type="email" value={formData.customer_email} onChange={e => set('customer_email', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 text-sm bg-white"
-                      placeholder="email@example.com" />
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1">📍 Địa chỉ lắp đặt</label>
-                <input type="text" value={formData.install_address} onChange={e => set('install_address', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 text-sm"
-                  placeholder="Số nhà, đường, quận/huyện, TP..." />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">Nguồn</label>
-                  <select value={formData.source_id} onChange={e => set('source_id', e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 text-sm">
-                    <option value="">-- Nguồn --</option>
-                    {modalSources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
-                </div>
-                {visibleLeadTypes.length > 0 && (
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-700 mb-1">🏷️ Loại Deal</label>
-                    <select value={formData.lead_type_id} onChange={e => set('lead_type_id', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 text-sm">
-                      <option value="">-- Không bắt buộc --</option>
-                      {visibleLeadTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                    </select>
-                  </div>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">Giá trị (VND)</label>
-                  <input type="number" value={formData.estimated_value} onChange={e => set('estimated_value', e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 text-sm" placeholder="0" />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">Xác suất (%)</label>
-                  <input type="number" min="0" max="100" value={formData.probability} onChange={e => set('probability', e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 text-sm" />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1">Ghi chú</label>
-                <textarea value={formData.description} onChange={e => set('description', e.target.value)} rows={2}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 text-sm resize-none"
-                  placeholder="Ghi chú thêm về deal..." />
-              </div>
-            </form>
-          </div>
-
-          {/* Footer buttons */}
-          <div className="px-6 py-4 border-t border-gray-100 flex items-center gap-3 shrink-0 bg-gray-50">
-            {currentUser && (
-              <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                <User className="h-3.5 w-3.5 text-green-600 shrink-0" />
-                <span className="text-xs text-gray-500 truncate">Phụ trách: <span className="font-semibold text-gray-700">{currentUser.full_name || currentUser.email}</span></span>
-              </div>
-            )}
-            <button type="button" onClick={onClose}
-              className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg transition cursor-pointer shrink-0">
-              Hủy
-            </button>
-            <button type="submit" form="deal-form" disabled={saving}
-              className="px-5 py-2 bg-purple-600 text-white rounded-lg text-sm font-semibold hover:bg-purple-700 transition disabled:opacity-50 cursor-pointer shrink-0">
-              {saving ? 'Đang tạo...' : '🎯 Tạo Deal'}
-            </button>
-          </div>
-        </div>
-
-        {/* ── RIGHT: Kanban Card Preview ── */}
-        <div className="w-72 shrink-0 bg-gray-50 flex flex-col">
-          <div className="px-5 py-4 border-b border-gray-100">
-            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Xem trước thẻ Deal</p>
-          </div>
-          <div className="flex-1 px-4 py-5 overflow-y-auto">
-            <div className="bg-white rounded-xl border border-purple-200 shadow-sm p-4 space-y-3">
-              {/* Title */}
-              <div>
-                <p className="text-[10px] font-bold text-purple-500 uppercase tracking-wide mb-1">🎯 Deal</p>
-                <p className="text-sm font-bold text-gray-900 leading-snug min-h-[1.5rem]">
-                  {formData.title || <span className="text-gray-300 italic font-normal">Chưa có tên...</span>}
-                </p>
-              </div>
-
-              {/* Customer */}
-              <div className="flex items-start gap-2 bg-blue-50 rounded-lg px-3 py-2.5">
-                <User className="h-3.5 w-3.5 text-blue-500 mt-0.5 shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold text-gray-800 truncate">
-                    {formData.customer_name || <span className="text-gray-300 italic font-normal">Tên khách hàng</span>}
-                  </p>
-                  {formData.customer_phone && <p className="text-[11px] text-gray-500">{formData.customer_phone}</p>}
-                  {formData.customer_email && <p className="text-[11px] text-gray-400 truncate">{formData.customer_email}</p>}
-                </div>
-              </div>
-
-              {/* Meta info */}
-              <div className="space-y-1.5 text-[11px] text-gray-500">
-                {companyName && (
-                  <div className="flex items-center gap-1.5"><span className="text-gray-400">🏢</span><span className="truncate">{companyName}</span></div>
-                )}
-                {regionName && (
-                  <div className="flex items-center gap-1.5"><span className="text-gray-400">📍</span><span className="truncate">{regionName}</span></div>
-                )}
-                {formData.install_address && (
-                  <div className="flex items-center gap-1.5"><span className="text-gray-400">🏠</span><span className="truncate">{formData.install_address}</span></div>
-                )}
-                {sourceName && (
-                  <div className="flex items-center gap-1.5"><span className="text-gray-400">📣</span><span>{sourceName}</span></div>
-                )}
-                {leadTypeName && (
-                  <div className="flex items-center gap-1.5"><span className="text-gray-400">🏷️</span><span>{leadTypeName}</span></div>
-                )}
-              </div>
-
-              {/* Value & probability */}
-              {(Number(formData.estimated_value) > 0 || formData.probability) && (
-                <div className="flex items-center gap-2 pt-1 border-t border-gray-100">
-                  {Number(formData.estimated_value) > 0 && (
-                    <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
-                      {Number(formData.estimated_value).toLocaleString('vi-VN')}đ
-                    </span>
-                  )}
-                  {formData.probability > 0 && (
-                    <span className="text-xs text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full">{formData.probability}%</span>
-                  )}
-                </div>
-              )}
-
-              {/* Assigned */}
-              {currentUser && (
-                <div className="flex items-center gap-1.5 pt-1 border-t border-gray-100">
-                  <div className="h-5 w-5 rounded-full bg-green-200 flex items-center justify-center text-[9px] font-bold text-green-800 shrink-0">
-                    {(currentUser.full_name || currentUser.email || '?')[0].toUpperCase()}
-                  </div>
-                  <span className="text-[11px] text-gray-500 truncate">{currentUser.full_name || currentUser.email}</span>
-                </div>
-              )}
-            </div>
-
-            {/* Pipeline hint */}
-            <div className="mt-4 rounded-xl border border-dashed border-gray-200 bg-white px-4 py-3 text-center">
-              <p className="text-[10px] text-gray-400">📋 Pipeline mặc định</p>
-              <p className="text-xs font-medium text-gray-600 mt-0.5">Giai đoạn đầu tiên</p>
-            </div>
-          </div>
-        </div>
-
       </div>
     </div>
   );
