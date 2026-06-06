@@ -9,7 +9,7 @@ import {
   workshopCreatedInRange, fetchWorkshopProjectPages,
 } from '../lib/workshopDashboardUtils';
 import {
-  CheckCircle2, Search, X, Calendar,
+  CheckCircle2, Search, X, Calendar, Plus,
   Factory, Users, LayoutGrid, List,
   CheckSquare, UserCheck, Loader2, Truck, Filter, Clock, Layers, Trash2, MessageSquare, Pin, ArrowUpDown,
 } from 'lucide-react';
@@ -22,6 +22,7 @@ import {
 } from '../lib/workshopPipelineStorage';
 import { computeSxRevenueKpis, getSxPipelineStageSlaTone, isSxColumnSlaOverdue } from '../lib/sxPipelineRevenue';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
+import NewDealModal from '../components/NewDealModal';
 import { getCrmDeadlineUrgencyFromIso, getCrmDeadlineUrgencyBadgeClass } from '../lib/crmLeadDeadlineDisplay';
 
 const INTAKE_BUCKET = 'won_pending';
@@ -214,6 +215,7 @@ export default function ProductionDashboard() {
   const [kanbanCommentPosting, setKanbanCommentPosting] = useState(false);
   const [deadlineCtx, setDeadlineCtx] = useState(null);
   const [deadlineBusy, setDeadlineBusy] = useState(false);
+  const [showNewDeal, setShowNewDeal] = useState(false);
   const navigate = useNavigate();
 
   const staffFilter = useWorkshopStaffFilter({
@@ -1022,6 +1024,15 @@ export default function ProductionDashboard() {
           </h1>
         </div>
         <div className="flex items-center gap-2 flex-wrap shrink-0">
+          <button
+            type="button"
+            onClick={() => setShowNewDeal(true)}
+            className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium inline-flex items-center gap-2 cursor-pointer text-sm shrink-0"
+            title="Tạo deal mới và đưa vào cột Chờ vào xưởng"
+          >
+            <Plus className="h-4 w-4" />
+            Tạo deal
+          </button>
           {[
             { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
             { id: 'list', icon: List, label: 'Danh sách' },
@@ -1656,6 +1667,24 @@ export default function ProductionDashboard() {
             </div>
           </div>
         </div>
+      )}
+
+      {showNewDeal && (
+        <NewDealModal
+          variant="production"
+          onClose={() => setShowNewDeal(false)}
+          onSuccess={() => load()}
+          companies={companies}
+          workTypes={workTypes}
+          defaultWorkshopTypeId={filterWorkTypeId && filterWorkTypeId !== 'none' ? filterWorkTypeId : ''}
+          defaultCompanyId={
+            isAdmin
+              ? (filterCompany || dashboardScopeCompanyId || user?.company_id || '')
+              : (dashboardScopeCompanyId || user?.company_id || '')
+          }
+          defaultRegionId={filterRegion && filterRegion !== '__none__' ? filterRegion : ''}
+          currentUser={user}
+        />
       )}
 
       <CrmDeadlineModal
