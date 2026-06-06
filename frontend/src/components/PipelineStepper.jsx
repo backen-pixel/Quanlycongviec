@@ -42,7 +42,7 @@ export default function PipelineStepper({
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-      <div className="flex items-start justify-between overflow-x-auto pb-1">
+      <div className="flex items-start overflow-x-auto pb-2 -mx-1 px-1 gap-0.5 scrollbar-thin">
         {sortedStages.map((s, i) => {
           const isCurrent = String(s.id) === curId;
           const isPast = stageIsPast(s, i);
@@ -51,13 +51,13 @@ export default function PipelineStepper({
             stageIsPast(sortedStages[i + 1], i + 1);
 
           return (
-            <div key={s.id} className="flex items-start flex-1 min-w-0">
-              <div className="flex flex-col items-center flex-shrink-0" style={{ minWidth: 70 }}>
+            <div key={s.id} className="flex items-start shrink-0">
+              <div className="flex flex-col items-center shrink-0 w-[7.5rem] px-1">
                 <button
                   type="button"
                   onClick={() => onMoveToStage?.(s.id)}
                   disabled={!onMoveToStage}
-                  className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold transition-all duration-200 ${
+                  className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold transition-all duration-200 shrink-0 ${
                     onMoveToStage ? 'cursor-pointer' : 'cursor-default'
                   } ${
                     isPast
@@ -72,7 +72,7 @@ export default function PipelineStepper({
                   {isPast ? '✓' : s.icon || i + 1}
                 </button>
                 <p
-                  className={`mt-2 text-xs text-center leading-tight max-w-[80px] ${
+                  className={`mt-2.5 text-[11px] text-center leading-snug w-full break-words hyphens-auto ${
                     isCurrent
                       ? 'font-bold'
                       : isPast
@@ -86,7 +86,7 @@ export default function PipelineStepper({
               </div>
 
               {i < sortedStages.length - 1 && (
-                <div className="flex-1 flex items-center pt-5 px-1 min-w-[12px]">
+                <div className="flex items-center pt-5 w-10 shrink-0 px-1">
                   <div
                     className={`w-full h-0.5 ${connectorPast ? 'bg-emerald-400' : 'bg-gray-200'}`}
                   />

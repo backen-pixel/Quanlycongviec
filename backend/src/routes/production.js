@@ -46,6 +46,8 @@ const {
   markPipelineWorkshopTypeJoinMissing,
   isPipelineKpiSlaMissingError,
   markPipelineKpiSlaColumnMissing,
+  isPipelineCollectedRevenueMissingError,
+  markPipelineCollectedRevenueColumnMissing,
   isPipelineRequiresDeadlineMissingError,
   markPipelineRequiresDeadlineColumnMissing,
   stripHandoverFields,
@@ -543,6 +545,17 @@ r.post('/pipeline-stages', requirePermission('projects', 'edit'), async (req, re
       data = r2.data;
       error = r2.error;
     }
+    if (error && isPipelineCollectedRevenueMissingError(error)) {
+      markPipelineCollectedRevenueColumnMissing();
+      ins = stripHandoverFields({ ...insertPayload });
+      const rCol = await supabase
+        .from('production_pipeline_stages')
+        .insert(ins)
+        .select(buildPipelineStageSelect())
+        .single();
+      data = rCol.data;
+      error = rCol.error;
+    }
     if (error && isPipelineKpiSlaMissingError(error)) {
       markPipelineKpiSlaColumnMissing();
       ins = stripHandoverFields({ ...insertPayload });
@@ -698,6 +711,18 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
         .single();
       data = r2.data;
       error = r2.error;
+    }
+    if (error && isPipelineCollectedRevenueMissingError(error)) {
+      markPipelineCollectedRevenueColumnMissing();
+      u = stripHandoverFields({ ...update });
+      const rCol = await supabase
+        .from('production_pipeline_stages')
+        .update(u)
+        .eq('id', req.params.id)
+        .select(buildPipelineStageSelect())
+        .single();
+      data = rCol.data;
+      error = rCol.error;
     }
     if (error && isPipelineKpiSlaMissingError(error)) {
       markPipelineKpiSlaColumnMissing();
@@ -1107,6 +1132,8 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
       completed_revenue_value: revenueKpis.completed_revenue_value,
       collected_revenue_value: revenueKpis.collected_revenue_value,
       debt_revenue_value: revenueKpis.debt_revenue_value,
+      debt_count: revenueKpis.debt_count,
+      collected_count: revenueKpis.collected_count,
       weighted_pipeline_value: revenueKpis.weighted_pipeline_value,
     };
 

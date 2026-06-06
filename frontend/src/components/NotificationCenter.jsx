@@ -599,6 +599,11 @@ export default function NotificationCenter({ socket }) {
           notification={toastNotification}
           onDismiss={() => setToastNotification(null)}
           onNavigate={(notif) => {
+            if (notif.metadata?.nav_url) {
+              navigate(notif.metadata.nav_url);
+              setOpen(false);
+              return;
+            }
             const pid = notif.metadata?.project_id || (notif.entity_type === 'project' ? notif.entity_id : null);
             const navTab = notif.metadata?.nav_tab;
             if (pid) {
@@ -984,8 +989,13 @@ export default function NotificationCenter({ socket }) {
                         setOpen(false);
                         return;
                       }
-                      // Smart navigation based on entity type
-                      const pid = n.metadata?.project_id || (n.entity_type === 'project' ? n.entity_id : null);
+                    if (n.metadata?.nav_url) {
+                      navigate(n.metadata.nav_url);
+                      setOpen(false);
+                      return;
+                    }
+                    // Smart navigation based on entity type
+                    const pid = n.metadata?.project_id || (n.entity_type === 'project' ? n.entity_id : null);
                       const navTab = n.metadata?.nav_tab;
                       if (pid) {
                         navigate(navTab ? `/projects/${pid}?tab=${navTab}` : `/projects/${pid}`);

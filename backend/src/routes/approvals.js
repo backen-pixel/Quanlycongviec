@@ -4,6 +4,10 @@ const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 
 const { isExpiryDeadlineNotificationType } = require('../helpers/notificationOperationalFilter');
+const {
+  normalizeApprovalRequestSource,
+  notifyCrossModuleApprovalRequest,
+} = require('../helpers/approvalCrossModuleNotify');
 
 const r = Router();
 r.use(auth);
@@ -27,6 +31,58 @@ async function notifyMultiple(req, userIds, type, title, message, entityType, en
 
 async function logActivity(userId, action, entityType, entityId, description, oldValues, newValues) {
   await supabase.from('activity_logs').insert({ user_id: userId, action, entity_type: entityType, entity_id: entityId, description, old_values: oldValues, new_values: newValues });
+}
+
+/** Map project.status → workflow_stages.slug (dự án xưởng thường không có current_stage_id). */
+const PROJECT_STATUS_TO_STAGE_SLUG = {
+  consulting: 'consulting',
+  designing: 'design',
+  quoting: 'quotation',
+  contract_signed: 'contract',
+  producing: 'production',
+  shipping: 'delivery',
+  installing: 'delivery',
+  warranty: 'customer-care',
+  completed: 'customer-care',
+};
+
+async function workflowStageIdBySlug(slug) {
+  if (!slug) return null;
+  const { data } = await supabase.from('workflow_stages').select('id').eq('slug', slug).maybeSingle();
+  return data?.id || null;
+}
+
+/**
+ * Giai đoạn duyệt: ưu tiên current_stage_id; dự án SX thường null → suy từ status / cột pipeline deal.
+ */
+async function resolveApprovalStageIdForProject(project, bodyStageId = null) {
+  if (bodyStageId) return bodyStageId;
+  if (project?.current_stage_id) return project.current_stage_id;
+
+  const fromStatus = await workflowStageIdBySlug(PROJECT_STATUS_TO_STAGE_SLUG[project?.status]);
+  if (fromStatus) return fromStatus;
+
+  if (project?.id) {
+    const { data: deal } = await supabase
+      .from('crm_leads')
+      .select('sx_pipeline_stage_id')
+      .eq('project_id', project.id)
+      .eq('type', 'deal')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (deal?.sx_pipeline_stage_id) {
+      const { data: pipeCol } = await supabase
+        .from('production_pipeline_stages')
+        .select('workflow_stage_id')
+        .eq('id', deal.sx_pipeline_stage_id)
+        .maybeSingle();
+      if (pipeCol?.workflow_stage_id) return pipeCol.workflow_stage_id;
+    }
+  }
+
+  return workflowStageIdBySlug('production');
 }
 
 // ═══ ADVANCE PROJECT STAGE HELPER ═══
@@ -310,6 +366,7 @@ r.post('/project/:projectId/request', async (req, res) => {
   try {
     const { notes, attachments, next_stage_slug, next_status } = req.body;
     const projectId = req.params.projectId;
+    const requestSource = normalizeApprovalRequestSource(req.body);
 
     // Get project info
     const { data: proj } = await supabase.from('projects')
@@ -317,25 +374,32 @@ r.post('/project/:projectId/request', async (req, res) => {
       .eq('id', projectId).single();
     if (!proj) return res.status(404).json({ error: 'Dự án không tồn tại' });
 
+    const stageId = await resolveApprovalStageIdForProject(proj, req.body?.stage_id || null);
+    if (!stageId) {
+      return res.status(400).json({
+        error: 'Không xác định được giai đoạn workflow cho dự án. Kiểm tra trạng thái dự án hoặc cột pipeline SX.',
+      });
+    }
+
     // Check if there's already a pending approval for this stage
     const { data: existingPending } = await supabase.from('project_approvals')
-      .select('id').eq('project_id', projectId).eq('stage_id', proj.current_stage_id).eq('status', 'pending').limit(1);
+      .select('id').eq('project_id', projectId).eq('stage_id', stageId).eq('status', 'pending').limit(1);
     if (existingPending?.length) {
       return res.status(400).json({ error: 'Đã có yêu cầu duyệt đang chờ cho giai đoạn này' });
     }
 
     // Check approval rule for current stage
     const { data: rule } = await supabase.from('approval_rules')
-      .select('*').eq('stage_id', proj.current_stage_id).single();
+      .select('*').eq('stage_id', stageId).single();
 
     // If auto-approval, check conditions
     if (rule?.approval_mode === 'auto') {
-      const autoResult = await checkAutoApproval(projectId, proj.current_stage_id, rule.auto_condition);
+      const autoResult = await checkAutoApproval(projectId, stageId, rule.auto_condition);
       if (autoResult.approved) {
         // Create auto-approved record
         const { data: approval, error } = await supabase.from('project_approvals').insert({
           project_id: projectId,
-          stage_id: proj.current_stage_id,
+          stage_id: stageId,
           requested_by: req.user.userId,
           status: 'auto_approved',
           notes: notes || null,
@@ -356,7 +420,7 @@ r.post('/project/:projectId/request', async (req, res) => {
 
         // ═══ THÔNG BÁO: TỰ ĐỘNG DUYỆT ═══
         const { data: curStageAuto } = await supabase.from('workflow_stages')
-          .select('name').eq('id', proj.current_stage_id).single();
+          .select('name').eq('id', stageId).single();
 
         // Notify requester
         await supabase.from('notifications').insert({
@@ -390,6 +454,27 @@ r.post('/project/:projectId/request', async (req, res) => {
           if (pushFn && nData) pushFn(uid, nData);
         }
 
+        try {
+          await notifyCrossModuleApprovalRequest(req, {
+            projectId,
+            projectCode: proj.code,
+            requesterName: req.user.fullName,
+            stageName: curStageAuto?.name,
+            notes,
+            approvalMeta: {
+              approval_id: approval.id,
+              project_id: projectId,
+              nav_tab: 'approvals',
+              type: 'approval_auto',
+              stage_name: curStageAuto?.name,
+            },
+            requestSource,
+            excludeUserIds: [...notifyIdsAuto, req.user.userId],
+          });
+        } catch (crossErr) {
+          console.warn('[approvals] cross-module auto notify:', crossErr.message);
+        }
+
         // ═══ TỰ ĐỘNG CHUYỂN GIAI ĐOẠN KHI AUTO-APPROVED ═══
         if (next_stage_slug && next_status) {
           await advanceProjectStage(req, projectId, next_stage_slug, next_status, notes, attachments);
@@ -402,7 +487,7 @@ r.post('/project/:projectId/request', async (req, res) => {
     // Manual approval — create pending record
     const { data: approval, error } = await supabase.from('project_approvals').insert({
       project_id: projectId,
-      stage_id: proj.current_stage_id,
+      stage_id: stageId,
       requested_by: req.user.userId,
       status: 'pending',
       notes: notes || null,
@@ -419,16 +504,20 @@ r.post('/project/:projectId/request', async (req, res) => {
     // ═══ THÔNG BÁO: CHỜ DUYỆT ═══
     const approverId = proj.project_manager_id || proj.sales_person_id;
     const { data: curStage } = await supabase.from('workflow_stages')
-      .select('name').eq('id', proj.current_stage_id).single();
+      .select('name').eq('id', stageId).single();
 
     const approvalMeta = {
       approval_id: approval.id, project_id: projectId, nav_tab: 'approvals',
       type: 'approval_request', stage_name: curStage?.name,
       notes: notes || null, attachments: attachments || [],
+      request_source: requestSource,
     };
+
+    const excludeCrossNotify = new Set([req.user.userId]);
 
     // Notify project manager
     if (approverId && approverId !== req.user.userId) {
+      excludeCrossNotify.add(approverId);
       const { data: nData } = await supabase.from('notifications').insert({
         user_id: approverId, type: 'approval_request',
         title: `🔍 Chờ duyệt: ${proj.code}`,
@@ -445,6 +534,7 @@ r.post('/project/:projectId/request', async (req, res) => {
     if (admins?.length) {
       const adminIds = admins.map(a => a.id).filter(id => id && id !== approverId && id !== req.user.userId);
       for (const uid of adminIds) {
+        excludeCrossNotify.add(uid);
         const { data: nData } = await supabase.from('notifications').insert({
           user_id: uid, type: 'approval_request',
           title: `🔍 Chờ duyệt: ${proj.code}`,
@@ -462,8 +552,32 @@ r.post('/project/:projectId/request', async (req, res) => {
       title: `📤 Đã gửi yêu cầu duyệt: ${proj.code}`,
       message: `Yêu cầu duyệt GĐ "${curStage?.name}" đã được gửi. Chờ quản lý phê duyệt.`,
       entity_type: 'project', entity_id: projectId,
-      metadata: { approval_id: approval.id, project_id: projectId, nav_tab: 'approvals', type: 'approval_sent' },
+      metadata: {
+        approval_id: approval.id,
+        project_id: projectId,
+        nav_tab: 'approvals',
+        type: 'approval_sent',
+        request_source: requestSource,
+        nav_url: requestSource === 'production' || requestSource === 'logistics'
+          ? `/sx/projects/${projectId}?tab=approvals`
+          : undefined,
+      },
     });
+
+    try {
+      await notifyCrossModuleApprovalRequest(req, {
+        projectId,
+        projectCode: proj.code,
+        requesterName: req.user.fullName,
+        stageName: curStage?.name,
+        notes,
+        approvalMeta,
+        requestSource,
+        excludeUserIds: [...excludeCrossNotify],
+      });
+    } catch (crossErr) {
+      console.warn('[approvals] cross-module notify:', crossErr.message);
+    }
 
     await logActivity(req.user.userId, 'approval_requested', 'project', projectId,
       `Yêu cầu duyệt giai đoạn "${curStage?.name}"`);
@@ -604,7 +718,8 @@ r.post('/:approvalId/decide', async (req, res) => {
 // POST re-request approval (after rejection)
 r.post('/:approvalId/re-request', async (req, res) => {
   try {
-    const { notes, attachments } = req.body;
+    const { notes, attachments, request_source, source_module } = req.body;
+    const requestSource = normalizeApprovalRequestSource({ request_source, source_module });
 
     // Get original approval
     const { data: old } = await supabase.from('project_approvals')
@@ -639,11 +754,15 @@ r.post('/:approvalId/re-request', async (req, res) => {
     const reRequestMeta = {
       approval_id: approval.id, project_id: old.project_id,
       nav_tab: 'approvals', type: 'approval_re_request', stage_name: approval.stage?.name,
+      request_source: requestSource,
     };
+
+    const excludeCrossNotify = new Set([req.user.userId]);
 
     // Notify project manager
     const approverId = proj?.project_manager_id || proj?.sales_person_id;
     if (approverId && approverId !== req.user.userId) {
+      excludeCrossNotify.add(approverId);
       const { data: nData } = await supabase.from('notifications').insert({
         user_id: approverId, type: 'approval_request',
         title: `🔄 Gửi lại yêu cầu: ${proj?.code}`,
@@ -660,6 +779,7 @@ r.post('/:approvalId/re-request', async (req, res) => {
     if (adminsRe?.length) {
       for (const a of adminsRe) {
         if (a.id === approverId || a.id === req.user.userId) continue;
+        excludeCrossNotify.add(a.id);
         const { data: nData } = await supabase.from('notifications').insert({
           user_id: a.id, type: 'approval_request',
           title: `🔄 Gửi lại yêu cầu: ${proj?.code}`,
@@ -669,6 +789,21 @@ r.post('/:approvalId/re-request', async (req, res) => {
         const pushFn = req.app.get('pushNotification');
         if (pushFn && nData) pushFn(a.id, nData);
       }
+    }
+
+    try {
+      await notifyCrossModuleApprovalRequest(req, {
+        projectId: old.project_id,
+        projectCode: proj?.code,
+        requesterName: req.user.fullName,
+        stageName: approval.stage?.name,
+        notes: notes || old.notes,
+        approvalMeta: reRequestMeta,
+        requestSource,
+        excludeUserIds: [...excludeCrossNotify],
+      });
+    } catch (crossErr) {
+      console.warn('[approvals] cross-module re-request notify:', crossErr.message);
     }
 
     res.json({ approval });
@@ -775,13 +910,16 @@ async function checkAutoApproval(projectId, stageId, conditionInput) {
 r.get('/check-auto/:projectId', async (req, res) => {
   try {
     const { data: proj } = await supabase.from('projects')
-      .select('id,current_stage_id').eq('id', req.params.projectId).single();
+      .select('id,current_stage_id,status').eq('id', req.params.projectId).single();
     if (!proj) return res.status(404).json({ error: 'Dự án không tồn tại' });
 
-    const { data: rule } = await supabase.from('approval_rules')
-      .select('*').eq('stage_id', proj.current_stage_id).single();
+    const stageId = await resolveApprovalStageIdForProject(proj);
+    if (!stageId) return res.json({ mode: 'manual', auto_check: null, stage_id: null });
 
-    if (!rule) return res.json({ mode: 'manual', auto_check: null });
+    const { data: rule } = await supabase.from('approval_rules')
+      .select('*').eq('stage_id', stageId).single();
+
+    if (!rule) return res.json({ mode: 'manual', auto_check: null, stage_id: stageId });
 
     // Parse conditions
     let conditions = [];
@@ -789,11 +927,11 @@ r.get('/check-auto/:projectId', async (req, res) => {
     if (!Array.isArray(conditions)) conditions = [conditions];
 
     if (rule.approval_mode === 'auto') {
-      const result = await checkAutoApproval(req.params.projectId, proj.current_stage_id, conditions);
-      return res.json({ mode: 'auto', rule: { ...rule, auto_conditions: conditions }, auto_check: result });
+      const result = await checkAutoApproval(req.params.projectId, stageId, conditions);
+      return res.json({ mode: 'auto', rule: { ...rule, auto_conditions: conditions }, auto_check: result, stage_id: stageId });
     }
 
-    res.json({ mode: rule.approval_mode, rule: { ...rule, auto_conditions: conditions }, auto_check: null });
+    res.json({ mode: rule.approval_mode, rule: { ...rule, auto_conditions: conditions }, auto_check: null, stage_id: stageId });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

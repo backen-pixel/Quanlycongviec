@@ -71,25 +71,34 @@ export function FileUploadButton({ onFilesUploaded, multiple = true, compact = f
   );
 }
 
-export function FilePreview({ files, onRemove, small = false }) {
+export function FilePreview({ files, onRemove, small = false, large = false }) {
   if (!files?.length) return null;
 
+  const imgClass = large
+    ? 'w-full max-w-sm h-44 object-contain bg-gray-50 border rounded-xl'
+    : small
+      ? 'w-12 h-12 rounded-lg object-cover'
+      : 'w-20 h-20 rounded-lg object-cover';
+
   return (
-    <div className={`flex flex-wrap gap-2 ${small ? 'mt-1' : 'mt-2'}`}>
+    <div className={`flex flex-wrap gap-3 ${small ? 'mt-1' : 'mt-2'} ${large ? 'w-full' : ''}`}>
       {files.map((f, i) => {
         const Icon = getFileIcon(f.mime_type);
         const isImage = f.mime_type?.startsWith('image/');
         return (
-          <div key={i} className={`relative group ${small ? '' : 'bg-gray-50 rounded-lg border p-2'}`}>
+          <div key={i} className={`relative group ${large ? 'w-full max-w-sm' : small ? '' : 'bg-gray-50 rounded-lg border p-2'}`}>
             {isImage ? (
-              <a href={f.file_url} target="_blank" rel="noopener noreferrer">
-                <img src={f.file_url} alt={f.file_name} className={`rounded-lg object-cover ${small ? 'w-12 h-12' : 'w-20 h-20'}`} />
+              <a href={f.file_url} target="_blank" rel="noopener noreferrer" className={large ? 'block' : undefined}>
+                <img src={f.file_url} alt={f.file_name} className={imgClass} />
+                {large && (
+                  <p className="text-xs text-gray-600 mt-1.5 truncate px-1">{f.file_name}</p>
+                )}
               </a>
             ) : (
               <a href={f.file_url} target="_blank" rel="noopener noreferrer"
-                className="flex items-center gap-2 text-xs text-blue-600 hover:underline">
-                <Icon className="h-4 w-4 shrink-0" />
-                <span className="truncate max-w-[120px]">{f.file_name}</span>
+                className={`flex items-center gap-2 text-blue-600 hover:underline ${large ? 'p-3 bg-gray-50 rounded-xl border text-sm' : 'text-xs'}`}>
+                <Icon className={`shrink-0 ${large ? 'h-6 w-6' : 'h-4 w-4'}`} />
+                <span className={`truncate ${large ? 'max-w-none flex-1 font-medium' : 'max-w-[120px]'}`}>{f.file_name}</span>
                 {!small && <span className="text-gray-400">{formatSize(f.file_size)}</span>}
               </a>
             )}
