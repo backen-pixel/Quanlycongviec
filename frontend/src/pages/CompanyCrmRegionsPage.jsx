@@ -1,16 +1,20 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import Modal from '../components/Modal';
 import { isCrmSystemAdmin, isCrmCompanyAdmin } from '../lib/crmAdminScope';
-import { MapPin, Plus, Pencil, Building2, RefreshCw, ExternalLink } from 'lucide-react';
+import { MapPin, Plus, Pencil, Building2, RefreshCw, ExternalLink, ArrowLeft } from 'lucide-react';
 
 /**
  * Quản lý khu vực CRM theo công ty — CRUD qua /api/crm/company-regions.
  * Admin hệ thống: chọn công ty. Admin công ty: khóa một công ty.
+ * @param {'crm'|'production'} [forModule] — lọc danh sách công ty theo module
+ * @param {string} [backLink] — link quay lại (vd. /sx/dashboard)
  */
-export default function CompanyCrmRegionsPage() {
+export default function CompanyCrmRegionsPage({ forModule = 'crm', backLink = '' }) {
+  const isProductionModule = forModule === 'production';
   const { user } = useAuth();
   const systemAdmin = isCrmSystemAdmin(user);
   const companyAdmin = isCrmCompanyAdmin(user);
@@ -37,13 +41,13 @@ export default function CompanyCrmRegionsPage() {
   const loadCompanies = useCallback(() => {
     if (!systemAdmin) return;
     api
-      .get('/companies', { params: { for_module: 'crm' } })
+      .get('/companies', { params: { for_module: isProductionModule ? 'production' : 'crm' } })
       .then((r) => {
         const list = r.data?.companies || r.data || [];
         setCompanies(Array.isArray(list) ? list : []);
       })
       .catch(() => setCompanies([]));
-  }, [systemAdmin]);
+  }, [systemAdmin, isProductionModule]);
 
   const loadDivisions = useCallback(() => {
     api
@@ -60,14 +64,20 @@ export default function CompanyCrmRegionsPage() {
     }
     setLoading(true);
     api
-      .get('/crm/company-regions', { params: { company_id: effectiveCompanyId, division_unit_id: filterDivision || undefined } })
+      .get('/crm/company-regions', {
+        params: {
+          company_id: effectiveCompanyId,
+          division_unit_id: filterDivision || undefined,
+          for_module: isProductionModule ? 'production' : 'crm',
+        },
+      })
       .then((r) => {
         const list = Array.isArray(r.data) ? r.data : [];
         setRegions(list);
       })
       .catch(() => setRegions([]))
       .finally(() => setLoading(false));
-  }, [effectiveCompanyId, filterDivision]);
+  }, [effectiveCompanyId, filterDivision, isProductionModule]);
 
   useEffect(() => {
     loadCompanies();
@@ -193,12 +203,25 @@ export default function CompanyCrmRegionsPage() {
 
   return (
     <div className="space-y-5 max-w-4xl">
+      {backLink && (
+        <Link
+          to={backLink}
+          className="inline-flex items-center gap-1.5 text-sm text-gray-600 hover:text-teal-700"
+        >
+          <ArrowLeft className="h-4 w-4" /> Quay lại
+        </Link>
+      )}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <MapPin className="h-7 w-7 text-blue-600" />
-            Quản lý khu vực
+            <MapPin className={`h-7 w-7 ${isProductionModule ? 'text-teal-600' : 'text-blue-600'}`} />
+            {isProductionModule ? 'Khu vực Sản xuất' : 'Quản lý khu vực'}
           </h1>
+          <p className="text-sm text-gray-500 mt-1">
+            {isProductionModule
+              ? 'Khu vực gắn trên deal CRM — dùng lọc Kanban SX và hiển thị trên thẻ dự án.'
+              : 'Khu vực theo công ty — gắn lead/deal CRM và phân quyền nhân viên.'}
+          </p>
         </div>
         <button
           type="button"
