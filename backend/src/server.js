@@ -74,7 +74,23 @@ const UPLOAD_BODY_LIMIT = '256mb';
 const STANDARD_BODY_LIMIT = '2mb';
 const largeBodyRoutes = ['/api/upload', '/api/voice-recordings', '/api/external', '/api/messenger'];
 
+/** Zalo OA webhook — giữ rawBody để verify X-ZEvent-Signature */
+app.use('/api/zalo/webhook', express.raw({ type: '*/*', limit: '1mb' }), (req, res, next) => {
+  if (req.method === 'POST' && Buffer.isBuffer(req.body)) {
+    req.rawBody = req.body.toString('utf8');
+    try {
+      req.body = JSON.parse(req.rawBody);
+    } catch {
+      req.body = {};
+    }
+  }
+  next();
+});
+
 app.use((req, res, next) => {
+  if (req.path === '/api/zalo/webhook' && req.method === 'POST' && req.rawBody != null) {
+    return next();
+  }
   const isLarge = largeBodyRoutes.some((p) => req.path.startsWith(p));
   const limit = isLarge ? UPLOAD_BODY_LIMIT : STANDARD_BODY_LIMIT;
   express.json({ limit })(req, res, (err) => {
@@ -214,6 +230,9 @@ app.use('/api/knowledge', require('./routes/knowledge'));
 const facebookRouter = require('./routes/facebook');
 facebookRouter._ioRef = io;
 app.use('/api/facebook', facebookRouter);
+const zaloRouter = require('./routes/zalo');
+zaloRouter._ioRef = io;
+app.use('/api/zalo', zaloRouter);
 // Inject io reference for realtime fb_message events
 app.use('/api/production', require('./routes/production'));
 app.use('/api/logistics', require('./routes/logistics'));

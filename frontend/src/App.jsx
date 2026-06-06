@@ -85,6 +85,7 @@ const ProductionApprovalsPage = lazyWithRetry(() => import('./pages/ProductionAp
 const ProductionPipelineSettingsPage = lazyWithRetry(() => import('./pages/ProductionPipelineSettingsPage'));
 const WorkshopTaskTemplatesPage = lazyWithRetry(() => import('./pages/WorkshopTaskTemplatesPage'));
 const ProductionHandoverSettingsPage = lazyWithRetry(() => import('./pages/ProductionHandoverSettingsPage'));
+const ProductionRegionsPage = lazyWithRetry(() => import('./pages/ProductionRegionsPage'));
 const LogisticsDashboard = lazyWithRetry(() => import('./pages/LogisticsDashboard'));
 const LogisticsDetail = lazyWithRetry(() => import('./pages/LogisticsDetail'));
 const LogisticsTaskTemplatesPage = lazyWithRetry(() => import('./pages/LogisticsTaskTemplatesPage'));
@@ -104,6 +105,7 @@ const SocialProfilePage = lazyWithRetry(() => import('./pages/SocialProfilePage'
 const ReleaseNotesPage = lazyWithRetry(() => import('./pages/ReleaseNotesPage'));
 const FacebookPage = lazyWithRetry(() => import('./pages/FacebookPage'));
 const FacebookLinkPhoneCleanupPage = lazyWithRetry(() => import('./pages/FacebookLinkPhoneCleanupPage'));
+const ZaloPage = lazyWithRetry(() => import('./pages/ZaloPage'));
 const CrmBlockedPhonesPage = lazyWithRetry(() => import('./pages/CrmBlockedPhonesPage'));
 const LeadDetail = lazyWithRetry(() => import('./pages/LeadDetail'));
 const CRMReports = lazyWithRetry(() => import('./pages/CRMReports'));
@@ -384,6 +386,7 @@ export default function App() {
             <Route path="/crm/deadline-settings" element={<RequireExecutive><CrmDeadlineSettingsPage /></RequireExecutive>} />
             <Route path="/crm/facebook" element={<RequireCrmElevated><FacebookPage /></RequireCrmElevated>} />
             <Route path="/crm/facebook/link-phone-cleanup" element={<RequireCrmElevated><FacebookLinkPhoneCleanupPage /></RequireCrmElevated>} />
+            <Route path="/crm/zalo" element={<RequireCrmElevated><ZaloPage /></RequireCrmElevated>} />
             <Route path="/crm/blocked-phones" element={<RequireCrmElevated><CrmBlockedPhonesPage /></RequireCrmElevated>} />
             <Route path="/crm/pipeline-settings" element={<RequireCrmElevated><PipelineSettingsPage /></RequireCrmElevated>} />
             <Route path="/crm/sources-settings" element={<RequireCrmElevated><CRMSourcesSettingsPage /></RequireCrmElevated>} />
@@ -414,6 +417,7 @@ export default function App() {
               <Route path="pipeline-settings" element={<ProductionPipelineSettingsPage />} />
               <Route path="task-templates" element={<WorkshopTaskTemplatesPage fixedArea="production" />} />
               <Route path="handover-settings" element={<ProductionHandoverSettingsPage />} />
+              <Route path="regions" element={<ProductionRegionsPage />} />
               <Route path="trash" element={<Navigate to="/admin/trash?tab=sx" replace />} />
               <Route path="projects/:id" element={<ProductionDetail />} />
             </Route>
