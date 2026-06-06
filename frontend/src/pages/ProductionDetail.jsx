@@ -28,6 +28,11 @@ import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
 import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
 import PipelineStepper from '../components/PipelineStepper';
 import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
+import {
+  buildCrmStageSlugLabelMapFromTasks,
+  resolveCrmPipelineStageLabel,
+} from '../lib/crmStageSlugLabels';
+import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
 
 /** Cùng tên tab với LeadDetail (chi tiết deal) — bỏ facebook và calls */
 const DEAL_TAB_KEYS = new Set(['tasks', 'documents', 'activities', 'notes', 'team', 'chat', 'approvals', 'incidents']);
@@ -428,6 +433,39 @@ function isCrmDocFromTask(doc) {
   return !!(doc?.source_attachment_id || doc?.source_crm_task_id || doc?.is_from_task);
 }
 
+/** lead_documents.name thường lưu `[Tên nhiệm vụ] tên file` — bóc prefix khi đã hiện tên NV ở nhóm cha. */
+function stripLeadDocumentTaskPrefix(raw) {
+  if (raw == null) return '';
+  const s = String(raw).trim();
+  if (!s) return '';
+  const bracket = s.match(/^\[([^\]]+)\]\s*(.*)$/s);
+  if (bracket) {
+    const rest = (bracket[2] || '').trim();
+    if (rest.startsWith('📝')) {
+      const noteBody = rest.replace(/^📝\s*(Ghi chú:?\s*)?/i, '').trim();
+      return noteBody || 'Ghi chú';
+    }
+    return rest || bracket[1];
+  }
+  if (s.startsWith('📝 Ghi chú:')) return s.replace(/^📝 Ghi chú:\s*/, '').trim() || 'Ghi chú';
+  return s;
+}
+
+function resolveCrmDocDisplayTitle(doc, { preferFileName = false } = {}) {
+  const fileName = doc.file_name || doc.file_path?.split('/').pop() || '';
+  const isNote = doc.doc_type === 'task_inline_note' || doc.doc_type === 'task_note'
+    || (!doc.file_url && !!doc.notes);
+  if (isNote) return stripLeadDocumentTaskPrefix(doc.name) || 'Ghi chú';
+  if (isCrmDocFromTask(doc)) {
+    if (preferFileName && fileName) return fileName;
+    const stripped = stripLeadDocumentTaskPrefix(doc.name);
+    if (fileName && stripped !== doc.name) return fileName;
+    if (stripped && stripped !== doc.name) return stripped;
+    return fileName || stripped || doc.name || 'Tài liệu';
+  }
+  return doc.name || fileName || 'Tài liệu';
+}
+
 function resolveDocStageSlug(doc, taskMetaMap) {
   if (doc.crm_stage_slug) return doc.crm_stage_slug;
   const taskId = doc.source_crm_task_id;
@@ -444,17 +482,28 @@ function resolveDocTaskKey(doc) {
 function resolveDocTaskTitle(doc, taskMetaMap) {
   const taskId = doc.source_crm_task_id;
   if (taskId && taskMetaMap?.[taskId]?.title) return taskMetaMap[taskId].title;
-  return doc.crm_stage_group_label || doc.name || 'Nhiệm vụ';
+  const bracket = String(doc.name || '').match(/^\[([^\]]+)\]/);
+  if (bracket) return bracket[1];
+  return 'Nhiệm vụ';
 }
 
-function stageSortIndex(slug) {
+function stageSortIndex(slug, stageSlugLabelMap = {}, taskMetaMap = {}) {
   if (!slug || slug === '_other') return 9999;
   const idx = CRM_STAGE_ORDER.indexOf(slug);
-  return idx >= 0 ? idx : 9998;
+  if (idx >= 0) return idx;
+  const label = resolveCrmPipelineStageLabel(slug, {
+    slugLabelMap: stageSlugLabelMap,
+    taskMetaMap,
+    staticLabels: CRM_STAGE_LABELS,
+  });
+  const fromTask = Object.values(taskMetaMap || {}).find((m) => m.stage_slug === slug);
+  const orderFromTask = fromTask?.stage_order_index;
+  if (Number.isFinite(orderFromTask)) return 1000 + orderFromTask;
+  return 9998;
 }
 
 /** Nhóm tài liệu CRM: giai đoạn → nhiệm vụ → từng file một dòng (đúng thứ tự pipeline). */
-function buildCrmSharedDocSections(docs, taskMetaMap) {
+function buildCrmSharedDocSections(docs, taskMetaMap, stageSlugLabelMap = {}) {
   const fromTask = [];
   const manual = [];
   for (const doc of docs) {
@@ -482,7 +531,8 @@ function buildCrmSharedDocSections(docs, taskMetaMap) {
   }
 
   const taskSections = [...stageBuckets.entries()]
-    .sort(([a], [b]) => stageSortIndex(a) - stageSortIndex(b) || String(a).localeCompare(String(b)))
+    .sort(([a], [b]) => stageSortIndex(a, stageSlugLabelMap, taskMetaMap) - stageSortIndex(b, stageSlugLabelMap, taskMetaMap)
+      || String(a).localeCompare(String(b)))
     .map(([stageSlug, taskMap]) => {
       const tasks = [...taskMap.values()]
         .sort((a, b) => a.taskOrder - b.taskOrder || a.taskTitle.localeCompare(b.taskTitle, 'vi'))
@@ -492,8 +542,11 @@ function buildCrmSharedDocSections(docs, taskMetaMap) {
             (a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0),
           ),
         }));
-      const stageLabel = CRM_STAGE_LABELS[stageSlug]
-        || (stageSlug === '_other' ? '📋 Khác' : docStageFallbackLabel(stageSlug));
+      const stageLabel = resolveCrmPipelineStageLabel(stageSlug, {
+        slugLabelMap: stageSlugLabelMap,
+        taskMetaMap,
+        staticLabels: CRM_STAGE_LABELS,
+      });
       return { stageSlug, stageLabel, tasks, fileCount: tasks.reduce((n, t) => n + t.docs.length, 0) };
     });
 
@@ -502,18 +555,13 @@ function buildCrmSharedDocSections(docs, taskMetaMap) {
   return { taskSections, manualDocs: manual };
 }
 
-function docStageFallbackLabel(slug) {
-  if (String(slug).startsWith('sx_')) {
-    return `🏭 ${slug.replace(/^sx_/, '').replace(/_/g, ' ')}`;
-  }
-  return String(slug).replace(/_/g, ' ');
-}
-
 /** Khối tài liệu CRM — mỗi file một dòng, nhóm theo giai đoạn → nhiệm vụ */
-function CrmSharedDocumentsPanel({ docs, workshopModule, crmLeadId, dealLabel, onVisibilitySaved, taskMetaMap = {} }) {
+function CrmSharedDocumentsPanel({
+  docs, workshopModule, crmLeadId, dealLabel, onVisibilitySaved, taskMetaMap = {}, stageSlugLabelMap = {},
+}) {
   const { taskSections, manualDocs } = useMemo(
-    () => buildCrmSharedDocSections(docs, taskMetaMap),
-    [docs, taskMetaMap],
+    () => buildCrmSharedDocSections(docs, taskMetaMap, stageSlugLabelMap),
+    [docs, taskMetaMap, stageSlugLabelMap],
   );
 
   if (!docs.length) return null;
@@ -565,6 +613,8 @@ function CrmSharedDocumentsPanel({ docs, workshopModule, crmLeadId, dealLabel, o
                               nested
                               workshopModule={workshopModule}
                               onVisibilitySaved={onVisibilitySaved}
+                              stageSlugLabelMap={stageSlugLabelMap}
+                              taskMetaMap={taskMetaMap}
                             />
                           </div>
                         ))}
@@ -590,6 +640,8 @@ function CrmSharedDocumentsPanel({ docs, workshopModule, crmLeadId, dealLabel, o
                   crmPresentation
                   workshopModule={workshopModule}
                   onVisibilitySaved={onVisibilitySaved}
+                  stageSlugLabelMap={stageSlugLabelMap}
+                  taskMetaMap={taskMetaMap}
                 />
               ))}
             </div>
@@ -601,7 +653,9 @@ function CrmSharedDocumentsPanel({ docs, workshopModule, crmLeadId, dealLabel, o
 }
 
 /** Row tài liệu — rich preview như CRM DocumentRow; crmVisibility = chia sẻ từ lead_documents */
-function DocRow({ doc, onDelete, workshopModule, onVisibilitySaved, crmPresentation = false, nested = false }) {
+function DocRow({
+  doc, onDelete, workshopModule, onVisibilitySaved, crmPresentation = false, nested = false, stageSlugLabelMap = {}, taskMetaMap = {},
+}) {
   const [expanded, setExpanded] = useState(false);
   const [showVis, setShowVis] = useState(false);
   const [sharedToWorkshop, setSharedToWorkshop] = useState(!!doc.shared_to_workshop);
@@ -611,7 +665,7 @@ function DocRow({ doc, onDelete, workshopModule, onVisibilitySaved, crmPresentat
   const typeInfo = CRM_DOC_TYPES.find((t) => t.value === doc.doc_type) || CRM_DOC_TYPES[5];
   const fileName = doc.file_name || doc.file_path?.split('/').pop() || '';
   const displayTitle = crmPresentation
-    ? (doc.name || fileName || 'Tài liệu')
+    ? resolveCrmDocDisplayTitle(doc, { preferFileName: nested })
     : (fileName || doc.name || 'Tài liệu');
   const fileHref = doc.file_url ? pubUrl(doc.file_url) : '';
   const fileOpenProps = fileHref ? getFileOpenAnchorProps(doc.file_url, { fileName: fileName || displayTitle }) : null;
@@ -622,6 +676,14 @@ function DocRow({ doc, onDelete, workshopModule, onVisibilitySaved, crmPresentat
   const hasExtra = doc.notes || isImage || isVideo;
   const crmShareUi = typeof doc.shared_to_workshop === 'boolean' && doc.id && onVisibilitySaved;
   const showCrmMeta = crmPresentation || crmShareUi;
+  const resolvedStageBadge = doc.crm_stage_slug || doc.crm_stage_group_label
+    ? resolveCrmPipelineStageLabel(doc.crm_stage_slug || doc.crm_stage_group_label, {
+      slugLabelMap: stageSlugLabelMap,
+      taskMetaMap,
+      staticLabels: CRM_STAGE_LABELS,
+    })
+    : null;
+  const showStageBadge = showCrmMeta && resolvedStageBadge && !nested && resolvedStageBadge !== '📋 Khác';
   const visibleHere =
     !workshopModule || isLeadDocVisibleInModule(doc, workshopModule);
 
@@ -659,7 +721,7 @@ function DocRow({ doc, onDelete, workshopModule, onVisibilitySaved, crmPresentat
               {showCrmMeta ? (
                 <span className="text-xs text-gray-500">
                   {typeInfo.label}
-                  {isFile && fileName ? ` · ${fileName}` : !isFile ? ' · Văn bản' : ''}
+                  {isFile && fileName && displayTitle !== fileName ? ` · ${fileName}` : !isFile ? ' · Văn bản' : ''}
                   {isImage ? ' · 🖼️' : ''}
                   {isVideo ? ' · 🎬' : ''}
                 </span>
@@ -672,8 +734,8 @@ function DocRow({ doc, onDelete, workshopModule, onVisibilitySaved, crmPresentat
               {showCrmMeta && isCrmDocFromTask(doc) && !nested && (
                 <span className="text-[9px] bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded-full font-medium">📌 Từ nhiệm vụ</span>
               )}
-              {showCrmMeta && doc.crm_stage_group_label && !nested && (
-                <span className="text-[9px] bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded-full font-medium">{doc.crm_stage_group_label}</span>
+              {showStageBadge && (
+                <span className="text-[9px] bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded-full font-medium">{resolvedStageBadge}</span>
               )}
               {crmShareUi && doc.shared_to_workshop && (
                 <span className="text-[9px] bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded-full font-medium">🧩 {shareModuleLabels(doc.allowed_share_modules)}</span>
@@ -863,6 +925,8 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [fallbackDealIdForTasks, setFallbackDealIdForTasks] = useState(null);
   /** Map crm_tasks.id → { title, stage_slug, order_index } — sắp xếp tài liệu theo nhiệm vụ */
   const [crmTaskMetaMap, setCrmTaskMetaMap] = useState({});
+  /** stage_slug (kể cả pl_* uuid) → tên cột pipeline CRM */
+  const [crmStageSlugLabelMap, setCrmStageSlugLabelMap] = useState({});
   const [ensuringCrmDeal, setEnsuringCrmDeal] = useState(false);
   const tabFromUrl = searchParams.get('tab');
   const normalizedUrlTab = LEGACY_TAB_MAP[tabFromUrl] || tabFromUrl;
@@ -951,25 +1015,48 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   useEffect(() => {
     if (!crmDealIdForDocs) {
       setCrmTaskMetaMap({});
+      setCrmStageSlugLabelMap({});
       return;
     }
     let cancelled = false;
-    api.get(`/crm/leads/${crmDealIdForDocs}/tasks`, { params: { task_scope: 'all' } })
-      .then(({ data }) => {
+    (async () => {
+      try {
+        const [tasksRes, leadRes] = await Promise.all([
+          api.get(`/crm/leads/${crmDealIdForDocs}/tasks`, { params: { task_scope: 'all' } }),
+          api.get(`/crm/leads/${crmDealIdForDocs}`).catch(() => ({ data: null })),
+        ]);
         if (cancelled) return;
+        const tasks = Array.isArray(tasksRes.data) ? tasksRes.data : [];
+        let pipelineStages = [];
+        const pipelineId = leadRes.data?.pipeline_id;
+        if (pipelineId) {
+          const { stages } = await fetchPipelineStagesById(pipelineId);
+          pipelineStages = stages || [];
+        }
+        const stageOrderById = new Map(
+          pipelineStages.map((s) => [String(s.id), s.order_index ?? 999]),
+        );
         const map = {};
-        (Array.isArray(data) ? data : []).forEach((t, idx) => {
+        tasks.forEach((t, idx) => {
           map[t.id] = {
             title: t.title,
             stage_slug: t.stage_slug,
+            stage_name: t.pipeline_stage?.name || null,
+            stage_order_index: t.pipeline_stage_id
+              ? stageOrderById.get(String(t.pipeline_stage_id))
+              : undefined,
             order_index: t.order_index ?? idx,
           };
         });
         setCrmTaskMetaMap(map);
-      })
-      .catch(() => {
-        if (!cancelled) setCrmTaskMetaMap({});
-      });
+        setCrmStageSlugLabelMap(buildCrmStageSlugLabelMapFromTasks(tasks, pipelineStages));
+      } catch {
+        if (!cancelled) {
+          setCrmTaskMetaMap({});
+          setCrmStageSlugLabelMap({});
+        }
+      }
+    })();
     return () => { cancelled = true; };
   }, [crmDealIdForDocs]);
 
@@ -2113,6 +2200,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     crmLeadId={crmLeadId}
                     dealLabel={displayCode}
                     taskMetaMap={crmTaskMetaMap}
+                    stageSlugLabelMap={crmStageSlugLabelMap}
                     onVisibilitySaved={refreshProjectSilently}
                   />
 

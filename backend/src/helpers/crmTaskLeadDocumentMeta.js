@@ -30,11 +30,14 @@ const SLUG_LABELS = {
   sx_giao_hang: 'Giao hàng',
 };
 
-function getCrmStageGroupLabel(stageSlug) {
+function getCrmStageGroupLabel(stageSlug, pipelineStageName = null) {
+  if (pipelineStageName) return pipelineStageName;
   if (!stageSlug) return null;
   const s = String(stageSlug);
   if (SLUG_LABELS[s]) return SLUG_LABELS[s];
-  if (s.startsWith(SX_PREFIX)) return `SX · ${SLUG_LABELS[s] || s.replace(/^sx_/, '')}`;
+  if (s.startsWith(SX_PREFIX)) return `SX · ${SLUG_LABELS[s] || s.replace(/^sx_/, '').replace(/_/g, ' ')}`;
+  const plMatch = s.match(/^pl_(.+)_([a-f0-9]{8})$/i);
+  if (plMatch) return plMatch[1].replace(/_/g, ' ');
   return s;
 }
 
@@ -73,12 +76,13 @@ function getLeadDocumentFieldsFromCrmTask(taskRow, opts = {}, attachmentRow = nu
     };
   }
   const slug = taskRow.stage_slug || null;
+  const pipelineStageName = taskRow.pipeline_stage?.name || taskRow.pipeline_stage_name || null;
   const shareSrc = attachmentRow?.shared_to_project != null ? attachmentRow : taskRow;
   const share = getLeadDocumentShareFromCrm(shareSrc);
   return {
     source_crm_task_id: taskRow.id,
     crm_stage_slug: slug,
-    crm_stage_group_label: getCrmStageGroupLabel(slug),
+    crm_stage_group_label: getCrmStageGroupLabel(slug, pipelineStageName),
     ...share,
   };
 }

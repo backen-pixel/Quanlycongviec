@@ -20,7 +20,7 @@ async function copyCrmTaskArtifactsToLeadDocuments(leadId) {
   try {
     const { data: dealTaskAtts } = await supabase
       .from('crm_task_attachments')
-      .select('*, task:crm_tasks(id, title, stage_slug, shared_to_project, allowed_share_modules)')
+      .select('*, task:crm_tasks(id, title, stage_slug, shared_to_project, allowed_share_modules, pipeline_stage:crm_pipeline_stages!crm_tasks_pipeline_stage_id_fkey(name))')
       .eq('lead_id', leadId);
 
     if (dealTaskAtts?.length) {
@@ -65,7 +65,7 @@ async function copyCrmTaskArtifactsToLeadDocuments(leadId) {
   try {
     const { data: dealTasksWithNotes } = await supabase
       .from('crm_tasks')
-      .select('id, title, stage_slug, notes, created_by, shared_to_project, allowed_share_modules')
+      .select('id, title, stage_slug, notes, created_by, shared_to_project, allowed_share_modules, pipeline_stage:crm_pipeline_stages!crm_tasks_pipeline_stage_id_fkey(name)')
       .eq('lead_id', leadId)
       .not('notes', 'is', null);
 

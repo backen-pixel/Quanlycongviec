@@ -11056,7 +11056,7 @@ r.get('/invoices/:id/pdf', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const CRM_TASK_SELECT =
-  '*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar), pipeline_stage:crm_pipeline_stages!crm_tasks_pipeline_stage_id_fkey(id, pipeline_type, name)';
+  '*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar), pipeline_stage:crm_pipeline_stages!crm_tasks_pipeline_stage_id_fkey(id, pipeline_type, name, order_index)';
 
 /**
  * Map task_id -> { files, notes } cho tab NV CRM (khớp logic cũ: doc_type = task_note → note).
@@ -11891,7 +11891,7 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
 
     // Query task visibility 1 lần duy nhất
     const { data: task } = await supabase.from('crm_tasks')
-      .select('id, title, stage_slug, default_allowed_companies, default_allowed_departments')
+      .select('id, title, stage_slug, default_allowed_companies, default_allowed_departments, pipeline_stage:crm_pipeline_stages!crm_tasks_pipeline_stage_id_fkey(name)')
       .eq('id', req.params.taskId).single();
     const finalCompanies = task?.default_allowed_companies || null;
     const finalDepts = task?.default_allowed_departments || null;
