@@ -926,6 +926,52 @@ r.post('/pipeline-stages/seed-default-kitchen-glass', requirePermission('project
   }
 });
 
+// Tạo đơn trực tiếp trên Kanban SX — không qua CRM (pipeline Deal tự sinh nội bộ).
+r.post('/workshop-intake', requirePermission('projects', 'create'), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const companyId = effectiveWorkshopCompanyId(req, b.company_id);
+    if (!companyId) return res.status(400).json({ error: 'Thiếu company_id' });
+
+    const { createWorkshopIntakeOrder } = require('../helpers/createWorkshopIntake');
+    const result = await createWorkshopIntakeOrder({
+      req,
+      userId: req.user.userId,
+      companyId,
+      workshopTypeId: b.workshop_type_id || null,
+      title: b.title,
+      customerId: b.customer_id || null,
+      customerName: b.customer_name,
+      customerPhone: b.customer_phone,
+      customerEmail: b.customer_email,
+      installAddress: b.install_address,
+      regionId: b.region_id || null,
+      estimatedValue: b.estimated_value,
+      description: b.description,
+    });
+
+    if (!result.ok) {
+      return res.status(result.statusCode || 500).json({
+        error: result.error,
+        deal_id: result.deal_id,
+      });
+    }
+
+    rcInvalidateTags(['production', 'crm']);
+    res.status(201).json({
+      project_id: result.project_id,
+      project_code: result.project_code,
+      project_name: result.project_name,
+      tasks_created: result.tasks_created,
+      deal_id: result.deal_id,
+      deal_code: result.deal_code,
+    });
+  } catch (e) {
+    console.error('[production/workshop-intake]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── GET /production/dashboard ──
 r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 30, scope: 'user', tags: ['production'] }), async (req, res) => {
   try {
