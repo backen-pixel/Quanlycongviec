@@ -8,8 +8,90 @@ import {
   Paperclip, FileText, Send, ChevronDown, ChevronUp, Eye, AlertTriangle
 } from 'lucide-react';
 import { formatDateTime, getInitials, avatarColor } from '../lib/utils';
+import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
 
-/** Màu nhấn: default = xanh CRM; workshop = teal (module xưởng) */
+function isApprovalImageFile(f) {
+  const name = f?.file_name || f?.file_url || '';
+  return f?.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(name);
+}
+
+function isApprovalVideoFile(f) {
+  const name = f?.file_name || f?.file_url || '';
+  return f?.mime_type?.startsWith('video/') || /\.(mp4|mov|webm|avi|mkv)$/i.test(name);
+}
+
+/** Gallery file đính kèm yêu cầu duyệt — preview lớn, dễ xem trước khi duyệt */
+function ApprovalAttachmentGallery({ attachments, linkClassName = 'text-blue-600' }) {
+  if (!attachments?.length) return null;
+
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      {attachments.map((f, i) => {
+        const name = f.file_name || `File ${i + 1}`;
+        const href = f.file_url ? publicFileUrl(f.file_url) : '';
+        const openProps = href ? getFileOpenAnchorProps(f.file_url, { fileName: name }) : null;
+
+        if (isApprovalImageFile(f) && openProps) {
+          return (
+            <a
+              key={i}
+              {...openProps}
+              className="block rounded-xl border border-gray-200 bg-white overflow-hidden hover:shadow-md hover:border-gray-300 transition-all"
+            >
+              <img src={href} alt={name} className="w-full max-h-72 min-h-[10rem] object-contain bg-gray-50 p-2" />
+              <div className="px-3 py-2.5 border-t border-gray-100 flex items-center justify-between gap-2 bg-white">
+                <span className={`text-sm font-medium truncate ${linkClassName}`}>{name}</span>
+                {f.file_size > 0 && (
+                  <span className="text-xs text-gray-400 shrink-0">
+                    {f.file_size > 1048576 ? `${(f.file_size / 1048576).toFixed(1)} MB` : `${(f.file_size / 1024).toFixed(0)} KB`}
+                  </span>
+                )}
+              </div>
+            </a>
+          );
+        }
+
+        if (isApprovalVideoFile(f) && href) {
+          return (
+            <div key={i} className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+              <video src={href} controls preload="metadata" className="w-full max-h-72 bg-black" />
+              <div className="px-3 py-2.5 border-t border-gray-100 flex items-center justify-between gap-2">
+                <span className="text-sm font-medium text-gray-800 truncate">{name}</span>
+                {openProps && (
+                  <a {...openProps} className={`text-xs font-medium shrink-0 hover:underline ${linkClassName}`}>Mở ↗</a>
+                )}
+              </div>
+            </div>
+          );
+        }
+
+        return (
+          <a
+            key={i}
+            {...(openProps || {})}
+            href={openProps ? undefined : href || undefined}
+            target={openProps ? undefined : '_blank'}
+            rel={openProps ? undefined : 'noopener noreferrer'}
+            className="flex items-center gap-3 p-4 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-300 transition-colors min-h-[5.5rem]"
+          >
+            <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center shrink-0">
+              <FileText className="h-7 w-7 text-gray-500" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className={`text-sm font-medium truncate ${linkClassName}`}>{name}</p>
+              {f.file_size > 0 && (
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {f.file_size > 1048576 ? `${(f.file_size / 1048576).toFixed(1)} MB` : `${(f.file_size / 1024).toFixed(0)} KB`}
+                </p>
+              )}
+            </div>
+          </a>
+        );
+      })}
+    </div>
+  );
+}
+
 const ACCENT = {
   blue: {
     icon: 'text-blue-600',
@@ -31,7 +113,14 @@ const ACCENT = {
   },
 };
 
+function approvalRequestSourceFromVariant(variant) {
+  if (variant === 'workshop') return 'production';
+  if (variant === 'logistics') return 'logistics';
+  return 'crm';
+}
+
 export default function ProjectApprovalsTab({ projectId, project, onUpdated, autoShowRequest, onRequestShown, variant = 'default' }) {
+  const requestSource = approvalRequestSourceFromVariant(variant);
   const accentKey = variant === 'workshop' ? 'teal' : 'blue';
   const ax = ACCENT[accentKey];
   const { user } = useAuth();
@@ -96,6 +185,7 @@ export default function ProjectApprovalsTab({ projectId, project, onUpdated, aut
       {showRequest && (
         <RequestApprovalForm
           accentKey={accentKey}
+          requestSource={requestSource}
           projectId={projectId}
           project={project}
           onCreated={() => { load(); setShowRequest(false); onUpdated?.(); }}
@@ -108,6 +198,7 @@ export default function ProjectApprovalsTab({ projectId, project, onUpdated, aut
         <ApprovalCard
           key={approval.id}
           accentKey={accentKey}
+          requestSource={requestSource}
           approval={approval}
           isAdmin={isAdmin}
           currentUserId={user?.userId}
@@ -130,7 +221,7 @@ export default function ProjectApprovalsTab({ projectId, project, onUpdated, aut
 }
 
 // ═══ Request Approval Form ═══
-function RequestApprovalForm({ projectId, project, onCreated, onCancel, accentKey = 'blue' }) {
+function RequestApprovalForm({ projectId, project, onCreated, onCancel, accentKey = 'blue', requestSource = 'crm' }) {
   const ax = ACCENT[accentKey] || ACCENT.blue;
   const [notes, setNotes] = useState('');
   const [files, setFiles] = useState([]);
@@ -165,6 +256,7 @@ function RequestApprovalForm({ projectId, project, onCreated, onCancel, accentKe
         attachments: files,
         next_stage_slug: next?.slug,
         next_status: next?.status,
+        request_source: requestSource,
       });
 
       if (data.auto_approved) {
@@ -211,7 +303,7 @@ function RequestApprovalForm({ projectId, project, onCreated, onCancel, accentKe
       <div>
         <label className="text-[11px] font-medium text-gray-600 block mb-1">File đính kèm</label>
         <FileUploadButton onFilesUploaded={f => setFiles(prev => [...prev, ...f])} />
-        <FilePreview files={files} onRemove={i => setFiles(f => f.filter((_, j) => j !== i))} small />
+        <FilePreview files={files} onRemove={i => setFiles(f => f.filter((_, j) => j !== i))} large />
       </div>
 
       <div className="flex justify-end gap-2 pt-1">
@@ -226,7 +318,7 @@ function RequestApprovalForm({ projectId, project, onCreated, onCancel, accentKe
 }
 
 // ═══ Approval Card ═══
-function ApprovalCard({ approval, isAdmin, currentUserId, expanded, onToggle, onDecided, onReRequested, accentKey = 'blue' }) {
+function ApprovalCard({ approval, isAdmin, currentUserId, expanded, onToggle, onDecided, onReRequested, accentKey = 'blue', requestSource = 'crm' }) {
   const ax = ACCENT[accentKey] || ACCENT.blue;
   const [action, setAction] = useState(null); // 'approve' | 'reject'
   const [reason, setReason] = useState('');
@@ -277,6 +369,7 @@ function ApprovalCard({ approval, isAdmin, currentUserId, expanded, onToggle, on
       await api.post(`/approvals/${approval.id}/re-request`, {
         notes: reRequestNotes || approval.notes,
         attachments: reRequestFiles.length ? reRequestFiles : approval.attachments,
+        request_source: requestSource,
       });
       setShowReRequest(false);
       onReRequested();
@@ -332,21 +425,8 @@ function ApprovalCard({ approval, isAdmin, currentUserId, expanded, onToggle, on
           {/* Attachments */}
           {approval.attachments?.length > 0 && (
             <div className="bg-white/70 rounded-lg p-3">
-              <label className="text-[10px] font-semibold text-gray-500 uppercase block mb-1.5">📎 File đính kèm</label>
-              <div className="space-y-1">
-                {approval.attachments.map((f, i) => (
-                  <a key={i} href={f.file_url} target="_blank" rel="noopener noreferrer"
-                    className="flex items-center gap-2 bg-white rounded-lg px-3 py-2 hover:bg-gray-50 transition-colors">
-                    {f.mime_type?.startsWith('image/') ? (
-                      <img src={f.file_url} alt="" className="h-8 w-8 rounded object-cover" />
-                    ) : (
-                      <FileText className="h-4 w-4 text-gray-400 shrink-0" />
-                    )}
-                    <span className={`text-xs truncate flex-1 ${ax.link}`}>{f.file_name || `File ${i + 1}`}</span>
-                    {f.file_size && <span className="text-[10px] text-gray-400">{(f.file_size / 1024).toFixed(0)} KB</span>}
-                  </a>
-                ))}
-              </div>
+              <label className="text-[10px] font-semibold text-gray-500 uppercase block mb-2">📎 File đính kèm ({approval.attachments.length})</label>
+              <ApprovalAttachmentGallery attachments={approval.attachments} linkClassName={ax.link} />
             </div>
           )}
 
@@ -442,7 +522,7 @@ function ApprovalCard({ approval, isAdmin, currentUserId, expanded, onToggle, on
               <div>
                 <label className="text-[11px] font-medium text-gray-600 block mb-1">File mới (tùy chọn)</label>
                 <FileUploadButton compact onFilesUploaded={f => setReRequestFiles(prev => [...prev, ...f])} />
-                <FilePreview files={reRequestFiles} onRemove={i => setReRequestFiles(f => f.filter((_, j) => j !== i))} small />
+                <FilePreview files={reRequestFiles} onRemove={i => setReRequestFiles(f => f.filter((_, j) => j !== i))} large />
               </div>
               <div className="flex gap-2 justify-end">
                 <button onClick={() => setShowReRequest(false)} className="h-7 px-3 border rounded-lg text-xs text-gray-600 cursor-pointer">Hủy</button>

@@ -730,6 +730,8 @@ export default function ProductionDashboard() {
         completed_revenue_value: kpis?.completed_revenue_value || 0,
         collected_revenue_value: kpis?.collected_revenue_value || 0,
         debt_revenue_value: kpis?.debt_revenue_value || 0,
+        debt_count: kpis?.debt_count || 0,
+        collected_count: kpis?.collected_count || 0,
         weighted_pipeline_value: kpis?.weighted_pipeline_value || 0,
         column_sla_overdue: 0,
       };
@@ -749,6 +751,8 @@ export default function ProductionDashboard() {
       completed_revenue_value: revenue.completedRevenue,
       collected_revenue_value: revenue.collectedRevenue,
       debt_revenue_value: revenue.debtRevenue,
+      debt_count: revenue.debtCount,
+      collected_count: revenue.collectedCount,
       weighted_pipeline_value: revenue.weightedPipeline,
       column_sla_overdue: columnSlaOverdue,
     };
@@ -1148,14 +1152,18 @@ export default function ProductionDashboard() {
             <KPICard
               accent="bg-amber-500"
               label="Công nợ"
-              value={scopeKpis.debt_revenue_value > 0 ? formatVND(scopeKpis.debt_revenue_value) : '—'}
-              descriptor="đã công, chưa thu"
+              value={(scopeKpis.debt_count > 0 || scopeKpis.debt_revenue_value > 0)
+                ? formatVND(scopeKpis.debt_revenue_value || 0)
+                : '—'}
+              descriptor={scopeKpis.debt_count > 0 ? `${scopeKpis.debt_count} dự án · đã công, chưa thu` : 'đã công, chưa thu'}
             />
             <KPICard
               accent="bg-emerald-600"
               label="Đã thu"
-              value={scopeKpis.collected_revenue_value > 0 ? formatVND(scopeKpis.collected_revenue_value) : '—'}
-              descriptor="theo cột pipeline"
+              value={(scopeKpis.collected_count > 0 || scopeKpis.collected_revenue_value > 0)
+                ? formatVND(scopeKpis.collected_revenue_value || 0)
+                : '—'}
+              descriptor={scopeKpis.collected_count > 0 ? `${scopeKpis.collected_count} dự án · theo cột pipeline` : 'theo cột pipeline'}
             />
           </div>
         );
@@ -2153,21 +2161,26 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
         </div>
       )}
 
-      {/* Cờ thanh toán theo cột pipeline hiện tại */}
-      {(item.sx_pipeline_stage?.counts_as_completed_revenue || item.sx_pipeline_stage?.counts_as_collected_revenue) && (
+      {/* Cờ thanh toán theo cột Kanban hiện tại */}
+      {(() => {
+        const showCompleted = !!(stage?.counts_as_completed_revenue || item.sx_pipeline_stage?.counts_as_completed_revenue);
+        const showCollected = !!(stage?.counts_as_collected_revenue || item.sx_pipeline_stage?.counts_as_collected_revenue);
+        if (!showCompleted && !showCollected) return null;
+        return (
         <div className="flex flex-wrap gap-1 mb-1.5">
-          {item.sx_pipeline_stage?.counts_as_completed_revenue && (
+          {showCompleted && (
             <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-teal-50 text-teal-800 border border-teal-200">
               ✓ Đã công
             </span>
           )}
-          {item.sx_pipeline_stage?.counts_as_collected_revenue && (
+          {showCollected && (
             <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
               💰 Đã thu tiền
             </span>
           )}
         </div>
-      )}
+        );
+      })()}
 
       {/* Deadline thẻ (sx_kanban_deadline_at) — bấm để sửa */}
       {typeof onOpenDeadline === 'function' && item.sx_kanban_deadline_at && (() => {

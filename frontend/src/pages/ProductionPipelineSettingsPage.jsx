@@ -613,7 +613,10 @@ export default function ProductionPipelineSettingsPage() {
       });
       load();
     } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi');
+      const msg = e.response?.data?.error || e.message || 'Lỗi';
+      alert(msg.includes('counts_as_collected') || msg.includes('296')
+        ? `${msg}\n\nChạy migration database/296_production_pipeline_collected_revenue.sql trên Supabase.`
+        : msg);
     }
   };
 

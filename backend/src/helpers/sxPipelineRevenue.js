@@ -119,6 +119,8 @@ function computeSxRevenueKpis(projects, stages, dealProbByProjectId = {}) {
   let awaitingDelivery = 0;
   let shipped = 0;
   let overdue = 0;
+  let debtCount = 0;
+  let collectedCount = 0;
   const now = new Date();
 
   for (const p of list) {
@@ -126,8 +128,14 @@ function computeSxRevenueKpis(projects, stages, dealProbByProjectId = {}) {
     const col = stageById(st, p.sx_kanban_column_id);
     if (projectCountsAsSxWonRevenue(p, st)) wonRevenue += val;
     if (projectCountsAsSxCompletedRevenue(p, st)) completedRevenue += val;
-    if (projectCountsAsSxCollectedRevenue(p, st)) collectedRevenue += val;
-    if (projectCountsAsSxDebt(p, st)) debtRevenue += val;
+    if (projectCountsAsSxCollectedRevenue(p, st)) {
+      collectedRevenue += val;
+      collectedCount += 1;
+    }
+    if (projectCountsAsSxDebt(p, st)) {
+      debtRevenue += val;
+      debtCount += 1;
+    }
     if (projectIsProducing(p, st)) producing += 1;
     if (projectIsAwaitingDelivery(p, st)) awaitingDelivery += 1;
     if (projectIsShipped(p)) shipped += 1;
@@ -148,6 +156,8 @@ function computeSxRevenueKpis(projects, stages, dealProbByProjectId = {}) {
     awaiting_delivery: awaitingDelivery,
     shipped,
     overdue,
+    debt_count: debtCount,
+    collected_count: collectedCount,
     has_explicit_won_revenue: hasExplicitSxWonRevenueStage(st),
     has_explicit_completed_revenue: hasExplicitSxCompletedRevenueStage(st),
     has_explicit_collected_revenue: hasExplicitSxCollectedRevenueStage(st),

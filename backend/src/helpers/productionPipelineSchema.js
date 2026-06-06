@@ -18,6 +18,8 @@ let pipelineWorkshopTypeColumnAvailable = true;
 let pipelineWorkshopTypeJoinAvailable = true;
 /** Cột KPI/SLA (migration 287) — tắt nếu DB chưa migrate */
 let pipelineKpiSlaColumnsAvailable = true;
+/** Cột counts_as_collected_revenue (migration 296) — tách khỏi 287 để không chặn «đã công» */
+let pipelineCollectedRevenueColumnAvailable = true;
 /** Cột requires_deadline (migration 288) — tắt nếu DB chưa migrate */
 let pipelineRequiresDeadlineColumnAvailable = true;
 
@@ -156,13 +158,28 @@ function markPipelineWorkshopTypeJoinMissing() {
   pipelineWorkshopTypeJoinAvailable = false;
 }
 
+function isPipelineCollectedRevenueMissingError(err) {
+  if (!err || !pipelineCollectedRevenueColumnAvailable) return false;
+  const s = String(err.message || err.details || err.hint || '').toLowerCase();
+  return s.includes('counts_as_collected_revenue')
+    && (s.includes('does not exist') || s.includes('could not find'));
+}
+
+function markPipelineCollectedRevenueColumnMissing() {
+  if (pipelineCollectedRevenueColumnAvailable) {
+    console.warn(
+      '[production_pipeline_stages] Cột counts_as_collected_revenue chưa tồn tại. Chạy database/296_production_pipeline_collected_revenue.sql trên Supabase.',
+    );
+  }
+  pipelineCollectedRevenueColumnAvailable = false;
+}
+
 function isPipelineKpiSlaMissingError(err) {
   if (!err || !pipelineKpiSlaColumnsAvailable) return false;
   const s = String(err.message || err.details || err.hint || '').toLowerCase();
   return (
     (s.includes('default_probability') || s.includes('sla_days')
-      || s.includes('counts_as_won_revenue') || s.includes('counts_as_completed_revenue')
-      || s.includes('counts_as_collected_revenue'))
+      || s.includes('counts_as_won_revenue') || s.includes('counts_as_completed_revenue'))
     && (s.includes('does not exist') || s.includes('could not find'))
   );
 }
@@ -196,9 +213,11 @@ function buildPipelineStageSelect() {
   const cid = productionCompanyIdColumnAvailable ? 'company_id, ' : '';
   const h = handoverToLogisticsColumnAvailable ? 'is_handover_to_logistics, ' : '';
   const pp = pipelineProgressPercentColumnAvailable ? 'progress_percent, ' : '';
-  const kpi = pipelineKpiSlaColumnsAvailable
-    ? 'default_probability, sla_days, counts_as_won_revenue, counts_as_completed_revenue, counts_as_collected_revenue, '
+  const kpi287 = pipelineKpiSlaColumnsAvailable
+    ? 'default_probability, sla_days, counts_as_won_revenue, counts_as_completed_revenue, '
     : '';
+  const kpiCollected = pipelineCollectedRevenueColumnAvailable ? 'counts_as_collected_revenue, ' : '';
+  const kpi = `${kpi287}${kpiCollected}`;
   const reqDl = pipelineRequiresDeadlineColumnAvailable ? 'requires_deadline, ' : '';
   let wt = '';
   if (pipelineWorkshopTypeColumnAvailable) {
@@ -230,6 +249,8 @@ function stripHandoverFields(obj) {
     delete o.sla_days;
     delete o.counts_as_won_revenue;
     delete o.counts_as_completed_revenue;
+  }
+  if (!pipelineCollectedRevenueColumnAvailable) {
     delete o.counts_as_collected_revenue;
   }
   if (!pipelineRequiresDeadlineColumnAvailable) delete o.requires_deadline;
@@ -248,6 +269,7 @@ function _resetForTests() {
   pipelineWorkshopTypeColumnAvailable = true;
   pipelineWorkshopTypeJoinAvailable = true;
   pipelineKpiSlaColumnsAvailable = true;
+  pipelineCollectedRevenueColumnAvailable = true;
   pipelineRequiresDeadlineColumnAvailable = true;
 }
 
@@ -268,6 +290,8 @@ module.exports = {
   markPipelineWorkshopTypeJoinMissing,
   isPipelineKpiSlaMissingError,
   markPipelineKpiSlaColumnMissing,
+  isPipelineCollectedRevenueMissingError,
+  markPipelineCollectedRevenueColumnMissing,
   isPipelineRequiresDeadlineMissingError,
   markPipelineRequiresDeadlineColumnMissing,
   isHandoverColumnInSchema,

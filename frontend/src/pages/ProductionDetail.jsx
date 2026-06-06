@@ -385,23 +385,243 @@ function getFileIcon(name) {
   return map[ext] || '📄';
 }
 
+const CRM_DOC_TYPES = [
+  { value: 'requirement', label: 'Yêu cầu KH', icon: '📝' },
+  { value: 'drawing', label: 'Bản vẽ', icon: '📐' },
+  { value: 'image', label: 'Hình ảnh', icon: '🖼️' },
+  { value: 'contract', label: 'Hợp đồng', icon: '📄' },
+  { value: 'measurement', label: 'Số đo', icon: '📏' },
+  { value: 'other', label: 'Khác', icon: '📎' },
+];
+
+/** Thứ tự giai đoạn pipeline CRM — khớp CRMTasksTab / LeadDetail */
+const CRM_STAGE_ORDER = [
+  'consulting', 'design', 'quotation', 'contract',
+  'deal_new', 'deal_quote_contract', 'deal_ordering', 'deal_schedule', 'deal_shipping', 'deal_notes',
+  'sx_tiep_nhan', 'sx_thiet_ke_ke_hoach', 'sx_kiem_tra_cheo', 'sx_vat_tu',
+  'sx_san_xuat_thung', 'sx_san_xuat_alu', 'sx_hoan_thien', 'sx_dong_goi', 'sx_giao_hang',
+];
+
+const CRM_STAGE_LABELS = {
+  consulting: '💬 Tư vấn',
+  design: '🎨 Thiết kế',
+  quotation: '💰 Báo giá',
+  contract: '📄 Hợp đồng',
+  deal_new: '📋 Nhiệm vụ Deal mới',
+  deal_quote_contract: '📄 Báo giá & Hợp đồng',
+  deal_ordering: '🛒 Tiến hành đặt hàng',
+  deal_schedule: '📅 Hẹn ngày lắp đặt',
+  deal_shipping: '🚛 Đặt Vận chuyển',
+  deal_notes: '📝 Ghi chú khác',
+  sx_tiep_nhan: '1️⃣ Tiếp nhận',
+  sx_thiet_ke_ke_hoach: '2️⃣ Thiết kế và lên kế hoạch',
+  sx_kiem_tra_cheo: '3️⃣ Kiểm tra chéo',
+  sx_vat_tu: '4️⃣ Vật tư',
+  sx_san_xuat_thung: '5️⃣ Sản xuất thùng',
+  sx_san_xuat_alu: '6️⃣ Sản xuất alu',
+  sx_hoan_thien: '7️⃣ Hoàn thiện',
+  sx_dong_goi: '8️⃣ Đóng gói',
+  sx_giao_hang: '9️⃣ Giao hàng',
+};
+
+function isCrmDocFromTask(doc) {
+  return !!(doc?.source_attachment_id || doc?.source_crm_task_id || doc?.is_from_task);
+}
+
+function resolveDocStageSlug(doc, taskMetaMap) {
+  if (doc.crm_stage_slug) return doc.crm_stage_slug;
+  const taskId = doc.source_crm_task_id;
+  if (taskId && taskMetaMap?.[taskId]?.stage_slug) return taskMetaMap[taskId].stage_slug;
+  return '_other';
+}
+
+function resolveDocTaskKey(doc) {
+  if (doc.source_crm_task_id) return String(doc.source_crm_task_id);
+  if (doc.source_attachment_id) return `_att_${doc.source_attachment_id}`;
+  return `_doc_${doc.id}`;
+}
+
+function resolveDocTaskTitle(doc, taskMetaMap) {
+  const taskId = doc.source_crm_task_id;
+  if (taskId && taskMetaMap?.[taskId]?.title) return taskMetaMap[taskId].title;
+  return doc.crm_stage_group_label || doc.name || 'Nhiệm vụ';
+}
+
+function stageSortIndex(slug) {
+  if (!slug || slug === '_other') return 9999;
+  const idx = CRM_STAGE_ORDER.indexOf(slug);
+  return idx >= 0 ? idx : 9998;
+}
+
+/** Nhóm tài liệu CRM: giai đoạn → nhiệm vụ → từng file một dòng (đúng thứ tự pipeline). */
+function buildCrmSharedDocSections(docs, taskMetaMap) {
+  const fromTask = [];
+  const manual = [];
+  for (const doc of docs) {
+    if (isCrmDocFromTask(doc)) fromTask.push(doc);
+    else manual.push(doc);
+  }
+
+  const stageBuckets = new Map();
+  for (const doc of fromTask) {
+    const stageSlug = resolveDocStageSlug(doc, taskMetaMap);
+    const taskKey = resolveDocTaskKey(doc);
+    if (!stageBuckets.has(stageSlug)) stageBuckets.set(stageSlug, new Map());
+    const taskMap = stageBuckets.get(stageSlug);
+    if (!taskMap.has(taskKey)) {
+      taskMap.set(taskKey, {
+        taskKey,
+        taskTitle: resolveDocTaskTitle(doc, taskMetaMap),
+        taskOrder: doc.source_crm_task_id && taskMetaMap?.[doc.source_crm_task_id]
+          ? (taskMetaMap[doc.source_crm_task_id].order_index ?? 0)
+          : 0,
+        docs: [],
+      });
+    }
+    taskMap.get(taskKey).docs.push(doc);
+  }
+
+  const taskSections = [...stageBuckets.entries()]
+    .sort(([a], [b]) => stageSortIndex(a) - stageSortIndex(b) || String(a).localeCompare(String(b)))
+    .map(([stageSlug, taskMap]) => {
+      const tasks = [...taskMap.values()]
+        .sort((a, b) => a.taskOrder - b.taskOrder || a.taskTitle.localeCompare(b.taskTitle, 'vi'))
+        .map((task) => ({
+          ...task,
+          docs: [...task.docs].sort(
+            (a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0),
+          ),
+        }));
+      const stageLabel = CRM_STAGE_LABELS[stageSlug]
+        || (stageSlug === '_other' ? '📋 Khác' : docStageFallbackLabel(stageSlug));
+      return { stageSlug, stageLabel, tasks, fileCount: tasks.reduce((n, t) => n + t.docs.length, 0) };
+    });
+
+  manual.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+
+  return { taskSections, manualDocs: manual };
+}
+
+function docStageFallbackLabel(slug) {
+  if (String(slug).startsWith('sx_')) {
+    return `🏭 ${slug.replace(/^sx_/, '').replace(/_/g, ' ')}`;
+  }
+  return String(slug).replace(/_/g, ' ');
+}
+
+/** Khối tài liệu CRM — mỗi file một dòng, nhóm theo giai đoạn → nhiệm vụ */
+function CrmSharedDocumentsPanel({ docs, workshopModule, crmLeadId, dealLabel, onVisibilitySaved, taskMetaMap = {} }) {
+  const { taskSections, manualDocs } = useMemo(
+    () => buildCrmSharedDocSections(docs, taskMetaMap),
+    [docs, taskMetaMap],
+  );
+
+  if (!docs.length) return null;
+
+  const moduleLabel = workshopModule === 'logistics' ? 'Vận chuyển' : 'Sản xuất';
+
+  return (
+    <div className="mb-5 rounded-xl border-2 border-violet-200 bg-gradient-to-br from-violet-50/90 via-white to-white overflow-hidden shadow-sm">
+      <div className="px-4 py-3 border-b border-violet-100 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-bold text-violet-900">📋 Tài liệu từ CRM</p>
+          <p className="text-xs text-violet-700/85 mt-0.5 leading-relaxed">
+            {docs.length} tài liệu được chia sẻ sang <strong>{moduleLabel}</strong>
+            {dealLabel ? <> · Deal <span className="font-mono">{dealLabel}</span></> : null}
+          </p>
+        </div>
+        {crmLeadId && (
+          <Link
+            to={`/crm/leads/${crmLeadId}?tab=documents`}
+            className="shrink-0 h-8 px-3 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-xs font-medium inline-flex items-center gap-1.5"
+          >
+            Mở trên CRM →
+          </Link>
+        )}
+      </div>
+
+      <div className="p-4 space-y-4">
+        {taskSections.length > 0 && (
+          <div className="space-y-4">
+            {taskSections.map((stage) => (
+              <div key={stage.stageSlug} className="border border-violet-100 rounded-xl overflow-hidden">
+                <div className="bg-gradient-to-r from-violet-50 to-slate-50 px-3 py-2 border-b border-violet-100 flex items-center gap-2">
+                  <p className="text-xs font-bold text-gray-700">{stage.stageLabel}</p>
+                  <span className="text-[10px] text-gray-400 bg-white px-2 py-0.5 rounded-full">{stage.fileCount} file</span>
+                </div>
+                <div className="divide-y divide-gray-100">
+                  {stage.tasks.map((task) => (
+                    <div key={task.taskKey}>
+                      <div className="bg-white px-3 py-1.5 border-b border-gray-50 flex items-center gap-2">
+                        <span className="text-[11px] font-semibold text-gray-600">📋 {task.taskTitle}</span>
+                        <span className="text-[9px] text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded-full">📎 {task.docs.length}</span>
+                      </div>
+                      <div className="divide-y divide-gray-50 bg-white">
+                        {task.docs.map((doc) => (
+                          <div key={doc.id} className="px-3 py-1">
+                            <DocRow
+                              doc={doc}
+                              crmPresentation
+                              nested
+                              workshopModule={workshopModule}
+                              onVisibilitySaved={onVisibilitySaved}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {manualDocs.length > 0 && (
+          <div>
+            <p className="text-xs font-bold text-gray-500 uppercase mb-2">
+              📄 Tài liệu thêm trên deal ({manualDocs.length})
+            </p>
+            <div className="space-y-2">
+              {manualDocs.map((doc) => (
+                <DocRow
+                  key={doc.id}
+                  doc={doc}
+                  crmPresentation
+                  workshopModule={workshopModule}
+                  onVisibilitySaved={onVisibilitySaved}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** Row tài liệu — rich preview như CRM DocumentRow; crmVisibility = chia sẻ từ lead_documents */
-function DocRow({ doc, onDelete, workshopModule, onVisibilitySaved }) {
+function DocRow({ doc, onDelete, workshopModule, onVisibilitySaved, crmPresentation = false, nested = false }) {
   const [expanded, setExpanded] = useState(false);
   const [showVis, setShowVis] = useState(false);
   const [sharedToWorkshop, setSharedToWorkshop] = useState(!!doc.shared_to_workshop);
   const [allowedMods, setAllowedMods] = useState(() => parseShareModules(doc.allowed_share_modules) || []);
   const [savingVis, setSavingVis] = useState(false);
 
-  const name = doc.file_name || doc.name || doc.file_path?.split('/').pop() || 'Tài liệu';
+  const typeInfo = CRM_DOC_TYPES.find((t) => t.value === doc.doc_type) || CRM_DOC_TYPES[5];
+  const fileName = doc.file_name || doc.file_path?.split('/').pop() || '';
+  const displayTitle = crmPresentation
+    ? (doc.name || fileName || 'Tài liệu')
+    : (fileName || doc.name || 'Tài liệu');
   const fileHref = doc.file_url ? pubUrl(doc.file_url) : '';
-  const fileOpenProps = fileHref ? getFileOpenAnchorProps(doc.file_url, { fileName: name }) : null;
+  const fileOpenProps = fileHref ? getFileOpenAnchorProps(doc.file_url, { fileName: fileName || displayTitle }) : null;
   const isFile = !!fileHref;
   const mime = doc.mime_type || '';
-  const isImage = isFile && (mime.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(name));
-  const isVideo = isFile && (mime.startsWith('video/') || /\.(mp4|mov|webm|avi|mkv)$/i.test(name));
+  const isImage = isFile && (mime.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(fileName || doc.file_url || ''));
+  const isVideo = isFile && (mime.startsWith('video/') || /\.(mp4|mov|webm|avi|mkv)$/i.test(fileName || doc.file_url || ''));
   const hasExtra = doc.notes || isImage || isVideo;
   const crmShareUi = typeof doc.shared_to_workshop === 'boolean' && doc.id && onVisibilitySaved;
+  const showCrmMeta = crmPresentation || crmShareUi;
   const visibleHere =
     !workshopModule || isLeadDocVisibleInModule(doc, workshopModule);
 
@@ -429,17 +649,32 @@ function DocRow({ doc, onDelete, workshopModule, onVisibilitySaved }) {
   };
 
   return (
-    <div className="bg-gray-50 rounded-lg border overflow-hidden">
-      <div className="flex items-center justify-between p-3">
+    <div className={nested ? 'border-b border-gray-50 last:border-b-0' : 'bg-gray-50 rounded-lg border overflow-hidden'}>
+      <div className={`flex items-center justify-between ${nested ? 'py-2' : 'p-3'}`}>
         <div className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer" onClick={() => hasExtra && setExpanded(!expanded)}>
-          <span className="text-lg shrink-0">{isVideo ? '🎬' : getFileIcon(name)}</span>
+          <span className="text-lg shrink-0">{isVideo ? '🎬' : (showCrmMeta ? typeInfo.icon : getFileIcon(fileName || displayTitle))}</span>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-gray-900 truncate">{name}</p>
+            <p className="text-sm font-medium text-gray-900 truncate">{displayTitle}</p>
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-xs text-gray-500">{isImage ? '🖼️ Ảnh' : isVideo ? '🎬 Video' : '📄 File'}</span>
+              {showCrmMeta ? (
+                <span className="text-xs text-gray-500">
+                  {typeInfo.label}
+                  {isFile && fileName ? ` · ${fileName}` : !isFile ? ' · Văn bản' : ''}
+                  {isImage ? ' · 🖼️' : ''}
+                  {isVideo ? ' · 🎬' : ''}
+                </span>
+              ) : (
+                <span className="text-xs text-gray-500">{isImage ? '🖼️ Ảnh' : isVideo ? '🎬 Video' : '📄 File'}</span>
+              )}
               {doc.file_size > 0 && <span className="text-[10px] text-gray-400">{doc.file_size > 1048576 ? `${(doc.file_size/1048576).toFixed(1)} MB` : `${(doc.file_size/1024).toFixed(1)} KB`}</span>}
               {doc.created_at && <span className="text-[10px] text-gray-400">{new Date(doc.created_at).toLocaleDateString('vi-VN')}</span>}
               {(doc.uploader?.full_name || doc.creator?.full_name) && <span className="text-[10px] text-gray-400">· {doc.uploader?.full_name || doc.creator?.full_name}</span>}
+              {showCrmMeta && isCrmDocFromTask(doc) && !nested && (
+                <span className="text-[9px] bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded-full font-medium">📌 Từ nhiệm vụ</span>
+              )}
+              {showCrmMeta && doc.crm_stage_group_label && !nested && (
+                <span className="text-[9px] bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded-full font-medium">{doc.crm_stage_group_label}</span>
+              )}
               {crmShareUi && doc.shared_to_workshop && (
                 <span className="text-[9px] bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded-full font-medium">🧩 {shareModuleLabels(doc.allowed_share_modules)}</span>
               )}
@@ -476,13 +711,13 @@ function DocRow({ doc, onDelete, workshopModule, onVisibilitySaved }) {
       )}
       {isImage && !expanded && fileOpenProps && (
         <div className="px-3 pb-2">
-          <a {...fileOpenProps} className="block"><img src={fileHref} alt={name} className="max-h-24 rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity" /></a>
+          <a {...fileOpenProps} className="block"><img src={fileHref} alt={displayTitle} className="max-h-24 rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity" /></a>
         </div>
       )}
       {expanded && (
         <div className="px-3 pb-3 space-y-2">
           {isImage && fileOpenProps && (
-            <a {...fileOpenProps} className="block"><img src={fileHref} alt={name} className="max-h-64 max-w-full rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90" /></a>
+            <a {...fileOpenProps} className="block"><img src={fileHref} alt={displayTitle} className="max-h-64 max-w-full rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90" /></a>
           )}
           {doc.notes && <div className="bg-white rounded-lg p-3 text-sm text-gray-700 whitespace-pre-wrap border">{doc.notes}</div>}
         </div>
@@ -626,6 +861,8 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [companyRegions, setCompanyRegions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [fallbackDealIdForTasks, setFallbackDealIdForTasks] = useState(null);
+  /** Map crm_tasks.id → { title, stage_slug, order_index } — sắp xếp tài liệu theo nhiệm vụ */
+  const [crmTaskMetaMap, setCrmTaskMetaMap] = useState({});
   const [ensuringCrmDeal, setEnsuringCrmDeal] = useState(false);
   const tabFromUrl = searchParams.get('tab');
   const normalizedUrlTab = LEGACY_TAB_MAP[tabFromUrl] || tabFromUrl;
@@ -703,6 +940,38 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     () => sharedActivities.filter((a) => a.type === 'note'),
     [sharedActivities],
   );
+
+  const visibleCrmSharedDocs = useMemo(
+    () => (project?.sharedDocuments || []).filter((d) => isLeadDocVisibleInModule(d, workshopShareMod)),
+    [project?.sharedDocuments, workshopShareMod],
+  );
+
+  const crmDealIdForDocs = project?.crmDeals?.[0]?.id || fallbackDealIdForTasks;
+
+  useEffect(() => {
+    if (!crmDealIdForDocs) {
+      setCrmTaskMetaMap({});
+      return;
+    }
+    let cancelled = false;
+    api.get(`/crm/leads/${crmDealIdForDocs}/tasks`, { params: { task_scope: 'all' } })
+      .then(({ data }) => {
+        if (cancelled) return;
+        const map = {};
+        (Array.isArray(data) ? data : []).forEach((t, idx) => {
+          map[t.id] = {
+            title: t.title,
+            stage_slug: t.stage_slug,
+            order_index: t.order_index ?? idx,
+          };
+        });
+        setCrmTaskMetaMap(map);
+      })
+      .catch(() => {
+        if (!cancelled) setCrmTaskMetaMap({});
+      });
+    return () => { cancelled = true; };
+  }, [crmDealIdForDocs]);
 
   const refreshCrmActivities = useCallback(async () => {
     const dealId = project?.crmDeals?.[0]?.id;
@@ -1822,46 +2091,6 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               {/* Tài liệu */}
               {activeTab === 'documents' && (
                 <>
-                  {/* Bản vẽ kỹ thuật nổi bật */}
-                  {(() => {
-                    const crmForDrawings = (project.sharedDocuments || []).filter(
-                      (d) => isLeadDocVisibleInModule(d, workshopShareMod),
-                    );
-                    const allDocs = [...crmForDrawings, ...projectDocs];
-                    const seen = new Set();
-                    const drawings = allDocs.filter((d) => {
-                      if (seen.has(d.id)) return false;
-                      seen.add(d.id);
-                      const name = d.file_name || d.name || '';
-                      return d.doc_type === 'drawing' || /\.(dwg|dxf|pdf|png|jpg|jpeg|webp)$/i.test(name);
-                    });
-                    if (!drawings.length) return null;
-                    return (
-                      <div className="mb-5 p-4 bg-sky-50 border border-sky-200 rounded-xl">
-                        <p className="text-xs font-bold text-sky-700 uppercase tracking-wide mb-3">📐 Bản vẽ & Tài liệu kỹ thuật ({drawings.length})</p>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                          {drawings.map((d) => {
-                            const name = d.file_name || d.name || 'File';
-                            const href = d.file_url ? (d.file_url.startsWith('http') ? d.file_url : `${window.location.origin}/${d.file_url}`) : '';
-                            const ext = name.split('.').pop()?.toLowerCase();
-                            const isImage = /^(jpg|jpeg|png|gif|webp|bmp|svg)$/.test(ext);
-                            return (
-                              <a key={d.id} href={href || undefined} target="_blank" rel="noopener noreferrer"
-                                className="flex flex-col items-center gap-1.5 p-3 bg-white border border-sky-100 rounded-lg hover:border-sky-300 hover:shadow-sm transition-all cursor-pointer group">
-                                {isImage && href ? (
-                                  <img src={href} alt={name} className="w-full h-20 object-contain rounded" />
-                                ) : (
-                                  <span className="text-3xl">{/pdf/i.test(ext) ? '📕' : /dwg|dxf/i.test(ext) ? '📐' : '📄'}</span>
-                                )}
-                                <p className="text-[10px] text-center text-gray-700 font-medium truncate w-full">{name}</p>
-                              </a>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })()}
-
                   {/* Header buttons */}
                   <div className="flex items-center gap-2 mb-4 flex-wrap">
                     {uploadingDoc ? (
@@ -1876,12 +2105,16 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     <button type="button" onClick={() => setShowAddTextDoc(true)} className="h-8 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
                       <Plus className="h-3.5 w-3.5" /> Nhập văn bản
                     </button>
-                    {crmLeadId && (
-                      <Link to={`/crm/leads/${crmLeadId}?tab=documents`} className="h-8 px-3 bg-violet-100 hover:bg-violet-200 text-violet-700 rounded-lg text-xs font-medium flex items-center gap-1.5">
-                        📋 CRM tài liệu
-                      </Link>
-                    )}
                   </div>
+
+                  <CrmSharedDocumentsPanel
+                    docs={visibleCrmSharedDocs}
+                    workshopModule={workshopShareMod}
+                    crmLeadId={crmLeadId}
+                    dealLabel={displayCode}
+                    taskMetaMap={crmTaskMetaMap}
+                    onVisibilitySaved={refreshProjectSilently}
+                  />
 
                   {/* Production-native documents */}
                   {projectDocs.length > 0 && (
@@ -1889,23 +2122,6 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                       <p className="text-xs font-bold text-gray-500 uppercase mb-2">📁 Tài liệu xưởng ({projectDocs.length})</p>
                       <div className="space-y-2">
                         {projectDocs.map(doc => <DocRow key={doc.id} doc={doc} onDelete={() => deleteProjectDocument(doc.id)} />)}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* CRM shared documents */}
-                  {(project.sharedDocuments?.length || 0) > 0 && (
-                    <div className="mb-4">
-                      <p className="text-xs font-bold text-gray-500 uppercase mb-2">🔗 Từ CRM — đã chia sẻ xưởng ({project.sharedDocuments.length})</p>
-                      <div className="space-y-2">
-                        {project.sharedDocuments.map((doc) => (
-                          <DocRow
-                            key={doc.id}
-                            doc={doc}
-                            workshopModule={moduleKey === 'vc' ? 'logistics' : 'production'}
-                            onVisibilitySaved={refreshProjectSilently}
-                          />
-                        ))}
                       </div>
                     </div>
                   )}
@@ -1931,7 +2147,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     </div>
                   )}
 
-                  {projectDocs.length === 0 && (project.sharedDocuments?.length || 0) === 0 && taskFiles.length === 0 && (
+                  {projectDocs.length === 0 && visibleCrmSharedDocs.length === 0 && taskFiles.length === 0 && (
                     <div className="text-center py-10 bg-gray-50 rounded-lg border-2 border-dashed">
                       <FileUp className="h-8 w-8 text-gray-300 mx-auto mb-2" />
                       <p className="text-sm text-gray-500">Chưa có tài liệu nào</p>

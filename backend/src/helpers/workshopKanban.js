@@ -20,6 +20,8 @@ const {
   markPipelineWorkshopTypeJoinMissing,
   isPipelineKpiSlaMissingError,
   markPipelineKpiSlaColumnMissing,
+  isPipelineCollectedRevenueMissingError,
+  markPipelineCollectedRevenueColumnMissing,
 } = require('./productionPipelineSchema');
 const { isCrmPostWonManagedStage } = require('./crmDealStageGate');
 
@@ -163,6 +165,12 @@ async function loadProductionPipelineStagesRows(includeInactive = false, company
     }
     if (error && isCrmTargetStageMissingError(error)) {
       markCrmTargetStageColumnMissing();
+      const retry = await runBase(scope);
+      data = retry.data;
+      error = retry.error;
+    }
+    if (error && isPipelineCollectedRevenueMissingError(error)) {
+      markPipelineCollectedRevenueColumnMissing();
       const retry = await runBase(scope);
       data = retry.data;
       error = retry.error;
