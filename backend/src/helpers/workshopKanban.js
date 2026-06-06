@@ -18,6 +18,8 @@ const {
   markProductionCompanyIdColumnMissing,
   markPipelineWorkshopTypeColumnMissing,
   markPipelineWorkshopTypeJoinMissing,
+  isPipelineKpiSlaMissingError,
+  markPipelineKpiSlaColumnMissing,
 } = require('./productionPipelineSchema');
 const { isCrmPostWonManagedStage } = require('./crmDealStageGate');
 
@@ -161,6 +163,12 @@ async function loadProductionPipelineStagesRows(includeInactive = false, company
     }
     if (error && isCrmTargetStageMissingError(error)) {
       markCrmTargetStageColumnMissing();
+      const retry = await runBase(scope);
+      data = retry.data;
+      error = retry.error;
+    }
+    if (error && isPipelineKpiSlaMissingError(error)) {
+      markPipelineKpiSlaColumnMissing();
       const retry = await runBase(scope);
       data = retry.data;
       error = retry.error;
@@ -329,6 +337,19 @@ function enrichOneSxProject(project, sortedStages, wonSet, leadMeta = null) {
     sx_kanban_column_id: colId,
     sx_intake: Boolean(inIntake),
     sx_pipeline_percent: matchedCol?.progress_percent ?? null,
+    sx_pipeline_stage: matchedCol ? {
+      id: matchedCol.id,
+      name: matchedCol.name,
+      color: matchedCol.color,
+      icon: matchedCol.icon,
+      sla_days: matchedCol.sla_days,
+      default_probability: matchedCol.default_probability,
+      counts_as_won_revenue: matchedCol.counts_as_won_revenue,
+      counts_as_completed_revenue: matchedCol.counts_as_completed_revenue,
+      requires_deadline: matchedCol.requires_deadline,
+      bucket_slug: matchedCol.bucket_slug,
+    } : null,
+    sx_pipeline_stage_entered_at: project.sx_pipeline_stage_entered_at ?? null,
   };
 }
 
@@ -377,6 +398,11 @@ function buildPipelineSummary(sortedStages, enhancedProjects) {
     workflow_stage_id: col.workflow_stage_id || col.workflow_stage?.id || null,
     slug: col.workflow_stage?.slug || col.bucket_slug || null,
     is_handover_to_logistics: col.is_handover_to_logistics ?? false,
+    default_probability: col.default_probability ?? null,
+    sla_days: col.sla_days ?? null,
+    counts_as_won_revenue: col.counts_as_won_revenue ?? null,
+    counts_as_completed_revenue: col.counts_as_completed_revenue ?? null,
+    requires_deadline: col.requires_deadline ?? false,
     count: enhancedProjects.filter((p) => p.sx_kanban_column_id === col.id).length,
     total_value: enhancedProjects
       .filter((p) => p.sx_kanban_column_id === col.id)

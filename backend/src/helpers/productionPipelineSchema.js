@@ -16,6 +16,10 @@ let pipelineProgressPercentColumnAvailable = true;
 let pipelineWorkshopTypeColumnAvailable = true;
 /** Embed workshop_type:workshop_project_types — tắt nếu schema cache chưa expose FK */
 let pipelineWorkshopTypeJoinAvailable = true;
+/** Cột KPI/SLA (migration 287) — tắt nếu DB chưa migrate */
+let pipelineKpiSlaColumnsAvailable = true;
+/** Cột requires_deadline (migration 288) — tắt nếu DB chưa migrate */
+let pipelineRequiresDeadlineColumnAvailable = true;
 
 function isHandoverMissingError(err) {
   if (!err) return false;
@@ -152,11 +156,49 @@ function markPipelineWorkshopTypeJoinMissing() {
   pipelineWorkshopTypeJoinAvailable = false;
 }
 
+function isPipelineKpiSlaMissingError(err) {
+  if (!err || !pipelineKpiSlaColumnsAvailable) return false;
+  const s = String(err.message || err.details || err.hint || '').toLowerCase();
+  return (
+    (s.includes('default_probability') || s.includes('sla_days')
+      || s.includes('counts_as_won_revenue') || s.includes('counts_as_completed_revenue'))
+    && (s.includes('does not exist') || s.includes('could not find'))
+  );
+}
+
+function markPipelineKpiSlaColumnMissing() {
+  if (pipelineKpiSlaColumnsAvailable) {
+    console.warn(
+      '[production_pipeline_stages] Cột KPI/SLA chưa tồn tại. Chạy database/287_production_pipeline_sx_kpi_sla.sql trên Supabase.',
+    );
+  }
+  pipelineKpiSlaColumnsAvailable = false;
+}
+
+function isPipelineRequiresDeadlineMissingError(err) {
+  if (!err || !pipelineRequiresDeadlineColumnAvailable) return false;
+  const s = String(err.message || err.details || err.hint || '').toLowerCase();
+  return s.includes('requires_deadline') && (s.includes('does not exist') || s.includes('could not find'));
+}
+
+function markPipelineRequiresDeadlineColumnMissing() {
+  if (pipelineRequiresDeadlineColumnAvailable) {
+    console.warn(
+      '[production_pipeline_stages] Cột requires_deadline chưa tồn tại. Chạy database/288_production_kanban_deadline.sql trên Supabase.',
+    );
+  }
+  pipelineRequiresDeadlineColumnAvailable = false;
+}
+
 /** Chuỗi .select() cho bảng production_pipeline_stages (+ join workflow_stage) */
 function buildPipelineStageSelect() {
   const cid = productionCompanyIdColumnAvailable ? 'company_id, ' : '';
   const h = handoverToLogisticsColumnAvailable ? 'is_handover_to_logistics, ' : '';
   const pp = pipelineProgressPercentColumnAvailable ? 'progress_percent, ' : '';
+  const kpi = pipelineKpiSlaColumnsAvailable
+    ? 'default_probability, sla_days, counts_as_won_revenue, counts_as_completed_revenue, '
+    : '';
+  const reqDl = pipelineRequiresDeadlineColumnAvailable ? 'requires_deadline, ' : '';
   let wt = '';
   if (pipelineWorkshopTypeColumnAvailable) {
     wt = pipelineWorkshopTypeJoinAvailable
@@ -171,7 +213,7 @@ function buildPipelineStageSelect() {
       t = 'crm_target_stage_id, ';
     }
   }
-  return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, ${h}${pp}${wt}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
+  return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, ${h}${pp}${kpi}${reqDl}${wt}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
 }
 
 /** Bỏ field khỏi object insert/update nếu DB không có cột */
@@ -182,6 +224,13 @@ function stripHandoverFields(obj) {
   if (!crmTargetStageColumnAvailable) delete o.crm_target_stage_id;
   if (!pipelineProgressPercentColumnAvailable) delete o.progress_percent;
   if (!pipelineWorkshopTypeColumnAvailable) delete o.workshop_type_id;
+  if (!pipelineKpiSlaColumnsAvailable) {
+    delete o.default_probability;
+    delete o.sla_days;
+    delete o.counts_as_won_revenue;
+    delete o.counts_as_completed_revenue;
+  }
+  if (!pipelineRequiresDeadlineColumnAvailable) delete o.requires_deadline;
   return o;
 }
 
@@ -196,6 +245,8 @@ function _resetForTests() {
   pipelineProgressPercentColumnAvailable = true;
   pipelineWorkshopTypeColumnAvailable = true;
   pipelineWorkshopTypeJoinAvailable = true;
+  pipelineKpiSlaColumnsAvailable = true;
+  pipelineRequiresDeadlineColumnAvailable = true;
 }
 
 module.exports = {
@@ -213,6 +264,10 @@ module.exports = {
   markPipelineWorkshopTypeColumnMissing,
   isPipelineWorkshopTypeEmbedRelationshipError,
   markPipelineWorkshopTypeJoinMissing,
+  isPipelineKpiSlaMissingError,
+  markPipelineKpiSlaColumnMissing,
+  isPipelineRequiresDeadlineMissingError,
+  markPipelineRequiresDeadlineColumnMissing,
   isHandoverColumnInSchema,
   isCrmTargetStageColumnInSchema,
   isCrmTargetStageJoinInSchema,

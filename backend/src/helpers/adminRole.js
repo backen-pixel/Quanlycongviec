@@ -43,15 +43,27 @@ function isProductionAdmin(user) {
   return normalizeRole(user?.role) === 'production_admin';
 }
 
+/** Nhân viên sản xuất — admin module Công việc + Sản xuất (phạm vi công ty). */
+function isProductionStaff(user) {
+  return normalizeRole(user?.role) === 'production_staff';
+}
+
 function isLogisticsAdmin(user) {
   return normalizeRole(user?.role) === 'logistics_admin';
+}
+
+/** Quản trị menu/API module Công việc + Sản xuất (không gồm CRM / hệ thống). */
+function isWorkProductionModuleAdmin(user) {
+  const r = normalizeRole(user?.role);
+  return isAdminLike(user) || r === 'manager' || isProductionStaff(user) || isProductionAdmin(user);
 }
 
 /** Admin module SX hoặc VC (hoặc admin hệ thống/công ty). */
 function isModuleAdmin(user, moduleKey) {
   if (isSystemAdmin(user) || isAdminLike(user)) return true;
   const k = String(moduleKey || '').trim().toLowerCase();
-  if (k === 'production' || k === 'sx') return isProductionAdmin(user);
+  if (k === 'production' || k === 'sx') return isProductionAdmin(user) || isProductionStaff(user);
+  if (k === 'tasks' || k === 'projects') return isProductionStaff(user);
   if (k === 'logistics' || k === 'vc') return isLogisticsAdmin(user);
   return false;
 }
@@ -77,7 +89,9 @@ module.exports = {
   isSystemAdmin,
   isCompanyScopedAdmin,
   isProductionAdmin,
+  isProductionStaff,
   isLogisticsAdmin,
+  isWorkProductionModuleAdmin,
   isModuleAdmin,
   canViewTrashTab,
   canAccessTrash,

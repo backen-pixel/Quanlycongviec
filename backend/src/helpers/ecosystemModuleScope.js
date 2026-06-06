@@ -1,6 +1,8 @@
 const { supabase } = require('../config/supabase');
 const { createTTLCache } = require('./ttlCache');
-const { isAdminLike, isSystemAdmin } = require('./adminRole');
+const { isAdminLike, isSystemAdmin, isProductionStaff } = require('./adminRole');
+
+const PRODUCTION_STAFF_MODULES = new Set(['tasks', 'production', 'projects']);
 
 /** Khớp module_key dùng trong ecosystem_module_scopes và Sidebar */
 const KNOWN_MODULE_KEYS = ['crm', 'production', 'logistics', 'projects', 'tasks', 'customers'];
@@ -59,6 +61,7 @@ function invalidateEcosystemModuleScopeCache(moduleKey) {
 async function userHasEcosystemModuleAccess(user, moduleKey) {
   if (!moduleKey || moduleKey === 'core') return true;
   if (isAdminLike(user)) return true;
+  if (isProductionStaff(user) && PRODUCTION_STAFF_MODULES.has(String(moduleKey))) return true;
 
   let divisionIds = [];
   if (user?.company_id) {

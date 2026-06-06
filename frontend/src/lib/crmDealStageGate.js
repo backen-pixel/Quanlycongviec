@@ -29,6 +29,48 @@ export function isCrmPostWonManagedStage(stage) {
   return false;
 }
 
+/** Deal CRM đã có dự án xưởng (đã tạo / đang ở Sản xuất). */
+export function dealHasSxProject(item) {
+  return !!(item?.project_id);
+}
+
+/** Cột đang ở giai đoạn sau Thắng (Thắng hoặc Sản xuất / VC…). */
+export function isDealOnCrmPostWonColumn(stage) {
+  if (!stage) return false;
+  if (stage.is_won) return true;
+  return isCrmPostWonManagedStage(stage);
+}
+
+/**
+ * Kéo ngược deal đã có dự án SX về cột bán hàng (trước Thắng) — không cho phép.
+ * @returns {string|null}
+ */
+export function crmDealRevertFromPostWonBlockedMessage(item, currentStage, targetStage) {
+  if (!item || item.type !== 'deal' || !dealHasSxProject(item)) return null;
+  if (!currentStage || !targetStage) return null;
+  if (String(currentStage.id) === String(targetStage.id)) return null;
+  const leavingPostWon = isDealOnCrmPostWonColumn(currentStage);
+  const enteringPreWon =
+    !targetStage.is_won
+    && !targetStage.is_lost
+    && !isCrmPostWonManagedStage(targetStage);
+  if (!leavingPostWon || !enteringPreWon) return null;
+  const code = item.code || item.title || 'Deal';
+  return `Deal ${code} đã tạo dự án Sản xuất — không thể kéo ngược về giai đoạn trước. Xem tại module Sản xuất.`;
+}
+
+/**
+ * Kéo lại sang Thắng khi đã có dự án SX — không mở hộp chuyển, chỉ thông báo.
+ * @returns {string|null}
+ */
+export function crmDealMoveToWonSxAlreadyCreatedMessage(item) {
+  if (!item || item.type !== 'deal' || !dealHasSxProject(item)) return null;
+  const code = item.code || item.title || 'Deal';
+  const proj = item.linked_project?.code || item.project_code || '';
+  const projHint = proj ? ` (${proj})` : '';
+  return `Deal ${code} đã có dự án Sản xuất${projHint}. Không tạo lại — chỉ cập nhật cột Thắng trên CRM nếu cần.`;
+}
+
 /** Khóa kéo khi thẻ đang ở cột SX/VC trên CRM (không khóa chỉ vì có dự án). */
 export function isDealCrmStageLocked(item) {
   if (!item || item.type !== 'deal') return false;
