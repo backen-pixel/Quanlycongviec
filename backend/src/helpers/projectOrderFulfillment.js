@@ -1,7 +1,6 @@
 const { supabase } = require('../config/supabase');
 const {
-  applyWorkshopTemplateWorkshopTypeScopeForProject,
-  isWorkshopTplWorkshopTypeMissingError,
+  fetchProductionWorkshopTemplatesForApply,
 } = require('./workshopTaskTemplateWorkshopType');
 const { getCrmVcDeliveryStageId } = require('./workshopKanban');
 const { validateProductionCompanyId } = require('./productionCompanyGate');
@@ -260,66 +259,25 @@ async function applyProductionTemplateToFulfillmentLead({
     //
     // Truy vấn KÈM production_stage_id (migration 256) để gen task gắn cột pipeline thật → gate Kanban
     // chặn chuyển giai đoạn hoạt động chính xác. DB cũ → retry không có cột.
-    const fetchTemplatesStrict = async (scope) => {
-      const wantStage = scope.wantStageCol;
-      const cols = wantStage
-        ? 'id, name, is_default, order_index, company_id, production_stage_id'
-        : 'id, name, is_default, order_index, company_id';
-      let q = supabase
-        .from('workshop_task_templates')
-        .select(cols)
-        .eq('workshop_area', 'production')
-        .eq('is_active', true);
-      if (scope.companyId) q = q.eq('company_id', scope.companyId);
-      else q = q.is('company_id', null);
-      if (scope.companyId) {
-        q = applyWorkshopTemplateWorkshopTypeScopeForProject(q, workshopTypeId);
-      }
-      q = q.order('order_index', { ascending: true });
-      const r = await q;
-      if (r.error?.message?.includes('order_index')) {
-        const colsNoOrder = wantStage
-          ? 'id, name, is_default, company_id, production_stage_id'
-          : 'id, name, is_default, company_id';
-        let q2 = supabase
-          .from('workshop_task_templates')
-          .select(colsNoOrder)
-          .eq('workshop_area', 'production')
-          .eq('is_active', true);
-        if (scope.companyId) q2 = q2.eq('company_id', scope.companyId);
-        else q2 = q2.is('company_id', null);
-        if (scope.companyId) {
-          q2 = applyWorkshopTemplateWorkshopTypeScopeForProject(q2, workshopTypeId);
-        }
-        return await q2;
-      }
-      if (r.error && isWorkshopTplWorkshopTypeMissingError(r.error)) {
-        let q3 = supabase
-          .from('workshop_task_templates')
-          .select(cols)
-          .eq('workshop_area', 'production')
-          .eq('is_active', true);
-        if (scope.companyId) q3 = q3.eq('company_id', scope.companyId);
-        else q3 = q3.is('company_id', null);
-        q3 = q3.order('order_index', { ascending: true });
-        return await q3;
-      }
-      return r;
-    };
+    const fetchTemplatesStrict = async (scopeCompanyId, wantStageCol) => fetchProductionWorkshopTemplatesForApply(supabase, {
+      companyId: scopeCompanyId,
+      workshopTypeId,
+      wantStageCol,
+    });
 
     let templates = [];
     let tplErr = null;
-    let r1 = await fetchTemplatesStrict({ companyId: mustCompanyId, wantStageCol: true });
+    let r1 = await fetchTemplatesStrict(mustCompanyId, true);
     if (r1.error && String(r1.error.message || '').includes('production_stage_id')) {
-      r1 = await fetchTemplatesStrict({ companyId: mustCompanyId, wantStageCol: false });
+      r1 = await fetchTemplatesStrict(mustCompanyId, false);
     }
     templates = r1.data || [];
     tplErr = r1.error;
     if (tplErr) throw tplErr;
     if (!templates?.length) {
-      let g = await fetchTemplatesStrict({ companyId: null, wantStageCol: true });
+      let g = await fetchTemplatesStrict(null, true);
       if (g.error && String(g.error.message || '').includes('production_stage_id')) {
-        g = await fetchTemplatesStrict({ companyId: null, wantStageCol: false });
+        g = await fetchTemplatesStrict(null, false);
       }
       if (g.error) throw g.error;
       templates = g.data || [];
@@ -481,10 +439,11 @@ async function applyProductionTemplateToFulfillmentLead({
   if (!targetCompanyId && leadRow?.project_id) {
     const { data: p } = await supabase
       .from('projects')
-      .select('company_id')
+      .select('company_id, workshop_type_id')
       .eq('id', leadRow.project_id)
       .maybeSingle();
     if (p?.company_id) targetCompanyId = p.company_id;
+    if (!workshopTypeId && p?.workshop_type_id) workshopTypeId = p.workshop_type_id;
   }
 
   if (!targetCompanyId && leadRow?.company_id) targetCompanyId = leadRow.company_id;
@@ -499,34 +458,11 @@ async function applyProductionTemplateToFulfillmentLead({
     ? await loadProductionHandoverMaps(targetCompanyId)
     : { responsibleUserId: null, assigneeByTemplateItemId: new Map() };
 
-  const fetchTemplates = async (companyMode, wantStage = true) => {
-    const cols = wantStage
-      ? 'id, name, is_default, order_index, company_id, production_stage_id'
-      : 'id, name, is_default, order_index, company_id';
-    let q = supabase
-      .from('workshop_task_templates')
-      .select(cols)
-      .eq('workshop_area', 'production')
-      .eq('is_active', true);
-    if (companyMode === 'scoped' && targetCompanyId) q = q.eq('company_id', targetCompanyId);
-    if (companyMode === 'global') q = q.is('company_id', null);
-    q = q.order('order_index', { ascending: true });
-    const r = await q;
-    if (r.error?.message?.includes('order_index')) {
-      const colsNoOrder = wantStage
-        ? 'id, name, is_default, company_id, production_stage_id'
-        : 'id, name, is_default, company_id';
-      let q2 = supabase
-        .from('workshop_task_templates')
-        .select(colsNoOrder)
-        .eq('workshop_area', 'production')
-        .eq('is_active', true);
-      if (companyMode === 'scoped' && targetCompanyId) q2 = q2.eq('company_id', targetCompanyId);
-      if (companyMode === 'global') q2 = q2.is('company_id', null);
-      return await q2;
-    }
-    return r;
-  };
+  const fetchTemplates = async (companyMode, wantStage = true) => fetchProductionWorkshopTemplatesForApply(supabase, {
+    companyId: companyMode === 'scoped' && targetCompanyId ? targetCompanyId : (companyMode === 'global' ? null : targetCompanyId),
+    workshopTypeId,
+    wantStageCol: wantStage,
+  });
 
   let r1 = await fetchTemplates('scoped', true);
   if (r1.error && String(r1.error.message || '').includes('production_stage_id')) {

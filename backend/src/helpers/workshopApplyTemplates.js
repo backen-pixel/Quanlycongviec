@@ -1,8 +1,9 @@
 const { supabase } = require('../config/supabase');
 const { getWorkshopStageMap } = require('./workshopKanban');
 const {
-  isWorkshopTplWorkshopTypeMissingError,
   applyWorkshopTemplateWorkshopTypeScopeForProject,
+  isWorkshopTplWorkshopTypeMissingError,
+  fetchProductionWorkshopTemplatesForApply,
 } = require('./workshopTaskTemplateWorkshopType');
 
 function normalizeChecklistForTaskInsert(checklist) {
@@ -163,6 +164,17 @@ async function fetchActiveWorkshopTemplatesForArea(workshopArea, companyId, opts
     }
     return q;
   };
+
+  if (area === 'production') {
+    const { data: prodRows, error: prodErr } = await fetchProductionWorkshopTemplatesForApply(supabase, {
+      companyId: cid,
+      workshopTypeId,
+    });
+    if (prodErr && !isWorkshopTplWorkshopTypeMissingError(prodErr)) {
+      console.warn('[workshop-templates] production scoped list:', prodErr.message);
+    }
+    return prodRows || [];
+  }
 
   let templates = [];
   if (cid) {

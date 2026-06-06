@@ -4,7 +4,7 @@ import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { findDefaultAdminCrmCompanyPhucDat } from '../lib/crmCompanyFilter';
-import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Globe, MapPin, Lock } from 'lucide-react';
+import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Globe, MapPin, Lock, Star } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -65,6 +65,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
   const [pipelineStages, setPipelineStages] = useState([]);
   const [selectedStageKey, setSelectedStageKey] = useState('');
   const [seedingNine, setSeedingNine] = useState(false);
+  const [bundleSetting, setBundleSetting] = useState(false);
   const companyDefaultResolvedRef = useRef(false);
 
   const currentStages = activeTab === 'logistics' ? WORKSHOP_LOGISTICS_STAGES : WORKSHOP_PRODUCTION_STAGES;
@@ -363,6 +364,51 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
     try { await api.put(`/production/task-templates/${tpl.id}`, { is_default: !tpl.is_default }); load(); } catch {}
   };
 
+  const setDefaultBundle = async () => {
+    if (!selectedCompanyId || !selectedWorkshopTypeKey || selectedWorkshopTypeKey === 'global') return;
+    const typeLabel = selectedWorkshopType?.name || 'phân loại này';
+    const tplCount = filteredTemplates.length;
+    const taskCount = filteredTemplates.reduce((n, t) => n + (t.items?.length || 0), 0);
+    const ok = window.confirm(
+      `Đặt ${tplCount} bộ mẫu (${taskCount} nhiệm vụ) của «${typeLabel}» làm bộ mặc định?\n\nKhi tạo deal Sản xuất thuộc phân loại này, hệ thống sẽ tự sinh đúng các nhiệm vụ từ bộ này.`,
+    );
+    if (!ok) return;
+    setBundleSetting(true);
+    try {
+      await api.put('/production/task-templates/set-default-bundle', {
+        company_id: selectedCompanyId,
+        workshop_type_id: selectedWorkshopTypeKey,
+        is_default: true,
+        template_ids: filteredTemplates.map((t) => t.id),
+      });
+      await load();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Không đặt được bộ mặc định');
+    } finally {
+      setBundleSetting(false);
+    }
+  };
+
+  const clearDefaultBundle = async () => {
+    if (!selectedCompanyId || !selectedWorkshopTypeKey || selectedWorkshopTypeKey === 'global') return;
+    const typeLabel = selectedWorkshopType?.name || 'phân loại này';
+    const ok = window.confirm(`Bỏ đặt bộ mặc định cho «${typeLabel}»?\n\nDeal SX mới sẽ không tự sinh nhiệm vụ từ bộ này cho đến khi đặt lại.`);
+    if (!ok) return;
+    setBundleSetting(true);
+    try {
+      await api.put('/production/task-templates/set-default-bundle', {
+        company_id: selectedCompanyId,
+        workshop_type_id: selectedWorkshopTypeKey,
+        is_default: false,
+      });
+      await load();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Không bỏ được bộ mặc định');
+    } finally {
+      setBundleSetting(false);
+    }
+  };
+
   const updateTemplate = async () => {
     if (!editingTpl || !editingTpl.name.trim()) return;
     try {
@@ -548,6 +594,9 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
       : { label: 'Bộ mẫu chung (Global)', icon: '🌐', color: '#64748b' });
 
   const stageTpls = [...filteredTemplates].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+  const isProductionTypeBundle = usesWorkshopType && selectedWorkshopTypeKey && selectedWorkshopTypeKey !== 'global';
+  const bundleAllDefault = isProductionTypeBundle && stageTpls.length > 0 && stageTpls.every((t) => t.is_default);
+  const bundleTaskCount = stageTpls.reduce((n, t) => n + (t.items?.length || 0), 0);
 
   return (
     <div className="space-y-5 max-w-6xl">
@@ -559,7 +608,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
           </h1>
           <p className="text-sm text-gray-500">
             {fixedArea === 'production'
-              ? <>Mỗi <strong>phân loại</strong> (Cửa / Tủ bếp / …) có một bộ nhiệm vụ riêng. Khi tạo dự án, hệ thống áp toàn bộ bộ mẫu của phân loại đó (không gắn cột pipeline).</>
+              ? <>Mỗi <strong>phân loại</strong> (Cánh kính / Tủ bếp / …) có một bộ nhiệm vụ riêng. Nhấn <strong>Đặt bộ mặc định deal SX</strong> để khi tạo deal thuộc phân loại đó hệ thống tự sinh đúng bộ nhiệm vụ.</>
               : <>Phân theo <strong>cột pipeline</strong> của công ty đã chọn. Khi tạo dự án mới, hệ thống áp một lần các bộ mẫu của cột hiện tại + Global.</>}
             {' '}Ngày hẹn trên từng nhiệm vụ do nhân viên tự đặt.
           </p>
@@ -826,6 +875,69 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
             )}
             <button onClick={createTemplate} className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm cursor-pointer hover:bg-blue-700">Tạo</button>
             <button onClick={() => setShowAddTpl(false)} className="h-9 px-3 bg-gray-100 rounded-lg text-sm cursor-pointer">Hủy</button>
+          </div>
+        </div>
+      )}
+
+      {canLoadTemplates && isProductionTypeBundle && stageTpls.length > 0 && (
+        <div className={`rounded-xl border p-4 flex flex-wrap items-center gap-3 ${
+          bundleAllDefault ? 'border-amber-300 bg-amber-50/80' : 'border-teal-200 bg-teal-50/60'
+        }`}>
+          <div className="flex items-start gap-3 min-w-0 flex-1">
+            <div className={`shrink-0 w-10 h-10 rounded-xl flex items-center justify-center ${
+              bundleAllDefault ? 'bg-amber-100 text-amber-700' : 'bg-teal-100 text-teal-700'
+            }`}>
+              <Star className={`h-5 w-5 ${bundleAllDefault ? 'fill-amber-500 text-amber-500' : ''}`} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-gray-900">
+                Bộ mặc định khi tạo deal Sản xuất — {selectedWorkshopType?.name}
+              </p>
+              <p className="text-xs text-gray-600 mt-0.5">
+                {stageTpls.length} bộ mẫu · {bundleTaskCount} nhiệm vụ
+                {bundleAllDefault
+                  ? ' · Đang được dùng tự động khi có deal SX thuộc phân loại này'
+                  : ' · Chưa đặt làm bộ mặc định — deal SX có thể lấy nhầm bộ mẫu khác'}
+              </p>
+              <ul className="mt-2 text-[11px] text-gray-500 space-y-0.5">
+                {stageTpls.map((t) => (
+                  <li key={t.id} className="flex items-center gap-2">
+                    <span className={t.is_default ? 'text-amber-600' : 'text-gray-400'}>
+                      {t.is_default ? '★' : '○'}
+                    </span>
+                    <span className="truncate">{t.name}</span>
+                    <span className="text-gray-400 shrink-0">({t.items?.length || 0} NV)</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {bundleAllDefault ? (
+              <>
+                <span className="text-xs font-medium text-amber-800 bg-amber-100 px-2.5 py-1 rounded-full">
+                  Đang là bộ mặc định
+                </span>
+                <button
+                  type="button"
+                  onClick={clearDefaultBundle}
+                  disabled={bundleSetting}
+                  className="h-9 px-3 rounded-lg text-xs font-medium border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 cursor-pointer disabled:opacity-60"
+                >
+                  Bỏ mặc định
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={setDefaultBundle}
+                disabled={bundleSetting}
+                className="h-9 px-4 rounded-lg text-sm font-medium bg-teal-600 text-white hover:bg-teal-700 cursor-pointer disabled:opacity-60 flex items-center gap-1.5"
+              >
+                <Star className="h-4 w-4" />
+                {bundleSetting ? 'Đang lưu…' : 'Đặt bộ mặc định deal SX'}
+              </button>
+            )}
           </div>
         </div>
       )}

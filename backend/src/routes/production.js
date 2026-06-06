@@ -2864,6 +2864,81 @@ r.post('/task-templates', requirePermission('projects', 'edit'), async (req, res
   }
 });
 
+r.put('/task-templates/set-default-bundle', requirePermission('projects', 'edit'), async (req, res) => {
+  try {
+    const company_id = effectiveWorkshopCompanyId(req, req.body.company_id);
+    const rawWkt = req.body.workshop_type_id;
+    const markDefault = req.body.is_default !== false;
+    const template_ids = Array.isArray(req.body.template_ids)
+      ? req.body.template_ids.map(String).filter(Boolean)
+      : null;
+
+    if (!company_id) return res.status(400).json({ error: 'Thiếu company_id' });
+    if (!rawWkt || String(rawWkt).toLowerCase() === 'global') {
+      return res.status(400).json({ error: 'Chọn phân loại cụ thể (Cánh kính / Tủ bếp / …)' });
+    }
+
+    const wktCheck = await validateWorkshopTemplateWorkshopType({
+      workshop_area: 'production',
+      company_id,
+      workshop_type_id: rawWkt,
+      production_stage_id: null,
+    });
+    if (!wktCheck.ok) return res.status(400).json({ error: wktCheck.error });
+    const workshop_type_id = wktCheck.workshop_type_id;
+
+    let clearQ = supabase
+      .from('workshop_task_templates')
+      .update({ is_default: false })
+      .eq('workshop_area', 'production')
+      .eq('company_id', company_id)
+      .eq('workshop_type_id', workshop_type_id);
+    const { error: clearErr } = await clearQ;
+    if (clearErr) throw clearErr;
+
+    if (!markDefault) {
+      return res.json({ ok: true, updated: 0, is_default: false, workshop_type_id });
+    }
+
+    let ids = template_ids;
+    if (!ids?.length) {
+      const { data: rows, error: listErr } = await supabase
+        .from('workshop_task_templates')
+        .select('id')
+        .eq('workshop_area', 'production')
+        .eq('company_id', company_id)
+        .eq('workshop_type_id', workshop_type_id)
+        .eq('is_active', true);
+      if (listErr) throw listErr;
+      ids = (rows || []).map((row) => row.id).filter(Boolean);
+    }
+
+    if (!ids.length) {
+      return res.status(400).json({ error: 'Không có bộ mẫu nào để đặt mặc định cho phân loại này' });
+    }
+
+    const { data: updated, error: updErr } = await supabase
+      .from('workshop_task_templates')
+      .update({ is_default: true })
+      .in('id', ids)
+      .eq('company_id', company_id)
+      .eq('workshop_type_id', workshop_type_id)
+      .select('id, name, is_default, order_index');
+    if (updErr) throw updErr;
+
+    res.json({
+      ok: true,
+      updated: updated?.length || 0,
+      is_default: true,
+      workshop_type_id,
+      templates: (updated || []).sort((a, b) => (a.order_index || 0) - (b.order_index || 0)),
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 r.put('/task-templates/:id', requirePermission('projects', 'edit'), async (req, res) => {
   try {
     let { data: existingRow, error: existingErr } = await supabase
@@ -2930,33 +3005,6 @@ r.put('/task-templates/:id', requirePermission('projects', 'edit'), async (req, 
     }
     if (update.workshop_area && !['production', 'logistics'].includes(update.workshop_area)) {
       return res.status(400).json({ error: 'workshop_area không hợp lệ' });
-    }
-    if ((req.body.is_default === true || update.is_default === true) && existingRow?.workshop_area) {
-      const scopeCompanyId = update.company_id !== undefined ? update.company_id : (existingRow.company_id || null);
-      const scopeWorkshopTypeId = update.workshop_type_id !== undefined
-        ? update.workshop_type_id
-        : (existingRow.workshop_type_id ?? null);
-      let clearQ = supabase
-        .from('workshop_task_templates')
-        .update({ is_default: false })
-        .eq('workshop_area', update.workshop_area || existingRow.workshop_area)
-        .neq('id', req.params.id);
-      if (scopeCompanyId) clearQ = clearQ.eq('company_id', scopeCompanyId);
-      else clearQ = clearQ.is('company_id', null);
-      if (existingRow.workshop_area === 'production') {
-        if (scopeWorkshopTypeId) clearQ = clearQ.eq('workshop_type_id', scopeWorkshopTypeId);
-        else clearQ = clearQ.is('workshop_type_id', null);
-      }
-      const { error: clearErr } = await clearQ;
-      if (clearErr && isWorkshopTplCompanyMissingError(clearErr)) {
-        await supabase
-          .from('workshop_task_templates')
-          .update({ is_default: false })
-          .eq('workshop_area', update.workshop_area || existingRow.workshop_area)
-          .neq('id', req.params.id);
-      } else if (clearErr) {
-        throw clearErr;
-      }
     }
     let { data, error } = await supabase
       .from('workshop_task_templates')
