@@ -1,7 +1,7 @@
 -- 252_workshop_default_kitchen_glass_pipelines.sql
 -- Tự sinh 2 phân loại + bộ pipeline xưởng mặc định cho MỌI công ty:
---   📦 Tủ bếp        (10 cột — bắt đầu từ «Thiết kế lập kế hoạch»)
---   📦 Cánh kính     (11 cột)
+--   📦 Tủ bếp        (20 cột — migration 291)
+--   📦 Cánh kính     (12 cột — migration 292)
 --
 -- Idempotent: chạy nhiều lần an toàn — phân loại đã có và cột đã có (theo
 -- company_id + workshop_type_id + name) sẽ bỏ qua. Chỉ thêm phần thiếu.
@@ -48,24 +48,34 @@ BEGIN
       RETURNING id INTO v_kinh_id;
     END IF;
 
-    -- ─── Pipeline cho Tủ bếp (10 cột — bỏ «Tiếp nhận») ───────────────────
-    -- order_index dùng dải 1001–1010 (tránh đè cột hiện có; user reorder sau).
+    -- ─── Pipeline cho Tủ bếp (20 cột) ────────────────────────────────────
+    -- order_index dùng dải 1001–1020 (tránh đè cột hiện có; user reorder sau).
     INSERT INTO production_pipeline_stages
       (company_id, workshop_type_id, name, color, icon, order_index,
        is_active, workflow_stage_id, bucket_slug)
     SELECT v_company.id, v_tubep_id, s.name, s.color, s.icon,
            1000 + s.idx, true, v_prod_ws, NULL
     FROM (VALUES
-      (1,  'Thiết kế lập kế hoạch',    '#8B5CF6', '📐'),
-      (2,  'Kiểm tra chéo',            '#06B6D4', '🔍'),
-      (3,  'KCS',                      '#14B8A6', '✅'),
-      (4,  'Đơn hàng chuẩn bị xong',   '#F59E0B', '📦'),
-      (5,  'Đơn hàng ngày mai giao',   '#FB923C', '🚚'),
-      (6,  'Đơn hàng đã giao',         '#10B981', '✔️'),
-      (7,  'Chốt công nợ',             '#64748B', '🧾'),
-      (8,  'Kiểm tra công nợ',         '#475569', '🔎'),
-      (9,  'Chốt lại công nợ',         '#334155', '📋'),
-      (10, 'Thu tiền',                 '#16A34A', '💰')
+      (1,  'Tiếp nhận đơn hàng về SX',           '#6366F1', '📥'),
+      (2,  'Thiết kế & lập kế hoạch NVL',        '#8B5CF6', '📐'),
+      (3,  'Sản xuất kiểm tra chéo đặt kính',    '#0EA5E9', '🔍'),
+      (4,  'CHUẨN BỊ VẬT TƯ, CẮT KÍNH',          '#06B6D4', '📦'),
+      (5,  'ĐANG CẮT CÁNH,',                     '#F59E0B', '✂️'),
+      (6,  'KẾ HOẠCH SX THÙNG LÁ GHÉP',          '#10B981', '📋'),
+      (7,  'KẾ HOẠCH SX THÙNG HỢP KIM',          '#FBBF24', '📋'),
+      (8,  'SX THÙNG HỢP KIM + 100 X 16',        '#F97316', '🏭'),
+      (9,  'ĐANG SX THÙNG LÁ GHÉP NHỎ',           '#84CC16', '🏭'),
+      (10, 'ĐỘI SƠN',                            '#A855F7', '🎨'),
+      (11, 'HT NHÔM NGUYÊN TẤM',                 '#22C55E', '🔧'),
+      (12, 'HT NHÔM LÁ GHÉP NHỎ',                '#EAB308', '🔧'),
+      (13, 'KT KCS SẢN PHẨM, TÍNH CN',           '#14B8A6', '✅'),
+      (14, 'ĐƠN HÀNG ĐÃ CHUẨN BỊ XONG',          '#3B82F6', '📦'),
+      (15, 'ĐƠN HÀNG NGÀY MAI GIAO',             '#FB923C', '🚚'),
+      (16, 'ĐƠN HÀNG ĐÃ GIAO',                   '#10B981', '✔️'),
+      (17, 'CHỐT CÔNG NỢ ,',                     '#64748B', '🧾'),
+      (18, 'KIỂM TRA CÔNG NỢ',                   '#475569', '🔎'),
+      (19, 'Thu tiền',                           '#16A34A', '💰'),
+      (20, 'CHUYỂN TÁC VỤ PHÒNG KẾ TOÁN',        '#1E40AF', '📨')
     ) AS s(idx, name, color, icon)
     WHERE NOT EXISTS (
       SELECT 1 FROM production_pipeline_stages p
@@ -81,17 +91,18 @@ BEGIN
     SELECT v_company.id, v_kinh_id, s.name, s.color, s.icon,
            1100 + s.idx, true, v_prod_ws, NULL
     FROM (VALUES
-      (1,  'Tiếp nhận',                '#6366F1', '📥'),
-      (2,  'Thiết kế và lập kế hoạch', '#8B5CF6', '📐'),
-      (3,  'Kiểm tra đặt kính',        '#0EA5E9', '🔍'),
-      (4,  'Chuẩn bị vật tư',          '#06B6D4', '📦'),
-      (5,  'Phát vật tư',              '#14B8A6', '📤'),
-      (6,  'Sản xuất',                 '#F59E0B', '🏭'),
-      (7,  'Vệ sinh đóng gói',         '#FB923C', '🧹'),
-      (8,  'Thu tiền',                 '#16A34A', '💰'),
-      (9,  'Chờ giao hàng',            '#64748B', '⏳'),
-      (10, 'Đợi thanh toán',           '#D97706', '💵'),
-      (11, 'Nợ quá hạn',               '#DC2626', '⚠️')
+      (1,  'Tiếp Nhận',                         '#6366F1', '📥'),
+      (2,  'Vẽ lên kế hoạch sản xuất',         '#8B5CF6', '📐'),
+      (3,  'Kiểm tra và đặt kính.',            '#0EA5E9', '🔍'),
+      (4,  'Chuẩn bị Vật tư',                  '#06B6D4', '📦'),
+      (5,  'Phát vật tư',                       '#14B8A6', '📤'),
+      (6,  'sản xuất',                          '#F59E0B', '🏭'),
+      (7,  'vệ sinh đóng gói',                  '#FB923C', '🧹'),
+      (8,  'thu tiền',                          '#16A34A', '💰'),
+      (9,  'Chờ giao hàng',                     '#64748B', '⏳'),
+      (10, 'Đợi thanh toán',                    '#D97706', '💵'),
+      (11, 'Hoàn thành',                        '#10B981', '✅'),
+      (12, 'Nợ quá hạn không thu tiền được',    '#DC2626', '⚠️')
     ) AS s(idx, name, color, icon)
     WHERE NOT EXISTS (
       SELECT 1 FROM production_pipeline_stages p

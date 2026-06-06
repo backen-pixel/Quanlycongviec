@@ -168,8 +168,26 @@ export default function NewDealModal({
     }
 
     setSaving(true);
-    setSaveMessage(isProduction ? 'Đang tạo khách hàng...' : 'Đang tạo deal...');
+    setSaveMessage(isProduction ? 'Đang tạo đơn xưởng...' : 'Đang tạo deal...');
     try {
+      if (isProduction) {
+        const { data } = await api.post('/production/workshop-intake', {
+          title: formData.title,
+          company_id: formData.company_id || null,
+          workshop_type_id: formData.workshop_type_id || null,
+          region_id: formData.region_id || null,
+          customer_name: formData.customer_name,
+          customer_phone: formData.customer_phone,
+          customer_email: formData.customer_email || null,
+          install_address: formData.install_address || null,
+          estimated_value: parseFloat(formData.estimated_value) || 0,
+          description: formData.description || null,
+        });
+        onSuccess?.(data);
+        onClose();
+        return;
+      }
+
       const { data: customer } = await api.post('/customers', {
         full_name: formData.customer_name,
         phone: formData.customer_phone,
@@ -179,33 +197,23 @@ export default function NewDealModal({
       });
       const customerId = customer?.id || customer?.customer?.id;
 
-      if (isProduction) setSaveMessage('Đang tạo deal sản xuất...');
       const { data: deal } = await api.post('/crm/deals', {
         title: formData.title,
         customer_id: customerId || null,
-        source_id: isProduction ? null : (formData.source_id || null),
+        source_id: formData.source_id || null,
         company_id: formData.company_id || null,
         region_id: formData.region_id || null,
-        lead_type_id: isProduction ? null : (formData.lead_type_id || null),
+        lead_type_id: formData.lead_type_id || null,
         estimated_value: parseFloat(formData.estimated_value) || 0,
-        probability: isProduction ? 100 : (parseInt(formData.probability, 10) || 50),
+        probability: parseInt(formData.probability, 10) || 50,
         install_address: formData.install_address || null,
         description: formData.description || null,
-        ...(isProduction ? { apply_workshop_production_tasks: true } : {}),
       });
-
-      if (isProduction && deal?.id) {
-        setSaveMessage('Đang đưa deal vào xưởng...');
-        await api.post(`/crm/deals/${deal.id}/auto-create-project`, {
-          production_company_id: formData.company_id,
-          workshop_type_id: formData.workshop_type_id || null,
-        });
-      }
 
       onSuccess?.(deal);
       onClose();
     } catch (err) {
-      alert(err.response?.data?.error || (isProduction ? 'Lỗi tạo deal / đưa vào xưởng' : 'Lỗi tạo Deal'));
+      alert(err.response?.data?.error || (isProduction ? 'Lỗi tạo đơn xưởng' : 'Lỗi tạo Deal'));
     }
     setSaving(false);
     setSaveMessage('');
@@ -233,11 +241,11 @@ export default function NewDealModal({
           <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
             <div>
               <h2 className="text-lg font-bold text-gray-900">
-                {isProduction ? '🏭 Tạo deal sản xuất' : '🎯 Tạo Deal mới'}
+                {isProduction ? '🏭 Tạo đơn xưởng' : '🎯 Tạo Deal mới'}
               </h2>
               <p className="text-xs text-gray-400 mt-0.5">
                 {isProduction
-                  ? 'Deal mới sẽ vào cột «Chờ vào xưởng» trên Kanban SX'
+                  ? 'Tạo trực tiếp trên Kanban SX — không qua pipeline CRM'
                   : 'Tạo deal trực tiếp — không cần qua Lead'}
               </p>
             </div>

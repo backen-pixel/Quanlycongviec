@@ -81,6 +81,7 @@ const {
   getCrmLeadTypesList,
   getCompanyRegionsList,
 } = require('../helpers/crmTaxonomyCache');
+const { ensureDefaultCrmPipelineForCompany } = require('../helpers/ensureDefaultCrmPipeline');
 const { getAppSettingValue, invalidateAppSettingKey } = require('../helpers/appSettingsCache');
 const {
   attachLeadUserFlagsForList,
@@ -5432,16 +5433,7 @@ r.post('/leads', async (req, res) => {
       body.region_id = defR?.id || null;
     }
     if (!body.pipeline_id) {
-      const { data: def } = await supabase
-        .from('crm_pipelines')
-        .select('id')
-        .eq('company_id', body.company_id)
-        .eq('is_active', true)
-        .order('is_default', { ascending: false })
-        .order('created_at')
-        .limit(1)
-        .maybeSingle();
-      body.pipeline_id = def?.id || null;
+      body.pipeline_id = await ensureDefaultCrmPipelineForCompany(body.company_id);
     }
     if (body.pipeline_id) {
       const { data: pl } = await supabase.from('crm_pipelines').select('id, company_id').eq('id', body.pipeline_id).maybeSingle();
@@ -5547,16 +5539,7 @@ r.post('/deals', async (req, res) => {
 
     // Resolve pipeline_id + first stage by company (company-scoped pipelines)
     if (!body.pipeline_id) {
-      const { data: def } = await supabase
-        .from('crm_pipelines')
-        .select('id')
-        .eq('company_id', body.company_id)
-        .eq('is_active', true)
-        .order('is_default', { ascending: false })
-        .order('created_at')
-        .limit(1)
-        .maybeSingle();
-      body.pipeline_id = def?.id || null;
+      body.pipeline_id = await ensureDefaultCrmPipelineForCompany(body.company_id);
     }
     if (!body.pipeline_id) return res.status(500).json({ error: 'Công ty chưa có pipeline CRM' });
     const { data: pl } = await supabase.from('crm_pipelines').select('id, company_id').eq('id', body.pipeline_id).maybeSingle();

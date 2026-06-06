@@ -1,8 +1,8 @@
 /**
  * Sinh các phân loại + bộ pipeline xưởng mặc định cho 1 công ty:
- *   📦 Tủ bếp     (10 cột)
- *   📦 Cánh kính  (11 cột)
- *   📦 Cửa        (11 cột — pipeline giống Cánh kính)
+ *   📦 Tủ bếp     (20 cột)
+ *   📦 Cánh kính  (12 cột)
+ *   📦 Cửa        (11 cột — pipeline cũ, không đổi)
  *
  * Idempotent: phân loại / cột đã tồn tại sẽ bỏ qua, chỉ thêm phần thiếu.
  * Tương ứng migration: 252_workshop_default_kitchen_glass_pipelines.sql + 255_workshop_default_type_cua.sql
@@ -18,21 +18,48 @@ const {
   stripHandoverFields,
 } = require('./productionPipelineSchema');
 
-// Tủ bếp: 10 cột (KHÔNG có «Tiếp nhận» — quy trình bắt đầu từ Thiết kế).
+// Tủ bếp: 20 cột pipeline xưởng (migration 291).
 const TUBEP_STAGES = [
-  { name: 'Thiết kế lập kế hoạch',    color: '#8B5CF6', icon: '📐' },
-  { name: 'Kiểm tra chéo',            color: '#06B6D4', icon: '🔍' },
-  { name: 'KCS',                      color: '#14B8A6', icon: '✅' },
-  { name: 'Đơn hàng chuẩn bị xong',   color: '#F59E0B', icon: '📦' },
-  { name: 'Đơn hàng ngày mai giao',   color: '#FB923C', icon: '🚚' },
-  { name: 'Đơn hàng đã giao',         color: '#10B981', icon: '✔️' },
-  { name: 'Chốt công nợ',             color: '#64748B', icon: '🧾' },
-  { name: 'Kiểm tra công nợ',         color: '#475569', icon: '🔎' },
-  { name: 'Chốt lại công nợ',         color: '#334155', icon: '📋' },
-  { name: 'Thu tiền',                 color: '#16A34A', icon: '💰' },
+  { name: 'Tiếp nhận đơn hàng về SX',           color: '#6366F1', icon: '📥' },
+  { name: 'Thiết kế & lập kế hoạch NVL',        color: '#8B5CF6', icon: '📐' },
+  { name: 'Sản xuất kiểm tra chéo đặt kính',    color: '#0EA5E9', icon: '🔍' },
+  { name: 'CHUẨN BỊ VẬT TƯ, CẮT KÍNH',          color: '#06B6D4', icon: '📦' },
+  { name: 'ĐANG CẮT CÁNH,',                     color: '#F59E0B', icon: '✂️' },
+  { name: 'KẾ HOẠCH SX THÙNG LÁ GHÉP',          color: '#10B981', icon: '📋' },
+  { name: 'KẾ HOẠCH SX THÙNG HỢP KIM',          color: '#FBBF24', icon: '📋' },
+  { name: 'SX THÙNG HỢP KIM + 100 X 16',        color: '#F97316', icon: '🏭' },
+  { name: 'ĐANG SX THÙNG LÁ GHÉP NHỎ',           color: '#84CC16', icon: '🏭' },
+  { name: 'ĐỘI SƠN',                            color: '#A855F7', icon: '🎨' },
+  { name: 'HT NHÔM NGUYÊN TẤM',                 color: '#22C55E', icon: '🔧' },
+  { name: 'HT NHÔM LÁ GHÉP NHỎ',                color: '#EAB308', icon: '🔧' },
+  { name: 'KT KCS SẢN PHẨM, TÍNH CN',           color: '#14B8A6', icon: '✅' },
+  { name: 'ĐƠN HÀNG ĐÃ CHUẨN BỊ XONG',          color: '#3B82F6', icon: '📦' },
+  { name: 'ĐƠN HÀNG NGÀY MAI GIAO',             color: '#FB923C', icon: '🚚' },
+  { name: 'ĐƠN HÀNG ĐÃ GIAO',                   color: '#10B981', icon: '✔️' },
+  { name: 'CHỐT CÔNG NỢ ,',                     color: '#64748B', icon: '🧾' },
+  { name: 'KIỂM TRA CÔNG NỢ',                   color: '#475569', icon: '🔎' },
+  { name: 'Thu tiền',                           color: '#16A34A', icon: '💰' },
+  { name: 'CHUYỂN TÁC VỤ PHÒNG KẾ TOÁN',        color: '#1E40AF', icon: '📨' },
 ];
 
+// Cánh kính: 12 cột pipeline xưởng (migration 292).
 const KINH_STAGES = [
+  { name: 'Tiếp Nhận',                         color: '#6366F1', icon: '📥' },
+  { name: 'Vẽ lên kế hoạch sản xuất',         color: '#8B5CF6', icon: '📐' },
+  { name: 'Kiểm tra và đặt kính.',            color: '#0EA5E9', icon: '🔍' },
+  { name: 'Chuẩn bị Vật tư',                  color: '#06B6D4', icon: '📦' },
+  { name: 'Phát vật tư',                       color: '#14B8A6', icon: '📤' },
+  { name: 'sản xuất',                          color: '#F59E0B', icon: '🏭' },
+  { name: 'vệ sinh đóng gói',                  color: '#FB923C', icon: '🧹' },
+  { name: 'thu tiền',                          color: '#16A34A', icon: '💰' },
+  { name: 'Chờ giao hàng',                     color: '#64748B', icon: '⏳' },
+  { name: 'Đợi thanh toán',                    color: '#D97706', icon: '💵' },
+  { name: 'Hoàn thành',                        color: '#10B981', icon: '✅' },
+  { name: 'Nợ quá hạn không thu tiền được',    color: '#DC2626', icon: '⚠️' },
+];
+
+// Cửa: giữ pipeline 11 cột cũ (không đổi theo Cánh kính).
+const CUA_STAGES = [
   { name: 'Tiếp nhận',                color: '#6366F1', icon: '📥' },
   { name: 'Thiết kế và lập kế hoạch', color: '#8B5CF6', icon: '📐' },
   { name: 'Kiểm tra đặt kính',        color: '#0EA5E9', icon: '🔍' },
@@ -46,8 +73,7 @@ const KINH_STAGES = [
   { name: 'Nợ quá hạn',               color: '#DC2626', icon: '⚠️' },
 ];
 
-// Cửa: dùng đúng pipeline của Cánh kính theo yêu cầu (11 cột).
-const CUA_STAGES = KINH_STAGES;
+// Cửa: dùng pipeline riêng (11 cột cũ).
 
 const PRESETS = [
   { typeName: 'Tủ bếp',    typeOrder: 100, baseOrder: 1000, stages: TUBEP_STAGES },
