@@ -6,6 +6,7 @@
  *   onMoveToStage  – (stageId) => void  called when a step circle is clicked
  *   currentStageName – tên stage khi stage_id không có trong `stages` (orphan)
  *   visitedStageIds – Set<string> các stage_id đã từng vào (lịch sử CRM)
+ *   linearProgress  – true: pipeline xưởng/VC (tích ✓ theo order_index); false: CRM deal (bỏ qua cột SX/VC)
  */
 import { sortAndDedupePipelineStages, pipelineStageSortKey } from '../lib/crmPipelineStages';
 import { isCrmPostWonManagedStage } from '../lib/crmDealStageGate';
@@ -16,6 +17,7 @@ export default function PipelineStepper({
   currentStageName,
   onMoveToStage,
   visitedStageIds = null,
+  linearProgress = false,
 }) {
   const sortedStages = sortAndDedupePipelineStages(stages);
   const curId = currentStageId != null ? String(currentStageId) : '';
@@ -33,7 +35,7 @@ export default function PipelineStepper({
     const sortKey = pipelineStageSortKey(s, i);
     // Không tích các cột đứng sau cột hiện tại trên pipeline (tránh sync cũ làm ✓ Đàm phán/SX sau Thắng).
     if (curSortKey != null && sortKey > curSortKey) return false;
-    if (isCrmPostWonManagedStage(s)) return false;
+    if (!linearProgress && isCrmPostWonManagedStage(s)) return false;
     if (visited?.has(String(s.id))) return true;
     return curSortKey != null && sortKey < curSortKey;
   };

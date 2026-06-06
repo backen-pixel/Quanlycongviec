@@ -7,10 +7,6 @@ const { isPostgresUniqueViolation, nextTbProjectCode } = require('./projectCode'
 const { validateProductionCompanyId } = require('./productionCompanyGate');
 const { ensureDealLeadDocumentsForModuleTransition } = require('./ensureDealLeadDocumentsForModuleTransition');
 const { applyProductionTemplateToFulfillmentLead } = require('./projectOrderFulfillment');
-const {
-  assignProductionCompanyDealResponsibility,
-  resolveProductionHandoverResponsibleUserId,
-} = require('./productionHandoverSettings');
 
 /**
  * Tạo dự án xưởng từ deal thắng (luồng tự động — dùng chung cho POST auto-create và PATCH stage).
@@ -103,7 +99,7 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
     current_stage_id: null,
     install_address: deal.install_address || deal.customer?.address || null,
     estimated_value: deal.estimated_value || null,
-    priority: config?.default_priority || deal.priority || 'medium',
+    priority: config?.default_priority || 'medium',
     sales_person_id: deal.assigned_to || userId,
     consult_date: new Date().toISOString(),
     ...(validatedWorkshopTypeId ? { workshop_type_id: validatedWorkshopTypeId } : {}),
@@ -131,25 +127,19 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
   const projectId = project.id;
 
   try {
-    const responsibleUserId = await resolveProductionHandoverResponsibleUserId(coCheck.company.id);
     const { data: hop } = await supabase
       .from('production_handover_settings')
       .select('default_production_team_id')
       .eq('production_company_id', coCheck.company.id)
       .maybeSingle();
-    const patchHo = {};
-    if (responsibleUserId) patchHo.production_person_id = responsibleUserId;
-    if (hop?.default_production_team_id) patchHo.production_workshop_team_id = hop.default_production_team_id;
-    if (Object.keys(patchHo).length) {
-      await supabase.from('projects').update({ ...patchHo, updated_at: new Date().toISOString() }).eq('id', projectId);
+    if (hop?.default_production_team_id) {
+      await supabase.from('projects').update({
+        production_workshop_team_id: hop.default_production_team_id,
+        updated_at: new Date().toISOString(),
+      }).eq('id', projectId);
     }
-    await assignProductionCompanyDealResponsibility({
-      dealId,
-      productionCompanyId: coCheck.company.id,
-      projectId,
-    });
   } catch (he) {
-    console.warn('[auto-project] production_handover_settings:', he.message);
+    console.warn('[auto-project] production_handover team:', he.message);
   }
 
   const { data: flowSteps } = await supabase.from('workflow_flow_steps')
@@ -317,6 +307,33 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
         'project', projectId);
     }
   } catch (_) {}
+
+  // Gán toàn bộ NV mặc định theo phân loại + phụ trách chính (cuối luồng, tránh bị ghi đè)
+  let primaryStaffId = null;
+  try {
+    const {
+      applyWorkshopTypeDefaultStaffToProject,
+      loadProjectProductionStaffUserIds,
+    } = require('./productionWorkshopTypeStaff');
+    primaryStaffId = await applyWorkshopTypeDefaultStaffToProject(
+      projectId,
+      coCheck.company.id,
+      validatedWorkshopTypeId,
+    );
+    const staffIds = await loadProjectProductionStaffUserIds(projectId);
+    const notifyStaff = staffIds.length ? staffIds : (primaryStaffId ? [primaryStaffId] : []);
+    for (const sid of notifyStaff) {
+      if (String(sid) === String(userId)) continue;
+      try {
+        await notifyMultiple(req, [sid], 'project_assigned',
+          '📋 Dự án SX mới',
+          `Bạn được gán vào dự án ${project.code} — "${deal.title}"`,
+          'project', projectId);
+      } catch (_) {}
+    }
+  } catch (staffErr) {
+    console.warn('[auto-project] production default staff:', staffErr.message);
+  }
 
   // NOTE: Không tự tạo Đơn 1/2/... từ deal thắng. Đơn hàng chỉ tạo thủ công tại tab Đơn hàng.
 

@@ -1,10 +1,11 @@
 /**
- * KPI doanh thu dashboard Sản xuất theo cột production_pipeline_stages (frontend).
+ * KPI doanh thu / thanh toán dashboard Sản xuất theo cột production_pipeline_stages (frontend).
  */
 
 import { effectivePipelineStageSlaDays } from './crmPipelineSla';
 
 const INTAKE_BUCKET = 'won_pending';
+const VC_SHIPPED_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
 
 function stageById(stages, colId) {
   if (!colId || !Array.isArray(stages)) return null;
@@ -27,6 +28,11 @@ export function pickSxCompletedStageIds(stages) {
   return [];
 }
 
+export function pickSxCollectedStageIds(stages) {
+  const list = (stages || []).filter((s) => s.bucket_slug !== INTAKE_BUCKET);
+  return list.filter((s) => !!s.counts_as_collected_revenue).map((s) => String(s.id));
+}
+
 function projectInSxColumn(project, stageIds) {
   const colId = String(project?.sx_kanban_column_id || '');
   if (!colId || !stageIds.length) return false;
@@ -41,6 +47,37 @@ export function projectCountsAsSxCompletedRevenue(project, stages) {
   const completedIds = pickSxCompletedStageIds(stages);
   if (completedIds.length) return projectInSxColumn(project, completedIds);
   return String(project?.status || '') === 'completed';
+}
+
+export function projectCountsAsSxCollectedRevenue(project, stages) {
+  return projectInSxColumn(project, pickSxCollectedStageIds(stages));
+}
+
+export function projectCountsAsSxDebt(project, stages) {
+  return projectCountsAsSxCompletedRevenue(project, stages)
+    && !projectCountsAsSxCollectedRevenue(project, stages);
+}
+
+export function projectIsShipped(project) {
+  return VC_SHIPPED_STATUSES.has(String(project?.status || ''))
+    || Boolean(project?.logistics_company_id || project?.logistics_company?.id);
+}
+
+export function projectIsAwaitingDelivery(project, stages) {
+  if (projectIsShipped(project)) return false;
+  const col = stageById(stages, project?.sx_kanban_column_id);
+  return Boolean(col?.is_handover_to_logistics);
+}
+
+export function projectIsProducing(project, stages) {
+  if (project.sx_intake) return false;
+  if (projectIsShipped(project)) return false;
+  if (projectIsAwaitingDelivery(project, stages)) return false;
+  if (projectCountsAsSxCompletedRevenue(project, stages)) return false;
+  if (projectCountsAsSxCollectedRevenue(project, stages)) return false;
+  const col = stageById(stages, project?.sx_kanban_column_id);
+  if (col?.bucket_slug === INTAKE_BUCKET) return false;
+  return true;
 }
 
 export function resolveSxProjectProbability(project, stage, dealProbability) {
@@ -62,18 +99,43 @@ export function computeSxRevenueKpis(projects, stages) {
   const st = Array.isArray(stages) ? stages : [];
   let wonRevenue = 0;
   let completedRevenue = 0;
+  let collectedRevenue = 0;
+  let debtRevenue = 0;
   let weightedPipeline = 0;
+  let producing = 0;
+  let awaitingDelivery = 0;
+  let shipped = 0;
+  let overdue = 0;
+  const now = new Date();
+
   for (const p of list) {
     const val = Number(p.estimated_value) || 0;
     const col = stageById(st, p.sx_kanban_column_id);
     if (projectCountsAsSxWonRevenue(p, st)) wonRevenue += val;
     if (projectCountsAsSxCompletedRevenue(p, st)) completedRevenue += val;
+    if (projectCountsAsSxCollectedRevenue(p, st)) collectedRevenue += val;
+    if (projectCountsAsSxDebt(p, st)) debtRevenue += val;
+    if (projectIsProducing(p, st)) producing += 1;
+    if (projectIsAwaitingDelivery(p, st)) awaitingDelivery += 1;
+    if (projectIsShipped(p)) shipped += 1;
+    if (p.deadline && new Date(p.deadline) < now && p.status !== 'completed') overdue += 1;
     if (col && col.bucket_slug !== INTAKE_BUCKET && val > 0) {
       const prob = resolveSxProjectProbability(p, col);
       if (prob != null) weightedPipeline += val * (prob / 100);
     }
   }
-  return { wonRevenue, completedRevenue, weightedPipeline: Math.round(weightedPipeline) };
+
+  return {
+    wonRevenue,
+    completedRevenue,
+    collectedRevenue,
+    debtRevenue,
+    weightedPipeline: Math.round(weightedPipeline),
+    producing,
+    awaitingDelivery,
+    shipped,
+    overdue,
+  };
 }
 
 /** SLA cột pipeline SX — null nếu không áp dụng. */

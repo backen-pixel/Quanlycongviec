@@ -23,10 +23,10 @@ export function getWorkshopDateRange(preset) {
 }
 
 export const WS_TIME_PRESETS = [
-  { key: '', label: 'Mọi thời gian' },
+  { key: '', label: 'Tất cả' },
   { key: 'this_week', label: 'Tuần này' },
   { key: 'this_month', label: 'Tháng này' },
-  { key: 'custom', label: 'Tùy chọn' },
+  { key: 'custom', label: 'Tùy chỉnh' },
 ];
 
 export const WS_KANBAN_LOAD_OPTIONS = [

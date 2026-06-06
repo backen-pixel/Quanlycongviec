@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { Settings, Plus, Trash2, Save, ChevronRight, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe, Clock, Trophy, CheckCircle2, UserCircle } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, ChevronRight, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe, Clock, Trophy, CheckCircle2, UserCircle, Banknote, Hammer } from 'lucide-react';
 import WorkshopTypeSettingsSection from '../components/WorkshopTypeSettingsSection';
 import { isPipelineStageSlaDisabled } from '../lib/crmPipelineSla';
 
@@ -36,7 +36,11 @@ export default function ProductionPipelineSettingsPage() {
   const [handoverData, setHandoverData] = useState(null);
   const [intakeAssigneeId, setIntakeAssigneeId] = useState('');
   const [intakeAssigneeLoading, setIntakeAssigneeLoading] = useState(false);
-  const [intakeAssigneeSaving, setIntakeAssigneeSaving] = useState(false);
+  const [typeStaffDefaults, setTypeStaffDefaults] = useState({});
+  const [typeStaffPrimary, setTypeStaffPrimary] = useState({});
+  const [typeStaffUsers, setTypeStaffUsers] = useState([]);
+  const [typeStaffLoading, setTypeStaffLoading] = useState(false);
+  const [typeStaffSaving, setTypeStaffSaving] = useState(false);
   const [form, setForm] = useState({
     name: '', color: COLORS[0], icon: '📋', is_active: true,
     is_handover_to_logistics: false, crm_sync_type: null, crm_target_stage_id: '',
@@ -45,6 +49,7 @@ export default function ProductionPipelineSettingsPage() {
     sla_days: '',
     counts_as_won_revenue: false,
     counts_as_completed_revenue: false,
+    counts_as_collected_revenue: false,
     requires_deadline: false,
   });
 
@@ -99,27 +104,156 @@ export default function ProductionPipelineSettingsPage() {
     void loadHandoverSettings();
   }, [loadHandoverSettings]);
 
-  const saveIntakeAssignee = async () => {
-    if (!settingsCompanyId) return;
-    setIntakeAssigneeSaving(true);
+  const loadTypeStaffDefaults = useCallback(async () => {
+    if (!settingsCompanyId) {
+      setTypeStaffDefaults({});
+      setTypeStaffPrimary({});
+      setTypeStaffUsers([]);
+      return;
+    }
+    setTypeStaffLoading(true);
     try {
-      const assignments = (handoverData?.assignments || [])
-        .filter((a) => a.template_item_id && a.assignee_user_id)
-        .map((a) => ({
-          template_item_id: a.template_item_id,
-          assignee_user_id: a.assignee_user_id,
-        }));
-      await api.put(`/production/handover-settings/${settingsCompanyId}`, {
-        responsible_user_id: intakeAssigneeId || null,
-        default_production_team_id: handoverData?.settings?.default_production_team_id || null,
-        assignments,
+      const { data } = await api.get(`/production/workshop-type-staff-defaults/${settingsCompanyId}`);
+      setTypeStaffUsers(data?.users || []);
+      const staff = {};
+      const primary = {};
+      for (const [typeId, val] of Object.entries(data?.defaults || {})) {
+        if (Array.isArray(val)) {
+          staff[typeId] = val.map(String);
+        } else {
+          staff[typeId] = (val.user_ids || []).map(String);
+          if (val.primary_user_id) primary[typeId] = String(val.primary_user_id);
+        }
+      }
+      setTypeStaffDefaults(staff);
+      setTypeStaffPrimary(primary);
+      if (data?.fallback_responsible_user_id != null) {
+        setIntakeAssigneeId(data.fallback_responsible_user_id ? String(data.fallback_responsible_user_id) : '');
+      }
+    } catch {
+      setTypeStaffDefaults({});
+      setTypeStaffPrimary({});
+      setTypeStaffUsers([]);
+    }
+    setTypeStaffLoading(false);
+  }, [settingsCompanyId]);
+
+  useEffect(() => {
+    void loadTypeStaffDefaults();
+  }, [loadTypeStaffDefaults]);
+
+  const toggleTypeStaffUser = (typeId, userId) => {
+    const key = String(typeId);
+    const uid = String(userId);
+    setTypeStaffDefaults((prev) => {
+      const current = Array.isArray(prev[key]) ? [...prev[key]] : [];
+      const idx = current.indexOf(uid);
+      if (idx >= 0) current.splice(idx, 1);
+      else current.push(uid);
+      return { ...prev, [key]: current };
+    });
+    setTypeStaffPrimary((prev) => {
+      if (prev[key] !== uid) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const setTypeStaffPrimaryForType = (typeId, userId) => {
+    const key = String(typeId);
+    const uid = userId ? String(userId) : '';
+    setTypeStaffPrimary((prev) => {
+      const next = { ...prev };
+      if (uid) next[key] = uid;
+      else delete next[key];
+      return next;
+    });
+    if (uid) {
+      setTypeStaffDefaults((prev) => {
+        const current = Array.isArray(prev[key]) ? [...prev[key]] : [];
+        if (current.includes(uid)) return prev;
+        return { ...prev, [key]: [...current, uid] };
       });
+    }
+  };
+
+  const typeStaffUserList = useMemo(
+    () => (typeStaffUsers.length ? typeStaffUsers : handoverData?.users || []),
+    [typeStaffUsers, handoverData?.users],
+  );
+
+  const setTypeStaffForType = (typeId, userIds) => {
+    const key = String(typeId);
+    setTypeStaffDefaults((prev) => ({ ...prev, [key]: userIds.map(String) }));
+    setTypeStaffPrimary((prev) => {
+      if (!prev[key] || userIds.map(String).includes(String(prev[key]))) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const selectAllTypeStaffForType = (typeId) => {
+    setTypeStaffForType(typeId, typeStaffUserList.map((u) => u.id));
+  };
+
+  const clearTypeStaffForType = (typeId) => {
+    const key = String(typeId);
+    setTypeStaffDefaults((prev) => ({ ...prev, [key]: [] }));
+    setTypeStaffPrimary((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const selectAllTypeStaffEverywhere = () => {
+    const allIds = typeStaffUserList.map((u) => String(u.id));
+    setTypeStaffDefaults((prev) => {
+      const next = { ...prev };
+      for (const t of workshopTypes) {
+        next[String(t.id)] = [...allIds];
+      }
+      return next;
+    });
+    setTypeStaffPrimary((prev) => {
+      const next = { ...prev };
+      for (const t of workshopTypes) {
+        const key = String(t.id);
+        if (next[key] && !allIds.includes(String(next[key]))) {
+          delete next[key];
+        }
+      }
+      return next;
+    });
+  };
+
+  const clearAllTypeStaff = () => {
+    setTypeStaffDefaults({});
+    setTypeStaffPrimary({});
+  };
+
+  const saveTypeStaffDefaults = async () => {
+    if (!settingsCompanyId) return;
+    setTypeStaffSaving(true);
+    try {
+      const defaults = (workshopTypes.length ? workshopTypes : []).map((t) => ({
+        workshop_type_id: t.id,
+        user_ids: typeStaffDefaults[String(t.id)] || [],
+        primary_user_id: typeStaffPrimary[String(t.id)] || null,
+      }));
+      await api.put(`/production/workshop-type-staff-defaults/${settingsCompanyId}`, {
+        defaults,
+        fallback_responsible_user_id: intakeAssigneeId || null,
+      });
+      await loadTypeStaffDefaults();
       await loadHandoverSettings();
-      alert('Đã lưu nhân viên mặc định cho cột đầu.');
+      alert('Đã lưu nhân viên mặc định theo phân loại.');
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Lỗi lưu');
     }
-    setIntakeAssigneeSaving(false);
+    setTypeStaffSaving(false);
   };
 
   // Reset bulk selection khi đổi công ty / phân loại
@@ -328,6 +462,7 @@ export default function ProductionPipelineSettingsPage() {
     sla_days: form.sla_days === '' || form.sla_days == null ? null : Number(form.sla_days),
     counts_as_won_revenue: !!form.counts_as_won_revenue,
     counts_as_completed_revenue: !!form.counts_as_completed_revenue,
+    counts_as_collected_revenue: !!form.counts_as_collected_revenue,
     requires_deadline: !!form.requires_deadline,
   });
 
@@ -343,6 +478,7 @@ export default function ProductionPipelineSettingsPage() {
       sla_days: '',
       counts_as_won_revenue: false,
       counts_as_completed_revenue: false,
+      counts_as_collected_revenue: false,
       requires_deadline: false,
     });
   };
@@ -363,6 +499,7 @@ export default function ProductionPipelineSettingsPage() {
       sla_days: stage.sla_days != null && stage.sla_days !== '' ? String(stage.sla_days) : '',
       counts_as_won_revenue: !!stage.counts_as_won_revenue,
       counts_as_completed_revenue: !!stage.counts_as_completed_revenue,
+      counts_as_collected_revenue: !!stage.counts_as_collected_revenue,
       requires_deadline: !!stage.requires_deadline,
     });
   };
@@ -451,6 +588,28 @@ export default function ProductionPipelineSettingsPage() {
     try {
       await api.put(`/production/pipeline-stages/${stage.id}`, {
         requires_deadline: !stage.requires_deadline,
+      });
+      load();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi');
+    }
+  };
+
+  const toggleCompletedRevenueColumn = async (stage) => {
+    try {
+      await api.put(`/production/pipeline-stages/${stage.id}`, {
+        counts_as_completed_revenue: !stage.counts_as_completed_revenue,
+      });
+      load();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi');
+    }
+  };
+
+  const toggleCollectedRevenueColumn = async (stage) => {
+    try {
+      await api.put(`/production/pipeline-stages/${stage.id}`, {
+        counts_as_collected_revenue: !stage.counts_as_collected_revenue,
       });
       load();
     } catch (e) {
@@ -643,15 +802,16 @@ export default function ProductionPipelineSettingsPage() {
       </div>
 
       {settingsCompanyId && (
-        <div className="rounded-xl border border-indigo-200 bg-gradient-to-r from-indigo-50/70 to-white p-4 shadow-sm space-y-3">
+        <div className="rounded-xl border border-indigo-200 bg-gradient-to-r from-indigo-50/70 to-white p-4 shadow-sm space-y-4">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div className="flex items-start gap-2.5 min-w-0">
               <UserCircle className="h-5 w-5 text-indigo-600 shrink-0 mt-0.5" />
               <div>
-                <h2 className="text-sm font-bold text-gray-900">Nhân viên mặc định — cột đầu (Chờ vào xưởng)</h2>
-                <p className="text-[11px] text-gray-600 mt-0.5 leading-snug max-w-xl">
-                  Deal thắng vào cột đầu Kanban SX sẽ tự gán người này làm phụ trách sản xuất trên dự án và deal CRM.
-                  Nếu để trống, hệ thống chọn admin công ty xưởng.
+                <h2 className="text-sm font-bold text-gray-900">Nhân viên mặc định theo phân loại</h2>
+                <p className="text-[11px] text-gray-600 mt-0.5 leading-snug max-w-2xl">
+                  Mỗi phân loại có <strong className="font-semibold text-indigo-800">phụ trách chính riêng</strong> và danh sách NV tham gia.
+                  Khi dự án vào xưởng, hệ thống gán đúng đội theo phân loại — phụ trách chính hiển thị trên dự án và deal CRM.
+                  Nếu phân loại chưa cấu hình, dùng người dự phòng bên dưới.
                 </p>
               </div>
             </div>
@@ -671,35 +831,139 @@ export default function ProductionPipelineSettingsPage() {
             </div>
           </div>
 
-          {intakeAssigneeLoading ? (
+          {(typeStaffLoading || intakeAssigneeLoading) ? (
             <div className="flex items-center gap-2 text-xs text-gray-500 py-1">
               <Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang tải nhân sự…
             </div>
           ) : (
-            <div className="flex flex-wrap items-end gap-2">
-              <label className="flex flex-col gap-1 flex-1 min-w-[240px] max-w-md">
-                <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Người nhận deal</span>
-                <select
-                  value={intakeAssigneeId}
-                  onChange={(e) => setIntakeAssigneeId(e.target.value)}
-                  className="h-9 px-2.5 border border-gray-200 rounded-lg text-sm bg-white"
+            <>
+              {(workshopTypes.length === 0) ? (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  Chưa có phân loại xưởng — thêm phân loại ở bước 2 bên dưới hoặc bấm «Tủ bếp + Cánh kính».
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {typeStaffUserList.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={selectAllTypeStaffEverywhere}
+                        className="text-[11px] font-medium text-indigo-700 hover:text-indigo-900 border border-indigo-200 rounded-lg px-2.5 py-1 bg-white cursor-pointer"
+                      >
+                        Chọn tất cả (mọi phân loại)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={clearAllTypeStaff}
+                        className="text-[11px] font-medium text-gray-600 hover:text-gray-800 border border-gray-200 rounded-lg px-2.5 py-1 bg-white cursor-pointer"
+                      >
+                        Bỏ chọn tất cả
+                      </button>
+                    </div>
+                  )}
+                  {typeStaffUserList.length === 0 ? (
+                    <p className="text-xs text-gray-500">Chưa có nhân viên thuộc công ty này.</p>
+                  ) : (
+                    workshopTypes.map((t) => {
+                      const users = typeStaffUserList;
+                      const selected = typeStaffDefaults[String(t.id)] || [];
+                      const primaryId = typeStaffPrimary[String(t.id)] || '';
+                      const primaryOptions = selected.length
+                        ? users.filter((u) => selected.includes(String(u.id)))
+                        : users;
+                      const allSelected = users.length > 0 && users.every((u) => selected.includes(String(u.id)));
+                      return (
+                        <div key={t.id} className="rounded-lg border border-indigo-100 bg-white/80 p-3">
+                          <div className="flex flex-wrap items-center gap-2 mb-2">
+                            <p className="text-xs font-bold text-gray-800 flex items-center gap-2 min-w-0">
+                              <Tags className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+                              {t.name}
+                              {selected.length > 0 && (
+                                <span className="text-[10px] font-medium text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">
+                                  {selected.length}/{users.length} NV
+                                </span>
+                              )}
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => (allSelected ? clearTypeStaffForType(t.id) : selectAllTypeStaffForType(t.id))}
+                              className="ml-auto text-[10px] font-medium text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded px-2 py-0.5 bg-indigo-50/50 cursor-pointer shrink-0"
+                            >
+                              {allSelected ? 'Bỏ chọn' : 'Chọn tất cả'}
+                            </button>
+                          </div>
+                          <label className="flex flex-col gap-1 mb-2 max-w-sm">
+                            <span className="text-[10px] font-semibold text-indigo-700 uppercase tracking-wide">Phụ trách chính ★</span>
+                            <select
+                              value={primaryId}
+                              onChange={(e) => setTypeStaffPrimaryForType(t.id, e.target.value)}
+                              className="h-8 px-2 border border-indigo-200 rounded-lg text-xs bg-white focus:ring-2 focus:ring-indigo-300"
+                            >
+                              <option value="">— Chọn phụ trách cho {t.name} —</option>
+                              {primaryOptions.map((u) => (
+                                <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <p className="text-[10px] text-gray-500 mb-1.5">Đội tham gia (chọn nhiều):</p>
+                          <div className="flex flex-wrap gap-x-4 gap-y-1.5 max-h-32 overflow-y-auto">
+                            {users.map((u) => {
+                              const checked = selected.includes(String(u.id));
+                              const isPrimary = String(u.id) === String(primaryId);
+                              return (
+                                <label
+                                  key={`${t.id}-${u.id}`}
+                                  className={`inline-flex items-center gap-1.5 text-xs cursor-pointer select-none px-2 py-1 rounded-md border transition-colors ${
+                                    isPrimary
+                                      ? 'bg-amber-50 border-amber-300 text-amber-900 ring-1 ring-amber-200'
+                                      : checked
+                                        ? 'bg-indigo-50 border-indigo-200 text-indigo-900'
+                                        : 'bg-gray-50/50 border-transparent text-gray-700 hover:bg-gray-100'
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                    checked={checked}
+                                    onChange={() => toggleTypeStaffUser(t.id, u.id)}
+                                  />
+                                  <span>{u.full_name || u.email}{isPrimary ? ' ★' : ''}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-end gap-2 pt-1 border-t border-indigo-100">
+                <label className="flex flex-col gap-1 flex-1 min-w-[240px] max-w-md">
+                  <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Dự phòng (khi phân loại chưa gán NV)</span>
+                  <select
+                    value={intakeAssigneeId}
+                    onChange={(e) => setIntakeAssigneeId(e.target.value)}
+                    className="h-9 px-2.5 border border-gray-200 rounded-lg text-sm bg-white"
+                  >
+                    <option value="">— Chưa chọn (admin công ty) —</option>
+                    {(typeStaffUserList).map((u) => (
+                      <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  disabled={typeStaffSaving}
+                  onClick={() => saveTypeStaffDefaults()}
+                  className="h-9 px-3.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer"
                 >
-                  <option value="">— Chưa chọn (admin công ty) —</option>
-                  {(handoverData?.users || []).map((u) => (
-                    <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
-                  ))}
-                </select>
-              </label>
-              <button
-                type="button"
-                disabled={intakeAssigneeSaving}
-                onClick={() => saveIntakeAssignee()}
-                className="h-9 px-3.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer"
-              >
-                {intakeAssigneeSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                Lưu
-              </button>
-            </div>
+                  {typeStaffSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                  Lưu cấu hình NV
+                </button>
+              </div>
+            </>
           )}
         </div>
       )}
@@ -1078,7 +1342,12 @@ export default function ProductionPipelineSettingsPage() {
                       )}
                       {!isIntake && s.counts_as_completed_revenue && (
                         <span className="bg-teal-50 text-teal-800 border border-teal-200 px-1.5 py-0.5 rounded font-medium">
-                          ✓ DT hoàn thành
+                          ✓ Đã công
+                        </span>
+                      )}
+                      {!isIntake && s.counts_as_collected_revenue && (
+                        <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-1.5 py-0.5 rounded font-medium">
+                          💰 Đã thu tiền
                         </span>
                       )}
                       {!isIntake && s.requires_deadline && (
@@ -1091,6 +1360,32 @@ export default function ProductionPipelineSettingsPage() {
                   <div className="flex items-center gap-1 shrink-0">
                     {!isIntake && (
                       <>
+                        <button
+                          type="button"
+                          onClick={() => toggleCompletedRevenueColumn(s)}
+                          className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
+                            s.counts_as_completed_revenue
+                              ? 'bg-teal-100 text-teal-800 border-teal-300'
+                              : 'bg-gray-50 text-gray-500 border-gray-200 hover:border-teal-300 hover:text-teal-700'
+                          }`}
+                          title={s.counts_as_completed_revenue ? 'Đang tính «Đã công» / công nợ — nhấn để tắt' : 'Bật tính «Đã công» / công nợ cho cột này'}
+                        >
+                          <Hammer className="h-3 w-3" />
+                          {s.counts_as_completed_revenue ? 'Đã công' : 'Công'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleCollectedRevenueColumn(s)}
+                          className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
+                            s.counts_as_collected_revenue
+                              ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                              : 'bg-gray-50 text-gray-500 border-gray-200 hover:border-emerald-300 hover:text-emerald-700'
+                          }`}
+                          title={s.counts_as_collected_revenue ? 'Đang tính «Đã thu tiền» — nhấn để tắt' : 'Bật tính «Đã thu tiền» cho cột này'}
+                        >
+                          <Banknote className="h-3 w-3" />
+                          {s.counts_as_collected_revenue ? 'Đã thu' : 'Thu tiền'}
+                        </button>
                         <button
                           type="button"
                           onClick={() => toggleRequiresDeadlineColumn(s)}
@@ -1266,7 +1561,16 @@ export default function ProductionPipelineSettingsPage() {
                         onChange={(e) => setForm((f) => ({ ...f, counts_as_completed_revenue: e.target.checked }))}
                         className="rounded border-teal-400"
                       />
-                      <CheckCircle2 className="h-3.5 w-3.5 text-teal-600" /> Tính vào «Doanh thu đã hoàn thành»
+                      <Hammer className="h-3.5 w-3.5 text-teal-600" /> Tính vào «Đã công» (công nợ nếu chưa thu)
+                    </label>
+                    <label className="flex items-center gap-2 text-xs cursor-pointer text-emerald-900 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200">
+                      <input
+                        type="checkbox"
+                        checked={!!form.counts_as_collected_revenue}
+                        onChange={(e) => setForm((f) => ({ ...f, counts_as_collected_revenue: e.target.checked }))}
+                        className="rounded border-emerald-400"
+                      />
+                      <Banknote className="h-3.5 w-3.5 text-emerald-600" /> Tính vào «Đã thu tiền»
                     </label>
                   </div>
                 </>

@@ -12,10 +12,13 @@ import {
   Paperclip,
   Image as ImageIcon,
   Mic,
+  Share2,
 } from 'lucide-react';
 import api from '../lib/api';
 import { publicFileUrl } from '../lib/publicFileUrl';
 import { formatDateTime } from '../lib/utils';
+import { parseShareModules, cleanShareModulesForApi, shareModuleLabels } from '../lib/documentShareScope';
+import DocumentShareModulePicker from './DocumentShareModulePicker';
 
 function sortNotesAsc(notes) {
   return [...(notes || [])].sort((a, b) => {
@@ -75,6 +78,12 @@ export default function CrmChatNotesPanel({
   variant = 'embedded',
   /** Gộp ghi âm CRM (voice_recordings theo lead) vào dòng thời gian cùng tab Ghi chú */
   includeVoiceTimeline = false,
+  /** Ghi chú mới mặc định chia sẻ sang SX (tab Ghi chú trên ProductionDetail) */
+  defaultShareToWorkshop = false,
+  /** Module mặc định khi bật chia sẻ — null = mọi khối */
+  defaultShareModules = null,
+  /** Hiện checkbox/module picker khi soạn ghi chú */
+  showShareControls = true,
 }) {
   const dockStorageKey =
     variant === 'floating' ? (leadId ? `crm_notes_fab_dock_${leadId}` : 'crm_notes_fab_dock_global') : null;
@@ -92,6 +101,12 @@ export default function CrmChatNotesPanel({
   /** Đã upload, chờ gửi kèm ghi chú — { url, name, type, size } */
   const [pendingAttachments, setPendingAttachments] = useState([]);
   const [uploadingFile, setUploadingFile] = useState(false);
+  const [shareToWorkshop, setShareToWorkshop] = useState(!!defaultShareToWorkshop);
+  const [shareModules, setShareModules] = useState(
+    () => parseShareModules(defaultShareModules) || ['production', 'workshop'],
+  );
+  const [shareSavingId, setShareSavingId] = useState(null);
+  const [shareEditId, setShareEditId] = useState(null);
 
   /** Chỉ panel nổi: ghi chú cho lead/deal khác (tìm từ API) */
   const [pickOverride, setPickOverride] = useState(null);
@@ -270,7 +285,9 @@ export default function CrmChatNotesPanel({
 
   useEffect(() => {
     setPendingAttachments([]);
-  }, [leadId]);
+    setShareToWorkshop(!!defaultShareToWorkshop);
+    setShareModules(parseShareModules(defaultShareModules) || ['production', 'workshop']);
+  }, [leadId, defaultShareToWorkshop, defaultShareModules]);
 
   const setFabDockedPersist = (docked) => {
     setFabDocked(docked);
@@ -352,6 +369,12 @@ export default function CrmChatNotesPanel({
         title,
         description: body,
         attachments: pendingAttachments.length ? pendingAttachments : undefined,
+        ...(showShareControls && shareToWorkshop
+          ? {
+              shared_to_workshop: true,
+              allowed_share_modules: cleanShareModulesForApi(shareModules),
+            }
+          : { shared_to_workshop: false }),
       });
       setText('');
       setPendingAttachments([]);
@@ -411,6 +434,31 @@ export default function CrmChatNotesPanel({
       alert(e.response?.data?.error || 'Không lưu được ghi chú');
     } finally {
       setSavingEditId(null);
+    }
+  };
+
+  const saveNoteShare = async (n, nextShared, modules = null) => {
+    const tid = targetLeadId;
+    if (!tid || !n?.id) return;
+    setShareSavingId(n.id);
+    try {
+      await api.put(`/crm/leads/${tid}/activities/${n.id}/share`, {
+        shared_to_workshop: nextShared,
+        allowed_share_modules: nextShared
+          ? cleanShareModulesForApi(modules ?? n.allowed_share_modules ?? shareModules)
+          : null,
+      });
+      setShareEditId(null);
+      if (pickOverride) {
+        await refreshRemoteActivities();
+      } else {
+        await refreshFloatingAnchoredActivities(tid);
+      }
+      await Promise.resolve(onPosted?.());
+    } catch (e) {
+      alert(e.response?.data?.error || 'Không lưu được chia sẻ');
+    } finally {
+      setShareSavingId(null);
     }
   };
 
@@ -510,6 +558,8 @@ export default function CrmChatNotesPanel({
           const attachments = Array.isArray(n.attachments) ? n.attachments : [];
           const editable = canEditNote(n);
           const isEditing = editingId === n.id;
+          const isShared = n.shared_to_workshop === true;
+          const shareEditing = shareEditId === n.id;
           return (
             <div key={n.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
               <div
@@ -520,18 +570,75 @@ export default function CrmChatNotesPanel({
                 }`}
               >
                 {editable && !isEditing && (
-                  <button
-                    type="button"
-                    onClick={() => startEdit(n)}
-                    className={`absolute top-1.5 right-1.5 p-1 rounded-md transition cursor-pointer ${
-                      mine
-                        ? 'text-blue-100 hover:bg-white/15'
-                        : 'text-gray-400 hover:bg-gray-200/80 hover:text-gray-700'
+                  <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5">
+                    {showShareControls && (
+                      <button
+                        type="button"
+                        onClick={() => setShareEditId(shareEditing ? null : n.id)}
+                        disabled={shareSavingId === n.id}
+                        className={`p-1 rounded-md transition cursor-pointer ${
+                          mine
+                            ? isShared
+                              ? 'text-emerald-200 hover:bg-white/15'
+                              : 'text-blue-100 hover:bg-white/15'
+                            : isShared
+                              ? 'text-emerald-600 hover:bg-emerald-50'
+                              : 'text-gray-400 hover:bg-gray-200/80 hover:text-gray-700'
+                        }`}
+                        title={isShared ? 'Đã chia sẻ — bấm để chỉnh' : 'Chia sẻ sang SX / VC'}
+                      >
+                        {shareSavingId === n.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Share2 className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => startEdit(n)}
+                      className={`p-1 rounded-md transition cursor-pointer ${
+                        mine
+                          ? 'text-blue-100 hover:bg-white/15'
+                          : 'text-gray-400 hover:bg-gray-200/80 hover:text-gray-700'
+                      }`}
+                      title="Sửa ghi chú"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
+                {isShared && !shareEditing && (
+                  <p
+                    className={`text-[10px] font-semibold mb-1 pr-14 ${
+                      mine ? 'text-emerald-100' : 'text-emerald-700'
                     }`}
-                    title="Sửa ghi chú"
                   >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </button>
+                    🔗 {shareModuleLabels(n.allowed_share_modules)}
+                  </p>
+                )}
+                {shareEditing && showShareControls && (
+                  <div
+                    className={`mb-2 rounded-lg border px-2 py-2 text-xs space-y-2 ${
+                      mine ? 'border-white/25 bg-white/10' : 'border-emerald-200 bg-emerald-50/80'
+                    }`}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={isShared}
+                        onChange={(e) => void saveNoteShare(n, e.target.checked)}
+                      />
+                      Chia sẻ sang khối khác
+                    </label>
+                    {isShared && (
+                      <DocumentShareModulePicker
+                        value={parseShareModules(n.allowed_share_modules) || shareModules}
+                        onChange={(mods) => void saveNoteShare(n, true, mods)}
+                      />
+                    )}
+                  </div>
                 )}
                 {!mine && (
                   <p className="text-[10px] font-semibold text-violet-600 mb-1 pr-6">{name}</p>
@@ -699,6 +806,22 @@ export default function CrmChatNotesPanel({
               </button>
             </span>
           ))}
+        </div>
+      )}
+      {showShareControls && (
+        <div className="rounded-lg border border-gray-100 bg-gray-50/80 px-2.5 py-2 space-y-2">
+          <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={shareToWorkshop}
+              onChange={(e) => setShareToWorkshop(e.target.checked)}
+              disabled={showRemoteLoading || !targetLeadId}
+            />
+            Chia sẻ ghi chú sang Sản xuất / VC / Công việc dự án
+          </label>
+          {shareToWorkshop && (
+            <DocumentShareModulePicker value={shareModules} onChange={setShareModules} />
+          )}
         </div>
       )}
       <div className="flex gap-2 items-end">

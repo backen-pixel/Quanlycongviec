@@ -1,4 +1,8 @@
 const { supabase } = require('../config/supabase');
+const {
+  applyWorkshopTemplateWorkshopTypeScopeForProject,
+  isWorkshopTplWorkshopTypeMissingError,
+} = require('./workshopTaskTemplateWorkshopType');
 const { getCrmVcDeliveryStageId } = require('./workshopKanban');
 const { validateProductionCompanyId } = require('./productionCompanyGate');
 const { loadProductionHandoverMaps, resolveSxAssigneeForTemplateItem } = require('./productionHandoverSettings');
@@ -233,6 +237,16 @@ async function applyProductionTemplateToFulfillmentLead({
     .eq('id', leadId)
     .maybeSingle();
 
+  let workshopTypeId = null;
+  if (leadRow?.project_id) {
+    const { data: projRow } = await supabase
+      .from('projects')
+      .select('workshop_type_id')
+      .eq('id', leadRow.project_id)
+      .maybeSingle();
+    workshopTypeId = projRow?.workshop_type_id || null;
+  }
+
   if (requireTemplateCompanyMatch) {
     const normCo = (v) => (v != null && String(v).trim() !== '' ? String(v).trim() : null);
     const mustCompanyId =
@@ -258,6 +272,9 @@ async function applyProductionTemplateToFulfillmentLead({
         .eq('is_active', true);
       if (scope.companyId) q = q.eq('company_id', scope.companyId);
       else q = q.is('company_id', null);
+      if (scope.companyId) {
+        q = applyWorkshopTemplateWorkshopTypeScopeForProject(q, workshopTypeId);
+      }
       q = q.order('order_index', { ascending: true });
       const r = await q;
       if (r.error?.message?.includes('order_index')) {
@@ -271,7 +288,21 @@ async function applyProductionTemplateToFulfillmentLead({
           .eq('is_active', true);
         if (scope.companyId) q2 = q2.eq('company_id', scope.companyId);
         else q2 = q2.is('company_id', null);
+        if (scope.companyId) {
+          q2 = applyWorkshopTemplateWorkshopTypeScopeForProject(q2, workshopTypeId);
+        }
         return await q2;
+      }
+      if (r.error && isWorkshopTplWorkshopTypeMissingError(r.error)) {
+        let q3 = supabase
+          .from('workshop_task_templates')
+          .select(cols)
+          .eq('workshop_area', 'production')
+          .eq('is_active', true);
+        if (scope.companyId) q3 = q3.eq('company_id', scope.companyId);
+        else q3 = q3.is('company_id', null);
+        q3 = q3.order('order_index', { ascending: true });
+        return await q3;
       }
       return r;
     };

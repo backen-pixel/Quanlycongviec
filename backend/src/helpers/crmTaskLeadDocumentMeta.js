@@ -38,12 +38,31 @@ function getCrmStageGroupLabel(stageSlug) {
   return s;
 }
 
+const { cleanShareModulesInput, parseJsonArray } = require('./documentShareScope');
+
 /**
- * @param {{ id?: string, stage_slug?: string|null, title?: string }|null|undefined} taskRow — một dòng crm_tasks (đủ id + stage_slug)
+ * Map cờ chia sẻ CRM (shared_to_project trên task/attachment) → lead_documents (shared_to_workshop).
+ * @param {{ shared_to_project?: boolean, allowed_share_modules?: unknown }|null|undefined} artifactRow — attachment hoặc task
+ */
+function getLeadDocumentShareFromCrm(artifactRow) {
+  if (!artifactRow || artifactRow.shared_to_project !== true) {
+    return { shared_to_workshop: false, allowed_share_modules: null };
+  }
+  const raw = parseJsonArray(artifactRow.allowed_share_modules);
+  const cleaned = raw?.length ? cleanShareModulesInput(raw) : null;
+  return {
+    shared_to_workshop: true,
+    allowed_share_modules: cleaned,
+  };
+}
+
+/**
+ * @param {{ id?: string, stage_slug?: string|null, title?: string, shared_to_project?: boolean, allowed_share_modules?: unknown }|null|undefined} taskRow
  * @param {{ linkToProject?: boolean }} opts — crm_leads đã có project_id (deal đã vào xưởng / có dự án)
+ * @param {{ shared_to_project?: boolean, allowed_share_modules?: unknown }|null|undefined} [attachmentRow] — ưu tiên cờ trên attachment
  * @returns {object} các cột gộp vào insert/update lead_documents
  */
-function getLeadDocumentFieldsFromCrmTask(taskRow, opts = {}) {
+function getLeadDocumentFieldsFromCrmTask(taskRow, opts = {}, attachmentRow = null) {
   if (!taskRow || !taskRow.id) {
     return {
       source_crm_task_id: null,
@@ -54,17 +73,18 @@ function getLeadDocumentFieldsFromCrmTask(taskRow, opts = {}) {
     };
   }
   const slug = taskRow.stage_slug || null;
-  const sx = slug && String(slug).startsWith(SX_PREFIX);
+  const shareSrc = attachmentRow?.shared_to_project != null ? attachmentRow : taskRow;
+  const share = getLeadDocumentShareFromCrm(shareSrc);
   return {
     source_crm_task_id: taskRow.id,
     crm_stage_slug: slug,
     crm_stage_group_label: getCrmStageGroupLabel(slug),
-    allowed_share_modules: sx ? ['production', 'workshop'] : null,
-    shared_to_workshop: false,
+    ...share,
   };
 }
 
 module.exports = {
   getCrmStageGroupLabel,
+  getLeadDocumentShareFromCrm,
   getLeadDocumentFieldsFromCrmTask,
 };
