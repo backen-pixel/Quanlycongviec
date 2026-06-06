@@ -941,10 +941,28 @@ r.get('/:id', async (req, res) => {
       workflowLines = wl || [];
     } catch { }
 
+    let productionStaff = [];
+    try {
+      const { data: staffRows } = await supabase
+        .from('project_production_staff')
+        .select('order_index, is_primary, user:users(id, full_name, avatar, email)')
+        .eq('project_id', req.params.id);
+      productionStaff = (staffRows || [])
+        .sort((a, b) => {
+          const ap = a.is_primary ? 1 : 0;
+          const bp = b.is_primary ? 1 : 0;
+          if (bp !== ap) return bp - ap;
+          return (a.order_index ?? 0) - (b.order_index ?? 0);
+        })
+        .map((r) => (r.user ? { ...r.user, is_primary: !!r.is_primary } : null))
+        .filter(Boolean);
+    } catch { /* migration 293/294 chưa chạy */ }
+
     res.json({
       project: {
         ...data,
         ...stagePersons,
+        production_staff: productionStaff,
         flow: flowInfo,
         flowAssignments,
         comments: comments || [],
@@ -1126,6 +1144,20 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
       });
     }
 
+    if (data.company_id && (b.workshop_type_id || data.workshop_type_id) && !b.production_person_id) {
+      try {
+        const { applyWorkshopTypeDefaultStaffToProject } = require('../helpers/productionWorkshopTypeStaff');
+        const primaryId = await applyWorkshopTypeDefaultStaffToProject(
+          data.id,
+          data.company_id,
+          b.workshop_type_id || data.workshop_type_id,
+        );
+        if (primaryId) data.production_person_id = primaryId;
+      } catch (staffErr) {
+        console.warn('[POST /projects] apply default production staff:', staffErr.message);
+      }
+    }
+
     // Activity log
     await logActivity(req.user.userId, 'created', 'project', data.id, `Tạo dự án ${data.code}: ${nameTrim}`);
 
@@ -1151,6 +1183,18 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
           '📋 Dự án mới', `Bạn được phân công vai trò ${a.role} cho dự án ${data.code}: ${nameTrim}`, 'project', data.id);
       }
     }
+
+    try {
+      const { loadProjectProductionStaffUserIds } = require('../helpers/productionWorkshopTypeStaff');
+      const staffIds = await loadProjectProductionStaffUserIds(data.id);
+      for (const sid of staffIds) {
+        if (sid && !notifiedIds.has(sid)) {
+          notifiedIds.add(sid);
+          await createNotification(req, sid, 'project_assigned',
+            '📋 Dự án mới', `Bạn được gán vào dự án ${data.code}: ${nameTrim}`, 'project', data.id);
+        }
+      }
+    } catch (_) {}
 
     // ── CREATE WORKFLOW LINES from payload ──
     let insertedLines = [];
@@ -1689,7 +1733,7 @@ r.put('/:id', requirePermission('projects', 'edit'), async (req, res) => {
     const fields = ['name','description','status','customer_id','kitchen_type','material','install_address','estimated_value','final_value','priority','sales_person_id','designer_id','project_manager_id','design_deadline','production_start_date','install_date','consulting_person_id','design_person_id','quotation_person_id','contract_person_id','production_person_id','shipping_person_id','installation_person_id','care_person_id','quotation_files','deadline','notes','supervisor_id','production_deadline','production_note','workshop_type_id'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
 
-    const { data: old } = await supabase.from('projects').select('status,name').eq('id', req.params.id).single();
+    const { data: old } = await supabase.from('projects').select('status,name,workshop_type_id,company_id,production_person_id').eq('id', req.params.id).single();
 
     // Try update — if column doesn't exist, retry without problematic fields
     let data, error;
@@ -1701,6 +1745,26 @@ r.put('/:id', requirePermission('projects', 'edit'), async (req, res) => {
       ({ data, error } = await supabase.from('projects').update(safeCopy).eq('id', req.params.id).select(`*, customers(id,full_name,phone), current_stage:workflow_stages(id,name,slug,color)`).single());
     }
     if (error) throw error;
+
+    if (
+      b.workshop_type_id !== undefined
+      && String(b.workshop_type_id || '') !== String(old?.workshop_type_id || '')
+      && b.production_person_id === undefined
+      && data?.company_id
+    ) {
+      try {
+        const { applyWorkshopTypeDefaultStaffToProject } = require('../helpers/productionWorkshopTypeStaff');
+        await applyWorkshopTypeDefaultStaffToProject(data.id, data.company_id, b.workshop_type_id || null);
+        const { data: refreshed } = await supabase
+          .from('projects')
+          .select(`*, customers(id,full_name,phone), current_stage:workflow_stages(id,name,slug,color)`)
+          .eq('id', data.id)
+          .single();
+        if (refreshed) Object.assign(data, refreshed);
+      } catch (staffErr) {
+        console.warn('[PUT /projects] apply default production staff:', staffErr.message);
+      }
+    }
 
     // Log & Notify
     if (old && update.status && update.status !== old.status) {
@@ -1722,7 +1786,15 @@ r.put('/:id', requirePermission('projects', 'edit'), async (req, res) => {
         'project', data.id);
     }
 
-    res.json({ project: data });
+    let production_staff = data.production_staff || [];
+    if (!production_staff.length) {
+      try {
+        const { loadProjectProductionStaffForApi } = require('../helpers/productionWorkshopTypeStaff');
+        production_staff = await loadProjectProductionStaffForApi(data.id);
+      } catch (_) { /* ignore */ }
+    }
+
+    res.json({ project: { ...data, production_staff } });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 

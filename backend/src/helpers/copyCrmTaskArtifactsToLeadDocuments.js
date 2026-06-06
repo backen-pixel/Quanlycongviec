@@ -20,7 +20,7 @@ async function copyCrmTaskArtifactsToLeadDocuments(leadId) {
   try {
     const { data: dealTaskAtts } = await supabase
       .from('crm_task_attachments')
-      .select('*, task:crm_tasks(id, title, stage_slug)')
+      .select('*, task:crm_tasks(id, title, stage_slug, shared_to_project, allowed_share_modules)')
       .eq('lead_id', leadId);
 
     if (dealTaskAtts?.length) {
@@ -36,6 +36,7 @@ async function copyCrmTaskArtifactsToLeadDocuments(leadId) {
         )
         .map((att) => ({
           lead_id: leadId,
+          project_id: leadRow?.project_id || null,
           name: `[${att.task?.title || 'Task'}] ${att.name}`,
           doc_type: att.file_url ? att.doc_type || 'other' : 'requirement',
           file_url: att.file_url || null,
@@ -44,7 +45,8 @@ async function copyCrmTaskArtifactsToLeadDocuments(leadId) {
           mime_type: att.mime_type || null,
           notes: att.notes || null,
           created_by: att.created_by,
-          ...getLeadDocumentFieldsFromCrmTask(att.task, linkOpts),
+          source_attachment_id: att.id,
+          ...getLeadDocumentFieldsFromCrmTask(att.task, linkOpts, att),
         }));
       if (newDocInserts.length) {
         const { error } = await supabase.from('lead_documents').insert(newDocInserts);
@@ -63,7 +65,7 @@ async function copyCrmTaskArtifactsToLeadDocuments(leadId) {
   try {
     const { data: dealTasksWithNotes } = await supabase
       .from('crm_tasks')
-      .select('id, title, stage_slug, notes, created_by')
+      .select('id, title, stage_slug, notes, created_by, shared_to_project, allowed_share_modules')
       .eq('lead_id', leadId)
       .not('notes', 'is', null);
 
@@ -75,6 +77,7 @@ async function copyCrmTaskArtifactsToLeadDocuments(leadId) {
         .filter((t) => t.notes?.trim() && !existingNames.has(`📝 Ghi chú: ${t.title}`))
         .map((t) => ({
           lead_id: leadId,
+          project_id: leadRow?.project_id || null,
           name: `📝 Ghi chú: ${t.title}`,
           doc_type: 'requirement',
           notes: t.notes,

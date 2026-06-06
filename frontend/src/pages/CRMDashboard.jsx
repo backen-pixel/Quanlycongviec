@@ -3476,6 +3476,11 @@ export default function CRMDashboard() {
                         {item.customer?.phone && <span className="text-[10px] text-green-600">📞 {item.customer.phone}</span>}
                         {item.customer?.full_name && <span className="text-[10px] text-gray-500">👤 {item.customer.full_name}</span>}
                         {item.assignee?.full_name && <span className="text-[10px] text-blue-500">🤝 {item.assignee.full_name}</span>}
+                        {(item.production_staff?.length > 1) && (
+                          <span className="text-[10px] text-indigo-600" title={(item.production_staff || []).map((u) => u.full_name).join(', ')}>
+                            🏭 {item.production_staff.length} NV
+                          </span>
+                        )}
                       </div>
                     </div>
                     <ChevronRight className="h-3.5 w-3.5 text-gray-300" />

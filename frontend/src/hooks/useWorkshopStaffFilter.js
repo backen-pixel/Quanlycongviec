@@ -190,12 +190,15 @@ export function useWorkshopStaffFilter({
 
   const matchesProject = useCallback((project, { personNameQ = '' } = {}) => {
     if (filterPersonId) {
+      const staffIds = (project?.production_staff || []).map((u) => String(u.id));
       const pid =
         project?.production_person?.id
         ?? project?.production_person_id
         ?? project?.logistics_person?.id
         ?? project?.logistics_person_id;
-      if (String(pid || '') !== String(filterPersonId)) return false;
+      const matchesPrimary = String(pid || '') === String(filterPersonId);
+      const matchesStaff = staffIds.includes(String(filterPersonId));
+      if (!matchesPrimary && !matchesStaff) return false;
     }
     const q = String(personNameQ || filterPersonName || '').trim().toLowerCase();
     if (q) {

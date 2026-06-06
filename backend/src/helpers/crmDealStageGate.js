@@ -19,6 +19,16 @@ function normalizeStageNameFold(name) {
     .replace(/[\u0300-\u036f]/g, '');
 }
 
+/** Tên cột CRM «Sản xuất» — không nhầm cột xưởng kiểu «Vẽ lên kế hoạch sản xuất». */
+function isSanXuatProductionColumnName(foldedName) {
+  const n = String(foldedName || '').trim();
+  if (!n) return false;
+  if (/\b(ke hoach|lap ke hoach|ve len ke hoach|thiet ke)\b/.test(n) && /\bsan xuat\b/.test(n)) {
+    return false;
+  }
+  return /\bsan xuat\b/.test(n);
+}
+
 /** Cột CRM sau Thắng (Sản xuất, VC…) — không cho kéo thủ công trên Kanban CRM. */
 function isCrmPostWonManagedStage(stage) {
   if (!stage) return false;
@@ -26,7 +36,7 @@ function isCrmPostWonManagedStage(stage) {
   const role = String(stage.sync_role || '').trim();
   if (role && POST_WON_SYNC_ROLES.has(role)) return true;
   const n = normalizeStageNameFold(stage.name);
-  if (n.includes('san xuat')) return true;
+  if (isSanXuatProductionColumnName(n)) return true;
   if (n.includes('van chuyen')) return true;
   if (n.includes('lap dat')) return true;
   if (n.includes('cham soc') && n.includes('khach')) return true;
@@ -73,6 +83,7 @@ function assertDealCrmManualStageChange(lead, targetStage, prevStage) {
 module.exports = {
   POST_WON_SYNC_ROLES,
   normalizeStageNameFold,
+  isSanXuatProductionColumnName,
   isCrmPostWonManagedStage,
   isDealOnCrmPostWonColumn,
   isDealCrmStageLocked,

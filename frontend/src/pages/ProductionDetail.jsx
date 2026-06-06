@@ -1594,6 +1594,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         stages={safePipelineStages}
         currentStageId={currentStageId}
         onMoveToStage={moveStage}
+        linearProgress
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
@@ -1650,7 +1651,23 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               <PersonCard label="Kinh doanh" person={project.sales_person} />
               <PersonCard label="QL dự án" person={project.project_manager} />
               <PersonCard label="Giám sát" person={project.supervisor} />
-              <PersonCard label={moduleKey === 'vc' ? 'Người vận chuyển' : 'Sản xuất'} person={project.logistics_person || project.production_person} />
+              <PersonCard label={moduleKey === 'vc' ? 'Người vận chuyển' : 'Phụ trách chính'} person={project.logistics_person || project.production_person} />
+              {moduleKey !== 'vc' && (project.production_staff?.length > 0) && (
+                <div className="pl-2">
+                  <p className="text-[10px] text-gray-400 uppercase font-medium mb-1">Đội SX ({project.production_staff.length})</p>
+                  <div className="flex flex-wrap gap-1">
+                    {project.production_staff.map((u) => (
+                      <span
+                        key={u.id}
+                        className={`text-[11px] px-2 py-0.5 rounded ${u.is_primary ? 'bg-indigo-100 text-indigo-800 font-medium' : 'bg-gray-100 text-gray-700'}`}
+                        title={u.is_primary ? 'Phụ trách chính' : undefined}
+                      >
+                        {u.full_name}{u.is_primary ? ' ★' : ''}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="pl-2">
                 <p className="text-[10px] text-gray-400 uppercase font-medium mb-1">
                   {moduleKey === 'vc' ? '🚚 Người vận chuyển phụ trách' : `Phân công ${MOD.label}`}
@@ -2027,6 +2044,8 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     currentUserId={user?.id || user?.userId}
                     canEditAnyNote={isAdminLike(user) || user?.role === 'manager'}
                     includeVoiceTimeline
+                    defaultShareToWorkshop
+                    defaultShareModules={['production', 'workshop']}
                     contextLine={
                       primaryCrmDeal
                         ? `🎯 Deal ${[primaryCrmDeal.code, primaryCrmDeal.title].filter(Boolean).join(' — ')}`

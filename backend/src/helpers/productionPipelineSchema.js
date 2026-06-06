@@ -161,7 +161,8 @@ function isPipelineKpiSlaMissingError(err) {
   const s = String(err.message || err.details || err.hint || '').toLowerCase();
   return (
     (s.includes('default_probability') || s.includes('sla_days')
-      || s.includes('counts_as_won_revenue') || s.includes('counts_as_completed_revenue'))
+      || s.includes('counts_as_won_revenue') || s.includes('counts_as_completed_revenue')
+      || s.includes('counts_as_collected_revenue'))
     && (s.includes('does not exist') || s.includes('could not find'))
   );
 }
@@ -196,7 +197,7 @@ function buildPipelineStageSelect() {
   const h = handoverToLogisticsColumnAvailable ? 'is_handover_to_logistics, ' : '';
   const pp = pipelineProgressPercentColumnAvailable ? 'progress_percent, ' : '';
   const kpi = pipelineKpiSlaColumnsAvailable
-    ? 'default_probability, sla_days, counts_as_won_revenue, counts_as_completed_revenue, '
+    ? 'default_probability, sla_days, counts_as_won_revenue, counts_as_completed_revenue, counts_as_collected_revenue, '
     : '';
   const reqDl = pipelineRequiresDeadlineColumnAvailable ? 'requires_deadline, ' : '';
   let wt = '';
@@ -229,6 +230,7 @@ function stripHandoverFields(obj) {
     delete o.sla_days;
     delete o.counts_as_won_revenue;
     delete o.counts_as_completed_revenue;
+    delete o.counts_as_collected_revenue;
   }
   if (!pipelineRequiresDeadlineColumnAvailable) delete o.requires_deadline;
   return o;

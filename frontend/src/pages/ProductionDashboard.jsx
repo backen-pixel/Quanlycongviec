@@ -22,6 +22,7 @@ import {
 } from '../lib/workshopPipelineStorage';
 import { computeSxRevenueKpis, getSxPipelineStageSlaTone, isSxColumnSlaOverdue } from '../lib/sxPipelineRevenue';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
+import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import NewDealModal from '../components/NewDealModal';
 import { getCrmDeadlineUrgencyFromIso, getCrmDeadlineUrgencyBadgeClass } from '../lib/crmLeadDeadlineDisplay';
 
@@ -163,6 +164,7 @@ export default function ProductionDashboard() {
   const [projects, setProjects] = useState([]);
   const [pipeline, setPipeline] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [firstLoaded, setFirstLoaded] = useState(false);
   const [searchQuery, setSearchQuery] = useState(() => (typeof P0?.searchQuery === 'string' ? P0.searchQuery : ''));
   const [priorityFilter, setPriorityFilter] = useState(() => (typeof P0?.priorityFilter === 'string' ? P0.priorityFilter : ''));
@@ -182,6 +184,10 @@ export default function ProductionDashboard() {
   const [timePreset, setTimePreset] = useState(() => P0?.timePreset ?? '');
   const [customFrom, setCustomFrom] = useState(() => P0?.customFrom ?? '');
   const [customTo, setCustomTo] = useState(() => P0?.customTo ?? '');
+  const [showCustomDate, setShowCustomDate] = useState(
+    () => !!P0?.showCustomDate || P0?.timePreset === 'custom',
+  );
+  const [showDateRangePicker, setShowDateRangePicker] = useState(false);
   const [kanbanLoadKey, setKanbanLoadKey] = useState(() => P0?.kanbanLoadKey ?? '500');
   const [filterPhone, setFilterPhone] = useState(() => P0?.filterPhone ?? '');
   const [showAdvFilter, setShowAdvFilter] = useState(false);
@@ -264,8 +270,10 @@ export default function ProductionDashboard() {
   }, [isAdmin, filterCompany, user?.company_id]);
   const companyForTypes = companyParam || (user?.company_id ? String(user.company_id) : '');
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (opts = {}) => {
+    const silent = !!opts.silent;
+    if (silent) setSyncing(true);
+    else setLoading(true);
     try {
       const dashQ = {
         ...(companyParam ? { company_id: companyParam } : {}),
@@ -290,8 +298,11 @@ export default function ProductionDashboard() {
     } catch (e) {
       console.error(e);
     }
-    setLoading(false);
-    setFirstLoaded(true);
+    if (silent) setSyncing(false);
+    else {
+      setLoading(false);
+      setFirstLoaded(true);
+    }
   }, [companyParam, kanbanLoadKey]);
 
   useEffect(() => { load(); }, [load]);
@@ -335,14 +346,14 @@ export default function ProductionDashboard() {
   useEffect(() => {
     try {
       localStorage.setItem(LS_SX, JSON.stringify({
-        filterCompany, timePreset, customFrom, customTo, kanbanLoadKey,
+        filterCompany, timePreset, customFrom, customTo, showCustomDate, kanbanLoadKey,
         filterPersonId, filterPersonName, filterRegion, filterPhone, filterWorkTypeId,
         searchQuery, priorityFilter, stageFilter, viewMode, sortBy,
         showOrphanColumn,
       }));
     } catch { /* ignore */ }
   }, [
-    filterCompany, timePreset, customFrom, customTo, kanbanLoadKey, filterPersonId, filterPersonName,
+    filterCompany, timePreset, customFrom, customTo, showCustomDate, kanbanLoadKey, filterPersonId, filterPersonName,
     filterRegion, filterPhone, filterWorkTypeId, searchQuery, priorityFilter, stageFilter, viewMode, sortBy,
     showOrphanColumn,
   ]);
@@ -382,6 +393,33 @@ export default function ProductionDashboard() {
       return getWorkshopDateRange(timePreset);
     }
     return { from: '', to: '' };
+  }, [timePreset, customFrom, customTo]);
+
+  const handleTimePresetChange = useCallback((preset) => {
+    setTimePreset(preset);
+    if (preset === 'custom') {
+      setShowCustomDate(true);
+      return;
+    }
+    setShowCustomDate(false);
+    setShowDateRangePicker(false);
+    if (preset === '') {
+      setCustomFrom('');
+      setCustomTo('');
+      return;
+    }
+    const range = getWorkshopDateRange(preset);
+    setCustomFrom(range.from);
+    setCustomTo(range.to);
+  }, []);
+
+  const timeFilterLabel = useMemo(() => {
+    if (!timePreset) return '';
+    if (timePreset === 'custom') {
+      if (customFrom && customTo) return `${customFrom} → ${customTo}`;
+      return 'Tùy chỉnh';
+    }
+    return WS_TIME_PRESETS.find((p) => p.key === timePreset)?.label || '';
   }, [timePreset, customFrom, customTo]);
 
   const scopeProjects = useMemo(() => {
@@ -435,7 +473,7 @@ export default function ProductionDashboard() {
       await Promise.all([...selectedIds].map(id =>
         api.put(`/projects/${id}`, { deadline: bulkDeadlineVal })
       ));
-      await load();
+      await load({ silent: true });
       setShowBulkDeadline(false);
       setBulkDeadlineVal('');
       clearSelection();
@@ -450,7 +488,7 @@ export default function ProductionDashboard() {
       await Promise.all([...selectedIds].map(id =>
         api.put(`/projects/${id}`, { production_person_id: bulkPersonId })
       ));
-      await load();
+      await load({ silent: true });
       setShowBulkPerson(false);
       setBulkPersonId('');
       clearSelection();
@@ -461,15 +499,27 @@ export default function ProductionDashboard() {
   const applyBulkDelete = useCallback(async () => {
     if (!selectedIds.size || bulkDeleting) return;
     const count = selectedIds.size;
+    const idsToDelete = [...selectedIds];
     const reason = window.prompt(`Xóa ${count} dự án đã chọn?\n\nDự án sẽ được chuyển vào Thùng rác — admin có thể khôi phục.\nNhập lý do (không bắt buộc):`, '');
-    if (reason === null) return; // user nhấn Cancel
+    if (reason === null) return;
     setBulkDeleting(true);
+    clearSelection();
+    setProjects((prev) => prev.filter((p) => !idsToDelete.includes(p.id)));
     try {
-      await Promise.all([...selectedIds].map((id) => api.delete(`/projects/${id}`, { data: { delete_reason: reason || undefined } })));
-      await load();
-      clearSelection();
+      const results = await Promise.allSettled(
+        idsToDelete.map((id) => api.delete(`/projects/${id}`, { data: { delete_reason: reason || undefined } })),
+      );
+      const failed = results.filter((r) => r.status === 'rejected');
+      if (failed.length) {
+        const msg = failed[0]?.reason?.response?.data?.error || failed[0]?.reason?.message || 'Lỗi xóa';
+        alert(failed.length === idsToDelete.length
+          ? msg
+          : `Đã xóa ${idsToDelete.length - failed.length}/${idsToDelete.length}. Lỗi: ${msg}`);
+      }
+      await load({ silent: true });
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi xóa dự án');
+      await load({ silent: true });
     }
     setBulkDeleting(false);
   }, [selectedIds, bulkDeleting, load, clearSelection]);
@@ -673,25 +723,32 @@ export default function ProductionDashboard() {
     const columnSlaOverdue = list.filter((p) => isSxColumnSlaOverdue(p)).length;
     if (!list.length) {
       return {
-        total: 0, producing: 0, completed: 0, overdue: 0, avg_progress: kpis?.avg_progress || 0,
+        total: 0, producing: 0, awaiting_delivery: 0, shipped: 0, completed: 0, overdue: 0,
+        avg_progress: kpis?.avg_progress || 0,
         intake_pending: 0, delivering: 0, customer_care: 0,
         won_revenue_value: kpis?.won_revenue_value || 0,
         completed_revenue_value: kpis?.completed_revenue_value || 0,
+        collected_revenue_value: kpis?.collected_revenue_value || 0,
+        debt_revenue_value: kpis?.debt_revenue_value || 0,
         weighted_pipeline_value: kpis?.weighted_pipeline_value || 0,
         column_sla_overdue: 0,
       };
     }
     return {
       total: list.length,
-      producing: list.filter((p) => p.current_stage?.slug === 'production' || p.status === 'producing').length,
-      delivering: list.filter((p) => p.current_stage?.slug === 'delivery' || p.status === 'shipping' || p.status === 'installing').length,
+      producing: revenue.producing,
+      awaiting_delivery: revenue.awaitingDelivery,
+      shipped: revenue.shipped,
+      delivering: revenue.awaitingDelivery,
       customer_care: list.filter((p) => p.current_stage?.slug === 'customer-care' || p.status === 'warranty').length,
       completed: list.filter((p) => p.status === 'completed').length,
-      overdue: list.filter((p) => p.deadline && new Date(p.deadline) < new Date() && p.status !== 'completed').length,
+      overdue: revenue.overdue,
       intake_pending: list.filter((p) => p.sx_intake).length,
       avg_progress: Math.round(list.reduce((s, p) => s + (p.progress || 0), 0) / list.length),
       won_revenue_value: revenue.wonRevenue,
       completed_revenue_value: revenue.completedRevenue,
+      collected_revenue_value: revenue.collectedRevenue,
+      debt_revenue_value: revenue.debtRevenue,
       weighted_pipeline_value: revenue.weightedPipeline,
       column_sla_overdue: columnSlaOverdue,
     };
@@ -982,7 +1039,7 @@ export default function ProductionDashboard() {
     (timePreset && timePreset !== 'custom') || (timePreset === 'custom' && customFrom && customTo),
   );
   const advFilterCount =
-    staffFilterActiveCount + (filterPhone ? 1 : 0) + (hasTimeFilter ? 1 : 0)
+    staffFilterActiveCount + (filterPhone ? 1 : 0)
     + (filterWorkTypeId ? 1 : 0)
     + (String(searchQuery || '').trim() ? 1 : 0) + (priorityFilter ? 1 : 0) + (stageFilter ? 1 : 0);
 
@@ -995,13 +1052,11 @@ export default function ProductionDashboard() {
     setSearchQuery('');
     setPriorityFilter('');
     setStageFilter('');
-    setTimePreset('');
-    setCustomFrom('');
-    setCustomTo('');
+    handleTimePresetChange('');
     setFilterPhone('');
     setFilterWorkTypeId('');
     resetStaffFilters();
-  }, [resetStaffFilters]);
+  }, [resetStaffFilters, handleTimePresetChange]);
 
   // Lần đầu chưa có data → spinner toàn vùng. Reload sau đó dùng overlay nhẹ
   // (xem block <main className="relative"> ở dưới) để toolbar/KPI vẫn hiển thị.
@@ -1059,49 +1114,54 @@ export default function ProductionDashboard() {
         </div>
       </div>
 
-      {/* KPI — thanh màu trên đầu + nhãn / số / descriptor (giống mockup) */}
+      {/* KPI — tổng quan dự án + công nợ / đã thu theo cột pipeline */}
       {(() => {
-        const overdueProd = scopeProjects.filter((p) => p.is_production_overdue).length;
         const total = scopeKpis.total;
-        const producingValue = scopeProjects
-          .filter((p) => p.current_stage?.slug === 'production' || p.status === 'producing')
-          .reduce((sum, p) => sum + (Number(p.estimated_value) || 0), 0);
         return (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-8 gap-2">
-            <KPICard accent="bg-violet-500" label="Tổng dự án" value={total} descriptor={total > 0 ? `↑ ${total} tuần này` : '—'} />
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-7 gap-2">
+            <KPICard accent="bg-violet-500" label="Tổng dự án" value={total} descriptor={total > 0 ? `${total} dự án` : '—'} />
             <KPICard
               accent="bg-teal-500"
               label="Đang sản xuất"
               value={scopeKpis.producing}
-              descriptor={scopeKpis.producing > 0 ? formatVND(producingValue) : '—'}
+              descriptor={scopeKpis.producing > 0 ? `${scopeKpis.producing} dự án` : '—'}
+            />
+            <KPICard
+              accent="bg-slate-500"
+              label="Chờ vận chuyển"
+              value={scopeKpis.awaiting_delivery}
+              descriptor={scopeKpis.awaiting_delivery > 0 ? 'ở cột bàn giao VC' : '—'}
+            />
+            <KPICard
+              accent="bg-blue-500"
+              label="Đã vận chuyển"
+              value={scopeKpis.shipped}
+              descriptor={scopeKpis.shipped > 0 ? 'đang / đã giao' : '—'}
+            />
+            <KPICard
+              accent="bg-red-500"
+              label="Quá hạn"
+              value={scopeKpis.overdue}
+              descriptor={scopeKpis.overdue > 0 ? 'cần xử lý' : 'không có'}
+              valueTone={scopeKpis.overdue > 0 ? 'danger' : undefined}
             />
             <KPICard
               accent="bg-amber-500"
-              label="DT thắng (SX)"
-              value={scopeKpis.won_revenue_value > 0 ? formatVND(scopeKpis.won_revenue_value) : '—'}
-              descriptor="theo cột pipeline"
+              label="Công nợ"
+              value={scopeKpis.debt_revenue_value > 0 ? formatVND(scopeKpis.debt_revenue_value) : '—'}
+              descriptor="đã công, chưa thu"
             />
             <KPICard
               accent="bg-emerald-600"
-              label="DT hoàn thành"
-              value={scopeKpis.completed_revenue_value > 0 ? formatVND(scopeKpis.completed_revenue_value) : '—'}
+              label="Đã thu"
+              value={scopeKpis.collected_revenue_value > 0 ? formatVND(scopeKpis.collected_revenue_value) : '—'}
               descriptor="theo cột pipeline"
             />
-            <KPICard accent="bg-emerald-500" label="Hoàn thành" value={scopeKpis.completed} descriptor="tuần này" />
-            <KPICard accent="bg-red-500" label="Quá hạn" value={scopeKpis.overdue} descriptor={scopeKpis.overdue > 0 ? 'cần xử lý' : 'không có'} valueTone={scopeKpis.overdue > 0 ? 'danger' : undefined} />
-            <KPICard
-              accent="bg-rose-500"
-              label="Trễ SLA cột"
-              value={scopeKpis.column_sla_overdue}
-              descriptor={scopeKpis.column_sla_overdue > 0 ? 'cần xử lý' : 'không có'}
-              valueTone={scopeKpis.column_sla_overdue > 0 ? 'danger' : undefined}
-            />
-            <KPICard accent="bg-orange-500" label="Trễ giao xưởng" value={overdueProd} descriptor={overdueProd > 0 ? 'cần xử lý' : 'không có'} valueTone={overdueProd > 0 ? 'danger' : undefined} />
           </div>
         );
       })()}
 
-      {/* Toolbar 1 dòng: Search + Chip filter inline + Bộ lọc + Sắp xếp (luôn hiển thị) */}
+      {/* Toolbar 1 dòng: Search + Chip filter inline + Thời gian + Bộ lọc (luôn hiển thị) */}
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
           {/* Search */}
@@ -1218,6 +1278,26 @@ export default function ProductionDashboard() {
             </label>
           )}
 
+          {/* Thời gian — giống CRM dashboard */}
+          <div className="relative shrink-0">
+            <select
+              value={timePreset}
+              onChange={(e) => handleTimePresetChange(e.target.value)}
+              className={`h-10 px-3 pl-9 rounded-xl text-sm font-medium cursor-pointer transition-all border appearance-none pr-8 ${
+                timePreset
+                  ? 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'
+                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+              }`}
+              style={{ minWidth: '160px' }}
+              title="Lọc theo thời gian tạo dự án"
+            >
+              {WS_TIME_PRESETS.map((o) => (
+                <option key={o.key || 'all'} value={o.key}>{o.label}</option>
+              ))}
+            </select>
+            <Clock className={`absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 pointer-events-none ${timePreset ? 'text-purple-500' : 'text-gray-400'}`} />
+          </div>
+
           {/* Bộ lọc */}
           <button
             type="button"
@@ -1238,37 +1318,6 @@ export default function ProductionDashboard() {
             )}
           </button>
 
-          {/* Sắp xếp */}
-          <div className="relative" ref={sortMenuRef}>
-            <button
-              type="button"
-              onClick={() => setSortOpen((s) => !s)}
-              className={`h-9 px-3 rounded-lg border text-sm font-medium inline-flex items-center gap-1.5 shrink-0 cursor-pointer ${
-                sortOpen ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white hover:bg-gray-50'
-              }`}
-              style={sortOpen ? undefined : { color: '#000000' }}
-            >
-              <ArrowUpDown className="h-3.5 w-3.5" />
-              {SX_SORT_OPTIONS.find((o) => o.id === sortBy)?.label || 'Sắp xếp'}
-            </button>
-            {sortOpen && (
-              <div className="absolute right-0 top-full mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-30 py-1">
-                {SX_SORT_OPTIONS.map((o) => (
-                  <button
-                    key={o.id}
-                    type="button"
-                    onClick={() => { setSortBy(o.id); setSortOpen(false); }}
-                    className={`w-full text-left px-3 py-1.5 text-sm cursor-pointer ${
-                      sortBy === o.id ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-50'
-                    }`}
-                  >
-                    {o.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
           {hasActiveFilter && (
             <button
               type="button"
@@ -1281,31 +1330,87 @@ export default function ProductionDashboard() {
           )}
         </div>
 
+        {showCustomDate && (
+          <div className="flex flex-wrap items-center gap-3 bg-purple-50 border border-purple-200 rounded-xl p-3 shadow-sm">
+            <span className="text-xs font-bold text-purple-600 uppercase flex items-center gap-1.5">
+              <Calendar className="h-3.5 w-3.5" /> Khoảng thời gian:
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowDateRangePicker(true)}
+              className="h-9 px-3 bg-white border border-purple-200 rounded-lg text-sm hover:bg-purple-50 cursor-pointer"
+              title="Chọn khoảng ngày"
+            >
+              {customFrom && customTo ? `${customFrom} → ${customTo}` : 'Chọn ngày bắt đầu/kết thúc'}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleTimePresetChange('')}
+              className="h-9 px-3 bg-white text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-lg text-sm transition cursor-pointer border border-gray-200"
+            >
+              Hủy
+            </button>
+          </div>
+        )}
+
+        <DateRangePickerPopover
+          open={showDateRangePicker}
+          title="Phạm vi tuỳ chỉnh"
+          from={customFrom}
+          to={customTo}
+          onChange={({ from, to }) => {
+            setCustomFrom(from);
+            setCustomTo(to);
+          }}
+          onClose={() => setShowDateRangePicker(false)}
+        />
+
+        {timePreset && timePreset !== 'custom' && timeFilterLabel && (
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-100 text-purple-700 rounded-lg text-xs font-medium border border-purple-200">
+              <Clock className="h-3 w-3" />
+              {timeFilterLabel}
+              <button type="button" onClick={() => handleTimePresetChange('')} className="ml-1 hover:text-purple-900 cursor-pointer" title="Bỏ lọc thời gian">
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          </div>
+        )}
+
         {showAdvFilter && (
           <div className="space-y-3 p-3 rounded-xl border border-dashed border-gray-200 bg-gray-50/80">
             <div className="flex flex-wrap items-end gap-2">
               <div>
-                <p className="text-[10px] font-semibold text-gray-500 mb-0.5">Thời gian tạo</p>
-                <div className="inline-flex items-center gap-0.5 rounded-lg border border-gray-200 bg-white px-1.5 h-9">
-                  <Clock className="h-3.5 w-3.5 text-gray-400 ml-0.5 shrink-0" />
-                  <select
-                    value={timePreset}
-                    onChange={(e) => setTimePreset(e.target.value)}
-                    className="h-8 pr-1 text-xs sm:text-sm bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[8rem]"
+                <p className="text-[10px] font-semibold text-gray-500 mb-0.5">Sắp xếp</p>
+                <div className="relative" ref={sortMenuRef}>
+                  <button
+                    type="button"
+                    onClick={() => setSortOpen((s) => !s)}
+                    className={`h-9 px-3 rounded-lg border text-sm font-medium inline-flex items-center gap-1.5 cursor-pointer ${
+                      sortOpen ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white hover:bg-gray-50'
+                    }`}
                   >
-                    {WS_TIME_PRESETS.map((o) => (
-                      <option key={o.key || 'all'} value={o.key}>{o.label}</option>
-                    ))}
-                  </select>
+                    <ArrowUpDown className="h-3.5 w-3.5" />
+                    {SX_SORT_OPTIONS.find((o) => o.id === sortBy)?.label || 'Sắp xếp'}
+                  </button>
+                  {sortOpen && (
+                    <div className="absolute left-0 top-full mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-30 py-1">
+                      {SX_SORT_OPTIONS.map((o) => (
+                        <button
+                          key={o.id}
+                          type="button"
+                          onClick={() => { setSortBy(o.id); setSortOpen(false); }}
+                          className={`w-full text-left px-3 py-1.5 text-sm cursor-pointer ${
+                            sortBy === o.id ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-50'
+                          }`}
+                        >
+                          {o.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
-              {timePreset === 'custom' && (
-                <div className="flex items-center gap-1 flex-wrap">
-                  <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} className="h-9 px-2 border border-gray-200 rounded-lg text-xs bg-white" />
-                  <span className="text-gray-400">–</span>
-                  <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} className="h-9 px-2 border border-gray-200 rounded-lg text-xs bg-white" />
-                </div>
-              )}
               <div>
                 <p className="text-[10px] font-semibold text-gray-500 mb-0.5">Tải tối đa</p>
                 <select
@@ -1440,7 +1545,7 @@ export default function ProductionDashboard() {
       )}
 
       <div className="relative">
-        {loading && firstLoaded && (
+        {syncing && firstLoaded && (
           <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/60 backdrop-blur-[2px] rounded-xl pointer-events-none">
             <div className="flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-200 rounded-full shadow-sm">
               <div className="animate-spin h-4 w-4 border-2 border-blue-600 border-t-transparent rounded-full" />
@@ -1457,10 +1562,17 @@ export default function ProductionDashboard() {
             workTypes={workTypes}
             onSetWorkType={async (projectId, typeId) => {
               try {
-                await api.put(`/projects/${projectId}`, { workshop_type_id: typeId || null });
+                const { data } = await api.put(`/projects/${projectId}`, { workshop_type_id: typeId || null });
+                const updated = data?.project || {};
                 setProjects((prev) => prev.map((p) => (p.id === projectId
-                  ? { ...p, workshop_type_id: typeId || null,
-                      workshop_type: typeId ? (workTypes.find((w) => String(w.id) === String(typeId)) || null) : null }
+                  ? {
+                    ...p,
+                    ...updated,
+                    workshop_type_id: typeId || null,
+                    workshop_type: typeId ? (workTypes.find((w) => String(w.id) === String(typeId)) || null) : null,
+                    production_staff: updated.production_staff || p.production_staff || [],
+                    production_person: updated.production_person || p.production_person,
+                  }
                   : p)));
               } catch (e) {
                 alert(e.response?.data?.error || 'Lỗi đổi phân loại');
@@ -1673,7 +1785,7 @@ export default function ProductionDashboard() {
         <NewDealModal
           variant="production"
           onClose={() => setShowNewDeal(false)}
-          onSuccess={() => load()}
+          onSuccess={() => load({ silent: true })}
           companies={companies}
           workTypes={workTypes}
           defaultWorkshopTypeId={filterWorkTypeId && filterWorkTypeId !== 'none' ? filterWorkTypeId : ''}
@@ -1778,6 +1890,12 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
           {stage.is_handover_to_logistics && (
             <span className="px-1 py-0.5 bg-orange-100 text-orange-600 text-[9px] font-bold rounded shrink-0">→VC</span>
           )}
+          {stage.counts_as_completed_revenue && (
+            <span className="px-1 py-0.5 bg-teal-100 text-teal-700 text-[9px] font-bold rounded shrink-0" title="Cột tính «Đã công»">✓Công</span>
+          )}
+          {stage.counts_as_collected_revenue && (
+            <span className="px-1 py-0.5 bg-emerald-100 text-emerald-700 text-[9px] font-bold rounded shrink-0" title="Cột tính «Đã thu tiền»">💰Thu</span>
+          )}
           {onSelectColumn && items.length > 0 && (
             <button
               type="button"
@@ -1858,7 +1976,9 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
   };
 
   const stageColor = stage.color || '#e5e7eb';
-  const assignee = item.production_person || item.assignee;
+  const staffList = Array.isArray(item.production_staff) ? item.production_staff : [];
+  const primaryStaff = staffList.find((u) => u.is_primary) || staffList[0] || null;
+  const assignee = item.production_person || primaryStaff || item.assignee;
   const deals = Array.isArray(item.crm_deals) ? item.crm_deals : [];
   const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
   const leadCreatedAt = primaryDeal?.created_at || item.created_at || null;
@@ -2033,6 +2153,22 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
         </div>
       )}
 
+      {/* Cờ thanh toán theo cột pipeline hiện tại */}
+      {(item.sx_pipeline_stage?.counts_as_completed_revenue || item.sx_pipeline_stage?.counts_as_collected_revenue) && (
+        <div className="flex flex-wrap gap-1 mb-1.5">
+          {item.sx_pipeline_stage?.counts_as_completed_revenue && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-teal-50 text-teal-800 border border-teal-200">
+              ✓ Đã công
+            </span>
+          )}
+          {item.sx_pipeline_stage?.counts_as_collected_revenue && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+              💰 Đã thu tiền
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Deadline thẻ (sx_kanban_deadline_at) — bấm để sửa */}
       {typeof onOpenDeadline === 'function' && item.sx_kanban_deadline_at && (() => {
         const { level } = getCrmDeadlineUrgencyFromIso(item.sx_kanban_deadline_at);
@@ -2129,8 +2265,29 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
         {/* Spacer */}
         <span className="flex-1" />
 
-        {/* Avatar */}
-        {assignee?.full_name ? (
+        {/* Avatar / đội SX */}
+        {staffList.length > 1 ? (
+          <span className="inline-flex items-center -space-x-1.5 shrink-0" title={staffList.map((u) => u.full_name).join(', ')}>
+            {staffList.slice(0, 3).map((u) => (
+              u.avatar ? (
+                <img key={u.id} src={u.avatar} alt="" className="h-5 w-5 rounded-full ring-2 ring-white" />
+              ) : (
+                <div
+                  key={u.id}
+                  className="h-5 w-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white ring-2 ring-white"
+                  style={{ backgroundColor: u.is_primary ? '#4f46e5' : stageColor }}
+                >
+                  {getInitials(u.full_name)}
+                </div>
+              )
+            ))}
+            {staffList.length > 3 && (
+              <span className="h-5 min-w-[20px] px-1 rounded-full bg-gray-200 text-[9px] font-bold text-gray-600 flex items-center justify-center ring-2 ring-white">
+                +{staffList.length - 3}
+              </span>
+            )}
+          </span>
+        ) : assignee?.full_name ? (
           assignee.avatar ? (
             <img src={assignee.avatar} alt="" className="h-5 w-5 rounded-full shrink-0" title={assignee.full_name} />
           ) : (

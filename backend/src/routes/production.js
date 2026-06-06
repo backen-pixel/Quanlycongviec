@@ -99,6 +99,9 @@ function parseProductionStageKpiBody(b) {
   if (b.counts_as_completed_revenue !== undefined) {
     out.counts_as_completed_revenue = b.counts_as_completed_revenue == null ? null : !!b.counts_as_completed_revenue;
   }
+  if (b.counts_as_collected_revenue !== undefined) {
+    out.counts_as_collected_revenue = b.counts_as_collected_revenue == null ? null : !!b.counts_as_collected_revenue;
+  }
   if (b.requires_deadline !== undefined) {
     out.requires_deadline = b.requires_deadline == null ? null : !!b.requires_deadline;
   }
@@ -121,40 +124,22 @@ async function touchProjectSxPipelineStageEnteredAt(projectId, targetColId, curr
   }
 }
 
-/** Gán NV mặc định (cấu hình bàn giao) khi deal vào cột intake nếu dự án chưa có production_person_id. */
+/** Gán NV mặc định theo phân loại xưởng khi deal vào cột intake nếu dự án chưa có đủ NV SX. */
 async function applyDefaultIntakeAssigneeIfNeeded(projectId, companyId) {
   if (!projectId || !companyId) return;
   try {
     const { data: proj } = await supabase
       .from('projects')
-      .select('id, production_person_id, company_id')
+      .select('id, production_person_id, company_id, workshop_type_id')
       .eq('id', projectId)
       .maybeSingle();
-    if (!proj || proj.production_person_id) return;
+    if (!proj) return;
 
-    const responsibleUserId = await resolveProductionHandoverResponsibleUserId(companyId);
-    if (!responsibleUserId) return;
+    const { loadProjectProductionStaffUserIds, applyWorkshopTypeDefaultStaffToProject } = require('../helpers/productionWorkshopTypeStaff');
+    const existingStaff = await loadProjectProductionStaffUserIds(projectId);
+    if (existingStaff.length > 0 && proj.production_person_id) return;
 
-    const nowIso = new Date().toISOString();
-    await supabase
-      .from('projects')
-      .update({ production_person_id: responsibleUserId, updated_at: nowIso })
-      .eq('id', projectId);
-
-    const { data: deal } = await supabase
-      .from('crm_leads')
-      .select('id')
-      .eq('project_id', projectId)
-      .eq('type', 'deal')
-      .limit(1)
-      .maybeSingle();
-    if (deal?.id) {
-      await assignProductionCompanyDealResponsibility({
-        dealId: deal.id,
-        productionCompanyId: companyId,
-        projectId,
-      });
-    }
+    await applyWorkshopTypeDefaultStaffToProject(projectId, companyId, proj.workshop_type_id || null);
   } catch (e) {
     console.warn('[production] applyDefaultIntakeAssigneeIfNeeded:', e.message);
   }
@@ -305,9 +290,10 @@ async function resolveDefaultPipelineAndStage(companyId) {
 }
 
 async function insertCrmDealForProjectResilient(insertRow) {
+  const { stripInvalidCrmLeadColumns } = require('../helpers/crmLeadInsert');
   // Một số DB cũ có thể thiếu cột pipeline_id / lead_owner_id / created_by... nên cần retry.
   const tryInsert = async (row) => supabase.from('crm_leads').insert(row).select('id, company_id').single();
-  let row = { ...insertRow };
+  let row = stripInvalidCrmLeadColumns({ ...insertRow });
   let r = await tryInsert(row);
   if (!r.error) return r;
 
@@ -676,6 +662,7 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
       delete update.sla_days;
       delete update.counts_as_won_revenue;
       delete update.counts_as_completed_revenue;
+      delete update.counts_as_collected_revenue;
       delete update.requires_deadline;
     }
     if (update.bucket_slug && update.bucket_slug !== INTAKE_BUCKET) {
@@ -1100,19 +1087,17 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
     }));
     const revenueKpis = computeSxRevenueKpis(projectsWithDealProb, sortedKanban, dealProbByProjectId);
 
-    const overdueCount = projectsWithDealProb.filter((project) => (
-      project.deadline && new Date(project.deadline) < new Date() && project.status !== 'completed'
-    )).length;
-
     const intakeCount = projectsWithDealProb.filter((p) => p.sx_intake).length;
 
     const kpis = {
       total_projects: projectsWithDealProb.length,
-      producing: projectsWithDealProb.filter((project) => project.current_stage?.slug === 'production' || project.status === 'producing').length,
-      delivering: projectsWithDealProb.filter((project) => project.current_stage?.slug === 'delivery' || project.status === 'shipping' || project.status === 'installing').length,
+      producing: revenueKpis.producing,
+      awaiting_delivery: revenueKpis.awaiting_delivery,
+      shipped: revenueKpis.shipped,
+      delivering: revenueKpis.awaiting_delivery,
       customer_care: projectsWithDealProb.filter((project) => project.current_stage?.slug === 'customer-care' || project.status === 'warranty').length,
       completed: projectsWithDealProb.filter((project) => project.status === 'completed').length,
-      overdue: overdueCount,
+      overdue: revenueKpis.overdue,
       intake_pending: intakeCount,
       total_value: projectsWithDealProb.reduce((sum, project) => sum + (project.estimated_value || 0), 0),
       avg_progress: projectsWithDealProb.length
@@ -1120,6 +1105,8 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
         : 0,
       won_revenue_value: revenueKpis.won_revenue_value,
       completed_revenue_value: revenueKpis.completed_revenue_value,
+      collected_revenue_value: revenueKpis.collected_revenue_value,
+      debt_revenue_value: revenueKpis.debt_revenue_value,
       weighted_pipeline_value: revenueKpis.weighted_pipeline_value,
     };
 
@@ -1260,7 +1247,14 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     if (error) throw error;
 
     const enrichedSx = await enrichProjectsForSx(projects, wonIds, company_id, workshop_type_id || null);
-    const enhanced = enrichedSx.map((project) => ({
+    const { attachProductionStaffToProjects, backfillMissingProductionStaff } = require('../helpers/productionWorkshopTypeStaff');
+    try {
+      await backfillMissingProductionStaff(enrichedSx);
+    } catch (bfErr) {
+      console.warn('[production/kanban] backfill staff:', bfErr.message);
+    }
+    const enrichedWithStaff = await attachProductionStaffToProjects(enrichedSx);
+    const enhanced = enrichedWithStaff.map((project) => ({
       ...project,
       progress: calcTaskProgress(project.tasks),
       task_total: project.tasks?.length || 0,
@@ -2689,6 +2683,13 @@ function applyWorkshopTemplateStageFilter(q, reqQuery, workshopAreaHint) {
   return q.eq(stageCol, raw);
 }
 
+const {
+  isWorkshopTplWorkshopTypeMissingError,
+  applyWorkshopTemplateWorkshopTypeFilter,
+  normalizeWorkshopTypeIdForInsert,
+  validateWorkshopTemplateWorkshopType,
+} = require('../helpers/workshopTaskTemplateWorkshopType');
+
 r.get('/task-templates', requirePermission('projects', 'view'), async (req, res) => {
   try {
     const company_id = effectiveWorkshopCompanyId(req, req.query.company_id);
@@ -2705,7 +2706,12 @@ r.get('/task-templates', requirePermission('projects', 'view'), async (req, res)
     if (company_id) {
       q = q.eq('company_id', company_id);
     }
-    q = applyWorkshopTemplateStageFilter(q, req.query);
+    if (req.query.workshop_area !== 'production') {
+      q = applyWorkshopTemplateStageFilter(q, req.query);
+    }
+    if (req.query.workshop_type_id !== undefined && req.query.workshop_area !== 'logistics') {
+      q = applyWorkshopTemplateWorkshopTypeFilter(q, req.query.workshop_type_id);
+    }
     let { data, error } = await q;
     if (error && company_id && isWorkshopTplCompanyMissingError(error)) {
       const retry = await supabase
@@ -2725,6 +2731,18 @@ r.get('/task-templates', requirePermission('projects', 'view'), async (req, res)
       const r2 = await retryQ;
       data = r2.data;
       error = r2.error;
+    }
+    if (error && isWorkshopTplWorkshopTypeMissingError(error)) {
+      let retryQ = supabase
+        .from('workshop_task_templates')
+        .select('*, items:workshop_task_template_items(*)')
+        .order('order_index');
+      if (req.query.workshop_area) retryQ = retryQ.eq('workshop_area', req.query.workshop_area);
+      if (company_id) retryQ = retryQ.eq('company_id', company_id);
+      retryQ = applyWorkshopTemplateStageFilter(retryQ, req.query);
+      const r3 = await retryQ;
+      data = r3.data;
+      error = r3.error;
     }
     if (error) throw error;
     const rows = (data || []).map((t) => ({
@@ -2748,7 +2766,7 @@ r.post('/task-templates', requirePermission('projects', 'edit'), async (req, res
     if (!['production', 'logistics'].includes(workshop_area)) {
       return res.status(400).json({ error: 'workshop_area phải là production hoặc logistics' });
     }
-    const production_stage_id = req.body?.production_stage_id || null;
+    const production_stage_id = workshop_area === 'production' ? null : (req.body?.production_stage_id || null);
     const logistics_stage_id = req.body?.logistics_stage_id || null;
     const stageCheck = await validateWorkshopTemplatePipelineStage(workshop_area, {
       production_stage_id,
@@ -2756,6 +2774,14 @@ r.post('/task-templates', requirePermission('projects', 'edit'), async (req, res
       company_id,
     });
     if (!stageCheck.ok) return res.status(400).json({ error: stageCheck.error });
+
+    const wktCheck = await validateWorkshopTemplateWorkshopType({
+      workshop_area,
+      company_id,
+      workshop_type_id: req.body?.workshop_type_id,
+      production_stage_id: workshop_area === 'production' ? (production_stage_id || null) : null,
+    });
+    if (!wktCheck.ok) return res.status(400).json({ error: wktCheck.error });
 
     const insertRow = {
       name: name.trim(),
@@ -2766,6 +2792,7 @@ r.post('/task-templates', requirePermission('projects', 'edit'), async (req, res
       company_id: company_id || null,
       production_stage_id: workshop_area === 'production' ? (production_stage_id || null) : null,
       logistics_stage_id: workshop_area === 'logistics' ? (logistics_stage_id || null) : null,
+      workshop_type_id: wktCheck.workshop_type_id,
     };
     let { data, error } = await supabase
       .from('workshop_task_templates')
@@ -2792,6 +2819,16 @@ r.post('/task-templates', requirePermission('projects', 'edit'), async (req, res
       data = retry.data;
       error = retry.error;
     }
+    if (error && isWorkshopTplWorkshopTypeMissingError(error)) {
+      const { workshop_type_id: _w, ...noWkt } = insertRow;
+      const retry = await supabase
+        .from('workshop_task_templates')
+        .insert(noWkt)
+        .select()
+        .single();
+      data = retry.data;
+      error = retry.error;
+    }
     if (error) throw error;
     res.status(201).json(data);
   } catch (e) {
@@ -2804,7 +2841,7 @@ r.put('/task-templates/:id', requirePermission('projects', 'edit'), async (req, 
   try {
     let { data: existingRow, error: existingErr } = await supabase
       .from('workshop_task_templates')
-      .select('workshop_area, company_id, production_stage_id, logistics_stage_id')
+      .select('workshop_area, company_id, production_stage_id, logistics_stage_id, workshop_type_id')
       .eq('id', req.params.id)
       .single();
     if (existingErr && isWorkshopTplCompanyMissingError(existingErr)) {
@@ -2831,6 +2868,23 @@ r.put('/task-templates/:id', requirePermission('projects', 'edit'), async (req, 
     if (req.body.logistics_stage_id !== undefined) {
       update.logistics_stage_id = req.body.logistics_stage_id || null;
     }
+    const areaForCheckEarly = update.workshop_area || existingRow?.workshop_area || 'production';
+    if (areaForCheckEarly === 'production') {
+      update.production_stage_id = null;
+    }
+    if (req.body.workshop_type_id !== undefined) {
+      const areaForWkt = update.workshop_area || existingRow?.workshop_area || 'production';
+      const wktCheck = await validateWorkshopTemplateWorkshopType({
+        workshop_area: areaForWkt,
+        company_id: update.company_id !== undefined ? update.company_id : (existingRow?.company_id || null),
+        workshop_type_id: req.body.workshop_type_id,
+        production_stage_id: update.production_stage_id !== undefined
+          ? update.production_stage_id
+          : (existingRow?.production_stage_id ?? null),
+      });
+      if (!wktCheck.ok) return res.status(400).json({ error: wktCheck.error });
+      update.workshop_type_id = wktCheck.workshop_type_id;
+    }
     const areaForCheck = update.workshop_area || existingRow?.workshop_area || 'production';
     const mergedProdStage = update.production_stage_id !== undefined
       ? update.production_stage_id
@@ -2852,6 +2906,9 @@ r.put('/task-templates/:id', requirePermission('projects', 'edit'), async (req, 
     }
     if ((req.body.is_default === true || update.is_default === true) && existingRow?.workshop_area) {
       const scopeCompanyId = update.company_id !== undefined ? update.company_id : (existingRow.company_id || null);
+      const scopeWorkshopTypeId = update.workshop_type_id !== undefined
+        ? update.workshop_type_id
+        : (existingRow.workshop_type_id ?? null);
       let clearQ = supabase
         .from('workshop_task_templates')
         .update({ is_default: false })
@@ -2859,6 +2916,10 @@ r.put('/task-templates/:id', requirePermission('projects', 'edit'), async (req, 
         .neq('id', req.params.id);
       if (scopeCompanyId) clearQ = clearQ.eq('company_id', scopeCompanyId);
       else clearQ = clearQ.is('company_id', null);
+      if (existingRow.workshop_area === 'production') {
+        if (scopeWorkshopTypeId) clearQ = clearQ.eq('workshop_type_id', scopeWorkshopTypeId);
+        else clearQ = clearQ.is('workshop_type_id', null);
+      }
       const { error: clearErr } = await clearQ;
       if (clearErr && isWorkshopTplCompanyMissingError(clearErr)) {
         await supabase
@@ -3346,6 +3407,95 @@ r.put('/handover-settings/:companyId', requirePermission('projects', 'edit'), as
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── NV mặc định theo phân loại xưởng (multi-select) ───
+r.get('/workshop-type-staff-defaults/:companyId', requirePermission('projects', 'view'), async (req, res) => {
+  try {
+    const companyId = req.params.companyId;
+    const v = await validateProductionCompanyId(companyId);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+    if (!userCanAccessProductionHandover(req, companyId)) {
+      return res.status(403).json({ error: 'Không có quyền xem cấu hình công ty này' });
+    }
+
+    const {
+      loadUsersForProductionCompany,
+      loadWorkshopTypeDefaultStaffMap,
+      formatDefaultsForApi,
+    } = require('../helpers/productionWorkshopTypeStaff');
+
+    const { data: types } = await supabase
+      .from('workshop_project_types')
+      .select('id, name, sort_order, is_active, applies_to')
+      .eq('company_id', companyId)
+      .in('applies_to', ['production', 'both'])
+      .order('sort_order')
+      .order('name');
+
+    const { data: settings } = await supabase
+      .from('production_handover_settings')
+      .select('responsible_user_id')
+      .eq('production_company_id', companyId)
+      .maybeSingle();
+
+    const staffMap = await loadWorkshopTypeDefaultStaffMap(companyId);
+    const defaults = formatDefaultsForApi(staffMap);
+
+    const users = await loadUsersForProductionCompany(companyId);
+
+    res.json({
+      users,
+      workshop_types: types || [],
+      defaults,
+      fallback_responsible_user_id: settings?.responsible_user_id || null,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.put('/workshop-type-staff-defaults/:companyId', requirePermission('projects', 'edit'), async (req, res) => {
+  try {
+    const companyId = req.params.companyId;
+    const v = await validateProductionCompanyId(companyId);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+    if (!userCanAccessProductionHandover(req, companyId)) {
+      return res.status(403).json({ error: 'Không có quyền sửa cấu hình công ty này' });
+    }
+
+    const { defaults, fallback_responsible_user_id } = req.body || {};
+    const { saveWorkshopTypeDefaultStaff, userBelongsToProductionCompany } = require('../helpers/productionWorkshopTypeStaff');
+
+    if (fallback_responsible_user_id !== undefined) {
+      if (fallback_responsible_user_id) {
+        const ok = await userBelongsToProductionCompany(fallback_responsible_user_id, companyId);
+        if (!ok) return res.status(400).json({ error: 'Người dự phòng phải thuộc đúng công ty sản xuất' });
+      }
+      const now = new Date().toISOString();
+      const { data: existing } = await supabase
+        .from('production_handover_settings')
+        .select('default_production_team_id')
+        .eq('production_company_id', companyId)
+        .maybeSingle();
+      await supabase.from('production_handover_settings').upsert(
+        {
+          production_company_id: companyId,
+          responsible_user_id: fallback_responsible_user_id || null,
+          default_production_team_id: existing?.default_production_team_id || null,
+          updated_at: now,
+        },
+        { onConflict: 'production_company_id' },
+      );
+    }
+
+    const result = await saveWorkshopTypeDefaultStaff(companyId, defaults);
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    console.error(e);
+    res.status(400).json({ error: e.message });
   }
 });
 

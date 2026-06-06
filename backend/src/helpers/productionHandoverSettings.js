@@ -24,14 +24,59 @@ async function resolveProductionHandoverResponsibleUserId(productionCompanyId) {
 
 /**
  * Gán deal (và dự án nếu có) cho admin / người phụ trách công ty xưởng đã chọn.
+ * Không ghi đè khi dự án đã có NV SX (project_production_staff hoặc production_person_id).
  * @returns {Promise<{ responsibleUserId: string|null }>}
  */
 async function assignProductionCompanyDealResponsibility({ dealId, productionCompanyId, projectId = null }) {
   if (!dealId || !productionCompanyId) return { responsibleUserId: null };
+
+  const now = new Date().toISOString();
+  let primaryId = null;
+
+  if (projectId) {
+    try {
+      const { data: staffRows } = await supabase
+        .from('project_production_staff')
+        .select('user_id, is_primary')
+        .eq('project_id', projectId)
+        .order('is_primary', { ascending: false })
+        .order('order_index');
+      if (staffRows?.length) {
+        primaryId = staffRows.find((r) => r.is_primary)?.user_id || staffRows[0].user_id;
+      }
+    } catch (e) {
+      if (!String(e.message || '').includes('project_production_staff')) throw e;
+    }
+
+    if (!primaryId) {
+      const { data: proj } = await supabase
+        .from('projects')
+        .select('production_person_id')
+        .eq('id', projectId)
+        .maybeSingle();
+      if (proj?.production_person_id) primaryId = proj.production_person_id;
+    }
+
+    if (primaryId) {
+      await supabase
+        .from('crm_leads')
+        .update({
+          assigned_to: primaryId,
+          lead_owner_id: primaryId,
+          updated_at: now,
+        })
+        .eq('id', dealId);
+      await supabase
+        .from('projects')
+        .update({ production_person_id: primaryId, updated_at: now })
+        .eq('id', projectId);
+      return { responsibleUserId: primaryId };
+    }
+  }
+
   const responsibleUserId = await resolveProductionHandoverResponsibleUserId(productionCompanyId);
   if (!responsibleUserId) return { responsibleUserId: null };
 
-  const now = new Date().toISOString();
   await supabase
     .from('crm_leads')
     .update({

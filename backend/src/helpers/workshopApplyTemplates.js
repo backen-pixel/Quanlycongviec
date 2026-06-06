@@ -1,5 +1,9 @@
 const { supabase } = require('../config/supabase');
 const { getWorkshopStageMap } = require('./workshopKanban');
+const {
+  isWorkshopTplWorkshopTypeMissingError,
+  applyWorkshopTemplateWorkshopTypeScopeForProject,
+} = require('./workshopTaskTemplateWorkshopType');
 
 function normalizeChecklistForTaskInsert(checklist) {
   if (!Array.isArray(checklist)) return [];
@@ -130,13 +134,14 @@ async function fetchActiveWorkshopTemplatesForArea(workshopArea, companyId, opts
   const cid = companyId || null;
   const productionStageId = opts.productionStageId || null;
   const logisticsStageId = opts.logisticsStageId || null;
+  const workshopTypeId = opts.workshopTypeId || null;
   const stageCol = area === 'logistics' ? 'logistics_stage_id' : 'production_stage_id';
   const stageId = area === 'logistics' ? logisticsStageId : productionStageId;
   const onlyGlobal = opts.onlyGlobal === true;
 
-  const selectCols = 'id, name, order_index, company_id, production_stage_id, logistics_stage_id';
+  const selectCols = 'id, name, order_index, company_id, production_stage_id, logistics_stage_id, workshop_type_id';
 
-  const baseQuery = (scope) => {
+  const baseQuery = (scope, { skipWorkshopType = false } = {}) => {
     let q = supabase
       .from('workshop_task_templates')
       .select(selectCols)
@@ -145,10 +150,16 @@ async function fetchActiveWorkshopTemplatesForArea(workshopArea, companyId, opts
       .order('order_index');
     if (scope === 'company' && cid) q = q.eq('company_id', cid);
     if (scope === 'global') q = q.is('company_id', null);
-    if (onlyGlobal) {
-      q = q.is(stageCol, null);
-    } else if (stageId) {
-      q = q.or(`${stageCol}.eq.${stageId},${stageCol}.is.null`);
+    if (area === 'production' && !skipWorkshopType) {
+      q = applyWorkshopTemplateWorkshopTypeScopeForProject(q, workshopTypeId);
+    }
+    // SX: bộ mẫu theo phân loại — không lọc theo cột pipeline.
+    if (area !== 'production') {
+      if (onlyGlobal) {
+        q = q.is(stageCol, null);
+      } else if (stageId) {
+        q = q.or(`${stageCol}.eq.${stageId},${stageCol}.is.null`);
+      }
     }
     return q;
   };
@@ -156,10 +167,16 @@ async function fetchActiveWorkshopTemplatesForArea(workshopArea, companyId, opts
   let templates = [];
   if (cid) {
     const { data: scoped, error } = await baseQuery('company');
-    if (error && !isWorkshopCompanyColumnError(error) && !isWorkshopPipelineStageColumnError(error)) {
+    if (error && !isWorkshopCompanyColumnError(error) && !isWorkshopPipelineStageColumnError(error)
+      && !isWorkshopTplWorkshopTypeMissingError(error)) {
       console.warn('[workshop-templates] company list:', error.message);
     }
-    if (scoped?.length) templates = scoped;
+    if (error && isWorkshopTplWorkshopTypeMissingError(error)) {
+      const { data: retryData } = await baseQuery('company', { skipWorkshopType: true });
+      templates = retryData || [];
+    } else if (scoped?.length) {
+      templates = scoped;
+    }
   }
   if (!templates.length) {
     const { data: globalRows, error } = await baseQuery('global');
@@ -362,102 +379,84 @@ async function applyWorkshopTemplateToProject(projectId, templateId, userId, opt
 /**
  * Chọn bộ mẫu mặc định: ưu tiên theo company_id dự án, sau đó bộ toàn cục.
  */
-async function resolveDefaultWorkshopTemplateId(workshopArea, companyId) {
-  if (companyId) {
-    const { data, error } = await supabase
+async function resolveDefaultWorkshopTemplateId(workshopArea, companyId, workshopTypeId = null) {
+  const pickDefault = async (scopeCompanyId, wktId) => {
+    let q = supabase
       .from('workshop_task_templates')
       .select('id')
       .eq('workshop_area', workshopArea)
       .eq('is_default', true)
-      .eq('is_active', true)
-      .eq('company_id', companyId)
-      .limit(1)
-      .maybeSingle();
-    if (!error && data?.id) return data.id;
-    if (error && !isWorkshopCompanyColumnError(error)) {
-      console.warn('[workshop-default-template] company template:', error.message);
+      .eq('is_active', true);
+    if (scopeCompanyId) q = q.eq('company_id', scopeCompanyId);
+    else q = q.is('company_id', null);
+    if (workshopArea === 'production') {
+      q = applyWorkshopTemplateWorkshopTypeScopeForProject(q, wktId);
     }
-  }
+    const { data, error } = await q.limit(1).maybeSingle();
+    if (error && isWorkshopTplWorkshopTypeMissingError(error)) {
+      const { data: legacy } = await supabase
+        .from('workshop_task_templates')
+        .select('id')
+        .eq('workshop_area', workshopArea)
+        .eq('is_default', true)
+        .eq('is_active', true)
+        .eq('company_id', scopeCompanyId || null)
+        .limit(1)
+        .maybeSingle();
+      return legacy?.id || null;
+    }
+    if (!error && data?.id) return data.id;
+    return null;
+  };
 
-  const { data: globalDef, error: e2 } = await supabase
-    .from('workshop_task_templates')
-    .select('id')
-    .eq('workshop_area', workshopArea)
-    .eq('is_default', true)
-    .eq('is_active', true)
-    .is('company_id', null)
-    .limit(1)
-    .maybeSingle();
-
-  if (!e2 && globalDef?.id) return globalDef.id;
-  if (e2 && !isWorkshopCompanyColumnError(e2)) {
-    console.warn('[workshop-default-template] global template:', e2.message);
+  if (companyId) {
+    const id = await pickDefault(companyId, workshopTypeId);
+    if (id) return id;
   }
-  if (e2 && isWorkshopCompanyColumnError(e2)) {
-    const { data: legacy } = await supabase
-      .from('workshop_task_templates')
-      .select('id')
-      .eq('workshop_area', workshopArea)
-      .eq('is_default', true)
-      .eq('is_active', true)
-      .limit(1)
-      .maybeSingle();
-    if (legacy?.id) return legacy.id;
-  }
-
-  const { data: anyDef } = await supabase
-    .from('workshop_task_templates')
-    .select('id')
-    .eq('workshop_area', workshopArea)
-    .eq('is_default', true)
-    .eq('is_active', true)
-    .limit(1)
-    .maybeSingle();
-  return anyDef?.id || null;
+  return pickDefault(null, workshopTypeId);
 }
 
 /**
- * Sau khi tạo dự án: áp TẤT CẢ bộ mẫu của cột pipeline hiện tại + Global (mỗi bộ 1 lần, idempotent).
+ * Sau khi tạo dự án: áp TẤT CẢ bộ mẫu SX theo phân loại + bộ VC theo cột pipeline (idempotent).
  */
 async function applyDefaultWorkshopTemplatesForNewProject(projectId, userId) {
   let companyId = null;
   let logisticsCompanyId = null;
   let currentStageId = null;
+  let workshopTypeId = null;
   if (arguments.length >= 3 && arguments[2] && typeof arguments[2] === 'object') {
     companyId = arguments[2].companyId || null;
     logisticsCompanyId = arguments[2].logisticsCompanyId || null;
     currentStageId = arguments[2].currentStageId || null;
+    workshopTypeId = arguments[2].workshopTypeId || null;
   }
-  if (!companyId || !currentStageId) {
+  if (!companyId || !currentStageId || workshopTypeId === null) {
     const { data: proj } = await supabase
       .from('projects')
-      .select('company_id, logistics_company_id, current_stage_id')
+      .select('company_id, logistics_company_id, current_stage_id, workshop_type_id')
       .eq('id', projectId)
       .maybeSingle();
     companyId = companyId || proj?.company_id || null;
     logisticsCompanyId = logisticsCompanyId || proj?.logistics_company_id || null;
     currentStageId = currentStageId || proj?.current_stage_id || null;
+    if (workshopTypeId === null) workshopTypeId = proj?.workshop_type_id || null;
   }
 
   let total = 0;
   for (const area of ['production', 'logistics']) {
     try {
       const cidForArea = area === 'logistics' ? (logisticsCompanyId || companyId) : companyId;
-      const productionStageId = area === 'production'
-        ? await resolveProductionPipelineStageId(currentStageId, cidForArea)
-        : null;
       const logisticsStageId = area === 'logistics'
         ? await resolveLogisticsPipelineStageId(currentStageId, cidForArea)
         : null;
-
       const stageOpts = area === 'production'
-        ? { productionStageId }
+        ? { workshopTypeId }
         : { logisticsStageId };
 
       const templates = await fetchActiveWorkshopTemplatesForArea(area, cidForArea, stageOpts);
       if (!templates.length) {
         // Fallback: chỉ bộ default cũ (tương thích DB chưa có stage)
-        const defId = await resolveDefaultWorkshopTemplateId(area, cidForArea);
+        const defId = await resolveDefaultWorkshopTemplateId(area, cidForArea, workshopTypeId);
         if (!defId) continue;
         const r = await applyWorkshopTemplateToProject(projectId, defId, userId, stageOpts);
         if (r.ok) total += r.count;
@@ -476,8 +475,8 @@ async function applyDefaultWorkshopTemplatesForNewProject(projectId, userId) {
         if (count && count > 0) continue;
 
         const applyOpts = area === 'production'
-          ? { productionStageId: tpl.production_stage_id || productionStageId }
-          : { productionStageId: null };
+          ? {}
+          : { logisticsStageId: tpl.logistics_stage_id || logisticsStageId };
         const r = await applyWorkshopTemplateToProject(projectId, tid, userId, applyOpts);
         if (r.ok) total += r.count;
         else console.warn(`[workshop-default-template] ${area} tpl ${tid}:`, r.error);
@@ -507,13 +506,13 @@ async function applyAllActiveWorkshopTemplatesForArea(projectId, userId, {
   let pe;
   ({ data: proj, error: pe } = await supabase
     .from('projects')
-    .select('id, company_id, logistics_company_id, current_stage_id')
+    .select('id, company_id, logistics_company_id, current_stage_id, workshop_type_id')
     .eq('id', projectId)
     .maybeSingle());
   if (pe && String(pe.message || '').includes('logistics_company_id')) {
     ({ data: proj, error: pe } = await supabase
       .from('projects')
-      .select('id, company_id, current_stage_id')
+      .select('id, company_id, current_stage_id, workshop_type_id')
       .eq('id', projectId)
       .maybeSingle());
   }
@@ -527,20 +526,17 @@ async function applyAllActiveWorkshopTemplatesForArea(projectId, userId, {
 
   let prodStageId = productionStageId;
   let logStageId = logisticsStageId;
-  if (area === 'production' && !prodStageId && proj.current_stage_id) {
-    prodStageId = await resolveProductionPipelineStageId(proj.current_stage_id, cid);
-  }
   if (area === 'logistics' && !logStageId && proj.current_stage_id) {
     logStageId = await resolveLogisticsPipelineStageId(proj.current_stage_id, cid);
   }
 
   const stageOpts = area === 'production'
-    ? { productionStageId: prodStageId }
+    ? { workshopTypeId: proj.workshop_type_id || null }
     : { logisticsStageId: logStageId };
 
   const templates = await fetchActiveWorkshopTemplatesForArea(area, cid, stageOpts);
   if (!templates.length) {
-    return { ok: false, error: 'Chưa có bộ mẫu xưởng cho khu vực / cột pipeline này' };
+    return { ok: false, error: area === 'production' ? 'Chưa có bộ mẫu xưởng cho phân loại này' : 'Chưa có bộ mẫu xưởng cho khu vực / cột pipeline này' };
   }
 
   let created_tasks = 0;
@@ -560,7 +556,7 @@ async function applyAllActiveWorkshopTemplatesForArea(projectId, userId, {
       continue;
     }
     const applyOpts = area === 'production'
-      ? { productionStageId: tpl.production_stage_id || prodStageId }
+      ? {}
       : {};
     const r0 = await applyWorkshopTemplateToProject(projectId, tid, userId, applyOpts);
     if (!r0.ok) return { ok: false, error: r0.error, template_id: tid, template_name: tpl.name || null };

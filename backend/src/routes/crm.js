@@ -4591,7 +4591,18 @@ async function fetchCrmLeadsByIdsOrdered(ids) {
       if (row?.id != null) byId.set(String(row.id), row);
     });
   }
-  return list.map((id) => byId.get(String(id))).filter(Boolean);
+  const rows = list.map((id) => byId.get(String(id))).filter(Boolean);
+  try {
+    const { enrichCrmLeadsWithProductionStaff } = require('../helpers/productionWorkshopTypeStaff');
+    return await enrichCrmLeadsWithProductionStaff(rows);
+  } catch (e) {
+    console.warn('[crm] enrich production_staff:', e.message);
+    return rows;
+  }
+}
+
+async function hydrateCrmLeadsByIdsWithStaff(raw) {
+  return fetchCrmLeadsByIdsOrdered(raw);
 }
 
 /** Fallback: dùng .range() — giới hạn parsedLimit dòng để tránh egress lớn. */
@@ -4745,8 +4756,15 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
   const pageWithDeadline = await attachCrmNextOpenTaskDeadline(page);
   const withNewFlag = attachLeadNewFlagForList(pageWithDeadline, viewerUserId);
   const withUserFlags = await attachLeadUserFlagsForList(withNewFlag, viewerUserId);
+  let enrichedStaff = withUserFlags;
+  try {
+    const { enrichCrmLeadsWithProductionStaff } = require('../helpers/productionWorkshopTypeStaff');
+    enrichedStaff = await enrichCrmLeadsWithProductionStaff(withUserFlags);
+  } catch (e) {
+    console.warn('[crm] enrich production_staff (legacy list):', e.message);
+  }
   return {
-    data: withUserFlags,
+    data: enrichedStaff,
     total,
     offset: parsedOffset,
     limit: parsedLimit,
@@ -5394,6 +5412,7 @@ r.post('/leads', async (req, res) => {
   try {
     const code = await nextCode('LEAD');
     const body = { ...req.body };
+    delete body.priority; // crm_leads không có cột priority
     ['customer_id', 'source_id', 'stage_id', 'assigned_to', 'company_id', 'pipeline_id', 'lead_type_id', 'region_id'].forEach(f => {
       if (body[f] === '' || body[f] === undefined) body[f] = null;
     });
@@ -5494,6 +5513,7 @@ r.post('/leads', async (req, res) => {
 r.post('/deals', async (req, res) => {
   try {
     const body = { ...req.body };
+    delete body.priority; // crm_leads không có cột priority
     const applyWorkshopSxFromBody =
       body.apply_workshop_production_tasks === true || body.apply_workshop_production_tasks === 'true';
     delete body.apply_workshop_production_tasks;
@@ -7762,6 +7782,15 @@ r.post('/leads/:id/activities', async (req, res) => {
       attachments,
       created_by: req.user.userId,
     };
+    if (b.shared_to_workshop !== undefined) row.shared_to_workshop = !!b.shared_to_workshop;
+    if (b.allowed_share_modules !== undefined) {
+      const { cleanShareModulesInput } = require('../helpers/documentShareScope');
+      row.allowed_share_modules = row.shared_to_workshop
+        ? cleanShareModulesInput(b.allowed_share_modules)
+        : null;
+    } else if (row.shared_to_workshop) {
+      row.allowed_share_modules = null;
+    }
 
     const { data, error } = await supabase.from('crm_activities').insert(row).select('*').single();
     if (error) throw error;
@@ -7816,6 +7845,14 @@ r.patch('/leads/:id/activities/:activityId', async (req, res) => {
       updated_at: new Date().toISOString(),
     };
     if (attachmentsRaw !== undefined) patch.attachments = nextAttachments;
+    if (req.body?.shared_to_workshop !== undefined) {
+      patch.shared_to_workshop = !!req.body.shared_to_workshop;
+      if (!patch.shared_to_workshop) patch.allowed_share_modules = null;
+    }
+    if (req.body?.allowed_share_modules !== undefined) {
+      const { cleanShareModulesInput } = require('../helpers/documentShareScope');
+      patch.allowed_share_modules = cleanShareModulesInput(req.body.allowed_share_modules);
+    }
 
     const { data, error } = await supabase.from('crm_activities')
       .update(patch)
@@ -7824,6 +7861,52 @@ r.patch('/leads/:id/activities/:activityId', async (req, res) => {
       .single();
     if (error) throw error;
     await supabase.from('crm_leads').update({ last_activity_at: new Date().toISOString() }).eq('id', leadId);
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Bật/tắt chia sẻ ghi chú (crm_activities type=note) sang SX / VC / xưởng */
+r.put('/leads/:id/activities/:activityId/share', async (req, res) => {
+  try {
+    const leadId = req.params.id;
+    const activityId = req.params.activityId;
+    const uid = req.user?.userId;
+    const { cleanShareModulesInput } = require('../helpers/documentShareScope');
+
+    const { data: act, error: fe } = await supabase.from('crm_activities')
+      .select('id, lead_id, type, created_by, shared_to_workshop, allowed_share_modules')
+      .eq('id', activityId)
+      .single();
+    if (fe || !act) return res.status(404).json({ error: 'Không tìm thấy hoạt động' });
+    if (act.lead_id !== leadId) return res.status(400).json({ error: 'Hoạt động không thuộc lead/deal này' });
+    if (act.type !== 'note') return res.status(400).json({ error: 'Chỉ chia sẻ được loại ghi chú' });
+
+    const rRole = normalizeCrmUserRole(req.user?.role);
+    const canModerate = rRole === 'admin' || rRole === 'manager';
+    if (!canModerate && String(act.created_by) !== String(uid)) {
+      return res.status(403).json({ error: 'Chỉ tác giả hoặc quản lý/admin mới đổi chia sẻ ghi chú này' });
+    }
+
+    const newShared = req.body?.shared_to_workshop !== undefined
+      ? !!req.body.shared_to_workshop
+      : !act.shared_to_workshop;
+    const update = { shared_to_workshop: newShared, updated_at: new Date().toISOString() };
+    if (req.body?.allowed_share_modules !== undefined) {
+      update.allowed_share_modules = newShared
+        ? cleanShareModulesInput(req.body.allowed_share_modules)
+        : null;
+    } else if (!newShared) {
+      update.allowed_share_modules = null;
+    }
+
+    const { data, error } = await supabase.from('crm_activities')
+      .update(update)
+      .eq('id', activityId)
+      .select('*, creator:users!crm_activities_created_by_fkey(id, full_name)')
+      .single();
+    if (error) throw error;
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -11288,11 +11371,29 @@ r.post('/leads/:id/tasks/generate-production-template', async (req, res) => {
         .select('project_id')
         .eq('id', targetLeadId)
         .maybeSingle();
-      await assignProductionCompanyDealResponsibility({
-        dealId: targetLeadId,
-        productionCompanyId: templateSourceCompanyId,
-        projectId: leadProj?.project_id || null,
-      });
+      if (leadProj?.project_id) {
+        const { data: projRow } = await supabase
+          .from('projects')
+          .select('workshop_type_id, company_id')
+          .eq('id', leadProj.project_id)
+          .maybeSingle();
+        const { applyWorkshopTypeDefaultStaffToProject } = require('../helpers/productionWorkshopTypeStaff');
+        try {
+          await applyWorkshopTypeDefaultStaffToProject(
+            leadProj.project_id,
+            projRow?.company_id || templateSourceCompanyId,
+            projRow?.workshop_type_id || null,
+          );
+        } catch (staffErr) {
+          console.warn('[crm/gen-sx] apply default staff:', staffErr.message);
+        }
+      } else {
+        await assignProductionCompanyDealResponsibility({
+          dealId: targetLeadId,
+          productionCompanyId: templateSourceCompanyId,
+          projectId: null,
+        });
+      }
       await supabase
         .from('crm_leads')
         .update({ sx_template_company_id: templateSourceCompanyId, updated_at: new Date().toISOString() })
@@ -11588,6 +11689,12 @@ r.put('/leads/:leadId/tasks/:taskId/toggle-share', async (req, res) => {
       .eq('id', req.params.taskId)
       .select('id, title, shared_to_project, allowed_share_modules').single();
     if (error) throw error;
+    try {
+      const { syncLeadDocumentsFromCrmTaskShare } = require('../helpers/syncCrmArtifactShareToLeadDocuments');
+      await syncLeadDocumentsFromCrmTaskShare(req.params.taskId);
+    } catch (syncErr) {
+      console.warn('[toggle-share task] lead_documents:', syncErr.message);
+    }
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -11616,6 +11723,12 @@ r.put('/leads/:leadId/tasks/:taskId/attachments/:attId/toggle-share', async (req
       .eq('id', req.params.attId)
       .select('id, name, shared_to_project, allowed_share_modules').single();
     if (error) throw error;
+    try {
+      const { syncLeadDocumentsFromCrmAttachmentShare } = require('../helpers/syncCrmArtifactShareToLeadDocuments');
+      await syncLeadDocumentsFromCrmAttachmentShare(req.params.attId);
+    } catch (syncErr) {
+      console.warn('[toggle-share attachment] lead_documents:', syncErr.message);
+    }
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -11634,6 +11747,12 @@ r.put('/leads/:leadId/tasks/:taskId/attachments/:attId/share-scope', async (req,
       .eq('id', req.params.attId)
       .select('id, name, shared_to_project, allowed_share_modules').single();
     if (error) throw error;
+    try {
+      const { syncLeadDocumentsFromCrmAttachmentShare } = require('../helpers/syncCrmArtifactShareToLeadDocuments');
+      await syncLeadDocumentsFromCrmAttachmentShare(req.params.attId);
+    } catch (syncErr) {
+      console.warn('[share-scope attachment] lead_documents:', syncErr.message);
+    }
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -11806,7 +11925,7 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
         file_size: att.file_size, mime_type: att.mime_type,
         allowed_companies: finalCompanies, allowed_departments: finalDepts,
         created_by: req.user.userId, source_attachment_id: att.id,
-        ...getLeadDocumentFieldsFromCrmTask(task, bulkDocOpts),
+        ...getLeadDocumentFieldsFromCrmTask(task, bulkDocOpts, att),
       }));
       if (syncRows.length) await supabase.from('lead_documents').insert(syncRows);
     } catch (syncErr) { console.warn('Bulk sync error:', syncErr.message); }
@@ -11862,7 +11981,7 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
         file_size: data.file_size, mime_type: data.mime_type, notes: data.notes,
         allowed_companies: finalCompanies, allowed_departments: finalDepts,
         created_by: req.user.userId, source_attachment_id: data.id,
-        ...getLeadDocumentFieldsFromCrmTask(task, { linkToProject: !!lead?.project_id }),
+        ...getLeadDocumentFieldsFromCrmTask(task, { linkToProject: !!lead?.project_id }, data),
       });
     } catch (syncErr) { console.warn('Sync attachment→document:', syncErr.message); }
 
@@ -12369,7 +12488,18 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
     }
 
     const now = new Date().toISOString();
-    const sxResponsible = await resolveProductionHandoverResponsibleUserId(pcv.company.id);
+    const { data: projRow } = await supabase
+      .from('projects')
+      .select('workshop_type_id')
+      .eq('id', lead.project_id)
+      .maybeSingle();
+    const { applyWorkshopTypeDefaultStaffToProject } = require('../helpers/productionWorkshopTypeStaff');
+    const primaryStaffId = await applyWorkshopTypeDefaultStaffToProject(
+      lead.project_id,
+      pcv.company.id,
+      projRow?.workshop_type_id || null,
+    );
+    const sxResponsible = primaryStaffId || await resolveProductionHandoverResponsibleUserId(pcv.company.id);
     const leadHandoverPatch = {
       sx_handover_at: now,
       sx_handover_confirmed_by: uid,
@@ -12385,16 +12515,6 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
     }
     const { error: upLeadErr } = await supabase.from('crm_leads').update(leadHandoverPatch).eq('id', leadId);
     if (upLeadErr) throw upLeadErr;
-
-    try {
-      await assignProductionCompanyDealResponsibility({
-        dealId: leadId,
-        productionCompanyId: pcv.company.id,
-        projectId: lead.project_id,
-      });
-    } catch (respErr) {
-      console.warn('[sx-handover] assign production responsible:', respErr.message);
-    }
 
     const projPatch = {
       construction_start_date: cStart,
@@ -12509,6 +12629,12 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
 // GET /leads/:id/members
 r.get('/leads/:id/members', async (req, res) => {
   try {
+    try {
+      const { ensureLeadMembersFromProjectStaff } = require('../helpers/productionWorkshopTypeStaff');
+      await ensureLeadMembersFromProjectStaff(req.params.id);
+    } catch (syncErr) {
+      console.warn('[crm/leads/members] sync production staff:', syncErr.message);
+    }
     const { data } = await supabase.from('lead_members')
       .select('*, user:users!lead_members_user_id_fkey(id, full_name, email, avatar, role)')
       .eq('lead_id', req.params.id)

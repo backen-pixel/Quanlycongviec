@@ -15,6 +15,16 @@ export function normalizeStageNameFold(name) {
     .replace(/[\u0300-\u036f]/g, '');
 }
 
+/** Tên cột CRM «Sản xuất» — không nhầm cột xưởng kiểu «Vẽ lên kế hoạch sản xuất». */
+export function isSanXuatProductionColumnName(foldedName) {
+  const n = String(foldedName || '').trim();
+  if (!n) return false;
+  if (/\b(ke hoach|lap ke hoach|ve len ke hoach|thiet ke)\b/.test(n) && /\bsan xuat\b/.test(n)) {
+    return false;
+  }
+  return /\bsan xuat\b/.test(n);
+}
+
 /** @param {CrmStageLike|null|undefined} stage */
 export function isCrmPostWonManagedStage(stage) {
   if (!stage) return false;
@@ -22,7 +32,7 @@ export function isCrmPostWonManagedStage(stage) {
   const role = String(stage.sync_role || '').trim();
   if (role && POST_WON_SYNC_ROLES.has(role)) return true;
   const n = normalizeStageNameFold(stage.name);
-  if (n.includes('san xuat')) return true;
+  if (isSanXuatProductionColumnName(n)) return true;
   if (n.includes('van chuyen')) return true;
   if (n.includes('lap dat')) return true;
   if (n.includes('cham soc') && n.includes('khach')) return true;
