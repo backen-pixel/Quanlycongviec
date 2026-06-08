@@ -9,6 +9,27 @@ import { FbCrmAvatar, FbCrmCommentComposer, formatCrmFbRelativeTime } from './cr
 
 const REACTION_PICKER = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
+export function commentIdKey(c) {
+  const id = c?.id;
+  return id != null && id !== '' ? String(id) : '';
+}
+
+/** Thêm/cập nhật một dòng — tránh trùng khi vừa nhận socket vừa nhận response POST. */
+export function upsertCommentList(prev, row, { replace = false } = {}) {
+  const key = commentIdKey(row);
+  if (!key) return prev || [];
+  const list = prev || [];
+  const idx = list.findIndex((c) => commentIdKey(c) === key);
+  const normalized = { ...row, reactions: row.reactions || { summary: [], mine: null } };
+  if (idx >= 0) {
+    if (!replace) return list;
+    const next = list.slice();
+    next[idx] = { ...list[idx], ...normalized, reactions: normalized.reactions ?? list[idx].reactions };
+    return next;
+  }
+  return [...list, normalized];
+}
+
 function groupByParent(flat, parentKey = 'parent_id') {
   const m = new Map();
   for (const c of flat || []) {
@@ -219,8 +240,9 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
       if (String(payload?.lead_id) !== String(leadId)) return;
       const action = payload?.action || 'created';
       if (action === 'deleted') {
+        const cid = payload.comment_id != null ? String(payload.comment_id) : '';
         setComments((prev) => {
-          const next = (prev || []).filter((c) => c.id !== payload.comment_id);
+          const next = (prev || []).filter((c) => commentIdKey(c) !== cid);
           onCountChange?.(next.length);
           return next;
         });
@@ -229,13 +251,12 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
       const row = payload.comment;
       if (!row?.id) return;
       if (action === 'updated') {
-        setComments((prev) => (prev || []).map((c) => (c.id === row.id ? { ...c, ...row, reactions: row.reactions ?? c.reactions } : c)));
+        setComments((prev) => upsertCommentList(prev, row, { replace: true }));
         return;
       }
       setComments((prev) => {
-        if ((prev || []).some((c) => c.id === row.id)) return prev;
-        const next = [...(prev || []), { ...row, reactions: row.reactions || { summary: [], mine: null } }];
-        onCountChange?.(next.length);
+        const next = upsertCommentList(prev, row);
+        if (next.length !== (prev || []).length) onCountChange?.(next.length);
         return next;
       });
     };
@@ -256,8 +277,8 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
       const r = await api.post(`/crm/leads/${leadId}/comments`, payload);
       const row = r.data || {};
       setComments((prev) => {
-        const next = [...prev, { ...row, reactions: row.reactions || { summary: [], mine: null } }];
-        onCountChange?.(next.length);
+        const next = upsertCommentList(prev, row);
+        if (next.length !== (prev || []).length) onCountChange?.(next.length);
         return next;
       });
       setBody('');
@@ -374,18 +395,18 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
     const merge = (payload) => {
       if (String(payload?.project_id) !== String(projectId)) return;
       const action = payload?.action;
-      if (action === 'deleted' || payload?.comment_id) {
-        const cid = payload.comment_id || payload.comment?.id;
-        if (cid) setComments((prev) => prev.filter((c) => c.id !== cid));
+      if (action === 'deleted') {
+        const cid = payload.comment_id != null ? String(payload.comment_id) : commentIdKey(payload.comment);
+        if (cid) setComments((prev) => (prev || []).filter((c) => commentIdKey(c) !== cid));
         return;
       }
       const row = payload.comment;
       if (!row?.id) return;
       if (action === 'updated') {
-        setComments((prev) => prev.map((c) => (c.id === row.id ? { ...c, ...row, reactions: row.reactions ?? c.reactions } : c)));
+        setComments((prev) => upsertCommentList(prev, row, { replace: true }));
         return;
       }
-      setComments((prev) => prev.some((c) => c.id === row.id) ? prev : [...prev, { ...row, reactions: row.reactions || { summary: [], mine: null } }]);
+      setComments((prev) => upsertCommentList(prev, row));
     };
     socket.on('project:comment', merge);
     socket.on('project:comment:deleted', (p) => merge({ ...p, action: 'deleted' }));
@@ -408,8 +429,8 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
       const row = r.data?.comment || r.data;
       if (row?.id) {
         setComments((prev) => {
-          const next = [...prev, { ...row, reactions: row.reactions || { summary: [], mine: null } }];
-          onCountChange?.(next.length);
+          const next = upsertCommentList(prev, row);
+          if (next.length !== (prev || []).length) onCountChange?.(next.length);
           return next;
         });
       } else await load();
