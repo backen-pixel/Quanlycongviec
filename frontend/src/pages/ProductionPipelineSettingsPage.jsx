@@ -29,6 +29,7 @@ export default function ProductionPipelineSettingsPage() {
   const [adding, setAdding] = useState(false);
   const [saving, setSaving] = useState(false);
   const deletingStageIdsRef = useRef(new Set());
+  const [reorderBusy, setReorderBusy] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [seedingDefault, setSeedingDefault] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -700,21 +701,27 @@ export default function ProductionPipelineSettingsPage() {
   };
 
   const persistStagesReorder = async (newList) => {
+    if (reorderBusy) return;
     const reorder = newList.map((s, i) => ({ id: s.id, order_index: i + 1 }));
     const prevStages = stages;
+    const orderMap = new Map(newList.map((s, i) => [String(s.id), i + 1]));
+    setReorderBusy(true);
     setStages((prev) => prev.map((s) => {
-      const idx = newList.findIndex((x) => x.id === s.id);
-      return idx >= 0 ? { ...s, order_index: idx + 1 } : s;
+      const nextOrder = orderMap.get(String(s.id));
+      return nextOrder != null ? { ...s, order_index: nextOrder } : s;
     }));
     try {
       await api.put('/production/pipeline-stages-reorder', { stages: reorder });
     } catch (err) {
       setStages(prevStages);
       alert('Lỗi sắp xếp: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setReorderBusy(false);
     }
   };
 
   const moveStage = async (stage, dir) => {
+    if (reorderBusy) return;
     if (stage.bucket_slug === INTAKE) return; // Cột deal-thắng luôn đứng đầu
     const list = [...stages].sort((a, b) => a.order_index - b.order_index);
     const idx = list.findIndex((s) => s.id === stage.id);
@@ -750,6 +757,7 @@ export default function ProductionPipelineSettingsPage() {
     if (dragOverId !== stage.id) setDragOverId(stage.id);
   };
   const handleDrop = async (e, target) => {
+    if (reorderBusy) return;
     e.preventDefault();
     e.stopPropagation();
     const sourceId = draggingId || e.dataTransfer.getData('text/plain');
@@ -766,7 +774,9 @@ export default function ProductionPipelineSettingsPage() {
 
     const newList = [...list];
     const [moved] = newList.splice(fromIdx, 1);
-    newList.splice(toIdx, 0, moved);
+    // Drop lên 1 dòng nghĩa là đặt trước dòng target để thao tác trực quan hơn.
+    const insertIdx = fromIdx < toIdx ? toIdx - 1 : toIdx;
+    newList.splice(insertIdx, 0, moved);
     await persistStagesReorder(newList);
   };
 
@@ -1302,10 +1312,10 @@ export default function ProductionPipelineSettingsPage() {
                     </span>
                     <div className="flex flex-col gap-0.5">
                       <button type="button" onClick={() => moveStage(s, -1)}
-                        disabled={i === 0 || isIntake || sorted[i - 1]?.bucket_slug === INTAKE}
+                        disabled={reorderBusy || i === 0 || isIntake || sorted[i - 1]?.bucket_slug === INTAKE}
                         className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]">▲</button>
                       <button type="button" onClick={() => moveStage(s, 1)}
-                        disabled={i === sorted.length - 1 || isIntake}
+                        disabled={reorderBusy || i === sorted.length - 1 || isIntake}
                         className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]">▼</button>
                     </div>
                   </div>
