@@ -8,7 +8,7 @@ import { getSocket } from '../lib/socket';
 import { useAuth } from '../lib/auth';
 import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
 import { FbCrmAvatar, FbCrmCommentComposer, formatCrmFbRelativeTime } from './crmFbCommentUi';
-import { commentIdKey, upsertCommentList } from './CommentsPanels';
+import { upsertComment } from './CommentsPanels';
 
 /** Bộ emoji được phép — đồng bộ với backend PROJECT_COMMENT_ALLOWED_REACTION_EMOJI */
 const PROJECT_COMMENT_REACTION_PICKER = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
@@ -1449,18 +1449,18 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
     const merge = (payload) => {
       if (String(payload?.project_id) !== String(item.id)) return;
       const action = payload?.action;
-      if (action === 'deleted') {
-        const cid = payload.comment_id != null ? String(payload.comment_id) : commentIdKey(payload.comment);
-        if (cid) setComments((prev) => (prev || []).filter((c) => commentIdKey(c) !== cid));
+      if (action === 'deleted' || payload?.comment_id) {
+        const cid = payload.comment_id || payload.comment?.id;
+        if (cid) setComments((prev) => (prev || []).filter((c) => String(c.id) !== String(cid)));
         return;
       }
       const row = payload.comment;
       if (!row?.id) return;
       if (action === 'updated') {
-        setComments((prev) => upsertCommentList(prev, row, { replace: true }));
+        setComments((prev) => (prev || []).map((c) => (String(c.id) === String(row.id) ? { ...c, ...row, reactions: row.reactions ?? c.reactions } : c)));
         return;
       }
-      setComments((prev) => upsertCommentList(prev, row));
+      setComments((prev) => upsertComment(prev, row));
     };
     socket.on('project:comment', merge);
     socket.on('project:comment:deleted', (p) => merge({ ...p, action: 'deleted' }));
@@ -1484,7 +1484,7 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
       const r = await api.post(`/projects/${item.id}/comments`, payload);
       const row = r.data?.comment || r.data;
       if (row?.id) {
-        setComments((prev) => upsertCommentList(prev, row));
+        setComments((prev) => upsertComment(prev, row));
       } else {
         await load({ silent: true });
       }
