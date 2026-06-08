@@ -3640,4 +3640,131 @@ r.delete('/planner/items/:id', async (req, res) => {
   }
 });
 
+function isSxProductionCommentNotification(n) {
+  if (!n || String(n.type || '') !== 'comment_added') return false;
+  const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  if (String(meta.ecosystem_module_key || '') === 'production') return true;
+  return n.entity_type === 'project' && !!meta.project_id;
+}
+
+async function filterSxProductionCommentNotifications(rows) {
+  const list = (rows || []).filter(isSxProductionCommentNotification);
+  const projectIds = [
+    ...new Set(list.map((n) => {
+      const meta = n.metadata || {};
+      return String(meta.project_id || n.entity_id || '').trim();
+    }).filter(Boolean)),
+  ];
+  if (!projectIds.length) return [];
+  const { data: projs } = await supabase
+    .from('projects')
+    .select('id, code, name, production_person_id')
+    .in('id', projectIds);
+  const prodMap = new Map(
+    (projs || [])
+      .filter((p) => p.production_person_id)
+      .map((p) => [String(p.id), p]),
+  );
+  return list
+    .filter((n) => {
+      const meta = n.metadata || {};
+      const pid = String(meta.project_id || n.entity_id || '');
+      return prodMap.has(pid);
+    })
+    .map((n) => {
+      const meta = n.metadata || {};
+      const pid = String(meta.project_id || n.entity_id || '');
+      const proj = prodMap.get(pid);
+      return {
+        ...n,
+        metadata: {
+          ...meta,
+          project_id: pid,
+          project_code: meta.project_code || proj?.code || null,
+          project_name: meta.project_name || proj?.name || null,
+        },
+      };
+    });
+}
+
+// ─── Xưởng SX: thông báo bình luận ───
+r.get('/notifications/comments', requirePermission('projects', 'view'), async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const lim = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 100);
+    const unreadOnly = String(req.query.unread || '') === 'true';
+
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('type', 'comment_added')
+      .order('created_at', { ascending: false })
+      .limit(250);
+    if (error) throw error;
+
+    let items = await filterSxProductionCommentNotifications(data);
+    if (unreadOnly) items = items.filter((n) => !n.is_read);
+    const unreadCount = items.filter((n) => !n.is_read).length;
+    res.json({ notifications: items.slice(0, lim), unread_count: unreadCount });
+  } catch (e) {
+    console.error('GET /production/notifications/comments:', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải thông báo' });
+  }
+});
+
+r.get('/notifications/comments/unread-count', requirePermission('projects', 'view'), async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('type', 'comment_added')
+      .eq('is_read', false)
+      .order('created_at', { ascending: false })
+      .limit(250);
+    if (error) throw error;
+    const items = await filterSxProductionCommentNotifications(data);
+    res.json({ unread_count: items.length });
+  } catch (e) {
+    console.error('GET /production/notifications/comments/unread-count:', e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
+r.put('/notifications/comments/read-all', requirePermission('projects', 'view'), async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('id, type, entity_type, metadata, is_read')
+      .eq('user_id', userId)
+      .eq('type', 'comment_added')
+      .eq('is_read', false)
+      .limit(500);
+    if (error) throw error;
+    const items = await filterSxProductionCommentNotifications(data);
+    const ids = items.map((n) => n.id).filter(Boolean);
+    if (ids.length) {
+      const { error: upErr } = await supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .in('id', ids)
+        .eq('user_id', userId);
+      if (upErr) throw upErr;
+    }
+    try {
+      rcInvalidateTags(['notifications', `user:${userId}`]);
+    } catch { /* ignore */ }
+    res.json({ ok: true, marked: ids.length });
+  } catch (e) {
+    console.error('PUT /production/notifications/comments/read-all:', e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
 module.exports = r;

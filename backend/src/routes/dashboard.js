@@ -59,9 +59,11 @@ function isDealActivityNotification(n) {
 }
 
 const { preferenceKeyForNotificationType } = require('../helpers/notificationPrefTypes');
-/** True nếu thông báo thuộc module Quản lý công việc (Dự án) — đã tắt cứng. */
+/** True nếu thông báo thuộc module Quản lý công việc (Dự án CRM) — đã tắt cứng. */
 function isProjectModuleNotification(n) {
   if (!n) return false;
+  const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  if (String(meta.ecosystem_module_key || '') === 'production') return false;
   const key = preferenceKeyForNotificationType(n.type, n.entity_type, n.metadata);
   if (key === 'project_notifications') return true;
   if (n.entity_type === 'project') return true;

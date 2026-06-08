@@ -29,6 +29,8 @@ const DEAL_ACTIVITY_NOTIFICATION_TYPES = [
 
 function isProjectModuleNotification(n) {
   if (!n) return false;
+  const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  if (String(meta.ecosystem_module_key || '') === 'production') return false;
   const key = preferenceKeyForNotificationType(n.type, n.entity_type, n.metadata);
   if (key === 'project_notifications') return true;
   if (n.entity_type === 'project') return true;

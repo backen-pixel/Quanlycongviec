@@ -858,9 +858,11 @@ const { isExpiryDeadlineNotificationType: isExpiryNotifType } = require('./helpe
 const { preferenceKeyForNotificationType } = require('./helpers/notificationPrefTypes');
 const { isNotificationAllowedForUser } = require('./helpers/notificationPrefsUser');
 
-/** True nếu thông báo thuộc module Quản lý công việc (Dự án) — đã tắt cứng theo yêu cầu. */
+/** True nếu thông báo thuộc module Quản lý công việc (Dự án CRM) — đã tắt cứng. */
 function isProjectModuleNotification(notification) {
   if (!notification) return false;
+  const meta = notification.metadata && typeof notification.metadata === 'object' ? notification.metadata : {};
+  if (String(meta.ecosystem_module_key || '') === 'production') return false;
   const key = preferenceKeyForNotificationType(notification.type, notification.entity_type, notification.metadata);
   if (key === 'project_notifications') return true;
   if (notification.entity_type === 'project') return true;
