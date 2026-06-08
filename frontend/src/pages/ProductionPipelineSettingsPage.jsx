@@ -27,6 +27,7 @@ export default function ProductionPipelineSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [typesLoading, setTypesLoading] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [seedingDefault, setSeedingDefault] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -466,6 +467,14 @@ export default function ProductionPipelineSettingsPage() {
     requires_deadline: !!form.requires_deadline,
   });
 
+  const requestEdit = (stage) => {
+    if (adding) {
+      if (!confirm(`Đang thêm cột mới. Chuyển sang sửa «${stage.name}»?`)) return;
+      setAdding(false);
+    }
+    startEdit(stage);
+  };
+
   const startAdd = () => {
     setAdding(true);
     setEditId(null);
@@ -507,8 +516,9 @@ export default function ProductionPipelineSettingsPage() {
   const saveNew = async () => {
     if (!form.name.trim()) return alert('Nhập tên cột');
     if (!selectedTypeKey) return alert('Hãy chọn phân loại trước');
+    setSaving(true);
     try {
-      await api.post('/production/pipeline-stages', {
+      const { data } = await api.post('/production/pipeline-stages', {
         name: form.name.trim(),
         color: form.color,
         icon: form.icon,
@@ -516,23 +526,29 @@ export default function ProductionPipelineSettingsPage() {
         workflow_stage_id: productionWorkflowStageId || null,
         is_active: form.is_active,
         is_handover_to_logistics: form.is_handover_to_logistics,
-        crm_sync_type: form.crm_target_stage_id ? null : (form.crm_sync_type || null),
-        crm_target_stage_id: form.crm_target_stage_id || null,
+        crm_sync_type: form.is_handover_to_logistics ? null : (form.crm_target_stage_id ? null : (form.crm_sync_type || null)),
+        crm_target_stage_id: form.is_handover_to_logistics ? null : (form.crm_target_stage_id || null),
         company_id: settingsCompanyId,
         workshop_type_id: currentWorkshopTypeId,
         ...kpiPayloadFromForm(),
       });
       setAdding(false);
-      load();
+      setEditId(null);
+      await load();
+      alert(`Đã tạo cột «${data?.name || form.name.trim()}».`);
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi tạo cột');
+    } finally {
+      setSaving(false);
     }
   };
 
   const saveEdit = async () => {
     if (!form.name.trim()) return alert('Nhập tên cột');
+    setSaving(true);
     try {
       const intakeRow = stages.find((s) => s.id === editId)?.bucket_slug === INTAKE;
+      const handover = !intakeRow && form.is_handover_to_logistics;
       await api.put(`/production/pipeline-stages/${editId}`, {
         name: form.name.trim(),
         color: form.color,
@@ -540,15 +556,18 @@ export default function ProductionPipelineSettingsPage() {
         progress_percent: form.progress_percent === '' ? null : Number(form.progress_percent),
         workflow_stage_id: intakeRow ? null : (productionWorkflowStageId || null),
         is_active: form.is_active,
-        is_handover_to_logistics: intakeRow ? false : form.is_handover_to_logistics,
-        crm_sync_type: intakeRow ? null : (form.crm_target_stage_id ? null : (form.crm_sync_type || null)),
-        crm_target_stage_id: intakeRow ? null : (form.crm_target_stage_id || null),
+        is_handover_to_logistics: handover,
+        crm_sync_type: intakeRow || handover ? null : (form.crm_target_stage_id ? null : (form.crm_sync_type || null)),
+        crm_target_stage_id: intakeRow || handover ? null : (form.crm_target_stage_id || null),
         ...(intakeRow ? {} : kpiPayloadFromForm()),
       });
       setEditId(null);
-      load();
+      setAdding(false);
+      await load();
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi lưu');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -663,6 +682,21 @@ export default function ProductionPipelineSettingsPage() {
     }
   };
 
+  const persistStagesReorder = async (newList) => {
+    const reorder = newList.map((s, i) => ({ id: s.id, order_index: i + 1 }));
+    const prevStages = stages;
+    setStages((prev) => prev.map((s) => {
+      const idx = newList.findIndex((x) => x.id === s.id);
+      return idx >= 0 ? { ...s, order_index: idx + 1 } : s;
+    }));
+    try {
+      await api.put('/production/pipeline-stages-reorder', { stages: reorder });
+    } catch (err) {
+      setStages(prevStages);
+      alert('Lỗi sắp xếp: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
   const moveStage = async (stage, dir) => {
     if (stage.bucket_slug === INTAKE) return; // Cột deal-thắng luôn đứng đầu
     const list = [...stages].sort((a, b) => a.order_index - b.order_index);
@@ -672,13 +706,7 @@ export default function ProductionPipelineSettingsPage() {
     if (dir === -1 && list[idx - 1]?.bucket_slug === INTAKE) return;
     const newList = [...list];
     [newList[idx], newList[idx + dir]] = [newList[idx + dir], newList[idx]];
-    const reorder = newList.map((s, i) => ({ id: s.id, order_index: i + 1 }));
-    try {
-      await api.put('/production/pipeline-stages-reorder', { stages: reorder });
-      load();
-    } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi sắp xếp');
-    }
+    await persistStagesReorder(newList);
   };
 
   /** Kéo thả sắp xếp pipeline xưởng — cùng phân loại đang chọn. */
@@ -696,14 +724,17 @@ export default function ProductionPipelineSettingsPage() {
   };
   const handleDragEnd = () => { setDraggingId(null); setDragOverId(null); };
   const handleDragOver = (e, stage) => {
-    if (!draggingId || draggingId === stage.id) return;
-    if (stage.bucket_slug === INTAKE) return; // Không drop trước cột intake
+    const sourceId = draggingId || e.dataTransfer.getData('text/plain');
+    if (!sourceId || sourceId === stage.id) return;
+    if (stage.bucket_slug === INTAKE) return; // Không drop lên cột intake
     e.preventDefault();
+    e.stopPropagation();
     e.dataTransfer.dropEffect = 'move';
     if (dragOverId !== stage.id) setDragOverId(stage.id);
   };
   const handleDrop = async (e, target) => {
     e.preventDefault();
+    e.stopPropagation();
     const sourceId = draggingId || e.dataTransfer.getData('text/plain');
     setDraggingId(null);
     setDragOverId(null);
@@ -719,21 +750,7 @@ export default function ProductionPipelineSettingsPage() {
     const newList = [...list];
     const [moved] = newList.splice(fromIdx, 1);
     newList.splice(toIdx, 0, moved);
-    const reorder = newList.map((s, i) => ({ id: s.id, order_index: i + 1 }));
-
-    // Optimistic update — cập nhật order_index trên UI ngay, rollback nếu API lỗi
-    const prevStages = stages;
-    setStages((prev) => prev.map((s) => {
-      const idx = newList.findIndex((x) => x.id === s.id);
-      return idx >= 0 ? { ...s, order_index: idx + 1 } : s;
-    }));
-    try {
-      await api.put('/production/pipeline-stages-reorder', { stages: reorder });
-      load();
-    } catch (err) {
-      setStages(prevStages);
-      alert('Lỗi sắp xếp: ' + (err.response?.data?.error || err.message));
-    }
+    await persistStagesReorder(newList);
   };
 
   const sorted = [...stages].sort((a, b) => a.order_index - b.order_index);
@@ -1105,7 +1122,7 @@ export default function ProductionPipelineSettingsPage() {
                 <div key={s.id} className="flex items-center shrink-0">
                   <button
                     type="button"
-                    onClick={() => startEdit(s)}
+                    onClick={() => requestEdit(s)}
                     className={`px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer border-2 transition-all ${
                       !s.is_active ? 'opacity-40 border-dashed' : 'border-transparent'
                     } ${editId === s.id ? 'ring-2 ring-teal-500' : ''}`}
@@ -1247,9 +1264,6 @@ export default function ProductionPipelineSettingsPage() {
               return (
                 <div
                   key={s.id}
-                  draggable={!isIntake}
-                  onDragStart={(e) => handleDragStart(e, s)}
-                  onDragEnd={handleDragEnd}
                   onDragOver={(e) => handleDragOver(e, s)}
                   onDragLeave={() => setDragOverId(null)}
                   onDrop={(e) => handleDrop(e, s)}
@@ -1259,8 +1273,11 @@ export default function ProductionPipelineSettingsPage() {
                     ${bulkSelected.has(s.id) ? 'bg-blue-50/60' : ''}
                     ${!s.is_active ? 'opacity-50' : ''}`}
                 >
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1 shrink-0">
                     <span
+                      draggable={!isIntake}
+                      onDragStart={(e) => handleDragStart(e, s)}
+                      onDragEnd={handleDragEnd}
                       className={`select-none px-0.5 text-gray-400 ${isIntake ? 'opacity-30 cursor-not-allowed' : 'cursor-grab active:cursor-grabbing hover:text-gray-700'}`}
                       title={isIntake ? 'Cột chờ vào xưởng cố định ở đầu' : 'Kéo để sắp xếp lại'}
                     >
@@ -1275,11 +1292,12 @@ export default function ProductionPipelineSettingsPage() {
                         className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]">▼</button>
                     </div>
                   </div>
+                  <div className={`flex items-center gap-3 flex-1 min-w-0 ${draggingId ? 'pointer-events-none' : ''}`}>
                   <div
                     className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
                     style={{ backgroundColor: s.color || '#0f766e' }}
                   >
-                    {s.order_index}
+                    {i + 1}
                   </div>
                   {!isIntake && (
                     <input
@@ -1424,12 +1442,13 @@ export default function ProductionPipelineSettingsPage() {
                     <button type="button" onClick={() => toggleActive(s)} className="p-1.5 rounded hover:bg-gray-100 cursor-pointer text-[10px] text-gray-500" title={s.is_active ? 'Ẩn' : 'Hiện'}>
                       {s.is_active ? 'Ẩn' : 'Hiện'}
                     </button>
-                    <button type="button" onClick={() => startEdit(s)} className="p-1.5 rounded hover:bg-teal-50 text-teal-600 cursor-pointer">
+                    <button type="button" onClick={() => requestEdit(s)} className="p-1.5 rounded hover:bg-teal-50 text-teal-600 cursor-pointer">
                       <Save className="h-3.5 w-3.5" />
                     </button>
                     <button type="button" onClick={() => del(s.id, s.bucket_slug)} className="p-1.5 rounded hover:bg-red-50 text-red-500 cursor-pointer">
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
+                  </div>
                   </div>
                 </div>
               );
@@ -1438,6 +1457,24 @@ export default function ProductionPipelineSettingsPage() {
 
           {(adding || editId) && (
             <div className="p-4 border-t bg-teal-50/50 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-bold text-gray-900">
+                  {adding ? (
+                    <span className="inline-flex items-center gap-1.5 text-teal-800">
+                      <Plus className="h-4 w-4" /> Thêm cột mới
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 text-indigo-800">
+                      <Save className="h-4 w-4" /> Sửa cột: {form.name || '…'}
+                    </span>
+                  )}
+                </p>
+                {adding && (
+                  <span className="text-[10px] text-teal-700 bg-teal-100 border border-teal-200 px-2 py-0.5 rounded-full">
+                    Nhấn «Tạo cột» để thêm — không phải «Lưu» cột cũ
+                  </span>
+                )}
+              </div>
               <div>
                 <label className="text-[10px] font-medium text-gray-500 block mb-1">Tên cột *</label>
                 <input
@@ -1653,15 +1690,30 @@ export default function ProductionPipelineSettingsPage() {
                   </details>
                 )}
                 {!editingIntake && (
-                  <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <label
+                    className="flex items-start gap-2 text-xs cursor-pointer"
+                    title="Khi thẻ vào cột này có thể bàn giao sang module Vận chuyển."
+                  >
                     <input
                       type="checkbox"
                       checked={form.is_handover_to_logistics}
-                      onChange={(e) => setForm((f) => ({ ...f, is_handover_to_logistics: e.target.checked }))}
-                      className="rounded border-orange-400 accent-orange-500"
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        setForm((f) => ({
+                          ...f,
+                          is_handover_to_logistics: on,
+                          ...(on ? { crm_sync_type: null, crm_target_stage_id: '' } : {}),
+                        }));
+                      }}
+                      className="mt-0.5 rounded border-orange-400 accent-orange-500"
                     />
-                    <span className="flex items-center gap-1 font-medium text-orange-700">
-                      <Truck className="h-3.5 w-3.5" /> Bàn giao VC
+                    <span>
+                      <span className="flex items-center gap-1 font-medium text-orange-700">
+                        <Truck className="h-3.5 w-3.5" /> Bàn giao VC
+                      </span>
+                      <span className="block text-[10px] text-orange-600/90 mt-0.5 leading-snug">
+                        Bật để hiện nút bàn giao Vận chuyển khi kéo thẻ vào cột này. Tự tắt đồng bộ CRM khi bật.
+                      </span>
                     </span>
                   </label>
                 )}
@@ -1669,15 +1721,18 @@ export default function ProductionPipelineSettingsPage() {
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={editId ? saveEdit : saveNew}
-                  className="px-4 py-2 bg-teal-600 text-white rounded-lg text-sm hover:bg-teal-700 cursor-pointer"
+                  onClick={adding ? saveNew : saveEdit}
+                  disabled={saving}
+                  className="px-4 py-2 bg-teal-600 text-white rounded-lg text-sm hover:bg-teal-700 cursor-pointer disabled:opacity-50 inline-flex items-center gap-1.5"
                 >
-                  Lưu
+                  {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  {adding ? 'Tạo cột' : 'Lưu thay đổi'}
                 </button>
                 <button
                   type="button"
                   onClick={() => { setAdding(false); setEditId(null); }}
-                  className="px-4 py-2 border rounded-lg text-sm cursor-pointer"
+                  disabled={saving}
+                  className="px-4 py-2 border rounded-lg text-sm cursor-pointer disabled:opacity-50"
                 >
                   Hủy
                 </button>
