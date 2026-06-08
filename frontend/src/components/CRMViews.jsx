@@ -13,7 +13,7 @@ import {
   pickDeadlineConfigValueWithSource,
 } from '../lib/crmLeadDeadlineDisplay';
 import { FbCrmAvatar, FbCrmCommentComposer, formatCrmFbRelativeTime } from './crmFbCommentUi';
-import { commentIdKey, upsertCommentList } from './CommentsPanels';
+import { upsertComment } from './CommentsPanels';
 import {
   Plus, X, Trash2, MessageSquare, GripVertical, Search, Edit2, Settings as SettingsIcon,
   ChevronLeft, ChevronRight, CheckSquare, Eye, Clock,
@@ -1180,18 +1180,17 @@ function CommentCard({ item, expanded, onToggle, onChanged, navigate }) {
       if (String(payload?.lead_id) !== String(item.id)) return;
       const action = payload?.action || 'created';
       if (action === 'deleted') {
-        const cid = payload.comment_id != null ? String(payload.comment_id) : '';
-        setComments((prev) => (prev || []).filter((c) => commentIdKey(c) !== cid));
+        setComments((prev) => (prev || []).filter((c) => String(c.id) !== String(payload.comment_id)));
         onChanged?.();
         return;
       }
       const row = payload.comment;
       if (!row?.id) return;
       if (action === 'updated') {
-        setComments((prev) => upsertCommentList(prev, row, { replace: true }));
+        setComments((prev) => (prev || []).map((c) => (String(c.id) === String(row.id) ? { ...c, ...row, reactions: row.reactions ?? c.reactions } : c)));
         return;
       }
-      setComments((prev) => upsertCommentList(prev, row));
+      setComments((prev) => upsertComment(prev, row));
       onChanged?.();
     };
     socket.on('lead:comment', handler);
@@ -1212,7 +1211,7 @@ function CommentCard({ item, expanded, onToggle, onChanged, navigate }) {
       if (replyTo?.id != null) payload.parent_id = replyTo.id;
       const r = await api.post(`/crm/leads/${item.id}/comments`, payload);
       const row = r.data || {};
-      setComments((prev) => upsertCommentList(prev, row));
+      setComments((prev) => upsertComment(prev, row));
       setBody('');
       setReplyTo(null);
       onChanged?.();

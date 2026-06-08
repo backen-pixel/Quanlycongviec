@@ -9,25 +9,34 @@ import { FbCrmAvatar, FbCrmCommentComposer, formatCrmFbRelativeTime } from './cr
 
 const REACTION_PICKER = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
-export function commentIdKey(c) {
-  const id = c?.id;
-  return id != null && id !== '' ? String(id) : '';
+function commentId(c) {
+  return c?.id != null && c.id !== '' ? String(c.id) : '';
 }
 
-/** Thêm/cập nhật một dòng — tránh trùng khi vừa nhận socket vừa nhận response POST. */
-export function upsertCommentList(prev, row, { replace = false } = {}) {
-  const key = commentIdKey(row);
-  if (!key) return prev || [];
+/** Thêm hoặc cập nhật một bình luận — tránh trùng khi POST và socket cùng trả về. */
+export function upsertComment(prev, row) {
+  const id = commentId(row);
+  if (!id) return prev || [];
   const list = prev || [];
-  const idx = list.findIndex((c) => commentIdKey(c) === key);
+  const idx = list.findIndex((c) => commentId(c) === id);
   const normalized = { ...row, reactions: row.reactions || { summary: [], mine: null } };
   if (idx >= 0) {
-    if (!replace) return list;
-    const next = list.slice();
-    next[idx] = { ...list[idx], ...normalized, reactions: normalized.reactions ?? list[idx].reactions };
+    const next = [...list];
+    next[idx] = { ...next[idx], ...normalized, reactions: normalized.reactions ?? next[idx].reactions };
     return next;
   }
   return [...list, normalized];
+}
+
+function replaceComment(prev, row) {
+  const id = commentId(row);
+  if (!id) return prev || [];
+  return (prev || []).map((c) => (commentId(c) === id ? { ...c, ...row, reactions: row.reactions ?? c.reactions } : c));
+}
+
+function removeCommentById(prev, rawId) {
+  const id = String(rawId);
+  return (prev || []).filter((c) => commentId(c) !== id);
 }
 
 function groupByParent(flat, parentKey = 'parent_id') {
@@ -240,9 +249,8 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
       if (String(payload?.lead_id) !== String(leadId)) return;
       const action = payload?.action || 'created';
       if (action === 'deleted') {
-        const cid = payload.comment_id != null ? String(payload.comment_id) : '';
         setComments((prev) => {
-          const next = (prev || []).filter((c) => commentIdKey(c) !== cid);
+          const next = removeCommentById(prev, payload.comment_id);
           onCountChange?.(next.length);
           return next;
         });
@@ -251,11 +259,11 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
       const row = payload.comment;
       if (!row?.id) return;
       if (action === 'updated') {
-        setComments((prev) => upsertCommentList(prev, row, { replace: true }));
+        setComments((prev) => replaceComment(prev, row));
         return;
       }
       setComments((prev) => {
-        const next = upsertCommentList(prev, row);
+        const next = upsertComment(prev, row);
         if (next.length !== (prev || []).length) onCountChange?.(next.length);
         return next;
       });
@@ -277,7 +285,7 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
       const r = await api.post(`/crm/leads/${leadId}/comments`, payload);
       const row = r.data || {};
       setComments((prev) => {
-        const next = upsertCommentList(prev, row);
+        const next = upsertComment(prev, row);
         if (next.length !== (prev || []).length) onCountChange?.(next.length);
         return next;
       });
@@ -296,7 +304,7 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
     try {
       const r = await api.patch(`/crm/lead-comments/${editingId}`, { body: v });
       const row = r.data || {};
-      setComments((prev) => prev.map((c) => (c.id === editingId ? { ...row, reactions: row.reactions ?? c.reactions } : c)));
+      setComments((prev) => replaceComment(prev, { ...row, id: editingId }));
       setEditingId(null);
       setEditingBody('');
     } catch (e) {
@@ -309,7 +317,7 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
     try {
       await api.delete(`/crm/lead-comments/${c.id}`);
       setComments((prev) => {
-        const next = prev.filter((x) => x.id !== c.id);
+        const next = removeCommentById(prev, c.id);
         onCountChange?.(next.length);
         return next;
       });
@@ -395,18 +403,28 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
     const merge = (payload) => {
       if (String(payload?.project_id) !== String(projectId)) return;
       const action = payload?.action;
-      if (action === 'deleted') {
-        const cid = payload.comment_id != null ? String(payload.comment_id) : commentIdKey(payload.comment);
-        if (cid) setComments((prev) => (prev || []).filter((c) => commentIdKey(c) !== cid));
+      if (action === 'deleted' || payload?.comment_id) {
+        const cid = payload.comment_id || payload.comment?.id;
+        if (cid) {
+          setComments((prev) => {
+            const next = removeCommentById(prev, cid);
+            if (next.length !== (prev || []).length) onCountChange?.(next.length);
+            return next;
+          });
+        }
         return;
       }
       const row = payload.comment;
       if (!row?.id) return;
       if (action === 'updated') {
-        setComments((prev) => upsertCommentList(prev, row, { replace: true }));
+        setComments((prev) => replaceComment(prev, row));
         return;
       }
-      setComments((prev) => upsertCommentList(prev, row));
+      setComments((prev) => {
+        const next = upsertComment(prev, row);
+        if (next.length !== (prev || []).length) onCountChange?.(next.length);
+        return next;
+      });
     };
     socket.on('project:comment', merge);
     socket.on('project:comment:deleted', (p) => merge({ ...p, action: 'deleted' }));
@@ -429,7 +447,7 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
       const row = r.data?.comment || r.data;
       if (row?.id) {
         setComments((prev) => {
-          const next = upsertCommentList(prev, row);
+          const next = upsertComment(prev, row);
           if (next.length !== (prev || []).length) onCountChange?.(next.length);
           return next;
         });
@@ -449,7 +467,7 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
     try {
       const r = await api.patch(`/projects/${projectId}/comments/${editingId}`, { content: v });
       const row = r.data || {};
-      setComments((prev) => prev.map((c) => (c.id === editingId ? { ...row, reactions: row.reactions ?? c.reactions } : c)));
+      setComments((prev) => replaceComment(prev, { ...row, id: editingId }));
       setEditingId(null);
       setEditingBody('');
     } catch (e) {
@@ -462,7 +480,7 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
     try {
       await api.delete(`/projects/${projectId}/comments/${c.id}`);
       setComments((prev) => {
-        const next = prev.filter((x) => x.id !== c.id);
+        const next = removeCommentById(prev, c.id);
         onCountChange?.(next.length);
         return next;
       });
