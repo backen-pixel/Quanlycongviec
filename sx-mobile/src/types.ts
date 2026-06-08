@@ -141,7 +141,7 @@ export type CrmTask = {
   attachment_count?: number;
   assignee?: PersonRef | null;
   assignees?: PersonRef[];
-  pipeline_stage?: { id?: string; name?: string | null } | null;
+  pipeline_stage?: { id?: string; name?: string | null; order_index?: number } | null;
 };
 
 export type ProjectActivity = {

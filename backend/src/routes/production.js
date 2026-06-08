@@ -25,6 +25,7 @@ const {
   emitCrmBadgeUpdateForProject,
   getDbIntakeStageId,
 } = require('../helpers/workshopKanban');
+const { attachCrmProductionTaskStatsToProjects } = require('../helpers/crmProductionTaskStats');
 const {
   applyWorkshopTemplateToProject,
   applyAllActiveWorkshopTemplatesForArea,
@@ -891,12 +892,13 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
     projects = data || [];
 
     const enriched = await enrichProjectsForSx(projects, wonIds, company_id, workshop_type_id || null);
-    const enhancedProjects = enriched.map((project) => ({
+    const workflowProjects = enriched.map((project) => ({
       ...project,
       progress: calcTaskProgress(project.tasks),
       task_total: project.tasks?.length || 0,
       done_tasks: project.tasks?.filter((t) => t.status === 'done').length || 0,
     }));
+    const enhancedProjects = await attachCrmProductionTaskStatsToProjects(workflowProjects);
 
     const projectIds = enhancedProjects.map((p) => p.id).filter(Boolean);
     const dealProbByProjectId = {};
@@ -1085,7 +1087,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       console.warn('[production/kanban] backfill staff:', bfErr.message);
     }
     const enrichedWithStaff = await attachProductionStaffToProjects(enrichedSx);
-    const enhanced = enrichedWithStaff.map((project) => ({
+    const workflowProjects = enrichedWithStaff.map((project) => ({
       ...project,
       progress: calcTaskProgress(project.tasks),
       task_total: project.tasks?.length || 0,
@@ -1093,6 +1095,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       is_overdue: Boolean(project.deadline && new Date(project.deadline) < new Date() && project.status !== 'completed'),
       is_production_overdue: Boolean(project.production_deadline && new Date(project.production_deadline) < new Date() && project.status !== 'completed'),
     }));
+    const enhanced = await attachCrmProductionTaskStatsToProjects(workflowProjects);
 
     res.json({
       projects: enhanced,

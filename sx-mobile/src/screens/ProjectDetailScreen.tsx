@@ -17,11 +17,13 @@ import { formatApiError } from '../api/client';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import {
+  calcCrmProductionTaskProgress,
   fetchCrmDealTasks,
   fetchDealIdForProject,
   fetchProductionProjectDetail,
   fetchProjectActivities,
   groupCrmTasksByStage,
+  isCrmProductionTaskDone,
   taskDeadline,
 } from '../lib/projectDetailApi';
 import type { RootStackParamList } from '../navigation/RootNavigator';
@@ -38,10 +40,6 @@ function formatDate(value?: string | null): string {
   } catch {
     return '';
   }
-}
-
-function isTaskDone(status: string): boolean {
-  return status === 'completed' || status === 'done';
 }
 
 export default function ProjectDetailScreen({ route, navigation }: Props) {
@@ -107,11 +105,13 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   }, []);
 
   const taskGroups = useMemo(() => groupCrmTasksByStage(tasks), [tasks]);
-  const taskDone = tasks.filter((t) => isTaskDone(t.status)).length;
-  const taskTotal = tasks.length;
-  const progress = taskTotal
-    ? Math.round((taskDone / taskTotal) * 100)
-    : Math.round(Number(project?.productionTaskProgress ?? project?.progress ?? 0));
+  const { done: taskDone, total: taskTotal, percent: progress } = useMemo(
+    () => calcCrmProductionTaskProgress(
+      tasks,
+      Number(project?.productionTaskProgress ?? project?.progress ?? 0),
+    ),
+    [tasks, project?.productionTaskProgress, project?.progress],
+  );
   const docCount = project?.sharedDocuments?.length ?? 0;
   const valueStr = formatMoneyAmount(project?.estimated_value);
 
@@ -359,7 +359,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         <View style={{ padding: Spacing.lg }}>
           {tab === 'tasks' && (
             taskGroups.length ? taskGroups.map((group) => {
-              const doneInGroup = group.tasks.filter((t) => isTaskDone(t.status)).length;
+              const doneInGroup = group.tasks.filter((t) => isCrmProductionTaskDone(t.status)).length;
               return (
                 <View key={group.key} style={{ marginBottom: 16 }}>
                   <View style={styles.groupHeader}>

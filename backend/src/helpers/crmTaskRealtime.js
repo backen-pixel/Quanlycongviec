@@ -18,6 +18,16 @@ async function emitCrmTaskChanged(req, { leadId, taskId = null, action = 'update
         .eq('id', leadId)
         .maybeSingle();
       projectId = lead?.project_id || null;
+      if (!projectId) {
+        const { data: ord } = await supabase
+          .from('orders')
+          .select('project_id')
+          .eq('fulfillment_lead_id', leadId)
+          .not('project_id', 'is', null)
+          .limit(1)
+          .maybeSingle();
+        projectId = ord?.project_id || null;
+      }
     } catch (_) {
       /* ignore */
     }
