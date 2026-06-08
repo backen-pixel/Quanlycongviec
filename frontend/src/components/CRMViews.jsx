@@ -13,6 +13,7 @@ import {
   pickDeadlineConfigValueWithSource,
 } from '../lib/crmLeadDeadlineDisplay';
 import { FbCrmAvatar, FbCrmCommentComposer, formatCrmFbRelativeTime } from './crmFbCommentUi';
+import { commentIdKey, upsertCommentList } from './CommentsPanels';
 import {
   Plus, X, Trash2, MessageSquare, GripVertical, Search, Edit2, Settings as SettingsIcon,
   ChevronLeft, ChevronRight, CheckSquare, Eye, Clock,
@@ -1179,17 +1180,18 @@ function CommentCard({ item, expanded, onToggle, onChanged, navigate }) {
       if (String(payload?.lead_id) !== String(item.id)) return;
       const action = payload?.action || 'created';
       if (action === 'deleted') {
-        setComments((prev) => (prev || []).filter((c) => c.id !== payload.comment_id));
+        const cid = payload.comment_id != null ? String(payload.comment_id) : '';
+        setComments((prev) => (prev || []).filter((c) => commentIdKey(c) !== cid));
         onChanged?.();
         return;
       }
       const row = payload.comment;
       if (!row?.id) return;
       if (action === 'updated') {
-        setComments((prev) => (prev || []).map((c) => (c.id === row.id ? { ...c, ...row, reactions: row.reactions ?? c.reactions } : c)));
+        setComments((prev) => upsertCommentList(prev, row, { replace: true }));
         return;
       }
-      setComments((prev) => ((prev || []).some((c) => c.id === row.id) ? prev : [...(prev || []), { ...row, reactions: row.reactions || { summary: [], mine: null } }]));
+      setComments((prev) => upsertCommentList(prev, row));
       onChanged?.();
     };
     socket.on('lead:comment', handler);
@@ -1210,7 +1212,7 @@ function CommentCard({ item, expanded, onToggle, onChanged, navigate }) {
       if (replyTo?.id != null) payload.parent_id = replyTo.id;
       const r = await api.post(`/crm/leads/${item.id}/comments`, payload);
       const row = r.data || {};
-      setComments(prev => [...(prev || []), { ...row, reactions: row.reactions || { summary: [], mine: null } }]);
+      setComments((prev) => upsertCommentList(prev, row));
       setBody('');
       setReplyTo(null);
       onChanged?.();

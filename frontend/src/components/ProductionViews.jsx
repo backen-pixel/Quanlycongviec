@@ -8,6 +8,7 @@ import { getSocket } from '../lib/socket';
 import { useAuth } from '../lib/auth';
 import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
 import { FbCrmAvatar, FbCrmCommentComposer, formatCrmFbRelativeTime } from './crmFbCommentUi';
+import { commentIdKey, upsertCommentList } from './CommentsPanels';
 
 /** Bộ emoji được phép — đồng bộ với backend PROJECT_COMMENT_ALLOWED_REACTION_EMOJI */
 const PROJECT_COMMENT_REACTION_PICKER = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
@@ -1448,18 +1449,18 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
     const merge = (payload) => {
       if (String(payload?.project_id) !== String(item.id)) return;
       const action = payload?.action;
-      if (action === 'deleted' || payload?.comment_id) {
-        const cid = payload.comment_id || payload.comment?.id;
-        if (cid) setComments((prev) => (prev || []).filter((c) => c.id !== cid));
+      if (action === 'deleted') {
+        const cid = payload.comment_id != null ? String(payload.comment_id) : commentIdKey(payload.comment);
+        if (cid) setComments((prev) => (prev || []).filter((c) => commentIdKey(c) !== cid));
         return;
       }
       const row = payload.comment;
       if (!row?.id) return;
       if (action === 'updated') {
-        setComments((prev) => (prev || []).map((c) => (c.id === row.id ? { ...c, ...row, reactions: row.reactions ?? c.reactions } : c)));
+        setComments((prev) => upsertCommentList(prev, row, { replace: true }));
         return;
       }
-      setComments((prev) => ((prev || []).some((c) => c.id === row.id) ? prev : [...(prev || []), { ...row, reactions: row.reactions || { summary: [], mine: null } }]));
+      setComments((prev) => upsertCommentList(prev, row));
     };
     socket.on('project:comment', merge);
     socket.on('project:comment:deleted', (p) => merge({ ...p, action: 'deleted' }));
@@ -1483,7 +1484,7 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
       const r = await api.post(`/projects/${item.id}/comments`, payload);
       const row = r.data?.comment || r.data;
       if (row?.id) {
-        setComments((prev) => [...(prev || []), { ...row, reactions: row.reactions || { summary: [], mine: null } }]);
+        setComments((prev) => upsertCommentList(prev, row));
       } else {
         await load({ silent: true });
       }
