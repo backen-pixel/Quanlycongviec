@@ -296,7 +296,7 @@ export default function UsersPage() {
         </div>
       )}
 
-      <StaffFormModal open={showCreate} onClose={() => { setShowCreate(false); setEditUser(null); }} onSaved={load} editUser={editUser} />
+      <StaffFormModal key={editUser?.id ?? 'new'} open={showCreate} onClose={() => { setShowCreate(false); setEditUser(null); }} onSaved={load} editUser={editUser} />
       
       {showRolesModal && (
         <UserRolesModal
@@ -401,6 +401,45 @@ function HardDeleteUserModal({ target, onClose, onDeleted }) {
 }
 
 // ═══ Staff Form Modal — Cascade: Khối → Cty → PB → Team ═══
+const STAFF_EMPTY_FORM = {
+  full_name: '',
+  email: '',
+  phone: '',
+  role: 'staff',
+  position: '',
+  department_id: '',
+  team_id: '',
+  password: '',
+  date_of_birth: '',
+  hire_date: '',
+  address: '',
+  emergency_contact: '',
+  notes: '',
+  crm_region_ids: [],
+  avatar: null,
+};
+
+function mapUserToForm(user) {
+  const dateOnly = (v) => (v ? String(v).slice(0, 10) : '');
+  return {
+    full_name: user.full_name || '',
+    email: user.email || '',
+    phone: user.phone || '',
+    role: user.role || 'staff',
+    position: user.position || '',
+    department_id: user.department_id || user.department?.id || '',
+    team_id: user.team_id || user.team?.id || '',
+    password: '',
+    date_of_birth: dateOnly(user.date_of_birth),
+    hire_date: dateOnly(user.hire_date),
+    address: user.address || '',
+    emergency_contact: user.emergency_contact || '',
+    notes: user.notes || '',
+    avatar: user.avatar || null,
+    crm_region_ids: Array.isArray(user.crm_region_ids) ? [...user.crm_region_ids] : [],
+  };
+}
+
 /** Export để dùng tại trang «Thiết lập tổ chức nhanh» — preset Khối/Cty khi mở từ đó */
 export function StaffFormModal({
   open,
@@ -412,8 +451,10 @@ export function StaffFormModal({
   /** Khi tạo mới: điền sẵn mật khẩu (vd: thiết lập tổ chức nhanh dùng 123456) */
   defaultNewUserPassword,
 }) {
-  const [form, setForm] = useState({});
+  const editUserId = editUser?.id ?? null;
+  const [form, setForm] = useState(STAFF_EMPTY_FORM);
   const [loading, setLoading] = useState(false);
+  const [userLoading, setUserLoading] = useState(false);
   const [avatarBusy, setAvatarBusy] = useState(false);
   const avatarInputRef = useRef(null);
 
@@ -429,6 +470,14 @@ export function StaffFormModal({
   const [selDivision, setSelDivision] = useState('');
   const [selCompany, setSelCompany] = useState('');
 
+  const resetCascade = () => {
+    setSelDivision('');
+    setSelCompany('');
+    setDepartments([]);
+    setTeams([]);
+    setCompanyRegions([]);
+  };
+
   useEffect(() => {
     if (!open) return;
     Promise.all([
@@ -438,46 +487,57 @@ export function StaffFormModal({
       setDivisions(divRes.data.units || []);
       setCompanies(cRes.data.companies || []);
     });
+  }, [open]);
 
-    if (editUser) {
+  /** Mỗi lần mở modal / đổi nhân viên: reset form và tải đủ dữ liệu từ API (tránh dính thông tin NV trước) */
+  useEffect(() => {
+    if (!open) return;
+
+    resetCascade();
+
+    if (!editUserId) {
+      setUserLoading(false);
       setForm({
-        ...editUser,
-        department_id: editUser.department_id || editUser.department?.id || '',
-        team_id: editUser.team_id || editUser.team?.id || '',
-        password: '',
-        crm_region_ids: [],
-      });
-      if (editUser.department?.company_id) {
-        setSelCompany(editUser.department.company_id);
-      }
-    } else {
-      setForm({
-        full_name: '',
-        email: '',
-        phone: '',
-        role: 'staff',
-        position: '',
-        department_id: '',
-        team_id: '',
+        ...STAFF_EMPTY_FORM,
         password: defaultNewUserPassword || '',
-        date_of_birth: '',
-        hire_date: '',
-        address: '',
-        emergency_contact: '',
-        notes: '',
-        crm_region_ids: [],
       });
-      setSelDivision('');
-      setSelCompany('');
+      return;
     }
-    setCompanyRegions([]);
-  }, [open, editUser, defaultNewUserPassword]);
+
+    setUserLoading(true);
+    setForm({ ...STAFF_EMPTY_FORM, email: editUser?.email || '' });
+
+    let cancelled = false;
+    api
+      .get(`/users/${editUserId}`)
+      .then((r) => {
+        if (cancelled) return;
+        const user = r.data?.user;
+        if (!user || String(user.id) !== String(editUserId)) return;
+        setForm(mapUserToForm(user));
+        const companyId = user.department?.company_id;
+        if (companyId) setSelCompany(companyId);
+      })
+      .catch(() => {
+        if (cancelled || !editUser) return;
+        setForm(mapUserToForm(editUser));
+        const companyId = editUser.department?.company_id;
+        if (companyId) setSelCompany(companyId);
+      })
+      .finally(() => {
+        if (!cancelled) setUserLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, editUserId, defaultNewUserPassword]);
 
   useEffect(() => {
-    if (!open || editUser) return;
+    if (!open || editUserId) return;
     if (presetDivisionId) setSelDivision(String(presetDivisionId));
     if (presetCompanyId) setSelCompany(String(presetCompanyId));
-  }, [open, editUser, presetDivisionId, presetCompanyId]);
+  }, [open, editUserId, presetDivisionId, presetCompanyId]);
 
   // Reload company list when selecting a Khối (include companies linked via company_division_units)
   useEffect(() => {
@@ -489,31 +549,12 @@ export function StaffFormModal({
       .catch(() => setCompanies([]));
   }, [open, selDivision]);
 
+  /** Sau khi có danh sách công ty — suy ra Khối từ company.division_unit_id */
   useEffect(() => {
-    if (!open || !editUser?.id) return;
-    let cancelled = false;
-    api
-      .get(`/users/${editUser.id}`)
-      .then((r) => {
-        if (cancelled) return;
-        const ids = r.data?.user?.crm_region_ids;
-        if (Array.isArray(ids)) setForm((f) => ({ ...f, crm_region_ids: ids }));
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [open, editUser?.id]);
-
-  /** Sau khi có danh sách công ty — suy ra Khối từ company.division_unit_id (không cần chờ load PB) */
-  useEffect(() => {
-    if (!open || !editUser || !companies.length) return;
-    const companyId = editUser.department?.company_id;
-    if (!companyId) return;
-    setSelCompany(companyId);
-    const comp = companies.find((c) => c.id === companyId);
+    if (!open || !selCompany || !companies.length) return;
+    const comp = companies.find((c) => String(c.id) === String(selCompany));
     if (comp?.division_unit_id) setSelDivision(comp.division_unit_id);
-  }, [open, editUser, companies]);
+  }, [open, selCompany, companies]);
 
   // Load departments when company changes
   useEffect(() => {
@@ -525,11 +566,11 @@ export function StaffFormModal({
     } else {
       setDepartments([]);
     }
-    if (!editUser) {
+    if (!editUserId) {
       setForm((f) => ({ ...f, department_id: '', team_id: '' }));
       setTeams([]);
     }
-  }, [selCompany, selDivision, editUser]);
+  }, [selCompany, selDivision, editUserId]);
 
   useEffect(() => {
     if (!selCompany) {
@@ -570,8 +611,8 @@ export function StaffFormModal({
     } else {
       setTeams([]);
     }
-    if (!editUser) setForm((f) => ({ ...f, team_id: '' }));
-  }, [form.department_id, editUser]);
+    if (!editUserId) setForm((f) => ({ ...f, team_id: '' }));
+  }, [form.department_id, editUserId]);
 
   // companies state is already filtered by selDivision via API above
   const divCompanies = companies;
@@ -600,8 +641,8 @@ export function StaffFormModal({
       if (payload.avatar === undefined) delete payload.avatar;
       else if (payload.avatar === null || payload.avatar === '') payload.avatar = null;
       else if (typeof payload.avatar === 'string') payload.avatar = payload.avatar.trim() || null;
-      if (!editUser && payload.avatar == null) delete payload.avatar;
-      if (editUser) await api.put(`/users/${editUser.id}`, payload);
+      if (!editUserId && payload.avatar == null) delete payload.avatar;
+      if (editUserId) await api.put(`/users/${editUserId}`, payload);
       else await api.post('/users', payload);
       onSaved?.(); onClose();
     } catch (err) { alert(err.response?.data?.error || 'Lỗi'); }
@@ -609,8 +650,13 @@ export function StaffFormModal({
   };
 
   return (
-    <Modal open={open} onClose={onClose} title={editUser ? 'Sửa nhân viên' : 'Thêm nhân viên mới'} size="lg">
-      <form onSubmit={submit} autoComplete="off" className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+    <Modal open={open} onClose={onClose} title={editUserId ? 'Sửa nhân viên' : 'Thêm nhân viên mới'} size="lg">
+      {userLoading ? (
+        <div className="flex items-center justify-center py-16">
+          <div className="animate-spin h-6 w-6 border-2 border-gray-200 border-t-gray-600 rounded-full" />
+        </div>
+      ) : (
+      <form key={editUserId ?? 'new'} onSubmit={submit} autoComplete="off" className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
         {/* Hidden fields to trick browser autofill */}
         <input type="text" name="prevent_autofill" id="prevent_autofill" style={{ display: 'none' }} tabIndex={-1} autoComplete="off" />
         <input type="password" name="prevent_autofill_pass" id="prevent_autofill_pass" style={{ display: 'none' }} tabIndex={-1} autoComplete="off" />
@@ -670,7 +716,7 @@ export function StaffFormModal({
                   const fd = new FormData();
                   fd.append('file', file);
                   fd.append('entity_type', 'user_avatars');
-                  if (editUser?.id) fd.append('entity_id', editUser.id);
+                  if (editUserId) fd.append('entity_id', editUserId);
                   const { data } = await api.post('/upload/single', fd, { timeout: 120000 });
                   if (!data?.file_url) throw new Error('Không nhận được URL');
                   set('avatar', data.file_url);
@@ -686,9 +732,9 @@ export function StaffFormModal({
 
         <div className="grid grid-cols-2 gap-4">
           <div><label className="block text-sm font-medium mb-1">Họ tên *</label><input value={form.full_name || ''} onChange={e => set('full_name', e.target.value)} required className="input" autoComplete="off" /></div>
-          <div><label className="block text-sm font-medium mb-1">Email *</label><input type="email" value={form.email || ''} onChange={e => set('email', e.target.value)} required className="input" disabled={!!editUser} autoComplete="off" readOnly={!!editUser} /></div>
+          <div><label className="block text-sm font-medium mb-1">Email *</label><input type="email" value={form.email || ''} onChange={e => set('email', e.target.value)} required className="input" disabled={!!editUserId} autoComplete="off" readOnly={!!editUserId} /></div>
           <div><label className="block text-sm font-medium mb-1">SĐT</label><input value={form.phone || ''} onChange={e => set('phone', e.target.value)} className="input" autoComplete="off" /></div>
-          <div><label className="block text-sm font-medium mb-1">Mật khẩu {editUser ? '(trống = giữ)' : '*'}</label><input type="password" value={form.password || ''} onChange={e => set('password', e.target.value)} className="input" required={!editUser} placeholder={editUser ? '••••••' : (defaultNewUserPassword || '123456')} autoComplete="new-password" /></div>
+          <div><label className="block text-sm font-medium mb-1">Mật khẩu {editUserId ? '(trống = giữ)' : '*'}</label><input type="password" value={form.password || ''} onChange={e => set('password', e.target.value)} className="input" required={!editUserId} placeholder={editUserId ? '••••••' : (defaultNewUserPassword || '123456')} autoComplete="new-password" /></div>
           <div><label className="block text-sm font-medium mb-1">Vai trò</label>
             <select value={form.role || 'staff'} onChange={e => set('role', e.target.value)} className="input">
               {Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
@@ -813,9 +859,10 @@ export function StaffFormModal({
         <div><label className="block text-sm font-medium mb-1">Địa chỉ</label><input value={form.address || ''} onChange={e => set('address', e.target.value)} className="input" /></div>
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" onClick={onClose} className="h-10 px-4 bg-gray-100 rounded-lg text-sm cursor-pointer">Hủy</button>
-          <button type="submit" disabled={loading} className="h-10 px-6 bg-blue-600 text-white rounded-lg text-sm font-medium cursor-pointer">{loading ? 'Lưu...' : editUser ? 'Cập nhật' : 'Tạo NV'}</button>
+          <button type="submit" disabled={loading} className="h-10 px-6 bg-blue-600 text-white rounded-lg text-sm font-medium cursor-pointer">{loading ? 'Lưu...' : editUserId ? 'Cập nhật' : 'Tạo NV'}</button>
         </div>
       </form>
+      )}
     </Modal>
   );
 }

@@ -12697,7 +12697,7 @@ r.post('/leads/:id/members', async (req, res) => {
       // Notify added user
       await createNotification(req, item.user_id, 'lead_member_added', '👥 Bạn được thêm vào nhóm',
         `${adder?.full_name || 'Admin'} đã thêm bạn vào ${leadLabel} với vai trò ${roleLabel}`, 'lead', req.params.id,
-        { nav_tab: 'chat' });
+        { nav_tab: 'team' });
     }
 
     // Notify existing members
@@ -12709,7 +12709,7 @@ r.post('/leads/:id/members', async (req, res) => {
       const names = results.map(r => r?.user?.full_name).filter(Boolean).join(', ');
       await notifyMultipleShared(req, otherMembers.map(m => m.user_id), 'lead_member_added',
         '👥 Thành viên mới', `${adder?.full_name || 'Admin'} đã thêm ${names} vào ${leadLabel}`,
-        'lead', req.params.id, { nav_tab: 'chat' });
+        'lead', req.params.id, { nav_tab: 'team' });
     }
 
     // Emit realtime
@@ -14119,7 +14119,10 @@ r.post('/leads/:id/comments', async (req, res) => {
       }
       throw error;
     }
-    res.json({ ...data, reactions: { summary: [], mine: null } });
+    const row = { ...data, reactions: { summary: [], mine: null } };
+    const io = req.app.get('io');
+    if (io) io.to(`lead:${leadId}`).emit('lead:comment', { lead_id: leadId, action: 'created', comment: row });
+    res.json(row);
   } catch (e) {
     console.error('POST /crm/leads/:id/comments:', e);
     res.status(500).json({ error: e.message || 'Lỗi server' });
@@ -14145,7 +14148,12 @@ r.patch('/lead-comments/:cid', async (req, res) => {
     if (error) throw error;
     const rxMap = await fetchCrmCommentReactionsAggregate(supabase, [cid], userId);
     const reactions = rxMap == null ? { summary: [], mine: null } : rxMap.get(cid) || { summary: [], mine: null };
-    res.json({ ...data, reactions });
+    const row = { ...data, reactions };
+    const io = req.app.get('io');
+    if (io && data?.lead_id) {
+      io.to(`lead:${data.lead_id}`).emit('lead:comment', { lead_id: data.lead_id, action: 'updated', comment: row });
+    }
+    res.json(row);
   } catch (e) {
     console.error('PATCH /crm/lead-comments/:cid:', e);
     res.status(500).json({ error: e.message || 'Lỗi server' });
@@ -14244,6 +14252,11 @@ r.delete('/lead-comments/:cid', async (req, res) => {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
     const cid = Number(req.params.cid);
     const isAdmin = isCrmSystemAdminUser(req.user?.role) || isCrmCompanyAdminUser(req.user?.role);
+    const { data: existing } = await supabase
+      .from('crm_lead_comments')
+      .select('lead_id')
+      .eq('id', cid)
+      .maybeSingle();
     let q = supabase
       .from('crm_lead_comments')
       .update({ deleted_at: new Date().toISOString() })
@@ -14251,6 +14264,14 @@ r.delete('/lead-comments/:cid', async (req, res) => {
     if (!isAdmin) q = q.eq('user_id', userId);
     const { error } = await q;
     if (error) throw error;
+    const io = req.app.get('io');
+    if (io && existing?.lead_id) {
+      io.to(`lead:${existing.lead_id}`).emit('lead:comment', {
+        lead_id: existing.lead_id,
+        action: 'deleted',
+        comment_id: cid,
+      });
+    }
     res.json({ ok: true });
   } catch (e) {
     console.error('DELETE /crm/lead-comments/:cid:', e);

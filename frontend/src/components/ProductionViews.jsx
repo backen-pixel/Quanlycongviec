@@ -4,6 +4,7 @@ import {
   Plus, Edit2, Trash2, X, Search, GripVertical, ChevronLeft, ChevronRight, MessageSquare,
 } from 'lucide-react';
 import api from '../lib/api';
+import { getSocket } from '../lib/socket';
 import { useAuth } from '../lib/auth';
 import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
 import { FbCrmAvatar, FbCrmCommentComposer, formatCrmFbRelativeTime } from './crmFbCommentUi';
@@ -1439,6 +1440,37 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
   useEffect(() => { if (expanded && comments == null) load(); }, [expanded, comments, load]);
   useEffect(() => { if (!expanded) setReplyTo(null); }, [expanded]);
 
+  useEffect(() => {
+    if (!expanded) return;
+    const socket = getSocket();
+    if (!socket) return;
+    socket.emit('join:project', item.id);
+    const merge = (payload) => {
+      if (String(payload?.project_id) !== String(item.id)) return;
+      const action = payload?.action;
+      if (action === 'deleted' || payload?.comment_id) {
+        const cid = payload.comment_id || payload.comment?.id;
+        if (cid) setComments((prev) => (prev || []).filter((c) => c.id !== cid));
+        return;
+      }
+      const row = payload.comment;
+      if (!row?.id) return;
+      if (action === 'updated') {
+        setComments((prev) => (prev || []).map((c) => (c.id === row.id ? { ...c, ...row, reactions: row.reactions ?? c.reactions } : c)));
+        return;
+      }
+      setComments((prev) => ((prev || []).some((c) => c.id === row.id) ? prev : [...(prev || []), { ...row, reactions: row.reactions || { summary: [], mine: null } }]));
+    };
+    socket.on('project:comment', merge);
+    socket.on('project:comment:deleted', (p) => merge({ ...p, action: 'deleted' }));
+    socket.on('project:comment:updated', (p) => merge({ ...p, action: 'updated' }));
+    return () => {
+      socket.off('project:comment', merge);
+      socket.off('project:comment:deleted', merge);
+      socket.off('project:comment:updated', merge);
+    };
+  }, [expanded, item.id]);
+
   const commentsByParent = useMemo(() => groupProjectCommentsByParent(comments || []), [comments]);
 
   const submit = async () => {
@@ -1606,7 +1638,7 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
               type="button"
               onClick={() => {
                 markWorkshopPipelineCardFocus(item.id, 'sx');
-                navigate(`/sx/projects/${item.id}?tab=chat`);
+                navigate(`/sx/projects/${item.id}?tab=comments`);
               }}
               className="group/h w-full text-left"
             >

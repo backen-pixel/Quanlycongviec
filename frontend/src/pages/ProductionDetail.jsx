@@ -34,17 +34,21 @@ import {
 } from '../lib/crmStageSlugLabels';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
 import { buildSxPipelineStageMeta } from '../lib/sxPipelineRevenue';
+import { ProjectCommentsPanel } from '../components/CommentsPanels';
 
 /** Cùng tên tab với LeadDetail (chi tiết deal) — bỏ facebook và calls */
-const DEAL_TAB_KEYS = new Set(['tasks', 'documents', 'activities', 'notes', 'team', 'chat', 'approvals', 'incidents']);
+const DEAL_TAB_KEYS = new Set(['tasks', 'documents', 'notes', 'comments', 'team', 'approvals', 'incidents']);
 const LEGACY_TAB_MAP = {
-  timeline: 'activities',
+  timeline: 'comments',
   'crm-notes': 'notes',
   /** Tab cũ «Đơn hàng» / crm-tasks → nhiệm vụ trên deal */
   orders: 'tasks',
   'crm-tasks': 'tasks',
-  'crm-chat': 'chat',
-  'crm-activities': 'activities',
+  'crm-chat': 'comments',
+  'crm-comments': 'comments',
+  'crm-activities': 'comments',
+  activities: 'comments',
+  chat: 'comments',
   'crm-deal-docs': 'documents',
   'crm-members': 'team',
 };
@@ -986,6 +990,17 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [showIncidentForm, setShowIncidentForm] = useState(false);
   const [incidentForm, setIncidentForm] = useState({ title: '', description: '', severity: 'medium' });
   const [savingIncident, setSavingIncident] = useState(false);
+  const [commentCount, setCommentCount] = useState(0);
+
+  useEffect(() => {
+    if (!project?.id) return;
+    api.get(`/projects/comments/index?project_ids=${project.id}`)
+      .then((r) => {
+        const meta = r.data?.[project.id] || r.data?.[String(project.id)];
+        setCommentCount(meta?.count || 0);
+      })
+      .catch(() => setCommentCount(0));
+  }, [project?.id]);
 
   const noteActivities = useMemo(
     () => (crmActivities || []).filter((a) => a.type === 'note'),
@@ -1124,10 +1139,23 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
 
   useEffect(() => {
     const t = searchParams.get('tab');
+    if (!t) return;
     const next = LEGACY_TAB_MAP[t] || t;
-    if (tabAllowed(next)) setActiveTab(next);
-    else setActiveTab('tasks');
-  }, [id, searchParams, moduleKey]);
+    if (!tabAllowed(next)) {
+      setActiveTab('tasks');
+      const p = new URLSearchParams(searchParams);
+      p.delete('tab');
+      setSearchParams(p, { replace: true });
+      return;
+    }
+    setActiveTab(next);
+    if (next !== t) {
+      const p = new URLSearchParams(searchParams);
+      if (next === 'tasks') p.delete('tab');
+      else p.set('tab', next);
+      setSearchParams(p, { replace: true });
+    }
+  }, [id, searchParams, moduleKey, setSearchParams]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2147,13 +2175,12 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
             <div className="flex border-b flex-wrap">
               {tabBtn('tasks', `✅ Công việc${taskCount ? ` (${taskCount})` : ''}`)}
               {tabBtn('documents', `📋 Tài liệu (${safeProjectDocs.length + visibleCrmSharedDocs.length + safeTaskFiles.length})`)}
-              {tabBtn('activities', `💬 Hoạt động (${crmLeadId ? sharedActivities.length : projectActivities.length})`)}
               {tabBtn('notes', `📝 Ghi chú (${sharedNotes.length})`)}
+              {tabBtn('comments', `💬 Bình luận${commentCount > 0 ? ` (${commentCount})` : ''}`)}
               {tabBtn('incidents', incidents.filter(i => i.status === 'open' || i.status === 'in_progress').length > 0
                 ? `⚠️ Sự cố (${incidents.filter(i => i.status === 'open' || i.status === 'in_progress').length})`
                 : '⚠️ Sự cố')}
               {tabBtn('team', '👥 Thành viên')}
-              {tabBtn('chat', '💬 Trao đổi')}
               {tabBtn('approvals', '✅ Gửi duyệt')}
             </div>
 
@@ -2470,6 +2497,13 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     </div>
                   )}
                 </div>
+              )}
+
+              {/* Bình luận deal / dự án — realtime */}
+              {activeTab === 'comments' && (
+                project?.id
+                  ? <ProjectCommentsPanel projectId={project.id} onCountChange={setCommentCount} />
+                  : <p className="text-sm text-gray-500 text-center py-8">Chưa có dữ liệu để bình luận.</p>
               )}
 
               {/* Thành viên */}

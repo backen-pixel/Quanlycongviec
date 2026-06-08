@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
+import { getSocket } from '../lib/socket';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { formatVND, formatDate } from '../lib/utils';
@@ -674,6 +675,47 @@ export default function ProductionDashboard() {
     if (viewMode !== 'comments') return;
     refreshProjectCommentsIndex();
   }, [viewMode, refreshProjectCommentsIndex]);
+
+  /** Realtime cập nhật badge bình luận trên Kanban / chế độ Bình luận */
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+    const bumpIndex = (payload) => {
+      const pid = payload?.project_id;
+      if (!pid) return;
+      const action = payload?.action;
+      if (action === 'deleted') {
+        setCommentsIndex((prev) => {
+          const cur = prev[String(pid)];
+          if (!cur) return prev;
+          return {
+            ...prev,
+            [String(pid)]: {
+              ...cur,
+              count: Math.max(0, (cur.count || 1) - 1),
+            },
+          };
+        });
+        return;
+      }
+      const c = payload.comment;
+      if (!c) return;
+      setCommentsIndex((prev) => ({
+        ...prev,
+        [String(pid)]: {
+          count: action === 'created' ? ((prev[String(pid)]?.count || 0) + 1) : (prev[String(pid)]?.count || 1),
+          last_at: c.created_at || new Date().toISOString(),
+          last_user_id: c.user_id ?? null,
+        },
+      }));
+    };
+    socket.on('project:comment', bumpIndex);
+    socket.on('project:comment:deleted', (p) => bumpIndex({ ...p, action: 'deleted' }));
+    return () => {
+      socket.off('project:comment', bumpIndex);
+      socket.off('project:comment:deleted', bumpIndex);
+    };
+  }, []);
 
   const submitKanbanQuickComment = useCallback(async () => {
     const v = kanbanCommentBody.trim();
@@ -2374,7 +2416,7 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
             if (typeof onOpenKanbanComment === 'function') {
               onOpenKanbanComment(item);
             } else {
-              navigate(`/sx/projects/${item.id}?tab=chat`);
+              navigate(`/sx/projects/${item.id}?tab=comments`);
             }
           }}
           className="h-5 w-5 inline-flex items-center justify-center rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 cursor-pointer"
