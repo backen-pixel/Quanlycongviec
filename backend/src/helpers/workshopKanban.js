@@ -236,6 +236,7 @@ async function getResolvedKanbanStages(companyId = null, opts = {}) {
     }
     return list.filter((r) => (
       r.bucket_slug === INTAKE_BUCKET
+      || r.is_handover_to_logistics === true
       || !r.workshop_type_id
       || String(r.workshop_type_id) === String(wkt)
     ));
@@ -327,14 +328,40 @@ function kanbanColumnIdForProject(project, sortedStages, wonIdSet, leadMeta = nu
   return null;
 }
 
+/** Chọn cột «Bàn giao VC» phù hợp phân loại project (ưu tiên preferredColId nếu hợp lệ). */
+function resolveSxHandoverColumnId(sortedStages, project, preferredColId = null) {
+  const sorted = [...(sortedStages || [])];
+  const stageIds = new Set(sorted.map((s) => String(s.id)));
+  if (preferredColId && stageIds.has(String(preferredColId))) {
+    return preferredColId;
+  }
+  const wktId = project?.workshop_type_id || project?.workshop_type?.id || null;
+  const handoverCols = sorted.filter((s) => s.is_handover_to_logistics === true);
+  if (!handoverCols.length) return null;
+  if (wktId) {
+    const typed = handoverCols.find((s) => String(s.workshop_type_id || '') === String(wktId));
+    if (typed) return typed.id;
+  }
+  const globalHo = handoverCols.find((s) => !s.workshop_type_id);
+  if (globalHo) return globalHo.id;
+  return handoverCols[0].id;
+}
+
 function enrichOneSxProject(project, sortedStages, wonSet, leadMeta = null) {
-  const handoverCol = sortedStages.find((s) => s.is_handover_to_logistics === true);
   const VC_STATUSES = new Set(['shipping', 'installing', 'warranty']);
   let colId = kanbanColumnIdForProject(project, sortedStages, wonSet, leadMeta);
-  // Khi đã bàn giao sang VC (status shipping/installing/warranty), ưu tiên ghim ở cột "bàn giao VC"
-  // (tránh bị rơi lại cột intake do wonSet).
-  if (VC_STATUSES.has(project.status) && handoverCol) {
-    colId = handoverCol.id;
+  // Khi đã bàn giao sang VC (status shipping/installing/warranty), ghim ở cột bàn giao phù hợp phân loại.
+  if (VC_STATUSES.has(project.status)) {
+    const sorted = [...(sortedStages || [])];
+    const stageIds = new Set(sorted.map((s) => String(s.id)));
+    const leadCol = leadMeta?.sx_pipeline_stage_id;
+    let preferred = null;
+    if (leadCol && stageIds.has(String(leadCol))) {
+      const leadColRow = sorted.find((s) => String(s.id) === String(leadCol));
+      if (leadColRow?.is_handover_to_logistics) preferred = leadCol;
+    }
+    const handoverId = resolveSxHandoverColumnId(sortedStages, project, preferred);
+    if (handoverId) colId = handoverId;
   }
   const intakeCol = sortedStages.find((s) => s.bucket_slug === INTAKE_BUCKET);
   const inIntake = intakeCol && colId === intakeCol.id;

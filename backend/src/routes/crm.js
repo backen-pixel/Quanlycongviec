@@ -97,7 +97,7 @@ const {
   resolveProductionHandoverResponsibleUserId,
 } = require('../helpers/productionHandoverSettings');
 const { ensureDealLeadDocumentsForModuleTransition } = require('../helpers/ensureDealLeadDocumentsForModuleTransition');
-const { getLeadDocumentFieldsFromCrmTask } = require('../helpers/crmTaskLeadDocumentMeta');
+const { getLeadDocumentFieldsFromCrmTask, getDefaultCrmAttachmentShare } = require('../helpers/crmTaskLeadDocumentMeta');
 const { parseVietnameseMoney, parseVietnameseMeasure } = require('../helpers/excelVnNumbers');
 const { snapshotOrderRowFromQuotation, mapQuotationItemsToOrderRows } = require('../helpers/orderFromQuotation');
 let autoFlowFns = {};
@@ -11850,10 +11850,12 @@ r.put('/leads/:leadId/tasks/:taskId/notes', async (req, res) => {
             .eq('source_attachment_id', existingAtt.id);
         } else {
           // Create new attachment + document
+          const noteShare = getDefaultCrmAttachmentShare(data, taskDocOpts);
           const { data: att } = await supabase.from('crm_task_attachments').insert({
             task_id: req.params.taskId, lead_id: req.params.leadId,
             name: `📝 ${data.title}`, doc_type: 'task_inline_note', notes,
             created_by: req.user.userId,
+            ...noteShare,
           }).select().single();
           if (att) {
             await supabase.from('lead_documents').insert({
@@ -11896,6 +11898,11 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
     const finalCompanies = task?.default_allowed_companies || null;
     const finalDepts = task?.default_allowed_departments || null;
 
+    const { data: leadForShare } = await supabase.from('crm_leads')
+      .select('project_id').eq('id', req.params.leadId).single();
+    const bulkShareOpts = { linkToProject: !!leadForShare?.project_id };
+    const defaultShare = getDefaultCrmAttachmentShare(task, bulkShareOpts);
+
     // Insert tất cả attachments 1 lần
     const rows = items.map(item => ({
       task_id: req.params.taskId,
@@ -11906,6 +11913,8 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
       file_size: item.file_size, mime_type: item.mime_type,
       allowed_companies: finalCompanies, allowed_departments: finalDepts,
       created_by: req.user.userId,
+      shared_to_project: item.shared_to_project ?? defaultShare.shared_to_project,
+      allowed_share_modules: item.allowed_share_modules ?? defaultShare.allowed_share_modules,
     }));
     const { data, error } = await supabase.from('crm_task_attachments')
       .insert(rows)
@@ -11914,12 +11923,10 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
 
     // Sync → lead_documents 1 lần
     try {
-      const { data: lead } = await supabase.from('crm_leads')
-        .select('project_id').eq('id', req.params.leadId).single();
-      const bulkDocOpts = { linkToProject: !!lead?.project_id };
+      const bulkDocOpts = bulkShareOpts;
       const syncRows = (data || []).map(att => ({
         lead_id: req.params.leadId,
-        project_id: lead?.project_id || null,
+        project_id: leadForShare?.project_id || null,
         name: `[${task?.title || 'Task'}] ${att.name}`,
         doc_type: att.doc_type, file_url: att.file_url, file_name: att.file_name,
         file_size: att.file_size, mime_type: att.mime_type,
@@ -11952,6 +11959,14 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
       }
     }
     
+    const { data: taskForShare } = await supabase.from('crm_tasks')
+      .select('id, title, stage_slug, default_allowed_companies, default_allowed_departments')
+      .eq('id', req.params.taskId).single();
+    const { data: leadForShare } = await supabase.from('crm_leads')
+      .select('project_id').eq('id', req.params.leadId).single();
+    const singleShareOpts = { linkToProject: !!leadForShare?.project_id };
+    const singleDefaultShare = getDefaultCrmAttachmentShare(taskForShare, singleShareOpts);
+
     const { data, error } = await supabase.from('crm_task_attachments')
       .insert({
         task_id: req.params.taskId,
@@ -11962,6 +11977,8 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
         allowed_companies: finalCompanies,
         allowed_departments: finalDepts,
         created_by: req.user.userId,
+        shared_to_project: req.body.shared_to_project ?? singleDefaultShare.shared_to_project,
+        allowed_share_modules: req.body.allowed_share_modules ?? singleDefaultShare.allowed_share_modules,
       })
       .select('*, creator:users!crm_task_attachments_created_by_fkey(id, full_name)')
       .single();
@@ -11969,10 +11986,8 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
 
     // ── SYNC → lead_documents ──
     try {
-      const { data: task } = await supabase.from('crm_tasks')
-        .select('id, title, stage_slug').eq('id', req.params.taskId).single();
-      const { data: lead } = await supabase.from('crm_leads')
-        .select('project_id').eq('id', req.params.leadId).single();
+      const task = taskForShare;
+      const lead = leadForShare;
       await supabase.from('lead_documents').insert({
         lead_id: req.params.leadId,
         project_id: lead?.project_id || null,

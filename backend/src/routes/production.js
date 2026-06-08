@@ -476,9 +476,18 @@ r.get('/pipeline-stages', requirePermission('projects', 'view'), responseCache({
     if (rawWorkshopType !== undefined && rawWorkshopType !== null && rawWorkshopType !== '') {
       const wkt = String(rawWorkshopType);
       if (wkt.toLowerCase() === 'global') {
-        out = out.filter((s) => !s.workshop_type_id);
+        out = out.filter((s) => (
+          !s.workshop_type_id
+          || s.is_handover_to_logistics === true
+          || s.bucket_slug === INTAKE_BUCKET
+        ));
       } else {
-        out = out.filter((s) => !s.workshop_type_id || String(s.workshop_type_id) === wkt);
+        out = out.filter((s) => (
+          !s.workshop_type_id
+          || String(s.workshop_type_id) === wkt
+          || s.is_handover_to_logistics === true
+          || s.bucket_slug === INTAKE_BUCKET
+        ));
       }
     }
     res.json(out);
@@ -1327,10 +1336,17 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
     ]);
 
     const documents = documentsRes.data || [];
-    const sharedDocuments = documents.filter(
-      (d) => isDocSharedToWorkshop(d) && leadDocVisibleForModuleAndUser(d, 'production', req.user),
+    const isSxTaskDocForProject = (d) => (
+      !!d?.project_id
+      && !!d?.source_crm_task_id
+      && String(d.crm_stage_slug || '').startsWith('sx_')
     );
-    const hiddenDocuments = documents.filter((doc) => !isDocSharedToWorkshop(doc));
+    const isVisibleSxDoc = (d) => (
+      (isDocSharedToWorkshop(d) || isSxTaskDocForProject(d))
+      && leadDocVisibleForModuleAndUser(d, 'production', req.user)
+    );
+    const sharedDocuments = documents.filter(isVisibleSxDoc);
+    const hiddenDocuments = documents.filter((doc) => !isVisibleSxDoc(doc));
 
     let crmSummary = await loadCrmDealsSummaryForProductionProject(project.id);
     // Nếu dự án được tạo thẳng từ module SX (không qua CRM / không có orders),
@@ -2242,10 +2258,13 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
       .single();
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
-    // ── 0. Lấy SX pipeline stage hiện tại (trước khi clear current_stage_id) ──
-    let sxHandoverPipelineStageId = null;
+    // ── 0. Cột pipeline SX «Bàn giao VC» — ưu tiên id client gửi (kéo thả Kanban), fallback workflow cũ ──
+    let sxHandoverPipelineStageId = req.body?.production_pipeline_stage_id
+      || req.body?.sx_pipeline_stage_id
+      || null;
+    if (sxHandoverPipelineStageId) sxHandoverPipelineStageId = String(sxHandoverPipelineStageId);
     try {
-      if (project.current_stage_id) {
+      if (!sxHandoverPipelineStageId && project.current_stage_id) {
         const { data: sxPipeRow } = await supabase
           .from('production_pipeline_stages')
           .select('id')
@@ -2443,7 +2462,14 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
     // Emit badge update cho CRM deals liên quan sau khi sync vc_pipeline_stage_id
     emitCrmBadgeUpdateForProject(id, io).catch(() => {});
 
-    res.json({ project: updated, handed_over: true });
+    res.json({
+      project: {
+        ...updated,
+        ...(sxHandoverPipelineStageId ? { sx_kanban_column_id: sxHandoverPipelineStageId } : {}),
+      },
+      handed_over: true,
+      sx_pipeline_stage_id: sxHandoverPipelineStageId,
+    });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });

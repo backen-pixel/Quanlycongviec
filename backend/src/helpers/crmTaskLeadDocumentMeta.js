@@ -59,6 +59,21 @@ function getLeadDocumentShareFromCrm(artifactRow) {
   };
 }
 
+/** Nhiệm vụ SX trên deal đã có project_id → tự chia sẻ sang tab Tài liệu module Sản xuất. */
+function shouldAutoShareSxToWorkshop(taskRow, opts = {}) {
+  if (!opts.linkToProject) return false;
+  const slug = taskRow?.stage_slug;
+  return !!(slug && String(slug).startsWith(SX_PREFIX));
+}
+
+/** Cờ mặc định trên crm_task_attachments khi tạo từ nhiệm vụ SX đã gắn dự án. */
+function getDefaultCrmAttachmentShare(taskRow, opts = {}) {
+  if (shouldAutoShareSxToWorkshop(taskRow, opts)) {
+    return { shared_to_project: true, allowed_share_modules: ['production'] };
+  }
+  return { shared_to_project: false, allowed_share_modules: null };
+}
+
 /**
  * @param {{ id?: string, stage_slug?: string|null, title?: string, shared_to_project?: boolean, allowed_share_modules?: unknown }|null|undefined} taskRow
  * @param {{ linkToProject?: boolean }} opts — crm_leads đã có project_id (deal đã vào xưởng / có dự án)
@@ -78,7 +93,10 @@ function getLeadDocumentFieldsFromCrmTask(taskRow, opts = {}, attachmentRow = nu
   const slug = taskRow.stage_slug || null;
   const pipelineStageName = taskRow.pipeline_stage?.name || taskRow.pipeline_stage_name || null;
   const shareSrc = attachmentRow?.shared_to_project != null ? attachmentRow : taskRow;
-  const share = getLeadDocumentShareFromCrm(shareSrc);
+  let share = getLeadDocumentShareFromCrm(shareSrc);
+  if (!share.shared_to_workshop && shouldAutoShareSxToWorkshop(taskRow, opts)) {
+    share = { shared_to_workshop: true, allowed_share_modules: ['production'] };
+  }
   return {
     source_crm_task_id: taskRow.id,
     crm_stage_slug: slug,
@@ -90,5 +108,7 @@ function getLeadDocumentFieldsFromCrmTask(taskRow, opts = {}, attachmentRow = nu
 module.exports = {
   getCrmStageGroupLabel,
   getLeadDocumentShareFromCrm,
+  shouldAutoShareSxToWorkshop,
+  getDefaultCrmAttachmentShare,
   getLeadDocumentFieldsFromCrmTask,
 };

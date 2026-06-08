@@ -33,6 +33,7 @@ import {
   resolveCrmPipelineStageLabel,
 } from '../lib/crmStageSlugLabels';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
+import { buildSxPipelineStageMeta } from '../lib/sxPipelineRevenue';
 
 /** Cùng tên tab với LeadDetail (chi tiết deal) — bỏ facebook và calls */
 const DEAL_TAB_KEYS = new Set(['tasks', 'documents', 'activities', 'notes', 'team', 'chat', 'approvals', 'incidents']);
@@ -1370,10 +1371,12 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       }
       const dealId = proj?.crmDeals?.[0]?.id || fallbackDealIdForTasks || null;
       await fetchCrmDealTaskSummary(dealId);
+      loadProjectDocs(id);
+      loadTaskFiles(id);
     } catch (_) {
       /* giữ state cũ */
     }
-  }, [id, MOD.apiPrefix, MOD.stagesKey, pickWorkshopTasksForSummary, fallbackDealIdForTasks, fetchCrmDealTaskSummary]);
+  }, [id, MOD.apiPrefix, MOD.stagesKey, pickWorkshopTasksForSummary, fallbackDealIdForTasks, fetchCrmDealTaskSummary, loadProjectDocs, loadTaskFiles]);
 
   useEffect(() => {
     if (!handoverModal) return;
@@ -1408,6 +1411,12 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     setHandoverSaving(true);
     setHandoverErr('');
     try {
+      const sxColId = handoverModal?.targetSxStageId ? String(handoverModal.targetSxStageId) : '';
+      const targetCol = sxColId
+        ? (productionStages || []).find((s) => String(s.id) === sxColId)
+        : null;
+      const sxStageMeta = buildSxPipelineStageMeta(targetCol);
+
       // Optimistic: ghim thẻ sang trạng thái VC ngay trên chi tiết
       setProject((prev) => (prev ? {
         ...prev,
@@ -1415,10 +1424,16 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         current_stage_id: null,
         current_stage: null,
         logistics_company_id: handoverLogisticsCompanyId,
+        ...(sxColId ? {
+          sx_kanban_column_id: sxColId,
+          sx_pipeline_stage: sxStageMeta || prev.sx_pipeline_stage,
+          sx_intake: false,
+        } : {}),
       } : prev));
 
       await api.patch(`/production/projects/${handoverModal.projectId}/handover-vc`, {
         logistics_company_id: handoverLogisticsCompanyId,
+        ...(sxColId ? { production_pipeline_stage_id: sxColId } : {}),
       });
       closeHandoverModal();
       window.setTimeout(() => { refreshProjectSilently(); }, 200);
@@ -1427,7 +1442,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       refreshProjectSilently();
     }
     setHandoverSaving(false);
-  }, [handoverModal?.projectId, handoverLogisticsCompanyId, closeHandoverModal, refreshProjectSilently]);
+  }, [handoverModal, handoverLogisticsCompanyId, closeHandoverModal, refreshProjectSilently, productionStages]);
 
   const ensureCrmDealAndSxTasks = useCallback(async () => {
     if (ensuringCrmDeal) return;
@@ -2130,7 +2145,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
             {/* Tab bar — giống LeadDetail, bỏ Facebook và Tổng đài */}
             <div className="flex border-b flex-wrap">
               {tabBtn('tasks', `✅ Công việc${taskCount ? ` (${taskCount})` : ''}`)}
-              {tabBtn('documents', `📋 Tài liệu (${safeProjectDocs.length + (project.sharedDocuments?.length || 0) + safeTaskFiles.length})`)}
+              {tabBtn('documents', `📋 Tài liệu (${safeProjectDocs.length + visibleCrmSharedDocs.length + safeTaskFiles.length})`)}
               {tabBtn('activities', `💬 Hoạt động (${crmLeadId ? sharedActivities.length : projectActivities.length})`)}
               {tabBtn('notes', `📝 Ghi chú (${sharedNotes.length})`)}
               {tabBtn('incidents', incidents.filter(i => i.status === 'open' || i.status === 'in_progress').length > 0
