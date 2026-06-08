@@ -2,6 +2,20 @@ import { api } from '../api/client';
 import type { CrmDealSummary, CrmTask, KanbanStage, PersonRef, ProductionProjectDetail, ProjectActivity } from '../types';
 import { mapProjectRow } from './productionApi';
 
+export function isCrmProductionTaskDone(status: string): boolean {
+  return status === 'completed' || status === 'done';
+}
+
+export function calcCrmProductionTaskProgress(
+  tasks: Pick<CrmTask, 'status'>[],
+  fallbackPercent = 0,
+): { done: number; total: number; percent: number } {
+  const total = tasks.length;
+  const done = tasks.filter((t) => isCrmProductionTaskDone(t.status)).length;
+  const percent = total ? Math.round((done / total) * 100) : Math.round(fallbackPercent);
+  return { done, total, percent };
+}
+
 function mapPerson(raw: unknown): PersonRef | null {
   if (!raw || typeof raw !== 'object') return null;
   const p = raw as Record<string, unknown>;
@@ -75,21 +89,67 @@ function mapCrmTask(raw: Record<string, unknown>): CrmTask {
           name: (raw.pipeline_stage as Record<string, unknown>).name != null
             ? String((raw.pipeline_stage as Record<string, unknown>).name)
             : null,
+          order_index: (raw.pipeline_stage as Record<string, unknown>).order_index != null
+            ? Number((raw.pipeline_stage as Record<string, unknown>).order_index)
+            : undefined,
         }
       : null,
   };
 }
 
+/** Thứ tự giai đoạn SX — khớp CRMTasksTab.jsx SX_ORDER_STAGES */
+const SX_STAGE_ORDER: { slug: string; label: string }[] = [
+  { slug: 'sx_tiep_nhan', label: 'Tiếp nhận' },
+  { slug: 'sx_thiet_ke_ke_hoach', label: 'Thiết kế và lên kế hoạch' },
+  { slug: 'sx_kiem_tra_cheo', label: 'Kiểm tra chéo' },
+  { slug: 'sx_vat_tu', label: 'Vật tư' },
+  { slug: 'sx_san_xuat_thung', label: 'Sản xuất thùng' },
+  { slug: 'sx_san_xuat_alu', label: 'Sản xuất alu' },
+  { slug: 'sx_hoan_thien', label: 'Hoàn thiện' },
+  { slug: 'sx_dong_goi', label: 'Đóng gói' },
+  { slug: 'sx_giao_hang', label: 'Giao hàng' },
+];
+
+const SX_STAGE_INDEX = new Map(SX_STAGE_ORDER.map((s, i) => [s.slug, i]));
+
+/** Chuẩn hoá stage_slug (bỏ hậu tố uuid pipeline) — khớp web CRMTasksTab */
+export function normalizeCrmTaskStageSlug(slug?: string | null): string {
+  const s = String(slug || '').trim();
+  if (!s) return '_other';
+  if (s.startsWith('sx_')) {
+    return s.replace(/[-_][a-f0-9]{8}$/i, '');
+  }
+  return s;
+}
+
+function sortTasksInStage(tasks: CrmTask[]): CrmTask[] {
+  return [...tasks].sort((a, b) => {
+    const oa = a.order_index ?? 0;
+    const ob = b.order_index ?? 0;
+    if (oa !== ob) return oa - ob;
+    return String(a.title || '').localeCompare(String(b.title || ''), 'vi');
+  });
+}
+
+function stageGroupSortIndex(key: string, sampleTask?: CrmTask): number {
+  const normalized = normalizeCrmTaskStageSlug(key);
+  const sxIdx = SX_STAGE_INDEX.get(normalized);
+  if (sxIdx != null) return sxIdx;
+  const pipeOrder = sampleTask?.pipeline_stage?.order_index;
+  if (pipeOrder != null && Number.isFinite(pipeOrder)) return 100 + pipeOrder;
+  return 900;
+}
+
 export function resolveCrmTaskStageLabel(task: CrmTask): string {
   if (task.pipeline_stage?.name) return task.pipeline_stage.name;
-  const slug = String(task.stage_slug || '');
-  if (!slug) return 'Khác';
-  if (slug === 'sx_tiep_nhan') return 'Tiếp nhận';
+  const slug = normalizeCrmTaskStageSlug(task.stage_slug);
+  const fromOrder = SX_STAGE_ORDER.find((s) => s.slug === slug);
+  if (fromOrder) return fromOrder.label;
+  if (!slug || slug === '_other') return 'Khác';
   if (slug === 'sx_other') return 'Khác';
   if (slug.startsWith('sx_')) {
     return slug
       .replace(/^sx_/, '')
-      .replace(/[-_][a-f0-9]{8}$/i, '')
       .replace(/_/g, ' ')
       .replace(/\b\w/g, (c) => c.toUpperCase());
   }
@@ -97,14 +157,26 @@ export function resolveCrmTaskStageLabel(task: CrmTask): string {
 }
 
 export function groupCrmTasksByStage(tasks: CrmTask[]): { key: string; label: string; tasks: CrmTask[] }[] {
-  const map = new Map<string, { label: string; tasks: CrmTask[] }>();
+  const map = new Map<string, { label: string; tasks: CrmTask[]; sample?: CrmTask }>();
   for (const task of tasks) {
-    const key = task.stage_slug || '_other';
-    const label = resolveCrmTaskStageLabel(task);
-    if (!map.has(key)) map.set(key, { label, tasks: [] });
+    const key = normalizeCrmTaskStageSlug(task.stage_slug);
+    if (!map.has(key)) {
+      map.set(key, { label: resolveCrmTaskStageLabel(task), tasks: [], sample: task });
+    }
     map.get(key)!.tasks.push(task);
   }
-  return [...map.entries()].map(([key, v]) => ({ key, label: v.label, tasks: v.tasks }));
+  return [...map.entries()]
+    .sort(([keyA, a], [keyB, b]) => {
+      const ia = stageGroupSortIndex(keyA, a.sample);
+      const ib = stageGroupSortIndex(keyB, b.sample);
+      if (ia !== ib) return ia - ib;
+      return keyA.localeCompare(keyB, 'vi');
+    })
+    .map(([key, v]) => ({
+      key,
+      label: v.label,
+      tasks: sortTasksInStage(v.tasks),
+    }));
 }
 
 export async function fetchProductionProjectDetail(projectId: string): Promise<ProductionProjectDetail> {
