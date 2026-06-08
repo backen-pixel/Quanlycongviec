@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { X, Search } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
 
 export default function NewProductionProjectModal({ onClose }) {
   const { user } = useAuth();
@@ -166,18 +167,20 @@ export default function NewProductionProjectModal({ onClose }) {
             </div>
           )}
 
-          {/* Giá trị & Ưu tiên */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">Giá trị ước tính (VND)</label>
-              <input
-                type="number"
-                value={formData.estimated_value}
-                onChange={e => set('estimated_value', e.target.value)}
-                placeholder="0"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-              />
-            </div>
+          {/* Ưu tiên (ẩn giá trị ước tính trong module SX) */}
+          <div className={HIDE_PRODUCTION_DEAL_VALUES ? '' : 'grid grid-cols-2 gap-3'}>
+            {!HIDE_PRODUCTION_DEAL_VALUES && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">Giá trị ước tính (VND)</label>
+                <input
+                  type="number"
+                  value={formData.estimated_value}
+                  onChange={e => set('estimated_value', e.target.value)}
+                  placeholder="0"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                />
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">Ưu tiên</label>
               <select
