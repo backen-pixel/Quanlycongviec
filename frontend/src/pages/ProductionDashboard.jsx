@@ -717,6 +717,28 @@ export default function ProductionDashboard() {
     };
   }, []);
 
+  /** Realtime Kanban SX: kéo thẻ / sửa nhiệm vụ từ mobile → refetch silent */
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return undefined;
+    let timer = null;
+    const schedule = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => loadRef.current?.({ silent: true }), 800);
+    };
+    const onStage = () => schedule();
+    const onTask = () => schedule();
+    socket.on('project:stage_changed', onStage);
+    socket.on('crm:task_changed', onTask);
+    return () => {
+      if (timer) clearTimeout(timer);
+      socket.off('project:stage_changed', onStage);
+      socket.off('crm:task_changed', onTask);
+    };
+  }, []);
+
   const submitKanbanQuickComment = useCallback(async () => {
     const v = kanbanCommentBody.trim();
     const it = kanbanCommentItem;

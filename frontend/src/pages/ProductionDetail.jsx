@@ -1407,6 +1407,31 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     }
   }, [id, MOD.apiPrefix, MOD.stagesKey, pickWorkshopTasksForSummary, fallbackDealIdForTasks, fetchCrmDealTaskSummary, loadProjectDocs, loadTaskFiles]);
 
+  /** Realtime: đồng bộ Kanban + nhiệm vụ CRM giữa web và mobile */
+  useEffect(() => {
+    if (!socket || !id) return undefined;
+    let timer = null;
+    const schedule = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => refreshProjectSilently(), 650);
+    };
+    const onStage = (payload) => {
+      const pid = payload?.id || payload?.project_id;
+      if (pid && String(pid) !== String(id)) return;
+      schedule();
+    };
+    const onTask = (payload) => {
+      if (payload?.project_id && String(payload.project_id) === String(id)) schedule();
+    };
+    socket.on('project:stage_changed', onStage);
+    socket.on('crm:task_changed', onTask);
+    return () => {
+      if (timer) clearTimeout(timer);
+      socket.off('project:stage_changed', onStage);
+      socket.off('crm:task_changed', onTask);
+    };
+  }, [socket, id, refreshProjectSilently]);
+
   useEffect(() => {
     if (!handoverModal) return;
     let cancelled = false;
