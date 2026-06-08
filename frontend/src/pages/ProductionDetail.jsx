@@ -60,26 +60,29 @@ function resolveSxKanbanCurrentStageId(project, stages) {
   const ids = new Set(list.map((s) => String(s.id)));
   const inList = (id) => (id != null && ids.has(String(id)) ? id : null);
   const sorted = [...list].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+  const VC_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
+  const inVcFlow = VC_STATUSES.has(String(project?.status || ''));
   const firstCol = () => {
     const intake = sorted.find(
       (s) => s.bucket_slug === 'won_pending' || String(s.id).startsWith('__fb_'),
     );
     return intake?.id ?? sorted[0]?.id ?? null;
   };
+  const handoverCol = sorted.find((s) => s.is_handover_to_logistics === true);
 
   const primaryDeal = project?.crmDeals?.[0];
-  if (project?.sx_won_deal && !primaryDeal?.sx_handover_at) {
-    const fromSx = inList(project?.sx_kanban_column_id);
-    if (fromSx) return fromSx;
-    return firstCol();
-  }
-
   const fromSx = inList(project?.sx_kanban_column_id);
   if (fromSx) return fromSx;
 
   const crmCol = primaryDeal?.sx_pipeline_stage?.id;
   const fromCrm = inList(crmCol);
   if (fromCrm) return fromCrm;
+
+  if (inVcFlow && handoverCol?.id) return handoverCol.id;
+
+  if (project?.sx_won_deal && !primaryDeal?.sx_handover_at) {
+    return firstCol();
+  }
 
   const wfId = project?.current_stage_id || project?.current_stage?.id;
   if (wfId) {
@@ -93,7 +96,7 @@ function resolveSxKanbanCurrentStageId(project, stages) {
     return firstCol();
   }
 
-  return sorted[0]?.id ?? null;
+  return null;
 }
 
 const ACTIVITY_TYPES = [
