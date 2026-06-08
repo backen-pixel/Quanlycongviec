@@ -11,7 +11,7 @@ import {
 import {
   CheckCircle2, Search, X, Calendar, Plus,
   Factory, Users, LayoutGrid, List,
-  CheckSquare, UserCheck, Loader2, Truck, Filter, Clock, Layers, Trash2, MessageSquare, Pin, ArrowUpDown,
+  CheckSquare, UserCheck, Loader2, Truck, Filter, Clock, Layers, Trash2, MessageSquare, Pin, ArrowUpDown, Building2,
 } from 'lucide-react';
 import { ProductionListView, ProductionPlannerView, ProductionCalendarView, ProductionCommentsView, ProductionDeadlineView } from '../components/ProductionViews';
 import WorkshopPipelineKanbanScroll from '../components/WorkshopPipelineKanbanScroll';
@@ -193,7 +193,7 @@ export default function ProductionDashboard() {
   const [showAdvFilter, setShowAdvFilter] = useState(false);
   const [filterWorkTypeId, setFilterWorkTypeId] = useState(() => P0?.filterWorkTypeId ?? '');
   const [workTypes, setWorkTypes] = useState([]);
-  /** Hiện cột ảo «Chưa phân loại» ở cuối Kanban — gom các project chưa có workshop_type_id. */
+  /** Hiện cột ảo «Chưa phân loại» ở đầu Kanban — gom các project chưa có workshop_type_id. */
   const [showOrphanColumn, setShowOrphanColumn] = useState(() => !!P0?.showOrphanColumn);
 
   // Bulk selection
@@ -604,7 +604,7 @@ export default function ProductionDashboard() {
       bucket_slug: 'orphan',
       workflow_stage_id: null,
     };
-    return [...baseColumns, orphanCol];
+    return [orphanCol, ...baseColumns];
   }, [pipeline, scopeProjects, showOrphanColumn, filterWorkTypeId]);
 
   const filteredKanbanPipeline = useMemo(() => {
@@ -1189,19 +1189,41 @@ export default function ProductionDashboard() {
             )}
           </div>
 
-          {/* Active filter chips — inline, có nút × để bỏ */}
-          {filterCompany && companies.length > 0 && (() => {
-            const c = companies.find((x) => String(x.id) === String(filterCompany));
-            if (!c) return null;
-            return (
-              <span className="inline-flex items-center gap-1.5 h-9 pl-3 pr-1.5 bg-blue-50 border border-blue-200 text-blue-700 rounded-lg text-sm font-medium">
-                {c.short_name || c.name}
-                <button type="button" onClick={() => handleStaffFilterCompanyChange('')} className="p-1 rounded hover:bg-blue-100 cursor-pointer" title="Bỏ lọc công ty">
-                  <X className="h-3.5 w-3.5" />
+          {/* Công ty — bên phải ô tìm kiếm, bên trái phân loại */}
+          {isAdmin && !isCompanyScopedAdmin && companies.length > 0 && (
+            <div
+              className={`inline-flex items-center gap-1 h-9 px-2 rounded-lg border shrink-0 ${
+                filterCompany ? 'border-blue-300 bg-blue-50' : 'border-gray-200 bg-white'
+              }`}
+              title="Lọc theo công ty"
+            >
+              <Building2 className={`h-3.5 w-3.5 shrink-0 ${filterCompany ? 'text-blue-700' : 'text-gray-500'}`} />
+              <select
+                value={filterCompany}
+                onChange={(e) => handleStaffFilterCompanyChange(e.target.value)}
+                className={`h-8 text-sm bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[12rem] font-medium ${
+                  filterCompany ? 'text-blue-800' : 'text-gray-700'
+                }`}
+              >
+                <option value="">Công ty: Tất cả</option>
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                ))}
+              </select>
+              {filterCompany && (
+                <button
+                  type="button"
+                  onClick={() => handleStaffFilterCompanyChange('')}
+                  className="p-1 rounded hover:bg-white/70 cursor-pointer"
+                  title="Bỏ lọc công ty"
+                >
+                  <X className="h-3 w-3" />
                 </button>
-              </span>
-            );
-          })()}
+              )}
+            </div>
+          )}
+
+          {/* Active filter chips — inline, có nút × để bỏ */}
           {priorityFilter && (
             <span className="inline-flex items-center gap-1.5 h-9 pl-3 pr-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg text-sm font-medium">
               Ưu tiên: {priorityFilter === 'high' ? 'Cao' : priorityFilter === 'medium' ? 'TB' : 'Thấp'}
@@ -1274,7 +1296,7 @@ export default function ProductionDashboard() {
                   ? 'bg-slate-100 border-slate-400 text-slate-800'
                   : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
               }`}
-              title="Hiện cột ảo ở cuối Kanban — gom các project chưa được gán phân loại (workshop type)."
+              title="Hiện cột ảo ở đầu Kanban — gom các project chưa được gán phân loại (workshop type)."
             >
               <input
                 type="checkbox"
