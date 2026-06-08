@@ -1190,6 +1190,7 @@ module.exports = {
   firstSxPipelineColumnId,
   loadDealSxPipelineMetaByProjectIds,
   kanbanColumnIdForProject,
+  resolveSxHandoverColumnId,
   enrichProjectsForSx,
   buildPipelineSummary,
   emitCrmBadgeUpdateForProject,

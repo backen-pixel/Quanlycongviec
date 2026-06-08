@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -28,6 +28,7 @@ export default function ProductionPipelineSettingsPage() {
   const [typesLoading, setTypesLoading] = useState(false);
   const [adding, setAdding] = useState(false);
   const [saving, setSaving] = useState(false);
+  const deletingStageIdsRef = useRef(new Set());
   const [seeding, setSeeding] = useState(false);
   const [seedingDefault, setSeedingDefault] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -573,12 +574,28 @@ export default function ProductionPipelineSettingsPage() {
 
   const del = async (id, bucket) => {
     if (bucket === INTAKE) return alert('Không xóa cột deal thắng — chỉ ẩn');
+    if (deletingStageIdsRef.current.has(id)) return;
     if (!confirm('Xóa cột này?')) return;
+    deletingStageIdsRef.current.add(id);
+    if (editId === id) {
+      setEditId(null);
+      setAdding(false);
+    }
+    setStages((prev) => prev.filter((s) => s.id !== id));
     try {
       await api.delete(`/production/pipeline-stages/${id}`);
-      load();
+      await load();
     } catch (e) {
+      const alreadyGone = e.response?.status === 404
+        || e.response?.data?.already_deleted === true;
+      if (alreadyGone) {
+        await load();
+        return;
+      }
+      await load();
       alert(e.response?.data?.error || 'Lỗi xóa');
+    } finally {
+      deletingStageIdsRef.current.delete(id);
     }
   };
 
