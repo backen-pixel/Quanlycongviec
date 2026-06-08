@@ -62,11 +62,18 @@ export function isVisibleInShareModule(artifact, moduleKey) {
   return cleaned.includes(mod);
 }
 
+/** Tài liệu đồng bộ từ nhiệm vụ SX (sx_*) đã gắn project — luôn hiện ở module Sản xuất. */
+export function isSxTaskDocForProject(doc) {
+  return !!doc?.project_id
+    && !!doc?.source_crm_task_id
+    && String(doc.crm_stage_slug || '').startsWith('sx_');
+}
+
 /** lead_documents trong module xưởng */
 export function isLeadDocVisibleInModule(doc, moduleKey) {
   const mod = String(moduleKey || '').toLowerCase().trim();
   if (!SHARE_MODULE_KEYS.has(mod)) return true;
-  if (!isLeadDocSharedToWorkshop(doc)) return false;
+  if (!isLeadDocSharedToWorkshop(doc) && !(mod === 'production' && isSxTaskDocForProject(doc))) return false;
   return isVisibleInShareModule(doc, mod);
 }
 

@@ -20,7 +20,14 @@ import { useWorkshopStaffFilter } from '../hooks/useWorkshopStaffFilter';
 import {
   peekWorkshopPipelineCardFocus, clearWorkshopPipelineCardFocus, markWorkshopPipelineCardFocus,
 } from '../lib/workshopPipelineStorage';
-import { computeSxRevenueKpis, getSxPipelineStageSlaTone, isSxColumnSlaOverdue } from '../lib/sxPipelineRevenue';
+import {
+  buildSxPipelineStageMeta,
+  computeSxRevenueKpis,
+  getSxPipelineStageSlaTone,
+  isSxColumnSlaOverdue,
+  resolveSxHandoverColumnId,
+  VC_KANBAN_STATUSES,
+} from '../lib/sxPipelineRevenue';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import NewDealModal from '../components/NewDealModal';
@@ -549,11 +556,17 @@ export default function ProductionDashboard() {
      */
     const sortedStages = [...baseStages].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
     const intake = sortedStages.find((s) => s.bucket_slug === 'won_pending');
-    const handover = sortedStages.find((s) => s.is_handover_to_logistics === true);
-    const VC_STATUSES = new Set(['shipping', 'installing', 'warranty']);
 
     const colIdFor = (project) => {
-      if (VC_STATUSES.has(project.status) && handover) return handover.id;
+      if (VC_KANBAN_STATUSES.has(project.status)) {
+        let preferred = null;
+        if (project.sx_kanban_column_id && sortedStages.some((s) => String(s.id) === String(project.sx_kanban_column_id))) {
+          const pinned = sortedStages.find((s) => String(s.id) === String(project.sx_kanban_column_id));
+          if (pinned?.is_handover_to_logistics) preferred = project.sx_kanban_column_id;
+        }
+        const handoverId = resolveSxHandoverColumnId(sortedStages, project, preferred);
+        if (handoverId) return handoverId;
+      }
       // Ưu tiên cột Kanban đã gắn (CRM deal / enrich) — khớp logic BE khi nhiều cột dùng chung workflow.
       if (project.sx_kanban_column_id && sortedStages.some((s) => String(s.id) === String(project.sx_kanban_column_id))) {
         return project.sx_kanban_column_id;
@@ -917,37 +930,42 @@ export default function ProductionDashboard() {
     }
   };
 
-  const handleHandoverVC = useCallback(async (projectId, projectName, logisticsCompanyId) => {
+  const handleHandoverVC = useCallback(async (projectId, projectName, logisticsCompanyId, sxPipelineStageId = '') => {
+    const sxColId = sxPipelineStageId ? String(sxPipelineStageId) : '';
+    const targetCol = sxColId ? pipeline.find((s) => String(s.id) === sxColId) : null;
+    const sxStageMeta = buildSxPipelineStageMeta(targetCol);
     try {
-      // Cập nhật optimistic: đổi status thành shipping, GIỮ trong kanban
-      setProjects((prev) => prev.map((p) => (p.id === projectId
-        ? { ...p, status: 'shipping', current_stage: null }
-        : p)));
       const { data } = await api.patch(`/production/projects/${projectId}/handover-vc`, {
         logistics_company_id: logisticsCompanyId || undefined,
+        ...(sxColId ? { production_pipeline_stage_id: sxColId } : {}),
       });
       const updated = data?.project;
-      if (updated) {
-        setProjects((prev) => prev.map((p) => (p.id === projectId
-          ? {
-              ...p,
-              status: updated.status ?? p.status,
-              current_stage_id: updated.current_stage_id ?? null,
-              current_stage: updated.current_stage ?? null,
-              vc_kanban_column_id: updated.vc_kanban_column_id ?? p.vc_kanban_column_id,
-              logistics_person_id: updated.logistics_person_id ?? p.logistics_person_id,
-              delivery_team_id: updated.delivery_team_id ?? p.delivery_team_id,
-              installation_team_id: updated.installation_team_id ?? p.installation_team_id,
-            }
-          : p)));
-      }
+      const resolvedSxCol = data?.sx_pipeline_stage_id || updated?.sx_kanban_column_id || sxColId || null;
+      const resolvedCol = resolvedSxCol
+        ? (pipeline.find((s) => String(s.id) === String(resolvedSxCol)) || targetCol)
+        : targetCol;
+      setProjects((prev) => prev.map((p) => (String(p.id) === String(projectId)
+        ? {
+            ...p,
+            status: updated?.status ?? 'shipping',
+            current_stage_id: updated?.current_stage_id ?? null,
+            current_stage: updated?.current_stage ?? null,
+            sx_kanban_column_id: resolvedSxCol || p.sx_kanban_column_id,
+            sx_pipeline_stage: buildSxPipelineStageMeta(resolvedCol) || sxStageMeta || p.sx_pipeline_stage,
+            sx_intake: false,
+            vc_kanban_column_id: updated?.vc_kanban_column_id ?? p.vc_kanban_column_id,
+            logistics_person_id: updated?.logistics_person_id ?? p.logistics_person_id,
+            delivery_team_id: updated?.delivery_team_id ?? p.delivery_team_id,
+            installation_team_id: updated?.installation_team_id ?? p.installation_team_id,
+          }
+        : p)));
       scheduleCrmBadgeRefresh(projectId);
     } catch (e) {
       console.error(e);
       alert(e.response?.data?.error || 'Lỗi bàn giao VC');
       load();
     }
-  }, [load]);
+  }, [load, pipeline]);
 
   const openHandoverModal = useCallback((projectId, projectName, sxTargetColId = '') => {
     setHandoverModal({ projectId, projectName });
@@ -1004,14 +1022,20 @@ export default function ProductionDashboard() {
     }
     setHandoverSaving(true);
 
-    // Optimistic: ghim thẻ ở cột bàn giao VC để không bị nhảy cột
+    const sxColId = handoverTargetSxColId || '';
+    const targetCol = sxColId ? pipeline.find((s) => String(s.id) === sxColId) : null;
+    const sxStageMeta = buildSxPipelineStageMeta(targetCol);
+
+    // Optimistic: ghim thẻ ở cột bàn giao VC để không bị nhảy cột / mất thẻ
     setProjects((prev) => prev.map((p) => (String(p.id) === String(handoverModal.projectId)
       ? {
           ...p,
           status: 'shipping',
           current_stage: null,
           current_stage_id: null,
-          sx_kanban_column_id: handoverTargetSxColId || p.sx_kanban_column_id,
+          sx_kanban_column_id: sxColId || p.sx_kanban_column_id,
+          sx_pipeline_stage: sxStageMeta || p.sx_pipeline_stage,
+          sx_intake: false,
         }
       : p)));
 
@@ -1019,6 +1043,7 @@ export default function ProductionDashboard() {
       handoverModal.projectId,
       handoverModal.projectName,
       handoverLogisticsCompanyId,
+      sxColId,
     );
     setHandoverSaving(false);
     setHandoverModal(null);
@@ -1027,7 +1052,7 @@ export default function ProductionDashboard() {
     setHandoverDeliveryTeamId('');
     setHandoverInstallationTeamId('');
     setHandoverErr('');
-  }, [handoverModal, handoverLogisticsCompanyId, handoverTargetSxColId, handleHandoverVC]);
+  }, [handoverModal, handoverLogisticsCompanyId, handoverTargetSxColId, handleHandoverVC, pipeline]);
 
   const calculateDays = (createdAt) => {
     if (!createdAt) return '';

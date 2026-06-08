@@ -6,6 +6,7 @@ import { effectivePipelineStageSlaDays } from './crmPipelineSla';
 
 const INTAKE_BUCKET = 'won_pending';
 const VC_SHIPPED_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
+export const VC_KANBAN_STATUSES = new Set(['shipping', 'installing', 'warranty']);
 
 function stageById(stages, colId) {
   if (!colId || !Array.isArray(stages)) return null;
@@ -168,4 +169,41 @@ export function isSxColumnSlaOverdue(project) {
     project?.sx_pipeline_stage,
   );
   return tone?.level === 'overdue';
+}
+
+/** Chọn cột «Bàn giao VC» theo phân loại — khớp logic BE workshopKanban. */
+export function resolveSxHandoverColumnId(stages, project, preferredColId = null) {
+  const sorted = Array.isArray(stages) ? stages : [];
+  const stageIds = new Set(sorted.map((s) => String(s.id)));
+  if (preferredColId && stageIds.has(String(preferredColId))) {
+    return preferredColId;
+  }
+  const wktId = project?.workshop_type_id || project?.workshop_type?.id || null;
+  const handoverCols = sorted.filter((s) => s.is_handover_to_logistics === true);
+  if (!handoverCols.length) return null;
+  if (wktId) {
+    const typed = handoverCols.find((s) => String(s.workshop_type_id || '') === String(wktId));
+    if (typed) return typed.id;
+  }
+  const globalHo = handoverCols.find((s) => !s.workshop_type_id);
+  if (globalHo) return globalHo.id;
+  return handoverCols[0].id;
+}
+
+export function buildSxPipelineStageMeta(col) {
+  if (!col) return null;
+  return {
+    id: col.id,
+    name: col.name,
+    color: col.color,
+    icon: col.icon,
+    sla_days: col.sla_days,
+    default_probability: col.default_probability,
+    counts_as_won_revenue: col.counts_as_won_revenue,
+    counts_as_completed_revenue: col.counts_as_completed_revenue,
+    counts_as_collected_revenue: col.counts_as_collected_revenue,
+    requires_deadline: col.requires_deadline,
+    bucket_slug: col.bucket_slug,
+    is_handover_to_logistics: col.is_handover_to_logistics,
+  };
 }
