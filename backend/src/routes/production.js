@@ -14,6 +14,7 @@ const {
   buildScopeOrFilter,
   loadProductionPipelineStagesRows,
   getResolvedKanbanStages,
+  resolveSxHandoverColumnId,
   enrichProjectsForSx,
   buildPipelineSummary,
   syncCrmLeadSxPipelineFromProject,
@@ -543,11 +544,15 @@ r.post('/pipeline-stages', requirePermission('projects', 'edit'), async (req, re
 r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req, res) => {
   try {
     const b = req.body;
-    const { data: existingRow } = await supabase
+    const { data: existingRow, error: existErr } = await supabase
       .from('production_pipeline_stages')
       .select('bucket_slug, company_id, workshop_type_id, is_handover_to_logistics')
       .eq('id', req.params.id)
-      .single();
+      .maybeSingle();
+    if (existErr) throw existErr;
+    if (!existingRow) {
+      return res.status(404).json({ error: 'Không tìm thấy cột pipeline' });
+    }
     const update = {};
     ['name', 'color', 'icon', 'order_index', 'is_active', 'workflow_stage_id', 'bucket_slug',
       'is_handover_to_logistics', 'crm_sync_type', 'crm_target_stage_id', 'progress_percent',
@@ -622,7 +627,9 @@ r.delete('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (r
       .eq('id', stageId)
       .maybeSingle();
     if (fetchErr) throw fetchErr;
-    if (!row) return res.status(404).json({ error: 'Không tìm thấy cột pipeline' });
+    if (!row) {
+      return res.json({ message: 'Cột pipeline đã được xóa', already_deleted: true });
+    }
     if (row.bucket_slug === INTAKE_BUCKET) {
       return res.status(400).json({ error: 'Không xóa cột deal thắng — chỉ có thể ẩn' });
     }
@@ -2264,6 +2271,14 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
       || null;
     if (sxHandoverPipelineStageId) sxHandoverPipelineStageId = String(sxHandoverPipelineStageId);
     try {
+      if (sxHandoverPipelineStageId) {
+        const { data: colVerify } = await supabase
+          .from('production_pipeline_stages')
+          .select('id')
+          .eq('id', sxHandoverPipelineStageId)
+          .maybeSingle();
+        if (!colVerify?.id) sxHandoverPipelineStageId = null;
+      }
       if (!sxHandoverPipelineStageId && project.current_stage_id) {
         const { data: sxPipeRow } = await supabase
           .from('production_pipeline_stages')
@@ -2273,6 +2288,18 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
           .limit(1)
           .maybeSingle();
         sxHandoverPipelineStageId = sxPipeRow?.id || null;
+      }
+      if (!sxHandoverPipelineStageId) {
+        const { data: projMeta } = await supabase
+          .from('projects')
+          .select('company_id, workshop_type_id')
+          .eq('id', id)
+          .maybeSingle();
+        const { stages: sxStages } = await getResolvedKanbanStages(projMeta?.company_id || null, {
+          workshopTypeId: projMeta?.workshop_type_id || null,
+        });
+        const resolvedHo = resolveSxHandoverColumnId(sxStages, projMeta || {}, null);
+        if (resolvedHo) sxHandoverPipelineStageId = String(resolvedHo);
       }
     } catch (_e) { /* ignore */ }
 
