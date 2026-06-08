@@ -51,6 +51,9 @@ const {
   isPipelineRequiresDeadlineMissingError,
   markPipelineRequiresDeadlineColumnMissing,
   stripHandoverFields,
+  fetchProductionPipelineStageById,
+  insertProductionPipelineStageRow,
+  INSERT_COLUMN_RETRIES,
 } = require('../helpers/productionPipelineSchema');
 const { normalizePipelineStageSlaDaysForDb } = require('../helpers/crmPipelineSla');
 const { computeSxRevenueKpis } = require('../helpers/sxPipelineRevenue');
@@ -500,6 +503,8 @@ r.post('/pipeline-stages', requirePermission('projects', 'edit'), async (req, re
     }
     const nextOrder = (scopedStages || []).reduce((m, r) => Math.max(m, Number(r.order_index) || 0), 0) + 1;
     const isIntake = b.bucket_slug === INTAKE_BUCKET;
+    const wantsHandover = !isIntake && !!b.is_handover_to_logistics;
+
     const insertPayload = {
       name: b.name.trim(),
       color: b.color || '#0f766e',
@@ -509,144 +514,20 @@ r.post('/pipeline-stages', requirePermission('projects', 'edit'), async (req, re
       progress_percent: b.progress_percent ?? null,
       workflow_stage_id: isIntake ? null : (b.workflow_stage_id || null),
       bucket_slug: b.bucket_slug || null,
-      is_handover_to_logistics: isIntake ? false : (b.is_handover_to_logistics || false),
-      crm_sync_type: isIntake ? null : (b.crm_sync_type || null),
-      crm_target_stage_id: isIntake ? null : (b.crm_target_stage_id || null),
+      is_handover_to_logistics: wantsHandover,
+      crm_sync_type: isIntake || wantsHandover ? null : (b.crm_sync_type || null),
+      crm_target_stage_id: isIntake || wantsHandover ? null : (b.crm_target_stage_id || null),
       company_id: insertCompanyId || null,
       workshop_type_id: isIntake ? null : (b.workshop_type_id || null),
       ...parseProductionStageKpiBody(b),
     };
 
-    let ins = stripHandoverFields({ ...insertPayload });
-    let { data, error } = await supabase
-      .from('production_pipeline_stages')
-      .insert(ins)
-      .select(buildPipelineStageSelect())
-      .single();
-    if (error && isHandoverMissingError(error)) {
-      markHandoverColumnMissing();
-      ins = stripHandoverFields({ ...insertPayload });
-      const r2 = await supabase
-        .from('production_pipeline_stages')
-        .insert(ins)
-        .select(buildPipelineStageSelect())
-        .single();
-      data = r2.data;
-      error = r2.error;
-    }
-    if (error && isPipelineProgressPercentMissingError(error)) {
-      markPipelineProgressPercentColumnMissing();
-      ins = stripHandoverFields({ ...insertPayload });
-      const r2 = await supabase
-        .from('production_pipeline_stages')
-        .insert(ins)
-        .select(buildPipelineStageSelect())
-        .single();
-      data = r2.data;
-      error = r2.error;
-    }
-    if (error && isPipelineCollectedRevenueMissingError(error)) {
-      markPipelineCollectedRevenueColumnMissing();
-      ins = stripHandoverFields({ ...insertPayload });
-      const rCol = await supabase
-        .from('production_pipeline_stages')
-        .insert(ins)
-        .select(buildPipelineStageSelect())
-        .single();
-      data = rCol.data;
-      error = rCol.error;
-    }
-    if (error && isPipelineKpiSlaMissingError(error)) {
-      markPipelineKpiSlaColumnMissing();
-      ins = stripHandoverFields({ ...insertPayload });
-      const rKpi = await supabase
-        .from('production_pipeline_stages')
-        .insert(ins)
-        .select(buildPipelineStageSelect())
-        .single();
-      data = rKpi.data;
-      error = rKpi.error;
-    }
-    if (error && isPipelineRequiresDeadlineMissingError(error)) {
-      markPipelineRequiresDeadlineColumnMissing();
-      ins = stripHandoverFields({ ...insertPayload });
-      const rDl = await supabase
-        .from('production_pipeline_stages')
-        .insert(ins)
-        .select(buildPipelineStageSelect())
-        .single();
-      data = rDl.data;
-      error = rDl.error;
-    }
-    if (error && isPipelineWorkshopTypeMissingError(error)) {
-      markPipelineWorkshopTypeColumnMissing();
-      ins = stripHandoverFields({ ...insertPayload });
-      const r2w = await supabase
-        .from('production_pipeline_stages')
-        .insert(ins)
-        .select(buildPipelineStageSelect())
-        .single();
-      data = r2w.data;
-      error = r2w.error;
-    }
-    if (error && isPipelineWorkshopTypeEmbedRelationshipError(error)) {
-      markPipelineWorkshopTypeJoinMissing();
-      const rWtJ = await supabase
-        .from('production_pipeline_stages')
-        .insert(ins)
-        .select(buildPipelineStageSelect())
-        .single();
-      data = rWtJ.data;
-      error = rWtJ.error;
-    }
-    if (error && isCrmTargetStageEmbedRelationshipError(error)) {
-      markCrmTargetStageJoinMissing();
-      const rJ = await supabase
-        .from('production_pipeline_stages')
-        .insert(ins)
-        .select(buildPipelineStageSelect())
-        .single();
-      data = rJ.data;
-      error = rJ.error;
-    }
-    if (error && isCrmTargetStageMissingError(error)) {
-      markCrmTargetStageColumnMissing();
-      ins = stripHandoverFields({ ...insertPayload });
-      const r2b = await supabase
-        .from('production_pipeline_stages')
-        .insert(ins)
-        .select(buildPipelineStageSelect())
-        .single();
-      data = r2b.data;
-      error = r2b.error;
-    }
-    // Nếu crm_sync_type chưa tồn tại trong DB → thử lại không có field đó
-    if (error && error.message?.includes('crm_sync_type')) {
-      const { crm_sync_type: _omit, ...insWithout } = ins;
-      const r3 = await supabase
-        .from('production_pipeline_stages')
-        .insert(insWithout)
-        .select(buildPipelineStageSelect())
-        .single();
-      data = r3.data;
-      error = r3.error;
-    }
-    if (error && isCrmTargetStageEmbedRelationshipError(error)) {
-      markCrmTargetStageJoinMissing();
-      const rF = await supabase
-        .from('production_pipeline_stages')
-        .insert(ins)
-        .select(buildPipelineStageSelect())
-        .single();
-      data = rF.data;
-      error = rF.error;
-    }
-    if (error) throw error;
+    const data = await insertProductionPipelineStageRow(supabase, insertPayload);
     invalidateAllowedWorkflowStageIdsCache();
     res.status(201).json(data);
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: e.message });
+    res.status(e.status || 500).json({ error: e.message });
   }
 });
 
@@ -655,7 +536,7 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
     const b = req.body;
     const { data: existingRow } = await supabase
       .from('production_pipeline_stages')
-      .select('bucket_slug')
+      .select('bucket_slug, company_id, workshop_type_id, is_handover_to_logistics')
       .eq('id', req.params.id)
       .single();
     const update = {};
@@ -681,148 +562,45 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
     if (update.bucket_slug && update.bucket_slug !== INTAKE_BUCKET) {
       return res.status(400).json({ error: 'bucket_slug không hợp lệ' });
     }
+
+    if (b.is_handover_to_logistics === true) {
+      update.crm_sync_type = null;
+      update.crm_target_stage_id = null;
+    }
+
     let u = stripHandoverFields({ ...update });
-    let { data, error } = await supabase
+    const tryUpdate = () => supabase
       .from('production_pipeline_stages')
       .update(u)
-      .eq('id', req.params.id)
-      .select(buildPipelineStageSelect())
-      .single();
-    if (error && isHandoverMissingError(error)) {
-      markHandoverColumnMissing();
-      u = stripHandoverFields({ ...update });
-      const r2 = await supabase
-        .from('production_pipeline_stages')
-        .update(u)
-        .eq('id', req.params.id)
-        .select(buildPipelineStageSelect())
-        .single();
-      data = r2.data;
-      error = r2.error;
-    }
-    if (error && isPipelineProgressPercentMissingError(error)) {
-      markPipelineProgressPercentColumnMissing();
-      u = stripHandoverFields({ ...update });
-      const r2 = await supabase
-        .from('production_pipeline_stages')
-        .update(u)
-        .eq('id', req.params.id)
-        .select(buildPipelineStageSelect())
-        .single();
-      data = r2.data;
-      error = r2.error;
-    }
-    if (error && isPipelineCollectedRevenueMissingError(error)) {
-      markPipelineCollectedRevenueColumnMissing();
-      u = stripHandoverFields({ ...update });
-      const rCol = await supabase
-        .from('production_pipeline_stages')
-        .update(u)
-        .eq('id', req.params.id)
-        .select(buildPipelineStageSelect())
-        .single();
-      data = rCol.data;
-      error = rCol.error;
-    }
-    if (error && isPipelineKpiSlaMissingError(error)) {
-      markPipelineKpiSlaColumnMissing();
-      u = stripHandoverFields({ ...update });
-      const rKpi = await supabase
-        .from('production_pipeline_stages')
-        .update(u)
-        .eq('id', req.params.id)
-        .select(buildPipelineStageSelect())
-        .single();
-      data = rKpi.data;
-      error = rKpi.error;
-    }
-    if (error && isPipelineRequiresDeadlineMissingError(error)) {
-      markPipelineRequiresDeadlineColumnMissing();
-      u = stripHandoverFields({ ...update });
-      const rDl = await supabase
-        .from('production_pipeline_stages')
-        .update(u)
-        .eq('id', req.params.id)
-        .select(buildPipelineStageSelect())
-        .single();
-      data = rDl.data;
-      error = rDl.error;
-    }
-    if (error && isPipelineWorkshopTypeMissingError(error)) {
-      markPipelineWorkshopTypeColumnMissing();
-      u = stripHandoverFields({ ...update });
-      const r2w = await supabase
-        .from('production_pipeline_stages')
-        .update(u)
-        .eq('id', req.params.id)
-        .select(buildPipelineStageSelect())
-        .single();
-      data = r2w.data;
-      error = r2w.error;
-    }
-    if (error && isPipelineWorkshopTypeEmbedRelationshipError(error)) {
-      markPipelineWorkshopTypeJoinMissing();
-      const rWtJ = await supabase
-        .from('production_pipeline_stages')
-        .update(u)
-        .eq('id', req.params.id)
-        .select(buildPipelineStageSelect())
-        .single();
-      data = rWtJ.data;
-      error = rWtJ.error;
-    }
-    if (error && isCrmTargetStageEmbedRelationshipError(error)) {
-      markCrmTargetStageJoinMissing();
-      const rJ = await supabase
-        .from('production_pipeline_stages')
-        .update(u)
-        .eq('id', req.params.id)
-        .select(buildPipelineStageSelect())
-        .single();
-      data = rJ.data;
-      error = rJ.error;
-    }
-    if (error && isCrmTargetStageMissingError(error)) {
-      markCrmTargetStageColumnMissing();
-      u = stripHandoverFields({ ...update });
-      const r2b = await supabase
-        .from('production_pipeline_stages')
-        .update(u)
-        .eq('id', req.params.id)
-        .select(buildPipelineStageSelect())
-        .single();
-      data = r2b.data;
-      error = r2b.error;
-    }
-    // Nếu crm_sync_type chưa tồn tại trong DB → thử lại không có field đó
-    if (error && error.message?.includes('crm_sync_type')) {
-      const { crm_sync_type: _omit, ...uWithout } = u;
-      const r3 = await supabase
-        .from('production_pipeline_stages')
-        .update(uWithout)
-        .eq('id', req.params.id)
-        .select(buildPipelineStageSelect())
-        .single();
-      data = r3.data;
-      error = r3.error;
-    }
-    if (error && isCrmTargetStageEmbedRelationshipError(error)) {
-      markCrmTargetStageJoinMissing();
-      const rF = await supabase
-        .from('production_pipeline_stages')
-        .update(u)
-        .eq('id', req.params.id)
-        .select(buildPipelineStageSelect())
-        .single();
-      data = rF.data;
-      error = rF.error;
+      .eq('id', req.params.id);
+
+    let { error } = await tryUpdate();
+    for (let pass = 0; pass < 3 && error; pass += 1) {
+      let changed = false;
+      for (const [isErr, mark] of INSERT_COLUMN_RETRIES) {
+        if (error && isErr(error)) {
+          mark();
+          u = stripHandoverFields({ ...update });
+          changed = true;
+        }
+      }
+      if (error?.message?.includes('crm_sync_type')) {
+        const { crm_sync_type: _omit, ...rest } = u;
+        u = rest;
+        changed = true;
+      }
+      if (!changed) break;
+      ({ error } = await tryUpdate());
     }
     if (error) throw error;
+
+    const { data, error: fetchErr } = await fetchProductionPipelineStageById(supabase, req.params.id);
+    if (fetchErr) throw fetchErr;
     invalidateAllowedWorkflowStageIdsCache();
     res.json(data);
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: e.message });
+    res.status(e.status || 500).json({ error: e.message });
   }
 });
 
@@ -892,10 +670,19 @@ r.delete('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (r
 r.put('/pipeline-stages-reorder', requirePermission('projects', 'edit'), async (req, res) => {
   try {
     const { stages } = req.body;
-    for (const s of stages || []) {
-      await supabase.from('production_pipeline_stages').update({ order_index: s.order_index }).eq('id', s.id);
+    if (!Array.isArray(stages) || stages.length === 0) {
+      return res.status(400).json({ error: 'Thiếu danh sách cột cần sắp xếp' });
+    }
+    for (const s of stages) {
+      if (!s?.id) continue;
+      const { error } = await supabase
+        .from('production_pipeline_stages')
+        .update({ order_index: s.order_index })
+        .eq('id', s.id);
+      if (error) throw error;
     }
     invalidateAllowedWorkflowStageIdsCache();
+    await rcInvalidateTags(['production']);
     res.json({ message: 'Đã sắp xếp lại' });
   } catch (e) {
     console.error(e);
@@ -3503,10 +3290,10 @@ r.get('/workshop-type-staff-defaults/:companyId', requirePermission('projects', 
 
     const { data: types } = await supabase
       .from('workshop_project_types')
-      .select('id, name, sort_order, is_active, applies_to')
+      .select('id, name, order_index, is_active, applies_to')
       .eq('company_id', companyId)
       .in('applies_to', ['production', 'both'])
-      .order('sort_order')
+      .order('order_index')
       .order('name');
 
     const { data: settings } = await supabase

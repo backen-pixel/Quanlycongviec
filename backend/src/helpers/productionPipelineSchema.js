@@ -236,6 +236,107 @@ function buildPipelineStageSelect() {
   return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, ${h}${pp}${kpi}${reqDl}${wt}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
 }
 
+/** Áp dụng retry khi SELECT 1 cột pipeline (embed / cột thiếu). */
+async function fetchProductionPipelineStageById(supabase, stageId) {
+  const run = () => supabase
+    .from('production_pipeline_stages')
+    .select(buildPipelineStageSelect())
+    .eq('id', stageId)
+    .single();
+
+  let { data, error } = await run();
+  if (error && isHandoverMissingError(error)) {
+    markHandoverColumnMissing();
+    ({ data, error } = await run());
+  }
+  if (error && isPipelineWorkshopTypeMissingError(error)) {
+    markPipelineWorkshopTypeColumnMissing();
+    ({ data, error } = await run());
+  }
+  if (error && isPipelineWorkshopTypeEmbedRelationshipError(error)) {
+    markPipelineWorkshopTypeJoinMissing();
+    ({ data, error } = await run());
+  }
+  if (error && isCrmTargetStageEmbedRelationshipError(error)) {
+    markCrmTargetStageJoinMissing();
+    ({ data, error } = await run());
+  }
+  if (error && isCrmTargetStageMissingError(error)) {
+    markCrmTargetStageColumnMissing();
+    ({ data, error } = await run());
+  }
+  if (error && isPipelineProgressPercentMissingError(error)) {
+    markPipelineProgressPercentColumnMissing();
+    ({ data, error } = await run());
+  }
+  if (error && isPipelineCollectedRevenueMissingError(error)) {
+    markPipelineCollectedRevenueColumnMissing();
+    ({ data, error } = await run());
+  }
+  if (error && isPipelineKpiSlaMissingError(error)) {
+    markPipelineKpiSlaColumnMissing();
+    ({ data, error } = await run());
+  }
+  if (error && isPipelineRequiresDeadlineMissingError(error)) {
+    markPipelineRequiresDeadlineColumnMissing();
+    ({ data, error } = await run());
+  }
+  if (data) {
+    data.is_handover_to_logistics = data.is_handover_to_logistics ?? false;
+  }
+  return { data, error };
+}
+
+const INSERT_COLUMN_RETRIES = [
+  [isHandoverMissingError, markHandoverColumnMissing],
+  [isPipelineProgressPercentMissingError, markPipelineProgressPercentColumnMissing],
+  [isPipelineCollectedRevenueMissingError, markPipelineCollectedRevenueColumnMissing],
+  [isPipelineKpiSlaMissingError, markPipelineKpiSlaColumnMissing],
+  [isPipelineRequiresDeadlineMissingError, markPipelineRequiresDeadlineColumnMissing],
+  [isPipelineWorkshopTypeMissingError, markPipelineWorkshopTypeColumnMissing],
+  [isCrmTargetStageMissingError, markCrmTargetStageColumnMissing],
+];
+
+/**
+ * Insert cột pipeline SX: ghi DB với select tối thiểu (tránh lỗi embed),
+ * rồi đọc lại bản ghi đầy đủ — không insert trùng khi chỉ select/embed lỗi.
+ */
+async function insertProductionPipelineStageRow(supabase, insertPayload) {
+  let ins = stripHandoverFields({ ...insertPayload });
+  const tryInsert = () => supabase
+    .from('production_pipeline_stages')
+    .insert(ins)
+    .select('id')
+    .single();
+
+  let { data: row, error } = await tryInsert();
+
+  for (let pass = 0; pass < 3 && error; pass += 1) {
+    let changed = false;
+    for (const [isErr, mark] of INSERT_COLUMN_RETRIES) {
+      if (error && isErr(error)) {
+        mark();
+        ins = stripHandoverFields({ ...insertPayload });
+        changed = true;
+      }
+    }
+    if (error?.message?.includes('crm_sync_type')) {
+      const { crm_sync_type: _omit, ...rest } = ins;
+      ins = rest;
+      changed = true;
+    }
+    if (!changed) break;
+    ({ data: row, error } = await tryInsert());
+  }
+
+  if (error) throw error;
+  if (!row?.id) throw new Error('Không tạo được cột pipeline');
+
+  const { data, error: fetchErr } = await fetchProductionPipelineStageById(supabase, row.id);
+  if (fetchErr) throw fetchErr;
+  return data;
+}
+
 /** Bỏ field khỏi object insert/update nếu DB không có cột */
 function stripHandoverFields(obj) {
   if (!obj) return obj;
@@ -299,5 +400,8 @@ module.exports = {
   isCrmTargetStageJoinInSchema,
   buildPipelineStageSelect,
   stripHandoverFields,
+  fetchProductionPipelineStageById,
+  insertProductionPipelineStageRow,
+  INSERT_COLUMN_RETRIES,
   _resetForTests,
 };
