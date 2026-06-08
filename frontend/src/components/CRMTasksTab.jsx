@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef, useLayoutEffect, useCallback } fr
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
+import { connectSocket, getSocket } from '../lib/socket';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
@@ -480,6 +481,25 @@ export default function CRMTasksTab({
     const silent = !first && !leadSwitched && refreshKey > 0;
     loadTasks({ silent });
   }, [leadId, taskScope, isProductionScope, refreshKey]);
+
+  /** Realtime: web ↔ mobile — refetch khi nhiệm vụ CRM thay đổi qua socket */
+  const loadTasksRef = useRef(loadTasks);
+  loadTasksRef.current = loadTasks;
+  useEffect(() => {
+    const socket = getSocket() || connectSocket();
+    if (!socket || !leadId) return undefined;
+    let timer = null;
+    const onTaskChanged = (payload) => {
+      if (String(payload?.lead_id) !== String(leadId)) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => loadTasksRef.current?.({ silent: true }), 650);
+    };
+    socket.on('crm:task_changed', onTaskChanged);
+    return () => {
+      if (timer) clearTimeout(timer);
+      socket.off('crm:task_changed', onTaskChanged);
+    };
+  }, [leadId]);
 
   const addTask = async (stageKey) => {
     if (!newTask.title.trim()) return;

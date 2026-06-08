@@ -22,6 +22,7 @@ const {
   resolveAssignmentIdForTask,
 } = require('../helpers/crmAssignmentNotifications');
 const { emitNotifyBadge } = require('../helpers/notifyBadge');
+const { emitCrmTaskChanged } = require('../helpers/crmTaskRealtime');
 const { createNotification: createNotif, notifyMultiple: notifyMultipleShared } = require('../helpers/notifications');
 const { DEFAULT_CHECKLISTS } = require('../helpers/defaultChecklists');
 const { generateFlowTasks, generateStepTasks } = require('../helpers/generateFlowTasks');
@@ -11241,6 +11242,12 @@ r.post('/leads/:id/tasks', async (req, res) => {
   try {
     const result = await createCrmLeadTask(req, req.params.id, req.body);
     if (result.error) return res.status(result.status || 500).json({ error: result.error });
+    await emitCrmTaskChanged(req, {
+      leadId: req.params.id,
+      taskId: result.data?.id,
+      action: 'created',
+      task: result.data,
+    });
     return res.status(result.status).json(result.data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -11649,6 +11656,13 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
       }
     }
 
+    await emitCrmTaskChanged(req, {
+      leadId: req.params.leadId,
+      taskId: req.params.taskId,
+      action: 'updated',
+      task: data,
+    });
+
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -11658,6 +11672,11 @@ r.delete('/leads/:leadId/tasks/:taskId', async (req, res) => {
   try {
     const result = await deleteCrmLeadTask(req, req.params.taskId);
     if (result.error) return res.status(result.status || 500).json({ error: result.error });
+    await emitCrmTaskChanged(req, {
+      leadId: req.params.leadId,
+      taskId: req.params.taskId,
+      action: 'deleted',
+    });
     return res.json(result.data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -11869,6 +11888,13 @@ r.put('/leads/:leadId/tasks/:taskId/notes', async (req, res) => {
       } catch (syncErr) { console.warn('Sync task notes:', syncErr.message); }
     }
 
+    await emitCrmTaskChanged(req, {
+      leadId: req.params.leadId,
+      taskId: req.params.taskId,
+      action: notes?.trim() ? 'notes_updated' : 'notes_cleared',
+      task: data,
+    });
+
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -11936,6 +11962,13 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
       }));
       if (syncRows.length) await supabase.from('lead_documents').insert(syncRows);
     } catch (syncErr) { console.warn('Bulk sync error:', syncErr.message); }
+
+    await emitCrmTaskChanged(req, {
+      leadId: req.params.leadId,
+      taskId: req.params.taskId,
+      action: 'attachment_added',
+      task,
+    });
 
     res.status(201).json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -12024,6 +12057,11 @@ r.delete('/leads/:leadId/tasks/:taskId/attachments/:attId', async (req, res) => 
     const { error } = await supabase.from('crm_task_attachments')
       .delete().eq('id', req.params.attId).eq('task_id', req.params.taskId);
     if (error) throw error;
+    await emitCrmTaskChanged(req, {
+      leadId: req.params.leadId,
+      taskId: req.params.taskId,
+      action: 'attachment_deleted',
+    });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
