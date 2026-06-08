@@ -22,6 +22,7 @@ const CHUNK_SIZE = 100;
 const CHANNEL_CHAT = 'crm_chat';
 const CHANNEL_SYSTEM = 'crm_system_tray_v3';
 const CHANNEL_CALL = 'crm_call';
+const CHANNEL_SX_COMMENTS = 'sx_comments';
 
 function isChatType(type) {
   return type === 'messenger_chat' || type === 'lead_chat' || type === 'department_chat';
@@ -29,6 +30,14 @@ function isChatType(type) {
 
 function isIncomingCallType(type) {
   return type === 'incoming_call';
+}
+
+function isProductionCommentNotification(notification) {
+  if (String(notification?.type || '') !== 'comment_added') return false;
+  const meta = notification.metadata && typeof notification.metadata === 'object'
+    ? notification.metadata
+    : {};
+  return String(meta.ecosystem_module_key || '') === 'production';
 }
 
 function buildPushPayload(notification) {
@@ -66,7 +75,8 @@ function buildPushPayload(notification) {
 
   const chat = isChatType(notification.type);
   const isCall = isIncomingCallType(notification.type);
-  const channelId = isCall ? CHANNEL_CALL : chat ? CHANNEL_CHAT : CHANNEL_SYSTEM;
+  const isSxComment = isProductionCommentNotification(notification);
+  const channelId = isCall ? CHANNEL_CALL : chat ? CHANNEL_CHAT : isSxComment ? CHANNEL_SX_COMMENTS : CHANNEL_SYSTEM;
 
   return {
     title: String(title).slice(0, 120),
@@ -442,6 +452,65 @@ async function sendFcmIncomingCall(tokens, notification) {
   }
 }
 
+/** FCM hiển thị notification trên thanh hệ thống (bình luận xưởng SX, v.v.). */
+async function sendFcmTrayNotification(tokens, notification) {
+  if (!tokens.length) return;
+  const auth = await getFcmAccessToken();
+  if (!auth) return;
+  const payload = buildPushPayload(notification);
+  const meta = (notification.metadata && typeof notification.metadata === 'object')
+    ? notification.metadata
+    : {};
+  const url = `https://fcm.googleapis.com/v1/projects/${auth.projectId}/messages:send`;
+  for (const row of tokens) {
+    try {
+      const body = {
+        message: {
+          token: row.token,
+          notification: {
+            title: payload.title,
+            body: payload.body,
+          },
+          data: {
+            type: String(notification.type || ''),
+            notif_id: String(notification.id || ''),
+            entity_type: String(notification.entity_type || ''),
+            entity_id: String(notification.entity_id || ''),
+            metadata: JSON.stringify(meta),
+            channelId: payload.channelId,
+          },
+          android: {
+            priority: 'HIGH',
+            ttl: `${payload.ttl || 86400}s`,
+            notification: {
+              channel_id: payload.channelId,
+              sound: 'default',
+            },
+          },
+        },
+      };
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${auth.accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const txt = await r.text().catch(() => '');
+        if (r.status === 404 || /UNREGISTERED|NOT_FOUND/i.test(txt)) {
+          await supabase.from('push_device_tokens').delete().eq('token', row.token).catch(() => {});
+        } else {
+          console.warn('[pushSender] FCM tray error:', r.status, txt.slice(0, 200));
+        }
+      }
+    } catch (e) {
+      console.warn('[pushSender] FCM tray send error:', e.message || e);
+    }
+  }
+}
+
 /**
  * Gửi push mobile cho user (chủ yếu chat khi app kill).
  * @param {string} userId
@@ -498,6 +567,8 @@ async function sendMobilePush(userId, notification) {
       await sendFcmIncomingCall(fcmRows, notification);
     } else if (fcmRows.length && isChatType(notification.type)) {
       await sendFcmDataOnly(fcmRows, notification);
+    } else if (fcmRows.length && isProductionCommentNotification(notification)) {
+      await sendFcmTrayNotification(fcmRows, notification);
     }
   } catch (e) {
     console.warn('[pushSender]', e.message || e);

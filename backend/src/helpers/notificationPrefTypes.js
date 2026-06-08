@@ -64,6 +64,14 @@ function preferenceKeyForNotificationType(type, entityType, metadata = null) {
   const eco =
     metadata && typeof metadata === 'object' ? String(metadata.ecosystem_module_key || '').trim() : '';
 
+  /** Xưởng SX — không gom vào project_notifications (CRM module Dự án). */
+  if (eco === 'production') {
+    const mapped = NOTIFICATION_TYPE_PREF_MAP[type];
+    if (mapped) return mapped;
+    if (type === 'comment_added') return 'comment_added';
+    return null;
+  }
+
   if (
     type === 'project_assigned' ||
     type === 'project_updated' ||

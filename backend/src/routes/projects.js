@@ -2536,11 +2536,17 @@ r.post('/:id/comments', async (req, res) => {
         : [proj?.sales_person_id, proj?.designer_id, proj?.project_manager_id, proj?.supervisor_id].filter(Boolean);
       const allIds = [...new Set([...baseTeam, ...taskAssigneeIds])].filter(id => id !== req.user.userId);
       const shortContent = (req.body.content || '').substring(0, 80);
+      const isProductionProject = Boolean(proj?.production_person_id);
       await notifyMultiple(req, allIds, 'comment_added',
         '💬 Bình luận dự án',
         `${req.user.fullName} trong ${proj?.code || 'dự án'}: "${shortContent}${shortContent.length >= 80 ? '...' : ''}"`,
         'project', req.params.id,
-        { project_id: req.params.id, nav_tab: 'comments' });
+        {
+          project_id: req.params.id,
+          nav_tab: 'comments',
+          ecosystem_module_key: isProductionProject ? 'production' : 'projects',
+          project_code: proj?.code || null,
+        });
     } catch (notifErr) { console.error('Comment notify error:', notifErr.message); }
 
     res.status(201).json({ comment: data });
