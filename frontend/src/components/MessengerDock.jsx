@@ -346,7 +346,7 @@ export default function MessengerDock() {
               </button>
               {w.chatType === 'lead' && w.leadId ? (
                 <Link
-                  to={`/crm/leads/${w.leadId}?tab=chat`}
+                  to={`/crm/leads/${w.leadId}?tab=comments`}
                   className="p-1.5 rounded-lg hover:bg-white/20 transition"
                   title="Mở Lead / Deal (CRM)"
                 >

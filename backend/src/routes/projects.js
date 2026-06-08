@@ -2518,9 +2518,13 @@ r.post('/:id/comments', async (req, res) => {
     }
     if (error) throw error;
 
-    // Emit socket for realtime chat
     const io = req.app.get('io');
-    if (io) io.emit('project:comment', { project_id: req.params.id, comment: data });
+    const pid = req.params.id;
+    const evt = { project_id: pid, action: 'created', comment: data };
+    if (io) {
+      io.to(`project:${pid}`).emit('project:comment', evt);
+      io.emit('project:comment', evt);
+    }
 
     // Notify project team — production project: only production_person + task assignees; CRM: full team
     try {
@@ -2536,7 +2540,7 @@ r.post('/:id/comments', async (req, res) => {
         '💬 Bình luận dự án',
         `${req.user.fullName} trong ${proj?.code || 'dự án'}: "${shortContent}${shortContent.length >= 80 ? '...' : ''}"`,
         'project', req.params.id,
-        { project_id: req.params.id, nav_tab: 'chat' });
+        { project_id: req.params.id, nav_tab: 'comments' });
     } catch (notifErr) { console.error('Comment notify error:', notifErr.message); }
 
     res.status(201).json({ comment: data });
@@ -2547,7 +2551,13 @@ r.delete('/:id/comments/:commentId', async (req, res) => {
   try {
     await supabase.from('project_comments').delete().eq('id', req.params.commentId).eq('user_id', req.user.userId);
     const io = req.app.get('io');
-    if (io) io.emit('project:comment:deleted', { project_id: req.params.id, comment_id: req.params.commentId });
+    const pid = req.params.id;
+    const delEvt = { project_id: pid, action: 'deleted', comment_id: req.params.commentId };
+    if (io) {
+      io.to(`project:${pid}`).emit('project:comment', delEvt);
+      io.emit('project:comment', delEvt);
+      io.emit('project:comment:deleted', delEvt);
+    }
     res.json({ message: 'Đã xóa' });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
@@ -2585,7 +2595,13 @@ r.patch('/:id/comments/:commentId', async (req, res) => {
       if (m) reactions = m.get(data.id) || reactions;
     } catch { /* ignore */ }
     const io = req.app.get('io');
-    if (io) io.emit('project:comment:updated', { project_id: req.params.id, comment: data });
+    const pid = req.params.id;
+    const updEvt = { project_id: pid, action: 'updated', comment: { ...data, reactions } };
+    if (io) {
+      io.to(`project:${pid}`).emit('project:comment', updEvt);
+      io.emit('project:comment', updEvt);
+      io.emit('project:comment:updated', updEvt);
+    }
     res.json({ ...data, reactions });
   } catch (e) {
     console.error('PATCH /projects/:id/comments/:commentId:', e);

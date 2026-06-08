@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
+import { getSocket } from '../lib/socket';
 import { useAuth } from '../lib/auth';
 import { markCrmPipelineCardFocus, persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
 import {
@@ -1168,6 +1169,35 @@ function CommentCard({ item, expanded, onToggle, onChanged, navigate }) {
   useEffect(() => {
     if (!expanded) setReplyTo(null);
   }, [expanded]);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const socket = getSocket();
+    if (!socket) return;
+    socket.emit('join:lead', item.id);
+    const handler = (payload) => {
+      if (String(payload?.lead_id) !== String(item.id)) return;
+      const action = payload?.action || 'created';
+      if (action === 'deleted') {
+        setComments((prev) => (prev || []).filter((c) => c.id !== payload.comment_id));
+        onChanged?.();
+        return;
+      }
+      const row = payload.comment;
+      if (!row?.id) return;
+      if (action === 'updated') {
+        setComments((prev) => (prev || []).map((c) => (c.id === row.id ? { ...c, ...row, reactions: row.reactions ?? c.reactions } : c)));
+        return;
+      }
+      setComments((prev) => ((prev || []).some((c) => c.id === row.id) ? prev : [...(prev || []), { ...row, reactions: row.reactions || { summary: [], mine: null } }]));
+      onChanged?.();
+    };
+    socket.on('lead:comment', handler);
+    return () => {
+      socket.emit('leave:lead', item.id);
+      socket.off('lead:comment', handler);
+    };
+  }, [expanded, item.id, onChanged]);
 
   const commentsByParent = useMemo(() => groupCrmCommentsByParent(comments || []), [comments]);
 

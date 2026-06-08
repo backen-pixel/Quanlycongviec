@@ -28,6 +28,7 @@ import CrmDeadlineModal from '../components/CrmDeadlineModal';
 import Modal from '../components/Modal';
 import DealCrossScoresPanel from '../components/DealCrossScoresPanel';
 import LeadKpiLedgerPanel from '../components/LeadKpiLedgerPanel';
+import { CrmLeadCommentsPanel } from '../components/CommentsPanels';
 import { useCrmNotesFab } from '../context/CrmNotesFabContext';
 import PipelineStepper from '../components/PipelineStepper';
 import {
@@ -100,6 +101,17 @@ export default function LeadDetail() {
   const [editingField, setEditingField] = useState(null);
   const [editValue, setEditValue] = useState('');
   const [activeTab, setActiveTab] = useState('tasks');
+  const [commentCount, setCommentCount] = useState(0);
+
+  useEffect(() => {
+    if (!id) return;
+    api.get(`/crm/lead-comments/index?lead_ids=${id}`)
+      .then((r) => {
+        const meta = r.data?.[id] || r.data?.[String(id)];
+        setCommentCount(meta?.count || 0);
+      })
+      .catch(() => setCommentCount(0));
+  }, [id]);
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [showExcelImport, setShowExcelImport] = useState(false);
   /** Báo giá deal có file Excel gốc — mở lại từ header */
@@ -265,15 +277,21 @@ export default function LeadDetail() {
   useEffect(() => {
     const t = searchParams.get('tab');
     if (!t) return;
+    if (t === 'chat' || t === 'activities' || t === 'crm-chat' || t === 'crm-activities' || t === 'timeline') {
+      setActiveTab('comments');
+      const next = new URLSearchParams(searchParams);
+      next.delete('tab');
+      setSearchParams(next, { replace: true });
+      return;
+    }
     const allowed = new Set([
       'tasks',
       'kpi_ledger',
       'documents',
-      'activities',
       'notes',
       'facebook',
       'team',
-      'chat',
+      'comments',
       'calls',
       'voice_crm',
       'approvals',
@@ -1530,16 +1548,6 @@ export default function LeadDetail() {
                 📋 Tài liệu ({documentsTabTotal})
               </button>
               <button
-                onClick={() => setActiveTab('activities')}
-                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
-                  activeTab === 'activities'
-                    ? 'text-blue-600 border-b-2 border-blue-600'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                💬 Hoạt động ({activities.length})
-              </button>
-              <button
                 onClick={() => setActiveTab('notes')}
                 className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'notes'
@@ -1570,14 +1578,14 @@ export default function LeadDetail() {
                 👥 Thành viên
               </button>
               <button
-                onClick={() => setActiveTab('chat')}
+                onClick={() => setActiveTab('comments')}
                 className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
-                  activeTab === 'chat'
+                  activeTab === 'comments'
                     ? 'text-blue-600 border-b-2 border-blue-600'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
-                💬 Trao đổi
+                💬 Bình luận{commentCount > 0 ? ` (${commentCount})` : ''}
               </button>
               <button
                 onClick={() => setActiveTab('voice_crm')}
@@ -1853,6 +1861,8 @@ export default function LeadDetail() {
                 <FacebookChatTab leadId={id} companyId={lead?.company_id} />
               ) : activeTab === 'team' ? (
                 <LeadMembersTab leadId={id} />
+              ) : activeTab === 'comments' ? (
+                <CrmLeadCommentsPanel leadId={id} onCountChange={setCommentCount} />
               ) : activeTab === 'chat' ? (
                 <LeadChatTab leadId={id} socket={socket} />
               ) : activeTab === 'voice_crm' ? (

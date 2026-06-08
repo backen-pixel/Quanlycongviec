@@ -1145,6 +1145,37 @@ export default function CRMDashboard() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode, pipelineType, allLeads, allDeals]);
 
+  /** Realtime badge bình luận trên Kanban / view Bình luận */
+  useEffect(() => {
+    const socket = getSocket() || connectSocket();
+    if (!socket) return;
+    const bump = (payload) => {
+      const lid = payload?.lead_id;
+      if (!lid) return;
+      const action = payload?.action;
+      if (action === 'deleted') {
+        setCommentsIndex((prev) => {
+          const cur = prev[String(lid)];
+          if (!cur) return prev;
+          return { ...prev, [String(lid)]: { ...cur, count: Math.max(0, (cur.count || 1) - 1) } };
+        });
+        return;
+      }
+      const c = payload.comment;
+      if (!c) return;
+      setCommentsIndex((prev) => ({
+        ...prev,
+        [String(lid)]: {
+          count: action === 'created' ? ((prev[String(lid)]?.count || 0) + 1) : (prev[String(lid)]?.count || 1),
+          last_at: c.created_at || new Date().toISOString(),
+          last_user_id: c.user_id ?? null,
+        },
+      }));
+    };
+    socket.on('lead:comment', bump);
+    return () => socket.off('lead:comment', bump);
+  }, []);
+
   // Cấu hình deadline theo công ty (cho view "Deadline")
   useEffect(() => {
     const companyId = filterCompany || user?.company_id;
