@@ -855,14 +855,31 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
     });
     const docs = [];
 
-    // CRM deals
-    const { data: crmDealsRaw, error: crmDealsErr } = await supabase
-      .from('crm_leads')
-      .select('id, name, type, stage:crm_pipeline_stages(id, name, color, is_won)')
-      .eq('project_id', rowId)
-      .eq('type', 'deal');
-    if (crmDealsErr) console.warn('[logistics/projects/:id] crm_leads:', crmDealsErr.message);
-    const crmDeals = Array.isArray(crmDealsRaw) ? crmDealsRaw : [];
+    // CRM deals + badge SX/VC để tab chi tiết VC không mất tag module Sản xuất sau khi reload/move stage.
+    let crmDeals = [];
+    try {
+      const { data: crmDealsRaw, error: crmDealsErr } = await supabase
+        .from('crm_leads')
+        .select(`
+          id, name, type,
+          stage:crm_pipeline_stages(id, name, color, is_won),
+          sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name)),
+          vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)
+        `)
+        .eq('project_id', rowId)
+        .eq('type', 'deal');
+      if (crmDealsErr) throw crmDealsErr;
+      crmDeals = Array.isArray(crmDealsRaw) ? crmDealsRaw : [];
+    } catch (crmDealsBadgeErr) {
+      console.warn('[logistics/projects/:id] crm_leads badges:', crmDealsBadgeErr.message);
+      const { data: crmDealsRaw2, error: crmDealsErr2 } = await supabase
+        .from('crm_leads')
+        .select('id, name, type, stage:crm_pipeline_stages(id, name, color, is_won)')
+        .eq('project_id', rowId)
+        .eq('type', 'deal');
+      if (crmDealsErr2) console.warn('[logistics/projects/:id] crm_leads:', crmDealsErr2.message);
+      crmDeals = Array.isArray(crmDealsRaw2) ? crmDealsRaw2 : [];
+    }
 
     // Stage transitions
     const { data: transitionsRaw, error: transErr } = await supabase
