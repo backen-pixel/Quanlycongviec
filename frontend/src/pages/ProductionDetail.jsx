@@ -84,16 +84,14 @@ function resolveSxKanbanCurrentStageId(project, stages) {
     return firstCol();
   }
 
+  if (project?.sx_intake) return firstCol();
+
   const wfId = project?.current_stage_id || project?.current_stage?.id;
   if (wfId) {
     const wfMatches = sorted.filter(
       (s) => String(s.workflow_stage_id || s.workflow_stage?.id) === String(wfId),
     );
     if (wfMatches.length === 1) return wfMatches[0].id;
-  }
-
-  if (project?.sx_intake || project?.sx_won_deal) {
-    return firstCol();
   }
 
   return null;

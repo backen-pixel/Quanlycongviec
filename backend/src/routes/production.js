@@ -15,6 +15,7 @@ const {
   loadProductionPipelineStagesRows,
   getResolvedKanbanStages,
   resolveSxHandoverColumnId,
+  resolveSxDisplayColumnId,
   enrichProjectsForSx,
   buildPipelineSummary,
   syncCrmLeadSxPipelineFromProject,
@@ -1473,7 +1474,13 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       .map((d) => d?.sx_pipeline_stage?.id || null)
       .find((sid) => sid && sortedKIdSet.has(String(sid))) || null;
     const intakeCol = sortedK.find((c) => c.bucket_slug === INTAKE_BUCKET);
+    const handoverCol = sortedK.find((c) => c.is_handover_to_logistics === true);
+    const VC_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
+    const projectInVcFlow = VC_STATUSES.has(String(project.status || ''));
     const defaultFirstColId = intakeCol?.id || sortedK[0]?.id || null;
+    const fallbackRepairColId = projectInVcFlow
+      ? (handoverCol?.id || defaultFirstColId)
+      : defaultFirstColId;
 
     // Auto-fix dữ liệu cũ: deal lưu sx_pipeline_stage_id lệch khỏi pipeline phân loại
     // hiện tại (vd. cột thuộc phân loại Tủ bếp nhưng project đã đổi sang phân loại Cửa).
@@ -1482,38 +1489,34 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       d?.sx_pipeline_stage?.id
       && !sortedKIdSet.has(String(d.sx_pipeline_stage.id))
     ));
-    if (orphanDeals.length && defaultFirstColId) {
+    if (orphanDeals.length && fallbackRepairColId) {
       try {
         await supabase
           .from('crm_leads')
-          .update({ sx_pipeline_stage_id: defaultFirstColId, updated_at: new Date().toISOString() })
+          .update({ sx_pipeline_stage_id: fallbackRepairColId, updated_at: new Date().toISOString() })
           .in('id', orphanDeals.map((d) => d.id));
         for (const d of orphanDeals) {
-          d.sx_pipeline_stage = sortedK.find((c) => String(c.id) === String(defaultFirstColId)) || null;
+          d.sx_pipeline_stage = sortedK.find((c) => String(c.id) === String(fallbackRepairColId)) || null;
         }
       } catch (e) {
         console.warn('[production] auto-fix orphan sx_pipeline_stage_id:', e.message);
       }
     }
 
-    let finalSxKanbanColumnId = sxRow.sx_kanban_column_id;
-    const inSxIntake = !project.current_stage_id;
-    // Deal thắng chờ vào xưởng (chưa có workflow): ghim cột đầu. Đã producing → giữ cột CRM/enrich.
-    if (sxRow.sx_won_deal && !dealHasHandover && inSxIntake && defaultFirstColId) {
-      finalSxKanbanColumnId = defaultFirstColId;
-    } else {
-      const fixedCrmStageId = crmStageId
-        || (crmSummary || [])
-          .map((d) => d?.sx_pipeline_stage?.id || null)
-          .find((sid) => sid && sortedKIdSet.has(String(sid))) || null;
-      if (fixedCrmStageId) finalSxKanbanColumnId = fixedCrmStageId;
-      else if (sxRow.sx_kanban_column_id && sortedKIdSet.has(String(sxRow.sx_kanban_column_id))) {
-        finalSxKanbanColumnId = sxRow.sx_kanban_column_id;
-      }
-    }
-    if (finalSxKanbanColumnId && !sortedKIdSet.has(String(finalSxKanbanColumnId))) {
-      finalSxKanbanColumnId = defaultFirstColId;
-    }
+    const displayLeadCol = crmStageId
+      || (crmSummary || [])
+        .map((d) => d?.sx_pipeline_stage?.id || null)
+        .find((sid) => sid && sortedKIdSet.has(String(sid))) || null;
+    let finalSxKanbanColumnId = resolveSxDisplayColumnId(
+      { ...project, sx_kanban_column_id: sxRow.sx_kanban_column_id, sx_intake: sxRow.sx_intake },
+      sortedK,
+      {
+        leadColId: displayLeadCol,
+        sxWonDeal: sxRow.sx_won_deal,
+        hasSxHandover: dealHasHandover,
+      },
+    );
+    if (!finalSxKanbanColumnId) finalSxKanbanColumnId = fallbackRepairColId;
     const finalIntakeFromCrm = finalSxKanbanColumnId
       ? Boolean(sortedK.find((c) => String(c.id) === String(finalSxKanbanColumnId))?.bucket_slug === INTAKE_BUCKET)
       : sxRow.sx_intake;

@@ -328,6 +328,52 @@ function kanbanColumnIdForProject(project, sortedStages, wonIdSet, leadMeta = nu
   return null;
 }
 
+/**
+ * Resolver dùng chung để xác định cột SX hiển thị cho Dashboard/Detail.
+ * Ưu tiên: vc handover (khi đã sang VC) -> sx_kanban_column_id -> lead sx_pipeline_stage_id.
+ */
+function resolveSxDisplayColumnId(project, sortedStages, opts = {}) {
+  const sorted = [...(sortedStages || [])].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+  const stageIds = new Set(sorted.map((s) => String(s.id)));
+  const inList = (id) => (id != null && stageIds.has(String(id)) ? id : null);
+  const leadMeta = opts?.leadMeta || null;
+  const leadColId = opts?.leadColId || leadMeta?.sx_pipeline_stage_id || null;
+  const wonDeal = opts?.sxWonDeal ?? false;
+  const hasSxHandover = opts?.hasSxHandover ?? Boolean(leadMeta?.sx_handover_at);
+  const VC_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
+
+  if (VC_STATUSES.has(String(project?.status || ''))) {
+    let preferred = null;
+    const leadColRow = sorted.find((s) => String(s.id) === String(leadColId || ''));
+    if (leadColRow?.is_handover_to_logistics) preferred = leadColId;
+    const handoverId = resolveSxHandoverColumnId(sorted, project, preferred);
+    if (handoverId) return handoverId;
+  }
+
+  const fromProject = inList(project?.sx_kanban_column_id);
+  if (fromProject) return fromProject;
+
+  const fromLead = inList(leadColId);
+  if (fromLead) return fromLead;
+
+  if (wonDeal) {
+    const inWorkshop = Boolean(project?.current_stage_id);
+    if (!inWorkshop && !hasSxHandover) return firstSxPipelineColumnId(sorted);
+  }
+
+  const cid = project?.current_stage_id || null;
+  if (cid) {
+    const wfMatches = sorted.filter((col) => {
+      const wid = col.workflow_stage_id || col.workflow_stage?.id;
+      return wid && String(wid) === String(cid);
+    });
+    if (wfMatches.length === 1) return wfMatches[0].id;
+  }
+
+  if (project?.sx_intake || wonDeal) return firstSxPipelineColumnId(sorted);
+  return null;
+}
+
 /** Chọn cột «Bàn giao VC» phù hợp phân loại project (ưu tiên preferredColId nếu hợp lệ). */
 function resolveSxHandoverColumnId(sortedStages, project, preferredColId = null) {
   const sorted = [...(sortedStages || [])];
@@ -348,21 +394,10 @@ function resolveSxHandoverColumnId(sortedStages, project, preferredColId = null)
 }
 
 function enrichOneSxProject(project, sortedStages, wonSet, leadMeta = null) {
-  const VC_STATUSES = new Set(['shipping', 'installing', 'warranty']);
-  let colId = kanbanColumnIdForProject(project, sortedStages, wonSet, leadMeta);
-  // Khi đã bàn giao sang VC (status shipping/installing/warranty), ghim ở cột bàn giao phù hợp phân loại.
-  if (VC_STATUSES.has(project.status)) {
-    const sorted = [...(sortedStages || [])];
-    const stageIds = new Set(sorted.map((s) => String(s.id)));
-    const leadCol = leadMeta?.sx_pipeline_stage_id;
-    let preferred = null;
-    if (leadCol && stageIds.has(String(leadCol))) {
-      const leadColRow = sorted.find((s) => String(s.id) === String(leadCol));
-      if (leadColRow?.is_handover_to_logistics) preferred = leadCol;
-    }
-    const handoverId = resolveSxHandoverColumnId(sortedStages, project, preferred);
-    if (handoverId) colId = handoverId;
-  }
+  const colId = resolveSxDisplayColumnId(project, sortedStages, {
+    leadMeta,
+    sxWonDeal: wonSet.has(project.id),
+  });
   const intakeCol = sortedStages.find((s) => s.bucket_slug === INTAKE_BUCKET);
   const inIntake = intakeCol && colId === intakeCol.id;
   const matchedCol = sortedStages.find((s) => String(s.id) === String(colId)) || null;
@@ -1190,6 +1225,7 @@ module.exports = {
   firstSxPipelineColumnId,
   loadDealSxPipelineMetaByProjectIds,
   kanbanColumnIdForProject,
+  resolveSxDisplayColumnId,
   resolveSxHandoverColumnId,
   enrichProjectsForSx,
   buildPipelineSummary,
