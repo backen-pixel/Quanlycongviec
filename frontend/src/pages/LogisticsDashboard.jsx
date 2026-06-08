@@ -515,8 +515,8 @@ export default function LogisticsDashboard() {
           >
             <Plus className="h-4 w-4" /> + Thêm dự án VC
           </button>
-          <Link to="/sx/pipeline-settings" className="h-9 px-3 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white text-gray-700 text-sm font-medium hover:bg-gray-50" title="Cấu hình pipeline xưởng dùng chung — VC dùng chung pipeline với Sản xuất">
-            Cài đặt pipeline xưởng
+          <Link to="/vc/pipeline-settings" className="h-9 px-3 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white text-gray-700 text-sm font-medium hover:bg-gray-50" title="Cấu hình cột pipeline riêng cho module VC/LĐ">
+            Cài đặt pipeline VC/LĐ
           </Link>
           <span className="hidden md:inline-block w-px h-6 bg-gray-200 mx-1" aria-hidden />
           <ModuleQuickActions trashTab="vc" />
