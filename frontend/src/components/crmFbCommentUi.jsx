@@ -1,4 +1,7 @@
 /** UI bình luận CRM theo phong cách Facebook (avatar, pill nhập, nút Đăng). */
+import { useCallback, useLayoutEffect, useRef } from 'react';
+
+const COMPOSER_MAX_H = 160; // tương đương max-h-40
 
 export function formatCrmFbRelativeTime(iso) {
   if (!iso) return '';
@@ -51,14 +54,35 @@ export function FbCrmCommentComposer({
   minRows = 1,
   autoFocus = false,
 }) {
+  const textareaRef = useRef(null);
+
+  const syncHeight = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    const h = Math.min(Math.max(el.scrollHeight, 22), COMPOSER_MAX_H);
+    el.style.height = `${h}px`;
+    el.style.overflowY = el.scrollHeight > COMPOSER_MAX_H ? 'auto' : 'hidden';
+  }, []);
+
+  useLayoutEffect(() => {
+    syncHeight();
+  }, [value, syncHeight]);
+
+  const handleChange = (e) => {
+    onChange?.(e);
+    requestAnimationFrame(syncHeight);
+  };
+
   return (
     <div className="flex items-end gap-2 px-3 py-2.5 bg-white">
       <FbCrmAvatar user={user} className="h-8 w-8 shrink-0 mb-px" />
       <div className="flex-1 min-w-0 rounded-[22px] bg-[#f0f2f5] px-3 py-2 border border-transparent focus-within:border-[#1877f2]/30 transition-colors">
         <textarea
+          ref={textareaRef}
           autoFocus={autoFocus}
           value={value}
-          onChange={onChange}
+          onChange={handleChange}
           rows={minRows}
           placeholder={placeholder}
           onKeyDown={(e) => {
@@ -67,7 +91,8 @@ export function FbCrmCommentComposer({
               onSubmit?.();
             }
           }}
-          className="w-full bg-transparent border-0 p-0 text-[15px] leading-snug text-[#050505] placeholder:text-[#65676b] focus:ring-0 resize-y min-h-[22px] max-h-40"
+          className="w-full bg-transparent border-0 p-0 text-[15px] leading-snug text-[#050505] placeholder:text-[#65676b] focus:ring-0 resize-none min-h-[22px] overflow-hidden"
+          style={{ maxHeight: COMPOSER_MAX_H }}
         />
       </div>
       <button
