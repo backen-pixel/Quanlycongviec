@@ -9,6 +9,7 @@ import { useAuth } from '../lib/auth';
 import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
 import { FbCrmAvatar, FbCrmCommentComposer, formatCrmFbRelativeTime } from './crmFbCommentUi';
 import { upsertComment } from './CommentsPanels';
+import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
 
 /** Bộ emoji được phép — đồng bộ với backend PROJECT_COMMENT_ALLOWED_REACTION_EMOJI */
 const PROJECT_COMMENT_REACTION_PICKER = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
@@ -214,7 +215,9 @@ export function ProductionListView({ pipeline, calculateDays }) {
                 <th className={headerCellCls}>Tên dự án</th>
                 <th className={headerCellCls}>Khách hàng</th>
                 <th className={headerCellCls}>Cột pipeline</th>
-                <th className={`${headerCellCls} text-right`}>Giá trị</th>
+                {!HIDE_PRODUCTION_DEAL_VALUES && (
+                  <th className={`${headerCellCls} text-right`}>Giá trị</th>
+                )}
                 <th className={headerCellCls}>SX phụ trách</th>
                 <th className={headerCellCls}>Sale</th>
                 <th className={headerCellCls}>Deadline</th>
@@ -288,10 +291,11 @@ export function ProductionListView({ pipeline, calculateDays }) {
                         </span>
                       ) : '—'}
                     </td>
-                    {/* Giá trị */}
-                    <td className="px-3 py-2 text-xs whitespace-nowrap text-right tabular-nums text-gray-900 font-medium">
-                      {Number(item.estimated_value) > 0 ? formatVND(item.estimated_value) : '—'}
-                    </td>
+                    {!HIDE_PRODUCTION_DEAL_VALUES && (
+                      <td className="px-3 py-2 text-xs whitespace-nowrap text-right tabular-nums text-gray-900 font-medium">
+                        {Number(item.estimated_value) > 0 ? formatVND(item.estimated_value) : '—'}
+                      </td>
+                    )}
                     {/* SX phụ trách */}
                     <td className="px-3 py-2 text-xs whitespace-nowrap max-w-[200px]">
                       <PersonAvatarCell name={sxName} />
@@ -340,7 +344,7 @@ export function ProductionListView({ pipeline, calculateDays }) {
           <span>
             Hiển thị: {Math.min(visibleCount, allItems.length).toLocaleString()} / {allItems.length.toLocaleString()} dự án
           </span>
-          <span>GT: {formatVND(totalValue)}</span>
+          {!HIDE_PRODUCTION_DEAL_VALUES && <span>GT: {formatVND(totalValue)}</span>}
         </div>
       </div>
     </div>
@@ -557,7 +561,7 @@ function ProductionByOwnerCard({ item, goProject }) {
           </span>
         )}
       </div>
-      {Number(item.estimated_value) > 0 && (
+      {!HIDE_PRODUCTION_DEAL_VALUES && Number(item.estimated_value) > 0 && (
         <p className="text-xs font-bold text-gray-900 mt-2">{formatVND(item.estimated_value)}</p>
       )}
     </div>
@@ -609,7 +613,8 @@ function ProductionPlannerByOwner({ allItems, goProject, onGoPersonal }) {
             <div>
               <p className="text-sm font-semibold text-gray-900">{group.user.full_name}</p>
               <p className="text-[10px] text-gray-500">
-                {group.items.length} dự án • {formatVND(group.totalValue)}
+                {group.items.length} dự án
+                {!HIDE_PRODUCTION_DEAL_VALUES && ` • ${formatVND(group.totalValue)}`}
               </p>
             </div>
           </div>
@@ -944,7 +949,7 @@ function ProductionPlannerPersonal({ allItems, goProject }) {
                 topBarColor={col.color || '#0d9488'}
                 title={col.name}
                 count={colItems.length}
-                subtitle={`Giá trị: ${formatVND(totalValue)}`}
+                subtitle={HIDE_PRODUCTION_DEAL_VALUES ? undefined : `Giá trị: ${formatVND(totalValue)}`}
                 isDragOver={dragOverCol === col.id}
                 onDragOver={(e) => { e.preventDefault(); setDragOverCol(col.id); }}
                 onDragLeave={(e) => { if (e.target === e.currentTarget) setDragOverCol(null); }}
@@ -1197,7 +1202,7 @@ function DeadlineCard({ item, goProject }) {
             ? ' · Deadline'
             : ''}
         </span>
-        {Number(item.estimated_value) > 0 && (
+        {!HIDE_PRODUCTION_DEAL_VALUES && Number(item.estimated_value) > 0 && (
           <span className="font-semibold text-gray-900 text-force-black">{formatVND(item.estimated_value)}</span>
         )}
       </div>
@@ -1309,7 +1314,7 @@ export function ProductionDeadlineView({ pipeline }) {
               topBarColor={b.color}
               title={b.label}
               count={items.length}
-              subtitle={totalValue > 0 ? `Giá trị: ${formatVND(totalValue)}` : undefined}
+              subtitle={!HIDE_PRODUCTION_DEAL_VALUES && totalValue > 0 ? `Giá trị: ${formatVND(totalValue)}` : undefined}
               isDragOver={isDragOver}
               onDragOver={(e) => {
                 e.preventDefault();

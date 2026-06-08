@@ -5,6 +5,7 @@ import { getSocket } from '../lib/socket';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { formatVND, formatDate } from '../lib/utils';
+import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
 import {
   getWorkshopDateRange, WS_TIME_PRESETS, WS_KANBAN_LOAD_OPTIONS,
   workshopCreatedInRange, fetchWorkshopProjectPages,
@@ -142,6 +143,10 @@ const SX_SORT_OPTIONS = [
   { id: 'name_asc', label: 'Tên A → Z' },
 ];
 
+const SX_SORT_OPTIONS_VISIBLE = HIDE_PRODUCTION_DEAL_VALUES
+  ? SX_SORT_OPTIONS.filter((o) => o.id !== 'value_desc' && o.id !== 'value_asc')
+  : SX_SORT_OPTIONS;
+
 function sortProjectsBy(items, sortBy) {
   if (!Array.isArray(items) || items.length === 0) return items || [];
   const cloned = [...items];
@@ -183,7 +188,7 @@ export default function ProductionDashboard() {
   });
   const [sortBy, setSortBy] = useState(() => {
     const v = P0?.sortBy;
-    return SX_SORT_OPTIONS.some((o) => o.id === v) ? v : 'newest';
+    return SX_SORT_OPTIONS_VISIBLE.some((o) => o.id === v) ? v : 'newest';
   });
   const [sortOpen, setSortOpen] = useState(false);
   const sortMenuRef = useRef(null);
@@ -1241,18 +1246,26 @@ export default function ProductionDashboard() {
             <KPICard
               accent="bg-amber-500"
               label="Công nợ"
-              value={(scopeKpis.debt_count > 0 || scopeKpis.debt_revenue_value > 0)
-                ? formatVND(scopeKpis.debt_revenue_value || 0)
-                : '—'}
-              descriptor={scopeKpis.debt_count > 0 ? `${scopeKpis.debt_count} dự án · đã công, chưa thu` : 'đã công, chưa thu'}
+              value={HIDE_PRODUCTION_DEAL_VALUES
+                ? (scopeKpis.debt_count > 0 ? scopeKpis.debt_count : '—')
+                : ((scopeKpis.debt_count > 0 || scopeKpis.debt_revenue_value > 0)
+                  ? formatVND(scopeKpis.debt_revenue_value || 0)
+                  : '—')}
+              descriptor={scopeKpis.debt_count > 0
+                ? `${scopeKpis.debt_count} dự án · đã công, chưa thu`
+                : 'đã công, chưa thu'}
             />
             <KPICard
               accent="bg-emerald-600"
               label="Đã thu"
-              value={(scopeKpis.collected_count > 0 || scopeKpis.collected_revenue_value > 0)
-                ? formatVND(scopeKpis.collected_revenue_value || 0)
-                : '—'}
-              descriptor={scopeKpis.collected_count > 0 ? `${scopeKpis.collected_count} dự án · theo cột pipeline` : 'theo cột pipeline'}
+              value={HIDE_PRODUCTION_DEAL_VALUES
+                ? (scopeKpis.collected_count > 0 ? scopeKpis.collected_count : '—')
+                : ((scopeKpis.collected_count > 0 || scopeKpis.collected_revenue_value > 0)
+                  ? formatVND(scopeKpis.collected_revenue_value || 0)
+                  : '—')}
+              descriptor={scopeKpis.collected_count > 0
+                ? `${scopeKpis.collected_count} dự án · theo cột pipeline`
+                : 'theo cột pipeline'}
             />
           </div>
         );
@@ -1510,11 +1523,11 @@ export default function ProductionDashboard() {
                     }`}
                   >
                     <ArrowUpDown className="h-3.5 w-3.5" />
-                    {SX_SORT_OPTIONS.find((o) => o.id === sortBy)?.label || 'Sắp xếp'}
+                    {SX_SORT_OPTIONS_VISIBLE.find((o) => o.id === sortBy)?.label || 'Sắp xếp'}
                   </button>
                   {sortOpen && (
                     <div className="absolute left-0 top-full mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-30 py-1">
-                      {SX_SORT_OPTIONS.map((o) => (
+                      {SX_SORT_OPTIONS_VISIBLE.map((o) => (
                         <button
                           key={o.id}
                           type="button"
@@ -2037,9 +2050,11 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
             </div>
           );
         })()}
-        <p className="text-[11px] text-gray-500 tabular-nums mt-0.5">
-          {totalValue > 0 ? formatVND(totalValue) : '0đ'}
-        </p>
+        {!HIDE_PRODUCTION_DEAL_VALUES && (
+          <p className="text-[11px] text-gray-500 tabular-nums mt-0.5">
+            {totalValue > 0 ? formatVND(totalValue) : '0đ'}
+          </p>
+        )}
       </div>
 
       {/* Cards container — không viền, không nền (sạch sẽ như mockup) */}
@@ -2253,14 +2268,18 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
       )}
 
       {/* Row 3: Giá trị + Deadline cùng hàng */}
-      {(Number(item.estimated_value) > 0 || primaryDeadline) && (
+      {((!HIDE_PRODUCTION_DEAL_VALUES && Number(item.estimated_value) > 0) || primaryDeadline) && (
         <div className="flex items-center justify-between gap-2 mb-1.5 min-w-0">
-          {Number(item.estimated_value) > 0 ? (
-            <p className="text-sm font-bold text-emerald-600 tabular-nums truncate">
-              {formatVND(item.estimated_value)}
-            </p>
-          ) : (
-            <span className="text-[11px] text-gray-400 italic">Chưa có giá trị</span>
+          {!HIDE_PRODUCTION_DEAL_VALUES && (
+            Number(item.estimated_value) > 0
+              ? (
+                <p className="text-sm font-bold text-emerald-600 tabular-nums truncate">
+                  {formatVND(item.estimated_value)}
+                </p>
+              )
+              : (
+                <span className="text-[11px] text-gray-400 italic">Chưa có giá trị</span>
+              )
           )}
           {primaryDeadline && (
             <DeadlineBadge

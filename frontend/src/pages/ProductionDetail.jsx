@@ -15,6 +15,7 @@ import DocumentShareModulePicker from '../components/DocumentShareModulePicker';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
+import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
 import { publicFileUrl as pubUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
 import {
   ArrowLeft, FolderKanban, MessageSquare, Plus, X,
@@ -219,23 +220,24 @@ function WorkshopInfoPanel({
         </div>
       )}
 
-      {/* Giá trị */}
-      <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'estimated_value' && startEdit('estimated_value', project.estimated_value || '')}>
-        <span className="text-sm mt-0.5 shrink-0">💰</span>
-        <div className="flex-1 min-w-0">
-          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Giá trị dự án</p>
-          {editing === 'estimated_value' ? (
-            <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-              <input type="number" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
-                className="w-full px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400" placeholder="0" />
-              <button onClick={() => save('estimated_value', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
-              <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
-            </div>
-          ) : (
-            <p className="text-sm font-medium text-gray-900 flex items-center gap-1">{formatVND(project.estimated_value)} <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" /></p>
-          )}
+      {(!HIDE_PRODUCTION_DEAL_VALUES || isVC) && (
+        <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'estimated_value' && startEdit('estimated_value', project.estimated_value || '')}>
+          <span className="text-sm mt-0.5 shrink-0">💰</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Giá trị dự án</p>
+            {editing === 'estimated_value' ? (
+              <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                <input type="number" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
+                  className="w-full px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400" placeholder="0" />
+                <button onClick={() => save('estimated_value', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+                <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+              </div>
+            ) : (
+              <p className="text-sm font-medium text-gray-900 flex items-center gap-1">{formatVND(project.estimated_value)} <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" /></p>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Deadline */}
       <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'deadline' && startEdit('deadline', project.deadline ? project.deadline.substring(0, 10) : '')}>

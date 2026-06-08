@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
+import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
 import { Search, Filter, FolderKanban } from 'lucide-react';
 
 const DEFAULT_STAGES = [
@@ -102,7 +103,7 @@ export default function ProductionPipeline() {
                     <p className="text-sm font-medium text-gray-900 truncate">{p.name}</p>
                  <div className="flex items-center justify-between mt-2 text-xs text-gray-500">
                       <span>{p.customer_name || '—'}</span>
-                      <span>{formatVND(p.estimated_value)}</span>
+                      {!HIDE_PRODUCTION_DEAL_VALUES && <span>{formatVND(p.estimated_value)}</span>}
                     </div>
                     {p.deadline && (
                       <p className={`text-[10px] mt-1 ${new Date(p.deadline) < new Date() ? 'text-red-600 font-bold' : 'text-gray-400'}`}>
