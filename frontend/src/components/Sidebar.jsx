@@ -302,6 +302,7 @@ const VC_MENU_GROUPS = [
     emoji: '📦',
     items: [
       { to: '/vc/dashboard', icon: FolderKanban, label: 'Dự án vận chuyển' },
+      { to: '/vc/pipeline-settings', icon: Settings, label: 'Pipeline VC/LĐ' },
       { to: '/vc/teams', icon: Users, label: 'Quản lý Đội nhóm' },
       { to: '/vc/task-templates', icon: ListChecks, label: 'Bộ nhiệm vụ VC/LĐ' },
       { to: { pathname: '/admin/trash', search: '?tab=vc' }, icon: Trash2, label: 'Thùng rác VC', adminOnly: true, strictAdminOnly: true },

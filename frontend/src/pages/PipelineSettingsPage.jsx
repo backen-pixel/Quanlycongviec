@@ -685,6 +685,38 @@ export default function PipelineSettingsPage() {
     }
   };
 
+  /** Gán role auto-sync cho cột VC/LĐ (delivery|installation) cho từng cột. */
+  const setVcSyncType = async (moduleStage, syncType) => {
+    if (!moduleStage?.id) return;
+    const nextType = moduleStage.crm_sync_type === syncType ? null : syncType;
+    try {
+      await api.put(`/logistics/pipeline-stages/${moduleStage.id}`, {
+        crm_sync_type: nextType,
+        ...(nextType ? { crm_target_stage_id: null } : {}),
+      });
+      load();
+    } catch (e) {
+      alert('Lỗi cập nhật role VC/LĐ: ' + (e.response?.data?.error || e.message));
+    }
+  };
+
+  /** Gán role auto-sync VC/LĐ hàng loạt cho nhiều cột đã chọn. */
+  const bulkSetVcSyncType = async (stageIds = [], syncType = null) => {
+    const ids = Array.from(new Set((stageIds || []).filter(Boolean)));
+    if (!ids.length) return;
+    try {
+      await Promise.all(
+        ids.map((id) => api.put(`/logistics/pipeline-stages/${id}`, {
+          crm_sync_type: syncType,
+          ...(syncType ? { crm_target_stage_id: null } : {}),
+        })),
+      );
+      load();
+    } catch (e) {
+      alert('Lỗi gán trigger VC/LĐ hàng loạt: ' + (e.response?.data?.error || e.message));
+    }
+  };
+
   const renderPipeline = (type, list) => (
     <div className="bg-white rounded-xl border overflow-hidden">
       {/* Header */}
@@ -1575,6 +1607,8 @@ export default function PipelineSettingsPage() {
             sxStages={sxStages}
             vcStages={vcStages}
             onSetModuleTarget={setModuleStageTarget}
+            onSetVcSyncType={setVcSyncType}
+            onBulkSetVcSyncType={bulkSetVcSyncType}
           />
         </div>
       )}
@@ -1600,7 +1634,26 @@ export default function PipelineSettingsPage() {
   );
 }
 
-function StageForm({ form, setForm, onSave, onCancel, pipelineType = 'lead', editingStageId, sxStages = [], vcStages = [], onSetModuleTarget }) {
+function StageForm({
+  form, setForm, onSave, onCancel, pipelineType = 'lead', editingStageId,
+  sxStages = [], vcStages = [], onSetModuleTarget, onSetVcSyncType, onBulkSetVcSyncType,
+}) {
+  const [bulkVcSelected, setBulkVcSelected] = useState(() => new Set());
+  useEffect(() => { setBulkVcSelected(new Set()); }, [editingStageId]);
+
+  const vcIds = vcStages.map((vc) => vc.id);
+  const vcAllSelected = vcIds.length > 0 && vcIds.every((id) => bulkVcSelected.has(id));
+  const vcSomeSelected = vcIds.some((id) => bulkVcSelected.has(id));
+
+  const toggleBulkVc = (id) => {
+    setBulkVcSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
@@ -1848,25 +1901,108 @@ function StageForm({ form, setForm, onSave, onCancel, pipelineType = 'lead', edi
 
           {vcStages.length > 0 && (
             <div>
-              <p className="text-[10px] font-semibold text-orange-700 mb-1">🚚 Vận chuyển & Lắp đặt (VC)</p>
+              <div className="flex flex-wrap items-center gap-2 mb-1">
+                <p className="text-[10px] font-semibold text-orange-700">🚚 Vận chuyển & Lắp đặt (VC)</p>
+                <label className="inline-flex items-center gap-1 text-[10px] text-gray-600 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={vcAllSelected}
+                    ref={(el) => { if (el) el.indeterminate = !vcAllSelected && vcSomeSelected; }}
+                    onChange={() => {
+                      if (vcAllSelected) setBulkVcSelected(new Set());
+                      else setBulkVcSelected(new Set(vcIds));
+                    }}
+                    className="rounded border-gray-300"
+                  />
+                  Chọn tất cả
+                </label>
+                {bulkVcSelected.size > 0 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => onBulkSetVcSyncType?.(Array.from(bulkVcSelected), 'delivery')}
+                      className="h-6 px-2 rounded border border-blue-300 bg-blue-50 text-blue-700 text-[10px] font-semibold cursor-pointer hover:bg-blue-100"
+                      title="Gán trigger Vận chuyển cho tất cả cột VC đã chọn"
+                    >
+                      🚚 Trigger Vận chuyển
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onBulkSetVcSyncType?.(Array.from(bulkVcSelected), 'installation')}
+                      className="h-6 px-2 rounded border border-amber-300 bg-amber-50 text-amber-700 text-[10px] font-semibold cursor-pointer hover:bg-amber-100"
+                      title="Gán trigger Lắp đặt cho tất cả cột VC đã chọn"
+                    >
+                      🔧 Trigger Lắp đặt
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onBulkSetVcSyncType?.(Array.from(bulkVcSelected), null)}
+                      className="h-6 px-2 rounded border border-gray-300 bg-white text-gray-600 text-[10px] font-semibold cursor-pointer hover:bg-gray-50"
+                      title="Bỏ trigger VC/LĐ cho các cột đã chọn"
+                    >
+                      Bỏ trigger
+                    </button>
+                  </>
+                )}
+              </div>
               <div className="flex flex-wrap gap-1.5">
                 {vcStages.map((vc) => {
                   const linked = vc.crm_target_stage_id === editingStageId;
+                  const isDelivery = vc.crm_sync_type === 'delivery';
+                  const isInstallation = vc.crm_sync_type === 'installation';
+                  const selected = bulkVcSelected.has(vc.id);
                   return (
-                    <button
+                    <div
                       key={vc.id}
-                      type="button"
-                      onClick={() => onSetModuleTarget?.(vc, 'vc', linked ? null : editingStageId)}
-                      className={`px-2 py-1 rounded-lg text-[10px] font-medium border cursor-pointer transition-all ${
+                      className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-medium border ${
                         linked
                           ? 'bg-orange-100 text-orange-800 border-orange-400 ring-1 ring-orange-400'
-                          : 'bg-white text-gray-600 border-gray-200 hover:border-orange-300 hover:text-orange-700'
+                          : 'bg-white text-gray-600 border-gray-200'
                       }`}
                       style={linked ? { borderColor: vc.color } : {}}
                     >
-                      {vc.icon || '📋'} {vc.name}
-                      {linked && ' ✓'}
-                    </button>
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={() => toggleBulkVc(vc.id)}
+                        className="rounded border-gray-300"
+                        title="Chọn cột này để gán trigger hàng loạt"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => onSetModuleTarget?.(vc, 'vc', linked ? null : editingStageId)}
+                        className="cursor-pointer hover:text-orange-700"
+                        title="Map cột VC/LĐ này vào CRM stage đang sửa"
+                      >
+                        {vc.icon || '📋'} {vc.name}
+                        {linked && ' ✓'}
+                      </button>
+                      <span className="w-px h-3 bg-gray-300" />
+                      <button
+                        type="button"
+                        onClick={() => onSetVcSyncType?.(vc, 'delivery')}
+                        className={`px-1.5 py-0.5 rounded border cursor-pointer ${
+                          isDelivery
+                            ? 'bg-blue-100 text-blue-800 border-blue-300'
+                            : 'bg-white text-gray-500 border-gray-200 hover:border-blue-300 hover:text-blue-700'
+                        }`}
+                        title="Tick để khi kéo vào cột này CRM tự chuyển role «Vận chuyển»"
+                      >
+                        🚚
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onSetVcSyncType?.(vc, 'installation')}
+                        className={`px-1.5 py-0.5 rounded border cursor-pointer ${
+                          isInstallation
+                            ? 'bg-amber-100 text-amber-800 border-amber-300'
+                            : 'bg-white text-gray-500 border-gray-200 hover:border-amber-300 hover:text-amber-700'
+                        }`}
+                        title="Tick để khi kéo vào cột này CRM tự chuyển role «Lắp đặt»"
+                      >
+                        🔧
+                      </button>
+                    </div>
                   );
                 })}
               </div>
