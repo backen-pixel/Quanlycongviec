@@ -273,7 +273,7 @@ function KpiKanbanLedgerBadge({ leadId, net, periodStart, compact }) {
 /** SLA cột pipeline: null DB → 7 ngày; sla_days=0 → không áp dụng SLA */
 function getPipelineStageSlaTone(stageEnteredAt, stage) {
   if (!stageEnteredAt || !stage) return { level: 'ok', remainingMs: null, deadlineTs: null };
-  if (stage.is_won || stage.is_lost) return { level: 'ok', remainingMs: null, deadlineTs: null };
+  if (stage.is_won || stage.is_lost || stage.counts_as_completed_revenue) return { level: 'ok', remainingMs: null, deadlineTs: null };
   const slaDays = effectivePipelineStageSlaDays(stage.sla_days);
   if (slaDays == null) return { level: 'ok', remainingMs: null, deadlineTs: null };
   const deadlineTs = new Date(stageEnteredAt).getTime() + slaDays * 86400000;
@@ -1492,7 +1492,7 @@ export default function CRMDashboard() {
     let cancel = false;
     (async () => {
       try {
-        const params = {};
+        const params = { for_module: 'crm' };
         if (dashboardScopeCompanyId) params.company_id = dashboardScopeCompanyId;
         const { data } = await api.get('/crm/employees-by-company', { params });
         if (cancel) return;
@@ -2565,9 +2565,9 @@ export default function CRMDashboard() {
     const stageMap = new Map(stages.map((s) => [String(s.id), s]));
     const out = [];
     for (const it of items) {
-      if (shouldHideCrmKanbanDeadlineOnCard(it)) continue;
       const stage = stageMap.get(String(it.stage_id || ''));
-      if (!stage || stage.is_won || stage.is_lost) continue;
+      if (shouldHideCrmKanbanDeadlineOnCard(it, stage)) continue;
+      if (!stage || stage.is_won || stage.is_lost || stage.counts_as_completed_revenue) continue;
       const taskTone = getCrmOpenTaskDeadlineTone(it.crm_next_open_task_deadline);
       const slaTone = getPipelineStageSlaTone(it.stage_entered_at, stage);
       const tone = taskTone || slaTone;
@@ -2905,13 +2905,7 @@ export default function CRMDashboard() {
           const alreadySx = crmDealMoveToWonSxAlreadyCreatedMessage(deal);
           if (alreadySx) {
             if (String(deal.stage_id) === String(newStageId)) return;
-            setDealWonSxExistsCtx({
-              leadId,
-              newStageId,
-              extraData,
-              deal,
-              message: alreadySx,
-            });
+            await applyKanbanStageChange(leadId, newStageId, extraData);
             return;
           }
 
@@ -2940,7 +2934,7 @@ export default function CRMDashboard() {
 
       // Chuyển sang cột mới (trừ Thắng/Thua): (1) kiểm tra nhiệm vụ chặn TRƯỚC;
       // (2) chỉ hiện hộp deadline nếu cột đích bật requires_deadline trong Cài đặt Pipeline.
-      if (targetStage && !targetStage.is_won && !targetStage.is_lost) {
+      if (targetStage && !targetStage.is_won && !targetStage.is_lost && !targetStage.counts_as_completed_revenue) {
         const rows = pipelineType === 'lead' ? allLeads : allDeals;
         const card = rows.find((x) => String(x.id) === String(leadId));
         const isSameStage = card && String(card.stage_id || '') === String(newStageId);
@@ -5760,7 +5754,7 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
   const selectedForMerge = mergeSelectedIds && mergeSelectedIds.some((x) => String(x) === String(item.id));
   const canMergeSelect = typeof onToggleMergeSelect === 'function';
 
-  const hideColumnDeadline = shouldHideCrmKanbanDeadlineOnCard(item);
+  const hideColumnDeadline = shouldHideCrmKanbanDeadlineOnCard(item, stage);
   const slaTone = getPipelineStageSlaTone(item.stage_entered_at, stage);
   const taskTone = getCrmOpenTaskDeadlineTone(item.crm_next_open_task_deadline);
   // Deadline thủ công (kanban_deadline_at) ưu tiên cao nhất cho «còn/quá hạn».
@@ -5774,7 +5768,7 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
   // SLA badge phía bên phải giá trị tiền
   const slaBadge = (() => {
     if (hideColumnDeadline) return null;
-    if (!scheduleTone?.deadlineTs || stage?.is_won || stage?.is_lost) return null;
+    if (!scheduleTone?.deadlineTs || stage?.is_won || stage?.is_lost || stage?.counts_as_completed_revenue) return null;
     const isOverdue = cardToneLevel === 'overdue';
     const remainingLabel = isOverdue
       ? formatRemainingMs(Math.abs(scheduleTone.remainingMs))
@@ -5852,9 +5846,20 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
     );
   })();
 
-  // Badge ngày giao xưởng từ linked_project
-  const productionDeadlineBadge = (() => {
-    const pd = item.linked_project?.production_deadline;
+  // Badge lịch đặt/giao từ linked_project
+  const orderDateBadge = (() => {
+    const od = item.linked_project?.order_date;
+    if (!od) return null;
+    return (
+      <div className="flex items-center gap-1.5 rounded-md border px-1.5 py-1 text-[11px] font-medium bg-slate-50 border-slate-200 text-slate-700">
+        <span>🛒</span>
+        <span className="truncate">Đặt: {new Date(od).toLocaleDateString('vi-VN')}</span>
+      </div>
+    );
+  })();
+
+  const deliveryDateBadge = (() => {
+    const pd = item.linked_project?.delivery_date || item.linked_project?.production_deadline;
     if (!pd) return null;
     const isOverdue = new Date(pd) < new Date();
     const isSoon = !isOverdue && new Date(pd) < new Date(Date.now() + 3 * 86400000);
@@ -5863,9 +5868,9 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
       : 'bg-teal-50 border-teal-200 text-teal-700';
     return (
       <div className={`flex items-center gap-1.5 rounded-md border px-1.5 py-1 text-[11px] font-medium ${tone}`}>
-        <span>🏭</span>
+        <span>🚚</span>
         <span className="truncate">
-          Giao xưởng: {new Date(pd).toLocaleDateString('vi-VN')}
+          Giao: {new Date(pd).toLocaleDateString('vi-VN')}
           {isOverdue ? ' ⚠️' : isSoon ? ' ⚡' : ''}
         </span>
       </div>
@@ -6009,11 +6014,12 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
           </div>
         )}
 
-        {/* 6. Hàng badge phụ: SX/VC + ngày giao xưởng (nếu có) */}
-        {(sxVcBadge || productionDeadlineBadge) && (
+        {/* 6. Hàng badge phụ: SX/VC + lịch đặt/giao (nếu có) */}
+        {(sxVcBadge || orderDateBadge || deliveryDateBadge) && (
           <div className="flex flex-wrap gap-1.5 pt-0.5">
             {sxVcBadge}
-            {productionDeadlineBadge}
+            {orderDateBadge}
+            {deliveryDateBadge}
           </div>
         )}
 
@@ -6090,7 +6096,7 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
             )}
           </div>
           <div className="flex items-center gap-1 shrink-0">
-            {typeof onOpenDeadline === 'function' && (
+            {!hideColumnDeadline && typeof onOpenDeadline === 'function' && (
               <button
                 type="button"
                 data-kanban-deadline-btn

@@ -10,9 +10,14 @@ function normalizeChecklistForTaskInsert(checklist) {
   if (!Array.isArray(checklist)) return [];
   return checklist
     .map((c, i) => {
-      if (typeof c === 'string' && c.trim()) return { title: c.trim(), order_index: i };
+      if (typeof c === 'string' && c.trim()) return { title: c.trim(), notes: null, order_index: i };
       if (c && typeof c === 'object' && (c.label || c.title)) {
-        return { title: String(c.label || c.title).trim(), order_index: c.order_index ?? i };
+        const desc = (c.description ?? c.notes ?? '').toString().trim();
+        return {
+          title: String(c.label || c.title).trim(),
+          notes: desc || null,
+          order_index: c.order_index ?? i,
+        };
       }
       return null;
     })
@@ -365,6 +370,7 @@ async function applyWorkshopTemplateToProject(projectId, templateId, userId, opt
       checklistBatch.push({
         task_id: taskRow.id,
         title: row.title,
+        notes: row.notes ?? null,
         order_index: row.order_index ?? ci,
       });
     });

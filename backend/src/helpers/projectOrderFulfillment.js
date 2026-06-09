@@ -7,6 +7,30 @@ const { validateProductionCompanyId } = require('./productionCompanyGate');
 const { loadProductionHandoverMaps, resolveSxAssigneeForTemplateItem } = require('./productionHandoverSettings');
 const ORDER_PHASES = ['draft', 'confirmed', 'in_production', 'ready_logistics', 'in_logistics', 'completed'];
 
+let _ckSeq = 0;
+/**
+ * Chuyển checklist mẫu (mảng chuỗi hoặc object) sang định dạng JSONB của crm_tasks.checklist:
+ * mỗi phần tử { id, title, description, done } — khớp với CRMTasksTab.normalizeChecklist.
+ */
+function toCrmChecklist(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((x, i) => {
+      const title = typeof x === 'string' ? x : (x?.title || x?.label || '');
+      if (!title || !String(title).trim()) return null;
+      return {
+        id: `ck_${Date.now().toString(36)}_${(_ckSeq++).toString(36)}_${i}`,
+        title: String(title).trim(),
+        description: (typeof x === 'object' && x) ? String(x.description || '') : '',
+        notes: '',
+        priority: 'medium',
+        assignee_id: null,
+        done: false,
+      };
+    })
+    .filter(Boolean);
+}
+
 async function nextDhCode() {
   const year = new Date().getFullYear();
   const { data } = await supabase
@@ -353,15 +377,13 @@ async function applyProductionTemplateToFulfillmentLead({
     });
 
     const inserts = sortedItems.map((it, idx) => {
-      const checklist = Array.isArray(it.checklist) ? it.checklist.filter(Boolean) : [];
-      const checklistText = checklist.length
-        ? `\n\nNhiệm vụ nhỏ:\n${checklist.map((x, i) => `${i + 1}. ${x}`).join('\n')}`
-        : '';
+      const checklist = toCrmChecklist(it.checklist);
       const stageSlug = stageSlugByTemplateId.get(String(it.template_id)) || 'sx_other';
       const row = {
         lead_id: leadId,
         title: it.title,
-        description: `${it.description || ''}${checklistText}`.trim() || null,
+        description: (it.description || '').trim() || null,
+        checklist,
         status: 'pending',
         priority: it.priority || 'medium',
         stage_slug: stageSlug,
@@ -396,6 +418,11 @@ async function applyProductionTemplateToFulfillmentLead({
     }
     if (insErr && String(insErr.message || '').includes('blocks_stage_advance')) {
       const stripped = toInsertStrict.map(({ blocks_stage_advance: _b, production_pipeline_stage_id: _p, ...rest }) => rest);
+      insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+    }
+    // DB chưa apply migration 308 (cột checklist) → bỏ checklist và thử lại.
+    if (insErr && String(insErr.message || '').toLowerCase().includes('checklist')) {
+      const stripped = toInsertStrict.map(({ checklist: _c, ...rest }) => rest);
       insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
     }
     if (insErr) throw insErr;
@@ -550,15 +577,13 @@ async function applyProductionTemplateToFulfillmentLead({
   });
 
   const inserts = sortedItems.map((it, idx) => {
-    const checklist = Array.isArray(it.checklist) ? it.checklist.filter(Boolean) : [];
-    const checklistText = checklist.length
-      ? `\n\nNhiệm vụ nhỏ:\n${checklist.map((x, i) => `${i + 1}. ${x}`).join('\n')}`
-      : '';
+    const checklist = toCrmChecklist(it.checklist);
     const stageSlug = stageSlugByTemplateId.get(String(it.template_id)) || 'sx_other';
     return {
       lead_id: leadId,
       title: it.title,
-      description: `${it.description || ''}${checklistText}`.trim() || null,
+      checklist,
+      description: (it.description || '').trim() || null,
       status: 'pending',
       priority: it.priority || 'medium',
       stage_slug: stageSlug,
@@ -589,6 +614,11 @@ async function applyProductionTemplateToFulfillmentLead({
   }
   if (insErr && String(insErr.message || '').includes('blocks_stage_advance')) {
     const stripped = toInsertLoose.map(({ blocks_stage_advance: _b, production_pipeline_stage_id: _p, ...rest }) => rest);
+    insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+  }
+  // DB chưa apply migration 308 (cột checklist) → bỏ checklist và thử lại.
+  if (insErr && String(insErr.message || '').toLowerCase().includes('checklist')) {
+    const stripped = toInsertLoose.map(({ checklist: _c, ...rest }) => rest);
     insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
   }
   if (insErr) throw insErr;

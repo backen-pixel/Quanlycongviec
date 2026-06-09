@@ -317,7 +317,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
   const createTemplate = async () => {
     if (!newTpl.name.trim() || !newTpl.workshop_area) return;
     try {
-      await api.post('/production/task-templates', {
+      const { data } = await api.post('/production/task-templates', {
         name: newTpl.name.trim(),
         workshop_area: fixedArea || newTpl.workshop_area,
         company_id: selectedCompanyId || null,
@@ -327,33 +327,46 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
       });
       setNewTpl({ name: '', workshop_area: activeTab });
       setShowAddTpl(false);
-      load();
+      if (data?.id) setTemplates(prev => [...prev, { ...data, items: data.items || [] }]);
+      else load();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
   const deleteTemplate = async (id) => {
     if (!confirm('Xóa bộ mẫu này?')) return;
-    try { await api.delete(`/production/task-templates/${id}`); load(); } catch { alert('Lỗi'); }
+    const snapshot = templates;
+    setTemplates(prev => prev.filter(t => t.id !== id));
+    try { await api.delete(`/production/task-templates/${id}`); }
+    catch { alert('Lỗi'); setTemplates(snapshot); }
   };
 
   const addItem = async (tplId) => {
     const item = newItem[tplId];
     if (!item?.title?.trim()) return;
     try {
-      await api.post(`/production/task-templates/${tplId}/items`, { ...item, checklist: item.checklist || [] });
+      const { data } = await api.post(`/production/task-templates/${tplId}/items`, { ...item, checklist: item.checklist || [] });
+      if (data?.id) {
+        setTemplates(prev => prev.map(t => t.id !== tplId ? t : {
+          ...t, items: [...(t.items || []), data],
+        }));
+      } else { load(); }
       setNewItem(p => ({ ...p, [tplId]: { title: '', priority: 'medium', deadline_days: 0 } }));
-      load();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
   const deleteItem = async (tplId, itemId) => {
-    try { await api.delete(`/production/task-templates/${tplId}/items/${itemId}`); load(); } catch {}
+    const snapshot = templates;
+    setTemplates(prev => prev.map(t => t.id !== tplId ? t : {
+      ...t, items: (t.items || []).filter(i => i.id !== itemId),
+    }));
+    try { await api.delete(`/production/task-templates/${tplId}/items/${itemId}`); }
+    catch { setTemplates(snapshot); }
   };
 
   const updateTemplateItemFields = async (tplId, itemId, body) => {
     try {
-      await api.put(`/production/task-templates/${tplId}/items/${itemId}`, body);
-      load();
+      const { data } = await api.put(`/production/task-templates/${tplId}/items/${itemId}`, body);
+      patchItemLocal(tplId, itemId, data && data.id ? data : body);
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi cập nhật mục mẫu');
       throw e;
@@ -361,7 +374,9 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
   };
 
   const toggleDefault = async (tpl) => {
-    try { await api.put(`/production/task-templates/${tpl.id}`, { is_default: !tpl.is_default }); load(); } catch {}
+    setTemplates(prev => prev.map(t => t.id === tpl.id ? { ...t, is_default: !tpl.is_default } : t));
+    try { await api.put(`/production/task-templates/${tpl.id}`, { is_default: !tpl.is_default }); }
+    catch { load(); }
   };
 
   const setDefaultBundle = async () => {
@@ -429,34 +444,45 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
       } else {
         stagePayload = stagePayloadForTpl();
       }
-      await api.put(`/production/task-templates/${editingTpl.id}`, {
+      const { data } = await api.put(`/production/task-templates/${editingTpl.id}`, {
         name: editingTpl.name.trim(),
         workshop_area: tplArea,
         company_id: selectedCompanyId || null,
         ...stagePayload,
         ...workshopTypePayloadForTpl(),
       });
+      const tplId = editingTpl.id;
       setEditingTpl(null);
-      load();
+      if (data?.id) setTemplates(prev => prev.map(t => t.id === tplId ? { ...t, ...data, items: t.items } : t));
+      else load();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
   // ═══ Checklist CRUD ═══
+  // Cập nhật cục bộ trước (optimistic) → không reload cả trang; chỉ load() lại khi lỗi.
+  const patchItemLocal = (tplId, itemId, patch) => {
+    setTemplates(prev => prev.map(t => t.id !== tplId ? t : {
+      ...t,
+      items: (t.items || []).map(i => i.id === itemId ? { ...i, ...patch } : i),
+    }));
+  };
+
   const updateItemChecklist = async (tplId, itemId, checklist) => {
+    patchItemLocal(tplId, itemId, { checklist });
     try {
       await api.put(`/production/task-templates/${tplId}/items/${itemId}`, { checklist });
-      load();
-    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); load(); }
   };
 
   const updateItemVisibility = async (tplId, itemId, allowedCompanies, allowedDepts) => {
+    const payload = {
+      default_allowed_companies: allowedCompanies?.length ? allowedCompanies : null,
+      default_allowed_departments: allowedDepts?.length ? allowedDepts : null,
+    };
+    patchItemLocal(tplId, itemId, payload);
     try {
-      await api.put(`/production/task-templates/${tplId}/items/${itemId}`, {
-        default_allowed_companies: allowedCompanies?.length ? allowedCompanies : null,
-        default_allowed_departments: allowedDepts?.length ? allowedDepts : null,
-      });
-      load();
-    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+      await api.put(`/production/task-templates/${tplId}/items/${itemId}`, payload);
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); load(); }
   };
 
   const toggleItemCompany = (tplId, itemId, companyId, item) => {
@@ -477,7 +503,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
     const tpl = templates.find(t => t.id === tplId);
     const item = tpl?.items?.find(i => i.id === itemId);
     const current = Array.isArray(item?.checklist) ? item.checklist : [];
-    await updateItemChecklist(tplId, itemId, [...current, text]);
+    await updateItemChecklist(tplId, itemId, [...current, { title: text, description: '' }]);
     setNewCheckItem(p => ({ ...p, [itemId]: '' }));
   };
 
@@ -486,6 +512,29 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
     const item = tpl?.items?.find(i => i.id === itemId);
     const current = Array.isArray(item?.checklist) ? [...item.checklist] : [];
     current.splice(idx, 1);
+    await updateItemChecklist(tplId, itemId, current);
+  };
+
+  // Cập nhật tiêu đề / mô tả của 1 mục checklist (chuyển chuỗi cũ → object để giữ mô tả).
+  const updateChecklistItem = async (tplId, itemId, idx, patch) => {
+    const tpl = templates.find(t => t.id === tplId);
+    const item = tpl?.items?.find(i => i.id === itemId);
+    const current = Array.isArray(item?.checklist) ? [...item.checklist] : [];
+    const entry = current[idx];
+    if (entry === undefined) return;
+    const base = typeof entry === 'string'
+      ? { title: entry }
+      : { ...(entry || {}) };
+    if (base.label && base.title === undefined) { base.title = base.label; }
+    delete base.label;
+    const next = { ...base, ...patch };
+    next.title = (next.title ?? '').toString();
+    next.description = (next.description ?? '').toString();
+    // Không thay đổi gì thì bỏ qua (tránh reload thừa khi blur).
+    const prevTitle = typeof entry === 'string' ? entry : (entry?.title || entry?.label || '');
+    const prevDesc = typeof entry === 'string' ? '' : (entry?.description || '');
+    if (next.title === prevTitle && next.description === prevDesc) return;
+    current[idx] = next;
     await updateItemChecklist(tplId, itemId, current);
   };
 
@@ -577,6 +626,97 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
 
     // Save
     await updateItemChecklist(tplId, itemId, checklist);
+  };
+
+  // ═══ DRAG & DROP: Di chuyển 1 mục checklist (kể cả sang nhiệm vụ khác) ═══
+  // ID checklist có dạng `ck|<itemId>|<index>`; ID nhiệm vụ là `item.id` thuần.
+  const handleChecklistMove = async (tplId, activeId, overId) => {
+    const tpl = templates.find(t => t.id === tplId);
+    if (!tpl) return;
+
+    const [, srcItemId, srcIdxStr] = activeId.split('|');
+    const srcIdx = parseInt(srcIdxStr, 10);
+    if (isNaN(srcIdx)) return;
+
+    // Xác định nhiệm vụ đích + vị trí chèn.
+    let dstItemId, dstIdx;
+    if (overId.startsWith('ck|')) {
+      const [, oItemId, oIdxStr] = overId.split('|');
+      dstItemId = oItemId;
+      dstIdx = parseInt(oIdxStr, 10);
+    } else {
+      // Thả lên hàng nhiệm vụ (kể cả khi checklist đang đóng/rỗng) → chèn vào cuối.
+      dstItemId = overId;
+      const target = (tpl.items || []).find(i => String(i.id) === String(overId));
+      dstIdx = Array.isArray(target?.checklist) ? target.checklist.length : 0;
+    }
+    if (dstItemId == null || isNaN(dstIdx)) return;
+
+    const srcItem = (tpl.items || []).find(i => String(i.id) === String(srcItemId));
+    const dstItem = (tpl.items || []).find(i => String(i.id) === String(dstItemId));
+    if (!srcItem || !dstItem) return;
+
+    // Cùng nhiệm vụ → chỉ sắp xếp lại.
+    if (String(srcItemId) === String(dstItemId)) {
+      if (srcIdx === dstIdx) return;
+      const list = Array.isArray(srcItem.checklist) ? [...srcItem.checklist] : [];
+      const [moved] = list.splice(srcIdx, 1);
+      if (moved == null) return;
+      list.splice(Math.min(dstIdx, list.length), 0, moved);
+      setTemplates(prev => prev.map(t => t.id !== tplId ? t : {
+        ...t,
+        items: (t.items || []).map(i => String(i.id) === String(srcItemId) ? { ...i, checklist: list } : i),
+      }));
+      await updateItemChecklist(tplId, srcItemId, list);
+      return;
+    }
+
+    // Khác nhiệm vụ → gỡ khỏi nguồn, chèn vào đích.
+    const srcList = Array.isArray(srcItem.checklist) ? [...srcItem.checklist] : [];
+    const dstList = Array.isArray(dstItem.checklist) ? [...dstItem.checklist] : [];
+    const [moved] = srcList.splice(srcIdx, 1);
+    if (moved == null) return;
+    dstList.splice(Math.min(dstIdx, dstList.length), 0, moved);
+
+    // Cập nhật cục bộ ngay (optimistic).
+    setTemplates(prev => prev.map(t => {
+      if (t.id !== tplId) return t;
+      return {
+        ...t,
+        items: (t.items || []).map(i => {
+          if (String(i.id) === String(srcItemId)) return { ...i, checklist: srcList };
+          if (String(i.id) === String(dstItemId)) return { ...i, checklist: dstList };
+          return i;
+        }),
+      };
+    }));
+
+    // Lưu cả 2 nhiệm vụ (đã cập nhật cục bộ ở trên — không reload khi thành công).
+    try {
+      await Promise.all([
+        api.put(`/production/task-templates/${tplId}/items/${srcItemId}`, { checklist: srcList }),
+        api.put(`/production/task-templates/${tplId}/items/${dstItemId}`, { checklist: dstList }),
+      ]);
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi di chuyển checklist');
+      load();
+    }
+  };
+
+  // Một DndContext duy nhất cho cả nhiệm vụ + checklist trong 1 bộ mẫu.
+  const handleCardDragEnd = (event, tplId) => {
+    const { active, over } = event;
+    if (!over) return;
+    const activeId = String(active.id);
+    const overId = String(over.id);
+    if (activeId.startsWith('ck|')) {
+      // Kéo 1 mục checklist (có thể sang nhiệm vụ khác).
+      handleChecklistMove(tplId, activeId, overId);
+      return;
+    }
+    // Kéo nhiệm vụ — chỉ xử lý khi thả lên 1 nhiệm vụ khác.
+    if (overId.startsWith('ck|')) return;
+    handleItemDragEnd(event, tplId);
   };
 
   if (loading) return (
@@ -990,9 +1130,11 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
                     setNewCheckItem={setNewCheckItem}
                     addChecklistItem={addChecklistItem}
                     removeChecklistItem={removeChecklistItem}
+                    updateChecklistItem={updateChecklistItem}
                     sensors={sensors}
                     handleItemDragEnd={handleItemDragEnd}
                     handleChecklistDragEnd={handleChecklistDragEnd}
+                    handleCardDragEnd={handleCardDragEnd}
                     templates={templates}
                     setTemplates={setTemplates}
                     updateItemChecklist={updateItemChecklist}
@@ -1038,8 +1180,8 @@ function TemplateCard({
   editingTpl, setEditingTpl, updateTemplate, toggleDefault, deleteTemplate,
   newItem, setNewItem, addItem, deleteItem,
   editingChecklist, setEditingChecklist, newCheckItem, setNewCheckItem,
-  addChecklistItem, removeChecklistItem,
-  sensors, handleItemDragEnd, handleChecklistDragEnd,
+  addChecklistItem, removeChecklistItem, updateChecklistItem,
+  sensors, handleItemDragEnd, handleChecklistDragEnd, handleCardDragEnd,
   editingVisibility, setEditingVisibility,
   companies, departments, toggleItemCompany, toggleItemDept,
   updateTemplateItemFields,
@@ -1197,7 +1339,7 @@ function TemplateCard({
             Không tự gán khi gắn bộ mẫu — nhân viên đặt trên từng nhiệm vụ (dự án / tab Công việc deal).
           </p>
           <DndContext sensors={sensors} collisionDetection={closestCenter}
-            onDragEnd={(e) => handleItemDragEnd(e, tpl.id)}>
+            onDragEnd={(e) => handleCardDragEnd(e, tpl.id)}>
             <SortableContext items={sortedItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
               {sortedItems.map((item, i) => (
                 <SortableItem key={item.id} id={item.id}>
@@ -1324,8 +1466,8 @@ function TemplateCard({
                       {editingChecklist[item.id] && (
                         <ChecklistEditor tplId={tpl.id} itemId={item.id}
                           checklist={Array.isArray(item.checklist) ? item.checklist : []}
-                          sensors={sensors} handleChecklistDragEnd={handleChecklistDragEnd}
                           removeChecklistItem={removeChecklistItem} addChecklistItem={addChecklistItem}
+                          updateChecklistItem={updateChecklistItem}
                           newCheckItem={newCheckItem} setNewCheckItem={setNewCheckItem} />
                       )}
                     </div>
@@ -1353,32 +1495,52 @@ function TemplateCard({
   );
 }
 
+// Đọc tiêu đề / mô tả của 1 mục checklist (hỗ trợ cả dữ liệu cũ dạng chuỗi).
+const ckTitleOf = (ck) => (typeof ck === 'string' ? ck : (ck?.title || ck?.label || ''));
+const ckDescOf = (ck) => (typeof ck === 'string' ? '' : (ck?.description || ''));
+
 // ═══ Checklist Editor with drag & drop ═══
-function ChecklistEditor({ tplId, itemId, checklist, sensors, handleChecklistDragEnd, removeChecklistItem, addChecklistItem, newCheckItem, setNewCheckItem }) {
-  const checkIds = checklist.map((_, i) => `ck-${itemId}-${i}`);
+function ChecklistEditor({ tplId, itemId, checklist, removeChecklistItem, addChecklistItem, updateChecklistItem, newCheckItem, setNewCheckItem }) {
+  // ID dạng `ck|<itemId>|<index>` để cha (DndContext của bộ mẫu) phân biệt với nhiệm vụ
+  // và cho phép kéo 1 mục checklist sang nhiệm vụ khác.
+  const checkIds = checklist.map((_, i) => `ck|${itemId}|${i}`);
   return (
-    <div className="ml-10 pl-3 border-l-2 border-emerald-200 mb-2 space-y-1">
-      <p className="text-[10px] text-emerald-600 font-medium uppercase tracking-wider">Checklist mẫu — kéo thả để sắp xếp</p>
-      <DndContext sensors={sensors} collisionDetection={closestCenter}
-        onDragEnd={(e) => handleChecklistDragEnd(e, tplId, itemId)}>
-        <SortableContext items={checkIds} strategy={verticalListSortingStrategy}>
-          {checklist.map((ck, ci) => (
-            <SortableItem key={checkIds[ci]} id={checkIds[ci]}>
-              {({ dragHandleProps: ckDrag }) => (
-                <div className="flex items-center gap-2 text-xs">
-                  <div {...ckDrag} className="cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 touch-none">
-                    <GripVertical className="h-3 w-3" />
-                  </div>
-                  <span className="text-emerald-500">☐</span>
-                  <span className="flex-1">{ck}</span>
-                  <button onClick={() => removeChecklistItem(tplId, itemId, ci)}
-                    className="p-0.5 text-gray-300 hover:text-red-500 cursor-pointer"><X className="h-3 w-3" /></button>
+    <div className="ml-10 pl-3 border-l-2 border-emerald-200 mb-2 space-y-1.5">
+      <p className="text-[10px] text-emerald-600 font-medium uppercase tracking-wider">Checklist mẫu — kéo thả để sắp xếp (có thể kéo sang nhiệm vụ khác)</p>
+      <SortableContext items={checkIds} strategy={verticalListSortingStrategy}>
+        {checklist.map((ck, ci) => (
+          <SortableItem key={checkIds[ci]} id={checkIds[ci]}>
+            {({ dragHandleProps: ckDrag }) => (
+              <div className="flex items-start gap-2 text-xs bg-white border border-emerald-100 rounded-md px-1.5 py-1.5">
+                <div {...ckDrag} className="cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 touch-none mt-1.5">
+                  <GripVertical className="h-3 w-3" />
                 </div>
-              )}
-            </SortableItem>
-          ))}
-        </SortableContext>
-      </DndContext>
+                <span className="text-emerald-500 mt-1.5">☐</span>
+                <div className="flex-1 min-w-0 space-y-1">
+                  <input
+                    key={`t|${checkIds[ci]}|${ckTitleOf(ck)}`}
+                    defaultValue={ckTitleOf(ck)}
+                    placeholder="Tên mục checklist"
+                    className="w-full h-7 px-2 text-xs font-medium border rounded outline-none focus:ring-1 focus:ring-emerald-400"
+                    onBlur={e => updateChecklistItem(tplId, itemId, ci, { title: e.target.value.trim() })}
+                    onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                  />
+                  <input
+                    key={`d|${checkIds[ci]}|${ckDescOf(ck)}`}
+                    defaultValue={ckDescOf(ck)}
+                    placeholder="Mô tả / hướng dẫn (tùy chọn)"
+                    className="w-full h-7 px-2 text-[11px] text-gray-600 border border-gray-200 rounded outline-none focus:ring-1 focus:ring-emerald-300"
+                    onBlur={e => updateChecklistItem(tplId, itemId, ci, { description: e.target.value.trim() })}
+                    onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                  />
+                </div>
+                <button onClick={() => removeChecklistItem(tplId, itemId, ci)}
+                  className="p-0.5 text-gray-300 hover:text-red-500 cursor-pointer mt-1.5"><X className="h-3 w-3" /></button>
+              </div>
+            )}
+          </SortableItem>
+        ))}
+      </SortableContext>
       <div className="flex items-center gap-1 mt-1">
         <input value={newCheckItem[itemId] || ''} onChange={e => setNewCheckItem(p => ({ ...p, [itemId]: e.target.value }))}
           placeholder="Thêm mục checklist..."

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Zap, Loader2, ChevronDown, ChevronUp, Settings2 } from 'lucide-react';
 import api from '../lib/api';
 import { connectSocket } from '../lib/socket';
-import { useBatchAuto, toggleBatchAuto, triggerPipelineNow, saveFbAutoPipelineConfig } from '../hooks/useBatchAutoRun';
+import { useBatchAuto, toggleBatchAuto, triggerPipelineNow, saveFbAutoPipelineConfig, setMaster } from '../hooks/useBatchAutoRun';
 import AutoPipelineMonitor from './AutoPipelineMonitor';
 
 const PIPELINE_FORM_EMPTY = {
@@ -23,15 +23,18 @@ const PIPELINE_FORM_EMPTY = {
   chain_run_extract: true,
 };
 
-export default function BatchActionsBar({ onComplete = null }) {
+export default function BatchActionsBar({ onComplete = null, companyId = null, isAdmin = false }) {
   const [expanded, setExpanded] = useState(false);
   const [pipelineCfgOpen, setPipelineCfgOpen] = useState(false);
   const [showAdvancedEngines, setShowAdvancedEngines] = useState(false);
   const [plForm, setPlForm] = useState(PIPELINE_FORM_EMPTY);
   const [plSaving, setPlSaving] = useState(false);
+  const [masterSaving, setMasterSaving] = useState(false);
   const logsEndRef = useRef(null);
 
-  const auto = useBatchAuto();
+  const companyQs = companyId != null && String(companyId).trim() !== '' ? String(companyId).trim() : undefined;
+  const auto = useBatchAuto(companyQs || null);
+  const masterEnabled = !!auto.master_enabled;
 
   useEffect(() => {
     connectSocket();
@@ -39,7 +42,7 @@ export default function BatchActionsBar({ onComplete = null }) {
 
   const loadPipelineForm = useCallback(async () => {
     try {
-      const { data } = await api.get('/facebook/auto-pipeline/config');
+      const { data } = await api.get('/facebook/auto-pipeline/config', { params: { company_id: companyQs } });
       const merged = { ...PIPELINE_FORM_EMPTY, ...(data?.defaults || {}), ...(data?.config || {}) };
       merged.full_cycle_rescan_phones = merged.full_cycle_rescan_phones !== false;
       setPlForm(merged);
@@ -47,11 +50,20 @@ export default function BatchActionsBar({ onComplete = null }) {
     } catch {
       setPlForm((prev) => ({ ...PIPELINE_FORM_EMPTY, ...prev }));
     }
-  }, []);
+  }, [companyQs]);
 
   useEffect(() => {
     if (expanded && pipelineCfgOpen) loadPipelineForm();
   }, [expanded, pipelineCfgOpen, loadPipelineForm]);
+
+  const onToggleMaster = useCallback(async () => {
+    setMasterSaving(true);
+    try {
+      await setMaster(!masterEnabled);
+    } finally {
+      setMasterSaving(false);
+    }
+  }, [masterEnabled]);
 
   const savePipelineForm = useCallback(async () => {
     setPlSaving(true);
@@ -65,7 +77,7 @@ export default function BatchActionsBar({ onComplete = null }) {
         if (!Number.isFinite(v)) return fallback;
         return Math.min(max, Math.max(min, v));
       };
-      await saveFbAutoPipelineConfig({
+      await saveFbAutoPipelineConfig(companyQs || null, {
         engine,
         full_cycle_max_users_per_round: parseIntBounded(plForm.full_cycle_max_users_per_round, { min: 0, max: 500000, fallback: 50 }),
         full_cycle_rescan_phones: !!plForm.full_cycle_rescan_phones,
@@ -84,7 +96,7 @@ export default function BatchActionsBar({ onComplete = null }) {
     } finally {
       setPlSaving(false);
     }
-  }, [plForm, showAdvancedEngines]);
+  }, [plForm, showAdvancedEngines, companyQs]);
 
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -116,22 +128,48 @@ export default function BatchActionsBar({ onComplete = null }) {
         </button>
 
         <div className="flex items-center gap-3">
+          {isAdmin && (
+            <div
+              className="flex items-center gap-1.5 pr-3 mr-1 border-r border-gray-200"
+              title="Công tắc TỔNG: tắt sẽ dừng auto của tất cả công ty"
+            >
+              <span className="text-[10px] uppercase tracking-wide text-gray-400 font-semibold">Tổng</span>
+              <button
+                type="button"
+                onClick={onToggleMaster}
+                disabled={masterSaving}
+                className={`relative w-10 h-5 rounded-full transition-colors cursor-pointer disabled:opacity-50 ${
+                  masterEnabled ? 'bg-indigo-600' : 'bg-gray-300'
+                }`}
+                title={masterEnabled ? 'Master: Bật' : 'Master: Tắt (mọi công ty dừng)'}
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
+                    masterEnabled ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+          )}
+
           <button
             type="button"
-            onClick={triggerPipelineNow}
-            disabled={running}
+            onClick={() => triggerPipelineNow(companyQs || null)}
+            disabled={running || !masterEnabled}
             className="px-3 py-1.5 text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 cursor-pointer transition"
+            title={!masterEnabled ? 'Bật công tắc tổng trước' : 'Chạy auto ngay cho công ty này'}
           >
             🚀 Chạy ngay
           </button>
 
           <button
             type="button"
-            onClick={toggleBatchAuto}
-            className={`relative w-10 h-5 rounded-full transition-colors cursor-pointer ${
+            onClick={() => toggleBatchAuto(companyQs || null)}
+            disabled={!masterEnabled}
+            className={`relative w-10 h-5 rounded-full transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
               auto.enabled ? 'bg-green-500' : 'bg-gray-300'
             }`}
-            title={auto.enabled ? 'Tự động: Bật (backend realtime)' : 'Tự động: Tắt'}
+            title={!masterEnabled ? 'Bật công tắc tổng trước' : auto.enabled ? 'Tự động: Bật (công ty này)' : 'Tự động: Tắt'}
           >
             <span
               className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${

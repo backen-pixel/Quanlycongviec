@@ -13,6 +13,7 @@ import { isAdminLike } from '../lib/adminRole';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
 import CRMTasksTab from '../components/CRMTasksTab';
+import CrmTaskDocumentsPanel from '../components/CrmTaskDocumentsPanel';
 import UnifiedTaskHistoryWidget from '../components/UnifiedTaskHistoryWidget';
 import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
 import ExcelQuotationImport from '../components/ExcelQuotationImport';
@@ -87,6 +88,7 @@ export default function LeadDetail() {
   const [activities, setActivities] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [taskDocuments, setTaskDocuments] = useState([]);
+  const [crmTasks, setCrmTasks] = useState([]);
   const [stagesLead, setStagesLead] = useState([]);
   const [stagesDeal, setStagesDeal] = useState([]);
   /** Các giai đoạn deal đã từng vào — stepper tích ✓ theo lịch sử (không chỉ order_index). */
@@ -345,13 +347,14 @@ export default function LeadDetail() {
     const seq = ++loadSeqRef.current;
     if (!silent) setLoading(true);
     try {
-      const [leadRes, actRes, docRes, flowsRes, usersRes, taskDocRes] = await Promise.all([
+      const [leadRes, actRes, docRes, flowsRes, usersRes, taskDocRes, tasksRes] = await Promise.all([
         api.get(`/crm/leads/${id}/detail`).then(r => r.data),
         api.get(`/crm/leads/${id}/activities`).catch(() => ({ data: [] })),
         api.get(`/crm/leads/${id}/documents`).catch(() => ({ data: [] })),
         api.get('/flows').then(r => r.data?.flows || r.data || []).catch(() => []),
         api.get('/users').then(r => r.data?.users || []).catch(() => []),
         api.get(`/crm/leads/${id}/task-documents`).catch(() => ({ data: [] })),
+        api.get(`/crm/leads/${id}/tasks`, { params: { task_scope: 'all' } }).catch(() => ({ data: [] })),
       ]);
 
       const leadCompanyId = leadRes?.company_id || leadRes?.company?.id || null;
@@ -372,6 +375,7 @@ export default function LeadDetail() {
       setActivities(actRes.data || []);
       setDocuments(docRes.data || []);
       setTaskDocuments(taskDocRes.data || taskDocRes || []);
+      setCrmTasks(Array.isArray(tasksRes.data) ? tasksRes.data : []);
       setStagesLead(sortAndDedupePipelineStages(stagesLeadRes.data || []));
       setStagesDeal(sortAndDedupePipelineStages(stagesDealRes.data || []));
       const visited = new Set();
@@ -439,6 +443,9 @@ export default function LeadDetail() {
       const taskLists = await Promise.all(
         leadIds.map((lid) => api.get(`/crm/leads/${lid}/task-documents`).catch(() => ({ data: [] }))),
       );
+      const crmTaskLists = await Promise.all(
+        leadIds.map((lid) => api.get(`/crm/leads/${lid}/tasks`, { params: { task_scope: 'all' } }).catch(() => ({ data: [] }))),
+      );
       const seenDoc = new Set();
       const mergedDocs = [];
       for (const dr of docLists) {
@@ -459,8 +466,18 @@ export default function LeadDetail() {
           mergedTask.push(a);
         }
       }
+      const seenTaskRow = new Set();
+      const mergedCrmTasks = [];
+      for (const tr of crmTaskLists) {
+        for (const t of tr.data || []) {
+          if (!t?.id || seenTaskRow.has(t.id)) continue;
+          seenTaskRow.add(t.id);
+          mergedCrmTasks.push(t);
+        }
+      }
       setDocuments(mergedDocs);
       setTaskDocuments(mergedTask);
+      setCrmTasks(mergedCrmTasks);
     } catch (_) {}
   }, [id]);
 
@@ -500,6 +517,11 @@ export default function LeadDetail() {
     const total = manual.length + (taskDocuments || []).length + orphan.length;
     return { manualLeadDocs: manual, orphanSyncedLeadDocs: orphan, documentsTabTotal: total };
   }, [documents, taskDocuments]);
+
+  const pipelineStagesForDocs = useMemo(
+    () => (lead?.type === 'deal' ? stagesDeal : stagesLead),
+    [lead?.type, stagesDeal, stagesLead],
+  );
 
   useEffect(() => {
     if (loading || !lead || !id || String(lead.id) !== String(id)) return;
@@ -777,7 +799,7 @@ export default function LeadDetail() {
       const alreadySx = crmDealMoveToWonSxAlreadyCreatedMessage(lead);
       if (alreadySx) {
         if (String(lead.stage_id) === String(stageId)) return;
-        setDealWonSxExistsCtx({ stageId, extraData, message: alreadySx });
+        await patchLeadStage(stageId, extraData);
         return;
       }
       setDealStageWonErr('');
@@ -796,6 +818,7 @@ export default function LeadDetail() {
       targetStage &&
       !targetStage.is_won &&
       !targetStage.is_lost &&
+      !targetStage.counts_as_completed_revenue &&
       String(lead?.stage_id || '') !== String(stageId)
     ) {
       try {
@@ -1636,6 +1659,7 @@ export default function LeadDetail() {
                   onArtifactsSynced={refreshTaskSyncedDocuments}
                   refreshKey={crmTasksRefreshKey}
                   sxTemplateCompanyId={lead?.sx_template_company_id || null}
+                  linkedProjectId={lead?.project_id || null}
                 />
                 <div className="mt-6">
                   <UnifiedTaskHistoryWidget
@@ -1666,104 +1690,13 @@ export default function LeadDetail() {
                     </div>
                   </div>
 
-                  {/* Task Documents — nhóm theo nhiệm vụ */}
-                  {taskDocuments.length > 0 && (
-                    <div className="mb-4">
-                      <p className="text-xs font-bold text-gray-500 uppercase mb-2">📂 File nhiệm vụ ({taskDocuments.length})</p>
-                      <div className="space-y-4">
-                        {/* Nhóm theo stage_slug → task_title */}
-                        {(() => {
-                          const STAGE_LABELS = {
-                            consulting: '💬 Tư vấn',
-                            deal_new: '📋 Nhiệm vụ Deal mới',
-                            deal_quote_contract: '📄 Báo giá & Hợp đồng',
-                            deal_ordering: '🛒 Tiến hành đặt hàng',
-                            deal_schedule: '📅 Hẹn ngày lắp đặt',
-                            deal_shipping: '🚛 Đặt Vận chuyển',
-                            deal_notes: '📝 Ghi chú khác',
-                          };
-                          // Group by stage → task
-                          const stageGroups = {};
-                          taskDocuments.forEach(td => {
-                            const stageKey = td.stage_slug || '_other';
-                            if (!stageGroups[stageKey]) stageGroups[stageKey] = {};
-                            const taskKey = td.task_title || 'Khác';
-                            if (!stageGroups[stageKey][taskKey]) stageGroups[stageKey][taskKey] = [];
-                            stageGroups[stageKey][taskKey].push(td);
-                          });
-                          return Object.entries(stageGroups).map(([stageSlug, taskGroups]) => {
-                            const stageLabel = STAGE_LABELS[stageSlug] || (stageSlug === '_other' ? '📋 Khác' : stageSlug);
-                            const stageFileCount = Object.values(taskGroups).flat().length;
-                            const stageNoteCount = Object.values(taskGroups).flat().filter(f => f.doc_type === 'task_note').length;
-                            return (
-                              <div key={stageSlug} className="border rounded-xl overflow-hidden">
-                                {/* Stage header */}
-                                <div className="bg-gradient-to-r from-gray-50 to-gray-100 px-3 py-2 border-b flex items-center gap-2">
-                                  <p className="text-xs font-bold text-gray-700">{stageLabel}</p>
-                                  <span className="text-[10px] text-gray-400 bg-white px-2 py-0.5 rounded-full">{stageFileCount} file</span>
-                                  {stageNoteCount > 0 && <span className="text-[10px] text-amber-500 bg-amber-50 px-2 py-0.5 rounded-full">{stageNoteCount} ghi chú</span>}
-                                </div>
-                                {/* Tasks inside this stage */}
-                                <div className="divide-y">
-                                  {Object.entries(taskGroups).map(([taskTitle, files]) => {
-                                    const fileFiles = files.filter(f => f.doc_type !== 'task_note');
-                                    const noteFiles = files.filter(f => f.doc_type === 'task_note');
-                                    return (
-                                      <div key={taskTitle}>
-                                        <div className="bg-white px-3 py-1.5 border-b flex items-center gap-2">
-                                          <span className="text-[11px] font-semibold text-gray-600">📋 {taskTitle}</span>
-                                          {fileFiles.length > 0 && <span className="text-[9px] text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded-full">📎 {fileFiles.length}</span>}
-                                          {noteFiles.length > 0 && <span className="text-[9px] text-amber-500 bg-amber-50 px-1.5 py-0.5 rounded-full">📝 {noteFiles.length}</span>}
-                                        </div>
-                                        <div className="divide-y divide-gray-50">
-                                          {files.map(f => {
-                                            const isVideo = f.doc_type === 'video' || f.mime_type?.startsWith('video/') || /\.(mp4|mov|webm|avi)$/i.test(f.file_name || '');
-                                            const isImage = f.doc_type === 'image' || f.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(f.file_name || '');
-                                            const taskFileOpen = f.file_url ? getFileOpenAnchorProps(f.file_url, { fileName: f.file_name }) : null;
-                                            return (
-                                              <div key={f.id} className="px-4 py-2 hover:bg-blue-50 transition">
-                                                <div className="flex items-center gap-3">
-                                                  <span className="text-lg">{f.doc_type === 'task_note' ? '📝' : isVideo ? '🎬' : getFileIcon(f.file_name)}</span>
-                                                  <div className="flex-1 min-w-0">
-                                                    <p className="text-sm font-medium text-gray-800 truncate">{f.doc_type === 'task_note' ? (f.name || 'Ghi chú') : (f.file_name || f.name)}</p>
-                                                    {f.notes && <p className="text-[10px] text-gray-500 truncate mt-0.5">{f.notes}</p>}
-                                                    <div className="flex items-center gap-2 mt-0.5">
-                                                      {f.file_size && <span className="text-[10px] text-gray-400">{f.file_size > 1024 * 1024 ? `${(f.file_size / 1024 / 1024).toFixed(1)} MB` : `${(f.file_size / 1024).toFixed(1)} KB`}</span>}
-                                                      {f.created_at && <span className="text-[10px] text-gray-400">{new Date(f.created_at).toLocaleDateString('vi-VN')}</span>}
-                                                      {taskFileOpen && <a {...taskFileOpen} className="text-[10px] text-blue-500 hover:underline">Mở ↗</a>}
-                                                    </div>
-                                                  </div>
-                                                </div>
-                                                {/* Video player */}
-                                                {isVideo && f.file_url && (
-                                                  <div className="mt-2 ml-8">
-                                                    <video src={publicFileUrl(f.file_url)} controls preload="metadata"
-                                                      className="max-w-full max-h-64 rounded-lg border border-gray-200 bg-black shadow-sm" />
-                                                  </div>
-                                                )}
-                                                {/* Image preview */}
-                                                {isImage && f.file_url && taskFileOpen && (
-                                                  <div className="mt-2 ml-8">
-                                                    <a {...taskFileOpen}>
-                                                      <img src={publicFileUrl(f.file_url)} alt={f.name} className="max-h-40 max-w-full rounded-lg border border-gray-200 object-contain hover:opacity-90 cursor-pointer" />
-                                                    </a>
-                                                  </div>
-                                                )}
-                                              </div>
-                                            );
-                                          })}
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            );
-                          });
-                        })()}
-                      </div>
-                    </div>
-                  )}
+                  <CrmTaskDocumentsPanel
+                    tasks={crmTasks}
+                    artifacts={taskDocuments}
+                    pipelineStages={pipelineStagesForDocs}
+                    leadCurrentStageId={lead?.stage_id}
+                    leadType={lead?.type || 'lead'}
+                  />
 
                   {orphanSyncedLeadDocs.length > 0 && (
                     <div className="mb-4">
@@ -3062,7 +2995,8 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
           type="date" />
       )}
 
-      {/* Deadline thẻ (kanban_deadline_at) — đặt/sửa kèm lý do + lịch sử */}
+      {/* Deadline thẻ (kanban_deadline_at) — ẩn khi deal đã ở cột Thắng */}
+      {!lead?.stage?.is_won && !lead?.stage?.counts_as_completed_revenue && (
       <div className="rounded-lg border border-rose-200 bg-rose-50/50 p-2.5 my-1.5">
         <div className="flex items-start gap-2">
           <span className="text-sm mt-0.5">⏰</span>
@@ -3136,7 +3070,9 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
           </div>
         )}
       </div>
+      )}
 
+      {!lead?.stage?.is_won && !lead?.stage?.counts_as_completed_revenue && (
       <CrmDeadlineModal
         open={deadlineModalOpen}
         title={lead?.kanban_deadline_at ? 'Sửa deadline thẻ' : 'Đặt deadline thẻ'}
@@ -3149,6 +3085,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
         onClose={() => { if (!deadlineBusy) setDeadlineModalOpen(false); }}
         onConfirm={saveKanbanDeadline}
       />
+      )}
 
       {lead?.lost_reason && (
         <div className="flex items-start gap-2 py-1.5 px-1">

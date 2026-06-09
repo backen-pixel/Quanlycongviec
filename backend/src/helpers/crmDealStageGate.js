@@ -51,10 +51,23 @@ function isDealCrmStageLocked(lead) {
   return false;
 }
 
+function isCrmCompletedRevenueStage(stage) {
+  return !!stage?.counts_as_completed_revenue;
+}
+
 function isDealOnCrmPostWonColumn(stage) {
   if (!stage) return false;
   if (stage.is_won) return true;
+  if (isCrmCompletedRevenueStage(stage)) return true;
   return isCrmPostWonManagedStage(stage);
+}
+
+function isCrmPreWonSalesStage(stage) {
+  if (!stage) return false;
+  if (stage.is_lost || stage.is_won) return false;
+  if (isCrmCompletedRevenueStage(stage)) return false;
+  if (isCrmPostWonManagedStage(stage)) return false;
+  return true;
 }
 
 /**
@@ -65,15 +78,14 @@ function assertDealCrmManualStageChange(lead, targetStage, prevStage) {
     return { ok: true };
   }
   if (String(prevStage.id) === String(targetStage.id)) return { ok: true };
+  // Luôn cho kéo về cột Thắng hoặc cột «doanh thu đã hoàn thành».
+  if (targetStage.is_won || isCrmCompletedRevenueStage(targetStage)) return { ok: true };
   const leavingPostWon = isDealOnCrmPostWonColumn(prevStage);
-  const enteringPreWon =
-    !targetStage.is_won
-    && !targetStage.is_lost
-    && !isCrmPostWonManagedStage(targetStage);
+  const enteringPreWon = isCrmPreWonSalesStage(targetStage);
   if (leavingPostWon && enteringPreWon) {
     return {
       ok: false,
-      error: 'Deal đã tạo dự án Sản xuất — không thể kéo ngược về giai đoạn trước.',
+      error: 'Deal đã tạo dự án Sản xuất — không thể kéo ngược về giai đoạn bán hàng. Vẫn có thể kéo thẳng về cột Thắng.',
       code: 'CRM_DEAL_SX_PROJECT_EXISTS',
     };
   }
@@ -85,6 +97,7 @@ module.exports = {
   normalizeStageNameFold,
   isSanXuatProductionColumnName,
   isCrmPostWonManagedStage,
+  isCrmCompletedRevenueStage,
   isDealOnCrmPostWonColumn,
   isDealCrmStageLocked,
   assertDealCrmManualStageChange,
