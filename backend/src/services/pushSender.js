@@ -114,7 +114,7 @@ async function fetchUserTokens(userId) {
   const empty = { expo: [], fcm: [] };
   const { data, error } = await supabase
     .from('push_device_tokens')
-    .select('token, platform')
+    .select('token, platform, last_seen_at')
     .eq('user_id', userId);
   if (error) {
     if (isRestTableMissingError(error)) {
@@ -187,7 +187,7 @@ async function sendExpoChunk(messages) {
     if (t?.status === 'error' && t?.details?.error === 'DeviceNotRegistered') {
       const badToken = messages[i]?.to;
       if (badToken) {
-        await supabase.from('push_device_tokens').delete().eq('token', badToken).catch(() => {});
+        await deletePushTokenSafe(badToken);
       }
     }
   }
@@ -321,7 +321,8 @@ function buildFcmDataPayload(notification) {
     message: String(notification.message || '').slice(0, 500),
     message_id: messageId,
     sender_id: senderId,
-    message_type: messageType,
+    // FCM cấm key "message_type" trong data payload — dùng msg_type.
+    msg_type: messageType,
     notif_id: String(notification.id || ''),
     entity_type: String(notification.entity_type || ''),
     entity_id: String(notification.entity_id || ''),
@@ -361,7 +362,7 @@ async function sendFcmDataOnly(tokens, notification) {
         const txt = await r.text().catch(() => '');
         const status = r.status;
         if (status === 404 || /UNREGISTERED|NOT_FOUND/i.test(txt)) {
-          await supabase.from('push_device_tokens').delete().eq('token', row.token).catch(() => {});
+          await deletePushTokenSafe(row.token);
         } else {
           console.warn('[pushSender] FCM error:', status, txt.slice(0, 200));
         }
@@ -388,6 +389,26 @@ function pickFcmTokens(rows) {
     }
   }
   return list;
+}
+
+/** Chỉ gửi tới token FCM mới nhất — tránh spam 10+ token cũ đã hết hạn. */
+function pickActiveFcmTokens(rows, limit = 2) {
+  const list = pickFcmTokens(rows);
+  const sorted = [...list].sort((a, b) => {
+    const ta = a.last_seen_at ? new Date(a.last_seen_at).getTime() : 0;
+    const tb = b.last_seen_at ? new Date(b.last_seen_at).getTime() : 0;
+    return tb - ta;
+  });
+  return sorted.slice(0, limit);
+}
+
+async function deletePushTokenSafe(token) {
+  if (!token) return;
+  try {
+    await supabase.from('push_device_tokens').delete().eq('token', token);
+  } catch {
+    /* ignore */
+  }
 }
 
 async function sendFcmIncomingCall(tokens, notification) {
@@ -439,7 +460,7 @@ async function sendFcmIncomingCall(tokens, notification) {
       if (!r.ok) {
         const txt = await r.text().catch(() => '');
         if (r.status === 404 || /UNREGISTERED|NOT_FOUND/i.test(txt)) {
-          await supabase.from('push_device_tokens').delete().eq('token', row.token).catch(() => {});
+          await deletePushTokenSafe(row.token);
         } else {
           console.warn('[pushSender] FCM call error:', r.status, txt.slice(0, 200));
         }
@@ -500,7 +521,7 @@ async function sendFcmTrayNotification(tokens, notification) {
       if (!r.ok) {
         const txt = await r.text().catch(() => '');
         if (r.status === 404 || /UNREGISTERED|NOT_FOUND/i.test(txt)) {
-          await supabase.from('push_device_tokens').delete().eq('token', row.token).catch(() => {});
+          await deletePushTokenSafe(row.token);
         } else {
           console.warn('[pushSender] FCM tray error:', r.status, txt.slice(0, 200));
         }
@@ -534,7 +555,7 @@ async function sendMobilePush(userId, notification) {
 
     const rows = await fetchUserTokens(userId);
     const expoRows = rows.expo.filter((r) => isExpoPushToken(r.token));
-    const fcmRows = isCall ? pickFcmTokens(rows) : rows.fcm;
+    const fcmRows = isCall ? pickFcmTokens(rows) : pickActiveFcmTokens(rows);
     if (!expoRows.length && !fcmRows.length) {
       if (isCall) console.warn('[pushSender] incoming_call: no device tokens for user', userId);
       return;
@@ -567,6 +588,7 @@ async function sendMobilePush(userId, notification) {
       await sendFcmIncomingCall(fcmRows, notification);
     } else if (fcmRows.length && isChatType(notification.type)) {
       await sendFcmDataOnly(fcmRows, notification);
+      await sendFcmTrayNotification(fcmRows, notification);
     } else if (fcmRows.length && isProductionCommentNotification(notification)) {
       await sendFcmTrayNotification(fcmRows, notification);
     }

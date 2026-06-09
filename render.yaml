@@ -23,3 +23,5 @@ services:
         sync: false
       - key: REDIS_URL
         sync: false
+      - key: FCM_SA_JSON
+        sync: false
