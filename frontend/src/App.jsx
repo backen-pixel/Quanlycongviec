@@ -104,6 +104,7 @@ const EventsOverviewPage = lazyWithRetry(() => import('./pages/EventsOverviewPag
 const SocialFeedPage = lazyWithRetry(() => import('./pages/SocialFeedPage'));
 const SocialProfilePage = lazyWithRetry(() => import('./pages/SocialProfilePage'));
 const ReleaseNotesPage = lazyWithRetry(() => import('./pages/ReleaseNotesPage'));
+const AppUpdatesPage = lazyWithRetry(() => import('./pages/AppUpdatesPage'));
 const FacebookPage = lazyWithRetry(() => import('./pages/FacebookPage'));
 const FacebookLinkPhoneCleanupPage = lazyWithRetry(() => import('./pages/FacebookLinkPhoneCleanupPage'));
 const ZaloPage = lazyWithRetry(() => import('./pages/ZaloPage'));
@@ -442,6 +443,7 @@ export default function App() {
             <Route path="/knowledge/admin" element={<KnowledgeAdminPage />} />
             <Route path="/knowledge/scoreboard" element={<KnowledgeScoreboardPage />} />
             <Route path="/updates" element={<ReleaseNotesPage />} />
+            <Route path="/settings/app-updates" element={<AppUpdatesPage />} />
             <Route path="/settings" element={
               <div className="flex items-center justify-center h-64 text-gray-400">
                 <div className="text-center">

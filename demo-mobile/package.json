@@ -1,0 +1,28 @@
+{
+  "name": "tubep-demo",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "build:apk": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-apk.ps1",
+    "prebuild:android": "expo prebuild --platform android --no-install",
+    "ios": "expo run:ios"
+  },
+  "dependencies": {
+    "expo": "~54.0.33",
+    "expo-application": "~7.0.8",
+    "expo-file-system": "~19.0.23",
+    "expo-intent-launcher": "~13.0.8",
+    "expo-status-bar": "~3.0.9",
+    "expo-updates": "~29.0.18",
+    "react": "19.1.0",
+    "react-native": "0.81.5"
+  },
+  "devDependencies": {
+    "@types/react": "~19.1.0",
+    "babel-preset-expo": "~54.0.10",
+    "typescript": "~5.9.2"
+  },
+  "private": true
+}

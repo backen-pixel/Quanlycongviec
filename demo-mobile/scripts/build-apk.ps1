@@ -1,11 +1,10 @@
-# Build APK release (TuBep CRM mobile)
-# Yêu cầu: JDK 17+, Android SDK (ANDROID_HOME)
+# Build APK release (TuBep Demo — test cập nhật)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 
 if (-not $env:JAVA_HOME) {
-  $jdk = 'C:\Program Files\Microsoft\jdk-17.0.16.8-hotspot'
+  $jdk = 'C:\Program Files\Microsoft\jdk-17.0.19.10-hotspot'
   if (Test-Path $jdk) { $env:JAVA_HOME = $jdk }
 }
 if (-not $env:ANDROID_HOME) {
@@ -35,7 +34,8 @@ $version = $appJson.expo.version
 if (-not $version) { $version = '1.0.0' }
 $versionCode = $appJson.expo.android.versionCode
 New-Item -ItemType Directory -Force -Path 'dist' | Out-Null
-$dest = Join-Path $root "dist\crm-mobile-$version-code$versionCode-release.apk"
+# Quy tắc tên: {app_key}-{version}[-code{N}]-release.apk (server tự đọc phiên bản)
+$dest = Join-Path $root "dist\tubep-demo-$version-code$versionCode-release.apk"
 Copy-Item $apk.FullName $dest -Force
 Write-Host ''
 Write-Host "OK: $dest"

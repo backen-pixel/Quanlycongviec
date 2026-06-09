@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "TuBep Demo",
+    "slug": "tubep-demo",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "runtimeVersion": { "policy": "appVersion" },
+    "updates": {
+      "enabled": true,
+      "url": "https://tubep-backend.onrender.com/api/app-updates/manifest?app=tubep-demo",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    },
+    "android": {
+      "package": "vn.tubeppro.tubepdemo",
+      "versionCode": 1,
+      "usesCleartextTraffic": true,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#EEF2F8"
+      },
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.REQUEST_INSTALL_PACKAGES"
+      ]
+    },
+    "ios": {
+      "bundleIdentifier": "vn.tubeppro.tubepdemo",
+      "supportsTablet": true
+    }
+  }
+}

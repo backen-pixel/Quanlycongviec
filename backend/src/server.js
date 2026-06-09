@@ -226,6 +226,9 @@ app.use('/api/messenger', require('./routes/messengerGroups'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/internal-social', require('./routes/internalSocial'));
 app.use('/api/release-notes', require('./routes/releaseNotes'));
+app.use('/api/app-updates/check', externalLimiter); // app gọi check công khai → rate-limit
+app.use('/api/app-updates/manifest', externalLimiter);
+app.use('/api/app-updates', require('./routes/appUpdates'));
 app.use('/api/knowledge', require('./routes/knowledge'));
 const facebookRouter = require('./routes/facebook');
 facebookRouter._ioRef = io;
