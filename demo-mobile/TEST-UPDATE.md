@@ -29,6 +29,17 @@ node scripts/publish-ota.js --app tubep-demo --dir ../demo-mobile --runtime 1.0.
 
 3. **Đóng app hoàn toàn** trên máy, mở lại → app tự tải OTA → thấy 2 tab **Tủ bếp** và **Kính**.
 
-## Hoặc test full APK v2
+## Bước 3 — Phát hành OTA v3 (tab Cập nhật + thông báo bản 1.0.3)
+
+`App.tsx` đã là v3 (3 tab + trang cập nhật từ server).
+
+```powershell
+cd backend
+node scripts/publish-ota.js --app tubep-demo --dir ../demo-mobile --runtime 1.0.0 --version 1.0.3 --notes "v3: trang Cập nhật từ server" --mandatory true
+```
+
+Đóng app, mở lại → modal **Đã cập nhật từ server** (bản 1.0.3) → tab **Cập nhật** hiển thị chi tiết.
+
+## Hoặc test full APK mới
 
 Tăng `versionCode` trong `app.json` (vd. 2), build APK mới, upload qua web `/settings/app-updates` → app hiện modal cập nhật APK.

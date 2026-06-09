@@ -121,9 +121,13 @@ export default function AppUpdatesPage() {
   };
 
   const deleteRelease = async (rel) => {
-    if (!confirm(`Xóa phiên bản ${rel.version}? File APK trên Storage cũng sẽ bị xóa.`)) return;
+    if (!confirm(
+      `Xóa phiên bản ${rel.version}?\n\nBản ghi database và file trên bucket Supabase sẽ bị xóa.\nFile APK local trên server (uploads) không bị xóa.`,
+    )) return;
     try {
-      await api.delete(`/app-updates/releases/${rel.id}`);
+      const { data } = await api.delete(`/app-updates/releases/${rel.id}`);
+      const n = data?.storageFilesRemoved;
+      if (n) alert(`Đã xóa phiên bản ${rel.version} (${n} file trên bucket).`);
       loadReleases(selected.id);
     } catch (e) { alert(e.response?.data?.error || 'Lỗi xóa'); }
   };
