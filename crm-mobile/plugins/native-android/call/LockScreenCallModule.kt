@@ -11,6 +11,10 @@ class LockScreenCallModule(private val reactContext: ReactApplicationContext) :
 
   override fun getName(): String = "LockScreenCall"
 
+  init {
+    attach(this)
+  }
+
   @ReactMethod
   fun addListener(eventName: String) {
     // Required for NativeEventEmitter on Android
@@ -23,10 +27,15 @@ class LockScreenCallModule(private val reactContext: ReactApplicationContext) :
 
   @ReactMethod
   fun updateCallState(callId: String?, status: String?, peerName: String?, durationMs: Double, isMuted: Boolean) {
+    val id = callId?.trim().orEmpty()
+    val st = status?.trim().orEmpty()
+    if (id.isNotBlank() && st.isNotBlank() && st != "idle" && st != "ended") {
+      LockScreenCallBridge.setUiActive(true)
+    }
     LockScreenCallBridge.notifyState(
       reactContext.applicationContext,
-      callId?.trim().orEmpty(),
-      status?.trim().orEmpty(),
+      id,
+      st,
       peerName?.trim().orEmpty(),
       durationMs.toLong(),
       isMuted,
@@ -35,7 +44,7 @@ class LockScreenCallModule(private val reactContext: ReactApplicationContext) :
 
   @ReactMethod
   fun dismissLockScreenUi() {
-    LockScreenCallBridge.dismissUi(reactContext.applicationContext)
+    LockScreenCallBridge.dismissUi(reactContext.applicationContext, force = true)
   }
 
   @ReactMethod
@@ -43,7 +52,31 @@ class LockScreenCallModule(private val reactContext: ReactApplicationContext) :
     promise.resolve(LockScreenCallBridge.isUiActive())
   }
 
+  @ReactMethod
+  fun showOutgoingCall(
+    callId: String?,
+    peerName: String?,
+    fromUserId: String?,
+    isGroup: Boolean,
+    groupName: String?,
+  ) {
+    val id = callId?.trim().orEmpty()
+    if (id.isBlank()) return
+    val name = peerName?.trim().orEmpty().ifBlank { "Người gọi" }
+    val data = IncomingCallHelper.CallData(
+      callId = id,
+      fromUserId = fromUserId?.trim().orEmpty().ifBlank { "0" },
+      fromName = name,
+      isGroup = isGroup,
+      groupId = "",
+      groupName = groupName?.trim().orEmpty(),
+    )
+    LockScreenCallBridge.setUiActive(true, data)
+    IncomingCallActivity.launchOutgoing(reactContext.applicationContext, data)
+  }
+
   companion object {
+    @Volatile
     private var instance: LockScreenCallModule? = null
 
     fun attach(module: LockScreenCallModule) {

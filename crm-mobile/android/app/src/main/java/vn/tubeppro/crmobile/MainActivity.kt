@@ -2,6 +2,7 @@ package vn.tubeppro.crmobile
 
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
@@ -9,26 +10,79 @@ import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnable
 import com.facebook.react.defaults.DefaultReactActivityDelegate
 
 import expo.modules.ReactActivityDelegateWrapper
+import vn.tubeppro.crmobile.call.IncomingCallActivity
 
 class MainActivity : ReactActivity() {
   private var lockScreenCallBoot = false
 
   override fun onCreate(savedInstanceState: Bundle?) {
-    setTheme(R.style.AppTheme)
+    lockScreenCallBoot = isLockScreenCallBootIntent(intent)
+    if (lockScreenCallBoot) {
+      setTheme(R.style.Theme_MainCallBoot)
+    } else {
+      setTheme(R.style.AppTheme)
+    }
     super.onCreate(null)
     stashIncomingCallIntent(intent)
     if (lockScreenCallBoot) {
-      window.decorView.post { moveTaskToBack(true) }
+      scheduleLockScreenCallBootUi()
     }
   }
 
   override fun onNewIntent(intent: android.content.Intent) {
     super.onNewIntent(intent)
     setIntent(intent)
+    val lockBoot = isLockScreenCallBootIntent(intent)
+    if (lockBoot) lockScreenCallBoot = true
     stashIncomingCallIntent(intent)
-    if (lockScreenCallBoot) {
-      window.decorView.post { moveTaskToBack(true) }
+    if (lockBoot) {
+      scheduleLockScreenCallBootUi()
     }
+  }
+
+  override fun onResume() {
+    super.onResume()
+    if (lockScreenCallBoot) {
+      scheduleLockScreenCallBootUi()
+    }
+  }
+
+  override fun onWindowFocusChanged(hasFocus: Boolean) {
+    super.onWindowFocusChanged(hasFocus)
+    if (lockScreenCallBoot && hasFocus) {
+      scheduleLockScreenCallBootUi()
+    }
+  }
+
+  /**
+   * RN chạy ngầm trong task app — đẩy task app xuống nền và giữ IncomingCallActivity (task riêng) trên cùng.
+   */
+  private fun scheduleLockScreenCallBootUi() {
+    hideForBackgroundCallBoot()
+    bringCallUiToFront()
+    window.decorView.postDelayed({ moveTaskToBack(true) }, 250L)
+    window.decorView.postDelayed({ bringCallUiToFront() }, 450L)
+    window.decorView.postDelayed({ bringCallUiToFront() }, 900L)
+  }
+
+  private fun hideForBackgroundCallBoot() {
+    window.addFlags(
+      WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+    )
+    window.decorView.alpha = 0f
+  }
+
+  private fun bringCallUiToFront() {
+    val callId = intent?.getStringExtra("call_id")?.trim().orEmpty()
+    if (callId.isBlank()) return
+    IncomingCallActivity.presentState(this, callId, "connecting", 0L, false)
+  }
+
+  private fun isLockScreenCallBootIntent(intent: android.content.Intent?): Boolean {
+    if (intent == null) return false
+    return intent.getBooleanExtra("lock_screen_call", false)
+      && intent.getStringExtra("call_action")?.trim() == "accept"
   }
 
   private fun stashIncomingCallIntent(intent: android.content.Intent?) {
@@ -41,8 +95,7 @@ class MainActivity : ReactActivity() {
     var groupId = intent.getStringExtra("group_id") ?: ""
     var groupName = intent.getStringExtra("group_name") ?: ""
     var callAction = intent.getStringExtra("call_action")?.trim().orEmpty()
-    lockScreenCallBoot = intent.getBooleanExtra("lock_screen_call", false)
-      && callAction == "accept"
+    lockScreenCallBoot = isLockScreenCallBootIntent(intent)
 
     if (callId.isNullOrBlank() && intent.getStringExtra("type") == "incoming_call") {
       callId = intent.getStringExtra("call_id")

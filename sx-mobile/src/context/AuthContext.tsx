@@ -1,9 +1,18 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 import { api, getStoredToken, setStoredToken, setUnauthorizedHandler } from '../api/client';
+import {
+  canDrawOverlays,
+  ensureOverlayPermissionInteractive,
+  isBubbleOverlaySupported,
+  startSystemBubbleOverlay,
+} from '../lib/floatingBubbleOverlay';
 import { registerPushToken, unregisterPushToken } from '../lib/pushRegistration';
+import { startDeviceHeartbeat, stopDeviceHeartbeat } from '../lib/deviceHeartbeat';
 
 const USER_KEY = 'sx_user_json';
+const OVERLAY_PROMPT_KEY = 'sx_overlay_prompt_v1';
 
 export type AuthUser = {
   id: string;
@@ -82,14 +91,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await AsyncStorage.setItem(USER_KEY, JSON.stringify(data.user));
     setToken(data.token);
     setUser(data.user);
+    startDeviceHeartbeat();
     void registerPushToken();
   }, []);
 
   useEffect(() => {
-    if (token) void registerPushToken();
+    if (token) {
+      startDeviceHeartbeat();
+      void registerPushToken();
+    } else {
+      stopDeviceHeartbeat();
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (!token || !isBubbleOverlaySupported()) return;
+    void (async () => {
+      const done = await AsyncStorage.getItem(OVERLAY_PROMPT_KEY);
+      if (done === '1') return;
+      await AsyncStorage.setItem(OVERLAY_PROMPT_KEY, '1');
+      const ok = await ensureOverlayPermissionInteractive({
+        title: 'Bong bóng chat ngoài app',
+        message:
+          'Cho phép "Hiển thị trên các ứng dụng khác" để bong bóng chat xuất hiện khi bạn dùng app khác (giống Zalo/Messenger).',
+      });
+      if (ok && (await canDrawOverlays())) await startSystemBubbleOverlay();
+    })();
   }, [token]);
 
   const logout = useCallback(async () => {
+    stopDeviceHeartbeat();
     await unregisterPushToken();
     await setStoredToken(null);
     await AsyncStorage.removeItem(USER_KEY);
@@ -100,6 +131,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setUnauthorizedHandler(() => {
       void (async () => {
+        stopDeviceHeartbeat();
         await AsyncStorage.removeItem(USER_KEY);
         setToken(null);
         setUser(null);

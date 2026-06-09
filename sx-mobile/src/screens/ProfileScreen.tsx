@@ -4,6 +4,13 @@ import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { clearFloatingBubbleHidden } from '../lib/floatingChatBubbleStorage';
+import {
+  canDrawOverlays,
+  ensureOverlayPermissionInteractive,
+  isBubbleOverlaySupported,
+  startSystemBubbleOverlay,
+} from '../lib/floatingBubbleOverlay';
 import { API_ORIGIN } from '../config';
 import { HIT_TARGET, Radii, Spacing, type ThemeMode } from '../theme';
 
@@ -101,6 +108,20 @@ export default function ProfileScreen() {
           borderRadius: Radii.md,
         },
         logoutText: { color: colors.danger, fontSize: 15, fontWeight: '700' },
+        bubbleBtn: {
+          marginHorizontal: Spacing.md,
+          marginTop: Spacing.md,
+          minHeight: HIT_TARGET,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 8,
+          backgroundColor: colors.primarySoft,
+          borderWidth: 1,
+          borderColor: colors.primary,
+          borderRadius: Radii.md,
+        },
+        bubbleBtnText: { color: colors.primary, fontSize: 15, fontWeight: '700' },
       }),
     [colors],
   );
@@ -167,6 +188,43 @@ export default function ProfileScreen() {
           })}
         </View>
       </View>
+
+      <TouchableOpacity
+        style={styles.bubbleBtn}
+        onPress={() => {
+          void clearFloatingBubbleHidden();
+          Alert.alert('Bong bóng chat', 'Đã bật lại bong bóng chat trên màn hình.');
+        }}
+        activeOpacity={0.85}
+      >
+        <Ionicons name="chatbubble-ellipses-outline" size={18} color={colors.primary} />
+        <Text style={styles.bubbleBtnText}>Hiện lại bong bóng chat</Text>
+      </TouchableOpacity>
+
+      {isBubbleOverlaySupported() ? (
+        <TouchableOpacity
+          style={styles.bubbleBtn}
+          onPress={() => {
+            void (async () => {
+              const ok = await canDrawOverlays();
+              if (ok) {
+                await startSystemBubbleOverlay();
+                Alert.alert('Bong bóng ngoài app', 'Đã bật bong bóng chat trên màn hình hệ thống.');
+                return;
+              }
+              await ensureOverlayPermissionInteractive({
+                title: 'Bong bóng ngoài app',
+                message:
+                  'Bật quyền "Hiển thị trên các ứng dụng khác" để bong bóng chat xuất hiện khi bạn dùng app khác (giống Zalo/Messenger).',
+              });
+            })();
+          }}
+          activeOpacity={0.85}
+        >
+          <Ionicons name="layers-outline" size={18} color={colors.primary} />
+          <Text style={styles.bubbleBtnText}>Bong bóng ngoài app (overlay)</Text>
+        </TouchableOpacity>
+      ) : null}
 
       <TouchableOpacity style={styles.logoutBtn} onPress={confirmLogout} activeOpacity={0.85}>
         <Ionicons name="log-out-outline" size={18} color={colors.danger} />
