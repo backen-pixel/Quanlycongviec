@@ -274,22 +274,87 @@ function filterContactsRecentHours(contacts, recentHours) {
  * bù thêm contact “nóng” theo last_message_at tới FB_PIPELINE_POOL_LIMIT.
  * Lọc recentHours: contact chưa có lead luôn giữ (xem filterContactsRecentHours).
  */
-async function loadFacebookContactsForBatchPipeline({ recentHours = 0, applyStaleFilter = false } = {}) {
+// ── Company → page_id scope (lọc pool quét theo công ty) ───────────────────
+/** Khóa cho phạm vi "toàn hệ thống" (không lọc công ty). */
+const FB_GLOBAL_SCOPE_KEY = '__global__';
+
+let _companyPageIdsCache = { ts: 0, byCompany: new Map() };
+
+async function refreshCompanyPageIdsCache() {
+  const byCompany = new Map();
+  try {
+    const { data } = await supabase.from('facebook_pages').select('page_id, default_company_id');
+    for (const p of data || []) {
+      const cid = p.default_company_id ? String(p.default_company_id) : '';
+      if (!cid || !p.page_id) continue;
+      if (!byCompany.has(cid)) byCompany.set(cid, []);
+      byCompany.get(cid).push(String(p.page_id));
+    }
+  } catch (e) {
+    console.warn('[FB scope] refresh company pageIds:', e.message);
+  }
+  _companyPageIdsCache = { ts: Date.now(), byCompany };
+  return _companyPageIdsCache;
+}
+
+/**
+ * Danh sách page_id thuộc 1 công ty (theo facebook_pages.default_company_id).
+ * companyId rỗng/null → trả null (phạm vi toàn hệ thống). Công ty không có page → [].
+ */
+async function getPageIdsForCompany(companyId) {
+  if (companyId == null || String(companyId).trim() === '') return null;
+  const fresh = Date.now() - _companyPageIdsCache.ts < 60_000 && _companyPageIdsCache.byCompany.size > 0;
+  const cache = fresh ? _companyPageIdsCache : await refreshCompanyPageIdsCache();
+  return cache.byCompany.get(String(companyId).trim()) || [];
+}
+
+/** Áp filter page_id vào query Supabase. pageIds=null → không lọc; []→ ép rỗng. */
+function applyPageIdsFilter(q, pageIds) {
+  if (!Array.isArray(pageIds)) return q;
+  return q.in('page_id', pageIds.length ? pageIds : ['__none__']);
+}
+
+/**
+ * Resolve pageIds cho 1 request tool theo company_id (tôn trọng quyền).
+ * - Admin: company_id rỗng → null (toàn hệ thống); có → page của công ty đó.
+ * - NV: luôn ép theo company_id tài khoản; chặn truy cập công ty khác.
+ * Trả về: null (toàn hệ thống) | string[] (lọc) | undefined (đã gửi lỗi response).
+ */
+async function resolvePageIdsForCompanyScoped(req, res, companyIdRaw) {
+  const companyId = companyIdRaw != null && String(companyIdRaw).trim() !== ''
+    ? String(companyIdRaw).trim()
+    : null;
+  if (isSystemAdmin(req.user)) {
+    return companyId ? await getPageIdsForCompany(companyId) : null;
+  }
+  const cid = req.user?.company_id;
+  if (!cid) {
+    res.status(400).json({ error: 'Thiếu company_id trên tài khoản — gán công ty cho nhân viên.' });
+    return undefined;
+  }
+  if (companyId && String(companyId) !== String(cid)) {
+    res.status(403).json({ error: 'Không có quyền chạy tool cho công ty khác.' });
+    return undefined;
+  }
+  return await getPageIdsForCompany(cid);
+}
+
+async function loadFacebookContactsForBatchPipeline({ recentHours = 0, applyStaleFilter = false, pageIds = null } = {}) {
   const pool = FB_PIPELINE_POOL_LIMIT;
   const needyCap = FB_PIPELINE_NEEDY_NO_LEAD_CAP;
 
   const { data: needyRaw } = needyCap > 0
-    ? await supabase.from('facebook_contacts')
+    ? await applyPageIdsFilter(supabase.from('facebook_contacts')
       .select('id, psid, page_id, fb_name, lead_id, phone, last_message_at, last_synced_at, created_at')
       .not('psid', 'is', null)
-      .is('lead_id', null)
+      .is('lead_id', null), pageIds)
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .limit(needyCap)
     : { data: [] };
 
-  const { data: raw } = await supabase.from('facebook_contacts')
+  const { data: raw } = await applyPageIdsFilter(supabase.from('facebook_contacts')
     .select('id, psid, page_id, fb_name, lead_id, phone, last_message_at, last_synced_at, created_at')
-    .not('psid', 'is', null)
+    .not('psid', 'is', null), pageIds)
     .order('last_message_at', { ascending: false, nullsFirst: false })
     .limit(pool);
 
@@ -358,113 +423,195 @@ const DEFAULT_FB_PIPELINE_CONFIG = {
   auto_loop_pause_sec: 0,
 };
 
-let fbPipelineConfigCache = { ...DEFAULT_FB_PIPELINE_CONFIG };
+/**
+ * Cấu hình auto-pipeline THEO CÔNG TY + công tắc tổng (master).
+ * app_settings key 'fb_auto_pipeline' = { master: bool, companies: { [companyKey]: cfg } }
+ * companyKey = companyId (uuid) hoặc FB_GLOBAL_SCOPE_KEY cho phạm vi toàn hệ thống.
+ */
+let fbPipelineState = { master: false, companies: {} };
+
+/** Chuẩn hóa + clamp 1 cfg công ty (gồm cờ enabled riêng). */
+function normalizeFbPipelineCfg(partial) {
+  const merged = { ...DEFAULT_FB_PIPELINE_CONFIG, ...(partial && typeof partial === 'object' ? partial : {}) };
+  if (!['chain', 'legacy', 'full_cycle'].includes(merged.engine)) merged.engine = 'full_cycle';
+  if (merged.engine === 'legacy') merged.engine = 'full_cycle';
+  merged.full_cycle_max_users_per_round = Math.min(500_000, Math.max(0, parseInt(merged.full_cycle_max_users_per_round, 10) || 0));
+  merged.full_cycle_graph_pages_per_contact = Math.min(30, Math.max(1, parseInt(merged.full_cycle_graph_pages_per_contact, 10) || 10));
+  merged.full_cycle_deep_retry_cap = Math.min(200, Math.max(0, parseInt(merged.full_cycle_deep_retry_cap, 10) || 0));
+  merged.full_cycle_deep_retry_pages = Math.min(30, Math.max(1, parseInt(merged.full_cycle_deep_retry_pages, 10) || merged.full_cycle_graph_pages_per_contact));
+  merged.chain_chunk_users = Math.min(500, Math.max(1, parseInt(merged.chain_chunk_users, 10) || 50));
+  merged.chain_sort = merged.chain_sort === 'oldest_first' ? 'oldest_first' : 'newest_first';
+  merged.chain_recent_hours = Math.min(168, Math.max(0, parseInt(merged.chain_recent_hours, 10) || 0));
+  merged.chain_graph_pages = Math.min(30, Math.max(1, parseInt(merged.chain_graph_pages, 10) || FB_SYNC_SINGLE_MAX_PAGES));
+  merged.chain_skip_stale = !!merged.chain_skip_stale;
+  merged.chain_final_lead_sync = merged.chain_final_lead_sync !== false;
+  merged.chain_run_graph_sync = merged.chain_run_graph_sync !== false;
+  merged.chain_run_extract = merged.chain_run_extract !== false;
+  merged.auto_loop_pause_sec = Math.min(3600, Math.max(0, parseInt(merged.auto_loop_pause_sec, 10) || 0));
+  merged.full_cycle_rescan_phones = merged.full_cycle_rescan_phones !== false;
+  merged.full_cycle_pool_sync_rounds = Math.min(100, Math.max(1, parseInt(merged.full_cycle_pool_sync_rounds, 10) || 12));
+  merged.enabled = !!merged.enabled;
+  return merged;
+}
+
+async function persistFbPipelineState() {
+  try {
+    await supabase.from('app_settings').upsert({
+      key: 'fb_auto_pipeline',
+      value: fbPipelineState,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'key' });
+  } catch (e) {
+    console.warn('[FB pipeline] persist state:', e.message);
+  }
+}
+
+/** Migrate cấu hình cũ (key fb_auto_pipeline_config + fb_auto_pipeline_enabled) → phạm vi global. */
+async function migrateLegacyFbPipelineConfig() {
+  let legacyCfg = null;
+  let legacyEnabled = false;
+  try {
+    const { data } = await supabase.from('app_settings').select('value').eq('key', 'fb_auto_pipeline_config').maybeSingle();
+    if (data?.value && typeof data.value === 'object') legacyCfg = data.value;
+  } catch (_) { /* ignore */ }
+  try {
+    const { data } = await supabase.from('app_settings').select('value').eq('key', 'fb_auto_pipeline_enabled').maybeSingle();
+    legacyEnabled = !!(data?.value?.enabled);
+  } catch (_) { /* ignore */ }
+  const globalCfg = normalizeFbPipelineCfg({ ...(legacyCfg || {}), enabled: legacyEnabled });
+  fbPipelineState = { master: legacyEnabled, companies: { [FB_GLOBAL_SCOPE_KEY]: globalCfg } };
+  await persistFbPipelineState();
+  return fbPipelineState;
+}
 
 async function loadFbPipelineConfigFromDb() {
   try {
-    const { data } = await supabase.from('app_settings').select('value').eq('key', 'fb_auto_pipeline_config').maybeSingle();
-    if (data?.value && typeof data.value === 'object') {
-      fbPipelineConfigCache = { ...DEFAULT_FB_PIPELINE_CONFIG, ...data.value };
-      // Back-compat: engine "legacy" cũ KHÔNG chạy CRM steps → tự ép sang full_cycle để tạo Lead.
-      if (fbPipelineConfigCache.engine === 'legacy' || !fbPipelineConfigCache.engine) {
-        console.log('[FB pipeline config] migrate engine "legacy" → "full_cycle" (legacy không tạo Lead)');
-        fbPipelineConfigCache.engine = 'full_cycle';
-      }
+    const { data } = await supabase.from('app_settings').select('value').eq('key', 'fb_auto_pipeline').maybeSingle();
+    if (data?.value && typeof data.value === 'object' && data.value.companies && typeof data.value.companies === 'object') {
+      const companies = {};
+      for (const [k, v] of Object.entries(data.value.companies)) companies[k] = normalizeFbPipelineCfg(v);
+      fbPipelineState = { master: !!data.value.master, companies };
+      return fbPipelineState;
     }
   } catch (e) {
     console.warn('[FB pipeline config] load:', e.message);
   }
-  return fbPipelineConfigCache;
+  // Chưa có key mới → migrate từ key cũ.
+  await migrateLegacyFbPipelineConfig();
+  return fbPipelineState;
 }
 
-function getFbPipelineConfigSync() {
-  return { ...fbPipelineConfigCache };
+function getFbPipelineConfigSync(companyKey = FB_GLOBAL_SCOPE_KEY) {
+  const key = companyKey || FB_GLOBAL_SCOPE_KEY;
+  const cfg = fbPipelineState.companies[key];
+  return cfg ? { ...cfg } : normalizeFbPipelineCfg({});
 }
 
-// ── Persist auto-pipeline enabled flag (resume sau reboot chỉ khi FB_AUTO_PIPELINE_RESUME_ON_BOOT) ──
-async function loadAutoPipelineEnabledFromDb() {
-  try {
-    const { data } = await supabase.from('app_settings')
-      .select('value').eq('key', 'fb_auto_pipeline_enabled').maybeSingle();
-    return !!(data?.value?.enabled);
-  } catch (e) {
-    console.warn('[AutoPipeline] load enabled flag:', e.message);
-    return false;
-  }
+function getFbMasterEnabledSync() {
+  return !!fbPipelineState.master;
 }
 
-async function saveAutoPipelineEnabledToDb(enabled) {
-  try {
-    await supabase.from('app_settings').upsert({
-      key: 'fb_auto_pipeline_enabled',
-      value: { enabled: !!enabled },
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'key' });
-  } catch (e) {
-    console.warn('[AutoPipeline] save enabled flag:', e.message);
-  }
+function listFbPipelineCompanyKeys() {
+  return Object.keys(fbPipelineState.companies || {});
 }
 
-const autoPipeline = {
-  enabled: false,
-  running: false,
-  stopRequested: false,
-  phase: 'idle',
-  step: -1,
-  totalSteps: 2,
-  stepLabel: null,
-  /** Nếu đang nghỉ giữa chu kỳ: timestamp ms (Date.now()+pauseMs); null nếu không nghỉ. */
-  pauseUntilMs: null,
-  cycleCount: 0,
-  batchIndex: 0,
-  totalBatches: 0,
-  totalContacts: 0,
-  batchOffset: 0,
-  lastUpdatedAt: null,
-  logs: [],
-  // Per-batch results + accumulated KPIs
-  batchResults: [],
-  kpi: { messagesSynced: 0, contactsProcessed: 0, contactPhones: 0, customerPhones: 0, leadPhones: 0, errors: 0 },
-  startedAt: null,
-  /** full_cycle: offset cho lô pool sync→quét (xoay vòng khi hết pool). */
-  fullCycleSyncExtractOffset: 0,
-};
-
-function pushAutoLog(text, status = 'info') {
-  autoPipeline.logs = [...autoPipeline.logs.slice(-199), { text, status, ts: Date.now() }];
-  autoPipeline.lastUpdatedAt = new Date().toISOString();
-  emitAutoState();
+async function saveFbPipelineConfigForCompany(companyKey, partial) {
+  const key = companyKey || FB_GLOBAL_SCOPE_KEY;
+  const existing = fbPipelineState.companies[key] || {};
+  const merged = normalizeFbPipelineCfg({ ...existing, ...(partial && typeof partial === 'object' ? partial : {}) });
+  fbPipelineState.companies[key] = merged;
+  await persistFbPipelineState();
+  return merged;
 }
 
-function getAutoState() {
-  const pauseUntilMs = typeof autoPipeline.pauseUntilMs === 'number' ? autoPipeline.pauseUntilMs : null;
-  const pauseRemainingMs = pauseUntilMs ? Math.max(0, pauseUntilMs - Date.now()) : 0;
+async function setFbPipelineMaster(enabled) {
+  fbPipelineState.master = !!enabled;
+  await persistFbPipelineState();
+  return fbPipelineState.master;
+}
+
+/** Tạo state auto-pipeline cho 1 phạm vi (công ty hoặc global). */
+function createAutoPipelineState(companyKey) {
   return {
-    enabled: autoPipeline.enabled,
-    running: autoPipeline.running,
-    phase: autoPipeline.phase,
-    step: autoPipeline.step,
-    totalSteps: autoPipeline.totalSteps,
-    stepLabel: autoPipeline.stepLabel,
-    pauseUntilMs,
-    pauseRemainingMs,
-    cycleCount: autoPipeline.cycleCount,
-    batchIndex: autoPipeline.batchIndex,
-    totalBatches: autoPipeline.totalBatches,
-    totalContacts: autoPipeline.totalContacts,
-    batchOffset: autoPipeline.batchOffset,
-    lastUpdatedAt: autoPipeline.lastUpdatedAt,
-    logs: autoPipeline.logs,
-    batchResults: autoPipeline.batchResults,
-    kpi: autoPipeline.kpi,
-    startedAt: autoPipeline.startedAt,
-    pipelineConfig: getFbPipelineConfigSync(),
+    companyKey,
+    enabled: false,
+    running: false,
+    stopRequested: false,
+    phase: 'idle',
+    step: -1,
+    totalSteps: 2,
+    stepLabel: null,
+    pauseUntilMs: null,
+    cycleCount: 0,
+    batchIndex: 0,
+    totalBatches: 0,
+    totalContacts: 0,
+    batchOffset: 0,
+    lastUpdatedAt: null,
+    logs: [],
+    batchResults: [],
+    kpi: { messagesSynced: 0, contactsProcessed: 0, contactPhones: 0, customerPhones: 0, leadPhones: 0, errors: 0 },
+    startedAt: null,
+    fullCycleSyncExtractOffset: 0,
   };
 }
 
-function emitAutoState() {
-  if (r._ioRef) r._ioRef.emit('auto_pipeline_state', getAutoState());
+/** Map companyKey -> state (mỗi công ty 1 vòng auto độc lập). */
+const autoPipelineStates = new Map();
+
+function getAutoPipelineState(companyKey = FB_GLOBAL_SCOPE_KEY) {
+  const key = companyKey || FB_GLOBAL_SCOPE_KEY;
+  if (!autoPipelineStates.has(key)) autoPipelineStates.set(key, createAutoPipelineState(key));
+  return autoPipelineStates.get(key);
 }
+
+/** companyKey -> companyId thật (null cho global). */
+function companyKeyToId(companyKey) {
+  return !companyKey || companyKey === FB_GLOBAL_SCOPE_KEY ? null : companyKey;
+}
+
+function pushAutoLog(st, text, status = 'info') {
+  st.logs = [...st.logs.slice(-199), { text, status, ts: Date.now() }];
+  st.lastUpdatedAt = new Date().toISOString();
+  emitAutoState(st);
+}
+
+function getAutoState(st) {
+  const pauseUntilMs = typeof st.pauseUntilMs === 'number' ? st.pauseUntilMs : null;
+  const pauseRemainingMs = pauseUntilMs ? Math.max(0, pauseUntilMs - Date.now()) : 0;
+  return {
+    company_id: companyKeyToId(st.companyKey),
+    company_key: st.companyKey,
+    master_enabled: getFbMasterEnabledSync(),
+    enabled: st.enabled,
+    running: st.running,
+    phase: st.phase,
+    step: st.step,
+    totalSteps: st.totalSteps,
+    stepLabel: st.stepLabel,
+    pauseUntilMs,
+    pauseRemainingMs,
+    cycleCount: st.cycleCount,
+    batchIndex: st.batchIndex,
+    totalBatches: st.totalBatches,
+    totalContacts: st.totalContacts,
+    batchOffset: st.batchOffset,
+    lastUpdatedAt: st.lastUpdatedAt,
+    logs: st.logs,
+    batchResults: st.batchResults,
+    kpi: st.kpi,
+    startedAt: st.startedAt,
+    pipelineConfig: getFbPipelineConfigSync(st.companyKey),
+  };
+}
+
+function emitAutoState(st) {
+  if (r._ioRef && st) r._ioRef.emit('auto_pipeline_state', getAutoState(st));
+}
+
+// Alias để vòng lặp per-company shadow lại với chữ ký cũ (text, status).
+const pushAutoLogImpl = pushAutoLog;
+const emitAutoStateImpl = emitAutoState;
 
 function getInternalAutoHeaders() {
   const token = jwt.sign({ userId: 'auto-pipeline', role: 'system', fullName: 'Auto Pipeline' }, config.jwtSecret, { expiresIn: '1h' });
@@ -540,13 +687,14 @@ async function autoPipelineInternalPostJson(apiPath, body = {}) {
 /**
  * Pipeline v2: contact chưa có lead, không sync_paused — không lọc pool 48h/stale Graph RPC.
  */
-async function loadContactsForPipelineV2(limit) {
+async function loadContactsForPipelineV2(limit, pageIds = null) {
   await ensureSyncPausedColumnDetected();
   const lim = Math.min(500, Math.max(1, parseInt(limit, 10) || 100));
   const cols = hasSyncPausedColumnSync()
     ? 'id, psid, page_id, fb_name, lead_id, phone, customer_id, last_message_at, created_at, sync_paused'
     : 'id, psid, page_id, fb_name, lead_id, phone, customer_id, last_message_at, created_at';
   let q = supabase.from('facebook_contacts').select(cols).is('lead_id', null).not('psid', 'is', null);
+  q = applyPageIdsFilter(q, pageIds);
   if (hasSyncPausedColumnSync()) q = q.neq('sync_paused', true);
   const { data, error } = await q
     .order('last_message_at', { ascending: false, nullsFirst: false })
@@ -557,13 +705,14 @@ async function loadContactsForPipelineV2(limit) {
 }
 
 /** Contact đã có lead — dùng bước dọn SĐT khi không quét được inbound mới. */
-async function loadContactsWithLeadForCleanup(limit) {
+async function loadContactsWithLeadForCleanup(limit, pageIds = null) {
   await ensureSyncPausedColumnDetected();
   const lim = Math.min(500, Math.max(1, parseInt(limit, 10) || 100));
   const cols = hasSyncPausedColumnSync()
     ? 'id, psid, page_id, fb_name, lead_id, phone, customer_id, last_message_at, created_at, sync_paused'
     : 'id, psid, page_id, fb_name, lead_id, phone, customer_id, last_message_at, created_at';
   let q = supabase.from('facebook_contacts').select(cols).not('lead_id', 'is', null).not('psid', 'is', null);
+  q = applyPageIdsFilter(q, pageIds);
   if (hasSyncPausedColumnSync()) q = q.neq('sync_paused', true);
   const { data, error } = await q
     .order('last_message_at', { ascending: false, nullsFirst: false })
@@ -587,13 +736,15 @@ async function runPipelineV2OnePass({
   deleteLeadWhenNoPhoneAfterClear = false,
   cleanupContactsWithLead = false,
   cleanupLimit = 0,
+  pageIds = null,
+  shouldStop = null,
 } = {}) {
   const autoLeadCfg = await loadAutoLeadConfig();
   const triggerMode = String(autoLeadCfg?.trigger || 'first_message');
   /** manual = vẫn đồng bộ tin + quét SĐT; không tự tạo lead hàng loạt */
   const skipAutoLeadCreation = triggerMode === 'manual';
 
-  const contacts = await loadContactsForPipelineV2(limit);
+  const contacts = await loadContactsForPipelineV2(limit, pageIds);
   if (!contacts.length) {
     return {
       ok: true,
@@ -617,7 +768,7 @@ async function runPipelineV2OnePass({
   if (io) io.emit('batch_progress', { type: 'pipeline_v2', phase: 'start', total: contacts.length, current: 0 });
 
   for (let i = 0; i < contacts.length; i++) {
-    if (autoPipeline.running && autoPipeline.stopRequested) break;
+    if (typeof shouldStop === 'function' && shouldStop()) break;
     const contact = contacts[i];
     const row = { contact_id: contact.id, name: contact.fb_name };
 
@@ -700,10 +851,10 @@ async function runPipelineV2OnePass({
   const cleanupDetails = [];
   if (cleanupContactsWithLead && clearPhoneWhenNoNewInbound) {
     const limClean = cleanupLimit > 0 ? cleanupLimit : limit;
-    const withLead = await loadContactsWithLeadForCleanup(limClean);
+    const withLead = await loadContactsWithLeadForCleanup(limClean, pageIds);
     if (io) io.emit('batch_progress', { type: 'pipeline_v2', phase: 'cleanup_lead', total: withLead.length, current: 0 });
     for (let j = 0; j < withLead.length; j++) {
-      if (autoPipeline.running && autoPipeline.stopRequested) break;
+      if (typeof shouldStop === 'function' && shouldStop()) break;
       const c = withLead[j];
       const crow = { contact_id: c.id, name: c.fb_name, phase: 'cleanup_with_lead' };
       const s2 = await graphSyncMessagesForContactRow(c, pageTokens, { maxGraphPages: graphPages });
@@ -765,7 +916,16 @@ async function runPipelineV2OnePass({
   return summary;
 }
 
-async function runAutoPipelineLoop() {
+async function runAutoPipelineLoop(companyKey = FB_GLOBAL_SCOPE_KEY) {
+  const st = getAutoPipelineState(companyKey);
+  // Shadow: trong vòng lặp, `autoPipeline` = state của công ty này;
+  // pushAutoLog/emitAutoState giữ chữ ký cũ nhưng gắn vào state này.
+  const autoPipeline = st;
+  const companyId = companyKeyToId(companyKey);
+  const pushAutoLog = (text, status = 'info') => pushAutoLogImpl(st, text, status);
+  const emitAutoState = () => emitAutoStateImpl(st);
+  const shouldStopLoop = () => !st.enabled || st.stopRequested || !getFbMasterEnabledSync();
+
   if (autoPipeline.running) return;
   autoPipeline.running = true;
   autoPipeline.stopRequested = false;
@@ -775,7 +935,7 @@ async function runAutoPipelineLoop() {
   autoPipeline.batchResults = [];
   autoPipeline.kpi = { messagesSynced: 0, contactsProcessed: 0, contactPhones: 0, customerPhones: 0, leadPhones: 0, errors: 0 };
   await loadFbPipelineConfigFromDb();
-  const pcfgBoot = getFbPipelineConfigSync();
+  const pcfgBoot = getFbPipelineConfigSync(companyKey);
   const bootPauseSec = Math.round(getAutoLoopPauseMsFromConfig(pcfgBoot) / 1000);
   if (pcfgBoot.engine === 'full_cycle') {
     const bootCap = Math.min(500_000, Math.max(0, parseInt(pcfgBoot.full_cycle_max_users_per_round, 10) || 0));
@@ -793,9 +953,14 @@ async function runAutoPipelineLoop() {
     );
   }
 
-  while (autoPipeline.enabled && !autoPipeline.stopRequested) {
+  while (autoPipeline.enabled && !autoPipeline.stopRequested && getFbMasterEnabledSync()) {
     await loadFbPipelineConfigFromDb();
-    const pcfg = getFbPipelineConfigSync();
+    const pcfg = getFbPipelineConfigSync(companyKey);
+    const pageIds = await getPageIdsForCompany(companyId);
+    if (Array.isArray(pageIds) && pageIds.length === 0) {
+      pushAutoLog('⚠️ Công ty chưa gán page Facebook nào — bỏ qua vòng này', 'error');
+      break;
+    }
     autoPipeline.cycleCount += 1;
     autoPipeline.batchOffset = 0;
     autoPipeline.batchIndex = 0;
@@ -818,7 +983,7 @@ async function runAutoPipelineLoop() {
       const v2Limit = userCap > 0 ? userCap : 150;
       let v2;
       try {
-        v2 = await runPipelineV2OnePass({ limit: v2Limit, graphPages: gp, io: null });
+        v2 = await runPipelineV2OnePass({ limit: v2Limit, graphPages: gp, io: null, pageIds, shouldStop: shouldStopLoop });
       } catch (e) {
         console.error('[AutoPipeline] pipeline v2', e);
         v2 = { ok: false, error: e.message, processed: 0, messagesSynced: 0, extractUpdated: 0, leadsCreated: 0, details: [] };
@@ -868,6 +1033,7 @@ async function runAutoPipelineLoop() {
               runGraphSync: pcfg.chain_run_graph_sync !== false,
               runExtract: pcfg.chain_run_extract !== false,
               emitBatchSocketEvents: false,
+              pageIds,
             });
           } catch (e) {
             console.error('[AutoPipeline] full_cycle pool sync', e);
@@ -921,7 +1087,7 @@ async function runAutoPipelineLoop() {
       let refreshUpdated = 0;
       let refreshTotal = 0;
       try {
-        const rn = await autoPipelineInternalPostJson('/facebook/refresh-names', {});
+        const rn = await autoPipelineInternalPostJson('/facebook/refresh-names', { company_id: companyId });
         refreshUpdated = rn.updated || 0;
         refreshTotal = rn.total || 0;
         pushAutoLog(`✅ Refresh tên: ${refreshUpdated}/${refreshTotal}`, 'ok');
@@ -938,7 +1104,7 @@ async function runAutoPipelineLoop() {
       let dedupMerged = 0;
       let dedupMessage = '';
       try {
-        const dd = await autoPipelineInternalPostJson('/facebook/dedup-leads', {});
+        const dd = await autoPipelineInternalPostJson('/facebook/dedup-leads', { company_id: companyId });
         dedupMerged = dd.merged || 0;
         dedupMessage = dd.message || '';
         pushAutoLog(`✅ Xóa lead trùng: ${dedupMerged} lead (${dedupMessage})`, 'ok');
@@ -955,7 +1121,7 @@ async function runAutoPipelineLoop() {
       let syncPhonesUpdated = 0;
       let syncPhonesTotal = 0;
       try {
-        const sp = await autoPipelineInternalPostJson('/facebook/sync-contact-phones', {});
+        const sp = await autoPipelineInternalPostJson('/facebook/sync-contact-phones', { company_id: companyId });
         syncPhonesUpdated = sp.updated ?? 0;
         syncPhonesTotal = sp.total ?? 0;
         pushAutoLog(`✅ Sync SĐT danh bạ → Lead: ${syncPhonesUpdated}/${syncPhonesTotal || 0}`, 'ok');
@@ -1013,7 +1179,7 @@ async function runAutoPipelineLoop() {
       const runGraph = pcfg.chain_run_graph_sync !== false;
       const runExtract = pcfg.chain_run_extract !== false;
 
-      while (!done && autoPipeline.enabled && !autoPipeline.stopRequested) {
+      while (!done && autoPipeline.enabled && !autoPipeline.stopRequested && getFbMasterEnabledSync()) {
         autoPipeline.batchIndex += 1;
         autoPipeline.batchOffset = chainOff;
         autoPipeline.step = 0;
@@ -1036,6 +1202,7 @@ async function runAutoPipelineLoop() {
             runGraphSync: runGraph,
             runExtract,
             emitBatchSocketEvents: false,
+            pageIds,
           });
         } catch (e) {
           console.error('[AutoPipeline chain]', e);
@@ -1099,13 +1266,13 @@ async function runAutoPipelineLoop() {
       const userCap = Math.min(500_000, Math.max(0, parseInt(pcfg.full_cycle_max_users_per_round, 10) || 0));
       const gp = Math.min(30, Math.max(1, parseInt(pcfg.full_cycle_graph_pages_per_contact, 10) || FB_SYNC_BATCH_GRAPH_MAX_PAGES));
       try {
-        await runPipelineV2OnePass({ limit: userCap > 0 ? userCap : 150, graphPages: gp, io: null });
+        await runPipelineV2OnePass({ limit: userCap > 0 ? userCap : 150, graphPages: gp, io: null, pageIds, shouldStop: shouldStopLoop });
       } catch (e) {
         console.error('[AutoPipeline] pipeline v2 (fallback)', e.message);
       }
-      try { await autoPipelineInternalPostJson('/facebook/refresh-names', {}); } catch (e) { console.error('[AutoPipeline] refresh-names (fallback)', e.message); }
-      try { await autoPipelineInternalPostJson('/facebook/dedup-leads', {}); } catch (e) { console.error('[AutoPipeline] dedup-leads (fallback)', e.message); }
-      try { await autoPipelineInternalPostJson('/facebook/sync-contact-phones', {}); } catch (e) { console.error('[AutoPipeline] sync-contact-phones (fallback)', e.message); }
+      try { await autoPipelineInternalPostJson('/facebook/refresh-names', { company_id: companyId }); } catch (e) { console.error('[AutoPipeline] refresh-names (fallback)', e.message); }
+      try { await autoPipelineInternalPostJson('/facebook/dedup-leads', { company_id: companyId }); } catch (e) { console.error('[AutoPipeline] dedup-leads (fallback)', e.message); }
+      try { await autoPipelineInternalPostJson('/facebook/sync-contact-phones', { company_id: companyId }); } catch (e) { console.error('[AutoPipeline] sync-contact-phones (fallback)', e.message); }
       done = true;
     }
 
@@ -1145,6 +1312,71 @@ async function runAutoPipelineLoop() {
   autoPipeline.stepLabel = null;
   pushAutoLog('⏹️ Auto pipeline đã dừng');
   emitAutoState();
+}
+
+// ── Quản lý vòng auto theo công ty (start/stop độc lập + master) ──────────────
+/** Khởi động vòng auto của 1 công ty (chỉ chạy khi master bật). */
+function startAutoPipelineForCompany(companyKey) {
+  const st = getAutoPipelineState(companyKey);
+  if (st.running) {
+    st.enabled = true;
+    emitAutoState(st);
+    return st;
+  }
+  if (!getFbMasterEnabledSync()) {
+    // Master tắt: chỉ đánh dấu enabled (sẽ chạy khi bật master).
+    st.enabled = true;
+    emitAutoState(st);
+    return st;
+  }
+  st.enabled = true;
+  runAutoPipelineLoop(companyKey).catch((err) => {
+    console.error('[AutoPipeline] FATAL', companyKey, err.message);
+    pushAutoLog(st, `❌ Auto pipeline lỗi nghiêm trọng: ${err.message}`, 'error');
+    st.running = false;
+    st.enabled = false;
+    st.phase = 'idle';
+    st.step = -1;
+    st.stepLabel = null;
+    st.pauseUntilMs = null;
+    emitAutoState(st);
+  });
+  return st;
+}
+
+/** Dừng vòng auto của 1 công ty. */
+function stopAutoPipelineForCompany(companyKey) {
+  const st = getAutoPipelineState(companyKey);
+  st.stopRequested = true;
+  st.enabled = false;
+  st.pauseUntilMs = null;
+  pushAutoLog(st, '🛑 Đã yêu cầu dừng auto pipeline');
+  return st;
+}
+
+/** Bật/tắt master: bật → chạy lại các công ty đang enabled; tắt → dừng tất cả. */
+async function applyFbPipelineMaster(enabled) {
+  await setFbPipelineMaster(enabled);
+  if (enabled) {
+    for (const key of listFbPipelineCompanyKeys()) {
+      const cfg = getFbPipelineConfigSync(key);
+      if (cfg.enabled) startAutoPipelineForCompany(key);
+    }
+    // Các state đang enabled nhưng chưa có trong config companies (hiếm)
+    for (const [key, st] of autoPipelineStates.entries()) {
+      if (st.enabled && !st.running) startAutoPipelineForCompany(key);
+    }
+  } else {
+    for (const st of autoPipelineStates.values()) {
+      if (st.running || st.enabled) {
+        st.stopRequested = true;
+        st.enabled = false;
+        st.pauseUntilMs = null;
+        emitAutoState(st);
+      }
+    }
+  }
+  return getFbMasterEnabledSync();
 }
 
 // ── Auto-migration: thêm cột mới nếu chưa có ──
@@ -3897,10 +4129,17 @@ r.post('/dedup-leads', authMiddleware, async (req, res) => {
   try {
     const io = r._ioRef;
 
+    // company_id (optional) → chỉ gộp lead trong phạm vi công ty
+    const dedupCompanyId = req.body?.company_id != null && String(req.body.company_id).trim() !== ''
+      ? String(req.body.company_id).trim()
+      : null;
+
     // 1. Lấy tất cả leads (không join customer để tránh lỗi FK)
-    const { data: allLeads, error: leadsErr } = await supabase.from('crm_leads')
+    let leadsQuery = supabase.from('crm_leads')
       .select('id, code, customer_id, source_id, title, type, estimated_value, created_at, updated_at, stage_id, assigned_to, description, install_address')
-      .eq('type', 'lead')
+      .eq('type', 'lead');
+    if (dedupCompanyId) leadsQuery = leadsQuery.eq('company_id', dedupCompanyId);
+    const { data: allLeads, error: leadsErr } = await leadsQuery
       .order('created_at', { ascending: false })
       .limit(5000);
     
@@ -4395,15 +4634,18 @@ r.post('/sync-contact-phones', authMiddleware, async (req, res) => {
     const io = r._ioRef;
     console.log('[SyncPhone] START — contacts có phone → lead/customer');
 
+    const pageIds = await resolvePageIdsForCompanyScoped(req, res, req.body?.company_id);
+    if (pageIds === undefined) return;
+
     // Lấy tất cả contacts có phone (phân trang)
     let contacts = [];
     let pageStart = 0;
     while (true) {
-      const { data: page } = await supabase.from('facebook_contacts')
-        .select('id, fb_name, phone, lead_id, customer_id, last_message_at, created_at')
+      const { data: page } = await applyPageIdsFilter(supabase.from('facebook_contacts')
+        .select('id, fb_name, phone, page_id, lead_id, customer_id, last_message_at, created_at')
         .not('psid', 'is', null)
         .not('phone', 'is', null)
-        .neq('phone', '')
+        .neq('phone', ''), pageIds)
         .order('last_message_at', { ascending: false, nullsFirst: false })
         .order('created_at', { ascending: false })
         .range(pageStart, pageStart + 999);
@@ -5182,6 +5424,7 @@ async function runSyncThenExtractPhonesJob({
   runGraphSync = true,
   runExtract = true,
   emitBatchSocketEvents = true,
+  pageIds = null,
 } = {}) {
   if (!runGraphSync && !runExtract) {
     return {
@@ -5201,6 +5444,7 @@ async function runSyncThenExtractPhonesJob({
   const { contacts: pool, excludedStaleNoContact, rawFetched } = await loadFacebookContactsForBatchPipeline({
     recentHours: rh,
     applyStaleFilter: applyStaleFilter,
+    pageIds,
   });
   let sorted = sortFacebookContactsNewestFirst(pool || []);
   if (sortOrder === 'oldest_first') sorted = [...sorted].reverse();
@@ -5359,36 +5603,7 @@ async function runSyncThenExtractPhonesJob({
   return summary;
 }
 
-async function saveFbPipelineConfig(partial) {
-  const merged = {
-    ...DEFAULT_FB_PIPELINE_CONFIG,
-    ...fbPipelineConfigCache,
-    ...(partial && typeof partial === 'object' ? partial : {}),
-  };
-  if (!['chain', 'legacy', 'full_cycle'].includes(merged.engine)) merged.engine = 'full_cycle';
-  merged.full_cycle_max_users_per_round = Math.min(500_000, Math.max(0, parseInt(merged.full_cycle_max_users_per_round, 10) || 0));
-  merged.full_cycle_graph_pages_per_contact = Math.min(30, Math.max(1, parseInt(merged.full_cycle_graph_pages_per_contact, 10) || 10));
-  merged.full_cycle_deep_retry_cap = Math.min(200, Math.max(0, parseInt(merged.full_cycle_deep_retry_cap, 10) || 0));
-  merged.full_cycle_deep_retry_pages = Math.min(30, Math.max(1, parseInt(merged.full_cycle_deep_retry_pages, 10) || merged.full_cycle_graph_pages_per_contact));
-  merged.chain_chunk_users = Math.min(500, Math.max(1, parseInt(merged.chain_chunk_users, 10) || 50));
-  merged.chain_sort = merged.chain_sort === 'oldest_first' ? 'oldest_first' : 'newest_first';
-  merged.chain_recent_hours = Math.min(168, Math.max(0, parseInt(merged.chain_recent_hours, 10) || 0));
-  merged.chain_graph_pages = Math.min(30, Math.max(1, parseInt(merged.chain_graph_pages, 10) || FB_SYNC_SINGLE_MAX_PAGES));
-  merged.chain_skip_stale = !!merged.chain_skip_stale;
-  merged.chain_final_lead_sync = merged.chain_final_lead_sync !== false;
-  merged.chain_run_graph_sync = merged.chain_run_graph_sync !== false;
-  merged.chain_run_extract = merged.chain_run_extract !== false;
-  merged.auto_loop_pause_sec = Math.min(3600, Math.max(0, parseInt(merged.auto_loop_pause_sec, 10) || 0));
-  merged.full_cycle_rescan_phones = merged.full_cycle_rescan_phones !== false;
-  merged.full_cycle_pool_sync_rounds = Math.min(100, Math.max(1, parseInt(merged.full_cycle_pool_sync_rounds, 10) || 12));
-  await supabase.from('app_settings').upsert({
-    key: 'fb_auto_pipeline_config',
-    value: merged,
-    updated_at: new Date().toISOString(),
-  }, { onConflict: 'key' });
-  fbPipelineConfigCache = merged;
-  return merged;
-}
+// (saveFbPipelineConfig per-company: xem saveFbPipelineConfigForCompany ở trên)
 
 // ═══════════════════════════════════════════════════════════════
 // BATCH: đồng bộ tin nhắn từng contact → quét SĐT ngay (mới → cũ, giới hạn N user)
@@ -5410,6 +5625,9 @@ r.post('/batch-sync-then-extract-phones', authMiddleware, async (req, res) => {
     const runGraphSync = req.body?.run_graph_sync !== false;
     const runExtract = req.body?.run_extract !== false;
 
+    const pageIds = await resolvePageIdsForCompanyScoped(req, res, req.body?.company_id);
+    if (pageIds === undefined) return;
+
     const summary = await runSyncThenExtractPhonesJob({
       io,
       limit,
@@ -5423,6 +5641,7 @@ r.post('/batch-sync-then-extract-phones', authMiddleware, async (req, res) => {
       runGraphSync,
       runExtract,
       emitBatchSocketEvents: true,
+      pageIds,
     });
     res.json(summary);
   } catch (e) {
@@ -5443,6 +5662,8 @@ r.post('/pipeline-v2/run', authMiddleware, async (req, res) => {
     const deleteLeadWhenNoPhoneAfterClear = !!req.body?.delete_lead_when_no_phone_after_clear;
     const cleanupContactsWithLead = !!req.body?.cleanup_contacts_with_lead;
     const cleanupLimit = Math.min(500, Math.max(0, parseInt(req.body?.cleanup_limit, 10) || 0));
+    const pageIds = await resolvePageIdsForCompanyScoped(req, res, req.body?.company_id);
+    if (pageIds === undefined) return;
     const result = await runPipelineV2OnePass({
       limit,
       graphPages,
@@ -5451,6 +5672,7 @@ r.post('/pipeline-v2/run', authMiddleware, async (req, res) => {
       deleteLeadWhenNoPhoneAfterClear,
       cleanupContactsWithLead,
       cleanupLimit,
+      pageIds,
     });
     if (!result.ok && result.error) return res.status(400).json(result);
     res.json(result);
@@ -5478,9 +5700,13 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
         ? false
         : (req.body?.skip_stale_customer_reply === true || mode === 'smart');
 
+    const pageIds = await resolvePageIdsForCompanyScoped(req, res, req.body?.company_id);
+    if (pageIds === undefined) return;
+
     const { contacts: workContacts, excludedStaleNoContact, rawFetched } = await loadFacebookContactsForBatchPipeline({
       recentHours,
       applyStaleFilter: skipStaleFilter,
+      pageIds,
     });
 
     if (!workContacts?.length) {
@@ -5815,26 +6041,16 @@ async function saveScanConfig(cfg) {
 // Preload
 loadScanConfig().then(() => console.log('[LeadScan] ✅ Config loaded'));
 loadFbPipelineConfigFromDb().then(async () => {
-  console.log('[FB] ✅ Auto pipeline config loaded');
+  console.log('[FB] ✅ Auto pipeline config loaded (per-company)');
   try {
-    const wasEnabled = await loadAutoPipelineEnabledFromDb();
-    if (wasEnabled && !FB_AUTO_PIPELINE_RESUME_ON_BOOT) {
-      console.log('[FB] ⏸️ Auto pipeline không tự resume sau reboot (mặc định). Set FB_AUTO_PIPELINE_RESUME_ON_BOOT=1 để resume. Đồng bộ DB → OFF.');
-      saveAutoPipelineEnabledToDb(false).catch(() => {});
-    } else if (wasEnabled && !autoPipeline.running && FB_AUTO_PIPELINE_RESUME_ON_BOOT) {
-      console.log('[FB] ▶️ Auto-resume auto pipeline (persisted=ON + FB_AUTO_PIPELINE_RESUME_ON_BOOT)');
-      autoPipeline.enabled = true;
-      runAutoPipelineLoop().catch(err => {
-        console.error('[AutoPipeline] FATAL on resume', err.message);
-        pushAutoLog(`❌ Auto pipeline lỗi nghiêm trọng: ${err.message}`, 'error');
-        autoPipeline.running = false;
-        autoPipeline.enabled = false;
-        autoPipeline.phase = 'idle';
-        autoPipeline.step = -1;
-        autoPipeline.stepLabel = null;
-        autoPipeline.pauseUntilMs = null;
-        emitAutoState();
-      });
+    const masterOn = getFbMasterEnabledSync();
+    if (masterOn && !FB_AUTO_PIPELINE_RESUME_ON_BOOT) {
+      console.log('[FB] ⏸️ Auto pipeline không tự resume sau reboot (mặc định). Set FB_AUTO_PIPELINE_RESUME_ON_BOOT=1 để resume. Tắt master → OFF.');
+      await setFbPipelineMaster(false).catch(() => {});
+    } else if (masterOn && FB_AUTO_PIPELINE_RESUME_ON_BOOT) {
+      const enabledKeys = listFbPipelineCompanyKeys().filter((k) => getFbPipelineConfigSync(k).enabled);
+      console.log(`[FB] ▶️ Auto-resume auto pipeline (master=ON + RESUME_ON_BOOT) cho ${enabledKeys.length} công ty`);
+      for (const key of enabledKeys) startAutoPipelineForCompany(key);
     }
   } catch (e) { console.warn('[FB] auto-resume check:', e.message); }
 });
@@ -6237,9 +6453,11 @@ r.get('/lead-scan/preview', authMiddleware, async (req, res) => {
 r.post('/refresh-names', authMiddleware, async (req, res) => {
   try {
     const io = r._ioRef;
-    const { data: stuckContacts } = await supabase.from('facebook_contacts')
+    const pageIds = await resolvePageIdsForCompanyScoped(req, res, req.body?.company_id);
+    if (pageIds === undefined) return;
+    const { data: stuckContacts } = await applyPageIdsFilter(supabase.from('facebook_contacts')
       .select('id, page_id, psid, fb_name, lead_id, last_message_at, created_at')
-      .or('fb_name.eq.Facebook User,fb_name.eq.User,fb_name.is.null')
+      .or('fb_name.eq.Facebook User,fb_name.eq.User,fb_name.is.null'), pageIds)
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
       .limit(100);
@@ -6304,55 +6522,100 @@ r.delete('/webhook-logs', authMiddleware, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 // AUTO PIPELINE CONTROL (backend-managed realtime)
 // ═══════════════════════════════════════════════════════════════
-r.get('/auto-pipeline/status', authMiddleware, async (_req, res) => {
-  res.json(getAutoState());
+/** Resolve companyKey cho request điều khiển auto (tôn trọng quyền). undefined = đã gửi lỗi. */
+function resolveAutoCompanyKey(req, res) {
+  const raw = (req.body && req.body.company_id != null) ? req.body.company_id : req.query?.company_id;
+  const companyId = raw != null && String(raw).trim() !== '' ? String(raw).trim() : null;
+  if (isSystemAdmin(req.user)) {
+    return companyId || FB_GLOBAL_SCOPE_KEY;
+  }
+  const cid = req.user?.company_id;
+  if (!cid) {
+    res.status(400).json({ error: 'Thiếu company_id trên tài khoản.' });
+    return undefined;
+  }
+  if (companyId && String(companyId) !== String(cid)) {
+    res.status(403).json({ error: 'Không có quyền công ty khác.' });
+    return undefined;
+  }
+  return String(cid);
+}
+
+r.get('/auto-pipeline/status', authMiddleware, async (req, res) => {
+  const companyKey = resolveAutoCompanyKey(req, res);
+  if (companyKey === undefined) return;
+  res.json(getAutoState(getAutoPipelineState(companyKey)));
 });
 
-r.get('/auto-pipeline/config', authMiddleware, async (_req, res) => {
+// Tổng hợp trạng thái tất cả công ty + master (chỉ admin xem toàn bộ; NV xem công ty mình)
+r.get('/auto-pipeline/status-all', authMiddleware, async (req, res) => {
   await loadFbPipelineConfigFromDb();
-  res.json({ config: getFbPipelineConfigSync(), defaults: DEFAULT_FB_PIPELINE_CONFIG });
+  const admin = isSystemAdmin(req.user);
+  const keys = new Set([...listFbPipelineCompanyKeys(), ...autoPipelineStates.keys()]);
+  if (!admin) {
+    const cid = req.user?.company_id;
+    if (!cid) return res.status(400).json({ error: 'Thiếu company_id trên tài khoản.' });
+    const companies = [getAutoState(getAutoPipelineState(String(cid)))];
+    return res.json({ master_enabled: getFbMasterEnabledSync(), companies });
+  }
+  const companies = [...keys].map((key) => getAutoState(getAutoPipelineState(key)));
+  res.json({ master_enabled: getFbMasterEnabledSync(), companies });
+});
+
+r.get('/auto-pipeline/config', authMiddleware, async (req, res) => {
+  await loadFbPipelineConfigFromDb();
+  const companyKey = resolveAutoCompanyKey(req, res);
+  if (companyKey === undefined) return;
+  res.json({
+    config: getFbPipelineConfigSync(companyKey),
+    master_enabled: getFbMasterEnabledSync(),
+    company_key: companyKey,
+    company_id: companyKeyToId(companyKey),
+    defaults: DEFAULT_FB_PIPELINE_CONFIG,
+  });
 });
 
 r.put('/auto-pipeline/config', authMiddleware, async (req, res) => {
   try {
-    const saved = await saveFbPipelineConfig(req.body || {});
-    emitAutoState();
+    const companyKey = resolveAutoCompanyKey(req, res);
+    if (companyKey === undefined) return;
+    const { company_id, ...partial } = req.body || {};
+    const saved = await saveFbPipelineConfigForCompany(companyKey, partial);
+    emitAutoState(getAutoPipelineState(companyKey));
     res.json({ ok: true, config: saved });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-r.post('/auto-pipeline/start', authMiddleware, async (_req, res) => {
+r.post('/auto-pipeline/start', authMiddleware, async (req, res) => {
   await loadFbPipelineConfigFromDb();
-  if (!autoPipeline.running) {
-    autoPipeline.enabled = true;
-    runAutoPipelineLoop().catch(err => {
-      console.error('[AutoPipeline] FATAL', err.message);
-      pushAutoLog(`❌ Auto pipeline lỗi nghiêm trọng: ${err.message}`, 'error');
-      autoPipeline.running = false;
-      autoPipeline.enabled = false;
-      autoPipeline.phase = 'idle';
-      autoPipeline.step = -1;
-      autoPipeline.stepLabel = null;
-      autoPipeline.pauseUntilMs = null;
-      emitAutoState();
-    });
-  } else {
-    autoPipeline.enabled = true;
-    emitAutoState();
-  }
-  saveAutoPipelineEnabledToDb(true).catch(() => {});
-  res.json({ ok: true, state: getAutoState() });
+  const companyKey = resolveAutoCompanyKey(req, res);
+  if (companyKey === undefined) return;
+  await saveFbPipelineConfigForCompany(companyKey, { enabled: true });
+  const st = startAutoPipelineForCompany(companyKey);
+  res.json({ ok: true, master_enabled: getFbMasterEnabledSync(), state: getAutoState(st) });
 });
 
-r.post('/auto-pipeline/stop', authMiddleware, async (_req, res) => {
-  autoPipeline.stopRequested = true;
-  autoPipeline.enabled = false;
-  autoPipeline.pauseUntilMs = null;
-  saveAutoPipelineEnabledToDb(false).catch(() => {});
-  pushAutoLog('🛑 Đã yêu cầu dừng auto pipeline');
-  res.json({ ok: true, state: getAutoState() });
+r.post('/auto-pipeline/stop', authMiddleware, async (req, res) => {
+  const companyKey = resolveAutoCompanyKey(req, res);
+  if (companyKey === undefined) return;
+  await saveFbPipelineConfigForCompany(companyKey, { enabled: false }).catch(() => {});
+  const st = stopAutoPipelineForCompany(companyKey);
+  res.json({ ok: true, master_enabled: getFbMasterEnabledSync(), state: getAutoState(st) });
+});
+
+// Công tắc TỔNG (master) — chỉ admin
+r.post('/auto-pipeline/master', authMiddleware, async (req, res) => {
+  try {
+    if (!isSystemAdmin(req.user)) return res.status(403).json({ error: 'Chỉ admin được bật/tắt công tắc tổng.' });
+    await loadFbPipelineConfigFromDb();
+    const enabled = !!req.body?.enabled;
+    await applyFbPipelineMaster(enabled);
+    res.json({ ok: true, master_enabled: getFbMasterEnabledSync() });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -6479,6 +6742,7 @@ async function runRescanPhonesBatch(body, ioRef) {
   let q = supabase.from('facebook_contacts')
     .select('id, fb_name, phone, page_id, last_message_at, created_at, customer_id, lead_id');
   if (pageId) q = q.eq('page_id', pageId);
+  else if (Array.isArray(b.pageIds)) q = applyPageIdsFilter(q, b.pageIds);
   if (sort === 'newest_first') {
     q = q.order('last_message_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false });
@@ -7300,7 +7564,9 @@ r.put('/rescan-phones/schedule/config', authMiddleware, async (req, res) => {
 
 r.post('/rescan-phones', authMiddleware, async (req, res) => {
   try {
-    const out = await runRescanPhonesBatch(req.body || {}, r._ioRef);
+    const pageIds = await resolvePageIdsForCompanyScoped(req, res, req.body?.company_id);
+    if (pageIds === undefined) return;
+    const out = await runRescanPhonesBatch({ ...(req.body || {}), pageIds }, r._ioRef);
     res.json(out);
   } catch (e) {
     console.error('[Rescan] error', e);

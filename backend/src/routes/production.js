@@ -971,7 +971,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
       return supabase
         .from('projects')
         .select(`
-          id, code, name, estimated_value, status, deadline, created_at, company_id,
+          id, code, name, estimated_value, production_value, status, deadline, created_at, company_id,
           sx_pipeline_stage_entered_at, sx_kanban_deadline_at, sx_kanban_deadline_reason,
           current_stage_id${wtScalar},
           current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1027,7 +1027,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
         return supabase
           .from('projects')
           .select(`
-          id, code, name, estimated_value, status, deadline, created_at, company_id,
+          id, code, name, estimated_value, production_value, status, deadline, created_at, company_id,
           sx_pipeline_stage_entered_at,
           current_stage_id${wtScalar},
           current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1086,7 +1086,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
       completed: projectsWithDealProb.filter((project) => project.status === 'completed').length,
       overdue: revenueKpis.overdue,
       intake_pending: intakeCount,
-      total_value: projectsWithDealProb.reduce((sum, project) => sum + (project.estimated_value || 0), 0),
+      total_value: projectsWithDealProb.reduce((sum, project) => sum + (project.production_value || 0), 0),
       avg_progress: projectsWithDealProb.length
         ? Math.round(projectsWithDealProb.reduce((sum, project) => sum + (project.progress || 0), 0) / projectsWithDealProb.length)
         : 0,
@@ -1134,7 +1134,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     let query = supabase
       .from('projects')
       .select(`
-        id, code, name, estimated_value, priority, deadline, ${MIGRATION_300_COLS} created_at, status, notes, company_id,
+        id, code, name, estimated_value, production_value, priority, deadline, ${MIGRATION_300_COLS} created_at, status, notes, company_id,
         production_deadline, production_note, vc_kanban_column_id,
         current_stage_id, workshop_type_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1206,7 +1206,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       let fallbackQuery = supabase
         .from('projects')
         .select(`
-          id, code, name, estimated_value, priority, deadline, created_at, status, notes,
+          id, code, name, estimated_value, production_value, priority, deadline, created_at, status, notes,
           production_deadline, production_note, workshop_type_id,
           current_stage_id,
           current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1296,7 +1296,7 @@ const WORKSHOP_TYPE_SCALAR = 'workshop_type_id,';
 const WORKSHOP_TYPE_EMBED = 'workshop_type:workshop_project_types(id, name, applies_to),';
 
 const PROJECT_DETAIL_SELECT = `
-        id, company_id, code, name, description, estimated_value, priority, deadline, ${MIGRATION_300_COLS} ${MIGRATION_76_COLS} status, notes, created_at,
+        id, company_id, code, name, description, estimated_value, production_value, priority, deadline, ${MIGRATION_300_COLS} ${MIGRATION_76_COLS} status, notes, created_at,
         current_stage_id, ${WORKSHOP_TYPE_SCALAR}
         ${WORKSHOP_TYPE_EMBED}
         current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1328,7 +1328,7 @@ const PROJECT_DETAIL_SELECT = `
 // Fallback select khi DB thiếu cột/relationship mới (FK users, task_checklists, participants…)
 // Mục tiêu: vẫn mở được chi tiết dự án + hiển thị stage/tag đúng.
 const PROJECT_DETAIL_SELECT_MIN = `
-        id, company_id, code, name, description, estimated_value, priority, deadline, ${MIGRATION_300_COLS} status, notes, created_at,
+        id, company_id, code, name, description, estimated_value, production_value, priority, deadline, ${MIGRATION_300_COLS} status, notes, created_at,
         current_stage_id, ${WORKSHOP_TYPE_SCALAR}
         ${WORKSHOP_TYPE_EMBED}
         current_stage:workflow_stages(id, slug, name, color, icon),

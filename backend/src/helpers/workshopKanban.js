@@ -497,7 +497,7 @@ function buildPipelineSummary(sortedStages, enhancedProjects) {
     count: enhancedProjects.filter((p) => p.sx_kanban_column_id === col.id).length,
     total_value: enhancedProjects
       .filter((p) => p.sx_kanban_column_id === col.id)
-      .reduce((sum, p) => sum + (Number(p.estimated_value) || 0), 0),
+      .reduce((sum, p) => sum + (Number(p.production_value) || 0), 0),
   }));
 }
 

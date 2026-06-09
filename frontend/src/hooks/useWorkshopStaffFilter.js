@@ -111,7 +111,7 @@ export function useWorkshopStaffFilter({
     let cancel = false;
     (async () => {
       try {
-        const params = {};
+        const params = { for_module: forModule };
         if (dashboardScopeCompanyId) params.company_id = dashboardScopeCompanyId;
         const { data } = await api.get('/crm/employees-by-company', { params });
         if (cancel) return;

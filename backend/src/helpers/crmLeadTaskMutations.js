@@ -164,10 +164,11 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
 
   const update = { updated_at: new Date().toISOString() };
   const fields = ['title', 'description', 'status', 'priority', 'stage_slug', 'order_index',
-    'assignee_id', 'supervisor_id', 'deadline', 'shared_to_project', 'show_excel_quotation_upload'];
+    'assignee_id', 'supervisor_id', 'deadline', 'shared_to_project', 'show_excel_quotation_upload', 'checklist'];
   fields.forEach((f) => {
     if (b[f] === undefined) return;
     if (f === 'deadline' && b[f] != null && b[f] !== '') update[f] = normalizeTimestamp(b[f]);
+    else if (f === 'checklist') update[f] = Array.isArray(b[f]) ? b[f] : [];
     else update[f] = b[f];
   });
   if (isAdminLike(req.user) && b.blocks_stage_advance !== undefined) {
@@ -182,6 +183,12 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
 
   let { data, error } = await supabase.from('crm_tasks').update(update)
     .eq('id', taskId).select(CRM_TASK_SELECT).single();
+  // DB chưa apply migration 308 (cột checklist) → bỏ checklist và thử lại để không vỡ luồng update.
+  if (error && String(error.message || '').toLowerCase().includes('checklist')) {
+    const { checklist: _dropChecklist, ...legacy } = update;
+    ({ data, error } = await supabase.from('crm_tasks').update(legacy)
+      .eq('id', taskId).select(CRM_TASK_SELECT).single());
+  }
   if (error) return { error: error.message, status: 500 };
 
   let newAssigneeIds = null;

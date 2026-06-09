@@ -1054,6 +1054,7 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
       material: b.material || null,
       install_address: b.install_address || null,
       estimated_value: b.estimated_value != null ? b.estimated_value : null,
+      production_value: b.production_value != null ? b.production_value : null,
       priority: b.priority || 'medium',
       sales_person_id: b.sales_person_id || null,
       designer_id: b.designer_id || null,
@@ -1109,6 +1110,7 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
           material: b.material || null,
           install_address: b.install_address || null,
           estimated_value: b.estimated_value != null ? b.estimated_value : null,
+          production_value: b.production_value != null ? b.production_value : null,
           priority: b.priority || 'medium',
           sales_person_id: b.sales_person_id || null,
           designer_id: b.designer_id || null,
@@ -1425,6 +1427,7 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
       current_stage_id: firstStage?.id || null,
       install_address: b.install_address || null,
       estimated_value: b.estimated_value != null ? b.estimated_value : null,
+      production_value: b.production_value != null ? b.production_value : null,
       priority: b.priority || 'medium',
       supervisor_id: b.supervisor_id || null,
       sales_person_id: b.sales_person_id || null,
@@ -1730,7 +1733,7 @@ r.put('/:id', requirePermission('projects', 'edit'), async (req, res) => {
   try {
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
-    const fields = ['name','description','status','customer_id','kitchen_type','material','install_address','estimated_value','final_value','priority','sales_person_id','designer_id','project_manager_id','design_deadline','production_start_date','install_date','consulting_person_id','design_person_id','quotation_person_id','contract_person_id','production_person_id','shipping_person_id','installation_person_id','care_person_id','quotation_files','deadline','notes','supervisor_id','production_deadline','production_note','workshop_type_id','order_date','delivery_date'];
+    const fields = ['name','description','status','customer_id','kitchen_type','material','install_address','estimated_value','production_value','final_value','priority','sales_person_id','designer_id','project_manager_id','design_deadline','production_start_date','install_date','consulting_person_id','design_person_id','quotation_person_id','contract_person_id','production_person_id','shipping_person_id','installation_person_id','care_person_id','quotation_files','deadline','notes','supervisor_id','production_deadline','production_note','workshop_type_id','order_date','delivery_date'];
     const dateFields = ['deadline', 'design_deadline', 'production_start_date', 'install_date', 'production_deadline', 'order_date', 'delivery_date'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
     dateFields.forEach((f) => { if (update[f] === '') update[f] = null; });

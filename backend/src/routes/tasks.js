@@ -292,6 +292,7 @@ r.patch('/:taskId/checklists/:clId', async (req, res) => {
       update.completed_at = req.body.is_completed ? new Date().toISOString() : null;
     }
     if (req.body.order_index !== undefined) update.order_index = req.body.order_index;
+    if (req.body.task_id !== undefined) update.task_id = req.body.task_id;
     if (req.body.notes !== undefined) update.notes = req.body.notes;
     if (req.body.attachments !== undefined) update.attachments = req.body.attachments;
 
@@ -307,18 +308,19 @@ r.patch('/:taskId/checklists/:clId', async (req, res) => {
     if (error) throw error;
 
     // ── CHECK IF ALL CHECKLISTS DONE ──
+    const effectiveTaskId = update.task_id || req.params.taskId;
     if (update.is_completed) {
       const { data: allChecklists } = await supabase.from('task_checklists')
-        .select('id, is_completed').eq('task_id', req.params.taskId);
+        .select('id, is_completed').eq('task_id', effectiveTaskId);
       const allDone = allChecklists?.length > 0 && allChecklists.every(cl => cl.is_completed);
       if (allDone) {
         const { data: task } = await supabase.from('tasks')
-          .select('title, assignee_id, project_id, projects(code)').eq('id', req.params.taskId).single();
+          .select('title, assignee_id, project_id, projects(code)').eq('id', effectiveTaskId).single();
         if (task?.assignee_id) {
           await createNotification(req, task.assignee_id, 'checklist_completed',
             '📋 Tất cả checklist hoàn tất',
             `Tất cả mục checklist của công việc "${task.title}" đã hoàn tất${task.projects?.code ? ` — DA ${task.projects.code}` : ''}`,
-            'task', req.params.taskId, taskProjectMeta(task.project_id));
+            'task', effectiveTaskId, taskProjectMeta(task.project_id));
         }
       }
     }
@@ -343,6 +345,8 @@ r.put('/checklists/:clId', async (req, res) => {
     if (b.notes !== undefined) update.notes = b.notes;
     if (b.attachments !== undefined) update.attachments = b.attachments;
     if (b.title !== undefined) update.title = b.title;
+    if (b.order_index !== undefined) update.order_index = b.order_index;
+    if (b.task_id !== undefined) update.task_id = b.task_id;
     if (b.is_completed !== undefined) {
       update.is_completed = b.is_completed;
       update.completed_by = b.is_completed ? req.user.userId : null;

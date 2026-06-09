@@ -397,6 +397,7 @@ export default function ProjectOrdersTab({
                       taskScope={taskScope}
                       onArtifactsSynced={onTaskArtifactsSynced}
                       refreshKey={String(o.fulfillment_lead_id)}
+                      linkedProjectId={projectId || null}
                     />
                   </div>
                 )}

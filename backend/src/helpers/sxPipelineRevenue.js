@@ -124,7 +124,7 @@ function computeSxRevenueKpis(projects, stages, dealProbByProjectId = {}) {
   const now = new Date();
 
   for (const p of list) {
-    const val = Number(p.estimated_value) || 0;
+    const val = Number(p.production_value) || 0;
     const col = stageById(st, p.sx_kanban_column_id);
     if (projectCountsAsSxWonRevenue(p, st)) wonRevenue += val;
     if (projectCountsAsSxCompletedRevenue(p, st)) completedRevenue += val;

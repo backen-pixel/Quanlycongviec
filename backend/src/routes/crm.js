@@ -99,6 +99,13 @@ const {
 } = require('../helpers/productionHandoverSettings');
 const { ensureDealLeadDocumentsForModuleTransition } = require('../helpers/ensureDealLeadDocumentsForModuleTransition');
 const { getLeadDocumentFieldsFromCrmTask, getDefaultCrmAttachmentShare } = require('../helpers/crmTaskLeadDocumentMeta');
+const {
+  findChecklistItem,
+  artifactNamePrefix,
+  syncChecklistItemNotes,
+  buildChecklistLeadDocumentRow,
+  parseChecklist,
+} = require('../helpers/crmChecklistArtifacts');
 const { parseVietnameseMoney, parseVietnameseMeasure } = require('../helpers/excelVnNumbers');
 const { snapshotOrderRowFromQuotation, mapQuotationItemsToOrderRows } = require('../helpers/orderFromQuotation');
 let autoFlowFns = {};
@@ -624,6 +631,27 @@ const { onLeadWon = async () => null, onOrderConfirmed = async () => null, onQuo
 
 const r = Router();
 r.use(auth);
+
+let _crmCkSeq = 0;
+/**
+ * Chuyển checklist mẫu (mảng chuỗi/object) sang định dạng JSONB của crm_tasks.checklist:
+ * mỗi phần tử { id, title, description, done } — khớp CRMTasksTab.normalizeChecklist.
+ */
+function toCrmTaskChecklist(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((x, i) => {
+      const title = typeof x === 'string' ? x : (x?.title || x?.label || '');
+      if (!title || !String(title).trim()) return null;
+      return {
+        id: `ck_${Date.now().toString(36)}_${(_crmCkSeq++).toString(36)}_${i}`,
+        title: String(title).trim(),
+        description: (typeof x === 'object' && x) ? String(x.description || '') : '',
+        done: false,
+      };
+    })
+    .filter(Boolean);
+}
 
 // Auto-invalidate response cache cho mọi mutation CRM
 r.use((req, res, next) => {
@@ -3408,6 +3436,8 @@ r.get('/employees-by-company', responseCache({ ttl: 120, scope: 'company', tags:
   try {
     const userId = req.user.userId;
     const { company_id: queryCompanyId } = req.query;
+    const forModuleRaw = String(req.query?.for_module || 'crm').trim().toLowerCase();
+    const forModule = ['crm', 'production', 'logistics'].includes(forModuleRaw) ? forModuleRaw : 'crm';
 
     const sacEmp = scopedAdminCompanyId(req);
     // Resolve company_id: admin gắn công ty → chỉ công ty đó; khác → query / user / department
@@ -3429,22 +3459,26 @@ r.get('/employees-by-company', responseCache({ ttl: 120, scope: 'company', tags:
       return res.json({ users: [], departments: [], company_id: null });
     }
 
-    // Lấy phòng ban kinh doanh (sales-related) của công ty
-    // Match: tên chứa "kinh doanh", "sales", "CSKH", "marketing", "tư vấn"
+    // Lọc phòng ban theo module để picker phụ trách chỉ hiện đúng đội.
     const { data: allDepts } = await supabase.from('departments')
       .select('id, name, color, company_id')
       .eq('company_id', companyId)
       .eq('is_active', true)
       .order('name');
 
-    const SALES_KEYWORDS = ['kinh doanh', 'sales', 'cskh', 'marketing', 'tư vấn', 'chăm sóc', 'thương mại', 'phát triển'];
-    const salesDepts = (allDepts || []).filter(d => {
+    const MODULE_DEPT_KEYWORDS = {
+      crm: ['kinh doanh', 'sales', 'cskh', 'marketing', 'tư vấn', 'chăm sóc', 'thương mại', 'phát triển'],
+      production: ['sản xuất', 'xuong', 'xưởng', 'kỹ thuật', 'ky thuat', 'gia công', 'gia cong', 'thi công', 'thi cong'],
+      logistics: ['logistics', 'vận chuyển', 'van chuyen', 'giao hàng', 'giao hang', 'lắp đặt', 'lap dat', 'kho'],
+    };
+    const moduleKeywords = MODULE_DEPT_KEYWORDS[forModule] || MODULE_DEPT_KEYWORDS.crm;
+    const moduleDepts = (allDepts || []).filter((d) => {
       const lowerName = (d.name || '').toLowerCase();
-      return SALES_KEYWORDS.some(kw => lowerName.includes(kw));
+      return moduleKeywords.some((kw) => lowerName.includes(kw));
     });
 
-    // Nếu không có phòng ban kinh doanh nào → trả về tất cả phòng ban
-    const targetDepts = salesDepts.length > 0 ? salesDepts : (allDepts || []);
+    // Nếu chưa map được theo keyword module → fallback tất cả phòng ban công ty.
+    const targetDepts = moduleDepts.length > 0 ? moduleDepts : (allDepts || []);
     const deptIds = targetDepts.map(d => d.id);
 
     if (!deptIds.length) {
@@ -3480,7 +3514,8 @@ r.get('/employees-by-company', responseCache({ ttl: 120, scope: 'company', tags:
       users: userRows,
       departments: targetDepts,
       company_id: companyId,
-      is_sales_filtered: salesDepts.length > 0,
+      for_module: forModule,
+      is_module_filtered: moduleDepts.length > 0,
     });
   } catch (e) {
     console.error('employees-by-company error:', e.message);
@@ -4254,7 +4289,7 @@ r.get('/leads-by-fb-page', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /** linked_project embed added in migration 76 — included here, stripped by runtime fallback if migration not applied */
-const CRM_LEAD_LIST_SELECT_EXTRA = ', linked_project:projects!crm_leads_project_id_fkey(id, production_deadline, production_note)';
+const CRM_LEAD_LIST_SELECT_EXTRA = ', linked_project:projects!crm_leads_project_id_fkey(id, code, name, order_date, delivery_date, production_deadline, production_note)';
 const CRM_LEAD_REGION_EMBED = ', crm_region:company_regions!crm_leads_region_id_fkey(id, name, code)';
 const CRM_LEAD_LIST_SELECT_BASE =
   `*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type, sync_role, order_index), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies!crm_leads_company_id_fkey(id, name, short_name)${CRM_LEAD_REGION_EMBED}, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name)), vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)`;
@@ -5833,11 +5868,27 @@ r.get('/leads/:id', async (req, res) => {
     const rawId = String(req.params.id || '').trim();
     if (!rawId) return res.status(400).json({ error: 'Thiếu id' });
     const canonicalId = (await resolveCanonicalCrmLeadId(rawId)) || rawId;
-    const { data, error } = await supabase
+    const baseFields = 'id, title, type, company_id, pipeline_id, stage_id, assigned_to, lead_owner_id, created_by, parent_lead_id, use_order_tasks, sx_template_company_id, project_id';
+    const projectEmbed = ', linked_project:projects!crm_leads_project_id_fkey(id, code, name, order_date, delivery_date, production_deadline)';
+    let { data, error } = await supabase
       .from('crm_leads')
-      .select('id, title, type, company_id, pipeline_id, stage_id, assigned_to, lead_owner_id, created_by, parent_lead_id, use_order_tasks, sx_template_company_id')
+      .select(`${baseFields}${projectEmbed}`)
       .eq('id', canonicalId)
       .maybeSingle();
+    if (error && /order_date|delivery_date|linked_project|column/i.test(String(error.message || ''))) {
+      ({ data, error } = await supabase
+        .from('crm_leads')
+        .select(`${baseFields}, linked_project:projects!crm_leads_project_id_fkey(id, code, name, production_deadline)`)
+        .eq('id', canonicalId)
+        .maybeSingle());
+    }
+    if (error && /linked_project|relationship/i.test(String(error.message || ''))) {
+      ({ data, error } = await supabase
+        .from('crm_leads')
+        .select(baseFields)
+        .eq('id', canonicalId)
+        .maybeSingle());
+    }
     if (error) return res.status(500).json({ error: error.message });
     if (!data) return res.status(404).json({ error: 'Không tìm thấy lead/deal' });
     const sacLdLite = scopedAdminCompanyId(req);
@@ -6361,8 +6412,9 @@ r.get('/leads/:id/task-documents', async (req, res) => {
   try {
     // Lấy tất cả crm_tasks của lead (có stage_slug)
     const { data: crmTasks } = await supabase.from('crm_tasks')
-      .select('id, title, stage_slug')
-      .eq('lead_id', req.params.id);
+      .select('id, title, stage_slug, checklist, pipeline_stage_id, order_index, pipeline_stage:crm_pipeline_stages!crm_tasks_pipeline_stage_id_fkey(id, name, icon, color, order_index)')
+      .eq('lead_id', req.params.id)
+      .order('order_index');
 
     // Fallback: cũng check project tasks
     const { data: lead } = await supabase.from('crm_leads')
@@ -6386,15 +6438,32 @@ r.get('/leads/:id/task-documents', async (req, res) => {
     
     // Build task info map
     const taskMap = {};
-    (crmTasks || []).forEach(t => { taskMap[t.id] = { title: t.title, stage_slug: t.stage_slug }; });
-    projectTasks.forEach(t => { if (!taskMap[t.id]) taskMap[t.id] = { title: t.title, stage_slug: null }; });
+    (crmTasks || []).forEach((t) => {
+      taskMap[t.id] = {
+        title: t.title,
+        stage_slug: t.stage_slug,
+        checklist: t.checklist,
+        pipeline_stage_id: t.pipeline_stage_id,
+        order_index: t.order_index,
+        pipeline_stage: t.pipeline_stage,
+      };
+    });
+    projectTasks.forEach(t => { if (!taskMap[t.id]) taskMap[t.id] = { title: t.title, stage_slug: null, checklist: [] }; });
     
     const visible = (attachments || []).filter((a) => canUserViewDocByAllowlist(req.user, a));
-    const result = visible.map(a => ({
-      ...a,
-      task_title: taskMap[a.task_id]?.title || 'Nhiệm vụ',
-      stage_slug: taskMap[a.task_id]?.stage_slug || null,
-    }));
+    const result = visible.map(a => {
+      const taskInfo = taskMap[a.task_id] || {};
+      const ckItem = a.checklist_id ? findChecklistItem(taskInfo, a.checklist_id) : null;
+      return {
+        ...a,
+        task_title: taskInfo.title || 'Nhiệm vụ',
+        stage_slug: taskInfo.stage_slug || null,
+        pipeline_stage_id: taskInfo.pipeline_stage_id || null,
+        order_index: taskInfo.order_index ?? 0,
+        checklist_id: a.checklist_id || null,
+        checklist_title: ckItem?.title || null,
+      };
+    });
 
     res.set('Cache-Control', 'private, no-store');
     res.json(result);
@@ -6869,7 +6938,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
     
     let { data: stage } = await supabase
       .from('crm_pipeline_stages')
-      .select('id, name, order_index, is_won, is_lost, pipeline_type, send_zalo_on_enter, default_probability, sync_role, requires_deadline')
+      .select('id, name, order_index, is_won, is_lost, pipeline_type, send_zalo_on_enter, default_probability, sync_role, requires_deadline, counts_as_completed_revenue')
       .eq('id', stage_id)
       .single();
     if (!stage) {
@@ -6901,7 +6970,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
     const { data: prevStageForGate } = isStageChangeEarly && lead?.stage_id
       ? await supabase
         .from('crm_pipeline_stages')
-        .select('id, name, order_index, is_won, is_lost, pipeline_type, sync_role')
+        .select('id, name, order_index, is_won, is_lost, pipeline_type, sync_role, counts_as_completed_revenue')
         .eq('id', lead.stage_id)
         .maybeSingle()
       : { data: null };
@@ -6931,7 +7000,8 @@ r.patch('/leads/:id/stage', async (req, res) => {
     }
 
     // Gate 2: cột bật requires_deadline → bắt buộc chọn deadline (sau khi đã qua gate nhiệm vụ).
-    if (isStageChange && stage?.requires_deadline && !hasDeadlineInput) {
+    // Cột Thắng/Thua/Hoàn thành doanh thu không yêu cầu deadline.
+    if (isStageChange && stage?.requires_deadline && !stage?.is_won && !stage?.is_lost && !stage?.counts_as_completed_revenue && !hasDeadlineInput) {
       return res.status(400).json({
         error: 'Cột này yêu cầu đặt deadline khi chuyển thẻ tới.',
         code: 'requires_deadline',
@@ -6978,7 +7048,16 @@ r.patch('/leads/:id/stage', async (req, res) => {
         updates.probability = Math.max(0, Math.min(100, Math.round(p)));
       }
     }
-    if (stage?.is_won) updates.actual_close_date = new Date().toISOString().split('T')[0];
+    if (stage?.is_won) {
+      updates.actual_close_date = new Date().toISOString().split('T')[0];
+      // Deal thắng — không còn theo dõi deadline thẻ.
+      updates.kanban_deadline_at = null;
+      updates.kanban_deadline_reason = null;
+    }
+    if (stage?.counts_as_completed_revenue) {
+      updates.kanban_deadline_at = null;
+      updates.kanban_deadline_reason = null;
+    }
     if (requiresProductionPick && effectiveProductionCompanyId) {
       const sxResponsibleId = await resolveProductionHandoverResponsibleUserId(effectiveProductionCompanyId);
       if (sxResponsibleId) {
@@ -7216,6 +7295,17 @@ r.patch('/leads/:id/deadline', async (req, res) => {
       .eq('id', leadId)
       .maybeSingle();
     if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead/deal' });
+
+    const { data: leadStage } = lead.stage_id
+      ? await supabase
+        .from('crm_pipeline_stages')
+        .select('is_won, is_lost, counts_as_completed_revenue')
+        .eq('id', lead.stage_id)
+        .maybeSingle()
+      : { data: null };
+    if (leadStage?.is_won || leadStage?.counts_as_completed_revenue) {
+      return res.status(400).json({ error: 'Deal đã chốt/hoàn thành — không đặt deadline', code: 'stage_terminal' });
+    }
 
     const raw = req.body?.kanban_deadline_at;
     const clearing = raw === null || raw === '';
@@ -11328,6 +11418,7 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
       lead_id: targetLeadId,
       title: item.title,
       description: item.description || null,
+      checklist: toCrmTaskChecklist(item.checklist),
       priority: item.priority || 'medium',
       stage_slug: tpl?.stage_slug || null,
       pipeline_stage_id: stageForTasks,
@@ -11341,8 +11432,13 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
       show_excel_quotation_upload: !!item.show_excel_quotation_upload,
     }));
 
-    const { data, error } = await supabase.from('crm_tasks').insert(inserts)
-      .select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)');
+    const sel = '*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)';
+    let { data, error } = await supabase.from('crm_tasks').insert(inserts).select(sel);
+    // DB chưa apply migration 308 (cột checklist) → bỏ checklist và thử lại.
+    if (error && String(error.message || '').toLowerCase().includes('checklist')) {
+      const stripped = inserts.map(({ checklist: _c, ...rest }) => rest);
+      ({ data, error } = await supabase.from('crm_tasks').insert(stripped).select(sel));
+    }
     if (error) throw error;
     res.status(201).json({ tasks: data, count: data.length, skipped });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -11899,6 +11995,55 @@ r.put('/leads/:leadId/tasks/:taskId/notes', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// UPDATE ghi chú cho 1 mục checklist con + sync → lead_documents
+r.put('/leads/:leadId/tasks/:taskId/checklist/:checklistId/notes', async (req, res) => {
+  try {
+    const { notes } = req.body;
+    const ckId = String(req.params.checklistId);
+    const { data: taskRow, error: tErr } = await supabase.from('crm_tasks')
+      .select('id, title, stage_slug, checklist, shared_to_project, allowed_share_modules')
+      .eq('id', req.params.taskId)
+      .maybeSingle();
+    if (tErr) throw tErr;
+    if (!taskRow) return res.status(404).json({ error: 'Nhiệm vụ không tồn tại' });
+
+    const ckItem = findChecklistItem(taskRow, ckId);
+    if (!ckItem) return res.status(404).json({ error: 'Mục checklist không tồn tại' });
+
+    const nextChecklist = parseChecklist(taskRow.checklist).map((c) => (
+      String(c.id) === ckId ? { ...c, notes: notes || '' } : c
+    ));
+
+    const { data, error } = await supabase.from('crm_tasks')
+      .update({ checklist: nextChecklist, updated_at: new Date().toISOString() })
+      .eq('id', req.params.taskId)
+      .select('id, title, checklist, stage_slug')
+      .single();
+    if (error) throw error;
+
+    try {
+      await syncChecklistItemNotes(supabase, {
+        leadId: req.params.leadId,
+        taskRow: { ...taskRow, checklist: nextChecklist },
+        checklistId: ckId,
+        notes: notes || '',
+        userId: req.user.userId,
+      });
+    } catch (syncErr) {
+      console.warn('Sync checklist notes:', syncErr.message);
+    }
+
+    await emitCrmTaskChanged(req, {
+      leadId: req.params.leadId,
+      taskId: req.params.taskId,
+      action: notes?.trim() ? 'checklist_notes_updated' : 'checklist_notes_cleared',
+      task: data,
+    });
+
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET attachments for a task
 r.get('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
   try {
@@ -11919,10 +12064,13 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
 
     // Query task visibility 1 lần duy nhất
     const { data: task } = await supabase.from('crm_tasks')
-      .select('id, title, stage_slug, default_allowed_companies, default_allowed_departments, pipeline_stage:crm_pipeline_stages!crm_tasks_pipeline_stage_id_fkey(name)')
+      .select('id, title, stage_slug, checklist, default_allowed_companies, default_allowed_departments, pipeline_stage:crm_pipeline_stages!crm_tasks_pipeline_stage_id_fkey(name)')
       .eq('id', req.params.taskId).single();
     const finalCompanies = task?.default_allowed_companies || null;
     const finalDepts = task?.default_allowed_departments || null;
+    const checklistId = req.body.checklist_id ? String(req.body.checklist_id) : null;
+    const ckItem = checklistId ? findChecklistItem(task, checklistId) : null;
+    if (checklistId && !ckItem) return res.status(400).json({ error: 'Mục checklist không tồn tại' });
 
     const { data: leadForShare } = await supabase.from('crm_leads')
       .select('project_id').eq('id', req.params.leadId).single();
@@ -11933,6 +12081,7 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
     const rows = items.map(item => ({
       task_id: req.params.taskId,
       lead_id: req.params.leadId,
+      checklist_id: item.checklist_id ? String(item.checklist_id) : checklistId,
       name: item.name || item.file_name || 'File',
       doc_type: item.doc_type || (item.file_url ? 'other' : 'task_note'),
       file_url: item.file_url, file_name: item.file_name,
@@ -11942,25 +12091,42 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
       shared_to_project: item.shared_to_project ?? defaultShare.shared_to_project,
       allowed_share_modules: item.allowed_share_modules ?? defaultShare.allowed_share_modules,
     }));
-    const { data, error } = await supabase.from('crm_task_attachments')
+    let { data, error } = await supabase.from('crm_task_attachments')
       .insert(rows)
       .select('*, creator:users!crm_task_attachments_created_by_fkey(id, full_name)');
+    if (error && String(error.message || '').toLowerCase().includes('checklist_id')) {
+      const legacyRows = rows.map(({ checklist_id: _c, ...rest }) => rest);
+      ({ data, error } = await supabase.from('crm_task_attachments')
+        .insert(legacyRows)
+        .select('*, creator:users!crm_task_attachments_created_by_fkey(id, full_name)'));
+    }
     if (error) throw error;
 
     // Sync → lead_documents 1 lần
     try {
-      const bulkDocOpts = bulkShareOpts;
-      const syncRows = (data || []).map(att => ({
-        lead_id: req.params.leadId,
-        project_id: leadForShare?.project_id || null,
-        name: `[${task?.title || 'Task'}] ${att.name}`,
-        doc_type: att.doc_type, file_url: att.file_url, file_name: att.file_name,
-        file_size: att.file_size, mime_type: att.mime_type,
-        allowed_companies: finalCompanies, allowed_departments: finalDepts,
-        created_by: req.user.userId, source_attachment_id: att.id,
-        ...getLeadDocumentFieldsFromCrmTask(task, bulkDocOpts, att),
-      }));
-      if (syncRows.length) await supabase.from('lead_documents').insert(syncRows);
+      const bulkDocOpts = { linkToProject: !!leadForShare?.project_id, projectId: leadForShare?.project_id || null };
+      const syncRows = (data || []).map(att => {
+        const attCk = att.checklist_id ? findChecklistItem(task, att.checklist_id) : ckItem;
+        return buildChecklistLeadDocumentRow({
+          leadId: req.params.leadId,
+          taskRow: task,
+          checklistId: att.checklist_id || checklistId,
+          checklistTitle: attCk?.title || null,
+          att,
+          taskDocOpts: bulkDocOpts,
+          finalCompanies,
+          finalDepts,
+          userId: req.user.userId,
+        });
+      });
+      if (syncRows.length) {
+        let { error: syncErr } = await supabase.from('lead_documents').insert(syncRows);
+        if (syncErr && String(syncErr.message || '').toLowerCase().includes('source_checklist_id')) {
+          const legacy = syncRows.map(({ source_checklist_id: _c, ...rest }) => rest);
+          ({ error: syncErr } = await supabase.from('lead_documents').insert(legacy));
+        }
+        if (syncErr) console.warn('Bulk sync error:', syncErr.message);
+      }
     } catch (syncErr) { console.warn('Bulk sync error:', syncErr.message); }
 
     await emitCrmTaskChanged(req, {
@@ -11977,7 +12143,7 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
 // ADD attachment (file or text note) to a task
 r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
   try {
-    const { name, doc_type, file_url, file_name, file_size, mime_type, notes, allowed_companies, allowed_departments } = req.body;
+    const { name, doc_type, file_url, file_name, file_size, mime_type, notes, allowed_companies, allowed_departments, checklist_id } = req.body;
     
     // Auto-apply default visibility from CRM task (inherited from template)
     let finalCompanies = allowed_companies || null;
@@ -11993,44 +12159,63 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
     }
     
     const { data: taskForShare } = await supabase.from('crm_tasks')
-      .select('id, title, stage_slug, default_allowed_companies, default_allowed_departments')
+      .select('id, title, stage_slug, checklist, default_allowed_companies, default_allowed_departments')
       .eq('id', req.params.taskId).single();
+    const ckId = checklist_id ? String(checklist_id) : null;
+    const ckItem = ckId ? findChecklistItem(taskForShare, ckId) : null;
+    if (ckId && !ckItem) return res.status(400).json({ error: 'Mục checklist không tồn tại' });
     const { data: leadForShare } = await supabase.from('crm_leads')
       .select('project_id').eq('id', req.params.leadId).single();
     const singleShareOpts = { linkToProject: !!leadForShare?.project_id };
     const singleDefaultShare = getDefaultCrmAttachmentShare(taskForShare, singleShareOpts);
 
-    const { data, error } = await supabase.from('crm_task_attachments')
-      .insert({
-        task_id: req.params.taskId,
-        lead_id: req.params.leadId,
-        name: name || file_name || 'Ghi chú',
-        doc_type: doc_type || (file_url ? 'other' : 'task_note'),
-        file_url, file_name, file_size, mime_type, notes,
-        allowed_companies: finalCompanies,
-        allowed_departments: finalDepts,
-        created_by: req.user.userId,
-        shared_to_project: req.body.shared_to_project ?? singleDefaultShare.shared_to_project,
-        allowed_share_modules: req.body.allowed_share_modules ?? singleDefaultShare.allowed_share_modules,
-      })
+    const insertRow = {
+      task_id: req.params.taskId,
+      lead_id: req.params.leadId,
+      checklist_id: ckId,
+      name: name || file_name || 'Ghi chú',
+      doc_type: doc_type || (file_url ? 'other' : 'task_note'),
+      file_url, file_name, file_size, mime_type, notes,
+      allowed_companies: finalCompanies,
+      allowed_departments: finalDepts,
+      created_by: req.user.userId,
+      shared_to_project: req.body.shared_to_project ?? singleDefaultShare.shared_to_project,
+      allowed_share_modules: req.body.allowed_share_modules ?? singleDefaultShare.allowed_share_modules,
+    };
+    let { data, error } = await supabase.from('crm_task_attachments')
+      .insert(insertRow)
       .select('*, creator:users!crm_task_attachments_created_by_fkey(id, full_name)')
       .single();
+    if (error && String(error.message || '').toLowerCase().includes('checklist_id')) {
+      const { checklist_id: _c, ...legacy } = insertRow;
+      ({ data, error } = await supabase.from('crm_task_attachments')
+        .insert(legacy)
+        .select('*, creator:users!crm_task_attachments_created_by_fkey(id, full_name)')
+        .single());
+    }
     if (error) throw error;
 
     // ── SYNC → lead_documents ──
     try {
       const task = taskForShare;
       const lead = leadForShare;
-      await supabase.from('lead_documents').insert({
-        lead_id: req.params.leadId,
-        project_id: lead?.project_id || null,
-        name: `[${task?.title || 'Task'}] ${data.name}`,
-        doc_type: data.doc_type, file_url: data.file_url, file_name: data.file_name,
-        file_size: data.file_size, mime_type: data.mime_type, notes: data.notes,
-        allowed_companies: finalCompanies, allowed_departments: finalDepts,
-        created_by: req.user.userId, source_attachment_id: data.id,
-        ...getLeadDocumentFieldsFromCrmTask(task, { linkToProject: !!lead?.project_id }, data),
+      const docRow = buildChecklistLeadDocumentRow({
+        leadId: req.params.leadId,
+        taskRow: task,
+        checklistId: ckId,
+        checklistTitle: ckItem?.title || null,
+        att: data,
+        taskDocOpts: { linkToProject: !!lead?.project_id, projectId: lead?.project_id || null },
+        finalCompanies,
+        finalDepts,
+        userId: req.user.userId,
       });
+      let { error: syncErr } = await supabase.from('lead_documents').insert(docRow);
+      if (syncErr && String(syncErr.message || '').toLowerCase().includes('source_checklist_id')) {
+        const { source_checklist_id: _c, ...legacyDoc } = docRow;
+        ({ error: syncErr } = await supabase.from('lead_documents').insert(legacyDoc));
+      }
+      if (syncErr) console.warn('Sync attachment→document:', syncErr.message);
     } catch (syncErr) { console.warn('Sync attachment→document:', syncErr.message); }
 
     res.status(201).json(data);

@@ -160,8 +160,8 @@ function sortProjectsBy(items, sortBy) {
       if (!da && !db) return 0; if (!da) return 1; if (!db) return -1;
       return da - db;
     });
-    case 'value_desc': return cloned.sort((a, b) => toNum(b.estimated_value) - toNum(a.estimated_value));
-    case 'value_asc': return cloned.sort((a, b) => toNum(a.estimated_value) - toNum(b.estimated_value));
+    case 'value_desc': return cloned.sort((a, b) => toNum(b.production_value) - toNum(a.production_value));
+    case 'value_asc': return cloned.sort((a, b) => toNum(a.production_value) - toNum(b.production_value));
     case 'name_asc': return cloned.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'vi'));
     case 'newest':
     default: return cloned.sort((a, b) => toTs(b.created_at) - toTs(a.created_at));
@@ -206,6 +206,8 @@ export default function ProductionDashboard() {
   const [showAdvFilter, setShowAdvFilter] = useState(false);
   const [filterWorkTypeId, setFilterWorkTypeId] = useState(() => P0?.filterWorkTypeId ?? '');
   const [workTypes, setWorkTypes] = useState([]);
+  /** Công ty mà danh sách `workTypes` hiện tại thuộc về — chống dùng nhầm loại của công ty cũ khi đổi công ty. */
+  const [workTypesCompanyId, setWorkTypesCompanyId] = useState('');
   /** Hiện cột ảo «Chưa phân loại» ở đầu Kanban — gom các project chưa có workshop_type_id. */
   const [showOrphanColumn, setShowOrphanColumn] = useState(() => !!P0?.showOrphanColumn);
 
@@ -310,7 +312,9 @@ export default function ProductionDashboard() {
         }).catch(() => []),
       ]);
       setKpis(dashRes.data?.kpis || {});
-      setPipeline(dashRes.data?.pipeline || []);
+      // KHÔNG set pipeline ở đây: `/production/dashboard` (không có workshop_type_id) trả cột
+      // của TẤT CẢ phân loại → gây hiển thị pipeline của cả 2 loại. Cột Kanban do effect
+      // riêng bên dưới sở hữu, luôn lọc theo `filterWorkTypeId` của công ty hiện hành.
       setProjects(projectList);
     } catch (e) {
       console.error(e);
@@ -325,29 +329,31 @@ export default function ProductionDashboard() {
   useEffect(() => { load(); }, [load]);
 
   /**
-   * Refetch pipeline columns SILENT khi đổi phân loại — không bật spinner toàn trang.
-   * Bỏ qua lần đầu (load() đã set pipeline). Chỉ chạy khi filterWorkTypeId thay đổi.
+   * Nguồn DUY NHẤT của cột Kanban (`pipeline`). Luôn lọc theo phân loại đang chọn —
+   * KHÔNG bao giờ tải "tất cả loại" (đó là nguyên nhân Kanban nhảy/hiển thị pipeline
+   * của cả 2 phân loại khi đổi công ty). Chạy silent (không bật spinner toàn trang).
    */
-  const initialWorkTypeRef = useRef(true);
   useEffect(() => {
-    if (initialWorkTypeRef.current) {
-      initialWorkTypeRef.current = false;
-      return;
-    }
-    if (loading) return;
+    // workTypes chưa khớp công ty hiện hành (đang refetch) → chờ, tránh tải nhầm cột.
+    if (workTypesCompanyId !== companyForTypes) return undefined;
+    const typesExist = Array.isArray(workTypes) && workTypes.length > 0;
+    // Công ty CÓ phân loại nhưng chưa chọn loại cụ thể → chờ effect default chọn loại,
+    // tuyệt đối không tải all-types trong lúc chuyển tiếp.
+    if (typesExist && (!filterWorkTypeId || filterWorkTypeId === 'none')) return undefined;
     let cancelled = false;
     (async () => {
       try {
         const params = { all: 'false' };
         if (companyParam) params.company_id = companyParam;
-        if (filterWorkTypeId) params.workshop_type_id = filterWorkTypeId;
+        // Công ty không cấu hình loại → bỏ workshop_type_id để lấy cột Global hợp lệ.
+        if (filterWorkTypeId && filterWorkTypeId !== 'none') params.workshop_type_id = filterWorkTypeId;
         const { data } = await api.get('/production/pipeline-stages', { params });
         if (cancelled) return;
         setPipeline(Array.isArray(data) ? data : []);
       } catch { /* silent */ }
     })();
     return () => { cancelled = true; };
-  }, [filterWorkTypeId, companyParam, loading]);
+  }, [companyParam, companyForTypes, filterWorkTypeId, workTypes, workTypesCompanyId]);
 
   useEffect(() => {
     api.get('/companies', { params: { for_module: 'production' } })
@@ -389,15 +395,31 @@ export default function ProductionDashboard() {
   useEffect(() => {
     if (!companyForTypes) {
       setWorkTypes([]);
-      return;
+      setWorkTypesCompanyId('');
+      return undefined;
     }
+    let cancelled = false;
+    // Xoá ngay danh sách cũ để effect chọn loại mặc định không bám nhầm loại của công ty trước.
+    setWorkTypes([]);
+    setWorkTypesCompanyId('');
     api.get('/workshop/project-types', { params: { company_id: companyForTypes, module: 'production' } })
-      .then((r) => setWorkTypes(Array.isArray(r.data) ? r.data : []))
-      .catch(() => setWorkTypes([]));
+      .then((r) => {
+        if (cancelled) return;
+        setWorkTypes(Array.isArray(r.data) ? r.data : []);
+        setWorkTypesCompanyId(companyForTypes);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setWorkTypes([]);
+        setWorkTypesCompanyId(companyForTypes);
+      });
+    return () => { cancelled = true; };
   }, [companyForTypes]);
 
   // Mặc định luôn chọn 1 phân loại hợp lệ (không để "trống/tất cả/chưa phân loại").
   useEffect(() => {
+    // Chỉ resolve khi workTypes đã đúng công ty hiện hành — tránh "nhảy" sang loại của công ty cũ.
+    if (workTypesCompanyId !== companyForTypes) return;
     if (!Array.isArray(workTypes) || workTypes.length === 0) {
       if (filterWorkTypeId) setFilterWorkTypeId('');
       return;
@@ -411,7 +433,7 @@ export default function ProductionDashboard() {
 
     const stillExists = workTypes.some((w) => String(w.id) === String(filterWorkTypeId));
     if (!stillExists) setFilterWorkTypeId(String(workTypes[0].id));
-  }, [workTypes, filterWorkTypeId]);
+  }, [workTypes, workTypesCompanyId, companyForTypes, filterWorkTypeId]);
 
 
   useEffect(() => {
@@ -2153,7 +2175,7 @@ function KPICard({ accent = 'bg-blue-500', label, value, descriptor, valueTone }
 function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const stageColor = stage.color || '#94a3b8';
-  const totalValue = items.reduce((sum, p) => sum + (Number(p.estimated_value) || 0), 0);
+  const totalValue = items.reduce((sum, p) => sum + (Number(p.production_value) || 0), 0);
 
   const handleColumnDragOver = (e) => {
     e.preventDefault();
@@ -2485,13 +2507,13 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
       )}
 
       {/* Row 3: Giá trị + Deadline cùng hàng */}
-      {((!HIDE_PRODUCTION_DEAL_VALUES && Number(item.estimated_value) > 0) || primaryDeadline) && (
+      {((Number(item.production_value) > 0) || primaryDeadline) && (
         <div className="flex items-center justify-between gap-2 mb-1.5 min-w-0">
-          {!HIDE_PRODUCTION_DEAL_VALUES && (
-            Number(item.estimated_value) > 0
+          {(
+            Number(item.production_value) > 0
               ? (
                 <p className="text-sm font-bold text-emerald-600 tabular-nums truncate">
-                  {formatVND(item.estimated_value)}
+                  {formatVND(item.production_value)}
                 </p>
               )
               : (
