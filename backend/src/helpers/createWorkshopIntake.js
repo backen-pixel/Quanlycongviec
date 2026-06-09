@@ -240,6 +240,7 @@ function scheduleWorkshopIntakeBackground({ req, dealId, projectId, userId, comp
  * @param {string} [opts.regionId]
  * @param {number} [opts.estimatedValue]
  * @param {string} [opts.description]
+ * @param {string} [opts.externalCompanyName]
  */
 async function createWorkshopIntakeOrder(opts) {
   const {
@@ -256,6 +257,7 @@ async function createWorkshopIntakeOrder(opts) {
     regionId,
     estimatedValue,
     description,
+    externalCompanyName,
   } = opts;
 
   const titleTrim = String(title || '').trim();
@@ -286,6 +288,20 @@ async function createWorkshopIntakeOrder(opts) {
   }
 
   const nowIso = new Date().toISOString();
+  let externalCoTrim = String(externalCompanyName || '').trim() || null;
+  if (externalCoTrim) {
+    try {
+      const { upsertProductionExternalCompany, normalizeExternalCompanyName } = require('./productionExternalCompanies');
+      const saved = await upsertProductionExternalCompany({
+        productionCompanyId: companyUuid,
+        name: externalCoTrim,
+        userId,
+      });
+      if (saved?.name) externalCoTrim = normalizeExternalCompanyName(saved.name);
+    } catch (e) {
+      console.warn('[workshop-intake] external company catalog:', e.message);
+    }
+  }
   const dealRow = {
     code: dealCode,
     title: titleTrim,
@@ -302,6 +318,7 @@ async function createWorkshopIntakeOrder(opts) {
     probability: 100,
     install_address: installAddress || null,
     description: description ? `[Xưởng] ${description}` : '[Xưởng] Tạo trực tiếp từ module Sản xuất',
+    external_company_name: externalCoTrim,
     stage_entered_at: nowIso,
     actual_close_date: nowIso.split('T')[0],
   };

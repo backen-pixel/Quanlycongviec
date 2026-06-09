@@ -13,7 +13,7 @@ import {
 import {
   CheckCircle2, Search, X, Calendar, Plus,
   Factory, Users, LayoutGrid, List,
-  CheckSquare, UserCheck, Loader2, Truck, Filter, Clock, Layers, Trash2, MessageSquare, Pin, ArrowUpDown, Building2,
+  CheckSquare, UserCheck, Loader2, Truck, Filter, Clock, Layers, Trash2, MessageSquare, Pin, ArrowUpDown, Building2, ArrowRightLeft,
 } from 'lucide-react';
 import { ProductionListView, ProductionPlannerView, ProductionCalendarView, ProductionCommentsView, ProductionDeadlineView } from '../components/ProductionViews';
 import WorkshopPipelineKanbanScroll from '../components/WorkshopPipelineKanbanScroll';
@@ -214,8 +214,10 @@ export default function ProductionDashboard() {
   const [allUsers, setAllUsers] = useState([]);
   const [showBulkDeadline, setShowBulkDeadline] = useState(false);
   const [showBulkPerson, setShowBulkPerson] = useState(false);
+  const [showBulkWorkType, setShowBulkWorkType] = useState(false);
   const [bulkDeadlineVal, setBulkDeadlineVal] = useState('');
   const [bulkPersonId, setBulkPersonId] = useState('');
+  const [bulkWorkTypeId, setBulkWorkTypeId] = useState('');
   const [bulkSaving, setBulkSaving] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [handoverModal, setHandoverModal] = useState(null); // { projectId, projectName }
@@ -228,6 +230,8 @@ export default function ProductionDashboard() {
   const [handoverInstallationTeams, setHandoverInstallationTeams] = useState([]);
   const [handoverErr, setHandoverErr] = useState('');
   const [handoverSaving, setHandoverSaving] = useState(false);
+  const [switchWorkshopModal, setSwitchWorkshopModal] = useState(null);
+  const [switchWorkshopSaving, setSwitchWorkshopSaving] = useState(false);
   const [commentsIndex, setCommentsIndex] = useState({});
   const [kanbanCommentItem, setKanbanCommentItem] = useState(null);
   const [kanbanCommentBody, setKanbanCommentBody] = useState('');
@@ -339,7 +343,7 @@ export default function ProductionDashboard() {
         if (filterWorkTypeId) params.workshop_type_id = filterWorkTypeId;
         const { data } = await api.get('/production/pipeline-stages', { params });
         if (cancelled) return;
-        if (Array.isArray(data) && data.length) setPipeline(data);
+        setPipeline(Array.isArray(data) ? data : []);
       } catch { /* silent */ }
     })();
     return () => { cancelled = true; };
@@ -391,6 +395,23 @@ export default function ProductionDashboard() {
       .then((r) => setWorkTypes(Array.isArray(r.data) ? r.data : []))
       .catch(() => setWorkTypes([]));
   }, [companyForTypes]);
+
+  // Mặc định luôn chọn 1 phân loại hợp lệ (không để "trống/tất cả/chưa phân loại").
+  useEffect(() => {
+    if (!Array.isArray(workTypes) || workTypes.length === 0) {
+      if (filterWorkTypeId) setFilterWorkTypeId('');
+      return;
+    }
+
+    // Không dùng mặc định "none" hay rỗng: luôn rơi về loại đầu tiên.
+    if (!filterWorkTypeId || filterWorkTypeId === 'none') {
+      setFilterWorkTypeId(String(workTypes[0].id));
+      return;
+    }
+
+    const stillExists = workTypes.some((w) => String(w.id) === String(filterWorkTypeId));
+    if (!stillExists) setFilterWorkTypeId(String(workTypes[0].id));
+  }, [workTypes, filterWorkTypeId]);
 
 
   useEffect(() => {
@@ -508,6 +529,32 @@ export default function ProductionDashboard() {
     } catch (e) { alert(e.response?.data?.error || 'Lỗi gắn người phụ trách'); }
     setBulkSaving(false);
   }, [bulkPersonId, selectedIds, load, clearSelection]);
+
+  const applyBulkWorkType = useCallback(async () => {
+    if (!selectedIds.size) return;
+    const typeId = bulkWorkTypeId || null;
+    const typeObj = typeId ? workTypes.find((w) => String(w.id) === String(typeId)) : null;
+    setBulkSaving(true);
+    try {
+      await Promise.all([...selectedIds].map((id) =>
+        api.put(`/projects/${id}`, { workshop_type_id: typeId }),
+      ));
+      setProjects((prev) => prev.map((p) => (selectedIds.has(p.id)
+        ? {
+          ...p,
+          workshop_type_id: typeId,
+          workshop_type: typeObj,
+        }
+        : p)));
+      await load({ silent: true });
+      setShowBulkWorkType(false);
+      setBulkWorkTypeId('');
+      clearSelection();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi gắn phân loại');
+    }
+    setBulkSaving(false);
+  }, [bulkWorkTypeId, selectedIds, workTypes, load, clearSelection]);
 
   const applyBulkDelete = useCallback(async () => {
     if (!selectedIds.size || bulkDeleting) return;
@@ -916,6 +963,8 @@ export default function ProductionDashboard() {
     const isIntake = targetCol?.bucket_slug === INTAKE_BUCKET
       || String(targetCol?.id || '').startsWith('__fb_');
     const isHandover = targetCol?.is_handover_to_logistics === true;
+    const isSwitchWorkshopType = targetCol?.is_switch_workshop_type === true
+      && !!targetCol?.target_workshop_type_id;
 
     if (isIntake) {
       setProjects((prev) => prev.map((p) => (p.id === projectId
@@ -945,6 +994,25 @@ export default function ProductionDashboard() {
       return;
     }
 
+    // Cột chuyển phân loại (vd: Chốt → Data đầu ra)
+    if (isSwitchWorkshopType) {
+      const fromName = current?.workshop_type?.name
+        || workTypes.find((w) => String(w.id) === String(current?.workshop_type_id))?.name
+        || 'Phân loại hiện tại';
+      const toName = targetCol?.target_workshop_type?.name
+        || workTypes.find((w) => String(w.id) === String(targetCol.target_workshop_type_id))?.name
+        || 'Phân loại đích';
+      setSwitchWorkshopModal({
+        projectId,
+        projectName: current?.name || current?.code || projectId,
+        targetCol,
+        fromName,
+        toName,
+        currentColId: current?.sx_kanban_column_id || null,
+      });
+      return;
+    }
+
     // Luôn gửi production_pipeline_stages.id (không chỉ workflow stage_id) — giống chi tiết dự án.
     const colId = targetCol?.id;
     const currentColId = current?.sx_kanban_column_id || null;
@@ -960,7 +1028,42 @@ export default function ProductionDashboard() {
     }
 
     await executeStageMove(projectId, targetCol);
-  }, [executeStageMove, projects]);
+  }, [executeStageMove, projects, workTypes]);
+
+  const confirmSwitchWorkshopType = useCallback(async () => {
+    if (!switchWorkshopModal || switchWorkshopSaving) return;
+    setSwitchWorkshopSaving(true);
+    try {
+      const { data } = await api.patch(`/production/projects/${switchWorkshopModal.projectId}/switch-workshop-type`, {
+        production_pipeline_stage_id: switchWorkshopModal.targetCol?.id,
+        current_sx_pipeline_stage_id: switchWorkshopModal.currentColId || null,
+      });
+      const updated = data?.project;
+      const pid = String(switchWorkshopModal.projectId);
+      const targetType = updated?.workshop_type
+        || workTypes.find((w) => String(w.id) === String(data?.to_workshop_type_id));
+      setProjects((prev) => prev.map((p) => (String(p.id) === pid
+        ? {
+            ...p,
+            workshop_type_id: updated?.workshop_type_id ?? data?.to_workshop_type_id ?? p.workshop_type_id,
+            workshop_type: targetType || p.workshop_type,
+            sx_kanban_column_id: updated?.sx_kanban_column_id ?? data?.pipeline_stage_id ?? p.sx_kanban_column_id,
+            sx_pipeline_stage: updated?.sx_pipeline_stage ?? p.sx_pipeline_stage,
+            sx_intake: false,
+            current_stage_id: updated?.current_stage_id ?? p.current_stage_id,
+            current_stage: updated?.current_stage ?? p.current_stage,
+            status: updated?.status ?? p.status,
+          }
+        : p)));
+      scheduleCrmBadgeRefresh(switchWorkshopModal.projectId);
+      setSwitchWorkshopModal(null);
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi chuyển phân loại');
+      load();
+    } finally {
+      setSwitchWorkshopSaving(false);
+    }
+  }, [switchWorkshopModal, switchWorkshopSaving, workTypes, load]);
 
   const openDeadlineFromCard = useCallback((item) => {
     setDeadlineCtx({
@@ -1662,6 +1765,14 @@ export default function ProductionDashboard() {
               className="h-8 px-3 bg-white text-blue-700 hover:bg-blue-50 rounded-lg text-xs font-semibold cursor-pointer flex items-center gap-1.5 transition-colors">
               <UserCheck className="h-3.5 w-3.5" /> Gắn người SX
             </button>
+            {workTypes.length > 0 && (
+              <button
+                onClick={() => { setShowBulkWorkType(true); setBulkWorkTypeId(''); }}
+                className="h-8 px-3 bg-white text-teal-700 hover:bg-teal-50 rounded-lg text-xs font-semibold cursor-pointer flex items-center gap-1.5 transition-colors"
+              >
+                <Layers className="h-3.5 w-3.5" /> Gắn phân loại
+              </button>
+            )}
             <button
               onClick={applyBulkDelete}
               disabled={bulkDeleting}
@@ -1762,6 +1873,43 @@ export default function ProductionDashboard() {
         </div>
       )}
 
+      {/* Bulk phân loại Modal */}
+      {showBulkWorkType && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowBulkWorkType(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                <Layers className="h-5 w-5 text-teal-600" /> Gắn phân loại hàng loạt
+              </h2>
+              <button onClick={() => setShowBulkWorkType(false)} className="p-1 hover:bg-gray-100 rounded cursor-pointer"><X className="h-5 w-5 text-gray-400" /></button>
+            </div>
+            <p className="text-sm text-gray-500 mb-4">
+              Áp dụng cho <strong className="text-teal-700">{selectedIds.size}</strong> dự án đã chọn — dự án sẽ hiển thị đúng pipeline theo phân loại.
+            </p>
+            <select
+              value={bulkWorkTypeId}
+              onChange={(e) => setBulkWorkTypeId(e.target.value)}
+              className="w-full h-10 px-3 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 mb-4 bg-white"
+              autoFocus
+            >
+              <option value="">⚠️ Bỏ phân loại (Chưa phân loại)</option>
+              {workTypes.map((wt) => (
+                <option key={wt.id} value={wt.id}>{wt.icon ? `${wt.icon} ` : ''}{wt.name}</option>
+              ))}
+            </select>
+            <div className="flex gap-2">
+              <button onClick={() => setShowBulkWorkType(false)}
+                className="flex-1 h-10 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 cursor-pointer">Hủy</button>
+              <button onClick={applyBulkWorkType} disabled={bulkSaving}
+                className="flex-1 h-10 bg-teal-600 text-white rounded-lg text-sm font-semibold hover:bg-teal-700 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2">
+                {bulkSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Layers className="h-4 w-4" />}
+                {bulkSaving ? 'Đang lưu...' : 'Áp dụng'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Bulk Person Modal */}
       {showBulkPerson && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowBulkPerson(false)}>
@@ -1791,6 +1939,36 @@ export default function ProductionDashboard() {
                 className="flex-1 h-10 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2">
                 {bulkSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserCheck className="h-4 w-4" />}
                 {bulkSaving ? 'Đang lưu...' : 'Áp dụng'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Chuyển phân loại Modal */}
+      {switchWorkshopModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" onClick={() => { if (!switchWorkshopSaving) setSwitchWorkshopModal(null); }}>
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                <ArrowRightLeft className="h-5 w-5 text-violet-600" /> Chuyển phân loại
+              </h2>
+              <button type="button" onClick={() => !switchWorkshopSaving && setSwitchWorkshopModal(null)} className="p-1 hover:bg-gray-100 rounded cursor-pointer"><X className="h-5 w-5 text-gray-400" /></button>
+            </div>
+            <p className="text-sm text-gray-600 mb-2">
+              Dự án <strong>{switchWorkshopModal.projectName}</strong> sẽ chuyển sang pipeline phân loại mới.
+            </p>
+            <div className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2.5 text-sm mb-4 space-y-1">
+              <p><span className="text-gray-500">Từ:</span> <strong>{switchWorkshopModal.fromName}</strong> → cột «{switchWorkshopModal.targetCol?.name}»</p>
+              <p><span className="text-gray-500">Sang:</span> <strong>{switchWorkshopModal.toName}</strong> → cột đầu pipeline</p>
+            </div>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => !switchWorkshopSaving && setSwitchWorkshopModal(null)}
+                className="flex-1 h-10 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 cursor-pointer">Hủy</button>
+              <button type="button" onClick={confirmSwitchWorkshopType} disabled={switchWorkshopSaving}
+                className="flex-1 h-10 bg-violet-600 text-white rounded-lg text-sm font-semibold hover:bg-violet-700 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2">
+                {switchWorkshopSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRightLeft className="h-4 w-4" />}
+                {switchWorkshopSaving ? 'Đang chuyển...' : 'Xác nhận chuyển'}
               </button>
             </div>
           </div>
@@ -2022,6 +2200,9 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
           {stage.is_handover_to_logistics && (
             <span className="px-1 py-0.5 bg-orange-100 text-orange-600 text-[9px] font-bold rounded shrink-0">→VC</span>
           )}
+          {stage.is_switch_workshop_type && (
+            <span className="px-1 py-0.5 bg-violet-100 text-violet-700 text-[9px] font-bold rounded shrink-0" title="Chuyển phân loại khi thả thẻ">⇄PL</span>
+          )}
           {stage.counts_as_completed_revenue && (
             <span className="px-1 py-0.5 bg-teal-100 text-teal-700 text-[9px] font-bold rounded shrink-0" title="Cột tính «Đã công»">✓Công</span>
           )}
@@ -2123,6 +2304,7 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
     : null;
   const manualDlLevel = manualDlUrgency && manualDlUrgency.level !== 'ok' ? manualDlUrgency.level : null;
   const companyName = item.company?.short_name || item.company?.name || null;
+  const externalCompanyName = primaryDeal?.external_company_name?.trim() || null;
   const slaDeadlineTs = (() => {
     const raw = item.deadline || item.production_deadline || null;
     if (!raw) return null;
@@ -2267,6 +2449,41 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
         </div>
       )}
 
+      {/* Ngày đặt hàng + ngày giao hàng */}
+      {(item.order_date || item.delivery_date) && (
+        <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+          {item.order_date && (
+            <span
+              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-100 tabular-nums"
+              title={`Ngày đặt hàng: ${formatDate(item.order_date)}`}
+            >
+              <Calendar className="h-2.5 w-2.5 shrink-0" strokeWidth={2.4} />
+              Đặt: {new Date(item.order_date).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}
+            </span>
+          )}
+          {item.delivery_date && (() => {
+            const dd = new Date(item.delivery_date);
+            const overdue = dd < new Date();
+            const soon = !overdue && dd < new Date(Date.now() + 3 * 86400000);
+            return (
+              <span
+                className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium border tabular-nums ${
+                  overdue
+                    ? 'bg-red-50 text-red-700 border-red-200'
+                    : soon
+                      ? 'bg-amber-50 text-amber-800 border-amber-200'
+                      : 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                }`}
+                title={`Ngày giao hàng: ${formatDate(item.delivery_date)}`}
+              >
+                <Truck className="h-2.5 w-2.5 shrink-0" strokeWidth={2.4} />
+                Giao: {dd.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}
+              </span>
+            );
+          })()}
+        </div>
+      )}
+
       {/* Row 3: Giá trị + Deadline cùng hàng */}
       {((!HIDE_PRODUCTION_DEAL_VALUES && Number(item.estimated_value) > 0) || primaryDeadline) && (
         <div className="flex items-center justify-between gap-2 mb-1.5 min-w-0">
@@ -2348,13 +2565,19 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
         </div>
       )}
 
-      {/* Row 5: Công ty + SĐT — 1 dòng */}
-      {(companyName || item.customer?.phone) && (
+      {/* Row 5: Công ty SX / bên ngoài + SĐT — 1 dòng */}
+      {(companyName || externalCompanyName || item.customer?.phone) && (
         <div className="flex items-center gap-2 text-[11px] text-gray-600 mb-1.5 min-w-0">
           {companyName && (
             <span className="inline-flex items-center gap-1 truncate min-w-0" title={companyName}>
               <Factory className="h-3 w-3 text-gray-400 shrink-0" />
               <span className="truncate">{companyName}</span>
+            </span>
+          )}
+          {externalCompanyName && (
+            <span className="inline-flex items-center gap-1 truncate min-w-0 text-indigo-700" title={`Công ty bên ngoài: ${externalCompanyName}`}>
+              <Building2 className="h-3 w-3 text-indigo-400 shrink-0" />
+              <span className="truncate">{externalCompanyName}</span>
             </span>
           )}
           {item.customer?.phone && (

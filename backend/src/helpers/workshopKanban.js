@@ -22,6 +22,11 @@ const {
   markPipelineKpiSlaColumnMissing,
   isPipelineCollectedRevenueMissingError,
   markPipelineCollectedRevenueColumnMissing,
+  isPipelineSwitchWorkshopTypeMissingError,
+  markPipelineSwitchWorkshopTypeColumnMissing,
+  isPipelineTargetWorkshopTypeEmbedRelationshipError,
+  markPipelineTargetWorkshopTypeJoinMissing,
+  normalizePipelineStageApiRow,
 } = require('./productionPipelineSchema');
 const { isCrmPostWonManagedStage } = require('./crmDealStageGate');
 
@@ -181,6 +186,18 @@ async function loadProductionPipelineStagesRows(includeInactive = false, company
       data = retry.data;
       error = retry.error;
     }
+    if (error && isPipelineSwitchWorkshopTypeMissingError(error)) {
+      markPipelineSwitchWorkshopTypeColumnMissing();
+      const retry = await runBase(scope);
+      data = retry.data;
+      error = retry.error;
+    }
+    if (error && isPipelineTargetWorkshopTypeEmbedRelationshipError(error)) {
+      markPipelineTargetWorkshopTypeJoinMissing();
+      const retry = await runBase(scope);
+      data = retry.data;
+      error = retry.error;
+    }
     return { data, error };
   };
 
@@ -210,7 +227,7 @@ async function loadProductionPipelineStagesRows(includeInactive = false, company
     }
   }
 
-  return (data || []).map((row) => ({
+  return (data || []).map((row) => normalizePipelineStageApiRow({
     ...row,
     is_handover_to_logistics: row.is_handover_to_logistics ?? false,
   }));
@@ -236,7 +253,6 @@ async function getResolvedKanbanStages(companyId = null, opts = {}) {
     }
     return list.filter((r) => (
       r.bucket_slug === INTAKE_BUCKET
-      || r.is_handover_to_logistics === true
       || !r.workshop_type_id
       || String(r.workshop_type_id) === String(wkt)
     ));
@@ -469,6 +485,9 @@ function buildPipelineSummary(sortedStages, enhancedProjects) {
     workflow_stage_id: col.workflow_stage_id || col.workflow_stage?.id || null,
     slug: col.workflow_stage?.slug || col.bucket_slug || null,
     is_handover_to_logistics: col.is_handover_to_logistics ?? false,
+    is_switch_workshop_type: col.is_switch_workshop_type ?? false,
+    target_workshop_type_id: col.target_workshop_type_id ?? null,
+    target_workshop_type: col.target_workshop_type ?? null,
     default_probability: col.default_probability ?? null,
     sla_days: col.sla_days ?? null,
     counts_as_won_revenue: col.counts_as_won_revenue ?? null,

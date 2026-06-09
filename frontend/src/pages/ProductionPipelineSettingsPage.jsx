@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+﻿import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { Settings, Plus, Trash2, Save, ChevronRight, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe, Clock, Trophy, CheckCircle2, UserCircle, Banknote, Hammer } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, ChevronRight, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe, Clock, Trophy, CheckCircle2, UserCircle, Banknote, Hammer, ArrowRightLeft } from 'lucide-react';
 import WorkshopTypeSettingsSection from '../components/WorkshopTypeSettingsSection';
 import { isPipelineStageSlaDisabled } from '../lib/crmPipelineSla';
 
@@ -13,6 +13,11 @@ const LS_SX_PIPE_TYPE = 'sx_pipeline_settings_type_key';
 const COLORS = ['#0f766e', '#14b8a6', '#5eead4', '#64748b', '#3B82F6', '#8B5CF6', '#F59E0B', '#10B981'];
 const ICONS = ['🏭', '🚚', '🤝', '⏳', '📋', '✅', '🎯', '🔧', '📦'];
 const GLOBAL_TYPE_KEY = 'global';
+const STALE_PIPELINE_STAGE_MSG = 'Cột pipeline không còn tồn tại (cấu hình đã đổi). Danh sách sẽ được tải lại.';
+
+function isMissingProductionStage(e) {
+  return e?.response?.status === 404;
+}
 
 export default function ProductionPipelineSettingsPage() {
   const { user } = useAuth();
@@ -35,6 +40,7 @@ export default function ProductionPipelineSettingsPage() {
   const [editId, setEditId] = useState(null);
   const [bulkSelected, setBulkSelected] = useState(() => new Set());
   const [bulkTargetCrm, setBulkTargetCrm] = useState('');
+  const [bulkTargetWorkshopType, setBulkTargetWorkshopType] = useState('');
   const [bulkSaving, setBulkSaving] = useState(false);
   const [handoverData, setHandoverData] = useState(null);
   const [intakeAssigneeId, setIntakeAssigneeId] = useState('');
@@ -46,7 +52,10 @@ export default function ProductionPipelineSettingsPage() {
   const [typeStaffSaving, setTypeStaffSaving] = useState(false);
   const [form, setForm] = useState({
     name: '', color: COLORS[0], icon: '📋', is_active: true,
-    is_handover_to_logistics: false, crm_sync_type: null, crm_target_stage_id: '',
+    is_handover_to_logistics: false,
+    is_switch_workshop_type: false,
+    target_workshop_type_id: '',
+    crm_sync_type: null, crm_target_stage_id: '',
     progress_percent: '',
     default_probability: '',
     sla_days: '',
@@ -67,7 +76,9 @@ export default function ProductionPipelineSettingsPage() {
       const pipeParams = {
         all: 'true',
         company_id: settingsCompanyId,
+        strict_company: 'true',
         workshop_type_id: selectedTypeKey,
+        _ts: Date.now(),
       };
       const [pipeRes, stRes, crmRes] = await Promise.all([
         api.get('/production/pipeline-stages', { params: pipeParams }),
@@ -82,6 +93,14 @@ export default function ProductionPipelineSettingsPage() {
     }
     setLoading(false);
   }, [settingsCompanyId, selectedTypeKey]);
+
+  const recoverMissingStage = useCallback(async () => {
+    setEditId(null);
+    setAdding(false);
+    setBulkSelected(new Set());
+    await load();
+    alert(STALE_PIPELINE_STAGE_MSG);
+  }, [load]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -263,6 +282,7 @@ export default function ProductionPipelineSettingsPage() {
   useEffect(() => {
     setBulkSelected(new Set());
     setBulkTargetCrm('');
+    setBulkTargetWorkshopType('');
   }, [settingsCompanyId, selectedTypeKey]);
 
   const toggleBulk = (id) => {
@@ -305,6 +325,10 @@ export default function ProductionPipelineSettingsPage() {
       setBulkSelected(new Set());
       await load();
     } catch (e) {
+      if (isMissingProductionStage(e)) {
+        await recoverMissingStage();
+        return;
+      }
       alert('Lỗi bỏ gán: ' + (e.response?.data?.error || e.message));
     } finally {
       setBulkSaving(false);
@@ -329,6 +353,10 @@ export default function ProductionPipelineSettingsPage() {
       setBulkSelected(new Set());
       await load();
     } catch (e) {
+      if (isMissingProductionStage(e)) {
+        await recoverMissingStage();
+        return;
+      }
       alert('Lỗi đặt trigger: ' + (e.response?.data?.error || e.message));
     } finally {
       setBulkSaving(false);
@@ -350,7 +378,46 @@ export default function ProductionPipelineSettingsPage() {
       setBulkSelected(new Set());
       await load();
     } catch (e) {
+      if (isMissingProductionStage(e)) {
+        await recoverMissingStage();
+        return;
+      }
       alert('Lỗi bỏ trigger: ' + (e.response?.data?.error || e.message));
+    } finally {
+      setBulkSaving(false);
+    }
+  };
+
+  const bulkMoveWorkshopType = async () => {
+    if (!bulkSelected.size || !bulkTargetWorkshopType) return;
+    const targetLabel = bulkTargetWorkshopType === GLOBAL_TYPE_KEY
+      ? 'Bộ chung'
+      : (workshopTypes.find((t) => String(t.id) === String(bulkTargetWorkshopType))?.name || bulkTargetWorkshopType);
+    const targetKey = bulkTargetWorkshopType;
+    const targetId = targetKey === GLOBAL_TYPE_KEY ? null : targetKey;
+    const count = bulkSelected.size;
+    if (!confirm(`Chuyển ${count} cột đã chọn sang phân loại «${targetLabel}»?`)) return;
+    setBulkSaving(true);
+    try {
+      await Promise.all(
+        Array.from(bulkSelected).map((id) =>
+          api.put(`/production/pipeline-stages/${id}`, { workshop_type_id: targetId }),
+        ),
+      );
+      setBulkSelected(new Set());
+      setBulkTargetWorkshopType('');
+      await load();
+      const switchHint = targetKey !== GLOBAL_TYPE_KEY
+        && String(targetKey) !== String(selectedTypeKey)
+        ? `\n\nBấm tab «${targetLabel}» ở khối Phân loại để xem các cột vừa chuyển.`
+        : '';
+      alert(`Đã chuyển ${count} cột sang «${targetLabel}».${switchHint}`);
+    } catch (e) {
+      if (isMissingProductionStage(e)) {
+        await recoverMissingStage();
+        return;
+      }
+      alert('Lỗi chuyển phân loại: ' + (e.response?.data?.error || e.message));
     } finally {
       setBulkSaving(false);
     }
@@ -375,7 +442,18 @@ export default function ProductionPipelineSettingsPage() {
 
   useEffect(() => { loadWorkshopTypes(); }, [loadWorkshopTypes]);
 
-  // Khôi phục lựa chọn phân loại đã lưu (theo từng công ty).
+  // Gỡ phân loại đã xóa khỏi localStorage (tránh POST pipeline với workshop_type_id không tồn tại → lỗi FK).
+  useEffect(() => {
+    if (!settingsCompanyId || typesLoading) return;
+    setSelectedTypeKey((prev) => {
+      if (prev === GLOBAL_TYPE_KEY) return prev;
+      if (prev && workshopTypes.some((t) => String(t.id) === String(prev))) return prev;
+      if (workshopTypes.length > 0) return String(workshopTypes[0].id);
+      return '';
+    });
+  }, [workshopTypes, settingsCompanyId, typesLoading]);
+
+  // Khôi phúc lựa chọn phân loại đã lưu (theo từng công ty).
   // Khi đổi công ty: reset về '' rồi đọc lại để tránh nhầm lẫn giữa công ty cũ/mới.
   useEffect(() => {
     if (!settingsCompanyId) {
@@ -483,6 +561,7 @@ export default function ProductionPipelineSettingsPage() {
     setForm({
       name: '', color: COLORS[stages.length % COLORS.length], icon: ICONS[stages.length % ICONS.length],
       is_active: true, is_handover_to_logistics: false,
+      is_switch_workshop_type: false, target_workshop_type_id: '',
       crm_sync_type: null, crm_target_stage_id: '',
       progress_percent: '',
       default_probability: '',
@@ -503,6 +582,8 @@ export default function ProductionPipelineSettingsPage() {
       icon: stage.icon || '📋',
       is_active: stage.is_active !== false,
       is_handover_to_logistics: stage.is_handover_to_logistics || false,
+      is_switch_workshop_type: stage.is_switch_workshop_type || false,
+      target_workshop_type_id: stage.target_workshop_type_id || '',
       crm_sync_type: stage.crm_sync_type || null,
       crm_target_stage_id: stage.crm_target_stage_id || '',
       progress_percent: stage.progress_percent ?? '',
@@ -518,6 +599,9 @@ export default function ProductionPipelineSettingsPage() {
   const saveNew = async () => {
     if (!form.name.trim()) return alert('Nhập tên cột');
     if (!selectedTypeKey) return alert('Hãy chọn phân loại trước');
+    if (form.is_switch_workshop_type && !form.target_workshop_type_id) {
+      return alert('Chọn phân loại đích khi bật «Chuyển phân loại»');
+    }
     setSaving(true);
     try {
       const { data } = await api.post('/production/pipeline-stages', {
@@ -528,8 +612,10 @@ export default function ProductionPipelineSettingsPage() {
         workflow_stage_id: productionWorkflowStageId || null,
         is_active: form.is_active,
         is_handover_to_logistics: form.is_handover_to_logistics,
-        crm_sync_type: form.is_handover_to_logistics ? null : (form.crm_target_stage_id ? null : (form.crm_sync_type || null)),
-        crm_target_stage_id: form.is_handover_to_logistics ? null : (form.crm_target_stage_id || null),
+        is_switch_workshop_type: form.is_switch_workshop_type,
+        target_workshop_type_id: form.is_switch_workshop_type ? (form.target_workshop_type_id || null) : null,
+        crm_sync_type: (form.is_handover_to_logistics || form.is_switch_workshop_type) ? null : (form.crm_target_stage_id ? null : (form.crm_sync_type || null)),
+        crm_target_stage_id: (form.is_handover_to_logistics || form.is_switch_workshop_type) ? null : (form.crm_target_stage_id || null),
         company_id: settingsCompanyId,
         workshop_type_id: currentWorkshopTypeId,
         ...kpiPayloadFromForm(),
@@ -547,10 +633,18 @@ export default function ProductionPipelineSettingsPage() {
 
   const saveEdit = async () => {
     if (!form.name.trim()) return alert('Nhập tên cột');
+    if (form.is_switch_workshop_type && !form.target_workshop_type_id) {
+      return alert('Chọn phân loại đích khi bật «Chuyển phân loại»');
+    }
+    if (!stages.some((s) => s.id === editId)) {
+      await recoverMissingStage();
+      return;
+    }
     setSaving(true);
     try {
       const intakeRow = stages.find((s) => s.id === editId)?.bucket_slug === INTAKE;
       const handover = !intakeRow && form.is_handover_to_logistics;
+      const switchType = !intakeRow && !handover && form.is_switch_workshop_type;
       await api.put(`/production/pipeline-stages/${editId}`, {
         name: form.name.trim(),
         color: form.color,
@@ -559,14 +653,20 @@ export default function ProductionPipelineSettingsPage() {
         workflow_stage_id: intakeRow ? null : (productionWorkflowStageId || null),
         is_active: form.is_active,
         is_handover_to_logistics: handover,
-        crm_sync_type: intakeRow || handover ? null : (form.crm_target_stage_id ? null : (form.crm_sync_type || null)),
-        crm_target_stage_id: intakeRow || handover ? null : (form.crm_target_stage_id || null),
+        is_switch_workshop_type: switchType,
+        target_workshop_type_id: switchType ? (form.target_workshop_type_id || null) : null,
+        crm_sync_type: intakeRow || handover || switchType ? null : (form.crm_target_stage_id ? null : (form.crm_sync_type || null)),
+        crm_target_stage_id: intakeRow || handover || switchType ? null : (form.crm_target_stage_id || null),
         ...(intakeRow ? {} : kpiPayloadFromForm()),
       });
       setEditId(null);
       setAdding(false);
       await load();
     } catch (e) {
+      if (isMissingProductionStage(e)) {
+        await recoverMissingStage();
+        return;
+      }
       alert(e.response?.data?.error || 'Lỗi lưu');
     } finally {
       setSaving(false);
@@ -582,9 +682,18 @@ export default function ProductionPipelineSettingsPage() {
       setEditId(null);
       setAdding(false);
     }
+    setBulkSelected((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
     setStages((prev) => prev.filter((s) => s.id !== id));
     try {
-      await api.delete(`/production/pipeline-stages/${id}`);
+      const { data } = await api.delete(`/production/pipeline-stages/${id}`);
+      if (data?.already_deleted) {
+        await load();
+        return;
+      }
       await load();
     } catch (e) {
       const alreadyGone = e.response?.status === 404
@@ -604,8 +713,12 @@ export default function ProductionPipelineSettingsPage() {
     try {
       await api.put(`/production/pipeline-stages/${stage.id}`, { is_active: !stage.is_active });
       load();
-    } catch {
-      alert('Lỗi');
+    } catch (e) {
+      if (isMissingProductionStage(e)) {
+        await recoverMissingStage();
+        return;
+      }
+      alert(e.response?.data?.error || 'Lỗi');
     }
   };
 
@@ -617,6 +730,10 @@ export default function ProductionPipelineSettingsPage() {
       });
       load();
     } catch (e) {
+      if (isMissingProductionStage(e)) {
+        await recoverMissingStage();
+        return;
+      }
       alert(e.response?.data?.error || 'Lỗi');
     }
   };
@@ -628,6 +745,10 @@ export default function ProductionPipelineSettingsPage() {
       });
       load();
     } catch (e) {
+      if (isMissingProductionStage(e)) {
+        await recoverMissingStage();
+        return;
+      }
       alert(e.response?.data?.error || 'Lỗi');
     }
   };
@@ -639,6 +760,10 @@ export default function ProductionPipelineSettingsPage() {
       });
       load();
     } catch (e) {
+      if (isMissingProductionStage(e)) {
+        await recoverMissingStage();
+        return;
+      }
       alert(e.response?.data?.error || 'Lỗi');
     }
   };
@@ -650,6 +775,10 @@ export default function ProductionPipelineSettingsPage() {
       });
       load();
     } catch (e) {
+      if (isMissingProductionStage(e)) {
+        await recoverMissingStage();
+        return;
+      }
       const msg = e.response?.data?.error || e.message || 'Lỗi';
       alert(msg.includes('counts_as_collected') || msg.includes('296')
         ? `${msg}\n\nChạy migration database/296_production_pipeline_collected_revenue.sql trên Supabase.`
@@ -712,9 +841,15 @@ export default function ProductionPipelineSettingsPage() {
     }));
     try {
       await api.put('/production/pipeline-stages-reorder', { stages: reorder });
+      await load();
     } catch (err) {
       setStages(prevStages);
+      if (isMissingProductionStage(err)) {
+        await recoverMissingStage();
+        return;
+      }
       alert('Lỗi sắp xếp: ' + (err.response?.data?.error || err.message));
+      await load();
     } finally {
       setReorderBusy(false);
     }
@@ -1091,6 +1226,11 @@ export default function ProductionPipelineSettingsPage() {
         <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-4 py-10 text-center text-sm text-gray-500">
           Chọn <strong>Công ty</strong> phía trên.
         </div>
+      ) : !workshopTypes.length ? (
+        <div className="rounded-xl border border-dashed border-amber-300 bg-amber-50/40 px-4 py-10 text-center text-sm text-amber-800 space-y-2">
+          <p>Công ty này <strong>chưa có phân loại dự án</strong> (Tủ bếp, B2B, …).</p>
+          <p className="text-xs text-amber-700">Tạo phân loại ở khối phía trên, rồi chọn phân loại để thêm/sửa/xóa cột pipeline.</p>
+        </div>
       ) : !selectedTypeKey ? (
         <div className="rounded-xl border border-dashed border-amber-300 bg-amber-50/40 px-4 py-10 text-center text-sm text-amber-800">
           Chọn <strong>Phân loại</strong> để cấu hình pipeline.
@@ -1203,6 +1343,31 @@ export default function ProductionPipelineSettingsPage() {
                 {bulkSelected.size > 0 && (
                   <>
                     <span className="text-xs text-gray-400">→</span>
+                    <select
+                      value={bulkTargetWorkshopType}
+                      onChange={(e) => setBulkTargetWorkshopType(e.target.value)}
+                      className="h-8 px-2 border rounded-lg text-xs bg-white border-indigo-200 max-w-[200px]"
+                      title="Chọn phân loại đích để chuyển các cột đã tick"
+                    >
+                      <option value="">— Phân loại đích —</option>
+                      <option value={GLOBAL_TYPE_KEY}>🌐 Bộ chung</option>
+                      {workshopTypes.map((t) => (
+                        <option key={t.id} value={String(t.id)}>
+                          {t.icon ? `${t.icon} ` : ''}{t.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={bulkMoveWorkshopType}
+                      disabled={!bulkTargetWorkshopType || bulkSaving}
+                      title="Chuyển các cột đã chọn sang phân loại khác (Tủ bếp, Cánh kính, B2B, …)"
+                      className="h-8 px-3 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                    >
+                      {bulkSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Tags className="h-3.5 w-3.5" />}
+                      Chuyển {bulkSelected.size} cột → phân loại
+                    </button>
+                    <span className="w-px h-6 bg-gray-300 mx-1" />
                     <button
                       type="button"
                       onClick={bulkSetTrigger}
@@ -1276,7 +1441,7 @@ export default function ProductionPipelineSettingsPage() {
                 )}
                 {bulkSelected.size === 0 && (
                   <span className="text-[11px] text-gray-500">
-                    Tick các cột → bấm <strong>«Đặt làm Trigger SX»</strong>. Khi project chạm cột trigger → CRM tự nhảy về cột «Sản xuất» của pipeline tương ứng.
+                    Tick các cột → <strong>chuyển phân loại</strong> (Tủ bếp, Cánh kính, …) hoặc <strong>đặt Trigger SX</strong> (CRM tự nhảy về cột Sản xuất khi project chạm cột trigger).
                   </span>
                 )}
               </div>
@@ -1332,7 +1497,7 @@ export default function ProductionPipelineSettingsPage() {
                       checked={bulkSelected.has(s.id)}
                       onChange={() => toggleBulk(s.id)}
                       className="rounded border-gray-300 cursor-pointer"
-                      title="Chọn để gán hàng loạt cột CRM trigger"
+                      title="Chọn để chuyển phân loại hoặc gán trigger CRM hàng loạt"
                     />
                   )}
                   <span className="text-lg shrink-0">{s.icon || '📋'}</span>
@@ -1365,6 +1530,12 @@ export default function ProductionPipelineSettingsPage() {
                       {s.is_handover_to_logistics && (
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-orange-100 text-orange-700">
                           <Truck className="h-2.5 w-2.5" /> Bàn giao VC
+                        </span>
+                      )}
+                      {s.is_switch_workshop_type && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-100 text-violet-700 border border-violet-200">
+                          <ArrowRightLeft className="h-2.5 w-2.5" />
+                          → {s.target_workshop_type?.name || workshopTypes.find((t) => String(t.id) === String(s.target_workshop_type_id))?.name || 'Phân loại đích'}
                         </span>
                       )}
                     </p>
@@ -1729,7 +1900,12 @@ export default function ProductionPipelineSettingsPage() {
                         setForm((f) => ({
                           ...f,
                           is_handover_to_logistics: on,
-                          ...(on ? { crm_sync_type: null, crm_target_stage_id: '' } : {}),
+                          ...(on ? {
+                            crm_sync_type: null,
+                            crm_target_stage_id: '',
+                            is_switch_workshop_type: false,
+                            target_workshop_type_id: '',
+                          } : {}),
                         }));
                       }}
                       className="mt-0.5 rounded border-orange-400 accent-orange-500"
@@ -1743,6 +1919,54 @@ export default function ProductionPipelineSettingsPage() {
                       </span>
                     </span>
                   </label>
+                )}
+                {!editingIntake && (
+                  <div className="space-y-2 rounded-lg border border-violet-200 bg-violet-50/60 p-3">
+                    <label className="flex items-start gap-2 text-xs cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={!!form.is_switch_workshop_type}
+                        onChange={(e) => {
+                          const on = e.target.checked;
+                          setForm((f) => ({
+                            ...f,
+                            is_switch_workshop_type: on,
+                            ...(on ? {
+                              is_handover_to_logistics: false,
+                              crm_sync_type: null,
+                              crm_target_stage_id: '',
+                            } : { target_workshop_type_id: '' }),
+                          }));
+                        }}
+                        className="mt-0.5 rounded border-violet-400 accent-violet-600"
+                      />
+                      <span>
+                        <span className="flex items-center gap-1 font-medium text-violet-800">
+                          <ArrowRightLeft className="h-3.5 w-3.5" /> Chuyển phân loại
+                        </span>
+                        <span className="block text-[10px] text-violet-700/90 mt-0.5 leading-snug">
+                          Khi kéo thẻ vào cột này, hiện hộp xác nhận chuyển sang phân loại khác (vd: Data đầu vào → Data đầu ra, cột đầu pipeline).
+                        </span>
+                      </span>
+                    </label>
+                    {form.is_switch_workshop_type && (
+                      <div>
+                        <label className="text-[10px] font-medium text-violet-700 block mb-1">Phân loại đích *</label>
+                        <select
+                          value={form.target_workshop_type_id}
+                          onChange={(e) => setForm((f) => ({ ...f, target_workshop_type_id: e.target.value }))}
+                          className="w-full max-w-sm h-8 px-2 border border-violet-200 rounded-lg text-xs bg-white"
+                        >
+                          <option value="">— Chọn phân loại đích —</option>
+                          {workshopTypes
+                            .filter((t) => String(t.id) !== String(currentWorkshopTypeId || ''))
+                            .map((t) => (
+                              <option key={t.id} value={t.id}>{t.name}</option>
+                            ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
               <div className="flex gap-2">
@@ -1780,6 +2004,7 @@ export default function ProductionPipelineSettingsPage() {
           <WorkshopTypeSettingsSection
             moduleContext="production"
             accent="teal"
+            onTypesChanged={loadWorkshopTypes}
             {...(isAdmin ? { companyId: settingsCompanyId, onCompanyIdChange: setSettingsCompanyId } : {})}
           />
         </div>

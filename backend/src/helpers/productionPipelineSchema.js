@@ -22,6 +22,9 @@ let pipelineKpiSlaColumnsAvailable = true;
 let pipelineCollectedRevenueColumnAvailable = true;
 /** Cột requires_deadline (migration 288) — tắt nếu DB chưa migrate */
 let pipelineRequiresDeadlineColumnAvailable = true;
+/** Cột converts_workshop_type / target_workshop_type_id (migration 303) */
+let pipelineSwitchWorkshopTypeColumnAvailable = true;
+let pipelineTargetWorkshopTypeJoinAvailable = true;
 
 function isHandoverMissingError(err) {
   if (!err) return false;
@@ -146,6 +149,9 @@ function isPipelineWorkshopTypeEmbedRelationshipError(err) {
   if (!raw) return false;
   if (raw.includes('could not find') && raw.includes('relationship') && raw.includes('workshop_project_types')) return true;
   if (raw.includes('schema cache') && raw.includes('production_pipeline') && raw.includes('workshop_project_types')) return true;
+  if (raw.includes('more than one relationship')
+      && raw.includes('production_pipeline_stages')
+      && raw.includes('workshop_project_types')) return true;
   return false;
 }
 
@@ -208,6 +214,68 @@ function markPipelineRequiresDeadlineColumnMissing() {
   pipelineRequiresDeadlineColumnAvailable = false;
 }
 
+function isPipelineSwitchWorkshopTypeMissingError(err) {
+  if (!err || !pipelineSwitchWorkshopTypeColumnAvailable) return false;
+  const s = String(err.message || err.details || err.hint || '').toLowerCase();
+  return (s.includes('converts_workshop_type') || s.includes('is_switch_workshop_type') || s.includes('target_workshop_type_id'))
+    && (s.includes('does not exist') || s.includes('could not find'));
+}
+
+function markPipelineSwitchWorkshopTypeColumnMissing() {
+  if (pipelineSwitchWorkshopTypeColumnAvailable) {
+    console.warn(
+      '[production_pipeline_stages] Cột converts_workshop_type / target_workshop_type_id chưa tồn tại. Chạy database/303_production_pipeline_switch_workshop_type.sql trên Supabase.',
+    );
+  }
+  pipelineSwitchWorkshopTypeColumnAvailable = false;
+}
+
+/** DB: converts_workshop_type — API/FE: is_switch_workshop_type */
+function normalizePipelineStageApiRow(row) {
+  if (!row) return row;
+  const flag = row.converts_workshop_type ?? row.is_switch_workshop_type ?? false;
+  return {
+    ...row,
+    converts_workshop_type: flag,
+    is_switch_workshop_type: flag,
+  };
+}
+
+/** Map field API → cột DB trước insert/update */
+function mapSwitchWorkshopTypeBodyToDb(obj) {
+  if (!obj) return obj;
+  const o = { ...obj };
+  if (o.is_switch_workshop_type !== undefined && o.converts_workshop_type === undefined) {
+    o.converts_workshop_type = o.is_switch_workshop_type;
+  }
+  delete o.is_switch_workshop_type;
+  return o;
+}
+
+function isPipelineTargetWorkshopTypeEmbedRelationshipError(err) {
+  if (!err || !pipelineTargetWorkshopTypeJoinAvailable) return false;
+  const raw = [err.message, err.details, err.hint, err.code, typeof err === 'object' ? JSON.stringify(err) : '']
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  if (!raw) return false;
+  if (raw.includes('could not find') && raw.includes('relationship') && raw.includes('target_workshop_type')) return true;
+  if (raw.includes('schema cache') && raw.includes('target_workshop_type')) return true;
+  if (raw.includes('more than one relationship')
+      && raw.includes('production_pipeline_stages')
+      && raw.includes('workshop_project_types')) return true;
+  return false;
+}
+
+function markPipelineTargetWorkshopTypeJoinMissing() {
+  if (pipelineTargetWorkshopTypeJoinAvailable) {
+    console.warn(
+      '[production_pipeline_stages] Không embed được target_workshop_type → workshop_project_types. Chỉ trả về target_workshop_type_id.',
+    );
+  }
+  pipelineTargetWorkshopTypeJoinAvailable = false;
+}
+
 /** Chuỗi .select() cho bảng production_pipeline_stages (+ join workflow_stage) */
 function buildPipelineStageSelect() {
   const cid = productionCompanyIdColumnAvailable ? 'company_id, ' : '';
@@ -219,6 +287,13 @@ function buildPipelineStageSelect() {
   const kpiCollected = pipelineCollectedRevenueColumnAvailable ? 'counts_as_collected_revenue, ' : '';
   const kpi = `${kpi287}${kpiCollected}`;
   const reqDl = pipelineRequiresDeadlineColumnAvailable ? 'requires_deadline, ' : '';
+  const sw = pipelineSwitchWorkshopTypeColumnAvailable ? 'converts_workshop_type, ' : '';
+  let twt = '';
+  if (pipelineSwitchWorkshopTypeColumnAvailable) {
+    twt = pipelineTargetWorkshopTypeJoinAvailable
+      ? 'target_workshop_type_id, target_workshop_type:workshop_project_types!target_workshop_type_id(id, name), '
+      : 'target_workshop_type_id, ';
+  }
   let wt = '';
   if (pipelineWorkshopTypeColumnAvailable) {
     wt = pipelineWorkshopTypeJoinAvailable
@@ -233,7 +308,7 @@ function buildPipelineStageSelect() {
       t = 'crm_target_stage_id, ';
     }
   }
-  return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, ${h}${pp}${kpi}${reqDl}${wt}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
+  return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, ${h}${sw}${twt}${pp}${kpi}${reqDl}${wt}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
 }
 
 /** Áp dụng retry khi SELECT 1 cột pipeline (embed / cột thiếu). */
@@ -281,8 +356,17 @@ async function fetchProductionPipelineStageById(supabase, stageId) {
     markPipelineRequiresDeadlineColumnMissing();
     ({ data, error } = await run());
   }
+  if (error && isPipelineSwitchWorkshopTypeMissingError(error)) {
+    markPipelineSwitchWorkshopTypeColumnMissing();
+    ({ data, error } = await run());
+  }
+  if (error && isPipelineTargetWorkshopTypeEmbedRelationshipError(error)) {
+    markPipelineTargetWorkshopTypeJoinMissing();
+    ({ data, error } = await run());
+  }
   if (data) {
     data.is_handover_to_logistics = data.is_handover_to_logistics ?? false;
+    data = normalizePipelineStageApiRow(data);
   }
   return { data, error };
 }
@@ -293,6 +377,7 @@ const INSERT_COLUMN_RETRIES = [
   [isPipelineCollectedRevenueMissingError, markPipelineCollectedRevenueColumnMissing],
   [isPipelineKpiSlaMissingError, markPipelineKpiSlaColumnMissing],
   [isPipelineRequiresDeadlineMissingError, markPipelineRequiresDeadlineColumnMissing],
+  [isPipelineSwitchWorkshopTypeMissingError, markPipelineSwitchWorkshopTypeColumnMissing],
   [isPipelineWorkshopTypeMissingError, markPipelineWorkshopTypeColumnMissing],
   [isCrmTargetStageMissingError, markCrmTargetStageColumnMissing],
 ];
@@ -302,7 +387,7 @@ const INSERT_COLUMN_RETRIES = [
  * rồi đọc lại bản ghi đầy đủ — không insert trùng khi chỉ select/embed lỗi.
  */
 async function insertProductionPipelineStageRow(supabase, insertPayload) {
-  let ins = stripHandoverFields({ ...insertPayload });
+  let ins = stripHandoverFields(mapSwitchWorkshopTypeBodyToDb({ ...insertPayload }));
   const tryInsert = () => supabase
     .from('production_pipeline_stages')
     .insert(ins)
@@ -316,7 +401,7 @@ async function insertProductionPipelineStageRow(supabase, insertPayload) {
     for (const [isErr, mark] of INSERT_COLUMN_RETRIES) {
       if (error && isErr(error)) {
         mark();
-        ins = stripHandoverFields({ ...insertPayload });
+        ins = stripHandoverFields(mapSwitchWorkshopTypeBodyToDb({ ...insertPayload }));
         changed = true;
       }
     }
@@ -355,6 +440,11 @@ function stripHandoverFields(obj) {
     delete o.counts_as_collected_revenue;
   }
   if (!pipelineRequiresDeadlineColumnAvailable) delete o.requires_deadline;
+  if (!pipelineSwitchWorkshopTypeColumnAvailable) {
+    delete o.converts_workshop_type;
+    delete o.is_switch_workshop_type;
+    delete o.target_workshop_type_id;
+  }
   return o;
 }
 
@@ -372,6 +462,8 @@ function _resetForTests() {
   pipelineKpiSlaColumnsAvailable = true;
   pipelineCollectedRevenueColumnAvailable = true;
   pipelineRequiresDeadlineColumnAvailable = true;
+  pipelineSwitchWorkshopTypeColumnAvailable = true;
+  pipelineTargetWorkshopTypeJoinAvailable = true;
 }
 
 module.exports = {
@@ -395,6 +487,12 @@ module.exports = {
   markPipelineCollectedRevenueColumnMissing,
   isPipelineRequiresDeadlineMissingError,
   markPipelineRequiresDeadlineColumnMissing,
+  isPipelineSwitchWorkshopTypeMissingError,
+  markPipelineSwitchWorkshopTypeColumnMissing,
+  isPipelineTargetWorkshopTypeEmbedRelationshipError,
+  markPipelineTargetWorkshopTypeJoinMissing,
+  normalizePipelineStageApiRow,
+  mapSwitchWorkshopTypeBodyToDb,
   isHandoverColumnInSchema,
   isCrmTargetStageColumnInSchema,
   isCrmTargetStageJoinInSchema,
