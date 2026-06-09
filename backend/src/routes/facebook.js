@@ -1263,6 +1263,26 @@ function withAsyncLock(key, fn) {
 }
 
 const _pageConfigCache = {}; // pageId → { data, ts }
+const FB_TARGET_TYPES = new Set(['lead', 'deal']);
+const FB_MODULE_KEYS = new Set(['crm', 'production', 'logistics']);
+function normalizeFacebookTargetType(value) {
+  const t = String(value || '').trim().toLowerCase();
+  return FB_TARGET_TYPES.has(t) ? t : 'lead';
+}
+function normalizeFacebookModuleKey(value) {
+  const mk = String(value || '').trim().toLowerCase();
+  return FB_MODULE_KEYS.has(mk) ? mk : 'crm';
+}
+function resolveFacebookModuleKeyForPage(page) {
+  if (page?.default_module_key) return normalizeFacebookModuleKey(page.default_module_key);
+  const tt = normalizeFacebookTargetType(page?.default_target_type);
+  return tt === 'deal' ? 'production' : 'crm';
+}
+function resolveFacebookCreateType(page) {
+  const mk = resolveFacebookModuleKeyForPage(page);
+  if (mk === 'production' || mk === 'logistics') return 'deal';
+  return normalizeFacebookTargetType(page?.default_target_type);
+}
 async function getPageConfig(pageId) {
   const cached = _pageConfigCache[pageId];
   if (cached && Date.now() - cached.ts < 60000) return cached.data; // cache 60s
@@ -1560,6 +1580,8 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
   const page = await getPageConfig(pageId);
   if (!page) return null;
   const autoLeadCfg = await loadAutoLeadConfig();
+  const moduleKey = resolveFacebookModuleKeyForPage(page);
+  const createType = resolveFacebookCreateType(page);
 
   // Công ty của page đích — dùng cho mọi bước «chống trùng» (không gộp lead giữa 2 công ty / 2 page)
   let companyId = null;
@@ -1577,16 +1599,16 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
     return { id: freshContact.lead_id };
   }
 
-  // 2. Đã gán customer: chỉ tái dùng lead nếu lead thuộc đúng công ty của page này (1 KH có thể có nhiều lead theo công ty)
+  // 2. Đã gán customer: chỉ tái dùng lead/deal nếu bản ghi thuộc đúng công ty của page này
   if (freshContact?.customer_id && companyId) {
     const { data: existing } = await supabase.from('crm_leads')
       .select('id')
       .eq('customer_id', freshContact.customer_id)
-      .eq('type', 'lead')
+      .eq('type', createType)
       .eq('company_id', companyId)
       .limit(1);
     if (existing?.length > 0) {
-      console.log(`[FB] ⚠️  Đã có lead (cùng công ty ${companyId}) cho customer ${freshContact.customer_id}, sync lead_id.`);
+      console.log(`[FB] ⚠️  Đã có ${createType} (cùng công ty ${companyId}) cho customer ${freshContact.customer_id}, sync lead_id.`);
       await supabase.from('facebook_contacts').update({ lead_id: existing[0].id }).eq('id', contact.id);
       return { id: existing[0].id };
     }
@@ -1618,7 +1640,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
   if (rawVin) {
     const v = normalizePhoneForLeadCreation(rawVin);
     if (!v.ok) {
-      console.log(`[FB] ⏭️ Không tạo lead — không chuẩn hóa được SĐT (${source}): "${rawVin}"`);
+      console.log(`[FB] ⏭️ Không tạo ${createType} — không chuẩn hóa được SĐT (${source}): "${rawVin}"`);
       return null;
     }
     if (v.normalized) extraData = { ...extraData, phone: v.normalized };
@@ -1629,7 +1651,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
   if (phone && String(phone).trim()) {
     const blocked = await isPhoneBlockedForFacebookAutoLead(supabase, phone);
     if (blocked) {
-      console.log(`[FB] ⛔ Không tạo lead — SĐT đã chặn tự động tạo lại (${source})`);
+      console.log(`[FB] ⛔ Không tạo ${createType} — SĐT đã chặn tự động tạo lại (${source})`);
       return null;
     }
   }
@@ -1642,11 +1664,11 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
         const { data: existLead } = await supabase.from('crm_leads')
           .select('id')
           .eq('customer_id', sameCust[0].id)
-          .eq('type', 'lead')
+          .eq('type', createType)
           .eq('company_id', companyId)
           .limit(1);
         if (existLead?.length > 0) {
-          console.log(`[FB] ⚠️  Đã có lead cùng công ty cho SĐT ${cleanPhone}, gộp vào lead ${existLead[0].id}`);
+          console.log(`[FB] ⚠️  Đã có ${createType} cùng công ty cho SĐT ${cleanPhone}, gộp vào bản ghi ${existLead[0].id}`);
           await supabase.from('facebook_contacts').update({
             lead_id: existLead[0].id,
             customer_id: sameCust[0].id,
@@ -1712,7 +1734,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
     const { data: leadForCust } = await supabase.from('crm_leads')
       .select('id, code')
       .eq('customer_id', customerId)
-      .eq('type', 'lead')
+      .eq('type', createType)
       .eq('company_id', companyId)
       .limit(1);
     if (leadForCust?.length > 0) {
@@ -1728,23 +1750,67 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
 
   const resolvedSourceId = await resolveFacebookSourceId(page);
 
-  // Tạo lead code — lấy code MAX hiện có để tránh race condition (count() có thể bị stale).
+  const codePrefix = createType === 'deal' ? 'DEAL' : 'LEAD';
+  const fbTitleTypeLabel = createType === 'deal' ? 'Deal' : 'Lead';
+  const notifyType = createType === 'deal' ? 'deal_created' : 'lead_created';
+  const notifyEntityType = createType === 'deal' ? 'crm_deal' : 'crm_lead';
+  const notifyTitle = createType === 'deal' ? '🎯 Deal mới từ Facebook' : '📘 Lead mới từ Facebook';
+
+  // Tạo mã lead/deal — lấy code MAX hiện có để tránh race condition (count() có thể bị stale).
   const { data: maxLead } = await supabase
     .from('crm_leads')
     .select('code')
-    .eq('type', 'lead')
-    .like('code', 'LEAD-%')
+    .eq('type', createType)
+    .like('code', `${codePrefix}-%`)
     .order('code', { ascending: false })
     .limit(1)
     .maybeSingle();
-  const _maxNum = maxLead?.code ? parseInt(String(maxLead.code).replace(/^LEAD-/, ''), 10) : 0;
-  const code = `LEAD-${String((_maxNum || 0) + 1).padStart(4, '0')}`;
+  const _maxNum = maxLead?.code
+    ? parseInt(String(maxLead.code).replace(new RegExp(`^${codePrefix}-`), ''), 10)
+    : 0;
+  const code = `${codePrefix}-${String((_maxNum || 0) + 1).padStart(4, '0')}`;
 
-  // Default stage: từ page config hoặc stage đầu tiên của pipeline lead
-  let stageId = page.default_stage_id || null;
+  const selectedWorkshopTypeId = (moduleKey === 'production' || moduleKey === 'logistics')
+    ? (page?.default_lead_type_id || null)
+    : null;
+  let defaultSxPipelineStageId = null;
+  if (moduleKey === 'production' && page?.default_stage_id) {
+    try {
+      const { data: sxStage } = await supabase
+        .from('production_pipeline_stages')
+        .select('id, company_id, workshop_type_id, is_active')
+        .eq('id', page.default_stage_id)
+        .maybeSingle();
+      if (
+        sxStage
+        && sxStage.is_active !== false
+        && (!companyId || String(sxStage.company_id || '') === String(companyId || ''))
+        && (!selectedWorkshopTypeId || !sxStage.workshop_type_id || String(sxStage.workshop_type_id) === String(selectedWorkshopTypeId))
+      ) {
+        defaultSxPipelineStageId = sxStage.id;
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  // Default CRM stage: từ page config (nếu cùng loại) hoặc stage đầu tiên theo loại tạo mới
+  let stageId = moduleKey === 'production' ? null : (page.default_stage_id || null);
+  if (stageId) {
+    try {
+      const { data: selectedStage } = await supabase
+        .from('crm_pipeline_stages')
+        .select('id, pipeline_type')
+        .eq('id', stageId)
+        .maybeSingle();
+      if (!selectedStage || String(selectedStage.pipeline_type || '') !== createType) {
+        stageId = null;
+      }
+    } catch (_) {
+      stageId = null;
+    }
+  }
   if (!stageId) {
     const { data: defaultStage } = await supabase.from('crm_pipeline_stages')
-      .select('id').eq('pipeline_type', 'lead').order('order_index').limit(1).single();
+      .select('id').eq('pipeline_type', createType).order('order_index').limit(1).single();
     stageId = defaultStage?.id || null;
   }
 
@@ -1754,9 +1820,11 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
     if (rr.ok) resolvedRegionId = page.default_region_id;
   }
 
-  // Default lead type (company-scoped)
+  // Default lead/deal type (company-scoped) — chỉ áp dụng module CRM
   let leadTypeId = null;
-  const candidateLeadTypeId = (page?.default_lead_type_id || autoLeadCfg?.default_lead_type_id) || null;
+  const candidateLeadTypeId = moduleKey === 'crm'
+    ? ((page?.default_lead_type_id || autoLeadCfg?.default_lead_type_id) || null)
+    : null;
   if (candidateLeadTypeId && companyId) {
     const { data: lt } = await supabase
       .from('crm_lead_types')
@@ -1766,12 +1834,12 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
     if (lt
       && String(lt.company_id || '') === String(companyId || '')
       && lt.is_active !== false
-      && ['lead', 'both'].includes(String(lt.applies_to || 'both'))) {
+      && [createType, 'both'].includes(String(lt.applies_to || 'both'))) {
       leadTypeId = lt.id;
     }
   }
 
-  // ── Resolve pipeline_id theo company (giống POST /api/crm/leads) ──
+  // ── Resolve pipeline_id theo company (giống POST /api/crm/leads|deals) ──
   let pipelineId = null;
   if (companyId) {
     try {
@@ -1791,7 +1859,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
           .from('crm_pipeline_stages')
           .select('id')
           .eq('pipeline_id', pipelineId)
-          .eq('pipeline_type', 'lead')
+          .eq('pipeline_type', createType)
           .eq('is_active', true)
           .order('order_index')
           .limit(1)
@@ -1803,8 +1871,8 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
 
   const leadData = {
     code,
-    title: `[FB] ${extraData.full_name || contact.fb_name || 'KH Facebook'}`,
-    type: 'lead',
+    title: `[FB ${fbTitleTypeLabel}] ${extraData.full_name || contact.fb_name || 'KH Facebook'}`,
+    type: createType,
     customer_id: customerId,
     source_id: resolvedSourceId,
     stage_id: stageId,
@@ -1825,18 +1893,18 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
   let lead = null;
   let lastErr = null;
   for (let attempt = 0; attempt < 10; attempt++) {
-    const tryCode = `LEAD-${String((_maxNum || 0) + 1 + attempt).padStart(4, '0')}`;
+    const tryCode = `${codePrefix}-${String((_maxNum || 0) + 1 + attempt).padStart(4, '0')}`;
 
     // Pre-check: code này đã tồn tại chưa
     const { data: existing } = await supabase
       .from('crm_leads')
       .select('id')
-      .eq('type', 'lead')
+      .eq('type', createType)
       .eq('code', tryCode)
       .limit(1)
       .maybeSingle();
     if (existing) {
-      console.warn(`[FB] Lead code ${tryCode} đã tồn tại — thử mã kế tiếp (attempt ${attempt + 1})`);
+      console.warn(`[FB] ${fbTitleTypeLabel} code ${tryCode} đã tồn tại — thử mã kế tiếp (attempt ${attempt + 1})`);
       continue;
     }
 
@@ -1850,10 +1918,10 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
       console.error('[FB] Create lead error:', error.message);
       return null;
     }
-    console.warn(`[FB] Lead code ${tryCode} race-collision — retry attempt ${attempt + 1}`);
+    console.warn(`[FB] ${fbTitleTypeLabel} code ${tryCode} race-collision — retry attempt ${attempt + 1}`);
   }
   if (!lead) {
-    console.error('[FB] Create lead failed sau 10 lần thử:', lastErr?.message);
+    console.error(`[FB] Create ${createType} failed sau 10 lần thử:`, lastErr?.message);
     return null;
   }
 
@@ -1865,32 +1933,45 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
     _linkUpd.phone_resolved_at = new Date().toISOString();
   }
   await supabase.from('facebook_contacts').update(_linkUpd).eq('id', contact.id);
+  if (moduleKey === 'production' && createType === 'deal' && defaultSxPipelineStageId) {
+    try {
+      await supabase
+        .from('crm_leads')
+        .update({ sx_pipeline_stage_id: defaultSxPipelineStageId })
+        .eq('id', lead.id);
+      lead.sx_pipeline_stage_id = defaultSxPipelineStageId;
+    } catch (e) {
+      if (!String(e?.message || '').includes('sx_pipeline_stage_id')) {
+        console.warn('[FB] set sx_pipeline_stage_id:', e.message);
+      }
+    }
+  }
 
   // ── Auto-gen CRM tasks (giống logic tạo thủ công) ──
   try {
     const { autoGenCrmTasksForNewLead } = require('../helpers/autoGenCrmTasks');
     const created = await autoGenCrmTasksForNewLead(lead.id, page.created_by);
-    if (created) console.log(`[FB] ✅ Auto-gen ${created} tasks for lead ${lead.code}`);
+    if (created) console.log(`[FB] ✅ Auto-gen ${created} tasks for ${createType} ${lead.code}`);
   } catch (e) { console.warn('[FB] Auto-gen tasks error:', e.message); }
 
-  console.log(`[FB] Lead created: ${lead.code} — ${lead.title}`);
+  console.log(`[FB] ${fbTitleTypeLabel} created: ${lead.code} — ${lead.title}`);
 
-  // Notify lead owner only (không gửi cho tất cả admin)
+  // Notify owner only (không gửi cho tất cả admin)
   try {
     const ownerId = page?.default_lead_owner_id || page?.created_by;
     if (ownerId) {
       await supabase.from('notifications').insert({
         user_id: ownerId,
-        type: 'lead_created',
-        title: '📘 Lead mới từ Facebook',
+        type: notifyType,
+        title: notifyTitle,
         message: `${lead.title} — ${extraData.phone || contact.fb_name || ''}`,
-        entity_type: 'crm_lead',
+        entity_type: notifyEntityType,
         entity_id: lead.id,
       });
       // Push via Socket.IO
       const pushFn = r._app?.get?.('pushNotification');
       if (pushFn) {
-        pushFn(ownerId, { type: 'lead_created', title: '📘 Lead mới từ Facebook', message: lead.title, entity_type: 'crm_lead', entity_id: lead.id });
+        pushFn(ownerId, { type: notifyType, title: notifyTitle, message: lead.title, entity_type: notifyEntityType, entity_id: lead.id });
       }
     }
   } catch (e) { console.warn('[FB] Notify error:', e.message); }
@@ -2631,8 +2712,20 @@ r.get('/pages', authMiddleware, async (req, res) => {
   try {
     // Try with all columns first
     let { data, error } = await supabase.from('facebook_pages')
-      .select('id, page_id, page_name, is_active, auto_create_lead, auto_reply_message, default_stage_id, default_lead_owner_id, default_company_id, default_region_id, default_lead_type_id, created_at, updated_at, settings_updated_at, webhook_verify_token')
+      .select('id, page_id, page_name, is_active, auto_create_lead, auto_reply_message, default_module_key, default_target_type, default_stage_id, default_lead_owner_id, default_company_id, default_region_id, default_lead_type_id, created_at, updated_at, settings_updated_at, webhook_verify_token')
       .order('created_at', { ascending: false });
+
+    if (error && (error.message?.includes('default_module_key') || error.code === '42703')) {
+      ({ data, error } = await supabase.from('facebook_pages')
+        .select('id, page_id, page_name, is_active, auto_create_lead, auto_reply_message, default_target_type, default_stage_id, default_lead_owner_id, default_company_id, default_region_id, default_lead_type_id, created_at, updated_at, settings_updated_at, webhook_verify_token')
+        .order('created_at', { ascending: false }));
+    }
+
+    if (error && (error.message?.includes('default_target_type') || error.code === '42703')) {
+      ({ data, error } = await supabase.from('facebook_pages')
+        .select('id, page_id, page_name, is_active, auto_create_lead, auto_reply_message, default_stage_id, default_lead_owner_id, default_company_id, default_region_id, default_lead_type_id, created_at, updated_at, settings_updated_at, webhook_verify_token')
+        .order('created_at', { ascending: false }));
+    }
 
     if (error && (error.message?.includes('default_region_id') || error.code === '42703')) {
       ({ data, error } = await supabase.from('facebook_pages')
@@ -2664,7 +2757,11 @@ r.get('/pages', authMiddleware, async (req, res) => {
       const set = new Set(scope.pageIds);
       rows = rows.filter((p) => set.has(p.page_id));
     }
-    res.json(rows.map(attachTokenReminderToPage));
+    res.json(rows.map((row) => attachTokenReminderToPage({
+      ...row,
+      default_module_key: resolveFacebookModuleKeyForPage(row),
+      default_target_type: normalizeFacebookTargetType(row?.default_target_type),
+    })));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2712,7 +2809,11 @@ r.get('/pages/token-reminder-summary', authMiddleware, async (req, res) => {
 
 r.post('/pages', authMiddleware, async (req, res) => {
   try {
-    const { page_id, page_name, access_token, webhook_verify_token, auto_create_lead, auto_reply_message, default_source_id, default_stage_id, default_company_id, default_region_id, default_lead_owner_id, default_lead_type_id } = req.body;
+    const { page_id, page_name, access_token, webhook_verify_token, auto_create_lead, auto_reply_message, default_source_id, default_module_key, default_target_type, default_stage_id, default_company_id, default_region_id, default_lead_owner_id, default_lead_type_id } = req.body;
+    const moduleKey = normalizeFacebookModuleKey(default_module_key);
+    const inferredTargetType = (moduleKey === 'production' || moduleKey === 'logistics')
+      ? 'deal'
+      : normalizeFacebookTargetType(default_target_type);
     const now = new Date().toISOString();
     const insertData = {
       page_id, page_name, access_token,
@@ -2720,6 +2821,8 @@ r.post('/pages', authMiddleware, async (req, res) => {
       auto_create_lead: auto_create_lead !== false,
       auto_reply_message: auto_reply_message || null,
       default_source_id: default_source_id || null,
+      default_module_key: moduleKey,
+      default_target_type: inferredTargetType,
       default_stage_id: default_stage_id || null,
       created_by: req.user.userId,
       settings_updated_at: now,
@@ -2732,11 +2835,13 @@ r.post('/pages', authMiddleware, async (req, res) => {
 
     let { data, error } = await supabase.from('facebook_pages').insert(insertData).select().single();
     // Retry without optional columns if they don't exist
-    if (error?.message?.includes('default_company_id') || error?.message?.includes('default_lead_owner_id') || error?.message?.includes('default_lead_type_id') || error?.message?.includes('default_region_id')) {
+    if (error?.message?.includes('default_company_id') || error?.message?.includes('default_lead_owner_id') || error?.message?.includes('default_lead_type_id') || error?.message?.includes('default_region_id') || error?.message?.includes('default_target_type') || error?.message?.includes('default_module_key')) {
       delete insertData.default_company_id;
       delete insertData.default_region_id;
       delete insertData.default_lead_owner_id;
       delete insertData.default_lead_type_id;
+      delete insertData.default_target_type;
+      delete insertData.default_module_key;
       ({ data, error } = await supabase.from('facebook_pages').insert(insertData).select().single());
     }
     if (error?.message?.includes('settings_updated_at')) {
@@ -2744,7 +2849,11 @@ r.post('/pages', authMiddleware, async (req, res) => {
       ({ data, error } = await supabase.from('facebook_pages').insert(insertData).select().single());
     }
     if (error) throw error;
-    res.status(201).json(attachTokenReminderToPage(data));
+    res.status(201).json(attachTokenReminderToPage({
+      ...data,
+      default_module_key: resolveFacebookModuleKeyForPage(data),
+      default_target_type: normalizeFacebookTargetType(data?.default_target_type),
+    }));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2752,9 +2861,20 @@ r.put('/pages/:id', authMiddleware, async (req, res) => {
   try {
     const update = {};
     ['page_name', 'access_token', 'is_active', 'auto_create_lead', 'auto_reply_message',
-     'webhook_verify_token', 'default_source_id', 'default_stage_id', 'default_pipeline_id', 'default_company_id', 'default_lead_owner_id', 'default_lead_type_id'].forEach(f => {
+     'webhook_verify_token', 'default_source_id', 'default_module_key', 'default_target_type', 'default_stage_id', 'default_pipeline_id', 'default_company_id', 'default_lead_owner_id', 'default_lead_type_id'].forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
+    if (update.default_module_key !== undefined) {
+      update.default_module_key = normalizeFacebookModuleKey(update.default_module_key);
+      if (update.default_module_key === 'production' || update.default_module_key === 'logistics') {
+        update.default_target_type = 'deal';
+      } else if (update.default_target_type === undefined) {
+        update.default_target_type = 'lead';
+      }
+    }
+    if (update.default_target_type !== undefined) {
+      update.default_target_type = normalizeFacebookTargetType(update.default_target_type);
+    }
     if (req.body.default_region_id !== undefined) {
       const rv = req.body.default_region_id;
       update.default_region_id = rv && String(rv).trim() ? String(rv).trim() : null;
@@ -2765,11 +2885,13 @@ r.put('/pages/:id', authMiddleware, async (req, res) => {
       update.settings_updated_at = now;
     }
     let { data, error } = await supabase.from('facebook_pages').update(update).eq('id', req.params.id).select().single();
-    if (error?.message?.includes('default_company_id') || error?.message?.includes('default_lead_owner_id') || error?.message?.includes('default_lead_type_id') || error?.message?.includes('default_region_id')) {
+    if (error?.message?.includes('default_company_id') || error?.message?.includes('default_lead_owner_id') || error?.message?.includes('default_lead_type_id') || error?.message?.includes('default_region_id') || error?.message?.includes('default_target_type') || error?.message?.includes('default_module_key')) {
       delete update.default_company_id;
       delete update.default_region_id;
       delete update.default_lead_owner_id;
       delete update.default_lead_type_id;
+      delete update.default_target_type;
+      delete update.default_module_key;
       ({ data, error } = await supabase.from('facebook_pages').update(update).eq('id', req.params.id).select().single());
     }
     if (error?.message?.includes('settings_updated_at')) {
@@ -2777,7 +2899,11 @@ r.put('/pages/:id', authMiddleware, async (req, res) => {
       ({ data, error } = await supabase.from('facebook_pages').update(update).eq('id', req.params.id).select().single());
     }
     if (error) throw error;
-    res.json(attachTokenReminderToPage(data));
+    res.json(attachTokenReminderToPage({
+      ...data,
+      default_module_key: resolveFacebookModuleKeyForPage(data),
+      default_target_type: normalizeFacebookTargetType(data?.default_target_type),
+    }));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2991,15 +3117,19 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
       .select('*').eq('page_id', contact.page_id).single();
 
     const autoLeadCfg = await loadAutoLeadConfig();
+    const moduleKey = resolveFacebookModuleKeyForPage(page);
+    const createType = resolveFacebookCreateType(page);
 
     // Company: body override → page default → auto-lead-config default (công ty mặc định trong Setup FB)
     let companyId = req.body.company_id || null;
     if (!companyId && page?.default_company_id) companyId = page.default_company_id;
     if (!companyId && autoLeadCfg?.default_company_id) companyId = autoLeadCfg.default_company_id;
 
-    // Default lead type (company-scoped): page default → auto-lead-config default
+    // Default lead/deal type (company-scoped): page default → auto-lead-config default (chỉ module CRM)
     let leadTypeId = null;
-    const candidateLeadTypeId = (page?.default_lead_type_id || autoLeadCfg?.default_lead_type_id) || null;
+    const candidateLeadTypeId = moduleKey === 'crm'
+      ? ((page?.default_lead_type_id || autoLeadCfg?.default_lead_type_id) || null)
+      : null;
     if (candidateLeadTypeId && companyId) {
       try {
         const { data: lt } = await supabase
@@ -3011,15 +3141,51 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
           lt
           && String(lt.company_id || '') === String(companyId || '')
           && lt.is_active !== false
-          && ['lead', 'both'].includes(String(lt.applies_to || 'both'))
+          && [createType, 'both'].includes(String(lt.applies_to || 'both'))
         ) {
           leadTypeId = lt.id;
         }
       } catch (_) { /* ignore */ }
     }
 
-    // Stage: page default → first stage of default pipeline (company) → global first lead stage
-    let stageId = page?.default_stage_id || null;
+    const selectedWorkshopTypeId = (moduleKey === 'production' || moduleKey === 'logistics')
+      ? (page?.default_lead_type_id || null)
+      : null;
+    let defaultSxPipelineStageId = null;
+    if (moduleKey === 'production' && page?.default_stage_id) {
+      try {
+        const { data: sxStage } = await supabase
+          .from('production_pipeline_stages')
+          .select('id, company_id, workshop_type_id, is_active')
+          .eq('id', page.default_stage_id)
+          .maybeSingle();
+        if (
+          sxStage
+          && sxStage.is_active !== false
+          && (!companyId || String(sxStage.company_id || '') === String(companyId || ''))
+          && (!selectedWorkshopTypeId || !sxStage.workshop_type_id || String(sxStage.workshop_type_id) === String(selectedWorkshopTypeId))
+        ) {
+          defaultSxPipelineStageId = sxStage.id;
+        }
+      } catch (_) { /* ignore */ }
+    }
+
+    // Stage CRM: page default (nếu đúng loại) → first stage of default pipeline (company) → global first stage theo loại
+    let stageId = moduleKey === 'production' ? null : (page?.default_stage_id || null);
+    if (stageId) {
+      try {
+        const { data: selectedStage } = await supabase
+          .from('crm_pipeline_stages')
+          .select('id, pipeline_type')
+          .eq('id', stageId)
+          .maybeSingle();
+        if (!selectedStage || String(selectedStage.pipeline_type || '') !== createType) {
+          stageId = null;
+        }
+      } catch (_) {
+        stageId = null;
+      }
+    }
     if (!stageId && companyId) {
       try {
         const { data: defPipe } = await supabase
@@ -3036,7 +3202,7 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
             .from('crm_pipeline_stages')
             .select('id')
             .eq('pipeline_id', defPipe.id)
-            .eq('pipeline_type', 'lead')
+            .eq('pipeline_type', createType)
             .eq('is_active', true)
             .order('order_index')
             .limit(1)
@@ -3047,7 +3213,7 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
     }
     if (!stageId) {
       const { data: defaultStage } = await supabase.from('crm_pipeline_stages')
-        .select('id').eq('pipeline_type', 'lead').order('order_index').limit(1).single();
+        .select('id').eq('pipeline_type', createType).order('order_index').limit(1).single();
       stageId = defaultStage?.id || null;
     }
 
@@ -3067,7 +3233,7 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
       }
     }
 
-    console.log(`[FB] Manual create lead — name: ${contact.fb_name}, phone: ${extractedPhone}, address: ${extractedAddress}`);
+    console.log(`[FB] Manual create ${createType} — name: ${contact.fb_name}, phone: ${extractedPhone}, address: ${extractedAddress}`);
 
     // Tạo/lấy customer
     let customerId = contact.customer_id;
@@ -3105,10 +3271,10 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
       if (rr.ok) manualRegionId = page.default_region_id;
     }
 
-    // IMPORTANT: tạo lead qua API CRM chuẩn để auto-gen tasks + tạo Đơn 1 (fulfillment)
+    // IMPORTANT: tạo lead/deal qua API CRM chuẩn để giữ đúng side-effects
     const port = process.env.PORT || 3000;
-    const { data: lead } = await axios.post(`http://localhost:${port}/api/crm/leads`, {
-      title: `[FB] ${contact.fb_name || 'KH Facebook'}`,
+    const { data: lead } = await axios.post(`http://localhost:${port}/api/crm/${createType === 'deal' ? 'deals' : 'leads'}`, {
+      title: `[FB ${createType === 'deal' ? 'Deal' : 'Lead'}] ${contact.fb_name || 'KH Facebook'}`,
       customer_id: customerId || null,
       stage_id: stageId || null,
       company_id: companyId || null,
@@ -3120,11 +3286,25 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
       assigned_to: ownerId || null,
     }, { headers: { authorization: req.headers.authorization } });
 
+    if (moduleKey === 'production' && createType === 'deal' && defaultSxPipelineStageId) {
+      try {
+        await supabase
+          .from('crm_leads')
+          .update({ sx_pipeline_stage_id: defaultSxPipelineStageId })
+          .eq('id', lead.id);
+        lead.sx_pipeline_stage_id = defaultSxPipelineStageId;
+      } catch (e) {
+        if (!String(e?.message || '').includes('sx_pipeline_stage_id')) {
+          console.warn('[FB] manual set sx_pipeline_stage_id:', e.message);
+        }
+      }
+    }
+
     // Link contact → lead + messages
     await supabase.from('facebook_contacts').update({ lead_id: lead.id }).eq('id', contact.id);
     await supabase.from('facebook_messages').update({ lead_id: lead.id }).eq('contact_id', contact.id);
 
-    console.log(`[FB] ✅ Manual lead created: ${lead.code} — ${lead.title}`);
+    console.log(`[FB] ✅ Manual ${createType} created: ${lead.code} — ${lead.title}`);
     res.status(201).json(lead);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

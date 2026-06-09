@@ -245,6 +245,7 @@ const SX_MENU_GROUPS = [
     emoji: '📦',
     items: [
       { to: '/sx/dashboard', icon: FolderKanban, label: 'Deal vào xưởng' },
+      { to: '/crm/facebook', icon: MessageCircle, label: 'Facebook', adminOnly: true },
       { to: '/sx/pipeline-settings', icon: Settings, label: 'Pipeline xưởng' },
       { to: '/sx/regions', icon: MapPin, label: 'Khu vực', adminOnly: true },
       { to: '/sx/task-templates', icon: ListChecks, label: 'Bộ mẫu nhiệm vụ xưởng' },
