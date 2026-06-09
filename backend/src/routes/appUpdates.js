@@ -2,7 +2,8 @@
  * App Update Server — quản lý phiên bản & phân phối cập nhật cho nhiều app Android nội bộ.
  *
  *  Public (không cần đăng nhập — app gọi trước khi login):
- *    GET  /api/app-updates/check       — so sánh phiên bản, trả link tải APK / thông tin OTA
+ *    GET  /api/app-updates/check       — so sánh phiên bản, trả link tải APK
+ *    GET  /api/app-updates/ota-current — phiên bản OTA (jsbundle) đang active trên server
  *    GET  /api/app-updates/manifest     — Expo Updates protocol (jsbundle OTA)
  *    GET  /api/app-updates/download/:id — redirect tới file APK
  *
@@ -26,6 +27,7 @@ const { isAdminLike } = require('../helpers/adminRole');
 const { parseReleaseFilename, FILENAME_RULE_TEXT, buildStandardApkFilename } = require('../helpers/appReleaseFilename');
 const { scanAppReleaseFiles } = require('../helpers/appReleaseScan');
 const { importApkFile } = require('../helpers/appReleaseImport');
+const { deleteAppReleaseById } = require('../helpers/appReleaseDelete');
 const config = require('../config');
 
 const r = Router();
@@ -157,6 +159,52 @@ r.get('/check', async (req, res) => {
     });
   } catch (e) {
     console.error('[appUpdates] check:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /ota-current?app=tubep-demo&runtime=1.0.0&channel=production
+r.get('/ota-current', async (req, res) => {
+  try {
+    const appKey = String(req.query.app || '').trim();
+    if (!appKey) return res.status(400).json({ error: 'Thiếu tham số app' });
+    const channel = String(req.query.channel || 'production').trim();
+    const runtimeVersion = String(req.query.runtime || req.query.runtimeVersion || '').trim();
+
+    const app = await findApp({ appKey });
+    if (!app || !app.is_active) {
+      return res.status(404).json({ error: 'App không tồn tại hoặc đã tắt' });
+    }
+
+    let q = supabase
+      .from('app_releases')
+      .select('id, version, runtime_version, release_notes, is_mandatory, manifest, created_at, updated_at')
+      .eq('app_id', app.id)
+      .eq('channel', channel)
+      .eq('update_type', 'jsbundle')
+      .eq('is_active', true)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (runtimeVersion) q = q.eq('runtime_version', runtimeVersion);
+
+    const { data: rows } = await q;
+    const rel = rows?.[0] || null;
+    if (!rel) {
+      return res.json({ available: false, version: null });
+    }
+
+    res.json({
+      available: true,
+      version: rel.version,
+      runtimeVersion: rel.runtime_version,
+      releaseNotes: rel.release_notes || null,
+      mandatory: rel.is_mandatory,
+      updateId: rel.manifest?.id || null,
+      publishedAt: rel.updated_at || rel.created_at,
+      source: 'server',
+    });
+  } catch (e) {
+    console.error('[appUpdates] ota-current:', e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -526,18 +574,20 @@ r.put('/releases/:id', requireAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// DELETE /releases/:id — xóa file Storage + bản ghi
+// DELETE /releases/:id — xóa bucket Storage + bản ghi DB (giữ file local uploads)
 r.delete('/releases/:id', requireAdmin, async (req, res) => {
   try {
-    const { data: rel } = await supabase.from('app_releases')
-      .select('storage_path').eq('id', req.params.id).maybeSingle();
-    if (rel?.storage_path) {
-      await supabase.storage.from(BUCKET).remove([rel.storage_path]);
-    }
-    const { error } = await supabase.from('app_releases').delete().eq('id', req.params.id);
-    if (error) throw error;
-    res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    const result = await deleteAppReleaseById(req.params.id);
+    if (!result.found) return res.status(404).json({ error: 'Không tìm thấy phiên bản' });
+    res.json({
+      success: true,
+      storageFilesRemoved: result.storageFilesRemoved,
+      fileErrors: result.errors?.length ? result.errors : undefined,
+    });
+  } catch (e) {
+    console.error('[appUpdates] delete release:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 module.exports = r;

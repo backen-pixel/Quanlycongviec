@@ -1,14 +1,16 @@
 /**
- * v2 — hai trang: Tủ bếp + Cửa kính (OTA từ bản APK 1.0.0).
+ * v3 — thêm tab Cập nhật (đã cập nhật từ server, thông báo bản 1.0.3).
  */
 import { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as Application from 'expo-application';
 import UpdateGate from './src/components/UpdateGate';
+import OtaSuccessNotice from './src/components/OtaSuccessNotice';
+import UpdateFromServerScreen from './src/screens/UpdateFromServerScreen';
 import { checkAndApplyOtaUpdate } from './src/lib/otaUpdate';
 
-type Tab = 'tubep' | 'kinh';
+type Tab = 'tubep' | 'kinh' | 'capnhat';
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('tubep');
@@ -40,7 +42,7 @@ export default function App() {
   return (
     <View style={styles.root}>
       <StatusBar style="dark" />
-      <Text style={styles.badge}>TuBep Demo v2</Text>
+      <Text style={styles.badge}>TuBep Demo v3</Text>
 
       <View style={styles.tabs}>
         <TouchableOpacity
@@ -55,19 +57,26 @@ export default function App() {
         >
           <Text style={[styles.tabText, tab === 'kinh' && styles.tabTextActive]}>Cửa kính</Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, tab === 'capnhat' && styles.tabActive]}
+          onPress={() => setTab('capnhat')}
+        >
+          <Text style={[styles.tabText, tab === 'capnhat' && styles.tabTextActive]}>Cập nhật</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.content}>
-        {tab === 'tubep' ? (
-          <Text style={styles.title}>Tủ bếp</Text>
-        ) : (
-          <Text style={styles.title}>Cửa kính</Text>
-        )}
+        {tab === 'tubep' && <Text style={styles.title}>Tủ bếp</Text>}
+        {tab === 'kinh' && <Text style={styles.title}>Cửa kính</Text>}
+        {tab === 'capnhat' && <UpdateFromServerScreen />}
       </View>
 
-      <Text style={styles.meta}>
-        v{Application.nativeApplicationVersion} (code {Application.nativeBuildVersion})
-      </Text>
+      {tab !== 'capnhat' && (
+        <Text style={styles.meta}>
+          v{Application.nativeApplicationVersion} (code {Application.nativeBuildVersion})
+        </Text>
+      )}
+      <OtaSuccessNotice />
       <UpdateGate />
     </View>
   );
@@ -88,17 +97,17 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     fontSize: 12,
     fontWeight: '700',
-    color: '#059669',
-    backgroundColor: '#D1FAE5',
+    color: '#7C3AED',
+    backgroundColor: '#EDE9FE',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 8,
     marginBottom: 24,
   },
-  tabs: { flexDirection: 'row', gap: 8, marginBottom: 32 },
+  tabs: { flexDirection: 'row', gap: 6, marginBottom: 20 },
   tab: {
     flex: 1,
-    paddingVertical: 12,
+    paddingVertical: 11,
     borderRadius: 12,
     backgroundColor: '#fff',
     alignItems: 'center',
@@ -106,9 +115,9 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
   },
   tabActive: { borderColor: '#2563EB', backgroundColor: '#EFF6FF' },
-  tabText: { fontSize: 15, fontWeight: '600', color: '#64748B' },
+  tabText: { fontSize: 13, fontWeight: '600', color: '#64748B' },
   tabTextActive: { color: '#2563EB' },
-  content: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  title: { fontSize: 42, fontWeight: '900', color: '#0F172A' },
+  content: { flex: 1 },
+  title: { fontSize: 42, fontWeight: '900', color: '#0F172A', textAlign: 'center', marginTop: 40 },
   meta: { textAlign: 'center', fontSize: 11, color: '#94A3B8', marginBottom: 16 },
 });
