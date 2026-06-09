@@ -6,10 +6,10 @@ import { Layers, Loader2, Plus, Trash2, Save, Building2 } from 'lucide-react';
 
 /**
  * Quản lý "Loại" dự án xưởng (bảng workshop_project_types) — cùng pattern CRM lead types.
- * @param {{ moduleContext: 'production' | 'logistics', accent: 'teal' | 'orange', companyId?: string, onCompanyIdChange?: (id: string) => void }} props
+ * @param {{ moduleContext: 'production' | 'logistics', accent: 'teal' | 'orange', companyId?: string, onCompanyIdChange?: (id: string) => void, onTypesChanged?: () => void }} props
  * Khi truyền `onCompanyIdChange`, công ty do trang cha điều khiển (ẩn dropdown trong section).
  */
-export default function WorkshopTypeSettingsSection({ moduleContext, accent = 'teal', companyId: companyIdProp, onCompanyIdChange }) {
+export default function WorkshopTypeSettingsSection({ moduleContext, accent = 'teal', companyId: companyIdProp, onCompanyIdChange, onTypesChanged }) {
   const { user } = useAuth();
   const isAdmin = isAdminLike(user);
   const isCompanyControlled = typeof onCompanyIdChange === 'function';
@@ -91,7 +91,8 @@ export default function WorkshopTypeSettingsSection({ moduleContext, accent = 't
         applies_to: newRow.applies_to,
       });
       setNewRow({ name: '', applies_to: newRow.applies_to });
-      loadTypes();
+      await loadTypes();
+      onTypesChanged?.();
     } catch (e) {
       alert(e.response?.data?.error || 'Không tạo được loại');
     }
@@ -106,7 +107,8 @@ export default function WorkshopTypeSettingsSection({ moduleContext, accent = 't
         order_index: t.order_index,
         is_active: t.is_active,
       });
-      loadTypes();
+      await loadTypes();
+      onTypesChanged?.();
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi lưu');
     }
@@ -117,7 +119,8 @@ export default function WorkshopTypeSettingsSection({ moduleContext, accent = 't
     if (!confirm(`Xóa loại «${t.name}»?`)) return;
     try {
       await api.delete(`/workshop/project-types/${t.id}`);
-      loadTypes();
+      await loadTypes();
+      onTypesChanged?.();
     } catch (e) {
       alert(e.response?.data?.error || 'Không xóa được');
     }

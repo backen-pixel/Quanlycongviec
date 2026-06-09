@@ -681,6 +681,11 @@ export default function PipelineSettingsPage() {
       await api.put(endpoint, { crm_target_stage_id: targetCrmStageId || null });
       load();
     } catch (e) {
+      if (e?.response?.status === 404) {
+        await load();
+        alert('Cột pipeline SX không còn tồn tại — đã tải lại danh sách mới.');
+        return;
+      }
       alert('Lỗi cập nhật: ' + (e.response?.data?.error || e.message));
     }
   };

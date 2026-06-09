@@ -36,12 +36,15 @@ export default function NewDealModal({
     probability: 50,
     install_address: '',
     description: '',
+    external_company_name: '',
   });
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
   const [modalSources, setModalSources] = useState([]);
   const [modalRegions, setModalRegions] = useState([]);
   const [modalWorkTypes, setModalWorkTypes] = useState([]);
+  const [externalCompanies, setExternalCompanies] = useState([]);
+  const [externalCompanyPick, setExternalCompanyPick] = useState('');
 
   const visibleLeadTypes = useMemo(() => {
     const cid = String(formData.company_id || '');
@@ -71,6 +74,24 @@ export default function NewDealModal({
         setModalWorkTypes(Array.isArray(r.data) ? r.data : []);
       })
       .catch(() => { if (!cancelled) setModalWorkTypes([]); });
+    return () => { cancelled = true; };
+  }, [isProduction, formData.company_id]);
+
+  useEffect(() => {
+    if (!isProduction) return undefined;
+    const cid = String(formData.company_id || '').trim();
+    if (!cid) {
+      setExternalCompanies([]);
+      setExternalCompanyPick('');
+      return undefined;
+    }
+    let cancelled = false;
+    api.get('/production/external-companies', { params: { company_id: cid } })
+      .then((r) => {
+        if (cancelled) return;
+        setExternalCompanies(Array.isArray(r.data?.items) ? r.data.items : []);
+      })
+      .catch(() => { if (!cancelled) setExternalCompanies([]); });
     return () => { cancelled = true; };
   }, [isProduction, formData.company_id]);
 
@@ -155,6 +176,13 @@ export default function NewDealModal({
     if (!ok) setFormData((prev) => ({ ...prev, region_id: '' }));
   }, [modalRegions, formData.region_id]);
 
+  const resolvedExternalCompanyName = useMemo(() => {
+    if (!isProduction || !externalCompanyPick) return '';
+    if (externalCompanyPick === '__new__') return String(formData.external_company_name || '').trim();
+    const hit = externalCompanies.find((x) => String(x.id) === String(externalCompanyPick));
+    return hit?.name?.trim() || '';
+  }, [isProduction, externalCompanyPick, externalCompanies, formData.external_company_name]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.title) return alert('Nhập tên Deal');
@@ -165,6 +193,9 @@ export default function NewDealModal({
     if (isProduction) {
       if (!visibleWorkTypes.length) return alert('Công ty chưa cấu hình phân loại xưởng');
       if (!formData.workshop_type_id) return alert('Chọn phân loại xưởng');
+      if (externalCompanyPick === '__new__' && !formData.external_company_name?.trim()) {
+        return alert('Nhập tên công ty bên ngoài hoặc chọn «Không chọn»');
+      }
     }
 
     setSaving(true);
@@ -182,6 +213,7 @@ export default function NewDealModal({
           install_address: formData.install_address || null,
           estimated_value: parseFloat(formData.estimated_value) || 0,
           description: formData.description || null,
+          external_company_name: resolvedExternalCompanyName || null,
         });
         onSuccess?.(data);
         onClose();
@@ -289,12 +321,16 @@ export default function NewDealModal({
                   {isAdmin ? (
                     <select
                       value={formData.company_id}
-                      onChange={(e) => setFormData((prev) => ({
-                        ...prev,
-                        company_id: e.target.value,
-                        region_id: '',
-                        workshop_type_id: '',
-                      }))}
+                      onChange={(e) => {
+                        setExternalCompanyPick('');
+                        setFormData((prev) => ({
+                          ...prev,
+                          company_id: e.target.value,
+                          region_id: '',
+                          workshop_type_id: '',
+                          external_company_name: '',
+                        }));
+                      }}
                       required
                       className={`w-full px-3 py-2 border rounded-lg focus:ring-2 ${ringClass} text-sm ${!formData.company_id ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
                     >
@@ -366,6 +402,44 @@ export default function NewDealModal({
                   </div>
                 </div>
               </div>
+
+              {isProduction && formData.company_id && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">
+                    🏢 Công ty bên ngoài / đơn vị đối tác
+                  </label>
+                  <select
+                    value={externalCompanyPick}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setExternalCompanyPick(v);
+                      if (v !== '__new__') set('external_company_name', '');
+                    }}
+                    className={`w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 ${ringClass} text-sm`}
+                  >
+                    <option value="">— Không chọn —</option>
+                    {externalCompanies.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                    <option value="__new__">➕ Nhập công ty mới…</option>
+                  </select>
+                  {externalCompanyPick === '__new__' && (
+                    <input
+                      type="text"
+                      value={formData.external_company_name}
+                      onChange={(e) => set('external_company_name', e.target.value)}
+                      className={`mt-2 w-full px-3 py-2 border rounded-lg focus:ring-2 ${ringClass} text-sm ${
+                        !formData.external_company_name?.trim() ? 'border-amber-300 bg-amber-50' : 'border-gray-200'
+                      }`}
+                      placeholder="VD: Công ty đối tác B2B"
+                      autoFocus
+                    />
+                  )}
+                  <p className="mt-1 text-[10px] text-gray-400">
+                    Tùy chọn — tên mới sẽ được lưu vào danh sách để chọn lại lần sau
+                  </p>
+                </div>
+              )}
 
               {isProduction && (
                 <div>
@@ -547,6 +621,9 @@ export default function NewDealModal({
                 )}
                 {workTypeName && (
                   <div className="flex items-center gap-1.5"><span className="text-gray-400">📦</span><span>{workTypeName}</span></div>
+                )}
+                {resolvedExternalCompanyName && (
+                  <div className="flex items-center gap-1.5"><span className="text-gray-400">🤝</span><span className="truncate">{resolvedExternalCompanyName}</span></div>
                 )}
               </div>
 

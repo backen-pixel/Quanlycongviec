@@ -1730,8 +1730,10 @@ r.put('/:id', requirePermission('projects', 'edit'), async (req, res) => {
   try {
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
-    const fields = ['name','description','status','customer_id','kitchen_type','material','install_address','estimated_value','final_value','priority','sales_person_id','designer_id','project_manager_id','design_deadline','production_start_date','install_date','consulting_person_id','design_person_id','quotation_person_id','contract_person_id','production_person_id','shipping_person_id','installation_person_id','care_person_id','quotation_files','deadline','notes','supervisor_id','production_deadline','production_note','workshop_type_id'];
+    const fields = ['name','description','status','customer_id','kitchen_type','material','install_address','estimated_value','final_value','priority','sales_person_id','designer_id','project_manager_id','design_deadline','production_start_date','install_date','consulting_person_id','design_person_id','quotation_person_id','contract_person_id','production_person_id','shipping_person_id','installation_person_id','care_person_id','quotation_files','deadline','notes','supervisor_id','production_deadline','production_note','workshop_type_id','order_date','delivery_date'];
+    const dateFields = ['deadline', 'design_deadline', 'production_start_date', 'install_date', 'production_deadline', 'order_date', 'delivery_date'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
+    dateFields.forEach((f) => { if (update[f] === '') update[f] = null; });
 
     const { data: old } = await supabase.from('projects').select('status,name,workshop_type_id,company_id,production_person_id').eq('id', req.params.id).single();
 
@@ -1741,7 +1743,7 @@ r.put('/:id', requirePermission('projects', 'edit'), async (req, res) => {
     if (error && error.message?.includes('column')) {
       // Remove fields that may not exist yet (need migration)
       const safeCopy = { ...update };
-      ['deadline', 'notes'].forEach(f => delete safeCopy[f]);
+      ['deadline', 'notes', 'order_date', 'delivery_date'].forEach(f => delete safeCopy[f]);
       ({ data, error } = await supabase.from('projects').update(safeCopy).eq('id', req.params.id).select(`*, customers(id,full_name,phone), current_stage:workflow_stages(id,name,slug,color)`).single());
     }
     if (error) throw error;

@@ -20,7 +20,7 @@ import { publicFileUrl as pubUrl, getFileOpenAnchorProps } from '../lib/publicFi
 import {
   ArrowLeft, FolderKanban, MessageSquare, Plus, X,
   FileUp, Edit2, Save, ChevronDown, Trash2, Send, Paperclip,
-  AlertTriangle, CheckCircle2, Circle, Clock, Truck, Wrench,
+  AlertTriangle, CheckCircle2, Circle, Clock, Truck, Wrench, ArrowRightLeft, Loader2,
 } from 'lucide-react';
 import CRMTasksTab from '../components/CRMTasksTab';
 import UnifiedTaskHistoryWidget from '../components/UnifiedTaskHistoryWidget';
@@ -238,6 +238,56 @@ function WorkshopInfoPanel({
           </div>
         </div>
       )}
+
+      {/* Ngày đặt hàng */}
+      <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'order_date' && startEdit('order_date', project.order_date ? project.order_date.substring(0, 10) : '')}>
+        <span className="text-sm mt-0.5 shrink-0">🛒</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Ngày đặt hàng</p>
+          {editing === 'order_date' ? (
+            <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+              <input type="date" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
+                className="px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400" />
+              <button onClick={() => save('order_date', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+              <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+            </div>
+          ) : (
+            <p className="text-sm font-medium text-gray-900 flex items-center gap-1">{project.order_date ? formatDate(project.order_date) : '—'} <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" /></p>
+          )}
+        </div>
+      </div>
+
+      {/* Ngày giao hàng */}
+      {(() => {
+        const dd = project.delivery_date;
+        const ddDate = dd ? new Date(dd) : null;
+        const isOverdue = ddDate && ddDate < new Date();
+        const isSoon = ddDate && !isOverdue && ddDate < new Date(Date.now() + 3 * 86400000);
+        return (
+          <div className={`flex items-start gap-2 py-2 px-1 rounded-lg -mx-1 transition-colors group cursor-pointer ${isOverdue ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}
+            onClick={() => editing !== 'delivery_date' && startEdit('delivery_date', dd ? dd.substring(0, 10) : '')}>
+            <span className="text-sm mt-0.5 shrink-0">🚚</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Ngày giao hàng</p>
+              {editing === 'delivery_date' ? (
+                <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                  <input type="date" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
+                    className="px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400" />
+                  <button onClick={() => save('delivery_date', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+                  <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+                </div>
+              ) : (
+                <p className={`text-sm font-medium flex items-center gap-1 ${isOverdue ? 'text-red-600' : isSoon ? 'text-amber-600' : 'text-gray-900'}`}>
+                  {dd ? formatDate(dd) : '—'}
+                  {isOverdue && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold">Trễ!</span>}
+                  {isSoon && <span className="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded font-bold">Sắp tới</span>}
+                  <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" />
+                </p>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Deadline */}
       <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'deadline' && startEdit('deadline', project.deadline ? project.deadline.substring(0, 10) : '')}>
@@ -983,6 +1033,8 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [handoverCompanies, setHandoverCompanies] = useState([]);
   const [handoverErr, setHandoverErr] = useState('');
   const [handoverSaving, setHandoverSaving] = useState(false);
+  const [switchWorkshopModal, setSwitchWorkshopModal] = useState(null);
+  const [switchWorkshopSaving, setSwitchWorkshopSaving] = useState(false);
 
   // Document upload state
   const [uploadingDoc, setUploadingDoc] = useState(false);
@@ -1500,6 +1552,40 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     setHandoverSaving(false);
   }, [handoverModal, handoverLogisticsCompanyId, closeHandoverModal, refreshProjectSilently, productionStages]);
 
+  const confirmSwitchWorkshopFromDetail = useCallback(async () => {
+    if (!switchWorkshopModal?.targetCol || !id || switchWorkshopSaving) return;
+    setSwitchWorkshopSaving(true);
+    try {
+      const { data } = await api.patch(`/production/projects/${id}/switch-workshop-type`, {
+        production_pipeline_stage_id: switchWorkshopModal.targetCol.id,
+        current_sx_pipeline_stage_id: switchWorkshopModal.currentColId || null,
+      });
+      const updated = data?.project;
+      setProject((prev) => (prev && updated ? {
+        ...prev,
+        workshop_type_id: updated.workshop_type_id ?? data?.to_workshop_type_id,
+        workshop_type: updated.workshop_type ?? prev.workshop_type,
+        sx_kanban_column_id: updated.sx_kanban_column_id ?? data?.pipeline_stage_id,
+        sx_pipeline_stage: updated.sx_pipeline_stage ?? prev.sx_pipeline_stage,
+        sx_intake: false,
+        current_stage_id: updated.current_stage_id ?? prev.current_stage_id,
+        current_stage: updated.current_stage ?? prev.current_stage,
+        status: updated.status ?? prev.status,
+      } : prev));
+      setSwitchWorkshopModal(null);
+      window.setTimeout(() => { refreshProjectSilently(); }, 200);
+      if (typeof window !== 'undefined') {
+        window.setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('crm-project-badges-refresh', { detail: { projectId: String(id) } }));
+        }, 280);
+      }
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi chuyển phân loại');
+      refreshProjectSilently();
+    }
+    setSwitchWorkshopSaving(false);
+  }, [switchWorkshopModal, switchWorkshopSaving, id, refreshProjectSilently]);
+
   const ensureCrmDealAndSxTasks = useCallback(async () => {
     if (ensuringCrmDeal) return;
     setEnsuringCrmDeal(true);
@@ -1609,6 +1695,17 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         // Nếu cột SX có cờ "bàn giao VC" → mở modal chọn công ty VC/LĐ thay vì patch stage thường
         if (sxStage?.is_handover_to_logistics === true) {
           setHandoverModal({ projectId: id, projectName: project?.name || project?.code || '', targetSxStageId: sxStage?.id || stageId });
+          return;
+        }
+        if (sxStage?.is_switch_workshop_type === true && sxStage?.target_workshop_type_id) {
+          const fromName = project?.workshop_type?.name || 'Phân loại hiện tại';
+          const toName = sxStage?.target_workshop_type?.name || 'Phân loại đích';
+          setSwitchWorkshopModal({
+            targetCol: sxStage,
+            fromName,
+            toName,
+            currentColId: project?.sx_kanban_column_id || project?.crmDeals?.[0]?.sx_pipeline_stage?.id || null,
+          });
           return;
         }
         // Intake (Chờ vào xưởng) không có workflow_stage_id → dùng move_to_intake giống Kanban drag.
@@ -2633,6 +2730,38 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         remainingTasks={blockingTasksModal?.remainingTasks || []}
         onGoToTasks={() => { try { setActiveTab('tasks'); } catch (_) { /* tab có thể chưa khởi tạo */ } }}
       />
+
+      {/* Chuyển phân loại (cột có cờ is_switch_workshop_type) */}
+      {switchWorkshopModal && moduleKey !== 'vc' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => { if (!switchWorkshopSaving) setSwitchWorkshopModal(null); }}>
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <ArrowRightLeft className="h-5 w-5 text-violet-600" /> Chuyển phân loại
+              </h2>
+              <button type="button" onClick={() => !switchWorkshopSaving && setSwitchWorkshopModal(null)} className="p-1 hover:bg-gray-100 rounded cursor-pointer">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="text-sm text-gray-600 mb-2">
+              Dự án <strong>{project?.name || project?.code}</strong> sẽ chuyển sang pipeline phân loại mới.
+            </p>
+            <div className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2.5 text-sm mb-4 space-y-1">
+              <p><span className="text-gray-500">Từ:</span> <strong>{switchWorkshopModal.fromName}</strong> → cột «{switchWorkshopModal.targetCol?.name}»</p>
+              <p><span className="text-gray-500">Sang:</span> <strong>{switchWorkshopModal.toName}</strong> → cột đầu pipeline</p>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={() => !switchWorkshopSaving && setSwitchWorkshopModal(null)} disabled={switchWorkshopSaving}
+                className="h-10 px-4 text-sm text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-50">Hủy</button>
+              <button type="button" onClick={confirmSwitchWorkshopFromDetail} disabled={switchWorkshopSaving}
+                className="h-10 px-4 text-sm bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50 flex items-center gap-2">
+                {switchWorkshopSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRightLeft className="h-4 w-4" />}
+                {switchWorkshopSaving ? 'Đang chuyển...' : 'Xác nhận chuyển'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* SX → VC/LĐ handover modal (khi đổi stage tới cột có cờ bàn giao VC) */}
       {handoverModal && moduleKey !== 'vc' && (

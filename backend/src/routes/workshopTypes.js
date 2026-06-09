@@ -161,6 +161,16 @@ r.delete('/project-types/:id', requirePermission('projects', 'edit'), async (req
     if ((count || 0) > 0) {
       return res.status(400).json({ error: `Không thể xóa — ${count} dự án đang dùng loại này` });
     }
+    // Gỡ deal khỏi cột pipeline SX trước khi xóa phân loại (cột cascade theo type).
+    const { data: stageRows } = await supabase
+      .from('production_pipeline_stages')
+      .select('id')
+      .eq('workshop_type_id', req.params.id);
+    const stageIds = (stageRows || []).map((s) => s.id).filter(Boolean);
+    if (stageIds.length) {
+      await supabase.from('crm_leads').update({ sx_pipeline_stage_id: null }).in('sx_pipeline_stage_id', stageIds);
+      await supabase.from('crm_tasks').update({ production_pipeline_stage_id: null }).in('production_pipeline_stage_id', stageIds);
+    }
     const { error } = await supabase.from('workshop_project_types').delete().eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
