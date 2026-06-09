@@ -635,8 +635,13 @@ export function StaffFormModal({
     try {
       const payload = { ...form };
       if (!payload.password) delete payload.password;
+      if (editUserId) delete payload.email;
       payload.department_id = payload.department_id || null;
       payload.team_id = payload.team_id || null;
+      ['date_of_birth', 'hire_date', 'address', 'emergency_contact', 'notes', 'position'].forEach((k) => {
+        if (payload[k] === '') payload[k] = null;
+      });
+      if (payload.salary === '' || payload.salary == null) payload.salary = null;
       payload.crm_region_ids = Array.isArray(form.crm_region_ids) ? form.crm_region_ids : [];
       if (payload.avatar === undefined) delete payload.avatar;
       else if (payload.avatar === null || payload.avatar === '') payload.avatar = null;
