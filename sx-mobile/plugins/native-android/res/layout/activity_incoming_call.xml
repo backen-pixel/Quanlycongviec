@@ -1,0 +1,296 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:id="@+id/call_root"
+  android:layout_width="match_parent"
+  android:layout_height="match_parent"
+  android:background="#0A1628">
+
+  <View
+    android:layout_width="280dp"
+    android:layout_height="280dp"
+    android:layout_gravity="top|center_horizontal"
+    android:layout_marginTop="-40dp"
+    android:background="@drawable/call_decor_circle" />
+
+  <View
+    android:layout_width="200dp"
+    android:layout_height="200dp"
+    android:layout_gravity="bottom|start"
+    android:layout_marginStart="-60dp"
+    android:layout_marginBottom="120dp"
+    android:background="@drawable/call_decor_circle" />
+
+  <LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="center_horizontal"
+    android:orientation="vertical"
+    android:paddingHorizontal="32dp"
+    android:paddingTop="72dp"
+    android:paddingBottom="48dp">
+
+    <FrameLayout
+      android:layout_width="140dp"
+      android:layout_height="140dp"
+      android:layout_marginBottom="28dp">
+
+      <View
+        android:id="@+id/pulse_ring_3"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/call_pulse_ring" />
+
+      <View
+        android:id="@+id/pulse_ring_2"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_margin="12dp"
+        android:background="@drawable/call_pulse_ring" />
+
+      <View
+        android:id="@+id/pulse_ring_1"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_margin="24dp"
+        android:background="@drawable/call_pulse_ring" />
+
+      <TextView
+        android:id="@+id/avatar_text"
+        android:layout_width="96dp"
+        android:layout_height="96dp"
+        android:layout_gravity="center"
+        android:background="@drawable/call_avatar_bg"
+        android:gravity="center"
+        android:textColor="#FFFFFF"
+        android:textSize="32sp"
+        android:textStyle="bold" />
+    </FrameLayout>
+
+    <TextView
+      android:id="@+id/name_text"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:gravity="center"
+      android:textColor="#FFFFFF"
+      android:textSize="32sp"
+      android:textStyle="bold" />
+
+    <TextView
+      android:id="@+id/status_text"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="8dp"
+      android:letterSpacing="0.12"
+      android:textAllCaps="true"
+      android:textColor="#FB923C"
+      android:textSize="13sp"
+      android:textStyle="bold" />
+
+    <TextView
+      android:id="@+id/subtitle_text"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="6dp"
+      android:textColor="#94A3B8"
+      android:textSize="16sp" />
+
+    <LinearLayout
+      android:id="@+id/waveform_row"
+      android:layout_width="wrap_content"
+      android:layout_height="32dp"
+      android:layout_marginTop="20dp"
+      android:gravity="bottom|center_horizontal"
+      android:orientation="horizontal" />
+
+    <View
+      android:layout_width="match_parent"
+      android:layout_height="0dp"
+      android:layout_weight="1" />
+
+    <LinearLayout
+      android:id="@+id/secondary_row"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:gravity="center"
+      android:orientation="horizontal"
+      android:visibility="gone">
+
+      <LinearLayout
+        android:id="@+id/btn_mute_wrap"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="8dp">
+
+        <ImageButton
+          android:id="@+id/btn_mute_secondary"
+          android:layout_width="56dp"
+          android:layout_height="56dp"
+          android:background="@drawable/call_action_btn_bg"
+          android:contentDescription="Tắt tiếng"
+          android:padding="14dp"
+          android:scaleType="centerInside"
+          android:src="@android:drawable/ic_btn_speak_now" />
+
+        <TextView
+          android:layout_width="wrap_content"
+          android:layout_height="wrap_content"
+          android:layout_marginTop="8dp"
+          android:text="TẮT TIẾNG"
+          android:textColor="#64748B"
+          android:textSize="11sp"
+          android:textStyle="bold" />
+      </LinearLayout>
+
+      <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="8dp">
+
+        <ImageButton
+          android:id="@+id/btn_speaker"
+          android:layout_width="56dp"
+          android:layout_height="56dp"
+          android:background="@drawable/call_action_btn_bg"
+          android:contentDescription="Loa ngoài"
+          android:padding="14dp"
+          android:scaleType="centerInside"
+          android:src="@android:drawable/ic_lock_silent_mode_off" />
+
+        <TextView
+          android:layout_width="wrap_content"
+          android:layout_height="wrap_content"
+          android:layout_marginTop="8dp"
+          android:text="LOA NGOÀI"
+          android:textColor="#64748B"
+          android:textSize="11sp"
+          android:textStyle="bold" />
+      </LinearLayout>
+
+      <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="8dp">
+
+        <ImageButton
+          android:id="@+id/btn_keypad"
+          android:layout_width="56dp"
+          android:layout_height="56dp"
+          android:background="@drawable/call_action_btn_bg"
+          android:contentDescription="Bàn phím"
+          android:padding="14dp"
+          android:scaleType="centerInside"
+          android:src="@android:drawable/ic_dialog_dialer" />
+
+        <TextView
+          android:layout_width="wrap_content"
+          android:layout_height="wrap_content"
+          android:layout_marginTop="8dp"
+          android:text="BÀN PHÍM"
+          android:textColor="#64748B"
+          android:textSize="11sp"
+          android:textStyle="bold" />
+      </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+      android:id="@+id/incoming_row"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="24dp"
+      android:gravity="center"
+      android:orientation="horizontal">
+
+      <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <ImageButton
+          android:id="@+id/btn_decline"
+          android:layout_width="72dp"
+          android:layout_height="72dp"
+          android:background="@drawable/call_btn_decline_bg"
+          android:contentDescription="Từ chối"
+          android:padding="18dp"
+          android:scaleType="centerInside"
+          android:src="@android:drawable/ic_menu_close_clear_cancel"
+          android:tint="#F87171" />
+
+        <TextView
+          android:layout_width="wrap_content"
+          android:layout_height="wrap_content"
+          android:layout_marginTop="10dp"
+          android:text="Từ chối"
+          android:textColor="#94A3B8"
+          android:textSize="14sp" />
+      </LinearLayout>
+
+      <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <ImageButton
+          android:id="@+id/btn_accept"
+          android:layout_width="72dp"
+          android:layout_height="72dp"
+          android:background="@drawable/call_btn_answer_bg"
+          android:contentDescription="Trả lời"
+          android:padding="18dp"
+          android:scaleType="centerInside"
+          android:src="@android:drawable/stat_sys_phone_call"
+          android:tint="#4ADE80" />
+
+        <TextView
+          android:layout_width="wrap_content"
+          android:layout_height="wrap_content"
+          android:layout_marginTop="10dp"
+          android:text="Trả lời"
+          android:textColor="#94A3B8"
+          android:textSize="14sp" />
+      </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+      android:id="@+id/active_row"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="24dp"
+      android:gravity="center"
+      android:orientation="vertical"
+      android:visibility="gone">
+
+      <ImageButton
+        android:id="@+id/btn_end"
+        android:layout_width="72dp"
+        android:layout_height="72dp"
+        android:background="@drawable/call_btn_decline_bg"
+        android:contentDescription="Kết thúc"
+        android:padding="18dp"
+        android:scaleType="centerInside"
+        android:src="@android:drawable/stat_sys_phone_call"
+        android:tint="#F87171" />
+
+      <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:text="Kết thúc"
+        android:textColor="#94A3B8"
+        android:textSize="14sp" />
+    </LinearLayout>
+  </LinearLayout>
+</FrameLayout>

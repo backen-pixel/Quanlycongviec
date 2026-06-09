@@ -11,10 +11,16 @@ object LockScreenCallBridge {
   @Volatile
   private var uiActive: Boolean = false
 
+  @Volatile
+  var activeCallData: IncomingCallHelper.CallData? = null
+    private set
+
   fun isUiActive(): Boolean = uiActive
 
-  fun setUiActive(active: Boolean) {
+  fun setUiActive(active: Boolean, data: IncomingCallHelper.CallData? = null) {
     uiActive = active
+    if (data != null) activeCallData = data
+    if (!active) activeCallData = null
   }
 
   fun notifyState(
@@ -35,13 +41,18 @@ object LockScreenCallBridge {
         putExtra("is_muted", isMuted)
       },
     )
+    if (uiActive && (status == "connecting" || status == "incall" || status == "active" || status == "incoming" || status == "outgoing")) {
+      IncomingCallActivity.presentState(context, callId, status, durationMs, isMuted)
+    }
     if (status == "idle" || status == "ended") {
-      dismissUi(context)
+      dismissUi(context, force = true)
     }
   }
 
-  fun dismissUi(context: Context) {
+  fun dismissUi(context: Context, force: Boolean = false) {
+    if (uiActive && !force) return
     uiActive = false
+    activeCallData = null
     InCallForegroundService.stop(context)
     context.sendBroadcast(
       Intent(ACTION_STATE).setPackage(context.packageName).apply {
@@ -52,7 +63,7 @@ object LockScreenCallBridge {
 
   fun notifyEndFromNativeUi(context: Context, callId: String) {
     LockScreenCallModule.emitEndCall(callId)
-    dismissUi(context)
+    dismissUi(context, force = true)
   }
 
   fun notifyToggleMuteFromNativeUi(context: Context, callId: String) {

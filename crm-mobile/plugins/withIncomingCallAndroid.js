@@ -40,6 +40,20 @@ function copyNativeCall(projectRoot) {
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.copyFileSync(src, dest);
   }
+
+  const androidRes = path.join(projectRoot, 'android', 'app', 'src', 'main', 'res');
+  const sourceRes = path.join(SOURCE_ROOT, 'res');
+  if (!fs.existsSync(sourceRes)) return;
+  const copyResRecursive = (srcDir, destDir) => {
+    fs.mkdirSync(destDir, { recursive: true });
+    for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+      const srcPath = path.join(srcDir, entry.name);
+      const destPath = path.join(destDir, entry.name);
+      if (entry.isDirectory()) copyResRecursive(srcPath, destPath);
+      else fs.copyFileSync(srcPath, destPath);
+    }
+  };
+  copyResRecursive(sourceRes, androidRes);
 }
 
 function withIncomingCallAndroidManifest(config) {
@@ -68,6 +82,18 @@ function withIncomingCallAndroidManifest(config) {
         },
       });
     }
+
+    app.activity = app.activity || [];
+    const callAct = app.activity.find(
+      (a) => a.$?.['android:name'] === '.call.IncomingCallActivity',
+    );
+    if (callAct) {
+      callAct.$['android:launchMode'] = 'singleTop';
+      callAct.$['android:taskAffinity'] = 'vn.tubeppro.crmobile.call';
+      callAct.$['android:showWhenLocked'] = 'true';
+      callAct.$['android:turnScreenOn'] = 'true';
+    }
+
     return cfg;
   });
 }

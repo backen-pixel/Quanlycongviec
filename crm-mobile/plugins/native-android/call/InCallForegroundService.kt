@@ -1,6 +1,7 @@
 package vn.tubeppro.crmobile.call
 
 import android.app.Notification
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -11,9 +12,30 @@ import androidx.core.app.NotificationCompat
 /** Giữ process + micro khi cuộc gọi trên màn khóa (MainActivity ở background). */
 class InCallForegroundService : Service() {
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    val callId = intent?.getStringExtra("call_id")?.trim().orEmpty()
     val title = intent?.getStringExtra("title")?.trim().orEmpty().ifBlank { "Cuộc gọi đang diễn ra" }
     val body = intent?.getStringExtra("body")?.trim().orEmpty().ifBlank { "TuBep CRM" }
     IncomingCallHelper.ensureCallChannel(this)
+    val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    val reopenIntent = if (callId.isNotBlank()) {
+      IncomingCallActivity.createIntent(this, IncomingCallHelper.CallData(
+        callId = callId,
+        fromUserId = "0",
+        fromName = title,
+        isGroup = false,
+        groupId = "",
+        groupName = "",
+      )).apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        putExtra("call_state", "incall")
+        putExtra("duration_ms", 0L)
+      }
+    } else {
+      packageManager.getLaunchIntentForPackage(packageName)
+    }
+    val contentPending = reopenIntent?.let {
+      PendingIntent.getActivity(this, LOCK_SCREEN_CALL_NOTIF_ID, it, pendingFlags)
+    }
     val notification: Notification = NotificationCompat.Builder(this, IncomingCallHelper.CALL_CHANNEL)
       .setSmallIcon(android.R.drawable.stat_sys_phone_call)
       .setContentTitle(title)
@@ -21,6 +43,11 @@ class InCallForegroundService : Service() {
       .setOngoing(true)
       .setCategory(NotificationCompat.CATEGORY_CALL)
       .setPriority(NotificationCompat.PRIORITY_LOW)
+      .apply {
+        if (contentPending != null) {
+          setContentIntent(contentPending)
+        }
+      }
       .build()
     val id = LOCK_SCREEN_CALL_NOTIF_ID
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -44,8 +71,9 @@ class InCallForegroundService : Service() {
   companion object {
     const val LOCK_SCREEN_CALL_NOTIF_ID = 910_001
 
-    fun start(context: android.content.Context, title: String, body: String) {
+    fun start(context: android.content.Context, callId: String, title: String, body: String) {
       val intent = Intent(context, InCallForegroundService::class.java).apply {
+        putExtra("call_id", callId)
         putExtra("title", title)
         putExtra("body", body)
       }

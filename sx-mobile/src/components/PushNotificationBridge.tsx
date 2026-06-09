@@ -1,25 +1,27 @@
 import * as Notifications from 'expo-notifications';
 import { useEffect, useRef } from 'react';
+import {
+  openChatFromBubble,
+  openProjectCommentFromNotif,
+} from '../navigation/navigationRef';
 
-type OpenCommentPayload = { projectId: string };
-
-type Props = {
-  onOpenComment: (payload: OpenCommentPayload) => void;
-};
-
-function extractProjectId(data: Record<string, unknown> | undefined): string | null {
-  if (!data) return null;
+function parseMeta(data: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!data) return undefined;
   let meta = data.metadata;
   if (typeof meta === 'string') {
     try {
       meta = JSON.parse(meta) as Record<string, unknown>;
     } catch {
-      meta = undefined;
+      return undefined;
     }
   }
-  if (meta && typeof meta === 'object' && (meta as Record<string, unknown>).project_id) {
-    return String((meta as Record<string, unknown>).project_id);
-  }
+  return meta && typeof meta === 'object' ? (meta as Record<string, unknown>) : undefined;
+}
+
+function extractProjectId(data: Record<string, unknown> | undefined): string | null {
+  if (!data) return null;
+  const meta = parseMeta(data);
+  if (meta?.project_id) return String(meta.project_id);
   const direct = data.project_id ?? data.projectId;
   if (direct) return String(direct);
   const entityId = data.entity_id ?? data.entityId;
@@ -27,31 +29,51 @@ function extractProjectId(data: Record<string, unknown> | undefined): string | n
   return null;
 }
 
-export default function PushNotificationBridge({ onOpenComment }: Props) {
-  const handlerRef = useRef(onOpenComment);
-  handlerRef.current = onOpenComment;
+function extractChatPayload(data: Record<string, unknown> | undefined): { groupId: string; title: string } | null {
+  if (!data) return null;
+  const type = String(data.type || '');
+  if (type !== 'messenger_chat') return null;
+  const entityType = String(data.entity_type || data.entityType || '');
+  const groupId = String(data.entity_id ?? data.entityId ?? data.group_id ?? data.groupId ?? '');
+  if (!groupId) return null;
+  if (entityType && entityType !== 'messenger_group') return null;
+  const meta = parseMeta(data);
+  const title =
+    (typeof data.group_name === 'string' && data.group_name.trim())
+    || (typeof meta?.group_name === 'string' && meta.group_name.trim())
+    || (typeof data.title === 'string' && data.title.trim())
+    || 'Tin nhắn';
+  return { groupId, title };
+}
+
+function handleNotificationData(data: Record<string, unknown> | undefined): void {
+  const chat = extractChatPayload(data);
+  if (chat) {
+    openChatFromBubble(chat.groupId, chat.title);
+    return;
+  }
+  const pid = extractProjectId(data);
+  if (pid) openProjectCommentFromNotif(pid);
+}
+
+export default function PushNotificationBridge() {
+  const handledRef = useRef<string | null>(null);
 
   useEffect(() => {
     void Notifications.getLastNotificationResponseAsync().then((response) => {
       const data = response?.notification?.request?.content?.data as Record<string, unknown> | undefined;
-      const pid = extractProjectId(data);
-      if (pid) handlerRef.current({ projectId: pid });
+      const key = JSON.stringify(data || {});
+      if (handledRef.current === key) return;
+      handledRef.current = key;
+      handleNotificationData(data);
     });
 
     const sub = Notifications.addNotificationResponseReceivedListener((response) => {
       const data = response.notification.request.content.data as Record<string, unknown> | undefined;
-      const pid = extractProjectId(data);
-      if (pid) handlerRef.current({ projectId: pid });
+      handleNotificationData(data);
     });
 
-    const subFg = Notifications.addNotificationReceivedListener(() => {
-      /* badge refresh handled by NotificationContext polling */
-    });
-
-    return () => {
-      sub.remove();
-      subFg.remove();
-    };
+    return () => sub.remove();
   }, []);
 
   return null;

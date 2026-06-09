@@ -4,10 +4,17 @@ import * as Notifications from 'expo-notifications';
 import React, { useEffect, useMemo } from 'react';
 import { Text, TextInput } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import PushNotificationBridge from './src/components/PushNotificationBridge';
+import CallNotificationBridge from './src/components/call/CallNotificationBridge';
+import CallOverlay from './src/components/call/CallOverlay';
+import SystemBubbleSync from './src/components/SystemBubbleSync';
 import { AuthProvider } from './src/context/AuthContext';
+import { CallProvider } from './src/context/CallContext';
+import { MessengerProvider } from './src/context/MessengerContext';
 import { NotificationProvider } from './src/context/NotificationContext';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
 import { setupNotificationChannels } from './src/lib/notificationChannels';
+import { navigationRef } from './src/navigation/navigationRef';
 import RootNavigator from './src/navigation/RootNavigator';
 
 Notifications.setNotificationHandler({
@@ -47,8 +54,12 @@ function AppShell() {
   );
 
   return (
-    <NavigationContainer theme={navTheme}>
+    <NavigationContainer ref={navigationRef} theme={navTheme}>
       <RootNavigator />
+      <CallOverlay />
+      <CallNotificationBridge />
+      <SystemBubbleSync />
+      <PushNotificationBridge />
       <StatusBar style={isDark ? 'light' : 'dark'} />
     </NavigationContainer>
   );
@@ -60,7 +71,11 @@ export default function App() {
       <ThemeProvider>
         <AuthProvider>
           <NotificationProvider>
-            <AppShell />
+            <MessengerProvider>
+              <CallProvider>
+                <AppShell />
+              </CallProvider>
+            </MessengerProvider>
           </NotificationProvider>
         </AuthProvider>
       </ThemeProvider>

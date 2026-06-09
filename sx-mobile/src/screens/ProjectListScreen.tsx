@@ -16,7 +16,7 @@ import { useTheme } from '../context/ThemeContext';
 import { fetchProductionBoard } from '../lib/productionApi';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { useRootNavigation } from '../navigation/useRootNavigation';
-import { Radii, Spacing, stageColor } from '../theme';
+import { Radii, Spacing, getTaskProgressColor, stageColor } from '../theme';
 import type { ProductionBoard } from '../types';
 
 function formatDate(value?: string | null): string {
@@ -169,6 +169,7 @@ export default function ProjectListScreen() {
         renderItem={({ item }) => {
           const stage = item.resolved_column_id ? stageNameById.get(item.resolved_column_id) : null;
           const progress = Math.max(0, Math.min(100, Number(item.progress || 0)));
+          const progressColor = getTaskProgressColor(progress, colors);
           return (
             <TapHighlight style={styles.row} onPress={() => openProjectDetail(item.id)}>
               <View style={styles.rowTop}>
@@ -186,7 +187,7 @@ export default function ProjectListScreen() {
                 {item.deadline ? ` • ${formatDate(item.deadline)}` : ''}
               </Text>
               <View style={styles.progressTrack}>
-                <View style={[styles.progressFill, { width: `${progress}%`, backgroundColor: stage?.color || colors.primary }]} />
+                <View style={[styles.progressFill, { width: `${progress}%`, backgroundColor: progressColor }]} />
               </View>
             </TapHighlight>
           );

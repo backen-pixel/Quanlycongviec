@@ -27,7 +27,7 @@ import {
   taskDeadline,
 } from '../lib/projectDetailApi';
 import type { RootStackParamList } from '../navigation/RootNavigator';
-import { formatMoneyAmount, Radii, Spacing } from '../theme';
+import { formatMoneyAmount, Radii, Spacing, getTaskProgressColor } from '../theme';
 import type { CrmTask, ProductionProjectDetail, ProjectActivity } from '../types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ProjectDetail'>;
@@ -112,6 +112,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
     ),
     [tasks, project?.productionTaskProgress, project?.progress],
   );
+  const progressColor = getTaskProgressColor(progress, colors);
   const docCount = project?.sharedDocuments?.length ?? 0;
   const valueStr = formatMoneyAmount(project?.estimated_value);
 
@@ -172,7 +173,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           backgroundColor: colors.cardAlt,
           overflow: 'hidden',
         },
-        progressFill: { height: '100%', borderRadius: Radii.full, backgroundColor: colors.primary },
+        progressFill: { height: '100%', borderRadius: Radii.full },
         progressPct: { color: colors.textFaint, fontSize: 11, fontWeight: '700', marginTop: 6, textAlign: 'right' },
         tabs: {
           flexDirection: 'row',
@@ -333,9 +334,9 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           <View style={styles.progressBox}>
             <Text style={styles.progressLabel}>Tiến độ sản xuất</Text>
             <View style={styles.progressTrack}>
-              <View style={[styles.progressFill, { width: `${Math.min(100, progress)}%` }]} />
+              <View style={[styles.progressFill, { width: `${Math.min(100, progress)}%`, backgroundColor: progressColor }]} />
             </View>
-            <Text style={styles.progressPct}>{progress}%</Text>
+            <Text style={[styles.progressPct, { color: progressColor }]}>{progress}%</Text>
           </View>
         </View>
 

@@ -19,9 +19,9 @@ import TapHighlight from '../components/TapHighlight';
 import FilterPickerModal from '../components/FilterPickerModal';
 import MoveColumnModal from '../components/MoveColumnModal';
 import ProjectCommentModal from '../components/ProjectCommentModal';
-import PushNotificationBridge from '../components/PushNotificationBridge';
 import Toast, { type ToastKind, type ToastState } from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
+import { useMessenger } from '../context/MessengerContext';
 import { useNotifications } from '../context/NotificationContext';
 import { useRootNavigation } from '../navigation/useRootNavigation';
 import {
@@ -35,9 +35,10 @@ import {
   type CompanyOption,
   type WorkshopTypeOption,
 } from '../lib/productionApi';
+import { ensureNotificationPermission } from '../lib/pushRegistration';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { useTheme } from '../context/ThemeContext';
-import { type AppColors, formatMoneyAmount, HIT_TARGET, Radii, Spacing, stageColor } from '../theme';
+import { type AppColors, colorWithAlpha, formatMoneyAmount, getTaskProgressColor, HIT_TARGET, Radii, Spacing, stageColor } from '../theme';
 import type { KanbanStage, ProductionBoard, ProductionProject } from '../types';
 
 type QuickFilter = 'all' | 'mine' | 'overdue' | 'today';
@@ -135,8 +136,9 @@ export default function KanbanScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const { unreadCount, refreshUnread, commentToast, dismissCommentToast, projectMetaRef } = useNotifications();
-  const { openProjectDetail } = useRootNavigation();
+  const { openProjectDetail, openMessages } = useRootNavigation();
   const myId = user?.id || user?.userId || null;
+  const { unreadTotal: messageUnread } = useMessenger();
 
   const [board, setBoard] = useState<ProductionBoard>({ stages: [], projects: [], kpis: null });
   const [loading, setLoading] = useState(true);
@@ -433,6 +435,17 @@ export default function KanbanScreen() {
           <Text style={styles.appSub}>Bảng điều hành sản xuất</Text>
         </View>
         <View style={styles.headerBtns}>
+          <TapHighlight style={styles.iconBtn} onPress={() => openMessages('chats')} hitSlop={8}>
+            <Ionicons name="chatbubbles-outline" size={20} color={colors.text} />
+            {messageUnread > 0 ? (
+              <View style={[styles.notifBadge, styles.msgBadge]}>
+                <Text style={styles.notifBadgeText}>{messageUnread > 99 ? '99+' : messageUnread}</Text>
+              </View>
+            ) : null}
+          </TapHighlight>
+          <TapHighlight style={styles.iconBtn} onPress={() => openMessages('calls')} hitSlop={8}>
+            <Ionicons name="call-outline" size={20} color={colors.text} />
+          </TapHighlight>
           <TapHighlight style={styles.iconBtn} onPress={() => void openNotifications()} hitSlop={8}>
             <Ionicons name="notifications-outline" size={20} color={colors.text} />
             {unreadCount > 0 ? (
@@ -668,6 +681,7 @@ export default function KanbanScreen() {
         }
         renderItem={({ item }) => {
           const progress = Math.max(0, Math.min(100, Number(item.progress || 0)));
+          const progressColor = getTaskProgressColor(progress, colors);
           const isMoving = movingId === item.id;
           const workTypeName = item.workshop_type_name;
           const workTypeColor = workTypeName ? typeColor(workTypeName) : null;
@@ -752,17 +766,28 @@ export default function KanbanScreen() {
               ) : null}
 
               {/* Tasks + progress */}
-              <View style={styles.progressSection}>
-                <Text style={styles.taskCount}>
-                  {item.done_tasks || 0}/{item.task_total || 0} nhiệm vụ
-                </Text>
-                <View style={styles.progressRow}>
-                  <View style={styles.progressTrack}>
-                    <View style={[styles.progressFill, { width: `${progress}%`, backgroundColor: accent }]} />
+              {(item.task_total || 0) > 0 ? (
+                <View style={styles.progressSection}>
+                  <View style={styles.taskCountRow}>
+                    <Ionicons name="checkbox-outline" size={13} color={progressColor} />
+                    <Text style={styles.taskCount}>
+                      <Text style={{ color: progressColor, fontWeight: '800' }}>{item.done_tasks || 0}</Text>
+                      <Text style={{ color: colors.textMuted }}>/{item.task_total} nhiệm vụ</Text>
+                    </Text>
                   </View>
-                  <Text style={styles.progressPct}>{progress}%</Text>
+                  <View style={styles.progressRow}>
+                    <View style={[styles.progressTrack, { backgroundColor: colorWithAlpha(progressColor, 0.18) }]}>
+                      <View
+                        style={[
+                          styles.progressFill,
+                          { width: `${progress}%`, backgroundColor: progressColor },
+                        ]}
+                      />
+                    </View>
+                    <Text style={[styles.progressPct, { color: progressColor }]}>{progress}%</Text>
+                  </View>
                 </View>
-              </View>
+              ) : null}
 
               </Pressable>
               {/* Bottom: value + icon actions */}
@@ -849,8 +874,6 @@ export default function KanbanScreen() {
         onOpenProject={(projectId) => void openCommentForProjectId(projectId)}
       />
 
-      <PushNotificationBridge onOpenComment={({ projectId }) => void openCommentForProjectId(projectId)} />
-
       <FilterPickerModal
         visible={companyPickerOpen}
         title="Chọn công ty"
@@ -910,6 +933,7 @@ function createKanbanStyles(c: AppColors) {
     backgroundColor: c.danger, alignItems: 'center', justifyContent: 'center',
     borderWidth: 2, borderColor: c.bg,
   },
+  msgBadge: { backgroundColor: '#6C5CE7' },
   notifBadgeText: { color: c.white, fontSize: 10, fontWeight: '800' },
   commentToast: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
@@ -1062,14 +1086,15 @@ function createKanbanStyles(c: AppColors) {
   stageHint: { color: c.textFaint, fontSize: 11, marginBottom: 4, fontStyle: 'italic' },
 
   progressSection: { marginTop: 6 },
-  taskCount: { color: c.textMuted, fontSize: 11, marginBottom: 4 },
+  taskCountRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 5 },
+  taskCount: { color: c.textMuted, fontSize: 11, fontWeight: '600' },
   progressRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   progressTrack: {
-    flex: 1, height: 6, borderRadius: Radii.full,
-    backgroundColor: c.cardAlt, overflow: 'hidden',
+    flex: 1, height: 8, borderRadius: Radii.full,
+    overflow: 'hidden',
   },
-  progressFill: { height: 6, borderRadius: Radii.full },
-  progressPct: { color: c.textMuted, fontSize: 11, fontWeight: '700', width: 32, textAlign: 'right' },
+  progressFill: { height: 8, borderRadius: Radii.full },
+  progressPct: { fontSize: 11, fontWeight: '800', width: 34, textAlign: 'right' },
 
   cardBottom: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

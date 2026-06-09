@@ -75,14 +75,28 @@ object IncomingCallHelper {
   fun showIncomingCall(context: Context, data: CallData) {
     val callId = data.callId.trim()
     if (callId.isBlank()) return
-    if (isJsHandlingCall(context, callId)) return
+    if (IncomingCallActivity.currentCallId == callId && LockScreenCallBridge.isUiActive()) return
     if (wasRecentlyDismissed(context, callId)) return
     if (activeRingingCallId == callId) return
     activeRingingCallId = callId
+    LockScreenCallBridge.setUiActive(true, data)
     wakeScreen(context)
     ensureCallChannel(context)
     startRingServiceWithCall(context, data)
     tryLaunchFullScreenActivity(context, data)
+  }
+
+  /**
+   * Sau khi user bấm Trả lời trên màn native:
+   * 1) Lưu pending intent (accept)
+   * 2) Dừng chuông
+   * 3) Luôn boot MainActivity nền để RN consume intent và xử lý signaling/WebRTC
+   */
+  fun completeNativeAccept(context: Context, data: CallData) {
+    stashPendingCall(context, data, "accept")
+    markCallAnswered(context, data.callId)
+    LockScreenCallBridge.setUiActive(true, data)
+    launchMainForCallBackground(context, data, "accept")
   }
 
   private fun tryLaunchFullScreenActivity(context: Context, data: CallData) {
@@ -92,6 +106,7 @@ object IncomingCallHelper {
           addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK
               or Intent.FLAG_ACTIVITY_SINGLE_TOP
+              or Intent.FLAG_ACTIVITY_CLEAR_TOP
               or Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS,
           )
         },
@@ -188,10 +203,9 @@ object IncomingCallHelper {
 
   fun launchMainForCallBackground(context: Context, data: CallData, callAction: String?) {
     stashPendingCall(context, data, callAction)
-    cancelCallNotification(context, data.callId)
-    LockScreenCallBridge.setUiActive(true)
+    LockScreenCallBridge.setUiActive(true, data)
     val intent = Intent(context, MainActivity::class.java).apply {
-      flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+      flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_NO_ANIMATION
       putExtra("incoming_call", true)
       putExtra("lock_screen_call", true)
       putExtra("call_id", data.callId)

@@ -4,6 +4,10 @@ import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import LoginScreen from '../screens/LoginScreen';
+import ChatDetailInfoScreen from '../screens/ChatDetailInfoScreen';
+import ChatDetailScreen from '../screens/ChatDetailScreen';
+import MessengerForwardScreen from '../screens/MessengerForwardScreen';
+import MessagesScreen from '../screens/MessagesScreen';
 import ProjectDetailScreen from '../screens/ProjectDetailScreen';
 import MainTabs from './MainTabs';
 
@@ -11,6 +15,21 @@ export type RootStackParamList = {
   Login: undefined;
   Main: undefined;
   ProjectDetail: { projectId: string };
+  Messages: { tab?: 'chats' | 'calls' } | undefined;
+  ChatDetail: { threadId: string; title: string };
+  MessengerForward: {
+    excludeGroupId: string;
+    sourceTitle: string;
+    messagesJson: string;
+  };
+  ChatDetailInfo: {
+    threadId: string;
+    title: string;
+    avatarColor?: string;
+    avatarUrl?: string | null;
+    isDirect?: boolean;
+    messagesJson: string;
+  };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -40,6 +59,26 @@ export default function RootNavigator() {
           <Stack.Screen
             name="ProjectDetail"
             component={ProjectDetailScreen}
+            options={{ animation: 'slide_from_right' }}
+          />
+          <Stack.Screen
+            name="Messages"
+            component={MessagesScreen}
+            options={{ animation: 'slide_from_right' }}
+          />
+          <Stack.Screen
+            name="ChatDetail"
+            component={ChatDetailScreen}
+            options={{ animation: 'slide_from_right' }}
+          />
+          <Stack.Screen
+            name="MessengerForward"
+            component={MessengerForwardScreen}
+            options={{ animation: 'slide_from_bottom' }}
+          />
+          <Stack.Screen
+            name="ChatDetailInfo"
+            component={ChatDetailInfoScreen}
             options={{ animation: 'slide_from_right' }}
           />
         </>

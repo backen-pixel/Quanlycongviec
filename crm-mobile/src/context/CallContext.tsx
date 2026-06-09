@@ -7,7 +7,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { AppState } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import {
   mediaDevices,
   RTCPeerConnection,
@@ -29,10 +29,12 @@ import {
   cancelNativeIncomingCallNotification,
   clearNativeIncomingCallClaim,
   markNativeCallAnswered,
-  setNativeIncomingCallClaim,
+  postNativeIncomingCallNotification,
 } from '../lib/nativeCallNotification';
 import {
   dismissLockScreenCallUi,
+  isLockScreenCallUiActive,
+  showNativeOutgoingCall,
   subscribeLockScreenCallEnd,
   subscribeLockScreenToggleMute,
   syncLockScreenCallState,
@@ -182,6 +184,11 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   }, [peer]);
 
   const resetState = useCallback(() => {
+    // Reset ref đồng bộ ngay — tránh cuộc gọi kế tiếp bị "busy" do statusRef còn kẹt.
+    statusRef.current = 'idle';
+    callIdRef.current = null;
+    modeRef.current = 'direct';
+    peerRef.current = null;
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
@@ -312,6 +319,11 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       setMode('direct');
       setPeer(peerUser);
       setStatus('outgoing');
+      showNativeOutgoingCall({
+        callId: newCallId,
+        peerName: peerUser.name || 'Người gọi',
+        fromUserId: String(peerUser.id),
+      });
       try {
         const stream = await getLocalStream();
         const pc = createDirectPc(newCallId, peerUser.id);
@@ -348,6 +360,13 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       setMemberIds(ids);
       setPeer({ id: ids[0], name: group.name || 'Nhóm' });
       setStatus('outgoing');
+      showNativeOutgoingCall({
+        callId: newCallId,
+        peerName: group.name || 'Nhóm',
+        fromUserId: String(ids[0]),
+        isGroup: true,
+        groupName: group.name || 'Nhóm',
+      });
       try {
         await getLocalStream();
         socket.emit('call:group_start', {
@@ -400,11 +419,37 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const acceptCall = useCallback(async () => {
     const socket = socketRef.current;
     const cid = callIdRef.current;
-    if (!socket || !cid || statusRef.current !== 'incoming') return;
+    if (!cid || statusRef.current !== 'incoming') return;
+
+    // Boot mới trên màn khóa: socket chưa kết nối → giữ màn "Đang kết nối…" và
+    // chờ onSocketConnect tự chạy lại pending accept thay vì bỏ cuộc gọi.
+    if (!socket || !socket.connected) {
+      pendingNativeAcceptRef.current = true;
+      setNativeAcceptPending(true);
+      if (Platform.OS === 'android') {
+        syncLockScreenCallState({
+          callId: cid,
+          status: 'connecting',
+          peerName: modeRef.current === 'group' ? groupName || 'Nhóm' : peerRef.current?.name || '',
+          durationMs: 0,
+          isMuted,
+        });
+      }
+      return;
+    }
 
     // Chặn reo lại ngay (sync socket / FCM trễ) — trước mọi thao tác async.
     markCallAnswered(cid);
     markNativeCallAnswered(cid);
+    if (Platform.OS === 'android') {
+      syncLockScreenCallState({
+        callId: cid,
+        status: 'connecting',
+        peerName: modeRef.current === 'group' ? groupName || 'Nhóm' : peerRef.current?.name || '',
+        durationMs: 0,
+        isMuted: isMuted,
+      });
+    }
     setCallSession(cid, 'connecting');
     statusRef.current = 'connecting';
 
@@ -466,7 +511,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       setError((e as Error)?.message || 'Không truy cập được micro');
       rejectCall();
     }
-  }, [clearNativeAcceptPending, createDirectPc, getLocalStream, rejectCall, resetState]);
+  }, [clearNativeAcceptPending, createDirectPc, getLocalStream, groupName, isMuted, rejectCall, resetState]);
 
   const scheduleNativeAcceptPending = useCallback(() => {
     pendingNativeAcceptRef.current = true;
@@ -495,6 +540,16 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const endCall = useCallback(() => {
     const socket = socketRef.current;
     const cid = callIdRef.current;
+    if (Platform.OS === 'android' && cid) {
+      const peerName = modeRef.current === 'group' ? groupName || 'Nhóm' : peerRef.current?.name || '';
+      syncLockScreenCallState({
+        callId: cid,
+        status: 'ended',
+        peerName,
+        durationMs: startedAt ? Date.now() - startedAt : 0,
+        isMuted,
+      });
+    }
     if (socket && cid) {
       if (modeRef.current === 'group') {
         socket.emit('call:end', { callId: cid });
@@ -503,7 +558,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       }
     }
     resetState();
-  }, [resetState]);
+  }, [groupName, isMuted, resetState, startedAt]);
 
   const toggleMute = useCallback(() => {
     setIsMuted((cur) => {
@@ -516,7 +571,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const applyIncomingCall = useCallback(
-    (payload: IncomingCallPayload, opts?: { notify?: boolean }) => {
+    (payload: IncomingCallPayload, opts?: { notify?: boolean; silent?: boolean }) => {
       const incomingId = payload.callId;
       const fromUserId = payload.fromUserId;
       if (!incomingId || !fromUserId) return;
@@ -526,11 +581,23 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       // Cập nhật ref ngay — tránh race socket + FCM / pending tạo 2 cuộc gọi.
       statusRef.current = 'incoming';
       callIdRef.current = incomingId;
+      modeRef.current = payload.isGroup ? 'group' : 'direct';
+      peerRef.current = { id: String(fromUserId), name: payload.fromName || 'Người gọi' };
       setCallSession(incomingId, 'incoming');
-      setNativeIncomingCallClaim(incomingId);
 
-      if (AppState.currentState === 'active') {
-        cancelNativeIncomingCallNotification(incomingId);
+      // Android: dùng màn hình native. KHÔNG re-post notification khi silent (đến từ accept/reject
+      // native) — tránh khởi động lại IncomingCallRingService làm đổ chuông thêm lần nữa.
+      if (Platform.OS === 'android' && !opts?.silent) {
+        clearNativeIncomingCallClaim();
+        postNativeIncomingCallNotification({
+          callId: incomingId,
+          fromUserId: String(fromUserId),
+          fromName: payload.fromName,
+          isGroup: payload.isGroup,
+          groupId: payload.groupId,
+          groupName: payload.groupName,
+          kind: payload.kind,
+        });
       }
 
       if (timeoutRef.current) {
@@ -548,7 +615,10 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       setStatus('incoming');
       setError(null);
 
-      const shouldNotify = opts?.notify !== false && AppState.currentState !== 'active';
+      const shouldNotify =
+        Platform.OS !== 'android'
+        && opts?.notify !== false
+        && AppState.currentState !== 'active';
       if (shouldNotify && !shouldSuppressIncomingRing(incomingId)) {
         void storePendingIncomingCall(payload);
         void showIncomingCallNotification(payload);
@@ -566,8 +636,8 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   );
 
   const applyIncomingFromPush = useCallback(
-    (payload: IncomingCallPayload) => {
-      applyIncomingCall(payload, { notify: false });
+    (payload: IncomingCallPayload, opts?: { silent?: boolean }) => {
+      applyIncomingCall(payload, { notify: false, silent: opts?.silent });
     },
     [applyIncomingCall],
   );
@@ -575,17 +645,31 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const handleNativeCallIntent = useCallback(
     (payload: IncomingCallPayload) => {
       if (payload.callAction === 'reject') {
-        applyIncomingFromPush(payload);
+        if (statusRef.current === 'idle') applyIncomingFromPush(payload, { silent: true });
         rejectCall();
         return;
       }
-      applyIncomingFromPush(payload);
       if (payload.callAction === 'accept') {
+        if (statusRef.current === 'idle') applyIncomingFromPush(payload, { silent: true });
+        const sameCall = callIdRef.current === payload.callId;
+        if (statusRef.current === 'incoming' && sameCall) {
+          void acceptCall();
+          return;
+        }
+        if (statusRef.current === 'connecting' && sameCall) return;
         scheduleNativeAcceptPending();
         void tryRunPendingNativeAccept();
+        return;
       }
+      applyIncomingFromPush(payload);
     },
-    [applyIncomingFromPush, rejectCall, scheduleNativeAcceptPending, tryRunPendingNativeAccept],
+    [
+      acceptCall,
+      applyIncomingFromPush,
+      rejectCall,
+      scheduleNativeAcceptPending,
+      tryRunPendingNativeAccept,
+    ],
   );
 
   useEffect(() => {
@@ -623,9 +707,15 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
           ) {
             return;
           }
-          if (payload.isGroup) socket.emit('call:reject', { callId: incomingId, reason: 'busy' });
-          else socket.emit('call:reject', { callId: incomingId, toUserId: fromUserId, reason: 'busy' });
-          return;
+          // Cuộc gọi mới (callId khác) trong khi cuộc cũ CHƯA kết nối ('incoming'/'connecting')
+          // → cuộc cũ coi như đã chết (kẹt trên màn khóa), dọn sạch rồi nhận cuộc mới.
+          if (curStatus !== 'active') {
+            resetState();
+          } else {
+            if (payload.isGroup) socket.emit('call:reject', { callId: incomingId, reason: 'busy' });
+            else socket.emit('call:reject', { callId: incomingId, toUserId: fromUserId, reason: 'busy' });
+            return;
+          }
         }
         applyIncomingCall({
           callId: incomingId,
@@ -820,18 +910,25 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   }, [callId, status]);
 
   useEffect(() => {
-    if (status === 'idle' || !callId) {
+    if (status !== 'idle' && callId) {
+      const peerName = mode === 'group' ? groupName || 'Nhóm' : peer?.name || '';
+      const durationMs = startedAt ? Date.now() - startedAt : 0;
+      syncLockScreenCallState({
+        callId,
+        status,
+        peerName,
+        durationMs,
+        isMuted,
+      });
+      return;
+    }
+    // RN mount với idle trước khi consume intent native — không đóng UI cuộc gọi đang hiển thị.
+    if (Platform.OS !== 'android') {
       dismissLockScreenCallUi();
       return;
     }
-    const peerName = mode === 'group' ? groupName || 'Nhóm' : peer?.name || '';
-    const durationMs = startedAt ? Date.now() - startedAt : 0;
-    syncLockScreenCallState({
-      callId,
-      status,
-      peerName,
-      durationMs,
-      isMuted,
+    void isLockScreenCallUiActive().then((nativeUi) => {
+      if (!nativeUi) dismissLockScreenCallUi();
     });
   }, [status, callId, peer, groupName, mode, isMuted, startedAt]);
 

@@ -114,6 +114,26 @@ export function stageColor(raw: string | null | undefined, index: number): strin
   return STAGE_FALLBACK_COLORS[index % STAGE_FALLBACK_COLORS.length];
 }
 
+/** Màu thanh tiến độ nhiệm vụ SX — đỏ → vàng → teal → xanh theo % hoàn thành */
+export function getTaskProgressColor(percent: number, colors: AppColors): string {
+  const p = Math.max(0, Math.min(100, Math.round(percent)));
+  if (p >= 100) return colors.success;
+  if (p >= 70) return '#14B8A6';
+  if (p >= 35) return colors.warning;
+  if (p > 0) return colors.danger;
+  return colors.textFaint;
+}
+
+export function colorWithAlpha(hex: string, alpha: number): string {
+  const h = hex.replace('#', '');
+  if (h.length !== 6 && h.length !== 3) return hex;
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
+}
+
 /** Định dạng tiền đầy đủ: 35.000.000 (không rút gọn tr/trđ). */
 export function formatMoneyAmount(value?: number | null): string | null {
   const n = Number(value || 0);

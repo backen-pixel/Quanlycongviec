@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "314186132796",
+    "project_id": "tubep-crm",
+    "storage_bucket": "tubep-crm.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:314186132796:android:bf26ce49f1deb02a2f8239",
+        "android_client_info": {
+          "package_name": "vn.tubeppro.crmobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCDYO8ydcNQb5nptB7okz5ZUu3sWFq5LUU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:314186132796:android:fcdefea7242036352f8239",
+        "android_client_info": {
+          "package_name": "vn.tubeppro.sxmobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCDYO8ydcNQb5nptB7okz5ZUu3sWFq5LUU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

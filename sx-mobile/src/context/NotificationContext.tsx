@@ -10,8 +10,14 @@ import React, {
 import { AppState, type AppStateStatus } from 'react-native';
 import { io, type Socket } from 'socket.io-client';
 import { API_ORIGIN } from '../config';
+import { setAppSocket } from '../lib/appSocket';
+import { mapMessageRow, resolveMediaUrl, fetchMessengerGroups } from '../lib/messengerApi';
 import { buildNotificationFromCommentEvent, type ProjectCommentSocketEvent } from '../lib/commentRealtime';
 import { showLocalCommentNotification } from '../lib/localCommentNotification';
+import { clearFloatingBubbleHidden } from '../lib/floatingChatBubbleStorage';
+import { showLocalMessengerNotification, type MessengerNotifPayload } from '../lib/localMessengerNotification';
+import { getMessengerActiveGroupId } from '../lib/messengerActiveGroup';
+import { buildMessengerNotifFromSocket } from '../lib/messengerNotifFromSocket';
 import {
   enrichNotificationPreview,
   fetchCommentUnreadCount,
@@ -24,21 +30,47 @@ import { useAuth } from './AuthContext';
 
 type CommentListener = (n: SxCommentNotification) => void;
 type SyncListener = (evt: SyncEvent) => void;
+type MessengerChatListener = (msg: Record<string, unknown>) => void;
 
 export type CommentToast = {
   notification: SxCommentNotification;
 };
+
+export type MessengerToast = MessengerNotifPayload;
+
+type MessengerNotifListener = (payload: MessengerNotifPayload) => void;
+
+type MessengerMetaListener = (evt: {
+  type: 'reaction' | 'recall';
+  groupId: string;
+  messageId?: string;
+  reactions?: import('../types/messenger').MessengerReaction[];
+  message?: import('../types/messenger').MessengerMessage;
+}) => void;
+
+type PresenceListener = (userId: string, online: boolean, lastPingAt?: string) => void;
 
 type NotificationCtx = {
   unreadCount: number;
   refreshUnread: () => void;
   commentToast: CommentToast | null;
   dismissCommentToast: () => void;
+  messengerToast: MessengerToast | null;
+  dismissMessengerToast: () => void;
+  notifyMessengerIncoming: (payload: MessengerNotifPayload) => void;
+  subscribeMessengerNotif: (fn: MessengerNotifListener) => () => void;
   liveNotifications: SxCommentNotification[];
   markLiveNotificationsRead: () => void;
   adjustUnreadCount: (delta: number) => void;
   subscribeComment: (fn: CommentListener) => () => void;
   subscribeSync: (fn: SyncListener) => () => void;
+  subscribeMessengerChat: (fn: MessengerChatListener) => () => void;
+  joinMessengerGroup: (groupId: string) => void;
+  leaveMessengerGroup: (groupId: string) => void;
+  joinMessengerGroups: (groupIds: string[]) => void;
+  subscribeMessengerMeta: (fn: MessengerMetaListener) => () => void;
+  subscribePresenceUpdate: (fn: PresenceListener) => () => void;
+  emitPresencePing: () => void;
   projectMetaRef: React.MutableRefObject<Map<string, { code?: string | null; name?: string | null }>>;
 };
 
@@ -49,12 +81,18 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const uid = user?.id || user?.userId || null;
   const [unreadCount, setUnreadCount] = useState(0);
   const [commentToast, setCommentToast] = useState<CommentToast | null>(null);
+  const [messengerToast, setMessengerToast] = useState<MessengerToast | null>(null);
   const [liveNotifications, setLiveNotifications] = useState<SxCommentNotification[]>([]);
   const busyRef = useRef(false);
   const socketRef = useRef<Socket | null>(null);
   const listenersRef = useRef<Set<CommentListener>>(new Set());
   const syncListenersRef = useRef<Set<SyncListener>>(new Set());
+  const messengerChatListenersRef = useRef<Set<MessengerChatListener>>(new Set());
+  const messengerNotifListenersRef = useRef<Set<MessengerNotifListener>>(new Set());
+  const messengerMetaListenersRef = useRef<Set<MessengerMetaListener>>(new Set());
+  const presenceListenersRef = useRef<Set<PresenceListener>>(new Set());
   const projectMetaRef = useRef(new Map<string, { code?: string | null; name?: string | null }>());
+  const recentMessengerNotifRef = useRef<Map<string, number>>(new Map());
 
   const refreshUnread = useCallback(() => {
     if (!token || busyRef.current) return;
@@ -77,6 +115,49 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     return () => syncListenersRef.current.delete(fn);
   }, []);
 
+  const subscribeMessengerChat = useCallback((fn: MessengerChatListener) => {
+    messengerChatListenersRef.current.add(fn);
+    return () => messengerChatListenersRef.current.delete(fn);
+  }, []);
+
+  const subscribeMessengerMeta = useCallback((fn: MessengerMetaListener) => {
+    messengerMetaListenersRef.current.add(fn);
+    return () => messengerMetaListenersRef.current.delete(fn);
+  }, []);
+
+  const subscribePresenceUpdate = useCallback((fn: PresenceListener) => {
+    presenceListenersRef.current.add(fn);
+    return () => presenceListenersRef.current.delete(fn);
+  }, []);
+
+  const emitPresencePing = useCallback(() => {
+    socketRef.current?.emit('presence:ping');
+  }, []);
+
+  const emitMessengerChat = useCallback((msg: Record<string, unknown>) => {
+    for (const fn of messengerChatListenersRef.current) fn(msg);
+  }, []);
+
+  const emitMessengerMeta = useCallback((evt: Parameters<MessengerMetaListener>[0]) => {
+    for (const fn of messengerMetaListenersRef.current) fn(evt);
+  }, []);
+
+  const joinMessengerGroup = useCallback((groupId: string) => {
+    if (!groupId) return;
+    socketRef.current?.emit('join:messenger_group', groupId);
+  }, []);
+
+  const leaveMessengerGroup = useCallback((groupId: string) => {
+    if (!groupId) return;
+    socketRef.current?.emit('leave:messenger_group', groupId);
+  }, []);
+
+  const joinMessengerGroups = useCallback((groupIds: string[]) => {
+    for (const id of groupIds) {
+      if (id) socketRef.current?.emit('join:messenger_group', id);
+    }
+  }, []);
+
   const emitSync = useCallback((evt: SyncEvent) => {
     syncListenersRef.current.forEach((fn) => {
       try {
@@ -88,6 +169,39 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   }, []);
 
   const dismissCommentToast = useCallback(() => setCommentToast(null), []);
+  const dismissMessengerToast = useCallback(() => setMessengerToast(null), []);
+
+  const subscribeMessengerNotif = useCallback((fn: MessengerNotifListener) => {
+    messengerNotifListenersRef.current.add(fn);
+    return () => messengerNotifListenersRef.current.delete(fn);
+  }, []);
+
+  const notifyMessengerIncoming = useCallback((payload: MessengerNotifPayload) => {
+    if (getMessengerActiveGroupId() === payload.groupId) return;
+    const dedupeKey = payload.messageId || `${payload.groupId}:${payload.message}`;
+    const now = Date.now();
+    const last = recentMessengerNotifRef.current.get(dedupeKey);
+    if (last != null && now - last < 12000) return;
+    recentMessengerNotifRef.current.set(dedupeKey, now);
+    if (recentMessengerNotifRef.current.size > 40) {
+      for (const [k, t] of recentMessengerNotifRef.current) {
+        if (now - t > 60000) recentMessengerNotifRef.current.delete(k);
+      }
+    }
+    void clearFloatingBubbleHidden();
+    const isActive = AppState.currentState === 'active';
+    if (!isActive) {
+      setMessengerToast(payload);
+      void showLocalMessengerNotification(payload);
+    }
+    messengerNotifListenersRef.current.forEach((fn) => {
+      try {
+        fn(payload);
+      } catch {
+        /* ignore */
+      }
+    });
+  }, []);
 
   const upsertLive = useCallback((n: SxCommentNotification) => {
     setLiveNotifications((prev) => {
@@ -157,6 +271,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       reconnectionAttempts: 12,
     });
     socketRef.current = s;
+    setAppSocket(s);
 
     const onProjectComment = async (raw: unknown) => {
       const evt = raw as ProjectCommentSocketEvent;
@@ -174,7 +289,39 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     };
 
     const onServerNotif = (raw: unknown) => {
-      const n = raw as SxCommentNotification & { metadata?: { ecosystem_module_key?: string } };
+      const n = raw as SxCommentNotification & {
+        metadata?: { ecosystem_module_key?: string; sender_name?: string; group_name?: string };
+      };
+      if (n?.type === 'messenger_chat' && n.entity_type === 'messenger_group' && n.entity_id) {
+        const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+        const senderName = typeof meta.sender_name === 'string' ? meta.sender_name : '';
+        const groupName =
+          typeof meta.group_name === 'string' && meta.group_name.trim()
+            ? meta.group_name
+            : String(n.title || 'Tin nhắn').replace(/^Messenger\s*·\s*/i, '');
+        const rawMsg = String(n.message || '');
+        const messageBody = rawMsg.includes(': ')
+          ? rawMsg.slice(rawMsg.indexOf(': ') + 2)
+          : rawMsg;
+        const avatarUrl = resolveMediaUrl(
+          typeof (meta as Record<string, unknown>).sender_avatar === 'string'
+            ? (meta as Record<string, unknown>).sender_avatar as string
+            : typeof (meta as Record<string, unknown>).group_avatar === 'string'
+              ? (meta as Record<string, unknown>).group_avatar as string
+              : null,
+        );
+        notifyMessengerIncoming({
+          groupId: String(n.entity_id),
+          title: groupName,
+          senderName,
+          message: messageBody,
+          messageId: typeof (meta as { message_id?: string }).message_id === 'string'
+            ? (meta as { message_id: string }).message_id
+            : undefined,
+          avatarUrl,
+        });
+        return;
+      }
       if (n?.type !== 'comment_added') return;
       const eco = n.metadata?.ecosystem_module_key;
       if (eco && eco !== 'production') return;
@@ -202,19 +349,94 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     const onTaskChanged = (raw: unknown) => {
       emitSync({ type: 'crm:task_changed', payload: (raw || {}) as CrmTaskChangedPayload });
     };
+    const onMessengerChat = (raw: unknown) => {
+      if (!raw || typeof raw !== 'object') return;
+      const row = raw as Record<string, unknown>;
+      emitMessengerChat(row);
+      const built = buildMessengerNotifFromSocket(row, uid);
+      if (built) notifyMessengerIncoming(built);
+    };
+    const onMessengerReaction = (raw: unknown) => {
+      const p = raw as { group_id?: string; message_id?: string; reactions?: unknown[] };
+      if (!p?.group_id || !p?.message_id) return;
+      emitMessengerMeta({
+        type: 'reaction',
+        groupId: String(p.group_id),
+        messageId: String(p.message_id),
+        reactions: Array.isArray(p.reactions)
+          ? p.reactions.map((r) => {
+              const row = r as Record<string, unknown>;
+              return {
+                emoji: String(row.emoji || ''),
+                user_id: row.user_id != null ? String(row.user_id) : null,
+                user: row.user as { full_name?: string | null } | null,
+              };
+            })
+          : [],
+      });
+    };
+    const onMessengerRecalled = (raw: unknown) => {
+      const p = raw as Record<string, unknown>;
+      const gid = p.group_id ?? p.groupId;
+      if (!gid) return;
+      if (p.message_id && !p.id) {
+        emitMessengerMeta({
+          type: 'recall',
+          groupId: String(gid),
+          messageId: String(p.message_id),
+          message: mapMessageRow({ ...p, group_id: gid, id: p.message_id, is_recalled: true }),
+        });
+        return;
+      }
+      emitMessengerMeta({
+        type: 'recall',
+        groupId: String(gid),
+        message: mapMessageRow({ ...p, group_id: gid }),
+      });
+    };
+    const onPresenceUpdate = (raw: unknown) => {
+      const p = raw as { user_id?: string; userId?: string; online?: boolean; last_ping_at?: string };
+      const uid = p.user_id ?? p.userId;
+      if (!uid) return;
+      for (const fn of presenceListenersRef.current) {
+        fn(String(uid), !!p.online, p.last_ping_at);
+      }
+    };
+
+    s.on('messenger_group:reaction', onMessengerReaction);
+    s.on('messenger_group:reactions', onMessengerReaction);
+    s.on('messenger_group:recalled', onMessengerRecalled);
+    s.on('presence:update', onPresenceUpdate);
 
     s.on('project:stage_changed', onStageChanged);
     s.on('crm:task_changed', onTaskChanged);
+    s.on('messenger_group:chat', onMessengerChat);
+
+    s.on('connect', () => {
+      void fetchMessengerGroups(uid)
+        .then((list) => {
+          for (const t of list) {
+            if (t.id) s.emit('join:messenger_group', t.id);
+          }
+        })
+        .catch(() => {});
+    });
 
     return () => {
       s.off('project:comment', onProjectComment);
       s.off('notification', onServerNotif);
       s.off('project:stage_changed', onStageChanged);
       s.off('crm:task_changed', onTaskChanged);
+      s.off('messenger_group:chat', onMessengerChat);
+      s.off('messenger_group:reaction', onMessengerReaction);
+      s.off('messenger_group:reactions', onMessengerReaction);
+      s.off('messenger_group:recalled', onMessengerRecalled);
+      s.off('presence:update', onPresenceUpdate);
       s.disconnect();
       if (socketRef.current === s) socketRef.current = null;
+      setAppSocket(null);
     };
-  }, [token, uid, emitComment, emitSync]);
+  }, [token, uid, emitComment, emitSync, emitMessengerChat, emitMessengerMeta, notifyMessengerIncoming]);
 
   const value = useMemo(
     () => ({
@@ -222,11 +444,22 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       refreshUnread,
       commentToast,
       dismissCommentToast,
+      messengerToast,
+      dismissMessengerToast,
+      notifyMessengerIncoming,
+      subscribeMessengerNotif,
       liveNotifications,
       markLiveNotificationsRead,
       adjustUnreadCount,
       subscribeComment,
       subscribeSync,
+      subscribeMessengerChat,
+      joinMessengerGroup,
+      leaveMessengerGroup,
+      joinMessengerGroups,
+      subscribeMessengerMeta,
+      subscribePresenceUpdate,
+      emitPresencePing,
       projectMetaRef,
     }),
     [
@@ -234,11 +467,22 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       refreshUnread,
       commentToast,
       dismissCommentToast,
+      messengerToast,
+      dismissMessengerToast,
+      notifyMessengerIncoming,
+      subscribeMessengerNotif,
       liveNotifications,
       markLiveNotificationsRead,
       adjustUnreadCount,
       subscribeComment,
       subscribeSync,
+      subscribeMessengerChat,
+      joinMessengerGroup,
+      leaveMessengerGroup,
+      joinMessengerGroups,
+      subscribeMessengerMeta,
+      subscribePresenceUpdate,
+      emitPresencePing,
     ],
   );
 
