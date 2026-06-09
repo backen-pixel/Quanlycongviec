@@ -515,6 +515,18 @@ function listFbPipelineCompanyKeys() {
   return Object.keys(fbPipelineState.companies || {});
 }
 
+/** Tất cả phạm vi auto: đã cấu hình + đang chạy + mỗi công ty có ≥1 Page FB (default_company_id). */
+async function listAllAutoPipelineScopeKeys() {
+  const keys = new Set([
+    FB_GLOBAL_SCOPE_KEY,
+    ...listFbPipelineCompanyKeys(),
+    ...autoPipelineStates.keys(),
+  ]);
+  const cache = await refreshCompanyPageIdsCache();
+  for (const cid of cache.byCompany.keys()) keys.add(cid);
+  return keys;
+}
+
 async function saveFbPipelineConfigForCompany(companyKey, partial) {
   const key = companyKey || FB_GLOBAL_SCOPE_KEY;
   const existing = fbPipelineState.companies[key] || {};
@@ -6547,18 +6559,35 @@ r.get('/auto-pipeline/status', authMiddleware, async (req, res) => {
   res.json(getAutoState(getAutoPipelineState(companyKey)));
 });
 
+/** Trạng thái auto 1 phạm vi (kèm số Page FB; enabled lấy từ config đã lưu). */
+function getAutoStateForScope(companyKey, pageIdsByCompany) {
+  const st = getAutoPipelineState(companyKey);
+  const cfg = getFbPipelineConfigSync(companyKey);
+  const state = getAutoState(st);
+  state.enabled = st.running ? st.enabled : !!(cfg.enabled || st.enabled);
+  if (companyKey === FB_GLOBAL_SCOPE_KEY) {
+    let total = 0;
+    for (const ids of pageIdsByCompany.values()) total += ids.length;
+    state.page_count = total;
+  } else {
+    state.page_count = (pageIdsByCompany.get(companyKey) || []).length;
+  }
+  return state;
+}
+
 // Tổng hợp trạng thái tất cả công ty + master (chỉ admin xem toàn bộ; NV xem công ty mình)
 r.get('/auto-pipeline/status-all', authMiddleware, async (req, res) => {
   await loadFbPipelineConfigFromDb();
   const admin = isSystemAdmin(req.user);
-  const keys = new Set([...listFbPipelineCompanyKeys(), ...autoPipelineStates.keys()]);
+  const cache = await refreshCompanyPageIdsCache();
   if (!admin) {
     const cid = req.user?.company_id;
     if (!cid) return res.status(400).json({ error: 'Thiếu company_id trên tài khoản.' });
-    const companies = [getAutoState(getAutoPipelineState(String(cid)))];
+    const companies = [getAutoStateForScope(String(cid), cache.byCompany)];
     return res.json({ master_enabled: getFbMasterEnabledSync(), companies });
   }
-  const companies = [...keys].map((key) => getAutoState(getAutoPipelineState(key)));
+  const keys = await listAllAutoPipelineScopeKeys();
+  const companies = [...keys].map((key) => getAutoStateForScope(key, cache.byCompany));
   res.json({ master_enabled: getFbMasterEnabledSync(), companies });
 });
 

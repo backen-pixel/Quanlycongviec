@@ -49,6 +49,7 @@ function CompanyCard({ st, name, masterEnabled, busy, onToggle, onRunNow }) {
   const kpi = st.kpi || {};
   const lastLog = Array.isArray(st.logs) && st.logs.length ? st.logs[st.logs.length - 1] : null;
   const isGlobal = st.company_key === GLOBAL_KEY || st.company_id == null;
+  const pageCount = typeof st.page_count === 'number' ? st.page_count : null;
   return (
     <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4 flex flex-col gap-3">
       <div className="flex items-start justify-between gap-3">
@@ -57,6 +58,11 @@ function CompanyCard({ st, name, masterEnabled, busy, onToggle, onRunNow }) {
             <span className="text-sm font-semibold text-gray-800 truncate">
               {isGlobal ? '🌐 Toàn hệ thống' : `🏢 ${name || 'Công ty'}`}
             </span>
+            {pageCount != null && (
+              <span className="text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded shrink-0">
+                {pageCount} Page
+              </span>
+            )}
           </div>
           <div className="mt-1"><StatusBadge st={st} /></div>
         </div>
@@ -140,7 +146,7 @@ export function FacebookAutoCompaniesPanel({ embedded = false }) {
 
   useEffect(() => {
     api
-      .get('/companies?for_module=crm')
+      .get('/companies')
       .then((r) => {
         const list = r.data?.companies || r.data || [];
         setCompanies(Array.isArray(list) ? list : []);
@@ -157,10 +163,16 @@ export function FacebookAutoCompaniesPanel({ embedded = false }) {
   const rows = useMemo(() => {
     const list = [...(all.companies || [])];
     list.sort((a, b) => {
+      const aGlobal = a.company_key === GLOBAL_KEY || a.company_id == null;
+      const bGlobal = b.company_key === GLOBAL_KEY || b.company_id == null;
+      if (aGlobal !== bGlobal) return aGlobal ? -1 : 1;
       const ra = a.running ? 0 : a.enabled ? 1 : 2;
       const rb = b.running ? 0 : b.enabled ? 1 : 2;
       if (ra !== rb) return ra - rb;
-      return String(nameById[a.company_id] || a.company_key).localeCompare(String(nameById[b.company_id] || b.company_key));
+      return String(nameById[a.company_id] || a.company_key).localeCompare(
+        String(nameById[b.company_id] || b.company_key),
+        'vi',
+      );
     });
     return list;
   }, [all.companies, nameById]);
@@ -220,7 +232,7 @@ export function FacebookAutoCompaniesPanel({ embedded = false }) {
             <Activity className="h-5 w-5 text-indigo-600" /> Auto Facebook theo công ty
           </h1>
           <p className="text-xs text-gray-500 mt-0.5">
-            Mỗi công ty chạy độc lập trên các page có <code className="text-[10px]">default_company_id</code> của công ty đó.
+            Mỗi công ty có Page Facebook (<code className="text-[10px]">default_company_id</code>) hiển thị riêng — bật/tắt auto độc lập.
             Đang chạy: <strong>{runningCount}</strong> · Đã bật: <strong>{enabledCount}</strong> · Tổng: <strong>{rows.length}</strong>
           </p>
         </div>
@@ -267,7 +279,7 @@ export function FacebookAutoCompaniesPanel({ embedded = false }) {
 
       {rows.length === 0 ? (
         <div className="bg-white border border-gray-200 rounded-xl p-8 text-center text-sm text-gray-500">
-          Chưa có công ty nào được cấu hình auto. Vào tab Facebook → bật auto cho công ty (theo bộ lọc công ty) để xuất hiện ở đây.
+          Chưa có Page Facebook nào gắn <code className="text-[10px]">default_company_id</code>. Vào tab Cài đặt → thêm Page và gán công ty.
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">

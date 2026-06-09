@@ -200,6 +200,7 @@ const CRM_MENU_BOTTOM_GROUPS = [
       { to: '/knowledge', icon: GraduationCap, label: 'Kiến thức' },
       { to: '/guide', icon: BookOpen, label: 'Hướng dẫn sử dụng', adminOnly: true },
       { to: '/settings/api-keys', icon: Key, label: 'API Key tích hợp', adminOnly: true },
+      { to: '/settings/app-updates', icon: Smartphone, label: 'Cập nhật App', adminOnly: true },
     ],
   },
 ];
