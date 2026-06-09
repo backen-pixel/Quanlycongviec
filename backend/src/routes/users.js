@@ -11,6 +11,30 @@ const { parseScopeFromQuery } = require('../helpers/scopeQueryParams');
 const { pgUsersActivityStats } = require('../helpers/pgHotQueries');
 const { responseCache, invalidateTags } = require('../middleware/responseCache');
 
+const USER_OPTIONAL_NULLABLE_FIELDS = [
+  'position', 'date_of_birth', 'hire_date', 'address', 'emergency_contact', 'salary', 'notes', 'skills',
+];
+
+function applyOptionalUserFields(body, target) {
+  USER_OPTIONAL_NULLABLE_FIELDS.forEach((f) => {
+    if (body[f] !== undefined) target[f] = body[f] === '' || body[f] == null ? null : body[f];
+  });
+}
+
+function mapUserWriteError(error) {
+  const msg = String(error?.message || '');
+  if (msg.includes('invalid input value for enum user_role')) {
+    return { status: 400, error: 'Vai trò không hợp lệ hoặc chưa được cấu hình trên database (chạy migration user_role).' };
+  }
+  if (msg.includes('invalid input syntax for type date')) {
+    return { status: 400, error: 'Ngày sinh hoặc ngày vào làm không hợp lệ' };
+  }
+  if (msg.includes('invalid input syntax for type numeric') || msg.includes('invalid input syntax for type integer')) {
+    return { status: 400, error: 'Lương hoặc số liệu không hợp lệ' };
+  }
+  return null;
+}
+
 const r = Router();
 r.use(auth);
 
@@ -654,9 +678,7 @@ r.post('/', async (req, res) => {
       insertObj.avatar = String(b.avatar).trim();
     }
     // Optional fields (need migration 06)
-    ['position','date_of_birth','hire_date','address','emergency_contact','salary','notes','skills'].forEach(f => {
-      if (b[f] !== undefined) insertObj[f] = b[f] || null;
-    });
+    applyOptionalUserFields(b, insertObj);
 
     if (b.crm_region_ids !== undefined && ['admin', 'manager'].includes(req.user.role)) {
       let targetCo = null;
@@ -747,8 +769,12 @@ r.put('/:id', async (req, res) => {
       .eq('id', targetId)
       .maybeSingle();
     const update = { updated_at: new Date().toISOString() };
-    const fields = ['full_name','phone','role','position','department_id','team_id','date_of_birth','hire_date','address','emergency_contact','salary','notes','skills','is_active'];
-    fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
+    ['full_name', 'phone', 'role', 'is_active'].forEach((f) => {
+      if (b[f] !== undefined) update[f] = b[f];
+    });
+    if (b.department_id !== undefined) update.department_id = b.department_id || null;
+    if (b.team_id !== undefined) update.team_id = b.team_id || null;
+    applyOptionalUserFields(b, update);
     if (b.avatar !== undefined) {
       update.avatar = (b.avatar && String(b.avatar).trim()) || null;
     }
@@ -776,7 +802,11 @@ r.put('/:id', async (req, res) => {
       ({ data, error } = await supabase.from('users').update(safeUpdate).eq('id', req.params.id)
         .select('id,email,full_name,phone,avatar,role,department_id,is_active,created_at').single());
     }
-    if (error) throw error;
+    if (error) {
+      const mapped = mapUserWriteError(error);
+      if (mapped) return res.status(mapped.status).json({ error: mapped.error });
+      throw error;
+    }
 
     if (b.crm_region_ids !== undefined) {
       if (!['admin', 'manager'].includes(req.user.role)) {
@@ -820,7 +850,12 @@ r.put('/:id', async (req, res) => {
     }
 
     res.json({ user: data });
-  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+  } catch (e) {
+    console.error('[users PUT]', e);
+    const mapped = mapUserWriteError(e);
+    if (mapped) return res.status(mapped.status).json({ error: mapped.error });
+    res.status(500).json({ error: 'Lỗi cập nhật nhân viên' });
+  }
 });
 
 // ═══ DEACTIVATE STAFF (soft delete) ═══
