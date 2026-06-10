@@ -15,6 +15,10 @@ class IncomingCallActionReceiver : BroadcastReceiver() {
         IncomingCallActivity.launchForAccept(context, data)
       }
       IncomingCallHelper.ACTION_REJECT -> {
+        // Báo RN (socket) nếu còn sống + REST fallback kép để caller luôn nhận tín hiệu.
+        if (LockScreenCallModule.hasLiveReactInstance()) {
+          LockScreenCallModule.emitRejectCall(data.callId)
+        }
         CallRejectApi.rejectAsync(context, data.callId, data.fromUserId)
         IncomingCallHelper.cancelCallNotification(context, data.callId)
       }
