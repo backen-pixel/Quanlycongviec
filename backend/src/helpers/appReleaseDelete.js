@@ -118,7 +118,43 @@ async function deleteAppReleaseById(releaseId) {
   return { found: true, ...bucket };
 }
 
+/** Xóa file trên bucket, giữ bản ghi DB (clear link / manifest). */
+async function clearReleaseBucketFilesOnly(releaseId) {
+  const { data: rel } = await supabase
+    .from('app_releases')
+    .select('*, mobile_apps(app_key)')
+    .eq('id', releaseId)
+    .maybeSingle();
+
+  if (!rel) return { found: false };
+
+  const row = { ...rel, app_key: rel.mobile_apps?.app_key };
+  const bucket = await deleteAppReleaseBucketFiles(row);
+
+  const patch = {
+    updated_at: new Date().toISOString(),
+    storage_path: null,
+    file_url: null,
+    external_url: null,
+    sha256: null,
+    file_size: null,
+  };
+  if (rel.update_type === 'jsbundle') {
+    patch.manifest = null;
+  }
+
+  const { data, error } = await supabase.from('app_releases')
+    .update(patch)
+    .eq('id', releaseId)
+    .select('*')
+    .single();
+  if (error) throw error;
+
+  return { found: true, release: data, ...bucket };
+}
+
 module.exports = {
   deleteAppReleaseById,
   deleteAppReleaseBucketFiles,
+  clearReleaseBucketFilesOnly,
 };

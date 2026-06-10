@@ -14,8 +14,26 @@ const FOLDER_ALIASES = {
   'tubep-demo': 'demo-mobile',
 };
 
-function getScanDirs(appKey) {
+/** Tách chuỗi đường dẫn tùy chỉnh (cho phép nhiều thư mục, ngăn bằng xuống dòng | ; hoặc ,). */
+function parseCustomDirs(customDir) {
+  if (!customDir) return [];
+  return String(customDir)
+    .split(/[\r\n;,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((d) => (path.isAbsolute(d) ? d : path.join(REPO_ROOT, d)));
+}
+
+/**
+ * @param {string} appKey
+ * @param {string} [customDir] - đường dẫn tùy chỉnh (mobile_apps.apk_scan_dir), được ưu tiên.
+ */
+function getScanDirs(appKey, customDir) {
   const dirs = [];
+
+  // Thư mục cấu hình riêng cho app được ưu tiên trước.
+  dirs.push(...parseCustomDirs(customDir));
+
   const folderNames = [appKey, FOLDER_ALIASES[appKey]].filter(Boolean);
   const envRoot = process.env.APP_RELEASES_SCAN_ROOT;
   for (const folder of folderNames) {
@@ -64,8 +82,15 @@ async function listApkFilesInDir(dir) {
 /**
  * Quét tất cả thư mục của app, phân loại: importable / skipped / already_imported.
  */
-async function scanAppReleaseFiles(app) {
-  const dirs = getScanDirs(app.app_key);
+/**
+ * @param {object} app - mobile_apps row
+ * @param {object} [opts] - { userScanDir } thư mục quét riêng của nhân viên hiện tại (ưu tiên cao nhất)
+ */
+async function scanAppReleaseFiles(app, opts = {}) {
+  const combinedCustom = [opts.userScanDir, app.apk_scan_dir]
+    .filter(Boolean)
+    .join('\n');
+  const dirs = getScanDirs(app.app_key, combinedCustom);
   const rawFiles = [];
   for (const dir of dirs) {
     const list = await listApkFilesInDir(dir);
@@ -140,9 +165,17 @@ async function scanAppReleaseFiles(app) {
     });
   }
 
+  const configuredDirs = parseCustomDirs(combinedCustom).map((d) => ({
+    path: path.normalize(d),
+    exists: fs.existsSync(d) && fs.statSync(d).isDirectory(),
+  }));
+
   return {
     rule: FILENAME_RULE_TEXT,
     scan_dirs: dirs,
+    configured_dirs: configuredDirs,
+    my_scan_dir: opts.userScanDir || '',
+    app_scan_dir: app.apk_scan_dir || '',
     importable,
     skipped,
     already_imported: alreadyImported,

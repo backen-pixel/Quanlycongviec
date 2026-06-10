@@ -133,10 +133,13 @@ async function main() {
     url: bundleUrl,
   };
 
+  let totalBytes = bundleBuf.length;
+
   // 3b) Assets
   const assets = [];
   for (const asset of fileMeta.assets || []) {
     const buf = fs.readFileSync(path.join(distDir, asset.path));
+    totalBytes += buf.length;
     const key = md5Hex(buf);
     const ext = (asset.ext || '').replace(/^\./, '');
     const contentType = MIME[ext.toLowerCase()] || 'application/octet-stream';
@@ -178,6 +181,7 @@ async function main() {
     version,
     runtime_version: runtimeVersion,
     manifest,
+    file_size: totalBytes,
     is_active: true,
     is_mandatory: isMandatory,
     release_notes: typeof args.notes === 'string' ? args.notes : null,

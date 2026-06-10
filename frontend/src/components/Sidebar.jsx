@@ -79,6 +79,7 @@ const MENU_GROUPS = [
       { to: '/settings/pdf', icon: Settings, label: 'Thông tin PDF' },
       { to: '/settings/theme', icon: Settings, label: 'Giao diện & Hình nền' },
       { to: '/settings/ai-chat-bot', icon: Bot, label: 'AI Bot trong chat' },
+      { to: '/settings/app-updates', icon: Smartphone, label: 'Cập nhật App' },
       { to: '/settings/request-monitor', icon: Activity, label: 'Theo dõi Request' },
       // { to: '/templates', icon: ClipboardList, label: 'Dự án mẫu' },
       // { to: '/stage-groups', icon: FolderKanban, label: 'Nhóm quy trình' },
