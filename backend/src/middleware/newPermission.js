@@ -5,9 +5,14 @@
 // ════════════════════════════════════════════════════════════
 
 const { supabase } = require('../config/supabase');
-const { isAdminLike, isProductionStaff } = require('../helpers/adminRole');
+const {
+  isAdminLike,
+  isProductionStaff,
+  isProductionAdmin,
+  isLogisticsAdmin,
+} = require('../helpers/adminRole');
 
-const PRODUCTION_STAFF_RESOURCES = new Set(['projects', 'workflows', 'templates', 'reports', 'customers', 'ecosystem']);
+const WORKSHOP_MODULE_RESOURCES = new Set(['projects', 'workflows', 'templates', 'reports', 'customers', 'ecosystem']);
 
 /** Chỉ bật khi dev local — KHÔNG dùng production. */
 function permissionFailOpen() {
@@ -20,7 +25,10 @@ function permissionFailOpen() {
 async function checkPermission(userId, resource, action, ecosystemUnitId = null, user = null) {
   try {
     if (user && isAdminLike(user)) return true;
-    if (user && isProductionStaff(user) && PRODUCTION_STAFF_RESOURCES.has(String(resource))) return true;
+    const resKey = String(resource);
+    if (WORKSHOP_MODULE_RESOURCES.has(resKey)) {
+      if (isProductionStaff(user) || isProductionAdmin(user) || isLogisticsAdmin(user)) return true;
+    }
 
     const { data, error } = await supabase.rpc('user_has_permission', {
       p_user_id: userId,

@@ -769,14 +769,20 @@ function BulkRoleAssignModal({ userIds, users, onClose, onSaved }) {
 
     setSaving(true);
     try {
-      const promises = userIds.map(userId =>
-        api.post(`/permissions/users/${userId}/roles`, {
+      let assigned = 0;
+      let skipped = 0;
+      for (const userId of userIds) {
+        const { data } = await api.post(`/permissions/users/${userId}/roles`, {
           role_id: selectedRole,
           ecosystem_unit_id: selectedUnit || null,
-        })
-      );
-      await Promise.all(promises);
-      alert(`✅ Đã gán vai trò cho ${userIds.length} nhân viên`);
+        });
+        if (data?.already_exists) skipped += 1;
+        else assigned += 1;
+      }
+      const parts = [];
+      if (assigned) parts.push(`gán mới ${assigned} người`);
+      if (skipped) parts.push(`bỏ qua ${skipped} người (đã có vai trò)`);
+      alert(`✅ Hoàn tất${parts.length ? ': ' + parts.join(', ') : ''}`);
       onSaved();
     } catch (e) {
       alert("Lỗi: " + (e.response?.data?.error || e.message));

@@ -1,5 +1,38 @@
 import api from './api';
 
+const SX_INTAKE_BUCKET = 'won_pending';
+
+/**
+ * Chỉ giữ cột pipeline SX của phân loại đang chọn — không gộp cột global (pipeline khác).
+ */
+export function filterSxPipelineStagesForWorkshopType(stages, workshopTypeId) {
+  const list = stages || [];
+  if (!workshopTypeId) return list;
+  const wktLower = String(workshopTypeId).toLowerCase();
+  if (wktLower === 'none') {
+    return list.filter((s) => s.bucket_slug === SX_INTAKE_BUCKET || !s.workshop_type_id);
+  }
+  if (wktLower === 'global') {
+    return list.filter((s) => !s.workshop_type_id || s.bucket_slug === SX_INTAKE_BUCKET);
+  }
+  const wkt = String(workshopTypeId);
+  const strict = list.filter((s) => {
+    if (s.bucket_slug === SX_INTAKE_BUCKET) {
+      return !s.workshop_type_id || String(s.workshop_type_id) === wkt;
+    }
+    return s.workshop_type_id && String(s.workshop_type_id) === wkt;
+  });
+  const strictWorkflow = strict.filter((s) => s.bucket_slug !== SX_INTAKE_BUCKET);
+  if (strictWorkflow.length > 0) return strict;
+  return list.filter((s) => {
+    if (s.bucket_slug === SX_INTAKE_BUCKET) {
+      return !s.workshop_type_id || String(s.workshop_type_id) === wkt;
+    }
+    if (s.workshop_type_id && String(s.workshop_type_id) !== wkt) return false;
+    return true;
+  });
+}
+
 /**
  * Chuẩn hóa danh sách cột pipeline CRM: dedupe theo id, sort theo order_index.
  * Tránh stepper hiển thị lệch (vd. Thắng trước Đàm phán) khi API trả thứ tự không ổn định.

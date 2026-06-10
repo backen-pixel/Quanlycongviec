@@ -1,11 +1,35 @@
 import { effectivePipelineStageSlaDays } from './crmPipelineSla';
 
+/** Cột pipeline Thắng — deal đã chốt, không tính/hiển thị deadline. */
+export function isCrmPipelineStageWon(stage) {
+  if (!stage) return false;
+  if (stage.is_won) return true;
+  if (stage.canonical_slug === 'won') return true;
+  if (stage.deal_report_bucket === 'won') return true;
+  return false;
+}
+
+/** Cột tích «doanh thu đã hoàn thành» — không tính/hiển thị deadline. */
+export function isCrmPipelineStageCompletedRevenue(stage) {
+  return !!stage?.counts_as_completed_revenue;
+}
+
+/** Cột không theo dõi deadline (Thắng / Thua / Hoàn thành doanh thu). */
+export function isCrmPipelineStageNoDeadline(stage) {
+  return isCrmPipelineStageWon(stage)
+    || isCrmPipelineStageLost(stage)
+    || isCrmPipelineStageCompletedRevenue(stage);
+}
+
 /**
- * Ẩn badge deadline trên thẻ Kanban khi user tick «đã tương tác».
- * Chuyển cột vẫn bắt buộc đặt deadline nếu cột đích bật requires_deadline.
+ * Ẩn badge deadline trên thẻ Kanban khi user tick «đã tương tác»
+ * hoặc thẻ đang ở cột Thắng/Thua/Hoàn thành doanh thu.
  */
-export function shouldHideCrmKanbanDeadlineOnCard(item) {
-  return !!item?.is_interacted;
+export function shouldHideCrmKanbanDeadlineOnCard(item, stage) {
+  if (item?.is_interacted) return true;
+  const st = stage || item?.stage;
+  if (isCrmPipelineStageNoDeadline(st)) return true;
+  return false;
 }
 
 /** Cột pipeline Thua / Mất — không đưa vào view Deadline. */
@@ -35,14 +59,18 @@ export const CRM_DEADLINE_SOURCE_META = {
 
 export function getPipelineStageSlaDeadlineTs(stageEnteredAt, stage) {
   if (!stageEnteredAt || !stage) return null;
-  if (stage.is_won || stage.is_lost) return null;
+  if (isCrmPipelineStageNoDeadline(stage)) return null;
   const slaDays = effectivePipelineStageSlaDays(stage.sla_days);
   if (slaDays == null) return null;
   return new Date(stageEnteredAt).getTime() + slaDays * 86400000;
 }
 
-/** Kanban: ưu tiên hạn NV mở mới nhất, không có thì SLA cột. */
+/** Kanban: ưu tiên hạn NV mở mới nhất, không có thì SLA cột. Bỏ qua cột không deadline. */
 export function resolveCrmLeadKanbanScheduleSource(item, stage) {
+  const st = stage || item?.stage;
+  if (isCrmPipelineStageNoDeadline(st)) {
+    return { source: null, deadlineTs: null };
+  }
   const taskIso = item?.crm_next_open_task_deadline;
   if (taskIso != null && taskIso !== '') {
     const ts = new Date(taskIso).getTime();

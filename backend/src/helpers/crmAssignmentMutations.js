@@ -7,11 +7,11 @@ const {
   buildAssignmentNotificationInsert,
 } = require('./crmAssignmentNotifications');
 
-const ADMIN_ROLES = new Set(['admin', 'manager', 'sales_admin']);
+const ADMIN_ROLES = new Set(['admin', 'manager', 'sales_admin', 'crm_production_admin']);
 const isAdmin = (req) => ADMIN_ROLES.has(String(req.user?.role || '').toLowerCase());
 
 const ASSIGNMENT_SELECT = `
-  id, company_id, column_id, lead_id, crm_task_id, title, description,
+  id, company_id, column_id, lead_id, crm_task_id, assignment_module, title, description,
   assignee_id, created_by_id, priority, status, deadline,
   position, created_at, updated_at, completed_at,
   assignee:users!crm_assignments_assignee_id_fkey(id, full_name, email, avatar),
@@ -69,8 +69,9 @@ function pushNotif(req, userId, notif) {
 async function createCrmAssignment(req, body) {
   const {
     title, description, assignee_id, assignee_ids, department_ids, region_ids,
-    column_id, company_id, priority, status, deadline, lead_id,
+    column_id, company_id, priority, status, deadline, lead_id, assignment_module,
   } = body || {};
+  const resolvedModule = assignment_module === 'production' ? 'production' : 'crm';
   if (!title || !title.trim()) return { error: 'Cần tiêu đề', status: 400 };
 
   let effectiveCompany = isAdmin(req)
@@ -112,10 +113,15 @@ async function createCrmAssignment(req, body) {
     status: status || 'pending',
     deadline: deadline || null,
     position: posBase,
+    assignment_module: resolvedModule,
     ...(resolvedLeadId ? { lead_id: resolvedLeadId } : {}),
   };
 
   let { data, error } = await supabase.from('crm_assignments').insert(insertRow).select(ASSIGNMENT_SELECT).single();
+  if (error && /assignment_module/.test(error.message || '')) {
+    delete insertRow.assignment_module;
+    ({ data, error } = await supabase.from('crm_assignments').insert(insertRow).select(ASSIGNMENT_SELECT).single());
+  }
   if (error && /lead_id/.test(error.message || '')) {
     delete insertRow.lead_id;
     ({ data, error } = await supabase.from('crm_assignments').insert(insertRow).select(ASSIGNMENT_SELECT).single());

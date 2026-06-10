@@ -7,9 +7,11 @@ import {
   MessageCircle, Users, FileText, MessageSquare, Settings, Send, Search, ExternalLink,
   Link2, Plus, ChevronRight, Bell, Image, Paperclip, RefreshCw, ToggleLeft, ToggleRight,
   X, Trash2, Edit3, UserPlus, Phone, Mail, MoreHorizontal, Check, Copy, Save, Eye, EyeOff,
-  Mic, MicOff, File, Camera, Smile, ArrowLeft, BarChart3, StickyNote,
+  Mic, MicOff, File, Camera, Smile, ArrowLeft, BarChart3, StickyNote, Activity,
 } from 'lucide-react';
 import AutoToolPanel from '../components/AutoToolPanel';
+import BatchActionsBar from '../components/BatchActionsBar';
+import { FacebookAutoCompaniesPanel } from './FacebookAutoCompaniesPage';
 import CrmAppChannelPrefsBanner from '../components/CrmAppChannelPrefsBanner';
 import AutoToolPanelInline from '../components/AutoToolPanel';
 import FacebookPageTokenReminderBanner, { FacebookPageTokenReminderRow } from '../components/FacebookPageTokenReminderBanner';
@@ -168,6 +170,7 @@ export default function FacebookPage() {
     { id: 'lead-ads', label: 'Lead Ads', icon: FileText, badge: stats?.lead_ads_today },
     { id: 'comments', label: 'Bình luận', icon: MessageSquare, badge: stats?.comments_today },
     { id: 'auto-lead', label: 'Tự động', icon: UserPlus },
+    ...(isAdmin ? [{ id: 'auto-companies', label: 'Auto công ty', icon: Activity }] : []),
     {
       id: 'settings',
       label: 'Cài đặt',
@@ -252,12 +255,13 @@ export default function FacebookPage() {
 
       <div className="flex-1 overflow-hidden">
         {tab === 'inbox' && <InboxTab pageStats={stats?.page_stats} fbCompanyQs={fbCompanyQs} />}
-        {tab === 'contacts' && <ContactsTab fbCompanyQs={fbCompanyQs} />}
+        {tab === 'contacts' && <ContactsTab fbCompanyQs={fbCompanyQs} companyId={effectiveCompanyFilter} isAdmin={isAdmin} />}
         {tab === 'analytics' && <AnalyticsTab />}
         {tab === 'lead-ads' && <LeadAdsTab />}
         {tab === 'comments' && <CommentsTab />}
         {tab === 'settings' && <SettingsTab onPagesChanged={loadFbTokenSummary} fbCompanyQs={fbCompanyQs} />}
         {tab === 'auto-lead' && <AutoLeadTab />}
+        {tab === 'auto-companies' && isAdmin && <FacebookAutoCompaniesPanel embedded />}
       </div>
     </div>
   );
@@ -1297,8 +1301,10 @@ function CreateLeadButton({ contactId, onCreated }) {
 // CONTACTS TAB — Danh bạ Facebook (CRUD)
 // ═══════════════════════════════════════════════════════════════
 
-function ContactsTab({ fbCompanyQs = '' }) {
+function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
   const navigate = useNavigate();
+  /** company_id để scope tool theo công ty (rỗng = toàn hệ thống cho admin; NV bị backend ép theo công ty đăng nhập). */
+  const toolCompanyId = companyId != null && String(companyId).trim() !== '' ? String(companyId).trim() : undefined;
   const { socket } = useAuth();
   const [contacts, setContacts] = useState([]);
   const [search, setSearch] = useState('');
@@ -1412,6 +1418,7 @@ function ContactsTab({ fbCompanyQs = '' }) {
     try {
       const payload = {
         ...rescanForm,
+        company_id: toolCompanyId,
         lead_date_from: rescanForm.lead_date_from?.trim() || undefined,
         lead_date_to: rescanForm.lead_date_to?.trim() || undefined,
       };
@@ -1664,6 +1671,7 @@ function ContactsTab({ fbCompanyQs = '' }) {
         body: JSON.stringify({
           limit: n,
           graph_pages: 12,
+          company_id: toolCompanyId,
           clear_phone_when_no_new_inbound: v2ClearPhoneNoInbound,
           delete_lead_when_no_phone_after_clear: v2DeleteLeadNoPhone,
           cleanup_contacts_with_lead: v2CleanupWithLead,
@@ -1854,7 +1862,7 @@ function ContactsTab({ fbCompanyQs = '' }) {
       const res = await fetch(`${API}/api/facebook/batch-sync-messages`, {
         method: 'POST',
         headers: { ...hdr(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: 'all' }),
+        body: JSON.stringify({ mode: 'all', company_id: toolCompanyId }),
       });
       const data = await res.json();
       setBatchStatus({ type: 'sync', loading: false, result: data });
@@ -1869,7 +1877,11 @@ function ContactsTab({ fbCompanyQs = '' }) {
     if (!confirm('Kiểm tra và xóa lead trùng không liên kết với Facebook?')) return;
     setBatchStatus({ type: 'dedup', loading: true, result: null });
     try {
-      const res = await fetch(`${API}/api/facebook/dedup-leads`, { method: 'POST', headers: hdr() });
+      const res = await fetch(`${API}/api/facebook/dedup-leads`, {
+        method: 'POST',
+        headers: { ...hdr(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_id: toolCompanyId }),
+      });
       const data = await res.json();
       setBatchStatus({ type: 'dedup', loading: false, result: data });
       load();
@@ -1880,8 +1892,9 @@ function ContactsTab({ fbCompanyQs = '' }) {
 
   return (
     <div className="p-6 overflow-y-auto h-full">
-      <div className="mb-4 shrink-0" data-tour="fb-contacts-auto-tools">
+      <div className="mb-4 shrink-0 space-y-3" data-tour="fb-contacts-auto-tools">
         <AutoToolPanel onComplete={() => load(false)} />
+        <BatchActionsBar onComplete={() => load(false)} companyId={toolCompanyId} isAdmin={isAdmin} />
       </div>
       <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
         <div>
@@ -4541,7 +4554,9 @@ function SettingsTab({ onPagesChanged, fbCompanyQs = '' }) {
                     <UserPlus size={14} /> {p.auto_create_lead ? 'Auto Lead: BẬT' : 'Auto Lead: TẮT'}
                   </button>
                   {p.auto_reply_message && <span className="text-xs px-3 py-1.5 rounded-lg bg-purple-50 text-purple-600 border border-purple-200">💬 "{p.auto_reply_message.substring(0, 25)}..."</span>}
-                  {p.default_company_id && <span className="text-xs px-3 py-1.5 rounded-lg bg-orange-50 text-orange-700 border border-orange-200">🏢 {companies.find(c => c.id === p.default_company_id)?.short_name || companies.find(c => c.id === p.default_company_id)?.name || 'Công ty'}</span>}
+                  {p.default_company_id
+                    ? <span className="text-xs px-3 py-1.5 rounded-lg bg-orange-50 text-orange-700 border border-orange-200">🏢 {companies.find(c => c.id === p.default_company_id)?.short_name || companies.find(c => c.id === p.default_company_id)?.name || 'Công ty'}</span>
+                    : <span className="text-xs px-3 py-1.5 rounded-lg bg-amber-50 text-amber-700 border border-amber-300" title="Page chưa gán công ty (default_company_id) → KHÔNG thuộc vòng auto của công ty nào. Hãy gán công ty để chạy auto theo công ty.">⚠️ Chưa gán công ty</span>}
                   {p.default_region_id && (() => {
                     const key = `${p.default_company_id || ''}::${String(p.default_module_key || '').trim().toLowerCase() || 'crm'}`;
                     const list = regionsByCompanyId[key] || [];

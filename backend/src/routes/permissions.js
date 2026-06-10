@@ -233,24 +233,70 @@ r.get('/users/:userId/roles', async (req, res) => {
   }
 });
 
+async function findExistingUserRole(userId, roleId, ecosystemUnitId) {
+  const unitId = ecosystemUnitId || null;
+  let q = supabase
+    .from('user_roles')
+    .select(`
+      *,
+      role:roles(*),
+      ecosystem_unit:ecosystem_units(id, name),
+      granted_by_user:users!user_roles_granted_by_fkey(id, full_name)
+    `)
+    .eq('user_id', userId)
+    .eq('role_id', roleId);
+  q = unitId ? q.eq('ecosystem_unit_id', unitId) : q.is('ecosystem_unit_id', null);
+  const { data, error } = await q.maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
 // Assign role to user
 r.post('/users/:userId/roles', async (req, res) => {
   try {
     const { role_id, ecosystem_unit_id, granted_by } = req.body;
-    
+    if (!role_id) return res.status(400).json({ error: 'Thiếu role_id' });
+
+    const unitId = ecosystem_unit_id || null;
+    const existing = await findExistingUserRole(req.params.userId, role_id, unitId);
+    if (existing) {
+      return res.json({
+        user_role: existing,
+        already_exists: true,
+        message: 'Nhân viên đã có vai trò này ở phạm vi đã chọn.',
+      });
+    }
+
     const { data, error } = await supabase
       .from('user_roles')
       .insert({
         user_id: req.params.userId,
         role_id,
-        ecosystem_unit_id: ecosystem_unit_id || null,
+        ecosystem_unit_id: unitId,
         granted_by: granted_by || null,
       })
-      .select()
+      .select(`
+        *,
+        role:roles(*),
+        ecosystem_unit:ecosystem_units(id, name),
+        granted_by_user:users!user_roles_granted_by_fkey(id, full_name)
+      `)
       .single();
-    
-    if (error) throw error;
-    res.json({ user_role: data });
+
+    if (error) {
+      if (error.code === '23505') {
+        const dup = await findExistingUserRole(req.params.userId, role_id, unitId);
+        if (dup) {
+          return res.json({
+            user_role: dup,
+            already_exists: true,
+            message: 'Nhân viên đã có vai trò này ở phạm vi đã chọn.',
+          });
+        }
+      }
+      throw error;
+    }
+    res.json({ user_role: data, already_exists: false });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

@@ -15,7 +15,6 @@ import DocumentShareModulePicker from '../components/DocumentShareModulePicker';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
-import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
 import { publicFileUrl as pubUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
 import {
   ArrowLeft, FolderKanban, MessageSquare, Plus, X,
@@ -33,12 +32,13 @@ import {
   buildCrmStageSlugLabelMapFromTasks,
   resolveCrmPipelineStageLabel,
 } from '../lib/crmStageSlugLabels';
+import { buildCrmLeadDocTaskSections, normalizeCrmChecklist } from '../lib/crmTaskDocumentTree';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
 import { buildSxPipelineStageMeta } from '../lib/sxPipelineRevenue';
 import { ProjectCommentsPanel } from '../components/CommentsPanels';
 
 /** Cùng tên tab với LeadDetail (chi tiết deal) — bỏ facebook và calls */
-const DEAL_TAB_KEYS = new Set(['tasks', 'documents', 'notes', 'comments', 'team', 'approvals', 'incidents']);
+const DEAL_TAB_KEYS = new Set(['tasks', 'shared-workspace', 'documents', 'notes', 'comments', 'team', 'approvals', 'incidents']);
 const LEGACY_TAB_MAP = {
   timeline: 'comments',
   'crm-notes': 'notes',
@@ -220,24 +220,22 @@ function WorkshopInfoPanel({
         </div>
       )}
 
-      {(!HIDE_PRODUCTION_DEAL_VALUES || isVC) && (
-        <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'estimated_value' && startEdit('estimated_value', project.estimated_value || '')}>
+      <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== (isVC ? 'estimated_value' : 'production_value') && startEdit(isVC ? 'estimated_value' : 'production_value', isVC ? (project.estimated_value || '') : (project.production_value || ''))}>
           <span className="text-sm mt-0.5 shrink-0">💰</span>
           <div className="flex-1 min-w-0">
-            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Giá trị dự án</p>
-            {editing === 'estimated_value' ? (
+            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">{isVC ? 'Giá trị dự án' : 'Giá trị sản xuất'}</p>
+            {editing === (isVC ? 'estimated_value' : 'production_value') ? (
               <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
                 <input type="number" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
                   className="w-full px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400" placeholder="0" />
-                <button onClick={() => save('estimated_value', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+                <button onClick={() => save(isVC ? 'estimated_value' : 'production_value', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
                 <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
               </div>
             ) : (
-              <p className="text-sm font-medium text-gray-900 flex items-center gap-1">{formatVND(project.estimated_value)} <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" /></p>
+              <p className="text-sm font-medium text-gray-900 flex items-center gap-1">{formatVND(isVC ? project.estimated_value : project.production_value)} <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" /></p>
             )}
           </div>
         </div>
-      )}
 
       {/* Ngày đặt hàng */}
       <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'order_date' && startEdit('order_date', project.order_date ? project.order_date.substring(0, 10) : '')}>
@@ -307,10 +305,10 @@ function WorkshopInfoPanel({
         </div>
       </div>
 
-      {/* Ngày giao xưởng (SX) / Deadline giao hàng (VC) */}
-      {(() => {
-        const fieldKey = isVC ? 'deadline' : 'production_deadline';
-        const pd = isVC ? project.deadline : project.production_deadline;
+      {/* Deadline giao hàng (VC) */}
+      {isVC && (() => {
+        const fieldKey = 'deadline';
+        const pd = project.deadline;
         const pdDate = pd ? new Date(pd) : null;
         const isOverdue = pdDate && pdDate < new Date();
         const isSoon = pdDate && !isOverdue && pdDate < new Date(Date.now() + 3 * 86400000);
@@ -319,9 +317,7 @@ function WorkshopInfoPanel({
             onClick={() => editing !== fieldKey && startEdit(fieldKey, pd ? pd.substring(0, 10) : '')}>
             <span className="text-sm mt-0.5 shrink-0">{isVC ? '🚚' : '🏭'}</span>
             <div className="flex-1 min-w-0">
-              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">
-                {isVC ? 'Deadline giao hàng' : 'Ngày giao xưởng'}
-              </p>
+              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Deadline giao hàng</p>
               {editing === fieldKey ? (
                 <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
                   <input type="date" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
@@ -524,93 +520,15 @@ function resolveCrmDocDisplayTitle(doc, { preferFileName = false } = {}) {
   return doc.name || fileName || 'Tài liệu';
 }
 
-function resolveDocStageSlug(doc, taskMetaMap) {
-  if (doc.crm_stage_slug) return doc.crm_stage_slug;
-  const taskId = doc.source_crm_task_id;
-  if (taskId && taskMetaMap?.[taskId]?.stage_slug) return taskMetaMap[taskId].stage_slug;
-  return '_other';
-}
-
-function resolveDocTaskKey(doc) {
-  if (doc.source_crm_task_id) return String(doc.source_crm_task_id);
-  if (doc.source_attachment_id) return `_att_${doc.source_attachment_id}`;
-  return `_doc_${doc.id}`;
-}
-
-function resolveDocTaskTitle(doc, taskMetaMap) {
-  const taskId = doc.source_crm_task_id;
-  if (taskId && taskMetaMap?.[taskId]?.title) return taskMetaMap[taskId].title;
-  const bracket = String(doc.name || '').match(/^\[([^\]]+)\]/);
-  if (bracket) return bracket[1];
-  return 'Nhiệm vụ';
-}
-
-function stageSortIndex(slug, stageSlugLabelMap = {}, taskMetaMap = {}) {
-  if (!slug || slug === '_other') return 9999;
-  const idx = CRM_STAGE_ORDER.indexOf(slug);
-  if (idx >= 0) return idx;
-  const label = resolveCrmPipelineStageLabel(slug, {
-    slugLabelMap: stageSlugLabelMap,
-    taskMetaMap,
-    staticLabels: CRM_STAGE_LABELS,
-  });
-  const fromTask = Object.values(taskMetaMap || {}).find((m) => m.stage_slug === slug);
-  const orderFromTask = fromTask?.stage_order_index;
-  if (Number.isFinite(orderFromTask)) return 1000 + orderFromTask;
-  return 9998;
-}
-
-/** Nhóm tài liệu CRM: giai đoạn → nhiệm vụ → từng file một dòng (đúng thứ tự pipeline). */
+/** Nhóm tài liệu CRM: giai đoạn → nhiệm vụ → checklist → file (khớp tab Nhiệm vụ). */
 function buildCrmSharedDocSections(docs, taskMetaMap, stageSlugLabelMap = {}) {
-  const fromTask = [];
-  const manual = [];
-  for (const doc of docs) {
-    if (isCrmDocFromTask(doc)) fromTask.push(doc);
-    else manual.push(doc);
-  }
-
-  const stageBuckets = new Map();
-  for (const doc of fromTask) {
-    const stageSlug = resolveDocStageSlug(doc, taskMetaMap);
-    const taskKey = resolveDocTaskKey(doc);
-    if (!stageBuckets.has(stageSlug)) stageBuckets.set(stageSlug, new Map());
-    const taskMap = stageBuckets.get(stageSlug);
-    if (!taskMap.has(taskKey)) {
-      taskMap.set(taskKey, {
-        taskKey,
-        taskTitle: resolveDocTaskTitle(doc, taskMetaMap),
-        taskOrder: doc.source_crm_task_id && taskMetaMap?.[doc.source_crm_task_id]
-          ? (taskMetaMap[doc.source_crm_task_id].order_index ?? 0)
-          : 0,
-        docs: [],
-      });
-    }
-    taskMap.get(taskKey).docs.push(doc);
-  }
-
-  const taskSections = [...stageBuckets.entries()]
-    .sort(([a], [b]) => stageSortIndex(a, stageSlugLabelMap, taskMetaMap) - stageSortIndex(b, stageSlugLabelMap, taskMetaMap)
-      || String(a).localeCompare(String(b)))
-    .map(([stageSlug, taskMap]) => {
-      const tasks = [...taskMap.values()]
-        .sort((a, b) => a.taskOrder - b.taskOrder || a.taskTitle.localeCompare(b.taskTitle, 'vi'))
-        .map((task) => ({
-          ...task,
-          docs: [...task.docs].sort(
-            (a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0),
-          ),
-        }));
-      const stageLabel = resolveCrmPipelineStageLabel(stageSlug, {
-        slugLabelMap: stageSlugLabelMap,
-        taskMetaMap,
-        staticLabels: CRM_STAGE_LABELS,
-      });
-      return { stageSlug, stageLabel, tasks, fileCount: tasks.reduce((n, t) => n + t.docs.length, 0) };
-    });
-
-  manual.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
-
-  return { taskSections, manualDocs: manual };
+  const { sections, manualDocs } = buildCrmLeadDocTaskSections(
+    docs,
+    taskMetaMap,
+    stageSlugLabelMap,
+    CRM_STAGE_LABELS,
+  );
+  return { taskSections: sections, manualDocs };
 }
 
 /** Khối tài liệu CRM — mỗi file một dòng, nhóm theo giai đoạn → nhiệm vụ */
@@ -658,25 +576,43 @@ function CrmSharedDocumentsPanel({
                 <div className="divide-y divide-gray-100">
                   {stage.tasks.map((task) => (
                     <div key={task.taskKey}>
-                      <div className="bg-white px-3 py-1.5 border-b border-gray-50 flex items-center gap-2">
-                        <span className="text-[11px] font-semibold text-gray-600">📋 {task.taskTitle}</span>
-                        <span className="text-[9px] text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded-full">📎 {task.docs.length}</span>
+                      <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200">
+                        <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-0.5">Nhiệm vụ</p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-base font-bold text-gray-900 leading-snug">{task.taskTitle}</span>
+                          <span className="text-[10px] text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full font-medium">
+                            📎 {task.checklistGroups.reduce((n, g) => n + g.docs.length, 0)} file
+                          </span>
+                        </div>
                       </div>
-                      <div className="divide-y divide-gray-50 bg-white">
-                        {task.docs.map((doc) => (
-                          <div key={doc.id} className="px-3 py-1">
-                            <DocRow
-                              doc={doc}
-                              crmPresentation
-                              nested
-                              workshopModule={workshopModule}
-                              onVisibilitySaved={onVisibilitySaved}
-                              stageSlugLabelMap={stageSlugLabelMap}
-                              taskMetaMap={taskMetaMap}
-                            />
+                      {task.checklistGroups.map((ckGroup) => (
+                        <div key={`${task.taskKey}-${ckGroup.checklistId}`}>
+                          {ckGroup.checklistTitle && (
+                            <div className="bg-emerald-50/80 px-4 py-2 border-b border-emerald-100 border-l-4 border-l-emerald-500">
+                              <p className="text-[10px] font-semibold text-emerald-700 uppercase tracking-wide mb-0.5">Checklist</p>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-sm font-bold text-emerald-950 leading-snug">{ckGroup.checklistTitle}</span>
+                                <span className="text-[10px] text-emerald-700 font-medium">{ckGroup.docs.length} mục</span>
+                              </div>
+                            </div>
+                          )}
+                          <div className="divide-y divide-gray-50 bg-white">
+                            {ckGroup.docs.map((doc) => (
+                              <div key={doc.id} className="px-3 py-1">
+                                <DocRow
+                                  doc={doc}
+                                  crmPresentation
+                                  nested
+                                  workshopModule={workshopModule}
+                                  onVisibilitySaved={onVisibilitySaved}
+                                  stageSlugLabelMap={stageSlugLabelMap}
+                                  taskMetaMap={taskMetaMap}
+                                />
+                              </div>
+                            ))}
                           </div>
-                        ))}
-                      </div>
+                        </div>
+                      ))}
                     </div>
                   ))}
                 </div>
@@ -1117,6 +1053,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               ? stageOrderById.get(String(t.pipeline_stage_id))
               : undefined,
             order_index: t.order_index ?? idx,
+            checklist: normalizeCrmChecklist(t.checklist),
           };
         });
         setCrmTaskMetaMap(map);
@@ -1213,10 +1150,22 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
 
   useEffect(() => {
     let cancelled = false;
-    api.get('/users').then((r) => {
+    const cid = project?.company_id || project?.company?.id || '';
+    const forModule = moduleKey === 'vc' ? 'logistics' : 'production';
+    api.get('/crm/employees-by-company', {
+      params: {
+        ...(cid ? { company_id: cid } : {}),
+        for_module: forModule,
+      },
+    }).then((r) => {
       const u = r.data?.users || r.data || [];
       if (!cancelled) setAllUsers(Array.isArray(u) ? u : []);
-    }).catch(() => {});
+    }).catch(() => {
+      api.get('/users').then((r) => {
+        const u = r.data?.users || r.data || [];
+        if (!cancelled) setAllUsers(Array.isArray(u) ? u : []);
+      }).catch(() => {});
+    });
     // Load VC teams (chỉ cần cho module VC)
     if (moduleKey === 'vc') {
       api.get('/workshop-teams').then((r) => {
@@ -1226,7 +1175,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       }).catch(() => {});
     }
     return () => { cancelled = true; };
-  }, [moduleKey]);
+  }, [moduleKey, project?.company_id, project?.company?.id]);
 
   useEffect(() => {
     const dealId = project?.crmDeals?.[0]?.id;
@@ -1240,7 +1189,12 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     (async () => {
       try {
         const [usersRes, actRes, docRes] = await Promise.all([
-          api.get('/users').then((r) => r.data?.users || r.data || []).catch(() => []),
+          api.get('/crm/employees-by-company', {
+            params: {
+              ...(project?.company_id ? { company_id: project.company_id } : {}),
+              for_module: 'crm',
+            },
+          }).then((r) => r.data?.users || r.data || []).catch(() => []),
           api.get(`/crm/leads/${dealId}/activities`).then((r) => r.data || []).catch(() => []),
           api.get(`/crm/leads/${dealId}/documents`).then((r) => r.data || []).catch(() => []),
         ]);
@@ -1258,7 +1212,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [project?.crmDeals?.[0]?.id]);
+  }, [project?.crmDeals?.[0]?.id, project?.company_id]);
 
   /**
    * Pipeline SX/VC theo công ty dự án + phân loại (workshop_type_id).
@@ -1318,7 +1272,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     }
     try {
       const taskScope = moduleKey === 'vc' ? 'crm' : 'production';
-      const { data } = await api.get(`/crm/leads/${dealId}/tasks`, { params: { task_scope: taskScope } });
+      const { data } = await api.get(`/crm/leads/${dealId}/tasks`, {
+        params: { task_scope: taskScope, task_company_scope: 'own' },
+      });
       setCrmDealTaskSummary(summarizeCrmTasks(data));
     } catch {
       setCrmDealTaskSummary({ total: 0, completed: 0, percent: 0 });
@@ -2298,6 +2254,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
             {/* Tab bar — giống LeadDetail, bỏ Facebook và Tổng đài */}
             <div className="flex border-b flex-wrap">
               {tabBtn('tasks', `✅ Công việc${taskCount ? ` (${taskCount})` : ''}`)}
+              {crmLeadId && moduleKey !== 'vc' && tabBtn('shared-workspace', '🤝 Không gian chung')}
               {tabBtn('documents', `📋 Tài liệu (${safeProjectDocs.length + visibleCrmSharedDocs.length + safeTaskFiles.length})`)}
               {tabBtn('notes', `📝 Ghi chú (${sharedNotes.length})`)}
               {tabBtn('comments', `💬 Bình luận${commentCount > 0 ? ` (${commentCount})` : ''}`)}
@@ -2311,14 +2268,25 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
             <div className="p-5">
               {activeTab === 'tasks' && (
                 <>
+                {project?.is_partner_project_view && (
+                  <p className="mb-3 text-xs text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">
+                    Dự án của công ty đối tác — tab Công việc chỉ hiển thị nhiệm vụ được giao cho công ty bạn.
+                    Xem tab <strong>Không gian chung</strong> để thấy toàn bộ nhiệm vụ hai bên.
+                  </p>
+                )}
                 {crmLeadId ? (
                   <CRMTasksTab
                     leadId={crmLeadId}
                     leadType="deal"
                     users={taskUsers}
                     taskScope={moduleKey === 'vc' ? 'crm' : 'production'}
+                    taskCompanyScope="own"
                     onArtifactsSynced={refreshProjectSilently}
                     onTaskSummaryChange={handleCrmTaskSummaryChange}
+                    linkedProjectId={project?.id || null}
+                    embeddedSxKanbanStages={project?.sxKanbanStages || null}
+                    embeddedWorkshopTypeId={project?.workshop_type_id || project?.workshop_type?.id || null}
+                    sxTemplateCompanyId={project?.company_id || project?.company?.id || null}
                   />
                 ) : scopedWorkshopTasksForTab.length > 0 ? (
                   <WorkshopTasksFallbackPanel
@@ -2340,6 +2308,26 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                   <UnifiedTaskHistoryWidget projectId={id} />
                 </div>
                 </>
+              )}
+
+              {activeTab === 'shared-workspace' && crmLeadId && (
+                <div className="space-y-3">
+                  <p className="text-xs text-gray-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                    Không gian chung — chỉ hiển thị nhiệm vụ đã gán <strong>công ty thực hiện khác</strong> chủ dự án. Nhiệm vụ nội bộ xem ở tab Công việc.
+                  </p>
+                  <CRMTasksTab
+                    leadId={crmLeadId}
+                    leadType="deal"
+                    users={taskUsers}
+                    taskScope="production"
+                    taskCompanyScope="shared"
+                    onArtifactsSynced={refreshProjectSilently}
+                    linkedProjectId={project?.id || null}
+                    embeddedSxKanbanStages={project?.sxKanbanStages || null}
+                    embeddedWorkshopTypeId={project?.workshop_type_id || project?.workshop_type?.id || null}
+                    sxTemplateCompanyId={project?.company_id || project?.company?.id || null}
+                  />
+                </div>
               )}
 
               {/* Tài liệu */}

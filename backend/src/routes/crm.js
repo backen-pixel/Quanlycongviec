@@ -5,7 +5,11 @@ const { responseCache, invalidateTags: rcInvalidateTags } = require('../middlewa
 const PDFDocument = require('pdfkit');
 const multer = require('multer');
 const XLSX = require('xlsx');
-const { crmTaskMeetsCompletionRequirements, crmTaskRequiresCompletionEvidence } = require('../helpers/crmTaskCompletionEvidence');
+const {
+  crmTaskMeetsCompletionRequirements,
+  crmTaskRequiresCompletionEvidence,
+  crmTaskMeetsRequiredFileTypes,
+} = require('../helpers/crmTaskCompletionEvidence');
 const { logKanbanDeadlineUnifiedHistory } = require('../helpers/crmKanbanDeadlineHistory');
 const {
   createCrmLeadTask,
@@ -23,6 +27,8 @@ const {
 } = require('../helpers/crmAssignmentNotifications');
 const { emitNotifyBadge } = require('../helpers/notifyBadge');
 const { emitCrmTaskChanged } = require('../helpers/crmTaskRealtime');
+const { normalizeTemplateChecklistForCrmTask } = require('../helpers/templateChecklistNormalize');
+const { resolveExecutorCompanyId, isExecutorColumnError } = require('../helpers/crossCompanyWorkspace');
 const { createNotification: createNotif, notifyMultiple: notifyMultipleShared } = require('../helpers/notifications');
 const { DEFAULT_CHECKLISTS } = require('../helpers/defaultChecklists');
 const { generateFlowTasks, generateStepTasks } = require('../helpers/generateFlowTasks');
@@ -99,6 +105,13 @@ const {
 } = require('../helpers/productionHandoverSettings');
 const { ensureDealLeadDocumentsForModuleTransition } = require('../helpers/ensureDealLeadDocumentsForModuleTransition');
 const { getLeadDocumentFieldsFromCrmTask, getDefaultCrmAttachmentShare } = require('../helpers/crmTaskLeadDocumentMeta');
+const {
+  findChecklistItem,
+  artifactNamePrefix,
+  syncChecklistItemNotes,
+  buildChecklistLeadDocumentRow,
+  parseChecklist,
+} = require('../helpers/crmChecklistArtifacts');
 const { parseVietnameseMoney, parseVietnameseMeasure } = require('../helpers/excelVnNumbers');
 const { snapshotOrderRowFromQuotation, mapQuotationItemsToOrderRows } = require('../helpers/orderFromQuotation');
 let autoFlowFns = {};
@@ -624,6 +637,17 @@ const { onLeadWon = async () => null, onOrderConfirmed = async () => null, onQuo
 
 const r = Router();
 r.use(auth);
+
+function crmExecutorFieldsFromTemplateItem(it, ownerCompanyId) {
+  const execId = resolveExecutorCompanyId(it, ownerCompanyId);
+  if (!execId || String(execId) === String(ownerCompanyId || '')) return { executor_company_id: null };
+  return { executor_company_id: execId };
+}
+
+function toCrmTaskChecklist(raw, ownerCompanyId, templateItem) {
+  const ckDefaultExec = crmExecutorFieldsFromTemplateItem(templateItem || {}, ownerCompanyId).executor_company_id;
+  return normalizeTemplateChecklistForCrmTask(raw, ckDefaultExec);
+}
 
 // Auto-invalidate response cache cho mọi mutation CRM
 r.use((req, res, next) => {
@@ -3408,6 +3432,8 @@ r.get('/employees-by-company', responseCache({ ttl: 120, scope: 'company', tags:
   try {
     const userId = req.user.userId;
     const { company_id: queryCompanyId } = req.query;
+    const forModuleRaw = String(req.query?.for_module || 'crm').trim().toLowerCase();
+    const forModule = ['crm', 'production', 'logistics'].includes(forModuleRaw) ? forModuleRaw : 'crm';
 
     const sacEmp = scopedAdminCompanyId(req);
     // Resolve company_id: admin gắn công ty → chỉ công ty đó; khác → query / user / department
@@ -3429,22 +3455,26 @@ r.get('/employees-by-company', responseCache({ ttl: 120, scope: 'company', tags:
       return res.json({ users: [], departments: [], company_id: null });
     }
 
-    // Lấy phòng ban kinh doanh (sales-related) của công ty
-    // Match: tên chứa "kinh doanh", "sales", "CSKH", "marketing", "tư vấn"
+    // Lọc phòng ban theo module để picker phụ trách chỉ hiện đúng đội.
     const { data: allDepts } = await supabase.from('departments')
       .select('id, name, color, company_id')
       .eq('company_id', companyId)
       .eq('is_active', true)
       .order('name');
 
-    const SALES_KEYWORDS = ['kinh doanh', 'sales', 'cskh', 'marketing', 'tư vấn', 'chăm sóc', 'thương mại', 'phát triển'];
-    const salesDepts = (allDepts || []).filter(d => {
+    const MODULE_DEPT_KEYWORDS = {
+      crm: ['kinh doanh', 'sales', 'cskh', 'marketing', 'tư vấn', 'chăm sóc', 'thương mại', 'phát triển'],
+      production: ['sản xuất', 'xuong', 'xưởng', 'kỹ thuật', 'ky thuat', 'gia công', 'gia cong', 'thi công', 'thi cong'],
+      logistics: ['logistics', 'vận chuyển', 'van chuyen', 'giao hàng', 'giao hang', 'lắp đặt', 'lap dat', 'kho'],
+    };
+    const moduleKeywords = MODULE_DEPT_KEYWORDS[forModule] || MODULE_DEPT_KEYWORDS.crm;
+    const moduleDepts = (allDepts || []).filter((d) => {
       const lowerName = (d.name || '').toLowerCase();
-      return SALES_KEYWORDS.some(kw => lowerName.includes(kw));
+      return moduleKeywords.some((kw) => lowerName.includes(kw));
     });
 
-    // Nếu không có phòng ban kinh doanh nào → trả về tất cả phòng ban
-    const targetDepts = salesDepts.length > 0 ? salesDepts : (allDepts || []);
+    // Nếu chưa map được theo keyword module → fallback tất cả phòng ban công ty.
+    const targetDepts = moduleDepts.length > 0 ? moduleDepts : (allDepts || []);
     const deptIds = targetDepts.map(d => d.id);
 
     if (!deptIds.length) {
@@ -3480,7 +3510,8 @@ r.get('/employees-by-company', responseCache({ ttl: 120, scope: 'company', tags:
       users: userRows,
       departments: targetDepts,
       company_id: companyId,
-      is_sales_filtered: salesDepts.length > 0,
+      for_module: forModule,
+      is_module_filtered: moduleDepts.length > 0,
     });
   } catch (e) {
     console.error('employees-by-company error:', e.message);
@@ -4254,7 +4285,7 @@ r.get('/leads-by-fb-page', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /** linked_project embed added in migration 76 — included here, stripped by runtime fallback if migration not applied */
-const CRM_LEAD_LIST_SELECT_EXTRA = ', linked_project:projects!crm_leads_project_id_fkey(id, production_deadline, production_note)';
+const CRM_LEAD_LIST_SELECT_EXTRA = ', linked_project:projects!crm_leads_project_id_fkey(id, code, name, order_date, delivery_date, production_deadline, production_note)';
 const CRM_LEAD_REGION_EMBED = ', crm_region:company_regions!crm_leads_region_id_fkey(id, name, code)';
 const CRM_LEAD_LIST_SELECT_BASE =
   `*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type, sync_role, order_index), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies!crm_leads_company_id_fkey(id, name, short_name)${CRM_LEAD_REGION_EMBED}, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name)), vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)`;
@@ -5833,11 +5864,27 @@ r.get('/leads/:id', async (req, res) => {
     const rawId = String(req.params.id || '').trim();
     if (!rawId) return res.status(400).json({ error: 'Thiếu id' });
     const canonicalId = (await resolveCanonicalCrmLeadId(rawId)) || rawId;
-    const { data, error } = await supabase
+    const baseFields = 'id, title, type, company_id, pipeline_id, stage_id, assigned_to, lead_owner_id, created_by, parent_lead_id, use_order_tasks, sx_template_company_id, project_id, deposit_amount, deposit_received, deposit_label';
+    const projectEmbed = ', linked_project:projects!crm_leads_project_id_fkey(id, code, name, order_date, delivery_date, production_deadline)';
+    let { data, error } = await supabase
       .from('crm_leads')
-      .select('id, title, type, company_id, pipeline_id, stage_id, assigned_to, lead_owner_id, created_by, parent_lead_id, use_order_tasks, sx_template_company_id')
+      .select(`${baseFields}${projectEmbed}`)
       .eq('id', canonicalId)
       .maybeSingle();
+    if (error && /order_date|delivery_date|linked_project|column/i.test(String(error.message || ''))) {
+      ({ data, error } = await supabase
+        .from('crm_leads')
+        .select(`${baseFields}, linked_project:projects!crm_leads_project_id_fkey(id, code, name, production_deadline)`)
+        .eq('id', canonicalId)
+        .maybeSingle());
+    }
+    if (error && /linked_project|relationship/i.test(String(error.message || ''))) {
+      ({ data, error } = await supabase
+        .from('crm_leads')
+        .select(baseFields)
+        .eq('id', canonicalId)
+        .maybeSingle());
+    }
     if (error) return res.status(500).json({ error: error.message });
     if (!data) return res.status(404).json({ error: 'Không tìm thấy lead/deal' });
     const sacLdLite = scopedAdminCompanyId(req);
@@ -5895,6 +5942,12 @@ r.get('/leads/:id/detail', async (req, res) => {
       data.pinned_at = null;
       data.is_interacted = false;
       data.interacted_at = null;
+    }
+    try {
+      const { resolveLeadInboxChannel } = require('../helpers/crmLeadInboxChannel');
+      data.inbox_channel = await resolveLeadInboxChannel(supabase, canonicalId, data);
+    } catch (e) {
+      data.inbox_channel = null;
     }
     res.json(data);
   } catch (e) {
@@ -6017,6 +6070,23 @@ r.put('/leads/:id', async (req, res) => {
         });
       }
     }
+
+    if ('deposit_amount' in safeBody) {
+      const raw = safeBody.deposit_amount;
+      if (raw === '' || raw === undefined || raw === null) safeBody.deposit_amount = null;
+      else {
+        const n = Number(raw);
+        safeBody.deposit_amount = Number.isFinite(n) && n > 0 ? n : null;
+      }
+    }
+    if ('deposit_received' in safeBody) {
+      const dr = safeBody.deposit_received;
+      if (dr === '' || dr === undefined || dr === null) safeBody.deposit_received = null;
+      else if (dr === true || dr === 'true') safeBody.deposit_received = true;
+      else if (dr === false || dr === 'false') safeBody.deposit_received = false;
+      else safeBody.deposit_received = null;
+    }
+    if ('deposit_label' in safeBody && safeBody.deposit_label === '') safeBody.deposit_label = null;
 
     if (Object.prototype.hasOwnProperty.call(safeBody, 'lead_type_id')) {
       if (!safeBody.lead_type_id) {
@@ -6361,8 +6431,9 @@ r.get('/leads/:id/task-documents', async (req, res) => {
   try {
     // Lấy tất cả crm_tasks của lead (có stage_slug)
     const { data: crmTasks } = await supabase.from('crm_tasks')
-      .select('id, title, stage_slug')
-      .eq('lead_id', req.params.id);
+      .select('id, title, stage_slug, checklist, pipeline_stage_id, order_index, pipeline_stage:crm_pipeline_stages!crm_tasks_pipeline_stage_id_fkey(id, name, icon, color, order_index)')
+      .eq('lead_id', req.params.id)
+      .order('order_index');
 
     // Fallback: cũng check project tasks
     const { data: lead } = await supabase.from('crm_leads')
@@ -6386,15 +6457,32 @@ r.get('/leads/:id/task-documents', async (req, res) => {
     
     // Build task info map
     const taskMap = {};
-    (crmTasks || []).forEach(t => { taskMap[t.id] = { title: t.title, stage_slug: t.stage_slug }; });
-    projectTasks.forEach(t => { if (!taskMap[t.id]) taskMap[t.id] = { title: t.title, stage_slug: null }; });
+    (crmTasks || []).forEach((t) => {
+      taskMap[t.id] = {
+        title: t.title,
+        stage_slug: t.stage_slug,
+        checklist: t.checklist,
+        pipeline_stage_id: t.pipeline_stage_id,
+        order_index: t.order_index,
+        pipeline_stage: t.pipeline_stage,
+      };
+    });
+    projectTasks.forEach(t => { if (!taskMap[t.id]) taskMap[t.id] = { title: t.title, stage_slug: null, checklist: [] }; });
     
     const visible = (attachments || []).filter((a) => canUserViewDocByAllowlist(req.user, a));
-    const result = visible.map(a => ({
-      ...a,
-      task_title: taskMap[a.task_id]?.title || 'Nhiệm vụ',
-      stage_slug: taskMap[a.task_id]?.stage_slug || null,
-    }));
+    const result = visible.map(a => {
+      const taskInfo = taskMap[a.task_id] || {};
+      const ckItem = a.checklist_id ? findChecklistItem(taskInfo, a.checklist_id) : null;
+      return {
+        ...a,
+        task_title: taskInfo.title || 'Nhiệm vụ',
+        stage_slug: taskInfo.stage_slug || null,
+        pipeline_stage_id: taskInfo.pipeline_stage_id || null,
+        order_index: taskInfo.order_index ?? 0,
+        checklist_id: a.checklist_id || null,
+        checklist_title: ckItem?.title || null,
+      };
+    });
 
     res.set('Cache-Control', 'private, no-store');
     res.json(result);
@@ -6869,7 +6957,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
     
     let { data: stage } = await supabase
       .from('crm_pipeline_stages')
-      .select('id, name, order_index, is_won, is_lost, pipeline_type, send_zalo_on_enter, default_probability, sync_role, requires_deadline')
+      .select('id, name, order_index, is_won, is_lost, pipeline_type, send_zalo_on_enter, default_probability, sync_role, requires_deadline, counts_as_completed_revenue')
       .eq('id', stage_id)
       .single();
     if (!stage) {
@@ -6901,7 +6989,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
     const { data: prevStageForGate } = isStageChangeEarly && lead?.stage_id
       ? await supabase
         .from('crm_pipeline_stages')
-        .select('id, name, order_index, is_won, is_lost, pipeline_type, sync_role')
+        .select('id, name, order_index, is_won, is_lost, pipeline_type, sync_role, counts_as_completed_revenue')
         .eq('id', lead.stage_id)
         .maybeSingle()
       : { data: null };
@@ -6931,7 +7019,8 @@ r.patch('/leads/:id/stage', async (req, res) => {
     }
 
     // Gate 2: cột bật requires_deadline → bắt buộc chọn deadline (sau khi đã qua gate nhiệm vụ).
-    if (isStageChange && stage?.requires_deadline && !hasDeadlineInput) {
+    // Cột Thắng/Thua/Hoàn thành doanh thu không yêu cầu deadline.
+    if (isStageChange && stage?.requires_deadline && !stage?.is_won && !stage?.is_lost && !stage?.counts_as_completed_revenue && !hasDeadlineInput) {
       return res.status(400).json({
         error: 'Cột này yêu cầu đặt deadline khi chuyển thẻ tới.',
         code: 'requires_deadline',
@@ -6978,7 +7067,16 @@ r.patch('/leads/:id/stage', async (req, res) => {
         updates.probability = Math.max(0, Math.min(100, Math.round(p)));
       }
     }
-    if (stage?.is_won) updates.actual_close_date = new Date().toISOString().split('T')[0];
+    if (stage?.is_won) {
+      updates.actual_close_date = new Date().toISOString().split('T')[0];
+      // Deal thắng — không còn theo dõi deadline thẻ.
+      updates.kanban_deadline_at = null;
+      updates.kanban_deadline_reason = null;
+    }
+    if (stage?.counts_as_completed_revenue) {
+      updates.kanban_deadline_at = null;
+      updates.kanban_deadline_reason = null;
+    }
     if (requiresProductionPick && effectiveProductionCompanyId) {
       const sxResponsibleId = await resolveProductionHandoverResponsibleUserId(effectiveProductionCompanyId);
       if (sxResponsibleId) {
@@ -7216,6 +7314,17 @@ r.patch('/leads/:id/deadline', async (req, res) => {
       .eq('id', leadId)
       .maybeSingle();
     if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead/deal' });
+
+    const { data: leadStage } = lead.stage_id
+      ? await supabase
+        .from('crm_pipeline_stages')
+        .select('is_won, is_lost, counts_as_completed_revenue')
+        .eq('id', lead.stage_id)
+        .maybeSingle()
+      : { data: null };
+    if (leadStage?.is_won || leadStage?.counts_as_completed_revenue) {
+      return res.status(400).json({ error: 'Deal đã chốt/hoàn thành — không đặt deadline', code: 'stage_terminal' });
+    }
 
     const raw = req.body?.kanban_deadline_at;
     const clearing = raw === null || raw === '';
@@ -11176,7 +11285,7 @@ r.get('/leads/:id/tasks', async (req, res) => {
     if (error) throw error;
 
     const { data: lead } = await supabase.from('crm_leads')
-      .select('type, created_by, parent_lead_id, use_order_tasks, pipeline_id, company_id, stage_id')
+      .select('type, created_by, parent_lead_id, use_order_tasks, pipeline_id, company_id, stage_id, project_id')
       .eq('id', req.params.id)
       .maybeSingle();
 
@@ -11202,10 +11311,39 @@ r.get('/leads/:id/tasks', async (req, res) => {
     // - production: chỉ task SX (stage_slug bắt đầu sx_)
     // - crm: ẩn task SX
     if (taskScope === 'production') {
-      data = (data || []).filter((t) => String(t.stage_slug || '').startsWith('sx_'));
+      data = (data || []).filter((t) => String(t.stage_slug || '').startsWith('sx_') || t.production_pipeline_stage_id);
+      const workshopTypeId = String(req.query?.workshop_type_id || '').trim() || null;
+      if (workshopTypeId) {
+        const { getProductionPipelineStagesForWorkshopType, filterSxTasksToWorkshopPipeline } = require('../helpers/sxPipelineStageSlug');
+        const companyId = lead?.company_id || null;
+        const stages = await getProductionPipelineStagesForWorkshopType(companyId, workshopTypeId);
+        data = filterSxTasksToWorkshopPipeline(data, stages);
+      } else if (lead?.project_id) {
+        const { data: proj } = await supabase
+          .from('projects')
+          .select('workshop_type_id, company_id')
+          .eq('id', lead.project_id)
+          .maybeSingle();
+        if (proj?.workshop_type_id) {
+          const { getProductionPipelineStagesForWorkshopType, filterSxTasksToWorkshopPipeline } = require('../helpers/sxPipelineStageSlug');
+          const stages = await getProductionPipelineStagesForWorkshopType(
+            proj.company_id || lead.company_id,
+            proj.workshop_type_id,
+          );
+          data = filterSxTasksToWorkshopPipeline(data, stages);
+        }
+      }
     } else if (taskScope === 'crm') {
       data = (data || []).filter((t) => !String(t.stage_slug || '').startsWith('sx_'));
     }
+
+    const { filterCrmTasksByCompanyScope } = require('../helpers/crossCompanyWorkspace');
+    const taskCompanyScope = String(req.query?.task_company_scope || 'own').toLowerCase();
+    data = filterCrmTasksByCompanyScope(data, {
+      scope: taskCompanyScope,
+      userCompanyId: req.user?.company_id || null,
+      leadCompanyId: lead?.company_id || null,
+    });
 
     if (data?.length) {
       data = await attachAssigneesToCrmTasks(data);
@@ -11269,9 +11407,10 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
     const targetLeadId = await resolveCrmTaskWriteLeadId(req.params.id);
     const { data: leadRow } = await supabase
       .from('crm_leads')
-      .select('stage_id')
+      .select('stage_id, company_id')
       .eq('id', targetLeadId)
       .maybeSingle();
+    const ownerCompanyId = leadRow?.company_id || null;
     const stageForTasks = tpl?.pipeline_stage_id || leadRow?.stage_id || null;
 
     // 1) Dedupe trong chính items của template (chống item bị thêm trùng do user)
@@ -11328,21 +11467,35 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
       lead_id: targetLeadId,
       title: item.title,
       description: item.description || null,
+      checklist: toCrmTaskChecklist(item.checklist, ownerCompanyId, item),
       priority: item.priority || 'medium',
       stage_slug: tpl?.stage_slug || null,
       pipeline_stage_id: stageForTasks,
       order_index: item.order_index,
       deadline: null,
       created_by: req.user.userId,
-      completion_requires_file_or_note: !!item.completion_requires_file_or_note,
+      completion_requires_file_or_note: !!item.completion_requires_file_or_note
+        || (Array.isArray(item.required_evidence_file_types) && item.required_evidence_file_types.length > 0),
+      required_evidence_file_types: Array.isArray(item.required_evidence_file_types) ? item.required_evidence_file_types : [],
       completion_requires_customer_note: !!item.completion_requires_customer_note,
       completion_requires_customer_contact: !!item.completion_requires_customer_contact,
+      requires_quick_verdict: !!item.requires_quick_verdict,
       blocks_stage_advance: !!item.blocks_stage_advance,
       show_excel_quotation_upload: !!item.show_excel_quotation_upload,
+      ...crmExecutorFieldsFromTemplateItem(item, ownerCompanyId),
     }));
 
-    const { data, error } = await supabase.from('crm_tasks').insert(inserts)
-      .select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)');
+    const sel = '*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)';
+    let { data, error } = await supabase.from('crm_tasks').insert(inserts).select(sel);
+    // DB chưa apply migration 308 (cột checklist) → bỏ checklist và thử lại.
+    if (error && String(error.message || '').toLowerCase().includes('checklist')) {
+      const stripped = inserts.map(({ checklist: _c, ...rest }) => rest);
+      ({ data, error } = await supabase.from('crm_tasks').insert(stripped).select(sel));
+    }
+    if (error && isExecutorColumnError(error)) {
+      const stripped = inserts.map(({ executor_company_id: _e, ...rest }) => rest);
+      ({ data, error } = await supabase.from('crm_tasks').insert(stripped).select(sel));
+    }
     if (error) throw error;
     res.status(201).json({ tasks: data, count: data.length, skipped });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -11444,17 +11597,27 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
     if (b.status === 'completed') {
       const { data: prior, error: pErr } = await supabase
         .from('crm_tasks')
-        .select('id,status,notes,completion_requires_file_or_note,completion_requires_customer_note,completion_requires_customer_contact')
+        .select('id,status,notes,completion_requires_file_or_note, required_evidence_file_types, requires_quick_verdict, quick_verdict, quick_verdict_reason, completion_requires_customer_note, completion_requires_customer_contact')
         .eq('id', req.params.taskId)
         .maybeSingle();
       if (pErr) throw pErr;
       if (prior && prior.status !== 'completed' && crmTaskRequiresCompletionEvidence(prior)) {
         const ok = await crmTaskMeetsCompletionRequirements(supabase, req.params.taskId, prior);
         if (!ok) {
+          if (prior.requires_quick_verdict && prior.quick_verdict !== 'sufficient') {
+            return res.status(400).json({
+              error: 'Nhiệm vụ này yêu cầu chọn «Đã đủ» trong ghi chú nhanh trước khi hoàn thành.',
+              code: 'crm_task_completion_requires_evidence',
+            });
+          }
+          const typed = await crmTaskMeetsRequiredFileTypes(supabase, req.params.taskId, prior);
+          const detail = typed.missingLabel
+            ? `Thiếu loại minh chứng: ${typed.missingLabel}.`
+            : 'Cần ghi chú khách hàng và/hoặc file đính kèm.';
           return res.status(400).json({
-            error:
-              'Nhiệm vụ này yêu cầu ghi chú khách hàng và/hoặc minh chứng liên hệ (ghi chú hoặc file đính kèm) trước khi hoàn thành — cấu hình tại Cấu hình KPI → Bộ NV CRM.',
+            error: `Nhiệm vụ này yêu cầu minh chứng trước khi hoàn thành. ${detail}`,
             code: 'crm_task_completion_requires_evidence',
+            missing_file_types: typed.missing || [],
           });
         }
       }
@@ -11899,6 +12062,55 @@ r.put('/leads/:leadId/tasks/:taskId/notes', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// UPDATE ghi chú cho 1 mục checklist con + sync → lead_documents
+r.put('/leads/:leadId/tasks/:taskId/checklist/:checklistId/notes', async (req, res) => {
+  try {
+    const { notes } = req.body;
+    const ckId = String(req.params.checklistId);
+    const { data: taskRow, error: tErr } = await supabase.from('crm_tasks')
+      .select('id, title, stage_slug, checklist, shared_to_project, allowed_share_modules')
+      .eq('id', req.params.taskId)
+      .maybeSingle();
+    if (tErr) throw tErr;
+    if (!taskRow) return res.status(404).json({ error: 'Nhiệm vụ không tồn tại' });
+
+    const ckItem = findChecklistItem(taskRow, ckId);
+    if (!ckItem) return res.status(404).json({ error: 'Mục checklist không tồn tại' });
+
+    const nextChecklist = parseChecklist(taskRow.checklist).map((c) => (
+      String(c.id) === ckId ? { ...c, notes: notes || '' } : c
+    ));
+
+    const { data, error } = await supabase.from('crm_tasks')
+      .update({ checklist: nextChecklist, updated_at: new Date().toISOString() })
+      .eq('id', req.params.taskId)
+      .select('id, title, checklist, stage_slug')
+      .single();
+    if (error) throw error;
+
+    try {
+      await syncChecklistItemNotes(supabase, {
+        leadId: req.params.leadId,
+        taskRow: { ...taskRow, checklist: nextChecklist },
+        checklistId: ckId,
+        notes: notes || '',
+        userId: req.user.userId,
+      });
+    } catch (syncErr) {
+      console.warn('Sync checklist notes:', syncErr.message);
+    }
+
+    await emitCrmTaskChanged(req, {
+      leadId: req.params.leadId,
+      taskId: req.params.taskId,
+      action: notes?.trim() ? 'checklist_notes_updated' : 'checklist_notes_cleared',
+      task: data,
+    });
+
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET attachments for a task
 r.get('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
   try {
@@ -11919,10 +12131,13 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
 
     // Query task visibility 1 lần duy nhất
     const { data: task } = await supabase.from('crm_tasks')
-      .select('id, title, stage_slug, default_allowed_companies, default_allowed_departments, pipeline_stage:crm_pipeline_stages!crm_tasks_pipeline_stage_id_fkey(name)')
+      .select('id, title, stage_slug, checklist, default_allowed_companies, default_allowed_departments, pipeline_stage:crm_pipeline_stages!crm_tasks_pipeline_stage_id_fkey(name)')
       .eq('id', req.params.taskId).single();
     const finalCompanies = task?.default_allowed_companies || null;
     const finalDepts = task?.default_allowed_departments || null;
+    const checklistId = req.body.checklist_id ? String(req.body.checklist_id) : null;
+    const ckItem = checklistId ? findChecklistItem(task, checklistId) : null;
+    if (checklistId && !ckItem) return res.status(400).json({ error: 'Mục checklist không tồn tại' });
 
     const { data: leadForShare } = await supabase.from('crm_leads')
       .select('project_id').eq('id', req.params.leadId).single();
@@ -11933,6 +12148,7 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
     const rows = items.map(item => ({
       task_id: req.params.taskId,
       lead_id: req.params.leadId,
+      checklist_id: item.checklist_id ? String(item.checklist_id) : checklistId,
       name: item.name || item.file_name || 'File',
       doc_type: item.doc_type || (item.file_url ? 'other' : 'task_note'),
       file_url: item.file_url, file_name: item.file_name,
@@ -11942,25 +12158,42 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
       shared_to_project: item.shared_to_project ?? defaultShare.shared_to_project,
       allowed_share_modules: item.allowed_share_modules ?? defaultShare.allowed_share_modules,
     }));
-    const { data, error } = await supabase.from('crm_task_attachments')
+    let { data, error } = await supabase.from('crm_task_attachments')
       .insert(rows)
       .select('*, creator:users!crm_task_attachments_created_by_fkey(id, full_name)');
+    if (error && String(error.message || '').toLowerCase().includes('checklist_id')) {
+      const legacyRows = rows.map(({ checklist_id: _c, ...rest }) => rest);
+      ({ data, error } = await supabase.from('crm_task_attachments')
+        .insert(legacyRows)
+        .select('*, creator:users!crm_task_attachments_created_by_fkey(id, full_name)'));
+    }
     if (error) throw error;
 
     // Sync → lead_documents 1 lần
     try {
-      const bulkDocOpts = bulkShareOpts;
-      const syncRows = (data || []).map(att => ({
-        lead_id: req.params.leadId,
-        project_id: leadForShare?.project_id || null,
-        name: `[${task?.title || 'Task'}] ${att.name}`,
-        doc_type: att.doc_type, file_url: att.file_url, file_name: att.file_name,
-        file_size: att.file_size, mime_type: att.mime_type,
-        allowed_companies: finalCompanies, allowed_departments: finalDepts,
-        created_by: req.user.userId, source_attachment_id: att.id,
-        ...getLeadDocumentFieldsFromCrmTask(task, bulkDocOpts, att),
-      }));
-      if (syncRows.length) await supabase.from('lead_documents').insert(syncRows);
+      const bulkDocOpts = { linkToProject: !!leadForShare?.project_id, projectId: leadForShare?.project_id || null };
+      const syncRows = (data || []).map(att => {
+        const attCk = att.checklist_id ? findChecklistItem(task, att.checklist_id) : ckItem;
+        return buildChecklistLeadDocumentRow({
+          leadId: req.params.leadId,
+          taskRow: task,
+          checklistId: att.checklist_id || checklistId,
+          checklistTitle: attCk?.title || null,
+          att,
+          taskDocOpts: bulkDocOpts,
+          finalCompanies,
+          finalDepts,
+          userId: req.user.userId,
+        });
+      });
+      if (syncRows.length) {
+        let { error: syncErr } = await supabase.from('lead_documents').insert(syncRows);
+        if (syncErr && String(syncErr.message || '').toLowerCase().includes('source_checklist_id')) {
+          const legacy = syncRows.map(({ source_checklist_id: _c, ...rest }) => rest);
+          ({ error: syncErr } = await supabase.from('lead_documents').insert(legacy));
+        }
+        if (syncErr) console.warn('Bulk sync error:', syncErr.message);
+      }
     } catch (syncErr) { console.warn('Bulk sync error:', syncErr.message); }
 
     await emitCrmTaskChanged(req, {
@@ -11977,7 +12210,7 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
 // ADD attachment (file or text note) to a task
 r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
   try {
-    const { name, doc_type, file_url, file_name, file_size, mime_type, notes, allowed_companies, allowed_departments } = req.body;
+    const { name, doc_type, file_url, file_name, file_size, mime_type, notes, allowed_companies, allowed_departments, checklist_id } = req.body;
     
     // Auto-apply default visibility from CRM task (inherited from template)
     let finalCompanies = allowed_companies || null;
@@ -11993,44 +12226,63 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
     }
     
     const { data: taskForShare } = await supabase.from('crm_tasks')
-      .select('id, title, stage_slug, default_allowed_companies, default_allowed_departments')
+      .select('id, title, stage_slug, checklist, default_allowed_companies, default_allowed_departments')
       .eq('id', req.params.taskId).single();
+    const ckId = checklist_id ? String(checklist_id) : null;
+    const ckItem = ckId ? findChecklistItem(taskForShare, ckId) : null;
+    if (ckId && !ckItem) return res.status(400).json({ error: 'Mục checklist không tồn tại' });
     const { data: leadForShare } = await supabase.from('crm_leads')
       .select('project_id').eq('id', req.params.leadId).single();
     const singleShareOpts = { linkToProject: !!leadForShare?.project_id };
     const singleDefaultShare = getDefaultCrmAttachmentShare(taskForShare, singleShareOpts);
 
-    const { data, error } = await supabase.from('crm_task_attachments')
-      .insert({
-        task_id: req.params.taskId,
-        lead_id: req.params.leadId,
-        name: name || file_name || 'Ghi chú',
-        doc_type: doc_type || (file_url ? 'other' : 'task_note'),
-        file_url, file_name, file_size, mime_type, notes,
-        allowed_companies: finalCompanies,
-        allowed_departments: finalDepts,
-        created_by: req.user.userId,
-        shared_to_project: req.body.shared_to_project ?? singleDefaultShare.shared_to_project,
-        allowed_share_modules: req.body.allowed_share_modules ?? singleDefaultShare.allowed_share_modules,
-      })
+    const insertRow = {
+      task_id: req.params.taskId,
+      lead_id: req.params.leadId,
+      checklist_id: ckId,
+      name: name || file_name || 'Ghi chú',
+      doc_type: doc_type || (file_url ? 'other' : 'task_note'),
+      file_url, file_name, file_size, mime_type, notes,
+      allowed_companies: finalCompanies,
+      allowed_departments: finalDepts,
+      created_by: req.user.userId,
+      shared_to_project: req.body.shared_to_project ?? singleDefaultShare.shared_to_project,
+      allowed_share_modules: req.body.allowed_share_modules ?? singleDefaultShare.allowed_share_modules,
+    };
+    let { data, error } = await supabase.from('crm_task_attachments')
+      .insert(insertRow)
       .select('*, creator:users!crm_task_attachments_created_by_fkey(id, full_name)')
       .single();
+    if (error && String(error.message || '').toLowerCase().includes('checklist_id')) {
+      const { checklist_id: _c, ...legacy } = insertRow;
+      ({ data, error } = await supabase.from('crm_task_attachments')
+        .insert(legacy)
+        .select('*, creator:users!crm_task_attachments_created_by_fkey(id, full_name)')
+        .single());
+    }
     if (error) throw error;
 
     // ── SYNC → lead_documents ──
     try {
       const task = taskForShare;
       const lead = leadForShare;
-      await supabase.from('lead_documents').insert({
-        lead_id: req.params.leadId,
-        project_id: lead?.project_id || null,
-        name: `[${task?.title || 'Task'}] ${data.name}`,
-        doc_type: data.doc_type, file_url: data.file_url, file_name: data.file_name,
-        file_size: data.file_size, mime_type: data.mime_type, notes: data.notes,
-        allowed_companies: finalCompanies, allowed_departments: finalDepts,
-        created_by: req.user.userId, source_attachment_id: data.id,
-        ...getLeadDocumentFieldsFromCrmTask(task, { linkToProject: !!lead?.project_id }, data),
+      const docRow = buildChecklistLeadDocumentRow({
+        leadId: req.params.leadId,
+        taskRow: task,
+        checklistId: ckId,
+        checklistTitle: ckItem?.title || null,
+        att: data,
+        taskDocOpts: { linkToProject: !!lead?.project_id, projectId: lead?.project_id || null },
+        finalCompanies,
+        finalDepts,
+        userId: req.user.userId,
       });
+      let { error: syncErr } = await supabase.from('lead_documents').insert(docRow);
+      if (syncErr && String(syncErr.message || '').toLowerCase().includes('source_checklist_id')) {
+        const { source_checklist_id: _c, ...legacyDoc } = docRow;
+        ({ error: syncErr } = await supabase.from('lead_documents').insert(legacyDoc));
+      }
+      if (syncErr) console.warn('Sync attachment→document:', syncErr.message);
     } catch (syncErr) { console.warn('Sync attachment→document:', syncErr.message); }
 
     res.status(201).json(data);
@@ -12158,16 +12410,52 @@ r.get('/tasks/planner', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+function crmTemplateMatchesLeadType(pipelineType, leadType) {
+  const lt = String(leadType || 'both').toLowerCase();
+  if (lt === 'both') return true;
+  const pt = String(pipelineType || '').toLowerCase();
+  return !pt || pt === 'both' || pt === lt;
+}
+
+async function resolveCrmBundleTemplateScope(sb, pipelineId, leadType) {
+  const { data: stages, error: stErr } = await sb
+    .from('crm_pipeline_stages')
+    .select('id, pipeline_type')
+    .eq('pipeline_id', pipelineId)
+    .eq('is_active', true);
+  if (stErr) throw stErr;
+
+  const stageIds = (stages || [])
+    .filter((s) => crmTemplateMatchesLeadType(s.pipeline_type, leadType))
+    .map((s) => s.id);
+  if (!stageIds.length) return { stageIds: [], templateIds: [] };
+
+  const { data: rows, error: tplErr } = await sb
+    .from('crm_task_templates')
+    .select('id, pipeline_type, pipeline_stage_id')
+    .eq('is_active', true)
+    .in('pipeline_stage_id', stageIds);
+  if (tplErr) throw tplErr;
+
+  const templateIds = (rows || [])
+    .filter((row) => crmTemplateMatchesLeadType(row.pipeline_type, leadType))
+    .map((row) => row.id)
+    .filter(Boolean);
+  return { stageIds, templateIds };
+}
+
 // GET task templates
 r.get('/task-templates', async (req, res) => {
   try {
     // Tham số:
     //   ?pipeline_id=<uuid>  → trả về cả bộ mẫu thuộc pipeline đó (pipeline_stage_id IN stages của pipeline)
     //                          VÀ bộ mẫu Global (pipeline_stage_id IS NULL).
+    //   ?company_id=<uuid>   → mọi bộ mẫu pipeline của công ty (qua stages thuộc pipelines công ty).
     //   ?scope=global        → chỉ trả về bộ mẫu Global (pipeline_stage_id IS NULL).
     //   ?scope=pipeline      → chỉ trả về bộ mẫu thuộc pipeline (pipeline_stage_id NOT NULL).
     //   (mặc định)           → trả về TẤT CẢ (giữ tương thích frontend cũ).
     const pipelineId = req.query.pipeline_id ? String(req.query.pipeline_id).trim() : null;
+    const companyId = req.query.company_id ? String(req.query.company_id).trim() : null;
     const scope = String(req.query.scope || '').trim();
 
     let q = supabase
@@ -12192,9 +12480,35 @@ r.get('/task-templates', async (req, res) => {
       if (stageIds.length === 0) {
         // Pipeline không có stage nào → chỉ trả global
         q = q.is('pipeline_stage_id', null);
+      } else if (scope === 'pipeline') {
+        q = q.in('pipeline_stage_id', stageIds);
       } else {
         const orClause = `pipeline_stage_id.in.(${stageIds.join(',')}),pipeline_stage_id.is.null`;
         q = q.or(orClause);
+      }
+    } else if (companyId) {
+      const { data: companyPipelines, error: plErr } = await supabase
+        .from('crm_pipelines')
+        .select('id')
+        .eq('company_id', companyId);
+      if (plErr) throw plErr;
+      const pipelineIds = (companyPipelines || []).map((p) => p.id);
+      if (!pipelineIds.length) {
+        if (scope === 'pipeline') return res.json([]);
+        q = q.is('pipeline_stage_id', null);
+      } else {
+        const { data: stages, error: stErr } = await supabase
+          .from('crm_pipeline_stages')
+          .select('id')
+          .in('pipeline_id', pipelineIds);
+        if (stErr) throw stErr;
+        const stageIds = (stages || []).map((s) => s.id);
+        if (!stageIds.length) {
+          if (scope === 'pipeline') return res.json([]);
+          q = q.is('pipeline_stage_id', null);
+        } else {
+          q = q.in('pipeline_stage_id', stageIds);
+        }
       }
     }
 
@@ -12260,12 +12574,126 @@ r.post('/task-templates', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+r.put('/task-templates/set-default-bundle', async (req, res) => {
+  try {
+    const pipelineId = req.body.pipeline_id && String(req.body.pipeline_id).trim();
+    const leadTypeRaw = String(req.body.lead_type || 'both').toLowerCase();
+    const leadType = ['lead', 'deal', 'both'].includes(leadTypeRaw) ? leadTypeRaw : 'both';
+    const markDefault = req.body.is_default !== false;
+    const templateIds = Array.isArray(req.body.template_ids)
+      ? req.body.template_ids.map(String).filter(Boolean)
+      : null;
+
+    if (!pipelineId) return res.status(400).json({ error: 'Thiếu pipeline_id' });
+
+    const { data: pipelineRow, error: plErr } = await supabase
+      .from('crm_pipelines')
+      .select('id, company_id')
+      .eq('id', pipelineId)
+      .maybeSingle();
+    if (plErr) throw plErr;
+    if (!pipelineRow) return res.status(400).json({ error: 'Pipeline không tồn tại' });
+
+    const sac = scopedAdminCompanyId(req);
+    if (!isCrmSystemAdminUser(req.user) && !isAdminLike(req.user)) {
+      if (sac && pipelineRow.company_id && String(sac) !== String(pipelineRow.company_id)) {
+        return res.status(403).json({ error: 'Pipeline không thuộc công ty của bạn' });
+      }
+    }
+
+    const { stageIds, templateIds: scopeTemplateIds } = await resolveCrmBundleTemplateScope(
+      supabase,
+      pipelineId,
+      leadType,
+    );
+    if (!stageIds.length) {
+      return res.status(400).json({ error: 'Pipeline không có giai đoạn phù hợp loại Lead/Deal đã chọn' });
+    }
+
+    // Chỉ bỏ mặc định các bộ thuộc ĐÚNG pipeline + loại Lead/Deal này — không đụng pipeline khác.
+    if (scopeTemplateIds.length) {
+      const { error: clearErr } = await supabase
+        .from('crm_task_templates')
+        .update({ is_default: false })
+        .in('id', scopeTemplateIds);
+      if (clearErr) throw clearErr;
+    }
+
+    if (!markDefault) {
+      return res.json({ ok: true, updated: 0, is_default: false, pipeline_id: pipelineId, lead_type: leadType });
+    }
+
+    let ids = templateIds;
+    if (!ids?.length) {
+      ids = scopeTemplateIds;
+    } else {
+      const allowed = new Set(scopeTemplateIds.map(String));
+      ids = ids.filter((id) => allowed.has(String(id)));
+    }
+
+    if (!ids.length) {
+      return res.status(400).json({ error: 'Không có bộ mẫu nào để đặt mặc định cho pipeline này' });
+    }
+
+    const { data: updated, error: updErr } = await supabase
+      .from('crm_task_templates')
+      .update({ is_default: true })
+      .in('id', ids)
+      .select('id, name, is_default, order_index, pipeline_stage_id');
+    if (updErr) throw updErr;
+
+    res.json({
+      ok: true,
+      updated: updated?.length || 0,
+      is_default: true,
+      pipeline_id: pipelineId,
+      lead_type: leadType,
+      templates: (updated || []).sort((a, b) => (a.order_index || 0) - (b.order_index || 0)),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 r.put('/task-templates/:id', async (req, res) => {
   try {
     const update = {};
     ['name', 'stage_slug', 'description', 'is_default', 'is_active', 'order_index', 'pipeline_type', 'pipeline_stage_id'].forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
+
+    if (update.is_default === true) {
+      const { data: cur } = await supabase
+        .from('crm_task_templates')
+        .select('pipeline_stage_id, pipeline_type')
+        .eq('id', req.params.id)
+        .maybeSingle();
+      const stageId = update.pipeline_stage_id || cur?.pipeline_stage_id || null;
+      const tplType = update.pipeline_type || cur?.pipeline_type || null;
+      if (stageId) {
+        const { data: siblings } = await supabase
+          .from('crm_task_templates')
+          .select('id, pipeline_type')
+          .eq('pipeline_stage_id', stageId)
+          .neq('id', req.params.id);
+        const toClear = (siblings || [])
+          .filter((row) => {
+            if (!tplType) return true;
+            const pt = String(row.pipeline_type || '').toLowerCase();
+            const tt = String(tplType || '').toLowerCase();
+            if (!pt || pt === 'both') return true;
+            if (!tt || tt === 'both') return true;
+            return pt === tt;
+          })
+          .map((row) => row.id);
+        if (toClear.length) {
+          await supabase
+            .from('crm_task_templates')
+            .update({ is_default: false })
+            .in('id', toClear);
+        }
+      }
+    }
 
     // Nếu user chuyển sang gắn pipeline_stage_id và muốn clear stage_slug → derive slug từ stage thật
     // (tránh vi phạm NOT NULL khi DB chưa chạy migration 215).
@@ -12370,17 +12798,33 @@ r.post('/task-templates/:tplId/items', async (req, res) => {
     const b = req.body;
     const { data: existing } = await supabase.from('crm_task_template_items').select('order_index').eq('template_id', req.params.tplId).order('order_index', { ascending: false }).limit(1);
     const nextOrder = (existing?.[0]?.order_index || 0) + 1;
-    const { data, error } = await supabase.from('crm_task_template_items').insert({
+    let { data, error } = await supabase.from('crm_task_template_items').insert({
       template_id: req.params.tplId,
       title: b.title, description: b.description || null,
       priority: b.priority || 'medium', deadline_days: b.deadline_days || 0,
       order_index: nextOrder, checklist: b.checklist || [],
-      completion_requires_file_or_note: !!b.completion_requires_file_or_note,
+      executor_company_id: b.executor_company_id || null,
+      completion_requires_file_or_note: !!b.completion_requires_file_or_note
+        || (Array.isArray(b.required_evidence_file_types) && b.required_evidence_file_types.length > 0),
+      required_evidence_file_types: Array.isArray(b.required_evidence_file_types) ? b.required_evidence_file_types : [],
       completion_requires_customer_note: !!b.completion_requires_customer_note,
       completion_requires_customer_contact: !!b.completion_requires_customer_contact,
+      requires_quick_verdict: !!b.requires_quick_verdict,
       blocks_stage_advance: !!b.blocks_stage_advance,
       show_excel_quotation_upload: !!b.show_excel_quotation_upload,
     }).select().single();
+    if (error && /required_evidence_file_types|requires_quick_verdict/.test(error.message || '')) {
+      return res.status(503).json({
+        error: 'Database chưa có cột minh chứng (migration 315/316). Chạy database/315_task_required_evidence_file_types.sql trên Supabase rồi thử lại.',
+        code: 'db_migration_required_evidence',
+      });
+    }
+    if (error && isExecutorColumnError(error)) {
+      return res.status(503).json({
+        error: 'Database chưa có cột giao việc chéo (migration 323). Chạy database/323_crm_task_template_executor_company.sql trên Supabase rồi thử lại.',
+        code: 'db_migration_executor_company',
+      });
+    }
     if (error) throw error;
     res.status(201).json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -12390,11 +12834,26 @@ r.post('/task-templates/:tplId/items', async (req, res) => {
 r.put('/task-templates/:tplId/items/:itemId', async (req, res) => {
   try {
     const update = {};
-    ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist', 'default_allowed_companies', 'default_allowed_departments', 'completion_requires_file_or_note', 'completion_requires_customer_note', 'completion_requires_customer_contact', 'blocks_stage_advance', 'show_excel_quotation_upload'].forEach(f => {
+    ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist', 'default_allowed_companies', 'default_allowed_departments', 'executor_company_id', 'completion_requires_file_or_note', 'required_evidence_file_types', 'completion_requires_customer_note', 'completion_requires_customer_contact', 'requires_quick_verdict', 'blocks_stage_advance', 'show_excel_quotation_upload'].forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
-    const { data, error } = await supabase.from('crm_task_template_items')
+    if (req.body.executor_company_id === '' || req.body.executor_company_id === null) {
+      update.executor_company_id = null;
+    }
+    let { data, error } = await supabase.from('crm_task_template_items')
       .update(update).eq('id', req.params.itemId).select().single();
+    if (error && /required_evidence_file_types|completion_requires_file_or_note|requires_quick_verdict/.test(error.message || '')) {
+      return res.status(503).json({
+        error: 'Database chưa có cột minh chứng (migration 315/316). Chạy database/315_task_required_evidence_file_types.sql trên Supabase rồi thử lại.',
+        code: 'db_migration_required_evidence',
+      });
+    }
+    if (error && isExecutorColumnError(error)) {
+      return res.status(503).json({
+        error: 'Database chưa có cột giao việc chéo (migration 323). Chạy database/323_crm_task_template_executor_company.sql trên Supabase rồi thử lại.',
+        code: 'db_migration_executor_company',
+      });
+    }
     if (error) throw error;
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }

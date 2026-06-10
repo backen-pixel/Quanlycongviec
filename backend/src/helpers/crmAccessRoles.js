@@ -35,9 +35,11 @@ function isCrmRegionAdminUser(user) {
   return normalizeCrmUserRole(user?.role) === 'region_admin' && user?.company_id != null && String(user.company_id).trim() !== '';
 }
 
-/** Sales Admin: trưởng/phụ trách phòng kinh doanh — xem mọi lead/deal trong phạm vi công ty. */
+/** Sales Admin / Admin CRM+SX: xem mọi lead/deal trong phạm vi công ty. */
 function isCrmSalesAdminUser(user) {
-  return normalizeCrmUserRole(user?.role) === 'sales_admin' && user?.company_id != null && String(user.company_id).trim() !== '';
+  const r = normalizeCrmUserRole(user?.role);
+  const hasCompany = user?.company_id != null && String(user.company_id).trim() !== '';
+  return (r === 'sales_admin' || r === 'crm_production_admin') && hasCompany;
 }
 
 /** Giống userSeesAllCrmLeads(role) nhưng gồm admin khu vực + sales_admin (phạm vi công ty). */

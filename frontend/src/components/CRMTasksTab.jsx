@@ -5,19 +5,63 @@ import api from '../lib/api';
 import { connectSocket, getSocket } from '../lib/socket';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
+import { fetchPipelineStagesById, filterSxPipelineStagesForWorkshopType, sortAndDedupePipelineStages } from '../lib/crmPipelineStages';
 import { formatDateTime, formatVND } from '../lib/utils';
 import { isoToDatetimeLocalValue, datetimeLocalValueToIso } from '../lib/datetimeLocal';
 import {
   Plus, CheckCircle2, Circle, Clock, User, Eye, Trash2, ChevronDown, ChevronRight,
   Calendar, List, Users, Target, AlertTriangle, X, Save, ListChecks, ClipboardList,
   Paperclip, FileUp, MessageSquare, FileText, Image as ImageIcon, Share2, Lock, Film,
-  FileSpreadsheet, Edit3, RefreshCw, UserPlus,
+  FileSpreadsheet, Edit3, RefreshCw, UserPlus, GripVertical, Globe,
 } from 'lucide-react';
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import ExcelQuotationImport from './ExcelQuotationImport';
 import CrmArtifactShareModal from './CrmArtifactShareModal';
 import { shareModuleLabels } from '../lib/documentShareScope';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
+import { formatEvidenceTypesList, formatEvidenceTypesShort, checklistItemRequiresEvidence } from '../lib/evidenceFileTypes';
+import TaskQuickVerdictBar from './TaskQuickVerdictBar';
+import EmployeePicker from './EmployeePicker';
+
+// Checklist con của nhiệm vụ — chuẩn hoá về { id, title, description, done } (hỗ trợ dữ liệu cũ dạng chuỗi).
+let _ckSeq = 0;
+const genChecklistId = () => `ck_${Date.now().toString(36)}_${(_ckSeq++).toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+const normalizeChecklist = (arr) => (Array.isArray(arr) ? arr : []).map((c, i) => (
+  typeof c === 'string'
+    ? { id: `ckidx_${i}_${c.slice(0, 8)}`, title: c, description: '', notes: '', done: false, priority: 'medium', assignee_id: null, executor_company_id: null, completion_requires_file_or_note: false, required_evidence_file_types: [] }
+    : {
+        id: c?.id || `ckidx_${i}`,
+        title: c?.title || c?.label || '',
+        description: c?.description || '',
+        notes: c?.notes || '',
+        done: !!(c?.done ?? c?.is_completed),
+        priority: c?.priority || 'medium',
+        assignee_id: c?.assignee_id || c?.default_assignee_id || null,
+        executor_company_id: c?.executor_company_id || null,
+        completion_requires_file_or_note: !!c?.completion_requires_file_or_note,
+        required_evidence_file_types: Array.isArray(c?.required_evidence_file_types) ? c.required_evidence_file_types : [],
+      }
+));
+const ckStateKey = (taskId, ckId) => `${taskId}:${ckId}`;
+
+/** Bọc hàng nhiệm vụ — kéo thả sắp xếp thứ tự (không gộp checklist). */
+function SortableTaskWrapper({ id, children }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging, isOver } = useSortable({ id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.55 : 1,
+    position: 'relative',
+    zIndex: isDragging ? 50 : 'auto',
+  };
+  return (
+    <div ref={setNodeRef} style={style}>
+      {children({ dragHandleProps: { ...attributes, ...listeners }, isDragging, isOver })}
+    </div>
+  );
+}
 
 const LEAD_STAGES = [
   { slug: 'consulting', label: 'Tư vấn', icon: '💬', color: '#3B82F6' },
@@ -42,6 +86,115 @@ const SX_ORDER_STAGES = [
   { slug: 'sx_giao_hang', label: 'Giao hàng', icon: '9️⃣', color: '#DC2626' },
 ];
 const ALL_STAGES = [...LEAD_STAGES, ...DEAL_STAGES];
+
+function normalizeSxStageText(raw) {
+  return String(raw || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+}
+
+function legacySxSlugFromStageName(nameRaw) {
+  const t = normalizeSxStageText(nameRaw);
+  if (!t) return null;
+  if (t.includes('tiep nhan')) return 'sx_tiep_nhan';
+  if (t.includes('thiet ke') || t.includes('len ke hoach')) return 'sx_thiet_ke_ke_hoach';
+  if (t.includes('kiem tra cheo')) return 'sx_kiem_tra_cheo';
+  if (t.includes('vat tu')) return 'sx_vat_tu';
+  if (t.includes('san xuat thung')) return 'sx_san_xuat_thung';
+  if (t.includes('san xuat alu')) return 'sx_san_xuat_alu';
+  if (t.includes('hoan thien')) return 'sx_hoan_thien';
+  if (t.includes('dong goi')) return 'sx_dong_goi';
+  if (t.includes('giao hang')) return 'sx_giao_hang';
+  return null;
+}
+
+function sxSlugForPipelineStage(stage) {
+  if (!stage) return null;
+  const bucket = String(stage.bucket_slug || '').trim();
+  if (bucket) return `sx_${bucket}`;
+  const legacy = legacySxSlugFromStageName(stage.name);
+  if (legacy) return legacy;
+  // Khớp slug sinh từ backend (projectOrderFulfillment / sxPipelineStageSlug)
+  if (stage.id) return `sx_pl_${String(stage.id).slice(0, 8)}`;
+  return null;
+}
+
+function buildLegacySxSlugToStageId(stages) {
+  const map = new Map();
+  for (const s of stages || []) {
+    if (!s?.id) continue;
+    const slug = sxSlugForPipelineStage(s);
+    if (slug && !map.has(slug)) map.set(slug, s.id);
+  }
+  return map;
+}
+
+/** Gom task SX vào cột production_pipeline_stages.id (ưu tiên) — khớp pipeline đã setup. */
+function resolveSxTaskProductionStageId(task, sxStages) {
+  const stages = sxStages || [];
+  const validIds = new Set(stages.map((s) => String(s.id)));
+  const pid = task?.production_pipeline_stage_id;
+  // Đã gắn cột pipeline: không fallback slug sang phân loại khác (vd. đầu vào → data đầu ra).
+  if (pid) return validIds.has(String(pid)) ? pid : null;
+
+  const legacyMap = buildLegacySxSlugToStageId(stages);
+  const slug = String(task?.stage_slug || '').trim();
+  if (slug && legacyMap.has(slug)) return legacyMap.get(slug);
+  // sx_pl_<8 ký tự đầu UUID> — slug do backend gán khi gen nhiệm vụ SX
+  if (slug.startsWith('sx_pl_')) {
+    const prefix = slug.slice(6);
+    const hit = stages.find((s) => s?.id && String(s.id).startsWith(prefix));
+    if (hit && validIds.has(String(hit.id))) return hit.id;
+  }
+  return null;
+}
+
+function sxTaskBelongsToPipeline(task, sxStages) {
+  if (!task) return false;
+  const isSx = String(task?.stage_slug || '').startsWith('sx_') || !!task?.production_pipeline_stage_id;
+  if (!isSx) return false;
+  return resolveSxTaskProductionStageId(task, sxStages) != null;
+}
+
+/** Bộ mẫu thuộc pipeline + loại lead/deal đang xem. */
+function filterTemplatesForPipeline(templates, pipelineStages, leadType) {
+  const stageIds = new Set((pipelineStages || []).map((s) => String(s.id)));
+  return (templates || []).filter((t) => {
+    if (!t.pipeline_stage_id || !stageIds.has(String(t.pipeline_stage_id))) return false;
+    const pt = String(t.pipeline_type || t.pipeline_stage?.pipeline_type || '').toLowerCase();
+    if (!pt || pt === 'both') return true;
+    const entity = leadType === 'deal' ? 'deal' : 'lead';
+    return pt === entity;
+  });
+}
+
+function templateItemTitleSet(tpl) {
+  return new Set(
+    (tpl?.items || [])
+      .map((i) => String(i.title || '').trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+/** Suy ra bộ mẫu nguồn của task (theo pipeline_stage + tiêu đề). */
+function inferTaskTemplate(task, stageTemplates) {
+  const title = String(task?.title || '').trim().toLowerCase();
+  if (!title || !stageTemplates?.length) return null;
+  let best = null;
+  let bestScore = 0;
+  for (const tpl of stageTemplates) {
+    const titles = templateItemTitleSet(tpl);
+    if (!titles.has(title)) continue;
+    const score = titles.size;
+    if (score > bestScore) {
+      best = tpl;
+      bestScore = score;
+    }
+  }
+  return best;
+}
 
 /** Gom task vào giai đoạn pipeline thật — không dùng bucket "Khác". */
 function resolveTaskPipelineStageId(task, pipelineStages, leadCurrentStageId) {
@@ -260,11 +413,18 @@ export default function CRMTasksTab({
   leadType = 'lead',
   users = [],
   taskScope = 'all',
+  /** own = chỉ NV công ty user; shared = chỉ nhiệm vụ giao chéo công ty */
+  taskCompanyScope = 'own',
   onArtifactsSynced = null,
   onTaskSummaryChange = null,
   refreshKey = null,
   /** Công ty xưởng đã gắn với deal (sx_template_company_id) — gửi khi Gen bộ nhiệm vụ SX */
   sxTemplateCompanyId = null,
+  /** Dự án gắn deal — ưu tiên hơn đọc từ GET /crm/leads/:id (đồng bộ ngày đặt/giao) */
+  linkedProjectId: linkedProjectIdProp = null,
+  /** Cột pipeline SX từ ProductionDetail (sxKanbanStages) — khớp stepper, tránh fallback 9 cột cứng */
+  embeddedSxKanbanStages = null,
+  embeddedWorkshopTypeId = null,
 }) {
   const { user } = useAuth();
   const isAdmin = isAdminLike(user);
@@ -312,17 +472,63 @@ export default function CRMTasksTab({
   const showCrmTemplatesUi = !showSxTasksInUi && !isProductionScope;
 
   const [pipelineStages, setPipelineStages] = useState([]);
+  const [sxPipelineStages, setSxPipelineStages] = useState([]);
   const [leadPipelineId, setLeadPipelineId] = useState(null);
   const [leadCurrentStageId, setLeadCurrentStageId] = useState(null);
+  const [leadCompanyId, setLeadCompanyId] = useState(null);
+  const [projectWorkshopTypeId, setProjectWorkshopTypeId] = useState(null);
+  const [companies, setCompanies] = useState([]);
+
+  useEffect(() => {
+    api.get('/companies', { params: { for_module: 'production' } })
+      .then((r) => setCompanies(r.data?.companies || r.data || []))
+      .catch(() => setCompanies([]));
+  }, []);
+
+  const companyLabelById = useCallback((id) => {
+    if (!id) return '';
+    const c = companies.find((x) => String(x.id) === String(id));
+    return c?.short_name || c?.name || 'Công ty';
+  }, [companies]);
+
+  const isDelegatedSxTask = useCallback((task) => {
+    if (!isSxStageSlug(task?.stage_slug) && !task?.production_pipeline_stage_id) return false;
+    const exec = task?.executor_company_id;
+    if (!exec) return false;
+    if (!leadCompanyId) return true;
+    return String(exec) !== String(leadCompanyId);
+  }, [isSxStageSlug, leadCompanyId]);
+
+  const normalizeExecutorForSave = useCallback((execId) => {
+    const v = execId ? String(execId) : null;
+    if (!v) return null;
+    if (leadCompanyId && String(v) === String(leadCompanyId)) return null;
+    return v;
+  }, [leadCompanyId]);
 
   const uiTasks = useMemo(() => {
     let list = tasks;
     if (leadType === 'deal') {
-      if (showSxTasksInUi) list = tasks.filter((t) => isSxStageSlug(t.stage_slug));
-      else list = tasks.filter((t) => !isSxStageSlug(t.stage_slug));
+      if (showSxTasksInUi) {
+        list = tasks.filter((t) => isSxStageSlug(t.stage_slug) || t.production_pipeline_stage_id);
+        // Chỉ hiển thị nhiệm vụ thuộc pipeline phân loại hiện tại (vd. Data đầu ra — không lẫn Đầu vào).
+        if (projectWorkshopTypeId && sxPipelineStages.length > 0) {
+          list = list.filter((t) => sxTaskBelongsToPipeline(t, sxPipelineStages));
+        }
+      } else {
+        list = tasks.filter((t) => !isSxStageSlug(t.stage_slug) && !t.production_pipeline_stage_id);
+      }
+    }
+    if (taskCompanyScope === 'shared') {
+      list = list.filter((t) => isDelegatedSxTask(t));
     }
     return list;
-  }, [leadType, tasks, showSxTasksInUi, isSxStageSlug]);
+  }, [leadType, tasks, showSxTasksInUi, isSxStageSlug, projectWorkshopTypeId, sxPipelineStages, taskCompanyScope, isDelegatedSxTask]);
+
+  const delegatedTasks = useMemo(
+    () => uiTasks.filter((t) => isDelegatedSxTask(t)),
+    [uiTasks, isDelegatedSxTask],
+  );
 
   useEffect(() => {
     if (!onTaskSummaryChange) return;
@@ -367,17 +573,56 @@ export default function CRMTasksTab({
     order_index: s.order_index ?? i,
   })), [pipelineStages]);
 
+  const sxPipelineStagesAsUiStages = useMemo(() => sortAndDedupePipelineStages(sxPipelineStages || [])
+    .map((s, i) => ({
+      slug: s.id,
+      label: s.name || 'Giai đoạn',
+      icon: s.icon || '📋',
+      color: s.color || '#059669',
+      isSxPipelineStage: true,
+      order_index: s.order_index ?? i,
+    })), [sxPipelineStages]);
+
+  const useSxPipelineTaskUi = isSxOrderTaskFlow && sxPipelineStagesAsUiStages.length > 0;
+
   const STAGES = useMemo(() => {
+    if (useSxPipelineTaskUi) return sxPipelineStagesAsUiStages;
+    // Tab SX: luôn dùng pipeline thật — không fallback 9 cột cứng (1️⃣ Tiếp nhận / Thiết kế và lên kế hoạch…).
+    if (isProductionScope && isSxOrderTaskFlow) return sxPipelineStagesAsUiStages;
+    if (isSxOrderTaskFlow && projectWorkshopTypeId) return sxPipelineStagesAsUiStages;
     if (isSxOrderTaskFlow) return SX_ORDER_STAGES;
     if (usePipelineTaskUi) return pipelineStagesAsUiStages;
     if (isLegacyCrmTaskSet && pipelineStages.length) return pipelineStagesAsUiStages;
     return leadType === 'deal' ? DEAL_STAGES : LEAD_STAGES;
-  }, [isSxOrderTaskFlow, usePipelineTaskUi, isLegacyCrmTaskSet, pipelineStages.length, pipelineStagesAsUiStages, leadType]);
+  }, [useSxPipelineTaskUi, sxPipelineStagesAsUiStages, isProductionScope, isSxOrderTaskFlow, projectWorkshopTypeId, usePipelineTaskUi, isLegacyCrmTaskSet, pipelineStages.length, pipelineStagesAsUiStages, leadType]);
   const STAGE_OPTIONS = useMemo(() => {
     if (usePipelineTaskUi) return [...pipelineStagesAsUiStages, ...SX_ORDER_STAGES];
     return leadType === 'deal' ? [...DEAL_STAGES, ...SX_ORDER_STAGES] : LEAD_STAGES;
   }, [leadType, usePipelineTaskUi, pipelineStagesAsUiStages]);
+
   const [templates, setTemplates] = useState([]);
+
+  const pipelineTemplates = useMemo(() => {
+    if (!usePipelineTaskUi && !(isLegacyCrmTaskSet && pipelineStages.length)) {
+      return (templates || []).filter((t) => {
+        if (t.pipeline_stage_id) return false;
+        const isDeal = t.stage_slug?.startsWith('deal_');
+        return leadType === 'deal' ? isDeal : !isDeal;
+      });
+    }
+    return filterTemplatesForPipeline(templates, pipelineStages, leadType);
+  }, [templates, usePipelineTaskUi, isLegacyCrmTaskSet, pipelineStages, leadType]);
+
+  const defaultPipelineTemplates = useMemo(
+    () => pipelineTemplates.filter((t) => t.is_default),
+    [pipelineTemplates],
+  );
+
+  const templatePanelStages = useMemo(() => {
+    if (usePipelineTaskUi || (isLegacyCrmTaskSet && pipelineStages.length)) return STAGES;
+    return leadType === 'deal' ? DEAL_STAGES : LEAD_STAGES;
+  }, [usePipelineTaskUi, isLegacyCrmTaskSet, pipelineStages.length, STAGES, leadType]);
+
   const [loading, setLoading] = useState(true);
   const [generatingProduction, setGeneratingProduction] = useState(false);
   const [resyncingPipeline, setResyncingPipeline] = useState(false);
@@ -396,9 +641,18 @@ export default function CRMTasksTab({
   const [assignPopoverStyle, setAssignPopoverStyle] = useState({});
   const assignPopoverRef = useRef(null);
   const assignAnchorElRef = useRef(null);
+  const [editPopoverStyle, setEditPopoverStyle] = useState({});
+  const editPopoverRef = useRef(null);
+  const editAnchorElRef = useRef(null);
+  const [newChecklistText, setNewChecklistText] = useState({});
   const [lastAssignmentLink, setLastAssignmentLink] = useState(null);
   const [shareModal, setShareModal] = useState(null);
   const [showTemplatePanel, setShowTemplatePanel] = useState(false);
+  const [linkedProjectId, setLinkedProjectId] = useState(linkedProjectIdProp || null);
+  const [linkedProjectLabel, setLinkedProjectLabel] = useState('');
+  const [projectDates, setProjectDates] = useState({ order_date: '', delivery_date: '' });
+  const [dateChecklist, setDateChecklist] = useState({ order_date: false, delivery_date: false });
+  const [dateSavingKey, setDateSavingKey] = useState('');
   /** Task có thể thuộc deal con (fulfillment) khi deal gốc dùng đơn — API đính kèm/ghi chú cần đúng lead_id */
   const apiLeadIdForTaskId = (taskId) => {
     const t = tasks.find((x) => x.id === taskId);
@@ -414,21 +668,106 @@ export default function CRMTasksTab({
 
   const prevLeadIdForTasksRef = useRef(null);
 
+  useEffect(() => {
+    if (linkedProjectIdProp) setLinkedProjectId(linkedProjectIdProp);
+  }, [linkedProjectIdProp]);
+
+  useEffect(() => {
+    if (embeddedWorkshopTypeId) setProjectWorkshopTypeId(String(embeddedWorkshopTypeId));
+  }, [embeddedWorkshopTypeId]);
+
+  useEffect(() => {
+    if (!Array.isArray(embeddedSxKanbanStages) || !embeddedSxKanbanStages.length) return;
+    const wkt = embeddedWorkshopTypeId ? String(embeddedWorkshopTypeId) : null;
+    let stages = embeddedSxKanbanStages;
+    if (wkt) stages = filterSxPipelineStagesForWorkshopType(stages, wkt);
+    setSxPipelineStages(sortAndDedupePipelineStages(stages));
+  }, [embeddedSxKanbanStages, embeddedWorkshopTypeId]);
+
+  const applyProjectDateFields = (p) => {
+    if (!p) return;
+    const orderDate = p.order_date ? String(p.order_date).substring(0, 10) : '';
+    const deliveryDate = (p.delivery_date || p.production_deadline)
+      ? String(p.delivery_date || p.production_deadline).substring(0, 10)
+      : '';
+    setProjectDates({ order_date: orderDate, delivery_date: deliveryDate });
+    setDateChecklist({ order_date: !!orderDate, delivery_date: !!deliveryDate });
+    const label = [p.code, p.name || p.title].filter(Boolean).join(' — ');
+    if (label) setLinkedProjectLabel(label);
+    const wkt = p.workshop_type_id || p.workshop_type?.id || null;
+    if (wkt) setProjectWorkshopTypeId(String(wkt));
+  };
+
+  const applySxKanbanStagesFromProject = (stages, wkt) => {
+    if (!Array.isArray(stages) || !stages.length) return;
+    let rows = stages;
+    if (wkt) rows = filterSxPipelineStagesForWorkshopType(rows, wkt);
+    setSxPipelineStages(sortAndDedupePipelineStages(rows));
+  };
+
+  const loadLinkedProjectDates = async (projectId, linkedProjectFallback = null) => {
+    if (!projectId) {
+      setLinkedProjectId(null);
+      setLinkedProjectLabel('');
+      setProjectDates({ order_date: '', delivery_date: '' });
+      setDateChecklist({ order_date: false, delivery_date: false });
+      setProjectWorkshopTypeId(null);
+      return { workshopTypeId: null, sxKanbanStages: null };
+    }
+    setLinkedProjectId(projectId);
+    const projectEndpoints = isProductionScope
+      ? [`/production/projects/${projectId}`, `/projects/${projectId}`]
+      : [`/projects/${projectId}`, `/production/projects/${projectId}`];
+    for (const path of projectEndpoints) {
+      try {
+        const { data } = await api.get(path, { headers: { 'x-no-cache': '1' } });
+        const p = data?.project || data;
+        if (p?.id) {
+          applyProjectDateFields(p);
+          const wkt = p.workshop_type_id || p.workshop_type?.id || null;
+          const kanban = Array.isArray(p.sxKanbanStages) && p.sxKanbanStages.length
+            ? p.sxKanbanStages
+            : null;
+          if (kanban) applySxKanbanStagesFromProject(kanban, wkt);
+          return { workshopTypeId: wkt, sxKanbanStages: kanban };
+        }
+      } catch (_) { /* thử endpoint kế */ }
+    }
+    if (linkedProjectFallback) {
+      applyProjectDateFields(linkedProjectFallback);
+      const wkt = linkedProjectFallback.workshop_type_id || linkedProjectFallback.workshop_type?.id || null;
+      return { workshopTypeId: wkt, sxKanbanStages: null };
+    }
+    return { workshopTypeId: null, sxKanbanStages: null };
+  };
+
   const loadTasks = async (opts = {}) => {
     const silent = !!opts.silent;
     if (!silent) setLoading(true);
     try {
-      const [tasksRes, tplRes, leadRes] = await Promise.all([
-        api.get(`/crm/leads/${leadId}/tasks`, { params: { task_scope: taskScope } }),
-        isProductionScope ? Promise.resolve({ data: [] }) : api.get('/crm/task-templates'),
-        api.get(`/crm/leads/${leadId}`).catch(() => ({ data: null })),
-      ]);
-      setTemplates(tplRes.data || []);
+      const leadRes = await api.get(`/crm/leads/${leadId}`).catch(() => ({ data: null }));
+      const linkedProject = leadRes?.data?.linked_project || null;
+      const projectId = linkedProjectIdProp || leadRes?.data?.project_id || linkedProject?.id || null;
+      let sxWkt = embeddedWorkshopTypeId
+        || linkedProject?.workshop_type_id
+        || linkedProject?.workshop_type?.id
+        || null;
+      const projCtx = await loadLinkedProjectDates(projectId, linkedProject);
+      if (projCtx.workshopTypeId) sxWkt = projCtx.workshopTypeId;
+      if (sxWkt) setProjectWorkshopTypeId(String(sxWkt));
+
+      const taskParams = {
+        task_scope: taskScope,
+        task_company_scope: taskCompanyScope,
+        ...(sxWkt ? { workshop_type_id: sxWkt } : {}),
+      };
+      const tasksRes = await api.get(`/crm/leads/${leadId}/tasks`, { params: taskParams });
 
       // Lấy pipeline_id của lead → load pipeline_stages thật
       // Một số task đã được auto-gen với pipeline_stage_id thuộc pipeline khác (deal cũ
       // nhảy giữa pipeline) → suy ra pipeline_id từ task đầu tiên có pipeline_stage_id.
       setLeadCurrentStageId(leadRes?.data?.stage_id || null);
+      setLeadCompanyId(leadRes?.data?.company_id || null);
       let pid = leadRes?.data?.pipeline_id || null;
       if (!pid) {
         const firstTaskWithStage = (tasksRes.data || []).find((t) => t.pipeline_stage_id);
@@ -443,20 +782,60 @@ export default function CRMTasksTab({
         }
       }
       setLeadPipelineId(pid);
+
+      let stagesForLead = [];
       if (pid) {
         try {
           const { stages } = await fetchPipelineStagesById(pid);
-          const filtered = stages.filter((s) => {
+          stagesForLead = stages.filter((s) => {
             if (!s.pipeline_type) return true;
             if (s.pipeline_type === 'both') return true;
             return s.pipeline_type === (leadType === 'deal' ? 'deal' : 'lead');
           });
-          setPipelineStages(filtered);
+          setPipelineStages(stagesForLead);
         } catch {
           setPipelineStages([]);
         }
       } else {
         setPipelineStages([]);
+      }
+
+      const sxCompanyId = sxTemplateCompanyId
+        || leadRes?.data?.sx_template_company_id
+        || leadRes?.data?.company_id
+        || null;
+      const hasEmbeddedStages = (
+        (Array.isArray(embeddedSxKanbanStages) && embeddedSxKanbanStages.length > 0)
+        || (Array.isArray(projCtx.sxKanbanStages) && projCtx.sxKanbanStages.length > 0)
+      );
+      if (!hasEmbeddedStages && sxCompanyId) {
+        try {
+          const sxParams = { company_id: sxCompanyId };
+          if (sxWkt) sxParams.workshop_type_id = sxWkt;
+          const { data: sxStages } = await api.get('/production/pipeline-stages', {
+            params: sxParams,
+            headers: { 'x-no-cache': '1' },
+          });
+          let raw = Array.isArray(sxStages) ? sxStages : [];
+          if (sxWkt) raw = filterSxPipelineStagesForWorkshopType(raw, sxWkt);
+          setSxPipelineStages(sortAndDedupePipelineStages(raw));
+        } catch {
+          if (!embeddedSxKanbanStages?.length) setSxPipelineStages([]);
+        }
+      } else if (!hasEmbeddedStages) {
+        setSxPipelineStages([]);
+      }
+
+      if (!isProductionScope) {
+        const tplParams = pid ? { pipeline_id: pid, scope: 'pipeline' } : {};
+        try {
+          const tplRes = await api.get('/crm/task-templates', { params: tplParams });
+          setTemplates(tplRes.data || []);
+        } catch {
+          setTemplates([]);
+        }
+      } else {
+        setTemplates([]);
       }
 
       const displayTasks = tasksRes.data || [];
@@ -465,7 +844,7 @@ export default function CRMTasksTab({
       // Auto-expand stages that have tasks
       const stagesExp = {};
       displayTasks.forEach((t) => {
-        const k = t.pipeline_stage_id || t.stage_slug;
+        const k = t.production_pipeline_stage_id || t.pipeline_stage_id || t.stage_slug;
         if (k) stagesExp[k] = true;
       });
       setExpandedStages(stagesExp);
@@ -480,7 +859,7 @@ export default function CRMTasksTab({
     prevLeadIdForTasksRef.current = leadId;
     const silent = !first && !leadSwitched && refreshKey > 0;
     loadTasks({ silent });
-  }, [leadId, taskScope, isProductionScope, refreshKey]);
+  }, [leadId, taskScope, taskCompanyScope, isProductionScope, refreshKey]);
 
   /** Realtime: web ↔ mobile — refetch khi nhiệm vụ CRM thay đổi qua socket */
   const loadTasksRef = useRef(loadTasks);
@@ -540,7 +919,10 @@ export default function CRMTasksTab({
       if (created.length) {
         setTasks((prev) => [...prev, ...created]);
         const stages = {};
-        created.forEach((t) => { if (t.stage_slug) stages[t.stage_slug] = true; });
+        created.forEach((t) => {
+          const k = t.pipeline_stage_id || t.stage_slug;
+          if (k) stages[k] = true;
+        });
         setExpandedStages((s) => ({ ...s, ...stages }));
       } else loadTasks();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
@@ -593,6 +975,14 @@ export default function CRMTasksTab({
         await loadTasks();
         return;
       }
+      if (data.reason === 'no_default_bundle_for_workshop_type' || data.reason === 'no_default_bundle') {
+        alert(
+          'Deal có phân loại Sản xuất nhưng chưa đặt bộ mặc định cho phân loại này.\n\n'
+          + 'Vào SX → Bộ mẫu nhiệm vụ: chọn Công ty + Phân loại + Pipeline → bấm «Đặt bộ mặc định deal SX».',
+        );
+        await loadTasks();
+        return;
+      }
       if (data.reason === 'no_missing_sx_tasks') {
         const ok = window.confirm(
           'Theo bộ mẫu SX hiện tại, không còn nhiệm vụ nào thiếu (đã bổ sung hết hoặc trùng tiêu đề + cột).\n\n'
@@ -633,6 +1023,121 @@ export default function CRMTasksTab({
     } catch (e) {
       setTasks(prevTasks);
       alert(e.response?.data?.error || 'Lỗi');
+    }
+  };
+
+  // ─── Checklist con của nhiệm vụ (lưu JSONB crm_tasks.checklist) ───
+  const addChecklistItem = (task, title) => {
+    const t = (title || '').trim();
+    if (!t) return;
+    const list = [...normalizeChecklist(task.checklist), {
+      id: genChecklistId(),
+      title: t,
+      description: '',
+      notes: '',
+      done: false,
+      priority: 'medium',
+      assignee_id: null,
+    }];
+    updateTask(task.id, { checklist: list });
+  };
+  const toggleChecklistItem = async (task, ckId) => {
+    const ck = normalizeChecklist(task.checklist).find((c) => c.id === ckId);
+    if (!ck) return;
+    const markingDone = !ck.done;
+    if (markingDone && checklistItemRequiresEvidence(ck)) {
+      if (!taskAttachments[task.id]) await loadAttachments(task);
+      setExpandedChecklistKey(ckStateKey(task.id, ckId));
+      if (expandedTask !== task.id) {
+        setExpandedTask(task.id);
+        setTaskNoteText((prev) => ({ ...prev, [task.id]: task.notes || '' }));
+      }
+    }
+    const list = normalizeChecklist(task.checklist).map((c) => (c.id === ckId ? { ...c, done: !c.done } : c));
+    await updateTask(task.id, { checklist: list });
+  };
+  const editChecklistItem = (task, ckId, patch) => {
+    const list = normalizeChecklist(task.checklist).map((c) => (c.id === ckId ? { ...c, ...patch } : c));
+    updateTask(task.id, { checklist: list });
+  };
+
+  const resolveChecklistAssignCompanyId = (task, ck) => (
+    ck?.executor_company_id
+    || task?.executor_company_id
+    || sxTemplateCompanyId
+    || leadCompanyId
+    || null
+  );
+
+  const assignChecklistExecutorCompany = async (task, ckId, companyId) => {
+    const cid = normalizeExecutorForSave(companyId);
+    const list = normalizeChecklist(task.checklist).map((c) => (
+      c.id === ckId ? { ...c, executor_company_id: cid } : c
+    ));
+    await updateTask(task.id, { checklist: list });
+  };
+
+  const assignChecklistItem = async (task, ckId, assigneeId) => {
+    const uid = assigneeId ? String(assigneeId) : null;
+    if (uid) {
+      try {
+        await ensureLeadMembersBeforeAssign(apiLeadIdForTaskId(task.id), [uid]);
+      } catch {
+        /* vẫn lưu gán trên checklist */
+      }
+    }
+    const list = normalizeChecklist(task.checklist).map((c) => (
+      c.id === ckId ? { ...c, assignee_id: uid } : c
+    ));
+    await updateTask(task.id, { checklist: list });
+  };
+  const removeChecklistItem = (task, ckId) => {
+    const list = normalizeChecklist(task.checklist).filter((c) => c.id !== ckId);
+    updateTask(task.id, { checklist: list });
+  };
+
+  const taskDnDSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+  );
+  const taskDnDIds = useMemo(() => uiTasks.map((t) => t.id), [uiTasks]);
+
+  const toReminderIso = (dateOnly) => {
+    if (!dateOnly) return null;
+    const ts = new Date(`${dateOnly}T09:00:00`);
+    return Number.isNaN(ts.getTime()) ? null : ts.toISOString();
+  };
+
+  const saveProjectDateFromChecklist = async (fieldKey) => {
+    if (!linkedProjectId) {
+      alert('Deal chưa gắn dự án để lưu ngày đặt/giao.');
+      return;
+    }
+    setDateSavingKey(fieldKey);
+    try {
+      const checked = !!dateChecklist[fieldKey];
+      const dateValue = checked ? (projectDates[fieldKey] || null) : null;
+      const patch = { [fieldKey]: dateValue };
+      if (fieldKey === 'delivery_date') patch.production_deadline = dateValue;
+      await api.put(`/projects/${linkedProjectId}`, patch);
+
+      // Đồng bộ nhắc việc vào nhóm nhiệm vụ giao hàng (sx_giao_hang).
+      if (fieldKey === 'delivery_date') {
+        const reminderDeadline = toReminderIso(dateValue);
+        const deliveryTasks = tasks.filter((t) => t.stage_slug === 'sx_giao_hang' && t.status !== 'completed');
+        await Promise.all(
+          deliveryTasks.map((t) => api.put(`/crm/leads/${apiLeadIdForTaskId(t.id)}/tasks/${t.id}`, { deadline: reminderDeadline })),
+        );
+      }
+
+      try {
+        onArtifactsSynced?.({ artifactLeadId: leadId, projectDatesUpdated: true, projectId: linkedProjectId });
+      } catch (_) { /* ignore */ }
+      await loadLinkedProjectDates(linkedProjectId);
+      await loadTasks({ silent: true });
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi lưu ngày đặt/giao');
+    } finally {
+      setDateSavingKey('');
     }
   };
 
@@ -805,7 +1310,63 @@ export default function CRMTasksTab({
     requestAnimationFrame(() => updateAssignPopoverPosition());
   };
 
-  const openEditModal = async (task) => {
+  const updateEditPopoverPosition = useCallback(() => {
+    const rect = editAnchorElRef.current?.getBoundingClientRect?.();
+    if (!rect) return;
+    const pad = 8;
+    const gap = 6;
+    const popoverWidth = Math.min(760, window.innerWidth - pad * 2);
+    let maxHeight = Math.min(640, window.innerHeight - pad * 2);
+
+    let left = rect.right - popoverWidth;
+    if (left < pad) left = Math.max(pad, rect.left);
+    left = Math.min(left, window.innerWidth - popoverWidth - pad);
+
+    let top = rect.bottom + gap;
+    if (top + maxHeight > window.innerHeight - pad) {
+      const aboveTop = rect.top - gap - maxHeight;
+      if (aboveTop >= pad) {
+        top = aboveTop;
+      } else {
+        top = pad;
+        maxHeight = window.innerHeight - pad * 2;
+      }
+    }
+
+    setEditPopoverStyle({
+      position: 'fixed',
+      top,
+      left,
+      width: popoverWidth,
+      maxHeight,
+      zIndex: 10050,
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!editingTask) return;
+    updateEditPopoverPosition();
+  }, [editingTask, assignPickList.length, updateEditPopoverPosition]);
+
+  useEffect(() => {
+    if (!editingTask) return;
+    const onReflow = () => updateEditPopoverPosition();
+    window.addEventListener('resize', onReflow);
+    window.addEventListener('scroll', onReflow, true);
+    return () => {
+      window.removeEventListener('resize', onReflow);
+      window.removeEventListener('scroll', onReflow, true);
+    };
+  }, [editingTask, updateEditPopoverPosition]);
+
+  const closeEditModal = () => {
+    setEditingTask(null);
+    editAnchorElRef.current = null;
+    setEditPopoverStyle({});
+  };
+
+  const openEditModal = async (task, anchorEl) => {
+    editAnchorElRef.current = anchorEl || null;
     setEditingTask(task);
     setAssigneeRoleById({});
     setDefaultNewMemberRole('member');
@@ -818,7 +1379,9 @@ export default function CRMTasksTab({
       supervisor_id: task.supervisor_id || '',
       stage_slug: task.stage_slug || '',
       show_excel_quotation_upload: !!task.show_excel_quotation_upload,
+      executor_company_id: task.executor_company_id || '',
     });
+    requestAnimationFrame(() => updateEditPopoverPosition());
     await loadLeadMembersForAssign(task);
   };
 
@@ -875,9 +1438,12 @@ export default function CRMTasksTab({
         stage_slug: editForm.stage_slug,
         show_excel_quotation_upload: !!editForm.show_excel_quotation_upload,
       };
-      const { data } = await api.put(`/crm/leads/${lid}/tasks/${taskId}`, payload);
+      if (showSxTasksInUi || isProductionScope) {
+        payload.executor_company_id = normalizeExecutorForSave(editForm.executor_company_id);
+      }
+      await api.put(`/crm/leads/${lid}/tasks/${taskId}`, payload);
       setEditingTask(null);
-      setTasks((p) => p.map((t) => (t.id === taskId ? { ...t, ...data } : t)));
+      await loadTasks({ silent: true });
     } catch (e) { alert(e.response?.data?.error || 'Lỗi lưu'); }
   };
 
@@ -989,28 +1555,101 @@ export default function CRMTasksTab({
     STAGES.forEach((s) => { map[s.slug] = []; });
     const usePipelineKeys = usePipelineTaskUi || (isLegacyCrmTaskSet && pipelineStages.length > 0);
 
-    if (usePipelineKeys) {
+    if (useSxPipelineTaskUi || (isSxOrderTaskFlow && sxPipelineStages.length > 0)) {
+      uiTasks.forEach((t) => {
+        const key = resolveSxTaskProductionStageId(t, sxPipelineStages);
+        if (key && map[key] !== undefined) map[key].push(t);
+        else if (key) {
+          map[key] = [t];
+        }
+      });
+    } else if (usePipelineKeys) {
       uiTasks.forEach((t) => {
         const key = resolveTaskPipelineStageId(t, pipelineStages, leadCurrentStageId);
         if (key && map[key] !== undefined) map[key].push(t);
       });
-      return map;
+    } else {
+      uiTasks.forEach((t) => {
+        const fallbackSlug = leadType === 'deal' ? (DEAL_STAGES[0]?.slug || 'deal_new') : (LEAD_STAGES[0]?.slug || 'consulting');
+        const key = t.stage_slug || fallbackSlug;
+        if (!map[key]) map[key] = [];
+        map[key].push(t);
+      });
     }
-
-    uiTasks.forEach((t) => {
-      const fallbackSlug = leadType === 'deal' ? (DEAL_STAGES[0]?.slug || 'deal_new') : (LEAD_STAGES[0]?.slug || 'consulting');
-      const key = t.stage_slug || fallbackSlug;
-      if (!map[key]) map[key] = [];
-      map[key].push(t);
+    Object.keys(map).forEach((k) => {
+      map[k].sort((a, b) => (Number(a.order_index) || 0) - (Number(b.order_index) || 0));
     });
     return map;
-  }, [uiTasks, STAGES, usePipelineTaskUi, isLegacyCrmTaskSet, pipelineStages, leadCurrentStageId, leadType]);
+  }, [uiTasks, STAGES, useSxPipelineTaskUi, isSxOrderTaskFlow, sxPipelineStages, usePipelineTaskUi, isLegacyCrmTaskSet, pipelineStages, leadCurrentStageId, leadType]);
+
+  /** Khóa giai đoạn — dùng khi sắp xếp kéo thả trong tab Công việc deal. */
+  const getTaskStageKey = useCallback((task) => {
+    if (!task) return null;
+    if (useSxPipelineTaskUi || (isSxOrderTaskFlow && sxPipelineStages.length > 0)) {
+      return resolveSxTaskProductionStageId(task, sxPipelineStages);
+    }
+    const usePipelineKeys = usePipelineTaskUi || (isLegacyCrmTaskSet && pipelineStages.length > 0);
+    if (usePipelineKeys) {
+      return resolveTaskPipelineStageId(task, pipelineStages, leadCurrentStageId);
+    }
+    const fallbackSlug = leadType === 'deal' ? (DEAL_STAGES[0]?.slug || 'deal_new') : (LEAD_STAGES[0]?.slug || 'consulting');
+    return task.stage_slug || fallbackSlug;
+  }, [useSxPipelineTaskUi, isSxOrderTaskFlow, sxPipelineStages, usePipelineTaskUi, isLegacyCrmTaskSet, pipelineStages, leadCurrentStageId, leadType]);
+
+  /** Kéo thả chỉ sắp xếp trong cùng giai đoạn — không gộp nhiệm vụ (gộp checklist chỉ ở bộ mẫu SX). */
+  const handleTaskDragEnd = useCallback(async (event) => {
+    if (viewMode !== 'list') return;
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const activeId = String(active.id);
+    const overId = String(over.id);
+    if (activeId.startsWith('ck|') || overId.startsWith('ck|')) return;
+
+    const sourceTask = tasks.find((t) => String(t.id) === activeId);
+    const targetTask = tasks.find((t) => String(t.id) === overId);
+    if (!sourceTask || !targetTask) return;
+
+    const srcStage = getTaskStageKey(sourceTask);
+    const dstStage = getTaskStageKey(targetTask);
+    if (!srcStage || srcStage !== dstStage) return;
+
+    const stageTasks = [...(tasksByStage[srcStage] || [])]
+      .sort((a, b) => (Number(a.order_index) || 0) - (Number(b.order_index) || 0));
+    const oldIdx = stageTasks.findIndex((t) => String(t.id) === activeId);
+    const newIdx = stageTasks.findIndex((t) => String(t.id) === overId);
+    if (oldIdx < 0 || newIdx < 0 || oldIdx === newIdx) return;
+
+    const reordered = [...stageTasks];
+    const [moved] = reordered.splice(oldIdx, 1);
+    reordered.splice(newIdx, 0, moved);
+
+    const orderMap = new Map(reordered.map((t, i) => [t.id, i]));
+    const prevTasks = tasks;
+    setTasks((prev) => prev.map((t) => (
+      orderMap.has(t.id) ? { ...t, order_index: orderMap.get(t.id) } : t
+    )));
+
+    try {
+      await Promise.all(reordered.map((t, i) =>
+        api.put(`/crm/leads/${apiLeadIdForTaskId(t.id)}/tasks/${t.id}`, { order_index: i }),
+      ));
+    } catch (e) {
+      setTasks(prevTasks);
+      alert(e.response?.data?.error || 'Lỗi sắp xếp nhiệm vụ');
+    }
+  }, [viewMode, tasks, tasksByStage, getTaskStageKey, apiLeadIdForTaskId]);
 
   const listStagesToRender = useMemo(() => {
-    const withTasks = STAGES.filter((s) => (tasksByStage[s.slug]?.length || 0) > 0);
-    if (usePipelineTaskUi || (isLegacyCrmTaskSet && pipelineStages.length)) {
-      return withTasks;
+    if (
+      useSxPipelineTaskUi
+      || (isProductionScope && isSxOrderTaskFlow)
+      || (isSxOrderTaskFlow && sxPipelineStages.length > 0)
+      || usePipelineTaskUi
+      || (isLegacyCrmTaskSet && pipelineStages.length)
+    ) {
+      return STAGES;
     }
+    const withTasks = STAGES.filter((s) => (tasksByStage[s.slug]?.length || 0) > 0);
     const known = new Set(STAGES.map((s) => s.slug));
     const extras = Object.keys(tasksByStage)
       .filter((k) => k && !known.has(k) && tasksByStage[k]?.length)
@@ -1021,7 +1660,51 @@ export default function CRMTasksTab({
         color: '#6B7280',
       });
     return [...withTasks, ...extras];
-  }, [STAGES, tasksByStage, usePipelineTaskUi, isLegacyCrmTaskSet, pipelineStages.length]);
+  }, [STAGES, tasksByStage, useSxPipelineTaskUi, isProductionScope, isSxOrderTaskFlow, sxPipelineStages.length, usePipelineTaskUi, isLegacyCrmTaskSet, pipelineStages.length]);
+
+  const stageTemplatesMap = useMemo(() => {
+    const map = {};
+    STAGES.forEach((s) => {
+      const key = s.slug;
+      map[key] = pipelineTemplates.filter((t) => (
+        usePipelineTaskUi || (isLegacyCrmTaskSet && pipelineStages.length)
+          ? String(t.pipeline_stage_id) === String(key)
+          : t.stage_slug === key
+      ));
+    });
+    return map;
+  }, [STAGES, pipelineTemplates, usePipelineTaskUi, isLegacyCrmTaskSet, pipelineStages.length]);
+
+  const groupStageTasksByBundle = useCallback((stageKey, stageTasks) => {
+    const stageTpls = stageTemplatesMap[stageKey] || [];
+    if (!stageTpls.length) {
+      return [{ key: 'ungrouped', label: null, tasks: stageTasks, tpl: null }];
+    }
+    const groups = new Map();
+    const orphans = [];
+    stageTasks.forEach((task) => {
+      const tpl = inferTaskTemplate(task, stageTpls);
+      if (!tpl) {
+        orphans.push(task);
+        return;
+      }
+      const gk = tpl.id;
+      if (!groups.has(gk)) {
+        groups.set(gk, { key: gk, label: tpl.name, tasks: [], tpl, isDefault: !!tpl.is_default });
+      }
+      groups.get(gk).tasks.push(task);
+    });
+    const ordered = stageTpls
+      .filter((tpl) => groups.has(tpl.id))
+      .map((tpl) => groups.get(tpl.id));
+    if (orphans.length) {
+      ordered.push({ key: 'orphan', label: 'Nhiệm vụ khác', tasks: orphans, tpl: null, isDefault: false });
+    }
+    if (!ordered.length && stageTasks.length) {
+      return [{ key: 'ungrouped', label: null, tasks: stageTasks, tpl: null }];
+    }
+    return ordered;
+  }, [stageTemplatesMap]);
 
   // Deadline view groups
   const deadlineGroups = useMemo(() => {
@@ -1079,6 +1762,14 @@ export default function CRMTasksTab({
   }, [calMonth]);
 
   const [expandedTask, setExpandedTask] = useState(null);
+  const [expandedChecklistKey, setExpandedChecklistKey] = useState(null);
+  const [editingChecklistKey, setEditingChecklistKey] = useState(null);
+  const [checklistEditForm, setChecklistEditForm] = useState({
+    title: '', description: '', priority: 'medium', assignee_id: '', executor_company_id: '',
+  });
+  const [checklistNoteText, setChecklistNoteText] = useState({});
+  const [savingChecklistNote, setSavingChecklistNote] = useState(null);
+  const [uploadingChecklistKey, setUploadingChecklistKey] = useState(null);
   const [editingDeadline, setEditingDeadline] = useState(null); // taskId currently editing deadline
   const [taskAttachments, setTaskAttachments] = useState({});
   const [taskNoteText, setTaskNoteText] = useState({});
@@ -1255,8 +1946,182 @@ export default function CRMTasksTab({
     } catch (e) { alert('Lỗi'); }
   };
 
+  const filterChecklistAttachments = (atts, ckId) => (
+    (atts || []).filter((a) => String(a.checklist_id || '') === String(ckId))
+  );
+  const filterTaskLevelAttachments = (atts) => (
+    (atts || []).filter((a) => !a.checklist_id)
+  );
+
+  const toggleExpandChecklist = (task, ck) => {
+    const key = ckStateKey(task.id, ck.id);
+    if (expandedChecklistKey === key) {
+      setExpandedChecklistKey(null);
+      return;
+    }
+    setExpandedChecklistKey(key);
+    setEditingChecklistKey(null);
+    setChecklistNoteText((p) => ({ ...p, [key]: ck.notes || '' }));
+    if (expandedTask !== task.id) {
+      setExpandedTask(task.id);
+      setTaskNoteText((prev) => ({ ...prev, [task.id]: task.notes || '' }));
+      loadAttachments(task);
+    } else if (!taskAttachments[task.id]) {
+      loadAttachments(task);
+    }
+  };
+
+  const openEditChecklist = (task, ck) => {
+    const key = ckStateKey(task.id, ck.id);
+    setEditingChecklistKey(key);
+    setExpandedChecklistKey(null);
+    setChecklistEditForm({
+      title: ck.title || '',
+      description: ck.description || '',
+      priority: ck.priority || 'medium',
+      assignee_id: ck.assignee_id || ck.default_assignee_id || '',
+      executor_company_id: ck.executor_company_id || '',
+    });
+    if (expandedTask !== task.id) setExpandedTask(task.id);
+  };
+
+  const saveChecklistEdit = async (task, ckId) => {
+    if (!checklistEditForm.title.trim()) {
+      alert('Nhập tên mục checklist');
+      return;
+    }
+    await editChecklistItem(task, ckId, {
+      title: checklistEditForm.title.trim(),
+      description: checklistEditForm.description?.trim() || '',
+      priority: checklistEditForm.priority || 'medium',
+      assignee_id: checklistEditForm.assignee_id || null,
+      executor_company_id: normalizeExecutorForSave(checklistEditForm.executor_company_id),
+    });
+    setEditingChecklistKey(null);
+  };
+
+  const saveChecklistNotes = async (taskId, ckId) => {
+    const key = ckStateKey(taskId, ckId);
+    setSavingChecklistNote(key);
+    try {
+      const { data } = await api.put(
+        `/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/checklist/${ckId}/notes`,
+        { notes: checklistNoteText[key] || '' },
+      );
+      setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, checklist: data.checklist } : t)));
+      notifyArtifactsSynced(taskId);
+      setSavingChecklistNote(`saved-${key}`);
+      setTimeout(() => setSavingChecklistNote(null), 1500);
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi lưu ghi chú');
+      setSavingChecklistNote(null);
+    }
+  };
+
+  const uploadChecklistFile = (taskId, ckId) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.accept = 'image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.dwg,.dxf,.mp4,.mov,.webm,.avi';
+    input.onchange = async (e) => {
+      const rawFiles = Array.from(e.target.files || []).slice(0, 20);
+      if (!rawFiles.length) return;
+      const upKey = ckStateKey(taskId, ckId);
+      setUploadingChecklistKey(upKey);
+      try {
+        const imageFiles = rawFiles.filter((f) => f.type.startsWith('image/'));
+        const otherFiles = rawFiles.filter((f) => !f.type.startsWith('image/'));
+        const allUploaded = [];
+        if (imageFiles.length) {
+          const compressed = await Promise.all(imageFiles.map((f) => compressImage(f)));
+          const formData = new FormData();
+          compressed.forEach((f) => formData.append('files', f));
+          const { data: uploadRes } = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+          allUploaded.push(...(uploadRes.files || (Array.isArray(uploadRes) ? uploadRes : [uploadRes])));
+        }
+        for (const file of otherFiles) {
+          const isLarge = file.size > 10 * 1024 * 1024;
+          const endpoint = isLarge ? '/upload/stream' : '/upload/single';
+          const result = await new Promise((resolve, reject) => {
+            const formData = new FormData();
+            formData.append('file', file);
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', `${api.defaults.baseURL}${endpoint}`);
+            xhr.setRequestHeader('Authorization', `Bearer ${localStorage.getItem('token')}`);
+            xhr.onload = () => {
+              if (xhr.status >= 200 && xhr.status < 300) resolve(JSON.parse(xhr.responseText));
+              else reject(new Error(`Upload lỗi: ${xhr.status}`));
+            };
+            xhr.onerror = () => reject(new Error('Lỗi mạng'));
+            xhr.send(formData);
+          });
+          allUploaded.push(result);
+        }
+        if (!allUploaded.length) throw new Error('Upload không trả về file');
+        const items = allUploaded.map((up) => ({
+          name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
+          doc_type: (up.mime_type || '').startsWith('image/') ? 'image'
+            : (up.mime_type || '').startsWith('video/') ? 'video'
+            : (up.file_name || '').match(/\.(dwg|dxf)$/i) ? 'drawing' : 'other',
+          file_url: up.file_url,
+          file_name: up.file_name,
+          file_size: up.file_size,
+          mime_type: up.mime_type,
+        }));
+        await api.post(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/bulk`, {
+          items,
+          checklist_id: ckId,
+        });
+        loadAttachments({ id: taskId });
+        loadTasks();
+        notifyArtifactsSynced(taskId);
+      } catch (err) {
+        alert(err.response?.data?.error || err.message || 'Upload lỗi');
+      }
+      setUploadingChecklistKey(null);
+    };
+    input.click();
+  };
 
   const ATT_ICONS = { image: ImageIcon, video: Film, drawing: FileText, task_note: MessageSquare, other: FileText };
+
+  const renderChecklistAttachmentList = (taskId, ckAtts) => {
+    if (!ckAtts.length) return null;
+    return (
+      <div className="space-y-1 mt-2">
+        {ckAtts.map((att) => {
+          const AttIcon = ATT_ICONS[att.doc_type] || FileText;
+          const attOpen = att.file_url ? getFileOpenAnchorProps(att.file_url, { fileName: att.file_name }) : null;
+          return (
+            <div key={att.id} className="py-1.5 px-2 rounded bg-white border group/att">
+              <div className="flex items-start gap-2">
+                <AttIcon className="h-3.5 w-3.5 text-gray-400 mt-0.5 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-gray-800 truncate">{att.name}</p>
+                  {att.notes && att.doc_type !== 'checklist_inline_note' && (
+                    <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{att.notes}</p>
+                  )}
+                  {att.file_url && !att.mime_type?.startsWith('image/') && attOpen && (
+                    <a {...attOpen} className="text-[10px] text-blue-600 hover:underline">{att.file_name || 'Mở file'}</a>
+                  )}
+                </div>
+                <button onClick={() => deleteAttachment(taskId, att.id)}
+                  className="p-0.5 text-gray-400 hover:text-red-500 cursor-pointer opacity-0 group-hover/att:opacity-100">
+                  <Trash2 className="h-2.5 w-2.5" />
+                </button>
+              </div>
+              {att.file_url && att.mime_type?.startsWith('image/') && attOpen && (
+                <a {...attOpen} className="block mt-1.5 ml-5">
+                  <img src={publicFileUrl(att.file_url)} alt={att.name} className="max-h-32 max-w-full rounded border object-contain" />
+                </a>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
 
   const excelQuotationLeadId = excelImportTaskId ? apiLeadIdForTaskId(excelImportTaskId) : leadId;
 
@@ -1265,17 +2130,37 @@ export default function CRMTasksTab({
     const StatusIcon = STATUS_ICONS[task.status] || Circle;
     const isOverdue = task.deadline && new Date(task.deadline) < new Date() && task.status !== 'completed';
     const isExpanded = expandedTask === task.id;
-    const atts = taskAttachments[task.id] || [];
+    const allAtts = taskAttachments[task.id] || [];
+    const atts = filterTaskLevelAttachments(allAtts);
     const descText = (task.description || '').trim();
     const hasDesc = !!descText;
     const hasContent = task.notes || descText || atts.length > 0;
     const fileCount = task.file_count || 0;
     const noteCount = task.note_count || 0;
     const hasNotes = !!task.notes;
+    const delegated = isDelegatedSxTask(task);
+    const executorLabel = delegated ? companyLabelById(task.executor_company_id) : '';
+    const isMyExecutorTask = task.executor_company_id && user?.company_id
+      && String(task.executor_company_id) === String(user.company_id);
     return (
-      <div key={task.id} className={`rounded-lg ${isExpanded ? 'bg-gray-50 border border-gray-200' : 'hover:bg-gray-50'}`}>
+      <SortableTaskWrapper key={task.id} id={task.id}>
+        {({ dragHandleProps, isOver }) => (
+      <div className={`rounded-lg ${
+        isExpanded ? 'bg-gray-50 border border-gray-200' : 'hover:bg-gray-50'
+      } ${delegated && taskCompanyScope === 'shared' ? 'border border-teal-200 bg-teal-50/25' : ''} ${isOver ? 'ring-2 ring-blue-300 ring-offset-1' : ''}`}>
         {/* Main row */}
         <div className="flex items-center gap-2 py-2 px-3 group">
+          {viewMode === 'list' && (
+          <button
+            type="button"
+            {...dragHandleProps}
+            onClick={(e) => e.stopPropagation()}
+            className="cursor-grab active:cursor-grabbing shrink-0 p-0.5 text-gray-300 hover:text-gray-500 rounded"
+            title="Kéo để sắp xếp thứ tự trong cùng giai đoạn"
+          >
+            <GripVertical className="h-4 w-4" />
+          </button>
+          )}
           <button onClick={() => toggleStatus(task)} className="cursor-pointer shrink-0">
             <StatusIcon className={`h-4 w-4 ${task.status === 'completed' ? 'text-emerald-500' : task.status === 'in_progress' ? 'text-blue-500' : 'text-gray-300'}`} />
           </button>
@@ -1290,7 +2175,7 @@ export default function CRMTasksTab({
                 style={task.status === 'completed' ? undefined : { color: '#000000' }}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
-                  openEditModal(task);
+                  openEditModal(task, e.currentTarget);
                 }}
               >
                 {task.title}
@@ -1300,17 +2185,46 @@ export default function CRMTasksTab({
                   Đơn: {task.order_label}
                 </span>
               )}
+              {delegated && (
+                <span
+                  className="shrink-0 text-[10px] font-semibold text-teal-800 bg-teal-50 border border-teal-200 px-1.5 py-0.5 rounded flex items-center gap-0.5"
+                  title={isMyExecutorTask ? 'Nhiệm vụ được giao cho công ty bạn' : `Giao cho ${executorLabel}`}
+                >
+                  <Globe className="h-2.5 w-2.5" />
+                  {isMyExecutorTask ? 'Giao cho bạn' : `Giao ${executorLabel}`}
+                </span>
+              )}
+              {!delegated && taskCompanyScope !== 'shared' && (showSxTasksInUi || isProductionScope) && isSxStageSlug(task.stage_slug) && leadCompanyId && (
+                <span className="shrink-0 text-[10px] text-slate-500 bg-slate-50 border border-slate-100 px-1.5 py-0.5 rounded">
+                  Nội bộ
+                </span>
+              )}
+              {(!!task.requires_quick_verdict && task.status !== 'completed') && (
+                <span
+                  className="shrink-0 text-[10px] font-medium text-sky-900 bg-sky-50 border border-sky-100 px-1.5 py-0.5 rounded max-w-[160px] truncate"
+                  title={task.quick_verdict === 'sufficient' ? 'Đã chọn: Đủ' : task.quick_verdict === 'insufficient' ? `Chưa: ${task.quick_verdict_reason || ''}` : 'Cần chọn Đủ/Chưa'}
+                >
+                  {task.quick_verdict === 'sufficient' ? '✓ Đủ' : task.quick_verdict === 'insufficient' ? '✗ Chưa' : '❓ Đủ/Chưa'}
+                </span>
+              )}
               {(!!task.completion_requires_file_or_note ||
+                (Array.isArray(task.required_evidence_file_types) && task.required_evidence_file_types.length > 0) ||
                 !!task.completion_requires_customer_note ||
                 !!task.completion_requires_customer_contact) &&
                 task.status !== 'completed' && (
                 <span
-                  className="shrink-0 text-[10px] font-medium text-violet-900 bg-violet-50 border border-violet-100 px-1.5 py-0.5 rounded"
-                  title="Cần ghi chú hoặc file đính kèm trước khi hoàn thành / chuyển giai đoạn (Bộ mẫu CRM)"
+                  className="shrink-0 text-[10px] font-medium text-violet-900 bg-violet-50 border border-violet-100 px-1.5 py-0.5 rounded max-w-[220px] truncate"
+                  title={(() => {
+                    const typed = formatEvidenceTypesList(task.required_evidence_file_types);
+                    if (task.required_evidence_file_types?.length) return `Cần nộp: ${typed}`;
+                    return 'Cần ghi chú hoặc file đính kèm trước khi hoàn thành / chuyển giai đoạn';
+                  })()}
                 >
                   {(() => {
+                    const typed = formatEvidenceTypesShort(task.required_evidence_file_types);
                     const n = !!task.completion_requires_customer_note;
-                    const c = !!(task.completion_requires_customer_contact || task.completion_requires_file_or_note);
+                    const c = !!(task.completion_requires_customer_contact || task.completion_requires_file_or_note || typed);
+                    if (typed) return `📎 ${typed}`;
                     if (n && c) return '📝+📎 Minh chứng';
                     if (n) return '📝 Ghi chú KH';
                     return '📎 Minh chứng';
@@ -1319,28 +2233,28 @@ export default function CRMTasksTab({
               )}
             </div>
             {!isExpanded && hasNotes && (
-              <p className="text-[10px] text-gray-400 mt-0.5 line-clamp-1 italic" title={task.notes}>
+              <p className="text-sm text-gray-500 mt-0.5 line-clamp-1 italic" title={task.notes}>
                 💬 {task.notes.slice(0, 80)}{task.notes.length > 80 ? '...' : ''}
               </p>
             )}
             {!isExpanded && !hasNotes && hasDesc && (
-              <p className="text-[10px] text-slate-500 mt-0.5 line-clamp-2" title={descText}>
+              <p className="text-sm text-slate-600 mt-0.5 line-clamp-2" title={descText}>
                 📋 {descText.slice(0, 120)}{descText.length > 120 ? '…' : ''}
               </p>
             )}
             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
               {task.deadline && editingDeadline !== task.id && (
                 <span onClick={(e) => { e.stopPropagation(); setEditingDeadline(task.id); }}
-                  className={`text-[10px] flex items-center gap-0.5 cursor-pointer hover:bg-gray-100 px-1 py-0.5 rounded ${isOverdue ? 'text-red-600 font-bold' : 'text-gray-400'}`}
+                  className={`text-xs font-semibold flex items-center gap-1 cursor-pointer hover:bg-gray-100 px-1.5 py-0.5 rounded ${isOverdue ? 'text-red-600' : 'text-gray-700'}`}
                   title="Click để đổi ngày giờ hẹn">
-                  <Calendar className="h-2.5 w-2.5" />{formatDateTime(task.deadline)}
+                  <Calendar className="h-3.5 w-3.5" />{formatDateTime(task.deadline)}
                 </span>
               )}
               {!task.deadline && editingDeadline !== task.id && (
                 <span onClick={(e) => { e.stopPropagation(); setEditingDeadline(task.id); }}
-                  className="text-[10px] text-gray-300 flex items-center gap-0.5 cursor-pointer hover:text-blue-500 hover:bg-blue-50 px-1 py-0.5 rounded"
+                  className="text-xs font-medium text-gray-400 flex items-center gap-1 cursor-pointer hover:text-blue-500 hover:bg-blue-50 px-1.5 py-0.5 rounded"
                   title="Chọn ngày giờ hẹn">
-                  <Calendar className="h-2.5 w-2.5" />+ Ngày hẹn
+                  <Calendar className="h-3.5 w-3.5" />+ Ngày hẹn
                 </span>
               )}
               {editingDeadline === task.id && (
@@ -1352,7 +2266,7 @@ export default function CRMTasksTab({
                       if (val) updateTask(task.id, { deadline: datetimeLocalValueToIso(val) });
                     }}
                     onBlur={() => setTimeout(() => setEditingDeadline(null), 300)}
-                    className="text-[10px] px-1.5 py-0.5 border border-blue-300 rounded bg-blue-50 outline-none focus:ring-1 focus:ring-blue-400 w-[175px]"
+                    className="text-xs px-2 py-1 border border-blue-300 rounded bg-blue-50 outline-none focus:ring-1 focus:ring-blue-400 w-[185px]"
                   />
                   {task.deadline && (
                     <button onClick={() => { updateTask(task.id, { deadline: null }); setEditingDeadline(null); }}
@@ -1389,6 +2303,18 @@ export default function CRMTasksTab({
                   <MessageSquare className="h-2.5 w-2.5" />{noteCount} ghi chú
                 </span>
               )}
+              {(() => {
+                const ck = normalizeChecklist(task.checklist);
+                if (!ck.length) return null;
+                const done = ck.filter((c) => c.done).length;
+                const allDone = done === ck.length;
+                return (
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-medium ${allDone ? 'text-emerald-700 bg-emerald-50' : 'text-emerald-600 bg-emerald-50'}`}
+                    title="Checklist con của nhiệm vụ">
+                    <ListChecks className="h-2.5 w-2.5" />{done}/{ck.length}
+                  </span>
+                );
+              })()}
               {hasNotes && !isExpanded && (
                 <span className="text-[10px] text-green-600 bg-green-50 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-medium">
                   <FileText className="h-2.5 w-2.5" />Có ghi chú
@@ -1460,7 +2386,7 @@ export default function CRMTasksTab({
             >
               <UserPlus className="h-3.5 w-3.5" />
             </button>
-            <button type="button" onClick={(e) => { e.stopPropagation(); openEditModal(task); }} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer" title="Chỉnh sửa nhiệm vụ">
+            <button type="button" onClick={(e) => { e.stopPropagation(); openEditModal(task, e.currentTarget); }} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer" title="Chỉnh sửa nhiệm vụ">
               <Edit3 className="h-3.5 w-3.5" />
             </button>
             <button type="button" onClick={(e) => { e.stopPropagation(); deleteTask(task.id); }} className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-md cursor-pointer" title="Xóa nhiệm vụ"><Trash2 className="h-3.5 w-3.5" /></button>
@@ -1471,11 +2397,291 @@ export default function CRMTasksTab({
         {isExpanded && (
           <div className="px-3 pb-3 space-y-3 border-t border-gray-200 mx-3 pt-3">
             {hasDesc && (
-              <div className="rounded-lg bg-slate-50 border border-slate-100 p-2.5">
-                <p className="text-[10px] font-semibold text-slate-500 uppercase mb-1">Mô tả / hướng dẫn (từ mẫu CRM)</p>
-                <p className="text-xs text-slate-700 whitespace-pre-wrap">{descText}</p>
+              <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
+                <p className="text-xs font-semibold text-slate-500 uppercase mb-1.5">Mô tả / hướng dẫn (từ mẫu CRM)</p>
+                <p className="text-sm text-slate-800 whitespace-pre-wrap leading-relaxed">{descText}</p>
               </div>
             )}
+
+            {!!task.requires_quick_verdict && (
+              <TaskQuickVerdictBar
+                task={task}
+                leadId={apiLeadIdForTaskId(task.id)}
+                onUpdated={(updated) => {
+                  setTasks((p) => p.map((t) => (t.id === task.id ? { ...t, ...updated } : t)));
+                }}
+              />
+            )}
+
+            {/* ─── Checklist: parity với nhiệm vụ (toolbar, sửa khi bấm Edit, ghi chú/file riêng) ─── */}
+            {(() => {
+              const ckItems = normalizeChecklist(task.checklist);
+              const ckDone = ckItems.filter((c) => c.done).length;
+              const ckPct = ckItems.length ? Math.round((ckDone / ckItems.length) * 100) : 0;
+              return (
+                <div className="rounded-lg border border-emerald-100 bg-emerald-50/40 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-[11px] font-semibold text-emerald-700 uppercase flex items-center gap-1">
+                      <ListChecks className="h-3.5 w-3.5" /> Checklist
+                      {ckItems.length > 0 && <span className="text-emerald-600 normal-case">{ckDone}/{ckItems.length}</span>}
+                    </label>
+                    <span className="text-[10px] text-emerald-600/80 normal-case">Mục con của nhiệm vụ — sửa từng dòng bằng ✏️</span>
+                  </div>
+                  {ckItems.length > 0 && (
+                    <div className="w-full h-1.5 bg-emerald-100 rounded-full overflow-hidden mb-2">
+                      <div className="h-full bg-emerald-500 transition-all duration-300" style={{ width: `${ckPct}%` }} />
+                    </div>
+                  )}
+                  <div className="space-y-1.5">
+                    {ckItems.map((ck) => {
+                      const ckKey = ckStateKey(task.id, ck.id);
+                      const ckAtts = filterChecklistAttachments(allAtts, ck.id);
+                      const ckFileCount = ckAtts.filter((a) => a.doc_type !== 'checklist_inline_note' && a.doc_type !== 'task_note').length;
+                      const ckHasNotes = !!(ck.notes?.trim() || ckAtts.some((a) => a.doc_type === 'checklist_inline_note' && a.notes?.trim()));
+                      const isCkExpanded = expandedChecklistKey === ckKey;
+                      const isCkEditing = editingChecklistKey === ckKey;
+                      const ckAssignee = (users || []).find((u) => String(u.id) === String(ck.assignee_id));
+                      const ckExecId = ck.executor_company_id || task.executor_company_id || null;
+                      const ckDelegated = ckExecId && leadCompanyId && String(ckExecId) !== String(leadCompanyId);
+                      return (
+                        <div key={ck.id} className={`rounded-md border bg-white ${isCkExpanded ? 'border-emerald-200 ring-1 ring-emerald-100' : 'border-gray-200'}`}>
+                          <div className="flex items-center gap-2 py-1.5 px-2 group/ck">
+                            <button type="button" onClick={() => toggleChecklistItem(task, ck.id)} className="shrink-0 cursor-pointer"
+                              title={ck.done ? 'Bỏ hoàn thành' : 'Đánh dấu hoàn thành'}>
+                              {ck.done ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : <Circle className="h-4 w-4 text-gray-300" />}
+                            </button>
+                            <div className="flex-1 min-w-0 cursor-pointer" onClick={() => toggleExpandChecklist(task, ck)}>
+                              <p className={`text-sm truncate ${ck.done ? 'line-through text-gray-400' : 'text-gray-800'}`}>{ck.title}</p>
+                              {!isCkExpanded && !isCkEditing && ck.description?.trim() && (
+                                <p className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">{ck.description}</p>
+                              )}
+                              {!isCkExpanded && ckHasNotes && (
+                                <p className="text-[11px] text-amber-600 line-clamp-1 mt-0.5 italic">💬 {(ck.notes || '').slice(0, 60)}</p>
+                              )}
+                              <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                {ckFileCount > 0 && (
+                                  <span className="text-[9px] text-blue-600 bg-blue-50 px-1 py-0.5 rounded-full flex items-center gap-0.5">
+                                    <Paperclip className="h-2.5 w-2.5" />{ckFileCount}
+                                  </span>
+                                )}
+                                {ckHasNotes && (
+                                  <span className="text-[9px] text-amber-600 bg-amber-50 px-1 py-0.5 rounded-full flex items-center gap-0.5">
+                                    <MessageSquare className="h-2.5 w-2.5" />Ghi chú
+                                  </span>
+                                )}
+                                {ckAssignee ? (
+                                  <span className="text-[9px] text-indigo-600 flex items-center gap-0.5">
+                                    <User className="h-2.5 w-2.5" />{ckAssignee.full_name}
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] text-gray-400 bg-gray-50 px-1 py-0.5 rounded-full flex items-center gap-0.5">
+                                    <User className="h-2.5 w-2.5" />Chưa gán
+                                  </span>
+                                )}
+                                {ckDelegated && (
+                                  <span className="text-[9px] text-teal-700 bg-teal-50 px-1 py-0.5 rounded-full flex items-center gap-0.5">
+                                    <Globe className="h-2.5 w-2.5" />{companyLabelById(ckExecId)}
+                                  </span>
+                                )}
+                                {checklistItemRequiresEvidence(ck) && !ck.done && (
+                                  <span
+                                    className="text-[9px] text-violet-700 bg-violet-50 px-1 py-0.5 rounded-full max-w-[140px] truncate"
+                                    title={`Cần nộp: ${formatEvidenceTypesList(ck.required_evidence_file_types)}`}
+                                  >
+                                    📎 {formatEvidenceTypesShort(ck.required_evidence_file_types) || 'Minh chứng'}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${PRIORITY_COLORS[ck.priority || 'medium']}`}>
+                              {PRIORITY_LABELS[ck.priority || 'medium']}
+                            </span>
+                            <div
+                              className="shrink-0 flex flex-col gap-0.5 border-l border-gray-100 pl-1"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <div className="w-[9.5rem]" title="Gán nhân viên cho mục checklist">
+                                <EmployeePicker
+                                  companyId={resolveChecklistAssignCompanyId(task, ck) || undefined}
+                                  value={ck.assignee_id || ''}
+                                  onChange={(userId) => assignChecklistItem(task, ck.id, userId)}
+                                  placeholder="👤 Chưa gán"
+                                  size="sm"
+                                />
+                              </div>
+                              {(showSxTasksInUi || isProductionScope) && companies.length > 0 && (
+                                <select
+                                  value={ck.executor_company_id || ''}
+                                  onChange={(e) => assignChecklistExecutorCompany(task, ck.id, e.target.value)}
+                                  className="h-6 w-[9.5rem] px-1 text-[9px] border border-teal-200 rounded bg-white text-teal-800 outline-none focus:ring-1 focus:ring-teal-300"
+                                  title="Công ty thực hiện mục checklist"
+                                >
+                                  <option value="">🏢 Nội bộ</option>
+                                  {companies
+                                    .filter((c) => !leadCompanyId || String(c.id) !== String(leadCompanyId))
+                                    .map((c) => (
+                                      <option key={c.id} value={c.id}>
+                                        🤝 {c.short_name || c.name}
+                                      </option>
+                                    ))}
+                                </select>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-0.5 shrink-0 border-l border-gray-100 pl-1">
+                              <button type="button" onClick={() => toggleExpandChecklist(task, ck)}
+                                className={`p-1 rounded-md cursor-pointer ${isCkExpanded ? 'text-blue-600 bg-blue-50' : 'text-gray-500 hover:text-blue-600 hover:bg-blue-50'}`}
+                                title="Ghi chú & file checklist">
+                                <Paperclip className="h-3.5 w-3.5" />
+                              </button>
+                              <button type="button" onClick={() => openEditChecklist(task, ck)}
+                                className={`p-1 rounded-md cursor-pointer ${isCkEditing ? 'text-blue-600 bg-blue-50' : 'text-blue-600 hover:bg-blue-50'}`}
+                                title="Sửa mục checklist">
+                                <Edit3 className="h-3.5 w-3.5" />
+                              </button>
+                              <button type="button" onClick={() => removeChecklistItem(task, ck.id)}
+                                className="p-1 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-md cursor-pointer" title="Xóa mục">
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {isCkEditing && (
+                            <div className="mx-2 mb-2 p-3 bg-sky-50 rounded-lg border border-sky-200 space-y-2" onClick={(e) => e.stopPropagation()}>
+                              <p className="text-[10px] text-sky-700 font-bold uppercase tracking-wide">✏️ Sửa mục checklist</p>
+                              <input
+                                value={checklistEditForm.title}
+                                onChange={(e) => setChecklistEditForm((f) => ({ ...f, title: e.target.value }))}
+                                className="w-full h-8 px-2 rounded border text-sm outline-none focus:ring-2 focus:ring-sky-400"
+                                placeholder="Tên mục..."
+                              />
+                              <textarea
+                                value={checklistEditForm.description}
+                                onChange={(e) => setChecklistEditForm((f) => ({ ...f, description: e.target.value }))}
+                                rows={2}
+                                className="w-full px-2 py-1.5 rounded border text-xs outline-none focus:ring-2 focus:ring-sky-400 resize-y min-h-[48px]"
+                                placeholder="Mô tả / hướng dẫn (tùy chọn)..."
+                              />
+                              <div className="flex flex-wrap items-center gap-2">
+                                <select
+                                  value={checklistEditForm.priority}
+                                  onChange={(e) => setChecklistEditForm((f) => ({ ...f, priority: e.target.value }))}
+                                  className="h-8 px-2 rounded border text-xs bg-white"
+                                >
+                                  <option value="low">Thấp</option>
+                                  <option value="medium">TB</option>
+                                  <option value="high">Cao</option>
+                                  <option value="urgent">Gấp</option>
+                                </select>
+                                <div className="min-w-[9.5rem]">
+                                  <EmployeePicker
+                                    companyId={resolveChecklistAssignCompanyId(task, ck) || undefined}
+                                    value={checklistEditForm.assignee_id || ''}
+                                    onChange={(userId) => setChecklistEditForm((f) => ({ ...f, assignee_id: userId || '' }))}
+                                    placeholder="👤 Chưa gán"
+                                    size="sm"
+                                  />
+                                </div>
+                                {(showSxTasksInUi || isProductionScope) && (
+                                  <select
+                                    value={checklistEditForm.executor_company_id || ''}
+                                    onChange={(e) => setChecklistEditForm((f) => ({ ...f, executor_company_id: e.target.value }))}
+                                    className="h-8 px-2 rounded border border-teal-200 text-xs bg-white min-w-[140px]"
+                                  >
+                                    <option value="">Cùng công ty chủ</option>
+                                    {companies
+                                      .filter((c) => !leadCompanyId || String(c.id) !== String(leadCompanyId))
+                                      .map((c) => (
+                                        <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                                      ))}
+                                  </select>
+                                )}
+                                <span className="flex-1" />
+                                <button type="button" onClick={() => setEditingChecklistKey(null)}
+                                  className="h-8 px-3 rounded-lg text-xs font-medium bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 cursor-pointer">
+                                  Hủy
+                                </button>
+                                <button type="button" onClick={() => saveChecklistEdit(task, ck.id)}
+                                  className="h-8 px-3 rounded-lg text-xs font-medium bg-sky-600 text-white hover:bg-sky-700 cursor-pointer flex items-center gap-1">
+                                  <Save className="h-3 w-3" /> Lưu
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {isCkExpanded && !isCkEditing && (
+                            <div className="px-2 pb-2 border-t border-emerald-100 pt-2 space-y-2" onClick={(e) => e.stopPropagation()}>
+                              {ck.description?.trim() && (
+                                <div className="rounded bg-slate-50 border border-slate-100 px-2 py-1.5">
+                                  <p className="text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Mô tả</p>
+                                  <p className="text-xs text-slate-700 whitespace-pre-wrap">{ck.description}</p>
+                                </div>
+                              )}
+                              <div>
+                                <div className="flex items-center justify-between mb-1">
+                                  <label className="text-[10px] font-semibold text-gray-500 uppercase">📝 Ghi chú & Đính kèm ({ckAtts.length})</label>
+                                  {uploadingChecklistKey === ckKey ? (
+                                    <span className="text-[10px] text-orange-600">Đang upload...</span>
+                                  ) : (
+                                    <button type="button" onClick={() => uploadChecklistFile(task.id, ck.id)}
+                                      className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-0.5 cursor-pointer px-1.5 py-0.5 rounded hover:bg-blue-50">
+                                      <FileUp className="h-3 w-3" /> Upload file
+                                    </button>
+                                  )}
+                                </div>
+                                <textarea
+                                  value={checklistNoteText[ckKey] ?? ck.notes ?? ''}
+                                  onChange={(e) => setChecklistNoteText((p) => ({ ...p, [ckKey]: e.target.value }))}
+                                  placeholder="Nhập ghi chú cho mục checklist..."
+                                  rows={2}
+                                  className="w-full px-2.5 py-1.5 border rounded-lg text-xs outline-none focus:border-emerald-400 resize-none mb-1.5"
+                                />
+                                <div className="flex justify-end mb-1">
+                                  <button type="button" onClick={() => saveChecklistNotes(task.id, ck.id)} disabled={savingChecklistNote === ckKey}
+                                    className={`px-2.5 py-1 rounded text-[10px] font-medium cursor-pointer flex items-center gap-1 disabled:opacity-50 ${
+                                      savingChecklistNote === `saved-${ckKey}` ? 'bg-emerald-600 text-white' : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                                    }`}>
+                                    <Save className="h-2.5 w-2.5" />
+                                    {savingChecklistNote === ckKey ? 'Đang lưu...' : savingChecklistNote === `saved-${ckKey}` ? '✓ Đã lưu' : 'Lưu ghi chú'}
+                                  </button>
+                                </div>
+                                {renderChecklistAttachmentList(task.id, ckAtts.filter((a) => a.doc_type !== 'checklist_inline_note'))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {ckItems.length === 0 && (
+                      <p className="text-[11px] text-gray-400 italic">Chưa có mục checklist nào.</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-2">
+                    <input
+                      value={newChecklistText[task.id] || ''}
+                      onChange={(e) => setNewChecklistText((p) => ({ ...p, [task.id]: e.target.value }))}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          addChecklistItem(task, newChecklistText[task.id]);
+                          setNewChecklistText((p) => ({ ...p, [task.id]: '' }));
+                        }
+                      }}
+                      placeholder="Thêm mục checklist..."
+                      className="flex-1 h-8 px-2 text-sm border rounded-lg outline-none focus:ring-1 focus:ring-emerald-400"
+                    />
+                    <button
+                      onClick={() => {
+                        addChecklistItem(task, newChecklistText[task.id]);
+                        setNewChecklistText((p) => ({ ...p, [task.id]: '' }));
+                      }}
+                      className="h-8 px-3 bg-emerald-600 text-white rounded-lg text-xs font-medium cursor-pointer hover:bg-emerald-700 flex items-center gap-1"
+                    >
+                      <Plus className="h-3.5 w-3.5" /> Thêm
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Ghi chú + Upload gộp chung */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
@@ -1606,6 +2812,8 @@ export default function CRMTasksTab({
           </div>
         )}
       </div>
+        )}
+      </SortableTaskWrapper>
     );
   };
 
@@ -1697,7 +2905,7 @@ export default function CRMTasksTab({
               Gen lại đúng bộ mẫu
             </button>
           )}
-          {showCrmTemplatesUi && templates.length > 0 && (
+          {showCrmTemplatesUi && pipelineTemplates.length > 0 && (
             <button onClick={() => setShowTemplatePanel(p => !p)}
               className={`h-7 px-2.5 rounded-lg text-[10px] font-medium flex items-center gap-1 cursor-pointer transition-colors ${showTemplatePanel ? 'bg-amber-500 text-white' : 'bg-amber-50 text-amber-700 border border-amber-300 hover:bg-amber-100'}`}>
               <ClipboardList className="h-3 w-3" /> Gắn mẫu
@@ -1713,18 +2921,90 @@ export default function CRMTasksTab({
         </div>
       </div>
 
+      {taskCompanyScope === 'shared' && (showSxTasksInUi || isProductionScope) && (
+        <div className="rounded-xl border border-teal-200 bg-teal-50/50 px-3 py-2.5 space-y-1">
+          <p className="text-xs font-semibold text-teal-900 flex items-center gap-1.5">
+            <Globe className="h-3.5 w-3.5" /> Không gian chung — chỉ nhiệm vụ giao công ty khác
+          </p>
+          <p className="text-[11px] text-teal-800">
+            {delegatedTasks.length > 0
+              ? `${delegatedTasks.length} nhiệm vụ giao chéo${leadCompanyId ? ` (chủ deal: ${companyLabelById(leadCompanyId)})` : ''}.`
+              : 'Chưa có nhiệm vụ giao cho công ty khác — gán «Công ty thực hiện» khi sửa nhiệm vụ SX hoặc trong bộ mẫu.'}
+          </p>
+        </div>
+      )}
+
+      {isProductionScope && leadType === 'deal' && (
+        <div className="rounded-xl border border-sky-200 bg-sky-50/60 p-3 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-semibold text-sky-900">📋 Thông tin dự án</p>
+            {linkedProjectId && linkedProjectLabel && (
+              <span className="text-[10px] text-sky-800 bg-white/80 border border-sky-200 px-2 py-0.5 rounded-full">
+                Dự án: {linkedProjectLabel}
+              </span>
+            )}
+          </div>
+          {!linkedProjectId && (
+            <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+              Deal chưa gắn dự án — tạo/chọn dự án trước khi lưu ngày đặt/giao.
+            </p>
+          )}
+          {[
+            { key: 'order_date', label: 'Ngày đặt hàng', icon: '🛒' },
+            { key: 'delivery_date', label: 'Ngày giao hàng', icon: '🚚' },
+          ].map((row) => (
+            <div key={row.key} className="rounded-lg border border-sky-100 bg-white px-2.5 py-2">
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={!!dateChecklist[row.key]}
+                  onChange={(e) => setDateChecklist((prev) => ({ ...prev, [row.key]: e.target.checked }))}
+                  disabled={!linkedProjectId}
+                  className="rounded border-sky-300 text-sky-600 disabled:opacity-40"
+                />
+                <span>{row.icon} {row.label}</span>
+              </label>
+              {dateChecklist[row.key] && linkedProjectId && (
+                <div className="mt-2 flex items-center gap-2">
+                  <input
+                    type="date"
+                    value={projectDates[row.key] || ''}
+                    onChange={(e) => setProjectDates((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                    className="h-8 px-2 border border-sky-200 rounded-md text-xs outline-none focus:ring-1 focus:ring-sky-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void saveProjectDateFromChecklist(row.key)}
+                    disabled={dateSavingKey === row.key}
+                    className="h-8 px-2.5 rounded-md bg-sky-600 text-white text-[11px] font-semibold hover:bg-sky-700 disabled:opacity-60 cursor-pointer"
+                  >
+                    {dateSavingKey === row.key ? 'Đang lưu...' : 'Lưu'}
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+          <p className="text-[10px] text-sky-700">
+            Lưu sẽ ghi vào thông tin dự án (Ngày đặt hàng / Ngày giao hàng). Ngày giao hàng cũng đồng bộ `production_deadline` và nhắc hạn nhiệm vụ `sx_giao_hang`.
+          </p>
+        </div>
+      )}
+
       {/* Template panel — always available via button */}
-      {showTemplatePanel && templates.length > 0 && (
+      {showTemplatePanel && pipelineTemplates.length > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-sm font-semibold text-amber-900 flex items-center gap-1.5">📋 Gắn bộ nhiệm vụ mẫu</p>
             <button onClick={() => setShowTemplatePanel(false)} className="p-1 hover:bg-amber-100 rounded cursor-pointer"><X className="h-3.5 w-3.5 text-amber-600" /></button>
           </div>
-          <p className="text-[11px] text-amber-700">Chọn bộ mẫu để tạo nhiệm vụ tự động cho {leadType === 'deal' ? 'Deal' : 'Lead'} này. Có thể gắn nhiều bộ mẫu.</p>
-          {ALL_STAGES.map(stage => {
-            const stageTpls = templates.filter(t => t.stage_slug === stage.slug);
+          <p className="text-[11px] text-amber-700">
+            Chọn bộ mẫu theo giai đoạn pipeline cho {leadType === 'deal' ? 'Deal' : 'Lead'} này.
+            {leadPipelineId ? ' Chỉ hiển thị bộ thuộc pipeline của lead/deal.' : ''}
+          </p>
+          {templatePanelStages.map((stage) => {
+            const stageTpls = stageTemplatesMap[stage.slug] || [];
             if (!stageTpls.length) return null;
-            const existingCount = uiTasks.filter(t => t.stage_slug === stage.slug).length;
+            const existingCount = (tasksByStage[stage.slug] || []).length;
             return (
               <div key={stage.slug}>
                 <p className="text-[10px] font-bold mb-1.5 flex items-center gap-1" style={{ color: stage.color }}>
@@ -1732,13 +3012,13 @@ export default function CRMTasksTab({
                   {existingCount > 0 && <span className="text-gray-400 font-normal">({existingCount} việc hiện có)</span>}
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  {stageTpls.map(tpl => (
+                  {stageTpls.map((tpl) => (
                     <button key={tpl.id} onClick={() => { applyTemplate(tpl.id); }}
                       className="px-3 py-2 bg-white border border-amber-300 rounded-lg text-xs font-medium text-amber-800 hover:bg-amber-100 hover:border-amber-400 cursor-pointer transition-colors flex items-center gap-1.5 shadow-sm">
                       <ListChecks className="h-3.5 w-3.5" />
                       {tpl.name}
                       <span className="text-[10px] text-amber-500">({tpl.items?.length || 0} việc)</span>
-                      {tpl.is_default && <span className="text-[9px] bg-amber-200 text-amber-700 px-1.5 py-0.5 rounded-full">⭐</span>}
+                      {tpl.is_default && <span className="text-[9px] bg-amber-200 text-amber-700 px-1.5 py-0.5 rounded-full">⭐ Mặc định</span>}
                     </button>
                   ))}
                 </div>
@@ -1749,25 +3029,42 @@ export default function CRMTasksTab({
       )}
 
       {/* Template quick-apply — only when no tasks exist */}
-      {showCrmTemplatesUi && templates.length > 0 && uiTasks.length === 0 && !showTemplatePanel && (
+      {showCrmTemplatesUi && pipelineTemplates.length > 0 && uiTasks.length === 0 && !showTemplatePanel && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-          <p className="text-xs font-medium text-amber-800 mb-2">📋 Chưa có công việc — Áp dụng bộ mẫu nhanh:</p>
+          <p className="text-xs font-medium text-amber-800 mb-2">📋 Chưa có công việc — Áp dụng bộ mẫu mặc định:</p>
           <div className="flex flex-wrap gap-2">
-            {templates.filter(t => t.is_default).concat(templates.filter(t => !t.is_default)).slice(0, 5).map(tpl => (
-              <button key={tpl.id} onClick={() => applyTemplate(tpl.id)}
-                className="px-3 py-1.5 bg-white border border-amber-300 rounded-lg text-xs font-medium text-amber-800 hover:bg-amber-100 cursor-pointer">
-                {ALL_STAGES.find(s => s.slug === tpl.stage_slug)?.icon || '📋'} {tpl.name} ({tpl.items?.length || 0} việc)
-                {tpl.is_default && ' ⭐'}
-              </button>
-            ))}
-            {templates.length > 5 && (
+            {(defaultPipelineTemplates.length ? defaultPipelineTemplates : pipelineTemplates)
+              .slice(0, 8)
+              .map((tpl) => {
+                const stage = templatePanelStages.find((s) => (
+                  usePipelineTaskUi
+                    ? String(s.slug) === String(tpl.pipeline_stage_id)
+                    : s.slug === tpl.stage_slug
+                ));
+                return (
+                  <button key={tpl.id} onClick={() => applyTemplate(tpl.id)}
+                    className="px-3 py-1.5 bg-white border border-amber-300 rounded-lg text-xs font-medium text-amber-800 hover:bg-amber-100 cursor-pointer">
+                    {stage?.icon || '📋'} {tpl.name} ({tpl.items?.length || 0} việc)
+                    {tpl.is_default && ' ⭐'}
+                  </button>
+                );
+              })}
+            {pipelineTemplates.length > 8 && (
               <button onClick={() => setShowTemplatePanel(true)} className="px-3 py-1.5 text-xs text-amber-600 hover:text-amber-800 cursor-pointer">
-                +{templates.length - 5} bộ mẫu khác...
+                +{pipelineTemplates.length - 8} bộ mẫu khác...
+              </button>
+            )}
+            {pipelineTemplates.length > 0 && pipelineTemplates.length <= 8 && (
+              <button onClick={() => setShowTemplatePanel(true)} className="px-3 py-1.5 text-xs text-amber-600 hover:text-amber-800 cursor-pointer">
+                Xem tất cả bộ mẫu
               </button>
             )}
           </div>
         </div>
       )}
+
+      <DndContext sensors={taskDnDSensors} collisionDetection={closestCenter} onDragEnd={handleTaskDragEnd}>
+      <SortableContext items={taskDnDIds} strategy={verticalListSortingStrategy}>
 
       {/* LIST VIEW */}
       {viewMode === 'list' && (
@@ -1776,9 +3073,9 @@ export default function CRMTasksTab({
             const stageTasks = tasksByStage[stage.slug] || [];
             const completed = stageTasks.filter(t => t.status === 'completed').length;
             const expanded = expandedStages[stage.slug] !== false;
-            const tpl = usePipelineTaskUi
-              ? templates.find((t) => t.pipeline_stage_id === stage.slug)
-              : templates.find((t) => t.stage_slug === stage.slug);
+            const stageTpls = stageTemplatesMap[stage.slug] || [];
+            const defaultTpl = stageTpls.find((t) => t.is_default) || stageTpls[0] || null;
+            const taskBundles = groupStageTasksByBundle(stage.slug, stageTasks);
             return (
               <div key={stage.slug} className="border rounded-lg overflow-hidden">
                 <div className="flex items-stretch gap-1 px-2 py-1.5 bg-gray-50 border-b border-gray-100">
@@ -1790,6 +3087,11 @@ export default function CRMTasksTab({
                     {expanded ? <ChevronDown className="h-3.5 w-3.5 text-gray-400 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 text-gray-400 shrink-0" />}
                     <span className="text-sm shrink-0">{stage.icon}</span>
                     <span className="text-sm font-semibold truncate" style={{ color: stage.color }}>{stage.label}</span>
+                    {defaultTpl && (
+                      <span className="text-[9px] text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full shrink-0 truncate max-w-[140px]" title={`Bộ mặc định: ${defaultTpl.name}`}>
+                        📋 {defaultTpl.name}{defaultTpl.is_default ? ' ⭐' : ''}
+                      </span>
+                    )}
                     <span className="text-[10px] text-gray-400 shrink-0">{completed}/{stageTasks.length}</span>
                     {(() => {
                       const totalFiles = stageTasks.reduce((s, t) => s + (t.file_count || 0), 0);
@@ -1826,21 +3128,35 @@ export default function CRMTasksTab({
                 </div>
                 {expanded && (
                   <div className="px-2 py-1">
-                    {stageTasks.map(t => renderTaskRow(t))}
+                    {taskBundles.map((bundle) => (
+                      <div key={bundle.key} className={bundle.label ? 'mb-2' : ''}>
+                        {bundle.label && (
+                          <p className="text-[10px] font-semibold text-gray-500 px-2 py-1 flex items-center gap-1.5">
+                            <ListChecks className="h-3 w-3 text-amber-600" />
+                            {bundle.label}
+                            {bundle.isDefault && <span className="text-[9px] text-amber-700 bg-amber-50 px-1 py-0.5 rounded">⭐ Mặc định</span>}
+                            <span className="text-gray-400 font-normal">({bundle.tasks.length})</span>
+                          </p>
+                        )}
+                        {bundle.tasks.map((t) => renderTaskRow(t))}
+                      </div>
+                    ))}
                     {showAdd === stage.slug ? (
                       <AddTaskForm stageSlug={stage.slug} />
                     ) : (
-                      <div className="flex items-center gap-2 py-1 px-3">
+                      <div className="flex flex-wrap items-center gap-2 py-1 px-3">
                         <button onClick={() => setShowAdd(stage.slug)}
                           className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-1 cursor-pointer">
                           <Plus className="h-3 w-3" /> Thêm việc
                         </button>
-                        {tpl && !stageTasks.length && (
-                          <button onClick={() => applyTemplate(tpl.id)}
+                        {!stageTasks.length && stageTpls.map((tpl) => (
+                          <button key={tpl.id} onClick={() => applyTemplate(tpl.id)}
                             className="text-[10px] text-amber-600 hover:text-amber-800 flex items-center gap-1 cursor-pointer">
-                            <ListChecks className="h-3 w-3" /> Áp dụng mẫu ({tpl.items?.length || 0})
+                            <ListChecks className="h-3 w-3" />
+                            {tpl.name} ({tpl.items?.length || 0})
+                            {tpl.is_default && ' ⭐'}
                           </button>
-                        )}
+                        ))}
                       </div>
                     )}
                   </div>
@@ -2002,6 +3318,9 @@ export default function CRMTasksTab({
         </details>
       )}
 
+      </SortableContext>
+      </DndContext>
+
       {/* Excel Quotation Import Modal */}
       {excelImportTaskId && (
         <ExcelQuotationImport
@@ -2034,43 +3353,48 @@ export default function CRMTasksTab({
       )}
 
 
-      {editingTask && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setEditingTask(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-4 border-b">
+      {editingTask && typeof document !== 'undefined' && createPortal(
+        <>
+          <div className="fixed inset-0 z-[10049]" onClick={closeEditModal} aria-hidden />
+          <div
+            ref={editPopoverRef}
+            style={editPopoverStyle}
+            className="bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
               <div className="flex items-center gap-2">
                 <Edit3 className="h-4 w-4 text-blue-600" />
                 <h3 className="text-sm font-bold text-gray-900">Sửa nhiệm vụ</h3>
               </div>
-              <button onClick={() => setEditingTask(null)} className="p-1 hover:bg-gray-100 rounded-lg cursor-pointer">
+              <button onClick={closeEditModal} className="p-1 hover:bg-gray-100 rounded-lg cursor-pointer">
                 <X className="h-4 w-4 text-gray-500" />
               </button>
             </div>
-            <div className="p-5 space-y-4">
-              <div>
+            <div className="flex-1 overflow-y-auto p-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="md:col-span-2">
                 <label className="text-[11px] font-semibold text-gray-500 uppercase">Tên nhiệm vụ *</label>
                 <input value={editForm.title} onChange={e => setEditForm(f => ({ ...f, title: e.target.value }))}
                   className="mt-1 w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:border-blue-400 outline-none" placeholder="Nhập tên nhiệm vụ..." />
               </div>
-              <div>
+              <div className="md:col-span-2">
                 <label className="text-[11px] font-semibold text-gray-500 uppercase">Mô tả</label>
                 <textarea value={editForm.description || ''} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))}
                   className="mt-1 w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none resize-y min-h-[70px]" placeholder="Mô tả chi tiết..." />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[11px] font-semibold text-gray-500 uppercase">Giai đoạn</label>
-                  <select value={editForm.stage_slug} onChange={e => setEditForm(f => ({ ...f, stage_slug: e.target.value }))}
-                    className="mt-1 w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none">
-                    <option value="">— Chọn giai đoạn —</option>
-                    {STAGE_OPTIONS.map(s => (<option key={s.slug} value={s.slug}>{s.icon} {s.label}</option>))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[11px] font-semibold text-gray-500 uppercase">Hạn hoàn thành</label>
-                  <input type="datetime-local" value={editForm.deadline} onChange={e => setEditForm(f => ({ ...f, deadline: e.target.value }))}
-                    className="mt-1 w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none" />
-                </div>
+              <div>
+                <label className="text-[11px] font-semibold text-gray-500 uppercase">Giai đoạn</label>
+                <select value={editForm.stage_slug} onChange={e => setEditForm(f => ({ ...f, stage_slug: e.target.value }))}
+                  className="mt-1 w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none">
+                  <option value="">— Chọn giai đoạn —</option>
+                  {STAGE_OPTIONS.map(s => (<option key={s.slug} value={s.slug}>{s.icon} {s.label}</option>))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold text-gray-500 uppercase">Hạn hoàn thành</label>
+                <input type="datetime-local" value={editForm.deadline} onChange={e => setEditForm(f => ({ ...f, deadline: e.target.value }))}
+                  className="mt-1 w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none" />
               </div>
               <div>
                 <label className="text-[11px] font-semibold text-gray-500 uppercase">Giám sát</label>
@@ -2080,21 +3404,35 @@ export default function CRMTasksTab({
                   {(users || []).map(u => (<option key={u.id} value={u.id}>{u.full_name}</option>))}
                 </select>
               </div>
-              <AssigneePickerBlock
-                count={editAssigneeIds.size}
-                pickList={assignPickList}
-                selectedIds={editAssigneeIds}
-                onToggle={toggleEditAssignee}
-                onSelectAll={selectAllEditAssignees}
-                showRolePicker
-                roleById={assigneeRoleById}
-                onRoleChange={setAssigneeRole}
-                defaultNewRole={defaultNewMemberRole}
-                onDefaultNewRoleChange={setDefaultNewMemberRole}
-              />
+              {(showSxTasksInUi || isProductionScope) && (
+                <div className="md:col-span-2">
+                  <label className="text-[11px] font-semibold text-gray-500 uppercase flex items-center gap-1">
+                    <Globe className="h-3 w-3 text-teal-600" /> Công ty thực hiện
+                  </label>
+                  <select
+                    value={editForm.executor_company_id || ''}
+                    onChange={(e) => setEditForm((f) => ({ ...f, executor_company_id: e.target.value }))}
+                    className="mt-1 w-full border border-teal-200 rounded-lg px-2 py-2 text-sm bg-white focus:ring-2 focus:ring-teal-300 outline-none"
+                  >
+                    <option value="">
+                      Cùng công ty chủ deal{leadCompanyId ? ` (${companyLabelById(leadCompanyId)})` : ''}
+                    </option>
+                    {companies
+                      .filter((c) => !leadCompanyId || String(c.id) !== String(leadCompanyId))
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}{c.short_name ? ` (${c.short_name})` : ''}
+                        </option>
+                      ))}
+                  </select>
+                  <p className="text-[10px] text-teal-700 mt-1">
+                    Giao cho công ty khác → họ thấy ở tab Công việc; nhiệm vụ xuất hiện ở tab Không gian chung (hai bên).
+                  </p>
+                </div>
+              )}
               <div>
                 <label className="text-[11px] font-semibold text-gray-500 uppercase">Độ ưu tiên</label>
-                <div className="mt-1 flex gap-2">
+                <div className="mt-1 flex gap-2 flex-wrap">
                   {['low','medium','high','urgent'].map(p => (
                     <button key={p} onClick={() => setEditForm(f => ({ ...f, priority: p }))}
                       className={"px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer border transition-colors " + (editForm.priority === p ? PRIORITY_COLORS[p] + ' border-current ring-1 ring-offset-1 ring-current' : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100')}>
@@ -2103,8 +3441,22 @@ export default function CRMTasksTab({
                   ))}
                 </div>
               </div>
+              <div className="md:col-span-2">
+                <AssigneePickerBlock
+                  count={editAssigneeIds.size}
+                  pickList={assignPickList}
+                  selectedIds={editAssigneeIds}
+                  onToggle={toggleEditAssignee}
+                  onSelectAll={selectAllEditAssignees}
+                  showRolePicker
+                  roleById={assigneeRoleById}
+                  onRoleChange={setAssigneeRole}
+                  defaultNewRole={defaultNewMemberRole}
+                  onDefaultNewRoleChange={setDefaultNewMemberRole}
+                />
+              </div>
               {isAdmin && (
-                <div>
+                <div className="md:col-span-2">
                   <label className="text-[11px] font-semibold text-gray-500 uppercase">Tiện ích (admin)</label>
                 <label className="mt-1 flex items-start gap-2 p-2.5 border border-emerald-200 bg-emerald-50 rounded-lg cursor-pointer select-none">
                   <input
@@ -2124,15 +3476,17 @@ export default function CRMTasksTab({
                 </label>
                 </div>
               )}
+              </div>
             </div>
-            <div className="px-5 py-4 border-t bg-gray-50 rounded-b-2xl flex items-center justify-end gap-2">
-              <button onClick={() => setEditingTask(null)} className="h-9 px-4 text-gray-600 hover:bg-gray-200 rounded-lg text-sm font-medium cursor-pointer transition-colors">Hủy</button>
+            <div className="px-5 py-4 border-t bg-gray-50 rounded-b-2xl flex items-center justify-end gap-2 shrink-0">
+              <button onClick={closeEditModal} className="h-9 px-4 text-gray-600 hover:bg-gray-200 rounded-lg text-sm font-medium cursor-pointer transition-colors">Hủy</button>
               <button onClick={saveEdit} className="h-9 px-5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold flex items-center gap-1.5 cursor-pointer transition-colors">
                 <Save className="h-3.5 w-3.5" /> Lưu
               </button>
             </div>
           </div>
-        </div>
+        </>,
+        document.body,
       )}
 
       {assigningTask && typeof document !== 'undefined' && createPortal(

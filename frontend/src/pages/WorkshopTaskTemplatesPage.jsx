@@ -4,7 +4,9 @@ import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { findDefaultAdminCrmCompanyPhucDat } from '../lib/crmCompanyFilter';
-import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Globe, MapPin, Lock, Star } from 'lucide-react';
+import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Globe, MapPin, Lock, Star, Paperclip, MessageSquare, User } from 'lucide-react';
+import EvidenceFileTypesPicker from '../components/EvidenceFileTypesPicker';
+import { formatEvidenceTypesShort, normalizeEvidenceFileTypes, checklistItemRequiresEvidence } from '../lib/evidenceFileTypes';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -58,6 +60,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
   const [editingVisibility, setEditingVisibility] = useState({}); // {itemId: true/false}
   const [companies, setCompanies] = useState([]);
   const [departments, setDepartments] = useState([]);
+  const [users, setUsers] = useState([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
   // Phân loại = workshop_project_types (Cửa, Tủ bếp, ...) — CHỈ áp dụng cho khu vực Sản xuất.
   const [workshopTypes, setWorkshopTypes] = useState([]);
@@ -69,9 +72,9 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
   const companyDefaultResolvedRef = useRef(false);
 
   const currentStages = activeTab === 'logistics' ? WORKSHOP_LOGISTICS_STAGES : WORKSHOP_PRODUCTION_STAGES;
-  // VC: Công ty → Pipeline. SX: Công ty → Phân loại (mỗi phân loại một bộ, không gắn pipeline).
+  // SX: Công ty → Phân loại → Pipeline (nhiều bộ/cột). VC: Công ty → Pipeline.
   const usesWorkshopType = activeTab === 'production';
-  const usesPipelineSidebar = activeTab === 'logistics';
+  const usesPipelineSidebar = activeTab === 'logistics' || fixedArea === 'production' || activeTab === 'production';
   const selectedWorkshopType = selectedWorkshopTypeKey === 'global'
     ? null
     : workshopTypes.find((t) => String(t.id) === String(selectedWorkshopTypeKey)) || null;
@@ -136,22 +139,26 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  // SX: Công ty + Phân loại. VC: Công ty + Pipeline.
+  // SX: Công ty + Phân loại + Pipeline. VC: Công ty + Pipeline.
   const canLoadTemplates = !!selectedCompanyId
     && !!activeTab
-    && (usesWorkshopType ? !!selectedWorkshopTypeKey : !!selectedStageKey);
+    && (usesWorkshopType ? !!selectedWorkshopTypeKey : true)
+    && (usesPipelineSidebar ? !!selectedStageKey : true);
 
   const load = async () => {
     setLoading(true);
     try {
       const compModule = activeTab === 'logistics' ? 'logistics' : 'production';
-      const [compRes, deptRes] = await Promise.all([
+      const userParams = selectedCompanyId ? { company_id: selectedCompanyId } : {};
+      const [compRes, deptRes, usersRes] = await Promise.all([
         api.get('/companies', { params: { for_module: compModule } }).catch(() => ({ data: [] })),
         api.get('/departments').catch(() => ({ data: [] })),
+        api.get('/users', { params: userParams }).catch(() => ({ data: [] })),
       ]);
       const coList = compRes.data?.companies || compRes.data || [];
       setCompanies(coList);
       setDepartments(deptRes.data?.departments || deptRes.data || []);
+      setUsers(usersRes.data?.users || usersRes.data || []);
       if (!companyDefaultResolvedRef.current) {
         companyDefaultResolvedRef.current = true;
         if (!selectedCompanyId) {
@@ -167,7 +174,8 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
           active_only: 'false',
           workshop_area: fixedArea || activeTab,
           company_id: selectedCompanyId,
-          ...(usesWorkshopType ? workshopTypePayloadForTpl() : stageFilterParams()),
+          ...(usesWorkshopType ? workshopTypePayloadForTpl() : {}),
+          ...(usesPipelineSidebar ? stageFilterParams() : {}),
         };
         const { data } = await api.get('/production/task-templates', { params });
         setTemplates(data || []);
@@ -190,15 +198,25 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
     loadWorkshopTypes();
   }, [selectedCompanyId, activeTab]);
 
-  // VC: đổi công ty → nạp pipeline. SX không dùng pipeline sidebar.
+  // Nạp cột pipeline khi đủ điều kiện (VC: công ty; SX: công ty + phân loại).
   useEffect(() => {
     if (usesPipelineSidebar) loadPipelineStages();
     else setPipelineStages([]);
   }, [selectedCompanyId, activeTab, selectedWorkshopTypeKey, usesPipelineSidebar]);
 
+  useEffect(() => {
+    if (usesPipelineSidebar) setSelectedStageKey('');
+  }, [selectedWorkshopTypeKey, usesPipelineSidebar]);
+
   const filteredTemplates = templates.filter((t) => t.workshop_area === (fixedArea || activeTab));
 
   const stagePayloadForTpl = () => {
+    if (usesWorkshopType && usesPipelineSidebar) {
+      return {
+        production_stage_id: selectedStageKey === 'global' ? null : selectedStageKey,
+        logistics_stage_id: null,
+      };
+    }
     if (usesWorkshopType) {
       return { production_stage_id: null, logistics_stage_id: null };
     }
@@ -317,7 +335,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
   const createTemplate = async () => {
     if (!newTpl.name.trim() || !newTpl.workshop_area) return;
     try {
-      await api.post('/production/task-templates', {
+      const { data } = await api.post('/production/task-templates', {
         name: newTpl.name.trim(),
         workshop_area: fixedArea || newTpl.workshop_area,
         company_id: selectedCompanyId || null,
@@ -327,41 +345,58 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
       });
       setNewTpl({ name: '', workshop_area: activeTab });
       setShowAddTpl(false);
-      load();
+      if (data?.id) setTemplates(prev => [...prev, { ...data, items: data.items || [] }]);
+      else load();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
   const deleteTemplate = async (id) => {
     if (!confirm('Xóa bộ mẫu này?')) return;
-    try { await api.delete(`/production/task-templates/${id}`); load(); } catch { alert('Lỗi'); }
+    const snapshot = templates;
+    setTemplates(prev => prev.filter(t => t.id !== id));
+    try { await api.delete(`/production/task-templates/${id}`); }
+    catch { alert('Lỗi'); setTemplates(snapshot); }
   };
 
   const addItem = async (tplId) => {
     const item = newItem[tplId];
     if (!item?.title?.trim()) return;
     try {
-      await api.post(`/production/task-templates/${tplId}/items`, { ...item, checklist: item.checklist || [] });
+      const { data } = await api.post(`/production/task-templates/${tplId}/items`, { ...item, checklist: item.checklist || [] });
+      if (data?.id) {
+        setTemplates(prev => prev.map(t => t.id !== tplId ? t : {
+          ...t, items: [...(t.items || []), data],
+        }));
+      } else { load(); }
       setNewItem(p => ({ ...p, [tplId]: { title: '', priority: 'medium', deadline_days: 0 } }));
-      load();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
   const deleteItem = async (tplId, itemId) => {
-    try { await api.delete(`/production/task-templates/${tplId}/items/${itemId}`); load(); } catch {}
+    const snapshot = templates;
+    setTemplates(prev => prev.map(t => t.id !== tplId ? t : {
+      ...t, items: (t.items || []).filter(i => i.id !== itemId),
+    }));
+    try { await api.delete(`/production/task-templates/${tplId}/items/${itemId}`); }
+    catch { setTemplates(snapshot); }
   };
 
   const updateTemplateItemFields = async (tplId, itemId, body) => {
+    patchItemLocal(tplId, itemId, body);
     try {
-      await api.put(`/production/task-templates/${tplId}/items/${itemId}`, body);
-      load();
+      const { data } = await api.put(`/production/task-templates/${tplId}/items/${itemId}`, body);
+      patchItemLocal(tplId, itemId, data?.id ? { ...data, ...body } : body);
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi cập nhật mục mẫu');
+      load();
       throw e;
     }
   };
 
   const toggleDefault = async (tpl) => {
-    try { await api.put(`/production/task-templates/${tpl.id}`, { is_default: !tpl.is_default }); load(); } catch {}
+    setTemplates(prev => prev.map(t => t.id === tpl.id ? { ...t, is_default: !tpl.is_default } : t));
+    try { await api.put(`/production/task-templates/${tpl.id}`, { is_default: !tpl.is_default }); }
+    catch { load(); }
   };
 
   const setDefaultBundle = async () => {
@@ -420,7 +455,14 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
         : editingTpl.pipeline_stage_id;
       let stagePayload;
       if (tplArea === 'production') {
-        stagePayload = { production_stage_id: null, logistics_stage_id: null };
+        if (editingStageId !== undefined) {
+          stagePayload = {
+            production_stage_id: editingStageId || null,
+            logistics_stage_id: null,
+          };
+        } else {
+          stagePayload = stagePayloadForTpl();
+        }
       } else if (editingStageId !== undefined) {
         stagePayload = {
           logistics_stage_id: editingStageId || null,
@@ -429,34 +471,46 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
       } else {
         stagePayload = stagePayloadForTpl();
       }
-      await api.put(`/production/task-templates/${editingTpl.id}`, {
+      const { data } = await api.put(`/production/task-templates/${editingTpl.id}`, {
         name: editingTpl.name.trim(),
         workshop_area: tplArea,
         company_id: selectedCompanyId || null,
         ...stagePayload,
         ...workshopTypePayloadForTpl(),
       });
+      const tplId = editingTpl.id;
       setEditingTpl(null);
-      load();
+      if (data?.id) setTemplates(prev => prev.map(t => t.id === tplId ? { ...t, ...data, items: t.items } : t));
+      else load();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
   // ═══ Checklist CRUD ═══
+  // Cập nhật cục bộ trước (optimistic) → không reload cả trang; chỉ load() lại khi lỗi.
+  const patchItemLocal = (tplId, itemId, patch) => {
+    setTemplates(prev => prev.map(t => t.id !== tplId ? t : {
+      ...t,
+      items: (t.items || []).map(i => i.id === itemId ? { ...i, ...patch } : i),
+    }));
+  };
+
   const updateItemChecklist = async (tplId, itemId, checklist) => {
+    patchItemLocal(tplId, itemId, { checklist });
     try {
-      await api.put(`/production/task-templates/${tplId}/items/${itemId}`, { checklist });
-      load();
-    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+      const { data } = await api.put(`/production/task-templates/${tplId}/items/${itemId}`, { checklist });
+      if (data?.id) patchItemLocal(tplId, itemId, { ...data, checklist });
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); load(); }
   };
 
   const updateItemVisibility = async (tplId, itemId, allowedCompanies, allowedDepts) => {
+    const payload = {
+      default_allowed_companies: allowedCompanies?.length ? allowedCompanies : null,
+      default_allowed_departments: allowedDepts?.length ? allowedDepts : null,
+    };
+    patchItemLocal(tplId, itemId, payload);
     try {
-      await api.put(`/production/task-templates/${tplId}/items/${itemId}`, {
-        default_allowed_companies: allowedCompanies?.length ? allowedCompanies : null,
-        default_allowed_departments: allowedDepts?.length ? allowedDepts : null,
-      });
-      load();
-    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+      await api.put(`/production/task-templates/${tplId}/items/${itemId}`, payload);
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); load(); }
   };
 
   const toggleItemCompany = (tplId, itemId, companyId, item) => {
@@ -477,7 +531,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
     const tpl = templates.find(t => t.id === tplId);
     const item = tpl?.items?.find(i => i.id === itemId);
     const current = Array.isArray(item?.checklist) ? item.checklist : [];
-    await updateItemChecklist(tplId, itemId, [...current, text]);
+    await updateItemChecklist(tplId, itemId, [...current, { title: text, description: '' }]);
     setNewCheckItem(p => ({ ...p, [itemId]: '' }));
   };
 
@@ -486,6 +540,52 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
     const item = tpl?.items?.find(i => i.id === itemId);
     const current = Array.isArray(item?.checklist) ? [...item.checklist] : [];
     current.splice(idx, 1);
+    await updateItemChecklist(tplId, itemId, current);
+  };
+
+  // Cập nhật tiêu đề / mô tả của 1 mục checklist (chuyển chuỗi cũ → object để giữ mô tả).
+  const updateChecklistItem = async (tplId, itemId, idx, patch) => {
+    const tpl = templates.find(t => t.id === tplId);
+    const item = tpl?.items?.find(i => i.id === itemId);
+    const current = Array.isArray(item?.checklist) ? [...item.checklist] : [];
+    const entry = current[idx];
+    if (entry === undefined) return;
+    const base = typeof entry === 'string'
+      ? { title: entry }
+      : { ...(entry || {}) };
+    if (base.label && base.title === undefined) { base.title = base.label; }
+    delete base.label;
+    const next = { ...base, ...patch };
+    next.title = (next.title ?? '').toString();
+    next.description = (next.description ?? '').toString();
+    if (patch.required_evidence_file_types !== undefined) {
+      next.required_evidence_file_types = normalizeEvidenceFileTypes(patch.required_evidence_file_types);
+      next.completion_requires_file_or_note = next.required_evidence_file_types.length > 0
+        || !!patch.completion_requires_file_or_note;
+    }
+    if (patch.completion_requires_file_or_note !== undefined && patch.required_evidence_file_types === undefined) {
+      next.completion_requires_file_or_note = !!patch.completion_requires_file_or_note;
+    }
+    // Không thay đổi gì thì bỏ qua (tránh reload thừa khi blur) — trừ khi đổi minh chứng.
+    const prevTitle = typeof entry === 'string' ? entry : (entry?.title || entry?.label || '');
+    const prevDesc = typeof entry === 'string' ? '' : (entry?.description || '');
+    if (patch.assignee_id !== undefined) {
+      next.assignee_id = patch.assignee_id ? String(patch.assignee_id) : null;
+    }
+    if (patch.executor_company_id !== undefined) {
+      next.executor_company_id = patch.executor_company_id ? String(patch.executor_company_id) : null;
+    }
+    const evidencePatch = patch.required_evidence_file_types !== undefined || patch.completion_requires_file_or_note !== undefined;
+    const assigneePatch = patch.assignee_id !== undefined;
+    const executorPatch = patch.executor_company_id !== undefined;
+    const prevAssignee = typeof entry === 'object' ? String(entry?.assignee_id || entry?.default_assignee_id || '') : '';
+    const prevExecutor = typeof entry === 'object' ? String(entry?.executor_company_id || '') : '';
+    if (!evidencePatch && !assigneePatch && !executorPatch && next.title === prevTitle && next.description === prevDesc) return;
+    if (assigneePatch && !evidencePatch && !executorPatch && next.title === prevTitle && next.description === prevDesc
+      && String(next.assignee_id || '') === prevAssignee) return;
+    if (executorPatch && !evidencePatch && !assigneePatch && next.title === prevTitle && next.description === prevDesc
+      && String(next.executor_company_id || '') === prevExecutor) return;
+    current[idx] = next;
     await updateItemChecklist(tplId, itemId, current);
   };
 
@@ -579,18 +679,111 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
     await updateItemChecklist(tplId, itemId, checklist);
   };
 
+  // ═══ DRAG & DROP: Di chuyển 1 mục checklist (kể cả sang nhiệm vụ khác) ═══
+  // ID checklist có dạng `ck|<itemId>|<index>`; ID nhiệm vụ là `item.id` thuần.
+  const handleChecklistMove = async (tplId, activeId, overId) => {
+    const tpl = templates.find(t => t.id === tplId);
+    if (!tpl) return;
+
+    const [, srcItemId, srcIdxStr] = activeId.split('|');
+    const srcIdx = parseInt(srcIdxStr, 10);
+    if (isNaN(srcIdx)) return;
+
+    // Xác định nhiệm vụ đích + vị trí chèn.
+    let dstItemId, dstIdx;
+    if (overId.startsWith('ck|')) {
+      const [, oItemId, oIdxStr] = overId.split('|');
+      dstItemId = oItemId;
+      dstIdx = parseInt(oIdxStr, 10);
+    } else {
+      // Thả lên hàng nhiệm vụ (kể cả khi checklist đang đóng/rỗng) → chèn vào cuối.
+      dstItemId = overId;
+      const target = (tpl.items || []).find(i => String(i.id) === String(overId));
+      dstIdx = Array.isArray(target?.checklist) ? target.checklist.length : 0;
+    }
+    if (dstItemId == null || isNaN(dstIdx)) return;
+
+    const srcItem = (tpl.items || []).find(i => String(i.id) === String(srcItemId));
+    const dstItem = (tpl.items || []).find(i => String(i.id) === String(dstItemId));
+    if (!srcItem || !dstItem) return;
+
+    // Cùng nhiệm vụ → chỉ sắp xếp lại.
+    if (String(srcItemId) === String(dstItemId)) {
+      if (srcIdx === dstIdx) return;
+      const list = Array.isArray(srcItem.checklist) ? [...srcItem.checklist] : [];
+      const [moved] = list.splice(srcIdx, 1);
+      if (moved == null) return;
+      list.splice(Math.min(dstIdx, list.length), 0, moved);
+      setTemplates(prev => prev.map(t => t.id !== tplId ? t : {
+        ...t,
+        items: (t.items || []).map(i => String(i.id) === String(srcItemId) ? { ...i, checklist: list } : i),
+      }));
+      await updateItemChecklist(tplId, srcItemId, list);
+      return;
+    }
+
+    // Khác nhiệm vụ → gỡ khỏi nguồn, chèn vào đích.
+    const srcList = Array.isArray(srcItem.checklist) ? [...srcItem.checklist] : [];
+    const dstList = Array.isArray(dstItem.checklist) ? [...dstItem.checklist] : [];
+    const [moved] = srcList.splice(srcIdx, 1);
+    if (moved == null) return;
+    dstList.splice(Math.min(dstIdx, dstList.length), 0, moved);
+
+    // Cập nhật cục bộ ngay (optimistic).
+    setTemplates(prev => prev.map(t => {
+      if (t.id !== tplId) return t;
+      return {
+        ...t,
+        items: (t.items || []).map(i => {
+          if (String(i.id) === String(srcItemId)) return { ...i, checklist: srcList };
+          if (String(i.id) === String(dstItemId)) return { ...i, checklist: dstList };
+          return i;
+        }),
+      };
+    }));
+
+    // Lưu cả 2 nhiệm vụ (đã cập nhật cục bộ ở trên — không reload khi thành công).
+    try {
+      await Promise.all([
+        api.put(`/production/task-templates/${tplId}/items/${srcItemId}`, { checklist: srcList }),
+        api.put(`/production/task-templates/${tplId}/items/${dstItemId}`, { checklist: dstList }),
+      ]);
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi di chuyển checklist');
+      load();
+    }
+  };
+
+  // Một DndContext duy nhất cho cả nhiệm vụ + checklist trong 1 bộ mẫu.
+  const handleCardDragEnd = (event, tplId) => {
+    const { active, over } = event;
+    if (!over) return;
+    const activeId = String(active.id);
+    const overId = String(over.id);
+    if (activeId.startsWith('ck|')) {
+      // Kéo 1 mục checklist (có thể sang nhiệm vụ khác).
+      handleChecklistMove(tplId, activeId, overId);
+      return;
+    }
+    // Kéo nhiệm vụ — chỉ xử lý khi thả lên 1 nhiệm vụ khác.
+    if (overId.startsWith('ck|')) return;
+    handleItemDragEnd(event, tplId);
+  };
+
   if (loading) return (
     <div className="flex items-center justify-center h-64">
       <div className="animate-spin h-8 w-8 border-3 border-blue-600 border-t-transparent rounded-full" />
     </div>
   );
 
-  const stageDisplay = usesWorkshopType
-    ? (selectedWorkshopTypeKey === 'global'
-      ? { label: 'Mọi phân loại', icon: '🌐', color: '#64748b' }
-      : { label: selectedWorkshopType?.name || 'Phân loại', icon: selectedWorkshopType?.icon || '📦', color: selectedWorkshopType?.color || '#0f766e' })
-    : (selectedPipelineStage
+  const stageDisplay = usesPipelineSidebar && selectedStageKey
+    ? (selectedPipelineStage
       ? { label: selectedPipelineStage.name, icon: selectedPipelineStage.icon || '📌', color: selectedPipelineStage.color || '#0f766e' }
+      : { label: 'Bộ mẫu chung (Global)', icon: '🌐', color: '#64748b' })
+    : (usesWorkshopType
+      ? (selectedWorkshopTypeKey === 'global'
+        ? { label: 'Mọi phân loại', icon: '🌐', color: '#64748b' }
+        : { label: selectedWorkshopType?.name || 'Phân loại', icon: selectedWorkshopType?.icon || '📦', color: selectedWorkshopType?.color || '#0f766e' })
       : { label: 'Bộ mẫu chung (Global)', icon: '🌐', color: '#64748b' });
 
   const stageTpls = [...filteredTemplates].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
@@ -608,7 +801,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
           </h1>
           <p className="text-sm text-gray-500">
             {fixedArea === 'production'
-              ? <>Mỗi <strong>phân loại</strong> (Cánh kính / Tủ bếp / …) có một bộ nhiệm vụ riêng. Nhấn <strong>Đặt bộ mặc định deal SX</strong> để khi tạo deal thuộc phân loại đó hệ thống tự sinh đúng bộ nhiệm vụ.</>
+              ? <>Gắn từng <strong>bộ nhiệm vụ</strong> vào <strong>cột pipeline</strong> (một cột có thể nhiều bộ). Khi thẻ chuyển sang cột đó, hệ thống tự sinh nhiệm vụ và gán NV theo cấu hình <Link to="/sx/handover-settings" className="text-blue-600 hover:underline">Bàn giao CRM → SX</Link>.</>
               : <>Phân theo <strong>cột pipeline</strong> của công ty đã chọn. Khi tạo dự án mới, hệ thống áp một lần các bộ mẫu của cột hiện tại + Global.</>}
             {' '}Ngày hẹn trên từng nhiệm vụ do nhân viên tự đặt.
           </p>
@@ -702,15 +895,15 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
         {usesPipelineSidebar && (
           <>
             <span className="text-gray-300">→</span>
-            <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full ${selectedStageKey ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : (selectedCompanyId ? 'bg-amber-50 text-amber-800 border border-amber-200' : 'bg-gray-50 text-gray-400 border border-gray-200')}`}>
-              <span className="font-semibold">2.</span> Pipeline
+            <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full ${selectedStageKey ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : ((usesWorkshopType ? selectedWorkshopTypeKey : selectedCompanyId) ? 'bg-amber-50 text-amber-800 border border-amber-200' : 'bg-gray-50 text-gray-400 border border-gray-200')}`}>
+              <span className="font-semibold">{usesWorkshopType ? '3.' : '2.'}</span> Pipeline
               {selectedStageKey ? <span>✓</span> : <span>·</span>}
             </span>
           </>
         )}
         <span className="text-gray-300">→</span>
         <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full ${canLoadTemplates ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-gray-50 text-gray-400 border border-gray-200'}`}>
-          <span className="font-semibold">{usesWorkshopType ? '3.' : (usesPipelineSidebar ? '3.' : '2.')}</span> Bộ mẫu
+          <span className="font-semibold">{usesWorkshopType && usesPipelineSidebar ? '4.' : (usesWorkshopType || usesPipelineSidebar ? '3.' : '2.')}</span> Bộ mẫu
         </span>
       </div>
 
@@ -990,9 +1183,11 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
                     setNewCheckItem={setNewCheckItem}
                     addChecklistItem={addChecklistItem}
                     removeChecklistItem={removeChecklistItem}
+                    updateChecklistItem={updateChecklistItem}
                     sensors={sensors}
                     handleItemDragEnd={handleItemDragEnd}
                     handleChecklistDragEnd={handleChecklistDragEnd}
+                    handleCardDragEnd={handleCardDragEnd}
                     templates={templates}
                     setTemplates={setTemplates}
                     updateItemChecklist={updateItemChecklist}
@@ -1001,6 +1196,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
                     setEditingVisibility={setEditingVisibility}
                     companies={companies}
                     departments={departments}
+                    users={users}
                     toggleItemCompany={toggleItemCompany}
                     toggleItemDept={toggleItemDept}
                     pipelineStages={pipelineStages}
@@ -1038,23 +1234,29 @@ function TemplateCard({
   editingTpl, setEditingTpl, updateTemplate, toggleDefault, deleteTemplate,
   newItem, setNewItem, addItem, deleteItem,
   editingChecklist, setEditingChecklist, newCheckItem, setNewCheckItem,
-  addChecklistItem, removeChecklistItem,
-  sensors, handleItemDragEnd, handleChecklistDragEnd,
+  addChecklistItem, removeChecklistItem, updateChecklistItem,
+  sensors, handleItemDragEnd, handleChecklistDragEnd, handleCardDragEnd,
   editingVisibility, setEditingVisibility,
-  companies, departments, toggleItemCompany, toggleItemDept,
+  companies, departments, users = [], toggleItemCompany, toggleItemDept,
   updateTemplateItemFields,
   pipelineStages = [], activeTab = 'production',
 }) {
   const tplArea = fixedArea || tpl.workshop_area || activeTab || 'production';
-  const showPipelineUi = tplArea === 'logistics';
-  const tplStageId = showPipelineUi ? (tpl.logistics_stage_id || null) : null;
+  const showPipelineUi = tplArea === 'logistics' || tplArea === 'production';
+  const tplStageId = showPipelineUi
+    ? (tplArea === 'logistics' ? (tpl.logistics_stage_id || null) : (tpl.production_stage_id || null))
+    : null;
   const tplStageRow = tplStageId
     ? pipelineStages.find((s) => String(s.id) === String(tplStageId)) || null
     : null;
   // Số nhiệm vụ "chặn chuyển giai đoạn" còn lại trong bộ mẫu (giúp người cấu hình nhìn nhanh trên header).
   const blockingItemsCount = (tpl.items || []).filter((it) => it && it.blocks_stage_advance).length;
   const [editingItemId, setEditingItemId] = useState(null);
-  const [itemEditForm, setItemEditForm] = useState({ title: '', description: '', priority: 'medium', deadline_days: 0, blocks_stage_advance: false });
+  const [itemEditForm, setItemEditForm] = useState({
+    title: '', description: '', priority: 'medium', deadline_days: 0,
+    blocks_stage_advance: false, completion_requires_file_or_note: false, required_evidence_file_types: [],
+    requires_quick_verdict: false, executor_company_id: '',
+  });
 
   const sortedItems = [...(tpl.items || [])].sort((a, b) => a.order_index - b.order_index);
 
@@ -1066,6 +1268,10 @@ function TemplateCard({
       priority: item.priority || 'medium',
       deadline_days: item.deadline_days ?? 0,
       blocks_stage_advance: !!item.blocks_stage_advance,
+      completion_requires_file_or_note: !!item.completion_requires_file_or_note,
+      required_evidence_file_types: normalizeEvidenceFileTypes(item.required_evidence_file_types),
+      requires_quick_verdict: !!item.requires_quick_verdict,
+      executor_company_id: item.executor_company_id || '',
     });
   };
 
@@ -1081,8 +1287,38 @@ function TemplateCard({
         priority: itemEditForm.priority,
         deadline_days: 0,
         blocks_stage_advance: !!itemEditForm.blocks_stage_advance,
+        completion_requires_file_or_note: !!itemEditForm.completion_requires_file_or_note
+          || (itemEditForm.required_evidence_file_types?.length > 0),
+        required_evidence_file_types: itemEditForm.required_evidence_file_types || [],
+        requires_quick_verdict: !!itemEditForm.requires_quick_verdict,
+        executor_company_id: itemEditForm.executor_company_id || null,
       });
       setEditingItemId(null);
+    } catch { /* alert trong updateTemplateItemFields */ }
+  };
+
+  const toggleItemQuickVerdict = async (item) => {
+    try {
+      await updateTemplateItemFields(tpl.id, item.id, {
+        requires_quick_verdict: !item.requires_quick_verdict,
+      });
+    } catch { /* alert trong updateTemplateItemFields */ }
+  };
+
+  const toggleItemEvidence = async (item) => {
+    try {
+      const types = normalizeEvidenceFileTypes(item.required_evidence_file_types);
+      if (types.length || item.completion_requires_file_or_note) {
+        await updateTemplateItemFields(tpl.id, item.id, {
+          completion_requires_file_or_note: false,
+          required_evidence_file_types: [],
+        });
+      } else {
+        await updateTemplateItemFields(tpl.id, item.id, {
+          completion_requires_file_or_note: true,
+          required_evidence_file_types: ['note', 'image'],
+        });
+      }
     } catch { /* alert trong updateTemplateItemFields */ }
   };
 
@@ -1134,8 +1370,9 @@ function TemplateCard({
           <button onClick={() => setEditingTpl(null)} className="h-8 px-2 bg-gray-100 rounded text-xs cursor-pointer"><X className="h-3 w-3" /></button>
           {showPipelineUi && (
           <p className="basis-full text-[10px] text-blue-900/70 leading-snug">
-            💡 Bộ mẫu sẽ được áp khi dự án bước vào <strong>{tplStageRow ? `cột "${tplStageRow.name}"` : 'bất kỳ cột nào trong khu vực này'}</strong>.
-            Các nhiệm vụ bật ⛔ <strong>Chặn chuyển giai đoạn</strong> bên dưới sẽ KHÔNG cho kéo deal/dự án sang cột kế tiếp đến khi hoàn thành hết.
+            💡 Bộ mẫu sẽ được áp khi thẻ vào <strong>{tplStageRow ? `cột "${tplStageRow.name}"` : 'bất kỳ cột nào trong khu vực này'}</strong>
+            {tplArea === 'production' ? ' — NV được gán theo cấu hình Bàn giao CRM → SX.' : '.'}
+            {' '}Các nhiệm vụ ⛔ <strong>Chặn chuyển giai đoạn</strong> phải hoàn thành trước khi kéo sang cột tiếp theo.
           </p>
           )}
         </div>
@@ -1176,7 +1413,7 @@ function TemplateCard({
                 id: tpl.id,
                 name: tpl.name,
                 workshop_area: tpl.workshop_area,
-                pipeline_stage_id: tplStageId || '',
+                pipeline_stage_id: tplStageId || tpl.production_stage_id || '',
               });
             }}
             className="p-1 text-gray-400 hover:text-blue-600 cursor-pointer" title="Sửa"><Edit2 className="h-3.5 w-3.5" /></button>
@@ -1197,7 +1434,7 @@ function TemplateCard({
             Không tự gán khi gắn bộ mẫu — nhân viên đặt trên từng nhiệm vụ (dự án / tab Công việc deal).
           </p>
           <DndContext sensors={sensors} collisionDetection={closestCenter}
-            onDragEnd={(e) => handleItemDragEnd(e, tpl.id)}>
+            onDragEnd={(e) => handleCardDragEnd(e, tpl.id)}>
             <SortableContext items={sortedItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
               {sortedItems.map((item, i) => (
                 <SortableItem key={item.id} id={item.id}>
@@ -1219,6 +1456,16 @@ function TemplateCard({
                           item.priority === 'urgent' ? 'bg-red-100 text-red-700' :
                           item.priority === 'medium' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
                         }`}>{item.priority === 'urgent' ? 'Gấp' : item.priority === 'high' ? 'Cao' : item.priority === 'medium' ? 'TB' : 'Thấp'}</span>
+                        {item.executor_company_id && (
+                          <span
+                            className="text-[9px] bg-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded-full font-medium max-w-[120px] truncate"
+                            title="Giao cho công ty khác thực hiện"
+                          >
+                            🤝 {companies.find((c) => String(c.id) === String(item.executor_company_id))?.short_name
+                              || companies.find((c) => String(c.id) === String(item.executor_company_id))?.name
+                              || 'Đối tác'}
+                          </span>
+                        )}
                         {(item.default_allowed_companies?.length > 0 || item.default_allowed_departments?.length > 0) && (
                           <span className="text-[9px] bg-red-50 text-red-600 px-1 py-0.5 rounded-full">🔒</span>
                         )}
@@ -1228,10 +1475,34 @@ function TemplateCard({
                             title="Chặn chuyển giai đoạn — phải hoàn thành trước khi kéo cột Kanban SX"
                           >⛔ Chặn</span>
                         )}
+                        {(!!item.completion_requires_file_or_note || normalizeEvidenceFileTypes(item.required_evidence_file_types).length > 0) && (
+                          <span
+                            className="text-[9px] bg-violet-100 text-violet-800 px-1.5 py-0.5 rounded-full font-medium max-w-[200px] truncate"
+                            title={`Bắt buộc minh chứng: ${formatEvidenceTypesShort(item.required_evidence_file_types) || 'file/ghi chú bất kỳ'}`}
+                          >
+                            📎 {formatEvidenceTypesShort(item.required_evidence_file_types) || 'Minh chứng'}
+                          </span>
+                        )}
+                        {item.requires_quick_verdict && (
+                          <span
+                            className="text-[9px] bg-sky-100 text-sky-800 px-1.5 py-0.5 rounded-full font-medium"
+                            title="Ghi chú nhanh: phải chọn Đã đủ / Chưa (+ lý do) trước khi hoàn thành hoặc chuyển giai đoạn"
+                          >
+                            ✓ Đủ/Chưa
+                          </span>
+                        )}
                         <button type="button" onClick={() => toggleItemBlocking(item)}
                           className={`p-1 rounded cursor-pointer shrink-0 ${item.blocks_stage_advance ? 'text-amber-600 bg-amber-50 hover:bg-amber-100' : 'text-gray-400 hover:bg-amber-50 hover:text-amber-600'}`}
                           title={item.blocks_stage_advance ? 'Đang chặn chuyển giai đoạn — bấm để tắt' : 'Bật chặn: bắt buộc hoàn thành trước khi chuyển giai đoạn SX'}>
                           <Lock className="h-3.5 w-3.5" /></button>
+                        <button type="button" onClick={() => toggleItemEvidence(item)}
+                          className={`p-1 rounded cursor-pointer shrink-0 ${(item.completion_requires_file_or_note || normalizeEvidenceFileTypes(item.required_evidence_file_types).length) ? 'text-violet-600 bg-violet-50 hover:bg-violet-100' : 'text-gray-400 hover:bg-violet-50 hover:text-violet-600'}`}
+                          title="Cấu hình loại file/ghi chú bắt buộc khi hoàn thành">
+                          <Paperclip className="h-3.5 w-3.5" /></button>
+                        <button type="button" onClick={() => toggleItemQuickVerdict(item)}
+                          className={`p-1 rounded cursor-pointer shrink-0 ${item.requires_quick_verdict ? 'text-sky-600 bg-sky-50 hover:bg-sky-100' : 'text-gray-400 hover:bg-sky-50 hover:text-sky-600'}`}
+                          title={item.requires_quick_verdict ? 'Đang bật ghi chú nhanh Đủ/Chưa — bấm để tắt' : 'Bật ghi chú nhanh: Đã đủ / Chưa (+ lý do)'}>
+                          <MessageSquare className="h-3.5 w-3.5" /></button>
                         <button type="button" onClick={() => setEditingVisibility(p => ({ ...p, [item.id]: !p[item.id] }))}
                           className={`p-1 rounded cursor-pointer shrink-0 ${(item.default_allowed_companies?.length > 0 || item.default_allowed_departments?.length > 0) ? 'text-red-500 hover:bg-red-50' : 'text-gray-400 hover:bg-purple-50 hover:text-purple-600'}`} title="Phân quyền xem">
                           <Shield className="h-3.5 w-3.5" /></button>
@@ -1254,6 +1525,28 @@ function TemplateCard({
                             className="w-full h-8 px-2 rounded border text-sm outline-none focus:ring-2 focus:ring-sky-400"
                             placeholder="Tên nhiệm vụ..."
                           />
+                          <div>
+                            <p className="text-[10px] font-semibold text-gray-500 mb-1">🤝 Công ty thực hiện (giao việc chéo)</p>
+                            <select
+                              value={itemEditForm.executor_company_id || ''}
+                              onChange={async (e) => {
+                                const executor_company_id = e.target.value || '';
+                                setItemEditForm((f) => ({ ...f, executor_company_id }));
+                                try {
+                                  await updateTemplateItemFields(tpl.id, item.id, {
+                                    executor_company_id: executor_company_id || null,
+                                  });
+                                } catch { /* alert trong updateTemplateItemFields */ }
+                              }}
+                              className="w-full h-8 px-2 rounded border text-xs bg-white outline-none focus:ring-2 focus:ring-indigo-400"
+                            >
+                              <option value="">Cùng công ty chủ dự án</option>
+                              {companies.map((c) => (
+                                <option key={c.id} value={c.id}>{c.name}{c.short_name ? ` (${c.short_name})` : ''}</option>
+                              ))}
+                            </select>
+                            <p className="text-[10px] text-gray-400 mt-1">Khi kích hoạt bộ mẫu ở pipeline, NV công ty này nhận việc và thấy dự án trên Kanban SX.</p>
+                          </div>
                           <textarea
                             value={itemEditForm.description || ''}
                             onChange={e => setItemEditForm(f => ({ ...f, description: e.target.value }))}
@@ -1281,6 +1574,29 @@ function TemplateCard({
                               />
                               ⛔ Chặn chuyển giai đoạn
                             </label>
+                            <label className="flex items-center gap-1.5 text-[11px] font-medium text-violet-700 bg-violet-50 border border-violet-200 px-2 h-8 rounded cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={!!itemEditForm.completion_requires_file_or_note || (itemEditForm.required_evidence_file_types?.length > 0)}
+                                onChange={e => setItemEditForm(f => ({
+                                  ...f,
+                                  completion_requires_file_or_note: e.target.checked,
+                                  required_evidence_file_types: e.target.checked && !f.required_evidence_file_types?.length
+                                    ? ['note', 'image'] : (e.target.checked ? f.required_evidence_file_types : []),
+                                }))}
+                                className="accent-violet-600"
+                              />
+                              <Paperclip className="h-3 w-3" /> Bắt buộc minh chứng
+                            </label>
+                            <label className="flex items-center gap-1.5 text-[11px] font-medium text-sky-700 bg-sky-50 border border-sky-200 px-2 h-8 rounded cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={!!itemEditForm.requires_quick_verdict}
+                                onChange={e => setItemEditForm(f => ({ ...f, requires_quick_verdict: e.target.checked }))}
+                                className="accent-sky-600"
+                              />
+                              <MessageSquare className="h-3 w-3" /> Ghi chú nhanh Đủ/Chưa
+                            </label>
                             <span className="flex-1" />
                             <button type="button" onClick={() => setEditingItemId(null)} className="h-8 px-3 rounded-lg text-xs font-medium bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 cursor-pointer">
                               Hủy
@@ -1289,6 +1605,19 @@ function TemplateCard({
                               <Save className="h-3 w-3" /> Lưu
                             </button>
                           </div>
+                          {(itemEditForm.completion_requires_file_or_note || itemEditForm.required_evidence_file_types?.length > 0) && (
+                            <div className="rounded-lg border border-violet-200 bg-white p-2">
+                              <EvidenceFileTypesPicker
+                                compact
+                                value={itemEditForm.required_evidence_file_types}
+                                onChange={(types) => setItemEditForm((f) => ({
+                                  ...f,
+                                  required_evidence_file_types: types,
+                                  completion_requires_file_or_note: types.length > 0 || f.completion_requires_file_or_note,
+                                }))}
+                              />
+                            </div>
+                          )}
                         </div>
                       )}
                       {editingVisibility[item.id] && (
@@ -1324,8 +1653,10 @@ function TemplateCard({
                       {editingChecklist[item.id] && (
                         <ChecklistEditor tplId={tpl.id} itemId={item.id}
                           checklist={Array.isArray(item.checklist) ? item.checklist : []}
-                          sensors={sensors} handleChecklistDragEnd={handleChecklistDragEnd}
+                          users={users} companies={companies}
+                          parentExecutorCompanyId={item.executor_company_id || ''}
                           removeChecklistItem={removeChecklistItem} addChecklistItem={addChecklistItem}
+                          updateChecklistItem={updateChecklistItem}
                           newCheckItem={newCheckItem} setNewCheckItem={setNewCheckItem} />
                       )}
                     </div>
@@ -1353,32 +1684,119 @@ function TemplateCard({
   );
 }
 
+// Đọc tiêu đề / mô tả của 1 mục checklist (hỗ trợ cả dữ liệu cũ dạng chuỗi).
+const ckTitleOf = (ck) => (typeof ck === 'string' ? ck : (ck?.title || ck?.label || ''));
+const ckDescOf = (ck) => (typeof ck === 'string' ? '' : (ck?.description || ''));
+const ckEvidenceTypesOf = (ck) => normalizeEvidenceFileTypes(typeof ck === 'object' ? ck?.required_evidence_file_types : []);
+const ckAssigneeOf = (ck) => (typeof ck === 'object' ? String(ck?.assignee_id || ck?.default_assignee_id || '') : '');
+const ckExecutorCompanyOf = (ck) => (typeof ck === 'object' ? String(ck?.executor_company_id || '') : '');
+
 // ═══ Checklist Editor with drag & drop ═══
-function ChecklistEditor({ tplId, itemId, checklist, sensors, handleChecklistDragEnd, removeChecklistItem, addChecklistItem, newCheckItem, setNewCheckItem }) {
-  const checkIds = checklist.map((_, i) => `ck-${itemId}-${i}`);
+function ChecklistEditor({
+  tplId, itemId, checklist, users = [], companies = [], parentExecutorCompanyId = '',
+  removeChecklistItem, addChecklistItem, updateChecklistItem, newCheckItem, setNewCheckItem,
+}) {
+  // ID dạng `ck|<itemId>|<index>` để cha (DndContext của bộ mẫu) phân biệt với nhiệm vụ
+  // và cho phép kéo 1 mục checklist sang nhiệm vụ khác.
+  const checkIds = checklist.map((_, i) => `ck|${itemId}|${i}`);
   return (
-    <div className="ml-10 pl-3 border-l-2 border-emerald-200 mb-2 space-y-1">
-      <p className="text-[10px] text-emerald-600 font-medium uppercase tracking-wider">Checklist mẫu — kéo thả để sắp xếp</p>
-      <DndContext sensors={sensors} collisionDetection={closestCenter}
-        onDragEnd={(e) => handleChecklistDragEnd(e, tplId, itemId)}>
-        <SortableContext items={checkIds} strategy={verticalListSortingStrategy}>
-          {checklist.map((ck, ci) => (
-            <SortableItem key={checkIds[ci]} id={checkIds[ci]}>
-              {({ dragHandleProps: ckDrag }) => (
-                <div className="flex items-center gap-2 text-xs">
-                  <div {...ckDrag} className="cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 touch-none">
-                    <GripVertical className="h-3 w-3" />
-                  </div>
-                  <span className="text-emerald-500">☐</span>
-                  <span className="flex-1">{ck}</span>
-                  <button onClick={() => removeChecklistItem(tplId, itemId, ci)}
-                    className="p-0.5 text-gray-300 hover:text-red-500 cursor-pointer"><X className="h-3 w-3" /></button>
+    <div className="ml-10 pl-3 border-l-2 border-emerald-200 mb-2 space-y-1.5">
+      <p className="text-[10px] text-emerald-600 font-medium uppercase tracking-wider">Checklist mẫu — kéo thả để sắp xếp (có thể kéo sang nhiệm vụ khác)</p>
+      <SortableContext items={checkIds} strategy={verticalListSortingStrategy}>
+        {checklist.map((ck, ci) => (
+          <SortableItem key={checkIds[ci]} id={checkIds[ci]}>
+            {({ dragHandleProps: ckDrag }) => (
+              <div className="flex items-start gap-2 text-xs bg-white border border-emerald-100 rounded-md px-1.5 py-1.5">
+                <div {...ckDrag} className="cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 touch-none mt-1.5">
+                  <GripVertical className="h-3 w-3" />
                 </div>
-              )}
-            </SortableItem>
-          ))}
-        </SortableContext>
-      </DndContext>
+                <span className="text-emerald-500 mt-1.5">☐</span>
+                <div className="flex-1 min-w-0 space-y-1">
+                  <input
+                    key={`t|${checkIds[ci]}|${ckTitleOf(ck)}`}
+                    defaultValue={ckTitleOf(ck)}
+                    placeholder="Tên mục checklist"
+                    className="w-full h-7 px-2 text-xs font-medium border rounded outline-none focus:ring-1 focus:ring-emerald-400"
+                    onBlur={e => updateChecklistItem(tplId, itemId, ci, { title: e.target.value.trim() })}
+                    onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                  />
+                  <input
+                    key={`d|${checkIds[ci]}|${ckDescOf(ck)}`}
+                    defaultValue={ckDescOf(ck)}
+                    placeholder="Mô tả / hướng dẫn (tùy chọn)"
+                    className="w-full h-7 px-2 text-[11px] text-gray-600 border border-gray-200 rounded outline-none focus:ring-1 focus:ring-emerald-300"
+                    onBlur={e => updateChecklistItem(tplId, itemId, ci, { description: e.target.value.trim() })}
+                    onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                  />
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                    <User className="h-3 w-3 text-indigo-600 shrink-0" />
+                    <select
+                      value={ckAssigneeOf(ck)}
+                      onChange={(e) => updateChecklistItem(tplId, itemId, ci, {
+                        assignee_id: e.target.value || null,
+                      })}
+                      className="h-7 min-w-[140px] flex-1 max-w-full px-2 text-[11px] border border-indigo-200 rounded bg-white outline-none focus:ring-1 focus:ring-indigo-300"
+                      title="Nhân viên mặc định khi sinh nhiệm vụ từ mẫu"
+                    >
+                      <option value="">— Chưa gán —</option>
+                      {(users || []).map((u) => (
+                        <option key={u.id} value={u.id}>{u.full_name || u.email || u.id}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <Globe className="h-3 w-3 text-teal-600 shrink-0" />
+                    <select
+                      value={ckExecutorCompanyOf(ck)}
+                      onChange={(e) => updateChecklistItem(tplId, itemId, ci, {
+                        executor_company_id: e.target.value || null,
+                      })}
+                      className="h-7 min-w-[140px] flex-1 max-w-full px-2 text-[11px] border border-teal-200 rounded bg-white outline-none focus:ring-1 focus:ring-teal-300"
+                      title="Công ty thực hiện mục checklist"
+                    >
+                      <option value="">
+                        {parentExecutorCompanyId
+                          ? `Kế thừa (${companies.find((c) => String(c.id) === String(parentExecutorCompanyId))?.short_name || companies.find((c) => String(c.id) === String(parentExecutorCompanyId))?.name || 'nhiệm vụ cha'})`
+                          : 'Cùng công ty chủ dự án'}
+                      </option>
+                      {(companies || []).map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}{c.short_name ? ` (${c.short_name})` : ''}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <label className="flex items-center gap-1.5 text-[10px] font-medium text-violet-700 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={checklistItemRequiresEvidence(ck)}
+                      onChange={(e) => updateChecklistItem(tplId, itemId, ci, {
+                        completion_requires_file_or_note: e.target.checked,
+                        required_evidence_file_types: e.target.checked && !ckEvidenceTypesOf(ck).length
+                          ? ['note', 'image'] : (e.target.checked ? ckEvidenceTypesOf(ck) : []),
+                      })}
+                      className="accent-violet-600"
+                    />
+                    <Paperclip className="h-3 w-3" /> Bắt buộc minh chứng khi tick xong
+                  </label>
+                  {checklistItemRequiresEvidence(ck) && (
+                    <div className="rounded border border-violet-100 bg-violet-50/40 p-1.5">
+                      <EvidenceFileTypesPicker
+                        compact
+                        value={ckEvidenceTypesOf(ck)}
+                        onChange={(types) => updateChecklistItem(tplId, itemId, ci, {
+                          required_evidence_file_types: types,
+                          completion_requires_file_or_note: types.length > 0 || !!ck.completion_requires_file_or_note,
+                        })}
+                      />
+                    </div>
+                  )}
+                </div>
+                <button onClick={() => removeChecklistItem(tplId, itemId, ci)}
+                  className="p-0.5 text-gray-300 hover:text-red-500 cursor-pointer mt-1.5"><X className="h-3 w-3" /></button>
+              </div>
+            )}
+          </SortableItem>
+        ))}
+      </SortableContext>
       <div className="flex items-center gap-1 mt-1">
         <input value={newCheckItem[itemId] || ''} onChange={e => setNewCheckItem(p => ({ ...p, [itemId]: e.target.value }))}
           placeholder="Thêm mục checklist..."

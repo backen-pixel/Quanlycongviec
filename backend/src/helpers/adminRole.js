@@ -39,13 +39,30 @@ function isCompanyScopedAdmin(user) {
   return isAdminLike(user) && hasCompanyId(user);
 }
 
+function isCrmProductionStaff(user) {
+  return normalizeRole(user?.role) === 'crm_production_staff';
+}
+
+/** Admin CRM + Sản xuất (phạm vi công ty — cần company_id). */
+function isCrmProductionAdmin(user) {
+  return normalizeRole(user?.role) === 'crm_production_admin';
+}
+
+/** Quản trị menu/route CRM (admin hệ thống, sales_admin, admin CRM+SX). */
+function isCrmModuleAdmin(user) {
+  return isAdminLike(user) || isCrmProductionAdmin(user);
+}
+
+/** Admin module Sản xuất (crm_production_staff = NV CRM nhưng admin SX trong phạm vi công ty). */
 function isProductionAdmin(user) {
-  return normalizeRole(user?.role) === 'production_admin';
+  const r = normalizeRole(user?.role);
+  return r === 'production_admin' || r === 'crm_production_admin' || r === 'crm_production_staff';
 }
 
 /** Nhân viên sản xuất — admin module Công việc + Sản xuất (phạm vi công ty). */
 function isProductionStaff(user) {
-  return normalizeRole(user?.role) === 'production_staff';
+  const r = normalizeRole(user?.role);
+  return r === 'production_staff' || r === 'crm_production_staff';
 }
 
 function isLogisticsAdmin(user) {
@@ -62,8 +79,9 @@ function isWorkProductionModuleAdmin(user) {
 function isModuleAdmin(user, moduleKey) {
   if (isSystemAdmin(user) || isAdminLike(user)) return true;
   const k = String(moduleKey || '').trim().toLowerCase();
+  if (k === 'crm' || k === 'customers') return isCrmProductionAdmin(user);
   if (k === 'production' || k === 'sx') return isProductionAdmin(user) || isProductionStaff(user);
-  if (k === 'tasks' || k === 'projects') return isProductionStaff(user);
+  if (k === 'tasks' || k === 'projects') return isProductionStaff(user) || isCrmProductionAdmin(user);
   if (k === 'logistics' || k === 'vc') return isLogisticsAdmin(user);
   return false;
 }
@@ -88,6 +106,9 @@ module.exports = {
   isStrictAdmin,
   isSystemAdmin,
   isCompanyScopedAdmin,
+  isCrmProductionStaff,
+  isCrmProductionAdmin,
+  isCrmModuleAdmin,
   isProductionAdmin,
   isProductionStaff,
   isLogisticsAdmin,

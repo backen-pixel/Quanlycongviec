@@ -3,10 +3,11 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import {
   MessageCircle, Settings, Send, Search, RefreshCw, Plus, Save, Trash2,
-  ExternalLink, Copy, Check, Users, Bell, Zap,
+  ExternalLink, Copy, Check, Users, Bell, Zap, UserCircle,
 } from 'lucide-react';
 import ZaloAutoToolPanel from '../components/ZaloAutoToolPanel';
 import ZaloContactsTab from '../components/ZaloContactsTab';
+import IntegrationLeadRoutingFields from '../components/IntegrationLeadRoutingFields';
 
 const API = import.meta.env.VITE_API_URL || '';
 const hdr = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' });
@@ -33,16 +34,49 @@ function formatTime(iso) {
   return `${d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })} ${time}`;
 }
 
+function looksLikePlaceholderName(name, userId) {
+  const n = String(name || '').trim();
+  if (!n) return true;
+  if (/^Zalo\s/i.test(n)) return true;
+  if (/^Zalo KH$/i.test(n)) return true;
+  if (userId && n === String(userId)) return true;
+  return false;
+}
+
+function formatTokenExpiry(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function tokenStatusLabel(account) {
+  if (account.access_token_expired) return { text: 'Access hết hạn', cls: 'text-red-600' };
+  if (account.needs_token_refresh) return { text: 'Cần refresh', cls: 'text-amber-600' };
+  if (account.access_token_expiring_soon) return { text: 'Sắp hết hạn', cls: 'text-amber-600' };
+  if (account.access_token_expires_at) return { text: 'OK', cls: 'text-green-600' };
+  if (!account.refresh_token_set) return { text: 'Chưa có refresh', cls: 'text-slate-500' };
+  return { text: '—', cls: 'text-slate-400' };
+}
+
 const EMPTY_ACCOUNT = {
   oa_id: '',
   oa_name: '',
   app_id: '',
   access_token: '',
+  refresh_token: '',
   secret_key: '',
   is_active: true,
   auto_create_lead: true,
   auto_reply_message: 'Cảm ơn bạn đã liên hệ! Chúng tôi sẽ phản hồi sớm nhất.',
   webhook_verify_enabled: true,
+  default_module_key: '',
+  default_target_type: '',
+  default_company_id: '',
+  default_region_id: '',
+  default_lead_type_id: '',
+  default_stage_id: '',
+  default_lead_owner_id: '',
 };
 
 export default function ZaloPage() {
@@ -65,6 +99,9 @@ export default function ZaloPage() {
   const [editingId, setEditingId] = useState(null);
   const [copied, setCopied] = useState(false);
   const [batchProgress, setBatchProgress] = useState(null);
+  const [syncingProfile, setSyncingProfile] = useState(false);
+  const [refreshingNames, setRefreshingNames] = useState(false);
+  const [refreshingTokenId, setRefreshingTokenId] = useState(null);
   const messagesEndRef = useRef(null);
 
   const loadStats = useCallback(() => {
@@ -95,22 +132,31 @@ export default function ZaloPage() {
       .catch(() => {});
   }, []);
 
-  const loadMessages = useCallback((contactId) => {
+  const loadMessages = useCallback(async (contactId, opts = {}) => {
     if (!contactId) return;
     setLoadingMessages(true);
-    fetch(`${API}/api/zalo/contacts/${contactId}/messages`, { headers: hdr() })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        setActiveContact(d?.contact || null);
-        setMessages(d?.messages || []);
-        setContacts((prev) => prev.map((c) => (c.id === contactId ? { ...c, unread_count: 0 } : c)));
-        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 80);
-      })
-      .catch(() => {
-        setMessages([]);
-        setActiveContact(null);
-      })
-      .finally(() => setLoadingMessages(false));
+    try {
+      const r = await fetch(`${API}/api/zalo/contacts/${contactId}/messages`, { headers: hdr() });
+      const d = r.ok ? await r.json() : null;
+      let contact = d?.contact || null;
+      const msgs = d?.messages || [];
+      if (contact?.id && (opts.syncProfile || looksLikePlaceholderName(contact.display_name, contact.user_id))) {
+        const sr = await fetch(`${API}/api/zalo/contacts/${contactId}/sync-profile`, { method: 'POST', headers: hdr() });
+        if (sr.ok) {
+          const sd = await sr.json();
+          if (sd.contact) contact = sd.contact;
+        }
+      }
+      setActiveContact(contact);
+      setMessages(msgs);
+      setContacts((prev) => prev.map((c) => (c.id === contactId ? { ...c, ...contact, unread_count: 0 } : c)));
+      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 80);
+    } catch {
+      setMessages([]);
+      setActiveContact(null);
+    } finally {
+      setLoadingMessages(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -175,6 +221,7 @@ export default function ZaloPage() {
       setBatchProgress(`Xong ${p.type}: ${JSON.stringify(p).slice(0, 120)}…`);
       loadStats();
       loadContacts();
+      if (selectedId) loadMessages(selectedId);
     };
     socket.on('zalo_message', onMsg);
     socket.on('batch_progress', onBatch);
@@ -185,6 +232,47 @@ export default function ZaloPage() {
       socket.off('batch_done', onBatchDone);
     };
   }, [socket, selectedId, loadStats, loadContacts, loadMessages]);
+
+  const syncContactProfile = async () => {
+    if (!selectedId || syncingProfile) return;
+    setSyncingProfile(true);
+    try {
+      const r = await fetch(`${API}/api/zalo/contacts/${selectedId}/sync-profile`, { method: 'POST', headers: hdr() });
+      const d = await r.json();
+      if (!r.ok) {
+        alert(d.error || 'Không lấy được tên từ Zalo');
+        return;
+      }
+      if (d.contact) {
+        setActiveContact(d.contact);
+        setContacts((prev) => prev.map((c) => (c.id === selectedId ? { ...c, ...d.contact } : c)));
+      }
+    } catch {
+      alert('Lỗi mạng');
+    } finally {
+      setSyncingProfile(false);
+    }
+  };
+
+  const refreshAllProfiles = async () => {
+    if (refreshingNames) return;
+    setRefreshingNames(true);
+    try {
+      const r = await fetch(`${API}/api/zalo/refresh-profiles`, { method: 'POST', headers: hdr() });
+      const d = await r.json();
+      if (!r.ok) {
+        alert(d.error || 'Lỗi cập nhật tên');
+        return;
+      }
+      alert(d.message || `Đã cập nhật ${d.updated}/${d.total} liên hệ`);
+      loadContacts();
+      if (selectedId) loadMessages(selectedId, { syncProfile: false });
+    } catch {
+      alert('Lỗi mạng');
+    } finally {
+      setRefreshingNames(false);
+    }
+  };
 
   const sendReply = async () => {
     const text = reply.trim();
@@ -212,13 +300,25 @@ export default function ZaloPage() {
   };
 
   const saveAccount = async () => {
-    if (!form.oa_id || !form.access_token) {
+    if (!form.oa_id || (!editingId && !form.access_token)) {
       alert('Nhập OA ID và Access Token');
       return;
     }
+    if (!String(form.default_module_key || '').trim()) {
+      alert('Cần chọn module tạo mới (CRM / Sản xuất / Vận chuyển)');
+      return;
+    }
+    if (!form.default_company_id) {
+      alert('Cần chọn công ty mặc định của module');
+      return;
+    }
+    const payload = { ...form };
+    if (editingId && !payload.access_token) delete payload.access_token;
+    if (editingId && !payload.refresh_token) delete payload.refresh_token;
+    if (editingId && !payload.secret_key) delete payload.secret_key;
     const url = editingId ? `${API}/api/zalo/accounts/${editingId}` : `${API}/api/zalo/accounts`;
     const method = editingId ? 'PUT' : 'POST';
-    const r = await fetch(url, { method, headers: hdr(), body: JSON.stringify(form) });
+    const r = await fetch(url, { method, headers: hdr(), body: JSON.stringify(payload) });
     const d = await r.json();
     if (!r.ok) {
       alert(d.error || 'Lưu thất bại');
@@ -227,6 +327,27 @@ export default function ZaloPage() {
     setForm({ ...EMPTY_ACCOUNT });
     setEditingId(null);
     loadAccounts();
+  };
+
+  const refreshAccountToken = async (accountId) => {
+    setRefreshingTokenId(accountId);
+    try {
+      const r = await fetch(`${API}/api/zalo/accounts/${accountId}/refresh-token`, {
+        method: 'POST',
+        headers: hdr(),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        alert(d.error || d.message || 'Refresh token thất bại');
+        return;
+      }
+      alert(`Đã làm mới token. Access hết hạn: ${formatTokenExpiry(d.access_token_expires_at)}`);
+      loadAccounts();
+    } catch {
+      alert('Lỗi mạng');
+    } finally {
+      setRefreshingTokenId(null);
+    }
   };
 
   const deleteAccount = async (id) => {
@@ -292,10 +413,19 @@ export default function ZaloPage() {
         <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-blue-900 space-y-2 mb-4">
           <p className="font-medium">Luồng giống Facebook (rút gọn)</p>
           <ol className="list-decimal list-inside text-xs space-y-1 text-blue-800">
+            <li><strong>Lấy tên KH</strong> — gọi Zalo OA API lấy display_name / avatar (webhook hoặc nút Tên KH)</li>
             <li><strong>Quét SĐT</strong> — đọc tin inbound đã lưu, trích SĐT/địa chỉ → cập nhật KH & lead</li>
             <li><strong>Tạo Lead</strong> — contact chưa có lead (ưu tiên có SĐT)</li>
             <li><strong>Auto</strong> — lặp quét + tạo lead theo batch (bật công tắc Auto)</li>
           </ol>
+          <button
+            type="button"
+            onClick={refreshAllProfiles}
+            disabled={refreshingNames}
+            className="mt-2 px-3 py-1.5 text-xs font-medium bg-white border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-50 flex items-center gap-1"
+          >
+            <UserCircle size={14} /> {refreshingNames ? 'Đang lấy tên...' : 'Cập nhật tên tất cả liên hệ'}
+          </button>
         </div>
       )}
 
@@ -363,14 +493,26 @@ export default function ZaloPage() {
               <>
                 <div className="p-3 border-b flex items-center gap-3">
                   <Avatar name={activeContact?.display_name} url={activeContact?.avatar_url} />
-                  <div>
-                    <div className="font-medium">{activeContact?.display_name || 'Khách Zalo'}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium truncate">{activeContact?.display_name || activeContact?.user_id || 'Khách Zalo'}</div>
+                    {activeContact?.phone && (
+                      <div className="text-xs text-green-600">📞 {activeContact.phone}</div>
+                    )}
                     {activeContact?.lead_id && (
                       <Link to={`/crm/leads/${activeContact.lead_id}`} className="text-xs text-blue-600 hover:underline">
                         Xem lead CRM →
                       </Link>
                     )}
                   </div>
+                  <button
+                    type="button"
+                    onClick={syncContactProfile}
+                    disabled={syncingProfile}
+                    className="text-xs border rounded-lg px-2 py-1.5 hover:bg-slate-50 flex items-center gap-1 shrink-0 disabled:opacity-50"
+                    title="Lấy tên & avatar từ Zalo OA API"
+                  >
+                    <UserCircle size={14} className={syncingProfile ? 'animate-pulse' : ''} /> Tên KH
+                  </button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50">
                   {loadingMessages ? (
@@ -461,9 +603,10 @@ export default function ZaloPage() {
               {[
                 ['oa_id', 'OA ID (recipient id)', true],
                 ['oa_name', 'Tên OA', false],
-                ['app_id', 'App ID', false],
-                ['access_token', 'Access Token', true],
-                ['secret_key', 'Secret Key (xác thực webhook)', false],
+                ['app_id', 'App ID (bắt buộc để refresh token)', false],
+                ['access_token', 'Access Token (~25h)', true],
+                ['refresh_token', 'Refresh Token (~3 tháng, rotate mỗi lần refresh)', false],
+                ['secret_key', 'Secret Key (webhook + refresh token)', false],
               ].map(([key, label, required]) => (
                 <div key={key}>
                   <label className="block text-slate-600 mb-1">{label}{required ? ' *' : ''}</label>
@@ -475,6 +618,10 @@ export default function ZaloPage() {
                   />
                 </div>
               ))}
+              <p className="text-xs text-slate-500 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                Access token hết hạn sau <strong>~25 giờ</strong>. Refresh token dùng <strong>1 lần</strong> để lấy cặp token mới (refresh cũ vô hiệu).
+                Hệ thống tự refresh lúc <strong>6:00 sáng</strong> (VN) mỗi ngày khi đủ App ID + Secret + Refresh Token.
+              </p>
               <div>
                 <label className="block text-slate-600 mb-1">Tin tự động trả lời</label>
                 <textarea
@@ -500,6 +647,12 @@ export default function ZaloPage() {
                 />
                 Xác thực chữ ký webhook (khuyến nghị)
               </label>
+              <IntegrationLeadRoutingFields
+                form={form}
+                setForm={setForm}
+                channelName="Zalo OA"
+                ownerFallbackLabel="Người tạo OA (mặc định)"
+              />
               <div className="flex gap-2 pt-2">
                 <button type="button" onClick={saveAccount} className="px-4 py-2 bg-blue-600 text-white rounded-lg flex items-center gap-1">
                   <Save size={16} /> Lưu
@@ -527,7 +680,9 @@ export default function ZaloPage() {
                   <thead>
                     <tr className="text-left text-slate-500 border-b">
                       <th className="py-2 pr-4">OA</th>
+                      <th className="py-2 pr-4">Module / Công ty</th>
                       <th className="py-2 pr-4">App ID</th>
+                      <th className="py-2 pr-4">Token</th>
                       <th className="py-2 pr-4">Trạng thái</th>
                       <th className="py-2">Thao tác</th>
                     </tr>
@@ -539,9 +694,41 @@ export default function ZaloPage() {
                           <div className="font-medium">{a.oa_name || a.oa_id}</div>
                           <div className="text-xs text-slate-400">{a.oa_id}</div>
                         </td>
+                        <td className="py-2 pr-4 text-xs">
+                          <div>{a.default_module_key === 'production' ? 'Sản xuất' : a.default_module_key === 'logistics' ? 'Vận chuyển' : a.default_module_key === 'crm' ? 'CRM' : '—'}</div>
+                          <div className="text-slate-400">{a.default_company_id ? `Công ty #${String(a.default_company_id).slice(0, 8)}…` : 'Chưa cấu hình'}</div>
+                        </td>
                         <td className="py-2 pr-4">{a.app_id || '—'}</td>
+                        <td className="py-2 pr-4 text-xs">
+                          {(() => {
+                            const st = tokenStatusLabel(a);
+                            return (
+                              <>
+                                <div className={st.cls}>{st.text}</div>
+                                <div className="text-slate-400">Access → {formatTokenExpiry(a.access_token_expires_at)}</div>
+                                {a.refresh_token_set && (
+                                  <div className="text-slate-400">Refresh → {formatTokenExpiry(a.refresh_token_expires_at)}</div>
+                                )}
+                                {a.last_token_error && (
+                                  <div className="text-red-500 truncate max-w-[180px]" title={a.last_token_error}>{a.last_token_error}</div>
+                                )}
+                              </>
+                            );
+                          })()}
+                        </td>
                         <td className="py-2 pr-4">{a.is_active ? '✅ Bật' : '⏸ Tắt'}</td>
-                        <td className="py-2 flex gap-2">
+                        <td className="py-2 flex flex-wrap gap-2">
+                          {a.refresh_token_set && a.app_id && (
+                            <button
+                              type="button"
+                              className="text-emerald-700 hover:underline flex items-center gap-1"
+                              disabled={refreshingTokenId === a.id}
+                              onClick={() => refreshAccountToken(a.id)}
+                            >
+                              <RefreshCw size={14} className={refreshingTokenId === a.id ? 'animate-spin' : ''} />
+                              Refresh token
+                            </button>
+                          )}
                           <button
                             type="button"
                             className="text-blue-600 hover:underline"
@@ -558,6 +745,13 @@ export default function ZaloPage() {
                                 auto_create_lead: a.auto_create_lead,
                                 auto_reply_message: a.auto_reply_message,
                                 webhook_verify_enabled: a.webhook_verify_enabled,
+                                default_module_key: a.default_module_key || (String(a.default_target_type || '').toLowerCase() === 'deal' ? 'production' : 'crm'),
+                                default_target_type: a.default_target_type || '',
+                                default_company_id: a.default_company_id || '',
+                                default_region_id: a.default_region_id || '',
+                                default_lead_type_id: a.default_lead_type_id || '',
+                                default_stage_id: a.default_stage_id || '',
+                                default_lead_owner_id: a.default_lead_owner_id || '',
                               });
                             }}
                           >
@@ -574,8 +768,9 @@ export default function ZaloPage() {
               </div>
             )}
             <p className="text-xs text-slate-500 mt-4">
-              Khi sửa: để trống Access Token / Secret Key nếu không đổi. Chạy migration{' '}
-              <code className="bg-slate-100 px-1 rounded">database/290_zalo_oa_inbox.sql</code> trên Supabase trước khi dùng.
+              Nhập <strong>Refresh Token</strong> lần đầu từ Zalo Developer (OAuth). Sau đó hệ thống tự rotate hàng ngày — không cần dán lại access token thủ công.
+              Migration:{' '}
+              <code className="bg-slate-100 px-1 rounded">database/319_zalo_oa_refresh_token.sql</code>
             </p>
           </div>
         </div>
