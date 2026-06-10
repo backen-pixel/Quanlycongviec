@@ -51,9 +51,10 @@ export function isCrmModuleAdmin(user) {
   return isAdminLike(user) || isCrmProductionAdmin(user);
 }
 
+/** Admin module Sản xuất (crm_production_staff = NV CRM nhưng admin SX trong phạm vi công ty). */
 export function isProductionAdmin(user) {
   const r = normalizeRole(user?.role);
-  return r === 'production_admin' || r === 'crm_production_admin';
+  return r === 'production_admin' || r === 'crm_production_admin' || r === 'crm_production_staff';
 }
 
 /** Nhân viên sản xuất — admin module Công việc + Sản xuất (phạm vi công ty). */
