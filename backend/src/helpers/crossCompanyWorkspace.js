@@ -13,15 +13,26 @@ function resolveExecutorCompanyId(templateItem, ownerCompanyId) {
   return ownerCompanyId ? String(ownerCompanyId) : null;
 }
 
+/** Nhiệm vụ giao cho công ty khác chủ deal (executor_company_id khác lead.company_id). */
+function isCrossCompanyDelegatedTask(task, leadCompanyId) {
+  const exec = task?.executor_company_id || null;
+  if (!exec) return false;
+  if (!leadCompanyId) return true;
+  return String(exec) !== String(leadCompanyId);
+}
+
 /**
  * Lọc nhiệm vụ theo phạm vi công ty:
  * - own: chỉ NV thuộc công ty user (executor = user hoặc NULL + chủ deal = user)
- * - shared: tất cả (không gian chung)
+ * - shared: chỉ nhiệm vụ giao chéo công ty (không gian chung)
  */
 function filterCrmTasksByCompanyScope(tasks, { scope, userCompanyId, leadCompanyId }) {
   const list = Array.isArray(tasks) ? tasks : [];
   const mode = String(scope || 'own').toLowerCase();
-  if (mode === 'shared' || mode === 'all') return list;
+  if (mode === 'shared') {
+    return list.filter((t) => isCrossCompanyDelegatedTask(t, leadCompanyId));
+  }
+  if (mode === 'all') return list;
   if (!userCompanyId) return list;
 
   return list.filter((t) => {
@@ -78,6 +89,7 @@ function isExecutorColumnError(err) {
 
 module.exports = {
   isSxTaskSlug,
+  isCrossCompanyDelegatedTask,
   resolveExecutorCompanyId,
   filterCrmTasksByCompanyScope,
   getExecutorProjectIdsForCompany,

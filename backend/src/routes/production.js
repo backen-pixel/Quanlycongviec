@@ -13,6 +13,7 @@ const {
   getWonDealProjectIds,
   buildScopeOrFilter,
   loadProductionPipelineStagesRows,
+  filterProductionPipelineStagesForWorkshopType,
   getResolvedKanbanStages,
   resolveSxHandoverColumnId,
   resolveSxDisplayColumnId,
@@ -530,19 +531,7 @@ r.get('/pipeline-stages', requirePermission('projects', 'view'), responseCache({
       out = out.filter((s) => String(s.company_id || '') === String(company_id));
     }
     if (rawWorkshopType !== undefined && rawWorkshopType !== null && rawWorkshopType !== '') {
-      const wkt = String(rawWorkshopType);
-      if (wkt.toLowerCase() === 'global') {
-        out = out.filter((s) => (
-          !s.workshop_type_id
-          || s.bucket_slug === INTAKE_BUCKET
-        ));
-      } else {
-        out = out.filter((s) => (
-          !s.workshop_type_id
-          || String(s.workshop_type_id) === wkt
-          || s.bucket_slug === INTAKE_BUCKET
-        ));
-      }
+      out = filterProductionPipelineStagesForWorkshopType(out, rawWorkshopType);
     }
     res.json(out);
   } catch (e) {
@@ -934,7 +923,7 @@ r.post('/workshop-intake', requirePermission('projects', 'create'), async (req, 
       });
     }
 
-    rcInvalidateTags(['production', 'crm']);
+    await rcInvalidateTags(['production', 'crm']);
     res.status(201).json({
       project_id: result.project_id,
       project_code: result.project_code,
@@ -942,6 +931,7 @@ r.post('/workshop-intake', requirePermission('projects', 'create'), async (req, 
       tasks_created: result.tasks_created,
       deal_id: result.deal_id,
       deal_code: result.deal_code,
+      workshop_type_id: result.workshop_type_id || null,
     });
   } catch (e) {
     console.error('[production/workshop-intake]', e);

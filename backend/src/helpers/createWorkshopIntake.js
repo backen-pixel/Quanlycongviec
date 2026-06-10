@@ -405,6 +405,7 @@ async function createWorkshopIntakeOrder(opts) {
     project_id: projectId,
     project_code: project.code,
     project_name: project.name,
+    workshop_type_id: wtCheck.type.id,
     tasks_created: 0,
   };
 }

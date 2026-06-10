@@ -9,7 +9,14 @@ const { validateProductionCompanyId } = require('./productionCompanyGate');
 const { loadProductionHandoverMaps, resolveSxAssigneeForTemplateItem } = require('./productionHandoverSettings');
 const { resolveExecutorCompanyId, isExecutorColumnError } = require('./crossCompanyWorkspace');
 const { normalizeEvidenceFileTypes } = require('./evidenceFileTypes');
-const { evidenceFieldsFromTemplateChecklistItem } = require('./checklistItemEvidence');
+const { normalizeTemplateChecklistForCrmTask } = require('./templateChecklistNormalize');
+const { loadProductionPipelineStagesRows, INTAKE_BUCKET } = require('./workshopKanban');
+const {
+  buildSxStageSlugByProductionStageId,
+  legacySxSlugFromStageName,
+  getProductionPipelineStagesForWorkshopType,
+  filterSxTemplatesToWorkshopPipeline,
+} = require('./sxPipelineStageSlug');
 
 const SX_TEMPLATE_ITEM_COLS_FULL =
   'id, template_id, title, description, priority, deadline_days, order_index, checklist, blocks_stage_advance, completion_requires_file_or_note, required_evidence_file_types, requires_quick_verdict, executor_company_id';
@@ -45,6 +52,35 @@ function sxEvidenceFieldsFromTemplateItem(it) {
   };
 }
 
+async function loadSxStageSlugMapForCompany(companyId, workshopTypeId) {
+  const stages = await getProductionPipelineStagesForWorkshopType(companyId, workshopTypeId);
+  return buildSxStageSlugByProductionStageId(stages);
+}
+
+async function scopeSxTemplatesForWorkshopType(templates, companyId, workshopTypeId) {
+  const stages = await getProductionPipelineStagesForWorkshopType(companyId, workshopTypeId);
+  return filterSxTemplatesToWorkshopPipeline(templates, stages, workshopTypeId);
+}
+
+function sxNoBundleResult(workshopTypeId, companyId, extra = {}) {
+  return {
+    created: 0,
+    reason: workshopTypeId ? 'no_default_bundle_for_workshop_type' : 'no_default_bundle',
+    template_count: 0,
+    template_names: [],
+    company_id: companyId || null,
+    workshop_type_id: workshopTypeId || null,
+    ...extra,
+  };
+}
+
+function resolveSxTaskStageSlug(prodStageId, slugByProdStageId, slugByTemplateId, templateId) {
+  if (prodStageId && slugByProdStageId?.has(String(prodStageId))) {
+    return slugByProdStageId.get(String(prodStageId));
+  }
+  return slugByTemplateId?.get(String(templateId)) || 'sx_other';
+}
+
 function isSxTemplateEvidenceColumnError(err) {
   const m = String(err?.message || '').toLowerCase();
   return m.includes('required_evidence_file_types')
@@ -54,31 +90,9 @@ function isSxTemplateEvidenceColumnError(err) {
 }
 const ORDER_PHASES = ['draft', 'confirmed', 'in_production', 'ready_logistics', 'in_logistics', 'completed'];
 
-let _ckSeq = 0;
-/**
- * Chuyển checklist mẫu (mảng chuỗi hoặc object) sang định dạng JSONB của crm_tasks.checklist:
- * mỗi phần tử { id, title, description, done } — khớp với CRMTasksTab.normalizeChecklist.
- */
-function toCrmChecklist(raw) {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((x, i) => {
-      const title = typeof x === 'string' ? x : (x?.title || x?.label || '');
-      if (!title || !String(title).trim()) return null;
-      return {
-        id: `ck_${Date.now().toString(36)}_${(_ckSeq++).toString(36)}_${i}`,
-        title: String(title).trim(),
-        description: (typeof x === 'object' && x) ? String(x.description || '') : '',
-        notes: '',
-        priority: (typeof x === 'object' && x?.priority) ? x.priority : 'medium',
-        assignee_id: (typeof x === 'object' && (x?.assignee_id || x?.default_assignee_id))
-          ? String(x.assignee_id || x.default_assignee_id)
-          : null,
-        done: false,
-        ...evidenceFieldsFromTemplateChecklistItem(x),
-      };
-    })
-    .filter(Boolean);
+function toCrmChecklist(raw, ownerCompanyId, templateItem) {
+  const ckDefaultExec = sxExecutorFieldsFromTemplateItem(templateItem || {}, ownerCompanyId).executor_company_id;
+  return normalizeTemplateChecklistForCrmTask(raw, ckDefaultExec);
 }
 
 async function nextDhCode() {
@@ -274,20 +288,8 @@ async function applyProductionTemplateToFulfillmentLead({
     return inserts.filter((row) => !keys.has(sxTaskFingerprint(row.title, row.stage_slug)));
   };
 
-  /** Map stage slug theo TÊN BỘ MẪU (template.name), không theo title của item. */
-  const slugByTemplateName = (nameRaw) => {
-    const t = normalizeSxTaskText(nameRaw);
-    if (t.includes('tiep nhan')) return 'sx_tiep_nhan';
-    if (t.includes('thiet ke') || t.includes('len ke hoach')) return 'sx_thiet_ke_ke_hoach';
-    if (t.includes('kiem tra cheo')) return 'sx_kiem_tra_cheo';
-    if (t.includes('vat tu')) return 'sx_vat_tu';
-    if (t.includes('san xuat thung')) return 'sx_san_xuat_thung';
-    if (t.includes('san xuat alu')) return 'sx_san_xuat_alu';
-    if (t.includes('hoan thien')) return 'sx_hoan_thien';
-    if (t.includes('dong goi')) return 'sx_dong_goi';
-    if (t.includes('giao hang')) return 'sx_giao_hang';
-    return 'sx_other';
-  };
+  /** Map stage slug theo TÊN BỘ MẫU (template.name) — fallback khi chưa gắn production_stage_id. */
+  const slugByTemplateName = (nameRaw) => legacySxSlugFromStageName(nameRaw) || 'sx_other';
 
   const { count: existingCount, error: exErr } = await supabase
     .from('crm_tasks')
@@ -348,7 +350,7 @@ async function applyProductionTemplateToFulfillmentLead({
     templates = r1.data || [];
     tplErr = r1.error;
     if (tplErr) throw tplErr;
-    if (!templates?.length) {
+    if (!templates?.length && !workshopTypeId) {
       let g = await fetchTemplatesStrict(null, true);
       if (g.error && String(g.error.message || '').includes('production_stage_id')) {
         g = await fetchTemplatesStrict(null, false);
@@ -356,7 +358,11 @@ async function applyProductionTemplateToFulfillmentLead({
       if (g.error) throw g.error;
       templates = g.data || [];
     }
+    templates = await scopeSxTemplatesForWorkshopType(templates, mustCompanyId, workshopTypeId);
     if (!templates?.length) {
+      if (workshopTypeId) {
+        return sxNoBundleResult(workshopTypeId, mustCompanyId);
+      }
       const emergency = buildEmergencySxInserts(handoverStrict);
       const toAdd = await filterMissingSxInserts(emergency);
       if (!toAdd.length) {
@@ -389,6 +395,12 @@ async function applyProductionTemplateToFulfillmentLead({
     }
     if (itemErr) throw itemErr;
     if (!items?.length) {
+      if (workshopTypeId) {
+        return sxNoBundleResult(workshopTypeId, mustCompanyId, {
+          template_count: templates.length,
+          template_names: templates.map((t) => t.name).filter(Boolean),
+        });
+      }
       const emergency = buildEmergencySxInserts(handoverStrict);
       const toAdd = await filterMissingSxInserts(emergency);
       if (!toAdd.length) {
@@ -422,6 +434,7 @@ async function applyProductionTemplateToFulfillmentLead({
         .filter((t) => t?.id)
         .map((t) => [String(t.id), t.production_stage_id || null]),
     );
+    const slugByProdStageId = await loadSxStageSlugMapForCompany(mustCompanyId, workshopTypeId);
     const templateOrder = new Map(templateIds.map((id, idx) => [String(id), idx]));
     const sortedItems = [...items].sort((a, b) => {
       const ta = templateOrder.get(String(a.template_id)) ?? 9999;
@@ -434,8 +447,14 @@ async function applyProductionTemplateToFulfillmentLead({
     const inserts = [];
     for (let idx = 0; idx < sortedItems.length; idx++) {
       const it = sortedItems[idx];
-      const checklist = toCrmChecklist(it.checklist);
-      const stageSlug = stageSlugByTemplateId.get(String(it.template_id)) || 'sx_other';
+      const checklist = toCrmChecklist(it.checklist, mustCompanyId, it);
+      const prodStageId = pipelineColByTemplateId.get(String(it.template_id)) || null;
+      const stageSlug = resolveSxTaskStageSlug(
+        prodStageId,
+        slugByProdStageId,
+        stageSlugByTemplateId,
+        it.template_id,
+      );
       const execCo = resolveExecutorCompanyId(it, mustCompanyId);
       const maps = await loadHandoverMapsCached(handoverCacheStrict, execCo);
       inserts.push({
@@ -569,7 +588,7 @@ async function applyProductionTemplateToFulfillmentLead({
   let templates = r1.data;
   let tplErr = r1.error;
   if (tplErr) throw tplErr;
-  if (!templates?.length) {
+  if (!templates?.length && !workshopTypeId) {
     let g = await fetchTemplates('global', true);
     if (g.error && String(g.error.message || '').includes('production_stage_id')) {
       g = await fetchTemplates('global', false);
@@ -578,7 +597,11 @@ async function applyProductionTemplateToFulfillmentLead({
     tplErr = g.error;
   }
   if (tplErr) throw tplErr;
+  templates = await scopeSxTemplatesForWorkshopType(templates, targetCompanyId, workshopTypeId);
   if (!templates?.length) {
+    if (workshopTypeId) {
+      return sxNoBundleResult(workshopTypeId, targetCompanyId);
+    }
     const emergency = buildEmergencySxInserts(handoverLoose);
     const toAdd = await filterMissingSxInserts(emergency);
     if (!toAdd.length) {
@@ -610,6 +633,12 @@ async function applyProductionTemplateToFulfillmentLead({
   }
   if (itemErr) throw itemErr;
   if (!items?.length) {
+    if (workshopTypeId) {
+      return sxNoBundleResult(workshopTypeId, targetCompanyId, {
+        template_count: templates.length,
+        template_names: templates.map((t) => t.name).filter(Boolean),
+      });
+    }
     const emergency = buildEmergencySxInserts(handoverLoose);
     const toAdd = await filterMissingSxInserts(emergency);
     if (!toAdd.length) {
@@ -642,6 +671,7 @@ async function applyProductionTemplateToFulfillmentLead({
       .filter((t) => t?.id)
       .map((t) => [String(t.id), t.production_stage_id || null]),
   );
+  const slugByProdStageIdLoose = await loadSxStageSlugMapForCompany(targetCompanyId, workshopTypeId);
 
   const templateOrder = new Map(templateIds.map((id, idx) => [String(id), idx]));
   const sortedItems = [...items].sort((a, b) => {
@@ -655,8 +685,14 @@ async function applyProductionTemplateToFulfillmentLead({
   const inserts = [];
   for (let idx = 0; idx < sortedItems.length; idx++) {
     const it = sortedItems[idx];
-    const checklist = toCrmChecklist(it.checklist);
-    const stageSlug = stageSlugByTemplateId.get(String(it.template_id)) || 'sx_other';
+    const checklist = toCrmChecklist(it.checklist, targetCompanyId, it);
+    const prodStageIdLoose = pipelineColByTemplateId.get(String(it.template_id)) || null;
+    const stageSlug = resolveSxTaskStageSlug(
+      prodStageIdLoose,
+      slugByProdStageIdLoose,
+      stageSlugByTemplateId,
+      it.template_id,
+    );
     const execCo = resolveExecutorCompanyId(it, targetCompanyId);
     const maps = await loadHandoverMapsCached(handoverCacheLoose, execCo);
     inserts.push({
@@ -1144,23 +1180,17 @@ async function applyProductionTemplatesOnPipelineEnter({
     (existingSx || []).map((t) => sxTaskFingerprint(t.title, t.stage_slug)),
   );
 
-  const slugByTemplateName = (nameRaw) => {
-    const t = normalizeSxTaskText(nameRaw);
-    if (t.includes('tiep nhan')) return 'sx_tiep_nhan';
-    if (t.includes('thiet ke') || t.includes('len ke hoach')) return 'sx_thiet_ke_ke_hoach';
-    if (t.includes('kiem tra cheo')) return 'sx_kiem_tra_cheo';
-    if (t.includes('vat tu')) return 'sx_vat_tu';
-    if (t.includes('san xuat thung')) return 'sx_san_xuat_thung';
-    if (t.includes('san xuat alu')) return 'sx_san_xuat_alu';
-    if (t.includes('hoan thien')) return 'sx_hoan_thien';
-    if (t.includes('dong goi')) return 'sx_dong_goi';
-    if (t.includes('giao hang')) return 'sx_giao_hang';
-    return 'sx_other';
-  };
+  const slugByTemplateNameLocal = (nameRaw) => legacySxSlugFromStageName(nameRaw) || 'sx_other';
 
   const stageSlugByTemplateId = new Map(
-    templates.filter((t) => t?.id).map((t) => [String(t.id), slugByTemplateName(t.name)]),
+    templates.filter((t) => t?.id).map((t) => [String(t.id), slugByTemplateNameLocal(t.name)]),
   );
+  const slugByProdStageIdEnter = await loadSxStageSlugMapForCompany(
+    project.company_id,
+    project.workshop_type_id,
+  );
+  const enterStageSlug = slugByProdStageIdEnter.get(String(pipelineStageId)) || null;
+
   const templateOrder = new Map(templateIds.map((id, idx) => [String(id), idx]));
   const sortedItems = [...items].sort((a, b) => {
     const ta = templateOrder.get(String(a.template_id)) ?? 9999;
@@ -1172,8 +1202,8 @@ async function applyProductionTemplatesOnPipelineEnter({
   const inserts = [];
   for (let idx = 0; idx < sortedItems.length; idx++) {
     const it = sortedItems[idx];
-    const checklist = toCrmChecklist(it.checklist);
-    const stageSlug = stageSlugByTemplateId.get(String(it.template_id)) || 'sx_other';
+    const checklist = toCrmChecklist(it.checklist, ownerCompanyId, it);
+    const stageSlug = enterStageSlug || stageSlugByTemplateId.get(String(it.template_id)) || 'sx_other';
     const execCo = resolveExecutorCompanyId(it, ownerCompanyId);
     const maps = await loadHandoverMapsCached(handoverCache, execCo);
     const row = {

@@ -2771,6 +2771,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
   const [sxHandoverSaving, setSxHandoverSaving] = useState(false);
   const [sxHandoverNotice, setSxHandoverNotice] = useState('');
   const [sxHandoverExpanded, setSxHandoverExpanded] = useState(false);
+  const [depositDraft, setDepositDraft] = useState({ amount: '', received: '', label: '' });
 
   useEffect(() => {
     if (lead?.type !== 'deal' || lead?.sx_handover_at) return;
@@ -2897,6 +2898,44 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
       onUpdate();
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi cập nhật');
+    }
+    setSaving(false);
+  };
+
+  const depositDisplayValue = () => {
+    const parts = [];
+    const amt = Number(lead?.deposit_amount);
+    if (Number.isFinite(amt) && amt > 0) parts.push(formatVND(amt));
+    if (lead?.deposit_received === true) parts.push('Đã nhận cọc');
+    else if (lead?.deposit_received === false) parts.push('Chưa nhận cọc');
+    const lbl = lead?.deposit_label?.trim();
+    if (lbl) parts.push(lbl);
+    return parts.length ? parts.join(' · ') : null;
+  };
+
+  const startEditDeposit = () => {
+    setEditing('deposit');
+    setDepositDraft({
+      amount: lead?.deposit_amount != null && Number(lead.deposit_amount) > 0 ? String(lead.deposit_amount) : '',
+      received: lead?.deposit_received === true ? 'yes' : lead?.deposit_received === false ? 'no' : '',
+      label: lead?.deposit_label?.trim() || '',
+    });
+  };
+
+  const saveDeposit = async () => {
+    setSaving(true);
+    try {
+      const rawAmt = depositDraft.amount;
+      const deposit_amount = rawAmt === '' || rawAmt == null ? null : Number(rawAmt);
+      await api.put(`/crm/leads/${lead.id}`, {
+        deposit_amount: deposit_amount != null && deposit_amount > 0 ? deposit_amount : null,
+        deposit_received: depositDraft.received === 'yes' ? true : depositDraft.received === 'no' ? false : null,
+        deposit_label: depositDraft.label?.trim() || null,
+      });
+      setEditing(null);
+      onUpdate();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi lưu tiền cọc');
     }
     setSaving(false);
   };
@@ -3028,6 +3067,70 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
         value={lead?.estimated_value || ''}
         displayValue={lead?.estimated_value > 0 ? formatVND(lead.estimated_value) : null}
         type="number" />
+
+      <div className="group">
+        <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors">
+          <span className="text-sm mt-0.5 shrink-0">💵</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Tiền cọc</p>
+            {editing === 'deposit' ? (
+              <div className="space-y-1.5 relative z-20">
+                <input
+                  type="number"
+                  min="0"
+                  value={depositDraft.amount}
+                  onChange={(e) => setDepositDraft((d) => ({ ...d, amount: e.target.value }))}
+                  className="w-full h-8 px-2 border rounded-lg text-sm text-right outline-none focus:ring-2 focus:ring-blue-400"
+                  placeholder="Số tiền VNĐ"
+                  autoFocus
+                />
+                <select
+                  value={depositDraft.received}
+                  onChange={(e) => setDepositDraft((d) => ({ ...d, received: e.target.value }))}
+                  className="w-full h-8 px-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                >
+                  <option value="">Chưa xác định</option>
+                  <option value="yes">Đã nhận</option>
+                  <option value="no">Chưa nhận</option>
+                </select>
+                <input
+                  type="text"
+                  value={depositDraft.label}
+                  onChange={(e) => setDepositDraft((d) => ({ ...d, label: e.target.value }))}
+                  className="w-full h-8 px-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
+                  placeholder="Mô tả (VD: ký HĐ, lệnh SX)"
+                />
+                <div className="flex items-center gap-1.5">
+                  <button type="button" onClick={() => void saveDeposit()} disabled={saving}
+                    className="h-8 px-2.5 flex items-center gap-1 bg-blue-600 text-white rounded-lg text-xs font-medium cursor-pointer hover:bg-blue-700 disabled:opacity-50">
+                    <Save className="h-3.5 w-3.5" /> Lưu
+                  </button>
+                  <button type="button" onClick={() => setEditing(null)}
+                    className="h-8 w-8 flex items-center justify-center bg-gray-100 text-gray-500 rounded-lg cursor-pointer hover:bg-gray-200">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div onClick={startEditDeposit} className="cursor-pointer group/val">
+                {depositDisplayValue() ? (
+                  <p className="text-sm font-medium" style={{ color: '#000000' }}>{depositDisplayValue()}</p>
+                ) : (
+                  <p className="text-sm text-gray-300 italic group-hover/val:text-blue-400 transition-colors">
+                    Nhấn để nhập...
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+          {editing !== 'deposit' && (
+            <button type="button" onClick={startEditDeposit}
+              className="p-1 opacity-0 group-hover:opacity-100 text-gray-300 hover:text-blue-500 cursor-pointer transition-opacity shrink-0">
+              <Edit2 className="h-3 w-3" />
+            </button>
+          )}
+        </div>
+      </div>
 
       {lead?.type === 'deal' && (
         <EditableRow icon="📅" label="Dự kiến chốt" field="expected_close_date"

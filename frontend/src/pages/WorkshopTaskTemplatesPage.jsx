@@ -382,11 +382,13 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
   };
 
   const updateTemplateItemFields = async (tplId, itemId, body) => {
+    patchItemLocal(tplId, itemId, body);
     try {
       const { data } = await api.put(`/production/task-templates/${tplId}/items/${itemId}`, body);
       patchItemLocal(tplId, itemId, data?.id ? { ...data, ...body } : body);
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi cập nhật mục mẫu');
+      load();
       throw e;
     }
   };
@@ -570,12 +572,19 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
     if (patch.assignee_id !== undefined) {
       next.assignee_id = patch.assignee_id ? String(patch.assignee_id) : null;
     }
+    if (patch.executor_company_id !== undefined) {
+      next.executor_company_id = patch.executor_company_id ? String(patch.executor_company_id) : null;
+    }
     const evidencePatch = patch.required_evidence_file_types !== undefined || patch.completion_requires_file_or_note !== undefined;
     const assigneePatch = patch.assignee_id !== undefined;
+    const executorPatch = patch.executor_company_id !== undefined;
     const prevAssignee = typeof entry === 'object' ? String(entry?.assignee_id || entry?.default_assignee_id || '') : '';
-    if (!evidencePatch && !assigneePatch && next.title === prevTitle && next.description === prevDesc) return;
-    if (assigneePatch && !evidencePatch && next.title === prevTitle && next.description === prevDesc
+    const prevExecutor = typeof entry === 'object' ? String(entry?.executor_company_id || '') : '';
+    if (!evidencePatch && !assigneePatch && !executorPatch && next.title === prevTitle && next.description === prevDesc) return;
+    if (assigneePatch && !evidencePatch && !executorPatch && next.title === prevTitle && next.description === prevDesc
       && String(next.assignee_id || '') === prevAssignee) return;
+    if (executorPatch && !evidencePatch && !assigneePatch && next.title === prevTitle && next.description === prevDesc
+      && String(next.executor_company_id || '') === prevExecutor) return;
     current[idx] = next;
     await updateItemChecklist(tplId, itemId, current);
   };
@@ -1520,7 +1529,15 @@ function TemplateCard({
                             <p className="text-[10px] font-semibold text-gray-500 mb-1">🤝 Công ty thực hiện (giao việc chéo)</p>
                             <select
                               value={itemEditForm.executor_company_id || ''}
-                              onChange={(e) => setItemEditForm((f) => ({ ...f, executor_company_id: e.target.value }))}
+                              onChange={async (e) => {
+                                const executor_company_id = e.target.value || '';
+                                setItemEditForm((f) => ({ ...f, executor_company_id }));
+                                try {
+                                  await updateTemplateItemFields(tpl.id, item.id, {
+                                    executor_company_id: executor_company_id || null,
+                                  });
+                                } catch { /* alert trong updateTemplateItemFields */ }
+                              }}
                               className="w-full h-8 px-2 rounded border text-xs bg-white outline-none focus:ring-2 focus:ring-indigo-400"
                             >
                               <option value="">Cùng công ty chủ dự án</option>
@@ -1636,7 +1653,8 @@ function TemplateCard({
                       {editingChecklist[item.id] && (
                         <ChecklistEditor tplId={tpl.id} itemId={item.id}
                           checklist={Array.isArray(item.checklist) ? item.checklist : []}
-                          users={users}
+                          users={users} companies={companies}
+                          parentExecutorCompanyId={item.executor_company_id || ''}
                           removeChecklistItem={removeChecklistItem} addChecklistItem={addChecklistItem}
                           updateChecklistItem={updateChecklistItem}
                           newCheckItem={newCheckItem} setNewCheckItem={setNewCheckItem} />
@@ -1671,9 +1689,13 @@ const ckTitleOf = (ck) => (typeof ck === 'string' ? ck : (ck?.title || ck?.label
 const ckDescOf = (ck) => (typeof ck === 'string' ? '' : (ck?.description || ''));
 const ckEvidenceTypesOf = (ck) => normalizeEvidenceFileTypes(typeof ck === 'object' ? ck?.required_evidence_file_types : []);
 const ckAssigneeOf = (ck) => (typeof ck === 'object' ? String(ck?.assignee_id || ck?.default_assignee_id || '') : '');
+const ckExecutorCompanyOf = (ck) => (typeof ck === 'object' ? String(ck?.executor_company_id || '') : '');
 
 // ═══ Checklist Editor with drag & drop ═══
-function ChecklistEditor({ tplId, itemId, checklist, users = [], removeChecklistItem, addChecklistItem, updateChecklistItem, newCheckItem, setNewCheckItem }) {
+function ChecklistEditor({
+  tplId, itemId, checklist, users = [], companies = [], parentExecutorCompanyId = '',
+  removeChecklistItem, addChecklistItem, updateChecklistItem, newCheckItem, setNewCheckItem,
+}) {
   // ID dạng `ck|<itemId>|<index>` để cha (DndContext của bộ mẫu) phân biệt với nhiệm vụ
   // và cho phép kéo 1 mục checklist sang nhiệm vụ khác.
   const checkIds = checklist.map((_, i) => `ck|${itemId}|${i}`);
@@ -1706,7 +1728,7 @@ function ChecklistEditor({ tplId, itemId, checklist, users = [], removeChecklist
                     onBlur={e => updateChecklistItem(tplId, itemId, ci, { description: e.target.value.trim() })}
                     onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                   />
-                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                     <User className="h-3 w-3 text-indigo-600 shrink-0" />
                     <select
                       value={ckAssigneeOf(ck)}
@@ -1719,6 +1741,26 @@ function ChecklistEditor({ tplId, itemId, checklist, users = [], removeChecklist
                       <option value="">— Chưa gán —</option>
                       {(users || []).map((u) => (
                         <option key={u.id} value={u.id}>{u.full_name || u.email || u.id}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <Globe className="h-3 w-3 text-teal-600 shrink-0" />
+                    <select
+                      value={ckExecutorCompanyOf(ck)}
+                      onChange={(e) => updateChecklistItem(tplId, itemId, ci, {
+                        executor_company_id: e.target.value || null,
+                      })}
+                      className="h-7 min-w-[140px] flex-1 max-w-full px-2 text-[11px] border border-teal-200 rounded bg-white outline-none focus:ring-1 focus:ring-teal-300"
+                      title="Công ty thực hiện mục checklist"
+                    >
+                      <option value="">
+                        {parentExecutorCompanyId
+                          ? `Kế thừa (${companies.find((c) => String(c.id) === String(parentExecutorCompanyId))?.short_name || companies.find((c) => String(c.id) === String(parentExecutorCompanyId))?.name || 'nhiệm vụ cha'})`
+                          : 'Cùng công ty chủ dự án'}
+                      </option>
+                      {(companies || []).map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}{c.short_name ? ` (${c.short_name})` : ''}</option>
                       ))}
                     </select>
                   </div>

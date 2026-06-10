@@ -2284,6 +2284,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     onArtifactsSynced={refreshProjectSilently}
                     onTaskSummaryChange={handleCrmTaskSummaryChange}
                     linkedProjectId={project?.id || null}
+                    embeddedSxKanbanStages={project?.sxKanbanStages || null}
+                    embeddedWorkshopTypeId={project?.workshop_type_id || project?.workshop_type?.id || null}
+                    sxTemplateCompanyId={project?.company_id || project?.company?.id || null}
                   />
                 ) : scopedWorkshopTasksForTab.length > 0 ? (
                   <WorkshopTasksFallbackPanel
@@ -2310,7 +2313,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               {activeTab === 'shared-workspace' && crmLeadId && (
                 <div className="space-y-3">
                   <p className="text-xs text-gray-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-                    Không gian làm việc chung — công ty chủ dự án và công ty được giao nhiệm vụ đều thấy toàn bộ công việc tại đây.
+                    Không gian chung — chỉ hiển thị nhiệm vụ đã gán <strong>công ty thực hiện khác</strong> chủ dự án. Nhiệm vụ nội bộ xem ở tab Công việc.
                   </p>
                   <CRMTasksTab
                     leadId={crmLeadId}
@@ -2320,6 +2323,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     taskCompanyScope="shared"
                     onArtifactsSynced={refreshProjectSilently}
                     linkedProjectId={project?.id || null}
+                    embeddedSxKanbanStages={project?.sxKanbanStages || null}
+                    embeddedWorkshopTypeId={project?.workshop_type_id || project?.workshop_type?.id || null}
+                    sxTemplateCompanyId={project?.company_id || project?.company?.id || null}
                   />
                 </div>
               )}
