@@ -94,3 +94,11 @@ export function subscribeLockScreenToggleMute(handler: (callId: string) => void)
   });
   return () => sub.remove();
 }
+
+export function subscribeLockScreenCallReject(handler: (callId: string) => void): () => void {
+  if (!emitter) return () => {};
+  const sub = emitter.addListener('LockScreenCallReject', (e: { callId?: string }) => {
+    if (e?.callId) handler(String(e.callId));
+  });
+  return () => sub.remove();
+}

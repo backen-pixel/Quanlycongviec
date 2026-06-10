@@ -157,8 +157,18 @@ class LockScreenCallModule(private val reactContext: ReactApplicationContext) :
       emitEvent("LockScreenCallEnd", callId)
     }
 
+    fun emitRejectCall(callId: String) {
+      emitEvent("LockScreenCallReject", callId)
+    }
+
     fun emitToggleMute(callId: String) {
       emitEvent("LockScreenCallToggleMute", callId)
+    }
+
+    /** True nếu RN còn sống để xử lý reject qua socket (foreground). */
+    fun hasLiveReactInstance(): Boolean {
+      val ctx = instance?.reactContext ?: return false
+      return ctx.hasActiveReactInstance()
     }
 
     private fun emitEvent(event: String, callId: String) {

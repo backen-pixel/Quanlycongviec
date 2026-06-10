@@ -36,6 +36,7 @@ import {
   isLockScreenCallUiActive,
   showNativeOutgoingCall,
   subscribeLockScreenCallEnd,
+  subscribeLockScreenCallReject,
   subscribeLockScreenToggleMute,
   syncLockScreenCallState,
 } from '../lib/lockScreenCall';
@@ -949,14 +950,18 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     const unsubEnd = subscribeLockScreenCallEnd((id) => {
       if (id === callIdRef.current) endCall();
     });
+    const unsubReject = subscribeLockScreenCallReject((id) => {
+      if (id === callIdRef.current) rejectCall();
+    });
     const unsubMute = subscribeLockScreenToggleMute((id) => {
       if (id === callIdRef.current) toggleMute();
     });
     return () => {
       unsubEnd();
+      unsubReject();
       unsubMute();
     };
-  }, [endCall, toggleMute]);
+  }, [endCall, rejectCall, toggleMute]);
 
   const value = useMemo(
     () => ({
