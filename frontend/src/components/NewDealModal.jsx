@@ -215,7 +215,14 @@ export default function NewDealModal({
           description: formData.description || null,
           external_company_name: resolvedExternalCompanyName || null,
         });
-        onSuccess?.(data);
+        const payload = {
+          ...data,
+          workshop_type_id: formData.workshop_type_id || null,
+          customer_name: formData.customer_name,
+          customer_phone: formData.customer_phone,
+          company_id: formData.company_id || null,
+        };
+        if (onSuccess) await onSuccess(payload);
         onClose();
         return;
       }

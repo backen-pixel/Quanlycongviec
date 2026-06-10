@@ -291,12 +291,15 @@ export default function ProductionDashboard() {
 
   const load = useCallback(async (opts = {}) => {
     const silent = !!opts.silent;
+    const bustCache = !!opts.bustCache;
+    const fetchCompanyId = opts.companyId || companyParam;
     if (silent) setSyncing(true);
     else setLoading(true);
     try {
       const dashQ = {
-        ...(companyParam ? { company_id: companyParam } : {}),
+        ...(fetchCompanyId ? { company_id: fetchCompanyId } : {}),
       };
+      const cacheHeaders = bustCache ? { headers: { 'x-no-cache': '1' } } : {};
       const maxRecords = kanbanLoadKey === 'all' ? 5000
         : Math.min(parseInt(kanbanLoadKey, 10) || 500, 5000);
 
@@ -304,18 +307,19 @@ export default function ProductionDashboard() {
       // đổi loại không reload toàn trang. Pipeline columns được refetch silent ở
       // useEffect bên dưới khi filterWorkTypeId đổi.
       const [dashRes, projectList] = await Promise.all([
-        api.get('/production/dashboard', { params: dashQ }).catch(() => ({ data: { kpis: {}, pipeline: [] } })),
+        api.get('/production/dashboard', { params: dashQ, ...cacheHeaders }).catch(() => ({ data: { kpis: {}, pipeline: [] } })),
         fetchWorkshopProjectPages(api, '/production/projects', {
-          companyId: companyParam,
+          companyId: fetchCompanyId,
           maxRecords,
           pageSize: 500,
-        }).catch(() => []),
+          bustCache,
+        }).catch(() => null),
       ]);
       setKpis(dashRes.data?.kpis || {});
       // KHÔNG set pipeline ở đây: `/production/dashboard` (không có workshop_type_id) trả cột
       // của TẤT CẢ phân loại → gây hiển thị pipeline của cả 2 loại. Cột Kanban do effect
       // riêng bên dưới sở hữu, luôn lọc theo `filterWorkTypeId` của công ty hiện hành.
-      setProjects(projectList);
+      if (projectList !== null) setProjects(projectList);
     } catch (e) {
       console.error(e);
     }
@@ -325,6 +329,62 @@ export default function ProductionDashboard() {
       setFirstLoaded(true);
     }
   }, [companyParam, kanbanLoadKey]);
+
+  const handleNewDealCreated = useCallback(async (created) => {
+    const projectId = created?.project_id;
+    const wktId = created?.workshop_type_id ? String(created.workshop_type_id) : '';
+    const createdCompanyId = created?.company_id ? String(created.company_id) : '';
+
+    if (isAdmin && createdCompanyId && createdCompanyId !== String(filterCompany || '')) {
+      setFilterCompany(createdCompanyId);
+    }
+    if (wktId && wktId !== String(filterWorkTypeId || '')) {
+      setFilterWorkTypeId(wktId);
+    }
+
+    try {
+      await load({
+        silent: true,
+        bustCache: true,
+        companyId: createdCompanyId || companyParam,
+      });
+    } catch (e) {
+      console.error(e);
+      alert('Đã tạo đơn xưởng nhưng tải lại danh sách thất bại — thử F5 trang.');
+      return;
+    }
+
+    if (!projectId) return;
+
+    setProjects((prev) => {
+      if (prev.some((p) => String(p.id) === String(projectId))) return prev;
+      const intakeCol = pipeline.find((s) => s.bucket_slug === 'won_pending') || pipeline[0] || null;
+      const optimistic = {
+        id: projectId,
+        code: created.project_code,
+        name: created.project_name,
+        company_id: createdCompanyId || companyParam || null,
+        created_at: new Date().toISOString(),
+        status: 'consulting',
+        current_stage_id: null,
+        sx_intake: true,
+        sx_won_deal: true,
+        sx_kanban_column_id: intakeCol?.id || null,
+        workshop_type_id: wktId || null,
+        workshop_type: wktId
+          ? (workTypes.find((w) => String(w.id) === wktId) || { id: wktId, name: '' })
+          : null,
+        customer: (created.customer_name || created.customer_phone)
+          ? { full_name: created.customer_name || '', phone: created.customer_phone || '' }
+          : null,
+        crm_deals: created.deal_id
+          ? [{ id: created.deal_id, code: created.deal_code, type: 'deal' }]
+          : [],
+        tasks: [],
+      };
+      return [optimistic, ...prev];
+    });
+  }, [load, pipeline, workTypes, companyParam, isAdmin, filterCompany, filterWorkTypeId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -2120,7 +2180,7 @@ export default function ProductionDashboard() {
         <NewDealModal
           variant="production"
           onClose={() => setShowNewDeal(false)}
-          onSuccess={() => load({ silent: true })}
+          onSuccess={handleNewDealCreated}
           companies={companies}
           workTypes={workTypes}
           defaultWorkshopTypeId={filterWorkTypeId && filterWorkTypeId !== 'none' ? filterWorkTypeId : ''}

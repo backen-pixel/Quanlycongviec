@@ -18,6 +18,7 @@ const {
   crmTaskDeadlineModuleKey,
   filterUserIdsForCrmLeadScopedNotification,
 } = require('./deadlineModuleNotifications');
+const { isExecutorColumnError } = require('./crossCompanyWorkspace');
 
 function normalizeTimestamp(v) {
   if (!v) return null;
@@ -45,6 +46,14 @@ async function resolveCrmTaskWriteLeadId(routeLeadId) {
 
 const CRM_TASK_SELECT = '*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)';
 
+function normalizeTaskExecutorCompanyId(raw, leadCompanyId) {
+  if (raw === undefined) return undefined;
+  if (raw === '' || raw === null) return null;
+  const v = String(raw);
+  if (leadCompanyId && v === String(leadCompanyId)) return null;
+  return v;
+}
+
 async function createCrmLeadTask(req, leadId, body) {
   const b = body;
   const targetLeadId = await resolveCrmTaskWriteLeadId(leadId);
@@ -58,7 +67,11 @@ async function createCrmLeadTask(req, leadId, body) {
     : (b.assignee_id ? [String(b.assignee_id)] : []);
   const primaryAssignee = rawAssigneeIds[0] || null;
 
-  let { data, error } = await supabase.from('crm_tasks').insert({
+  const { data: leadSnap } = await supabase.from('crm_leads')
+    .select('company_id')
+    .eq('id', targetLeadId)
+    .maybeSingle();
+  const insertRow = {
     lead_id: targetLeadId,
     title: b.title,
     description: b.description || null,
@@ -79,7 +92,19 @@ async function createCrmLeadTask(req, leadId, body) {
     requires_quick_verdict: !!b.requires_quick_verdict,
     blocks_stage_advance: isAdminLike(req.user) ? !!b.blocks_stage_advance : false,
     show_excel_quotation_upload: !!b.show_excel_quotation_upload,
-  }).select(CRM_TASK_SELECT).single();
+  };
+  if (b.executor_company_id !== undefined) {
+    insertRow.executor_company_id = normalizeTaskExecutorCompanyId(
+      b.executor_company_id,
+      leadSnap?.company_id,
+    );
+  }
+
+  let { data, error } = await supabase.from('crm_tasks').insert(insertRow).select(CRM_TASK_SELECT).single();
+  if (error && isExecutorColumnError(error)) {
+    const { executor_company_id: _e, ...legacy } = insertRow;
+    ({ data, error } = await supabase.from('crm_tasks').insert(legacy).select(CRM_TASK_SELECT).single());
+  }
   if (error) return { error: error.message, status: 500 };
 
   if (rawAssigneeIds.length) {
@@ -207,6 +232,11 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
     }
   }
 
+  const { data: leadRowForExec } = await supabase.from('crm_leads')
+    .select('company_id')
+    .eq('id', leadId)
+    .maybeSingle();
+
   const update = { updated_at: new Date().toISOString() };
   const fields = ['title', 'description', 'status', 'priority', 'stage_slug', 'order_index',
     'assignee_id', 'supervisor_id', 'deadline', 'shared_to_project', 'show_excel_quotation_upload', 'checklist'];
@@ -231,12 +261,23 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
     if (qv?.error) return { error: qv.error, status: 400 };
     if (qv?.patch) Object.assign(update, qv.patch);
   }
+  if (b.executor_company_id !== undefined) {
+    update.executor_company_id = normalizeTaskExecutorCompanyId(
+      b.executor_company_id,
+      leadRowForExec?.company_id,
+    );
+  }
 
   let { data, error } = await supabase.from('crm_tasks').update(update)
     .eq('id', taskId).select(CRM_TASK_SELECT).single();
   // DB chưa apply migration 308 (cột checklist) → bỏ checklist và thử lại để không vỡ luồng update.
   if (error && String(error.message || '').toLowerCase().includes('checklist')) {
     const { checklist: _dropChecklist, ...legacy } = update;
+    ({ data, error } = await supabase.from('crm_tasks').update(legacy)
+      .eq('id', taskId).select(CRM_TASK_SELECT).single());
+  }
+  if (error && isExecutorColumnError(error)) {
+    const { executor_company_id: _e, ...legacy } = update;
     ({ data, error } = await supabase.from('crm_tasks').update(legacy)
       .eq('id', taskId).select(CRM_TASK_SELECT).single());
   }

@@ -112,7 +112,7 @@ r.get('/', requirePermission('projects', 'view'), async (req, res) => {
     
     let q = supabase.from('projects').select(`
       *, customers(id,full_name,phone,email,city),
-      company:companies(id,name,short_name,division_unit_id),
+      company:companies!projects_company_id_fkey(id,name,short_name,division_unit_id),
       current_stage:workflow_stages(id,name,slug,color,icon),
       sales_person:users!projects_sales_person_id_fkey(id,full_name),
       designer:users!projects_designer_id_fkey(id,full_name),
@@ -785,7 +785,7 @@ r.get('/:id', async (req, res) => {
      */
     const baseSelect = `
       *, customers(*),
-      company:companies(id,name,short_name),
+      company:companies!projects_company_id_fkey(id,name,short_name),
       current_stage:workflow_stages(*),
       sales_person:users!projects_sales_person_id_fkey(id,full_name,avatar,email),
       designer:users!projects_designer_id_fkey(id,full_name,avatar,email),
@@ -794,6 +794,15 @@ r.get('/:id', async (req, res) => {
       tasks(*, assignee:users!tasks_assignee_id_fkey(id,full_name,avatar), stage:workflow_stages(id,name,slug,color,order_index), checklists:task_checklists(id,title,is_completed,order_index,notes,attachments))
     `;
     const withWorkshopType = `${baseSelect}, workshop_type:workshop_project_types(id,name,applies_to)`;
+    const baseSelectNoTasks = `
+      *, customers(*),
+      company:companies!projects_company_id_fkey(id,name,short_name),
+      current_stage:workflow_stages(*),
+      sales_person:users!projects_sales_person_id_fkey(id,full_name,avatar,email),
+      designer:users!projects_designer_id_fkey(id,full_name,avatar,email),
+      project_manager:users!projects_project_manager_id_fkey(id,full_name,avatar,email),
+      supervisor:users!projects_supervisor_id_fkey(id,full_name,avatar,email)
+    `;
     let { data, error } = await supabase.from('projects')
       .select(withWorkshopType)
       .eq('id', req.params.id)
@@ -804,7 +813,31 @@ r.get('/:id', async (req, res) => {
         .eq('id', req.params.id)
         .single());
     }
+    if (error && (error.message?.includes('task_checklists') || error.message?.includes('tasks('))) {
+      ({ data, error } = await supabase.from('projects')
+        .select(`${baseSelectNoTasks}, workshop_type:workshop_project_types(id,name,applies_to)`)
+        .eq('id', req.params.id)
+        .single());
+    }
+    if (error && (error.message?.includes('workshop_project_types') || error.message?.includes('relationship'))) {
+      ({ data, error } = await supabase.from('projects')
+        .select(baseSelectNoTasks)
+        .eq('id', req.params.id)
+        .single());
+    }
     if (error) throw error;
+    if (data && !Array.isArray(data.tasks)) {
+      try {
+        const { data: projTasks } = await supabase.from('tasks')
+          .select('id, title, status, order_index, stage_id, project_id, task_type, deadline, metadata')
+          .eq('project_id', req.params.id)
+          .eq('task_type', 'project')
+          .order('order_index');
+        data.tasks = projTasks || [];
+      } catch {
+        data.tasks = [];
+      }
+    }
 
     // Try to load stage persons (may fail if migration 07 not run)
     let stagePersons = {};
@@ -974,7 +1007,10 @@ r.get('/:id', async (req, res) => {
         stageTasksTotal,
       }
     });
-  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+  } catch (e) {
+    console.error('[GET /projects/:id]', e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
 });
 
 // ─── CREATE PROJECT ──

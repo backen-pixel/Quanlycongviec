@@ -187,14 +187,20 @@ async function autoGenCrmTasksForNewLead(leadId, userId) {
     return 0;
   }
 
-  const { data: templates, error: tplErr } = await supabase
+  const { data: allTplRows, error: tplErr } = await supabase
     .from('crm_task_templates')
-    .select('id, name, stage_slug, pipeline_stage_id')
+    .select('id, name, stage_slug, pipeline_stage_id, is_default')
     .eq('is_active', true)
     .in('pipeline_stage_id', stageIds)
     .order('order_index');
   if (tplErr) throw tplErr;
-  if (!templates?.length) {
+
+  let templates = (allTplRows || []).filter((t) => t.is_default);
+  if (!templates.length && (allTplRows || []).length) {
+    console.log(`[AUTO-TASK] ${entityType} ${leadId}: pipeline có bộ mẫu nhưng chưa đặt bộ mặc định → skip`);
+    return 0;
+  }
+  if (!templates.length) {
     console.log(`[AUTO-TASK] ${entityType} ${leadId}: chưa có bộ mẫu gắn pipeline_stage → skip`);
     return 0;
   }

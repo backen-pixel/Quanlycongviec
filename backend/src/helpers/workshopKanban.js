@@ -239,23 +239,53 @@ async function loadProductionPipelineStagesRows(includeInactive = false, company
  * @param {string|null} [opts.workshopTypeId]  null = không filter, 'none' = chỉ cột Bộ chung,
  *                                              <uuid> = cột của loại đó + Bộ chung (fallback)
  */
+/**
+ * Lọc cột pipeline SX theo phân loại.
+ * Khi đã chọn phân loại cụ thể (uuid): CHỈ cột gắn đúng workshop_type_id (+ intake cùng loại hoặc intake chung).
+ * Không gộp cột global (workshop_type_id null) — tránh lẫn pipeline Đầu vào với Data đầu ra.
+ */
+function filterProductionPipelineStagesForWorkshopType(stages, workshopTypeId) {
+  const list = (stages || []).filter((s) => s.is_active !== false);
+  const wktRaw = workshopTypeId;
+  if (!wktRaw) return list;
+  const wktLower = String(wktRaw).toLowerCase();
+
+  if (wktLower === 'none') {
+    return list.filter((s) => s.bucket_slug === INTAKE_BUCKET || !s.workshop_type_id);
+  }
+  if (wktLower === 'global') {
+    return list.filter((s) => !s.workshop_type_id || s.bucket_slug === INTAKE_BUCKET);
+  }
+
+  const wkt = String(wktRaw);
+  const strict = list.filter((s) => {
+    if (s.bucket_slug === INTAKE_BUCKET) {
+      return !s.workshop_type_id || String(s.workshop_type_id) === wkt;
+    }
+    return s.workshop_type_id && String(s.workshop_type_id) === wkt;
+  });
+  const strictWorkflow = strict.filter((s) => s.bucket_slug !== INTAKE_BUCKET);
+  if (strictWorkflow.length > 0) return strict;
+
+  // DB legacy: cột pipeline chưa gắn workshop_type_id — giữ cột global, loại cột phân loại khác.
+  return list.filter((s) => {
+    if (s.bucket_slug === INTAKE_BUCKET) {
+      return !s.workshop_type_id || String(s.workshop_type_id) === wkt;
+    }
+    if (s.workshop_type_id && String(s.workshop_type_id) !== wkt) return false;
+    return true;
+  });
+}
+
 async function getResolvedKanbanStages(companyId = null, opts = {}) {
   const rows = await loadProductionPipelineStagesRows(false, companyId);
   const { stages: ws, bySlug, ids: workshopIds } = await getWorkshopStageMap();
 
-  /** Lọc rows theo workshop_type_id: cột intake luôn được giữ. */
   const filterByType = (list) => {
     if (!list?.length) return list;
     const wkt = opts?.workshopTypeId;
     if (!wkt) return list;
-    if (String(wkt).toLowerCase() === 'none') {
-      return list.filter((r) => r.bucket_slug === INTAKE_BUCKET || !r.workshop_type_id);
-    }
-    return list.filter((r) => (
-      r.bucket_slug === INTAKE_BUCKET
-      || !r.workshop_type_id
-      || String(r.workshop_type_id) === String(wkt)
-    ));
+    return filterProductionPipelineStagesForWorkshopType(list, wkt);
   };
 
   if (!rows?.length) {
@@ -1240,6 +1270,7 @@ module.exports = {
   getWonDealProjectIds,
   buildScopeOrFilter,
   loadProductionPipelineStagesRows,
+  filterProductionPipelineStagesForWorkshopType,
   getResolvedKanbanStages,
   firstSxPipelineColumnId,
   loadDealSxPipelineMetaByProjectIds,

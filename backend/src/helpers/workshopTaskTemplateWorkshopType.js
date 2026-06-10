@@ -66,7 +66,7 @@ async function validateWorkshopTemplateWorkshopType({
   return { ok: true, workshop_type_id: wkt };
 }
 
-/** Chọn bộ mẫu SX khi áp vào deal/dự án: ưu tiên bộ đã đánh dấu is_default theo phân loại. */
+/** Chọn bộ mẫu SX: chỉ bộ mặc định (is_default) của phân loại — không lấy hết bộ trong phân loại. */
 function pickProductionTemplatesForWorkshopType(allRows, workshopTypeId) {
   const rows = Array.isArray(allRows) ? allRows : [];
   const wkt = workshopTypeId ? String(workshopTypeId).trim() : '';
@@ -75,11 +75,11 @@ function pickProductionTemplatesForWorkshopType(allRows, workshopTypeId) {
     const defaults = globalRows.filter((t) => t.is_default);
     return defaults.length ? defaults : globalRows;
   }
-  const forType = rows.filter((t) => t.workshop_type_id && String(t.workshop_type_id) === wkt);
-  const defaults = forType.filter((t) => t.is_default);
-  if (defaults.length) return defaults;
-  if (forType.length) return forType;
-  return [];
+  return rows.filter(
+    (t) => t.workshop_type_id
+      && String(t.workshop_type_id) === wkt
+      && t.is_default,
+  );
 }
 
 /**
@@ -148,6 +148,8 @@ async function fetchProductionWorkshopTemplatesForApply(client, {
     ? 'id, name, is_default, order_index, company_id, production_stage_id, workshop_type_id'
     : 'id, name, is_default, order_index, company_id, workshop_type_id';
 
+  const wktScoped = workshopTypeId ? String(workshopTypeId).trim() : '';
+
   const loadScoped = async (cid) => {
     let q = db
       .from('workshop_task_templates')
@@ -157,6 +159,8 @@ async function fetchProductionWorkshopTemplatesForApply(client, {
       .order('order_index', { ascending: true });
     if (cid) q = q.eq('company_id', cid);
     else q = q.is('company_id', null);
+    if (wktScoped) q = q.eq('workshop_type_id', wktScoped);
+    else q = q.is('workshop_type_id', null);
     return q;
   };
 
@@ -170,8 +174,8 @@ async function fetchProductionWorkshopTemplatesForApply(client, {
     let r = await runPick(companyId);
     if (r.error && isWorkshopTplWorkshopTypeMissingError(r.error)) {
       const legacyCols = wantStageCol
-        ? 'id, name, is_default, order_index, company_id, production_stage_id'
-        : 'id, name, is_default, order_index, company_id';
+        ? 'id, name, is_default, order_index, company_id, production_stage_id, workshop_type_id'
+        : 'id, name, is_default, order_index, company_id, workshop_type_id';
       let q = db
         .from('workshop_task_templates')
         .select(legacyCols)
@@ -179,14 +183,21 @@ async function fetchProductionWorkshopTemplatesForApply(client, {
         .eq('is_active', true)
         .eq('company_id', companyId)
         .order('order_index', { ascending: true });
+      if (wktScoped) q = q.eq('workshop_type_id', wktScoped);
+      else q = q.is('workshop_type_id', null);
       const legacy = await q;
       if (legacy.error) return legacy;
-      return { data: legacy.data || [], error: null };
+      return {
+        data: pickProductionTemplatesForWorkshopType(legacy.data || [], workshopTypeId),
+        error: null,
+      };
     }
     if (r.error) return r;
     if (r.data?.length) return r;
-    r = await runPick(null);
-    if (r.data?.length) return r;
+    if (!wktScoped) {
+      r = await runPick(null);
+      if (r.data?.length) return r;
+    }
     return { data: [], error: r.error };
   }
 

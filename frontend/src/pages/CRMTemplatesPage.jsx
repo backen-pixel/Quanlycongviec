@@ -3,7 +3,7 @@ import api from '../lib/api';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Lock, Building2, Workflow, Globe, MapPin, RefreshCw, FileSpreadsheet, Paperclip, MessageSquare, User } from 'lucide-react';
+import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Lock, Building2, Workflow, Globe, MapPin, RefreshCw, FileSpreadsheet, Paperclip, MessageSquare, User, Star } from 'lucide-react';
 import EvidenceFileTypesPicker from '../components/EvidenceFileTypesPicker';
 import { formatEvidenceTypesShort, normalizeEvidenceFileTypes, checklistItemRequiresEvidence } from '../lib/evidenceFileTypes';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
@@ -96,6 +96,7 @@ export default function CRMTemplatesPage() {
   const [companyRegions, setCompanyRegions] = useState([]);
   const [applyingToRegions, setApplyingToRegions] = useState(false);
   const [applyRegionsResult, setApplyRegionsResult] = useState(null);
+  const [bundleSetting, setBundleSetting] = useState(false);
 
   // Ref để bỏ qua việc save vào localStorage ở lần render đầu tiên
   // (tránh đè saved=null bằng saved="" làm mất khả năng auto-pick)
@@ -193,7 +194,9 @@ export default function CRMTemplatesPage() {
     const silent = !!opts.silent;
     if (!silent) setLoading(true);
     try {
-      const tplParams = selectedPipelineId ? { pipeline_id: selectedPipelineId } : {};
+      const tplParams = selectedPipelineId
+        ? { pipeline_id: selectedPipelineId, scope: 'pipeline' }
+        : (selectedCompanyId ? { company_id: selectedCompanyId, scope: 'pipeline' } : {});
       const [tplRes, compRes, deptRes] = await Promise.all([
         api.get('/crm/task-templates', { params: tplParams }),
         api.get('/companies', { params: { for_module: 'crm' } }).catch(() => ({ data: [] })),
@@ -216,7 +219,7 @@ export default function CRMTemplatesPage() {
     } catch {}
     if (!silent) setLoading(false);
   };
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selectedPipelineId]);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selectedPipelineId, selectedCompanyId]);
 
   useEffect(() => {
     let active = true;
@@ -498,6 +501,92 @@ export default function CRMTemplatesPage() {
   //  - Nếu Global mode nhưng có công ty + có pipeline mặc định → dùng pipeline mặc định đó
   const effectivePipelineIdForStageEdit = selectedPipelineId || fallbackCompanyPipeline?.id || '';
 
+  const pipelineDefaultMap = useMemo(() => {
+    const map = {};
+    for (const pl of pipelines) {
+      const stages = (companyPipelinesAll.find((x) => x.id === pl.id)?.stages || [])
+        .filter((s) => {
+          if (!s.pipeline_type || s.pipeline_type === 'both') return true;
+          return s.pipeline_type === activeTab;
+        });
+      const stageIds = new Set(stages.map((s) => String(s.id)));
+      const plTpls = templates
+        .filter((t) => t.pipeline_stage_id && stageIds.has(String(t.pipeline_stage_id)))
+        .filter((t) => {
+          const pt = String(t.pipeline_type || '').toLowerCase();
+          if (!pt || pt === 'both') return true;
+          return pt === activeTab;
+        });
+      map[pl.id] = plTpls.length > 0 && plTpls.every((t) => t.is_default);
+    }
+    return map;
+  }, [pipelines, companyPipelinesAll, templates, activeTab]);
+
+  const bundleAllDefault = useMemo(() => {
+    if (!selectedPipelineId || !filteredTemplates.length) return false;
+    return filteredTemplates.every((t) => t.is_default);
+  }, [filteredTemplates, selectedPipelineId]);
+
+  const setDefaultBundle = async () => {
+    if (!selectedPipelineId) {
+      alert('Chọn pipeline cụ thể ở dropdown phía trên.\n\nMỗi pipeline có bộ mặc định riêng — đặt pipeline này không ảnh hưởng pipeline khác.');
+      return;
+    }
+    const pipelineId = selectedPipelineId;
+    if (!filteredTemplates.length) return;
+    const pipelineName = pipelines.find((p) => p.id === pipelineId)?.name || 'pipeline';
+    const typeLabel = activeTab === 'deal' ? 'Deal' : 'Lead';
+    const tplCount = filteredTemplates.length;
+    const taskCount = filteredTemplates.reduce((n, t) => n + (t.items?.length || 0), 0);
+    const ok = window.confirm(
+      `Đặt ${tplCount} bộ mẫu (${taskCount} nhiệm vụ) của pipeline «${pipelineName}» — ${typeLabel} làm bộ mặc định?\n\n`
+      + `Khi tạo ${typeLabel} mới thuộc pipeline này, hệ thống sẽ tự sinh đúng các nhiệm vụ từ bộ này.`,
+    );
+    if (!ok) return;
+    setBundleSetting(true);
+    try {
+      await api.put('/crm/task-templates/set-default-bundle', {
+        pipeline_id: pipelineId,
+        lead_type: activeTab,
+        is_default: true,
+        template_ids: filteredTemplates.map((t) => t.id),
+      });
+      await load();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Không đặt được bộ mặc định');
+    } finally {
+      setBundleSetting(false);
+    }
+  };
+
+  const clearDefaultBundle = async () => {
+    if (!selectedPipelineId) {
+      alert('Chọn pipeline cụ thể để bỏ bộ mặc định của pipeline đó.');
+      return;
+    }
+    const pipelineId = selectedPipelineId;
+    const pipelineName = pipelines.find((p) => p.id === pipelineId)?.name || 'pipeline';
+    const typeLabel = activeTab === 'deal' ? 'Deal' : 'Lead';
+    const ok = window.confirm(
+      `Bỏ đặt bộ mặc định cho pipeline «${pipelineName}» — ${typeLabel}?\n\n`
+      + `${typeLabel} mới sẽ không tự sinh nhiệm vụ cho đến khi đặt lại bộ mặc định.`,
+    );
+    if (!ok) return;
+    setBundleSetting(true);
+    try {
+      await api.put('/crm/task-templates/set-default-bundle', {
+        pipeline_id: pipelineId,
+        lead_type: activeTab,
+        is_default: false,
+      });
+      await load();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Không bỏ được bộ mặc định');
+    } finally {
+      setBundleSetting(false);
+    }
+  };
+
   // ── Pipeline Stages CRUD (inline trên Stages preview) ──
   const reloadPipelineStages = async () => {
     const pid = effectivePipelineIdForStageEdit;
@@ -587,12 +676,14 @@ export default function CRMTemplatesPage() {
   };
 
   const updateTemplateItemFields = async (tplId, itemId, body) => {
+    upsertItemLocal(tplId, { id: itemId, ...body });
     try {
       const { data } = await api.put(`/crm/task-templates/${tplId}/items/${itemId}`, body);
       if (data?.id) upsertItemLocal(tplId, { ...data, ...body });
       else upsertItemLocal(tplId, { id: itemId, ...body });
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi cập nhật mục mẫu');
+      load();
       throw e;
     }
   };
@@ -625,11 +716,12 @@ export default function CRMTemplatesPage() {
 
   // ═══ Checklist CRUD ═══
   const updateItemChecklist = async (tplId, itemId, checklist) => {
+    upsertItemLocal(tplId, { id: itemId, checklist });
     try {
       const { data } = await api.put(`/crm/task-templates/${tplId}/items/${itemId}`, { checklist });
       if (data?.id) upsertItemLocal(tplId, { ...data, checklist });
       else upsertItemLocal(tplId, { id: itemId, checklist });
-    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); load(); }
   };
 
   const updateItemVisibility = async (tplId, itemId, allowedCompanies, allowedDepts) => {
@@ -691,12 +783,19 @@ export default function CRMTemplatesPage() {
     if (patch.assignee_id !== undefined) {
       next.assignee_id = patch.assignee_id ? String(patch.assignee_id) : null;
     }
+    if (patch.executor_company_id !== undefined) {
+      next.executor_company_id = patch.executor_company_id ? String(patch.executor_company_id) : null;
+    }
     const evidencePatch = patch.required_evidence_file_types !== undefined || patch.completion_requires_file_or_note !== undefined;
     const assigneePatch = patch.assignee_id !== undefined;
+    const executorPatch = patch.executor_company_id !== undefined;
     const prevAssignee = typeof entry === 'object' ? String(entry?.assignee_id || entry?.default_assignee_id || '') : '';
-    if (!evidencePatch && !assigneePatch && next.title === prevTitle && next.description === prevDesc) return;
-    if (assigneePatch && !evidencePatch && next.title === prevTitle && next.description === prevDesc
+    const prevExecutor = typeof entry === 'object' ? String(entry?.executor_company_id || '') : '';
+    if (!evidencePatch && !assigneePatch && !executorPatch && next.title === prevTitle && next.description === prevDesc) return;
+    if (assigneePatch && !evidencePatch && !executorPatch && next.title === prevTitle && next.description === prevDesc
       && String(next.assignee_id || '') === prevAssignee) return;
+    if (executorPatch && !evidencePatch && !assigneePatch && next.title === prevTitle && next.description === prevDesc
+      && String(next.executor_company_id || '') === prevExecutor) return;
     current[idx] = next;
     await updateItemChecklist(tplId, itemId, current);
   };
@@ -881,7 +980,9 @@ export default function CRMTemplatesPage() {
           <option value="">— Bộ mẫu chung (Global) —</option>
           {pipelines.map((p) => (
             <option key={p.id} value={p.id}>
-              🔧 {p.name}{p.is_default ? ' (mặc định)' : ''}
+              🔧 {p.name}
+              {p.is_default ? ' (pipeline hệ thống)' : ''}
+              {pipelineDefaultMap[p.id] ? ` ⭐ Bộ ${activeTab === 'deal' ? 'Deal' : 'Lead'}` : ''}
             </option>
           ))}
         </select>
@@ -954,6 +1055,55 @@ export default function CRMTemplatesPage() {
           <p className="text-[11px] text-amber-700">
             Sau khi chạy: <b>Settings → API → Reload schema</b> trên Supabase rồi tải lại trang. Trong lúc đó, bạn vẫn dùng được chế độ <b>Bộ mẫu chung (Global)</b> bên dưới.
           </p>
+        </div>
+      )}
+
+      {/* Bộ mặc định theo pipeline — mỗi pipeline độc lập */}
+      {selectedCompanyId && pipelines.length > 0 && !selectedPipelineId && (
+        <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          Chọn <b>pipeline cụ thể</b> ở dropdown để đặt bộ mặc định {activeTab === 'deal' ? 'Deal' : 'Lead'}.
+          Mỗi pipeline có bộ riêng — pipeline đã có ⭐ vẫn giữ mặc định khi bạn cấu hình pipeline khác.
+        </p>
+      )}
+      {selectedPipelineId && filteredTemplates.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-amber-900">
+              Bộ mặc định — {activeTab === 'deal' ? 'Deal' : 'Lead'} · {pipelines.find((p) => p.id === selectedPipelineId)?.name}
+            </p>
+            <p className="text-[11px] text-amber-800 mt-0.5">
+              {filteredTemplates.length} bộ mẫu · {filteredTemplates.reduce((n, t) => n + (t.items?.length || 0), 0)} nhiệm vụ
+              {' · '}
+              Chỉ áp dụng cho pipeline này (các pipeline khác không bị ảnh hưởng)
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {bundleAllDefault ? (
+              <>
+                <span className="text-xs font-medium text-amber-800 bg-amber-100 px-2.5 py-1 rounded-full">
+                  Đang là bộ mặc định
+                </span>
+                <button
+                  type="button"
+                  onClick={clearDefaultBundle}
+                  disabled={bundleSetting}
+                  className="h-9 px-3 rounded-lg text-xs font-medium border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 cursor-pointer disabled:opacity-60"
+                >
+                  Bỏ mặc định
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={setDefaultBundle}
+                disabled={bundleSetting}
+                className="h-9 px-4 rounded-lg text-sm font-medium bg-amber-600 text-white hover:bg-amber-700 cursor-pointer disabled:opacity-60 flex items-center gap-1.5"
+              >
+                <Star className="h-4 w-4" />
+                {bundleSetting ? 'Đang lưu…' : `Đặt bộ mặc định ${activeTab === 'deal' ? 'Deal' : 'Lead'}`}
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -1292,6 +1442,7 @@ function TemplateCard({
     required_evidence_file_types: [],
     requires_quick_verdict: false,
     show_excel_quotation_upload: false,
+    executor_company_id: '',
   });
 
   const sortedItems = [...(tpl.items || [])].sort((a, b) => a.order_index - b.order_index);
@@ -1308,6 +1459,7 @@ function TemplateCard({
       required_evidence_file_types: normalizeEvidenceFileTypes(item.required_evidence_file_types),
       requires_quick_verdict: !!item.requires_quick_verdict,
       show_excel_quotation_upload: !!item.show_excel_quotation_upload,
+      executor_company_id: item.executor_company_id || '',
     });
   };
 
@@ -1328,6 +1480,7 @@ function TemplateCard({
         required_evidence_file_types: itemEditForm.required_evidence_file_types || [],
         requires_quick_verdict: !!itemEditForm.requires_quick_verdict,
         show_excel_quotation_upload: !!itemEditForm.show_excel_quotation_upload,
+        executor_company_id: itemEditForm.executor_company_id || null,
       });
       setEditingItemId(null);
     } catch { /* alert trong updateTemplateItemFields */ }
@@ -1517,6 +1670,13 @@ function TemplateCard({
                         {(item.default_allowed_companies?.length > 0 || item.default_allowed_departments?.length > 0) && (
                           <span className="text-[9px] bg-red-50 text-red-600 px-1 py-0.5 rounded-full">🔒</span>
                         )}
+                        {item.executor_company_id && (
+                          <span className="text-[9px] bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded-full font-medium" title="Công ty thực hiện">
+                            🤝 {companies.find((c) => String(c.id) === String(item.executor_company_id))?.short_name
+                              || companies.find((c) => String(c.id) === String(item.executor_company_id))?.name
+                              || 'Đối tác'}
+                          </span>
+                        )}
                         {item.blocks_stage_advance && (
                           <span
                             className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
@@ -1587,6 +1747,27 @@ function TemplateCard({
                             className="w-full h-8 px-2 rounded border text-sm outline-none focus:ring-2 focus:ring-sky-400"
                             placeholder="Tên nhiệm vụ..."
                           />
+                          <div>
+                            <p className="text-[10px] font-semibold text-gray-500 mb-1">🤝 Công ty thực hiện (giao việc chéo)</p>
+                            <select
+                              value={itemEditForm.executor_company_id || ''}
+                              onChange={async (e) => {
+                                const executor_company_id = e.target.value || '';
+                                setItemEditForm((f) => ({ ...f, executor_company_id }));
+                                try {
+                                  await updateTemplateItemFields(tpl.id, item.id, {
+                                    executor_company_id: executor_company_id || null,
+                                  });
+                                } catch { /* alert trong updateTemplateItemFields */ }
+                              }}
+                              className="w-full h-8 px-2 rounded border text-xs bg-white outline-none focus:ring-2 focus:ring-indigo-400"
+                            >
+                              <option value="">Cùng công ty chủ deal</option>
+                              {companies.map((c) => (
+                                <option key={c.id} value={c.id}>{c.name}{c.short_name ? ` (${c.short_name})` : ''}</option>
+                              ))}
+                            </select>
+                          </div>
                           <textarea
                             value={itemEditForm.description || ''}
                             onChange={e => setItemEditForm(f => ({ ...f, description: e.target.value }))}
@@ -1715,7 +1896,8 @@ function TemplateCard({
                       {editingChecklist[item.id] && (
                         <ChecklistEditor tplId={tpl.id} itemId={item.id}
                           checklist={Array.isArray(item.checklist) ? item.checklist : []}
-                          users={users}
+                          users={users} companies={companies}
+                          parentExecutorCompanyId={item.executor_company_id || ''}
                           sensors={sensors} handleChecklistDragEnd={handleChecklistDragEnd}
                           removeChecklistItem={removeChecklistItem} addChecklistItem={addChecklistItem}
                           updateChecklistItem={updateChecklistItem}
@@ -1750,9 +1932,14 @@ const ckTitleOfCrm = (ck) => (typeof ck === 'string' ? ck : (ck?.title || ck?.la
 const ckDescOfCrm = (ck) => (typeof ck === 'string' ? '' : (ck?.description || ''));
 const ckEvidenceTypesOfCrm = (ck) => normalizeEvidenceFileTypes(typeof ck === 'object' ? ck?.required_evidence_file_types : []);
 const ckAssigneeOfCrm = (ck) => (typeof ck === 'object' ? String(ck?.assignee_id || ck?.default_assignee_id || '') : '');
+const ckExecutorCompanyOfCrm = (ck) => (typeof ck === 'object' ? String(ck?.executor_company_id || '') : '');
 
 // ═══ Checklist Editor with drag & drop ═══
-function ChecklistEditor({ tplId, itemId, checklist, users = [], sensors, handleChecklistDragEnd, removeChecklistItem, addChecklistItem, updateChecklistItem, newCheckItem, setNewCheckItem }) {
+function ChecklistEditor({
+  tplId, itemId, checklist, users = [], companies = [], parentExecutorCompanyId = '',
+  sensors, handleChecklistDragEnd, removeChecklistItem, addChecklistItem, updateChecklistItem,
+  newCheckItem, setNewCheckItem,
+}) {
   const checkIds = checklist.map((_, i) => `ck-${itemId}-${i}`);
   return (
     <div className="ml-10 pl-3 border-l-2 border-emerald-200 mb-2 space-y-1.5">
@@ -1797,6 +1984,26 @@ function ChecklistEditor({ tplId, itemId, checklist, users = [], sensors, handle
                         <option value="">— Chưa gán —</option>
                         {(users || []).map((u) => (
                           <option key={u.id} value={u.id}>{u.full_name || u.email || u.id}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <Globe className="h-3 w-3 text-teal-600 shrink-0" />
+                      <select
+                        value={ckExecutorCompanyOfCrm(ck)}
+                        onChange={(e) => updateChecklistItem(tplId, itemId, ci, {
+                          executor_company_id: e.target.value || null,
+                        })}
+                        className="h-7 min-w-[140px] flex-1 max-w-full px-2 text-[11px] border border-teal-200 rounded bg-white outline-none focus:ring-1 focus:ring-teal-300"
+                        title="Công ty thực hiện mục checklist"
+                      >
+                        <option value="">
+                          {parentExecutorCompanyId
+                            ? `Kế thừa (${companies.find((c) => String(c.id) === String(parentExecutorCompanyId))?.short_name || companies.find((c) => String(c.id) === String(parentExecutorCompanyId))?.name || 'nhiệm vụ cha'})`
+                            : 'Cùng công ty chủ deal'}
+                        </option>
+                        {(companies || []).map((c) => (
+                          <option key={c.id} value={c.id}>{c.name}{c.short_name ? ` (${c.short_name})` : ''}</option>
                         ))}
                       </select>
                     </div>
