@@ -30,10 +30,12 @@ Set-Location $root
 $apk = Get-ChildItem 'android\app\build\outputs\apk\release\*.apk' | Select-Object -First 1
 if (-not $apk) { throw 'Không tìm thấy APK sau build' }
 
-$version = (Get-Content app.json -Raw | Select-String '"version":\s*"([^"]+)"').Matches.Groups[1].Value
+$appJson = Get-Content app.json -Raw | ConvertFrom-Json
+$version = $appJson.expo.version
 if (-not $version) { $version = '1.0.0' }
+$versionCode = $appJson.expo.android.versionCode
 New-Item -ItemType Directory -Force -Path 'dist' | Out-Null
-$dest = Join-Path $root "dist\XuongSX-$version-release.apk"
+$dest = Join-Path $root "dist\sx-mobile-$version-code$versionCode-release.apk"
 Copy-Item $apk.FullName $dest -Force
 Write-Host ''
 Write-Host "OK: $dest"

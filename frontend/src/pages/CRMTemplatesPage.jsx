@@ -3,7 +3,9 @@ import api from '../lib/api';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Lock, Building2, Workflow, Globe, MapPin, RefreshCw, FileSpreadsheet, Paperclip } from 'lucide-react';
+import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Lock, Building2, Workflow, Globe, MapPin, RefreshCw, FileSpreadsheet, Paperclip, MessageSquare, User, Star } from 'lucide-react';
+import EvidenceFileTypesPicker from '../components/EvidenceFileTypesPicker';
+import { formatEvidenceTypesShort, normalizeEvidenceFileTypes, checklistItemRequiresEvidence } from '../lib/evidenceFileTypes';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -60,6 +62,7 @@ export default function CRMTemplatesPage() {
   const [editingVisibility, setEditingVisibility] = useState({}); // {itemId: true/false}
   const [companies, setCompanies] = useState([]);
   const [departments, setDepartments] = useState([]);
+  const [users, setUsers] = useState([]);
 
   // ── Chọn pipeline thật theo công ty ──
   // Mặc định: chọn công ty của user (nếu có) để page mở ra ở chế độ Pipeline ngay.
@@ -93,6 +96,7 @@ export default function CRMTemplatesPage() {
   const [companyRegions, setCompanyRegions] = useState([]);
   const [applyingToRegions, setApplyingToRegions] = useState(false);
   const [applyRegionsResult, setApplyRegionsResult] = useState(null);
+  const [bundleSetting, setBundleSetting] = useState(false);
 
   // Ref để bỏ qua việc save vào localStorage ở lần render đầu tiên
   // (tránh đè saved=null bằng saved="" làm mất khả năng auto-pick)
@@ -190,7 +194,9 @@ export default function CRMTemplatesPage() {
     const silent = !!opts.silent;
     if (!silent) setLoading(true);
     try {
-      const tplParams = selectedPipelineId ? { pipeline_id: selectedPipelineId } : {};
+      const tplParams = selectedPipelineId
+        ? { pipeline_id: selectedPipelineId, scope: 'pipeline' }
+        : (selectedCompanyId ? { company_id: selectedCompanyId, scope: 'pipeline' } : {});
       const [tplRes, compRes, deptRes] = await Promise.all([
         api.get('/crm/task-templates', { params: tplParams }),
         api.get('/companies', { params: { for_module: 'crm' } }).catch(() => ({ data: [] })),
@@ -213,7 +219,16 @@ export default function CRMTemplatesPage() {
     } catch {}
     if (!silent) setLoading(false);
   };
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selectedPipelineId]);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selectedPipelineId, selectedCompanyId]);
+
+  useEffect(() => {
+    let active = true;
+    const params = selectedCompanyId ? { company_id: selectedCompanyId } : {};
+    api.get('/users', { params })
+      .then((r) => { if (active) setUsers(r.data?.users || r.data || []); })
+      .catch(() => { if (active) setUsers([]); });
+    return () => { active = false; };
+  }, [selectedCompanyId]);
 
   // ── Helpers: cập nhật state cục bộ thay vì load lại toàn trang sau mỗi thao tác CRUD ──
   const upsertTemplateLocal = (tplPartial) => {
@@ -486,6 +501,92 @@ export default function CRMTemplatesPage() {
   //  - Nếu Global mode nhưng có công ty + có pipeline mặc định → dùng pipeline mặc định đó
   const effectivePipelineIdForStageEdit = selectedPipelineId || fallbackCompanyPipeline?.id || '';
 
+  const pipelineDefaultMap = useMemo(() => {
+    const map = {};
+    for (const pl of pipelines) {
+      const stages = (companyPipelinesAll.find((x) => x.id === pl.id)?.stages || [])
+        .filter((s) => {
+          if (!s.pipeline_type || s.pipeline_type === 'both') return true;
+          return s.pipeline_type === activeTab;
+        });
+      const stageIds = new Set(stages.map((s) => String(s.id)));
+      const plTpls = templates
+        .filter((t) => t.pipeline_stage_id && stageIds.has(String(t.pipeline_stage_id)))
+        .filter((t) => {
+          const pt = String(t.pipeline_type || '').toLowerCase();
+          if (!pt || pt === 'both') return true;
+          return pt === activeTab;
+        });
+      map[pl.id] = plTpls.length > 0 && plTpls.every((t) => t.is_default);
+    }
+    return map;
+  }, [pipelines, companyPipelinesAll, templates, activeTab]);
+
+  const bundleAllDefault = useMemo(() => {
+    if (!selectedPipelineId || !filteredTemplates.length) return false;
+    return filteredTemplates.every((t) => t.is_default);
+  }, [filteredTemplates, selectedPipelineId]);
+
+  const setDefaultBundle = async () => {
+    if (!selectedPipelineId) {
+      alert('Chọn pipeline cụ thể ở dropdown phía trên.\n\nMỗi pipeline có bộ mặc định riêng — đặt pipeline này không ảnh hưởng pipeline khác.');
+      return;
+    }
+    const pipelineId = selectedPipelineId;
+    if (!filteredTemplates.length) return;
+    const pipelineName = pipelines.find((p) => p.id === pipelineId)?.name || 'pipeline';
+    const typeLabel = activeTab === 'deal' ? 'Deal' : 'Lead';
+    const tplCount = filteredTemplates.length;
+    const taskCount = filteredTemplates.reduce((n, t) => n + (t.items?.length || 0), 0);
+    const ok = window.confirm(
+      `Đặt ${tplCount} bộ mẫu (${taskCount} nhiệm vụ) của pipeline «${pipelineName}» — ${typeLabel} làm bộ mặc định?\n\n`
+      + `Khi tạo ${typeLabel} mới thuộc pipeline này, hệ thống sẽ tự sinh đúng các nhiệm vụ từ bộ này.`,
+    );
+    if (!ok) return;
+    setBundleSetting(true);
+    try {
+      await api.put('/crm/task-templates/set-default-bundle', {
+        pipeline_id: pipelineId,
+        lead_type: activeTab,
+        is_default: true,
+        template_ids: filteredTemplates.map((t) => t.id),
+      });
+      await load();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Không đặt được bộ mặc định');
+    } finally {
+      setBundleSetting(false);
+    }
+  };
+
+  const clearDefaultBundle = async () => {
+    if (!selectedPipelineId) {
+      alert('Chọn pipeline cụ thể để bỏ bộ mặc định của pipeline đó.');
+      return;
+    }
+    const pipelineId = selectedPipelineId;
+    const pipelineName = pipelines.find((p) => p.id === pipelineId)?.name || 'pipeline';
+    const typeLabel = activeTab === 'deal' ? 'Deal' : 'Lead';
+    const ok = window.confirm(
+      `Bỏ đặt bộ mặc định cho pipeline «${pipelineName}» — ${typeLabel}?\n\n`
+      + `${typeLabel} mới sẽ không tự sinh nhiệm vụ cho đến khi đặt lại bộ mặc định.`,
+    );
+    if (!ok) return;
+    setBundleSetting(true);
+    try {
+      await api.put('/crm/task-templates/set-default-bundle', {
+        pipeline_id: pipelineId,
+        lead_type: activeTab,
+        is_default: false,
+      });
+      await load();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Không bỏ được bộ mặc định');
+    } finally {
+      setBundleSetting(false);
+    }
+  };
+
   // ── Pipeline Stages CRUD (inline trên Stages preview) ──
   const reloadPipelineStages = async () => {
     const pid = effectivePipelineIdForStageEdit;
@@ -575,12 +676,14 @@ export default function CRMTemplatesPage() {
   };
 
   const updateTemplateItemFields = async (tplId, itemId, body) => {
+    upsertItemLocal(tplId, { id: itemId, ...body });
     try {
       const { data } = await api.put(`/crm/task-templates/${tplId}/items/${itemId}`, body);
-      if (data?.id) upsertItemLocal(tplId, data);
+      if (data?.id) upsertItemLocal(tplId, { ...data, ...body });
       else upsertItemLocal(tplId, { id: itemId, ...body });
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi cập nhật mục mẫu');
+      load();
       throw e;
     }
   };
@@ -613,11 +716,12 @@ export default function CRMTemplatesPage() {
 
   // ═══ Checklist CRUD ═══
   const updateItemChecklist = async (tplId, itemId, checklist) => {
+    upsertItemLocal(tplId, { id: itemId, checklist });
     try {
       const { data } = await api.put(`/crm/task-templates/${tplId}/items/${itemId}`, { checklist });
-      if (data?.id) upsertItemLocal(tplId, data);
+      if (data?.id) upsertItemLocal(tplId, { ...data, checklist });
       else upsertItemLocal(tplId, { id: itemId, checklist });
-    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); load(); }
   };
 
   const updateItemVisibility = async (tplId, itemId, allowedCompanies, allowedDepts) => {
@@ -650,8 +754,50 @@ export default function CRMTemplatesPage() {
     const tpl = templates.find(t => t.id === tplId);
     const item = tpl?.items?.find(i => i.id === itemId);
     const current = Array.isArray(item?.checklist) ? item.checklist : [];
-    await updateItemChecklist(tplId, itemId, [...current, text]);
+    await updateItemChecklist(tplId, itemId, [...current, { title: text, description: '' }]);
     setNewCheckItem(p => ({ ...p, [itemId]: '' }));
+  };
+
+  const updateChecklistItem = async (tplId, itemId, idx, patch) => {
+    const tpl = templates.find(t => t.id === tplId);
+    const item = tpl?.items?.find(i => i.id === itemId);
+    const current = Array.isArray(item?.checklist) ? [...item.checklist] : [];
+    const entry = current[idx];
+    if (entry === undefined) return;
+    const base = typeof entry === 'string' ? { title: entry } : { ...(entry || {}) };
+    if (base.label && base.title === undefined) { base.title = base.label; }
+    delete base.label;
+    const next = { ...base, ...patch };
+    next.title = (next.title ?? '').toString();
+    next.description = (next.description ?? '').toString();
+    if (patch.required_evidence_file_types !== undefined) {
+      next.required_evidence_file_types = normalizeEvidenceFileTypes(patch.required_evidence_file_types);
+      next.completion_requires_file_or_note = next.required_evidence_file_types.length > 0
+        || !!patch.completion_requires_file_or_note;
+    }
+    if (patch.completion_requires_file_or_note !== undefined && patch.required_evidence_file_types === undefined) {
+      next.completion_requires_file_or_note = !!patch.completion_requires_file_or_note;
+    }
+    const prevTitle = typeof entry === 'string' ? entry : (entry?.title || entry?.label || '');
+    const prevDesc = typeof entry === 'string' ? '' : (entry?.description || '');
+    if (patch.assignee_id !== undefined) {
+      next.assignee_id = patch.assignee_id ? String(patch.assignee_id) : null;
+    }
+    if (patch.executor_company_id !== undefined) {
+      next.executor_company_id = patch.executor_company_id ? String(patch.executor_company_id) : null;
+    }
+    const evidencePatch = patch.required_evidence_file_types !== undefined || patch.completion_requires_file_or_note !== undefined;
+    const assigneePatch = patch.assignee_id !== undefined;
+    const executorPatch = patch.executor_company_id !== undefined;
+    const prevAssignee = typeof entry === 'object' ? String(entry?.assignee_id || entry?.default_assignee_id || '') : '';
+    const prevExecutor = typeof entry === 'object' ? String(entry?.executor_company_id || '') : '';
+    if (!evidencePatch && !assigneePatch && !executorPatch && next.title === prevTitle && next.description === prevDesc) return;
+    if (assigneePatch && !evidencePatch && !executorPatch && next.title === prevTitle && next.description === prevDesc
+      && String(next.assignee_id || '') === prevAssignee) return;
+    if (executorPatch && !evidencePatch && !assigneePatch && next.title === prevTitle && next.description === prevDesc
+      && String(next.executor_company_id || '') === prevExecutor) return;
+    current[idx] = next;
+    await updateItemChecklist(tplId, itemId, current);
   };
 
   const removeChecklistItem = async (tplId, itemId, idx) => {
@@ -834,7 +980,9 @@ export default function CRMTemplatesPage() {
           <option value="">— Bộ mẫu chung (Global) —</option>
           {pipelines.map((p) => (
             <option key={p.id} value={p.id}>
-              🔧 {p.name}{p.is_default ? ' (mặc định)' : ''}
+              🔧 {p.name}
+              {p.is_default ? ' (pipeline hệ thống)' : ''}
+              {pipelineDefaultMap[p.id] ? ` ⭐ Bộ ${activeTab === 'deal' ? 'Deal' : 'Lead'}` : ''}
             </option>
           ))}
         </select>
@@ -907,6 +1055,55 @@ export default function CRMTemplatesPage() {
           <p className="text-[11px] text-amber-700">
             Sau khi chạy: <b>Settings → API → Reload schema</b> trên Supabase rồi tải lại trang. Trong lúc đó, bạn vẫn dùng được chế độ <b>Bộ mẫu chung (Global)</b> bên dưới.
           </p>
+        </div>
+      )}
+
+      {/* Bộ mặc định theo pipeline — mỗi pipeline độc lập */}
+      {selectedCompanyId && pipelines.length > 0 && !selectedPipelineId && (
+        <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          Chọn <b>pipeline cụ thể</b> ở dropdown để đặt bộ mặc định {activeTab === 'deal' ? 'Deal' : 'Lead'}.
+          Mỗi pipeline có bộ riêng — pipeline đã có ⭐ vẫn giữ mặc định khi bạn cấu hình pipeline khác.
+        </p>
+      )}
+      {selectedPipelineId && filteredTemplates.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-amber-900">
+              Bộ mặc định — {activeTab === 'deal' ? 'Deal' : 'Lead'} · {pipelines.find((p) => p.id === selectedPipelineId)?.name}
+            </p>
+            <p className="text-[11px] text-amber-800 mt-0.5">
+              {filteredTemplates.length} bộ mẫu · {filteredTemplates.reduce((n, t) => n + (t.items?.length || 0), 0)} nhiệm vụ
+              {' · '}
+              Chỉ áp dụng cho pipeline này (các pipeline khác không bị ảnh hưởng)
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {bundleAllDefault ? (
+              <>
+                <span className="text-xs font-medium text-amber-800 bg-amber-100 px-2.5 py-1 rounded-full">
+                  Đang là bộ mặc định
+                </span>
+                <button
+                  type="button"
+                  onClick={clearDefaultBundle}
+                  disabled={bundleSetting}
+                  className="h-9 px-3 rounded-lg text-xs font-medium border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 cursor-pointer disabled:opacity-60"
+                >
+                  Bỏ mặc định
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={setDefaultBundle}
+                disabled={bundleSetting}
+                className="h-9 px-4 rounded-lg text-sm font-medium bg-amber-600 text-white hover:bg-amber-700 cursor-pointer disabled:opacity-60 flex items-center gap-1.5"
+              >
+                <Star className="h-4 w-4" />
+                {bundleSetting ? 'Đang lưu…' : `Đặt bộ mặc định ${activeTab === 'deal' ? 'Deal' : 'Lead'}`}
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -1182,13 +1379,14 @@ export default function CRMTemplatesPage() {
                           editingChecklist={editingChecklist} setEditingChecklist={setEditingChecklist}
                           newCheckItem={newCheckItem} setNewCheckItem={setNewCheckItem}
                           addChecklistItem={addChecklistItem} removeChecklistItem={removeChecklistItem}
+                          updateChecklistItem={updateChecklistItem}
                           sensors={sensors} handleItemDragEnd={handleItemDragEnd}
                           handleChecklistDragEnd={handleChecklistDragEnd}
                           templates={templates} setTemplates={setTemplates}
                           updateItemChecklist={updateItemChecklist}
                           updateTemplateItemFields={updateTemplateItemFields}
                           editingVisibility={editingVisibility} setEditingVisibility={setEditingVisibility}
-                          companies={companies} departments={departments}
+                          companies={companies} departments={departments} users={users}
                           toggleItemCompany={toggleItemCompany} toggleItemDept={toggleItemDept}
                           isPipelineMode={isPipelineMode} pipelineStages={pipelineStages}
                           companyPipelinesAll={companyPipelinesAll} activeTab={activeTab}
@@ -1225,10 +1423,10 @@ function TemplateCard({
   editingTpl, setEditingTpl, updateTemplate, toggleDefault, deleteTemplate,
   newItem, setNewItem, addItem, deleteItem,
   editingChecklist, setEditingChecklist, newCheckItem, setNewCheckItem,
-  addChecklistItem, removeChecklistItem,
+  addChecklistItem, removeChecklistItem, updateChecklistItem,
   sensors, handleItemDragEnd, handleChecklistDragEnd,
   editingVisibility, setEditingVisibility,
-  companies, departments, toggleItemCompany, toggleItemDept,
+  companies, departments, users = [], toggleItemCompany, toggleItemDept,
   updateTemplateItemFields,
   isPipelineMode = false, pipelineStages = [],
   companyPipelinesAll = [], activeTab = 'deal',
@@ -1241,7 +1439,10 @@ function TemplateCard({
     deadline_days: 0,
     blocks_stage_advance: false,
     completion_requires_file_or_note: false,
+    required_evidence_file_types: [],
+    requires_quick_verdict: false,
     show_excel_quotation_upload: false,
+    executor_company_id: '',
   });
 
   const sortedItems = [...(tpl.items || [])].sort((a, b) => a.order_index - b.order_index);
@@ -1255,7 +1456,10 @@ function TemplateCard({
       deadline_days: item.deadline_days ?? 0,
       blocks_stage_advance: !!item.blocks_stage_advance,
       completion_requires_file_or_note: !!item.completion_requires_file_or_note,
+      required_evidence_file_types: normalizeEvidenceFileTypes(item.required_evidence_file_types),
+      requires_quick_verdict: !!item.requires_quick_verdict,
       show_excel_quotation_upload: !!item.show_excel_quotation_upload,
+      executor_company_id: item.executor_company_id || '',
     });
   };
 
@@ -1271,10 +1475,22 @@ function TemplateCard({
         priority: itemEditForm.priority,
         deadline_days: 0,
         blocks_stage_advance: !!itemEditForm.blocks_stage_advance,
-        completion_requires_file_or_note: !!itemEditForm.completion_requires_file_or_note,
+        completion_requires_file_or_note: !!itemEditForm.completion_requires_file_or_note
+          || (itemEditForm.required_evidence_file_types?.length > 0),
+        required_evidence_file_types: itemEditForm.required_evidence_file_types || [],
+        requires_quick_verdict: !!itemEditForm.requires_quick_verdict,
         show_excel_quotation_upload: !!itemEditForm.show_excel_quotation_upload,
+        executor_company_id: itemEditForm.executor_company_id || null,
       });
       setEditingItemId(null);
+    } catch { /* alert trong updateTemplateItemFields */ }
+  };
+
+  const toggleItemQuickVerdict = async (item) => {
+    try {
+      await updateTemplateItemFields(tpl.id, item.id, {
+        requires_quick_verdict: !item.requires_quick_verdict,
+      });
     } catch { /* alert trong updateTemplateItemFields */ }
   };
 
@@ -1296,9 +1512,18 @@ function TemplateCard({
 
   const toggleItemFileEvidence = async (item) => {
     try {
-      await updateTemplateItemFields(tpl.id, item.id, {
-        completion_requires_file_or_note: !item.completion_requires_file_or_note,
-      });
+      const types = normalizeEvidenceFileTypes(item.required_evidence_file_types);
+      if (types.length || item.completion_requires_file_or_note) {
+        await updateTemplateItemFields(tpl.id, item.id, {
+          completion_requires_file_or_note: false,
+          required_evidence_file_types: [],
+        });
+      } else {
+        await updateTemplateItemFields(tpl.id, item.id, {
+          completion_requires_file_or_note: true,
+          required_evidence_file_types: ['note', 'image'],
+        });
+      }
     } catch { /* alert trong updateTemplateItemFields */ }
   };
 
@@ -1445,6 +1670,13 @@ function TemplateCard({
                         {(item.default_allowed_companies?.length > 0 || item.default_allowed_departments?.length > 0) && (
                           <span className="text-[9px] bg-red-50 text-red-600 px-1 py-0.5 rounded-full">🔒</span>
                         )}
+                        {item.executor_company_id && (
+                          <span className="text-[9px] bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded-full font-medium" title="Công ty thực hiện">
+                            🤝 {companies.find((c) => String(c.id) === String(item.executor_company_id))?.short_name
+                              || companies.find((c) => String(c.id) === String(item.executor_company_id))?.name
+                              || 'Đối tác'}
+                          </span>
+                        )}
                         {item.blocks_stage_advance && (
                           <span
                             className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
@@ -1453,12 +1685,12 @@ function TemplateCard({
                             <Lock className="h-2.5 w-2.5" /> Chặn
                           </span>
                         )}
-                        {item.completion_requires_file_or_note && (
+                        {(!!item.completion_requires_file_or_note || normalizeEvidenceFileTypes(item.required_evidence_file_types).length > 0) && (
                           <span
-                            className="text-[9px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
-                            title="Bắt buộc ghi chú hoặc file đính kèm trước khi chuyển giai đoạn"
+                            className="text-[9px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5 max-w-[200px] truncate"
+                            title={`Bắt buộc: ${formatEvidenceTypesShort(item.required_evidence_file_types) || 'file/ghi chú bất kỳ'}`}
                           >
-                            <Paperclip className="h-2.5 w-2.5" /> File/GC
+                            <Paperclip className="h-2.5 w-2.5" /> {formatEvidenceTypesShort(item.required_evidence_file_types) || 'File/GC'}
                           </span>
                         )}
                         {item.show_excel_quotation_upload && (
@@ -1469,6 +1701,14 @@ function TemplateCard({
                             <FileSpreadsheet className="h-2.5 w-2.5" /> Excel BG
                           </span>
                         )}
+                        {item.requires_quick_verdict && (
+                          <span
+                            className="text-[9px] bg-sky-100 text-sky-800 px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
+                            title="Ghi chú nhanh: phải chọn Đã đủ / Chưa (+ lý do)"
+                          >
+                            <MessageSquare className="h-2.5 w-2.5" /> Đủ/Chưa
+                          </span>
+                        )}
                         <button type="button" onClick={() => toggleItemBlocking(item)}
                           className={`p-1 rounded cursor-pointer shrink-0 ${item.blocks_stage_advance ? 'text-amber-600 bg-amber-50 hover:bg-amber-100' : 'text-gray-400 hover:bg-amber-50 hover:text-amber-600'}`}
                           title={item.blocks_stage_advance ? 'Đang chặn chuyển giai đoạn — bấm để tắt' : 'Bật chặn: bắt buộc hoàn thành trước khi chuyển giai đoạn'}>
@@ -1477,6 +1717,10 @@ function TemplateCard({
                           className={`p-1 rounded cursor-pointer shrink-0 ${item.completion_requires_file_or_note ? 'text-violet-600 bg-violet-50 hover:bg-violet-100' : 'text-gray-400 hover:bg-violet-50 hover:text-violet-600'}`}
                           title={item.completion_requires_file_or_note ? 'Đang bắt buộc file/ghi chú — bấm để tắt' : 'Bật: bắt buộc ghi chú hoặc file đính kèm trước khi chuyển giai đoạn'}>
                           <Paperclip className="h-3.5 w-3.5" /></button>
+                        <button type="button" onClick={() => toggleItemQuickVerdict(item)}
+                          className={`p-1 rounded cursor-pointer shrink-0 ${item.requires_quick_verdict ? 'text-sky-600 bg-sky-50 hover:bg-sky-100' : 'text-gray-400 hover:bg-sky-50 hover:text-sky-600'}`}
+                          title={item.requires_quick_verdict ? 'Đang bật ghi chú nhanh Đủ/Chưa — bấm để tắt' : 'Bật ghi chú nhanh: Đã đủ / Chưa (+ lý do)'}>
+                          <MessageSquare className="h-3.5 w-3.5" /></button>
                         <button type="button" onClick={() => toggleItemExcelUpload(item)}
                           className={`p-1 rounded cursor-pointer shrink-0 ${item.show_excel_quotation_upload ? 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100' : 'text-gray-400 hover:bg-emerald-50 hover:text-emerald-600'}`}
                           title={item.show_excel_quotation_upload ? 'Đang hiển thị nút Upload Excel BG — bấm để tắt' : 'Bật: hiển thị nút Upload Excel Báo giá trên tab Nhiệm vụ'}>
@@ -1503,6 +1747,27 @@ function TemplateCard({
                             className="w-full h-8 px-2 rounded border text-sm outline-none focus:ring-2 focus:ring-sky-400"
                             placeholder="Tên nhiệm vụ..."
                           />
+                          <div>
+                            <p className="text-[10px] font-semibold text-gray-500 mb-1">🤝 Công ty thực hiện (giao việc chéo)</p>
+                            <select
+                              value={itemEditForm.executor_company_id || ''}
+                              onChange={async (e) => {
+                                const executor_company_id = e.target.value || '';
+                                setItemEditForm((f) => ({ ...f, executor_company_id }));
+                                try {
+                                  await updateTemplateItemFields(tpl.id, item.id, {
+                                    executor_company_id: executor_company_id || null,
+                                  });
+                                } catch { /* alert trong updateTemplateItemFields */ }
+                              }}
+                              className="w-full h-8 px-2 rounded border text-xs bg-white outline-none focus:ring-2 focus:ring-indigo-400"
+                            >
+                              <option value="">Cùng công ty chủ deal</option>
+                              {companies.map((c) => (
+                                <option key={c.id} value={c.id}>{c.name}{c.short_name ? ` (${c.short_name})` : ''}</option>
+                              ))}
+                            </select>
+                          </div>
                           <textarea
                             value={itemEditForm.description || ''}
                             onChange={e => setItemEditForm(f => ({ ...f, description: e.target.value }))}
@@ -1534,12 +1799,17 @@ function TemplateCard({
                             <label className="flex items-center gap-1.5 h-8 px-2 rounded border bg-white text-xs cursor-pointer select-none">
                               <input
                                 type="checkbox"
-                                checked={!!itemEditForm.completion_requires_file_or_note}
-                                onChange={e => setItemEditForm(f => ({ ...f, completion_requires_file_or_note: e.target.checked }))}
+                                checked={!!itemEditForm.completion_requires_file_or_note || (itemEditForm.required_evidence_file_types?.length > 0)}
+                                onChange={e => setItemEditForm(f => ({
+                                  ...f,
+                                  completion_requires_file_or_note: e.target.checked,
+                                  required_evidence_file_types: e.target.checked && !f.required_evidence_file_types?.length
+                                    ? ['note', 'image'] : (e.target.checked ? f.required_evidence_file_types : []),
+                                }))}
                                 className="accent-violet-600"
                               />
                               <Paperclip className="h-3 w-3 text-violet-600" />
-                              Bắt buộc file/ghi chú
+                              Bắt buộc minh chứng
                             </label>
                             <label className="flex items-center gap-1.5 h-8 px-2 rounded border bg-white text-xs cursor-pointer select-none">
                               <input
@@ -1550,6 +1820,16 @@ function TemplateCard({
                               />
                               <FileSpreadsheet className="h-3 w-3 text-emerald-600" />
                               Hiện nút Upload Excel BG
+                            </label>
+                            <label className="flex items-center gap-1.5 h-8 px-2 rounded border bg-white text-xs cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={!!itemEditForm.requires_quick_verdict}
+                                onChange={e => setItemEditForm(f => ({ ...f, requires_quick_verdict: e.target.checked }))}
+                                className="accent-sky-600"
+                              />
+                              <MessageSquare className="h-3 w-3 text-sky-600" />
+                              Ghi chú nhanh Đủ/Chưa
                             </label>
                             <span className="flex-1" />
                             <button type="button" onClick={() => setEditingItemId(null)} className="h-8 px-3 rounded-lg text-xs font-medium bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 cursor-pointer">
@@ -1562,8 +1842,21 @@ function TemplateCard({
                           <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
                             <Lock className="h-2.5 w-2.5 inline mr-1" /> Khi bật: lead/deal không thể chuyển sang giai đoạn khác (trừ Thắng/Thua) đến khi nhiệm vụ này hoàn thành.
                           </p>
+                          {(itemEditForm.completion_requires_file_or_note || itemEditForm.required_evidence_file_types?.length > 0) && (
+                            <div className="rounded-lg border border-violet-200 bg-white p-2">
+                              <EvidenceFileTypesPicker
+                                compact
+                                value={itemEditForm.required_evidence_file_types}
+                                onChange={(types) => setItemEditForm((f) => ({
+                                  ...f,
+                                  required_evidence_file_types: types,
+                                  completion_requires_file_or_note: types.length > 0 || f.completion_requires_file_or_note,
+                                }))}
+                              />
+                            </div>
+                          )}
                           <p className="text-[10px] text-violet-700 bg-violet-50 border border-violet-200 rounded-md px-2 py-1">
-                            <Paperclip className="h-2.5 w-2.5 inline mr-1" /> Khi bật: phải có ghi chú trên nhiệm vụ hoặc file đính kèm trước khi chuyển giai đoạn (và khi đánh dấu hoàn thành).
+                            <Paperclip className="h-2.5 w-2.5 inline mr-1" /> Chọn loại file cụ thể (SketchUp, AutoCAD, render, …) hoặc để trống loại = chấp nhận bất kỳ file/ghi chú.
                           </p>
                           <p className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1">
                             <FileSpreadsheet className="h-2.5 w-2.5 inline mr-1" /> Khi bật: nhiệm vụ sinh ra ở tab Nhiệm vụ sẽ có nút <b>Upload Excel BG</b> để tải file báo giá Excel và tạo báo giá tự động.
@@ -1603,8 +1896,11 @@ function TemplateCard({
                       {editingChecklist[item.id] && (
                         <ChecklistEditor tplId={tpl.id} itemId={item.id}
                           checklist={Array.isArray(item.checklist) ? item.checklist : []}
+                          users={users} companies={companies}
+                          parentExecutorCompanyId={item.executor_company_id || ''}
                           sensors={sensors} handleChecklistDragEnd={handleChecklistDragEnd}
                           removeChecklistItem={removeChecklistItem} addChecklistItem={addChecklistItem}
+                          updateChecklistItem={updateChecklistItem}
                           newCheckItem={newCheckItem} setNewCheckItem={setNewCheckItem} />
                       )}
                     </div>
@@ -1632,11 +1928,21 @@ function TemplateCard({
   );
 }
 
+const ckTitleOfCrm = (ck) => (typeof ck === 'string' ? ck : (ck?.title || ck?.label || ''));
+const ckDescOfCrm = (ck) => (typeof ck === 'string' ? '' : (ck?.description || ''));
+const ckEvidenceTypesOfCrm = (ck) => normalizeEvidenceFileTypes(typeof ck === 'object' ? ck?.required_evidence_file_types : []);
+const ckAssigneeOfCrm = (ck) => (typeof ck === 'object' ? String(ck?.assignee_id || ck?.default_assignee_id || '') : '');
+const ckExecutorCompanyOfCrm = (ck) => (typeof ck === 'object' ? String(ck?.executor_company_id || '') : '');
+
 // ═══ Checklist Editor with drag & drop ═══
-function ChecklistEditor({ tplId, itemId, checklist, sensors, handleChecklistDragEnd, removeChecklistItem, addChecklistItem, newCheckItem, setNewCheckItem }) {
+function ChecklistEditor({
+  tplId, itemId, checklist, users = [], companies = [], parentExecutorCompanyId = '',
+  sensors, handleChecklistDragEnd, removeChecklistItem, addChecklistItem, updateChecklistItem,
+  newCheckItem, setNewCheckItem,
+}) {
   const checkIds = checklist.map((_, i) => `ck-${itemId}-${i}`);
   return (
-    <div className="ml-10 pl-3 border-l-2 border-emerald-200 mb-2 space-y-1">
+    <div className="ml-10 pl-3 border-l-2 border-emerald-200 mb-2 space-y-1.5">
       <p className="text-[10px] text-emerald-600 font-medium uppercase tracking-wider">Checklist mẫu — kéo thả để sắp xếp</p>
       <DndContext sensors={sensors} collisionDetection={closestCenter}
         onDragEnd={(e) => handleChecklistDragEnd(e, tplId, itemId)}>
@@ -1644,14 +1950,91 @@ function ChecklistEditor({ tplId, itemId, checklist, sensors, handleChecklistDra
           {checklist.map((ck, ci) => (
             <SortableItem key={checkIds[ci]} id={checkIds[ci]}>
               {({ dragHandleProps: ckDrag }) => (
-                <div className="flex items-center gap-2 text-xs">
-                  <div {...ckDrag} className="cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 touch-none">
+                <div className="flex items-start gap-2 text-xs bg-white border border-emerald-100 rounded-md px-1.5 py-1.5">
+                  <div {...ckDrag} className="cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 touch-none mt-1.5">
                     <GripVertical className="h-3 w-3" />
                   </div>
-                  <span className="text-emerald-500">☐</span>
-                  <span className="flex-1">{ck}</span>
+                  <span className="text-emerald-500 mt-1.5">☐</span>
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <input
+                      key={`t|${checkIds[ci]}|${ckTitleOfCrm(ck)}`}
+                      defaultValue={ckTitleOfCrm(ck)}
+                      placeholder="Tên mục checklist"
+                      className="w-full h-7 px-2 text-xs font-medium border rounded outline-none focus:ring-1 focus:ring-emerald-400"
+                      onBlur={e => updateChecklistItem(tplId, itemId, ci, { title: e.target.value.trim() })}
+                      onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                    />
+                    <input
+                      key={`d|${checkIds[ci]}|${ckDescOfCrm(ck)}`}
+                      defaultValue={ckDescOfCrm(ck)}
+                      placeholder="Mô tả (tùy chọn)"
+                      className="w-full h-7 px-2 text-[11px] text-gray-600 border border-gray-200 rounded outline-none focus:ring-1 focus:ring-emerald-300"
+                      onBlur={e => updateChecklistItem(tplId, itemId, ci, { description: e.target.value.trim() })}
+                    />
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <User className="h-3 w-3 text-indigo-600 shrink-0" />
+                      <select
+                        value={ckAssigneeOfCrm(ck)}
+                        onChange={(e) => updateChecklistItem(tplId, itemId, ci, {
+                          assignee_id: e.target.value || null,
+                        })}
+                        className="h-7 min-w-[140px] flex-1 max-w-full px-2 text-[11px] border border-indigo-200 rounded bg-white outline-none focus:ring-1 focus:ring-indigo-300"
+                        title="Nhân viên mặc định khi sinh nhiệm vụ từ mẫu"
+                      >
+                        <option value="">— Chưa gán —</option>
+                        {(users || []).map((u) => (
+                          <option key={u.id} value={u.id}>{u.full_name || u.email || u.id}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <Globe className="h-3 w-3 text-teal-600 shrink-0" />
+                      <select
+                        value={ckExecutorCompanyOfCrm(ck)}
+                        onChange={(e) => updateChecklistItem(tplId, itemId, ci, {
+                          executor_company_id: e.target.value || null,
+                        })}
+                        className="h-7 min-w-[140px] flex-1 max-w-full px-2 text-[11px] border border-teal-200 rounded bg-white outline-none focus:ring-1 focus:ring-teal-300"
+                        title="Công ty thực hiện mục checklist"
+                      >
+                        <option value="">
+                          {parentExecutorCompanyId
+                            ? `Kế thừa (${companies.find((c) => String(c.id) === String(parentExecutorCompanyId))?.short_name || companies.find((c) => String(c.id) === String(parentExecutorCompanyId))?.name || 'nhiệm vụ cha'})`
+                            : 'Cùng công ty chủ deal'}
+                        </option>
+                        {(companies || []).map((c) => (
+                          <option key={c.id} value={c.id}>{c.name}{c.short_name ? ` (${c.short_name})` : ''}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <label className="flex items-center gap-1.5 text-[10px] font-medium text-violet-700 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={checklistItemRequiresEvidence(ck)}
+                        onChange={(e) => updateChecklistItem(tplId, itemId, ci, {
+                          completion_requires_file_or_note: e.target.checked,
+                          required_evidence_file_types: e.target.checked && !ckEvidenceTypesOfCrm(ck).length
+                            ? ['note', 'image'] : (e.target.checked ? ckEvidenceTypesOfCrm(ck) : []),
+                        })}
+                        className="accent-violet-600"
+                      />
+                      <Paperclip className="h-3 w-3" /> Bắt buộc minh chứng khi tick xong
+                    </label>
+                    {checklistItemRequiresEvidence(ck) && (
+                      <div className="rounded border border-violet-100 bg-violet-50/40 p-1.5">
+                        <EvidenceFileTypesPicker
+                          compact
+                          value={ckEvidenceTypesOfCrm(ck)}
+                          onChange={(types) => updateChecklistItem(tplId, itemId, ci, {
+                            required_evidence_file_types: types,
+                            completion_requires_file_or_note: types.length > 0 || !!(typeof ck === 'object' && ck?.completion_requires_file_or_note),
+                          })}
+                        />
+                      </div>
+                    )}
+                  </div>
                   <button onClick={() => removeChecklistItem(tplId, itemId, ci)}
-                    className="p-0.5 text-gray-300 hover:text-red-500 cursor-pointer"><X className="h-3 w-3" /></button>
+                    className="p-0.5 text-gray-300 hover:text-red-500 cursor-pointer mt-1.5"><X className="h-3 w-3" /></button>
                 </div>
               )}
             </SortableItem>

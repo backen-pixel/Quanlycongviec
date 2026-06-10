@@ -1,4 +1,4 @@
-/** @typedef {{ id?: string, name?: string, is_won?: boolean, is_lost?: boolean, sync_role?: string|null }} CrmStageLike */
+/** @typedef {{ id?: string, name?: string, is_won?: boolean, is_lost?: boolean, sync_role?: string|null, counts_as_completed_revenue?: boolean }} CrmStageLike */
 /** @typedef {{ type?: string, project_id?: string|null, sx_handover_at?: string|null, stage_id?: string|null, stage?: CrmStageLike|null }} CrmLeadLike */
 
 const POST_WON_SYNC_ROLES = new Set([
@@ -44,11 +44,26 @@ export function dealHasSxProject(item) {
   return !!(item?.project_id);
 }
 
-/** Cột đang ở giai đoạn sau Thắng (Thắng hoặc Sản xuất / VC…). */
+/** Cột «doanh thu đã hoàn thành» — tiến về phía sau Thắng, không coi là giai đoạn bán hàng. */
+export function isCrmCompletedRevenueStage(stage) {
+  return !!stage?.counts_as_completed_revenue;
+}
+
+/** Cột đang ở giai đoạn sau Thắng (Thắng, Hoàn thành DT, Sản xuất / VC…). */
 export function isDealOnCrmPostWonColumn(stage) {
   if (!stage) return false;
   if (stage.is_won) return true;
+  if (isCrmCompletedRevenueStage(stage)) return true;
   return isCrmPostWonManagedStage(stage);
+}
+
+/** Cột giai đoạn bán hàng (trước Thắng) — kéo ngược từ post-won về đây bị chặn. */
+function isCrmPreWonSalesStage(stage) {
+  if (!stage) return false;
+  if (stage.is_lost || stage.is_won) return false;
+  if (isCrmCompletedRevenueStage(stage)) return false;
+  if (isCrmPostWonManagedStage(stage)) return false;
+  return true;
 }
 
 /**
@@ -59,14 +74,13 @@ export function crmDealRevertFromPostWonBlockedMessage(item, currentStage, targe
   if (!item || item.type !== 'deal' || !dealHasSxProject(item)) return null;
   if (!currentStage || !targetStage) return null;
   if (String(currentStage.id) === String(targetStage.id)) return null;
+  // Luôn cho kéo về cột Thắng hoặc cột «doanh thu đã hoàn thành».
+  if (targetStage.is_won || isCrmCompletedRevenueStage(targetStage)) return null;
   const leavingPostWon = isDealOnCrmPostWonColumn(currentStage);
-  const enteringPreWon =
-    !targetStage.is_won
-    && !targetStage.is_lost
-    && !isCrmPostWonManagedStage(targetStage);
+  const enteringPreWon = isCrmPreWonSalesStage(targetStage);
   if (!leavingPostWon || !enteringPreWon) return null;
   const code = item.code || item.title || 'Deal';
-  return `Deal ${code} đã tạo dự án Sản xuất — không thể kéo ngược về giai đoạn trước. Xem tại module Sản xuất.`;
+  return `Deal ${code} đã tạo dự án Sản xuất — không thể kéo ngược về giai đoạn bán hàng. Vẫn có thể kéo thẳng về cột Thắng.`;
 }
 
 /**

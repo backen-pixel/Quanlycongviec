@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import api from '../lib/api';
 import { formatDate } from '../lib/utils';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
@@ -38,6 +39,9 @@ export default function ProductionTasksTab({
   const [newTask, setNewTask] = useState({ title: '', priority: 'medium', due_date: '', assignee_id: '' });
   const [editingTask, setEditingTask] = useState(null);
   const [editForm, setEditForm] = useState({});
+  const [editPopoverStyle, setEditPopoverStyle] = useState({});
+  const editPopoverRef = useRef(null);
+  const editAnchorElRef = useRef(null);
   const [showTemplatePanel, setShowTemplatePanel] = useState(false);
   const [editingDeadline, setEditingDeadline] = useState(null);
   const [calMonth, setCalMonth] = useState(() => { const n = new Date(); return { y: n.getFullYear(), m: n.getMonth() }; });
@@ -258,7 +262,63 @@ export default function ProductionTasksTab({
     try { await api.delete(`/tasks/${taskId}`); loadTasks(); } catch (e) { alert('Lỗi'); }
   };
 
-  const openEditModal = (task) => {
+  const updateEditPopoverPosition = useCallback(() => {
+    const rect = editAnchorElRef.current?.getBoundingClientRect?.();
+    if (!rect) return;
+    const pad = 8;
+    const gap = 6;
+    const popoverWidth = Math.min(760, window.innerWidth - pad * 2);
+    let maxHeight = Math.min(640, window.innerHeight - pad * 2);
+
+    let left = rect.right - popoverWidth;
+    if (left < pad) left = Math.max(pad, rect.left);
+    left = Math.min(left, window.innerWidth - popoverWidth - pad);
+
+    let top = rect.bottom + gap;
+    if (top + maxHeight > window.innerHeight - pad) {
+      const aboveTop = rect.top - gap - maxHeight;
+      if (aboveTop >= pad) {
+        top = aboveTop;
+      } else {
+        top = pad;
+        maxHeight = window.innerHeight - pad * 2;
+      }
+    }
+
+    setEditPopoverStyle({
+      position: 'fixed',
+      top,
+      left,
+      width: popoverWidth,
+      maxHeight,
+      zIndex: 10050,
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!editingTask) return;
+    updateEditPopoverPosition();
+  }, [editingTask, updateEditPopoverPosition]);
+
+  useEffect(() => {
+    if (!editingTask) return;
+    const onReflow = () => updateEditPopoverPosition();
+    window.addEventListener('resize', onReflow);
+    window.addEventListener('scroll', onReflow, true);
+    return () => {
+      window.removeEventListener('resize', onReflow);
+      window.removeEventListener('scroll', onReflow, true);
+    };
+  }, [editingTask, updateEditPopoverPosition]);
+
+  const closeEditModal = () => {
+    setEditingTask(null);
+    editAnchorElRef.current = null;
+    setEditPopoverStyle({});
+  };
+
+  const openEditModal = (task, anchorEl) => {
+    editAnchorElRef.current = anchorEl || null;
     setEditingTask(task);
     setEditForm({
       title: task.title || '',
@@ -269,6 +329,7 @@ export default function ProductionTasksTab({
       stage_id: task.stage_id || '',
       blocks_stage_advance: !!task.blocks_stage_advance,
     });
+    requestAnimationFrame(() => updateEditPopoverPosition());
   };
 
   const saveEdit = async () => {
@@ -396,26 +457,26 @@ export default function ProductionTasksTab({
           <div
             className="flex-1 min-w-0 cursor-pointer"
             onClick={() => toggleExpand(task.id, task.description || task.notes || '')}
-            onDoubleClick={(e) => { e.stopPropagation(); openEditModal(task); }}
+            onDoubleClick={(e) => { e.stopPropagation(); openEditModal(task, e.currentTarget); }}
             title="Click: ghi chú & đính kèm · Double-click: chỉnh sửa nhiệm vụ"
           >
             <p className={`text-sm ${task.status === 'done' ? 'line-through text-gray-400' : 'text-gray-900'}`}>{task.title}</p>
             {hasNotes && !isExpanded && (
-              <p className="text-[10px] text-gray-400 mt-0.5 line-clamp-1 italic">
+              <p className="text-sm text-gray-500 mt-0.5 line-clamp-1 italic">
                 💬 {(task.description || task.notes || '').slice(0, 80)}
               </p>
             )}
             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
               {task.due_date && editingDeadline !== task.id && (
                 <span onClick={e => { e.stopPropagation(); setEditingDeadline(task.id); }}
-                  className={`text-[10px] flex items-center gap-0.5 cursor-pointer hover:bg-gray-100 px-1 py-0.5 rounded ${isOverdue ? 'text-red-600 font-bold' : 'text-gray-400'}`}>
-                  <Calendar className="h-2.5 w-2.5" />{formatDate(task.due_date)}{task.due_date?.includes('T') ? ` ${new Date(task.due_date).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}` : ''}
+                  className={`text-xs font-semibold flex items-center gap-1 cursor-pointer hover:bg-gray-100 px-1.5 py-0.5 rounded ${isOverdue ? 'text-red-600' : 'text-gray-700'}`}>
+                  <Calendar className="h-3.5 w-3.5" />{formatDate(task.due_date)}{task.due_date?.includes('T') ? ` ${new Date(task.due_date).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}` : ''}
                 </span>
               )}
               {!task.due_date && editingDeadline !== task.id && (
                 <span onClick={e => { e.stopPropagation(); setEditingDeadline(task.id); }}
-                  className="text-[10px] text-gray-300 flex items-center gap-0.5 cursor-pointer hover:text-blue-500 hover:bg-blue-50 px-1 py-0.5 rounded">
-                  <Calendar className="h-2.5 w-2.5" />+ Ngày hẹn
+                  className="text-xs font-medium text-gray-400 flex items-center gap-1 cursor-pointer hover:text-blue-500 hover:bg-blue-50 px-1.5 py-0.5 rounded">
+                  <Calendar className="h-3.5 w-3.5" />+ Ngày hẹn
                 </span>
               )}
               {editingDeadline === task.id && (
@@ -424,7 +485,7 @@ export default function ProductionTasksTab({
                     defaultValue={task.due_date ? task.due_date.substring(0, 16) : ''}
                     onChange={e => { if (e.target.value) updateTaskDeadline(task.id, e.target.value); }}
                     onBlur={() => setTimeout(() => setEditingDeadline(null), 300)}
-                    className="text-[10px] px-1.5 py-0.5 border border-blue-300 rounded bg-blue-50 outline-none focus:ring-1 focus:ring-blue-400 w-[175px]"
+                    className="text-xs px-2 py-1 border border-blue-300 rounded bg-blue-50 outline-none focus:ring-1 focus:ring-blue-400 w-[185px]"
                   />
                   {task.due_date && (
                     <button onClick={() => { updateTaskDeadline(task.id, null); setEditingDeadline(null); }}
@@ -462,7 +523,7 @@ export default function ProductionTasksTab({
               className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer" title="Ghi chú & file đính kèm">
               <Paperclip className="h-3.5 w-3.5" />
             </button>
-            <button type="button" onClick={e => { e.stopPropagation(); openEditModal(task); }}
+            <button type="button" onClick={e => { e.stopPropagation(); openEditModal(task, e.currentTarget); }}
               className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer" title="Sửa nhiệm vụ">
               <Edit3 className="h-3.5 w-3.5" />
             </button>
@@ -504,8 +565,8 @@ export default function ProductionTasksTab({
                   setTaskNoteText(p => ({ ...p, [task.id]: val }));
                 }}
                 placeholder="Nhập ghi chú cho nhiệm vụ này..."
-                rows={2}
-                className="w-full px-2.5 py-1.5 border rounded-lg text-xs outline-none focus:border-blue-400 resize-none mb-1.5"
+                rows={3}
+                className="w-full px-3 py-2 border rounded-lg text-sm leading-relaxed outline-none focus:border-blue-400 resize-y mb-1.5"
               />
               <div className="flex justify-between items-center mb-2">
                 <div>
@@ -843,46 +904,51 @@ export default function ProductionTasksTab({
         </details>
       )}
 
-      {/* Edit modal */}
-      {editingTask && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setEditingTask(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-4 border-b">
+      {/* Edit popover — hiển thị ngay tại nút Sửa */}
+      {editingTask && typeof document !== 'undefined' && createPortal(
+        <>
+          <div className="fixed inset-0 z-[10049]" onClick={closeEditModal} aria-hidden />
+          <div
+            ref={editPopoverRef}
+            style={editPopoverStyle}
+            className="bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
               <div className="flex items-center gap-2">
                 <Edit3 className="h-4 w-4 text-blue-600" />
                 <h3 className="text-sm font-bold text-gray-900">Sửa nhiệm vụ</h3>
               </div>
-              <button onClick={() => setEditingTask(null)} className="p-1 hover:bg-gray-100 rounded-lg cursor-pointer">
+              <button onClick={closeEditModal} className="p-1 hover:bg-gray-100 rounded-lg cursor-pointer">
                 <X className="h-4 w-4 text-gray-500" />
               </button>
             </div>
-            <div className="p-5 space-y-4">
-              <div>
+            <div className="flex-1 overflow-y-auto p-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="md:col-span-2">
                 <label className="text-[11px] font-semibold text-gray-500 uppercase">Tên nhiệm vụ *</label>
                 <input value={editForm.title} onChange={e => setEditForm(f => ({ ...f, title: e.target.value }))}
                   className="mt-1 w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none" />
               </div>
-              <div>
+              <div className="md:col-span-2">
                 <label className="text-[11px] font-semibold text-gray-500 uppercase">Mô tả</label>
                 <textarea value={editForm.description || ''} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))}
                   className="mt-1 w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none resize-y min-h-[70px]" />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[11px] font-semibold text-gray-500 uppercase">Giai đoạn</label>
-                  <select value={editForm.stage_id || ''} onChange={e => setEditForm(f => ({ ...f, stage_id: e.target.value }))}
-                    className="mt-1 w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none">
-                    <option value="">— Chọn giai đoạn —</option>
-                    {stageList.filter(s => s.task_stage_id).map(s => (
-                      <option key={s.task_stage_id} value={s.task_stage_id}>{s.name || s.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[11px] font-semibold text-gray-500 uppercase">Hạn hoàn thành</label>
-                  <input type="datetime-local" value={editForm.due_date} onChange={e => setEditForm(f => ({ ...f, due_date: e.target.value }))}
-                    className="mt-1 w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none" />
-                </div>
+              <div>
+                <label className="text-[11px] font-semibold text-gray-500 uppercase">Giai đoạn</label>
+                <select value={editForm.stage_id || ''} onChange={e => setEditForm(f => ({ ...f, stage_id: e.target.value }))}
+                  className="mt-1 w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none">
+                  <option value="">— Chọn giai đoạn —</option>
+                  {stageList.filter(s => s.task_stage_id).map(s => (
+                    <option key={s.task_stage_id} value={s.task_stage_id}>{s.name || s.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold text-gray-500 uppercase">Hạn hoàn thành</label>
+                <input type="datetime-local" value={editForm.due_date} onChange={e => setEditForm(f => ({ ...f, due_date: e.target.value }))}
+                  className="mt-1 w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none" />
               </div>
               <div>
                 <label className="text-[11px] font-semibold text-gray-500 uppercase">Người phụ trách</label>
@@ -894,7 +960,7 @@ export default function ProductionTasksTab({
               </div>
               <div>
                 <label className="text-[11px] font-semibold text-gray-500 uppercase">Độ ưu tiên</label>
-                <div className="mt-1 flex gap-2">
+                <div className="mt-1 flex gap-2 flex-wrap">
                   {['low','medium','high','urgent'].map(p => (
                     <button key={p} onClick={() => setEditForm(f => ({ ...f, priority: p }))}
                       className={"px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer border transition-colors " + (editForm.priority === p ? PRIORITY_COLORS[p] + ' border-current ring-1 ring-offset-1 ring-current' : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100')}>
@@ -903,7 +969,7 @@ export default function ProductionTasksTab({
                   ))}
                 </div>
               </div>
-              <div>
+              <div className="md:col-span-2">
                 <label className="text-[11px] font-semibold text-gray-500 uppercase">Chặn chuyển giai đoạn</label>
                 <label className="mt-1 flex items-center gap-2 px-3 py-2 rounded-lg border border-amber-200 bg-amber-50 cursor-pointer select-none">
                   <input
@@ -917,15 +983,17 @@ export default function ProductionTasksTab({
                   </span>
                 </label>
               </div>
+              </div>
             </div>
-            <div className="px-5 py-4 border-t bg-gray-50 rounded-b-2xl flex items-center justify-end gap-2">
-              <button onClick={() => setEditingTask(null)} className="h-9 px-4 text-gray-600 hover:bg-gray-200 rounded-lg text-sm font-medium cursor-pointer">Hủy</button>
+            <div className="px-5 py-4 border-t bg-gray-50 rounded-b-2xl flex items-center justify-end gap-2 shrink-0">
+              <button onClick={closeEditModal} className="h-9 px-4 text-gray-600 hover:bg-gray-200 rounded-lg text-sm font-medium cursor-pointer">Hủy</button>
               <button onClick={saveEdit} className="h-9 px-5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold flex items-center gap-1.5 cursor-pointer">
                 <Save className="h-3.5 w-3.5" /> Lưu
               </button>
             </div>
           </div>
-        </div>
+        </>,
+        document.body,
       )}
     </div>
   );

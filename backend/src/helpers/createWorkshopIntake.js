@@ -145,6 +145,7 @@ async function insertWorkshopProject({ deal, companyId, workshopTypeId, userId, 
     current_stage_id: null,
     install_address: deal.install_address || null,
     estimated_value: deal.estimated_value ?? null,
+    production_value: deal.estimated_value ?? null,
     priority: 'medium',
     sales_person_id: deal.assigned_to || userId,
     consult_date: nowIso,
@@ -404,6 +405,7 @@ async function createWorkshopIntakeOrder(opts) {
     project_id: projectId,
     project_code: project.code,
     project_name: project.name,
+    workshop_type_id: wtCheck.type.id,
     tasks_created: 0,
   };
 }

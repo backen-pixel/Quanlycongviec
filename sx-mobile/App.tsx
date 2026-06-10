@@ -8,12 +8,14 @@ import PushNotificationBridge from './src/components/PushNotificationBridge';
 import CallNotificationBridge from './src/components/call/CallNotificationBridge';
 import CallOverlay from './src/components/call/CallOverlay';
 import SystemBubbleSync from './src/components/SystemBubbleSync';
+import UpdateGate from './src/components/UpdateGate';
 import { AuthProvider } from './src/context/AuthContext';
 import { CallProvider } from './src/context/CallContext';
 import { MessengerProvider } from './src/context/MessengerContext';
 import { NotificationProvider } from './src/context/NotificationContext';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
 import { setupNotificationChannels } from './src/lib/notificationChannels';
+import { checkAndApplyOtaUpdate } from './src/lib/otaUpdate';
 import { navigationRef } from './src/navigation/navigationRef';
 import RootNavigator from './src/navigation/RootNavigator';
 
@@ -36,6 +38,7 @@ function AppShell() {
 
   useEffect(() => {
     void setupNotificationChannels();
+    void checkAndApplyOtaUpdate();
   }, []);
 
   const navTheme = useMemo(
@@ -60,6 +63,7 @@ function AppShell() {
       <CallNotificationBridge />
       <SystemBubbleSync />
       <PushNotificationBridge />
+      <UpdateGate />
       <StatusBar style={isDark ? 'light' : 'dark'} />
     </NavigationContainer>
   );

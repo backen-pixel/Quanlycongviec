@@ -13,6 +13,7 @@ import { isAdminLike } from '../lib/adminRole';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
 import CRMTasksTab from '../components/CRMTasksTab';
+import CrmTaskDocumentsPanel from '../components/CrmTaskDocumentsPanel';
 import UnifiedTaskHistoryWidget from '../components/UnifiedTaskHistoryWidget';
 import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
 import ExcelQuotationImport from '../components/ExcelQuotationImport';
@@ -23,6 +24,7 @@ import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
 import CallLogsTab from '../components/CallLogsTab';
 import LeadVoiceRecordingsTab from '../components/LeadVoiceRecordingsTab';
 import FacebookChatTab from '../components/FacebookChatTab';
+import ZaloChatTab from '../components/ZaloChatTab';
 import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
 import Modal from '../components/Modal';
@@ -87,6 +89,7 @@ export default function LeadDetail() {
   const [activities, setActivities] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [taskDocuments, setTaskDocuments] = useState([]);
+  const [crmTasks, setCrmTasks] = useState([]);
   const [stagesLead, setStagesLead] = useState([]);
   const [stagesDeal, setStagesDeal] = useState([]);
   /** Các giai đoạn deal đã từng vào — stepper tích ✓ theo lịch sử (không chỉ order_index). */
@@ -273,6 +276,13 @@ export default function LeadDetail() {
     return () => { cancelled = true; };
   }, [lead?.company_id, user?.company_id]);
 
+  /** Chỉ hiện tab inbox đúng nguồn tạo lead (facebook | zalo). */
+  const inboxChannel = useMemo(() => {
+    const ch = String(lead?.inbox_channel || '').trim().toLowerCase();
+    if (ch === 'facebook' || ch === 'zalo') return ch;
+    return null;
+  }, [lead?.inbox_channel]);
+
   /** Mở đúng tab từ URL (?tab=chat|facebook|calls|voice_crm|approvals|…) — app mobile / liên kết ngoài. */
   useEffect(() => {
     const t = searchParams.get('tab');
@@ -290,6 +300,7 @@ export default function LeadDetail() {
       'documents',
       'notes',
       'facebook',
+      'zalo',
       'team',
       'comments',
       'calls',
@@ -318,11 +329,20 @@ export default function LeadDetail() {
         return;
       }
     }
+    if (t === 'facebook' || t === 'zalo') {
+      if (!lead || String(lead.id) !== String(id)) return;
+      const ch = inboxChannel;
+      setActiveTab(ch === 'facebook' || ch === 'zalo' ? ch : 'tasks');
+      const next = new URLSearchParams(searchParams);
+      next.delete('tab');
+      setSearchParams(next, { replace: true });
+      return;
+    }
     setActiveTab(t);
     const next = new URLSearchParams(searchParams);
     next.delete('tab');
     setSearchParams(next, { replace: true });
-  }, [id, searchParams, setSearchParams, lead]);
+  }, [id, searchParams, setSearchParams, lead, inboxChannel]);
 
   const loadDealExcelQuotations = useCallback(() => {
     if (!id) return;
@@ -345,13 +365,14 @@ export default function LeadDetail() {
     const seq = ++loadSeqRef.current;
     if (!silent) setLoading(true);
     try {
-      const [leadRes, actRes, docRes, flowsRes, usersRes, taskDocRes] = await Promise.all([
+      const [leadRes, actRes, docRes, flowsRes, usersRes, taskDocRes, tasksRes] = await Promise.all([
         api.get(`/crm/leads/${id}/detail`).then(r => r.data),
         api.get(`/crm/leads/${id}/activities`).catch(() => ({ data: [] })),
         api.get(`/crm/leads/${id}/documents`).catch(() => ({ data: [] })),
         api.get('/flows').then(r => r.data?.flows || r.data || []).catch(() => []),
         api.get('/users').then(r => r.data?.users || []).catch(() => []),
         api.get(`/crm/leads/${id}/task-documents`).catch(() => ({ data: [] })),
+        api.get(`/crm/leads/${id}/tasks`, { params: { task_scope: 'all' } }).catch(() => ({ data: [] })),
       ]);
 
       const leadCompanyId = leadRes?.company_id || leadRes?.company?.id || null;
@@ -372,6 +393,7 @@ export default function LeadDetail() {
       setActivities(actRes.data || []);
       setDocuments(docRes.data || []);
       setTaskDocuments(taskDocRes.data || taskDocRes || []);
+      setCrmTasks(Array.isArray(tasksRes.data) ? tasksRes.data : []);
       setStagesLead(sortAndDedupePipelineStages(stagesLeadRes.data || []));
       setStagesDeal(sortAndDedupePipelineStages(stagesDealRes.data || []));
       const visited = new Set();
@@ -439,6 +461,9 @@ export default function LeadDetail() {
       const taskLists = await Promise.all(
         leadIds.map((lid) => api.get(`/crm/leads/${lid}/task-documents`).catch(() => ({ data: [] }))),
       );
+      const crmTaskLists = await Promise.all(
+        leadIds.map((lid) => api.get(`/crm/leads/${lid}/tasks`, { params: { task_scope: 'all' } }).catch(() => ({ data: [] }))),
+      );
       const seenDoc = new Set();
       const mergedDocs = [];
       for (const dr of docLists) {
@@ -459,8 +484,18 @@ export default function LeadDetail() {
           mergedTask.push(a);
         }
       }
+      const seenTaskRow = new Set();
+      const mergedCrmTasks = [];
+      for (const tr of crmTaskLists) {
+        for (const t of tr.data || []) {
+          if (!t?.id || seenTaskRow.has(t.id)) continue;
+          seenTaskRow.add(t.id);
+          mergedCrmTasks.push(t);
+        }
+      }
       setDocuments(mergedDocs);
       setTaskDocuments(mergedTask);
+      setCrmTasks(mergedCrmTasks);
     } catch (_) {}
   }, [id]);
 
@@ -472,6 +507,13 @@ export default function LeadDetail() {
     const st = stagesDeal.find((s) => s.id === lead.stage_id);
     return !!(st && isCrmDealStageHoanThanhName(st.name));
   }, [lead, stagesDeal]);
+
+  useEffect(() => {
+    if (!lead) return;
+    if ((activeTab === 'facebook' || activeTab === 'zalo') && activeTab !== inboxChannel) {
+      setActiveTab(inboxChannel || 'tasks');
+    }
+  }, [lead?.id, inboxChannel, activeTab]);
 
   useEffect(() => {
     if (lead?.type === 'deal' && activeTab === 'deal_scores' && !isDealHoanThanhForZalo) {
@@ -500,6 +542,11 @@ export default function LeadDetail() {
     const total = manual.length + (taskDocuments || []).length + orphan.length;
     return { manualLeadDocs: manual, orphanSyncedLeadDocs: orphan, documentsTabTotal: total };
   }, [documents, taskDocuments]);
+
+  const pipelineStagesForDocs = useMemo(
+    () => (lead?.type === 'deal' ? stagesDeal : stagesLead),
+    [lead?.type, stagesDeal, stagesLead],
+  );
 
   useEffect(() => {
     if (loading || !lead || !id || String(lead.id) !== String(id)) return;
@@ -777,7 +824,7 @@ export default function LeadDetail() {
       const alreadySx = crmDealMoveToWonSxAlreadyCreatedMessage(lead);
       if (alreadySx) {
         if (String(lead.stage_id) === String(stageId)) return;
-        setDealWonSxExistsCtx({ stageId, extraData, message: alreadySx });
+        await patchLeadStage(stageId, extraData);
         return;
       }
       setDealStageWonErr('');
@@ -796,6 +843,7 @@ export default function LeadDetail() {
       targetStage &&
       !targetStage.is_won &&
       !targetStage.is_lost &&
+      !targetStage.counts_as_completed_revenue &&
       String(lead?.stage_id || '') !== String(stageId)
     ) {
       try {
@@ -1557,6 +1605,7 @@ export default function LeadDetail() {
               >
                 📝 Ghi chú ({noteActivities.length})
               </button>
+              {inboxChannel === 'facebook' && (
               <button
                 onClick={() => setActiveTab('facebook')}
                 className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
@@ -1567,6 +1616,19 @@ export default function LeadDetail() {
               >
                 📘 Facebook
               </button>
+              )}
+              {inboxChannel === 'zalo' && (
+              <button
+                onClick={() => setActiveTab('zalo')}
+                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                  activeTab === 'zalo'
+                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                💬 Zalo OA
+              </button>
+              )}
               <button
                 onClick={() => setActiveTab('team')}
                 className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
@@ -1636,6 +1698,7 @@ export default function LeadDetail() {
                   onArtifactsSynced={refreshTaskSyncedDocuments}
                   refreshKey={crmTasksRefreshKey}
                   sxTemplateCompanyId={lead?.sx_template_company_id || null}
+                  linkedProjectId={lead?.project_id || null}
                 />
                 <div className="mt-6">
                   <UnifiedTaskHistoryWidget
@@ -1666,104 +1729,13 @@ export default function LeadDetail() {
                     </div>
                   </div>
 
-                  {/* Task Documents — nhóm theo nhiệm vụ */}
-                  {taskDocuments.length > 0 && (
-                    <div className="mb-4">
-                      <p className="text-xs font-bold text-gray-500 uppercase mb-2">📂 File nhiệm vụ ({taskDocuments.length})</p>
-                      <div className="space-y-4">
-                        {/* Nhóm theo stage_slug → task_title */}
-                        {(() => {
-                          const STAGE_LABELS = {
-                            consulting: '💬 Tư vấn',
-                            deal_new: '📋 Nhiệm vụ Deal mới',
-                            deal_quote_contract: '📄 Báo giá & Hợp đồng',
-                            deal_ordering: '🛒 Tiến hành đặt hàng',
-                            deal_schedule: '📅 Hẹn ngày lắp đặt',
-                            deal_shipping: '🚛 Đặt Vận chuyển',
-                            deal_notes: '📝 Ghi chú khác',
-                          };
-                          // Group by stage → task
-                          const stageGroups = {};
-                          taskDocuments.forEach(td => {
-                            const stageKey = td.stage_slug || '_other';
-                            if (!stageGroups[stageKey]) stageGroups[stageKey] = {};
-                            const taskKey = td.task_title || 'Khác';
-                            if (!stageGroups[stageKey][taskKey]) stageGroups[stageKey][taskKey] = [];
-                            stageGroups[stageKey][taskKey].push(td);
-                          });
-                          return Object.entries(stageGroups).map(([stageSlug, taskGroups]) => {
-                            const stageLabel = STAGE_LABELS[stageSlug] || (stageSlug === '_other' ? '📋 Khác' : stageSlug);
-                            const stageFileCount = Object.values(taskGroups).flat().length;
-                            const stageNoteCount = Object.values(taskGroups).flat().filter(f => f.doc_type === 'task_note').length;
-                            return (
-                              <div key={stageSlug} className="border rounded-xl overflow-hidden">
-                                {/* Stage header */}
-                                <div className="bg-gradient-to-r from-gray-50 to-gray-100 px-3 py-2 border-b flex items-center gap-2">
-                                  <p className="text-xs font-bold text-gray-700">{stageLabel}</p>
-                                  <span className="text-[10px] text-gray-400 bg-white px-2 py-0.5 rounded-full">{stageFileCount} file</span>
-                                  {stageNoteCount > 0 && <span className="text-[10px] text-amber-500 bg-amber-50 px-2 py-0.5 rounded-full">{stageNoteCount} ghi chú</span>}
-                                </div>
-                                {/* Tasks inside this stage */}
-                                <div className="divide-y">
-                                  {Object.entries(taskGroups).map(([taskTitle, files]) => {
-                                    const fileFiles = files.filter(f => f.doc_type !== 'task_note');
-                                    const noteFiles = files.filter(f => f.doc_type === 'task_note');
-                                    return (
-                                      <div key={taskTitle}>
-                                        <div className="bg-white px-3 py-1.5 border-b flex items-center gap-2">
-                                          <span className="text-[11px] font-semibold text-gray-600">📋 {taskTitle}</span>
-                                          {fileFiles.length > 0 && <span className="text-[9px] text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded-full">📎 {fileFiles.length}</span>}
-                                          {noteFiles.length > 0 && <span className="text-[9px] text-amber-500 bg-amber-50 px-1.5 py-0.5 rounded-full">📝 {noteFiles.length}</span>}
-                                        </div>
-                                        <div className="divide-y divide-gray-50">
-                                          {files.map(f => {
-                                            const isVideo = f.doc_type === 'video' || f.mime_type?.startsWith('video/') || /\.(mp4|mov|webm|avi)$/i.test(f.file_name || '');
-                                            const isImage = f.doc_type === 'image' || f.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(f.file_name || '');
-                                            const taskFileOpen = f.file_url ? getFileOpenAnchorProps(f.file_url, { fileName: f.file_name }) : null;
-                                            return (
-                                              <div key={f.id} className="px-4 py-2 hover:bg-blue-50 transition">
-                                                <div className="flex items-center gap-3">
-                                                  <span className="text-lg">{f.doc_type === 'task_note' ? '📝' : isVideo ? '🎬' : getFileIcon(f.file_name)}</span>
-                                                  <div className="flex-1 min-w-0">
-                                                    <p className="text-sm font-medium text-gray-800 truncate">{f.doc_type === 'task_note' ? (f.name || 'Ghi chú') : (f.file_name || f.name)}</p>
-                                                    {f.notes && <p className="text-[10px] text-gray-500 truncate mt-0.5">{f.notes}</p>}
-                                                    <div className="flex items-center gap-2 mt-0.5">
-                                                      {f.file_size && <span className="text-[10px] text-gray-400">{f.file_size > 1024 * 1024 ? `${(f.file_size / 1024 / 1024).toFixed(1)} MB` : `${(f.file_size / 1024).toFixed(1)} KB`}</span>}
-                                                      {f.created_at && <span className="text-[10px] text-gray-400">{new Date(f.created_at).toLocaleDateString('vi-VN')}</span>}
-                                                      {taskFileOpen && <a {...taskFileOpen} className="text-[10px] text-blue-500 hover:underline">Mở ↗</a>}
-                                                    </div>
-                                                  </div>
-                                                </div>
-                                                {/* Video player */}
-                                                {isVideo && f.file_url && (
-                                                  <div className="mt-2 ml-8">
-                                                    <video src={publicFileUrl(f.file_url)} controls preload="metadata"
-                                                      className="max-w-full max-h-64 rounded-lg border border-gray-200 bg-black shadow-sm" />
-                                                  </div>
-                                                )}
-                                                {/* Image preview */}
-                                                {isImage && f.file_url && taskFileOpen && (
-                                                  <div className="mt-2 ml-8">
-                                                    <a {...taskFileOpen}>
-                                                      <img src={publicFileUrl(f.file_url)} alt={f.name} className="max-h-40 max-w-full rounded-lg border border-gray-200 object-contain hover:opacity-90 cursor-pointer" />
-                                                    </a>
-                                                  </div>
-                                                )}
-                                              </div>
-                                            );
-                                          })}
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            );
-                          });
-                        })()}
-                      </div>
-                    </div>
-                  )}
+                  <CrmTaskDocumentsPanel
+                    tasks={crmTasks}
+                    artifacts={taskDocuments}
+                    pipelineStages={pipelineStagesForDocs}
+                    leadCurrentStageId={lead?.stage_id}
+                    leadType={lead?.type || 'lead'}
+                  />
 
                   {orphanSyncedLeadDocs.length > 0 && (
                     <div className="mb-4">
@@ -1859,6 +1831,8 @@ export default function LeadDetail() {
                 />
               ) : activeTab === 'facebook' ? (
                 <FacebookChatTab leadId={id} companyId={lead?.company_id} />
+              ) : activeTab === 'zalo' ? (
+                <ZaloChatTab leadId={id} />
               ) : activeTab === 'team' ? (
                 <LeadMembersTab leadId={id} />
               ) : activeTab === 'comments' ? (
@@ -2797,6 +2771,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
   const [sxHandoverSaving, setSxHandoverSaving] = useState(false);
   const [sxHandoverNotice, setSxHandoverNotice] = useState('');
   const [sxHandoverExpanded, setSxHandoverExpanded] = useState(false);
+  const [depositDraft, setDepositDraft] = useState({ amount: '', received: '', label: '' });
 
   useEffect(() => {
     if (lead?.type !== 'deal' || lead?.sx_handover_at) return;
@@ -2923,6 +2898,44 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
       onUpdate();
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi cập nhật');
+    }
+    setSaving(false);
+  };
+
+  const depositDisplayValue = () => {
+    const parts = [];
+    const amt = Number(lead?.deposit_amount);
+    if (Number.isFinite(amt) && amt > 0) parts.push(formatVND(amt));
+    if (lead?.deposit_received === true) parts.push('Đã nhận cọc');
+    else if (lead?.deposit_received === false) parts.push('Chưa nhận cọc');
+    const lbl = lead?.deposit_label?.trim();
+    if (lbl) parts.push(lbl);
+    return parts.length ? parts.join(' · ') : null;
+  };
+
+  const startEditDeposit = () => {
+    setEditing('deposit');
+    setDepositDraft({
+      amount: lead?.deposit_amount != null && Number(lead.deposit_amount) > 0 ? String(lead.deposit_amount) : '',
+      received: lead?.deposit_received === true ? 'yes' : lead?.deposit_received === false ? 'no' : '',
+      label: lead?.deposit_label?.trim() || '',
+    });
+  };
+
+  const saveDeposit = async () => {
+    setSaving(true);
+    try {
+      const rawAmt = depositDraft.amount;
+      const deposit_amount = rawAmt === '' || rawAmt == null ? null : Number(rawAmt);
+      await api.put(`/crm/leads/${lead.id}`, {
+        deposit_amount: deposit_amount != null && deposit_amount > 0 ? deposit_amount : null,
+        deposit_received: depositDraft.received === 'yes' ? true : depositDraft.received === 'no' ? false : null,
+        deposit_label: depositDraft.label?.trim() || null,
+      });
+      setEditing(null);
+      onUpdate();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi lưu tiền cọc');
     }
     setSaving(false);
   };
@@ -3055,6 +3068,70 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
         displayValue={lead?.estimated_value > 0 ? formatVND(lead.estimated_value) : null}
         type="number" />
 
+      <div className="group">
+        <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors">
+          <span className="text-sm mt-0.5 shrink-0">💵</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Tiền cọc</p>
+            {editing === 'deposit' ? (
+              <div className="space-y-1.5 relative z-20">
+                <input
+                  type="number"
+                  min="0"
+                  value={depositDraft.amount}
+                  onChange={(e) => setDepositDraft((d) => ({ ...d, amount: e.target.value }))}
+                  className="w-full h-8 px-2 border rounded-lg text-sm text-right outline-none focus:ring-2 focus:ring-blue-400"
+                  placeholder="Số tiền VNĐ"
+                  autoFocus
+                />
+                <select
+                  value={depositDraft.received}
+                  onChange={(e) => setDepositDraft((d) => ({ ...d, received: e.target.value }))}
+                  className="w-full h-8 px-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                >
+                  <option value="">Chưa xác định</option>
+                  <option value="yes">Đã nhận</option>
+                  <option value="no">Chưa nhận</option>
+                </select>
+                <input
+                  type="text"
+                  value={depositDraft.label}
+                  onChange={(e) => setDepositDraft((d) => ({ ...d, label: e.target.value }))}
+                  className="w-full h-8 px-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
+                  placeholder="Mô tả (VD: ký HĐ, lệnh SX)"
+                />
+                <div className="flex items-center gap-1.5">
+                  <button type="button" onClick={() => void saveDeposit()} disabled={saving}
+                    className="h-8 px-2.5 flex items-center gap-1 bg-blue-600 text-white rounded-lg text-xs font-medium cursor-pointer hover:bg-blue-700 disabled:opacity-50">
+                    <Save className="h-3.5 w-3.5" /> Lưu
+                  </button>
+                  <button type="button" onClick={() => setEditing(null)}
+                    className="h-8 w-8 flex items-center justify-center bg-gray-100 text-gray-500 rounded-lg cursor-pointer hover:bg-gray-200">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div onClick={startEditDeposit} className="cursor-pointer group/val">
+                {depositDisplayValue() ? (
+                  <p className="text-sm font-medium" style={{ color: '#000000' }}>{depositDisplayValue()}</p>
+                ) : (
+                  <p className="text-sm text-gray-300 italic group-hover/val:text-blue-400 transition-colors">
+                    Nhấn để nhập...
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+          {editing !== 'deposit' && (
+            <button type="button" onClick={startEditDeposit}
+              className="p-1 opacity-0 group-hover:opacity-100 text-gray-300 hover:text-blue-500 cursor-pointer transition-opacity shrink-0">
+              <Edit2 className="h-3 w-3" />
+            </button>
+          )}
+        </div>
+      </div>
+
       {lead?.type === 'deal' && (
         <EditableRow icon="📅" label="Dự kiến chốt" field="expected_close_date"
           value={lead?.expected_close_date || ''}
@@ -3062,7 +3139,8 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
           type="date" />
       )}
 
-      {/* Deadline thẻ (kanban_deadline_at) — đặt/sửa kèm lý do + lịch sử */}
+      {/* Deadline thẻ (kanban_deadline_at) — ẩn khi deal đã ở cột Thắng */}
+      {!lead?.stage?.is_won && !lead?.stage?.counts_as_completed_revenue && (
       <div className="rounded-lg border border-rose-200 bg-rose-50/50 p-2.5 my-1.5">
         <div className="flex items-start gap-2">
           <span className="text-sm mt-0.5">⏰</span>
@@ -3136,7 +3214,9 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
           </div>
         )}
       </div>
+      )}
 
+      {!lead?.stage?.is_won && !lead?.stage?.counts_as_completed_revenue && (
       <CrmDeadlineModal
         open={deadlineModalOpen}
         title={lead?.kanban_deadline_at ? 'Sửa deadline thẻ' : 'Đặt deadline thẻ'}
@@ -3149,6 +3229,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
         onClose={() => { if (!deadlineBusy) setDeadlineModalOpen(false); }}
         onConfirm={saveKanbanDeadline}
       />
+      )}
 
       {lead?.lost_reason && (
         <div className="flex items-start gap-2 py-1.5 px-1">

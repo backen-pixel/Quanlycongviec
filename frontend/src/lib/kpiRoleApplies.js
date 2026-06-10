@@ -26,7 +26,7 @@ export function allowedAppliesTagsForUserRole(userRole) {
   const r = String(userRole ?? '').trim().toLowerCase();
   if (!r) return null;
   if (KPI_FULL_DEFINITION_ROLES.has(r)) return null;
-  if (r === 'sales_admin') return new Set(['sales_admin', 'sales_all', 'all']);
+  if (r === 'sales_admin' || r === 'crm_production_admin') return new Set(['sales_admin', 'sales_all', 'all']);
   if (KPI_CRM_FIELD_ROLES.has(r)) return new Set(['sales', 'sales_all', 'deal', 'all']);
   return new Set(['all']);
 }

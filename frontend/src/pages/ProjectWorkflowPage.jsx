@@ -9,6 +9,62 @@ import {
 import { FileUploadButton, FilePreview } from '../components/FileUpload';
 import { getInitials, avatarColor, PRIORITY_LABELS, PRIORITY_COLORS, formatDate, formatVND } from '../lib/utils';
 
+const sortChecklists = (items = []) =>
+  [...items].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+
+const normalizeChecklistOrder = (items = []) =>
+  items.map((item, idx) => ({ ...item, order_index: idx }));
+
+function moveChecklistAcrossTasks(taskList, move) {
+  const { checklistId, fromTaskId, toTaskId, beforeChecklistId } = move;
+  const fromTaskKey = String(fromTaskId);
+  const toTaskKey = String(toTaskId);
+  const checklistKey = String(checklistId);
+  const beforeKey = beforeChecklistId != null ? String(beforeChecklistId) : null;
+
+  const fromTask = taskList.find((t) => String(t.id) === fromTaskKey);
+  const toTask = taskList.find((t) => String(t.id) === toTaskKey);
+  if (!fromTask || !toTask) return null;
+
+  const fromList = sortChecklists(fromTask.checklists || []);
+  const toListBase = fromTaskKey === toTaskKey ? fromList : sortChecklists(toTask.checklists || []);
+  const sourceIndex = fromList.findIndex((c) => String(c.id) === checklistKey);
+  if (sourceIndex < 0) return null;
+
+  const movingItem = fromList[sourceIndex];
+  const nextFrom = fromList.filter((c) => String(c.id) !== checklistKey);
+  const nextToSeed = fromTaskKey === toTaskKey ? nextFrom : toListBase;
+  const targetIndexRaw = beforeKey
+    ? nextToSeed.findIndex((c) => String(c.id) === beforeKey)
+    : nextToSeed.length;
+  const targetIndex = targetIndexRaw >= 0 ? targetIndexRaw : nextToSeed.length;
+  const nextTo = [...nextToSeed];
+  nextTo.splice(targetIndex, 0, { ...movingItem, task_id: toTask.id });
+
+  const orderedFrom = normalizeChecklistOrder(nextFrom);
+  const orderedTo = normalizeChecklistOrder(nextTo);
+
+  const nextTasks = taskList.map((t) => {
+    const taskKey = String(t.id);
+    if (taskKey === fromTaskKey && fromTaskKey === toTaskKey) {
+      return { ...t, checklists: orderedTo };
+    }
+    if (taskKey === fromTaskKey) return { ...t, checklists: orderedFrom };
+    if (taskKey === toTaskKey) return { ...t, checklists: orderedTo };
+    return t;
+  });
+
+  return {
+    tasks: nextTasks,
+    fromTaskId: fromTask.id,
+    toTaskId: toTask.id,
+    orderedFrom,
+    orderedTo,
+    movedChecklistId: movingItem.id,
+    toOrderIndex: targetIndex,
+  };
+}
+
 // TaskCard component with expandable checklist
 function TaskCard({ task, onToggle, onSaveNote, onStart, onDone }) {
   const [expanded, setExpanded] = useState(false);
@@ -179,6 +235,8 @@ export default function ProjectWorkflowPage() {
   const [editingChecklist, setEditingChecklist] = useState(null); // { taskId, clId }
   const [editNoteText, setEditNoteText] = useState('');
   const [editNoteFiles, setEditNoteFiles] = useState([]);
+  const [draggingChecklist, setDraggingChecklist] = useState(null); // { checklistId, fromTaskId }
+  const [dropHint, setDropHint] = useState(null); // { taskId, beforeChecklistId|null }
 
   // Permission check for viewing all employees
   const canViewAllEmployees = ['admin', 'manager', 'director', 'supervisor'].includes(user?.role);
@@ -354,6 +412,42 @@ export default function ProjectWorkflowPage() {
         if (t.id !== taskId) return t;
         return { ...t, checklists: t.checklists.map(cl => cl.id === clId ? { ...cl, notes, attachments } : cl) };
       }));
+    } catch {
+      selectProject(selectedProject);
+    }
+  };
+
+  const moveChecklist = async ({ checklistId, fromTaskId, toTaskId, beforeChecklistId = null }) => {
+    let moveResult = null;
+    setTasks((prev) => {
+      moveResult = moveChecklistAcrossTasks(prev, { checklistId, fromTaskId, toTaskId, beforeChecklistId });
+      return moveResult?.tasks || prev;
+    });
+    if (!moveResult) return;
+
+    const syncOneTask = async (taskId, orderedList) => {
+      if (!orderedList?.length) return;
+      await Promise.all(
+        orderedList.map((item, idx) =>
+          api.patch(`/tasks/${taskId}/checklists/${item.id}`, { order_index: idx })
+        )
+      );
+    };
+
+    try {
+      await api.patch(`/tasks/${fromTaskId}/checklists/${moveResult.movedChecklistId}`, {
+        task_id: moveResult.toTaskId,
+        order_index: moveResult.toOrderIndex,
+      });
+
+      if (String(moveResult.fromTaskId) === String(moveResult.toTaskId)) {
+        await syncOneTask(moveResult.toTaskId, moveResult.orderedTo);
+      } else {
+        await Promise.all([
+          syncOneTask(moveResult.fromTaskId, moveResult.orderedFrom),
+          syncOneTask(moveResult.toTaskId, moveResult.orderedTo),
+        ]);
+      }
     } catch {
       selectProject(selectedProject);
     }
@@ -783,7 +877,7 @@ export default function ProjectWorkflowPage() {
           /* Task Kanban: Each column = 1 task, cards = checklists */
           <div className="flex gap-4 overflow-x-auto pb-4" style={{ minHeight: '500px' }}>
             {stageTasks.map(task => {
-              const checklists = task.checklists || [];
+              const checklists = sortChecklists(task.checklists || []);
               const clDone = checklists.filter(c => c.is_completed).length;
               return (
                 <div key={task.id} className="shrink-0 w-80 flex flex-col">
@@ -803,12 +897,68 @@ export default function ProjectWorkflowPage() {
                       )}
                     </div>
                   </div>
-                  <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto" style={{ maxHeight: '70vh' }}>
+                  <div
+                    className={`flex-1 rounded-b-xl border p-2 space-y-2 overflow-y-auto ${
+                      dropHint?.taskId === task.id && dropHint?.beforeChecklistId == null
+                        ? 'bg-blue-50/70'
+                        : 'bg-gray-50/50'
+                    }`}
+                    style={{ maxHeight: '70vh' }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      if (!draggingChecklist) return;
+                      setDropHint({ taskId: task.id, beforeChecklistId: null });
+                    }}
+                    onDrop={async (e) => {
+                      e.preventDefault();
+                      if (!draggingChecklist) return;
+                      await moveChecklist({
+                        checklistId: draggingChecklist.checklistId,
+                        fromTaskId: draggingChecklist.fromTaskId,
+                        toTaskId: task.id,
+                        beforeChecklistId: null,
+                      });
+                      setDraggingChecklist(null);
+                      setDropHint(null);
+                    }}
+                  >
                     {checklists.map(cl => {
                       const isEditing = editingChecklist?.taskId === task.id && editingChecklist?.clId === cl.id;
                       
                       return (
-                      <div key={cl.id} className={`bg-white rounded-lg border p-3 ${cl.is_completed ? 'border-emerald-200 bg-emerald-50/30' : 'border-gray-200'}`}>
+                      <div
+                        key={cl.id}
+                        draggable={!isEditing}
+                        onDragStart={() => setDraggingChecklist({ checklistId: cl.id, fromTaskId: task.id })}
+                        onDragEnd={() => {
+                          setDraggingChecklist(null);
+                          setDropHint(null);
+                        }}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          if (!draggingChecklist) return;
+                          setDropHint({ taskId: task.id, beforeChecklistId: cl.id });
+                        }}
+                        onDrop={async (e) => {
+                          e.preventDefault();
+                          if (!draggingChecklist) return;
+                          await moveChecklist({
+                            checklistId: draggingChecklist.checklistId,
+                            fromTaskId: draggingChecklist.fromTaskId,
+                            toTaskId: task.id,
+                            beforeChecklistId: cl.id,
+                          });
+                          setDraggingChecklist(null);
+                          setDropHint(null);
+                        }}
+                        className={`bg-white rounded-lg border p-3 cursor-grab active:cursor-grabbing ${
+                          dropHint?.taskId === task.id && dropHint?.beforeChecklistId === cl.id
+                            ? 'border-blue-400 ring-1 ring-blue-200'
+                            : cl.is_completed
+                              ? 'border-emerald-200 bg-emerald-50/30'
+                              : 'border-gray-200'
+                        }`}
+                      >
                         <div className="flex items-start gap-2">
                           <button onClick={() => toggleCheckItem(task.id, cl.id, cl.is_completed)}
                             className={`shrink-0 w-4 h-4 mt-0.5 rounded border-2 flex items-center justify-center cursor-pointer ${

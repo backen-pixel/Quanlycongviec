@@ -9,7 +9,9 @@ import {
   formatCrmRemainingMs,
   getCrmDeadlineUrgencyBadgeClass,
   getCrmDeadlineUrgencyFromTs,
+  isCrmPipelineStageCompletedRevenue,
   isCrmPipelineStageLost,
+  isCrmPipelineStageWon,
   pickDeadlineConfigValueWithSource,
 } from '../lib/crmLeadDeadlineDisplay';
 import { FbCrmAvatar, FbCrmCommentComposer, formatCrmFbRelativeTime } from './crmFbCommentUi';
@@ -872,7 +874,7 @@ export function DeadlineView({
   const navigate = useNavigate();
   const allItems = useMemo(
     () => pipeline.flatMap((s) => {
-      if (isCrmPipelineStageLost(s)) return [];
+      if (isCrmPipelineStageLost(s) || isCrmPipelineStageWon(s) || isCrmPipelineStageCompletedRevenue(s)) return [];
       return s.items.map((item) => ({ ...item, _stage: s }));
     }),
     [pipeline],

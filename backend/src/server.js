@@ -226,6 +226,9 @@ app.use('/api/messenger', require('./routes/messengerGroups'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/internal-social', require('./routes/internalSocial'));
 app.use('/api/release-notes', require('./routes/releaseNotes'));
+app.use('/api/app-updates/check', externalLimiter); // app gọi check công khai → rate-limit
+app.use('/api/app-updates/manifest', externalLimiter);
+app.use('/api/app-updates', require('./routes/appUpdates'));
 app.use('/api/knowledge', require('./routes/knowledge'));
 const facebookRouter = require('./routes/facebook');
 facebookRouter._ioRef = io;
@@ -956,6 +959,13 @@ server.listen(config.port, () => {
     require('./jobs/crmKanbanDeadlineReminder').start(io);
   } catch (e) {
     console.warn('[crm-kanban-deadline] Failed to start:', e.message);
+  }
+
+  // Cron refresh Zalo OA token hàng ngày 6:00 VN — disable: ZALO_OA_TOKEN_CRON_DISABLED=1
+  try {
+    require('./jobs/zaloOaTokenRefresh').start();
+  } catch (e) {
+    console.warn('[zalo-token-cron] Failed to start:', e.message);
   }
 
   // Cron AI Chat Bot — tick mỗi phút, gửi tin AI vào chat phòng ban/nhóm theo lịch admin cấu hình.

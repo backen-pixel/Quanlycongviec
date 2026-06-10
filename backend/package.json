@@ -13,6 +13,7 @@
     "fb:validate-contact-phones": "node scripts/validate-fb-contact-phones.js",
     "build:frontend": "node ../scripts/knowledge/sync-screenshots-deploy.js && cd ../frontend && npm ci --prefer-offline --no-audit && npm run build",
     "db:migrate:180": "node scripts/run-sql-migration.js ../database/180_internal_social_schedule_visibility_hide_share.sql",
+    "ota:publish": "node scripts/publish-ota.js",
     "test:cache": "node tests/response-cache-smoke.js"
   },
   "keywords": [],

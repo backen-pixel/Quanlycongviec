@@ -7,6 +7,7 @@ import * as Notifications from 'expo-notifications';
 import { AuthProvider } from './src/context/AuthContext';
 import { setupNotificationChannels } from './src/lib/notificationChannels';
 import { setupIncomingCallNotificationCategories } from './src/lib/incomingCallNotifications';
+import { checkAndApplyOtaUpdate } from './src/lib/otaUpdate';
 
 // Hiện notification ngay cả khi app foreground (kể cả tin chat).
 Notifications.setNotificationHandler({
@@ -29,6 +30,7 @@ import GlobalNotificationToast from './src/components/GlobalNotificationToast';
 import ChatNotificationToast from './src/components/ChatNotificationToast';
 import FloatingChatBubble from './src/components/FloatingChatBubble';
 import SystemBubbleSync from './src/components/SystemBubbleSync';
+import UpdateGate from './src/components/UpdateGate';
 import { CrmColors } from './src/theme/crmTheme';
 import { useCrmAndroidSystemUi } from './src/lib/useCrmAndroidSystemUi';
 
@@ -49,6 +51,7 @@ export default function App() {
   useEffect(() => {
     void setupNotificationChannels();
     void setupIncomingCallNotificationCategories();
+    void checkAndApplyOtaUpdate();
   }, []);
 
   return (
@@ -81,6 +84,7 @@ export default function App() {
               <FloatingChatBubble />
               <CallOverlay />
               <CallNotificationBridge />
+              <UpdateGate />
             </View>
             <StatusBar style="dark" />
           </NavigationContainer>

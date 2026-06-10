@@ -3,11 +3,164 @@
  */
 const { supabase } = require('../config/supabase');
 const { nextCrmCode } = require('./crmNextCode');
+const { assertRegionBelongsToCompany } = require('./crmRegionScope');
 const {
   extractContactInfo,
   extractInboundContactInfo,
 } = require('./facebookPhoneExtract');
 const { formatVnPhoneLocal0From84, normalizeVnPhoneTo84 } = require('./zaloOa');
+const { fetchZaloUserProfile } = require('./zaloOaMessaging');
+
+const ZALO_TARGET_TYPES = new Set(['lead', 'deal']);
+const ZALO_MODULE_KEYS = new Set(['crm', 'production', 'logistics']);
+
+function normalizeZaloTargetType(value) {
+  const t = String(value || '').trim().toLowerCase();
+  return ZALO_TARGET_TYPES.has(t) ? t : 'lead';
+}
+
+function normalizeZaloModuleKey(value) {
+  const mk = String(value || '').trim().toLowerCase();
+  return ZALO_MODULE_KEYS.has(mk) ? mk : 'crm';
+}
+
+function resolveZaloModuleKeyForOa(oa) {
+  if (oa?.default_module_key) return normalizeZaloModuleKey(oa.default_module_key);
+  const tt = normalizeZaloTargetType(oa?.default_target_type);
+  return tt === 'deal' ? 'production' : 'crm';
+}
+
+function resolveZaloCreateType(oa) {
+  const mk = resolveZaloModuleKeyForOa(oa);
+  if (mk === 'production' || mk === 'logistics') return 'deal';
+  return normalizeZaloTargetType(oa?.default_target_type);
+}
+
+/** Resolve stage, pipeline, region, lead_type, sx stage — mirror Facebook createLeadFromFacebookInner */
+async function resolveZaloLeadRouting(oaConfig) {
+  const moduleKey = resolveZaloModuleKeyForOa(oaConfig);
+  const createType = resolveZaloCreateType(oaConfig);
+  const companyId = oaConfig?.default_company_id || null;
+
+  const selectedWorkshopTypeId = (moduleKey === 'production' || moduleKey === 'logistics')
+    ? (oaConfig?.default_lead_type_id || null)
+    : null;
+
+  let defaultSxPipelineStageId = null;
+  if (moduleKey === 'production' && oaConfig?.default_stage_id) {
+    try {
+      const { data: sxStage } = await supabase
+        .from('production_pipeline_stages')
+        .select('id, company_id, workshop_type_id, is_active')
+        .eq('id', oaConfig.default_stage_id)
+        .maybeSingle();
+      if (
+        sxStage
+        && sxStage.is_active !== false
+        && (!companyId || String(sxStage.company_id || '') === String(companyId || ''))
+        && (!selectedWorkshopTypeId || !sxStage.workshop_type_id || String(sxStage.workshop_type_id) === String(selectedWorkshopTypeId))
+      ) {
+        defaultSxPipelineStageId = sxStage.id;
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  let stageId = moduleKey === 'production' ? null : (oaConfig?.default_stage_id || null);
+  if (stageId) {
+    try {
+      const { data: selectedStage } = await supabase
+        .from('crm_pipeline_stages')
+        .select('id, pipeline_type')
+        .eq('id', stageId)
+        .maybeSingle();
+      if (!selectedStage || String(selectedStage.pipeline_type || '') !== createType) {
+        stageId = null;
+      }
+    } catch (_) {
+      stageId = null;
+    }
+  }
+  if (!stageId) {
+    const { data: defaultStage } = await supabase.from('crm_pipeline_stages')
+      .select('id').eq('pipeline_type', createType).order('order_index').limit(1).maybeSingle();
+    stageId = defaultStage?.id || null;
+  }
+
+  let resolvedRegionId = null;
+  if (companyId && oaConfig?.default_region_id) {
+    const rr = await assertRegionBelongsToCompany(supabase, companyId, oaConfig.default_region_id);
+    if (rr.ok) resolvedRegionId = oaConfig.default_region_id;
+  }
+
+  let leadTypeId = null;
+  const candidateLeadTypeId = moduleKey === 'crm'
+    ? (oaConfig?.default_lead_type_id || null)
+    : null;
+  if (candidateLeadTypeId && companyId) {
+    const { data: lt } = await supabase
+      .from('crm_lead_types')
+      .select('id, company_id, applies_to, is_active')
+      .eq('id', candidateLeadTypeId)
+      .maybeSingle();
+    if (lt
+      && String(lt.company_id || '') === String(companyId || '')
+      && lt.is_active !== false
+      && [createType, 'both'].includes(String(lt.applies_to || 'both'))) {
+      leadTypeId = lt.id;
+    }
+  }
+
+  let pipelineId = oaConfig?.default_pipeline_id || null;
+  if (companyId) {
+    try {
+      if (pipelineId) {
+        const { data: pipeOk } = await supabase
+          .from('crm_pipelines')
+          .select('id')
+          .eq('id', pipelineId)
+          .eq('company_id', companyId)
+          .eq('is_active', true)
+          .maybeSingle();
+        if (!pipeOk?.id) pipelineId = null;
+      }
+      if (!pipelineId) {
+        const { data: defPipe } = await supabase
+          .from('crm_pipelines')
+          .select('id')
+          .eq('company_id', companyId)
+          .eq('is_active', true)
+          .order('is_default', { ascending: false })
+          .order('created_at')
+          .limit(1)
+          .maybeSingle();
+        pipelineId = defPipe?.id || null;
+      }
+      if (pipelineId && !stageId) {
+        const { data: firstStage } = await supabase
+          .from('crm_pipeline_stages')
+          .select('id')
+          .eq('pipeline_id', pipelineId)
+          .eq('pipeline_type', createType)
+          .eq('is_active', true)
+          .order('order_index')
+          .limit(1)
+          .maybeSingle();
+        if (firstStage?.id) stageId = firstStage.id;
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  return {
+    moduleKey,
+    createType,
+    companyId,
+    stageId,
+    pipelineId,
+    regionId: resolvedRegionId,
+    leadTypeId,
+    defaultSxPipelineStageId,
+  };
+}
 
 function phoneDigitsLen(s) {
   if (s == null || s === '') return 0;
@@ -40,7 +193,8 @@ async function createLeadFromZaloContact(oaConfig, contact, content, extractedPh
   if (!contact?.id) return null;
   if (contact.lead_id) return { id: contact.lead_id };
 
-  const companyId = oaConfig?.default_company_id || null;
+  const routing = await resolveZaloLeadRouting(oaConfig);
+  const { createType, companyId } = routing;
   let customerId = contact.customer_id;
 
   const phoneLocal = extractedPhone
@@ -80,7 +234,7 @@ async function createLeadFromZaloContact(oaConfig, contact, content, extractedPh
     const { data: existLead } = await supabase.from('crm_leads')
       .select('id, code')
       .eq('customer_id', customerId)
-      .eq('type', 'lead')
+      .eq('type', createType)
       .eq('company_id', companyId)
       .limit(1);
     if (existLead?.length) {
@@ -94,32 +248,60 @@ async function createLeadFromZaloContact(oaConfig, contact, content, extractedPh
   }
 
   const sourceId = await resolveZaloSourceId(oaConfig);
-  const title = contact.display_name || 'Lead Zalo OA';
-  const code = await nextCrmCode('LEAD');
-  const descParts = [];
+  const typeLabel = createType === 'deal' ? 'Deal' : 'Lead';
+  const displayName = contact.display_name || 'KH Zalo';
+  const title = `[Zalo ${typeLabel}] ${displayName}`;
+  const codePrefix = createType === 'deal' ? 'DEAL' : 'LEAD';
+  const code = await nextCrmCode(codePrefix);
+  const descParts = [`Nguồn: Zalo OA`];
   if (content) descParts.push(`Tin Zalo: ${String(content).slice(0, 500)}`);
   if (phoneLocal) descParts.push(`SĐT: ${phoneLocal}`);
   if (extractedAddress) descParts.push(`Địa chỉ: ${extractedAddress}`);
 
+  const ownerId = oaConfig?.default_lead_owner_id || oaConfig?.created_by || null;
   const leadRow = {
     code,
     title,
-    type: 'lead',
+    type: createType,
     customer_id: customerId,
-    stage_id: oaConfig?.default_stage_id || null,
+    stage_id: routing.stageId,
+    pipeline_id: routing.pipelineId,
     source_id: sourceId,
     company_id: companyId,
-    region_id: oaConfig?.default_region_id || null,
-    assigned_to: oaConfig?.default_lead_owner_id || null,
-    lead_type_id: oaConfig?.default_lead_type_id || null,
+    region_id: routing.regionId,
+    assigned_to: ownerId,
+    lead_owner_id: ownerId,
+    lead_type_id: routing.leadTypeId,
     description: descParts.join('\n') || 'Tin nhắn Zalo OA',
     install_address: extractedAddress || null,
+    created_by: oaConfig?.created_by || null,
   };
 
   const { data: lead, error } = await supabase.from('crm_leads').insert(leadRow).select().single();
   if (error) {
     console.error('[Zalo OA] create lead:', error.message);
     return null;
+  }
+
+  if (routing.moduleKey === 'production' && createType === 'deal' && routing.defaultSxPipelineStageId) {
+    try {
+      await supabase
+        .from('crm_leads')
+        .update({ sx_pipeline_stage_id: routing.defaultSxPipelineStageId })
+        .eq('id', lead.id);
+      lead.sx_pipeline_stage_id = routing.defaultSxPipelineStageId;
+    } catch (e) {
+      if (!String(e?.message || '').includes('sx_pipeline_stage_id')) {
+        console.warn('[Zalo OA] set sx_pipeline_stage_id:', e.message);
+      }
+    }
+  }
+
+  try {
+    const { autoGenCrmTasksForNewLead } = require('./autoGenCrmTasks');
+    await autoGenCrmTasksForNewLead(lead.id, ownerId);
+  } catch (e) {
+    console.warn('[Zalo OA] Auto-gen tasks:', e.message);
   }
 
   await supabase.from('zalo_contacts').update({
@@ -129,6 +311,7 @@ async function createLeadFromZaloContact(oaConfig, contact, content, extractedPh
   }).eq('id', contact.id);
 
   await supabase.from('zalo_messages').update({ lead_id: lead.id }).eq('contact_id', contact.id);
+  console.log(`[Zalo OA] ${typeLabel} created: ${lead.code} — ${lead.title}`);
   return lead;
 }
 
@@ -486,6 +669,142 @@ async function runZaloBatchCreateLeads({ io, limit = 500, requirePhone = false, 
   return summary;
 }
 
+/** Tên tạm khi chưa lấy được profile Zalo OA. */
+function isPlaceholderZaloDisplayName(name, userId) {
+  const n = String(name || '').trim();
+  if (!n) return true;
+  if (/^Zalo\s/i.test(n)) return true;
+  if (/^Zalo KH$/i.test(n)) return true;
+  if (userId && n === String(userId)) return true;
+  return false;
+}
+
+/**
+ * Gọi Open API Zalo lấy display_name / avatar → cập nhật zalo_contacts (+ lead/customer nếu tên tạm).
+ */
+async function syncZaloContactProfile(contact, oaConfig) {
+  if (!contact?.user_id) return { ok: false, reason: 'missing_user_id' };
+  const { ensureZaloOaAccessToken } = require('./zaloOaToken');
+
+  let ensured = await ensureZaloOaAccessToken(oaConfig);
+  if (!ensured.ok) return { ok: false, reason: 'missing_access_token', message: ensured.message || ensured.error };
+
+  let profile = await fetchZaloUserProfile(ensured.accessToken, contact.user_id);
+  if (!profile?.display_name) {
+    ensured = await ensureZaloOaAccessToken(ensured.oaConfig, { forceRefresh: true });
+    if (ensured.ok) {
+      profile = await fetchZaloUserProfile(ensured.accessToken, contact.user_id);
+    }
+  }
+  if (!profile?.display_name) {
+    return { ok: false, reason: 'profile_empty', profile };
+  }
+
+  const upd = { updated_at: new Date().toISOString() };
+  const oldName = contact.display_name;
+  if (profile.display_name && profile.display_name !== oldName) {
+    upd.display_name = profile.display_name;
+  }
+  if (profile.avatar && profile.avatar !== contact.avatar_url) {
+    upd.avatar_url = profile.avatar;
+  }
+  if (Object.keys(upd).length <= 1) {
+    return { ok: true, updated: false, display_name: oldName || profile.display_name, profile };
+  }
+
+  await supabase.from('zalo_contacts').update(upd).eq('id', contact.id);
+
+  if (contact.lead_id && profile.display_name) {
+    const title = `[Zalo] ${profile.display_name}`;
+    await supabase.from('crm_leads')
+      .update({ title, updated_at: new Date().toISOString() })
+      .eq('id', contact.lead_id)
+      .or('title.ilike.%Zalo KH%,title.ilike.%[Zalo] Zalo%,title.ilike.%[Zalo] User%');
+    const { data: leadData } = await supabase.from('crm_leads')
+      .select('customer_id').eq('id', contact.lead_id).maybeSingle();
+    if (leadData?.customer_id) {
+      await supabase.from('customers')
+        .update({ full_name: profile.display_name, updated_at: new Date().toISOString() })
+        .eq('id', leadData.customer_id)
+        .or('full_name.ilike.%Zalo KH%,full_name.eq.Zalo KH');
+    }
+  }
+
+  return {
+    ok: true,
+    updated: true,
+    display_name: profile.display_name,
+    old_name: oldName,
+    avatar_url: profile.avatar || contact.avatar_url,
+    profile,
+  };
+}
+
+/** Quét contact thiếu tên thật → gọi syncZaloContactProfile. */
+async function runZaloBatchRefreshProfiles({ oaIds, io } = {}) {
+  let q = supabase.from('zalo_contacts')
+    .select('id, oa_id, user_id, display_name, avatar_url, lead_id')
+    .order('last_message_at', { ascending: false, nullsFirst: false })
+    .limit(100);
+  if (oaIds?.length) q = q.in('oa_id', oaIds);
+
+  const { data: rows } = await q;
+  const pool = (rows || []).filter((c) => isPlaceholderZaloDisplayName(c.display_name, c.user_id));
+  const total = pool.length;
+  if (!total) {
+    const summary = { updated: 0, total: 0, message: 'Không có liên hệ cần cập nhật tên' };
+    if (io) io.emit('batch_done', { type: 'zalo_refresh_profiles', ...summary });
+    return summary;
+  }
+
+  let updated = 0;
+  if (io) io.emit('batch_progress', { type: 'zalo_refresh_profiles', phase: 'start', total, current: 0 });
+
+  for (let i = 0; i < pool.length; i++) {
+    const contact = pool[i];
+    try {
+      const oaConfig = await getOaConfigById(contact.oa_id);
+      const result = await syncZaloContactProfile(contact, oaConfig);
+      if (result.ok && result.updated) {
+        updated++;
+        if (io) {
+          io.emit('batch_progress', {
+            type: 'zalo_refresh_profiles',
+            current: i + 1,
+            total,
+            name: result.display_name,
+            oldName: result.old_name,
+            status: 'updated',
+          });
+        }
+      } else if (io) {
+        io.emit('batch_progress', {
+          type: 'zalo_refresh_profiles',
+          current: i + 1,
+          total,
+          name: contact.display_name,
+          status: result.reason || 'unchanged',
+        });
+      }
+    } catch (e) {
+      if (io) {
+        io.emit('batch_progress', {
+          type: 'zalo_refresh_profiles',
+          current: i + 1,
+          total,
+          name: contact.display_name,
+          status: 'error',
+          error: e.message,
+        });
+      }
+    }
+  }
+
+  const summary = { updated, total };
+  if (io) io.emit('batch_done', { type: 'zalo_refresh_profiles', ...summary });
+  return summary;
+}
+
 module.exports = {
   phoneDigitsLen,
   sortZaloContactsNewestFirst,
@@ -495,4 +814,11 @@ module.exports = {
   updateZaloLeadFromExtract,
   runZaloBatchExtractPhones,
   runZaloBatchCreateLeads,
+  isPlaceholderZaloDisplayName,
+  syncZaloContactProfile,
+  runZaloBatchRefreshProfiles,
+  normalizeZaloTargetType,
+  normalizeZaloModuleKey,
+  resolveZaloModuleKeyForOa,
+  resolveZaloCreateType,
 };

@@ -7,7 +7,7 @@ import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut,
   ChevronDown, MessageSquare, Palette, Calculator, FileText,
   Hammer, Truck, Wrench, Heart, Inbox, UserCircle, Package, ClipboardList, 
-  UserPlus, Building2, Building, Network, Layers, GitBranch, Shield
+  UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Smartphone
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -62,6 +62,7 @@ const MENUS = [
       { to: '/templates', icon: ClipboardList, label: 'Dự án mẫu' },
       { to: '/stage-groups', icon: FolderKanban, label: 'Nhóm quy trình' },
       { to: '/approval-rules', icon: Settings, label: 'Quy tắc duyệt' },
+      { to: '/settings/app-updates', icon: Smartphone, label: 'Cập nhật App' },
     ]
   }
 ];

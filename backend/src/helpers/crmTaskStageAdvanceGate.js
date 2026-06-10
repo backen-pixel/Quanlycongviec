@@ -11,7 +11,13 @@
  */
 
 const { supabase } = require('../config/supabase');
-const { crmTaskHasCompletionEvidence } = require('./crmTaskCompletionEvidence');
+const { crmTaskMeetsRequiredFileTypes } = require('./crmTaskCompletionEvidence');
+const { taskRequiresTypedEvidence } = require('./evidenceFileTypes');
+const {
+  taskRequiresQuickVerdict,
+  quickVerdictMeetsRequirement,
+  formatQuickVerdictBlockLabel,
+} = require('./taskQuickVerdict');
 
 /** Mapping từ tên giai đoạn (đã chuẩn hoá) → template-slug của bộ nhiệm vụ Lead. */
 const LEAD_STAGE_NAME_TO_SLUG = [
@@ -77,7 +83,7 @@ function shouldSkipGate(currentStage, targetStage) {
 }
 
 const TASK_SELECT =
-  'id, title, status, blocks_stage_advance, completion_requires_file_or_note, notes';
+  'id, title, status, blocks_stage_advance, completion_requires_file_or_note, required_evidence_file_types, requires_quick_verdict, quick_verdict, quick_verdict_reason, notes';
 
 async function fetchStageTasks(leadId, currentStage, leadType) {
   if (currentStage?.id) {
@@ -117,7 +123,7 @@ async function collectBlockingTasks(tasks, stageMeta = null) {
   const blocking = [];
   const seen = new Set();
 
-  const push = (task, blockReason) => {
+  const push = (task, blockReason, extra = {}) => {
     if (!task?.id || seen.has(task.id)) return;
     seen.add(task.id);
     blocking.push({
@@ -126,9 +132,11 @@ async function collectBlockingTasks(tasks, stageMeta = null) {
       status: task.status,
       blocks_stage_advance: !!task.blocks_stage_advance,
       completion_requires_file_or_note: !!task.completion_requires_file_or_note,
+      required_evidence_file_types: task.required_evidence_file_types || [],
       block_reason: blockReason,
       stage_id: stageMeta?.id || null,
       stage_name: stageMeta?.name || null,
+      ...extra,
     });
   };
 
@@ -139,12 +147,23 @@ async function collectBlockingTasks(tasks, stageMeta = null) {
   }
 
   for (const task of tasks) {
-    if (!task.completion_requires_file_or_note) continue;
+    if (!taskRequiresTypedEvidence(task)) continue;
     try {
-      const hasEvidence = await crmTaskHasCompletionEvidence(supabase, task.id, task.notes);
-      if (!hasEvidence) push(task, 'missing_evidence');
+      const check = await crmTaskMeetsRequiredFileTypes(supabase, task.id, task);
+      if (!check.ok) {
+        push(task, 'missing_evidence', { missing_file_types: check.missing, missing_label: check.missingLabel });
+      }
     } catch (e) {
       console.warn('[crmTaskStageAdvanceGate] evidence check error:', e.message);
+    }
+  }
+
+  for (const task of tasks) {
+    if (!taskRequiresQuickVerdict(task)) continue;
+    if (!quickVerdictMeetsRequirement(task)) {
+      push(task, 'missing_quick_verdict', {
+        missing_label: formatQuickVerdictBlockLabel(task),
+      });
     }
   }
 
@@ -154,7 +173,12 @@ async function collectBlockingTasks(tasks, stageMeta = null) {
 function formatBlockingTaskLine(t) {
   const prefix = t.stage_name ? `[${t.stage_name}] ` : '';
   if (t.block_reason === 'missing_evidence') {
-    return `• ${prefix}${t.title} (thiếu ghi chú hoặc file đính kèm)`;
+    const label = t.missing_label || 'ghi chú hoặc file đính kèm';
+    return `• ${prefix}${t.title} (thiếu: ${label})`;
+  }
+  if (t.block_reason === 'missing_quick_verdict') {
+    const label = t.missing_label || 'chưa chọn Đủ/Chưa';
+    return `• ${prefix}${t.title} (ghi chú nhanh: ${label})`;
   }
   return `• ${prefix}${t.title} (chưa hoàn thành)`;
 }
@@ -169,10 +193,12 @@ function buildBlockResponse(tasks, currentStage, targetStage) {
 
   const names = tasks.map(formatBlockingTaskLine).join('\n');
   const hasEvidenceBlock = tasks.some((t) => t.block_reason === 'missing_evidence');
+  const hasQuickVerdictBlock = tasks.some((t) => t.block_reason === 'missing_quick_verdict');
   const hasIncompleteBlock = tasks.some((t) => t.block_reason === 'incomplete');
   const hintParts = [];
   if (hasIncompleteBlock) hintParts.push('hoàn thành các nhiệm vụ có cờ «Chặn chuyển giai đoạn»');
   if (hasEvidenceBlock) hintParts.push('bổ sung ghi chú hoặc file đính kèm cho nhiệm vụ có cờ «Bắt buộc file/ghi chú»');
+  if (hasQuickVerdictBlock) hintParts.push('chọn «Đã đủ» trong ghi chú nhanh (Đủ/Chưa) cho các nhiệm vụ yêu cầu');
   const hint = hintParts.length ? `👉 ${hintParts.join(' và ')} rồi chuyển giai đoạn lại.` : '';
 
   const multiHop = stageNames.length > 1;

@@ -100,9 +100,12 @@ function buildTaskInsertsFromTemplates(templates, allItems, userId, leadId) {
       order_index: item.order_index,
       deadline,
       created_by: userId,
-      completion_requires_file_or_note: !!item.completion_requires_file_or_note,
+      completion_requires_file_or_note: !!item.completion_requires_file_or_note
+        || (Array.isArray(item.required_evidence_file_types) && item.required_evidence_file_types.length > 0),
+      required_evidence_file_types: Array.isArray(item.required_evidence_file_types) ? item.required_evidence_file_types : [],
       completion_requires_customer_note: !!item.completion_requires_customer_note,
       completion_requires_customer_contact: !!item.completion_requires_customer_contact,
+      requires_quick_verdict: !!item.requires_quick_verdict,
       blocks_stage_advance: !!item.blocks_stage_advance,
       show_excel_quotation_upload: !!item.show_excel_quotation_upload,
     };
@@ -184,14 +187,20 @@ async function autoGenCrmTasksForNewLead(leadId, userId) {
     return 0;
   }
 
-  const { data: templates, error: tplErr } = await supabase
+  const { data: allTplRows, error: tplErr } = await supabase
     .from('crm_task_templates')
-    .select('id, name, stage_slug, pipeline_stage_id')
+    .select('id, name, stage_slug, pipeline_stage_id, is_default')
     .eq('is_active', true)
     .in('pipeline_stage_id', stageIds)
     .order('order_index');
   if (tplErr) throw tplErr;
-  if (!templates?.length) {
+
+  let templates = (allTplRows || []).filter((t) => t.is_default);
+  if (!templates.length && (allTplRows || []).length) {
+    console.log(`[AUTO-TASK] ${entityType} ${leadId}: pipeline có bộ mẫu nhưng chưa đặt bộ mặc định → skip`);
+    return 0;
+  }
+  if (!templates.length) {
     console.log(`[AUTO-TASK] ${entityType} ${leadId}: chưa có bộ mẫu gắn pipeline_stage → skip`);
     return 0;
   }
