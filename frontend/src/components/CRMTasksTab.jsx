@@ -2934,7 +2934,7 @@ export default function CRMTasksTab({
         </div>
       )}
 
-      {!isProductionScope && (leadType === 'lead' || leadType === 'deal') && (
+      {isProductionScope && leadType === 'deal' && (
         <div className="rounded-xl border border-sky-200 bg-sky-50/60 p-3 space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs font-semibold text-sky-900">📋 Thông tin dự án</p>
