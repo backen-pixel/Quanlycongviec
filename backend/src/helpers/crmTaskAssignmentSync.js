@@ -117,6 +117,7 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
     deadline: task.deadline || null,
     column_id: columnId,
     company_id: lead?.company_id || null,
+    executor_company_id: task.executor_company_id || null,
     lead_id: task.lead_id,
     crm_task_id: task.id,
     assignment_module: assignmentModule,
@@ -145,6 +146,10 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
       const { crm_task_id: _t, assignment_module: _m, ...legacy } = row;
       ({ error } = await supabase.from('crm_assignments').update(legacy).eq('id', assignmentId));
     }
+    if (error && /executor_company_id/.test(error.message || '')) {
+      const { executor_company_id: _e, ...legacy } = row;
+      ({ error } = await supabase.from('crm_assignments').update(legacy).eq('id', assignmentId));
+    }
     if (error) throw error;
   } else {
     let insertRow = {
@@ -163,6 +168,10 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
     }
     if (error && /crm_task_id/.test(error.message || '')) {
       const { crm_task_id: _t, assignment_module: _m, ...legacy } = insertRow;
+      ({ data: created, error } = await supabase.from('crm_assignments').insert(legacy).select(ASSIGNMENT_SELECT).single());
+    }
+    if (error && /executor_company_id/.test(error.message || '')) {
+      const { executor_company_id: _e, ...legacy } = insertRow;
       ({ data: created, error } = await supabase.from('crm_assignments').insert(legacy).select(ASSIGNMENT_SELECT).single());
     }
     if (error) throw error;

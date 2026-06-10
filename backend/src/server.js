@@ -961,6 +961,13 @@ server.listen(config.port, () => {
     console.warn('[crm-kanban-deadline] Failed to start:', e.message);
   }
 
+  // Cron refresh Zalo OA token hàng ngày 6:00 VN — disable: ZALO_OA_TOKEN_CRON_DISABLED=1
+  try {
+    require('./jobs/zaloOaTokenRefresh').start();
+  } catch (e) {
+    console.warn('[zalo-token-cron] Failed to start:', e.message);
+  }
+
   // Cron AI Chat Bot — tick mỗi phút, gửi tin AI vào chat phòng ban/nhóm theo lịch admin cấu hình.
   // Disable: AI_CHAT_BOT_CRON_DISABLED=1
   try {

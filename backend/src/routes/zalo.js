@@ -20,6 +20,15 @@ const {
   sendZaloCsTextMessage,
 } = require('../helpers/zaloOaMessaging');
 const { formatVnPhoneLocal0From84, normalizeVnPhoneTo84 } = require('../helpers/zaloOa');
+const {
+  registerOaConfigCacheInvalidator,
+  ensureZaloOaAccessToken,
+  refreshZaloOaTokens,
+  attachZaloTokenMeta,
+  isZaloTokenExpiredError,
+  computeAccessTokenExpiresAt,
+  computeRefreshTokenExpiresAt,
+} = require('../helpers/zaloOaToken');
 
 const ZALO_DISABLE_WEBHOOK_LOGS = ['1', 'true', 'yes', 'on'].includes(
   String(process.env.ZALO_DISABLE_WEBHOOK_LOGS || '').toLowerCase(),
@@ -48,6 +57,13 @@ function withAsyncLock(key, fn) {
 }
 
 const _oaConfigCache = {};
+
+function invalidateOaConfigCache(oaId) {
+  if (oaId) delete _oaConfigCache[String(oaId)];
+  else Object.keys(_oaConfigCache).forEach((k) => delete _oaConfigCache[k]);
+}
+registerOaConfigCacheInvalidator(invalidateOaConfigCache);
+
 async function getOaConfig(oaId) {
   const key = String(oaId || '');
   const cached = _oaConfigCache[key];
@@ -56,6 +72,52 @@ async function getOaConfig(oaId) {
     .select('*').eq('oa_id', key).eq('is_active', true).maybeSingle();
   _oaConfigCache[key] = { data, ts: Date.now() };
   return data;
+}
+
+async function getOaConfigWithValidToken(oaId) {
+  const oaConfig = await getOaConfig(oaId);
+  if (!oaConfig) return null;
+  const ensured = await ensureZaloOaAccessToken(oaConfig);
+  if (!ensured.ok) return { ...oaConfig, _tokenError: ensured.message || ensured.error };
+  invalidateOaConfigCache(oaId);
+  _oaConfigCache[String(oaId)] = { data: ensured.oaConfig, ts: Date.now() };
+  return ensured.oaConfig;
+}
+
+async function fetchZaloProfileWithToken(oaConfig, userId) {
+  let ensured = await ensureZaloOaAccessToken(oaConfig);
+  if (!ensured.ok) return { profile: null, oaConfig, error: ensured.message || ensured.error };
+  let profile = await fetchZaloUserProfile(ensured.accessToken, userId);
+  if (!profile) {
+    ensured = await ensureZaloOaAccessToken(ensured.oaConfig, { forceRefresh: true });
+    if (ensured.ok) {
+      profile = await fetchZaloUserProfile(ensured.accessToken, userId);
+    }
+  }
+  return { profile, oaConfig: ensured.ok ? ensured.oaConfig : oaConfig, error: profile ? null : 'profile_empty' };
+}
+
+async function sendZaloCsWithToken(oaConfig, { userId, text }) {
+  let ensured = await ensureZaloOaAccessToken(oaConfig);
+  if (!ensured.ok) {
+    return { ok: false, error: 'config', message: ensured.message || ensured.error || 'Token không hợp lệ' };
+  }
+  let result = await sendZaloCsTextMessage({
+    accessToken: ensured.accessToken,
+    userId,
+    text,
+  });
+  if (!result.ok && isZaloTokenExpiredError(result.zalo_error)) {
+    ensured = await ensureZaloOaAccessToken(ensured.oaConfig, { forceRefresh: true });
+    if (ensured.ok) {
+      result = await sendZaloCsTextMessage({
+        accessToken: ensured.accessToken,
+        userId,
+        text,
+      });
+    }
+  }
+  return result;
 }
 
 async function getOrCreateContact(oaId, userId, displayName, avatarUrl) {
@@ -105,6 +167,7 @@ async function handleWebhookEvent(body, io) {
       console.warn('[Zalo OA] OA chưa cấu hình:', oaId);
       return { skipped: true, reason: 'oa_not_configured' };
     }
+    let activeOaConfig = oaConfig;
 
     if (msgId && !acquireMsgLock(msgId)) {
       return { skipped: true, reason: 'duplicate_lock' };
@@ -116,8 +179,10 @@ async function handleWebhookEvent(body, io) {
     }
 
     let profile = null;
-    if (isInbound && oaConfig.access_token) {
-      profile = await fetchZaloUserProfile(oaConfig.access_token, partnerUserId);
+    if (isInbound && (activeOaConfig.access_token || activeOaConfig.refresh_token)) {
+      const fetched = await fetchZaloProfileWithToken(activeOaConfig, partnerUserId);
+      profile = fetched.profile;
+      if (fetched.oaConfig) activeOaConfig = fetched.oaConfig;
     }
 
     let contact = await getOrCreateContact(
@@ -128,8 +193,8 @@ async function handleWebhookEvent(body, io) {
     );
     if (!contact) return { skipped: true, reason: 'contact_failed' };
 
-    if (isInbound && oaConfig.access_token && isPlaceholderZaloDisplayName(contact.display_name, contact.user_id)) {
-      const syncResult = await syncZaloContactProfile(contact, oaConfig).catch((e) => {
+    if (isInbound && (activeOaConfig.access_token || activeOaConfig.refresh_token) && isPlaceholderZaloDisplayName(contact.display_name, contact.user_id)) {
+      const syncResult = await syncZaloContactProfile(contact, activeOaConfig).catch((e) => {
         console.warn('[Zalo OA] sync profile on webhook:', e.message);
         return null;
       });
@@ -189,19 +254,18 @@ async function handleWebhookEvent(body, io) {
         }
       }
 
-      if (oaConfig.auto_create_lead && !contact.lead_id) {
-        const lead = await createLeadFromZaloContact(oaConfig, contact, content, extractedPhone, null);
+      if (activeOaConfig.auto_create_lead && !contact.lead_id) {
+        const lead = await createLeadFromZaloContact(activeOaConfig, contact, content, extractedPhone, null);
         if (lead?.id) {
           contact.lead_id = lead.id;
           await supabase.from('zalo_messages').update({ lead_id: lead.id }).eq('contact_id', contact.id);
         }
       }
 
-      if (oaConfig.auto_reply_message && oaConfig.access_token) {
-        sendZaloCsTextMessage({
-          accessToken: oaConfig.access_token,
+      if (activeOaConfig.auto_reply_message && (activeOaConfig.access_token || activeOaConfig.refresh_token)) {
+        sendZaloCsWithToken(activeOaConfig, {
           userId: partnerUserId,
-          text: oaConfig.auto_reply_message,
+          text: activeOaConfig.auto_reply_message,
         }).catch((e) => console.warn('[Zalo OA] auto-reply failed:', e.message));
       }
     }
@@ -360,11 +424,44 @@ function attachZaloOaRouting(row) {
   };
 }
 
+function sanitizeZaloAccountForApi(row) {
+  if (!row) return row;
+  const safe = attachZaloTokenMeta(attachZaloOaRouting({ ...row }));
+  delete safe.refresh_token;
+  delete safe.access_token;
+  delete safe.secret_key;
+  return {
+    ...safe,
+    access_token_set: !!row.access_token,
+    refresh_token_set: !!row.refresh_token,
+    has_secret_key: !!row.secret_key,
+  };
+}
+
+function applyManualTokenFields(row, body) {
+  const nowIso = new Date().toISOString();
+  if (body.access_token && String(body.access_token).trim() && !String(body.access_token).includes('…')) {
+    row.access_token = String(body.access_token).trim();
+    row.access_token_expires_at = computeAccessTokenExpiresAt(body.access_token_expires_in || null);
+    row.token_refreshed_at = nowIso;
+  }
+  if (body.refresh_token && String(body.refresh_token).trim() && !String(body.refresh_token).includes('…')) {
+    row.refresh_token = String(body.refresh_token).trim();
+    row.refresh_token_expires_at = computeRefreshTokenExpiresAt();
+  }
+  return row;
+}
+
 r.get('/accounts', authMiddleware, async (req, res) => {
   try {
     let { data, error } = await supabase.from('zalo_oa_accounts')
-      .select('id, oa_id, oa_name, app_id, is_active, auto_create_lead, auto_reply_message, default_module_key, default_target_type, default_pipeline_id, default_stage_id, default_source_id, default_company_id, default_region_id, default_lead_owner_id, default_lead_type_id, webhook_verify_enabled, created_at, updated_at')
+      .select('id, oa_id, oa_name, app_id, is_active, auto_create_lead, auto_reply_message, default_module_key, default_target_type, default_pipeline_id, default_stage_id, default_source_id, default_company_id, default_region_id, default_lead_owner_id, default_lead_type_id, webhook_verify_enabled, access_token, refresh_token, secret_key, access_token_expires_at, refresh_token_expires_at, token_refreshed_at, last_token_error, created_at, updated_at')
       .order('created_at', { ascending: false });
+    if (error && (error.message?.includes('access_token_expires_at') || error.message?.includes('refresh_token') || error.code === '42703')) {
+      ({ data, error } = await supabase.from('zalo_oa_accounts')
+        .select('id, oa_id, oa_name, app_id, is_active, auto_create_lead, auto_reply_message, default_module_key, default_target_type, default_pipeline_id, default_stage_id, default_source_id, default_company_id, default_region_id, default_lead_owner_id, default_lead_type_id, webhook_verify_enabled, created_at, updated_at')
+        .order('created_at', { ascending: false }));
+    }
     if (error && (error.message?.includes('default_module_key') || error.code === '42703')) {
       ({ data, error } = await supabase.from('zalo_oa_accounts')
         .select('id, oa_id, oa_name, app_id, is_active, auto_create_lead, auto_reply_message, default_target_type, default_pipeline_id, default_stage_id, default_source_id, default_company_id, default_region_id, default_lead_owner_id, default_lead_type_id, webhook_verify_enabled, created_at, updated_at')
@@ -376,11 +473,11 @@ r.get('/accounts', authMiddleware, async (req, res) => {
         .order('created_at', { ascending: false }));
     }
     if (error) throw error;
-    res.json((data || []).map((row) => attachZaloOaRouting({
+    res.json((data || []).map((row) => sanitizeZaloAccountForApi({
       ...row,
-      access_token_masked: null,
-      has_access_token: true,
-      has_secret_key: true,
+      access_token: 'set',
+      refresh_token: row.refresh_token ? 'set' : null,
+      secret_key: row.secret_key ? 'set' : null,
     })));
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -392,12 +489,10 @@ r.get('/accounts/:id', authMiddleware, async (req, res) => {
     const { data, error } = await supabase.from('zalo_oa_accounts')
       .select('*').eq('id', req.params.id).single();
     if (error) throw error;
-    res.json(attachZaloOaRouting({
+    res.json(sanitizeZaloAccountForApi({
       ...data,
       access_token: data.access_token ? maskToken(data.access_token) : null,
       secret_key: data.secret_key ? '********' : null,
-      access_token_set: !!data.access_token,
-      secret_key_set: !!data.secret_key,
     }));
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -414,7 +509,7 @@ r.post('/accounts', authMiddleware, async (req, res) => {
     const inferredTargetType = (moduleKey === 'production' || moduleKey === 'logistics')
       ? 'deal'
       : normalizeZaloTargetType(b.default_target_type);
-    const row = {
+    const row = applyManualTokenFields({
       oa_id: String(b.oa_id).trim(),
       oa_name: b.oa_name || null,
       app_id: b.app_id ? String(b.app_id).trim() : null,
@@ -435,7 +530,11 @@ r.post('/accounts', authMiddleware, async (req, res) => {
       webhook_verify_enabled: b.webhook_verify_enabled !== false,
       created_by: req.user?.id || null,
       updated_at: new Date().toISOString(),
-    };
+    }, b);
+    if (b.refresh_token && String(b.refresh_token).trim()) {
+      row.refresh_token = String(b.refresh_token).trim();
+      row.refresh_token_expires_at = computeRefreshTokenExpiresAt();
+    }
     let { data, error } = await supabase.from('zalo_oa_accounts').insert(row).select().single();
     if (error?.message?.includes('default_module_key') || error?.message?.includes('default_target_type') || error?.message?.includes('default_company_id') || error?.message?.includes('default_region_id') || error?.message?.includes('default_lead_owner_id') || error?.message?.includes('default_lead_type_id')) {
       delete row.default_module_key;
@@ -448,7 +547,7 @@ r.post('/accounts', authMiddleware, async (req, res) => {
     }
     if (error) throw error;
     delete _oaConfigCache[row.oa_id];
-    res.status(201).json(attachZaloOaRouting(data));
+    res.status(201).json(sanitizeZaloAccountForApi(data));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -487,6 +586,16 @@ r.put('/accounts/:id', authMiddleware, async (req, res) => {
     if (b.secret_key && String(b.secret_key).trim() && b.secret_key !== '********') {
       update.secret_key = String(b.secret_key).trim();
     }
+    applyManualTokenFields(update, b);
+    if (b.refresh_token !== undefined) {
+      const rv = b.refresh_token && String(b.refresh_token).trim() && !String(b.refresh_token).includes('…')
+        ? String(b.refresh_token).trim()
+        : null;
+      if (rv) {
+        update.refresh_token = rv;
+        update.refresh_token_expires_at = computeRefreshTokenExpiresAt();
+      }
+    }
     let { data, error } = await supabase.from('zalo_oa_accounts')
       .update(update).eq('id', req.params.id).select().single();
     if (error?.message?.includes('default_module_key') || error?.message?.includes('default_target_type')) {
@@ -497,7 +606,29 @@ r.put('/accounts/:id', authMiddleware, async (req, res) => {
     }
     if (error) throw error;
     delete _oaConfigCache[data.oa_id];
-    res.json(attachZaloOaRouting(data));
+    res.json(sanitizeZaloAccountForApi(data));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.post('/accounts/:id/refresh-token', authMiddleware, async (req, res) => {
+  try {
+    const { data: account, error } = await supabase.from('zalo_oa_accounts')
+      .select('*').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!account) return res.status(404).json({ error: 'Không tìm thấy OA' });
+    const result = await refreshZaloOaTokens(account, { reason: 'manual_api' });
+    if (!result.ok) {
+      return res.status(400).json({ error: result.message || result.error, ...result });
+    }
+    invalidateOaConfigCache(account.oa_id);
+    res.json({
+      ok: true,
+      account: sanitizeZaloAccountForApi(result.oaConfig),
+      access_token_expires_at: result.access_token_expires_at,
+      refresh_token_expires_at: result.refresh_token_expires_at,
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -664,9 +795,9 @@ r.post('/contacts/:id/sync-profile', authMiddleware, async (req, res) => {
       return res.status(403).json({ error: 'Không có quyền' });
     }
 
-    const oaConfig = await getOaConfig(contact.oa_id);
-    if (!oaConfig?.access_token) {
-      return res.status(400).json({ error: 'OA chưa cấu hình access_token' });
+    const oaConfig = await getOaConfigWithValidToken(contact.oa_id);
+    if (!oaConfig || (!oaConfig.access_token && !oaConfig.refresh_token)) {
+      return res.status(400).json({ error: 'OA chưa cấu hình token (access / refresh)' });
     }
 
     const result = await syncZaloContactProfile(contact, oaConfig);
@@ -797,13 +928,12 @@ r.post('/contacts/:id/messages', authMiddleware, async (req, res) => {
     const { data: contact } = await supabase.from('zalo_contacts').select('*').eq('id', req.params.id).single();
     if (!contact) return res.status(404).json({ error: 'Không tìm thấy liên hệ' });
 
-    const oaConfig = await getOaConfig(contact.oa_id);
-    if (!oaConfig?.access_token) {
-      return res.status(400).json({ error: 'OA chưa cấu hình access_token' });
+    const oaConfig = await getOaConfigWithValidToken(contact.oa_id);
+    if (!oaConfig || (!oaConfig.access_token && !oaConfig.refresh_token)) {
+      return res.status(400).json({ error: 'OA chưa cấu hình token (access / refresh)' });
     }
 
-    const result = await sendZaloCsTextMessage({
-      accessToken: oaConfig.access_token,
+    const result = await sendZaloCsWithToken(oaConfig, {
       userId: contact.user_id,
       text,
     });

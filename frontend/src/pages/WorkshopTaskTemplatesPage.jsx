@@ -4,7 +4,7 @@ import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { findDefaultAdminCrmCompanyPhucDat } from '../lib/crmCompanyFilter';
-import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Globe, MapPin, Lock, Star, Paperclip, MessageSquare } from 'lucide-react';
+import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Globe, MapPin, Lock, Star, Paperclip, MessageSquare, User } from 'lucide-react';
 import EvidenceFileTypesPicker from '../components/EvidenceFileTypesPicker';
 import { formatEvidenceTypesShort, normalizeEvidenceFileTypes, checklistItemRequiresEvidence } from '../lib/evidenceFileTypes';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
@@ -60,6 +60,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
   const [editingVisibility, setEditingVisibility] = useState({}); // {itemId: true/false}
   const [companies, setCompanies] = useState([]);
   const [departments, setDepartments] = useState([]);
+  const [users, setUsers] = useState([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
   // Phân loại = workshop_project_types (Cửa, Tủ bếp, ...) — CHỈ áp dụng cho khu vực Sản xuất.
   const [workshopTypes, setWorkshopTypes] = useState([]);
@@ -148,13 +149,16 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
     setLoading(true);
     try {
       const compModule = activeTab === 'logistics' ? 'logistics' : 'production';
-      const [compRes, deptRes] = await Promise.all([
+      const userParams = selectedCompanyId ? { company_id: selectedCompanyId } : {};
+      const [compRes, deptRes, usersRes] = await Promise.all([
         api.get('/companies', { params: { for_module: compModule } }).catch(() => ({ data: [] })),
         api.get('/departments').catch(() => ({ data: [] })),
+        api.get('/users', { params: userParams }).catch(() => ({ data: [] })),
       ]);
       const coList = compRes.data?.companies || compRes.data || [];
       setCompanies(coList);
       setDepartments(deptRes.data?.departments || deptRes.data || []);
+      setUsers(usersRes.data?.users || usersRes.data || []);
       if (!companyDefaultResolvedRef.current) {
         companyDefaultResolvedRef.current = true;
         if (!selectedCompanyId) {
@@ -380,7 +384,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
   const updateTemplateItemFields = async (tplId, itemId, body) => {
     try {
       const { data } = await api.put(`/production/task-templates/${tplId}/items/${itemId}`, body);
-      patchItemLocal(tplId, itemId, data && data.id ? data : body);
+      patchItemLocal(tplId, itemId, data?.id ? { ...data, ...body } : body);
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi cập nhật mục mẫu');
       throw e;
@@ -491,7 +495,8 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
   const updateItemChecklist = async (tplId, itemId, checklist) => {
     patchItemLocal(tplId, itemId, { checklist });
     try {
-      await api.put(`/production/task-templates/${tplId}/items/${itemId}`, { checklist });
+      const { data } = await api.put(`/production/task-templates/${tplId}/items/${itemId}`, { checklist });
+      if (data?.id) patchItemLocal(tplId, itemId, { ...data, checklist });
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); load(); }
   };
 
@@ -562,8 +567,15 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
     // Không thay đổi gì thì bỏ qua (tránh reload thừa khi blur) — trừ khi đổi minh chứng.
     const prevTitle = typeof entry === 'string' ? entry : (entry?.title || entry?.label || '');
     const prevDesc = typeof entry === 'string' ? '' : (entry?.description || '');
+    if (patch.assignee_id !== undefined) {
+      next.assignee_id = patch.assignee_id ? String(patch.assignee_id) : null;
+    }
     const evidencePatch = patch.required_evidence_file_types !== undefined || patch.completion_requires_file_or_note !== undefined;
-    if (!evidencePatch && next.title === prevTitle && next.description === prevDesc) return;
+    const assigneePatch = patch.assignee_id !== undefined;
+    const prevAssignee = typeof entry === 'object' ? String(entry?.assignee_id || entry?.default_assignee_id || '') : '';
+    if (!evidencePatch && !assigneePatch && next.title === prevTitle && next.description === prevDesc) return;
+    if (assigneePatch && !evidencePatch && next.title === prevTitle && next.description === prevDesc
+      && String(next.assignee_id || '') === prevAssignee) return;
     current[idx] = next;
     await updateItemChecklist(tplId, itemId, current);
   };
@@ -1175,6 +1187,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
                     setEditingVisibility={setEditingVisibility}
                     companies={companies}
                     departments={departments}
+                    users={users}
                     toggleItemCompany={toggleItemCompany}
                     toggleItemDept={toggleItemDept}
                     pipelineStages={pipelineStages}
@@ -1215,7 +1228,7 @@ function TemplateCard({
   addChecklistItem, removeChecklistItem, updateChecklistItem,
   sensors, handleItemDragEnd, handleChecklistDragEnd, handleCardDragEnd,
   editingVisibility, setEditingVisibility,
-  companies, departments, toggleItemCompany, toggleItemDept,
+  companies, departments, users = [], toggleItemCompany, toggleItemDept,
   updateTemplateItemFields,
   pipelineStages = [], activeTab = 'production',
 }) {
@@ -1233,7 +1246,7 @@ function TemplateCard({
   const [itemEditForm, setItemEditForm] = useState({
     title: '', description: '', priority: 'medium', deadline_days: 0,
     blocks_stage_advance: false, completion_requires_file_or_note: false, required_evidence_file_types: [],
-    requires_quick_verdict: false,
+    requires_quick_verdict: false, executor_company_id: '',
   });
 
   const sortedItems = [...(tpl.items || [])].sort((a, b) => a.order_index - b.order_index);
@@ -1249,6 +1262,7 @@ function TemplateCard({
       completion_requires_file_or_note: !!item.completion_requires_file_or_note,
       required_evidence_file_types: normalizeEvidenceFileTypes(item.required_evidence_file_types),
       requires_quick_verdict: !!item.requires_quick_verdict,
+      executor_company_id: item.executor_company_id || '',
     });
   };
 
@@ -1268,6 +1282,7 @@ function TemplateCard({
           || (itemEditForm.required_evidence_file_types?.length > 0),
         required_evidence_file_types: itemEditForm.required_evidence_file_types || [],
         requires_quick_verdict: !!itemEditForm.requires_quick_verdict,
+        executor_company_id: itemEditForm.executor_company_id || null,
       });
       setEditingItemId(null);
     } catch { /* alert trong updateTemplateItemFields */ }
@@ -1432,6 +1447,16 @@ function TemplateCard({
                           item.priority === 'urgent' ? 'bg-red-100 text-red-700' :
                           item.priority === 'medium' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
                         }`}>{item.priority === 'urgent' ? 'Gấp' : item.priority === 'high' ? 'Cao' : item.priority === 'medium' ? 'TB' : 'Thấp'}</span>
+                        {item.executor_company_id && (
+                          <span
+                            className="text-[9px] bg-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded-full font-medium max-w-[120px] truncate"
+                            title="Giao cho công ty khác thực hiện"
+                          >
+                            🤝 {companies.find((c) => String(c.id) === String(item.executor_company_id))?.short_name
+                              || companies.find((c) => String(c.id) === String(item.executor_company_id))?.name
+                              || 'Đối tác'}
+                          </span>
+                        )}
                         {(item.default_allowed_companies?.length > 0 || item.default_allowed_departments?.length > 0) && (
                           <span className="text-[9px] bg-red-50 text-red-600 px-1 py-0.5 rounded-full">🔒</span>
                         )}
@@ -1491,6 +1516,20 @@ function TemplateCard({
                             className="w-full h-8 px-2 rounded border text-sm outline-none focus:ring-2 focus:ring-sky-400"
                             placeholder="Tên nhiệm vụ..."
                           />
+                          <div>
+                            <p className="text-[10px] font-semibold text-gray-500 mb-1">🤝 Công ty thực hiện (giao việc chéo)</p>
+                            <select
+                              value={itemEditForm.executor_company_id || ''}
+                              onChange={(e) => setItemEditForm((f) => ({ ...f, executor_company_id: e.target.value }))}
+                              className="w-full h-8 px-2 rounded border text-xs bg-white outline-none focus:ring-2 focus:ring-indigo-400"
+                            >
+                              <option value="">Cùng công ty chủ dự án</option>
+                              {companies.map((c) => (
+                                <option key={c.id} value={c.id}>{c.name}{c.short_name ? ` (${c.short_name})` : ''}</option>
+                              ))}
+                            </select>
+                            <p className="text-[10px] text-gray-400 mt-1">Khi kích hoạt bộ mẫu ở pipeline, NV công ty này nhận việc và thấy dự án trên Kanban SX.</p>
+                          </div>
                           <textarea
                             value={itemEditForm.description || ''}
                             onChange={e => setItemEditForm(f => ({ ...f, description: e.target.value }))}
@@ -1597,6 +1636,7 @@ function TemplateCard({
                       {editingChecklist[item.id] && (
                         <ChecklistEditor tplId={tpl.id} itemId={item.id}
                           checklist={Array.isArray(item.checklist) ? item.checklist : []}
+                          users={users}
                           removeChecklistItem={removeChecklistItem} addChecklistItem={addChecklistItem}
                           updateChecklistItem={updateChecklistItem}
                           newCheckItem={newCheckItem} setNewCheckItem={setNewCheckItem} />
@@ -1630,9 +1670,10 @@ function TemplateCard({
 const ckTitleOf = (ck) => (typeof ck === 'string' ? ck : (ck?.title || ck?.label || ''));
 const ckDescOf = (ck) => (typeof ck === 'string' ? '' : (ck?.description || ''));
 const ckEvidenceTypesOf = (ck) => normalizeEvidenceFileTypes(typeof ck === 'object' ? ck?.required_evidence_file_types : []);
+const ckAssigneeOf = (ck) => (typeof ck === 'object' ? String(ck?.assignee_id || ck?.default_assignee_id || '') : '');
 
 // ═══ Checklist Editor with drag & drop ═══
-function ChecklistEditor({ tplId, itemId, checklist, removeChecklistItem, addChecklistItem, updateChecklistItem, newCheckItem, setNewCheckItem }) {
+function ChecklistEditor({ tplId, itemId, checklist, users = [], removeChecklistItem, addChecklistItem, updateChecklistItem, newCheckItem, setNewCheckItem }) {
   // ID dạng `ck|<itemId>|<index>` để cha (DndContext của bộ mẫu) phân biệt với nhiệm vụ
   // và cho phép kéo 1 mục checklist sang nhiệm vụ khác.
   const checkIds = checklist.map((_, i) => `ck|${itemId}|${i}`);
@@ -1665,6 +1706,22 @@ function ChecklistEditor({ tplId, itemId, checklist, removeChecklistItem, addChe
                     onBlur={e => updateChecklistItem(tplId, itemId, ci, { description: e.target.value.trim() })}
                     onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                   />
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <User className="h-3 w-3 text-indigo-600 shrink-0" />
+                    <select
+                      value={ckAssigneeOf(ck)}
+                      onChange={(e) => updateChecklistItem(tplId, itemId, ci, {
+                        assignee_id: e.target.value || null,
+                      })}
+                      className="h-7 min-w-[140px] flex-1 max-w-full px-2 text-[11px] border border-indigo-200 rounded bg-white outline-none focus:ring-1 focus:ring-indigo-300"
+                      title="Nhân viên mặc định khi sinh nhiệm vụ từ mẫu"
+                    >
+                      <option value="">— Chưa gán —</option>
+                      {(users || []).map((u) => (
+                        <option key={u.id} value={u.id}>{u.full_name || u.email || u.id}</option>
+                      ))}
+                    </select>
+                  </div>
                   <label className="flex items-center gap-1.5 text-[10px] font-medium text-violet-700 cursor-pointer select-none">
                     <input
                       type="checkbox"

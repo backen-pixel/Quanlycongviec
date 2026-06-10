@@ -43,11 +43,28 @@ function looksLikePlaceholderName(name, userId) {
   return false;
 }
 
+function formatTokenExpiry(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function tokenStatusLabel(account) {
+  if (account.access_token_expired) return { text: 'Access hết hạn', cls: 'text-red-600' };
+  if (account.needs_token_refresh) return { text: 'Cần refresh', cls: 'text-amber-600' };
+  if (account.access_token_expiring_soon) return { text: 'Sắp hết hạn', cls: 'text-amber-600' };
+  if (account.access_token_expires_at) return { text: 'OK', cls: 'text-green-600' };
+  if (!account.refresh_token_set) return { text: 'Chưa có refresh', cls: 'text-slate-500' };
+  return { text: '—', cls: 'text-slate-400' };
+}
+
 const EMPTY_ACCOUNT = {
   oa_id: '',
   oa_name: '',
   app_id: '',
   access_token: '',
+  refresh_token: '',
   secret_key: '',
   is_active: true,
   auto_create_lead: true,
@@ -84,6 +101,7 @@ export default function ZaloPage() {
   const [batchProgress, setBatchProgress] = useState(null);
   const [syncingProfile, setSyncingProfile] = useState(false);
   const [refreshingNames, setRefreshingNames] = useState(false);
+  const [refreshingTokenId, setRefreshingTokenId] = useState(null);
   const messagesEndRef = useRef(null);
 
   const loadStats = useCallback(() => {
@@ -296,6 +314,7 @@ export default function ZaloPage() {
     }
     const payload = { ...form };
     if (editingId && !payload.access_token) delete payload.access_token;
+    if (editingId && !payload.refresh_token) delete payload.refresh_token;
     if (editingId && !payload.secret_key) delete payload.secret_key;
     const url = editingId ? `${API}/api/zalo/accounts/${editingId}` : `${API}/api/zalo/accounts`;
     const method = editingId ? 'PUT' : 'POST';
@@ -308,6 +327,27 @@ export default function ZaloPage() {
     setForm({ ...EMPTY_ACCOUNT });
     setEditingId(null);
     loadAccounts();
+  };
+
+  const refreshAccountToken = async (accountId) => {
+    setRefreshingTokenId(accountId);
+    try {
+      const r = await fetch(`${API}/api/zalo/accounts/${accountId}/refresh-token`, {
+        method: 'POST',
+        headers: hdr(),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        alert(d.error || d.message || 'Refresh token thất bại');
+        return;
+      }
+      alert(`Đã làm mới token. Access hết hạn: ${formatTokenExpiry(d.access_token_expires_at)}`);
+      loadAccounts();
+    } catch {
+      alert('Lỗi mạng');
+    } finally {
+      setRefreshingTokenId(null);
+    }
   };
 
   const deleteAccount = async (id) => {
@@ -563,9 +603,10 @@ export default function ZaloPage() {
               {[
                 ['oa_id', 'OA ID (recipient id)', true],
                 ['oa_name', 'Tên OA', false],
-                ['app_id', 'App ID', false],
-                ['access_token', 'Access Token', true],
-                ['secret_key', 'Secret Key (xác thực webhook)', false],
+                ['app_id', 'App ID (bắt buộc để refresh token)', false],
+                ['access_token', 'Access Token (~25h)', true],
+                ['refresh_token', 'Refresh Token (~3 tháng, rotate mỗi lần refresh)', false],
+                ['secret_key', 'Secret Key (webhook + refresh token)', false],
               ].map(([key, label, required]) => (
                 <div key={key}>
                   <label className="block text-slate-600 mb-1">{label}{required ? ' *' : ''}</label>
@@ -577,6 +618,10 @@ export default function ZaloPage() {
                   />
                 </div>
               ))}
+              <p className="text-xs text-slate-500 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                Access token hết hạn sau <strong>~25 giờ</strong>. Refresh token dùng <strong>1 lần</strong> để lấy cặp token mới (refresh cũ vô hiệu).
+                Hệ thống tự refresh lúc <strong>6:00 sáng</strong> (VN) mỗi ngày khi đủ App ID + Secret + Refresh Token.
+              </p>
               <div>
                 <label className="block text-slate-600 mb-1">Tin tự động trả lời</label>
                 <textarea
@@ -637,6 +682,7 @@ export default function ZaloPage() {
                       <th className="py-2 pr-4">OA</th>
                       <th className="py-2 pr-4">Module / Công ty</th>
                       <th className="py-2 pr-4">App ID</th>
+                      <th className="py-2 pr-4">Token</th>
                       <th className="py-2 pr-4">Trạng thái</th>
                       <th className="py-2">Thao tác</th>
                     </tr>
@@ -653,8 +699,36 @@ export default function ZaloPage() {
                           <div className="text-slate-400">{a.default_company_id ? `Công ty #${String(a.default_company_id).slice(0, 8)}…` : 'Chưa cấu hình'}</div>
                         </td>
                         <td className="py-2 pr-4">{a.app_id || '—'}</td>
+                        <td className="py-2 pr-4 text-xs">
+                          {(() => {
+                            const st = tokenStatusLabel(a);
+                            return (
+                              <>
+                                <div className={st.cls}>{st.text}</div>
+                                <div className="text-slate-400">Access → {formatTokenExpiry(a.access_token_expires_at)}</div>
+                                {a.refresh_token_set && (
+                                  <div className="text-slate-400">Refresh → {formatTokenExpiry(a.refresh_token_expires_at)}</div>
+                                )}
+                                {a.last_token_error && (
+                                  <div className="text-red-500 truncate max-w-[180px]" title={a.last_token_error}>{a.last_token_error}</div>
+                                )}
+                              </>
+                            );
+                          })()}
+                        </td>
                         <td className="py-2 pr-4">{a.is_active ? '✅ Bật' : '⏸ Tắt'}</td>
-                        <td className="py-2 flex gap-2">
+                        <td className="py-2 flex flex-wrap gap-2">
+                          {a.refresh_token_set && a.app_id && (
+                            <button
+                              type="button"
+                              className="text-emerald-700 hover:underline flex items-center gap-1"
+                              disabled={refreshingTokenId === a.id}
+                              onClick={() => refreshAccountToken(a.id)}
+                            >
+                              <RefreshCw size={14} className={refreshingTokenId === a.id ? 'animate-spin' : ''} />
+                              Refresh token
+                            </button>
+                          )}
                           <button
                             type="button"
                             className="text-blue-600 hover:underline"
@@ -694,9 +768,9 @@ export default function ZaloPage() {
               </div>
             )}
             <p className="text-xs text-slate-500 mt-4">
-              Chọn <strong>module, công ty, khu vực, pipeline và người phụ trách</strong> để lead/deal tự tạo hiển thị đúng trên Kanban CRM.
-              Chạy migration{' '}
-              <code className="bg-slate-100 px-1 rounded">database/314_zalo_oa_default_module.sql</code> trên Supabase nếu chưa có cột module.
+              Nhập <strong>Refresh Token</strong> lần đầu từ Zalo Developer (OAuth). Sau đó hệ thống tự rotate hàng ngày — không cần dán lại access token thủ công.
+              Migration:{' '}
+              <code className="bg-slate-100 px-1 rounded">database/319_zalo_oa_refresh_token.sql</code>
             </p>
           </div>
         </div>

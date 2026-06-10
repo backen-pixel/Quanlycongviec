@@ -38,7 +38,7 @@ import { buildSxPipelineStageMeta } from '../lib/sxPipelineRevenue';
 import { ProjectCommentsPanel } from '../components/CommentsPanels';
 
 /** Cùng tên tab với LeadDetail (chi tiết deal) — bỏ facebook và calls */
-const DEAL_TAB_KEYS = new Set(['tasks', 'documents', 'notes', 'comments', 'team', 'approvals', 'incidents']);
+const DEAL_TAB_KEYS = new Set(['tasks', 'shared-workspace', 'documents', 'notes', 'comments', 'team', 'approvals', 'incidents']);
 const LEGACY_TAB_MAP = {
   timeline: 'comments',
   'crm-notes': 'notes',
@@ -1272,7 +1272,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     }
     try {
       const taskScope = moduleKey === 'vc' ? 'crm' : 'production';
-      const { data } = await api.get(`/crm/leads/${dealId}/tasks`, { params: { task_scope: taskScope } });
+      const { data } = await api.get(`/crm/leads/${dealId}/tasks`, {
+        params: { task_scope: taskScope, task_company_scope: 'own' },
+      });
       setCrmDealTaskSummary(summarizeCrmTasks(data));
     } catch {
       setCrmDealTaskSummary({ total: 0, completed: 0, percent: 0 });
@@ -2252,6 +2254,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
             {/* Tab bar — giống LeadDetail, bỏ Facebook và Tổng đài */}
             <div className="flex border-b flex-wrap">
               {tabBtn('tasks', `✅ Công việc${taskCount ? ` (${taskCount})` : ''}`)}
+              {crmLeadId && moduleKey !== 'vc' && tabBtn('shared-workspace', '🤝 Không gian chung')}
               {tabBtn('documents', `📋 Tài liệu (${safeProjectDocs.length + visibleCrmSharedDocs.length + safeTaskFiles.length})`)}
               {tabBtn('notes', `📝 Ghi chú (${sharedNotes.length})`)}
               {tabBtn('comments', `💬 Bình luận${commentCount > 0 ? ` (${commentCount})` : ''}`)}
@@ -2265,12 +2268,19 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
             <div className="p-5">
               {activeTab === 'tasks' && (
                 <>
+                {project?.is_partner_project_view && (
+                  <p className="mb-3 text-xs text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">
+                    Dự án của công ty đối tác — tab Công việc chỉ hiển thị nhiệm vụ được giao cho công ty bạn.
+                    Xem tab <strong>Không gian chung</strong> để thấy toàn bộ nhiệm vụ hai bên.
+                  </p>
+                )}
                 {crmLeadId ? (
                   <CRMTasksTab
                     leadId={crmLeadId}
                     leadType="deal"
                     users={taskUsers}
                     taskScope={moduleKey === 'vc' ? 'crm' : 'production'}
+                    taskCompanyScope="own"
                     onArtifactsSynced={refreshProjectSilently}
                     onTaskSummaryChange={handleCrmTaskSummaryChange}
                     linkedProjectId={project?.id || null}
@@ -2295,6 +2305,23 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                   <UnifiedTaskHistoryWidget projectId={id} />
                 </div>
                 </>
+              )}
+
+              {activeTab === 'shared-workspace' && crmLeadId && (
+                <div className="space-y-3">
+                  <p className="text-xs text-gray-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                    Không gian làm việc chung — công ty chủ dự án và công ty được giao nhiệm vụ đều thấy toàn bộ công việc tại đây.
+                  </p>
+                  <CRMTasksTab
+                    leadId={crmLeadId}
+                    leadType="deal"
+                    users={taskUsers}
+                    taskScope="production"
+                    taskCompanyScope="shared"
+                    onArtifactsSynced={refreshProjectSilently}
+                    linkedProjectId={project?.id || null}
+                  />
+                </div>
               )}
 
               {/* Tài liệu */}
