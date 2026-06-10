@@ -684,9 +684,18 @@ function isPlaceholderZaloDisplayName(name, userId) {
  */
 async function syncZaloContactProfile(contact, oaConfig) {
   if (!contact?.user_id) return { ok: false, reason: 'missing_user_id' };
-  if (!oaConfig?.access_token) return { ok: false, reason: 'missing_access_token' };
+  const { ensureZaloOaAccessToken } = require('./zaloOaToken');
 
-  const profile = await fetchZaloUserProfile(oaConfig.access_token, contact.user_id);
+  let ensured = await ensureZaloOaAccessToken(oaConfig);
+  if (!ensured.ok) return { ok: false, reason: 'missing_access_token', message: ensured.message || ensured.error };
+
+  let profile = await fetchZaloUserProfile(ensured.accessToken, contact.user_id);
+  if (!profile?.display_name) {
+    ensured = await ensureZaloOaAccessToken(ensured.oaConfig, { forceRefresh: true });
+    if (ensured.ok) {
+      profile = await fetchZaloUserProfile(ensured.accessToken, contact.user_id);
+    }
+  }
   if (!profile?.display_name) {
     return { ok: false, reason: 'profile_empty', profile };
   }

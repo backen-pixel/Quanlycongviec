@@ -302,6 +302,8 @@ export default function CRMTasksTab({
   leadType = 'lead',
   users = [],
   taskScope = 'all',
+  /** own = chỉ NV công ty user; shared = không gian chung (mọi bên thấy hết) */
+  taskCompanyScope = 'own',
   onArtifactsSynced = null,
   onTaskSummaryChange = null,
   refreshKey = null,
@@ -510,7 +512,9 @@ export default function CRMTasksTab({
     if (!silent) setLoading(true);
     try {
       const [tasksRes, tplRes, leadRes] = await Promise.all([
-        api.get(`/crm/leads/${leadId}/tasks`, { params: { task_scope: taskScope } }),
+        api.get(`/crm/leads/${leadId}/tasks`, {
+          params: { task_scope: taskScope, task_company_scope: taskCompanyScope },
+        }),
         isProductionScope ? Promise.resolve({ data: [] }) : api.get('/crm/task-templates'),
         api.get(`/crm/leads/${leadId}`).catch(() => ({ data: null })),
       ]);
@@ -574,7 +578,7 @@ export default function CRMTasksTab({
     prevLeadIdForTasksRef.current = leadId;
     const silent = !first && !leadSwitched && refreshKey > 0;
     loadTasks({ silent });
-  }, [leadId, taskScope, isProductionScope, refreshKey]);
+  }, [leadId, taskScope, taskCompanyScope, isProductionScope, refreshKey]);
 
   /** Realtime: web ↔ mobile — refetch khi nhiệm vụ CRM thay đổi qua socket */
   const loadTasksRef = useRef(loadTasks);

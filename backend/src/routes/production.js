@@ -26,6 +26,7 @@ const {
   getDbIntakeStageId,
 } = require('../helpers/workshopKanban');
 const { attachCrmProductionTaskStatsToProjects } = require('../helpers/crmProductionTaskStats');
+const { applyProductionCompanyScopeFilter, getExecutorProjectIdsForCompany } = require('../helpers/crossCompanyWorkspace');
 const {
   applyWorkshopTemplateToProject,
   applyAllActiveWorkshopTemplatesForArea,
@@ -996,7 +997,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
 
     let query = runQuery('full');
     if (division_id) query = query.eq('division_id', division_id);
-    if (company_id) query = query.eq('company_id', company_id);
+    if (company_id) query = await applyProductionCompanyScopeFilter(query, company_id);
     query = applyWorkshopTypeFilter(query);
 
     let projects = [];
@@ -1010,7 +1011,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
     if (needsNoJoin) {
       let q2 = runQuery('no_join');
       if (division_id) q2 = q2.eq('division_id', division_id);
-      if (company_id) q2 = q2.eq('company_id', company_id);
+      if (company_id) q2 = await applyProductionCompanyScopeFilter(q2, company_id);
       q2 = applyWorkshopTypeFilter(q2);
       ({ data, error } = await q2.order('created_at', { ascending: false }));
     }
@@ -1018,7 +1019,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
     if (error && error.message?.includes('workshop_type_id')) {
       let q3 = runQuery('no_col');
       if (division_id) q3 = q3.eq('division_id', division_id);
-      if (company_id) q3 = q3.eq('company_id', company_id);
+      if (company_id) q3 = await applyProductionCompanyScopeFilter(q3, company_id);
       // Không thể filter theo workshop_type_id khi DB chưa có cột — bỏ filter này
       ({ data, error } = await q3.order('created_at', { ascending: false }));
     }
@@ -1043,7 +1044,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
       };
       let qDl = runNoKanbanDl(needsNoJoin ? 'no_join' : (error.message?.includes('workshop_type_id') ? 'no_col' : 'full'));
       if (division_id) qDl = qDl.eq('division_id', division_id);
-      if (company_id) qDl = qDl.eq('company_id', company_id);
+      if (company_id) qDl = await applyProductionCompanyScopeFilter(qDl, company_id);
       qDl = applyWorkshopTypeFilter(qDl);
       ({ data, error } = await qDl.order('created_at', { ascending: false }));
     }
@@ -1166,7 +1167,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     }
 
     if (division_id) query = query.eq('division_id', division_id);
-    if (company_id) query = query.eq('company_id', company_id);
+    if (company_id) query = await applyProductionCompanyScopeFilter(query, company_id);
     // workshop_type_id='none' → lọc deal CHƯA phân loại (workshop_type_id IS NULL)
     const wantsUnclassified = String(workshop_type_id || '').toLowerCase() === 'none';
     if (wantsUnclassified) query = query.is('workshop_type_id', null);
@@ -1232,7 +1233,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       if (search) fallbackQuery = fallbackQuery.or(`code.ilike.%${search}%,name.ilike.%${search}%`);
       if (priority) fallbackQuery = fallbackQuery.eq('priority', priority);
       if (division_id) fallbackQuery = fallbackQuery.eq('division_id', division_id);
-      if (company_id) fallbackQuery = fallbackQuery.eq('company_id', company_id);
+      if (company_id) fallbackQuery = await applyProductionCompanyScopeFilter(fallbackQuery, company_id);
       if (wantsUnclassified) fallbackQuery = fallbackQuery.is('workshop_type_id', null);
       else if (workshop_type_id) fallbackQuery = fallbackQuery.eq('workshop_type_id', workshop_type_id);
       fallbackQuery = fallbackQuery.order('deadline', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false }).range(offset, offset + parsedLimit - 1);
@@ -1518,6 +1519,17 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       return res.status(403).json({ error: 'Dự án không thuộc phạm vi sản xuất / deal thắng' });
     }
 
+    const viewerCompanyId = req.user?.company_id || null;
+    const ownerCompanyId = project.company_id || null;
+    let isPartnerProjectView = false;
+    if (viewerCompanyId && ownerCompanyId && String(viewerCompanyId) !== String(ownerCompanyId)) {
+      const partnerIds = await getExecutorProjectIdsForCompany(viewerCompanyId);
+      if (!partnerIds.includes(project.id)) {
+        return res.status(403).json({ error: 'Dự án không thuộc phạm vi công ty của bạn' });
+      }
+      isPartnerProjectView = true;
+    }
+
     const [documentsRes, commentsRes, incidentsRes] = await Promise.all([
       supabase
         .from('lead_documents')
@@ -1719,6 +1731,7 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
     res.json({
       project: {
         ...project,
+        is_partner_project_view: isPartnerProjectView,
         sx_won_deal: sxRow.sx_won_deal,
         sx_kanban_column_id: finalSxKanbanColumnId,
         sx_intake: finalIntakeFromCrm,
@@ -3276,6 +3289,7 @@ r.post('/task-templates/:tplId/items', requirePermission('projects', 'edit'), as
       checklist: Array.isArray(b.checklist) ? b.checklist : [],
       default_allowed_companies: Array.isArray(b.default_allowed_companies) ? b.default_allowed_companies : null,
       default_allowed_departments: Array.isArray(b.default_allowed_departments) ? b.default_allowed_departments : null,
+      executor_company_id: b.executor_company_id || null,
       blocks_stage_advance: !!b.blocks_stage_advance,
       completion_requires_file_or_note: !!b.completion_requires_file_or_note
         || (Array.isArray(b.required_evidence_file_types) && b.required_evidence_file_types.length > 0),
@@ -3288,17 +3302,16 @@ r.post('/task-templates/:tplId/items', requirePermission('projects', 'edit'), as
       .select()
       .single();
     if (error && /required_evidence_file_types|completion_requires_file_or_note|requires_quick_verdict/.test(error.message || '')) {
-      const {
-        completion_requires_file_or_note: _c,
-        required_evidence_file_types: _r,
-        requires_quick_verdict: _q,
-        ...legacy
-      } = insertRow;
-      ({ data, error } = await supabase
-        .from('workshop_task_template_items')
-        .insert(legacy)
-        .select()
-        .single());
+      return res.status(503).json({
+        error: 'Database chưa có cột minh chứng (migration 315/316). Chạy database/315_task_required_evidence_file_types.sql trên Supabase rồi thử lại.',
+        code: 'db_migration_required_evidence',
+      });
+    }
+    if (error && /executor_company_id/.test(error.message || '')) {
+      return res.status(503).json({
+        error: 'Database chưa có cột giao việc chéo (migration 318). Chạy database/318_cross_company_executor.sql trên Supabase rồi thử lại.',
+        code: 'db_migration_executor_company',
+      });
     }
     if (error && String(error.message || '').includes('blocks_stage_advance')) {
       // DB chưa apply migration 256 — bỏ cờ và retry để vẫn tạo được item.
@@ -3321,10 +3334,13 @@ r.put('/task-templates/:tplId/items/:itemId', requirePermission('projects', 'edi
   try {
     const update = {};
     ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist',
-      'default_allowed_companies', 'default_allowed_departments', 'blocks_stage_advance',
+      'default_allowed_companies', 'default_allowed_departments', 'executor_company_id', 'blocks_stage_advance',
       'completion_requires_file_or_note', 'required_evidence_file_types', 'requires_quick_verdict'].forEach((f) => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
+    if (req.body.executor_company_id === '' || req.body.executor_company_id === null) {
+      update.executor_company_id = null;
+    }
     if (req.body.required_evidence_file_types !== undefined) {
       const types = Array.isArray(req.body.required_evidence_file_types) ? req.body.required_evidence_file_types : [];
       update.required_evidence_file_types = types;
@@ -3339,18 +3355,16 @@ r.put('/task-templates/:tplId/items/:itemId', requirePermission('projects', 'edi
       .select()
       .single();
     if (error && /required_evidence_file_types|completion_requires_file_or_note|requires_quick_verdict/.test(error.message || '')) {
-      const {
-        completion_requires_file_or_note: _c,
-        required_evidence_file_types: _r,
-        requires_quick_verdict: _q,
-        ...legacy
-      } = update;
-      ({ data, error } = await supabase
-        .from('workshop_task_template_items')
-        .update(legacy)
-        .eq('id', req.params.itemId)
-        .select()
-        .single());
+      return res.status(503).json({
+        error: 'Database chưa có cột minh chứng (migration 315/316). Chạy database/315_task_required_evidence_file_types.sql trên Supabase rồi thử lại.',
+        code: 'db_migration_required_evidence',
+      });
+    }
+    if (error && /executor_company_id/.test(error.message || '')) {
+      return res.status(503).json({
+        error: 'Database chưa có cột giao việc chéo (migration 318). Chạy database/318_cross_company_executor.sql trên Supabase rồi thử lại.',
+        code: 'db_migration_executor_company',
+      });
     }
     if (error && String(error.message || '').includes('blocks_stage_advance')) {
       const { blocks_stage_advance: _drop, ...legacy } = update;

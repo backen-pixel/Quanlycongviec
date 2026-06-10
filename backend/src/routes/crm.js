@@ -653,8 +653,10 @@ function toCrmTaskChecklist(raw) {
         title: String(title).trim(),
         description: (typeof x === 'object' && x) ? String(x.description || '') : '',
         notes: '',
-        priority: 'medium',
-        assignee_id: null,
+        priority: (typeof x === 'object' && x?.priority) ? x.priority : 'medium',
+        assignee_id: (typeof x === 'object' && (x?.assignee_id || x?.default_assignee_id))
+          ? String(x.assignee_id || x.default_assignee_id)
+          : null,
         done: false,
         ...evidenceFieldsFromTemplateChecklistItem(x),
       };
@@ -11312,6 +11314,14 @@ r.get('/leads/:id/tasks', async (req, res) => {
       data = (data || []).filter((t) => !String(t.stage_slug || '').startsWith('sx_'));
     }
 
+    const { filterCrmTasksByCompanyScope } = require('../helpers/crossCompanyWorkspace');
+    const taskCompanyScope = String(req.query?.task_company_scope || 'own').toLowerCase();
+    data = filterCrmTasksByCompanyScope(data, {
+      scope: taskCompanyScope,
+      userCompanyId: req.user?.company_id || null,
+      leadCompanyId: lead?.company_id || null,
+    });
+
     if (data?.length) {
       data = await attachAssigneesToCrmTasks(data);
       data = await attachAssignmentIdsToCrmTasks(data);
@@ -12583,7 +12593,7 @@ r.post('/task-templates/:tplId/items', async (req, res) => {
     const b = req.body;
     const { data: existing } = await supabase.from('crm_task_template_items').select('order_index').eq('template_id', req.params.tplId).order('order_index', { ascending: false }).limit(1);
     const nextOrder = (existing?.[0]?.order_index || 0) + 1;
-    const { data, error } = await supabase.from('crm_task_template_items').insert({
+    let { data, error } = await supabase.from('crm_task_template_items').insert({
       template_id: req.params.tplId,
       title: b.title, description: b.description || null,
       priority: b.priority || 'medium', deadline_days: b.deadline_days || 0,
@@ -12597,6 +12607,12 @@ r.post('/task-templates/:tplId/items', async (req, res) => {
       blocks_stage_advance: !!b.blocks_stage_advance,
       show_excel_quotation_upload: !!b.show_excel_quotation_upload,
     }).select().single();
+    if (error && /required_evidence_file_types|requires_quick_verdict/.test(error.message || '')) {
+      return res.status(503).json({
+        error: 'Database chưa có cột minh chứng (migration 315/316). Chạy database/315_task_required_evidence_file_types.sql trên Supabase rồi thử lại.',
+        code: 'db_migration_required_evidence',
+      });
+    }
     if (error) throw error;
     res.status(201).json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -12609,8 +12625,14 @@ r.put('/task-templates/:tplId/items/:itemId', async (req, res) => {
     ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist', 'default_allowed_companies', 'default_allowed_departments', 'completion_requires_file_or_note', 'required_evidence_file_types', 'completion_requires_customer_note', 'completion_requires_customer_contact', 'requires_quick_verdict', 'blocks_stage_advance', 'show_excel_quotation_upload'].forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
-    const { data, error } = await supabase.from('crm_task_template_items')
+    let { data, error } = await supabase.from('crm_task_template_items')
       .update(update).eq('id', req.params.itemId).select().single();
+    if (error && /required_evidence_file_types|completion_requires_file_or_note|requires_quick_verdict/.test(error.message || '')) {
+      return res.status(503).json({
+        error: 'Database chưa có cột minh chứng (migration 315/316). Chạy database/315_task_required_evidence_file_types.sql trên Supabase rồi thử lại.',
+        code: 'db_migration_required_evidence',
+      });
+    }
     if (error) throw error;
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }

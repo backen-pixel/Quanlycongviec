@@ -204,6 +204,7 @@ async function userCanAccessAssignment(req, row) {
   if ((asn || []).length) return true;
   const cid = req.user?.company_id;
   if (cid && row.company_id && String(row.company_id) === String(cid)) return true;
+  if (cid && row.executor_company_id && String(row.executor_company_id) === String(cid)) return true;
   return false;
 }
 
@@ -221,13 +222,20 @@ async function getVisibleAssignmentIdsForNonAdmin(req) {
       .eq('company_id', companyId);
     if (error) throw error;
     (companyRows || []).forEach((r) => idSet.add(r.id));
+
+    const { data: execRows, error: execErr } = await supabase
+      .from('crm_assignments')
+      .select('id')
+      .eq('executor_company_id', companyId);
+    if (execErr && !String(execErr.message || '').includes('executor_company_id')) throw execErr;
+    if (!execErr) (execRows || []).forEach((r) => idSet.add(r.id));
   }
 
   return [...idSet];
 }
 
 const ASSIGNMENT_SELECT = `
-  id, company_id, column_id, lead_id, crm_task_id, assignment_module, title, description,
+  id, company_id, executor_company_id, column_id, lead_id, crm_task_id, assignment_module, title, description,
   assignee_id, created_by_id, priority, status, deadline,
   position, created_at, updated_at, completed_at,
   assignee:users!crm_assignments_assignee_id_fkey(id, full_name, email, avatar),
@@ -440,7 +448,9 @@ r.get('/', async (req, res) => {
     let scopeIds = null;
     if (isAdmin(req)) {
       const companyId = req.query.company_id || null;
-      if (companyId) q = q.eq('company_id', companyId);
+      if (companyId) {
+        q = q.or(`company_id.eq.${companyId},executor_company_id.eq.${companyId}`);
+      }
     } else {
       scopeIds = await getVisibleAssignmentIdsForNonAdmin(req);
       if (!scopeIds.length) return res.json({ assignments: [] });
@@ -476,11 +486,20 @@ r.get('/', async (req, res) => {
 
     q = q.order('position', { ascending: true }).order('created_at', { ascending: false });
     let { data, error } = await q;
+    if (error && /executor_company_id/.test(error.message || '') && isAdmin(req) && req.query.company_id) {
+      let qExec = supabase.from('crm_assignments').select(ASSIGNMENT_SELECT);
+      qExec = qExec.eq('company_id', req.query.company_id);
+      if (req.query.status) qExec = qExec.eq('status', req.query.status);
+      if (req.query.priority) qExec = qExec.eq('priority', req.query.priority);
+      if (moduleFilter === 'production' || moduleFilter === 'crm') qExec = qExec.eq('assignment_module', moduleFilter);
+      qExec = qExec.order('position', { ascending: true }).order('created_at', { ascending: false });
+      ({ data, error } = await qExec);
+    }
     if (error && /assignment_module/.test(error.message || '') && moduleFilter) {
       let q2 = supabase.from('crm_assignments').select(ASSIGNMENT_SELECT);
       if (isAdmin(req)) {
         const companyId = req.query.company_id || null;
-        if (companyId) q2 = q2.eq('company_id', companyId);
+        if (companyId) q2 = q2.or(`company_id.eq.${companyId},executor_company_id.eq.${companyId}`);
       } else if (scopeIds?.length) {
         q2 = q2.in('id', scopeIds);
       }

@@ -7,13 +7,34 @@ const { syncAssignmentFromCrmTask } = require('./crmTaskAssignmentSync');
 const { getCrmVcDeliveryStageId } = require('./workshopKanban');
 const { validateProductionCompanyId } = require('./productionCompanyGate');
 const { loadProductionHandoverMaps, resolveSxAssigneeForTemplateItem } = require('./productionHandoverSettings');
+const { resolveExecutorCompanyId, isExecutorColumnError } = require('./crossCompanyWorkspace');
 const { normalizeEvidenceFileTypes } = require('./evidenceFileTypes');
 const { evidenceFieldsFromTemplateChecklistItem } = require('./checklistItemEvidence');
 
 const SX_TEMPLATE_ITEM_COLS_FULL =
-  'id, template_id, title, description, priority, deadline_days, order_index, checklist, blocks_stage_advance, completion_requires_file_or_note, required_evidence_file_types, requires_quick_verdict';
+  'id, template_id, title, description, priority, deadline_days, order_index, checklist, blocks_stage_advance, completion_requires_file_or_note, required_evidence_file_types, requires_quick_verdict, executor_company_id';
 const SX_TEMPLATE_ITEM_COLS_LEGACY =
+  'id, template_id, title, description, priority, deadline_days, order_index, checklist, blocks_stage_advance, executor_company_id';
+const SX_TEMPLATE_ITEM_COLS_MIN =
   'id, template_id, title, description, priority, deadline_days, order_index, checklist, blocks_stage_advance';
+
+async function loadHandoverMapsCached(cache, companyId) {
+  const key = companyId ? String(companyId) : '__none__';
+  if (!cache.has(key)) {
+    cache.set(key, companyId
+      ? await loadProductionHandoverMaps(companyId)
+      : { responsibleUserId: null, assigneeByTemplateItemId: new Map() });
+  }
+  return cache.get(key);
+}
+
+function sxExecutorFieldsFromTemplateItem(it, ownerCompanyId) {
+  const execId = resolveExecutorCompanyId(it, ownerCompanyId);
+  if (!execId || String(execId) === String(ownerCompanyId || '')) {
+    return { executor_company_id: null };
+  }
+  return { executor_company_id: execId };
+}
 
 function sxEvidenceFieldsFromTemplateItem(it) {
   const types = normalizeEvidenceFileTypes(it?.required_evidence_file_types);
@@ -49,8 +70,10 @@ function toCrmChecklist(raw) {
         title: String(title).trim(),
         description: (typeof x === 'object' && x) ? String(x.description || '') : '',
         notes: '',
-        priority: 'medium',
-        assignee_id: null,
+        priority: (typeof x === 'object' && x?.priority) ? x.priority : 'medium',
+        assignee_id: (typeof x === 'object' && (x?.assignee_id || x?.default_assignee_id))
+          ? String(x.assignee_id || x.default_assignee_id)
+          : null,
         done: false,
         ...evidenceFieldsFromTemplateChecklistItem(x),
       };
@@ -356,6 +379,9 @@ async function applyProductionTemplateToFulfillmentLead({
     if (itemErr && isSxTemplateEvidenceColumnError(itemErr)) {
       ({ data: items, error: itemErr } = await fetchItems(SX_TEMPLATE_ITEM_COLS_LEGACY));
     }
+    if (itemErr && isExecutorColumnError(itemErr)) {
+      ({ data: items, error: itemErr } = await fetchItems(SX_TEMPLATE_ITEM_COLS_MIN));
+    }
     if (itemErr && String(itemErr.message || '').includes('blocks_stage_advance')) {
       ({ data: items, error: itemErr } = await fetchItems(
         'id, template_id, title, description, priority, deadline_days, order_index, checklist',
@@ -404,10 +430,15 @@ async function applyProductionTemplateToFulfillmentLead({
       return (Number(a.order_index) || 0) - (Number(b.order_index) || 0);
     });
 
-    const inserts = sortedItems.map((it, idx) => {
+    const handoverCacheStrict = new Map();
+    const inserts = [];
+    for (let idx = 0; idx < sortedItems.length; idx++) {
+      const it = sortedItems[idx];
       const checklist = toCrmChecklist(it.checklist);
       const stageSlug = stageSlugByTemplateId.get(String(it.template_id)) || 'sx_other';
-      const row = {
+      const execCo = resolveExecutorCompanyId(it, mustCompanyId);
+      const maps = await loadHandoverMapsCached(handoverCacheStrict, execCo);
+      inserts.push({
         lead_id: leadId,
         title: it.title,
         description: (it.description || '').trim() || null,
@@ -416,18 +447,16 @@ async function applyProductionTemplateToFulfillmentLead({
         priority: it.priority || 'medium',
         stage_slug: stageSlug,
         order_index: Number.isFinite(Number(it.order_index)) ? Number(it.order_index) : (idx + 1),
-        assignee_id: resolveSxAssigneeForTemplateItem(it, handoverStrict),
+        assignee_id: resolveSxAssigneeForTemplateItem(it, maps),
         supervisor_id: null,
         deadline: null,
         created_by: createdBy,
-        // Parity với CRM: kế thừa cờ "Chặn chuyển giai đoạn" từ mẫu xưởng.
         blocks_stage_advance: !!it.blocks_stage_advance,
         ...sxEvidenceFieldsFromTemplateItem(it),
-        // D: gắn task sx_* với cột pipeline thật → gate kanban SX bám đúng cột công ty + phân loại.
+        ...sxExecutorFieldsFromTemplateItem(it, mustCompanyId),
         production_pipeline_stage_id: pipelineColByTemplateId.get(String(it.template_id)) || null,
-      };
-      return row;
-    });
+      });
+    }
 
     const toInsertStrict = await filterMissingSxInserts(inserts);
     if (!toInsertStrict.length) {
@@ -456,6 +485,10 @@ async function applyProductionTemplateToFulfillmentLead({
         requires_quick_verdict: _q,
         ...rest
       }) => rest);
+      insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+    }
+    if (insErr && isExecutorColumnError(insErr)) {
+      const stripped = toInsertStrict.map(({ executor_company_id: _e, ...rest }) => rest);
       insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
     }
     // DB chưa apply migration 308 (cột checklist) → bỏ checklist và thử lại.
@@ -567,6 +600,9 @@ async function applyProductionTemplateToFulfillmentLead({
   if (itemErr && isSxTemplateEvidenceColumnError(itemErr)) {
     ({ data: items, error: itemErr } = await fetchItemsLoose(SX_TEMPLATE_ITEM_COLS_LEGACY));
   }
+  if (itemErr && isExecutorColumnError(itemErr)) {
+    ({ data: items, error: itemErr } = await fetchItemsLoose(SX_TEMPLATE_ITEM_COLS_MIN));
+  }
   if (itemErr && String(itemErr.message || '').includes('blocks_stage_advance')) {
     ({ data: items, error: itemErr } = await fetchItemsLoose(
       'id, template_id, title, description, priority, deadline_days, order_index, checklist',
@@ -615,10 +651,15 @@ async function applyProductionTemplateToFulfillmentLead({
     return (Number(a.order_index) || 0) - (Number(b.order_index) || 0);
   });
 
-  const inserts = sortedItems.map((it, idx) => {
+  const handoverCacheLoose = new Map();
+  const inserts = [];
+  for (let idx = 0; idx < sortedItems.length; idx++) {
+    const it = sortedItems[idx];
     const checklist = toCrmChecklist(it.checklist);
     const stageSlug = stageSlugByTemplateId.get(String(it.template_id)) || 'sx_other';
-    return {
+    const execCo = resolveExecutorCompanyId(it, targetCompanyId);
+    const maps = await loadHandoverMapsCached(handoverCacheLoose, execCo);
+    inserts.push({
       lead_id: leadId,
       title: it.title,
       checklist,
@@ -627,15 +668,16 @@ async function applyProductionTemplateToFulfillmentLead({
       priority: it.priority || 'medium',
       stage_slug: stageSlug,
       order_index: Number.isFinite(Number(it.order_index)) ? Number(it.order_index) : (idx + 1),
-      assignee_id: resolveSxAssigneeForTemplateItem(it, handoverLoose),
+      assignee_id: resolveSxAssigneeForTemplateItem(it, maps),
       supervisor_id: null,
       deadline: null,
       created_by: createdBy,
       blocks_stage_advance: !!it.blocks_stage_advance,
       ...sxEvidenceFieldsFromTemplateItem(it),
+      ...sxExecutorFieldsFromTemplateItem(it, targetCompanyId),
       production_pipeline_stage_id: pipelineColByTemplateId.get(String(it.template_id)) || null,
-    };
-  });
+    });
+  }
 
   const toInsertLoose = await filterMissingSxInserts(inserts);
   if (!toInsertLoose.length) {
@@ -663,6 +705,10 @@ async function applyProductionTemplateToFulfillmentLead({
       requires_quick_verdict: _q,
       ...rest
     }) => rest);
+    insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+  }
+  if (insErr && isExecutorColumnError(insErr)) {
+    const stripped = toInsertLoose.map(({ executor_company_id: _e, ...rest }) => rest);
     insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
   }
   // DB chưa apply migration 308 (cột checklist) → bỏ checklist và thử lại.
@@ -1047,9 +1093,8 @@ async function applyProductionTemplatesOnPipelineEnter({
     };
   }
 
-  const handoverMaps = project.company_id
-    ? await loadProductionHandoverMaps(project.company_id)
-    : { responsibleUserId: null, assigneeByTemplateItemId: new Map() };
+  const handoverCache = new Map();
+  const ownerCompanyId = project.company_id || null;
 
   const templateIds = templates.map((t) => t.id).filter(Boolean);
   const fetchItemsPipe = async (cols) => supabase
@@ -1061,6 +1106,9 @@ async function applyProductionTemplatesOnPipelineEnter({
   let { data: items, error: itemErr } = await fetchItemsPipe(SX_TEMPLATE_ITEM_COLS_FULL);
   if (itemErr && isSxTemplateEvidenceColumnError(itemErr)) {
     ({ data: items, error: itemErr } = await fetchItemsPipe(SX_TEMPLATE_ITEM_COLS_LEGACY));
+  }
+  if (itemErr && isExecutorColumnError(itemErr)) {
+    ({ data: items, error: itemErr } = await fetchItemsPipe(SX_TEMPLATE_ITEM_COLS_MIN));
   }
   if (itemErr && String(itemErr.message || '').includes('blocks_stage_advance')) {
     ({ data: items, error: itemErr } = await fetchItemsPipe(
@@ -1121,10 +1169,14 @@ async function applyProductionTemplatesOnPipelineEnter({
     return (Number(a.order_index) || 0) - (Number(b.order_index) || 0);
   });
 
-  const inserts = sortedItems.map((it, idx) => {
+  const inserts = [];
+  for (let idx = 0; idx < sortedItems.length; idx++) {
+    const it = sortedItems[idx];
     const checklist = toCrmChecklist(it.checklist);
     const stageSlug = stageSlugByTemplateId.get(String(it.template_id)) || 'sx_other';
-    return {
+    const execCo = resolveExecutorCompanyId(it, ownerCompanyId);
+    const maps = await loadHandoverMapsCached(handoverCache, execCo);
+    const row = {
       lead_id: leadId,
       title: it.title,
       checklist,
@@ -1133,15 +1185,17 @@ async function applyProductionTemplatesOnPipelineEnter({
       priority: it.priority || 'medium',
       stage_slug: stageSlug,
       order_index: Number.isFinite(Number(it.order_index)) ? Number(it.order_index) : (idx + 1),
-      assignee_id: resolveSxAssigneeForTemplateItem(it, handoverMaps),
+      assignee_id: resolveSxAssigneeForTemplateItem(it, maps),
       supervisor_id: null,
       deadline: null,
       created_by: userId,
       blocks_stage_advance: !!it.blocks_stage_advance,
       ...sxEvidenceFieldsFromTemplateItem(it),
+      ...sxExecutorFieldsFromTemplateItem(it, ownerCompanyId),
       production_pipeline_stage_id: pipelineStageId,
     };
-  }).filter((row) => !existingKeys.has(sxTaskFingerprint(row.title, row.stage_slug)));
+    if (!existingKeys.has(sxTaskFingerprint(row.title, row.stage_slug))) inserts.push(row);
+  }
 
   if (!inserts.length) {
     return {
@@ -1171,6 +1225,10 @@ async function applyProductionTemplatesOnPipelineEnter({
     }) => rest);
     insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
   }
+  if (insErr && isExecutorColumnError(insErr)) {
+    const stripped = inserts.map(({ executor_company_id: _e, ...rest }) => rest);
+    insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+  }
   if (insErr && String(insErr.message || '').toLowerCase().includes('checklist')) {
     const stripped = inserts.map(({ checklist: _c, ...rest }) => rest);
     insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
@@ -1179,7 +1237,7 @@ async function applyProductionTemplatesOnPipelineEnter({
 
   const { data: createdTasks } = await supabase
     .from('crm_tasks')
-    .select('id, lead_id, title, description, status, priority, deadline, stage_slug, assignee_id, completed_at')
+    .select('id, lead_id, title, description, status, priority, deadline, stage_slug, assignee_id, completed_at, executor_company_id')
     .eq('lead_id', leadId)
     .like('stage_slug', 'sx_%')
     .order('created_at', { ascending: false })

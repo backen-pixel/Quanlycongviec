@@ -3,7 +3,7 @@ import api from '../lib/api';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Lock, Building2, Workflow, Globe, MapPin, RefreshCw, FileSpreadsheet, Paperclip, MessageSquare } from 'lucide-react';
+import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Lock, Building2, Workflow, Globe, MapPin, RefreshCw, FileSpreadsheet, Paperclip, MessageSquare, User } from 'lucide-react';
 import EvidenceFileTypesPicker from '../components/EvidenceFileTypesPicker';
 import { formatEvidenceTypesShort, normalizeEvidenceFileTypes, checklistItemRequiresEvidence } from '../lib/evidenceFileTypes';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
@@ -62,6 +62,7 @@ export default function CRMTemplatesPage() {
   const [editingVisibility, setEditingVisibility] = useState({}); // {itemId: true/false}
   const [companies, setCompanies] = useState([]);
   const [departments, setDepartments] = useState([]);
+  const [users, setUsers] = useState([]);
 
   // ── Chọn pipeline thật theo công ty ──
   // Mặc định: chọn công ty của user (nếu có) để page mở ra ở chế độ Pipeline ngay.
@@ -216,6 +217,15 @@ export default function CRMTemplatesPage() {
     if (!silent) setLoading(false);
   };
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selectedPipelineId]);
+
+  useEffect(() => {
+    let active = true;
+    const params = selectedCompanyId ? { company_id: selectedCompanyId } : {};
+    api.get('/users', { params })
+      .then((r) => { if (active) setUsers(r.data?.users || r.data || []); })
+      .catch(() => { if (active) setUsers([]); });
+    return () => { active = false; };
+  }, [selectedCompanyId]);
 
   // ── Helpers: cập nhật state cục bộ thay vì load lại toàn trang sau mỗi thao tác CRUD ──
   const upsertTemplateLocal = (tplPartial) => {
@@ -579,7 +589,7 @@ export default function CRMTemplatesPage() {
   const updateTemplateItemFields = async (tplId, itemId, body) => {
     try {
       const { data } = await api.put(`/crm/task-templates/${tplId}/items/${itemId}`, body);
-      if (data?.id) upsertItemLocal(tplId, data);
+      if (data?.id) upsertItemLocal(tplId, { ...data, ...body });
       else upsertItemLocal(tplId, { id: itemId, ...body });
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi cập nhật mục mẫu');
@@ -617,7 +627,7 @@ export default function CRMTemplatesPage() {
   const updateItemChecklist = async (tplId, itemId, checklist) => {
     try {
       const { data } = await api.put(`/crm/task-templates/${tplId}/items/${itemId}`, { checklist });
-      if (data?.id) upsertItemLocal(tplId, data);
+      if (data?.id) upsertItemLocal(tplId, { ...data, checklist });
       else upsertItemLocal(tplId, { id: itemId, checklist });
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
@@ -678,8 +688,15 @@ export default function CRMTemplatesPage() {
     }
     const prevTitle = typeof entry === 'string' ? entry : (entry?.title || entry?.label || '');
     const prevDesc = typeof entry === 'string' ? '' : (entry?.description || '');
+    if (patch.assignee_id !== undefined) {
+      next.assignee_id = patch.assignee_id ? String(patch.assignee_id) : null;
+    }
     const evidencePatch = patch.required_evidence_file_types !== undefined || patch.completion_requires_file_or_note !== undefined;
-    if (!evidencePatch && next.title === prevTitle && next.description === prevDesc) return;
+    const assigneePatch = patch.assignee_id !== undefined;
+    const prevAssignee = typeof entry === 'object' ? String(entry?.assignee_id || entry?.default_assignee_id || '') : '';
+    if (!evidencePatch && !assigneePatch && next.title === prevTitle && next.description === prevDesc) return;
+    if (assigneePatch && !evidencePatch && next.title === prevTitle && next.description === prevDesc
+      && String(next.assignee_id || '') === prevAssignee) return;
     current[idx] = next;
     await updateItemChecklist(tplId, itemId, current);
   };
@@ -1219,7 +1236,7 @@ export default function CRMTemplatesPage() {
                           updateItemChecklist={updateItemChecklist}
                           updateTemplateItemFields={updateTemplateItemFields}
                           editingVisibility={editingVisibility} setEditingVisibility={setEditingVisibility}
-                          companies={companies} departments={departments}
+                          companies={companies} departments={departments} users={users}
                           toggleItemCompany={toggleItemCompany} toggleItemDept={toggleItemDept}
                           isPipelineMode={isPipelineMode} pipelineStages={pipelineStages}
                           companyPipelinesAll={companyPipelinesAll} activeTab={activeTab}
@@ -1259,7 +1276,7 @@ function TemplateCard({
   addChecklistItem, removeChecklistItem, updateChecklistItem,
   sensors, handleItemDragEnd, handleChecklistDragEnd,
   editingVisibility, setEditingVisibility,
-  companies, departments, toggleItemCompany, toggleItemDept,
+  companies, departments, users = [], toggleItemCompany, toggleItemDept,
   updateTemplateItemFields,
   isPipelineMode = false, pipelineStages = [],
   companyPipelinesAll = [], activeTab = 'deal',
@@ -1698,6 +1715,7 @@ function TemplateCard({
                       {editingChecklist[item.id] && (
                         <ChecklistEditor tplId={tpl.id} itemId={item.id}
                           checklist={Array.isArray(item.checklist) ? item.checklist : []}
+                          users={users}
                           sensors={sensors} handleChecklistDragEnd={handleChecklistDragEnd}
                           removeChecklistItem={removeChecklistItem} addChecklistItem={addChecklistItem}
                           updateChecklistItem={updateChecklistItem}
@@ -1731,9 +1749,10 @@ function TemplateCard({
 const ckTitleOfCrm = (ck) => (typeof ck === 'string' ? ck : (ck?.title || ck?.label || ''));
 const ckDescOfCrm = (ck) => (typeof ck === 'string' ? '' : (ck?.description || ''));
 const ckEvidenceTypesOfCrm = (ck) => normalizeEvidenceFileTypes(typeof ck === 'object' ? ck?.required_evidence_file_types : []);
+const ckAssigneeOfCrm = (ck) => (typeof ck === 'object' ? String(ck?.assignee_id || ck?.default_assignee_id || '') : '');
 
 // ═══ Checklist Editor with drag & drop ═══
-function ChecklistEditor({ tplId, itemId, checklist, sensors, handleChecklistDragEnd, removeChecklistItem, addChecklistItem, updateChecklistItem, newCheckItem, setNewCheckItem }) {
+function ChecklistEditor({ tplId, itemId, checklist, users = [], sensors, handleChecklistDragEnd, removeChecklistItem, addChecklistItem, updateChecklistItem, newCheckItem, setNewCheckItem }) {
   const checkIds = checklist.map((_, i) => `ck-${itemId}-${i}`);
   return (
     <div className="ml-10 pl-3 border-l-2 border-emerald-200 mb-2 space-y-1.5">
@@ -1765,6 +1784,22 @@ function ChecklistEditor({ tplId, itemId, checklist, sensors, handleChecklistDra
                       className="w-full h-7 px-2 text-[11px] text-gray-600 border border-gray-200 rounded outline-none focus:ring-1 focus:ring-emerald-300"
                       onBlur={e => updateChecklistItem(tplId, itemId, ci, { description: e.target.value.trim() })}
                     />
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <User className="h-3 w-3 text-indigo-600 shrink-0" />
+                      <select
+                        value={ckAssigneeOfCrm(ck)}
+                        onChange={(e) => updateChecklistItem(tplId, itemId, ci, {
+                          assignee_id: e.target.value || null,
+                        })}
+                        className="h-7 min-w-[140px] flex-1 max-w-full px-2 text-[11px] border border-indigo-200 rounded bg-white outline-none focus:ring-1 focus:ring-indigo-300"
+                        title="Nhân viên mặc định khi sinh nhiệm vụ từ mẫu"
+                      >
+                        <option value="">— Chưa gán —</option>
+                        {(users || []).map((u) => (
+                          <option key={u.id} value={u.id}>{u.full_name || u.email || u.id}</option>
+                        ))}
+                      </select>
+                    </div>
                     <label className="flex items-center gap-1.5 text-[10px] font-medium text-violet-700 cursor-pointer select-none">
                       <input
                         type="checkbox"
