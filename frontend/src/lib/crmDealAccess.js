@@ -23,5 +23,5 @@ export function userSeesAllCrmDealsScoped(user) {
   const r = normalizeCrmUserRole(user?.role);
   const hasCompany = !!(user?.company_id != null && String(user.company_id).trim());
   if (r === 'region_admin' && hasCompany) return true;
-  return r === 'sales_admin' && hasCompany;
+  return (r === 'sales_admin' || r === 'crm_production_admin') && hasCompany;
 }

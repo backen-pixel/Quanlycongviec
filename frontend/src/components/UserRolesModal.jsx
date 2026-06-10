@@ -76,14 +76,29 @@ export default function UserRolesModal({ userId, userName, onClose, onSaved }) {
     setLoading(false);
   };
 
+  const hasRoleAssignment = (roleId, ecosystemUnitId = null) => {
+    const unitKey = ecosystemUnitId || null;
+    return userRoles.some((ur) => {
+      const urUnit = ur.ecosystem_unit_id || ur.ecosystem_unit?.id || null;
+      return ur.role_id === roleId && (urUnit || null) === unitKey;
+    });
+  };
+
   const assignRole = async (roleId, ecosystemUnitId = null) => {
+    if (hasRoleAssignment(roleId, ecosystemUnitId)) {
+      alert('Nhân viên đã có vai trò này ở phạm vi đã chọn.');
+      return;
+    }
     setSaving(true);
     try {
-      await api.post(`/permissions/users/${userId}/roles`, {
+      const { data } = await api.post(`/permissions/users/${userId}/roles`, {
         role_id: roleId,
         ecosystem_unit_id: ecosystemUnitId,
         granted_by: null,
       });
+      if (data?.already_exists) {
+        alert(data.message || 'Nhân viên đã có vai trò này ở phạm vi đã chọn.');
+      }
       await load();
     } catch (e) {
       alert('Lỗi: ' + (e.response?.data?.error || e.message));
@@ -204,6 +219,7 @@ export default function UserRolesModal({ userId, userName, onClose, onSaved }) {
                 key={role.id}
                 role={role}
                 ecosystemUnits={ecosystemUnits}
+                userRoles={userRoles}
                 onAssign={(unitId) => assignRole(role.id, unitId)}
                 disabled={saving}
               />
@@ -224,7 +240,11 @@ export default function UserRolesModal({ userId, userName, onClose, onSaved }) {
   );
 }
 
-function RoleAssignRow({ role, ecosystemUnits, onAssign, disabled }) {
+function roleScopeKey(roleId, unitId) {
+  return `${roleId}::${unitId || 'global'}`;
+}
+
+function RoleAssignRow({ role, ecosystemUnits, userRoles, onAssign, disabled }) {
   const [targetDepth, setTargetDepth] = useState(null);
   /** Gốc cây khi có nhiều đơn vị không cha (cần trước khi chọn Khối). */
   const [anchorRootId, setAnchorRootId] = useState('');
@@ -262,12 +282,25 @@ function RoleAssignRow({ role, ecosystemUnits, onAssign, disabled }) {
     });
   };
 
+  const assignedScopeKeys = useMemo(() => {
+    const keys = new Set();
+    for (const ur of userRoles || []) {
+      const unitId = ur.ecosystem_unit_id || ur.ecosystem_unit?.id || null;
+      keys.add(roleScopeKey(ur.role_id, unitId));
+    }
+    return keys;
+  }, [userRoles, role.id]);
+
+  const pendingUnitId = useMemo(() => {
+    if (targetDepth === null) return null;
+    if (targetDepth === 0) return pickByDepth[0] || null;
+    return pickByDepth[targetDepth] || null;
+  }, [targetDepth, pickByDepth]);
+
+  const isDuplicateAssignment = assignedScopeKeys.has(roleScopeKey(role.id, pendingUnitId));
+
   const handleAssign = () => {
-    let unitId = null;
-    if (targetDepth === null) unitId = null;
-    else if (targetDepth === 0) unitId = pickByDepth[0] || null;
-    else unitId = pickByDepth[targetDepth] || null;
-    onAssign(unitId);
+    onAssign(pendingUnitId);
     setTargetDepth(null);
     resetScopePicks();
     setExpanded(false);
@@ -495,13 +528,19 @@ function RoleAssignRow({ role, ecosystemUnits, onAssign, disabled }) {
           </p>
         </div>
         
+        {isDuplicateAssignment && (
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            Nhân viên đã có vai trò «{role.name}» ở phạm vi này.
+          </p>
+        )}
+
         <button
           onClick={handleAssign}
-          disabled={disabled || (targetDepth !== null && !canAssignScoped)}
+          disabled={disabled || isDuplicateAssignment || (targetDepth !== null && !canAssignScoped)}
           className="w-full px-4 py-2.5 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
           <Plus className="h-4 w-4" />
-          Gán vai trò
+          {isDuplicateAssignment ? 'Đã gán ở phạm vi này' : 'Gán vai trò'}
         </button>
       </div>
     </div>

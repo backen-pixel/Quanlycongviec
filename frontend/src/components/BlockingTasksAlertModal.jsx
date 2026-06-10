@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { AlertCircle, X, Lock, CheckCircle2, Paperclip, MessageSquare, Loader2, FileText, Image as ImageIcon, Film } from 'lucide-react';
 import api from '../lib/api';
+import TaskQuickVerdictBar from './TaskQuickVerdictBar';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
 
 function fmtDateTime(value) {
@@ -248,6 +249,18 @@ export default function BlockingTasksAlertModal({
     }
   };
 
+  const tryClearAfterQuickVerdict = (task, updated) => {
+    if (task.block_reason !== 'missing_quick_verdict') return;
+    if (updated?.quick_verdict !== 'sufficient') return;
+    const stillNeedsComplete =
+      task.blocks_stage_advance && task.status !== 'completed' && task.status !== 'cancelled';
+    if (!stillNeedsComplete) removeTask(task.id);
+  };
+
+  const patchTaskInList = (taskId, patch) => {
+    setTasks((prev) => prev.map((t) => (String(t.id) === String(taskId) ? { ...t, ...patch } : t)));
+  };
+
   const setTaskError = (taskId, msg) => {
     setErrById((prev) => ({ ...prev, [taskId]: msg }));
   };
@@ -390,6 +403,9 @@ export default function BlockingTasksAlertModal({
                   {tasks.some((t) => t.block_reason === 'missing_evidence') && (
                     <span className="block mt-0.5">Một số nhiệm vụ cần ghi chú hoặc file đính kèm.</span>
                   )}
+                  {tasks.some((t) => t.block_reason === 'missing_quick_verdict') && (
+                    <span className="block mt-0.5">Một số nhiệm vụ cần chọn «Đã đủ» trong ghi chú nhanh.</span>
+                  )}
                 </p>
               </>
             )}
@@ -432,11 +448,37 @@ export default function BlockingTasksAlertModal({
                           </span>
                         )}
                         {t.block_reason === 'missing_evidence' && (
-                          <span className="shrink-0 text-[10px] text-violet-700 bg-violet-100 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-semibold">
-                            <Paperclip className="h-2.5 w-2.5" /> Thiếu file/GC
+                          <span
+                            className="shrink-0 text-[10px] text-violet-700 bg-violet-100 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-semibold max-w-[180px] truncate"
+                            title={t.missing_label ? `Thiếu: ${t.missing_label}` : 'Thiếu ghi chú hoặc file đính kèm'}
+                          >
+                            <Paperclip className="h-2.5 w-2.5" /> {t.missing_label ? `Thiếu: ${t.missing_label}` : 'Thiếu file/GC'}
+                          </span>
+                        )}
+                        {t.block_reason === 'missing_quick_verdict' && (
+                          <span
+                            className="shrink-0 text-[10px] text-sky-700 bg-sky-100 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-semibold max-w-[180px] truncate"
+                            title={t.missing_label || 'Chưa chọn Đủ/Chưa'}
+                          >
+                            <MessageSquare className="h-2.5 w-2.5" /> {t.missing_label || 'Chưa Đủ/Chưa'}
                           </span>
                         )}
                       </div>
+
+                      {(t.requires_quick_verdict || t.block_reason === 'missing_quick_verdict') && (
+                        <div className="mt-2 pl-7">
+                          <TaskQuickVerdictBar
+                            compact
+                            task={t}
+                            leadId={leadId}
+                            onUpdated={(updated) => {
+                              patchTaskInList(t.id, updated);
+                              onChanged?.();
+                              tryClearAfterQuickVerdict(t, updated);
+                            }}
+                          />
+                        </div>
+                      )}
 
                       {/* Hàng nút thao tác */}
                       <div className="flex items-center gap-1.5 mt-2 pl-7">

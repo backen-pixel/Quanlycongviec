@@ -4,7 +4,9 @@ import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { findDefaultAdminCrmCompanyPhucDat } from '../lib/crmCompanyFilter';
-import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Globe, MapPin, Lock, Star } from 'lucide-react';
+import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Globe, MapPin, Lock, Star, Paperclip, MessageSquare } from 'lucide-react';
+import EvidenceFileTypesPicker from '../components/EvidenceFileTypesPicker';
+import { formatEvidenceTypesShort, normalizeEvidenceFileTypes, checklistItemRequiresEvidence } from '../lib/evidenceFileTypes';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -69,9 +71,9 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
   const companyDefaultResolvedRef = useRef(false);
 
   const currentStages = activeTab === 'logistics' ? WORKSHOP_LOGISTICS_STAGES : WORKSHOP_PRODUCTION_STAGES;
-  // VC: Công ty → Pipeline. SX: Công ty → Phân loại (mỗi phân loại một bộ, không gắn pipeline).
+  // SX: Công ty → Phân loại → Pipeline (nhiều bộ/cột). VC: Công ty → Pipeline.
   const usesWorkshopType = activeTab === 'production';
-  const usesPipelineSidebar = activeTab === 'logistics';
+  const usesPipelineSidebar = activeTab === 'logistics' || fixedArea === 'production' || activeTab === 'production';
   const selectedWorkshopType = selectedWorkshopTypeKey === 'global'
     ? null
     : workshopTypes.find((t) => String(t.id) === String(selectedWorkshopTypeKey)) || null;
@@ -136,10 +138,11 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  // SX: Công ty + Phân loại. VC: Công ty + Pipeline.
+  // SX: Công ty + Phân loại + Pipeline. VC: Công ty + Pipeline.
   const canLoadTemplates = !!selectedCompanyId
     && !!activeTab
-    && (usesWorkshopType ? !!selectedWorkshopTypeKey : !!selectedStageKey);
+    && (usesWorkshopType ? !!selectedWorkshopTypeKey : true)
+    && (usesPipelineSidebar ? !!selectedStageKey : true);
 
   const load = async () => {
     setLoading(true);
@@ -167,7 +170,8 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
           active_only: 'false',
           workshop_area: fixedArea || activeTab,
           company_id: selectedCompanyId,
-          ...(usesWorkshopType ? workshopTypePayloadForTpl() : stageFilterParams()),
+          ...(usesWorkshopType ? workshopTypePayloadForTpl() : {}),
+          ...(usesPipelineSidebar ? stageFilterParams() : {}),
         };
         const { data } = await api.get('/production/task-templates', { params });
         setTemplates(data || []);
@@ -190,15 +194,25 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
     loadWorkshopTypes();
   }, [selectedCompanyId, activeTab]);
 
-  // VC: đổi công ty → nạp pipeline. SX không dùng pipeline sidebar.
+  // Nạp cột pipeline khi đủ điều kiện (VC: công ty; SX: công ty + phân loại).
   useEffect(() => {
     if (usesPipelineSidebar) loadPipelineStages();
     else setPipelineStages([]);
   }, [selectedCompanyId, activeTab, selectedWorkshopTypeKey, usesPipelineSidebar]);
 
+  useEffect(() => {
+    if (usesPipelineSidebar) setSelectedStageKey('');
+  }, [selectedWorkshopTypeKey, usesPipelineSidebar]);
+
   const filteredTemplates = templates.filter((t) => t.workshop_area === (fixedArea || activeTab));
 
   const stagePayloadForTpl = () => {
+    if (usesWorkshopType && usesPipelineSidebar) {
+      return {
+        production_stage_id: selectedStageKey === 'global' ? null : selectedStageKey,
+        logistics_stage_id: null,
+      };
+    }
     if (usesWorkshopType) {
       return { production_stage_id: null, logistics_stage_id: null };
     }
@@ -435,7 +449,14 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
         : editingTpl.pipeline_stage_id;
       let stagePayload;
       if (tplArea === 'production') {
-        stagePayload = { production_stage_id: null, logistics_stage_id: null };
+        if (editingStageId !== undefined) {
+          stagePayload = {
+            production_stage_id: editingStageId || null,
+            logistics_stage_id: null,
+          };
+        } else {
+          stagePayload = stagePayloadForTpl();
+        }
       } else if (editingStageId !== undefined) {
         stagePayload = {
           logistics_stage_id: editingStageId || null,
@@ -530,10 +551,19 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
     const next = { ...base, ...patch };
     next.title = (next.title ?? '').toString();
     next.description = (next.description ?? '').toString();
-    // Không thay đổi gì thì bỏ qua (tránh reload thừa khi blur).
+    if (patch.required_evidence_file_types !== undefined) {
+      next.required_evidence_file_types = normalizeEvidenceFileTypes(patch.required_evidence_file_types);
+      next.completion_requires_file_or_note = next.required_evidence_file_types.length > 0
+        || !!patch.completion_requires_file_or_note;
+    }
+    if (patch.completion_requires_file_or_note !== undefined && patch.required_evidence_file_types === undefined) {
+      next.completion_requires_file_or_note = !!patch.completion_requires_file_or_note;
+    }
+    // Không thay đổi gì thì bỏ qua (tránh reload thừa khi blur) — trừ khi đổi minh chứng.
     const prevTitle = typeof entry === 'string' ? entry : (entry?.title || entry?.label || '');
     const prevDesc = typeof entry === 'string' ? '' : (entry?.description || '');
-    if (next.title === prevTitle && next.description === prevDesc) return;
+    const evidencePatch = patch.required_evidence_file_types !== undefined || patch.completion_requires_file_or_note !== undefined;
+    if (!evidencePatch && next.title === prevTitle && next.description === prevDesc) return;
     current[idx] = next;
     await updateItemChecklist(tplId, itemId, current);
   };
@@ -725,12 +755,14 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
     </div>
   );
 
-  const stageDisplay = usesWorkshopType
-    ? (selectedWorkshopTypeKey === 'global'
-      ? { label: 'Mọi phân loại', icon: '🌐', color: '#64748b' }
-      : { label: selectedWorkshopType?.name || 'Phân loại', icon: selectedWorkshopType?.icon || '📦', color: selectedWorkshopType?.color || '#0f766e' })
-    : (selectedPipelineStage
+  const stageDisplay = usesPipelineSidebar && selectedStageKey
+    ? (selectedPipelineStage
       ? { label: selectedPipelineStage.name, icon: selectedPipelineStage.icon || '📌', color: selectedPipelineStage.color || '#0f766e' }
+      : { label: 'Bộ mẫu chung (Global)', icon: '🌐', color: '#64748b' })
+    : (usesWorkshopType
+      ? (selectedWorkshopTypeKey === 'global'
+        ? { label: 'Mọi phân loại', icon: '🌐', color: '#64748b' }
+        : { label: selectedWorkshopType?.name || 'Phân loại', icon: selectedWorkshopType?.icon || '📦', color: selectedWorkshopType?.color || '#0f766e' })
       : { label: 'Bộ mẫu chung (Global)', icon: '🌐', color: '#64748b' });
 
   const stageTpls = [...filteredTemplates].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
@@ -748,7 +780,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
           </h1>
           <p className="text-sm text-gray-500">
             {fixedArea === 'production'
-              ? <>Mỗi <strong>phân loại</strong> (Cánh kính / Tủ bếp / …) có một bộ nhiệm vụ riêng. Nhấn <strong>Đặt bộ mặc định deal SX</strong> để khi tạo deal thuộc phân loại đó hệ thống tự sinh đúng bộ nhiệm vụ.</>
+              ? <>Gắn từng <strong>bộ nhiệm vụ</strong> vào <strong>cột pipeline</strong> (một cột có thể nhiều bộ). Khi thẻ chuyển sang cột đó, hệ thống tự sinh nhiệm vụ và gán NV theo cấu hình <Link to="/sx/handover-settings" className="text-blue-600 hover:underline">Bàn giao CRM → SX</Link>.</>
               : <>Phân theo <strong>cột pipeline</strong> của công ty đã chọn. Khi tạo dự án mới, hệ thống áp một lần các bộ mẫu của cột hiện tại + Global.</>}
             {' '}Ngày hẹn trên từng nhiệm vụ do nhân viên tự đặt.
           </p>
@@ -842,15 +874,15 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
         {usesPipelineSidebar && (
           <>
             <span className="text-gray-300">→</span>
-            <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full ${selectedStageKey ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : (selectedCompanyId ? 'bg-amber-50 text-amber-800 border border-amber-200' : 'bg-gray-50 text-gray-400 border border-gray-200')}`}>
-              <span className="font-semibold">2.</span> Pipeline
+            <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full ${selectedStageKey ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : ((usesWorkshopType ? selectedWorkshopTypeKey : selectedCompanyId) ? 'bg-amber-50 text-amber-800 border border-amber-200' : 'bg-gray-50 text-gray-400 border border-gray-200')}`}>
+              <span className="font-semibold">{usesWorkshopType ? '3.' : '2.'}</span> Pipeline
               {selectedStageKey ? <span>✓</span> : <span>·</span>}
             </span>
           </>
         )}
         <span className="text-gray-300">→</span>
         <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full ${canLoadTemplates ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-gray-50 text-gray-400 border border-gray-200'}`}>
-          <span className="font-semibold">{usesWorkshopType ? '3.' : (usesPipelineSidebar ? '3.' : '2.')}</span> Bộ mẫu
+          <span className="font-semibold">{usesWorkshopType && usesPipelineSidebar ? '4.' : (usesWorkshopType || usesPipelineSidebar ? '3.' : '2.')}</span> Bộ mẫu
         </span>
       </div>
 
@@ -1188,15 +1220,21 @@ function TemplateCard({
   pipelineStages = [], activeTab = 'production',
 }) {
   const tplArea = fixedArea || tpl.workshop_area || activeTab || 'production';
-  const showPipelineUi = tplArea === 'logistics';
-  const tplStageId = showPipelineUi ? (tpl.logistics_stage_id || null) : null;
+  const showPipelineUi = tplArea === 'logistics' || tplArea === 'production';
+  const tplStageId = showPipelineUi
+    ? (tplArea === 'logistics' ? (tpl.logistics_stage_id || null) : (tpl.production_stage_id || null))
+    : null;
   const tplStageRow = tplStageId
     ? pipelineStages.find((s) => String(s.id) === String(tplStageId)) || null
     : null;
   // Số nhiệm vụ "chặn chuyển giai đoạn" còn lại trong bộ mẫu (giúp người cấu hình nhìn nhanh trên header).
   const blockingItemsCount = (tpl.items || []).filter((it) => it && it.blocks_stage_advance).length;
   const [editingItemId, setEditingItemId] = useState(null);
-  const [itemEditForm, setItemEditForm] = useState({ title: '', description: '', priority: 'medium', deadline_days: 0, blocks_stage_advance: false });
+  const [itemEditForm, setItemEditForm] = useState({
+    title: '', description: '', priority: 'medium', deadline_days: 0,
+    blocks_stage_advance: false, completion_requires_file_or_note: false, required_evidence_file_types: [],
+    requires_quick_verdict: false,
+  });
 
   const sortedItems = [...(tpl.items || [])].sort((a, b) => a.order_index - b.order_index);
 
@@ -1208,6 +1246,9 @@ function TemplateCard({
       priority: item.priority || 'medium',
       deadline_days: item.deadline_days ?? 0,
       blocks_stage_advance: !!item.blocks_stage_advance,
+      completion_requires_file_or_note: !!item.completion_requires_file_or_note,
+      required_evidence_file_types: normalizeEvidenceFileTypes(item.required_evidence_file_types),
+      requires_quick_verdict: !!item.requires_quick_verdict,
     });
   };
 
@@ -1223,8 +1264,37 @@ function TemplateCard({
         priority: itemEditForm.priority,
         deadline_days: 0,
         blocks_stage_advance: !!itemEditForm.blocks_stage_advance,
+        completion_requires_file_or_note: !!itemEditForm.completion_requires_file_or_note
+          || (itemEditForm.required_evidence_file_types?.length > 0),
+        required_evidence_file_types: itemEditForm.required_evidence_file_types || [],
+        requires_quick_verdict: !!itemEditForm.requires_quick_verdict,
       });
       setEditingItemId(null);
+    } catch { /* alert trong updateTemplateItemFields */ }
+  };
+
+  const toggleItemQuickVerdict = async (item) => {
+    try {
+      await updateTemplateItemFields(tpl.id, item.id, {
+        requires_quick_verdict: !item.requires_quick_verdict,
+      });
+    } catch { /* alert trong updateTemplateItemFields */ }
+  };
+
+  const toggleItemEvidence = async (item) => {
+    try {
+      const types = normalizeEvidenceFileTypes(item.required_evidence_file_types);
+      if (types.length || item.completion_requires_file_or_note) {
+        await updateTemplateItemFields(tpl.id, item.id, {
+          completion_requires_file_or_note: false,
+          required_evidence_file_types: [],
+        });
+      } else {
+        await updateTemplateItemFields(tpl.id, item.id, {
+          completion_requires_file_or_note: true,
+          required_evidence_file_types: ['note', 'image'],
+        });
+      }
     } catch { /* alert trong updateTemplateItemFields */ }
   };
 
@@ -1276,8 +1346,9 @@ function TemplateCard({
           <button onClick={() => setEditingTpl(null)} className="h-8 px-2 bg-gray-100 rounded text-xs cursor-pointer"><X className="h-3 w-3" /></button>
           {showPipelineUi && (
           <p className="basis-full text-[10px] text-blue-900/70 leading-snug">
-            💡 Bộ mẫu sẽ được áp khi dự án bước vào <strong>{tplStageRow ? `cột "${tplStageRow.name}"` : 'bất kỳ cột nào trong khu vực này'}</strong>.
-            Các nhiệm vụ bật ⛔ <strong>Chặn chuyển giai đoạn</strong> bên dưới sẽ KHÔNG cho kéo deal/dự án sang cột kế tiếp đến khi hoàn thành hết.
+            💡 Bộ mẫu sẽ được áp khi thẻ vào <strong>{tplStageRow ? `cột "${tplStageRow.name}"` : 'bất kỳ cột nào trong khu vực này'}</strong>
+            {tplArea === 'production' ? ' — NV được gán theo cấu hình Bàn giao CRM → SX.' : '.'}
+            {' '}Các nhiệm vụ ⛔ <strong>Chặn chuyển giai đoạn</strong> phải hoàn thành trước khi kéo sang cột tiếp theo.
           </p>
           )}
         </div>
@@ -1318,7 +1389,7 @@ function TemplateCard({
                 id: tpl.id,
                 name: tpl.name,
                 workshop_area: tpl.workshop_area,
-                pipeline_stage_id: tplStageId || '',
+                pipeline_stage_id: tplStageId || tpl.production_stage_id || '',
               });
             }}
             className="p-1 text-gray-400 hover:text-blue-600 cursor-pointer" title="Sửa"><Edit2 className="h-3.5 w-3.5" /></button>
@@ -1370,10 +1441,34 @@ function TemplateCard({
                             title="Chặn chuyển giai đoạn — phải hoàn thành trước khi kéo cột Kanban SX"
                           >⛔ Chặn</span>
                         )}
+                        {(!!item.completion_requires_file_or_note || normalizeEvidenceFileTypes(item.required_evidence_file_types).length > 0) && (
+                          <span
+                            className="text-[9px] bg-violet-100 text-violet-800 px-1.5 py-0.5 rounded-full font-medium max-w-[200px] truncate"
+                            title={`Bắt buộc minh chứng: ${formatEvidenceTypesShort(item.required_evidence_file_types) || 'file/ghi chú bất kỳ'}`}
+                          >
+                            📎 {formatEvidenceTypesShort(item.required_evidence_file_types) || 'Minh chứng'}
+                          </span>
+                        )}
+                        {item.requires_quick_verdict && (
+                          <span
+                            className="text-[9px] bg-sky-100 text-sky-800 px-1.5 py-0.5 rounded-full font-medium"
+                            title="Ghi chú nhanh: phải chọn Đã đủ / Chưa (+ lý do) trước khi hoàn thành hoặc chuyển giai đoạn"
+                          >
+                            ✓ Đủ/Chưa
+                          </span>
+                        )}
                         <button type="button" onClick={() => toggleItemBlocking(item)}
                           className={`p-1 rounded cursor-pointer shrink-0 ${item.blocks_stage_advance ? 'text-amber-600 bg-amber-50 hover:bg-amber-100' : 'text-gray-400 hover:bg-amber-50 hover:text-amber-600'}`}
                           title={item.blocks_stage_advance ? 'Đang chặn chuyển giai đoạn — bấm để tắt' : 'Bật chặn: bắt buộc hoàn thành trước khi chuyển giai đoạn SX'}>
                           <Lock className="h-3.5 w-3.5" /></button>
+                        <button type="button" onClick={() => toggleItemEvidence(item)}
+                          className={`p-1 rounded cursor-pointer shrink-0 ${(item.completion_requires_file_or_note || normalizeEvidenceFileTypes(item.required_evidence_file_types).length) ? 'text-violet-600 bg-violet-50 hover:bg-violet-100' : 'text-gray-400 hover:bg-violet-50 hover:text-violet-600'}`}
+                          title="Cấu hình loại file/ghi chú bắt buộc khi hoàn thành">
+                          <Paperclip className="h-3.5 w-3.5" /></button>
+                        <button type="button" onClick={() => toggleItemQuickVerdict(item)}
+                          className={`p-1 rounded cursor-pointer shrink-0 ${item.requires_quick_verdict ? 'text-sky-600 bg-sky-50 hover:bg-sky-100' : 'text-gray-400 hover:bg-sky-50 hover:text-sky-600'}`}
+                          title={item.requires_quick_verdict ? 'Đang bật ghi chú nhanh Đủ/Chưa — bấm để tắt' : 'Bật ghi chú nhanh: Đã đủ / Chưa (+ lý do)'}>
+                          <MessageSquare className="h-3.5 w-3.5" /></button>
                         <button type="button" onClick={() => setEditingVisibility(p => ({ ...p, [item.id]: !p[item.id] }))}
                           className={`p-1 rounded cursor-pointer shrink-0 ${(item.default_allowed_companies?.length > 0 || item.default_allowed_departments?.length > 0) ? 'text-red-500 hover:bg-red-50' : 'text-gray-400 hover:bg-purple-50 hover:text-purple-600'}`} title="Phân quyền xem">
                           <Shield className="h-3.5 w-3.5" /></button>
@@ -1423,6 +1518,29 @@ function TemplateCard({
                               />
                               ⛔ Chặn chuyển giai đoạn
                             </label>
+                            <label className="flex items-center gap-1.5 text-[11px] font-medium text-violet-700 bg-violet-50 border border-violet-200 px-2 h-8 rounded cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={!!itemEditForm.completion_requires_file_or_note || (itemEditForm.required_evidence_file_types?.length > 0)}
+                                onChange={e => setItemEditForm(f => ({
+                                  ...f,
+                                  completion_requires_file_or_note: e.target.checked,
+                                  required_evidence_file_types: e.target.checked && !f.required_evidence_file_types?.length
+                                    ? ['note', 'image'] : (e.target.checked ? f.required_evidence_file_types : []),
+                                }))}
+                                className="accent-violet-600"
+                              />
+                              <Paperclip className="h-3 w-3" /> Bắt buộc minh chứng
+                            </label>
+                            <label className="flex items-center gap-1.5 text-[11px] font-medium text-sky-700 bg-sky-50 border border-sky-200 px-2 h-8 rounded cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={!!itemEditForm.requires_quick_verdict}
+                                onChange={e => setItemEditForm(f => ({ ...f, requires_quick_verdict: e.target.checked }))}
+                                className="accent-sky-600"
+                              />
+                              <MessageSquare className="h-3 w-3" /> Ghi chú nhanh Đủ/Chưa
+                            </label>
                             <span className="flex-1" />
                             <button type="button" onClick={() => setEditingItemId(null)} className="h-8 px-3 rounded-lg text-xs font-medium bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 cursor-pointer">
                               Hủy
@@ -1431,6 +1549,19 @@ function TemplateCard({
                               <Save className="h-3 w-3" /> Lưu
                             </button>
                           </div>
+                          {(itemEditForm.completion_requires_file_or_note || itemEditForm.required_evidence_file_types?.length > 0) && (
+                            <div className="rounded-lg border border-violet-200 bg-white p-2">
+                              <EvidenceFileTypesPicker
+                                compact
+                                value={itemEditForm.required_evidence_file_types}
+                                onChange={(types) => setItemEditForm((f) => ({
+                                  ...f,
+                                  required_evidence_file_types: types,
+                                  completion_requires_file_or_note: types.length > 0 || f.completion_requires_file_or_note,
+                                }))}
+                              />
+                            </div>
+                          )}
                         </div>
                       )}
                       {editingVisibility[item.id] && (
@@ -1498,6 +1629,7 @@ function TemplateCard({
 // Đọc tiêu đề / mô tả của 1 mục checklist (hỗ trợ cả dữ liệu cũ dạng chuỗi).
 const ckTitleOf = (ck) => (typeof ck === 'string' ? ck : (ck?.title || ck?.label || ''));
 const ckDescOf = (ck) => (typeof ck === 'string' ? '' : (ck?.description || ''));
+const ckEvidenceTypesOf = (ck) => normalizeEvidenceFileTypes(typeof ck === 'object' ? ck?.required_evidence_file_types : []);
 
 // ═══ Checklist Editor with drag & drop ═══
 function ChecklistEditor({ tplId, itemId, checklist, removeChecklistItem, addChecklistItem, updateChecklistItem, newCheckItem, setNewCheckItem }) {
@@ -1533,6 +1665,31 @@ function ChecklistEditor({ tplId, itemId, checklist, removeChecklistItem, addChe
                     onBlur={e => updateChecklistItem(tplId, itemId, ci, { description: e.target.value.trim() })}
                     onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                   />
+                  <label className="flex items-center gap-1.5 text-[10px] font-medium text-violet-700 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={checklistItemRequiresEvidence(ck)}
+                      onChange={(e) => updateChecklistItem(tplId, itemId, ci, {
+                        completion_requires_file_or_note: e.target.checked,
+                        required_evidence_file_types: e.target.checked && !ckEvidenceTypesOf(ck).length
+                          ? ['note', 'image'] : (e.target.checked ? ckEvidenceTypesOf(ck) : []),
+                      })}
+                      className="accent-violet-600"
+                    />
+                    <Paperclip className="h-3 w-3" /> Bắt buộc minh chứng khi tick xong
+                  </label>
+                  {checklistItemRequiresEvidence(ck) && (
+                    <div className="rounded border border-violet-100 bg-violet-50/40 p-1.5">
+                      <EvidenceFileTypesPicker
+                        compact
+                        value={ckEvidenceTypesOf(ck)}
+                        onChange={(types) => updateChecklistItem(tplId, itemId, ci, {
+                          required_evidence_file_types: types,
+                          completion_requires_file_or_note: types.length > 0 || !!ck.completion_requires_file_or_note,
+                        })}
+                      />
+                    </div>
+                  )}
                 </div>
                 <button onClick={() => removeChecklistItem(tplId, itemId, ci)}
                   className="p-0.5 text-gray-300 hover:text-red-500 cursor-pointer mt-1.5"><X className="h-3 w-3" /></button>

@@ -85,6 +85,7 @@ const ProductionApprovalsPage = lazyWithRetry(() => import('./pages/ProductionAp
 const ProductionPipelineSettingsPage = lazyWithRetry(() => import('./pages/ProductionPipelineSettingsPage'));
 const WorkshopTaskTemplatesPage = lazyWithRetry(() => import('./pages/WorkshopTaskTemplatesPage'));
 const ProductionHandoverSettingsPage = lazyWithRetry(() => import('./pages/ProductionHandoverSettingsPage'));
+const ProductionAssignmentsPage = lazyWithRetry(() => import('./pages/ProductionAssignmentsPage'));
 const ProductionRegionsPage = lazyWithRetry(() => import('./pages/ProductionRegionsPage'));
 const LogisticsDashboard = lazyWithRetry(() => import('./pages/LogisticsDashboard'));
 const LogisticsDetail = lazyWithRetry(() => import('./pages/LogisticsDetail'));
@@ -419,6 +420,7 @@ export default function App() {
               <Route path="pipeline-settings" element={<ProductionPipelineSettingsPage />} />
               <Route path="task-templates" element={<WorkshopTaskTemplatesPage fixedArea="production" />} />
               <Route path="handover-settings" element={<ProductionHandoverSettingsPage />} />
+              <Route path="assignments" element={<ProductionAssignmentsPage />} />
               <Route path="regions" element={<ProductionRegionsPage />} />
               <Route path="trash" element={<Navigate to="/admin/trash?tab=sx" replace />} />
               <Route path="projects/:id" element={<ProductionDetail />} />

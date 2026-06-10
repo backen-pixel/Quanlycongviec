@@ -10,7 +10,7 @@ const { supabase } = require('../config/supabase');
 const { auth: authMiddleware } = require('../middleware/auth');
 const { isSystemAdmin } = require('../helpers/adminRole');
 const { extractContactInfo } = require('../helpers/facebookPhoneExtract');
-const { createLeadFromZaloContact, runZaloBatchExtractPhones, runZaloBatchCreateLeads, extractFromZaloContact } = require('../helpers/zaloBatchTools');
+const { createLeadFromZaloContact, runZaloBatchExtractPhones, runZaloBatchCreateLeads, extractFromZaloContact, syncZaloContactProfile, runZaloBatchRefreshProfiles, isPlaceholderZaloDisplayName, normalizeZaloModuleKey, normalizeZaloTargetType, resolveZaloModuleKeyForOa, resolveZaloCreateType } = require('../helpers/zaloBatchTools');
 const {
   isUserSendEvent,
   isOaEchoEvent,
@@ -120,13 +120,27 @@ async function handleWebhookEvent(body, io) {
       profile = await fetchZaloUserProfile(oaConfig.access_token, partnerUserId);
     }
 
-    const contact = await getOrCreateContact(
+    let contact = await getOrCreateContact(
       oaId,
       partnerUserId,
       profile?.display_name || null,
       profile?.avatar || null,
     );
     if (!contact) return { skipped: true, reason: 'contact_failed' };
+
+    if (isInbound && oaConfig.access_token && isPlaceholderZaloDisplayName(contact.display_name, contact.user_id)) {
+      const syncResult = await syncZaloContactProfile(contact, oaConfig).catch((e) => {
+        console.warn('[Zalo OA] sync profile on webhook:', e.message);
+        return null;
+      });
+      if (syncResult?.display_name) {
+        contact = {
+          ...contact,
+          display_name: syncResult.display_name,
+          avatar_url: syncResult.avatar_url || contact.avatar_url,
+        };
+      }
+    }
 
     const insertData = {
       contact_id: contact.id,
@@ -337,13 +351,32 @@ function buildZaloContactsQuery(scope, query) {
     .order('created_at', { ascending: false });
 }
 
+function attachZaloOaRouting(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    default_module_key: resolveZaloModuleKeyForOa(row),
+    default_target_type: normalizeZaloTargetType(row?.default_target_type),
+  };
+}
+
 r.get('/accounts', authMiddleware, async (req, res) => {
   try {
-    const { data, error } = await supabase.from('zalo_oa_accounts')
-      .select('id, oa_id, oa_name, app_id, is_active, auto_create_lead, auto_reply_message, default_stage_id, default_source_id, default_company_id, default_region_id, default_lead_owner_id, default_lead_type_id, webhook_verify_enabled, created_at, updated_at')
+    let { data, error } = await supabase.from('zalo_oa_accounts')
+      .select('id, oa_id, oa_name, app_id, is_active, auto_create_lead, auto_reply_message, default_module_key, default_target_type, default_pipeline_id, default_stage_id, default_source_id, default_company_id, default_region_id, default_lead_owner_id, default_lead_type_id, webhook_verify_enabled, created_at, updated_at')
       .order('created_at', { ascending: false });
+    if (error && (error.message?.includes('default_module_key') || error.code === '42703')) {
+      ({ data, error } = await supabase.from('zalo_oa_accounts')
+        .select('id, oa_id, oa_name, app_id, is_active, auto_create_lead, auto_reply_message, default_target_type, default_pipeline_id, default_stage_id, default_source_id, default_company_id, default_region_id, default_lead_owner_id, default_lead_type_id, webhook_verify_enabled, created_at, updated_at')
+        .order('created_at', { ascending: false }));
+    }
+    if (error && (error.message?.includes('default_target_type') || error.code === '42703')) {
+      ({ data, error } = await supabase.from('zalo_oa_accounts')
+        .select('id, oa_id, oa_name, app_id, is_active, auto_create_lead, auto_reply_message, default_pipeline_id, default_stage_id, default_source_id, default_company_id, default_region_id, default_lead_owner_id, default_lead_type_id, webhook_verify_enabled, created_at, updated_at')
+        .order('created_at', { ascending: false }));
+    }
     if (error) throw error;
-    res.json((data || []).map((row) => ({
+    res.json((data || []).map((row) => attachZaloOaRouting({
       ...row,
       access_token_masked: null,
       has_access_token: true,
@@ -359,13 +392,13 @@ r.get('/accounts/:id', authMiddleware, async (req, res) => {
     const { data, error } = await supabase.from('zalo_oa_accounts')
       .select('*').eq('id', req.params.id).single();
     if (error) throw error;
-    res.json({
+    res.json(attachZaloOaRouting({
       ...data,
       access_token: data.access_token ? maskToken(data.access_token) : null,
       secret_key: data.secret_key ? '********' : null,
       access_token_set: !!data.access_token,
       secret_key_set: !!data.secret_key,
-    });
+    }));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -377,6 +410,10 @@ r.post('/accounts', authMiddleware, async (req, res) => {
     if (!b.oa_id || !b.access_token) {
       return res.status(400).json({ error: 'Thiếu oa_id hoặc access_token' });
     }
+    const moduleKey = normalizeZaloModuleKey(b.default_module_key);
+    const inferredTargetType = (moduleKey === 'production' || moduleKey === 'logistics')
+      ? 'deal'
+      : normalizeZaloTargetType(b.default_target_type);
     const row = {
       oa_id: String(b.oa_id).trim(),
       oa_name: b.oa_name || null,
@@ -386,21 +423,32 @@ r.post('/accounts', authMiddleware, async (req, res) => {
       is_active: b.is_active !== false,
       auto_create_lead: b.auto_create_lead !== false,
       auto_reply_message: b.auto_reply_message ?? 'Cảm ơn bạn đã liên hệ! Chúng tôi sẽ phản hồi sớm nhất.',
+      default_module_key: moduleKey,
+      default_target_type: inferredTargetType,
       default_pipeline_id: b.default_pipeline_id || null,
       default_stage_id: b.default_stage_id || null,
       default_source_id: b.default_source_id || null,
       default_company_id: b.default_company_id || null,
-      default_region_id: b.default_region_id || null,
+      default_region_id: b.default_region_id && String(b.default_region_id).trim() ? String(b.default_region_id).trim() : null,
       default_lead_owner_id: b.default_lead_owner_id || null,
       default_lead_type_id: b.default_lead_type_id || null,
       webhook_verify_enabled: b.webhook_verify_enabled !== false,
       created_by: req.user?.id || null,
       updated_at: new Date().toISOString(),
     };
-    const { data, error } = await supabase.from('zalo_oa_accounts').insert(row).select().single();
+    let { data, error } = await supabase.from('zalo_oa_accounts').insert(row).select().single();
+    if (error?.message?.includes('default_module_key') || error?.message?.includes('default_target_type') || error?.message?.includes('default_company_id') || error?.message?.includes('default_region_id') || error?.message?.includes('default_lead_owner_id') || error?.message?.includes('default_lead_type_id')) {
+      delete row.default_module_key;
+      delete row.default_target_type;
+      delete row.default_company_id;
+      delete row.default_region_id;
+      delete row.default_lead_owner_id;
+      delete row.default_lead_type_id;
+      ({ data, error } = await supabase.from('zalo_oa_accounts').insert(row).select().single());
+    }
     if (error) throw error;
     delete _oaConfigCache[row.oa_id];
-    res.status(201).json(data);
+    res.status(201).json(attachZaloOaRouting(data));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -414,20 +462,42 @@ r.put('/accounts/:id', authMiddleware, async (req, res) => {
       'oa_id', 'oa_name', 'app_id', 'is_active', 'auto_create_lead', 'auto_reply_message',
       'default_pipeline_id', 'default_stage_id', 'default_source_id', 'default_company_id',
       'default_region_id', 'default_lead_owner_id', 'default_lead_type_id', 'webhook_verify_enabled',
+      'default_module_key', 'default_target_type',
     ].forEach((f) => {
       if (b[f] !== undefined) update[f] = b[f];
     });
+    if (update.default_module_key !== undefined) {
+      update.default_module_key = normalizeZaloModuleKey(update.default_module_key);
+      if (update.default_module_key === 'production' || update.default_module_key === 'logistics') {
+        update.default_target_type = 'deal';
+      } else if (update.default_target_type === undefined) {
+        update.default_target_type = 'lead';
+      }
+    }
+    if (update.default_target_type !== undefined) {
+      update.default_target_type = normalizeZaloTargetType(update.default_target_type);
+    }
+    if (b.default_region_id !== undefined) {
+      const rv = b.default_region_id;
+      update.default_region_id = rv && String(rv).trim() ? String(rv).trim() : null;
+    }
     if (b.access_token && String(b.access_token).trim() && !String(b.access_token).includes('…')) {
       update.access_token = String(b.access_token).trim();
     }
     if (b.secret_key && String(b.secret_key).trim() && b.secret_key !== '********') {
       update.secret_key = String(b.secret_key).trim();
     }
-    const { data, error } = await supabase.from('zalo_oa_accounts')
+    let { data, error } = await supabase.from('zalo_oa_accounts')
       .update(update).eq('id', req.params.id).select().single();
+    if (error?.message?.includes('default_module_key') || error?.message?.includes('default_target_type')) {
+      delete update.default_module_key;
+      delete update.default_target_type;
+      ({ data, error } = await supabase.from('zalo_oa_accounts')
+        .update(update).eq('id', req.params.id).select().single());
+    }
     if (error) throw error;
     delete _oaConfigCache[data.oa_id];
-    res.json(data);
+    res.json(attachZaloOaRouting(data));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -579,6 +649,55 @@ r.delete('/contacts/:id', authMiddleware, async (req, res) => {
     await supabase.from('zalo_messages').delete().eq('contact_id', req.params.id);
     await supabase.from('zalo_contacts').delete().eq('id', req.params.id);
     res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.post('/contacts/:id/sync-profile', authMiddleware, async (req, res) => {
+  try {
+    const scope = await resolveZaloOaScope(req, res);
+    if (!scope) return;
+    const { data: contact } = await supabase.from('zalo_contacts').select('*').eq('id', req.params.id).maybeSingle();
+    if (!contact) return res.status(404).json({ error: 'Không tìm thấy liên hệ' });
+    if (!contactAllowedByZaloScope(scope, contact)) {
+      return res.status(403).json({ error: 'Không có quyền' });
+    }
+
+    const oaConfig = await getOaConfig(contact.oa_id);
+    if (!oaConfig?.access_token) {
+      return res.status(400).json({ error: 'OA chưa cấu hình access_token' });
+    }
+
+    const result = await syncZaloContactProfile(contact, oaConfig);
+    if (!result.ok) {
+      return res.status(502).json({
+        error: result.reason === 'profile_empty'
+          ? 'Zalo không trả tên khách (kiểm tra token OA / IP VN)'
+          : 'Không lấy được profile',
+        ...result,
+      });
+    }
+
+    const { data: fresh } = await supabase.from('zalo_contacts')
+      .select('*, lead:crm_leads(id, title, code, type), customer:customers(id, full_name, phone, email)')
+      .eq('id', contact.id)
+      .single();
+
+    res.json({ ok: true, contact: enrichZaloContact(fresh), ...result });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.post('/refresh-profiles', authMiddleware, async (req, res) => {
+  try {
+    const scope = await resolveZaloOaScope(req, res);
+    if (!scope) return;
+    const oaIds = scope.mode === 'filter' ? scope.oaIds : null;
+    const io = r._ioRef;
+    const summary = await runZaloBatchRefreshProfiles({ oaIds, io });
+    res.json(summary);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

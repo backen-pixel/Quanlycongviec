@@ -21,13 +21,15 @@ import ExcelQuotationImport from './ExcelQuotationImport';
 import CrmArtifactShareModal from './CrmArtifactShareModal';
 import { shareModuleLabels } from '../lib/documentShareScope';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
+import { formatEvidenceTypesList, formatEvidenceTypesShort, checklistItemRequiresEvidence } from '../lib/evidenceFileTypes';
+import TaskQuickVerdictBar from './TaskQuickVerdictBar';
 
 // Checklist con của nhiệm vụ — chuẩn hoá về { id, title, description, done } (hỗ trợ dữ liệu cũ dạng chuỗi).
 let _ckSeq = 0;
 const genChecklistId = () => `ck_${Date.now().toString(36)}_${(_ckSeq++).toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 const normalizeChecklist = (arr) => (Array.isArray(arr) ? arr : []).map((c, i) => (
   typeof c === 'string'
-    ? { id: `ckidx_${i}_${c.slice(0, 8)}`, title: c, description: '', notes: '', done: false, priority: 'medium', assignee_id: null }
+    ? { id: `ckidx_${i}_${c.slice(0, 8)}`, title: c, description: '', notes: '', done: false, priority: 'medium', assignee_id: null, completion_requires_file_or_note: false, required_evidence_file_types: [] }
     : {
         id: c?.id || `ckidx_${i}`,
         title: c?.title || c?.label || '',
@@ -36,6 +38,8 @@ const normalizeChecklist = (arr) => (Array.isArray(arr) ? arr : []).map((c, i) =
         done: !!(c?.done ?? c?.is_completed),
         priority: c?.priority || 'medium',
         assignee_id: c?.assignee_id || null,
+        completion_requires_file_or_note: !!c?.completion_requires_file_or_note,
+        required_evidence_file_types: Array.isArray(c?.required_evidence_file_types) ? c.required_evidence_file_types : [],
       }
 ));
 const ckStateKey = (taskId, ckId) => `${taskId}:${ckId}`;
@@ -741,9 +745,20 @@ export default function CRMTasksTab({
     }];
     updateTask(task.id, { checklist: list });
   };
-  const toggleChecklistItem = (task, ckId) => {
+  const toggleChecklistItem = async (task, ckId) => {
+    const ck = normalizeChecklist(task.checklist).find((c) => c.id === ckId);
+    if (!ck) return;
+    const markingDone = !ck.done;
+    if (markingDone && checklistItemRequiresEvidence(ck)) {
+      if (!taskAttachments[task.id]) await loadAttachments(task);
+      setExpandedChecklistKey(ckStateKey(task.id, ckId));
+      if (expandedTask !== task.id) {
+        setExpandedTask(task.id);
+        setTaskNoteText((prev) => ({ ...prev, [task.id]: task.notes || '' }));
+      }
+    }
     const list = normalizeChecklist(task.checklist).map((c) => (c.id === ckId ? { ...c, done: !c.done } : c));
-    updateTask(task.id, { checklist: list });
+    await updateTask(task.id, { checklist: list });
   };
   const editChecklistItem = (task, ckId, patch) => {
     const list = normalizeChecklist(task.checklist).map((c) => (c.id === ckId ? { ...c, ...patch } : c));
@@ -1772,17 +1787,32 @@ export default function CRMTasksTab({
                   Đơn: {task.order_label}
                 </span>
               )}
+              {(!!task.requires_quick_verdict && task.status !== 'completed') && (
+                <span
+                  className="shrink-0 text-[10px] font-medium text-sky-900 bg-sky-50 border border-sky-100 px-1.5 py-0.5 rounded max-w-[160px] truncate"
+                  title={task.quick_verdict === 'sufficient' ? 'Đã chọn: Đủ' : task.quick_verdict === 'insufficient' ? `Chưa: ${task.quick_verdict_reason || ''}` : 'Cần chọn Đủ/Chưa'}
+                >
+                  {task.quick_verdict === 'sufficient' ? '✓ Đủ' : task.quick_verdict === 'insufficient' ? '✗ Chưa' : '❓ Đủ/Chưa'}
+                </span>
+              )}
               {(!!task.completion_requires_file_or_note ||
+                (Array.isArray(task.required_evidence_file_types) && task.required_evidence_file_types.length > 0) ||
                 !!task.completion_requires_customer_note ||
                 !!task.completion_requires_customer_contact) &&
                 task.status !== 'completed' && (
                 <span
-                  className="shrink-0 text-[10px] font-medium text-violet-900 bg-violet-50 border border-violet-100 px-1.5 py-0.5 rounded"
-                  title="Cần ghi chú hoặc file đính kèm trước khi hoàn thành / chuyển giai đoạn (Bộ mẫu CRM)"
+                  className="shrink-0 text-[10px] font-medium text-violet-900 bg-violet-50 border border-violet-100 px-1.5 py-0.5 rounded max-w-[220px] truncate"
+                  title={(() => {
+                    const typed = formatEvidenceTypesList(task.required_evidence_file_types);
+                    if (task.required_evidence_file_types?.length) return `Cần nộp: ${typed}`;
+                    return 'Cần ghi chú hoặc file đính kèm trước khi hoàn thành / chuyển giai đoạn';
+                  })()}
                 >
                   {(() => {
+                    const typed = formatEvidenceTypesShort(task.required_evidence_file_types);
                     const n = !!task.completion_requires_customer_note;
-                    const c = !!(task.completion_requires_customer_contact || task.completion_requires_file_or_note);
+                    const c = !!(task.completion_requires_customer_contact || task.completion_requires_file_or_note || typed);
+                    if (typed) return `📎 ${typed}`;
                     if (n && c) return '📝+📎 Minh chứng';
                     if (n) return '📝 Ghi chú KH';
                     return '📎 Minh chứng';
@@ -1961,6 +1991,16 @@ export default function CRMTasksTab({
               </div>
             )}
 
+            {!!task.requires_quick_verdict && (
+              <TaskQuickVerdictBar
+                task={task}
+                leadId={apiLeadIdForTaskId(task.id)}
+                onUpdated={(updated) => {
+                  setTasks((p) => p.map((t) => (t.id === task.id ? { ...t, ...updated } : t)));
+                }}
+              />
+            )}
+
             {/* ─── Checklist: parity với nhiệm vụ (toolbar, sửa khi bấm Edit, ghi chú/file riêng) ─── */}
             {(() => {
               const ckItems = normalizeChecklist(task.checklist);
@@ -2018,6 +2058,14 @@ export default function CRMTasksTab({
                                 {ckAssignee && (
                                   <span className="text-[9px] text-indigo-600 flex items-center gap-0.5">
                                     <User className="h-2.5 w-2.5" />{ckAssignee.full_name}
+                                  </span>
+                                )}
+                                {checklistItemRequiresEvidence(ck) && !ck.done && (
+                                  <span
+                                    className="text-[9px] text-violet-700 bg-violet-50 px-1 py-0.5 rounded-full max-w-[140px] truncate"
+                                    title={`Cần nộp: ${formatEvidenceTypesList(ck.required_evidence_file_types)}`}
+                                  >
+                                    📎 {formatEvidenceTypesShort(ck.required_evidence_file_types) || 'Minh chứng'}
                                   </span>
                                 )}
                               </div>

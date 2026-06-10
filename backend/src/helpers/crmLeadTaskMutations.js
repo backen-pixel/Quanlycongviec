@@ -3,6 +3,8 @@
  */
 const { supabase } = require('../config/supabase');
 const { crmTaskMeetsCompletionRequirements, crmTaskRequiresCompletionEvidence } = require('./crmTaskCompletionEvidence');
+const { normalizeQuickVerdictPayload } = require('./taskQuickVerdict');
+const { validateChecklistTransition, validateChecklistDoneEvidence } = require('./checklistItemEvidence');
 const { createNotification } = require('./notifications');
 const { attachAssigneesToCrmTasks, replaceCrmTaskAssignees } = require('./crmTaskAssignees');
 const { syncAssignmentFromCrmTask } = require('./crmTaskAssignmentSync');
@@ -69,9 +71,12 @@ async function createCrmLeadTask(req, leadId, body) {
     supervisor_id: b.supervisor_id || null,
     deadline: b.deadline ? normalizeTimestamp(b.deadline) : null,
     created_by: req.user.userId,
-    completion_requires_file_or_note: !!b.completion_requires_file_or_note,
+    completion_requires_file_or_note: !!b.completion_requires_file_or_note
+      || (Array.isArray(b.required_evidence_file_types) && b.required_evidence_file_types.length > 0),
+    required_evidence_file_types: Array.isArray(b.required_evidence_file_types) ? b.required_evidence_file_types : [],
     completion_requires_customer_note: !!b.completion_requires_customer_note,
     completion_requires_customer_contact: !!b.completion_requires_customer_contact,
+    requires_quick_verdict: !!b.requires_quick_verdict,
     blocks_stage_advance: isAdminLike(req.user) ? !!b.blocks_stage_advance : false,
     show_excel_quotation_upload: !!b.show_excel_quotation_upload,
   }).select(CRM_TASK_SELECT).single();
@@ -129,17 +134,57 @@ async function createCrmLeadTask(req, leadId, body) {
 
 async function updateCrmLeadTask(req, leadId, taskId, body) {
   const b = body;
-  if (b.status === 'completed') {
+  let priorEvidenceRow = null;
+  if (b.status === 'completed' || Array.isArray(b.checklist)) {
     const { data: prior, error: pErr } = await supabase
       .from('crm_tasks')
-      .select('id,status,notes,completion_requires_file_or_note,completion_requires_customer_note,completion_requires_customer_contact')
+      .select('id,status,notes,checklist,completion_requires_file_or_note,required_evidence_file_types,requires_quick_verdict,quick_verdict,quick_verdict_reason,completion_requires_customer_note,completion_requires_customer_contact')
       .eq('id', taskId).maybeSingle();
     if (pErr) return { error: pErr.message, status: 500 };
-    if (prior && prior.status !== 'completed' && crmTaskRequiresCompletionEvidence(prior)) {
+    priorEvidenceRow = prior;
+
+    if (Array.isArray(b.checklist)) {
+      const { data: ckAtts, error: attErr } = await supabase
+        .from('crm_task_attachments')
+        .select('id, file_url, file_name, mime_type, notes, doc_type, checklist_id')
+        .eq('task_id', taskId)
+        .limit(200);
+      if (attErr) return { error: attErr.message, status: 500 };
+      const ckCheck = validateChecklistTransition(prior?.checklist, b.checklist, ckAtts || []);
+      if (!ckCheck.ok) {
+        return {
+          error: `Mục checklist «${ckCheck.itemTitle || ''}»: thiếu minh chứng${ckCheck.missingLabel ? ` (${ckCheck.missingLabel})` : ''}.`,
+          code: 'crm_checklist_completion_requires_evidence',
+          status: 400,
+        };
+      }
+    }
+
+    if (b.status === 'completed' && prior && prior.status !== 'completed') {
+      const nextChecklist = Array.isArray(b.checklist) ? b.checklist : prior.checklist;
+      const { data: ckAtts } = await supabase
+        .from('crm_task_attachments')
+        .select('id, file_url, file_name, mime_type, notes, doc_type, checklist_id')
+        .eq('task_id', taskId)
+        .limit(200);
+      const allCk = validateChecklistDoneEvidence(nextChecklist, ckAtts || []);
+      if (!allCk.ok) {
+        return {
+          error: `Mục checklist «${allCk.itemTitle || ''}»: thiếu minh chứng${allCk.missingLabel ? ` (${allCk.missingLabel})` : ''}.`,
+          code: 'crm_checklist_completion_requires_evidence',
+          status: 400,
+        };
+      }
+    }
+
+    if (b.status === 'completed' && prior && prior.status !== 'completed' && crmTaskRequiresCompletionEvidence(prior)) {
       const ok = await crmTaskMeetsCompletionRequirements(supabase, taskId, prior);
       if (!ok) {
+        const needsQv = prior.requires_quick_verdict && prior.quick_verdict !== 'sufficient';
         return {
-          error: 'Nhiệm vụ này yêu cầu ghi chú khách hàng và/hoặc minh chứng liên hệ trước khi hoàn thành.',
+          error: needsQv
+            ? 'Nhiệm vụ này yêu cầu chọn «Đã đủ» trong ghi chú nhanh trước khi hoàn thành.'
+            : 'Nhiệm vụ này yêu cầu ghi chú khách hàng và/hoặc minh chứng liên hệ trước khi hoàn thành.',
           code: 'crm_task_completion_requires_evidence',
           status: 400,
         };
@@ -180,6 +225,12 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
   }
   if (b.status === 'completed' && !b.completed_at) update.completed_at = new Date().toISOString();
   if (b.status && b.status !== 'completed') update.completed_at = null;
+
+  if (b.quick_verdict !== undefined) {
+    const qv = normalizeQuickVerdictPayload(b, req.user?.userId);
+    if (qv?.error) return { error: qv.error, status: 400 };
+    if (qv?.patch) Object.assign(update, qv.patch);
+  }
 
   let { data, error } = await supabase.from('crm_tasks').update(update)
     .eq('id', taskId).select(CRM_TASK_SELECT).single();

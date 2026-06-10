@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, createContext, useContext } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -46,8 +46,17 @@ const STATUS_MAP = Object.fromEntries(STATUS_OPTIONS.map((s) => [s.value, s]));
 
 const COLUMN_COLORS = ['#3B82F6', '#8B5CF6', '#F59E0B', '#10B981', '#EF4444', '#EC4899', '#6B7280', '#0EA5E9'];
 
-const LS_COMPANY = 'crm_assignments_company_id';
-const LS_VIEW_SCOPE = 'crm_assignments_view_scope';
+const DEFAULT_LS_COMPANY = 'crm_assignments_company_id';
+const DEFAULT_LS_VIEW_SCOPE = 'crm_assignments_view_scope';
+
+const AssignmentsPageContext = createContext({
+  apiBase: '/crm/assignments',
+  assignmentModule: 'crm',
+});
+
+function useAssignmentsPageContext() {
+  return useContext(AssignmentsPageContext);
+}
 
 const DEADLINE_BUCKET_META = [
   { key: 'overdue',    label: '🔴 Quá hạn',     color: '#EF4444' },
@@ -172,7 +181,16 @@ function LeadAssignmentLink({ lead, className = '' }) {
   );
 }
 
-export default function CRMAssignmentsPage() {
+export default function CRMAssignmentsPage({
+  apiBase = '/crm/assignments',
+  pageTitle = '📋 Giao việc CRM',
+  companiesModule = 'crm',
+  assignmentModule = 'crm',
+  storagePrefix = 'crm_assignments',
+  dashboardLink = '/crm/dashboard',
+} = {}) {
+  const LS_COMPANY = `${storagePrefix}_company_id`;
+  const LS_VIEW_SCOPE = `${storagePrefix}_view_scope`;
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const isAdmin = ['admin', 'manager', 'sales_admin'].includes(user?.role);
@@ -241,10 +259,10 @@ export default function CRMAssignmentsPage() {
   // ─── Load companies (admin) ──
   useEffect(() => {
     if (!isAdmin) return;
-    api.get('/companies', { params: { for_module: 'crm' } })
+    api.get('/companies', { params: { for_module: companiesModule } })
       .then((r) => setCompanies(r.data?.companies || r.data || []))
       .catch(() => setCompanies([]));
-  }, [isAdmin]);
+  }, [isAdmin, companiesModule]);
 
   // ─── Load all data ──
   const load = useCallback(async () => {
@@ -256,10 +274,11 @@ export default function CRMAssignmentsPage() {
       if (filterStatus) params.status = filterStatus;
       if (filterPriority) params.priority = filterPriority;
       if (search) params.q = search;
+      if (assignmentModule) params.assignment_module = assignmentModule;
 
       const [colRes, itRes, usrRes] = await Promise.all([
-        api.get('/crm/assignments/columns'),
-        api.get('/crm/assignments', { params }),
+        api.get(`${apiBase}/columns`),
+        api.get(apiBase, { params }),
         api.get('/users').then((r) => r.data?.users || []),
       ]);
       setColumns(colRes.data?.columns || []);
@@ -267,7 +286,7 @@ export default function CRMAssignmentsPage() {
       setUsers(usrRes);
     } catch (e) { console.error(e); }
     setLoading(false);
-  }, [isAdmin, filterCompanyId, filterAssignee, filterStatus, filterPriority, search]);
+  }, [isAdmin, filterCompanyId, filterAssignee, filterStatus, filterPriority, search, apiBase, assignmentModule]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -288,7 +307,7 @@ export default function CRMAssignmentsPage() {
       try {
         let assignment = items.find((t) => String(t.id) === String(pendingOpenId));
         if (!assignment) {
-          const { data } = await api.get(`/crm/assignments/${pendingOpenId}`);
+          const { data } = await api.get(`${apiBase}/${pendingOpenId}`);
           assignment = data?.assignment;
         }
         if (cancelled || !assignment) {
@@ -410,9 +429,9 @@ export default function CRMAssignmentsPage() {
     try {
       let assignmentId = payload.id;
       if (payload.id) {
-        await api.put(`/crm/assignments/${payload.id}`, payload);
+        await api.put(`${apiBase}/${payload.id}`, payload);
       } else {
-        const r = await api.post('/crm/assignments', payload);
+        const r = await api.post(apiBase, { ...payload, assignment_module: assignmentModule });
         assignmentId = r.data?.assignment?.id || r.data?.id;
       }
       // Upload file yêu cầu đã chọn ở bước tạo
@@ -420,7 +439,7 @@ export default function CRMAssignmentsPage() {
         for (const item of stagedFiles) {
           try {
             if (item?._stagedUrl) {
-              await api.post(`/crm/assignments/${assignmentId}/files/link`, {
+              await api.post(`${apiBase}/${assignmentId}/files/link`, {
                 url: item.url,
                 file_name: item.name,
                 kind: 'req',
@@ -429,7 +448,7 @@ export default function CRMAssignmentsPage() {
               const fd = new FormData();
               fd.append('file', item);
               fd.append('kind', 'req');
-              await api.post(`/crm/assignments/${assignmentId}/files`, fd, {
+              await api.post(`${apiBase}/${assignmentId}/files`, fd, {
                 headers: { 'Content-Type': 'multipart/form-data' },
               });
             }
@@ -445,7 +464,7 @@ export default function CRMAssignmentsPage() {
   const removeItem = async (id) => {
     if (!confirm('Xoá nhiệm vụ này?')) return;
     try {
-      await api.delete(`/crm/assignments/${id}`);
+      await api.delete(`${apiBase}/${id}`);
       void load();
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Không xóa được nhiệm vụ');
@@ -460,7 +479,7 @@ export default function CRMAssignmentsPage() {
       return;
     }
     try {
-      const { data } = await api.put(`/crm/assignments/${id}`, patch);
+      const { data } = await api.put(`${apiBase}/${id}`, patch);
       const updated = data?.assignment;
       if (updated) {
         setItems((prev) => prev.map((t) => (String(t.id) === String(id) ? { ...t, ...updated } : t)));
@@ -479,7 +498,7 @@ export default function CRMAssignmentsPage() {
       return;
     }
     try {
-      const { data } = await api.post(`/crm/assignments/${id}/move`, { column_id, position });
+      const { data } = await api.post(`${apiBase}/${id}/move`, { column_id, position });
       const updated = data?.assignment;
       if (updated) {
         setItems((prev) => prev.map((t) => (String(t.id) === String(id) ? { ...t, ...updated } : t)));
@@ -495,15 +514,15 @@ export default function CRMAssignmentsPage() {
   const upsertColumn = async (payload) => {
     try {
       const { company_id: _drop, ...body } = payload;
-      if (payload.id) await api.put(`/crm/assignments/columns/${payload.id}`, body);
-      else await api.post('/crm/assignments/columns', body);
+      if (payload.id) await api.put(`${apiBase}/columns/${payload.id}`, body);
+      else await api.post(`${apiBase}/columns`, body);
       setShowColumnModal(null);
       void load();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi lưu cột'); }
   };
   const removeColumn = async (id) => {
     if (!confirm('Xoá cột này? Các nhiệm vụ sẽ về cột "Chưa phân loại".')) return;
-    try { await api.delete(`/crm/assignments/columns/${id}`); void load(); } catch {}
+    try { await api.delete(`${apiBase}/columns/${id}`); void load(); } catch {}
   };
 
   const upsertPersonalColumn = (payload) => {
@@ -571,11 +590,12 @@ export default function CRMAssignmentsPage() {
   }
 
   return (
+    <AssignmentsPageContext.Provider value={{ apiBase, assignmentModule }}>
     <div className="space-y-5">
       {/* HEADER */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold" style={{ color: '#000000' }}>📋 Giao việc CRM</h1>
+          <h1 className="text-2xl font-bold" style={{ color: '#000000' }}>{pageTitle}</h1>
           <p className="text-sm text-gray-500">
             {stats.total} nhiệm vụ — {stats.completed} hoàn thành — {stats.inProgress} đang làm
           </p>
@@ -844,6 +864,7 @@ export default function CRMAssignmentsPage() {
         />
       )}
     </div>
+    </AssignmentsPageContext.Provider>
   );
 }
 
@@ -1404,6 +1425,7 @@ function PersonalColumnModal({ column, viewLabel, onClose, onSave }) {
 
 // ─── MODALS ───────────────────────────────────────────────────────────────────
 function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, defaultCompanyId, onClose, onSave }) {
+  const { apiBase } = useAssignmentsPageContext();
   const initialAssigneeIds = item?.assignees?.length
     ? item.assignees.map((a) => String(a.id))
     : (item?.assignee_id ? [String(item.assignee_id)] : []);
@@ -1434,7 +1456,7 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
     setLoadingLk(true);
     const params = {};
     if (form.company_id) params.company_id = form.company_id;
-    api.get('/crm/assignments/lookups', { params })
+    api.get(`${apiBase}/lookups`, { params })
       .then((r) => {
         if (cancel) return;
         const lk = r.data || { departments: [], regions: [], users: [] };
@@ -1443,7 +1465,7 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
       .catch(() => { if (!cancel) setLookups({ departments: [], regions: [], users: [] }); })
       .finally(() => { if (!cancel) setLoadingLk(false); });
     return () => { cancel = true; };
-  }, [form.company_id]);
+  }, [form.company_id, apiBase]);
 
   // Lọc danh sách NV theo region/department/search
   const filteredUsers = useMemo(() => {
@@ -1960,6 +1982,7 @@ function DetailModal({ item, columns, onClose, onEdit, onUpdate, onDelete }) {
 // ─── ATTACHMENTS (file đính kèm nhiệm vụ) ────────────────────────────────────
 // kind: 'req' (yêu cầu, do người giao) hoặc 'sub' (nộp bài, do NV làm)
 function AttachmentsSection({ assignmentId, kind = 'req', canUpload = true, title, hint, color = 'blue', emptyText }) {
+  const { apiBase } = useAssignmentsPageContext();
   const { user } = useAuth();
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1968,7 +1991,7 @@ function AttachmentsSection({ assignmentId, kind = 'req', canUpload = true, titl
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await api.get(`/crm/assignments/${assignmentId}/files`, { params: { kind } });
+      const r = await api.get(`${apiBase}/${assignmentId}/files`, { params: { kind } });
       setFiles(r.data?.files || []);
     } catch { setFiles([]); }
     setLoading(false);
@@ -1986,7 +2009,7 @@ function AttachmentsSection({ assignmentId, kind = 'req', canUpload = true, titl
         const fd = new FormData();
         fd.append('file', file);
         fd.append('kind', kind);
-        await api.post(`/crm/assignments/${assignmentId}/files`, fd, {
+        await api.post(`${apiBase}/${assignmentId}/files`, fd, {
           headers: { 'Content-Type': 'multipart/form-data' },
         });
       }
@@ -2000,7 +2023,7 @@ function AttachmentsSection({ assignmentId, kind = 'req', canUpload = true, titl
   const remove = async (fileId) => {
     if (!confirm('Xoá file này?')) return;
     try {
-      await api.delete(`/crm/assignments/${assignmentId}/files/${fileId}`);
+      await api.delete(`${apiBase}/${assignmentId}/files/${fileId}`);
       void load();
     } catch (err) {
       alert(err.response?.data?.error || 'Lỗi xóa file');
@@ -2097,6 +2120,7 @@ function groupAssignmentCommentsByParent(flat) {
 }
 
 function CommentSection({ assignmentId }) {
+  const { apiBase } = useAssignmentsPageContext();
   const { user } = useAuth();
   const isAdmin = ['admin', 'manager', 'sales_admin'].includes(user?.role);
   const [comments, setComments] = useState([]);
@@ -2110,7 +2134,7 @@ function CommentSection({ assignmentId }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await api.get(`/crm/assignments/${assignmentId}/comments`);
+      const r = await api.get(`${apiBase}/${assignmentId}/comments`);
       setComments(r.data?.comments || []);
     } catch { setComments([]); }
     setLoading(false);
@@ -2128,7 +2152,7 @@ function CommentSection({ assignmentId }) {
     try {
       const payload = { content: v };
       if (replyTo?.id != null) payload.parent_id = replyTo.id;
-      await api.post(`/crm/assignments/${assignmentId}/comments`, payload);
+      await api.post(`${apiBase}/${assignmentId}/comments`, payload);
       setText('');
       setReplyTo(null);
       void load();
@@ -2140,7 +2164,7 @@ function CommentSection({ assignmentId }) {
     const v = editText.trim();
     if (!v) return;
     try {
-      await api.put(`/crm/assignments/${assignmentId}/comments/${cid}`, { content: v });
+      await api.put(`${apiBase}/${assignmentId}/comments/${cid}`, { content: v });
       setEditingId(null); setEditText('');
       void load();
     } catch (err) { alert(err.response?.data?.error || 'Lỗi'); }
@@ -2148,7 +2172,7 @@ function CommentSection({ assignmentId }) {
 
   const remove = async (cid) => {
     if (!confirm('Xoá ghi chú này? Các trả lời liên quan cũng sẽ bị xoá.')) return;
-    try { await api.delete(`/crm/assignments/${assignmentId}/comments/${cid}`); void load(); } catch {}
+    try { await api.delete(`${apiBase}/${assignmentId}/comments/${cid}`); void load(); } catch {}
   };
 
   const startReply = (c) => {
