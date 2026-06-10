@@ -51,6 +51,7 @@ export function isWorkPrimaryPath(pathname) {
     pathname.startsWith('/products') ||
     pathname.startsWith('/workflow') ||
     pathname.startsWith('/permissions') ||
+    pathname.startsWith('/settings/app-updates') ||
     pathname.startsWith('/stage/') ||
     pathname.startsWith('/project-workflow')
   );

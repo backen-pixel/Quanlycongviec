@@ -26,8 +26,8 @@ const { auth } = require('../middleware/auth');
 const { isAdminLike } = require('../helpers/adminRole');
 const { parseReleaseFilename, FILENAME_RULE_TEXT, buildStandardApkFilename } = require('../helpers/appReleaseFilename');
 const { scanAppReleaseFiles } = require('../helpers/appReleaseScan');
-const { importApkFile } = require('../helpers/appReleaseImport');
-const { deleteAppReleaseById } = require('../helpers/appReleaseDelete');
+const { importApkFile, replaceReleaseApkFile, replaceReleaseOtaFile, backfillOtaSizes } = require('../helpers/appReleaseImport');
+const { deleteAppReleaseById, clearReleaseBucketFilesOnly } = require('../helpers/appReleaseDelete');
 const config = require('../config');
 
 const r = Router();
@@ -86,6 +86,21 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+function currentUserId(req) {
+  return req.user?.userId || req.user?.id || null;
+}
+
+async function getUserScanDir(userId, appId) {
+  if (!userId || !appId) return '';
+  const { data } = await supabase
+    .from('app_scan_dirs')
+    .select('scan_dir')
+    .eq('user_id', userId)
+    .eq('app_id', appId)
+    .maybeSingle();
+  return data?.scan_dir || '';
+}
+
 async function findApp({ appKey, appId }) {
   let q = supabase.from('mobile_apps').select('*');
   if (appId) q = q.eq('id', appId);
@@ -96,6 +111,26 @@ async function findApp({ appKey, appId }) {
 
 function downloadUrlFor(release) {
   return release.external_url || release.file_url || null;
+}
+
+function computeStorageStats(releases) {
+  let total_bytes = 0;
+  let release_count = 0;
+  let sized_count = 0;
+  for (const r of releases || []) {
+    release_count += 1;
+    const sz = Number(r.file_size);
+    if (Number.isFinite(sz) && sz > 0) {
+      total_bytes += sz;
+      sized_count += 1;
+    }
+  }
+  return {
+    total_bytes,
+    release_count,
+    sized_count,
+    unsized_count: release_count - sized_count,
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -315,28 +350,39 @@ r.get('/apps', async (req, res) => {
       .order('created_at', { ascending: true });
     if (error) throw error;
 
-    // Phiên bản apk mới nhất cho mỗi app
     const ids = (apps || []).map((a) => a.id);
     let latestByApp = {};
+    const statsByApp = {};
     if (ids.length) {
       const { data: rels } = await supabase
         .from('app_releases')
-        .select('app_id, version, version_code, update_type, is_active, created_at')
+        .select('app_id, version, version_code, update_type, is_active, created_at, file_size')
         .in('app_id', ids)
-        .eq('is_active', true)
         .order('created_at', { ascending: false });
+      const grouped = {};
       for (const rel of rels || []) {
-        if (!latestByApp[rel.app_id]) latestByApp[rel.app_id] = rel;
+        if (!grouped[rel.app_id]) grouped[rel.app_id] = [];
+        grouped[rel.app_id].push(rel);
+        if (rel.is_active && !latestByApp[rel.app_id]) latestByApp[rel.app_id] = rel;
+      }
+      for (const id of ids) {
+        statsByApp[id] = computeStorageStats(grouped[id] || []);
       }
     }
-    res.json({ apps: (apps || []).map((a) => ({ ...a, latest_release: latestByApp[a.id] || null })) });
+    res.json({
+      apps: (apps || []).map((a) => ({
+        ...a,
+        latest_release: latestByApp[a.id] || null,
+        storage_stats: statsByApp[a.id] || computeStorageStats([]),
+      })),
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // POST /apps — đăng ký app mới
 r.post('/apps', requireAdmin, async (req, res) => {
   try {
-    const { app_key, display_name, android_package, platform, icon_url } = req.body;
+    const { app_key, display_name, android_package, platform, icon_url, apk_scan_dir } = req.body;
     if (!app_key || !display_name) {
       return res.status(400).json({ error: 'app_key và display_name là bắt buộc' });
     }
@@ -346,6 +392,7 @@ r.post('/apps', requireAdmin, async (req, res) => {
       android_package: android_package || null,
       platform: platform || 'android',
       icon_url: icon_url || null,
+      apk_scan_dir: apk_scan_dir ? String(apk_scan_dir).trim() : null,
     }).select('*').single();
     if (error) throw error;
     res.status(201).json(data);
@@ -361,8 +408,12 @@ r.post('/apps', requireAdmin, async (req, res) => {
 r.put('/apps/:appId', requireAdmin, async (req, res) => {
   try {
     const patch = { updated_at: new Date().toISOString() };
-    ['display_name', 'android_package', 'platform', 'icon_url', 'is_active'].forEach((f) => {
-      if (req.body[f] !== undefined) patch[f] = req.body[f];
+    ['display_name', 'android_package', 'platform', 'icon_url', 'is_active', 'apk_scan_dir'].forEach((f) => {
+      if (req.body[f] !== undefined) {
+        patch[f] = f === 'apk_scan_dir' && typeof req.body[f] === 'string'
+          ? (req.body[f].trim() || null)
+          : req.body[f];
+      }
     });
     const { data, error } = await supabase.from('mobile_apps')
       .update(patch).eq('id', req.params.appId).select('*').single();
@@ -384,10 +435,36 @@ r.get('/apps/:appId/scan-files', async (req, res) => {
   try {
     const app = await findApp({ appId: req.params.appId });
     if (!app) return res.status(404).json({ error: 'App không tồn tại' });
-    const result = await scanAppReleaseFiles(app);
+    const userScanDir = await getUserScanDir(currentUserId(req), app.id);
+    const result = await scanAppReleaseFiles(app, { userScanDir });
     res.json(result);
   } catch (e) {
     console.error('[appUpdates] scan-files:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /apps/:appId/scan-dir — lưu thư mục quét APK riêng của nhân viên hiện tại
+r.put('/apps/:appId/scan-dir', requireAdmin, async (req, res) => {
+  try {
+    const userId = currentUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Chưa đăng nhập' });
+    const app = await findApp({ appId: req.params.appId });
+    if (!app) return res.status(404).json({ error: 'App không tồn tại' });
+
+    const raw = typeof req.body?.scan_dir === 'string' ? req.body.scan_dir.trim() : '';
+    const { error } = await supabase
+      .from('app_scan_dirs')
+      .upsert(
+        { user_id: userId, app_id: app.id, scan_dir: raw || null, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id,app_id' },
+      );
+    if (error) throw error;
+
+    const result = await scanAppReleaseFiles(app, { userScanDir: raw });
+    res.json({ my_scan_dir: raw, scan: result });
+  } catch (e) {
+    console.error('[appUpdates] save scan-dir:', e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -398,7 +475,8 @@ r.post('/apps/:appId/scan-import', requireAdmin, async (req, res) => {
     const app = await findApp({ appId: req.params.appId });
     if (!app) return res.status(404).json({ error: 'App không tồn tại' });
 
-    const scan = await scanAppReleaseFiles(app);
+    const userScanDir = await getUserScanDir(currentUserId(req), app.id);
+    const scan = await scanAppReleaseFiles(app, { userScanDir });
     const paths = Array.isArray(req.body?.paths) ? req.body.paths : null;
     const toImport = paths
       ? scan.importable.filter((f) => paths.includes(f.path))
@@ -452,7 +530,13 @@ r.get('/apps/:appId/releases', async (req, res) => {
       .eq('app_id', req.params.appId)
       .order('created_at', { ascending: false });
     if (error) throw error;
-    res.json({ releases: data || [] });
+    const releases = data || [];
+    const app = await findApp({ appId: req.params.appId });
+    if (app) await backfillOtaSizes(app, releases);
+    res.json({
+      releases,
+      storage_summary: computeStorageStats(releases),
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -465,24 +549,29 @@ const diskUpload = multer({
   }),
   limits: { fileSize: MAX_APK_BYTES },
   fileFilter: (req, file, cb) => {
-    const ok = /\.(apk|aab)$/i.test(file.originalname)
+    const name = file.originalname || '';
+    const ok = /\.(apk|aab|hbc|bundle|js)$/i.test(name)
       || file.mimetype === 'application/vnd.android.package-archive'
+      || file.mimetype === 'application/javascript'
       || file.mimetype === 'application/octet-stream';
-    cb(ok ? null : new Error('Chỉ chấp nhận file .apk'), ok);
+    cb(ok ? null : new Error('Chấp nhận .apk hoặc bundle OTA (.hbc, .bundle, .js)'), ok);
   },
 });
 
-function apkUploadSingle(req, res, next) {
+function releaseFileUploadSingle(req, res, next) {
   diskUpload.single('file')(req, res, (err) => {
     if (!err) return next();
     if (err.code === 'LIMIT_FILE_SIZE') {
       return res.status(413).json({
-        error: `APK vượt quá ${Math.round(MAX_APK_BYTES / MB)}MB. Tăng env APK_MAX_UPLOAD_MB hoặc dùng external_url.`,
+        error: `File vượt quá ${Math.round(MAX_APK_BYTES / MB)}MB. Tăng env APK_MAX_UPLOAD_MB hoặc dùng external_url.`,
       });
     }
     return res.status(400).json({ error: err.message || 'Lỗi upload' });
   });
 }
+
+/** @deprecated alias */
+const apkUploadSingle = releaseFileUploadSingle;
 
 // POST /apps/:appId/releases — tạo bản phát hành (kèm upload APK hoặc external_url)
 r.post('/apps/:appId/releases', requireAdmin, apkUploadSingle, async (req, res) => {
@@ -561,17 +650,189 @@ r.post('/apps/:appId/releases', requireAdmin, apkUploadSingle, async (req, res) 
   }
 });
 
-// PUT /releases/:id — bật/tắt active, mandatory, sửa notes…
-r.put('/releases/:id', requireAdmin, async (req, res) => {
+// PUT /releases/:id — sửa metadata và (tuỳ chọn) thay file (multipart field: file)
+r.put('/releases/:id', requireAdmin, releaseFileUploadSingle, async (req, res) => {
+  const tmpPath = req.file?.path;
   try {
+    const { data: existing } = await supabase
+      .from('app_releases')
+      .select('*, mobile_apps(*)')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!existing) {
+      if (tmpPath) fs.unlink(tmpPath, () => {});
+      return res.status(404).json({ error: 'Không tìm thấy phiên bản' });
+    }
+
+    const app = existing.mobile_apps;
+    if (!app) {
+      if (tmpPath) fs.unlink(tmpPath, () => {});
+      return res.status(404).json({ error: 'App không tồn tại' });
+    }
+
+    if (tmpPath) {
+      await ensureBucket();
+      if (existing.update_type === 'apk') {
+        await replaceReleaseApkFile(existing, app, tmpPath, {
+          channel: req.body.channel || existing.channel,
+          version: req.body.version ? String(req.body.version).trim() : undefined,
+          version_code: req.body.version_code,
+          publicBaseUrl: publicBaseUrl(req),
+        });
+      } else if (existing.update_type === 'jsbundle') {
+        await replaceReleaseOtaFile(existing, app, tmpPath, {
+          runtime_version: req.body.runtime_version || existing.runtime_version,
+        });
+      } else {
+        fs.unlink(tmpPath, () => {});
+        return res.status(400).json({ error: 'Loại phát hành không hỗ trợ thay file' });
+      }
+    }
+
     const patch = { updated_at: new Date().toISOString() };
-    ['version', 'version_code', 'channel', 'is_mandatory', 'is_active', 'release_notes', 'external_url']
-      .forEach((f) => { if (req.body[f] !== undefined) patch[f] = req.body[f]; });
-    const { data, error } = await supabase.from('app_releases')
-      .update(patch).eq('id', req.params.id).select('*').single();
-    if (error) throw error;
+
+    if (req.body.version !== undefined) {
+      const v = String(req.body.version).trim();
+      if (!v) return res.status(400).json({ error: 'version không được rỗng' });
+      patch.version = v;
+    }
+    if (req.body.version_code !== undefined) {
+      const raw = req.body.version_code;
+      if (raw === '' || raw === null) patch.version_code = null;
+      else {
+        const n = parseInt(raw, 10);
+        if (!Number.isFinite(n)) return res.status(400).json({ error: 'version_code phải là số' });
+        patch.version_code = n;
+      }
+    }
+    if (req.body.runtime_version !== undefined) {
+      const rv = String(req.body.runtime_version).trim();
+      patch.runtime_version = rv || null;
+    }
+    if (req.body.channel !== undefined) {
+      patch.channel = String(req.body.channel).trim() || 'production';
+    }
+    if (req.body.release_notes !== undefined) {
+      patch.release_notes = req.body.release_notes ? String(req.body.release_notes) : null;
+    }
+    if (req.body.external_url !== undefined) {
+      patch.external_url = req.body.external_url ? String(req.body.external_url).trim() : null;
+    }
+    if (req.body.is_mandatory !== undefined) {
+      patch.is_mandatory = req.body.is_mandatory === true || req.body.is_mandatory === 'true';
+    }
+    if (req.body.is_active !== undefined) {
+      patch.is_active = req.body.is_active === true || req.body.is_active === 'true';
+    }
+
+    const hasMeta = Object.keys(patch).length > 1;
+    let data;
+    if (hasMeta) {
+      const { data: updated, error } = await supabase.from('app_releases')
+        .update(patch).eq('id', req.params.id).select('*').single();
+      if (error) throw error;
+      data = updated;
+    } else if (tmpPath) {
+      const { data: updated, error } = await supabase.from('app_releases')
+        .select('*').eq('id', req.params.id).single();
+      if (error) throw error;
+      data = updated;
+    } else {
+      const { data: updated, error } = await supabase.from('app_releases')
+        .select('*').eq('id', req.params.id).single();
+      if (error) throw error;
+      data = updated;
+    }
+
+    if (tmpPath) fs.unlink(tmpPath, () => {});
     res.json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    if (tmpPath) fs.unlink(tmpPath, () => {});
+    console.error('[appUpdates] put release:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /releases/:id/run — bật phát hành bản này (bắt buộc), tắt các bản cùng loại/kênh/runtime
+r.post('/releases/:id/run', requireAdmin, async (req, res) => {
+  try {
+    const { data: rel } = await supabase
+      .from('app_releases')
+      .select('*')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!rel) return res.status(404).json({ error: 'Không tìm thấy phiên bản' });
+
+    if (rel.update_type === 'jsbundle') {
+      if (!rel.manifest?.launchAsset?.url) {
+        return res.status(400).json({ error: 'OTA chưa có bundle — upload file trước khi chạy' });
+      }
+    } else if (rel.update_type === 'apk') {
+      if (!rel.file_url && !rel.external_url) {
+        return res.status(400).json({ error: 'APK chưa có file — upload trước khi chạy' });
+      }
+    }
+
+    let offQ = supabase
+      .from('app_releases')
+      .update({ is_active: false, is_mandatory: false, updated_at: new Date().toISOString() })
+      .eq('app_id', rel.app_id)
+      .eq('channel', rel.channel)
+      .eq('update_type', rel.update_type)
+      .neq('id', rel.id);
+    if (rel.update_type === 'jsbundle' && rel.runtime_version) {
+      offQ = offQ.eq('runtime_version', rel.runtime_version);
+    }
+    const { error: offErr } = await offQ;
+    if (offErr) throw offErr;
+
+    const patch = {
+      is_active: true,
+      is_mandatory: true,
+      updated_at: new Date().toISOString(),
+    };
+
+    // OTA: expo-updates chỉ áp dụng bản có createdAt MỚI HƠN bản đang chạy.
+    // Khi ép chạy (kể cả bản code cũ hơn), đóng dấu manifest id + createdAt mới
+    // để máy coi đây là bản mới nhất và buộc tải về, tránh bị "không cài được".
+    if (rel.update_type === 'jsbundle' && rel.manifest) {
+      patch.manifest = {
+        ...rel.manifest,
+        id: crypto.randomUUID(),
+        createdAt: new Date().toISOString(),
+      };
+    }
+
+    const { data: updated, error } = await supabase
+      .from('app_releases')
+      .update(patch)
+      .eq('id', rel.id)
+      .select('*')
+      .single();
+    if (error) throw error;
+
+    res.json({ release: updated });
+  } catch (e) {
+    console.error('[appUpdates] run release:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /releases/:id/file — xóa file trên bucket, giữ bản ghi phiên bản
+r.delete('/releases/:id/file', requireAdmin, async (req, res) => {
+  try {
+    const result = await clearReleaseBucketFilesOnly(req.params.id);
+    if (!result.found) return res.status(404).json({ error: 'Không tìm thấy phiên bản' });
+    res.json({
+      success: true,
+      release: result.release,
+      storageFilesRemoved: result.storageFilesRemoved,
+      fileErrors: result.errors?.length ? result.errors : undefined,
+    });
+  } catch (e) {
+    console.error('[appUpdates] delete release file:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // DELETE /releases/:id — xóa bucket Storage + bản ghi DB (giữ file local uploads)
