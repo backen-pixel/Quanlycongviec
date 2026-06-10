@@ -489,7 +489,9 @@ export default function ProductionDashboard() {
       if (filterWorkTypeId === 'none') {
         if (p.workshop_type_id || p.workshop_type?.id) return false;
       } else if (filterWorkTypeId) {
-        if (String(p.workshop_type_id || p.workshop_type?.id || '') !== String(filterWorkTypeId)) return false;
+        const wt = p.workshop_type_id || p.workshop_type?.id;
+        // Deal chưa phân loại vẫn hiển thị — gom vào cột «Chưa phân loại» trên Kanban
+        if (wt && String(wt) !== String(filterWorkTypeId)) return false;
       }
       return true;
     });
@@ -664,8 +666,9 @@ export default function ProductionDashboard() {
 
     /** Project được coi là «chưa phân loại» khi không có workshop_type_id. */
     const isOrphan = (p) => !p.workshop_type_id && !p.workshop_type?.id;
-    /** Bật cột ảo khi user tích checkbox & đang xem Tất cả loại (không lọc cụ thể). */
-    const includeOrphan = showOrphanColumn && !filterWorkTypeId;
+    /** Cột ảo khi có deal chưa phân loại (checkbox hoặc tự bật nếu đang lọc 1 loại cụ thể). */
+    const hasOrphans = scopeProjects.some(isOrphan);
+    const includeOrphan = hasOrphans && (showOrphanColumn || !!filterWorkTypeId);
 
     const baseColumns = baseStages.map((stage) => ({
       ...stage,
@@ -1515,8 +1518,8 @@ export default function ProductionDashboard() {
             </div>
           )}
 
-          {/* Cột ảo «Chưa phân loại» — chỉ hiển thị khi đang xem Tất cả loại */}
-          {viewMode === 'kanban' && !filterWorkTypeId && (
+          {/* Cột ảo «Chưa phân loại» — ẩn khi đang lọc riêng «Chưa phân loại» */}
+          {viewMode === 'kanban' && filterWorkTypeId !== 'none' && (
             <label
               className={`inline-flex items-center gap-1.5 h-9 px-2.5 border rounded-lg text-xs cursor-pointer transition-colors shrink-0 ${
                 showOrphanColumn

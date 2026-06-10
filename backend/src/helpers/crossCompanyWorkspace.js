@@ -58,13 +58,17 @@ async function getExecutorProjectIdsForCompany(companyId) {
   return [...new Set((leads || []).map((l) => l.project_id).filter(Boolean))];
 }
 
-/** Áp filter OR company_id + dự án đối tác cho query Supabase projects. */
-async function applyProductionCompanyScopeFilter(query, companyId) {
+/**
+ * Áp filter OR company_id + dự án đối tác cho query Supabase projects.
+ * Đồng bộ — KHÔNG await hàm này: PostgrestFilterBuilder là thenable, await sẽ chạy query sớm.
+ * @param {unknown} partnerIds — kết quả getExecutorProjectIdsForCompany (optional)
+ */
+function applyProductionCompanyScopeFilter(query, companyId, partnerIds = null) {
   if (!companyId) return query;
-  const partnerIds = await getExecutorProjectIdsForCompany(companyId);
-  if (!partnerIds.length) return query.eq('company_id', companyId);
+  const pids = Array.isArray(partnerIds) ? partnerIds : [];
+  if (!pids.length) return query.eq('company_id', companyId);
   const orParts = [`company_id.eq.${companyId}`];
-  for (const pid of partnerIds) orParts.push(`id.eq.${pid}`);
+  for (const pid of pids) orParts.push(`id.eq.${pid}`);
   return query.or(orParts.join(','));
 }
 

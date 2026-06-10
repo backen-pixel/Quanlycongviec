@@ -32,7 +32,7 @@ INSERT INTO roles (name, description, is_system)
 VALUES
   (
     'crm_production_staff',
-    'Nhân viên CRM + Sản xuất — dùng cả 2 module, quản trị Công việc/SX trong phạm vi công ty',
+    'Nhân viên CRM + Admin Sản xuất — CRM theo deal được giao; quản trị SX trong phạm vi công ty',
     true
   ),
   (

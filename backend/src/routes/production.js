@@ -954,6 +954,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
   try {
     const { division_id, company_id: companyIdQuery, workshop_type_id } = req.query;
     const company_id = effectiveWorkshopCompanyId(req, companyIdQuery);
+    const scopePartnerIds = company_id ? await getExecutorProjectIdsForCompany(company_id) : [];
     const { ids: stageIds } = await getWorkshopStageMap();
     const wonIds = await getWonDealProjectIds();
     // Truyền workshop_type_id xuống resolver để pipeline Kanban khớp với phân loại đang chọn
@@ -997,7 +998,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
 
     let query = runQuery('full');
     if (division_id) query = query.eq('division_id', division_id);
-    if (company_id) query = await applyProductionCompanyScopeFilter(query, company_id);
+    if (company_id) query = applyProductionCompanyScopeFilter(query, company_id, scopePartnerIds);
     query = applyWorkshopTypeFilter(query);
 
     let projects = [];
@@ -1011,7 +1012,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
     if (needsNoJoin) {
       let q2 = runQuery('no_join');
       if (division_id) q2 = q2.eq('division_id', division_id);
-      if (company_id) q2 = await applyProductionCompanyScopeFilter(q2, company_id);
+      if (company_id) q2 = applyProductionCompanyScopeFilter(q2, company_id, scopePartnerIds);
       q2 = applyWorkshopTypeFilter(q2);
       ({ data, error } = await q2.order('created_at', { ascending: false }));
     }
@@ -1019,7 +1020,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
     if (error && error.message?.includes('workshop_type_id')) {
       let q3 = runQuery('no_col');
       if (division_id) q3 = q3.eq('division_id', division_id);
-      if (company_id) q3 = await applyProductionCompanyScopeFilter(q3, company_id);
+      if (company_id) q3 = applyProductionCompanyScopeFilter(q3, company_id, scopePartnerIds);
       // Không thể filter theo workshop_type_id khi DB chưa có cột — bỏ filter này
       ({ data, error } = await q3.order('created_at', { ascending: false }));
     }
@@ -1044,7 +1045,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
       };
       let qDl = runNoKanbanDl(needsNoJoin ? 'no_join' : (error.message?.includes('workshop_type_id') ? 'no_col' : 'full'));
       if (division_id) qDl = qDl.eq('division_id', division_id);
-      if (company_id) qDl = await applyProductionCompanyScopeFilter(qDl, company_id);
+      if (company_id) qDl = applyProductionCompanyScopeFilter(qDl, company_id, scopePartnerIds);
       qDl = applyWorkshopTypeFilter(qDl);
       ({ data, error } = await qDl.order('created_at', { ascending: false }));
     }
@@ -1124,6 +1125,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       search, priority, page = 1, limit = 100, division_id, company_id: companyIdQuery, stage_slug, sx_intake, workshop_type_id,
     } = req.query;
     const company_id = effectiveWorkshopCompanyId(req, companyIdQuery);
+    const scopePartnerIds = company_id ? await getExecutorProjectIdsForCompany(company_id) : [];
     const parsedPage = Math.max(parseInt(page) || 1, 1);
     const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 500);
     const offset = (parsedPage - 1) * parsedLimit;
@@ -1167,7 +1169,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     }
 
     if (division_id) query = query.eq('division_id', division_id);
-    if (company_id) query = await applyProductionCompanyScopeFilter(query, company_id);
+    if (company_id) query = applyProductionCompanyScopeFilter(query, company_id, scopePartnerIds);
     // workshop_type_id='none' → lọc deal CHƯA phân loại (workshop_type_id IS NULL)
     const wantsUnclassified = String(workshop_type_id || '').toLowerCase() === 'none';
     if (wantsUnclassified) query = query.is('workshop_type_id', null);
@@ -1233,7 +1235,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       if (search) fallbackQuery = fallbackQuery.or(`code.ilike.%${search}%,name.ilike.%${search}%`);
       if (priority) fallbackQuery = fallbackQuery.eq('priority', priority);
       if (division_id) fallbackQuery = fallbackQuery.eq('division_id', division_id);
-      if (company_id) fallbackQuery = await applyProductionCompanyScopeFilter(fallbackQuery, company_id);
+      if (company_id) fallbackQuery = applyProductionCompanyScopeFilter(fallbackQuery, company_id, scopePartnerIds);
       if (wantsUnclassified) fallbackQuery = fallbackQuery.is('workshop_type_id', null);
       else if (workshop_type_id) fallbackQuery = fallbackQuery.eq('workshop_type_id', workshop_type_id);
       fallbackQuery = fallbackQuery.order('deadline', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false }).range(offset, offset + parsedLimit - 1);
