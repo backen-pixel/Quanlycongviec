@@ -100,9 +100,12 @@ function buildTaskInsertsFromTemplates(templates, allItems, userId, leadId) {
       order_index: item.order_index,
       deadline,
       created_by: userId,
-      completion_requires_file_or_note: !!item.completion_requires_file_or_note,
+      completion_requires_file_or_note: !!item.completion_requires_file_or_note
+        || (Array.isArray(item.required_evidence_file_types) && item.required_evidence_file_types.length > 0),
+      required_evidence_file_types: Array.isArray(item.required_evidence_file_types) ? item.required_evidence_file_types : [],
       completion_requires_customer_note: !!item.completion_requires_customer_note,
       completion_requires_customer_contact: !!item.completion_requires_customer_contact,
+      requires_quick_verdict: !!item.requires_quick_verdict,
       blocks_stage_advance: !!item.blocks_stage_advance,
       show_excel_quotation_upload: !!item.show_excel_quotation_upload,
     };

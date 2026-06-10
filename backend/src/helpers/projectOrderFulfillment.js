@@ -1,10 +1,36 @@
 const { supabase } = require('../config/supabase');
 const {
   fetchProductionWorkshopTemplatesForApply,
+  fetchProductionTemplatesForPipelineStage,
 } = require('./workshopTaskTemplateWorkshopType');
+const { syncAssignmentFromCrmTask } = require('./crmTaskAssignmentSync');
 const { getCrmVcDeliveryStageId } = require('./workshopKanban');
 const { validateProductionCompanyId } = require('./productionCompanyGate');
 const { loadProductionHandoverMaps, resolveSxAssigneeForTemplateItem } = require('./productionHandoverSettings');
+const { normalizeEvidenceFileTypes } = require('./evidenceFileTypes');
+const { evidenceFieldsFromTemplateChecklistItem } = require('./checklistItemEvidence');
+
+const SX_TEMPLATE_ITEM_COLS_FULL =
+  'id, template_id, title, description, priority, deadline_days, order_index, checklist, blocks_stage_advance, completion_requires_file_or_note, required_evidence_file_types, requires_quick_verdict';
+const SX_TEMPLATE_ITEM_COLS_LEGACY =
+  'id, template_id, title, description, priority, deadline_days, order_index, checklist, blocks_stage_advance';
+
+function sxEvidenceFieldsFromTemplateItem(it) {
+  const types = normalizeEvidenceFileTypes(it?.required_evidence_file_types);
+  return {
+    completion_requires_file_or_note: !!it?.completion_requires_file_or_note || types.length > 0,
+    required_evidence_file_types: types,
+    requires_quick_verdict: !!it?.requires_quick_verdict,
+  };
+}
+
+function isSxTemplateEvidenceColumnError(err) {
+  const m = String(err?.message || '').toLowerCase();
+  return m.includes('required_evidence_file_types')
+    || m.includes('completion_requires_file_or_note')
+    || m.includes('requires_quick_verdict')
+    || m.includes('quick_verdict');
+}
 const ORDER_PHASES = ['draft', 'confirmed', 'in_production', 'ready_logistics', 'in_logistics', 'completed'];
 
 let _ckSeq = 0;
@@ -26,6 +52,7 @@ function toCrmChecklist(raw) {
         priority: 'medium',
         assignee_id: null,
         done: false,
+        ...evidenceFieldsFromTemplateChecklistItem(x),
       };
     })
     .filter(Boolean);
@@ -319,19 +346,20 @@ async function applyProductionTemplateToFulfillmentLead({
 
     const templateIds = templates.map((t) => t.id).filter(Boolean);
     // Cố gắng select kèm blocks_stage_advance (migration 256) — fallback bỏ cờ nếu DB chưa migrate.
-    const fetchItems = async (wantBlocking) => supabase
+    const fetchItems = async (cols) => supabase
       .from('workshop_task_template_items')
-      .select(
-        wantBlocking
-          ? 'id, template_id, title, description, priority, deadline_days, order_index, checklist, blocks_stage_advance'
-          : 'id, template_id, title, description, priority, deadline_days, order_index, checklist',
-      )
+      .select(cols)
       .in('template_id', templateIds)
       .order('template_id')
       .order('order_index');
-    let { data: items, error: itemErr } = await fetchItems(true);
+    let { data: items, error: itemErr } = await fetchItems(SX_TEMPLATE_ITEM_COLS_FULL);
+    if (itemErr && isSxTemplateEvidenceColumnError(itemErr)) {
+      ({ data: items, error: itemErr } = await fetchItems(SX_TEMPLATE_ITEM_COLS_LEGACY));
+    }
     if (itemErr && String(itemErr.message || '').includes('blocks_stage_advance')) {
-      ({ data: items, error: itemErr } = await fetchItems(false));
+      ({ data: items, error: itemErr } = await fetchItems(
+        'id, template_id, title, description, priority, deadline_days, order_index, checklist',
+      ));
     }
     if (itemErr) throw itemErr;
     if (!items?.length) {
@@ -394,6 +422,7 @@ async function applyProductionTemplateToFulfillmentLead({
         created_by: createdBy,
         // Parity với CRM: kế thừa cờ "Chặn chuyển giai đoạn" từ mẫu xưởng.
         blocks_stage_advance: !!it.blocks_stage_advance,
+        ...sxEvidenceFieldsFromTemplateItem(it),
         // D: gắn task sx_* với cột pipeline thật → gate kanban SX bám đúng cột công ty + phân loại.
         production_pipeline_stage_id: pipelineColByTemplateId.get(String(it.template_id)) || null,
       };
@@ -418,6 +447,15 @@ async function applyProductionTemplateToFulfillmentLead({
     }
     if (insErr && String(insErr.message || '').includes('blocks_stage_advance')) {
       const stripped = toInsertStrict.map(({ blocks_stage_advance: _b, production_pipeline_stage_id: _p, ...rest }) => rest);
+      insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+    }
+    if (insErr && isSxTemplateEvidenceColumnError(insErr)) {
+      const stripped = toInsertStrict.map(({
+        completion_requires_file_or_note: _c,
+        required_evidence_file_types: _r,
+        requires_quick_verdict: _q,
+        ...rest
+      }) => rest);
       insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
     }
     // DB chưa apply migration 308 (cột checklist) → bỏ checklist và thử lại.
@@ -519,19 +557,20 @@ async function applyProductionTemplateToFulfillmentLead({
   }
 
   const templateIds = templates.map((t) => t.id).filter(Boolean);
-  const fetchItemsLoose = async (wantBlocking) => supabase
+  const fetchItemsLoose = async (cols) => supabase
     .from('workshop_task_template_items')
-    .select(
-      wantBlocking
-        ? 'id, template_id, title, description, priority, deadline_days, order_index, checklist, blocks_stage_advance'
-        : 'id, template_id, title, description, priority, deadline_days, order_index, checklist',
-    )
+    .select(cols)
     .in('template_id', templateIds)
     .order('template_id')
     .order('order_index');
-  let { data: items, error: itemErr } = await fetchItemsLoose(true);
+  let { data: items, error: itemErr } = await fetchItemsLoose(SX_TEMPLATE_ITEM_COLS_FULL);
+  if (itemErr && isSxTemplateEvidenceColumnError(itemErr)) {
+    ({ data: items, error: itemErr } = await fetchItemsLoose(SX_TEMPLATE_ITEM_COLS_LEGACY));
+  }
   if (itemErr && String(itemErr.message || '').includes('blocks_stage_advance')) {
-    ({ data: items, error: itemErr } = await fetchItemsLoose(false));
+    ({ data: items, error: itemErr } = await fetchItemsLoose(
+      'id, template_id, title, description, priority, deadline_days, order_index, checklist',
+    ));
   }
   if (itemErr) throw itemErr;
   if (!items?.length) {
@@ -593,6 +632,7 @@ async function applyProductionTemplateToFulfillmentLead({
       deadline: null,
       created_by: createdBy,
       blocks_stage_advance: !!it.blocks_stage_advance,
+      ...sxEvidenceFieldsFromTemplateItem(it),
       production_pipeline_stage_id: pipelineColByTemplateId.get(String(it.template_id)) || null,
     };
   });
@@ -614,6 +654,15 @@ async function applyProductionTemplateToFulfillmentLead({
   }
   if (insErr && String(insErr.message || '').includes('blocks_stage_advance')) {
     const stripped = toInsertLoose.map(({ blocks_stage_advance: _b, production_pipeline_stage_id: _p, ...rest }) => rest);
+    insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+  }
+  if (insErr && isSxTemplateEvidenceColumnError(insErr)) {
+    const stripped = toInsertLoose.map(({
+      completion_requires_file_or_note: _c,
+      required_evidence_file_types: _r,
+      requires_quick_verdict: _q,
+      ...rest
+    }) => rest);
     insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
   }
   // DB chưa apply migration 308 (cột checklist) → bỏ checklist và thử lại.
@@ -950,6 +999,217 @@ async function scheduleNextSxCrmTaskAfterComplete() {
   return { ok: true, skip: 'manual_deadline_policy' };
 }
 
+/**
+ * Khi thẻ SX chuyển sang cột pipeline: áp mọi bộ mẫu gắn cột đó → crm_tasks sx_* + Giao việc SX.
+ * Idempotent: không nhân đôi nhiệm vụ đã có (theo title + stage_slug).
+ */
+async function applyProductionTemplatesOnPipelineEnter({
+  projectId,
+  pipelineStageId,
+  userId,
+  req = null,
+}) {
+  if (!projectId || !pipelineStageId || !userId) {
+    return { created: 0, synced_assignments: 0, reason: 'missing_params' };
+  }
+
+  const { data: project } = await supabase
+    .from('projects')
+    .select('id, company_id, workshop_type_id')
+    .eq('id', projectId)
+    .maybeSingle();
+  if (!project?.id) return { created: 0, synced_assignments: 0, reason: 'no_project' };
+
+  const { data: deals } = await supabase
+    .from('crm_leads')
+    .select('id')
+    .eq('project_id', projectId)
+    .eq('type', 'deal')
+    .order('created_at', { ascending: true })
+    .limit(1);
+  const leadId = deals?.[0]?.id || null;
+  if (!leadId) return { created: 0, synced_assignments: 0, reason: 'no_deal' };
+
+  let templates = [];
+  const tplRes = await fetchProductionTemplatesForPipelineStage(supabase, {
+    companyId: project.company_id,
+    workshopTypeId: project.workshop_type_id,
+    pipelineStageId,
+  });
+  if (tplRes.error) throw tplRes.error;
+  templates = tplRes.data || [];
+  if (!templates.length) {
+    return {
+      created: 0,
+      synced_assignments: 0,
+      reason: 'no_templates_for_stage',
+      pipeline_stage_id: pipelineStageId,
+    };
+  }
+
+  const handoverMaps = project.company_id
+    ? await loadProductionHandoverMaps(project.company_id)
+    : { responsibleUserId: null, assigneeByTemplateItemId: new Map() };
+
+  const templateIds = templates.map((t) => t.id).filter(Boolean);
+  const fetchItemsPipe = async (cols) => supabase
+    .from('workshop_task_template_items')
+    .select(cols)
+    .in('template_id', templateIds)
+    .order('template_id')
+    .order('order_index');
+  let { data: items, error: itemErr } = await fetchItemsPipe(SX_TEMPLATE_ITEM_COLS_FULL);
+  if (itemErr && isSxTemplateEvidenceColumnError(itemErr)) {
+    ({ data: items, error: itemErr } = await fetchItemsPipe(SX_TEMPLATE_ITEM_COLS_LEGACY));
+  }
+  if (itemErr && String(itemErr.message || '').includes('blocks_stage_advance')) {
+    ({ data: items, error: itemErr } = await fetchItemsPipe(
+      'id, template_id, title, description, priority, deadline_days, order_index, checklist',
+    ));
+  }
+  if (itemErr) throw itemErr;
+  if (!items?.length) {
+    return {
+      created: 0,
+      synced_assignments: 0,
+      reason: 'empty_templates',
+      template_count: templates.length,
+      pipeline_stage_id: pipelineStageId,
+    };
+  }
+
+  const normalizeSxTaskText = (raw) =>
+    String(raw || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim();
+  const sxTaskFingerprint = (title, stageSlug) =>
+    `${normalizeSxTaskText(title)}|${String(stageSlug || '').trim()}`;
+
+  const { data: existingSx } = await supabase
+    .from('crm_tasks')
+    .select('title, stage_slug')
+    .eq('lead_id', leadId)
+    .like('stage_slug', 'sx_%');
+  const existingKeys = new Set(
+    (existingSx || []).map((t) => sxTaskFingerprint(t.title, t.stage_slug)),
+  );
+
+  const slugByTemplateName = (nameRaw) => {
+    const t = normalizeSxTaskText(nameRaw);
+    if (t.includes('tiep nhan')) return 'sx_tiep_nhan';
+    if (t.includes('thiet ke') || t.includes('len ke hoach')) return 'sx_thiet_ke_ke_hoach';
+    if (t.includes('kiem tra cheo')) return 'sx_kiem_tra_cheo';
+    if (t.includes('vat tu')) return 'sx_vat_tu';
+    if (t.includes('san xuat thung')) return 'sx_san_xuat_thung';
+    if (t.includes('san xuat alu')) return 'sx_san_xuat_alu';
+    if (t.includes('hoan thien')) return 'sx_hoan_thien';
+    if (t.includes('dong goi')) return 'sx_dong_goi';
+    if (t.includes('giao hang')) return 'sx_giao_hang';
+    return 'sx_other';
+  };
+
+  const stageSlugByTemplateId = new Map(
+    templates.filter((t) => t?.id).map((t) => [String(t.id), slugByTemplateName(t.name)]),
+  );
+  const templateOrder = new Map(templateIds.map((id, idx) => [String(id), idx]));
+  const sortedItems = [...items].sort((a, b) => {
+    const ta = templateOrder.get(String(a.template_id)) ?? 9999;
+    const tb = templateOrder.get(String(b.template_id)) ?? 9999;
+    if (ta !== tb) return ta - tb;
+    return (Number(a.order_index) || 0) - (Number(b.order_index) || 0);
+  });
+
+  const inserts = sortedItems.map((it, idx) => {
+    const checklist = toCrmChecklist(it.checklist);
+    const stageSlug = stageSlugByTemplateId.get(String(it.template_id)) || 'sx_other';
+    return {
+      lead_id: leadId,
+      title: it.title,
+      checklist,
+      description: (it.description || '').trim() || null,
+      status: 'pending',
+      priority: it.priority || 'medium',
+      stage_slug: stageSlug,
+      order_index: Number.isFinite(Number(it.order_index)) ? Number(it.order_index) : (idx + 1),
+      assignee_id: resolveSxAssigneeForTemplateItem(it, handoverMaps),
+      supervisor_id: null,
+      deadline: null,
+      created_by: userId,
+      blocks_stage_advance: !!it.blocks_stage_advance,
+      ...sxEvidenceFieldsFromTemplateItem(it),
+      production_pipeline_stage_id: pipelineStageId,
+    };
+  }).filter((row) => !existingKeys.has(sxTaskFingerprint(row.title, row.stage_slug)));
+
+  if (!inserts.length) {
+    return {
+      created: 0,
+      synced_assignments: 0,
+      reason: 'no_missing_sx_tasks',
+      template_count: templates.length,
+      pipeline_stage_id: pipelineStageId,
+    };
+  }
+
+  let insErr = (await supabase.from('crm_tasks').insert(inserts)).error;
+  if (insErr && String(insErr.message || '').includes('production_pipeline_stage_id')) {
+    const stripped = inserts.map(({ production_pipeline_stage_id: _p, ...rest }) => rest);
+    insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+  }
+  if (insErr && String(insErr.message || '').includes('blocks_stage_advance')) {
+    const stripped = inserts.map(({ blocks_stage_advance: _b, production_pipeline_stage_id: _p, ...rest }) => rest);
+    insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+  }
+  if (insErr && isSxTemplateEvidenceColumnError(insErr)) {
+    const stripped = inserts.map(({
+      completion_requires_file_or_note: _c,
+      required_evidence_file_types: _r,
+      requires_quick_verdict: _q,
+      ...rest
+    }) => rest);
+    insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+  }
+  if (insErr && String(insErr.message || '').toLowerCase().includes('checklist')) {
+    const stripped = inserts.map(({ checklist: _c, ...rest }) => rest);
+    insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+  }
+  if (insErr) throw insErr;
+
+  const { data: createdTasks } = await supabase
+    .from('crm_tasks')
+    .select('id, lead_id, title, description, status, priority, deadline, stage_slug, assignee_id, completed_at')
+    .eq('lead_id', leadId)
+    .like('stage_slug', 'sx_%')
+    .order('created_at', { ascending: false })
+    .limit(inserts.length);
+
+  const syncReq = req || { user: { userId } };
+  let syncedAssignments = 0;
+  const createdTitles = new Set(inserts.map((r) => sxTaskFingerprint(r.title, r.stage_slug)));
+  for (const task of createdTasks || []) {
+    if (!createdTitles.has(sxTaskFingerprint(task.title, task.stage_slug))) continue;
+    if (!task.assignee_id) continue;
+    try {
+      const r0 = await syncAssignmentFromCrmTask(syncReq, task, [task.assignee_id], { assignmentModule: 'production' });
+      if (r0?.assignmentId) syncedAssignments += 1;
+    } catch (e) {
+      console.warn('[applyProductionTemplatesOnPipelineEnter] sync assignment:', e.message);
+    }
+  }
+
+  return {
+    created: inserts.length,
+    synced_assignments: syncedAssignments,
+    reason: 'ok',
+    template_count: templates.length,
+    template_names: templates.map((t) => t.name).filter(Boolean),
+    pipeline_stage_id: pipelineStageId,
+    lead_id: leadId,
+  };
+}
+
 module.exports = {
   ORDER_PHASES,
   nextDhCode,
@@ -960,6 +1220,7 @@ module.exports = {
   pushOrderToLogistics,
   resolveVcIntakeStageId,
   applyProductionTemplateToFulfillmentLead,
+  applyProductionTemplatesOnPipelineEnter,
   migrateDealInternalsToFulfillmentLead,
   syncExistingCrmOrdersToProject,
   scheduleNextSxCrmTaskAfterComplete,

@@ -94,7 +94,7 @@ r.use((req, res, next) => {
   next();
 });
 
-const ADMIN_ROLES = new Set(['admin', 'manager', 'sales_admin']);
+const ADMIN_ROLES = new Set(['admin', 'manager', 'sales_admin', 'crm_production_admin']);
 const isAdmin = (req) => ADMIN_ROLES.has(String(req.user?.role || '').toLowerCase());
 
 /** Cột Kanban dùng chung toàn hệ thống — không theo company_id. */
@@ -227,7 +227,7 @@ async function getVisibleAssignmentIdsForNonAdmin(req) {
 }
 
 const ASSIGNMENT_SELECT = `
-  id, company_id, column_id, lead_id, crm_task_id, title, description,
+  id, company_id, column_id, lead_id, crm_task_id, assignment_module, title, description,
   assignee_id, created_by_id, priority, status, deadline,
   position, created_at, updated_at, completed_at,
   assignee:users!crm_assignments_assignee_id_fkey(id, full_name, email, avatar),
@@ -465,13 +465,36 @@ r.get('/', async (req, res) => {
     if (req.query.priority) q = q.eq('priority', req.query.priority);
     if (req.query.column_id) q = q.eq('column_id', req.query.column_id);
     if (req.query.lead_id) q = q.eq('lead_id', String(req.query.lead_id).trim());
+    const moduleFilter = String(req.query.assignment_module || '').trim().toLowerCase();
+    if (moduleFilter === 'production' || moduleFilter === 'crm') {
+      q = q.eq('assignment_module', moduleFilter);
+    }
     if (req.query.q) {
       const s = String(req.query.q).replace(/[%,]/g, ' ').trim();
       if (s) q = q.ilike('title', `%${s}%`);
     }
 
     q = q.order('position', { ascending: true }).order('created_at', { ascending: false });
-    const { data, error } = await q;
+    let { data, error } = await q;
+    if (error && /assignment_module/.test(error.message || '') && moduleFilter) {
+      let q2 = supabase.from('crm_assignments').select(ASSIGNMENT_SELECT);
+      if (isAdmin(req)) {
+        const companyId = req.query.company_id || null;
+        if (companyId) q2 = q2.eq('company_id', companyId);
+      } else if (scopeIds?.length) {
+        q2 = q2.in('id', scopeIds);
+      }
+      if (req.query.status) q2 = q2.eq('status', req.query.status);
+      if (req.query.priority) q2 = q2.eq('priority', req.query.priority);
+      if (req.query.column_id) q2 = q2.eq('column_id', req.query.column_id);
+      if (req.query.lead_id) q2 = q2.eq('lead_id', String(req.query.lead_id).trim());
+      if (req.query.q) {
+        const s = String(req.query.q).replace(/[%,]/g, ' ').trim();
+        if (s) q2 = q2.ilike('title', `%${s}%`);
+      }
+      q2 = q2.order('position', { ascending: true }).order('created_at', { ascending: false });
+      ({ data, error } = await q2);
+    }
     if (error) throw error;
     await attachAssigneesToAssignments(data || []);
     await attachCrmTaskMetaToAssignments(data || []);

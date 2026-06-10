@@ -45,7 +45,9 @@ function isManagerLike(req) {
   return isAdminLike(req.user)
     || role === 'manager'
     || role === 'production_staff'
-    || role === 'production_admin';
+    || role === 'production_admin'
+    || role === 'crm_production_staff'
+    || role === 'crm_production_admin';
 }
 
 /** Áp scope cho nhân viên thường — chỉ thấy NV mình liên quan. */

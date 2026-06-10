@@ -26,6 +26,7 @@ const KPI_CRM_FIELD_ROLES = new Set([
   'production',
   'driver',
   'installer',
+  'crm_production_staff',
 ]);
 
 /**
@@ -35,6 +36,8 @@ const KPI_CRM_FIELD_ROLES = new Set([
 const KPI_RECOMPUTE_USER_ROLES_DEFAULT = [
   'sales',
   'sales_admin',
+  'crm_production_staff',
+  'crm_production_admin',
   'manager',
   'customer_care',
   'staff',
@@ -52,7 +55,7 @@ const KPI_RECOMPUTE_USER_ROLES_DEFAULT = [
 function allowedAppliesTagsForUserRole(userRole) {
   const r = String(userRole || 'sales').trim().toLowerCase();
   if (KPI_FULL_DEFINITION_ROLES.has(r)) return null;
-  if (r === 'sales_admin') return new Set(['sales_admin', 'sales_all', 'all']);
+  if (r === 'sales_admin' || r === 'crm_production_admin') return new Set(['sales_admin', 'sales_all', 'all']);
   if (KPI_CRM_FIELD_ROLES.has(r)) return new Set(['sales', 'sales_all', 'deal', 'all']);
   return new Set(['all']);
 }

@@ -5,7 +5,11 @@ const { responseCache, invalidateTags: rcInvalidateTags } = require('../middlewa
 const PDFDocument = require('pdfkit');
 const multer = require('multer');
 const XLSX = require('xlsx');
-const { crmTaskMeetsCompletionRequirements, crmTaskRequiresCompletionEvidence } = require('../helpers/crmTaskCompletionEvidence');
+const {
+  crmTaskMeetsCompletionRequirements,
+  crmTaskRequiresCompletionEvidence,
+  crmTaskMeetsRequiredFileTypes,
+} = require('../helpers/crmTaskCompletionEvidence');
 const { logKanbanDeadlineUnifiedHistory } = require('../helpers/crmKanbanDeadlineHistory');
 const {
   createCrmLeadTask,
@@ -23,6 +27,7 @@ const {
 } = require('../helpers/crmAssignmentNotifications');
 const { emitNotifyBadge } = require('../helpers/notifyBadge');
 const { emitCrmTaskChanged } = require('../helpers/crmTaskRealtime');
+const { evidenceFieldsFromTemplateChecklistItem } = require('../helpers/checklistItemEvidence');
 const { createNotification: createNotif, notifyMultiple: notifyMultipleShared } = require('../helpers/notifications');
 const { DEFAULT_CHECKLISTS } = require('../helpers/defaultChecklists');
 const { generateFlowTasks, generateStepTasks } = require('../helpers/generateFlowTasks');
@@ -647,7 +652,11 @@ function toCrmTaskChecklist(raw) {
         id: `ck_${Date.now().toString(36)}_${(_crmCkSeq++).toString(36)}_${i}`,
         title: String(title).trim(),
         description: (typeof x === 'object' && x) ? String(x.description || '') : '',
+        notes: '',
+        priority: 'medium',
+        assignee_id: null,
         done: false,
+        ...evidenceFieldsFromTemplateChecklistItem(x),
       };
     })
     .filter(Boolean);
@@ -5946,6 +5955,12 @@ r.get('/leads/:id/detail', async (req, res) => {
       data.pinned_at = null;
       data.is_interacted = false;
       data.interacted_at = null;
+    }
+    try {
+      const { resolveLeadInboxChannel } = require('../helpers/crmLeadInboxChannel');
+      data.inbox_channel = await resolveLeadInboxChannel(supabase, canonicalId, data);
+    } catch (e) {
+      data.inbox_channel = null;
     }
     res.json(data);
   } catch (e) {
@@ -11425,9 +11440,12 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
       order_index: item.order_index,
       deadline: null,
       created_by: req.user.userId,
-      completion_requires_file_or_note: !!item.completion_requires_file_or_note,
+      completion_requires_file_or_note: !!item.completion_requires_file_or_note
+        || (Array.isArray(item.required_evidence_file_types) && item.required_evidence_file_types.length > 0),
+      required_evidence_file_types: Array.isArray(item.required_evidence_file_types) ? item.required_evidence_file_types : [],
       completion_requires_customer_note: !!item.completion_requires_customer_note,
       completion_requires_customer_contact: !!item.completion_requires_customer_contact,
+      requires_quick_verdict: !!item.requires_quick_verdict,
       blocks_stage_advance: !!item.blocks_stage_advance,
       show_excel_quotation_upload: !!item.show_excel_quotation_upload,
     }));
@@ -11540,17 +11558,27 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
     if (b.status === 'completed') {
       const { data: prior, error: pErr } = await supabase
         .from('crm_tasks')
-        .select('id,status,notes,completion_requires_file_or_note,completion_requires_customer_note,completion_requires_customer_contact')
+        .select('id,status,notes,completion_requires_file_or_note, required_evidence_file_types, requires_quick_verdict, quick_verdict, quick_verdict_reason, completion_requires_customer_note, completion_requires_customer_contact')
         .eq('id', req.params.taskId)
         .maybeSingle();
       if (pErr) throw pErr;
       if (prior && prior.status !== 'completed' && crmTaskRequiresCompletionEvidence(prior)) {
         const ok = await crmTaskMeetsCompletionRequirements(supabase, req.params.taskId, prior);
         if (!ok) {
+          if (prior.requires_quick_verdict && prior.quick_verdict !== 'sufficient') {
+            return res.status(400).json({
+              error: 'Nhiệm vụ này yêu cầu chọn «Đã đủ» trong ghi chú nhanh trước khi hoàn thành.',
+              code: 'crm_task_completion_requires_evidence',
+            });
+          }
+          const typed = await crmTaskMeetsRequiredFileTypes(supabase, req.params.taskId, prior);
+          const detail = typed.missingLabel
+            ? `Thiếu loại minh chứng: ${typed.missingLabel}.`
+            : 'Cần ghi chú khách hàng và/hoặc file đính kèm.';
           return res.status(400).json({
-            error:
-              'Nhiệm vụ này yêu cầu ghi chú khách hàng và/hoặc minh chứng liên hệ (ghi chú hoặc file đính kèm) trước khi hoàn thành — cấu hình tại Cấu hình KPI → Bộ NV CRM.',
+            error: `Nhiệm vụ này yêu cầu minh chứng trước khi hoàn thành. ${detail}`,
             code: 'crm_task_completion_requires_evidence',
+            missing_file_types: typed.missing || [],
           });
         }
       }
@@ -12560,9 +12588,12 @@ r.post('/task-templates/:tplId/items', async (req, res) => {
       title: b.title, description: b.description || null,
       priority: b.priority || 'medium', deadline_days: b.deadline_days || 0,
       order_index: nextOrder, checklist: b.checklist || [],
-      completion_requires_file_or_note: !!b.completion_requires_file_or_note,
+      completion_requires_file_or_note: !!b.completion_requires_file_or_note
+        || (Array.isArray(b.required_evidence_file_types) && b.required_evidence_file_types.length > 0),
+      required_evidence_file_types: Array.isArray(b.required_evidence_file_types) ? b.required_evidence_file_types : [],
       completion_requires_customer_note: !!b.completion_requires_customer_note,
       completion_requires_customer_contact: !!b.completion_requires_customer_contact,
+      requires_quick_verdict: !!b.requires_quick_verdict,
       blocks_stage_advance: !!b.blocks_stage_advance,
       show_excel_quotation_upload: !!b.show_excel_quotation_upload,
     }).select().single();
@@ -12575,7 +12606,7 @@ r.post('/task-templates/:tplId/items', async (req, res) => {
 r.put('/task-templates/:tplId/items/:itemId', async (req, res) => {
   try {
     const update = {};
-    ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist', 'default_allowed_companies', 'default_allowed_departments', 'completion_requires_file_or_note', 'completion_requires_customer_note', 'completion_requires_customer_contact', 'blocks_stage_advance', 'show_excel_quotation_upload'].forEach(f => {
+    ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist', 'default_allowed_companies', 'default_allowed_departments', 'completion_requires_file_or_note', 'required_evidence_file_types', 'completion_requires_customer_note', 'completion_requires_customer_contact', 'requires_quick_verdict', 'blocks_stage_advance', 'show_excel_quotation_upload'].forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
     const { data, error } = await supabase.from('crm_task_template_items')

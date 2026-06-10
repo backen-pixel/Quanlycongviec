@@ -11,7 +11,7 @@ const SHARED_COLUMN_DEFAULTS = [
 ];
 
 const ASSIGNMENT_SELECT = `
-  id, company_id, column_id, lead_id, crm_task_id, title, description,
+  id, company_id, column_id, lead_id, crm_task_id, assignment_module, title, description,
   assignee_id, created_by_id, priority, status, deadline,
   position, created_at, updated_at, completed_at
 `;
@@ -67,9 +67,17 @@ async function replaceAssignmentAssignees(assignmentId, userIds) {
 /**
  * Tạo/cập nhật crm_assignments khi gán NV cho crm_tasks.
  */
-async function syncAssignmentFromCrmTask(req, task, assigneeIds) {
+function resolveAssignmentModuleForCrmTask(task, explicitModule) {
+  if (explicitModule === 'production' || explicitModule === 'crm') return explicitModule;
+  const slug = String(task?.stage_slug || '');
+  if (slug.startsWith('sx_')) return 'production';
+  return 'crm';
+}
+
+async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
   if (!task?.id) return { assignmentId: null };
   const ids = [...new Set((assigneeIds || []).filter(Boolean).map(String))];
+  const assignmentModule = resolveAssignmentModuleForCrmTask(task, opts.assignmentModule);
 
   let existing = null;
   const { data: byTask, error: findErr } = await supabase
@@ -111,6 +119,13 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds) {
     company_id: lead?.company_id || null,
     lead_id: task.lead_id,
     crm_task_id: task.id,
+    assignment_module: assignmentModule,
+    completion_requires_file_or_note: !!task.completion_requires_file_or_note
+      || (Array.isArray(task.required_evidence_file_types) && task.required_evidence_file_types.length > 0),
+    required_evidence_file_types: Array.isArray(task.required_evidence_file_types) ? task.required_evidence_file_types : [],
+    requires_quick_verdict: !!task.requires_quick_verdict,
+    quick_verdict: task.quick_verdict || null,
+    quick_verdict_reason: task.quick_verdict_reason || null,
     updated_at: new Date().toISOString(),
   };
   if (status === 'completed') {
@@ -122,8 +137,12 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds) {
   let assignmentId = existing?.id || null;
   if (assignmentId) {
     let { error } = await supabase.from('crm_assignments').update(row).eq('id', assignmentId);
+    if (error && /assignment_module/.test(error.message || '')) {
+      const { assignment_module: _m, ...legacy } = row;
+      ({ error } = await supabase.from('crm_assignments').update(legacy).eq('id', assignmentId));
+    }
     if (error && /crm_task_id/.test(error.message || '')) {
-      const { crm_task_id: _t, ...legacy } = row;
+      const { crm_task_id: _t, assignment_module: _m, ...legacy } = row;
       ({ error } = await supabase.from('crm_assignments').update(legacy).eq('id', assignmentId));
     }
     if (error) throw error;
@@ -138,8 +157,12 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds) {
       .insert(insertRow)
       .select(ASSIGNMENT_SELECT)
       .single();
+    if (error && /assignment_module/.test(error.message || '')) {
+      const { assignment_module: _m, ...legacy } = insertRow;
+      ({ data: created, error } = await supabase.from('crm_assignments').insert(legacy).select(ASSIGNMENT_SELECT).single());
+    }
     if (error && /crm_task_id/.test(error.message || '')) {
-      const { crm_task_id: _t, ...legacy } = insertRow;
+      const { crm_task_id: _t, assignment_module: _m, ...legacy } = insertRow;
       ({ data: created, error } = await supabase.from('crm_assignments').insert(legacy).select(ASSIGNMENT_SELECT).single());
     }
     if (error) throw error;

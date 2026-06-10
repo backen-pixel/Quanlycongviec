@@ -20,7 +20,10 @@ async function getAllowedEventModules(user) {
   const r = String(user.role || '').trim().toLowerCase();
   const allowed = new Set(['general']);
 
-  if (r === 'production_admin' || r === 'production_staff') {
+  if (r === 'crm_production_admin' || r === 'crm_production_staff') {
+    allowed.add('crm');
+    allowed.add('production');
+  } else if (r === 'production_admin' || r === 'production_staff') {
     allowed.add('production');
   } else if (r === 'logistics_admin') {
     allowed.add('logistics');

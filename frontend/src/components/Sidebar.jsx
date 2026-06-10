@@ -1,7 +1,7 @@
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
 import { useAuth } from '../lib/auth';
-import { isAdminLike, isStrictAdmin, isWorkProductionModuleAdmin } from '../lib/adminRole';
+import { isAdminLike, isCrmModuleAdmin, isStrictAdmin, isWorkProductionModuleAdmin } from '../lib/adminRole';
 import NotificationCenter from './NotificationCenter';
 import SidebarTooltip from './SidebarTooltip';
 import { getInitials, avatarColor } from '../lib/utils';
@@ -251,6 +251,7 @@ const SX_MENU_GROUPS = [
       { to: '/sx/pipeline-settings', icon: Settings, label: 'Pipeline xưởng' },
       { to: '/sx/regions', icon: MapPin, label: 'Khu vực', adminOnly: true },
       { to: '/sx/task-templates', icon: ListChecks, label: 'Bộ mẫu nhiệm vụ xưởng' },
+      { to: '/sx/assignments', icon: ClipboardList, label: 'Giao việc Sản xuất' },
       { to: '/sx/handover-settings', icon: UserCog, label: 'Bàn giao CRM → SX (nâng cao)' },
       { to: { pathname: '/admin/trash', search: '?tab=sx' }, icon: Trash2, label: 'Thùng rác SX', adminOnly: true, strictAdminOnly: true },
     ]
@@ -469,9 +470,9 @@ export default function Sidebar() {
   const isAdmin = isAdminLike(user) || user?.role === 'manager';
   const isWorkModuleAdmin = isWorkProductionModuleAdmin(user);
   const isStrictAdminUser = isStrictAdmin(user);
-  /** Sidebar CRM: role admin/sales_admin (admin hệ thống, admin công ty, sales_admin) thấy đủ mục cài đặt CRM; dữ liệu vẫn khóa theo API. */
-  const isCrmMenuAdmin = isAdminLike(user);
-  const isExecutive = ['admin', 'manager', 'director', 'supervisor', 'sales_admin'].includes(user?.role);
+  /** Sidebar CRM: admin CRM (hệ thống, sales_admin, admin CRM+SX) thấy đủ mục cài đặt CRM. */
+  const isCrmMenuAdmin = isCrmModuleAdmin(user);
+  const isExecutive = ['admin', 'manager', 'director', 'supervisor', 'sales_admin', 'crm_production_admin'].includes(user?.role);
   const [activeModule, setActiveModule] = useState(() => readStoredModule() || 'crm');
 
   useEffect(() => {

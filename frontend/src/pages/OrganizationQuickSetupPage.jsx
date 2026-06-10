@@ -42,6 +42,8 @@ const ROLES = [
   ['production', 'Sản xuất'],
   ['production_staff', 'NV Sản xuất (Admin CV+SX)'],
   ['production_admin', 'Admin Sản xuất'],
+  ['crm_production_staff', 'NV CRM + Sản xuất'],
+  ['crm_production_admin', 'Admin CRM + Sản xuất'],
   ['driver', 'Tài xế'],
   ['installer', 'Lắp đặt'],
   ['customer_care', 'CSKH'],

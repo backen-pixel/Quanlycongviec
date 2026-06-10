@@ -82,6 +82,62 @@ function pickProductionTemplatesForWorkshopType(allRows, workshopTypeId) {
   return [];
 }
 
+/**
+ * Bộ mẫu SX gắn đúng một cột pipeline — kích hoạt khi thẻ vào cột đó.
+ * Một cột có thể có nhiều bộ (không lọc is_default).
+ */
+async function fetchProductionTemplatesForPipelineStage(client, {
+  companyId,
+  workshopTypeId,
+  pipelineStageId,
+} = {}) {
+  const db = client || supabase;
+  const stageId = pipelineStageId ? String(pipelineStageId).trim() : '';
+  if (!stageId) return [];
+
+  const cols = 'id, name, is_default, order_index, company_id, production_stage_id, workshop_type_id';
+
+  const loadScoped = async (cid) => {
+    let q = db
+      .from('workshop_task_templates')
+      .select(cols)
+      .eq('workshop_area', 'production')
+      .eq('is_active', true)
+      .eq('production_stage_id', stageId)
+      .order('order_index', { ascending: true });
+    if (cid) q = q.eq('company_id', cid);
+    else q = q.is('company_id', null);
+    q = applyWorkshopTemplateWorkshopTypeScopeForProject(q, workshopTypeId);
+    return q;
+  };
+
+  if (companyId) {
+    let { data, error } = await loadScoped(companyId);
+    if (error && isWorkshopTplWorkshopTypeMissingError(error)) {
+      let q = db
+        .from('workshop_task_templates')
+        .select(cols)
+        .eq('workshop_area', 'production')
+        .eq('is_active', true)
+        .eq('production_stage_id', stageId)
+        .eq('company_id', companyId)
+        .order('order_index', { ascending: true });
+      ({ data, error } = await q);
+    }
+    if (error && String(error.message || '').includes('production_stage_id')) {
+      return { data: [], error: null };
+    }
+    if (error) return { data: [], error };
+    if (data?.length) return { data, error: null };
+  }
+
+  const global = await loadScoped(null);
+  if (global.error && String(global.error.message || '').includes('production_stage_id')) {
+    return { data: [], error: null };
+  }
+  return global;
+}
+
 async function fetchProductionWorkshopTemplatesForApply(client, {
   companyId,
   workshopTypeId,
@@ -145,4 +201,5 @@ module.exports = {
   validateWorkshopTemplateWorkshopType,
   pickProductionTemplatesForWorkshopType,
   fetchProductionWorkshopTemplatesForApply,
+  fetchProductionTemplatesForPipelineStage,
 };

@@ -30,7 +30,10 @@ const {
   applyWorkshopTemplateToProject,
   applyAllActiveWorkshopTemplatesForArea,
 } = require('../helpers/workshopApplyTemplates');
-const { applyProductionTemplateToFulfillmentLead } = require('../helpers/projectOrderFulfillment');
+const {
+  applyProductionTemplateToFulfillmentLead,
+  applyProductionTemplatesOnPipelineEnter,
+} = require('../helpers/projectOrderFulfillment');
 const { assertSxKanbanAdvanceAllowed } = require('../helpers/workshopStageAdvanceGate');
 const { notifyMultiple: notifyMultipleShared, createNotification: createNotif } = require('../helpers/notifications');
 const {
@@ -2008,12 +2011,30 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
       });
 
       const ioPipe = req.app.get('io');
+      const shouldApplyPipelineTemplates = colChanged && colRow.bucket_slug !== INTAKE_BUCKET;
       setImmediate(() => {
         void (async () => {
           try {
             await syncCrmLeadSxPipelineFromProject(id);
           } catch (syncErr) {
             console.warn('[production] syncCrmLeadSxPipelineFromProject (pipeline col):', syncErr.message);
+          }
+          if (shouldApplyPipelineTemplates) {
+            try {
+              const rTpl = await applyProductionTemplatesOnPipelineEnter({
+                projectId: id,
+                pipelineStageId: colId,
+                userId,
+                req,
+              });
+              if (rTpl?.created > 0) {
+                console.info(
+                  `[production] pipeline templates applied: project=${id} stage=${colId} created=${rTpl.created} synced=${rTpl.synced_assignments || 0}`,
+                );
+              }
+            } catch (tplErr) {
+              console.warn('[production] applyProductionTemplatesOnPipelineEnter:', tplErr.message);
+            }
           }
           try {
             if (ioPipe) await emitCrmBadgeUpdateForProject(id, ioPipe);
@@ -2924,7 +2945,7 @@ r.get('/task-templates', requirePermission('projects', 'view'), async (req, res)
     if (company_id) {
       q = q.eq('company_id', company_id);
     }
-    if (req.query.workshop_area !== 'production') {
+    if (req.query.production_stage_id !== undefined || req.query.logistics_stage_id !== undefined) {
       q = applyWorkshopTemplateStageFilter(q, req.query);
     }
     if (req.query.workshop_type_id !== undefined && req.query.workshop_area !== 'logistics') {
@@ -2984,7 +3005,9 @@ r.post('/task-templates', requirePermission('projects', 'edit'), async (req, res
     if (!['production', 'logistics'].includes(workshop_area)) {
       return res.status(400).json({ error: 'workshop_area phải là production hoặc logistics' });
     }
-    const production_stage_id = workshop_area === 'production' ? null : (req.body?.production_stage_id || null);
+    const production_stage_id = workshop_area === 'production'
+      ? (req.body?.production_stage_id || null)
+      : null;
     const logistics_stage_id = req.body?.logistics_stage_id || null;
     const stageCheck = await validateWorkshopTemplatePipelineStage(workshop_area, {
       production_stage_id,
@@ -3161,10 +3184,6 @@ r.put('/task-templates/:id', requirePermission('projects', 'edit'), async (req, 
     if (req.body.logistics_stage_id !== undefined) {
       update.logistics_stage_id = req.body.logistics_stage_id || null;
     }
-    const areaForCheckEarly = update.workshop_area || existingRow?.workshop_area || 'production';
-    if (areaForCheckEarly === 'production') {
-      update.production_stage_id = null;
-    }
     if (req.body.workshop_type_id !== undefined) {
       const areaForWkt = update.workshop_area || existingRow?.workshop_area || 'production';
       const wktCheck = await validateWorkshopTemplateWorkshopType({
@@ -3258,12 +3277,29 @@ r.post('/task-templates/:tplId/items', requirePermission('projects', 'edit'), as
       default_allowed_companies: Array.isArray(b.default_allowed_companies) ? b.default_allowed_companies : null,
       default_allowed_departments: Array.isArray(b.default_allowed_departments) ? b.default_allowed_departments : null,
       blocks_stage_advance: !!b.blocks_stage_advance,
+      completion_requires_file_or_note: !!b.completion_requires_file_or_note
+        || (Array.isArray(b.required_evidence_file_types) && b.required_evidence_file_types.length > 0),
+      required_evidence_file_types: Array.isArray(b.required_evidence_file_types) ? b.required_evidence_file_types : [],
+      requires_quick_verdict: !!b.requires_quick_verdict,
     };
     let { data, error } = await supabase
       .from('workshop_task_template_items')
       .insert(insertRow)
       .select()
       .single();
+    if (error && /required_evidence_file_types|completion_requires_file_or_note|requires_quick_verdict/.test(error.message || '')) {
+      const {
+        completion_requires_file_or_note: _c,
+        required_evidence_file_types: _r,
+        requires_quick_verdict: _q,
+        ...legacy
+      } = insertRow;
+      ({ data, error } = await supabase
+        .from('workshop_task_template_items')
+        .insert(legacy)
+        .select()
+        .single());
+    }
     if (error && String(error.message || '').includes('blocks_stage_advance')) {
       // DB chưa apply migration 256 — bỏ cờ và retry để vẫn tạo được item.
       const { blocks_stage_advance: _drop, ...legacy } = insertRow;
@@ -3285,15 +3321,37 @@ r.put('/task-templates/:tplId/items/:itemId', requirePermission('projects', 'edi
   try {
     const update = {};
     ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist',
-      'default_allowed_companies', 'default_allowed_departments', 'blocks_stage_advance'].forEach((f) => {
+      'default_allowed_companies', 'default_allowed_departments', 'blocks_stage_advance',
+      'completion_requires_file_or_note', 'required_evidence_file_types', 'requires_quick_verdict'].forEach((f) => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
+    if (req.body.required_evidence_file_types !== undefined) {
+      const types = Array.isArray(req.body.required_evidence_file_types) ? req.body.required_evidence_file_types : [];
+      update.required_evidence_file_types = types;
+      if (types.length && update.completion_requires_file_or_note === undefined) {
+        update.completion_requires_file_or_note = true;
+      }
+    }
     let { data, error } = await supabase
       .from('workshop_task_template_items')
       .update(update)
       .eq('id', req.params.itemId)
       .select()
       .single();
+    if (error && /required_evidence_file_types|completion_requires_file_or_note|requires_quick_verdict/.test(error.message || '')) {
+      const {
+        completion_requires_file_or_note: _c,
+        required_evidence_file_types: _r,
+        requires_quick_verdict: _q,
+        ...legacy
+      } = update;
+      ({ data, error } = await supabase
+        .from('workshop_task_template_items')
+        .update(legacy)
+        .eq('id', req.params.itemId)
+        .select()
+        .single());
+    }
     if (error && String(error.message || '').includes('blocks_stage_advance')) {
       const { blocks_stage_advance: _drop, ...legacy } = update;
       ({ data, error } = await supabase

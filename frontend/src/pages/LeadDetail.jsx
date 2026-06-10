@@ -24,6 +24,7 @@ import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
 import CallLogsTab from '../components/CallLogsTab';
 import LeadVoiceRecordingsTab from '../components/LeadVoiceRecordingsTab';
 import FacebookChatTab from '../components/FacebookChatTab';
+import ZaloChatTab from '../components/ZaloChatTab';
 import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
 import Modal from '../components/Modal';
@@ -275,6 +276,13 @@ export default function LeadDetail() {
     return () => { cancelled = true; };
   }, [lead?.company_id, user?.company_id]);
 
+  /** Chỉ hiện tab inbox đúng nguồn tạo lead (facebook | zalo). */
+  const inboxChannel = useMemo(() => {
+    const ch = String(lead?.inbox_channel || '').trim().toLowerCase();
+    if (ch === 'facebook' || ch === 'zalo') return ch;
+    return null;
+  }, [lead?.inbox_channel]);
+
   /** Mở đúng tab từ URL (?tab=chat|facebook|calls|voice_crm|approvals|…) — app mobile / liên kết ngoài. */
   useEffect(() => {
     const t = searchParams.get('tab');
@@ -292,6 +300,7 @@ export default function LeadDetail() {
       'documents',
       'notes',
       'facebook',
+      'zalo',
       'team',
       'comments',
       'calls',
@@ -320,11 +329,20 @@ export default function LeadDetail() {
         return;
       }
     }
+    if (t === 'facebook' || t === 'zalo') {
+      if (!lead || String(lead.id) !== String(id)) return;
+      const ch = inboxChannel;
+      setActiveTab(ch === 'facebook' || ch === 'zalo' ? ch : 'tasks');
+      const next = new URLSearchParams(searchParams);
+      next.delete('tab');
+      setSearchParams(next, { replace: true });
+      return;
+    }
     setActiveTab(t);
     const next = new URLSearchParams(searchParams);
     next.delete('tab');
     setSearchParams(next, { replace: true });
-  }, [id, searchParams, setSearchParams, lead]);
+  }, [id, searchParams, setSearchParams, lead, inboxChannel]);
 
   const loadDealExcelQuotations = useCallback(() => {
     if (!id) return;
@@ -489,6 +507,13 @@ export default function LeadDetail() {
     const st = stagesDeal.find((s) => s.id === lead.stage_id);
     return !!(st && isCrmDealStageHoanThanhName(st.name));
   }, [lead, stagesDeal]);
+
+  useEffect(() => {
+    if (!lead) return;
+    if ((activeTab === 'facebook' || activeTab === 'zalo') && activeTab !== inboxChannel) {
+      setActiveTab(inboxChannel || 'tasks');
+    }
+  }, [lead?.id, inboxChannel, activeTab]);
 
   useEffect(() => {
     if (lead?.type === 'deal' && activeTab === 'deal_scores' && !isDealHoanThanhForZalo) {
@@ -1580,6 +1605,7 @@ export default function LeadDetail() {
               >
                 📝 Ghi chú ({noteActivities.length})
               </button>
+              {inboxChannel === 'facebook' && (
               <button
                 onClick={() => setActiveTab('facebook')}
                 className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
@@ -1590,6 +1616,19 @@ export default function LeadDetail() {
               >
                 📘 Facebook
               </button>
+              )}
+              {inboxChannel === 'zalo' && (
+              <button
+                onClick={() => setActiveTab('zalo')}
+                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                  activeTab === 'zalo'
+                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                💬 Zalo OA
+              </button>
+              )}
               <button
                 onClick={() => setActiveTab('team')}
                 className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
@@ -1792,6 +1831,8 @@ export default function LeadDetail() {
                 />
               ) : activeTab === 'facebook' ? (
                 <FacebookChatTab leadId={id} companyId={lead?.company_id} />
+              ) : activeTab === 'zalo' ? (
+                <ZaloChatTab leadId={id} />
               ) : activeTab === 'team' ? (
                 <LeadMembersTab leadId={id} />
               ) : activeTab === 'comments' ? (
