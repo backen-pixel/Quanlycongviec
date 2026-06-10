@@ -2,7 +2,7 @@
   "expo": {
     "name": "Xưởng SX",
     "slug": "sx-mobile",
-    "version": "1.0.30",
+    "version": "1.0.32",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -15,7 +15,7 @@
     },
     "android": {
       "package": "vn.tubeppro.sxmobile",
-      "versionCode": 33,
+      "versionCode": 35,
       "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": false,
       "softwareKeyboardLayoutMode": "resize",
@@ -34,9 +34,11 @@
         "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
-        "android.permission.WAKE_LOCK",
         "android.permission.USE_FULL_SCREEN_INTENT",
-        "android.permission.FOREGROUND_SERVICE_MICROPHONE"
+        "android.permission.WAKE_LOCK",
+        "android.permission.DISABLE_KEYGUARD",
+        "android.permission.FOREGROUND_SERVICE_MICROPHONE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
       ]
     },
     "plugins": [
@@ -56,9 +58,16 @@
           "cameraPermission": "Cho phép camera để chụp ảnh gửi tin nhắn."
         }
       ],
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "cameraPermission": "Cho phép camera cho cuộc gọi video.",
+          "microphonePermission": "Cho phép micro cho cuộc gọi thoại."
+        }
+      ],
       "./plugins/withGoogleServices.js",
       "./plugins/withFloatingBubbleAndroid.js",
-      "./plugins/withIncomingCallSxAndroid.js"
+      "./plugins/withIncomingCallAndroid.js"
     ],
     "ios": {
       "supportsTablet": true,

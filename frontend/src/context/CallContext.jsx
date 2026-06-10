@@ -505,6 +505,11 @@ export function CallProvider({ children }) {
     const wantVideo = !!opts.video;
     setError(null);
     const newCallId = genCallId();
+    // Cập nhật refs đồng bộ ngay — tránh race khi callee reject nhanh trước khi useEffect chạy.
+    callIdRef.current = newCallId;
+    statusRef.current = 'outgoing';
+    modeRef.current = 'direct';
+    peerRef.current = { id: peerUser.id, name: peerUser.name || 'Người dùng', avatar: peerUser.avatar || null };
     setCallId(newCallId);
     setMode('direct');
     setPeer({ id: peerUser.id, name: peerUser.name || 'Người dùng', avatar: peerUser.avatar || null });
@@ -554,6 +559,10 @@ export function CallProvider({ children }) {
     const wantVideo = !!opts.video;
     setError(null);
     const newCallId = genCallId();
+    // Cập nhật refs đồng bộ ngay — tránh race khi thành viên reject nhanh trước khi useEffect chạy.
+    callIdRef.current = newCallId;
+    statusRef.current = 'outgoing';
+    modeRef.current = 'group';
     setCallId(newCallId);
     setMode('group');
     setGroupInfo({ id: group.id, name: group.name || 'Nhóm chat', hostId: uid });
