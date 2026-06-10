@@ -184,6 +184,8 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   }, [peer]);
 
   const resetState = useCallback(() => {
+    // Giữ lại callId hiện tại TRƯỚC khi xoá ref — dùng để hủy thông báo / dừng chuông native.
+    const endingCallId = callIdRef.current;
     // Reset ref đồng bộ ngay — tránh cuộc gọi kế tiếp bị "busy" do statusRef còn kẹt.
     statusRef.current = 'idle';
     callIdRef.current = null;
@@ -210,10 +212,11 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     groupPeersRef.current.clear();
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     localStreamRef.current = null;
-    void dismissIncomingCallNotification(callIdRef.current);
+    void dismissIncomingCallNotification(endingCallId);
+    markNativeCallAnswered(endingCallId);
     dismissLockScreenCallUi();
-    releaseIncomingClaim(callIdRef.current);
-    clearNativeIncomingCallClaim(callIdRef.current);
+    releaseIncomingClaim(endingCallId);
+    clearNativeIncomingCallClaim(endingCallId);
     pendingNativeAcceptRef.current = false;
     setNativeAcceptPending(false);
     setCallSession(null, 'idle');
@@ -315,6 +318,11 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       if (!socket || !peerUser?.id || statusRef.current !== 'idle') return;
       setError(null);
       const newCallId = genCallId();
+      // Cập nhật refs đồng bộ ngay — tránh race khi callee reject nhanh trước khi useEffect chạy.
+      callIdRef.current = newCallId;
+      statusRef.current = 'outgoing';
+      modeRef.current = 'direct';
+      peerRef.current = peerUser;
       setCallId(newCallId);
       setMode('direct');
       setPeer(peerUser);
@@ -353,6 +361,11 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       }
       setError(null);
       const newCallId = genCallId();
+      // Cập nhật refs đồng bộ ngay — tránh race khi thành viên reject nhanh trước khi useEffect chạy.
+      callIdRef.current = newCallId;
+      statusRef.current = 'outgoing';
+      modeRef.current = 'group';
+      peerRef.current = { id: ids[0], name: group.name || 'Nhóm' };
       setCallId(newCallId);
       setMode('group');
       setGroupId(String(group.id));
@@ -585,8 +598,9 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       peerRef.current = { id: String(fromUserId), name: payload.fromName || 'Người gọi' };
       setCallSession(incomingId, 'incoming');
 
-      // Android: native full-screen khi app nền/kill; in-app dùng CallScreen khi đang mở.
-      if (Platform.OS === 'android' && !opts?.silent && AppState.currentState !== 'active') {
+      // Android: dùng màn hình native. KHÔNG re-post notification khi silent (đến từ accept/reject
+      // native) — tránh khởi động lại IncomingCallRingService làm đổ chuông thêm lần nữa.
+      if (Platform.OS === 'android' && !opts?.silent) {
         clearNativeIncomingCallClaim();
         postNativeIncomingCallNotification({
           callId: incomingId,
