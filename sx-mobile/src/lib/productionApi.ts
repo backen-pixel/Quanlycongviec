@@ -124,17 +124,24 @@ async function fetchAllProjects(noCache = false, filters: BoardFilters = {}): Pr
 
 /**
  * Tải board đồng bộ với web:
- *  - Cột Kanban từ /production/pipeline-stages (lọc theo companyId + workshopTypeId)
- *  - Dự án đầy đủ (kèm production_person) từ /production/projects (lọc theo companyId)
+ *  - Cột Kanban từ /production/pipeline-stages
+ *      + company_id nếu có
+ *      + workshop_type_id chỉ khi là UUID cụ thể (KHÔNG gửi khi 'none' — giống web)
+ *  - Dự án đầy đủ từ /production/projects (lọc theo companyId server-side)
  *  - KPI từ /production/dashboard (best-effort)
- * Resolve cột client-side (giống web) và gắn vào resolved_column_id.
- * Lọc theo phân loại (workshopTypeId) cho project được thực hiện phía client (giống web).
+ * Lọc theo phân loại (workshopTypeId) cho project thực hiện client-side (giống web).
  */
 export async function fetchProductionBoard(noCache = false, filters: BoardFilters = {}): Promise<ProductionBoard> {
   const stageParams: Record<string, unknown> = {};
   if (noCache) stageParams._t = Date.now();
   if (filters.companyId) stageParams.company_id = filters.companyId;
-  if (filters.workshopTypeId) stageParams.workshop_type_id = filters.workshopTypeId;
+  // Khớp web (ProductionDashboard.jsx:408-410): chỉ gửi workshop_type_id khi là UUID cụ thể.
+  // Khi 'none' (Chưa phân loại), KHÔNG gửi để lấy toàn bộ cột — project lọc client-side.
+  // Nếu gửi 'none', backend chỉ trả cột null-type (thường chỉ có Tiếp nhận) → mọi project
+  // chưa phân loại đều bị đẩy vào Tiếp nhận vì không còn cột nào khác để gắn.
+  if (filters.workshopTypeId && filters.workshopTypeId !== 'none') {
+    stageParams.workshop_type_id = filters.workshopTypeId;
+  }
 
   const dashParams: Record<string, unknown> = {};
   if (noCache) dashParams._t = Date.now();
