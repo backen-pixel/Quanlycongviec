@@ -289,6 +289,10 @@ const {
   finalizeGroupCallLog,
 } = require('./helpers/messengerCallLog');
 
+// Cho route REST (vd /push/call-reject khi app bị kill) truy cập + finalize log cuộc gọi.
+app.set('activeDirectCalls', activeDirectCalls);
+app.set('finalizeDirectCallLog', finalizeDirectCallLog);
+
 /** Callee đang có socket CRM mở — không cần FCM (tránh chuông reo lần 2). */
 function isUserSocketOnline(userId) {
   if (!userId) return false;
