@@ -202,6 +202,10 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
   useEffect(() => {
     return subscribeMessengerMeta((evt) => {
       if (String(evt.groupId) !== String(threadId)) return;
+      if (evt.type === 'read') {
+        refreshReceipts();
+        return;
+      }
       if (evt.type === 'reaction' && evt.messageId && evt.reactions) {
         setMessages((prev) =>
           prev.map((m) =>

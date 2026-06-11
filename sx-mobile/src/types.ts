@@ -23,6 +23,7 @@ export type ProductionProject = {
   priority?: string | null;
   deadline?: string | null;
   production_deadline?: string | null;
+  created_at?: string | null;
   estimated_value?: number | null;
   progress?: number;
   task_total?: number;

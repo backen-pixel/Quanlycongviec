@@ -23,6 +23,7 @@ export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
     priority: (raw.priority as string) || null,
     deadline: (raw.deadline as string) || null,
     production_deadline: (raw.production_deadline as string) || null,
+    created_at: (raw.created_at as string) || null,
     estimated_value: Number(raw.estimated_value || 0),
     progress: Number(raw.progress || 0),
     task_total: Number(raw.task_total || 0),

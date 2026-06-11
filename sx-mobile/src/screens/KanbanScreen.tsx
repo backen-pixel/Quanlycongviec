@@ -39,7 +39,7 @@ import {
 import { ensureNotificationPermission } from '../lib/pushRegistration';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { useTheme } from '../context/ThemeContext';
-import { type AppColors, colorWithAlpha, formatMoneyAmount, getTaskProgressColor, HIT_TARGET, Radii, Spacing, stageColor } from '../theme';
+import { type AppColors, colorWithAlpha, getTaskProgressColor, HIT_TARGET, Radii, Spacing, stageColor } from '../theme';
 import type { KanbanStage, ProductionBoard, ProductionProject } from '../types';
 
 type QuickFilter = 'all' | 'mine' | 'overdue' | 'today';
@@ -62,7 +62,7 @@ function formatDate(value?: string | null): string {
   if (!value) return '';
   try {
     const d = new Date(value);
-    return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+    return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
   } catch {
     return '';
   }
@@ -148,7 +148,7 @@ export default function KanbanScreen() {
   const styles = useMemo(() => createKanbanStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { unreadCount, refreshUnread, commentToast, dismissCommentToast, projectMetaRef } = useNotifications();
+  const { unreadCount, refreshUnread, commentToast, dismissCommentToast, projectMetaRef, subscribeComment, subscribeSync } = useNotifications();
   const { openProjectDetail, openMessages } = useRootNavigation();
   const myId = user?.id || user?.userId || null;
   const { unreadTotal: messageUnread } = useMessenger();
@@ -266,7 +266,45 @@ export default function KanbanScreen() {
 
   useProductionRealtime({
     onRefresh: () => load('silent'),
+    modes: ['board', 'task'],
   });
+
+  useEffect(() => {
+    board.projects.forEach((p) => {
+      if (p.id) projectMetaRef.current.set(p.id, { code: p.code, name: p.name });
+    });
+  }, [board.projects, projectMetaRef]);
+
+  useEffect(() => {
+    return subscribeSync((evt) => {
+      if (evt.type !== 'project:comment_changed') return;
+      const pid = evt.payload.project_id ? String(evt.payload.project_id) : '';
+      if (!pid) return;
+      void fetchProjectCommentIndex([pid])
+        .then((idx) => {
+          const entry = idx[pid];
+          if (entry) {
+            setCommentIndex((prev) => ({ ...prev, [pid]: entry }));
+          }
+        })
+        .catch(() => {});
+    });
+  }, [subscribeSync]);
+
+  useEffect(() => {
+    return subscribeComment((n) => {
+      const pid = n.metadata?.project_id ? String(n.metadata.project_id) : n.entity_id ? String(n.entity_id) : '';
+      if (!pid) return;
+      setCommentIndex((prev) => ({
+        ...prev,
+        [pid]: {
+          count: (prev[pid]?.count ?? 0) + 1,
+          last_at: n.created_at,
+          last_user_id: prev[pid]?.last_user_id ?? null,
+        },
+      }));
+    });
+  }, [subscribeComment]);
 
   useEffect(() => {
     const ids = board.projects.map((p) => p.id).filter(Boolean);
@@ -834,8 +872,8 @@ export default function KanbanScreen() {
           const stageName = item.stage_name;
           const avatarBg = avatarColor(item.customer_name);
           const avatarLetters = initials(item.customer_name);
-          const moneyAmount = formatMoneyAmount(item.estimated_value);
-          const dateStr = formatDate(item.production_deadline || item.deadline);
+          const deadlineStr = formatDate(item.production_deadline || item.deadline);
+          const createdStr = formatDate(item.created_at);
           const vcTag = getVcTag(item, stages);
           const personName = item.production_person_name?.trim() || null;
           const commentCount = commentIndex[item.id]?.count ?? 0;
@@ -873,7 +911,6 @@ export default function KanbanScreen() {
                     </View>
                   ) : null}
                 </ScrollView>
-                {dateStr ? <Text style={styles.cardDate}>{dateStr}</Text> : null}
               </View>
 
               {/* Card name */}
@@ -936,18 +973,44 @@ export default function KanbanScreen() {
               ) : null}
 
               </Pressable>
-              {/* Bottom: value + icon actions */}
+              {/* Bottom: deadline + created + icon actions */}
               <View style={styles.cardBottom}>
                 <View style={styles.cardBottomLeft}>
-                  {moneyAmount ? (
-                    <View style={styles.valueBox}>
-                      <View style={styles.valueIconWrap}>
-                        <Ionicons name="cash-outline" size={15} color={colors.valueText} />
+                  <View style={styles.dateMetaBox}>
+                    <View style={styles.dateMetaItem}>
+                      <Ionicons
+                        name="calendar-outline"
+                        size={14}
+                        color={item.is_overdue ? colors.danger : colors.primary}
+                      />
+                      <View style={styles.dateMetaTextWrap}>
+                        <Text style={styles.dateMetaLabel}>Deadline</Text>
+                        <Text
+                          style={[
+                            styles.dateMetaValue,
+                            item.is_overdue && styles.dateMetaValueOverdue,
+                            !deadlineStr && styles.dateMetaValueEmpty,
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {deadlineStr || '—'}
+                        </Text>
                       </View>
-                      <Text style={styles.valueAmount} numberOfLines={1}>{moneyAmount}</Text>
-                      <Text style={styles.valueCurrency}>{'\u20AB'}</Text>
                     </View>
-                  ) : null}
+                    <View style={styles.dateMetaDivider} />
+                    <View style={styles.dateMetaItem}>
+                      <Ionicons name="time-outline" size={14} color={colors.textMuted} />
+                      <View style={styles.dateMetaTextWrap}>
+                        <Text style={styles.dateMetaLabel}>Ngày tạo</Text>
+                        <Text
+                          style={[styles.dateMetaValue, !createdStr && styles.dateMetaValueEmpty]}
+                          numberOfLines={1}
+                        >
+                          {createdStr || '—'}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
                 </View>
                 <View style={styles.cardActions}>
                   <TapHighlight
@@ -1210,7 +1273,6 @@ function createKanbanStyles(c: AppColors) {
     paddingHorizontal: 8, paddingVertical: 2,
   },
   tagOverdueText: { color: c.danger, fontSize: 10, fontWeight: '700' },
-  cardDate: { color: c.textFaint, fontSize: 11, fontWeight: '600' },
 
   cardName: { color: c.text, fontSize: 15, fontWeight: '800', marginBottom: 8 },
 
@@ -1266,18 +1328,24 @@ function createKanbanStyles(c: AppColors) {
     alignItems: 'center', justifyContent: 'center',
   },
   actionBadgeText: { color: c.white, fontSize: 9, fontWeight: '800', lineHeight: 11 },
-  valueBox: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: c.valueBg, borderRadius: Radii.md,
-    borderWidth: 1, borderColor: c.valueBorder,
-    paddingHorizontal: 10, paddingVertical: 7,
+  dateMetaBox: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    backgroundColor: c.cardAlt,
+    borderRadius: Radii.md,
+    borderWidth: 1,
+    borderColor: c.border,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 10,
   },
-  valueIconWrap: {
-    width: 26, height: 26, borderRadius: 13,
-    backgroundColor: c.valueBorder, alignItems: 'center', justifyContent: 'center',
-  },
-  valueAmount: { flexShrink: 1, color: c.valueText, fontSize: 14, fontWeight: '800', letterSpacing: -0.2 },
-  valueCurrency: { color: c.valueMuted, fontSize: 13, fontWeight: '700', marginLeft: 1 },
+  dateMetaItem: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 },
+  dateMetaTextWrap: { flex: 1, minWidth: 0 },
+  dateMetaLabel: { color: c.textFaint, fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.3 },
+  dateMetaValue: { color: c.text, fontSize: 12, fontWeight: '800', marginTop: 1 },
+  dateMetaValueOverdue: { color: c.danger },
+  dateMetaValueEmpty: { color: c.textMuted, fontWeight: '600' },
+  dateMetaDivider: { width: 1, backgroundColor: c.border, marginVertical: 2 },
 
   emptyBox: { alignItems: 'center', paddingVertical: 52, gap: 10 },
   emptyText: { color: c.textMuted, fontSize: 13, textAlign: 'center' },

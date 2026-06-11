@@ -41,11 +41,15 @@ export type MessengerToast = MessengerNotifPayload;
 type MessengerNotifListener = (payload: MessengerNotifPayload) => void;
 
 type MessengerMetaListener = (evt: {
-  type: 'reaction' | 'recall';
+  type: 'reaction' | 'recall' | 'read' | 'members' | 'updated';
   groupId: string;
   messageId?: string;
   reactions?: import('../types/messenger').MessengerReaction[];
   message?: import('../types/messenger').MessengerMessage;
+  userId?: string;
+  lastReadAt?: string;
+  name?: string | null;
+  avatar?: string | null;
 }) => void;
 
 type PresenceListener = (userId: string, online: boolean, lastPingAt?: string) => void;
@@ -71,6 +75,8 @@ type NotificationCtx = {
   subscribeMessengerMeta: (fn: MessengerMetaListener) => () => void;
   subscribePresenceUpdate: (fn: PresenceListener) => () => void;
   emitPresencePing: () => void;
+  joinProjectRoom: (projectId: string) => void;
+  leaveProjectRoom: (projectId: string) => void;
   projectMetaRef: React.MutableRefObject<Map<string, { code?: string | null; name?: string | null }>>;
 };
 
@@ -156,6 +162,16 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     for (const id of groupIds) {
       if (id) socketRef.current?.emit('join:messenger_group', id);
     }
+  }, []);
+
+  const joinProjectRoom = useCallback((projectId: string) => {
+    if (!projectId) return;
+    socketRef.current?.emit('join:project', projectId);
+  }, []);
+
+  const leaveProjectRoom = useCallback((projectId: string) => {
+    if (!projectId) return;
+    socketRef.current?.emit('leave:project', projectId);
   }, []);
 
   const emitSync = useCallback((evt: SyncEvent) => {
@@ -275,11 +291,18 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
     const onProjectComment = async (raw: unknown) => {
       const evt = raw as ProjectCommentSocketEvent;
+      const pid = evt.project_id ? String(evt.project_id) : '';
+      if (pid) {
+        emitSync({
+          type: 'project:comment_changed',
+          payload: { project_id: pid, action: evt.action || 'created' },
+        });
+      }
+
       const commentUserId = evt.comment?.user_id;
       const myId = uid || (await getCurrentUserIdForNotifications());
       if (commentUserId && myId && String(commentUserId) === String(myId)) return;
 
-      const pid = evt.project_id ? String(evt.project_id) : '';
       const meta = pid ? projectMetaRef.current.get(pid) : undefined;
       const built = buildNotificationFromCommentEvent(evt, meta);
       if (!built) return;
@@ -288,10 +311,46 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       emitComment(built);
     };
 
+    const onProjectCommentUpdated = (raw: unknown) => {
+      const evt = raw as ProjectCommentSocketEvent;
+      const pid = evt.project_id ? String(evt.project_id) : '';
+      if (!pid) return;
+      emitSync({ type: 'project:comment_changed', payload: { project_id: pid, action: 'updated' } });
+    };
+
+    const onProjectCommentDeleted = (raw: unknown) => {
+      const evt = raw as ProjectCommentSocketEvent;
+      const pid = evt.project_id ? String(evt.project_id) : '';
+      if (!pid) return;
+      emitSync({ type: 'project:comment_changed', payload: { project_id: pid, action: 'deleted' } });
+    };
+
     const onServerNotif = (raw: unknown) => {
       const n = raw as SxCommentNotification & {
         metadata?: { ecosystem_module_key?: string; sender_name?: string; group_name?: string };
       };
+      const notifType = String(n?.type || '');
+      if (
+        notifType.startsWith('crm_assignment')
+        || notifType.startsWith('crm_task')
+        || notifType === 'crm_task_assigned'
+        || notifType === 'crm_task_completed'
+      ) {
+        emitSync({
+          type: 'crm:task_changed',
+          payload: {
+            action: notifType,
+            project_id:
+              (n.metadata as Record<string, unknown> | undefined)?.project_id != null
+                ? String((n.metadata as Record<string, unknown>).project_id)
+                : undefined,
+            lead_id:
+              (n.metadata as Record<string, unknown> | undefined)?.lead_id != null
+                ? String((n.metadata as Record<string, unknown>).lead_id)
+                : undefined,
+          },
+        });
+      }
       if (n?.type === 'messenger_chat' && n.entity_type === 'messenger_group' && n.entity_id) {
         const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
         const senderName = typeof meta.sender_name === 'string' ? meta.sender_name : '';
@@ -341,10 +400,29 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     };
 
     s.on('project:comment', onProjectComment);
+    s.on('project:comment:updated', onProjectCommentUpdated);
+    s.on('project:comment:deleted', onProjectCommentDeleted);
     s.on('notification', onServerNotif);
 
     const onStageChanged = (raw: unknown) => {
       emitSync({ type: 'project:stage_changed', payload: (raw || {}) as Record<string, unknown> });
+    };
+    const onBoardChanged = (raw: unknown) => {
+      const p = (raw || {}) as Record<string, unknown>;
+      emitSync({
+        type: 'project:board_changed',
+        payload: {
+          ...p,
+          project_id:
+            p.project_id != null
+              ? String(p.project_id)
+              : p.id != null
+                ? String(p.id)
+                : p.projectId != null
+                  ? String(p.projectId)
+                  : null,
+        },
+      });
     };
     const onTaskChanged = (raw: unknown) => {
       emitSync({ type: 'crm:task_changed', payload: (raw || {}) as CrmTaskChangedPayload });
@@ -402,6 +480,31 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         fn(String(uid), !!p.online, p.last_ping_at);
       }
     };
+    const onMessengerRead = (raw: unknown) => {
+      const p = raw as { group_id?: string; user_id?: string; last_read_at?: string };
+      if (!p?.group_id) return;
+      emitMessengerMeta({
+        type: 'read',
+        groupId: String(p.group_id),
+        userId: p.user_id != null ? String(p.user_id) : undefined,
+        lastReadAt: p.last_read_at != null ? String(p.last_read_at) : undefined,
+      });
+    };
+    const onMessengerMembers = (raw: unknown) => {
+      const p = raw as { group_id?: string };
+      if (!p?.group_id) return;
+      emitMessengerMeta({ type: 'members', groupId: String(p.group_id) });
+    };
+    const onMessengerUpdated = (raw: unknown) => {
+      const p = raw as { group_id?: string; name?: string; avatar?: string | null };
+      if (!p?.group_id) return;
+      emitMessengerMeta({
+        type: 'updated',
+        groupId: String(p.group_id),
+        name: p.name != null ? String(p.name) : undefined,
+        avatar: p.avatar ?? undefined,
+      });
+    };
 
     s.on('messenger_group:reaction', onMessengerReaction);
     s.on('messenger_group:reactions', onMessengerReaction);
@@ -409,8 +512,18 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     s.on('presence:update', onPresenceUpdate);
 
     s.on('project:stage_changed', onStageChanged);
+    s.on('project:updated', onBoardChanged);
+    s.on('approval:updated', onBoardChanged);
+    s.on('crm:badge_updated', onBoardChanged);
+    s.on('notify:badge', onBoardChanged);
+    s.on('logistics:project_trashed', onBoardChanged);
+    s.on('logistics:project_restored', onBoardChanged);
+    s.on('logistics:project_purged', onBoardChanged);
     s.on('crm:task_changed', onTaskChanged);
     s.on('messenger_group:chat', onMessengerChat);
+    s.on('messenger_group:read', onMessengerRead);
+    s.on('messenger_group:members', onMessengerMembers);
+    s.on('messenger_group:updated', onMessengerUpdated);
 
     s.on('connect', () => {
       void fetchMessengerGroups(uid)
@@ -424,10 +537,22 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
     return () => {
       s.off('project:comment', onProjectComment);
+      s.off('project:comment:updated', onProjectCommentUpdated);
+      s.off('project:comment:deleted', onProjectCommentDeleted);
       s.off('notification', onServerNotif);
       s.off('project:stage_changed', onStageChanged);
+      s.off('project:updated', onBoardChanged);
+      s.off('approval:updated', onBoardChanged);
+      s.off('crm:badge_updated', onBoardChanged);
+      s.off('notify:badge', onBoardChanged);
+      s.off('logistics:project_trashed', onBoardChanged);
+      s.off('logistics:project_restored', onBoardChanged);
+      s.off('logistics:project_purged', onBoardChanged);
       s.off('crm:task_changed', onTaskChanged);
       s.off('messenger_group:chat', onMessengerChat);
+      s.off('messenger_group:read', onMessengerRead);
+      s.off('messenger_group:members', onMessengerMembers);
+      s.off('messenger_group:updated', onMessengerUpdated);
       s.off('messenger_group:reaction', onMessengerReaction);
       s.off('messenger_group:reactions', onMessengerReaction);
       s.off('messenger_group:recalled', onMessengerRecalled);
@@ -460,6 +585,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       subscribeMessengerMeta,
       subscribePresenceUpdate,
       emitPresencePing,
+      joinProjectRoom,
+      leaveProjectRoom,
       projectMetaRef,
     }),
     [
@@ -483,6 +610,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       subscribeMessengerMeta,
       subscribePresenceUpdate,
       emitPresencePing,
+      joinProjectRoom,
+      leaveProjectRoom,
     ],
   );
 
