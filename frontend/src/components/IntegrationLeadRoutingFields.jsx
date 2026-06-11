@@ -303,6 +303,11 @@ export default function IntegrationLeadRoutingFields({
         <p className="text-[10px] text-gray-400 mt-1">
           {targetType === 'deal' ? 'Deal' : 'Lead'} mới từ {channelName} sẽ gán người này làm chủ + phụ trách
         </p>
+        {String(channelName || '').toLowerCase().includes('zalo') && (
+          <p className="text-[10px] text-amber-700 mt-2 bg-amber-50 border border-amber-100 rounded px-2 py-1.5">
+            Chỉ lead Zalo: chưa có SĐT vẫn hiện Kanban (tab <strong>Lead</strong>, đúng công ty). Lead Facebook vẫn cần SĐT. Khi tạo lead mới, nhiệm vụ CRM được gen tự động từ bộ mẫu pipeline (nếu đã cấu hình). Lead tạo trước khi lưu cấu hình: tab Công cụ Lead → «Áp dụng routing OA → Kanban».
+          </p>
+        )}
       </div>
     </div>
   );

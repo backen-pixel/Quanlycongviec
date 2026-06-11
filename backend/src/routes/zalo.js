@@ -10,7 +10,7 @@ const { supabase } = require('../config/supabase');
 const { auth: authMiddleware } = require('../middleware/auth');
 const { isSystemAdmin } = require('../helpers/adminRole');
 const { extractContactInfo } = require('../helpers/facebookPhoneExtract');
-const { createLeadFromZaloContact, runZaloBatchExtractPhones, runZaloBatchCreateLeads, extractFromZaloContact, syncZaloContactProfile, runZaloBatchRefreshProfiles, isPlaceholderZaloDisplayName, normalizeZaloModuleKey, normalizeZaloTargetType, resolveZaloModuleKeyForOa, resolveZaloCreateType } = require('../helpers/zaloBatchTools');
+const { createLeadFromZaloContact, runZaloBatchExtractPhones, runZaloBatchCreateLeads, extractFromZaloContact, syncZaloContactProfile, runZaloBatchRefreshProfiles, isPlaceholderZaloDisplayName, normalizeZaloModuleKey, normalizeZaloTargetType, resolveZaloModuleKeyForOa, resolveZaloCreateType, applyZaloOaRoutingToLead, runZaloBatchApplyOaRouting, ensureZaloLeadAutoTasks } = require('../helpers/zaloBatchTools');
 const {
   isUserSendEvent,
   isOaEchoEvent,
@@ -29,6 +29,7 @@ const {
   computeAccessTokenExpiresAt,
   computeRefreshTokenExpiresAt,
 } = require('../helpers/zaloOaToken');
+const { triggerZaloInboundN8nWebhook, triggerZaloSyncProfileN8nWebhook, getN8nIntegrationInfo, generateN8nTriggerToken, buildOaN8nTriggerUrls, resolveOaN8nInboundUrl, resolveOaN8nSyncProfileUrl } = require('../helpers/zaloN8nWebhook');
 
 const ZALO_DISABLE_WEBHOOK_LOGS = ['1', 'true', 'yes', 'on'].includes(
   String(process.env.ZALO_DISABLE_WEBHOOK_LOGS || '').toLowerCase(),
@@ -268,6 +269,34 @@ async function handleWebhookEvent(body, io) {
           text: activeOaConfig.auto_reply_message,
         }).catch((e) => console.warn('[Zalo OA] auto-reply failed:', e.message));
       }
+
+      if (resolveOaN8nInboundUrl(activeOaConfig) || resolveOaN8nSyncProfileUrl(activeOaConfig)) {
+        let leadSummary = null;
+        if (contact.lead_id) {
+          const { data: ld } = await supabase.from('crm_leads')
+            .select('id, code, title')
+            .eq('id', contact.lead_id)
+            .maybeSingle();
+          if (ld) leadSummary = ld;
+        }
+        const n8nCtx = {
+          contact: { ...contact, ...contactUpd },
+          message: savedMsg,
+          partnerUserId,
+          eventName,
+          lead: leadSummary,
+          extractedPhone,
+          needsProfileSync: isPlaceholderZaloDisplayName(contact.display_name, contact.user_id),
+        };
+        if (resolveOaN8nInboundUrl(activeOaConfig)) {
+          triggerZaloInboundN8nWebhook(activeOaConfig, n8nCtx)
+            .catch((e) => console.warn('[Zalo→n8n]', e.message));
+        }
+        if (n8nCtx.needsProfileSync && resolveOaN8nSyncProfileUrl(activeOaConfig)) {
+          triggerZaloSyncProfileN8nWebhook(activeOaConfig, n8nCtx)
+            .catch((e) => console.warn('[Zalo→n8n sync-profile]', e.message));
+        }
+      }
     }
 
     try {
@@ -287,6 +316,149 @@ async function handleWebhookEvent(body, io) {
 }
 
 // ═══ WEBHOOK (public) ═══════════════════════════════════════
+
+function verifyZaloN8nCallbackSecret(req, res, next) {
+  const expected = process.env.ZALO_N8N_CALLBACK_SECRET;
+  if (!expected) {
+    return res.status(503).json({
+      error: 'Server chưa cấu hình ZALO_N8N_CALLBACK_SECRET (Render/hosting env)',
+    });
+  }
+  const got = req.headers['x-zalo-n8n-secret'] || req.headers['X-Zalo-N8n-Secret'];
+  if (String(got || '') !== String(expected)) {
+    return res.status(401).json({ error: 'Sai X-Zalo-N8n-Secret' });
+  }
+  return next();
+}
+
+async function getOaAccountByN8nTriggerToken(token) {
+  const t = String(token || '').trim();
+  if (!t) return null;
+  const { data } = await supabase.from('zalo_oa_accounts')
+    .select('*')
+    .eq('n8n_trigger_token', t)
+    .maybeSingle();
+  return data;
+}
+
+async function runN8nSyncProfileForContact(req, res, scopedOaConfig) {
+  const contactId = req.body?.contact_id && String(req.body.contact_id).trim();
+  const oaId = req.body?.oa_id && String(req.body.oa_id).trim();
+  const userId = req.body?.user_id && String(req.body.user_id).trim();
+
+  let contact = null;
+  if (contactId) {
+    const { data } = await supabase.from('zalo_contacts').select('*').eq('id', contactId).maybeSingle();
+    contact = data;
+  } else if (oaId && userId) {
+    const { data } = await supabase.from('zalo_contacts')
+      .select('*').eq('oa_id', oaId).eq('user_id', userId).maybeSingle();
+    contact = data;
+  }
+  if (!contact) {
+    return res.status(404).json({ error: 'Không tìm thấy zalo_contacts (cần contact_id hoặc oa_id+user_id)' });
+  }
+  if (scopedOaConfig && String(contact.oa_id) !== String(scopedOaConfig.oa_id)) {
+    return res.status(403).json({ error: 'Contact không thuộc OA của token này' });
+  }
+
+  const oaConfig = await getOaConfigWithValidToken(contact.oa_id);
+  if (!oaConfig || (!oaConfig.access_token && !oaConfig.refresh_token)) {
+    return res.status(400).json({ error: 'OA chưa cấu hình token' });
+  }
+
+  const result = await syncZaloContactProfile(contact, oaConfig);
+  if (!result.ok) {
+    return res.status(502).json({
+      error: result.reason === 'profile_empty'
+        ? 'Zalo không trả tên (token OA / IP server VN)'
+        : 'Không lấy được profile',
+      ...result,
+    });
+  }
+
+  const { data: fresh } = await supabase.from('zalo_contacts')
+    .select('*, lead:crm_leads(id, title, code, type), customer:customers(id, full_name, phone, email)')
+    .eq('id', contact.id)
+    .single();
+
+  return res.json({
+    ok: true,
+    display_name: result.display_name,
+    avatar_url: result.avatar_url,
+    contact: enrichZaloContact(fresh),
+    ...result,
+  });
+}
+
+/** Thông tin trigger riêng theo token OA (n8n). */
+r.get('/integrations/n8n/o/:token', async (req, res) => {
+  try {
+    const oa = await getOaAccountByN8nTriggerToken(req.params.token);
+    if (!oa) return res.status(404).json({ error: 'Token OA không hợp lệ' });
+    res.json({
+      ok: true,
+      oa_id: oa.oa_id,
+      oa_name: oa.oa_name,
+      is_active: oa.is_active,
+      n8n_trigger: buildOaN8nTriggerUrls(oa),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.get('/integrations/n8n/o/:token/sync-profile', async (req, res) => {
+  const oa = await getOaAccountByN8nTriggerToken(req.params.token);
+  if (!oa) return res.status(404).json({ error: 'Token OA không hợp lệ' });
+  res.json({
+    ok: true,
+    method: 'POST',
+    oa_id: oa.oa_id,
+    oa_name: oa.oa_name,
+    url: buildOaN8nTriggerUrls(oa).crm?.sync_profile,
+    body: { contact_id: 'uuid zalo_contacts' },
+  });
+});
+
+r.post('/integrations/n8n/o/:token/sync-profile', async (req, res) => {
+  try {
+    const oa = await getOaAccountByN8nTriggerToken(req.params.token);
+    if (!oa) return res.status(404).json({ error: 'Token OA không hợp lệ' });
+    if (!oa.is_active) return res.status(403).json({ error: 'OA đang tắt' });
+    await runN8nSyncProfileForContact(req, res, oa);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** n8n gọi lại CRM → lấy tên/avatar Zalo (CRM giữ OA token). Chỉ POST (trình duyệt mở URL = GET → dùng curl/n8n). */
+r.get('/integrations/n8n/sync-profile', (_req, res) => {
+  res.json({
+    ok: true,
+    endpoint: '/api/zalo/integrations/n8n/sync-profile',
+    method: 'POST',
+    note: 'Không hỗ trợ GET thao tác — dùng n8n HTTP Request hoặc curl POST.',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Zalo-N8n-Secret': '<trùng ZALO_N8N_CALLBACK_SECRET trên server>',
+    },
+    body: {
+      contact_id: 'uuid zalo_contacts (ưu tiên)',
+      oa_id: 'optional nếu không có contact_id',
+      user_id: 'optional cùng oa_id',
+    },
+    secret_configured: !!process.env.ZALO_N8N_CALLBACK_SECRET,
+  });
+});
+
+r.post('/integrations/n8n/sync-profile', verifyZaloN8nCallbackSecret, async (req, res) => {
+  try {
+    await runN8nSyncProfileForContact(req, res, null);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 r.post('/webhook', async (req, res) => {
   const body = req.body || {};
@@ -435,6 +607,7 @@ function sanitizeZaloAccountForApi(row) {
     access_token_set: !!row.access_token,
     refresh_token_set: !!row.refresh_token,
     has_secret_key: !!row.secret_key,
+    n8n_trigger: buildOaN8nTriggerUrls(row),
   };
 }
 
@@ -455,7 +628,7 @@ function applyManualTokenFields(row, body) {
 r.get('/accounts', authMiddleware, async (req, res) => {
   try {
     let { data, error } = await supabase.from('zalo_oa_accounts')
-      .select('id, oa_id, oa_name, app_id, is_active, auto_create_lead, auto_reply_message, default_module_key, default_target_type, default_pipeline_id, default_stage_id, default_source_id, default_company_id, default_region_id, default_lead_owner_id, default_lead_type_id, webhook_verify_enabled, access_token, refresh_token, secret_key, access_token_expires_at, refresh_token_expires_at, token_refreshed_at, last_token_error, created_at, updated_at')
+      .select('id, oa_id, oa_name, app_id, is_active, auto_create_lead, auto_reply_message, default_module_key, default_target_type, default_pipeline_id, default_stage_id, default_source_id, default_company_id, default_region_id, default_lead_owner_id, default_lead_type_id, webhook_verify_enabled, n8n_trigger_token, n8n_webhook_url, n8n_sync_profile_webhook_url, access_token, refresh_token, secret_key, access_token_expires_at, refresh_token_expires_at, token_refreshed_at, last_token_error, created_at, updated_at')
       .order('created_at', { ascending: false });
     if (error && (error.message?.includes('access_token_expires_at') || error.message?.includes('refresh_token') || error.code === '42703')) {
       ({ data, error } = await supabase.from('zalo_oa_accounts')
@@ -528,6 +701,13 @@ r.post('/accounts', authMiddleware, async (req, res) => {
       default_lead_owner_id: b.default_lead_owner_id || null,
       default_lead_type_id: b.default_lead_type_id || null,
       webhook_verify_enabled: b.webhook_verify_enabled !== false,
+      n8n_webhook_url: b.n8n_webhook_url && String(b.n8n_webhook_url).trim()
+        ? String(b.n8n_webhook_url).trim()
+        : null,
+      n8n_sync_profile_webhook_url: b.n8n_sync_profile_webhook_url && String(b.n8n_sync_profile_webhook_url).trim()
+        ? String(b.n8n_sync_profile_webhook_url).trim()
+        : null,
+      n8n_trigger_token: generateN8nTriggerToken(),
       created_by: req.user?.id || null,
       updated_at: new Date().toISOString(),
     }, b);
@@ -536,13 +716,16 @@ r.post('/accounts', authMiddleware, async (req, res) => {
       row.refresh_token_expires_at = computeRefreshTokenExpiresAt();
     }
     let { data, error } = await supabase.from('zalo_oa_accounts').insert(row).select().single();
-    if (error?.message?.includes('default_module_key') || error?.message?.includes('default_target_type') || error?.message?.includes('default_company_id') || error?.message?.includes('default_region_id') || error?.message?.includes('default_lead_owner_id') || error?.message?.includes('default_lead_type_id')) {
+    if (error?.message?.includes('default_module_key') || error?.message?.includes('default_target_type') || error?.message?.includes('default_company_id') || error?.message?.includes('default_region_id') || error?.message?.includes('default_lead_owner_id') || error?.message?.includes('default_lead_type_id') || error?.message?.includes('n8n_webhook_url') || error?.message?.includes('n8n_trigger_token')) {
       delete row.default_module_key;
       delete row.default_target_type;
       delete row.default_company_id;
       delete row.default_region_id;
       delete row.default_lead_owner_id;
       delete row.default_lead_type_id;
+      delete row.n8n_webhook_url;
+      delete row.n8n_sync_profile_webhook_url;
+      delete row.n8n_trigger_token;
       ({ data, error } = await supabase.from('zalo_oa_accounts').insert(row).select().single());
     }
     if (error) throw error;
@@ -556,6 +739,10 @@ r.post('/accounts', authMiddleware, async (req, res) => {
 r.put('/accounts/:id', authMiddleware, async (req, res) => {
   try {
     const b = req.body || {};
+    const { data: existing } = await supabase.from('zalo_oa_accounts')
+      .select('n8n_trigger_token')
+      .eq('id', req.params.id)
+      .maybeSingle();
     const update = { updated_at: new Date().toISOString() };
     [
       'oa_id', 'oa_name', 'app_id', 'is_active', 'auto_create_lead', 'auto_reply_message',
@@ -565,6 +752,16 @@ r.put('/accounts/:id', authMiddleware, async (req, res) => {
     ].forEach((f) => {
       if (b[f] !== undefined) update[f] = b[f];
     });
+    if (b.n8n_webhook_url !== undefined) {
+      update.n8n_webhook_url = b.n8n_webhook_url && String(b.n8n_webhook_url).trim()
+        ? String(b.n8n_webhook_url).trim()
+        : null;
+    }
+    if (b.n8n_sync_profile_webhook_url !== undefined) {
+      update.n8n_sync_profile_webhook_url = b.n8n_sync_profile_webhook_url && String(b.n8n_sync_profile_webhook_url).trim()
+        ? String(b.n8n_sync_profile_webhook_url).trim()
+        : null;
+    }
     if (update.default_module_key !== undefined) {
       update.default_module_key = normalizeZaloModuleKey(update.default_module_key);
       if (update.default_module_key === 'production' || update.default_module_key === 'logistics') {
@@ -596,11 +793,21 @@ r.put('/accounts/:id', authMiddleware, async (req, res) => {
         update.refresh_token_expires_at = computeRefreshTokenExpiresAt();
       }
     }
+    if (!existing?.n8n_trigger_token || !String(existing.n8n_trigger_token).trim()) {
+      update.n8n_trigger_token = generateN8nTriggerToken();
+    }
     let { data, error } = await supabase.from('zalo_oa_accounts')
       .update(update).eq('id', req.params.id).select().single();
     if (error?.message?.includes('default_module_key') || error?.message?.includes('default_target_type')) {
       delete update.default_module_key;
       delete update.default_target_type;
+      ({ data, error } = await supabase.from('zalo_oa_accounts')
+        .update(update).eq('id', req.params.id).select().single());
+    }
+    if (error?.message?.includes('n8n_webhook_url') || error?.message?.includes('n8n_sync_profile_webhook_url') || error?.message?.includes('n8n_trigger_token')) {
+      delete update.n8n_webhook_url;
+      delete update.n8n_sync_profile_webhook_url;
+      delete update.n8n_trigger_token;
       ({ data, error } = await supabase.from('zalo_oa_accounts')
         .update(update).eq('id', req.params.id).select().single());
     }
@@ -821,6 +1028,32 @@ r.post('/contacts/:id/sync-profile', authMiddleware, async (req, res) => {
   }
 });
 
+r.post('/contacts/:id/apply-oa-routing', authMiddleware, async (req, res) => {
+  try {
+    const scope = await resolveZaloOaScope(req, res);
+    if (!scope) return;
+    const { data: contact } = await supabase.from('zalo_contacts').select('*').eq('id', req.params.id).maybeSingle();
+    if (!contact) return res.status(404).json({ error: 'Không tìm thấy liên hệ' });
+    if (!contactAllowedByZaloScope(scope, contact)) {
+      return res.status(403).json({ error: 'Không có quyền' });
+    }
+    if (!contact.lead_id) {
+      return res.status(400).json({ error: 'Contact chưa có lead — tạo lead trước' });
+    }
+    const oaConfig = await getOaConfig(contact.oa_id);
+    if (!oaConfig?.default_company_id) {
+      return res.status(400).json({ error: 'OA chưa cấu hình module/công ty/khu vực' });
+    }
+    const result = await applyZaloOaRoutingToLead(contact.lead_id, oaConfig);
+    if (!result.ok) {
+      return res.status(400).json({ error: result.message || result.error, ...result });
+    }
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 r.post('/refresh-profiles', authMiddleware, async (req, res) => {
   try {
     const scope = await resolveZaloOaScope(req, res);
@@ -868,7 +1101,7 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
       .eq('id', contact.id)
       .single();
 
-    res.json({ ok: true, lead, contact: enrichZaloContact(fresh) });
+    res.json({ ok: true, lead, tasks_created: lead.tasks_created || 0, contact: enrichZaloContact(fresh) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -892,7 +1125,11 @@ r.put('/contacts/:id/link-lead', authMiddleware, async (req, res) => {
       .single();
     if (error) throw error;
     await supabase.from('zalo_messages').update({ lead_id }).eq('contact_id', req.params.id);
-    res.json(enrichZaloContact(data));
+    const oaConfig = await getOaConfig(prev.oa_id);
+    const tasksCreated = oaConfig
+      ? await ensureZaloLeadAutoTasks(lead_id, oaConfig.default_lead_owner_id || oaConfig.created_by || req.user?.userId)
+      : 0;
+    res.json({ ...enrichZaloContact(data), tasks_created: tasksCreated });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -990,6 +1227,7 @@ r.get('/webhook-info', authMiddleware, (_req, res) => {
   const webhookUrl = base
     ? `${String(base).replace(/\/$/, '')}/api/zalo/webhook`
     : '/api/zalo/webhook';
+  const n8nInfo = getN8nIntegrationInfo();
   res.json({
     webhook_url: webhookUrl,
     events_recommended: [
@@ -998,6 +1236,7 @@ r.get('/webhook-info', authMiddleware, (_req, res) => {
     ],
     docs: 'https://developers.zalo.me/docs/official-account/webhook/tong-quan',
     note: 'Cần HTTPS công khai. IP Việt Nam để lấy đủ tên/avatar khách. Chỉ trả lời tin tư vấn trong 7 ngày sau tin khách.',
+    n8n: n8nInfo,
   });
 });
 
@@ -1024,6 +1263,18 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
     const requirePhone = req.body?.require_phone !== false;
     const oaId = req.body?.oa_id ? String(req.body.oa_id) : null;
     const summary = await runZaloBatchCreateLeads({ io, limit, requirePhone, oaId });
+    res.json(summary);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Gán lại công ty / khu vực / stage / pipeline / NV theo cấu hình OA (lead đã tạo trước khi cấu hình). */
+r.post('/batch-apply-oa-routing', authMiddleware, async (req, res) => {
+  try {
+    const oaId = req.body?.oa_id ? String(req.body.oa_id) : null;
+    const limit = parseInt(req.body?.limit, 10) || 500;
+    const summary = await runZaloBatchApplyOaRouting({ oaId, limit });
     res.json(summary);
   } catch (e) {
     res.status(500).json({ error: e.message });
