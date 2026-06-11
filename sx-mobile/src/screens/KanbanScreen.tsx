@@ -154,7 +154,8 @@ export default function KanbanScreen() {
   const [filterWorkTypeId, setFilterWorkTypeId] = useState('');
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [workTypes, setWorkTypes] = useState<WorkshopTypeOption[]>([]);
-  const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
+  // Ref cache danh sách công ty — không bao giờ bị xóa khi board reload theo filter.
+  const allCompaniesRef = useRef<CompanyOption[]>([]);
   const [workTypePickerOpen, setWorkTypePickerOpen] = useState(false);
   const [moveModalProject, setMoveModalProject] = useState<ProductionProject | null>(null);
   const [commentProject, setCommentProject] = useState<ProductionProject | null>(null);
@@ -266,7 +267,11 @@ export default function KanbanScreen() {
 
   useEffect(() => {
     void fetchCompanies()
-      .then(setCompanies)
+      .then((list) => {
+        setCompanies(list);
+        // Lưu vào ref để companyOptions không bị mất khi board reload theo filter.
+        if (list.length > 0) allCompaniesRef.current = list;
+      })
       .catch(() => setCompanies([]));
   }, []);
 
@@ -281,8 +286,10 @@ export default function KanbanScreen() {
   }, [companyForTypes]);
 
   const companyOptions = useMemo(() => {
-    const fromApi = companies.length
-      ? companies
+    // Ưu tiên: ref cache (ổn định qua board reload) > companies state > fallback từ board.projects
+    const stable = allCompaniesRef.current.length ? allCompaniesRef.current : companies;
+    const fromApi = stable.length
+      ? stable
       : (() => {
           const map = new Map<string, string>();
           board.projects.forEach((p) => {
@@ -290,7 +297,7 @@ export default function KanbanScreen() {
           });
           return Array.from(map, ([id, name]) => ({ id, name }));
         })();
-    return [{ id: '', label: 'Tất cả công ty' }, ...fromApi.map((c) => ({ id: c.id, label: c.name }))];
+    return [{ id: '', label: 'Tất cả' }, ...fromApi.map((c) => ({ id: c.id, label: c.name }))];
   }, [companies, board.projects]);
 
   const workTypeOptions = useMemo(
@@ -302,7 +309,7 @@ export default function KanbanScreen() {
     [workTypes],
   );
 
-  const selectedCompanyLabel = companyOptions.find((o) => o.id === filterCompany)?.label || 'Công ty';
+  // selectedCompanyLabel — không cần vì công ty hiện dạng chips ngang
   const selectedWorkTypeLabel = workTypeOptions.find((o) => o.id === filterWorkTypeId)?.label || 'Phân loại';
 
   const stages = board.stages;
@@ -573,24 +580,48 @@ export default function KanbanScreen() {
         ) : null}
       </ScrollView>
 
-      {/* ── DROPDOWN FILTERS ── */}
+      {/* ── COMPANY CHIPS — 1 tap đổi công ty, không cần modal ── */}
+      {(isSystemAdmin || companyOptions.length > 2) ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.companyChipScroll}
+          contentContainerStyle={styles.companyChipContent}
+          nestedScrollEnabled
+        >
+          {companyOptions.map((opt, idx) => {
+            const active = filterCompany === opt.id;
+            return (
+              <TapHighlight
+                key={opt.id}
+                onPress={() => {
+                  if (active) return;
+                  setFilterCompany(opt.id);
+                  setFilterWorkTypeId('');
+                }}
+                style={[
+                  styles.companyChip,
+                  active && styles.companyChipActive,
+                  idx < companyOptions.length - 1 && styles.chipGap,
+                ]}
+              >
+                {active ? (
+                  <Ionicons name="business" size={11} color={colors.white} style={{ marginRight: 3 }} />
+                ) : null}
+                <Text
+                  style={[styles.companyChipText, active && styles.companyChipTextActive]}
+                  numberOfLines={1}
+                >
+                  {opt.label}
+                </Text>
+              </TapHighlight>
+            );
+          })}
+        </ScrollView>
+      ) : null}
+
+      {/* ── DROPDOWN FILTER — Phân loại ── */}
       <View style={styles.dropdownRow}>
-        {(isSystemAdmin || companyOptions.length > 2) ? (
-          <Pressable
-            style={[styles.dropdownBtn, filterCompany ? styles.dropdownBtnActive : null]}
-            hitSlop={4}
-            onPress={() => setCompanyPickerOpen(true)}
-          >
-            <Ionicons name="business-outline" size={14} color={filterCompany ? colors.primary : colors.textMuted} />
-            <Text
-              style={[styles.dropdownText, filterCompany ? styles.dropdownTextActive : null]}
-              numberOfLines={1}
-            >
-              {filterCompany ? selectedCompanyLabel : 'Công ty'}
-            </Text>
-            <Ionicons name="chevron-down" size={14} color={colors.textFaint} />
-          </Pressable>
-        ) : null}
         <Pressable
           style={[styles.dropdownBtn, filterWorkTypeId ? styles.dropdownBtnActive : null, styles.dropdownBtnFlex]}
           hitSlop={4}
@@ -898,18 +929,6 @@ export default function KanbanScreen() {
       />
 
       <FilterPickerModal
-        visible={companyPickerOpen}
-        title="Chọn công ty"
-        options={companyOptions}
-        selectedId={filterCompany}
-        onSelect={(id) => {
-          setFilterCompany(id);
-          if (id !== filterCompany) setFilterWorkTypeId('');
-        }}
-        onClose={() => setCompanyPickerOpen(false)}
-      />
-
-      <FilterPickerModal
         visible={workTypePickerOpen}
         title="Chọn phân loại"
         options={workTypeOptions}
@@ -1000,6 +1019,20 @@ function createKanbanStyles(c: AppColors) {
     flexDirection: 'row', flexShrink: 0,
     paddingHorizontal: Spacing.lg, paddingTop: 8, paddingBottom: 4,
   },
+  // Company chips — hàng ngang, 1 tap đổi công ty
+  companyChipScroll: { height: 38, flexShrink: 0, flexGrow: 0, marginBottom: 4 },
+  companyChipContent: { paddingHorizontal: Spacing.lg, alignItems: 'center', height: 38 },
+  companyChip: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 13, height: 30, borderRadius: Radii.full,
+    backgroundColor: c.card, borderWidth: 1.5, borderColor: c.border,
+    maxWidth: 150,
+  },
+  companyChipActive: { backgroundColor: c.primary, borderColor: c.primary },
+  companyChipText: { color: c.textMuted, fontSize: 12, fontWeight: '700' },
+  companyChipTextActive: { color: c.white },
+
+  // Dropdown filter row — chỉ còn Phân loại
   dropdownBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
     backgroundColor: c.card, borderWidth: 1, borderColor: c.border,
