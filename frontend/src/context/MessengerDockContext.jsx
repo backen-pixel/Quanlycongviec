@@ -274,9 +274,10 @@ export function MessengerDockProvider({ children }) {
     setUnreadByLeadId((prev) => ({ ...prev, [leadId]: 0 }));
   }, []);
 
-  const markGroupRead = useCallback((groupId) => {
+  const markGroupRead = useCallback((groupId, { skipPatch = false } = {}) => {
     if (!groupId) return;
     setUnreadByGroupId((prev) => ({ ...prev, [groupId]: 0 }));
+    if (skipPatch) return;
     // Đồng bộ read receipt lên server để lần hydrate sau không khôi phục badge.
     api.patch(`/messenger/groups/${groupId}/read`).catch(() => { /* ignore */ });
   }, []);
@@ -501,15 +502,31 @@ export function MessengerDockProvider({ children }) {
       ...myDepartmentIds,
       ...windows.filter((w) => w.chatType === 'department').map((w) => w.deptId),
     ])].filter(Boolean);
-    leadJoin.forEach((id) => socket.emit('join:lead', id));
-    grpJoin.forEach((id) => socket.emit('join:messenger_group', id));
-    deptJoin.forEach((id) => socket.emit('join:dept', id));
+    const joinAll = () => {
+      leadJoin.forEach((id) => socket.emit('join:lead', id));
+      grpJoin.forEach((id) => socket.emit('join:messenger_group', id));
+      deptJoin.forEach((id) => socket.emit('join:dept', id));
+    };
+    joinAll();
+    socket.on('connect', joinAll);
     return () => {
+      socket.off('connect', joinAll);
       leadJoin.forEach((id) => socket.emit('leave:lead', id));
       grpJoin.forEach((id) => socket.emit('leave:messenger_group', id));
       deptJoin.forEach((id) => socket.emit('leave:dept', id));
     };
   }, [socket, uid, windows, hubThreadLeadIds, hubMessengerGroupIds, myDepartmentIds]);
+
+  /** Phát read receipt realtime tới mọi khung chat nhóm đang mở (web + bong bóng). */
+  useEffect(() => {
+    if (!socket) return undefined;
+    const onRead = (payload) => {
+      if (!payload?.group_id || !payload?.user_id || !payload?.last_read_at) return;
+      window.dispatchEvent(new CustomEvent('messenger:group-read', { detail: payload }));
+    };
+    socket.on('messenger_group:read', onRead);
+    return () => socket.off('messenger_group:read', onRead);
+  }, [socket]);
 
   useEffect(() => {
     if (!socket || !uid) return;

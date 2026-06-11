@@ -5,7 +5,7 @@ import { resolveMediaUrl, BROKEN_MEDIA_PLACEHOLDER } from '../lib/mediaUrl';
 import { formatDate } from '../lib/utils';
 import {
   Trash2, Send, Users, Crown, Shield, Building2, Eye, Paperclip, X, Mic, Reply,
-  CornerDownRight, Smile, Zap, Undo2, Check, Phone, Loader2, ClipboardList,
+  CornerDownRight, Smile, Zap, Undo2, Check, CheckCheck, Phone, Loader2, ClipboardList,
   Calendar, CheckCircle2, Circle, Clock, Plus,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
@@ -397,21 +397,172 @@ function EmojiStickerPicker({ onPickEmoji, onPickSticker, onClose }) {
   );
 }
 
-/**
- * Kiểm tra xem tin nhắn `msg` đã được ít nhất một thành viên khác (≠ self) đọc chưa.
- * Dựa vào `readReceipts: Map<userId, last_read_at ISO>`.
- */
-function hasAnyOtherSeen(msg, readReceipts, selfUid) {
-  if (!msg?.created_at || !readReceipts || readReceipts.size === 0) return false;
+/** Danh sách user (≠ excludeUserId) có last_read_at ≥ created_at của tin. */
+function getSeenByUsersForMessage(msg, readReceipts, excludeUserId) {
+  if (!msg?.created_at || !readReceipts || readReceipts.size === 0) return [];
   const ts = new Date(msg.created_at).getTime();
-  if (!Number.isFinite(ts)) return false;
-  const selfStr = String(selfUid || '');
+  if (!Number.isFinite(ts)) return [];
+  const excludeStr = String(excludeUserId || '');
+  const out = [];
   for (const [userId, lastReadAt] of readReceipts) {
-    if (String(userId) === selfStr) continue;
+    if (String(userId) === excludeStr) continue;
     const readTs = new Date(lastReadAt).getTime();
-    if (Number.isFinite(readTs) && readTs >= ts) return true;
+    if (Number.isFinite(readTs) && readTs >= ts) {
+      out.push({ user_id: userId, last_read_at: lastReadAt });
+    }
   }
-  return false;
+  return out;
+}
+
+function messengerMemberDisplayName(userId, members) {
+  const mem = (members || []).find((m) => String(m.user_id) === String(userId));
+  return mem?.user?.full_name || mem?.user?.email || '';
+}
+
+/** Nhãn rút gọn: "Đã gửi" / "Đã xem · An, Bình" / "Đã xem bởi N người". */
+function buildMessengerSeenStatusLabel(seenBy, members, { isDirect = false } = {}) {
+  const count = seenBy.length;
+  if (count === 0) return { label: 'Đã gửi', seenCount: 0, seenNames: [] };
+  const seenNames = seenBy
+    .map((r) => messengerMemberDisplayName(r.user_id, members))
+    .filter(Boolean);
+  if (isDirect || count <= 2) {
+    return {
+      label: seenNames.length ? `Đã xem · ${seenNames.join(', ')}` : 'Đã xem',
+      seenCount: count,
+      seenNames,
+    };
+  }
+  return { label: `Đã xem bởi ${count} người`, seenCount: count, seenNames };
+}
+
+/** Thành viên (≠ excludeUserId) chưa đọc tới tin này — coi là đã nhận nhưng chưa xem. */
+function getNotSeenMembersForMessage(seenBy, members, excludeUserId) {
+  const seenIds = new Set(seenBy.map((r) => String(r.user_id)));
+  const excludeStr = String(excludeUserId || '');
+  return (members || []).filter((m) => {
+    const id = String(m.user_id);
+    return id && id !== excludeStr && !seenIds.has(id);
+  });
+}
+
+function MessengerReadStatus({
+  msg,
+  readReceipts,
+  members,
+  isDirect,
+  selfUid,
+  isOwnMessage,
+  alignEnd,
+  openDetailId,
+  onOpenDetail,
+}) {
+  const wrapRef = useRef(null);
+  const msgId = String(msg?.id || '');
+  const detailOpen = !isDirect && openDetailId === msgId;
+
+  useEffect(() => {
+    if (!detailOpen) return undefined;
+    const onDoc = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) onOpenDetail?.(null);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [detailOpen, onOpenDetail]);
+
+  if (!msg) return null;
+
+  // Tin mình: không tính mình; tin người khác: không tính người gửi (có tính mình nếu đã đọc)
+  const excludeUid = isOwnMessage ? selfUid : msg.user_id;
+  const seenBy = getSeenByUsersForMessage(msg, readReceipts, excludeUid);
+  const { label, seenCount } = buildMessengerSeenStatusLabel(seenBy, members, { isDirect });
+  const notSeen = getNotSeenMembersForMessage(seenBy, members, excludeUid);
+  const Icon = seenCount > 0 ? CheckCheck : Check;
+  const activeCls = seenCount > 0 ? 'text-sky-500 font-medium' : 'text-slate-400';
+
+  // Chat cá nhân: hiển thị đầy đủ tên ngay trên dòng thời gian
+  if (isDirect) {
+    const directLabel = isOwnMessage
+      ? label
+      : seenCount > 0
+        ? label
+        : 'Chưa xem';
+    return (
+      <span className={`inline-flex items-center gap-0.5 ml-1 ${activeCls}`}>
+        <Icon size={11} className="shrink-0" aria-hidden />
+        <span>{directLabel}</span>
+      </span>
+    );
+  }
+
+  // Nhóm: gọn — bấm mới mở chi tiết (áp dụng cả tin mình và tin người khác)
+  const compactLabel = isOwnMessage
+    ? seenCount === 0
+      ? 'Đã gửi'
+      : `Đã xem (${seenCount})`
+    : seenCount === 0
+      ? 'Chưa xem'
+      : `Đã xem (${seenCount})`;
+
+  return (
+    <span ref={wrapRef} className="relative inline-flex ml-1">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpenDetail?.(detailOpen ? null : msgId);
+        }}
+        className={`inline-flex items-center gap-0.5 rounded px-0.5 -mx-0.5 hover:bg-slate-100/80 transition cursor-pointer ${activeCls}`}
+        title="Bấm xem ai đã xem / chưa xem"
+        aria-expanded={detailOpen}
+      >
+        <Icon size={11} className="shrink-0" aria-hidden />
+        <span className="text-[10px]">{compactLabel}</span>
+      </button>
+      {detailOpen ? (
+        <div
+          className={`absolute bottom-full mb-1 z-30 min-w-[168px] max-w-[220px] rounded-lg border border-slate-200/90 bg-white shadow-lg py-1.5 px-2 text-left ${
+            alignEnd ? 'right-0' : 'left-0'
+          }`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {seenBy.length > 0 ? (
+            <div className="mb-1.5">
+              <p className="text-[9px] font-semibold uppercase tracking-wide text-sky-600 mb-0.5">
+                Đã xem ({seenBy.length})
+              </p>
+              <ul className="space-y-0.5 max-h-28 overflow-y-auto">
+                {seenBy.map((r) => (
+                  <li key={r.user_id} className="text-[10px] text-slate-700 leading-snug">
+                    <span className="font-medium">{messengerMemberDisplayName(r.user_id, members) || 'Thành viên'}</span>
+                    {r.last_read_at ? (
+                      <span className="text-slate-400 ml-1">{formatTime(r.last_read_at)}</span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <p className="text-[10px] text-slate-500 mb-1">Chưa có ai xem tin này</p>
+          )}
+          {notSeen.length > 0 ? (
+            <div>
+              <p className="text-[9px] font-semibold uppercase tracking-wide text-amber-600 mb-0.5">
+                Đã nhận, chưa xem ({notSeen.length})
+              </p>
+              <ul className="space-y-0.5 max-h-28 overflow-y-auto">
+                {notSeen.map((m) => (
+                  <li key={m.user_id} className="text-[10px] text-slate-600 leading-snug">
+                    {messengerMemberDisplayName(m.user_id, members) || 'Thành viên'}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </span>
+  );
 }
 
 const formatTime = (d) => {
@@ -1529,6 +1680,8 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
   const [highlightId, setHighlightId] = useState(null);
   // Map<userId, last_read_at ISO> — của các thành viên khác (không phải mình)
   const [readReceipts, setReadReceipts] = useState(() => new Map());
+  /** Tin nhóm đang mở popup chi tiết đã xem (chỉ một popup/lần). */
+  const [readDetailMsgId, setReadDetailMsgId] = useState(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [moreMenuMsgId, setMoreMenuMsgId] = useState(null);
   const [forwardMsg, setForwardMsg] = useState(null);
@@ -1547,6 +1700,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
   const initialScrolledRef = useRef(false);
   const textareaRef = useRef(null);
   const messageRefs = useRef(new Map());
+  const syncReadTimerRef = useRef(null);
   const { user } = useAuth();
   const { registerMessengerGroupPresence, markGroupRead } = useMessengerDock();
   const onMessagesChangeRef = useRef(onMessagesChange);
@@ -1562,15 +1716,55 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
     emitMessages(messages, { loaded: true });
   }, [messages, emitMessages]);
 
-  // Tự đánh dấu đã đọc mỗi khi danh sách tin nhắn thay đổi (mở tab hoặc nhận tin mới
-  // trong khi tab đang hiển thị) — để phía gửi nhận được trạng thái "Đã xem".
-  useEffect(() => {
-    if (!groupId || !messages.length) return;
-    const last = messages[messages.length - 1];
+  const applyReadReceipt = useCallback((payload) => {
+    if (!payload?.user_id || !payload?.last_read_at) return;
+    setReadReceipts((prev) => {
+      const rid = String(payload.user_id);
+      const prevAt = prev.get(rid);
+      const nextAt = payload.last_read_at;
+      if (prevAt && new Date(prevAt).getTime() >= new Date(nextAt).getTime()) return prev;
+      const next = new Map(prev);
+      next.set(rid, nextAt);
+      return next;
+    });
+  }, []);
+
+  const syncGroupRead = useCallback(async () => {
+    if (!groupId) return;
     const uidStr = String(user?.userId || user?.id || '');
-    if (last && String(last.user_id) === uidStr) return;
-    markGroupRead?.(groupId);
-  }, [groupId, messages, markGroupRead, user]);
+    try {
+      const { data } = await api.patch(`/messenger/groups/${groupId}/read`);
+      markGroupRead?.(groupId, { skipPatch: true });
+      if (data?.last_read_at && uidStr) {
+        applyReadReceipt({ group_id: groupId, user_id: uidStr, last_read_at: data.last_read_at });
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [groupId, user, markGroupRead, applyReadReceipt]);
+
+  const lastMsgId = messages.length ? messages[messages.length - 1]?.id : null;
+
+  // Đồng bộ đã đọc realtime khi đang xem khung chat (kể cả tin cuối là của mình).
+  useEffect(() => {
+    if (!groupId || !lastMsgId) return undefined;
+    clearTimeout(syncReadTimerRef.current);
+    syncReadTimerRef.current = setTimeout(() => {
+      void syncGroupRead();
+    }, 280);
+    return () => clearTimeout(syncReadTimerRef.current);
+  }, [groupId, lastMsgId, syncGroupRead]);
+
+  // Read receipt từ socket app-wide (MessengerDockContext) → cập nhật ngay không cần reload.
+  useEffect(() => {
+    const handler = (e) => {
+      const payload = e?.detail;
+      if (String(payload?.group_id) !== String(groupId)) return;
+      applyReadReceipt(payload);
+    };
+    window.addEventListener('messenger:group-read', handler);
+    return () => window.removeEventListener('messenger:group-read', handler);
+  }, [groupId, applyReadReceipt]);
 
   useEffect(() => {
     return registerMessengerGroupPresence(groupId);
@@ -1810,6 +2004,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
     setMessages([]);
     setMentionOpen(false);
     setReadReceipts(new Map());
+    setReadDetailMsgId(null);
     initialScrolledRef.current = false;
     void loadGroupMeta();
     void load();
@@ -1833,12 +2028,11 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
       const onRecalled = (payload) => applyRecallUpdate(payload);
       const onRead = (payload) => {
         if (String(payload?.group_id) !== String(groupId)) return;
-        if (!payload?.user_id || !payload?.last_read_at) return;
-        setReadReceipts((prev) => {
-          const next = new Map(prev);
-          next.set(String(payload.user_id), payload.last_read_at);
-          return next;
-        });
+        applyReadReceipt(payload);
+      };
+      const onSocketConnect = () => {
+        socket.emit('join:messenger_group', groupId);
+        void loadReceipts();
       };
       const onMembers = (payload) => {
         if (String(payload?.group_id) !== String(groupId)) return;
@@ -1874,6 +2068,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
       socket.on('messenger_group:members', onMembers);
       socket.on('messenger_group:typing', onTyping);
       socket.on('messenger_group:read', onRead);
+      socket.on('connect', onSocketConnect);
       return () => {
         socket.emit('leave:messenger_group', groupId);
         socket.off('messenger_group:chat', onChat);
@@ -1883,10 +2078,11 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
         socket.off('messenger_group:members', onMembers);
         socket.off('messenger_group:typing', onTyping);
         socket.off('messenger_group:read', onRead);
+        socket.off('connect', onSocketConnect);
       };
     }
     return undefined;
-  }, [groupId, socket, loadGroupMeta, load, loadReceipts, user, mergeIncomingChat, applyReactionUpdate, applyRecallUpdate]);
+  }, [groupId, socket, loadGroupMeta, load, loadReceipts, user, mergeIncomingChat, applyReactionUpdate, applyRecallUpdate, applyReadReceipt]);
 
   // Auto cleanup typing entries quá 5s không refresh (client tự stop nếu server không emit stop kịp)
   useEffect(() => {
@@ -2159,15 +2355,6 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
 
   const uid = user?.userId || user?.id;
 
-  // Index của tin nhắn cuối cùng mình gửi — dùng để gắn nhãn Đã gửi/Đã xem
-  const lastMyMessageIndex = useMemo(() => {
-    const uidStr = String(uid || '');
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-      if (String(messages[i]?.user_id) === uidStr) return i;
-    }
-    return -1;
-  }, [messages, uid]);
-
   return (
     <div className={fillParent ? 'flex flex-col flex-1 min-h-0' : 'flex flex-col'} style={fillParent ? undefined : { height: '450px' }}>
       {mediaPreview && (
@@ -2242,15 +2429,6 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
 
           const prev = messages[idx - 1];
           const showDateSep = !prev || !isSameDay(prev.created_at, m.created_at);
-          // Chỉ hiển thị trạng thái "Đã gửi/Đã xem" cho tin nhắn cuối cùng của mình trong toàn bộ luồng
-          const lastMineIdx = lastMyMessageIndex;
-          const isLastFromMe = isMe && idx === lastMineIdx;
-          let deliveryStatus = '';
-          if (isLastFromMe) {
-            const seenByOther = hasAnyOtherSeen(m, readReceipts, uid);
-            deliveryStatus = seenByOther ? ' · Đã xem' : ' · Đã gửi';
-          }
-
           const recalled = isMessengerMessageRecalled(m);
           const reactionGroups = groupMessengerReactions(m.reactions, uid);
           const contentStr = String(m.content || '');
@@ -2452,12 +2630,22 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                   )}
                   {!recalled ? (
                     <p
-                      className={`text-[10px] mt-1 px-1 ${
-                        isMe ? 'text-right text-slate-400' : 'text-left text-slate-400'
+                      className={`text-[10px] mt-1 px-1 flex flex-wrap items-center gap-x-0.5 ${
+                        isMe ? 'justify-end text-slate-400' : 'justify-start text-slate-400'
                       }`}
                     >
-                      {formatTime(m.created_at)}
-                      {deliveryStatus}
+                      <span>{formatTime(m.created_at)}</span>
+                      <MessengerReadStatus
+                        msg={m}
+                        readReceipts={readReceipts}
+                        members={groupMeta?.members || []}
+                        isDirect={!!groupMeta?.is_direct}
+                        selfUid={uid}
+                        isOwnMessage={isMe}
+                        alignEnd={isMe}
+                        openDetailId={readDetailMsgId}
+                        onOpenDetail={setReadDetailMsgId}
+                      />
                     </p>
                   ) : null}
                 </div>
