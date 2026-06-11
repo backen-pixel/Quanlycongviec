@@ -50,13 +50,23 @@ class InCallForegroundService : Service() {
       }
       .build()
     val id = LOCK_SCREEN_CALL_NOTIF_ID
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-      startForeground(id, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-      startForeground(id, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
-    } else {
-      @Suppress("DEPRECATION")
-      startForeground(id, notification)
+    // PHẢI khớp foregroundServiceType khai báo trong manifest (microphone). Trước đây nhánh
+    // API 29..33 dùng PHONE_CALL (0x04) trong khi manifest là microphone (0x80) → ném
+    // IllegalArgumentException làm CRASH app ngay khi bấm nghe (kẹt "đang kết nối", reo lại).
+    try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        startForeground(id, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+      } else {
+        @Suppress("DEPRECATION")
+        startForeground(id, notification)
+      }
+    } catch (e: Exception) {
+      // Không để FGS làm sập app — nếu OS từ chối (vd start từ background bị hạn chế mic),
+      // vẫn giữ tiến trình sống nhờ START_STICKY thay vì crash.
+      try {
+        @Suppress("DEPRECATION")
+        startForeground(id, notification)
+      } catch (_: Exception) { }
     }
     return START_STICKY
   }

@@ -293,32 +293,43 @@ export default function ProductionDashboard() {
     const silent = !!opts.silent;
     const bustCache = !!opts.bustCache;
     const fetchCompanyId = opts.companyId || companyParam;
+    if (workTypesCompanyId !== companyForTypes) return;
+    const typesExist = Array.isArray(workTypes) && workTypes.length > 0;
+    if (typesExist && (!filterWorkTypeId || filterWorkTypeId === 'none')) return;
+
+    const fetchWorkTypeId = filterWorkTypeId && filterWorkTypeId !== 'none'
+      ? filterWorkTypeId
+      : (filterWorkTypeId === 'none' ? 'none' : undefined);
+
     if (silent) setSyncing(true);
     else setLoading(true);
     try {
       const dashQ = {
         ...(fetchCompanyId ? { company_id: fetchCompanyId } : {}),
+        ...(fetchWorkTypeId ? { workshop_type_id: fetchWorkTypeId } : {}),
+      };
+      const pipeParams = {
+        all: 'false',
+        ...(fetchCompanyId ? { company_id: fetchCompanyId } : {}),
+        ...(fetchWorkTypeId ? { workshop_type_id: fetchWorkTypeId } : {}),
       };
       const cacheHeaders = bustCache ? { headers: { 'x-no-cache': '1' } } : {};
       const maxRecords = kanbanLoadKey === 'all' ? 5000
         : Math.min(parseInt(kanbanLoadKey, 10) || 500, 5000);
 
-      // KHÔNG truyền workshop_type_id ở fetch chính — filter loại làm phía client để
-      // đổi loại không reload toàn trang. Pipeline columns được refetch silent ở
-      // useEffect bên dưới khi filterWorkTypeId đổi.
-      const [dashRes, projectList] = await Promise.all([
+      const [dashRes, projectList, pipeRes] = await Promise.all([
         api.get('/production/dashboard', { params: dashQ, ...cacheHeaders }).catch(() => ({ data: { kpis: {}, pipeline: [] } })),
         fetchWorkshopProjectPages(api, '/production/projects', {
           companyId: fetchCompanyId,
+          workshopTypeId: fetchWorkTypeId,
           maxRecords,
           pageSize: 500,
           bustCache,
         }).catch(() => null),
+        api.get('/production/pipeline-stages', { params: pipeParams, ...cacheHeaders }).catch(() => ({ data: [] })),
       ]);
       setKpis(dashRes.data?.kpis || {});
-      // KHÔNG set pipeline ở đây: `/production/dashboard` (không có workshop_type_id) trả cột
-      // của TẤT CẢ phân loại → gây hiển thị pipeline của cả 2 loại. Cột Kanban do effect
-      // riêng bên dưới sở hữu, luôn lọc theo `filterWorkTypeId` của công ty hiện hành.
+      if (Array.isArray(pipeRes?.data)) setPipeline(pipeRes.data);
       if (projectList !== null) setProjects(projectList);
     } catch (e) {
       console.error(e);
@@ -328,7 +339,7 @@ export default function ProductionDashboard() {
       setLoading(false);
       setFirstLoaded(true);
     }
-  }, [companyParam, kanbanLoadKey]);
+  }, [companyParam, filterWorkTypeId, kanbanLoadKey, workTypes, workTypesCompanyId, companyForTypes]);
 
   const handleNewDealCreated = useCallback(async (created) => {
     const projectId = created?.project_id;
@@ -386,34 +397,12 @@ export default function ProductionDashboard() {
     });
   }, [load, pipeline, workTypes, companyParam, isAdmin, filterCompany, filterWorkTypeId]);
 
-  useEffect(() => { load(); }, [load]);
-
-  /**
-   * Nguồn DUY NHẤT của cột Kanban (`pipeline`). Luôn lọc theo phân loại đang chọn —
-   * KHÔNG bao giờ tải "tất cả loại" (đó là nguyên nhân Kanban nhảy/hiển thị pipeline
-   * của cả 2 phân loại khi đổi công ty). Chạy silent (không bật spinner toàn trang).
-   */
   useEffect(() => {
-    // workTypes chưa khớp công ty hiện hành (đang refetch) → chờ, tránh tải nhầm cột.
     if (workTypesCompanyId !== companyForTypes) return undefined;
     const typesExist = Array.isArray(workTypes) && workTypes.length > 0;
-    // Công ty CÓ phân loại nhưng chưa chọn loại cụ thể → chờ effect default chọn loại,
-    // tuyệt đối không tải all-types trong lúc chuyển tiếp.
     if (typesExist && (!filterWorkTypeId || filterWorkTypeId === 'none')) return undefined;
-    let cancelled = false;
-    (async () => {
-      try {
-        const params = { all: 'false' };
-        if (companyParam) params.company_id = companyParam;
-        // Công ty không cấu hình loại → bỏ workshop_type_id để lấy cột Global hợp lệ.
-        if (filterWorkTypeId && filterWorkTypeId !== 'none') params.workshop_type_id = filterWorkTypeId;
-        const { data } = await api.get('/production/pipeline-stages', { params });
-        if (cancelled) return;
-        setPipeline(Array.isArray(data) ? data : []);
-      } catch { /* silent */ }
-    })();
-    return () => { cancelled = true; };
-  }, [companyParam, companyForTypes, filterWorkTypeId, workTypes, workTypesCompanyId]);
+    load({ silent: firstLoaded });
+  }, [load, workTypesCompanyId, companyForTypes, workTypes, filterWorkTypeId, firstLoaded]);
 
   useEffect(() => {
     api.get('/companies', { params: { for_module: 'production' } })
@@ -545,13 +534,9 @@ export default function ProductionDashboard() {
       if (!matchesProject(p, { personNameQ: deferredPersonName })) return false;
       if (filterPhone === 'has' && !p.customer?.phone) return false;
       if (filterPhone === 'no' && p.customer?.phone) return false;
-      // Filter phân loại client-side (không reload trang khi đổi loại)
+      // Phân loại đã lọc server-side (kèm deal chưa phân loại cho cột ảo).
       if (filterWorkTypeId === 'none') {
         if (p.workshop_type_id || p.workshop_type?.id) return false;
-      } else if (filterWorkTypeId) {
-        const wt = p.workshop_type_id || p.workshop_type?.id;
-        // Deal chưa phân loại vẫn hiển thị — gom vào cột «Chưa phân loại» trên Kanban
-        if (wt && String(wt) !== String(filterWorkTypeId)) return false;
       }
       return true;
     });

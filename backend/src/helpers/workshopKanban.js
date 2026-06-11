@@ -244,6 +244,19 @@ async function loadProductionPipelineStagesRows(includeInactive = false, company
  * Khi đã chọn phân loại cụ thể (uuid): CHỈ cột gắn đúng workshop_type_id (+ intake cùng loại hoặc intake chung).
  * Không gộp cột global (workshop_type_id null) — tránh lẫn pipeline Đầu vào với Data đầu ra.
  */
+/**
+ * Lọc query projects theo phân loại xưởng.
+ * - 'none' → chỉ deal chưa phân loại
+ * - <uuid> → phân loại đó + deal chưa phân loại (cột ảo «Chưa phân loại» trên web)
+ */
+function applyProductionWorkshopTypeScopeFilter(query, workshopTypeId) {
+  const raw = workshopTypeId;
+  if (raw === undefined || raw === null || raw === '') return query;
+  const lower = String(raw).toLowerCase();
+  if (lower === 'none') return query.is('workshop_type_id', null);
+  return query.or(`workshop_type_id.eq.${raw},workshop_type_id.is.null`);
+}
+
 function filterProductionPipelineStagesForWorkshopType(stages, workshopTypeId) {
   const list = (stages || []).filter((s) => s.is_active !== false);
   const wktRaw = workshopTypeId;
@@ -1271,6 +1284,7 @@ module.exports = {
   buildScopeOrFilter,
   loadProductionPipelineStagesRows,
   filterProductionPipelineStagesForWorkshopType,
+  applyProductionWorkshopTypeScopeFilter,
   getResolvedKanbanStages,
   firstSxPipelineColumnId,
   loadDealSxPipelineMetaByProjectIds,

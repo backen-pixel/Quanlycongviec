@@ -30,6 +30,7 @@ import {
   fetchProductionProject,
   fetchProjectCommentIndex,
   fetchWorkshopTypes,
+  invalidateProductionBoardCache,
   moveProjectToStage,
   type CommentIndexEntry,
   type CompanyOption,
@@ -153,6 +154,7 @@ export default function KanbanScreen() {
   const [filterWorkTypeId, setFilterWorkTypeId] = useState('');
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [workTypes, setWorkTypes] = useState<WorkshopTypeOption[]>([]);
+  const [workTypesCompanyId, setWorkTypesCompanyId] = useState('');
   const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
   const [workTypePickerOpen, setWorkTypePickerOpen] = useState(false);
   const [moveModalProject, setMoveModalProject] = useState<ProductionProject | null>(null);
@@ -160,9 +162,14 @@ export default function KanbanScreen() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [commentIndex, setCommentIndex] = useState<Record<string, CommentIndexEntry>>({});
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasLoadedBoardRef = useRef(false);
 
   const isSystemAdmin = user?.role === 'admin' && !user?.company_id;
-  const companyForTypes = filterCompany || user?.company_id || null;
+  const companyParam = useMemo(() => {
+    if (isSystemAdmin) return filterCompany || undefined;
+    return user?.company_id ? String(user.company_id) : undefined;
+  }, [isSystemAdmin, filterCompany, user?.company_id]);
+  const companyForTypes = companyParam || (user?.company_id ? String(user.company_id) : '');
 
   const showToast = useCallback((message: string, kind: ToastKind) => {
     setToast({ message, kind });
@@ -214,7 +221,11 @@ export default function KanbanScreen() {
     if (mode === 'refresh') setRefreshing(true);
     setError(null);
     try {
-      const data = await fetchProductionBoard(mode === 'silent');
+      const bustCache = mode !== 'init';
+      const data = await fetchProductionBoard(bustCache, {
+        companyId: companyParam,
+        workshopTypeId: filterWorkTypeId || undefined,
+      });
       setBoard(data);
       setActiveIndex((prev) => Math.min(prev, Math.max(0, data.stages.length - 1)));
     } catch (e) {
@@ -223,9 +234,20 @@ export default function KanbanScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [companyParam, filterWorkTypeId]);
 
-  useEffect(() => { void load('init'); }, [load]);
+  useEffect(() => {
+    hasLoadedBoardRef.current = false;
+  }, [companyForTypes]);
+
+  // Chờ phân loại mặc định (khi công ty có loại) rồi mới tải cột Kanban — khớp web.
+  useEffect(() => {
+    if (workTypesCompanyId !== companyForTypes) return;
+    const typesExist = workTypes.length > 0;
+    if (typesExist && (!filterWorkTypeId || filterWorkTypeId === 'none')) return;
+    void load(hasLoadedBoardRef.current ? 'silent' : 'init');
+    hasLoadedBoardRef.current = true;
+  }, [load, workTypesCompanyId, companyForTypes, workTypes.length, filterWorkTypeId]);
 
   useProductionRealtime({
     onRefresh: () => load('silent'),
@@ -251,12 +273,40 @@ export default function KanbanScreen() {
   useEffect(() => {
     if (!companyForTypes) {
       setWorkTypes([]);
+      setWorkTypesCompanyId('');
       return;
     }
+    let cancelled = false;
+    setWorkTypes([]);
+    setWorkTypesCompanyId('');
     void fetchWorkshopTypes(companyForTypes)
-      .then(setWorkTypes)
-      .catch(() => setWorkTypes([]));
+      .then((types) => {
+        if (cancelled) return;
+        setWorkTypes(types);
+        setWorkTypesCompanyId(companyForTypes);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setWorkTypes([]);
+        setWorkTypesCompanyId(companyForTypes);
+      });
+    return () => { cancelled = true; };
   }, [companyForTypes]);
+
+  // Mặc định chọn phân loại đầu tiên của công ty (không để "tất cả") — khớp web.
+  useEffect(() => {
+    if (workTypesCompanyId !== companyForTypes) return;
+    if (!workTypes.length) {
+      if (filterWorkTypeId) setFilterWorkTypeId('');
+      return;
+    }
+    if (!filterWorkTypeId || filterWorkTypeId === 'none') {
+      setFilterWorkTypeId(String(workTypes[0].id));
+      return;
+    }
+    const stillExists = workTypes.some((w) => String(w.id) === String(filterWorkTypeId));
+    if (!stillExists) setFilterWorkTypeId(String(workTypes[0].id));
+  }, [workTypes, workTypesCompanyId, companyForTypes, filterWorkTypeId]);
 
   const companyOptions = useMemo(() => {
     const fromApi = companies.length
@@ -272,11 +322,12 @@ export default function KanbanScreen() {
   }, [companies, board.projects]);
 
   const workTypeOptions = useMemo(
-    () => [
-      { id: '', label: 'Tất cả phân loại' },
-      { id: 'none', label: 'Chưa phân loại' },
-      ...workTypes.map((t) => ({ id: t.id, label: t.name })),
-    ],
+    () => (workTypes.length > 0
+      ? workTypes.map((t) => ({ id: t.id, label: t.name }))
+      : [
+          { id: '', label: 'Tất cả phân loại' },
+          { id: 'none', label: 'Chưa phân loại' },
+        ]),
     [workTypes],
   );
 
@@ -299,13 +350,9 @@ export default function KanbanScreen() {
       if (quickFilter === 'mine' && String(p.production_person_id || '') !== String(myId || '')) return false;
       if (quickFilter === 'overdue' && !p.is_overdue) return false;
       if (quickFilter === 'today' && !isToday(p.production_deadline || p.deadline)) return false;
-      if (filterCompany && String(p.company_id || '') !== String(filterCompany)) return false;
-      if (filterWorkTypeId === 'none' && p.workshop_type_id) return false;
-      if (filterWorkTypeId && filterWorkTypeId !== 'none'
-        && String(p.workshop_type_id || '') !== String(filterWorkTypeId)) return false;
       return true;
     });
-  }, [board.projects, search, quickFilter, myId, filterCompany, filterWorkTypeId]);
+  }, [board.projects, search, quickFilter, myId]);
 
   const projectsByStage = useMemo(() => {
     const map = new Map<string, ProductionProject[]>();
@@ -358,6 +405,7 @@ export default function KanbanScreen() {
           ),
         }));
         showToast(`Đã chuyển ${project.code} → ${target.name}`, 'success');
+        invalidateProductionBoardCache();
       } catch (e) {
         setBoard((prev) => ({
           ...prev,
@@ -881,7 +929,10 @@ export default function KanbanScreen() {
         selectedId={filterCompany}
         onSelect={(id) => {
           setFilterCompany(id);
-          if (id !== filterCompany) setFilterWorkTypeId('');
+          if (id !== filterCompany) {
+            setFilterWorkTypeId('');
+            setActiveIndex(0);
+          }
         }}
         onClose={() => setCompanyPickerOpen(false)}
       />
@@ -891,7 +942,10 @@ export default function KanbanScreen() {
         title="Chọn phân loại"
         options={workTypeOptions}
         selectedId={filterWorkTypeId}
-        onSelect={setFilterWorkTypeId}
+        onSelect={(id) => {
+          setFilterWorkTypeId(id);
+          setActiveIndex(0);
+        }}
         onClose={() => setWorkTypePickerOpen(false)}
       />
 

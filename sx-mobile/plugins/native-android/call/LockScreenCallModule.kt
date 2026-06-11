@@ -161,6 +161,10 @@ class LockScreenCallModule(private val reactContext: ReactApplicationContext) :
       emitEvent("LockScreenCallReject", callId)
     }
 
+    fun emitAcceptCall(callId: String) {
+      emitEvent("LockScreenCallAccept", callId)
+    }
+
     fun emitToggleMute(callId: String) {
       emitEvent("LockScreenCallToggleMute", callId)
     }

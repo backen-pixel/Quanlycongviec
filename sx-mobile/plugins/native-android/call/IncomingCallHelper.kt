@@ -272,10 +272,12 @@ object IncomingCallHelper {
   private fun markCallDismissed(context: Context, callId: String) {
     if (callId.isBlank()) return
     try {
+      // commit() đồng bộ: nếu tiến trình bị force-stop ngay sau khi nhận/từ chối, cờ dismissed
+      // vẫn kịp lưu xuống đĩa để FCM redelivery / lần boot sau KHÔNG reo lại cuộc gọi này.
       context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         .edit()
         .putLong("$DISMISSED_PREFIX$callId", System.currentTimeMillis())
-        .apply()
+        .commit()
     } catch (_: Exception) { }
   }
 
