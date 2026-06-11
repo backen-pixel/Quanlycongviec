@@ -130,10 +130,23 @@ async function crmTaskMeetsCompletionRequirements(supabase, taskId, prior) {
   return hasEvidence;
 }
 
+/** Nhiệm vụ pipeline sản xuất (stage sx_* hoặc gắn cột SX). */
+function isSxProductionTask(prior) {
+  if (!prior) return false;
+  return String(prior.stage_slug || '').startsWith('sx_') || !!prior.production_pipeline_stage_id;
+}
+
+/** App Công việc (sx-mobile): theo dõi nhanh — bỏ qua minh chứng khi hoàn thành NV SX. */
+function skipSxWorkQuickComplete(body, prior) {
+  return !!(body?.skip_completion_evidence && isSxProductionTask(prior));
+}
+
 module.exports = {
   crmTaskHasCompletionEvidence,
   crmTaskMeetsRequiredFileTypes,
   loadCrmTaskIdsWithAttachmentEvidence,
   crmTaskRequiresCompletionEvidence,
   crmTaskMeetsCompletionRequirements,
+  isSxProductionTask,
+  skipSxWorkQuickComplete,
 };

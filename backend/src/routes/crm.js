@@ -9,6 +9,7 @@ const {
   crmTaskMeetsCompletionRequirements,
   crmTaskRequiresCompletionEvidence,
   crmTaskMeetsRequiredFileTypes,
+  skipSxWorkQuickComplete,
 } = require('../helpers/crmTaskCompletionEvidence');
 const { logKanbanDeadlineUnifiedHistory } = require('../helpers/crmKanbanDeadlineHistory');
 const {
@@ -11644,11 +11645,11 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
     if (b.status === 'completed') {
       const { data: prior, error: pErr } = await supabase
         .from('crm_tasks')
-        .select('id,status,notes,completion_requires_file_or_note, required_evidence_file_types, requires_quick_verdict, quick_verdict, quick_verdict_reason, completion_requires_customer_note, completion_requires_customer_contact')
+        .select('id,status,notes,stage_slug,production_pipeline_stage_id,completion_requires_file_or_note, required_evidence_file_types, requires_quick_verdict, quick_verdict, quick_verdict_reason, completion_requires_customer_note, completion_requires_customer_contact')
         .eq('id', req.params.taskId)
         .maybeSingle();
       if (pErr) throw pErr;
-      if (prior && prior.status !== 'completed' && crmTaskRequiresCompletionEvidence(prior)) {
+      if (prior && prior.status !== 'completed' && crmTaskRequiresCompletionEvidence(prior) && !skipSxWorkQuickComplete(b, prior)) {
         const ok = await crmTaskMeetsCompletionRequirements(supabase, req.params.taskId, prior);
         if (!ok) {
           if (prior.requires_quick_verdict && prior.quick_verdict !== 'sufficient') {
@@ -12452,8 +12453,9 @@ r.get('/tasks/overview', async (req, res) => {
     }
 
     const { status, assignee_id, stage_slug, type } = req.query;
+    const taskScope = String(req.query?.task_scope || 'all').toLowerCase();
     let q = supabase.from('crm_tasks')
-      .select('*, lead:crm_leads(id,title,code,type,customer:customers(id,full_name)), assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)')
+      .select('*, lead:crm_leads(id,title,code,type,project_id,customer:customers(id,full_name)), assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)')
       .order('deadline', { ascending: true, nullsFirst: false });
     if (leadIds?.length) q = q.in('lead_id', leadIds);
     if (status) q = q.eq('status', status);
@@ -12463,6 +12465,11 @@ r.get('/tasks/overview', async (req, res) => {
     if (error) throw error;
     let rows = data || [];
     if (type) rows = rows.filter((t) => (t.lead?.type || '') === type);
+    if (taskScope === 'production') {
+      rows = rows.filter((t) => String(t.stage_slug || '').startsWith('sx_') || t.production_pipeline_stage_id);
+    } else if (taskScope === 'crm') {
+      rows = rows.filter((t) => !String(t.stage_slug || '').startsWith('sx_'));
+    }
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
