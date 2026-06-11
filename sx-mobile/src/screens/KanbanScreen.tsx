@@ -45,6 +45,18 @@ import type { KanbanStage, ProductionBoard, ProductionProject } from '../types';
 type QuickFilter = 'all' | 'mine' | 'overdue' | 'today';
 
 const INTAKE_BUCKET = 'won_pending';
+const ORPHAN_COL_ID = '__orphan_no_type__';
+/** Cột ảo gom project chưa có workshop_type_id — giống web. */
+const ORPHAN_STAGE: KanbanStage = {
+  id: ORPHAN_COL_ID,
+  name: 'Chưa phân loại',
+  icon: '📦',
+  color: '#94A3B8',
+  order_index: -1,
+  bucket_slug: 'orphan',
+  workflow_stage_id: null,
+  is_handover_to_logistics: false,
+};
 
 function formatDate(value?: string | null): string {
   if (!value) return '';
@@ -312,10 +324,8 @@ export default function KanbanScreen() {
   // selectedCompanyLabel — không cần vì công ty hiện dạng chips ngang
   const selectedWorkTypeLabel = workTypeOptions.find((o) => o.id === filterWorkTypeId)?.label || 'Phân loại';
 
-  const ORPHAN_STAGE_ID = '__orphan_no_type__';
-
-  /** Kiểm tra project chưa phân loại (giống web isOrphan). */
-  const isOrphan = useCallback((p: ProductionProject) => !p.workshop_type_id, []);
+  /** Stages thực từ API — dùng cho move modal và logic stageById. */
+  const stages = board.stages;
 
   const filteredProjects = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -327,75 +337,56 @@ export default function KanbanScreen() {
       if (quickFilter === 'mine' && String(p.production_person_id || '') !== String(myId || '')) return false;
       if (quickFilter === 'overdue' && !p.is_overdue) return false;
       if (quickFilter === 'today' && !isToday(p.production_deadline || p.deadline)) return false;
-      // filterCompany được lọc server-side (company_id gửi lên /projects), không cần lọc lại.
-      // filterWorkTypeId lọc client-side như web (chỉ /pipeline-stages nhận workshop_type_id).
-      if (filterWorkTypeId === 'none' && p.workshop_type_id) return false;
-      if (filterWorkTypeId && filterWorkTypeId !== 'none'
-        && String(p.workshop_type_id || '') !== String(filterWorkTypeId)) return false;
+      // filterCompany: server-side.
+      // filterWorkTypeId: client-side giống web.
+      //   - 'none' → chỉ project chưa phân loại
+      //   - uuid  → project có đúng loại ĐÓ + project chưa có loại (orphan → vào cột ảo)
+      if (filterWorkTypeId === 'none') {
+        if (p.workshop_type_id) return false;
+      } else if (filterWorkTypeId) {
+        const wt = p.workshop_type_id;
+        // Có loại nhưng khác loại đang lọc → loại bỏ (orphan không bị loại bỏ)
+        if (wt && String(wt) !== String(filterWorkTypeId)) return false;
+      }
       return true;
     });
   }, [board.projects, search, quickFilter, myId, filterWorkTypeId]);
 
+  /** Cột ảo «Chưa phân loại» — chỉ hiện khi có project orphan và không đang lọc 'none'. */
+  const orphanProjects = useMemo(
+    () => filteredProjects.filter((p) => !p.workshop_type_id),
+    [filteredProjects],
+  );
+  const showOrphanCol = orphanProjects.length > 0 && filterWorkTypeId !== 'none';
+
   /**
-   * Projects chưa phân loại — xuất hiện trong cột ảo khi đang lọc theo 1 loại cụ thể
-   * (giống web: orphan projects vào column ảo thay vì bị loại bỏ hoàn toàn).
+   * Stages để hiển thị (navigation, dots, cột active).
+   * Cột ảo ORPHAN_STAGE được thêm vào đầu nếu có orphan projects.
    */
-  const orphanProjects = useMemo(() => {
-    const isSpecificType = filterWorkTypeId && filterWorkTypeId !== 'none';
-    if (!isSpecificType) return [];
-    const needle = search.trim().toLowerCase();
-    return board.projects.filter((p) => {
-      if (!isOrphan(p)) return false;
-      if (needle) {
-        const hay = `${p.code} ${p.name} ${p.customer_name || ''} ${p.customer_phone || ''}`.toLowerCase();
-        if (!hay.includes(needle)) return false;
-      }
-      if (quickFilter === 'mine' && String(p.production_person_id || '') !== String(myId || '')) return false;
-      if (quickFilter === 'overdue' && !p.is_overdue) return false;
-      if (quickFilter === 'today' && !isToday(p.production_deadline || p.deadline)) return false;
-      return true;
-    });
-  }, [board.projects, search, quickFilter, myId, filterWorkTypeId, isOrphan]);
-
-  /** Cột ảo «Chưa phân loại» — hiện khi lọc loại cụ thể VÀ có project chưa được gán loại. */
-  const orphanStage: KanbanStage | null = useMemo(() => {
-    if (!orphanProjects.length) return null;
-    return {
-      id: ORPHAN_STAGE_ID,
-      name: 'Chưa phân loại',
-      icon: '📦',
-      color: '#94a3b8',
-      order_index: -1,
-      bucket_slug: 'orphan',
-    };
-  }, [orphanProjects.length]);
-
-  /** Danh sách cột hiển thị = cột ảo (nếu có) + cột thật. */
-  const allStages = useMemo(
-    () => (orphanStage ? [orphanStage, ...board.stages] : board.stages),
-    [orphanStage, board.stages],
+  const displayStages = useMemo<KanbanStage[]>(
+    () => (showOrphanCol ? [ORPHAN_STAGE, ...stages] : stages),
+    [stages, showOrphanCol],
   );
 
-  const activeStage: KanbanStage | undefined = allStages[activeIndex];
+  const activeStage: KanbanStage | undefined = displayStages[activeIndex];
   const canPrev = activeIndex > 0;
-  const canNext = activeIndex < allStages.length - 1;
+  const canNext = activeIndex < displayStages.length - 1;
   const accent = stageColor(activeStage?.color, activeIndex);
 
   const projectsByStage = useMemo(() => {
     const map = new Map<string, ProductionProject[]>();
-    allStages.forEach((s) => map.set(s.id, []));
+    displayStages.forEach((s) => map.set(s.id, []));
     filteredProjects.forEach((p) => {
+      // Orphan project → vào cột ảo (nếu có)
+      if (!p.workshop_type_id && map.has(ORPHAN_COL_ID)) {
+        map.get(ORPHAN_COL_ID)!.push(p);
+        return;
+      }
       const key = p.resolved_column_id;
       if (key && map.has(key)) map.get(key)!.push(p);
     });
-    // Orphan projects đi vào cột ảo
-    if (orphanStage) {
-      orphanProjects.forEach((p) => {
-        map.get(ORPHAN_STAGE_ID)!.push(p);
-      });
-    }
     return map;
-  }, [allStages, filteredProjects, orphanProjects, orphanStage]);
+  }, [displayStages, filteredProjects]);
 
   const columnProjects = activeStage ? (projectsByStage.get(activeStage.id) || []) : [];
   const filterActive = search.trim().length > 0 || quickFilter !== 'all'
@@ -403,7 +394,7 @@ export default function KanbanScreen() {
 
   const moveCardTo = useCallback(
     async (project: ProductionProject, targetStageId: string) => {
-      const target = allStages.find((s) => String(s.id) === String(targetStageId));
+      const target = stages.find((s) => String(s.id) === String(targetStageId));
       if (!target) return;
       const fromColId = project.resolved_column_id ?? project.sx_kanban_column_id ?? null;
       const isIntake = target.bucket_slug === INTAKE_BUCKET;
@@ -452,20 +443,20 @@ export default function KanbanScreen() {
         setMovingId(null);
       }
     },
-    [allStages, showToast, user?.company_id],
+    [stages, showToast, user?.company_id],
   );
 
   const statPills = useMemo(() => {
-    const list = [...filteredProjects, ...orphanProjects];
-    const intakeStage = allStages.find((s) => s.bucket_slug === INTAKE_BUCKET);
-    const handoverStage = allStages.find((s) => s.is_handover_to_logistics);
+    const list = filteredProjects;
+    const intakeStage = stages.find((s) => s.bucket_slug === INTAKE_BUCKET);
+    const handoverStage = stages.find((s) => s.is_handover_to_logistics);
     const producing = list.filter((p) => {
       const col = p.resolved_column_id;
       if (!col || col === intakeStage?.id || col === handoverStage?.id) return false;
-      if (isShipped(p) || isAwaitingDelivery(p, allStages)) return false;
+      if (isShipped(p) || isAwaitingDelivery(p, stages)) return false;
       return p.status === 'producing' || !['completed'].includes(String(p.status || ''));
     }).length;
-    const awaitingDelivery = list.filter((p) => isAwaitingDelivery(p, allStages)).length;
+    const awaitingDelivery = list.filter((p) => isAwaitingDelivery(p, stages)).length;
     const shipped = list.filter((p) => isShipped(p)).length;
     const completed = list.filter((p) => p.status === 'completed').length;
     const intake = list.filter((p) => p.resolved_column_id === intakeStage?.id || p.sx_intake).length;
@@ -490,7 +481,7 @@ export default function KanbanScreen() {
     );
   }
 
-  if (error && !allStages.length) {
+  if (error && !stages.length) {
     return (
       <View style={[styles.center, { paddingTop: insets.top, paddingHorizontal: Spacing.xl }]}>
         <Ionicons name="cloud-offline-outline" size={44} color={colors.textFaint} />
@@ -728,7 +719,7 @@ export default function KanbanScreen() {
         </View>
 
         <Pressable
-          onPress={() => setActiveIndex((i) => Math.min(allStages.length - 1, i + 1))}
+          onPress={() => setActiveIndex((i) => Math.min(displayStages.length - 1, i + 1))}
           disabled={!canNext}
           hitSlop={10}
           style={[styles.colNavArrow, !canNext && styles.colNavArrowHidden]}
@@ -745,16 +736,14 @@ export default function KanbanScreen() {
         contentContainerStyle={styles.dotsRow}
         nestedScrollEnabled
       >
-        {allStages.map((s, i) => {
+        {displayStages.map((s, i) => {
           const active = i === activeIndex;
-          const isVirtual = s.id === ORPHAN_STAGE_ID;
           return (
             <Pressable key={s.id} onPress={() => setActiveIndex(i)} hitSlop={8} style={i > 0 ? styles.dotGap : undefined}>
               <View
                 style={[
                   styles.dot,
-                  isVirtual && { backgroundColor: '#94a3b8' },
-                  active && { width: 20, backgroundColor: isVirtual ? '#94a3b8' : stageColor(s.color, i) },
+                  active && { width: 20, backgroundColor: stageColor(s.color, i) },
                 ]}
               />
             </Pressable>
@@ -945,7 +934,7 @@ export default function KanbanScreen() {
 
       <MoveColumnModal
         visible={!!moveModalProject}
-        stages={board.stages}
+        stages={stages}
         currentStageId={moveModalProject?.resolved_column_id ?? moveModalProject?.sx_kanban_column_id}
         onSelect={(stageId) => {
           if (moveModalProject) void moveCardTo(moveModalProject, stageId);
