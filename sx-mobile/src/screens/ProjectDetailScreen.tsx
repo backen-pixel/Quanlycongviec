@@ -14,6 +14,7 @@ import ProductionPipelineStepper from '../components/projectDetail/ProductionPip
 import ProjectCrmTaskRow from '../components/projectDetail/ProjectCrmTaskRow';
 import TapHighlight from '../components/TapHighlight';
 import { formatApiError } from '../api/client';
+import { useNotifications } from '../context/NotificationContext';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import {
@@ -45,6 +46,7 @@ function formatDate(value?: string | null): string {
 export default function ProjectDetailScreen({ route, navigation }: Props) {
   const { projectId } = route.params;
   const { colors } = useTheme();
+  const { joinProjectRoom, leaveProjectRoom } = useNotifications();
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<TabKey>('tasks');
   const [project, setProject] = useState<ProductionProjectDetail | null>(null);
@@ -80,6 +82,11 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   useEffect(() => {
     void load(false);
   }, [load]);
+
+  useEffect(() => {
+    joinProjectRoom(projectId);
+    return () => leaveProjectRoom(projectId);
+  }, [projectId, joinProjectRoom, leaveProjectRoom]);
 
   useProductionRealtime({
     projectId,

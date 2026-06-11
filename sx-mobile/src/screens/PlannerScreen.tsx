@@ -12,6 +12,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import { useTheme } from '../context/ThemeContext';
+import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { fetchPersonalPlanner, fetchProductionBoard } from '../lib/productionApi';
 import { formatMoneyAmount, Radii, Spacing, stageColor } from '../theme';
 import type { PersonalPlanner, ProductionBoard, ProductionProject } from '../types';
@@ -55,6 +56,10 @@ export default function PlannerScreen() {
   useEffect(() => {
     void load('init');
   }, [load]);
+
+  useProductionRealtime({
+    onRefresh: () => load('refresh'),
+  });
 
   const stageById = useMemo(() => {
     const map = new Map<string, { name: string; color: string; icon: string }>();

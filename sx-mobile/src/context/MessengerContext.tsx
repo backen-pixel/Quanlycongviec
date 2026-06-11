@@ -25,11 +25,15 @@ import { useNotifications } from './NotificationContext';
 type GroupMessageListener = (groupId: string, message: MessengerMessage) => void;
 
 type MessengerMetaListener = (evt: {
-  type: 'reaction' | 'recall';
+  type: 'reaction' | 'recall' | 'read' | 'members' | 'updated';
   groupId: string;
   messageId?: string;
   reactions?: MessengerMessage['reactions'];
   message?: MessengerMessage;
+  userId?: string;
+  lastReadAt?: string;
+  name?: string | null;
+  avatar?: string | null;
 }) => void;
 
 type MessengerCtx = {
@@ -192,9 +196,25 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!token) return undefined;
     return subscribeMessengerMetaRaw((evt) => {
+      if (evt.type === 'members') {
+        void refreshThreads(true);
+      }
+      if (evt.type === 'updated') {
+        setThreads((prev) =>
+          prev.map((t) =>
+            t.id === evt.groupId
+              ? {
+                  ...t,
+                  name: evt.name != null && evt.name.trim() ? evt.name : t.name,
+                  avatarUrl: evt.avatar !== undefined ? evt.avatar : t.avatarUrl,
+                }
+              : t,
+          ),
+        );
+      }
       for (const fn of metaListenersRef.current) fn(evt);
     });
-  }, [token, subscribeMessengerMetaRaw]);
+  }, [token, subscribeMessengerMetaRaw, refreshThreads]);
 
   useEffect(() => {
     if (!token) return undefined;

@@ -11642,14 +11642,14 @@ r.post('/leads/:id/tasks/generate-production-template', async (req, res) => {
 r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
   try {
     const b = req.body;
-    if (b.status === 'completed' && !skipSxWorkQuickComplete(b)) {
+    if (b.status === 'completed') {
       const { data: prior, error: pErr } = await supabase
         .from('crm_tasks')
         .select('id,status,notes,stage_slug,production_pipeline_stage_id,completion_requires_file_or_note, required_evidence_file_types, requires_quick_verdict, quick_verdict, quick_verdict_reason, completion_requires_customer_note, completion_requires_customer_contact')
         .eq('id', req.params.taskId)
         .maybeSingle();
       if (pErr) throw pErr;
-      if (prior && prior.status !== 'completed' && crmTaskRequiresCompletionEvidence(prior)) {
+      if (prior && prior.status !== 'completed' && crmTaskRequiresCompletionEvidence(prior) && !skipSxWorkQuickComplete(b, prior)) {
         const ok = await crmTaskMeetsCompletionRequirements(supabase, req.params.taskId, prior);
         if (!ok) {
           if (prior.requires_quick_verdict && prior.quick_verdict !== 'sufficient') {

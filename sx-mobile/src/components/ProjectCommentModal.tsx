@@ -33,6 +33,7 @@ import {
 } from '../lib/productionApi';
 import TapHighlight from './TapHighlight';
 import { useAuth } from '../context/AuthContext';
+import { useNotifications } from '../context/NotificationContext';
 import { useTheme } from '../context/ThemeContext';
 import { HIT_TARGET, Radii, Spacing } from '../theme';
 import type { ProductionProject } from '../types';
@@ -51,6 +52,7 @@ type Props = {
 export default function ProjectCommentModal({ visible, project, onClose, onPosted }: Props) {
   const { colors } = useTheme();
   const { user } = useAuth();
+  const { subscribeComment, subscribeSync } = useNotifications();
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
   const onPostedRef = useRef(onPosted);
@@ -242,6 +244,24 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
   }, [project?.id]);
 
   useEffect(() => {
+    if (!visible || !project?.id) return undefined;
+    return subscribeSync((evt) => {
+      if (evt.type !== 'project:comment_changed') return;
+      if (String(evt.payload.project_id || '') !== String(project.id)) return;
+      void loadComments(true);
+    });
+  }, [visible, project?.id, loadComments, subscribeSync]);
+
+  useEffect(() => {
+    if (!visible || !project?.id) return undefined;
+    return subscribeComment((n) => {
+      const pid = n.metadata?.project_id ? String(n.metadata.project_id) : n.entity_id ? String(n.entity_id) : '';
+      if (pid !== String(project.id)) return;
+      void loadComments(true);
+    });
+  }, [visible, project?.id, loadComments, subscribeComment]);
+
+  useEffect(() => {
     if (!visible || !project?.id) {
       setComments([]);
       setBody('');
@@ -251,12 +271,6 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
       return;
     }
     void loadComments(false);
-  }, [visible, project?.id, loadComments]);
-
-  useEffect(() => {
-    if (!visible || !project?.id) return undefined;
-    const timer = setInterval(() => void loadComments(true), 20000);
-    return () => clearInterval(timer);
   }, [visible, project?.id, loadComments]);
 
   const commentById = useMemo(() => {

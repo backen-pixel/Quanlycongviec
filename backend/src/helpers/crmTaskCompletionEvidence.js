@@ -136,10 +136,9 @@ function isSxProductionTask(prior) {
   return String(prior.stage_slug || '').startsWith('sx_') || !!prior.production_pipeline_stage_id;
 }
 
-/** App Công việc (sx-mobile): theo dõi nhanh — bỏ qua mọi kiểm tra minh chứng khi hoàn thành. */
-function skipSxWorkQuickComplete(body) {
-  const v = body?.skip_completion_evidence;
-  return v === true || v === 'true' || v === 1 || v === '1';
+/** App Công việc (sx-mobile): theo dõi nhanh — bỏ qua minh chứng khi hoàn thành NV SX. */
+function skipSxWorkQuickComplete(body, prior) {
+  return !!(body?.skip_completion_evidence && isSxProductionTask(prior));
 }
 
 module.exports = {
