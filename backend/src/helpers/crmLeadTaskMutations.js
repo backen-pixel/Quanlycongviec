@@ -2,7 +2,7 @@
  * Core mutations cho crm_tasks — dùng chung từ /api/crm và /api/work-tasks gateway.
  */
 const { supabase } = require('../config/supabase');
-const { crmTaskMeetsCompletionRequirements, crmTaskRequiresCompletionEvidence } = require('./crmTaskCompletionEvidence');
+const { crmTaskMeetsCompletionRequirements, crmTaskRequiresCompletionEvidence, skipSxWorkQuickComplete } = require('./crmTaskCompletionEvidence');
 const { normalizeQuickVerdictPayload } = require('./taskQuickVerdict');
 const { validateChecklistTransition, validateChecklistDoneEvidence } = require('./checklistItemEvidence');
 const { createNotification } = require('./notifications');
@@ -216,12 +216,13 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
   if (b.status === 'completed' || Array.isArray(b.checklist)) {
     const { data: prior, error: pErr } = await supabase
       .from('crm_tasks')
-      .select('id,status,notes,checklist,completion_requires_file_or_note,required_evidence_file_types,requires_quick_verdict,quick_verdict,quick_verdict_reason,completion_requires_customer_note,completion_requires_customer_contact')
+      .select('id,status,notes,checklist,stage_slug,production_pipeline_stage_id,completion_requires_file_or_note,required_evidence_file_types,requires_quick_verdict,quick_verdict,quick_verdict_reason,completion_requires_customer_note,completion_requires_customer_contact')
       .eq('id', taskId).maybeSingle();
     if (pErr) return { error: pErr.message, status: 500 };
     priorEvidenceRow = prior;
+    const quickComplete = skipSxWorkQuickComplete(b, prior);
 
-    if (Array.isArray(b.checklist)) {
+    if (Array.isArray(b.checklist) && !quickComplete) {
       resolvedChecklist = resolveChecklistForUpdate(prior?.checklist, b.checklist, b.checklist_partial);
       const { data: ckAtts, error: attErr } = await supabase
         .from('crm_task_attachments')
@@ -239,7 +240,7 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
       }
     }
 
-    if (b.status === 'completed' && prior && prior.status !== 'completed') {
+    if (b.status === 'completed' && prior && prior.status !== 'completed' && !quickComplete) {
       const nextChecklist = Array.isArray(b.checklist) ? resolvedChecklist : prior.checklist;
       const { data: ckAtts } = await supabase
         .from('crm_task_attachments')
@@ -256,7 +257,7 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
       }
     }
 
-    if (b.status === 'completed' && prior && prior.status !== 'completed' && crmTaskRequiresCompletionEvidence(prior)) {
+    if (b.status === 'completed' && prior && prior.status !== 'completed' && crmTaskRequiresCompletionEvidence(prior) && !quickComplete) {
       const ok = await crmTaskMeetsCompletionRequirements(supabase, taskId, prior);
       if (!ok) {
         const needsQv = prior.requires_quick_verdict && prior.quick_verdict !== 'sufficient';

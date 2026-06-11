@@ -14,7 +14,6 @@ const {
   buildScopeOrFilter,
   loadProductionPipelineStagesRows,
   filterProductionPipelineStagesForWorkshopType,
-  applyProductionWorkshopTypeScopeFilter,
   getResolvedKanbanStages,
   resolveSxHandoverColumnId,
   resolveSxDisplayColumnId,
@@ -971,12 +970,11 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
       return supabase
         .from('projects')
         .select(`
-          id, code, name, estimated_value, production_value, status, deadline, production_deadline, created_at, company_id,
+          id, code, name, estimated_value, production_value, status, deadline, created_at, company_id,
           sx_pipeline_stage_entered_at, sx_kanban_deadline_at, sx_kanban_deadline_reason,
           current_stage_id${wtScalar},
           current_stage:workflow_stages(id, slug, name, color, icon),
-          customer:customers(id, full_name, phone),
-          production_person:users!projects_production_person_id_fkey(id, full_name),
+          customer:customers(id, full_name),
           company:companies!projects_company_id_fkey(id, name, short_name),
           logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
           tasks(id, status)${wtJoin}
@@ -984,10 +982,18 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
         .or(orFilter);
     };
 
+    // workshop_type_id='none' → lọc deal CHƯA phân loại (workshop_type_id IS NULL)
+    const wantsUnclassified = String(workshop_type_id || '').toLowerCase() === 'none';
+    const applyWorkshopTypeFilter = (q) => {
+      if (wantsUnclassified) return q.is('workshop_type_id', null);
+      if (workshop_type_id) return q.eq('workshop_type_id', workshop_type_id);
+      return q;
+    };
+
     let query = runQuery('full');
     if (division_id) query = query.eq('division_id', division_id);
     if (company_id) query = applyProductionCompanyScopeFilter(query, company_id, scopePartnerIds);
-    query = applyProductionWorkshopTypeScopeFilter(query, workshop_type_id);
+    query = applyWorkshopTypeFilter(query);
 
     let projects = [];
     let { data, error } = await query.order('created_at', { ascending: false });
@@ -1001,7 +1007,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
       let q2 = runQuery('no_join');
       if (division_id) q2 = q2.eq('division_id', division_id);
       if (company_id) q2 = applyProductionCompanyScopeFilter(q2, company_id, scopePartnerIds);
-      q2 = applyProductionWorkshopTypeScopeFilter(q2, workshop_type_id);
+      q2 = applyWorkshopTypeFilter(q2);
       ({ data, error } = await q2.order('created_at', { ascending: false }));
     }
     // Bước 2: nếu vẫn lỗi do cột workshop_type_id chưa tồn tại trên bảng projects → fallback hoàn toàn
@@ -1034,7 +1040,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
       let qDl = runNoKanbanDl(needsNoJoin ? 'no_join' : (error.message?.includes('workshop_type_id') ? 'no_col' : 'full'));
       if (division_id) qDl = qDl.eq('division_id', division_id);
       if (company_id) qDl = applyProductionCompanyScopeFilter(qDl, company_id, scopePartnerIds);
-      qDl = applyProductionWorkshopTypeScopeFilter(qDl, workshop_type_id);
+      qDl = applyWorkshopTypeFilter(qDl);
       ({ data, error } = await qDl.order('created_at', { ascending: false }));
     }
     if (error) throw error;
@@ -1064,7 +1070,6 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
     const projectsWithDealProb = enhancedProjects.map((p) => ({
       ...p,
       deal_probability: dealProbByProjectId[String(p.id)] ?? null,
-      is_overdue: Boolean(p.deadline && new Date(p.deadline) < new Date() && p.status !== 'completed'),
     }));
     const revenueKpis = computeSxRevenueKpis(projectsWithDealProb, sortedKanban, dealProbByProjectId);
 
@@ -1159,7 +1164,10 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
 
     if (division_id) query = query.eq('division_id', division_id);
     if (company_id) query = applyProductionCompanyScopeFilter(query, company_id, scopePartnerIds);
-    query = applyProductionWorkshopTypeScopeFilter(query, workshop_type_id);
+    // workshop_type_id='none' → lọc deal CHƯA phân loại (workshop_type_id IS NULL)
+    const wantsUnclassified = String(workshop_type_id || '').toLowerCase() === 'none';
+    if (wantsUnclassified) query = query.is('workshop_type_id', null);
+    else if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
 
     if (search) {
       const searchPattern = `%${search}%`;
@@ -1222,7 +1230,8 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       if (priority) fallbackQuery = fallbackQuery.eq('priority', priority);
       if (division_id) fallbackQuery = fallbackQuery.eq('division_id', division_id);
       if (company_id) fallbackQuery = applyProductionCompanyScopeFilter(fallbackQuery, company_id, scopePartnerIds);
-      fallbackQuery = applyProductionWorkshopTypeScopeFilter(fallbackQuery, workshop_type_id);
+      if (wantsUnclassified) fallbackQuery = fallbackQuery.is('workshop_type_id', null);
+      else if (workshop_type_id) fallbackQuery = fallbackQuery.eq('workshop_type_id', workshop_type_id);
       fallbackQuery = fallbackQuery.order('deadline', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false }).range(offset, offset + parsedLimit - 1);
       ({ data: projects, error, count } = await fallbackQuery);
     }

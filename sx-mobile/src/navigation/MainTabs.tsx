@@ -10,11 +10,11 @@ import { useTheme } from '../context/ThemeContext';
 import KanbanScreen from '../screens/KanbanScreen';
 import PlannerScreen from '../screens/PlannerScreen';
 import ProfileScreen from '../screens/ProfileScreen';
-import ProjectListScreen from '../screens/ProjectListScreen';
+import WorkScreen from '../screens/WorkScreen';
 
 export type MainTabParamList = {
   Kanban: undefined;
-  ProjectList: undefined;
+  Work: undefined;
   CreateDeal: undefined;
   Planner: undefined;
   Profile: undefined;
@@ -106,12 +106,12 @@ export default function MainTabs() {
           }}
         />
         <Tab.Screen
-          name="ProjectList"
-          component={ProjectListScreen}
+          name="Work"
+          component={WorkScreen}
           options={{
-            tabBarLabel: 'Danh sách',
+            tabBarLabel: 'Công việc',
             tabBarIcon: ({ color, focused }) => (
-              <Ionicons name={focused ? 'list' : 'list-outline'} size={22} color={color} />
+              <Ionicons name={focused ? 'clipboard' : 'clipboard-outline'} size={22} color={color} />
             ),
           }}
         />
