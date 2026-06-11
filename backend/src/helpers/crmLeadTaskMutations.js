@@ -220,7 +220,7 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
       .eq('id', taskId).maybeSingle();
     if (pErr) return { error: pErr.message, status: 500 };
     priorEvidenceRow = prior;
-    const quickComplete = skipSxWorkQuickComplete(b, prior);
+    const quickComplete = skipSxWorkQuickComplete(b);
 
     if (Array.isArray(b.checklist) && !quickComplete) {
       resolvedChecklist = resolveChecklistForUpdate(prior?.checklist, b.checklist, b.checklist_partial);

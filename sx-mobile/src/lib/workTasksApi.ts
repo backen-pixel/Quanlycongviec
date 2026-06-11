@@ -71,7 +71,7 @@ export function statusPillLabel(status: string): string {
 
 export function nextTaskStatus(status: string): string {
   const cur = String(status || 'pending');
-  if (isTaskDone(cur)) return 'pending';
+  if (isTaskDone(cur)) return 'in_progress';
   if (isTaskPending(cur)) return 'in_progress';
   return 'completed';
 }
