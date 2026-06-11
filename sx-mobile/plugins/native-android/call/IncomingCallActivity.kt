@@ -35,28 +35,43 @@ class IncomingCallActivity : AppCompatActivity() {
   private var ringAnchorMs: Long = 0L
   private var receiverRegistered = false
 
+  private var isSpeakerOn: Boolean = false
+
+  // Màn hình cuộc gọi đến
+  private lateinit var incomingScreen: View
+  private lateinit var incomingHeader: TextView
   private lateinit var avatarText: TextView
   private lateinit var nameText: TextView
-  private lateinit var statusText: TextView
   private lateinit var subtitleText: TextView
-  private lateinit var waveformRow: LinearLayout
-  private lateinit var secondaryRow: LinearLayout
-  private lateinit var incomingRow: LinearLayout
-  private lateinit var activeRow: LinearLayout
   private lateinit var btnDecline: ImageButton
   private lateinit var btnAccept: ImageButton
-  private lateinit var btnEnd: ImageButton
-  private lateinit var btnMuteSecondary: ImageButton
   private lateinit var pulseRing1: View
   private lateinit var pulseRing2: View
   private lateinit var pulseRing3: View
+
+  // Màn hình đang gọi
+  private lateinit var incallScreen: View
+  private lateinit var incallHeader: TextView
+  private lateinit var incallName: TextView
+  private lateinit var incallTimer: TextView
+  private lateinit var peerAvatar: TextView
+  private lateinit var peerName: TextView
+  private lateinit var selfMicStatus: TextView
+  private lateinit var waveformRow: LinearLayout
+  private lateinit var btnMuteSecondary: ImageButton
+  private lateinit var btnSpeaker: ImageButton
+  private lateinit var btnAddPeople: ImageButton
+  private lateinit var btnKeypad: ImageButton
+  private lateinit var btnVideo: ImageButton
+  private lateinit var btnMinimize: ImageButton
+  private lateinit var btnEnd: ImageButton
 
   private val handler = Handler(Looper.getMainLooper())
   private val tickRunnable = object : Runnable {
     override fun run() {
       if (uiState == "incall" && durationAnchorMs > 0L) {
         val sec = ((System.currentTimeMillis() - durationAnchorMs + durationBaseMs) / 1000).toInt()
-        subtitleText.text = String.format("%02d:%02d", sec / 60, sec % 60)
+        incallTimer.text = String.format("%02d:%02d", sec / 60, sec % 60)
         handler.postDelayed(this, 1000L)
       }
     }
@@ -64,9 +79,8 @@ class IncomingCallActivity : AppCompatActivity() {
 
   private val ringTickRunnable = object : Runnable {
     override fun run() {
-      if (uiState == "ringing" || uiState == "outgoing") {
-        val sec = ((System.currentTimeMillis() - ringAnchorMs) / 1000).toInt()
-        subtitleText.text = String.format("%02d:%02d", sec / 60, sec % 60)
+      if (uiState == "outgoing") {
+        incallTimer.text = "Đang gọi…"
         handler.postDelayed(this, 1000L)
       }
     }
@@ -143,21 +157,32 @@ class IncomingCallActivity : AppCompatActivity() {
   }
 
   private fun bindViews() {
+    incomingScreen = findViewById(R.id.incoming_screen)
+    incomingHeader = findViewById(R.id.incoming_header)
     avatarText = findViewById(R.id.avatar_text)
     nameText = findViewById(R.id.name_text)
-    statusText = findViewById(R.id.status_text)
     subtitleText = findViewById(R.id.subtitle_text)
-    waveformRow = findViewById(R.id.waveform_row)
-    secondaryRow = findViewById(R.id.secondary_row)
-    incomingRow = findViewById(R.id.incoming_row)
-    activeRow = findViewById(R.id.active_row)
     btnDecline = findViewById(R.id.btn_decline)
     btnAccept = findViewById(R.id.btn_accept)
-    btnEnd = findViewById(R.id.btn_end)
-    btnMuteSecondary = findViewById(R.id.btn_mute_secondary)
     pulseRing1 = findViewById(R.id.pulse_ring_1)
     pulseRing2 = findViewById(R.id.pulse_ring_2)
     pulseRing3 = findViewById(R.id.pulse_ring_3)
+
+    incallScreen = findViewById(R.id.incall_screen)
+    incallHeader = findViewById(R.id.incall_header)
+    incallName = findViewById(R.id.incall_name)
+    incallTimer = findViewById(R.id.incall_timer)
+    peerAvatar = findViewById(R.id.peer_avatar)
+    peerName = findViewById(R.id.peer_name)
+    selfMicStatus = findViewById(R.id.self_mic_status)
+    waveformRow = findViewById(R.id.waveform_row)
+    btnMuteSecondary = findViewById(R.id.btn_mute_secondary)
+    btnSpeaker = findViewById(R.id.btn_speaker)
+    btnAddPeople = findViewById(R.id.btn_add_people)
+    btnKeypad = findViewById(R.id.btn_keypad)
+    btnVideo = findViewById(R.id.btn_video)
+    btnMinimize = findViewById(R.id.btn_minimize)
+    btnEnd = findViewById(R.id.btn_end)
   }
 
   private fun wireButtons(data: IncomingCallHelper.CallData) {
@@ -169,15 +194,32 @@ class IncomingCallActivity : AppCompatActivity() {
       LockScreenCallBridge.notifyToggleMuteFromNativeUi(applicationContext, data.callId)
       updateMuteIcon()
     }
+    btnSpeaker.setOnClickListener { toggleSpeaker() }
+    btnMinimize.setOnClickListener { moveTaskToBack(true) }
+    val soon = View.OnClickListener {
+      android.widget.Toast.makeText(this, "Tính năng đang phát triển", android.widget.Toast.LENGTH_SHORT).show()
+    }
+    btnAddPeople.setOnClickListener(soon)
+    btnKeypad.setOnClickListener(soon)
+    btnVideo.setOnClickListener(soon)
+  }
+
+  private fun toggleSpeaker() {
+    isSpeakerOn = !isSpeakerOn
+    try {
+      val am = getSystemService(AUDIO_SERVICE) as? android.media.AudioManager
+      am?.isSpeakerphoneOn = isSpeakerOn
+    } catch (_: Exception) { }
+    btnSpeaker.alpha = if (isSpeakerOn) 1f else 0.7f
   }
 
   private fun setupWaveform() {
     waveformRow.removeAllViews()
-    val heights = intArrayOf(12, 20, 28, 18, 24, 16, 22)
+    val heights = intArrayOf(8, 16, 22, 12, 18, 10, 16)
     for (h in heights) {
       val bar = View(this).apply {
-        setBackgroundColor(Color.parseColor("#3B82F6"))
-        val lp = LinearLayout.LayoutParams(dp(4), dp(h))
+        setBackgroundColor(Color.parseColor("#F472B6"))
+        val lp = LinearLayout.LayoutParams(dp(3), dp(h))
         lp.marginEnd = dp(3)
         layoutParams = lp
       }
@@ -218,19 +260,23 @@ class IncomingCallActivity : AppCompatActivity() {
     return if (data.isGroup) data.groupName.ifBlank { "Nhóm" } else data.fromName
   }
 
+  private fun bindIncallHeader(data: IncomingCallHelper.CallData) {
+    val name = displayName(data)
+    incallName.text = name
+    peerName.text = if (data.isGroup) "Nhóm" else data.fromName.split(Regex("\\s+")).firstOrNull().orEmpty()
+    peerAvatar.text = firstInitial(name)
+  }
+
   private fun showRinging() {
     uiState = "ringing"
     val data = callData ?: return
     val name = displayName(data)
-    avatarText.text = avatarInitials(name)
+    avatarText.text = firstInitial(name)
     nameText.text = name
-    statusText.text = if (data.isGroup) "CUỘC GỌI NHÓM" else "CUỘC GỌI ĐẾN"
+    incomingHeader.text = if (data.isGroup) "Messenger · Cuộc gọi nhóm" else "Messenger · Cuộc gọi đến"
     subtitleText.text = "Đang đổ chuông…"
-    incomingRow.visibility = View.VISIBLE
-    activeRow.visibility = View.GONE
-    secondaryRow.visibility = View.VISIBLE
-    btnMuteSecondary.isEnabled = false
-    btnMuteSecondary.alpha = 0.4f
+    incomingScreen.visibility = View.VISIBLE
+    incallScreen.visibility = View.GONE
     handler.removeCallbacks(tickRunnable)
     handler.removeCallbacks(ringTickRunnable)
   }
@@ -238,14 +284,12 @@ class IncomingCallActivity : AppCompatActivity() {
   private fun showOutgoing() {
     uiState = "outgoing"
     val data = callData ?: return
-    val name = displayName(data)
-    avatarText.text = avatarInitials(name)
-    nameText.text = name
-    statusText.text = "ĐANG GỌI"
-    subtitleText.text = "00:00"
-    incomingRow.visibility = View.GONE
-    activeRow.visibility = View.VISIBLE
-    secondaryRow.visibility = View.VISIBLE
+    bindIncallHeader(data)
+    incallHeader.text = "Đang gọi qua Messenger"
+    incallTimer.text = "Đang gọi…"
+    incomingScreen.visibility = View.GONE
+    incallScreen.visibility = View.VISIBLE
+    updateMuteIcon()
     handler.removeCallbacks(tickRunnable)
     startRingTimer()
   }
@@ -254,14 +298,12 @@ class IncomingCallActivity : AppCompatActivity() {
     uiState = "connecting"
     handler.removeCallbacks(ringTickRunnable)
     val data = callData ?: return
-    nameText.text = displayName(data)
-    statusText.text = "ĐANG KẾT NỐI"
-    subtitleText.text = "Đang kết nối…"
-    incomingRow.visibility = View.GONE
-    activeRow.visibility = View.VISIBLE
-    secondaryRow.visibility = View.VISIBLE
-    btnMuteSecondary.isEnabled = true
-    btnMuteSecondary.alpha = 1f
+    bindIncallHeader(data)
+    incallHeader.text = "Đang gọi qua Messenger"
+    incallTimer.text = "Đang kết nối…"
+    incomingScreen.visibility = View.GONE
+    incallScreen.visibility = View.VISIBLE
+    updateMuteIcon()
   }
 
   private fun showActive(durationMs: Long) {
@@ -269,13 +311,10 @@ class IncomingCallActivity : AppCompatActivity() {
     val wasActive = uiState == "incall"
     uiState = "incall"
     handler.removeCallbacks(ringTickRunnable)
-    nameText.text = displayName(data)
-    statusText.text = "ĐANG GỌI"
-    incomingRow.visibility = View.GONE
-    activeRow.visibility = View.VISIBLE
-    secondaryRow.visibility = View.VISIBLE
-    btnMuteSecondary.isEnabled = true
-    btnMuteSecondary.alpha = 1f
+    bindIncallHeader(data)
+    incallHeader.text = "Đang gọi qua Messenger"
+    incomingScreen.visibility = View.GONE
+    incallScreen.visibility = View.VISIBLE
     updateMuteIcon()
     if (!wasActive) {
       durationAnchorMs = System.currentTimeMillis()
@@ -286,7 +325,12 @@ class IncomingCallActivity : AppCompatActivity() {
   }
 
   private fun updateMuteIcon() {
-    btnMuteSecondary.alpha = if (isMuted) 0.5f else 1f
+    btnMuteSecondary.alpha = if (isMuted) 0.55f else 1f
+    selfMicStatus.text = if (isMuted) "Đã tắt mic" else ""
+  }
+
+  private fun firstInitial(name: String): String {
+    return name.trim().firstOrNull()?.uppercase() ?: "?"
   }
 
   private fun applyState(status: String) {
@@ -314,7 +358,20 @@ class IncomingCallActivity : AppCompatActivity() {
       if (data.isGroup) "Cuộc gọi nhóm" else data.fromName,
       "Đang kết nối…",
     )
-    IncomingCallHelper.completeNativeAccept(applicationContext, data)
+    IncomingCallHelper.markCallAnswered(applicationContext, data.callId)
+    // Báo server "đã nhận" qua REST ngay (best-effort, chạy nền) — set answeredAt để server
+    // KHÔNG reo lại dù tiến trình bị kill trước khi RN kịp emit call:accept qua socket.
+    if (!data.isGroup && data.fromUserId.isNotBlank()) {
+      CallAcceptApi.acceptAsync(applicationContext, data.callId, data.fromUserId)
+    }
+    if (LockScreenCallModule.hasLiveReactInstance()) {
+      // RN còn sống (foreground/background): emit event để RN acceptCall ngay — không cần
+      // boot lại MainActivity rồi chờ consume pending intent (vốn chỉ chạy lúc mount → kẹt).
+      LockScreenCallModule.emitAcceptCall(data.callId)
+    } else {
+      // App bị kill: stash pending + boot RN ngầm để consume intent và xử lý WebRTC.
+      IncomingCallHelper.completeNativeAccept(applicationContext, data)
+    }
   }
 
   private fun onReject(data: IncomingCallHelper.CallData) {
@@ -388,14 +445,6 @@ class IncomingCallActivity : AppCompatActivity() {
     handler.postDelayed(show, 120L)
     handler.postDelayed(show, 450L)
     handler.postDelayed(show, 900L)
-  }
-
-  private fun avatarInitials(name: String): String {
-    val parts = name.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
-    if (parts.size >= 2) {
-      return (parts.first().first().toString() + parts.last().first()).uppercase()
-    }
-    return parts.firstOrNull()?.take(2)?.uppercase() ?: "?"
   }
 
   private fun setupLockScreenWindow() {

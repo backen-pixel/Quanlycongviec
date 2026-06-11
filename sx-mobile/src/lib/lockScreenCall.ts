@@ -102,3 +102,11 @@ export function subscribeLockScreenCallReject(handler: (callId: string) => void)
   });
   return () => sub.remove();
 }
+
+export function subscribeLockScreenCallAccept(handler: (callId: string) => void): () => void {
+  if (!emitter) return () => {};
+  const sub = emitter.addListener('LockScreenCallAccept', (e: { callId?: string }) => {
+    if (e?.callId) handler(String(e.callId));
+  });
+  return () => sub.remove();
+}

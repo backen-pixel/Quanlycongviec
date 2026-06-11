@@ -13,21 +13,25 @@ export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
   const productionPerson = (raw.production_person || {}) as { id?: string; full_name?: string };
   const company = (raw.company || {}) as { id?: string; short_name?: string; name?: string };
   const workshopType = (raw.workshop_type || {}) as { id?: string; name?: string };
+  const deadline = (raw.deadline as string) || null;
+  const status = (raw.status as string) || null;
   return {
     id: String(raw.id || ''),
     code: String(raw.code || ''),
     name: String(raw.name || raw.code || 'Dự án sản xuất'),
     customer_name: customer.full_name ?? (raw.customer_name as string) ?? null,
     customer_phone: customer.phone ?? null,
-    status: (raw.status as string) || null,
+    status,
     priority: (raw.priority as string) || null,
-    deadline: (raw.deadline as string) || null,
+    deadline,
     production_deadline: (raw.production_deadline as string) || null,
     estimated_value: Number(raw.estimated_value || 0),
     progress: Number(raw.progress || 0),
     task_total: Number(raw.task_total || 0),
     done_tasks: Number(raw.done_tasks || 0),
-    is_overdue: Boolean(raw.is_overdue),
+    is_overdue: raw.is_overdue != null
+      ? Boolean(raw.is_overdue)
+      : Boolean(deadline && status !== 'completed' && new Date(deadline) < new Date()),
     sx_intake: Boolean(raw.sx_intake),
     sx_won_deal: Boolean(raw.sx_won_deal),
     current_stage_id: (raw.current_stage_id as string) ?? stage.id ?? null,
@@ -35,7 +39,7 @@ export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
     sx_kanban_column_id: (raw.sx_kanban_column_id as string) ?? null,
     stage_name: stage.name ?? null,
     stage_slug: stage.slug ?? null,
-    production_person_id: productionPerson.id ?? null,
+    production_person_id: productionPerson.id ?? (raw.production_person_id as string) ?? null,
     production_person_name: productionPerson.full_name ?? null,
     company_name: company.short_name || company.name || null,
     company_id: (raw.company_id as string) ?? company.id ?? null,
@@ -95,58 +99,81 @@ export function resolveColumnId(
   return null;
 }
 
-/** Lấy toàn bộ dự án sản xuất (đủ trang) từ /production/projects. */
-async function fetchAllProjects(noCache = false): Promise<ProductionProject[]> {
-  const limit = 200;
-  const out: ProductionProject[] = [];
-  for (let page = 1; page <= 25; page += 1) {
-    const params: Record<string, unknown> = { page, limit };
-    if (noCache) params._t = Date.now();
-    const { data } = await api.get<{
-      projects?: Array<Record<string, unknown>>;
-      totalPages?: number;
-    }>('/production/projects', { params });
-    const rows = Array.isArray(data?.projects) ? data.projects : [];
-    out.push(...rows.map(mapProjectRow));
-    const totalPages = Number(data?.totalPages || 1);
-    if (rows.length < limit || page >= totalPages) break;
+/** Tham số lọc board — khớp web ProductionDashboard (company + phân loại). */
+export type ProductionBoardFilters = {
+  companyId?: string | null;
+  workshopTypeId?: string | null;
+};
+
+type BoardCacheEntry = { at: number; data: ProductionBoard };
+const boardCache = new Map<string, BoardCacheEntry>();
+const BOARD_CACHE_MS = 20_000;
+
+function boardCacheKey(filters: ProductionBoardFilters): string {
+  return `${filters.companyId || '_'}|${filters.workshopTypeId || '_'}`;
+}
+
+function buildBoardQueryParams(filters: ProductionBoardFilters): Record<string, string> {
+  const params: Record<string, string> = {};
+  if (filters.companyId) params.company_id = String(filters.companyId);
+  if (filters.workshopTypeId && filters.workshopTypeId !== 'none') {
+    params.workshop_type_id = String(filters.workshopTypeId);
+  } else if (filters.workshopTypeId === 'none') {
+    params.workshop_type_id = 'none';
   }
-  return out;
+  return params;
+}
+
+/** Xóa cache board (sau khi kéo thẻ / realtime). */
+export function invalidateProductionBoardCache(): void {
+  boardCache.clear();
 }
 
 /**
- * Tải board đồng bộ với web:
- *  - Cột Kanban từ /production/pipeline-stages
- *  - Dự án đầy đủ (kèm production_person) từ /production/projects
- *  - KPI từ /production/dashboard (best-effort)
- * Resolve cột client-side (giống web) và gắn vào resolved_column_id.
+ * Tải board tối ưu — 1 request `/production/dashboard`:
+ *  - Cột Kanban (pipeline) đã lọc theo công ty + phân loại
+ *  - Dự án đã lọc + enrich sx_kanban_column_id trên server
+ *  - KPI đồng bộ cùng phạm vi lọc
  */
-export async function fetchProductionBoard(noCache = false): Promise<ProductionBoard> {
-  const [stageRes, projects, kpis] = await Promise.all([
-    api
-      .get<Array<Record<string, unknown>>>('/production/pipeline-stages', {
-        params: noCache ? { _t: Date.now() } : undefined,
-      })
-      .then((r) => (Array.isArray(r.data) ? r.data : []))
-      .catch(() => [] as Array<Record<string, unknown>>),
-    fetchAllProjects(noCache),
-    api
-      .get<{ kpis?: ProductionDashboard }>('/production/dashboard', {
-        params: noCache ? { _t: Date.now() } : undefined,
-      })
-      .then((r) => r.data?.kpis ?? null)
-      .catch(() => null),
-  ]);
+export async function fetchProductionBoard(
+  noCache = false,
+  filters: ProductionBoardFilters = {},
+): Promise<ProductionBoard> {
+  const cacheKey = boardCacheKey(filters);
+  if (!noCache) {
+    const hit = boardCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < BOARD_CACHE_MS) return hit.data;
+  }
 
-  const stages = stageRes.map((s, i) => mapStageRow(s, i)).sort((a, b) => a.order_index - b.order_index);
+  const params = buildBoardQueryParams(filters);
+  if (noCache) params._t = String(Date.now());
 
-  const resolved = projects.map((p) => ({
-    ...p,
-    resolved_column_id: p.sx_kanban_column_id && stages.some((s) => String(s.id) === String(p.sx_kanban_column_id))
+  const { data } = await api.get<{
+    kpis?: ProductionDashboard;
+    pipeline?: Array<Record<string, unknown>>;
+    projects?: Array<Record<string, unknown>>;
+  }>('/production/dashboard', { params });
+
+  const stages = (Array.isArray(data?.pipeline) ? data.pipeline : [])
+    .map((s, i) => mapStageRow(s, i))
+    .sort((a, b) => a.order_index - b.order_index);
+
+  const projects = (Array.isArray(data?.projects) ? data.projects : []).map((raw) => {
+    const p = mapProjectRow(raw);
+    const colId = p.sx_kanban_column_id && stages.some((s) => String(s.id) === String(p.sx_kanban_column_id))
       ? p.sx_kanban_column_id
-      : resolveColumnId(p, stages),
-  }));
-  return { stages, projects: resolved, kpis };
+      : resolveColumnId(p, stages);
+    return { ...p, resolved_column_id: colId };
+  });
+
+  const result: ProductionBoard = {
+    stages,
+    projects,
+    kpis: data?.kpis ?? null,
+  };
+
+  boardCache.set(cacheKey, { at: Date.now(), data: result });
+  return result;
 }
 
 export async function fetchProductionProject(projectId: string): Promise<ProductionProject> {

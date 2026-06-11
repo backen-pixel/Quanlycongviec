@@ -35,6 +35,7 @@ import {
   dismissLockScreenCallUi,
   isLockScreenCallUiActive,
   showNativeOutgoingCall,
+  subscribeLockScreenCallAccept,
   subscribeLockScreenCallEnd,
   subscribeLockScreenCallReject,
   subscribeLockScreenToggleMute,
@@ -889,18 +890,25 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         const cid = callIdRef.current;
         const phase = statusRef.current;
         const peerId = peerRef.current?.id;
-        if (
-          cid
-          && peerId
+        // CHỈ tự gửi lại call:accept khi: đang kết nối (đã nhận, khôi phục sau reconnect) HOẶC
+        // đang reo NHƯNG người dùng đã bấm nhận (pendingNativeAccept). KHÔNG tự nhận một cuộc gọi
+        // mới đang reo — nếu không, reconnect lúc đang reo sẽ tự bắt máy / loạn trạng thái.
+        const shouldResendAccept =
+          !!cid
+          && !!peerId
           && modeRef.current === 'direct'
-          && (phase === 'connecting' || phase === 'incoming')
-        ) {
+          && (phase === 'connecting' || (phase === 'incoming' && pendingNativeAcceptRef.current));
+        if (shouldResendAccept) {
           markCallAnswered(cid);
           socket.emit('call:accept', { callId: cid, toUserId: peerId });
         }
         tryRunPendingNativeAcceptRef.current();
       };
       socket.on('connect', onSocketConnect);
+      // Socket có thể đã connected TRƯỚC khi handler này được gắn (RN boot từ trạng thái kill:
+      // NotificationContext gọi setAppSocket sau khi 'connect' đã bắn). Khi đó sự kiện 'connect'
+      // không lặp lại → chạy ngay logic để gửi call:accept và flush pending native accept.
+      if (socket.connected) onSocketConnect();
 
       detachSocket = () => {
         socket.off('connect', onSocketConnect);
@@ -953,15 +961,19 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     const unsubReject = subscribeLockScreenCallReject((id) => {
       if (id === callIdRef.current) rejectCall();
     });
+    const unsubAccept = subscribeLockScreenCallAccept((id) => {
+      if (id === callIdRef.current && statusRef.current === 'incoming') void acceptCall();
+    });
     const unsubMute = subscribeLockScreenToggleMute((id) => {
       if (id === callIdRef.current) toggleMute();
     });
     return () => {
       unsubEnd();
       unsubReject();
+      unsubAccept();
       unsubMute();
     };
-  }, [endCall, rejectCall, toggleMute]);
+  }, [acceptCall, endCall, rejectCall, toggleMute]);
 
   const value = useMemo(
     () => ({
