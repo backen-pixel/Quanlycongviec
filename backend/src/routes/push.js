@@ -336,6 +336,19 @@ r.post('/call-reject', async (req, res) => {
     }
 
     const io = req.app.get('io');
+    // Finalize log + dọn session giống socket handler `call:reject` — nếu không, khi app bị
+    // kill và từ chối qua REST sẽ chỉ tắt UI caller mà không ghi "cuộc gọi bị từ chối" và
+    // session vẫn treo trong activeDirectCalls (gây hiện lại cuộc gọi khi mở app).
+    const activeDirectCalls = req.app.get('activeDirectCalls');
+    const finalizeDirectCallLog = req.app.get('finalizeDirectCallLog');
+    if (io && activeDirectCalls && finalizeDirectCallLog) {
+      const session = activeDirectCalls.get(callId);
+      if (session && !session.logged) {
+        session.logged = true;
+        activeDirectCalls.delete(callId);
+        void finalizeDirectCallLog(io, session, { endedByUserId: uid, reason: 'rejected' });
+      }
+    }
     if (io) {
       io.to(`user:${toUserId}`).emit('call:rejected', { callId, reason: 'rejected' });
     }
