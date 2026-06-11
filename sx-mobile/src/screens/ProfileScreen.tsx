@@ -1,4 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import * as Application from 'expo-application';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useMemo } from 'react';
 import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,10 +15,12 @@ import {
   startSystemBubbleOverlay,
 } from '../lib/floatingBubbleOverlay';
 import { API_ORIGIN } from '../config';
+import type { RootStackParamList } from '../navigation/RootNavigator';
 import { HIT_TARGET, Radii, Spacing, type ThemeMode } from '../theme';
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { user, logout } = useAuth();
   const { colors, mode, setMode } = useTheme();
 
@@ -122,6 +127,23 @@ export default function ProfileScreen() {
           borderRadius: Radii.md,
         },
         bubbleBtnText: { color: colors.primary, fontSize: 15, fontWeight: '700' },
+        updateBtn: {
+          marginHorizontal: Spacing.md,
+          marginTop: Spacing.md,
+          minHeight: HIT_TARGET,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+          backgroundColor: colors.card,
+          borderWidth: 1,
+          borderColor: colors.border,
+          borderRadius: Radii.md,
+          paddingHorizontal: Spacing.md,
+        },
+        updateBtnLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
+        updateBtnTitle: { color: colors.text, fontSize: 15, fontWeight: '700' },
+        updateBtnSub: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
       }),
     [colors],
   );
@@ -167,7 +189,29 @@ export default function ProfileScreen() {
       <View style={styles.infoCard}>
         <Row colors={colors} styles={styles} icon="business-outline" label="Công ty" value={user?.company_id ? 'Đã gán' : 'Chưa gán'} />
         <Row colors={colors} styles={styles} icon="server-outline" label="Máy chủ" value={API_ORIGIN.replace(/^https?:\/\//, '')} />
+        <Row
+          colors={colors}
+          styles={styles}
+          icon="phone-portrait-outline"
+          label="Phiên bản"
+          value={`v${Application.nativeApplicationVersion} (${Application.nativeBuildVersion})`}
+        />
       </View>
+
+      <TouchableOpacity
+        style={styles.updateBtn}
+        onPress={() => navigation.navigate('UpdateFromServer')}
+        activeOpacity={0.85}
+      >
+        <View style={styles.updateBtnLeft}>
+          <Ionicons name="cloud-download-outline" size={20} color={colors.primary} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.updateBtnTitle}>Cập nhật ứng dụng</Text>
+            <Text style={styles.updateBtnSub}>Kiểm tra OTA và APK từ server</Text>
+          </View>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+      </TouchableOpacity>
 
       <View style={styles.themeCard}>
         <Text style={styles.sectionTitle}>Giao diện</Text>

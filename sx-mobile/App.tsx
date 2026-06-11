@@ -1,9 +1,11 @@
 import { DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Text, TextInput } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import OtaBlockingScreen from './src/components/OtaBlockingScreen';
+import OtaSuccessNotice from './src/components/OtaSuccessNotice';
 import PushNotificationBridge from './src/components/PushNotificationBridge';
 import CallNotificationBridge from './src/components/call/CallNotificationBridge';
 import CallOverlay from './src/components/call/CallOverlay';
@@ -35,10 +37,17 @@ TextInput.defaultProps.allowFontScaling = false;
 
 function AppShell() {
   const { colors, isDark } = useTheme();
+  const [otaPhase, setOtaPhase] = useState<'checking' | 'downloading' | 'none'>('checking');
 
   useEffect(() => {
     void setupNotificationChannels();
-    void checkAndApplyOtaUpdate();
+    void (async () => {
+      setOtaPhase('checking');
+      const applied = await checkAndApplyOtaUpdate({
+        onFetching: () => setOtaPhase('downloading'),
+      });
+      if (!applied) setOtaPhase('none');
+    })();
   }, []);
 
   const navTheme = useMemo(
@@ -56,6 +65,10 @@ function AppShell() {
     [colors, isDark],
   );
 
+  if (otaPhase === 'checking' || otaPhase === 'downloading') {
+    return <OtaBlockingScreen phase={otaPhase} />;
+  }
+
   return (
     <NavigationContainer ref={navigationRef} theme={navTheme}>
       <RootNavigator />
@@ -63,6 +76,7 @@ function AppShell() {
       <CallNotificationBridge />
       <SystemBubbleSync />
       <PushNotificationBridge />
+      <OtaSuccessNotice />
       <UpdateGate />
       <StatusBar style={isDark ? 'light' : 'dark'} />
     </NavigationContainer>

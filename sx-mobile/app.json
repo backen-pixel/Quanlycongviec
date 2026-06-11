@@ -2,7 +2,7 @@
   "expo": {
     "name": "Xưởng SX",
     "slug": "sx-mobile",
-    "version": "1.0.41",
+    "version": "1.0.40",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -22,7 +22,7 @@
     },
     "android": {
       "package": "vn.tubeppro.sxmobile",
-      "versionCode": 46,
+      "versionCode": 43,
       "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": false,
       "softwareKeyboardLayoutMode": "resize",

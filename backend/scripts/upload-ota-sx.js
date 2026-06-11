@@ -13,7 +13,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const BUCKET = 'app-releases';
 const APP_KEY = 'sx-mobile';
-const RUNTIME_VERSION = '1.0.39';
+const RUNTIME_VERSION = '1.0.40';
 const CHANNEL = 'production';
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
