@@ -319,14 +319,19 @@ class IncomingCallActivity : AppCompatActivity() {
 
   private fun onReject(data: IncomingCallHelper.CallData) {
     currentCallId = null
-    // Báo cho RN để emit socket call:reject (đáng tin cậy khi app còn sống) — đảm bảo caller
-    // nhận được tín hiệu kết thúc. Đồng thời gọi REST làm fallback kép phòng khi socket lỗi
-    // hoặc app đã bị kill (RN không còn sống). Backend xử lý idempotent nên gửi 2 lần vô hại.
-    if (LockScreenCallModule.hasLiveReactInstance()) {
-      LockScreenCallModule.emitRejectCall(data.callId)
+    // Gửi broadcast tới IncomingCallActionReceiver để xử lý từ chối qua goAsync() — giữ tiến
+    // trình sống tới khi REST hoàn tất, tránh việc finishAndRemoveTask() kill tiến trình giữa
+    // chừng khiến caller không nhận được lệnh từ chối. Receiver cũng emit socket khi RN còn sống.
+    val rejectIntent = Intent(applicationContext, IncomingCallActionReceiver::class.java).apply {
+      action = IncomingCallHelper.ACTION_REJECT
+      putExtra("call_id", data.callId)
+      putExtra("from_user_id", data.fromUserId)
+      putExtra("from_name", data.fromName)
+      putExtra("is_group", data.isGroup)
+      putExtra("group_id", data.groupId)
+      putExtra("group_name", data.groupName)
     }
-    CallRejectApi.rejectAsync(applicationContext, data.callId, data.fromUserId)
-    IncomingCallHelper.cancelCallNotification(this, data.callId)
+    applicationContext.sendBroadcast(rejectIntent)
     LockScreenCallBridge.dismissUi(applicationContext, force = true)
     finishAndRemoveTask()
   }
