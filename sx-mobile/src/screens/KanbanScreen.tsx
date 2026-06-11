@@ -312,11 +312,10 @@ export default function KanbanScreen() {
   // selectedCompanyLabel — không cần vì công ty hiện dạng chips ngang
   const selectedWorkTypeLabel = workTypeOptions.find((o) => o.id === filterWorkTypeId)?.label || 'Phân loại';
 
-  const stages = board.stages;
-  const activeStage: KanbanStage | undefined = stages[activeIndex];
-  const canPrev = activeIndex > 0;
-  const canNext = activeIndex < stages.length - 1;
-  const accent = stageColor(activeStage?.color, activeIndex);
+  const ORPHAN_STAGE_ID = '__orphan_no_type__';
+
+  /** Kiểm tra project chưa phân loại (giống web isOrphan). */
+  const isOrphan = useCallback((p: ProductionProject) => !p.workshop_type_id, []);
 
   const filteredProjects = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -337,15 +336,66 @@ export default function KanbanScreen() {
     });
   }, [board.projects, search, quickFilter, myId, filterWorkTypeId]);
 
+  /**
+   * Projects chưa phân loại — xuất hiện trong cột ảo khi đang lọc theo 1 loại cụ thể
+   * (giống web: orphan projects vào column ảo thay vì bị loại bỏ hoàn toàn).
+   */
+  const orphanProjects = useMemo(() => {
+    const isSpecificType = filterWorkTypeId && filterWorkTypeId !== 'none';
+    if (!isSpecificType) return [];
+    const needle = search.trim().toLowerCase();
+    return board.projects.filter((p) => {
+      if (!isOrphan(p)) return false;
+      if (needle) {
+        const hay = `${p.code} ${p.name} ${p.customer_name || ''} ${p.customer_phone || ''}`.toLowerCase();
+        if (!hay.includes(needle)) return false;
+      }
+      if (quickFilter === 'mine' && String(p.production_person_id || '') !== String(myId || '')) return false;
+      if (quickFilter === 'overdue' && !p.is_overdue) return false;
+      if (quickFilter === 'today' && !isToday(p.production_deadline || p.deadline)) return false;
+      return true;
+    });
+  }, [board.projects, search, quickFilter, myId, filterWorkTypeId, isOrphan]);
+
+  /** Cột ảo «Chưa phân loại» — hiện khi lọc loại cụ thể VÀ có project chưa được gán loại. */
+  const orphanStage: KanbanStage | null = useMemo(() => {
+    if (!orphanProjects.length) return null;
+    return {
+      id: ORPHAN_STAGE_ID,
+      name: 'Chưa phân loại',
+      icon: '📦',
+      color: '#94a3b8',
+      order_index: -1,
+      bucket_slug: 'orphan',
+    };
+  }, [orphanProjects.length]);
+
+  /** Danh sách cột hiển thị = cột ảo (nếu có) + cột thật. */
+  const allStages = useMemo(
+    () => (orphanStage ? [orphanStage, ...board.stages] : board.stages),
+    [orphanStage, board.stages],
+  );
+
+  const activeStage: KanbanStage | undefined = allStages[activeIndex];
+  const canPrev = activeIndex > 0;
+  const canNext = activeIndex < allStages.length - 1;
+  const accent = stageColor(activeStage?.color, activeIndex);
+
   const projectsByStage = useMemo(() => {
     const map = new Map<string, ProductionProject[]>();
-    stages.forEach((s) => map.set(s.id, []));
+    allStages.forEach((s) => map.set(s.id, []));
     filteredProjects.forEach((p) => {
       const key = p.resolved_column_id;
       if (key && map.has(key)) map.get(key)!.push(p);
     });
+    // Orphan projects đi vào cột ảo
+    if (orphanStage) {
+      orphanProjects.forEach((p) => {
+        map.get(ORPHAN_STAGE_ID)!.push(p);
+      });
+    }
     return map;
-  }, [stages, filteredProjects]);
+  }, [allStages, filteredProjects, orphanProjects, orphanStage]);
 
   const columnProjects = activeStage ? (projectsByStage.get(activeStage.id) || []) : [];
   const filterActive = search.trim().length > 0 || quickFilter !== 'all'
@@ -353,7 +403,7 @@ export default function KanbanScreen() {
 
   const moveCardTo = useCallback(
     async (project: ProductionProject, targetStageId: string) => {
-      const target = stages.find((s) => String(s.id) === String(targetStageId));
+      const target = allStages.find((s) => String(s.id) === String(targetStageId));
       if (!target) return;
       const fromColId = project.resolved_column_id ?? project.sx_kanban_column_id ?? null;
       const isIntake = target.bucket_slug === INTAKE_BUCKET;
@@ -402,20 +452,20 @@ export default function KanbanScreen() {
         setMovingId(null);
       }
     },
-    [stages, showToast, user?.company_id],
+    [allStages, showToast, user?.company_id],
   );
 
   const statPills = useMemo(() => {
-    const list = filteredProjects;
-    const intakeStage = stages.find((s) => s.bucket_slug === INTAKE_BUCKET);
-    const handoverStage = stages.find((s) => s.is_handover_to_logistics);
+    const list = [...filteredProjects, ...orphanProjects];
+    const intakeStage = allStages.find((s) => s.bucket_slug === INTAKE_BUCKET);
+    const handoverStage = allStages.find((s) => s.is_handover_to_logistics);
     const producing = list.filter((p) => {
       const col = p.resolved_column_id;
       if (!col || col === intakeStage?.id || col === handoverStage?.id) return false;
-      if (isShipped(p) || isAwaitingDelivery(p, stages)) return false;
+      if (isShipped(p) || isAwaitingDelivery(p, allStages)) return false;
       return p.status === 'producing' || !['completed'].includes(String(p.status || ''));
     }).length;
-    const awaitingDelivery = list.filter((p) => isAwaitingDelivery(p, stages)).length;
+    const awaitingDelivery = list.filter((p) => isAwaitingDelivery(p, allStages)).length;
     const shipped = list.filter((p) => isShipped(p)).length;
     const completed = list.filter((p) => p.status === 'completed').length;
     const intake = list.filter((p) => p.resolved_column_id === intakeStage?.id || p.sx_intake).length;
@@ -440,7 +490,7 @@ export default function KanbanScreen() {
     );
   }
 
-  if (error && !stages.length) {
+  if (error && !allStages.length) {
     return (
       <View style={[styles.center, { paddingTop: insets.top, paddingHorizontal: Spacing.xl }]}>
         <Ionicons name="cloud-offline-outline" size={44} color={colors.textFaint} />
@@ -678,7 +728,7 @@ export default function KanbanScreen() {
         </View>
 
         <Pressable
-          onPress={() => setActiveIndex((i) => Math.min(stages.length - 1, i + 1))}
+          onPress={() => setActiveIndex((i) => Math.min(allStages.length - 1, i + 1))}
           disabled={!canNext}
           hitSlop={10}
           style={[styles.colNavArrow, !canNext && styles.colNavArrowHidden]}
@@ -695,14 +745,16 @@ export default function KanbanScreen() {
         contentContainerStyle={styles.dotsRow}
         nestedScrollEnabled
       >
-        {stages.map((s, i) => {
+        {allStages.map((s, i) => {
           const active = i === activeIndex;
+          const isVirtual = s.id === ORPHAN_STAGE_ID;
           return (
             <Pressable key={s.id} onPress={() => setActiveIndex(i)} hitSlop={8} style={i > 0 ? styles.dotGap : undefined}>
               <View
                 style={[
                   styles.dot,
-                  active && { width: 20, backgroundColor: stageColor(s.color, i) },
+                  isVirtual && { backgroundColor: '#94a3b8' },
+                  active && { width: 20, backgroundColor: isVirtual ? '#94a3b8' : stageColor(s.color, i) },
                 ]}
               />
             </Pressable>
@@ -893,7 +945,7 @@ export default function KanbanScreen() {
 
       <MoveColumnModal
         visible={!!moveModalProject}
-        stages={stages}
+        stages={board.stages}
         currentStageId={moveModalProject?.resolved_column_id ?? moveModalProject?.sx_kanban_column_id}
         onSelect={(stageId) => {
           if (moveModalProject) void moveCardTo(moveModalProject, stageId);
