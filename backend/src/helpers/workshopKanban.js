@@ -793,6 +793,47 @@ async function resolveSxColumnUuidForDb(colId, companyId) {
 }
 
 /**
+ * Ngày đặt hàng (projects.order_date) = ngày deal vào cột CRM «Sản xuất».
+ * Chỉ ghi khi chưa có — không ghi đè ngày đã nhập thủ công.
+ */
+function crmTransitionToDateOnly(isoOrDate) {
+  if (!isoOrDate) return null;
+  const d = new Date(isoOrDate);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
+async function syncProjectOrderDateFromCrmProductionEntry(projectId, transitionAt) {
+  const pid = String(projectId || '').trim();
+  if (!pid) return { ok: false, skipped: 'no_project' };
+  const dateOnly = crmTransitionToDateOnly(transitionAt || new Date());
+  if (!dateOnly) return { ok: false, skipped: 'invalid_date' };
+
+  const { data: project, error: pErr } = await supabase
+    .from('projects')
+    .select('id, order_date')
+    .eq('id', pid)
+    .maybeSingle();
+  if (pErr) throw pErr;
+  if (!project) return { ok: false, skipped: 'project_not_found' };
+  if (project.order_date) return { ok: false, skipped: 'already_set', order_date: project.order_date };
+
+  const { error } = await supabase
+    .from('projects')
+    .update({ order_date: dateOnly, updated_at: new Date().toISOString() })
+    .eq('id', pid);
+  if (error && !String(error.message || '').includes('order_date')) throw error;
+  if (error) return { ok: false, skipped: 'order_date_column_missing' };
+  return { ok: true, order_date: dateOnly };
+}
+
+/** Trả ngày đặt hàng đề xuất (không ghi DB) — dùng khi gộp patch project. */
+function resolveProjectOrderDateFromCrmProduction(project, transitionAt) {
+  if (project?.order_date) return null;
+  return crmTransitionToDateOnly(transitionAt || new Date());
+}
+
+/**
  * CRM → SX: deal vào cột sync_role='sx_production' → gán sx_pipeline_stage_id (+ workflow project nếu có).
  */
 async function syncSxKanbanFromCrmProductionStage(leadId) {
@@ -801,7 +842,7 @@ async function syncSxKanbanFromCrmProductionStage(leadId) {
 
   const { data: lead, error: le } = await supabase
     .from('crm_leads')
-    .select('id, type, project_id, pipeline_id, stage_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, sync_role)')
+    .select('id, type, project_id, pipeline_id, stage_id, stage_entered_at, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, sync_role)')
     .eq('id', lid)
     .maybeSingle();
   if (le) throw le;
@@ -815,7 +856,7 @@ async function syncSxKanbanFromCrmProductionStage(leadId) {
 
   const { data: project } = await supabase
     .from('projects')
-    .select('id, company_id, workshop_type_id, current_stage_id, status')
+    .select('id, company_id, workshop_type_id, current_stage_id, status, order_date')
     .eq('id', lead.project_id)
     .maybeSingle();
   if (!project) return { ok: false, skipped: 'project_not_found' };
@@ -858,6 +899,9 @@ async function syncSxKanbanFromCrmProductionStage(leadId) {
     }
   }
 
+  const autoOrderDate = resolveProjectOrderDateFromCrmProduction(project, lead.stage_entered_at || now);
+  if (autoOrderDate) projectUpd.order_date = autoOrderDate;
+
   if (Object.keys(projectUpd).length > 1) {
     await supabase.from('projects').update(projectUpd).eq('id', project.id);
   }
@@ -867,6 +911,7 @@ async function syncSxKanbanFromCrmProductionStage(leadId) {
     sx_pipeline_stage_id: sxColUuid,
     project_id: project.id,
     workflow_stage_id: wfId,
+    order_date: autoOrderDate || project.order_date || null,
   };
 }
 
@@ -1298,6 +1343,7 @@ module.exports = {
   resolveSxPipelineStageUuidForProject,
   syncCrmLeadSxPipelineFromProject,
   syncSxKanbanFromCrmProductionStage,
+  syncProjectOrderDateFromCrmProductionEntry,
   pickSxColumnOnCrmProductionEntry,
   shouldAutoOverwriteCrmStage,
   repairCrmDealPipelineDisplay,

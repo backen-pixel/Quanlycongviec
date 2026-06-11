@@ -10,13 +10,14 @@ const UnreadBadgesContext = createContext(null);
 export function UnreadBadgesProvider({ children }) {
   const { socket } = useAuth();
   const release = useReleaseNotesUnread();
-  const assignments = useCrmAssignmentsUnread();
+  const assignmentsCrm = useCrmAssignmentsUnread('crm');
+  const assignmentsSx = useCrmAssignmentsUnread('production');
   const social = useInternalSocialUnread();
 
   useEffect(() => {
     const handlers = {
       social: () => { void social.refresh?.(); },
-      assignments: () => { void assignments.refresh?.(); },
+      assignments: () => { void assignmentsCrm.refresh?.(); void assignmentsSx.refresh?.(); },
       updates: () => { void release.refresh?.(); },
       events: () => { void release.refresh?.(); },
     };
@@ -35,7 +36,7 @@ export function UnreadBadgesProvider({ children }) {
         window.removeEventListener(`badge:refresh:${ch}`, onWindow);
       }
     };
-  }, [social, assignments, release]);
+  }, [social, assignmentsCrm, assignmentsSx, release]);
 
   useEffect(() => {
     if (!socket) return undefined;
@@ -53,22 +54,26 @@ export function UnreadBadgesProvider({ children }) {
     () => ({
       updates: release.total,
       updatesDetail: release,
-      assignments: assignments.unread,
-      assignmentsDetail: assignments,
+      assignments: assignmentsCrm.unread,
+      assignmentsDetail: assignmentsCrm,
+      sxAssignments: assignmentsSx.unread,
+      sxAssignmentsDetail: assignmentsSx,
       social: social.unread,
       socialDetail: social,
       refreshAll: async () => {
         await Promise.all([
           release.refresh?.(),
-          assignments.refresh?.(),
+          assignmentsCrm.refresh?.(),
+          assignmentsSx.refresh?.(),
           social.refresh?.(),
         ]);
       },
       refreshSocial: social.refresh,
-      refreshAssignments: assignments.refresh,
+      refreshAssignments: assignmentsCrm.refresh,
+      refreshSxAssignments: assignmentsSx.refresh,
       refreshUpdates: release.refresh,
     }),
-    [release, assignments, social],
+    [release, assignmentsCrm, assignmentsSx, social],
   );
 
   return (
@@ -100,6 +105,7 @@ export function useSidebarUnreadBadges() {
   return {
     updatesUnread: b.updates,
     assignmentsUnread: b.assignments,
+    sxAssignmentsUnread: b.sxAssignments ?? 0,
     socialUnread: b.social,
   };
 }

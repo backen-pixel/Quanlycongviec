@@ -1,4 +1,5 @@
 const { supabase } = require('../config/supabase');
+const { normalizeTemplateItemAssigneeIds } = require('./templateItemAssignees');
 
 /** Admin công ty xưởng (role admin/sales_admin + company_id khớp). */
 async function resolveProductionCompanyAdminUserId(productionCompanyId) {
@@ -123,21 +124,29 @@ async function loadProductionHandoverMaps(productionCompanyId) {
 }
 
 /**
- * Gán assignee_id cho nhiệm vụ sx_*: chỉ khi có dòng trong production_handover_task_assignments.
- * Không gán NV mặc định — trách nhiệm deal nằm ở admin công ty xưởng (assigned_to / production_person_id).
+ * Gán assignee_id cho nhiệm vụ sx_*:
+ * 1) production_handover_task_assignments theo công ty (ghi đè → 1 NV)
+ * 2) default_assignee_ids / default_assignee_id trên workshop_task_template_items
  */
-function resolveSxAssigneeForTemplateItem(item, maps) {
-  if (!item?.id) return null;
+function resolveSxAssigneesForTemplateItem(item, maps) {
+  if (!item?.id) return [];
   const key = String(item.id);
   if (maps.assigneeByTemplateItemId.has(key)) {
-    return maps.assigneeByTemplateItemId.get(key) || null;
+    const h = maps.assigneeByTemplateItemId.get(key);
+    return h ? [String(h)] : [];
   }
-  return null;
+  return normalizeTemplateItemAssigneeIds(item);
+}
+
+function resolveSxAssigneeForTemplateItem(item, maps) {
+  const ids = resolveSxAssigneesForTemplateItem(item, maps);
+  return ids[0] || null;
 }
 
 module.exports = {
   loadProductionHandoverMaps,
   resolveSxAssigneeForTemplateItem,
+  resolveSxAssigneesForTemplateItem,
   resolveProductionCompanyAdminUserId,
   resolveProductionHandoverResponsibleUserId,
   assignProductionCompanyDealResponsibility,

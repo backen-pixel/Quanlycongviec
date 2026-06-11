@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import api from '../lib/api';
+import { resolveApiOrigin } from '../lib/apiOrigin';
 import {
   Smartphone, Plus, Upload, Trash2, Eye, EyeOff, ShieldAlert, ShieldCheck,
   Loader2, X, Package, Download, RefreshCw, ChevronRight, FolderSearch, FileWarning, Pencil, Play,
@@ -24,6 +25,20 @@ function formatBytes(n) {
   if (!n) return '—';
   const mb = n / (1024 * 1024);
   return mb >= 1 ? `${mb.toFixed(1)} MB` : `${(n / 1024).toFixed(0)} KB`;
+}
+
+/** Link tải APK qua API — hoạt động khi web và backend khác origin (điện thoại). */
+function apkDownloadHref(release) {
+  if (!release?.id) return '';
+  const base = resolveApiOrigin();
+  const path = `/api/app-updates/download/${release.id}`;
+  return base ? `${base}${path}` : path;
+}
+
+function apkDownloadFilename(release, appKey) {
+  if (!release?.version) return 'app-release.apk';
+  const code = release.version_code != null ? `-code${release.version_code}` : '';
+  return `${appKey || 'app'}-${release.version}${code}-release.apk`;
 }
 
 function formatDateVN(iso) {
@@ -563,9 +578,12 @@ export default function AppUpdatesPage() {
                             {rel.sha256 && <p className="text-[10px] text-gray-300 font-mono truncate mt-0.5">sha256: {rel.sha256}</p>}
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
-                            {(rel.file_url || rel.external_url) && (
-                              <a href={rel.external_url || rel.file_url} target="_blank" rel="noreferrer"
-                                className="h-8 w-8 flex items-center justify-center rounded-lg border hover:bg-gray-50 cursor-pointer" title="Tải file">
+                            {(rel.file_url || rel.external_url || rel.storage_path) && (
+                              <a
+                                href={apkDownloadHref(rel)}
+                                download={apkDownloadFilename(rel, selected.app_key)}
+                                className="h-8 w-8 flex items-center justify-center rounded-lg border hover:bg-gray-50 cursor-pointer"
+                                title="Tải APK">
                                 <Download className="h-4 w-4 text-gray-500" />
                               </a>
                             )}
@@ -816,9 +834,10 @@ function ReleaseEditForm({ app, release, onClose, onSaved, onReleaseUpdated }) {
                 ) : null}
                 <div className="flex flex-wrap gap-2 pt-1">
                   <a
-                    href={isOta ? release.manifest?.launchAsset?.url : (release.external_url || release.file_url)}
-                    target="_blank"
-                    rel="noreferrer"
+                    href={isOta ? release.manifest?.launchAsset?.url : apkDownloadHref(release)}
+                    download={isOta ? undefined : apkDownloadFilename(release, app.app_key)}
+                    target={isOta ? '_blank' : undefined}
+                    rel={isOta ? 'noreferrer' : undefined}
                     className="h-8 px-3 inline-flex items-center gap-1.5 rounded-lg border bg-white text-xs font-medium text-blue-600 hover:bg-blue-50"
                   >
                     <Download className="h-3.5 w-3.5" /> Tải file

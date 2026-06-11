@@ -180,6 +180,12 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
 
   if (assignmentId) {
     await replaceAssignmentAssignees(assignmentId, ids);
+    try {
+      const { syncAllTaskArtifactsToAssignment } = require('./crmTaskAssignmentArtifactSync');
+      await syncAllTaskArtifactsToAssignment(task.id, assignmentId, req);
+    } catch (artErr) {
+      console.warn('[sync] task→assignment artifacts:', artErr.message);
+    }
   }
 
   return { assignmentId };
@@ -196,7 +202,17 @@ async function syncCrmTaskFromAssignment(assignment) {
     updated_at: new Date().toISOString(),
   };
   if (assignment.title != null) update.title = assignment.title;
-  if (assignment.description !== undefined) update.description = assignment.description;
+  if (assignment.description !== undefined) {
+    update.description = assignment.description;
+    const { data: priorNotes } = await supabase
+      .from('crm_tasks')
+      .select('notes')
+      .eq('id', taskId)
+      .maybeSingle();
+    if (!String(priorNotes?.notes || '').trim() && String(assignment.description || '').trim()) {
+      update.notes = assignment.description;
+    }
+  }
   if (assignment.priority != null) update.priority = assignment.priority;
   if (assignment.status != null) update.status = assignment.status;
   if (assignment.deadline !== undefined) update.deadline = assignment.deadline;
@@ -229,7 +245,7 @@ async function attachCrmTaskMetaToAssignments(list) {
   if (!taskIds.length) return list;
   const { data, error } = await supabase
     .from('crm_tasks')
-    .select('id, notes, status, lead_id, title')
+    .select('id, notes, status, lead_id, title, stage_slug, production_pipeline_stage_id')
     .in('id', taskIds);
   if (error) return list;
   const byId = new Map((data || []).map((t) => [String(t.id), t]));
@@ -254,15 +270,26 @@ async function applyAssignmentStatusColumn(update, status) {
 async function attachAssignmentIdsToCrmTasks(list) {
   if (!Array.isArray(list) || !list.length) return list;
   const taskIds = list.map((t) => t.id);
-  const { data, error } = await supabase
+  let rows = null;
+  let error = null;
+  ({ data: rows, error } = await supabase
     .from('crm_assignments')
-    .select('id, crm_task_id')
-    .in('crm_task_id', taskIds);
+    .select('id, crm_task_id, assignment_module')
+    .in('crm_task_id', taskIds));
+  if (error && /assignment_module/.test(error.message || '')) {
+    ({ data: rows, error } = await supabase
+      .from('crm_assignments')
+      .select('id, crm_task_id')
+      .in('crm_task_id', taskIds));
+  }
   if (error && /crm_task_id/.test(error.message || '')) return list;
-  const byTask = new Map((data || []).map((r) => [String(r.crm_task_id), r.id]));
+  const byTask = new Map((rows || []).map((r) => [String(r.crm_task_id), r]));
   list.forEach((t) => {
-    const aid = byTask.get(String(t.id));
-    if (aid) t.crm_assignment_id = aid;
+    const row = byTask.get(String(t.id));
+    if (row?.id) {
+      t.crm_assignment_id = row.id;
+      if (row.assignment_module) t.crm_assignment_module = row.assignment_module;
+    }
   });
   return list;
 }

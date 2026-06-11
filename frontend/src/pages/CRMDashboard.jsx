@@ -14,6 +14,7 @@ import {
   MessageSquare, MinusSquare,
 } from 'lucide-react';
 import { ListView, PlannerView, DeadlineView, CommentsView } from '../components/CRMViews';
+import AssignedTasksToolbarButton from '../components/AssignedTasksToolbarButton';
 import { resolveCrmLeadKanbanScheduleSource } from '../lib/crmLeadDeadlineDisplay';
 import EmployeePicker from '../components/EmployeePicker';
 import NewDealModal from '../components/NewDealModal';
@@ -4126,7 +4127,8 @@ export default function CRMDashboard() {
       </div>
 
       {/* View Mode Toggle */}
-      <div className={`flex items-center gap-1 ${compactLeadUi ? 'mb-2' : 'mb-3'}`}>
+      <div className={`flex items-center gap-1 flex-wrap ${compactLeadUi ? 'mb-2' : 'mb-3'}`}>
+        <AssignedTasksToolbarButton compact={compactLeadUi} />
         {[
           { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
           { id: 'list', icon: List, label: 'Danh sách' },

@@ -4,9 +4,10 @@ import api from '../lib/api';
 import {
   FolderKanban, CheckSquare, Users, DollarSign, TrendingUp, TrendingDown,
   AlertTriangle, Clock, ArrowRight, Activity, Bell, Building2,
-  ChevronDown, ChevronRight, Filter, Calendar, Search, X, User, Target, ArrowRightLeft
+  ChevronDown, ChevronRight, Filter, Calendar, Search, X, User, Target, ArrowRightLeft,
 } from 'lucide-react';
 import { formatVND, getInitials, avatarColor, STATUS_LABELS, STATUS_COLORS, PRIORITY_LABELS, PRIORITY_COLORS, formatDate } from '../lib/utils';
+import AssignedTasksToolbarButton from '../components/AssignedTasksToolbarButton';
 
 export default function DashboardNew() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -83,8 +84,9 @@ export default function DashboardNew() {
   return (
     <div className="min-h-screen p-4 sm:p-6 lg:p-8">
       <div className="mb-6">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
           <h1 className="text-3xl font-bold" style={{ color: '#000000' }}>📊 Dashboard</h1>
+          {!selectedDiv && <AssignedTasksToolbarButton />}
         </div>
         <div data-tour="division-tabs" className="flex items-center gap-3">
           <select

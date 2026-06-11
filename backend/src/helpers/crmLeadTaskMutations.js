@@ -20,6 +20,58 @@ const {
 } = require('./deadlineModuleNotifications');
 const { isExecutorColumnError } = require('./crossCompanyWorkspace');
 
+function isQuickVerdictColumnError(err) {
+  const m = String(err?.message || '').toLowerCase();
+  return m.includes('requires_quick_verdict') || m.includes('quick_verdict');
+}
+
+/** Cập nhật một phần checklist (không gian chung) — gộp theo id, không xóa mục nội bộ. */
+function mergeChecklistPartialUpdate(priorRaw, incomingRaw) {
+  const prior = Array.isArray(priorRaw) ? priorRaw : [];
+  const incoming = Array.isArray(incomingRaw) ? incomingRaw : [];
+  if (!prior.length) return incoming;
+  if (!incoming.length) return prior;
+
+  const priorMap = new Map(prior.filter((c) => c?.id).map((c) => [String(c.id), c]));
+  const incomingIds = incoming.map((c) => String(c?.id || '')).filter(Boolean);
+  const allIncomingKnown = incomingIds.length === incoming.length
+    && incomingIds.every((id) => priorMap.has(id));
+  const hasMissing = prior.some((p) => p?.id && !incomingIds.includes(String(p.id)));
+
+  if (!allIncomingKnown || !hasMissing) return incoming;
+
+  return prior.map((p) => {
+    const upd = incoming.find((c) => String(c?.id) === String(p?.id));
+    return upd ? { ...p, ...upd } : p;
+  });
+}
+
+/** Tự phát hiện cập nhật từ không gian chung (subset nhỏ) — tránh ghi đè mất mục nội bộ. */
+function shouldAutoMergeChecklistUpdate(priorRaw, incomingRaw) {
+  const prior = Array.isArray(priorRaw) ? priorRaw.filter((c) => c?.id) : [];
+  const incoming = Array.isArray(incomingRaw) ? incomingRaw.filter((c) => c?.id) : [];
+  if (!prior.length || !incoming.length) return false;
+  if (incoming.length >= prior.length) return false;
+
+  const priorIds = new Set(prior.map((c) => String(c.id)));
+  const allKnown = incoming.every((c) => priorIds.has(String(c.id)));
+  if (!allKnown) return false;
+
+  const hasMissing = prior.some((p) => !incoming.some((c) => String(c.id) === String(p.id)));
+  if (!hasMissing) return false;
+
+  return (incoming.length / prior.length) < 0.75;
+}
+
+function resolveChecklistForUpdate(priorRaw, incomingRaw, checklistPartial) {
+  if (!Array.isArray(incomingRaw)) return incomingRaw;
+  if (!priorRaw) return incomingRaw;
+  if (checklistPartial || shouldAutoMergeChecklistUpdate(priorRaw, incomingRaw)) {
+    return mergeChecklistPartialUpdate(priorRaw, incomingRaw);
+  }
+  return incomingRaw;
+}
+
 function normalizeTimestamp(v) {
   if (!v) return null;
   const d = new Date(v);
@@ -160,6 +212,7 @@ async function createCrmLeadTask(req, leadId, body) {
 async function updateCrmLeadTask(req, leadId, taskId, body) {
   const b = body;
   let priorEvidenceRow = null;
+  let resolvedChecklist = null;
   if (b.status === 'completed' || Array.isArray(b.checklist)) {
     const { data: prior, error: pErr } = await supabase
       .from('crm_tasks')
@@ -169,13 +222,14 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
     priorEvidenceRow = prior;
 
     if (Array.isArray(b.checklist)) {
+      resolvedChecklist = resolveChecklistForUpdate(prior?.checklist, b.checklist, b.checklist_partial);
       const { data: ckAtts, error: attErr } = await supabase
         .from('crm_task_attachments')
         .select('id, file_url, file_name, mime_type, notes, doc_type, checklist_id')
         .eq('task_id', taskId)
         .limit(200);
       if (attErr) return { error: attErr.message, status: 500 };
-      const ckCheck = validateChecklistTransition(prior?.checklist, b.checklist, ckAtts || []);
+      const ckCheck = validateChecklistTransition(prior?.checklist, resolvedChecklist, ckAtts || []);
       if (!ckCheck.ok) {
         return {
           error: `Mục checklist «${ckCheck.itemTitle || ''}»: thiếu minh chứng${ckCheck.missingLabel ? ` (${ckCheck.missingLabel})` : ''}.`,
@@ -186,7 +240,7 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
     }
 
     if (b.status === 'completed' && prior && prior.status !== 'completed') {
-      const nextChecklist = Array.isArray(b.checklist) ? b.checklist : prior.checklist;
+      const nextChecklist = Array.isArray(b.checklist) ? resolvedChecklist : prior.checklist;
       const { data: ckAtts } = await supabase
         .from('crm_task_attachments')
         .select('id, file_url, file_name, mime_type, notes, doc_type, checklist_id')
@@ -243,11 +297,16 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
   fields.forEach((f) => {
     if (b[f] === undefined) return;
     if (f === 'deadline' && b[f] != null && b[f] !== '') update[f] = normalizeTimestamp(b[f]);
-    else if (f === 'checklist') update[f] = Array.isArray(b[f]) ? b[f] : [];
+    else if (f === 'checklist') {
+      update[f] = resolvedChecklist != null ? resolvedChecklist : (Array.isArray(b[f]) ? b[f] : []);
+    }
     else update[f] = b[f];
   });
   if (isAdminLike(req.user) && b.blocks_stage_advance !== undefined) {
     update.blocks_stage_advance = !!b.blocks_stage_advance;
+  }
+  if (b.requires_quick_verdict !== undefined) {
+    update.requires_quick_verdict = !!b.requires_quick_verdict;
   }
   if (Array.isArray(b.assignee_ids)) {
     const ids = b.assignee_ids.filter(Boolean).map(String);
@@ -278,6 +337,24 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
   }
   if (error && isExecutorColumnError(error)) {
     const { executor_company_id: _e, ...legacy } = update;
+    ({ data, error } = await supabase.from('crm_tasks').update(legacy)
+      .eq('id', taskId).select(CRM_TASK_SELECT).single());
+  }
+  if (error && isQuickVerdictColumnError(error)) {
+    if (b.requires_quick_verdict !== undefined || b.quick_verdict !== undefined) {
+      return {
+        error: 'Database chưa có cột ghi chú nhanh (migration 316). Chạy database/316_task_quick_verdict.sql trên Supabase rồi thử lại.',
+        status: 503,
+      };
+    }
+    const {
+      requires_quick_verdict: _rq,
+      quick_verdict: _qv,
+      quick_verdict_reason: _qr,
+      quick_verdict_at: _qa,
+      quick_verdict_by: _qb,
+      ...legacy
+    } = update;
     ({ data, error } = await supabase.from('crm_tasks').update(legacy)
       .eq('id', taskId).select(CRM_TASK_SELECT).single());
   }
@@ -350,10 +427,107 @@ async function getCrmTaskLeadId(taskId) {
   return data?.lead_id || null;
 }
 
+function mergeChecklistRestoreFromTemplate(existingRaw, templateRaw, defaultExec) {
+  const { normalizeTemplateChecklistForCrmTask } = require('./templateChecklistNormalize');
+  const template = normalizeTemplateChecklistForCrmTask(templateRaw, defaultExec);
+  const existing = Array.isArray(existingRaw) ? existingRaw : [];
+  const byTitle = new Map(
+    existing
+      .filter((c) => c && String(c.title || '').trim())
+      .map((c) => [String(c.title).trim().toLowerCase(), c]),
+  );
+  return template.map((tpl) => {
+    const prior = byTitle.get(String(tpl.title).trim().toLowerCase());
+    if (!prior) return tpl;
+    return {
+      ...tpl,
+      id: prior.id,
+      done: !!prior.done,
+      notes: prior.notes || '',
+      assignee_id: prior.assignee_id || tpl.assignee_id || null,
+      executor_company_id: prior.executor_company_id ?? tpl.executor_company_id ?? null,
+    };
+  });
+}
+
+/** Khôi phục checklist từ workshop_task_template_items khi bị ghi đè (vd. từ không gian chung). */
+async function restoreCrmTaskChecklistFromWorkshopTemplate(taskId, ownerCompanyId = null) {
+  const { data: task, error: tErr } = await supabase.from('crm_tasks')
+    .select('id, title, checklist, lead_id, executor_company_id')
+    .eq('id', taskId)
+    .maybeSingle();
+  if (tErr) return { error: tErr.message, status: 500 };
+  if (!task) return { error: 'Không tìm thấy nhiệm vụ', status: 404 };
+
+  const titleKey = String(task.title || '').trim();
+  if (!titleKey) return { error: 'Nhiệm vụ không có tên', status: 400 };
+
+  let companyId = ownerCompanyId || null;
+  if (!companyId && task.lead_id) {
+    const { data: lead } = await supabase.from('crm_leads')
+      .select('company_id, project_id')
+      .eq('id', task.lead_id)
+      .maybeSingle();
+    if (lead?.project_id) {
+      const { data: proj } = await supabase
+        .from('projects')
+        .select('company_id')
+        .eq('id', lead.project_id)
+        .maybeSingle();
+      companyId = proj?.company_id || lead?.company_id || null;
+    } else {
+      companyId = lead?.company_id || null;
+    }
+  }
+
+  const { data: tplItems, error: tplErr } = await supabase
+    .from('workshop_task_template_items')
+    .select('checklist, executor_company_id, template_id')
+    .eq('title', titleKey)
+    .order('created_at', { ascending: false })
+    .limit(20);
+  if (tplErr) return { error: tplErr.message, status: 500 };
+
+  let tplItem = (tplItems || [])[0] || null;
+  if (companyId && tplItems?.length) {
+    for (const row of tplItems) {
+      if (!row.template_id) continue;
+      const { data: tpl } = await supabase
+        .from('workshop_task_templates')
+        .select('company_id')
+        .eq('id', row.template_id)
+        .maybeSingle();
+      if (tpl && String(tpl.company_id) === String(companyId)) {
+        tplItem = row;
+        break;
+      }
+    }
+  }
+  if (!tplItem?.checklist?.length) {
+    return { error: `Không tìm thấy mẫu checklist cho nhiệm vụ «${titleKey}»`, status: 404 };
+  }
+
+  const defExec = tplItem.executor_company_id || task.executor_company_id || companyId || null;
+  const nextChecklist = mergeChecklistRestoreFromTemplate(task.checklist, tplItem.checklist, defExec);
+
+  const { data, error } = await supabase.from('crm_tasks')
+    .update({ checklist: nextChecklist, updated_at: new Date().toISOString() })
+    .eq('id', taskId)
+    .select(CRM_TASK_SELECT)
+    .single();
+  if (error) return { error: error.message, status: 500 };
+
+  const [withAssignees] = await attachAssigneesToCrmTasks([data]);
+  return { data: withAssignees, status: 200, restored_count: nextChecklist.length };
+}
+
 module.exports = {
   resolveCrmTaskWriteLeadId,
   createCrmLeadTask,
   updateCrmLeadTask,
   deleteCrmLeadTask,
   getCrmTaskLeadId,
+  restoreCrmTaskChecklistFromWorkshopTemplate,
+  mergeChecklistPartialUpdate,
+  resolveChecklistForUpdate,
 };

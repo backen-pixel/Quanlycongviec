@@ -10,10 +10,11 @@ import { useAuth } from '../lib/auth';
  * Chỉ gọi API khi đã đăng nhập — nếu không, route sẽ trả 401 và bị
  * interceptor redirect về /login (vô nghĩa khi user vốn dĩ đang ở /login).
  */
-export function useCrmAssignmentsUnread() {
+export function useCrmAssignmentsUnread(assignmentModule = 'crm') {
   const { user } = useAuth();
   const [unread, setUnread] = useState(0);
   const [detail, setDetail] = useState({ overdue: 0, dueSoon: 0, pending: 0 });
+  const mod = String(assignmentModule || 'crm').toLowerCase();
 
   const refresh = useCallback(async () => {
     if (!user) {
@@ -22,7 +23,8 @@ export function useCrmAssignmentsUnread() {
       return;
     }
     try {
-      const { data } = await api.get('/crm/assignments/unread-count');
+      const params = mod === 'production' || mod === 'crm' ? { assignment_module: mod } : {};
+      const { data } = await api.get('/crm/assignments/unread-count', { params });
       setUnread(Number(data?.unread) || 0);
       setDetail({
         overdue: Number(data?.overdue) || 0,
@@ -33,7 +35,7 @@ export function useCrmAssignmentsUnread() {
       setUnread(0);
       setDetail({ overdue: 0, dueSoon: 0, pending: 0 });
     }
-  }, [user]);
+  }, [user, mod]);
 
   useEffect(() => {
     if (!user) {
@@ -44,8 +46,14 @@ export function useCrmAssignmentsUnread() {
     void refresh();
     const t = setInterval(refresh, 60_000);
     const onFocus = () => refresh();
+    const onBadge = () => refresh();
     window.addEventListener('focus', onFocus);
-    return () => { clearInterval(t); window.removeEventListener('focus', onFocus); };
+    window.addEventListener('badge:refresh:assignments', onBadge);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('badge:refresh:assignments', onBadge);
+    };
   }, [refresh, user]);
 
   return { unread, ...detail, refresh };

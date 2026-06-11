@@ -28,6 +28,11 @@ const { parseReleaseFilename, FILENAME_RULE_TEXT, buildStandardApkFilename } = r
 const { scanAppReleaseFiles } = require('../helpers/appReleaseScan');
 const { importApkFile, replaceReleaseApkFile, replaceReleaseOtaFile, backfillOtaSizes } = require('../helpers/appReleaseImport');
 const { deleteAppReleaseById, clearReleaseBucketFilesOnly } = require('../helpers/appReleaseDelete');
+const {
+  apkFilenameForRelease,
+  resolveLocalApkPath,
+  buildPublicDownloadUrl,
+} = require('../helpers/appReleaseDownload');
 const config = require('../config');
 
 const r = Router();
@@ -109,8 +114,10 @@ async function findApp({ appKey, appId }) {
   return data || null;
 }
 
-function downloadUrlFor(release) {
-  return release.external_url || release.file_url || null;
+function downloadUrlFor(release, publicBase) {
+  if (release.external_url) return release.external_url;
+  if (release.file_url && /^https?:\/\//i.test(release.file_url)) return release.file_url;
+  return buildPublicDownloadUrl(publicBase, release.id);
 }
 
 function computeStorageStats(releases) {
@@ -187,7 +194,7 @@ r.get('/check', async (req, res) => {
       mandatory: hasNewer && latest.is_mandatory,
       latestVersion: latest.version,
       latestVersionCode: latest.version_code,
-      downloadUrl: hasNewer ? downloadUrlFor(latest) : null,
+      downloadUrl: hasNewer ? downloadUrlFor(latest, publicBaseUrl(req)) : null,
       size: latest.file_size,
       sha256: latest.sha256,
       releaseNotes: latest.release_notes || null,
@@ -244,22 +251,65 @@ r.get('/ota-current', async (req, res) => {
   }
 });
 
-// GET /download/:releaseId — redirect tới file (tiện đặt link cố định)
+// GET /download/:releaseId — phục vụ APK (local uploads) hoặc redirect Storage/external
 r.get('/download/:releaseId', async (req, res) => {
   try {
     const { data: rel } = await supabase
       .from('app_releases')
-      .select('*')
+      .select('*, mobile_apps(app_key, display_name)')
       .eq('id', req.params.releaseId)
       .maybeSingle();
     if (!rel) return res.status(404).json({ error: 'Không tìm thấy phiên bản' });
-    const url = downloadUrlFor(rel);
-    if (!url) return res.status(404).json({ error: 'Phiên bản chưa có file' });
+    if (rel.update_type !== 'apk') {
+      return res.status(400).json({ error: 'Chỉ hỗ trợ tải bản phát hành APK' });
+    }
+
+    const appKey = rel.mobile_apps?.app_key || null;
+    const localPath = resolveLocalApkPath(rel, appKey);
+    const filename = localPath
+      ? path.basename(localPath)
+      : apkFilenameForRelease(rel, appKey || 'app');
+
     supabase.from('app_update_logs').insert({
       app_id: rel.app_id, to_version: rel.version, action: 'download',
       platform: 'android',
     }).then(() => {}, () => {});
-    res.redirect(302, url);
+
+    if (localPath) {
+      res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      return res.sendFile(localPath);
+    }
+
+    let remote = rel.external_url
+      || (rel.file_url && /^https?:\/\//i.test(rel.file_url) ? rel.file_url : null);
+    if (!remote && rel.storage_path) {
+      const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(rel.storage_path);
+      remote = urlData?.publicUrl || null;
+    }
+    if (remote) {
+      if (/\/uploads\/app-releases\//i.test(remote)) {
+        return res.status(404).json({
+          error: 'File APK không còn trên server — admin hãy upload lại bản phát hành (Phát hành → chọn .apk)',
+        });
+      }
+      return res.redirect(302, remote);
+    }
+
+    if (rel.file_url && String(rel.file_url).startsWith('/uploads/')) {
+      const diskPath = path.join(__dirname, '../..', rel.file_url.replace(/^\//, ''));
+      if (fs.existsSync(diskPath)) {
+        res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+        res.setHeader('Content-Disposition', `attachment; filename="${path.basename(diskPath)}"`);
+        res.setHeader('Cache-Control', 'public, max-age=3600');
+        return res.sendFile(diskPath);
+      }
+    }
+
+    return res.status(404).json({
+      error: 'Không tìm thấy file APK trên server — hãy upload lại bản phát hành',
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

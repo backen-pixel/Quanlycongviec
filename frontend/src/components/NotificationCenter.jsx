@@ -84,6 +84,7 @@ const ASSIGNMENT_NOTIFICATION_TYPES = [
   'crm_assignment_comment',
   'crm_assignment_due_soon',
   'crm_assignment_overdue',
+  'crm_task_assigned',
 ];
 const DEAL_ACTIVITY_NOTIFICATION_TYPES = ['deal_assigned', 'deal_created', 'deal_won', 'workshop_new_deal', 'crm_deal'];
 
@@ -145,6 +146,7 @@ const COLOR_MAP = {
   crm_assignment_comment: 'bg-purple-100 text-purple-600',
   crm_assignment_due_soon: 'bg-amber-100 text-amber-700',
   crm_assignment_overdue: 'bg-red-100 text-red-600',
+  crm_task_assigned: 'bg-indigo-100 text-indigo-700',
 };
 
 const MODULE_FILTER_OPTIONS = [
@@ -170,7 +172,10 @@ function navigateCrmAssignment(navigate, nOrEntityId) {
   const id = typeof nOrEntityId === 'object' && nOrEntityId !== null
     ? resolveAssignmentEntityId(nOrEntityId)
     : (nOrEntityId != null ? String(nOrEntityId) : null);
-  navigate(id ? `/crm/assignments?open=${id}` : '/crm/assignments', { state: { moduleContext: 'crm' } });
+  const meta = typeof nOrEntityId === 'object' && nOrEntityId !== null ? nOrEntityId.metadata : null;
+  const navPath = meta?.nav_path || (meta?.module_key === 'production' ? '/sx/assignments' : '/crm/assignments');
+  const moduleContext = meta?.module_key === 'production' ? 'production' : 'crm';
+  navigate(id ? `${navPath}?open=${id}` : navPath, { state: { moduleContext } });
 }
 
 function inferNotificationModuleKey(n) {
@@ -751,7 +756,7 @@ export default function NotificationCenter({ socket }) {
                   {t.count > 0 && (
                     <span className={`ml-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] rounded-full px-1 text-[10px] font-bold ${
                       active ? 'bg-white/30 text-white' : 'bg-red-500 text-white'
-                    }`}>
+                    } ${t.id === 'assignments' ? 'animate-pulse-dot' : ''}`}>
                       {t.count > 99 ? '99+' : t.count}
                     </span>
                   )}

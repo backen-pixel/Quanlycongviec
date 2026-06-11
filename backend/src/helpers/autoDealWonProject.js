@@ -242,6 +242,7 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
   // Dùng strict company match theo công ty SX đã chọn.
   try {
     await applyProductionTemplateToFulfillmentLead({
+      req,
       leadId: dealId,
       createdBy: userId,
       assigneeId: null,

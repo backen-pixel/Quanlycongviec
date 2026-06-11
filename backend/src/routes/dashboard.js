@@ -34,6 +34,7 @@ const ASSIGNMENT_NOTIFICATION_TYPES = [
   'crm_assignment_comment',
   'crm_assignment_due_soon',
   'crm_assignment_overdue',
+  'crm_task_assigned',
 ];
 
 /** Hoạt động chỉ giữ thông báo Deal */
