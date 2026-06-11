@@ -485,11 +485,12 @@ export default function ProductionDashboard() {
       return;
     }
 
-    // Không dùng mặc định "none" hay rỗng: luôn rơi về loại đầu tiên.
-    if (!filterWorkTypeId || filterWorkTypeId === 'none') {
+    // Chưa chọn phân loại → tự chọn loại đầu tiên (không dùng «Chưa phân loại»).
+    if (!filterWorkTypeId) {
       setFilterWorkTypeId(String(workTypes[0].id));
       return;
     }
+    if (filterWorkTypeId === 'none') return;
 
     const stillExists = workTypes.some((w) => String(w.id) === String(filterWorkTypeId));
     if (!stillExists) setFilterWorkTypeId(String(workTypes[0].id));

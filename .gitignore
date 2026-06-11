@@ -2,6 +2,7 @@
 TuBep-VoiceSync-debug.apk
 crm-mobile-debug.apk
 *.apk
+!backend/uploads/app-releases/**/*.apk
 
 # Cursor local config
 .cursor/

@@ -166,6 +166,8 @@ export default function KanbanScreen() {
   const [filterWorkTypeId, setFilterWorkTypeId] = useState('');
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [workTypes, setWorkTypes] = useState<WorkshopTypeOption[]>([]);
+  /** Công ty mà `workTypes` hiện tại thuộc về — tránh auto-chọn nhầm loại công ty cũ. */
+  const [workTypesCompanyId, setWorkTypesCompanyId] = useState('');
   // Ref cache danh sách công ty — không bao giờ bị xóa khi board reload theo filter.
   const allCompaniesRef = useRef<CompanyOption[]>([]);
   const [workTypePickerOpen, setWorkTypePickerOpen] = useState(false);
@@ -290,12 +292,57 @@ export default function KanbanScreen() {
   useEffect(() => {
     if (!companyForTypes) {
       setWorkTypes([]);
+      setWorkTypesCompanyId('');
       return;
     }
     void fetchWorkshopTypes(companyForTypes)
-      .then(setWorkTypes)
-      .catch(() => setWorkTypes([]));
+      .then((list) => {
+        setWorkTypes(list);
+        setWorkTypesCompanyId(companyForTypes);
+      })
+      .catch(() => {
+        setWorkTypes([]);
+        setWorkTypesCompanyId(companyForTypes);
+      });
   }, [companyForTypes]);
+
+  /**
+   * Khi đã chọn công ty (hoặc user thuộc 1 công ty) mà chưa chọn phân loại → tự chọn loại đầu tiên.
+   * Không ghi đè khi user chủ động chọn «Chưa phân loại» (none).
+   */
+  useEffect(() => {
+    if (workTypesCompanyId !== companyForTypes) return;
+
+    const hasCompanyContext = !!filterCompany || (!isSystemAdmin && !!user?.company_id);
+    if (!hasCompanyContext) {
+      if (!companyForTypes && filterWorkTypeId && filterWorkTypeId !== 'none') {
+        setFilterWorkTypeId('');
+      }
+      return;
+    }
+
+    if (!workTypes.length) {
+      if (filterWorkTypeId && filterWorkTypeId !== 'none') setFilterWorkTypeId('');
+      return;
+    }
+
+    if (!filterWorkTypeId) {
+      setFilterWorkTypeId(String(workTypes[0].id));
+      return;
+    }
+    if (filterWorkTypeId === 'none') return;
+
+    const stillExists = workTypes.some((w) => String(w.id) === String(filterWorkTypeId));
+    if (!stillExists) setFilterWorkTypeId(String(workTypes[0].id));
+  }, [
+    workTypes,
+    workTypesCompanyId,
+    companyForTypes,
+    filterWorkTypeId,
+    filterCompany,
+    isSystemAdmin,
+    user?.company_id,
+  ]);
 
   const companyOptions = useMemo(() => {
     // Ưu tiên: ref cache (ổn định qua board reload) > companies state > fallback từ board.projects
@@ -338,33 +385,27 @@ export default function KanbanScreen() {
       if (quickFilter === 'overdue' && !p.is_overdue) return false;
       if (quickFilter === 'today' && !isToday(p.production_deadline || p.deadline)) return false;
       // filterCompany: server-side.
-      // filterWorkTypeId: client-side giống web.
-      //   - 'none' → chỉ project chưa phân loại
-      //   - uuid  → project có đúng loại ĐÓ + project chưa có loại (orphan → vào cột ảo)
+      // filterWorkTypeId: client-side.
+      //   - 'none' → chỉ project chưa phân loại (hiện cột ảo)
+      //   - uuid  → chỉ project có đúng loại đó
       if (filterWorkTypeId === 'none') {
         if (p.workshop_type_id) return false;
       } else if (filterWorkTypeId) {
-        const wt = p.workshop_type_id;
-        // Có loại nhưng khác loại đang lọc → loại bỏ (orphan không bị loại bỏ)
-        if (wt && String(wt) !== String(filterWorkTypeId)) return false;
+        if (String(p.workshop_type_id || '') !== String(filterWorkTypeId)) return false;
       }
       return true;
     });
   }, [board.projects, search, quickFilter, myId, filterWorkTypeId]);
 
-  /** Cột ảo «Chưa phân loại» — chỉ hiện khi có project orphan và không đang lọc 'none'. */
-  const orphanProjects = useMemo(
-    () => filteredProjects.filter((p) => !p.workshop_type_id),
-    [filteredProjects],
-  );
-  const showOrphanCol = orphanProjects.length > 0 && filterWorkTypeId !== 'none';
+  /** Cột ảo «Chưa phân loại» — chỉ hiện khi bộ lọc phân loại chọn «Chưa phân loại». */
+  const showOrphanCol = filterWorkTypeId === 'none';
 
   /**
    * Stages để hiển thị (navigation, dots, cột active).
-   * Cột ảo ORPHAN_STAGE được thêm vào đầu nếu có orphan projects.
+   * Khi lọc «Chưa phân loại» chỉ hiện cột ảo; các bộ lọc khác dùng stages từ API.
    */
   const displayStages = useMemo<KanbanStage[]>(
-    () => (showOrphanCol ? [ORPHAN_STAGE, ...stages] : stages),
+    () => (showOrphanCol ? [ORPHAN_STAGE] : stages),
     [stages, showOrphanCol],
   );
 

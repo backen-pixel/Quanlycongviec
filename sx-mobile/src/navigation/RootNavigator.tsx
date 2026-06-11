@@ -9,6 +9,7 @@ import ChatDetailScreen from '../screens/ChatDetailScreen';
 import MessengerForwardScreen from '../screens/MessengerForwardScreen';
 import MessagesScreen from '../screens/MessagesScreen';
 import ProjectDetailScreen from '../screens/ProjectDetailScreen';
+import UpdateFromServerScreen from '../screens/UpdateFromServerScreen';
 import MainTabs from './MainTabs';
 
 export type RootStackParamList = {
@@ -30,6 +31,7 @@ export type RootStackParamList = {
     isDirect?: boolean;
     messagesJson: string;
   };
+  UpdateFromServer: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -79,6 +81,11 @@ export default function RootNavigator() {
           <Stack.Screen
             name="ChatDetailInfo"
             component={ChatDetailInfoScreen}
+            options={{ animation: 'slide_from_right' }}
+          />
+          <Stack.Screen
+            name="UpdateFromServer"
+            component={UpdateFromServerScreen}
             options={{ animation: 'slide_from_right' }}
           />
         </>
