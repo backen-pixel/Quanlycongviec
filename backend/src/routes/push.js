@@ -359,5 +359,38 @@ r.post('/call-reject', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /push/call-accept — Nhận cuộc gọi từ native (app kill / chưa có socket)
+// Set answeredAt ngay để syncPendingIncomingCalls KHÔNG reo lại + báo caller.
+// ═══════════════════════════════════════════════════════════════════════════
+r.post('/call-accept', async (req, res) => {
+  try {
+    const uid = currentUserId(req);
+    if (!uid) return res.status(401).json({ error: 'Token không có user id' });
+
+    const callId = String(req.body?.callId || req.body?.call_id || '').trim();
+    const toUserId = String(req.body?.toUserId || req.body?.to_user_id || '').trim();
+    if (!callId || !toUserId) {
+      return res.status(400).json({ error: 'Thiếu callId hoặc toUserId' });
+    }
+
+    const io = req.app.get('io');
+    const activeDirectCalls = req.app.get('activeDirectCalls');
+    // Đánh dấu đã nhận để vòng đời tiến trình có chết/khởi động lại thì server cũng KHÔNG
+    // re-emit call:incoming (syncPendingIncomingCalls bỏ qua session có answeredAt).
+    if (activeDirectCalls) {
+      const session = activeDirectCalls.get(callId);
+      if (session && !session.answeredAt) session.answeredAt = Date.now();
+    }
+    if (io) {
+      io.to(`user:${toUserId}`).emit('call:accepted', { callId });
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('POST /push/call-accept:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = r;
 module.exports.sendWebPush = sendWebPush;
