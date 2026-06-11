@@ -345,19 +345,29 @@ export default function KanbanScreen() {
   ]);
 
   const companyOptions = useMemo(() => {
-    // Ưu tiên: ref cache (ổn định qua board reload) > companies state > fallback từ board.projects
-    const stable = allCompaniesRef.current.length ? allCompaniesRef.current : companies;
-    const fromApi = stable.length
-      ? stable
-      : (() => {
-          const map = new Map<string, string>();
-          board.projects.forEach((p) => {
-            if (p.company_id && p.company_name) map.set(p.company_id, p.company_name);
-          });
-          return Array.from(map, ([id, name]) => ({ id, name }));
-        })();
+    // Luôn giữ danh sách đầy đủ — không thu hẹp theo board đang lọc.
+    let fromApi = allCompaniesRef.current.length
+      ? [...allCompaniesRef.current]
+      : [...companies];
+    if (board.projects.length) {
+      const map = new Map(fromApi.map((c) => [String(c.id), c]));
+      board.projects.forEach((p) => {
+        if (p.company_id && p.company_name && !map.has(String(p.company_id))) {
+          map.set(String(p.company_id), { id: String(p.company_id), name: p.company_name });
+        }
+      });
+      fromApi = Array.from(map.values());
+    }
+    if (fromApi.length) {
+      if (!allCompaniesRef.current.length || fromApi.length > allCompaniesRef.current.length) {
+        allCompaniesRef.current = fromApi;
+      }
+    }
     return [{ id: '', label: 'Tất cả' }, ...fromApi.map((c) => ({ id: c.id, label: c.name }))];
   }, [companies, board.projects]);
+
+  const showCompanyChips = companyOptions.filter((o) => o.id).length > 0
+    && (isSystemAdmin || companyOptions.length > 1);
 
   const workTypeOptions = useMemo(
     () => [
@@ -662,8 +672,8 @@ export default function KanbanScreen() {
         ) : null}
       </ScrollView>
 
-      {/* ── COMPANY CHIPS — 1 tap đổi công ty, không cần modal ── */}
-      {(isSystemAdmin || companyOptions.length > 2) ? (
+      {/* ── COMPANY CHIPS — luôn hiện tất cả công ty, tô màu công ty đang chọn ── */}
+      {showCompanyChips ? (
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}

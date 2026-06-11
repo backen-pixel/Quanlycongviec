@@ -1480,37 +1480,30 @@ export default function ProductionDashboard() {
             )}
           </div>
 
-          {/* Công ty — bên phải ô tìm kiếm, bên trái phân loại */}
+          {/* Công ty — chip ngang, luôn hiện tất cả, tô màu công ty đang chọn */}
           {isAdmin && !isCompanyScopedAdmin && companies.length > 0 && (
-            <div
-              className={`inline-flex items-center gap-1 h-9 px-2 rounded-lg border shrink-0 ${
-                filterCompany ? 'border-blue-300 bg-blue-50' : 'border-gray-200 bg-white'
-              }`}
-              title="Lọc theo công ty"
-            >
-              <Building2 className={`h-3.5 w-3.5 shrink-0 ${filterCompany ? 'text-blue-700' : 'text-gray-500'}`} />
-              <select
-                value={filterCompany}
-                onChange={(e) => handleStaffFilterCompanyChange(e.target.value)}
-                className={`h-8 text-sm bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[12rem] font-medium ${
-                  filterCompany ? 'text-blue-800' : 'text-gray-700'
-                }`}
-              >
-                <option value="">Công ty: Tất cả</option>
-                {companies.map((c) => (
-                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                ))}
-              </select>
-              {filterCompany && (
-                <button
-                  type="button"
-                  onClick={() => handleStaffFilterCompanyChange('')}
-                  className="p-1 rounded hover:bg-white/70 cursor-pointer"
-                  title="Bỏ lọc công ty"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              )}
+            <div className="flex items-center gap-1.5 overflow-x-auto max-w-full shrink-0 pb-0.5 scrollbar-thin scrollbar-thumb-gray-200">
+              {[{ id: '', name: 'Tất cả' }, ...companies].map((c) => {
+                const active = filterCompany === c.id;
+                return (
+                  <button
+                    key={c.id || 'all'}
+                    type="button"
+                    onClick={() => {
+                      if (active) return;
+                      handleStaffFilterCompanyChange(c.id);
+                    }}
+                    className={`shrink-0 h-9 px-3 rounded-full text-xs font-semibold border transition-all cursor-pointer whitespace-nowrap ${
+                      active
+                        ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
+                        : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-700 hover:bg-blue-50'
+                    }`}
+                  >
+                    {active && <span className="mr-1">✓</span>}
+                    {c.id === '' ? 'Tất cả' : (c.short_name || c.name)}
+                  </button>
+                );
+              })}
             </div>
           )}
 
@@ -1873,32 +1866,6 @@ export default function ProductionDashboard() {
         </div>
       )}
 
-      {/* ── COMPANY TABS — chuyển công ty 1 click, không cần qua "Tất cả" ── */}
-      {isAdmin && !isCompanyScopedAdmin && companies.length > 1 && (
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 mb-2 scrollbar-thin scrollbar-thumb-gray-200">
-          {[{ id: '', name: 'Tất cả' }, ...companies].map((c) => {
-            const active = filterCompany === c.id;
-            return (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => {
-                  if (active) return;
-                  handleStaffFilterCompanyChange(c.id);
-                }}
-                className={`shrink-0 h-8 px-3.5 rounded-full text-xs font-semibold border transition-all cursor-pointer whitespace-nowrap ${
-                  active
-                    ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
-                    : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-700 hover:bg-blue-50'
-                }`}
-              >
-                {active && <span className="mr-1">✓</span>}
-                {c.id === '' ? 'Tất cả công ty' : (c.short_name || c.name)}
-              </button>
-            );
-          })}
-        </div>
-      )}
 
       <div className="relative">
         {syncing && firstLoaded && (
