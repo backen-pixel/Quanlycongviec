@@ -395,6 +395,7 @@ r.post('/:id/orders/:orderId/push-to-production', async (req, res) => {
 
     // Đảm bảo deal fulfillment có bộ nhiệm vụ SX thuộc công ty SX đã chọn.
     const rGen = await applyProductionTemplateToFulfillmentLead({
+      req,
       leadId: existing.fulfillment_lead_id,
       createdBy: req.user.userId,
       requireTemplateCompanyMatch: true,
@@ -455,6 +456,7 @@ r.post('/:id/orders/push-to-production-bulk', async (req, res) => {
 
         if (existing.fulfillment_lead_id) {
           const rGen = await applyProductionTemplateToFulfillmentLead({
+            req,
             leadId: existing.fulfillment_lead_id,
             createdBy: req.user.userId,
             requireTemplateCompanyMatch: true,

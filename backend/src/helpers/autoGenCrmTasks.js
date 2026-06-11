@@ -5,6 +5,11 @@
 
 const { supabase } = require('../config/supabase');
 const { getDefaultPipelineIdForCompany } = require('./crmTaxonomyCache');
+const {
+  normalizeTemplateItemAssigneeIds,
+  primaryTemplateItemAssigneeId,
+  applyAssigneesToInsertedCrmTasks,
+} = require('./templateItemAssignees');
 
 function isSxCrmTaskRow(t) {
   return String(t?.stage_slug || '').startsWith('sx_');
@@ -108,6 +113,7 @@ function buildTaskInsertsFromTemplates(templates, allItems, userId, leadId) {
       requires_quick_verdict: !!item.requires_quick_verdict,
       blocks_stage_advance: !!item.blocks_stage_advance,
       show_excel_quotation_upload: !!item.show_excel_quotation_upload,
+      assignee_id: primaryTemplateItemAssigneeId(item),
     };
   });
 }
@@ -116,7 +122,7 @@ function buildTaskInsertsFromTemplates(templates, allItems, userId, leadId) {
  * Gen toàn bộ nhiệm vụ CRM từ bộ mẫu pipeline của công ty (mọi stage đã setup template).
  * Idempotent: nếu đã có ≥1 task gắn stage có pipeline_type khớp lead/deal → skip.
  */
-async function autoGenCrmTasksForNewLead(leadId, userId) {
+async function autoGenCrmTasksForNewLead(leadId, userId, req = null) {
   const { data: lead, error: leadErr } = await supabase
     .from('crm_leads')
     .select('id, type, company_id, pipeline_id, created_by')
@@ -220,11 +226,23 @@ async function autoGenCrmTasksForNewLead(leadId, userId) {
   const inserts = buildTaskInsertsFromTemplates(templates, allItems, actorId, leadId);
   if (!inserts.length) return 0;
 
-  const { error: insErr } = await supabase.from('crm_tasks').insert(inserts);
+  const tplMap = {};
+  templates.forEach((t) => { tplMap[t.id] = t; });
+  const dedupedItems = dedupeTemplateItemsForInsert(allItems, tplMap, null, `lead=${leadId}`);
+  const assigneeIdsList = dedupedItems.map((item) => normalizeTemplateItemAssigneeIds(item));
+  const { data: inserted, error: insErr } = await supabase
+    .from('crm_tasks')
+    .insert(inserts)
+    .select('id, title, stage_slug, lead_id, assignee_id, description, status, priority, deadline, executor_company_id');
   if (insErr) {
     console.error('[AUTO-TASK] Insert error:', insErr.message);
     return 0;
   }
+  await applyAssigneesToInsertedCrmTasks(
+    inserted || [],
+    assigneeIdsList,
+    req || { user: { userId: actorId } },
+  );
   console.log(`[AUTO-TASK] Created ${inserts.length} tasks for ${entityType} ${leadId} (company pipeline)`);
   return inserts.length;
 }
@@ -257,7 +275,7 @@ function filterCrmTasksForLeadType(tasks, leadType) {
 /**
  * Đồng bộ lại: xóa task CRM (non-sx) gắn stage khớp pipeline_type của lead/deal, rồi gen lại.
  */
-async function resyncCrmPipelineTasksForLead(leadId, userId) {
+async function resyncCrmPipelineTasksForLead(leadId, userId, req = null) {
   const { data: lead, error: leadErr } = await supabase
     .from('crm_leads')
     .select('type, company_id, pipeline_id, created_by')
@@ -291,7 +309,7 @@ async function resyncCrmPipelineTasksForLead(leadId, userId) {
     if (delErr) throw delErr;
   }
 
-  const created = await autoGenCrmTasksForNewLead(leadId, userId || lead.created_by);
+  const created = await autoGenCrmTasksForNewLead(leadId, userId || lead.created_by, req);
 
   return {
     ok: true,

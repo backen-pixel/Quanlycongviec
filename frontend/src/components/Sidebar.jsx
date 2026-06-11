@@ -373,7 +373,7 @@ function SideLink({ to, icon: Icon, label, collapsed, end, badge, moduleContext 
   );
 }
 
-function MenuGroup({ group, collapsed, isAdmin, isWorkModuleAdmin, isStrictAdminUser, isExecutive, canAccessModule, userRole, updatesUnread = 0, assignmentsUnread = 0, socialUnread = 0 }) {
+function MenuGroup({ group, collapsed, isAdmin, isWorkModuleAdmin, isStrictAdminUser, isExecutive, canAccessModule, userRole, updatesUnread = 0, assignmentsUnread = 0, sxAssignmentsUnread = 0, socialUnread = 0 }) {
   const [open, setOpen] = useState(true);
   const moduleContext = resolveGroupModuleContext(group);
   const moduleAdmin = (moduleContext === 'work' || moduleContext === 'sx')
@@ -429,6 +429,7 @@ function MenuGroup({ group, collapsed, isAdmin, isWorkModuleAdmin, isStrictAdmin
               badge={
                 item.to === '/updates' ? updatesUnread
                 : item.to === '/crm/assignments' ? assignmentsUnread
+                : item.to === '/sx/assignments' ? sxAssignmentsUnread
                 : item.to === '/social' ? socialUnread
                 : 0
               }
@@ -441,7 +442,7 @@ function MenuGroup({ group, collapsed, isAdmin, isWorkModuleAdmin, isStrictAdmin
 }
 
 export default function Sidebar() {
-  const { updatesUnread, assignmentsUnread, socialUnread } = useSidebarUnreadBadges();
+  const { updatesUnread, assignmentsUnread, sxAssignmentsUnread, socialUnread } = useSidebarUnreadBadges();
   const { canAccessModule, crmOnly } = useModuleAccess();
   const [collapsed, setCollapsed] = useState(false);
   const [userPanelHidden, setUserPanelHidden] = useState(() => {
@@ -722,6 +723,7 @@ export default function Sidebar() {
                 userRole={user?.role}
                 updatesUnread={updatesUnread}
                 assignmentsUnread={assignmentsUnread}
+                sxAssignmentsUnread={sxAssignmentsUnread}
                 socialUnread={socialUnread}
               />
             </div>
@@ -742,6 +744,7 @@ export default function Sidebar() {
                     userRole={user?.role}
                     updatesUnread={updatesUnread}
                     assignmentsUnread={assignmentsUnread}
+                sxAssignmentsUnread={sxAssignmentsUnread}
                 socialUnread={socialUnread}
                   />
                 );
@@ -762,6 +765,7 @@ export default function Sidebar() {
                 userRole={user?.role}
                 updatesUnread={updatesUnread}
                 assignmentsUnread={assignmentsUnread}
+                sxAssignmentsUnread={sxAssignmentsUnread}
                 socialUnread={socialUnread}
               />
           ))

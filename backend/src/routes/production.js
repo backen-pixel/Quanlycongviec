@@ -30,6 +30,10 @@ const {
 const { attachCrmProductionTaskStatsToProjects } = require('../helpers/crmProductionTaskStats');
 const { applyProductionCompanyScopeFilter, getExecutorProjectIdsForCompany } = require('../helpers/crossCompanyWorkspace');
 const {
+  templateItemAssigneePatch,
+  isDefaultAssigneeIdsColumnError,
+} = require('../helpers/templateItemAssignees');
+const {
   applyWorkshopTemplateToProject,
   applyAllActiveWorkshopTemplatesForArea,
 } = require('../helpers/workshopApplyTemplates');
@@ -1583,6 +1587,7 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
           const newDeal = insRes.data;
 
           await applyProductionTemplateToFulfillmentLead({
+            req,
             leadId: newDeal.id,
             createdBy: req.user.userId,
             requireTemplateCompanyMatch: true,
@@ -3278,6 +3283,7 @@ r.post('/task-templates/:tplId/items', requirePermission('projects', 'edit'), as
         || (Array.isArray(b.required_evidence_file_types) && b.required_evidence_file_types.length > 0),
       required_evidence_file_types: Array.isArray(b.required_evidence_file_types) ? b.required_evidence_file_types : [],
       requires_quick_verdict: !!b.requires_quick_verdict,
+      ...templateItemAssigneePatch(b),
     };
     let { data, error } = await supabase
       .from('workshop_task_template_items')
@@ -3305,6 +3311,12 @@ r.post('/task-templates/:tplId/items', requirePermission('projects', 'edit'), as
         .select()
         .single());
     }
+    if (error && isDefaultAssigneeIdsColumnError(error)) {
+      return res.status(503).json({
+        error: 'Database chưa có cột default_assignee_ids (migration 331). Chạy database/331_template_item_default_assignee_ids.sql trên Supabase rồi thử lại.',
+        code: 'db_migration_default_assignee_ids',
+      });
+    }
     if (error) throw error;
     res.status(201).json(data);
   } catch (e) {
@@ -3321,6 +3333,7 @@ r.put('/task-templates/:tplId/items/:itemId', requirePermission('projects', 'edi
       'completion_requires_file_or_note', 'required_evidence_file_types', 'requires_quick_verdict'].forEach((f) => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
+    Object.assign(update, templateItemAssigneePatch(req.body));
     if (req.body.executor_company_id === '' || req.body.executor_company_id === null) {
       update.executor_company_id = null;
     }
@@ -3357,6 +3370,12 @@ r.put('/task-templates/:tplId/items/:itemId', requirePermission('projects', 'edi
         .eq('id', req.params.itemId)
         .select()
         .single());
+    }
+    if (error && isDefaultAssigneeIdsColumnError(error)) {
+      return res.status(503).json({
+        error: 'Database chưa có cột default_assignee_ids (migration 331). Chạy database/331_template_item_default_assignee_ids.sql trên Supabase rồi thử lại.',
+        code: 'db_migration_default_assignee_ids',
+      });
     }
     if (error) throw error;
     res.json(data);

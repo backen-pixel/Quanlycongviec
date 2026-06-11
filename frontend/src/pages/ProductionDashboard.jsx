@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { ProductionListView, ProductionPlannerView, ProductionCalendarView, ProductionCommentsView, ProductionDeadlineView } from '../components/ProductionViews';
 import WorkshopPipelineKanbanScroll from '../components/WorkshopPipelineKanbanScroll';
+import AssignedTasksToolbarButton from '../components/AssignedTasksToolbarButton';
 import WorkshopStaffFilterPanel from '../components/WorkshopStaffFilterPanel';
 import { useWorkshopStaffFilter } from '../hooks/useWorkshopStaffFilter';
 import {
@@ -1375,6 +1376,7 @@ export default function ProductionDashboard() {
             <Plus className="h-4 w-4" />
             Tạo deal
           </button>
+          <AssignedTasksToolbarButton to="/sx/assignments" variant="outlined" className="!h-9" />
           {[
             { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
             { id: 'list', icon: List, label: 'Danh sách' },

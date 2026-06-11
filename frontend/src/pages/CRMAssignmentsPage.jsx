@@ -22,6 +22,14 @@ import {
   setTaskPersonalColumn,
   newPersonalColumnId,
 } from '../lib/crmAssignmentPersonalColumns';
+import {
+  buildAssignmentSourceHref,
+  assignmentSourceLabel,
+  assignmentSourceTooltip,
+  assignmentDealCardLabel,
+  assignmentSourceFieldLabel,
+  isProductionAssignmentsPage,
+} from '../lib/assignmentSourceLink';
 
 /**
  * Trang "Giao việc CRM" — độc lập với module Công việc và CRM tasks gắn lead.
@@ -166,17 +174,49 @@ function PipelineTaskNotesSection({ item, canEdit, onNotesSaved }) {
   );
 }
 
-function LeadAssignmentLink({ lead, className = '' }) {
+function LeadAssignmentLink({ assignment, className = '', variant = 'chip' }) {
+  const { assignmentModule } = useAssignmentsPageContext();
+  const lead = assignment?.lead;
   if (!lead?.id) return null;
-  const label = [lead.code, lead.title].filter(Boolean).join(' — ') || (lead.type === 'deal' ? 'Deal' : 'Lead');
+  const href = buildAssignmentSourceHref(assignment, assignmentModule);
+  if (!href) return null;
+  const isSx = isProductionAssignmentsPage(assignmentModule);
+  const label = variant === 'card' ? assignmentDealCardLabel(lead) : assignmentSourceLabel(lead);
+  const tooltip = assignmentSourceTooltip(lead, assignmentModule);
+  const taskHint = assignment?.crm_task_id
+    ? `${tooltip}${isSx ? '' : ''} (focus nhiệm vụ pipeline)`
+    : tooltip;
+  const isDeal = String(lead.type || '').toLowerCase() === 'deal';
+  const icon = isSx ? '🏭' : (isDeal ? '🎯' : '💼');
+
+  if (variant === 'card') {
+    return (
+      <Link
+        to={href}
+        onClick={(e) => e.stopPropagation()}
+        className={`flex items-center gap-1 mt-1 min-w-0 text-[11px] font-medium hover:underline ${
+          isSx ? 'text-teal-800 hover:text-teal-950' : 'text-indigo-800 hover:text-indigo-950'
+        } ${className}`}
+        title={taskHint}
+      >
+        <span className="shrink-0" aria-hidden>{icon}</span>
+        <span className="truncate">{label}</span>
+      </Link>
+    );
+  }
+
   return (
     <Link
-      to={`/crm/leads/${lead.id}`}
+      to={href}
       onClick={(e) => e.stopPropagation()}
-      className={`inline-flex items-center gap-0.5 rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-800 hover:bg-indigo-100 ${className}`}
-      title="Mở lead/deal gốc"
+      className={`inline-flex items-center gap-0.5 rounded border px-1.5 py-0.5 text-[10px] font-medium max-w-[200px] truncate ${
+        isSx
+          ? 'border-teal-200 bg-teal-50 text-teal-800 hover:bg-teal-100'
+          : 'border-indigo-200 bg-indigo-50 text-indigo-800 hover:bg-indigo-100'
+      } ${className}`}
+      title={taskHint}
     >
-      🔗 {label}
+      {icon} {label}
     </Link>
   );
 }
@@ -190,6 +230,7 @@ export default function CRMAssignmentsPage({
   dashboardLink = '/crm/dashboard',
 } = {}) {
   const LS_COMPANY = `${storagePrefix}_company_id`;
+  const LS_DEPARTMENT = `${storagePrefix}_department_id`;
   const LS_VIEW_SCOPE = `${storagePrefix}_view_scope`;
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -203,15 +244,18 @@ export default function CRMAssignmentsPage({
   const [items, setItems] = useState([]);
   const [users, setUsers] = useState([]);
   const [companies, setCompanies] = useState([]);
+  const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const [search, setSearch] = useState('');
   const [filterAssignee, setFilterAssignee] = useState('');
-  const assigneeDefaultSet = useRef(false);
   const [filterPriority, setFilterPriority] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterCompanyId, setFilterCompanyId] = useState(() => {
     try { return localStorage.getItem(LS_COMPANY) || ''; } catch { return ''; }
+  });
+  const [filterDepartmentId, setFilterDepartmentId] = useState(() => {
+    try { return localStorage.getItem(LS_DEPARTMENT) || ''; } catch { return ''; }
   });
 
   const [editingItem, setEditingItem] = useState(null);
@@ -228,21 +272,96 @@ export default function CRMAssignmentsPage({
   const [personalPlannerMap, setPersonalPlannerMap] = useState({});
   const [personalDeadlineMap, setPersonalDeadlineMap] = useState({});
 
-  // NV thường: mặc định lọc "việc giao cho tôi" để thấy nhiệm vụ được chỉ định
+  // NV thường: chỉ xem việc giao cho mình
   useEffect(() => {
-    if (assigneeDefaultSet.current || isAdmin || !user?.id) return;
-    assigneeDefaultSet.current = true;
-    setFilterAssignee(String(user.id));
-  }, [isAdmin, user?.id]);
+    if (!uid || isAdmin) return;
+    setFilterAssignee(uid);
+  }, [isAdmin, uid]);
 
-  // ─── Persist company filter ──
   useEffect(() => {
     if (!isAdmin) return;
     try {
       if (filterCompanyId) localStorage.setItem(LS_COMPANY, filterCompanyId);
       else localStorage.removeItem(LS_COMPANY);
     } catch { /* ignore */ }
+  }, [filterCompanyId, isAdmin, LS_COMPANY]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    try {
+      if (filterDepartmentId) localStorage.setItem(LS_DEPARTMENT, filterDepartmentId);
+      else localStorage.removeItem(LS_DEPARTMENT);
+    } catch { /* ignore */ }
+  }, [filterDepartmentId, isAdmin, LS_DEPARTMENT]);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setDepartments([]);
+      if (user?.id) {
+        setUsers([{
+          id: user.id,
+          full_name: user.full_name || user.email || 'Tôi',
+          email: user.email,
+        }]);
+      } else {
+        setUsers([]);
+      }
+      return undefined;
+    }
+    if (!filterCompanyId) {
+      setDepartments([]);
+      setUsers([]);
+      return undefined;
+    }
+    let cancelled = false;
+    Promise.all([
+      api.get('/departments', { params: { company_id: filterCompanyId } }),
+      api.get('/users', { params: { company_id: filterCompanyId } }),
+    ])
+      .then(([dRes, uRes]) => {
+        if (cancelled) return;
+        const depts = dRes.data?.departments || dRes.data || [];
+        setDepartments(Array.isArray(depts) ? depts : []);
+        setUsers(uRes.data?.users || uRes.data || []);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDepartments([]);
+          setUsers([]);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [isAdmin, filterCompanyId, user?.id, user?.full_name, user?.email]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    setFilterDepartmentId('');
   }, [filterCompanyId, isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin || !filterDepartmentId) return;
+    const exists = departments.some((d) => String(d.id) === String(filterDepartmentId));
+    if (!exists && departments.length) setFilterDepartmentId('');
+  }, [departments, filterDepartmentId, isAdmin]);
+
+  const filteredAssigneeOptions = useMemo(() => {
+    if (!isAdmin) {
+      return user?.id ? [{
+        id: user.id,
+        full_name: user.full_name || user.email || 'Tôi',
+      }] : [];
+    }
+    if (filterDepartmentId) {
+      return users.filter((u) => String(u.department_id || '') === String(filterDepartmentId));
+    }
+    return users;
+  }, [isAdmin, users, filterDepartmentId, user?.id, user?.full_name, user?.email]);
+
+  useEffect(() => {
+    if (!isAdmin || !filterAssignee) return;
+    const ok = filteredAssigneeOptions.some((u) => String(u.id) === String(filterAssignee));
+    if (!ok) setFilterAssignee('');
+  }, [filterDepartmentId, filterCompanyId, filteredAssigneeOptions, filterAssignee, isAdmin]);
 
   useEffect(() => {
     if (!uid) return;
@@ -270,23 +389,23 @@ export default function CRMAssignmentsPage({
     try {
       const params = {};
       if (isAdmin && filterCompanyId) params.company_id = filterCompanyId;
+      if (isAdmin && filterDepartmentId) params.department_id = filterDepartmentId;
       if (filterAssignee) params.assignee_id = filterAssignee;
+      else if (!isAdmin && uid) params.assignee_id = uid;
       if (filterStatus) params.status = filterStatus;
       if (filterPriority) params.priority = filterPriority;
       if (search) params.q = search;
       if (assignmentModule) params.assignment_module = assignmentModule;
 
-      const [colRes, itRes, usrRes] = await Promise.all([
+      const [colRes, itRes] = await Promise.all([
         api.get(`${apiBase}/columns`),
         api.get(apiBase, { params }),
-        api.get('/users').then((r) => r.data?.users || []),
       ]);
       setColumns(colRes.data?.columns || []);
       setItems(itRes.data?.assignments || []);
-      setUsers(usrRes);
     } catch (e) { console.error(e); }
     setLoading(false);
-  }, [isAdmin, filterCompanyId, filterAssignee, filterStatus, filterPriority, search, apiBase, assignmentModule]);
+  }, [isAdmin, filterCompanyId, filterDepartmentId, filterAssignee, filterStatus, filterPriority, search, apiBase, assignmentModule, uid]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -575,10 +694,17 @@ export default function CRMAssignmentsPage({
   };
   const allowDrop = (e) => e.preventDefault();
 
-  const hasFilters = search || filterAssignee || filterPriority || filterStatus || (isAdmin && filterCompanyId);
+  const hasFilters = search || filterPriority || filterStatus
+    || (isAdmin && (filterCompanyId || filterDepartmentId || filterAssignee));
   const clearFilters = () => {
-    setSearch(''); setFilterAssignee(''); setFilterPriority(''); setFilterStatus('');
-    if (isAdmin) setFilterCompanyId('');
+    setSearch(''); setFilterPriority(''); setFilterStatus('');
+    if (isAdmin) {
+      setFilterCompanyId('');
+      setFilterDepartmentId('');
+      setFilterAssignee('');
+    } else if (uid) {
+      setFilterAssignee(uid);
+    }
   };
 
   if (loading) {
@@ -599,26 +725,16 @@ export default function CRMAssignmentsPage({
           <p className="text-sm text-gray-500">
             {stats.total} nhiệm vụ — {stats.completed} hoàn thành — {stats.inProgress} đang làm
           </p>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {assignmentModule === 'production'
+              ? 'Module riêng — chỉ nhiệm vụ Sản xuất (sx_*). Không lẫn với Giao việc CRM.'
+              : 'Module riêng — chỉ nhiệm vụ CRM / deal. Không lẫn với Giao việc Sản xuất.'}
+          </p>
           <p className="text-[11px] text-gray-400 mt-0.5">
             Kanban: cột dùng chung. Planner / Deadline: cột cá nhân (chỉ bạn thấy) — bấm <strong>Thêm cột</strong>.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {isAdmin && (
-            <div className="flex items-center gap-1.5">
-              <Building2 className="h-4 w-4 text-gray-500 shrink-0" />
-              <select
-                value={filterCompanyId}
-                onChange={(e) => setFilterCompanyId(e.target.value)}
-                className="h-8 min-w-[180px] px-2 rounded-lg border text-xs bg-white"
-              >
-                <option value="">Tất cả công ty</option>
-                {companies.map((co) => (
-                  <option key={co.id} value={co.id}>{co.short_name || co.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
           <div className="flex items-center gap-1">
             {[
               { id: 'kanban',   icon: LayoutGrid,     label: 'Kanban' },
@@ -726,6 +842,51 @@ export default function CRMAssignmentsPage({
             className="w-full h-9 pl-9 pr-3 rounded-lg border text-sm outline-none focus:border-blue-500"
           />
         </div>
+        {isAdmin && (
+          <>
+            <select
+              value={filterCompanyId}
+              onChange={(e) => setFilterCompanyId(e.target.value)}
+              className="h-9 min-w-[160px] px-3 rounded-lg border text-xs bg-white"
+              title="Lọc theo công ty"
+            >
+              <option value="">Tất cả công ty</option>
+              {companies.map((co) => (
+                <option key={co.id} value={co.id}>{co.short_name || co.name}</option>
+              ))}
+            </select>
+            <select
+              value={filterDepartmentId}
+              onChange={(e) => setFilterDepartmentId(e.target.value)}
+              disabled={!filterCompanyId}
+              className="h-9 min-w-[160px] px-3 rounded-lg border text-xs bg-white disabled:opacity-50 disabled:cursor-not-allowed"
+              title={filterCompanyId ? 'Lọc theo phòng ban' : 'Chọn công ty trước'}
+            >
+              <option value="">{filterCompanyId ? 'Tất cả phòng ban' : 'Phòng ban'}</option>
+              {departments.map((d) => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          </>
+        )}
+        <select
+          value={filterAssignee}
+          onChange={(e) => setFilterAssignee(e.target.value)}
+          disabled={!isAdmin}
+          className="h-9 min-w-[160px] max-w-[220px] px-3 rounded-lg border text-xs bg-white disabled:opacity-80"
+          title={isAdmin ? 'Lọc theo người nhận' : 'Chỉ hiển thị việc giao cho bạn'}
+        >
+          {isAdmin ? (
+            <>
+              <option value="">Tất cả nhân viên</option>
+              {filteredAssigneeOptions.map((u) => (
+                <option key={u.id} value={u.id}>{u.full_name}</option>
+              ))}
+            </>
+          ) : (
+            <option value={uid}>{user?.full_name || 'Việc của tôi'}</option>
+          )}
+        </select>
         <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="h-9 px-3 rounded-lg border text-xs">
           <option value="">Trạng thái</option>
           {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
@@ -734,10 +895,11 @@ export default function CRMAssignmentsPage({
           <option value="">Ưu tiên</option>
           {PRIORITY_OPTIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
         </select>
-        <select value={filterAssignee} onChange={(e) => setFilterAssignee(e.target.value)} className="h-9 px-3 rounded-lg border text-xs">
-          <option value="">Người nhận</option>
-          {users.map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-        </select>
+        {!isAdmin && (
+          <span className="text-[11px] text-gray-500 px-2 py-1 rounded-lg bg-gray-100">
+            Chỉ việc giao cho bạn
+          </span>
+        )}
         {hasFilters && (
           <button onClick={clearFilters} className="h-9 px-3 text-xs text-red-500 hover:bg-red-50 rounded-lg cursor-pointer flex items-center gap-1">
             <X className="h-3 w-3" />Xóa lọc
@@ -980,9 +1142,9 @@ function Card({ task, canManage, canMove, onDragStart, onOpen, onEdit, onDelete,
           <p className={`text-sm leading-snug ${task.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}>
             {task.title}
           </p>
+          <LeadAssignmentLink assignment={task} variant="card" />
           {task.description && <p className="text-[11px] text-gray-500 mt-0.5 line-clamp-2">{task.description}</p>}
           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-            <LeadAssignmentLink lead={task.lead} />
             <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${pri.color}`}>{pri.label}</span>
             {task.deadline && (
               <span className={`text-[10px] flex items-center gap-0.5 ${overdue ? 'text-red-600 font-bold' : 'text-gray-500'}`}>
@@ -1073,8 +1235,8 @@ function TaskRow({ task, canManage, canMove, onOpen, onEdit, onDelete, onUpdate,
       )}
       <div className="flex-1 min-w-0 cursor-pointer" onClick={() => (onOpen || onEdit)?.(task)}>
         <p className={`text-sm hover:text-blue-700 ${task.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}>{task.title}</p>
+        <LeadAssignmentLink assignment={task} variant="card" />
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-          <LeadAssignmentLink lead={task.lead} />
           {col && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ backgroundColor: (col.color || '#999') + '20', color: col.color }}>{col.name}</span>}
           {task.deadline && (
             <span className={`text-[10px] flex items-center gap-0.5 ${overdue ? 'text-red-600 font-bold' : 'text-gray-400'}`}>
@@ -1832,6 +1994,7 @@ function ColumnModal({ column, onClose, onSave }) {
 // ─── DETAIL MODAL (chỉ XEM khi bấm vào thẻ) ──────────────────────────────────
 function DetailModal({ item, columns, onClose, onEdit, onUpdate, onDelete }) {
   const { user } = useAuth();
+  const { assignmentModule } = useAssignmentsPageContext();
   const uid = String(user?.id || '');
   const isCreator = String(item.created_by_id || '') === uid;
   const assigneeList = (item.assignees && item.assignees.length) ? item.assignees : (item.assignee ? [item.assignee] : []);
@@ -1914,18 +2077,9 @@ function DetailModal({ item, columns, onClose, onEdit, onUpdate, onDelete }) {
             </div>
             {localItem.lead && (
               <div className="md:col-span-2">
-                <p className="text-[11px] text-gray-500">Lead / Deal gốc</p>
+                <p className="text-[11px] text-gray-500">{assignmentSourceFieldLabel(assignmentModule)}</p>
                 <div className="flex flex-wrap items-center gap-2 mt-0.5">
-                  <LeadAssignmentLink lead={localItem.lead} />
-                  {localItem.crm_task_id && (
-                    <Link
-                      to={`/crm/leads/${localItem.lead.id}?tab=tasks`}
-                      className="inline-flex items-center gap-0.5 rounded border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-800 hover:bg-violet-100"
-                      title="Nhiệm vụ pipeline trên lead/deal"
-                    >
-                      📋 Nhiệm vụ pipeline
-                    </Link>
-                  )}
+                  <LeadAssignmentLink assignment={localItem} />
                 </div>
               </div>
             )}

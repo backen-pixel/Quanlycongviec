@@ -8,6 +8,7 @@ import {
 } from '../lib/documentShareScope';
 import DocumentShareModulePicker from '../components/DocumentShareModulePicker';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
+import { downloadCrmLeadDocumentsZip } from '../lib/crmDocumentsZipDownload';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import api from '../lib/api';
@@ -43,7 +44,7 @@ import DealStageEventModal from '../components/DealStageEventModal';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, MessageCircle, Edit2, Trash2, X, Save, Building2, FolderKanban,
-  FileUp, FileText, Zap, ChevronDown, Send, RefreshCw, Users, ClipboardCheck, Loader2, Mic, RotateCcw,
+  FileUp, FileText, Zap, ChevronDown, Send, RefreshCw, Users, ClipboardCheck, Loader2, Mic, RotateCcw, Download,
   Pin, CheckCircle2,
 } from 'lucide-react';
 
@@ -116,6 +117,7 @@ export default function LeadDetail() {
       .catch(() => setCommentCount(0));
   }, [id]);
   const [uploadingDoc, setUploadingDoc] = useState(false);
+  const [downloadingDocsZip, setDownloadingDocsZip] = useState(false);
   const [showExcelImport, setShowExcelImport] = useState(false);
   /** Báo giá deal có file Excel gốc — mở lại từ header */
   const [dealExcelQuotations, setDealExcelQuotations] = useState([]);
@@ -286,6 +288,11 @@ export default function LeadDetail() {
   /** Mở đúng tab từ URL (?tab=chat|facebook|calls|voice_crm|approvals|…) — app mobile / liên kết ngoài. */
   useEffect(() => {
     const t = searchParams.get('tab');
+    const crmTask = searchParams.get('crm_task');
+    if (!t && crmTask) {
+      setActiveTab('tasks');
+      return;
+    }
     if (!t) return;
     if (t === 'chat' || t === 'activities' || t === 'crm-chat' || t === 'crm-activities' || t === 'timeline') {
       setActiveTab('comments');
@@ -547,6 +554,38 @@ export default function LeadDetail() {
     () => (lead?.type === 'deal' ? stagesDeal : stagesLead),
     [lead?.type, stagesDeal, stagesLead],
   );
+
+  const handleDownloadAllDocuments = useCallback(async () => {
+    if (downloadingDocsZip || documentsTabTotal === 0) return;
+    setDownloadingDocsZip(true);
+    try {
+      const dealLabel = [lead?.code, lead?.title].filter(Boolean).join(' - ')
+        || (lead?.type === 'deal' ? 'Deal' : 'Lead');
+      await downloadCrmLeadDocumentsZip({
+        dealLabel,
+        tasks: crmTasks,
+        artifacts: taskDocuments,
+        manualDocs: manualLeadDocs,
+        orphanSyncedDocs: orphanSyncedLeadDocs,
+        pipelineStages: pipelineStagesForDocs,
+        leadCurrentStageId: lead?.stage_id,
+        leadType: lead?.type || 'lead',
+      });
+    } catch (e) {
+      alert(e?.message || 'Không tải được tài liệu');
+    } finally {
+      setDownloadingDocsZip(false);
+    }
+  }, [
+    downloadingDocsZip,
+    documentsTabTotal,
+    lead,
+    crmTasks,
+    taskDocuments,
+    manualLeadDocs,
+    orphanSyncedLeadDocs,
+    pipelineStagesForDocs,
+  ]);
 
   useEffect(() => {
     if (loading || !lead || !id || String(lead.id) !== String(id)) return;
@@ -1695,6 +1734,7 @@ export default function LeadDetail() {
                   leadId={id}
                   leadType={lead?.type || 'lead'}
                   users={allUsers}
+                  focusTaskId={searchParams.get('crm_task') || null}
                   onArtifactsSynced={refreshTaskSyncedDocuments}
                   refreshKey={crmTasksRefreshKey}
                   sxTemplateCompanyId={lead?.sx_template_company_id || null}
@@ -1727,6 +1767,25 @@ export default function LeadDetail() {
                         </button>
                       )}
                     </div>
+                    {documentsTabTotal > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleDownloadAllDocuments}
+                        disabled={downloadingDocsZip}
+                        className="h-8 px-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer"
+                        title="Tải ZIP — phân thư mục: Deal → giai đoạn → nhiệm vụ → checklist"
+                      >
+                        {downloadingDocsZip ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang nén...
+                          </>
+                        ) : (
+                          <>
+                            <Download className="h-3.5 w-3.5" /> Tải tất cả ({documentsTabTotal})
+                          </>
+                        )}
+                      </button>
+                    )}
                   </div>
 
                   <CrmTaskDocumentsPanel

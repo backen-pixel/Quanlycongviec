@@ -3,10 +3,17 @@ const {
   fetchProductionWorkshopTemplatesForApply,
   fetchProductionTemplatesForPipelineStage,
 } = require('./workshopTaskTemplateWorkshopType');
-const { syncAssignmentFromCrmTask } = require('./crmTaskAssignmentSync');
+const { syncProductionLeadTasksToAssignments } = require('./crmTaskAssignmentArtifactSync');
 const { getCrmVcDeliveryStageId } = require('./workshopKanban');
 const { validateProductionCompanyId } = require('./productionCompanyGate');
-const { loadProductionHandoverMaps, resolveSxAssigneeForTemplateItem } = require('./productionHandoverSettings');
+const { loadProductionHandoverMaps, resolveSxAssigneesForTemplateItem, resolveSxAssigneeForTemplateItem } = require('./productionHandoverSettings');
+const {
+  normalizeTemplateItemAssigneeIds,
+  primaryTemplateItemAssigneeId,
+  applyAssigneesToInsertedCrmTasks,
+  assigneeIdsForFilteredInserts,
+  stripAssigneeMetaFromInsertRow,
+} = require('./templateItemAssignees');
 const { resolveExecutorCompanyId, isExecutorColumnError } = require('./crossCompanyWorkspace');
 const { normalizeEvidenceFileTypes } = require('./evidenceFileTypes');
 const { normalizeTemplateChecklistForCrmTask } = require('./templateChecklistNormalize');
@@ -19,11 +26,11 @@ const {
 } = require('./sxPipelineStageSlug');
 
 const SX_TEMPLATE_ITEM_COLS_FULL =
-  'id, template_id, title, description, priority, deadline_days, order_index, checklist, blocks_stage_advance, completion_requires_file_or_note, required_evidence_file_types, requires_quick_verdict, executor_company_id';
+  'id, template_id, title, description, priority, deadline_days, order_index, checklist, blocks_stage_advance, completion_requires_file_or_note, required_evidence_file_types, requires_quick_verdict, executor_company_id, default_assignee_id';
 const SX_TEMPLATE_ITEM_COLS_LEGACY =
-  'id, template_id, title, description, priority, deadline_days, order_index, checklist, blocks_stage_advance, executor_company_id';
+  'id, template_id, title, description, priority, deadline_days, order_index, checklist, blocks_stage_advance, executor_company_id, default_assignee_id';
 const SX_TEMPLATE_ITEM_COLS_MIN =
-  'id, template_id, title, description, priority, deadline_days, order_index, checklist, blocks_stage_advance';
+  'id, template_id, title, description, priority, deadline_days, order_index, checklist, blocks_stage_advance, default_assignee_id';
 
 async function loadHandoverMapsCached(cache, companyId) {
   const key = companyId ? String(companyId) : '__none__';
@@ -33,6 +40,22 @@ async function loadHandoverMapsCached(cache, companyId) {
       : { responsibleUserId: null, assigneeByTemplateItemId: new Map() });
   }
   return cache.get(key);
+}
+
+async function syncSxTasksAfterBulkInsert(req, leadId, rows, fingerprintFn, createdBy) {
+  if (!leadId || !rows?.length) return { synced_assignments: 0, synced_artifacts: 0 };
+  try {
+    const syncReq = req || { user: { userId: createdBy } };
+    return await syncProductionLeadTasksToAssignments(syncReq, leadId, {
+      fingerprints: new Set(rows.map((r) => fingerprintFn(r.title, r.stage_slug))),
+      fingerprintFn,
+      assignmentModule: 'production',
+      limit: rows.length + 20,
+    });
+  } catch (e) {
+    console.warn('[applyProductionTemplate] sync assignments:', e.message);
+    return { synced_assignments: 0, synced_artifacts: 0 };
+  }
 }
 
 function sxExecutorFieldsFromTemplateItem(it, ownerCompanyId) {
@@ -214,6 +237,7 @@ async function createFulfillmentChildDeal({
 async function applyProductionTemplateToFulfillmentLead({
   leadId,
   createdBy,
+  req = null,
   assigneeId = null,
   force = false,
   /** Nếu true: chỉ cho phép lấy bộ mẫu thuộc đúng company_id của deal (không fallback global / công ty khác). */
@@ -370,7 +394,16 @@ async function applyProductionTemplateToFulfillmentLead({
       }
       const { error: insErr } = await supabase.from('crm_tasks').insert(toAdd);
       if (insErr) throw insErr;
-      return { created: toAdd.length, reason: 'emergency_seed', template_count: 0, template_names: [], company_id: mustCompanyId };
+      const syncStats = await syncSxTasksAfterBulkInsert(req, leadId, toAdd, sxTaskFingerprint, createdBy);
+      return {
+        created: toAdd.length,
+        synced_assignments: syncStats.synced_assignments || 0,
+        synced_artifacts: syncStats.synced_artifacts || 0,
+        reason: 'emergency_seed',
+        template_count: 0,
+        template_names: [],
+        company_id: mustCompanyId,
+      };
     }
 
     const templateIds = templates.map((t) => t.id).filter(Boolean);
@@ -414,8 +447,11 @@ async function applyProductionTemplateToFulfillmentLead({
       }
       const { error: insErr } = await supabase.from('crm_tasks').insert(toAdd);
       if (insErr) throw insErr;
+      const syncStats = await syncSxTasksAfterBulkInsert(req, leadId, toAdd, sxTaskFingerprint, createdBy);
       return {
         created: toAdd.length,
+        synced_assignments: syncStats.synced_assignments || 0,
+        synced_artifacts: syncStats.synced_artifacts || 0,
         reason: 'emergency_seed',
         template_count: templates.length,
         template_names: templates.map((t) => t.name).filter(Boolean),
@@ -457,6 +493,7 @@ async function applyProductionTemplateToFulfillmentLead({
       );
       const execCo = resolveExecutorCompanyId(it, mustCompanyId);
       const maps = await loadHandoverMapsCached(handoverCacheStrict, execCo);
+      const assigneeIds = resolveSxAssigneesForTemplateItem(it, maps);
       inserts.push({
         lead_id: leadId,
         title: it.title,
@@ -466,7 +503,8 @@ async function applyProductionTemplateToFulfillmentLead({
         priority: it.priority || 'medium',
         stage_slug: stageSlug,
         order_index: Number.isFinite(Number(it.order_index)) ? Number(it.order_index) : (idx + 1),
-        assignee_id: resolveSxAssigneeForTemplateItem(it, maps),
+        assignee_id: assigneeIds[0] || null,
+        __template_assignee_ids: assigneeIds,
         supervisor_id: null,
         deadline: null,
         created_by: createdBy,
@@ -487,37 +525,44 @@ async function applyProductionTemplateToFulfillmentLead({
         company_id: mustCompanyId,
       };
     }
-    // Insert với fallback chuỗi: nếu DB chưa apply migration 256 → strip cột mới và retry.
-    let insErr = (await supabase.from('crm_tasks').insert(toInsertStrict)).error;
+    const assigneeIdsForCreated = assigneeIdsForFilteredInserts(inserts, toInsertStrict, sxTaskFingerprint);
+    const rowsToInsert = toInsertStrict.map(stripAssigneeMetaFromInsertRow);
+    const selCols = 'id, title, stage_slug, lead_id, description, status, priority, deadline, assignee_id, executor_company_id';
+    let insertedRows = null;
+    let insErr = null;
+    ({ data: insertedRows, error: insErr } = await supabase.from('crm_tasks').insert(rowsToInsert).select(selCols));
     if (insErr && String(insErr.message || '').includes('production_pipeline_stage_id')) {
-      const stripped = toInsertStrict.map(({ production_pipeline_stage_id: _p, ...rest }) => rest);
-      insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+      const stripped = rowsToInsert.map(({ production_pipeline_stage_id: _p, ...rest }) => rest);
+      ({ data: insertedRows, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selCols));
     }
     if (insErr && String(insErr.message || '').includes('blocks_stage_advance')) {
-      const stripped = toInsertStrict.map(({ blocks_stage_advance: _b, production_pipeline_stage_id: _p, ...rest }) => rest);
-      insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+      const stripped = rowsToInsert.map(({ blocks_stage_advance: _b, production_pipeline_stage_id: _p, ...rest }) => rest);
+      ({ data: insertedRows, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selCols));
     }
     if (insErr && isSxTemplateEvidenceColumnError(insErr)) {
-      const stripped = toInsertStrict.map(({
+      const stripped = rowsToInsert.map(({
         completion_requires_file_or_note: _c,
         required_evidence_file_types: _r,
         requires_quick_verdict: _q,
         ...rest
       }) => rest);
-      insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+      ({ data: insertedRows, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selCols));
     }
     if (insErr && isExecutorColumnError(insErr)) {
-      const stripped = toInsertStrict.map(({ executor_company_id: _e, ...rest }) => rest);
-      insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+      const stripped = rowsToInsert.map(({ executor_company_id: _e, ...rest }) => rest);
+      ({ data: insertedRows, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selCols));
     }
-    // DB chưa apply migration 308 (cột checklist) → bỏ checklist và thử lại.
     if (insErr && String(insErr.message || '').toLowerCase().includes('checklist')) {
-      const stripped = toInsertStrict.map(({ checklist: _c, ...rest }) => rest);
-      insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+      const stripped = rowsToInsert.map(({ checklist: _c, ...rest }) => rest);
+      ({ data: insertedRows, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selCols));
     }
     if (insErr) throw insErr;
+    await applyAssigneesToInsertedCrmTasks(insertedRows || [], assigneeIdsForCreated, null, { syncAssignments: false });
+    const syncStats = await syncSxTasksAfterBulkInsert(req, leadId, toInsertStrict, sxTaskFingerprint, createdBy);
     return {
       created: toInsertStrict.length,
+      synced_assignments: syncStats.synced_assignments || 0,
+      synced_artifacts: syncStats.synced_artifacts || 0,
       reason: 'ok',
       template_count: templates.length,
       template_names: templates.map((t) => t.name).filter(Boolean),
@@ -609,7 +654,16 @@ async function applyProductionTemplateToFulfillmentLead({
     }
     const { error: insErr } = await supabase.from('crm_tasks').insert(toAdd);
     if (insErr) throw insErr;
-    return { created: toAdd.length, reason: 'emergency_seed', template_count: 0, template_names: [], company_id: targetCompanyId || null };
+    const syncStats = await syncSxTasksAfterBulkInsert(req, leadId, toAdd, sxTaskFingerprint, createdBy);
+    return {
+      created: toAdd.length,
+      synced_assignments: syncStats.synced_assignments || 0,
+      synced_artifacts: syncStats.synced_artifacts || 0,
+      reason: 'emergency_seed',
+      template_count: 0,
+      template_names: [],
+      company_id: targetCompanyId || null,
+    };
   }
 
   const templateIds = templates.map((t) => t.id).filter(Boolean);
@@ -652,8 +706,11 @@ async function applyProductionTemplateToFulfillmentLead({
     }
     const { error: insErr } = await supabase.from('crm_tasks').insert(toAdd);
     if (insErr) throw insErr;
+    const syncStats = await syncSxTasksAfterBulkInsert(req, leadId, toAdd, sxTaskFingerprint, createdBy);
     return {
       created: toAdd.length,
+      synced_assignments: syncStats.synced_assignments || 0,
+      synced_artifacts: syncStats.synced_artifacts || 0,
       reason: 'emergency_seed',
       template_count: templates.length,
       template_names: templates.map((t) => t.name).filter(Boolean),
@@ -695,6 +752,7 @@ async function applyProductionTemplateToFulfillmentLead({
     );
     const execCo = resolveExecutorCompanyId(it, targetCompanyId);
     const maps = await loadHandoverMapsCached(handoverCacheLoose, execCo);
+    const assigneeIds = resolveSxAssigneesForTemplateItem(it, maps);
     inserts.push({
       lead_id: leadId,
       title: it.title,
@@ -704,7 +762,8 @@ async function applyProductionTemplateToFulfillmentLead({
       priority: it.priority || 'medium',
       stage_slug: stageSlug,
       order_index: Number.isFinite(Number(it.order_index)) ? Number(it.order_index) : (idx + 1),
-      assignee_id: resolveSxAssigneeForTemplateItem(it, maps),
+      assignee_id: assigneeIds[0] || null,
+      __template_assignee_ids: assigneeIds,
       supervisor_id: null,
       deadline: null,
       created_by: createdBy,
@@ -725,36 +784,45 @@ async function applyProductionTemplateToFulfillmentLead({
       company_id: targetCompanyId || null,
     };
   }
-  let insErr = (await supabase.from('crm_tasks').insert(toInsertLoose)).error;
+  const assigneeIdsForCreatedLoose = assigneeIdsForFilteredInserts(inserts, toInsertLoose, sxTaskFingerprint);
+  const rowsToInsertLoose = toInsertLoose.map(stripAssigneeMetaFromInsertRow);
+  const selColsLoose = 'id, title, stage_slug, lead_id, description, status, priority, deadline, assignee_id, executor_company_id';
+  let insertedRowsLoose = null;
+  let insErr = null;
+  ({ data: insertedRowsLoose, error: insErr } = await supabase.from('crm_tasks').insert(rowsToInsertLoose).select(selColsLoose));
   if (insErr && String(insErr.message || '').includes('production_pipeline_stage_id')) {
-    const stripped = toInsertLoose.map(({ production_pipeline_stage_id: _p, ...rest }) => rest);
-    insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+    const stripped = rowsToInsertLoose.map(({ production_pipeline_stage_id: _p, ...rest }) => rest);
+    ({ data: insertedRowsLoose, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selColsLoose));
   }
   if (insErr && String(insErr.message || '').includes('blocks_stage_advance')) {
-    const stripped = toInsertLoose.map(({ blocks_stage_advance: _b, production_pipeline_stage_id: _p, ...rest }) => rest);
-    insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+    const stripped = rowsToInsertLoose.map(({ blocks_stage_advance: _b, production_pipeline_stage_id: _p, ...rest }) => rest);
+    ({ data: insertedRowsLoose, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selColsLoose));
   }
   if (insErr && isSxTemplateEvidenceColumnError(insErr)) {
-    const stripped = toInsertLoose.map(({
+    const stripped = rowsToInsertLoose.map(({
       completion_requires_file_or_note: _c,
       required_evidence_file_types: _r,
       requires_quick_verdict: _q,
       ...rest
     }) => rest);
-    insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+    ({ data: insertedRowsLoose, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selColsLoose));
   }
   if (insErr && isExecutorColumnError(insErr)) {
-    const stripped = toInsertLoose.map(({ executor_company_id: _e, ...rest }) => rest);
-    insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+    const stripped = rowsToInsertLoose.map(({ executor_company_id: _e, ...rest }) => rest);
+    ({ data: insertedRowsLoose, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selColsLoose));
   }
   // DB chưa apply migration 308 (cột checklist) → bỏ checklist và thử lại.
   if (insErr && String(insErr.message || '').toLowerCase().includes('checklist')) {
-    const stripped = toInsertLoose.map(({ checklist: _c, ...rest }) => rest);
-    insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+    const stripped = rowsToInsertLoose.map(({ checklist: _c, ...rest }) => rest);
+    ({ data: insertedRowsLoose, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selColsLoose));
   }
   if (insErr) throw insErr;
+  await applyAssigneesToInsertedCrmTasks(insertedRowsLoose || [], assigneeIdsForCreatedLoose, null, { syncAssignments: false });
+  const syncStats = await syncSxTasksAfterBulkInsert(req, leadId, toInsertLoose, sxTaskFingerprint, createdBy);
   return {
     created: toInsertLoose.length,
+    synced_assignments: syncStats.synced_assignments || 0,
+    synced_artifacts: syncStats.synced_artifacts || 0,
     reason: 'ok',
     template_count: templates.length,
     template_names: templates.map((t) => t.name).filter(Boolean),
@@ -1206,6 +1274,7 @@ async function applyProductionTemplatesOnPipelineEnter({
     const stageSlug = enterStageSlug || stageSlugByTemplateId.get(String(it.template_id)) || 'sx_other';
     const execCo = resolveExecutorCompanyId(it, ownerCompanyId);
     const maps = await loadHandoverMapsCached(handoverCache, execCo);
+    const assigneeIds = resolveSxAssigneesForTemplateItem(it, maps);
     const row = {
       lead_id: leadId,
       title: it.title,
@@ -1215,7 +1284,8 @@ async function applyProductionTemplatesOnPipelineEnter({
       priority: it.priority || 'medium',
       stage_slug: stageSlug,
       order_index: Number.isFinite(Number(it.order_index)) ? Number(it.order_index) : (idx + 1),
-      assignee_id: resolveSxAssigneeForTemplateItem(it, maps),
+      assignee_id: assigneeIds[0] || null,
+      __template_assignee_ids: assigneeIds,
       supervisor_id: null,
       deadline: null,
       created_by: userId,
@@ -1237,59 +1307,53 @@ async function applyProductionTemplatesOnPipelineEnter({
     };
   }
 
-  let insErr = (await supabase.from('crm_tasks').insert(inserts)).error;
+  const assigneeIdsForCreatedPipe = assigneeIdsForFilteredInserts(inserts, inserts, sxTaskFingerprint);
+  const rowsToInsertPipe = inserts.map(stripAssigneeMetaFromInsertRow);
+  const selColsPipe = 'id, title, stage_slug, lead_id, description, status, priority, deadline, assignee_id, executor_company_id';
+  let insertedRowsPipe = null;
+  let insErr = null;
+  ({ data: insertedRowsPipe, error: insErr } = await supabase.from('crm_tasks').insert(rowsToInsertPipe).select(selColsPipe));
   if (insErr && String(insErr.message || '').includes('production_pipeline_stage_id')) {
-    const stripped = inserts.map(({ production_pipeline_stage_id: _p, ...rest }) => rest);
-    insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+    const stripped = rowsToInsertPipe.map(({ production_pipeline_stage_id: _p, ...rest }) => rest);
+    ({ data: insertedRowsPipe, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selColsPipe));
   }
   if (insErr && String(insErr.message || '').includes('blocks_stage_advance')) {
-    const stripped = inserts.map(({ blocks_stage_advance: _b, production_pipeline_stage_id: _p, ...rest }) => rest);
-    insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+    const stripped = rowsToInsertPipe.map(({ blocks_stage_advance: _b, production_pipeline_stage_id: _p, ...rest }) => rest);
+    ({ data: insertedRowsPipe, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selColsPipe));
   }
   if (insErr && isSxTemplateEvidenceColumnError(insErr)) {
-    const stripped = inserts.map(({
+    const stripped = rowsToInsertPipe.map(({
       completion_requires_file_or_note: _c,
       required_evidence_file_types: _r,
       requires_quick_verdict: _q,
       ...rest
     }) => rest);
-    insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+    ({ data: insertedRowsPipe, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selColsPipe));
   }
   if (insErr && isExecutorColumnError(insErr)) {
-    const stripped = inserts.map(({ executor_company_id: _e, ...rest }) => rest);
-    insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+    const stripped = rowsToInsertPipe.map(({ executor_company_id: _e, ...rest }) => rest);
+    ({ data: insertedRowsPipe, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selColsPipe));
   }
   if (insErr && String(insErr.message || '').toLowerCase().includes('checklist')) {
-    const stripped = inserts.map(({ checklist: _c, ...rest }) => rest);
-    insErr = (await supabase.from('crm_tasks').insert(stripped)).error;
+    const stripped = rowsToInsertPipe.map(({ checklist: _c, ...rest }) => rest);
+    ({ data: insertedRowsPipe, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selColsPipe));
   }
   if (insErr) throw insErr;
-
-  const { data: createdTasks } = await supabase
-    .from('crm_tasks')
-    .select('id, lead_id, title, description, status, priority, deadline, stage_slug, assignee_id, completed_at, executor_company_id')
-    .eq('lead_id', leadId)
-    .like('stage_slug', 'sx_%')
-    .order('created_at', { ascending: false })
-    .limit(inserts.length);
+  await applyAssigneesToInsertedCrmTasks(insertedRowsPipe || [], assigneeIdsForCreatedPipe, req || { user: { userId } }, { syncAssignments: false });
 
   const syncReq = req || { user: { userId } };
-  let syncedAssignments = 0;
   const createdTitles = new Set(inserts.map((r) => sxTaskFingerprint(r.title, r.stage_slug)));
-  for (const task of createdTasks || []) {
-    if (!createdTitles.has(sxTaskFingerprint(task.title, task.stage_slug))) continue;
-    if (!task.assignee_id) continue;
-    try {
-      const r0 = await syncAssignmentFromCrmTask(syncReq, task, [task.assignee_id], { assignmentModule: 'production' });
-      if (r0?.assignmentId) syncedAssignments += 1;
-    } catch (e) {
-      console.warn('[applyProductionTemplatesOnPipelineEnter] sync assignment:', e.message);
-    }
-  }
+  const syncStats = await syncProductionLeadTasksToAssignments(syncReq, leadId, {
+    fingerprints: createdTitles,
+    fingerprintFn: sxTaskFingerprint,
+    assignmentModule: 'production',
+    limit: inserts.length + 20,
+  });
 
   return {
     created: inserts.length,
-    synced_assignments: syncedAssignments,
+    synced_assignments: syncStats.synced_assignments || 0,
+    synced_artifacts: syncStats.synced_artifacts || 0,
     reason: 'ok',
     template_count: templates.length,
     template_names: templates.map((t) => t.name).filter(Boolean),

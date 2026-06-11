@@ -22,6 +22,10 @@ const {
   attachCrmTaskMetaToAssignments,
   applyAssignmentStatusColumn,
 } = require('../helpers/crmTaskAssignmentSync');
+const {
+  syncAssignmentFileToTask,
+  deleteMirroredTaskAttachmentForAssignmentFile,
+} = require('../helpers/crmTaskAssignmentArtifactSync');
 const { responseCache, invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
 
 const assignColsCache = createTTLCache({
@@ -208,30 +212,43 @@ async function userCanAccessAssignment(req, row) {
   return false;
 }
 
-/** Id nhiệm vụ NV được xem: công ty + việc được giao (tránh .or() + UUID làm vỡ query Supabase). */
+/** Id nhiệm vụ NV được xem: chỉ việc được giao / tạo (không xem toàn bộ công ty). */
 async function getVisibleAssignmentIdsForNonAdmin(req) {
-  const uid = req.user?.userId;
-  const companyId = req.user?.company_id || null;
-  const involvedIds = await getUserInvolvedAssignmentIds(uid);
-  const idSet = new Set(involvedIds);
+  return getUserInvolvedAssignmentIds(req.user?.userId);
+}
 
-  if (companyId) {
-    const { data: companyRows, error } = await supabase
-      .from('crm_assignments')
-      .select('id')
-      .eq('company_id', companyId);
-    if (error) throw error;
-    (companyRows || []).forEach((r) => idSet.add(r.id));
+/** Lọc assignment theo phòng ban — NV thuộc phòng ban đó (assignees hoặc assignee_id). */
+async function getAssignmentIdsForDepartment(departmentId) {
+  const deptId = String(departmentId || '').trim();
+  if (!deptId) return null;
+  const { data: deptUsers, error: uErr } = await supabase
+    .from('users')
+    .select('id')
+    .eq('department_id', deptId)
+    .neq('is_active', false);
+  if (uErr) throw uErr;
+  const userIds = (deptUsers || []).map((u) => u.id).filter(Boolean);
+  if (!userIds.length) return [];
 
-    const { data: execRows, error: execErr } = await supabase
-      .from('crm_assignments')
-      .select('id')
-      .eq('executor_company_id', companyId);
-    if (execErr && !String(execErr.message || '').includes('executor_company_id')) throw execErr;
-    if (!execErr) (execRows || []).forEach((r) => idSet.add(r.id));
-  }
+  const ids = new Set();
+  const { data: junction } = await supabase
+    .from('crm_assignment_assignees')
+    .select('assignment_id')
+    .in('user_id', userIds);
+  (junction || []).forEach((r) => ids.add(r.assignment_id));
 
-  return [...idSet];
+  const { data: direct } = await supabase
+    .from('crm_assignments')
+    .select('id')
+    .in('assignee_id', userIds);
+  (direct || []).forEach((r) => ids.add(r.id));
+  return [...ids];
+}
+
+function intersectAssignmentIds(currentIds, nextIds) {
+  if (currentIds == null) return nextIds;
+  const allowed = new Set(nextIds);
+  return currentIds.filter((id) => allowed.has(id));
 }
 
 const ASSIGNMENT_SELECT = `
@@ -240,8 +257,9 @@ const ASSIGNMENT_SELECT = `
   position, created_at, updated_at, completed_at,
   assignee:users!crm_assignments_assignee_id_fkey(id, full_name, email, avatar),
   created_by:users!crm_assignments_created_by_id_fkey(id, full_name, email, avatar),
-  company:companies(id, name, short_name),
-  lead:crm_leads(id, code, title, type)
+  company:companies!crm_assignments_company_id_fkey(id, name, short_name),
+  executor_company:companies!crm_assignments_executor_company_id_fkey(id, name, short_name),
+  lead:crm_leads(id, code, title, type, project_id)
 `;
 
 async function attachAssigneesToAssignments(list) {
@@ -457,12 +475,22 @@ r.get('/', async (req, res) => {
       q = q.in('id', scopeIds);
     }
 
-    if (req.query.assignee_id) {
+    const assigneeFilter = String(req.query.assignee_id || '').trim();
+    if (assigneeFilter) {
+      if (!isAdmin(req) && String(assigneeFilter) !== String(req.user?.userId || '')) {
+        return res.json({ assignments: [] });
+      }
       const { data: rows } = await supabase
         .from('crm_assignment_assignees')
         .select('assignment_id')
-        .eq('user_id', req.query.assignee_id);
+        .eq('user_id', assigneeFilter);
       let ids = [...new Set((rows || []).map((r) => r.assignment_id))];
+      const { data: directRows } = await supabase
+        .from('crm_assignments')
+        .select('id')
+        .eq('assignee_id', assigneeFilter);
+      (directRows || []).forEach((r) => ids.push(r.id));
+      ids = [...new Set(ids)];
       if (!ids.length) return res.json({ assignments: [] });
       if (scopeIds) {
         const allowed = new Set(scopeIds);
@@ -471,6 +499,23 @@ r.get('/', async (req, res) => {
       }
       q = q.in('id', ids);
     }
+
+    const departmentFilter = String(req.query.department_id || '').trim();
+    if (departmentFilter) {
+      if (!isAdmin(req)) {
+        return res.json({ assignments: [] });
+      }
+      const deptIds = await getAssignmentIdsForDepartment(departmentFilter);
+      if (!deptIds.length) return res.json({ assignments: [] });
+      if (scopeIds) {
+        scopeIds = intersectAssignmentIds(scopeIds, deptIds);
+        if (!scopeIds.length) return res.json({ assignments: [] });
+        q = q.in('id', scopeIds);
+      } else {
+        q = q.in('id', deptIds);
+      }
+    }
+
     if (req.query.status) q = q.eq('status', req.query.status);
     if (req.query.priority) q = q.eq('priority', req.query.priority);
     if (req.query.column_id) q = q.eq('column_id', req.query.column_id);
@@ -734,12 +779,25 @@ r.get('/unread-count', responseCache({ ttl: 30, scope: 'user', tags: ['crm:assig
 
     const now = new Date();
     const in24h = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+    const moduleFilter = String(req.query.assignment_module || '').trim().toLowerCase();
 
-    const { data: items } = await supabase
+    let q = supabase
       .from('crm_assignments')
       .select('id, status, deadline')
       .in('id', ids)
       .neq('status', 'completed');
+    if (moduleFilter === 'production' || moduleFilter === 'crm') {
+      q = q.eq('assignment_module', moduleFilter);
+    }
+    let { data: items, error: listErr } = await q;
+    if (listErr && /assignment_module/.test(listErr.message || '') && moduleFilter) {
+      ({ data: items, error: listErr } = await supabase
+        .from('crm_assignments')
+        .select('id, status, deadline')
+        .in('id', ids)
+        .neq('status', 'completed'));
+    }
+    if (listErr) throw listErr;
 
     const list = items || [];
     const overdue = list.filter((t) => t.deadline && t.deadline < now.toISOString()).length;
@@ -819,6 +877,11 @@ r.post('/:id/files', (req, res, next) => {
       }
       throw error;
     }
+    try {
+      await syncAssignmentFileToTask(data, req);
+    } catch (syncErr) {
+      console.warn('[assignment file] sync→task:', syncErr.message);
+    }
     res.status(201).json({ file: data });
   } catch (e) {
     console.error(e);
@@ -883,6 +946,11 @@ r.post('/:id/files/link', async (req, res) => {
       }
       throw error;
     }
+    try {
+      await syncAssignmentFileToTask(data, req);
+    } catch (syncErr) {
+      console.warn('[assignment file link] sync→task:', syncErr.message);
+    }
     res.status(201).json({ file: data });
   } catch (e) {
     console.error(e);
@@ -896,13 +964,18 @@ r.delete('/:id/files/:fileId', async (req, res) => {
     const uid = req.user.userId || req.user.id;
     const { data: row } = await supabase
       .from('crm_assignment_files')
-      .select('id, storage_path, uploaded_by')
+      .select('id, storage_path, uploaded_by, source_task_attachment_id')
       .eq('id', req.params.fileId)
       .eq('assignment_id', req.params.id)
       .maybeSingle();
     if (!row) return res.status(404).json({ error: 'Không tìm thấy file' });
     if (String(row.uploaded_by) !== String(uid) && !isAdmin(req)) {
       return res.status(403).json({ error: 'Không có quyền xóa file' });
+    }
+    try {
+      await deleteMirroredTaskAttachmentForAssignmentFile(row.id, row.source_task_attachment_id);
+    } catch (syncErr) {
+      console.warn('[assignment file delete] sync→task:', syncErr.message);
     }
     if (row.storage_path) {
       await supabase.storage.from(STORAGE_BUCKET).remove([row.storage_path]).catch(() => {});

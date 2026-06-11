@@ -6,6 +6,8 @@ import { isAdminLike } from '../lib/adminRole';
 import { findDefaultAdminCrmCompanyPhucDat } from '../lib/crmCompanyFilter';
 import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Globe, MapPin, Lock, Star, Paperclip, MessageSquare, User } from 'lucide-react';
 import EvidenceFileTypesPicker from '../components/EvidenceFileTypesPicker';
+import TemplateItemAssigneePicker from '../components/TemplateItemAssigneePicker';
+import { templateItemAssigneeIds, templateItemAssigneeCount } from '../lib/templateItemAssignees';
 import { formatEvidenceTypesShort, normalizeEvidenceFileTypes, checklistItemRequiresEvidence } from '../lib/evidenceFileTypes';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
@@ -1197,6 +1199,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
                     companies={companies}
                     departments={departments}
                     users={users}
+                    defaultCompanyId={selectedCompanyId}
                     toggleItemCompany={toggleItemCompany}
                     toggleItemDept={toggleItemDept}
                     pipelineStages={pipelineStages}
@@ -1237,7 +1240,7 @@ function TemplateCard({
   addChecklistItem, removeChecklistItem, updateChecklistItem,
   sensors, handleItemDragEnd, handleChecklistDragEnd, handleCardDragEnd,
   editingVisibility, setEditingVisibility,
-  companies, departments, users = [], toggleItemCompany, toggleItemDept,
+  companies, departments, users = [], defaultCompanyId = '', toggleItemCompany, toggleItemDept,
   updateTemplateItemFields,
   pipelineStages = [], activeTab = 'production',
 }) {
@@ -1252,13 +1255,29 @@ function TemplateCard({
   // Số nhiệm vụ "chặn chuyển giai đoạn" còn lại trong bộ mẫu (giúp người cấu hình nhìn nhanh trên header).
   const blockingItemsCount = (tpl.items || []).filter((it) => it && it.blocks_stage_advance).length;
   const [editingItemId, setEditingItemId] = useState(null);
+  const [editingAssignee, setEditingAssignee] = useState({});
   const [itemEditForm, setItemEditForm] = useState({
     title: '', description: '', priority: 'medium', deadline_days: 0,
     blocks_stage_advance: false, completion_requires_file_or_note: false, required_evidence_file_types: [],
-    requires_quick_verdict: false, executor_company_id: '',
+    requires_quick_verdict: false, executor_company_id: '', default_assignee_id: '', default_assignee_ids: [],
   });
 
   const sortedItems = [...(tpl.items || [])].sort((a, b) => a.order_index - b.order_index);
+
+  const saveItemAssignees = async (itemId, ids) => {
+    const payload = {
+      default_assignee_ids: ids?.length ? ids : [],
+      default_assignee_id: ids?.[0] || null,
+    };
+    await updateTemplateItemFields(tpl.id, itemId, payload);
+    if (editingItemId === itemId) {
+      setItemEditForm((f) => ({
+        ...f,
+        default_assignee_ids: ids || [],
+        default_assignee_id: ids?.[0] || '',
+      }));
+    }
+  };
 
   const openItemEdit = (item) => {
     setEditingItemId(item.id);
@@ -1272,6 +1291,8 @@ function TemplateCard({
       required_evidence_file_types: normalizeEvidenceFileTypes(item.required_evidence_file_types),
       requires_quick_verdict: !!item.requires_quick_verdict,
       executor_company_id: item.executor_company_id || '',
+      default_assignee_id: templateItemAssigneeIds(item)[0] || '',
+      default_assignee_ids: templateItemAssigneeIds(item),
     });
   };
 
@@ -1292,6 +1313,8 @@ function TemplateCard({
         required_evidence_file_types: itemEditForm.required_evidence_file_types || [],
         requires_quick_verdict: !!itemEditForm.requires_quick_verdict,
         executor_company_id: itemEditForm.executor_company_id || null,
+        default_assignee_ids: templateItemAssigneeIds(itemEditForm),
+        default_assignee_id: templateItemAssigneeIds(itemEditForm)[0] || null,
       });
       setEditingItemId(null);
     } catch { /* alert trong updateTemplateItemFields */ }
@@ -1430,8 +1453,10 @@ function TemplateCard({
       {expanded && (
         <div className="px-4 py-2 space-y-1">
           <p className="text-[10px] text-gray-600 mb-2 leading-snug bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-2">
-            <span className="font-semibold text-gray-700">Ngày hẹn:</span>{' '}
-            Không tự gán khi gắn bộ mẫu — nhân viên đặt trên từng nhiệm vụ (dự án / tab Công việc deal).
+            <span className="font-semibold text-gray-700">Gán NV:</span>{' '}
+            Bấm icon <User className="h-3 w-3 inline -mt-0.5" /> trên từng dòng — có thể chọn nhiều người, lọc công ty/phòng ban, tìm tên. SX: ưu tiên{' '}
+            <Link to="/sx/handover-settings" className="text-teal-700 hover:underline">Bàn giao CRM → SX</Link>
+            {' '}theo công ty nếu đã cấu hình.
           </p>
           <DndContext sensors={sensors} collisionDetection={closestCenter}
             onDragEnd={(e) => handleCardDragEnd(e, tpl.id)}>
@@ -1503,6 +1528,12 @@ function TemplateCard({
                           className={`p-1 rounded cursor-pointer shrink-0 ${item.requires_quick_verdict ? 'text-sky-600 bg-sky-50 hover:bg-sky-100' : 'text-gray-400 hover:bg-sky-50 hover:text-sky-600'}`}
                           title={item.requires_quick_verdict ? 'Đang bật ghi chú nhanh Đủ/Chưa — bấm để tắt' : 'Bật ghi chú nhanh: Đã đủ / Chưa (+ lý do)'}>
                           <MessageSquare className="h-3.5 w-3.5" /></button>
+                        <button type="button" onClick={() => setEditingAssignee((p) => ({ ...p, [item.id]: !p[item.id] }))}
+                          className={`p-1 rounded cursor-pointer shrink-0 ${templateItemAssigneeCount(item) || editingAssignee[item.id] ? 'text-indigo-600 bg-indigo-50 hover:bg-indigo-100' : 'text-gray-400 hover:bg-indigo-50 hover:text-indigo-600'}`}
+                          title={templateItemAssigneeCount(item)
+                            ? `Đã gán ${templateItemAssigneeCount(item)} NV — bấm để sửa`
+                            : 'Gán nhân viên (có thể nhiều người)'}>
+                          <User className="h-3.5 w-3.5" /></button>
                         <button type="button" onClick={() => setEditingVisibility(p => ({ ...p, [item.id]: !p[item.id] }))}
                           className={`p-1 rounded cursor-pointer shrink-0 ${(item.default_allowed_companies?.length > 0 || item.default_allowed_departments?.length > 0) ? 'text-red-500 hover:bg-red-50' : 'text-gray-400 hover:bg-purple-50 hover:text-purple-600'}`} title="Phân quyền xem">
                           <Shield className="h-3.5 w-3.5" /></button>
@@ -1516,6 +1547,15 @@ function TemplateCard({
                           className="p-1 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded cursor-pointer shrink-0" title="Xóa mục">
                           <Trash2 className="h-3 w-3" /></button>
                       </div>
+                      {editingAssignee[item.id] && (
+                        <TemplateItemAssigneePicker
+                          item={item}
+                          companies={companies}
+                          defaultCompanyId={defaultCompanyId}
+                          compact
+                          onSave={(ids) => saveItemAssignees(item.id, ids)}
+                        />
+                      )}
                       {editingItemId === item.id && (
                         <div className="mx-2 mb-2 p-3 bg-sky-50 rounded-lg border border-sky-200 space-y-2" onClick={e => e.stopPropagation()}>
                           <p className="text-[10px] text-sky-700 font-bold uppercase tracking-wide">✏️ Sửa nhiệm vụ mẫu</p>
@@ -1546,6 +1586,19 @@ function TemplateCard({
                               ))}
                             </select>
                             <p className="text-[10px] text-gray-400 mt-1">Khi kích hoạt bộ mẫu ở pipeline, NV công ty này nhận việc và thấy dự án trên Kanban SX.</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-semibold text-gray-500 mb-1 flex items-center gap-1">
+                              <User className="h-3 w-3 text-indigo-600" /> Nhân viên mặc định
+                            </p>
+                            <TemplateItemAssigneePicker
+                              item={itemEditForm.default_assignee_ids?.length ? itemEditForm : item}
+                              companies={companies}
+                              defaultCompanyId={defaultCompanyId}
+                              compact
+                              onSave={(ids) => saveItemAssignees(editingItemId, ids)}
+                            />
+                            <p className="text-[10px] text-gray-400 mt-1">Dùng khi gen nhiệm vụ sx_* nếu chưa cấu hình riêng ở Bàn giao CRM → SX.</p>
                           </div>
                           <textarea
                             value={itemEditForm.description || ''}

@@ -15,9 +15,23 @@ const {
   createCrmLeadTask,
   updateCrmLeadTask,
   deleteCrmLeadTask,
+  restoreCrmTaskChecklistFromWorkshopTemplate,
 } = require('../helpers/crmLeadTaskMutations');
 const { attachAssigneesToCrmTasks } = require('../helpers/crmTaskAssignees');
+const {
+  templateItemAssigneePatch,
+  isDefaultAssigneeIdsColumnError,
+  normalizeTemplateItemAssigneeIds,
+  primaryTemplateItemAssigneeId,
+  applyAssigneesToInsertedCrmTasks,
+} = require('../helpers/templateItemAssignees');
 const { attachAssignmentIdsToCrmTasks } = require('../helpers/crmTaskAssignmentSync');
+const {
+  syncTaskAttachmentToAssignment,
+  syncAllTaskArtifactsToAssignment,
+  deleteMirroredAssignmentFileForTaskAttachment,
+  fetchAssignmentForTask,
+} = require('../helpers/crmTaskAssignmentArtifactSync');
 const { createCrmAssignment } = require('../helpers/crmAssignmentMutations');
 const {
   persistAssignmentNotification,
@@ -5544,7 +5558,7 @@ r.post('/leads', async (req, res) => {
     } catch (ne) { console.warn('[NOTIFY] lead_created:', ne.message); }
 
     try {
-      await autoGenCrmTasksForNewLead(data.id, req.user.userId);
+      await autoGenCrmTasksForNewLead(data.id, req.user.userId, req);
     } catch (autoErr) { console.error('Auto-create tasks error:', autoErr.message); }
 
     // Lead: toàn bộ nhiệm vụ trên chính lead (không Đơn 1 / deal con).
@@ -5664,7 +5678,7 @@ r.post('/deals', async (req, res) => {
     } catch (ne) { console.warn('[NOTIFY] deal_created:', ne.message); }
 
     try {
-      await autoGenCrmTasksForNewLead(data.id, req.user.userId);
+      await autoGenCrmTasksForNewLead(data.id, req.user.userId, req);
     } catch (autoErr) { console.error('Auto-create tasks on deal create error:', autoErr.message); }
 
     // Nhiệm vụ SX (sx_*) từ workshop_task_templates — khi loại Deal bật cờ hoặc client gửi apply_workshop_production_tasks.
@@ -5674,6 +5688,7 @@ r.post('/deals', async (req, res) => {
         if (gate.ok) {
           const targetLeadId = await resolveCrmTaskWriteLeadId(data.id);
           await applyProductionTemplateToFulfillmentLead({
+            req,
             leadId: targetLeadId,
             createdBy: req.user.userId,
             assigneeId: data.assigned_to || data.lead_owner_id || null,
@@ -6138,7 +6153,7 @@ r.put('/leads/:id', async (req, res) => {
 
     if (oldLead?.type === 'lead' && data?.type === 'deal') {
       try {
-        await autoGenCrmTasksForNewLead(id, req.user.userId);
+        await autoGenCrmTasksForNewLead(id, req.user.userId, req);
       } catch (genErr) {
         console.warn('[crm PUT /leads/:id] auto-gen deal tasks after lead→deal:', genErr.message);
       }
@@ -6860,7 +6875,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 
     // Gen bộ nhiệm vụ Deal (1 lần) từ template pipeline công ty; task Lead cũ giữ DB, UI ẩn qua filter pipeline_type.
     try {
-      await autoGenCrmTasksForNewLead(req.params.id, req.user.userId);
+      await autoGenCrmTasksForNewLead(req.params.id, req.user.userId, req);
     } catch (autoErr) {
       console.error('Auto-create tasks on convert-to-deal error:', autoErr.message);
     }
@@ -11351,13 +11366,26 @@ r.get('/leads/:id/tasks', async (req, res) => {
       data = (data || []).filter((t) => !String(t.stage_slug || '').startsWith('sx_'));
     }
 
-    const { filterCrmTasksByCompanyScope } = require('../helpers/crossCompanyWorkspace');
+    const { filterCrmTasksByCompanyScope, sanitizeTasksForSharedWorkspace } = require('../helpers/crossCompanyWorkspace');
     const taskCompanyScope = String(req.query?.task_company_scope || 'own').toLowerCase();
+    let ownerCompanyId = String(req.query?.owner_company_id || '').trim() || null;
+    if (!ownerCompanyId && lead?.project_id) {
+      const { data: projOwner } = await supabase
+        .from('projects')
+        .select('company_id')
+        .eq('id', lead.project_id)
+        .maybeSingle();
+      ownerCompanyId = projOwner?.company_id || null;
+    }
     data = filterCrmTasksByCompanyScope(data, {
       scope: taskCompanyScope,
       userCompanyId: req.user?.company_id || null,
       leadCompanyId: lead?.company_id || null,
+      ownerCompanyId,
     });
+    if (taskCompanyScope === 'shared') {
+      data = sanitizeTasksForSharedWorkspace(data, ownerCompanyId);
+    }
 
     if (data?.length) {
       data = await attachAssigneesToCrmTasks(data);
@@ -11381,7 +11409,7 @@ r.post('/leads/:id/tasks/resync-pipeline', async (req, res) => {
     const regionCheck = assertLeadReadableByRegionScope(req, leadRow);
     if (!regionCheck.ok) return res.status(403).json({ error: regionCheck.error });
 
-    const result = await resyncCrmPipelineTasksForLead(req.params.id, req.user?.userId);
+    const result = await resyncCrmPipelineTasksForLead(req.params.id, req.user?.userId, req);
     if (!result.ok) return res.status(400).json(result);
     res.json(result);
   } catch (e) {
@@ -11496,9 +11524,11 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
       requires_quick_verdict: !!item.requires_quick_verdict,
       blocks_stage_advance: !!item.blocks_stage_advance,
       show_excel_quotation_upload: !!item.show_excel_quotation_upload,
+      assignee_id: primaryTemplateItemAssigneeId(item),
       ...crmExecutorFieldsFromTemplateItem(item, ownerCompanyId),
     }));
 
+    const assigneeIdsList = toInsert.map((item) => normalizeTemplateItemAssigneeIds(item));
     const sel = '*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)';
     let { data, error } = await supabase.from('crm_tasks').insert(inserts).select(sel);
     // DB chưa apply migration 308 (cột checklist) → bỏ checklist và thử lại.
@@ -11511,6 +11541,8 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
       ({ data, error } = await supabase.from('crm_tasks').insert(stripped).select(sel));
     }
     if (error) throw error;
+    await applyAssigneesToInsertedCrmTasks(data, assigneeIdsList, req);
+    if (data?.length) await attachAssigneesToCrmTasks(data);
     res.status(201).json({ tasks: data, count: data.length, skipped });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -11575,6 +11607,7 @@ r.post('/leads/:id/tasks/generate-production-template', async (req, res) => {
     }
 
     const r0 = await applyProductionTemplateToFulfillmentLead({
+      req,
       leadId: targetLeadId,
       createdBy: req.user.userId,
       assigneeId: null,
@@ -11844,6 +11877,22 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Khôi phục checklist từ mẫu xưởng (khi bị ghi đè từ không gian chung)
+r.post('/leads/:leadId/tasks/:taskId/restore-checklist', async (req, res) => {
+  try {
+    const ownerCompanyId = String(req.query?.owner_company_id || req.body?.owner_company_id || '').trim() || null;
+    const result = await restoreCrmTaskChecklistFromWorkshopTemplate(req.params.taskId, ownerCompanyId);
+    if (result.error) return res.status(result.status || 500).json({ error: result.error });
+    await emitCrmTaskChanged(req, {
+      leadId: req.params.leadId,
+      taskId: req.params.taskId,
+      action: 'updated',
+      task: result.data,
+    });
+    res.json({ task: result.data, restored_count: result.restored_count });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // DELETE task
 r.delete('/leads/:leadId/tasks/:taskId', async (req, res) => {
   try {
@@ -12072,6 +12121,15 @@ r.put('/leads/:leadId/tasks/:taskId/notes', async (req, res) => {
       task: data,
     });
 
+    try {
+      const assignment = await fetchAssignmentForTask(req.params.taskId);
+      if (assignment?.id) {
+        await syncAllTaskArtifactsToAssignment(req.params.taskId, assignment.id, req);
+      }
+    } catch (syncErr) {
+      console.warn('[task notes] sync→assignment:', syncErr.message);
+    }
+
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -12217,6 +12275,14 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
       task,
     });
 
+    for (const att of data || []) {
+      try {
+        await syncTaskAttachmentToAssignment(att, req);
+      } catch (syncErr) {
+        console.warn('[bulk attach] sync→assignment:', syncErr.message);
+      }
+    }
+
     res.status(201).json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -12299,6 +12365,12 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
       if (syncErr) console.warn('Sync attachment→document:', syncErr.message);
     } catch (syncErr) { console.warn('Sync attachment→document:', syncErr.message); }
 
+    try {
+      await syncTaskAttachmentToAssignment(data, req);
+    } catch (syncErr) {
+      console.warn('[attach] sync→assignment:', syncErr.message);
+    }
+
     res.status(201).json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -12306,6 +12378,12 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
 // DELETE attachment + sync xóa lead_document liên kết
 r.delete('/leads/:leadId/tasks/:taskId/attachments/:attId', async (req, res) => {
   try {
+    const { data: attBefore } = await supabase.from('crm_task_attachments')
+      .select('id, source_assignment_file_id')
+      .eq('id', req.params.attId)
+      .eq('task_id', req.params.taskId)
+      .maybeSingle();
+
     // Snapshot vào Thùng rác trước khi xóa thật (trừ khi permanent=true)
     if (req.query.permanent !== 'true') {
       try {
@@ -12319,6 +12397,14 @@ r.delete('/leads/:leadId/tasks/:taskId/attachments/:attId', async (req, res) => 
     // Xóa lead_document liên kết trước (vì có FK ON DELETE SET NULL)
     await supabase.from('lead_documents').delete()
       .eq('source_attachment_id', req.params.attId);
+    try {
+      await deleteMirroredAssignmentFileForTaskAttachment(
+        req.params.attId,
+        attBefore?.source_assignment_file_id,
+      );
+    } catch (syncErr) {
+      console.warn('[delete attach] sync→assignment:', syncErr.message);
+    }
     // Xóa attachment
     const { error } = await supabase.from('crm_task_attachments')
       .delete().eq('id', req.params.attId).eq('task_id', req.params.taskId);
@@ -12826,6 +12912,7 @@ r.post('/task-templates/:tplId/items', async (req, res) => {
       requires_quick_verdict: !!b.requires_quick_verdict,
       blocks_stage_advance: !!b.blocks_stage_advance,
       show_excel_quotation_upload: !!b.show_excel_quotation_upload,
+      ...templateItemAssigneePatch(b),
     }).select().single();
     if (error && /required_evidence_file_types|requires_quick_verdict/.test(error.message || '')) {
       return res.status(503).json({
@@ -12837,6 +12924,12 @@ r.post('/task-templates/:tplId/items', async (req, res) => {
       return res.status(503).json({
         error: 'Database chưa có cột giao việc chéo (migration 323). Chạy database/323_crm_task_template_executor_company.sql trên Supabase rồi thử lại.',
         code: 'db_migration_executor_company',
+      });
+    }
+    if (error && isDefaultAssigneeIdsColumnError(error)) {
+      return res.status(503).json({
+        error: 'Database chưa có cột default_assignee_ids (migration 331). Chạy database/331_template_item_default_assignee_ids.sql trên Supabase rồi thử lại.',
+        code: 'db_migration_default_assignee_ids',
       });
     }
     if (error) throw error;
@@ -12851,6 +12944,7 @@ r.put('/task-templates/:tplId/items/:itemId', async (req, res) => {
     ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist', 'default_allowed_companies', 'default_allowed_departments', 'executor_company_id', 'completion_requires_file_or_note', 'required_evidence_file_types', 'completion_requires_customer_note', 'completion_requires_customer_contact', 'requires_quick_verdict', 'blocks_stage_advance', 'show_excel_quotation_upload'].forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
+    Object.assign(update, templateItemAssigneePatch(req.body));
     if (req.body.executor_company_id === '' || req.body.executor_company_id === null) {
       update.executor_company_id = null;
     }
@@ -12866,6 +12960,12 @@ r.put('/task-templates/:tplId/items/:itemId', async (req, res) => {
       return res.status(503).json({
         error: 'Database chưa có cột giao việc chéo (migration 323). Chạy database/323_crm_task_template_executor_company.sql trên Supabase rồi thử lại.',
         code: 'db_migration_executor_company',
+      });
+    }
+    if (error && isDefaultAssigneeIdsColumnError(error)) {
+      return res.status(503).json({
+        error: 'Database chưa có cột default_assignee_ids (migration 331). Chạy database/331_template_item_default_assignee_ids.sql trên Supabase rồi thử lại.',
+        code: 'db_migration_default_assignee_ids',
       });
     }
     if (error) throw error;

@@ -158,6 +158,31 @@ function sxTaskBelongsToPipeline(task, sxStages) {
   return resolveSxTaskProductionStageId(task, sxStages) != null;
 }
 
+function isSxProductionTask(task) {
+  if (!task) return false;
+  return String(task?.stage_slug || '').startsWith('sx_') || !!task?.production_pipeline_stage_id;
+}
+
+const SX_ASSIGNMENTS_PATH = '/sx/assignments';
+
+function assignmentNavForTask(task, isProductionScope = false, forceProduction = null) {
+  const isProduction = forceProduction != null
+    ? !!forceProduction
+    : (
+      isProductionScope
+      || isSxProductionTask(task)
+      || String(task?.crm_assignment_module || '').toLowerCase() === 'production'
+    );
+  const base = isProduction ? SX_ASSIGNMENTS_PATH : '/crm/assignments';
+  return {
+    isProduction,
+    base,
+    label: isProduction ? 'Giao việc Sản xuất' : 'Giao việc CRM',
+    title: isProduction ? 'Mở trên trang Giao việc Sản xuất' : 'Mở trên trang Giao việc CRM',
+    openUrl: (id) => `${base}?open=${id}`,
+  };
+}
+
 /** Bộ mẫu thuộc pipeline + loại lead/deal đang xem. */
 function filterTemplatesForPipeline(templates, pipelineStages, leadType) {
   const stageIds = new Set((pipelineStages || []).map((s) => String(s.id)));
@@ -425,6 +450,8 @@ export default function CRMTasksTab({
   /** Cột pipeline SX từ ProductionDetail (sxKanbanStages) — khớp stepper, tránh fallback 9 cột cứng */
   embeddedSxKanbanStages = null,
   embeddedWorkshopTypeId = null,
+  /** Mở & cuộn tới nhiệm vụ từ liên kết Giao việc (?crm_task=) */
+  focusTaskId = null,
 }) {
   const { user } = useAuth();
   const isAdmin = isAdminLike(user);
@@ -492,12 +519,24 @@ export default function CRMTasksTab({
   }, [companies]);
 
   const isDelegatedSxTask = useCallback((task) => {
-    if (!isSxStageSlug(task?.stage_slug) && !task?.production_pipeline_stage_id) return false;
+    const ownerId = sxTemplateCompanyId || leadCompanyId || null;
     const exec = task?.executor_company_id;
-    if (!exec) return false;
-    if (!leadCompanyId) return true;
-    return String(exec) !== String(leadCompanyId);
-  }, [isSxStageSlug, leadCompanyId]);
+    if (exec) {
+      if (!ownerId) return true;
+      if (String(exec) !== String(ownerId)) return true;
+    }
+    const list = Array.isArray(task?.checklist) ? task.checklist : [];
+    return list.some((ck) => {
+      if (!ck || typeof ck !== 'object') return false;
+      const ckExec = ck.executor_company_id || null;
+      if (!ckExec) return false;
+      if (!ownerId) return true;
+      return String(ckExec) !== String(ownerId);
+    });
+  }, [leadCompanyId, sxTemplateCompanyId]);
+
+  const ownerCompanyId = sxTemplateCompanyId || leadCompanyId || null;
+  const isSharedWorkspace = taskCompanyScope === 'shared';
 
   const normalizeExecutorForSave = useCallback((execId) => {
     const v = execId ? String(execId) : null;
@@ -525,18 +564,81 @@ export default function CRMTasksTab({
     return list;
   }, [leadType, tasks, showSxTasksInUi, isSxStageSlug, projectWorkshopTypeId, sxPipelineStages, taskCompanyScope, isDelegatedSxTask]);
 
-  const delegatedTasks = useMemo(
-    () => uiTasks.filter((t) => isDelegatedSxTask(t)),
-    [uiTasks, isDelegatedSxTask],
-  );
+  const isTaskLevelCrossCompany = useCallback((task) => {
+    const ownerId = ownerCompanyId;
+    const exec = task?.executor_company_id;
+    if (!exec) return false;
+    if (!ownerId) return true;
+    return String(exec) !== String(ownerId);
+  }, [ownerCompanyId]);
+
+  const isChecklistOnlyInShared = useCallback((task) => {
+    if (task?.shared_view === 'checklist_only') return true;
+    if (!isSharedWorkspace) return false;
+    if (isTaskLevelCrossCompany(task)) return false;
+    return normalizeChecklist(task?.checklist).some((ck) => {
+      const ckExec = ck.executor_company_id || null;
+      if (!ckExec) return false;
+      if (!ownerCompanyId) return true;
+      return String(ckExec) !== String(ownerCompanyId);
+    });
+  }, [isSharedWorkspace, isTaskLevelCrossCompany, ownerCompanyId]);
+
+  const sharedWorkspaceGroups = useMemo(() => {
+    if (!isSharedWorkspace) return null;
+    const groups = new Map();
+    const ensureGroup = (execId) => {
+      const key = String(execId);
+      if (!groups.has(key)) {
+        groups.set(key, {
+          execId: key,
+          label: companyLabelById(key) || 'Công ty đối tác',
+          fullTasks: [],
+          checklistEntries: [],
+        });
+      }
+      return groups.get(key);
+    };
+    for (const t of uiTasks) {
+      if (isChecklistOnlyInShared(t)) {
+        for (const ck of normalizeChecklist(t.checklist)) {
+          const execId = ck.executor_company_id;
+          if (!execId) continue;
+          if (ownerCompanyId && String(execId) === String(ownerCompanyId)) continue;
+          ensureGroup(execId).checklistEntries.push({ task: t, ck });
+        }
+      } else if (t.executor_company_id) {
+        ensureGroup(t.executor_company_id).fullTasks.push(t);
+      }
+    }
+    return [...groups.values()]
+      .map((g) => {
+        const total = g.fullTasks.length + g.checklistEntries.length;
+        const completed = g.fullTasks.filter((x) => x.status === 'completed').length
+          + g.checklistEntries.filter(({ ck }) => ck.done).length;
+        return { ...g, total, completed };
+      })
+      .filter((g) => g.total > 0)
+      .sort((a, b) => a.label.localeCompare(b.label, 'vi'));
+  }, [isSharedWorkspace, uiTasks, companyLabelById, isChecklistOnlyInShared, ownerCompanyId]);
+
+  const sharedWorkspaceStats = useMemo(() => {
+    if (!isSharedWorkspace || !sharedWorkspaceGroups) {
+      return { total: uiTasks.length, completed: uiTasks.filter((t) => t.status === 'completed').length };
+    }
+    return sharedWorkspaceGroups.reduce(
+      (acc, g) => ({ total: acc.total + g.total, completed: acc.completed + g.completed }),
+      { total: 0, completed: 0 },
+    );
+  }, [isSharedWorkspace, sharedWorkspaceGroups, uiTasks]);
 
   useEffect(() => {
     if (!onTaskSummaryChange) return;
-    const total = uiTasks.length;
-    const completed = uiTasks.filter((t) => t.status === 'completed').length;
+    const total = isSharedWorkspace ? sharedWorkspaceStats.total : uiTasks.length;
+    const completed = isSharedWorkspace ? sharedWorkspaceStats.completed : uiTasks.filter((t) => t.status === 'completed').length;
     const percent = total ? Math.round((completed / total) * 100) : 0;
     onTaskSummaryChange({ total, completed, percent });
-  }, [uiTasks, onTaskSummaryChange]);
+  }, [uiTasks, onTaskSummaryChange, isSharedWorkspace, sharedWorkspaceStats]);
 
   /** Lead/deal cũ: task không gắn pipeline hoặc gắn stage pipeline không còn hợp lệ */
   const isLegacyCrmTaskSet = useMemo(() => {
@@ -667,6 +769,7 @@ export default function CRMTasksTab({
   };
 
   const prevLeadIdForTasksRef = useRef(null);
+  const loadTasksSeqRef = useRef(0);
 
   useEffect(() => {
     if (linkedProjectIdProp) setLinkedProjectId(linkedProjectIdProp);
@@ -743,6 +846,8 @@ export default function CRMTasksTab({
 
   const loadTasks = async (opts = {}) => {
     const silent = !!opts.silent;
+    const fetchScope = taskCompanyScope;
+    const fetchId = ++loadTasksSeqRef.current;
     if (!silent) setLoading(true);
     try {
       const leadRes = await api.get(`/crm/leads/${leadId}`).catch(() => ({ data: null }));
@@ -760,6 +865,9 @@ export default function CRMTasksTab({
         task_scope: taskScope,
         task_company_scope: taskCompanyScope,
         ...(sxWkt ? { workshop_type_id: sxWkt } : {}),
+        ...((sxTemplateCompanyId || leadRes?.data?.company_id)
+          ? { owner_company_id: sxTemplateCompanyId || leadRes?.data?.company_id }
+          : {}),
       };
       const tasksRes = await api.get(`/crm/leads/${leadId}/tasks`, { params: taskParams });
 
@@ -838,7 +946,10 @@ export default function CRMTasksTab({
         setTemplates([]);
       }
 
-      const displayTasks = tasksRes.data || [];
+      const displayTasks = (tasksRes.data || []).map((t) => (
+        fetchScope === 'shared' ? t : { ...t, shared_view: undefined }
+      ));
+      if (fetchId !== loadTasksSeqRef.current || fetchScope !== taskCompanyScope) return;
       setTasks(displayTasks);
 
       // Auto-expand stages that have tasks
@@ -850,7 +961,9 @@ export default function CRMTasksTab({
       setExpandedStages(stagesExp);
     } catch (e) { console.error(e); }
     finally {
-      setLoading(false);
+      if (fetchId === loadTasksSeqRef.current && fetchScope === taskCompanyScope) {
+        setLoading(false);
+      }
     }
   };
   useEffect(() => {
@@ -859,7 +972,7 @@ export default function CRMTasksTab({
     prevLeadIdForTasksRef.current = leadId;
     const silent = !first && !leadSwitched && refreshKey > 0;
     loadTasks({ silent });
-  }, [leadId, taskScope, taskCompanyScope, isProductionScope, refreshKey]);
+  }, [leadId, taskScope, taskCompanyScope, isProductionScope, refreshKey, sxTemplateCompanyId]);
 
   /** Realtime: web ↔ mobile — refetch khi nhiệm vụ CRM thay đổi qua socket */
   const loadTasksRef = useRef(loadTasks);
@@ -1013,17 +1126,62 @@ export default function CRMTasksTab({
     }
   };
 
+  const needsPartialChecklistSave = useCallback((task) => (
+    isSharedWorkspace && (task?.shared_view === 'checklist_only' || isChecklistOnlyInShared(task))
+  ), [isSharedWorkspace, isChecklistOnlyInShared]);
+
+  const mergeChecklistIntoTaskState = (task, serverTask, sentUpdates) => {
+    if (!isSharedWorkspace || !sentUpdates?.checklist_partial || !serverTask?.checklist) {
+      return { ...task, ...serverTask };
+    }
+    const local = normalizeChecklist(task.checklist);
+    const remote = normalizeChecklist(serverTask.checklist);
+    const nextChecklist = local.map((c) => {
+      const u = remote.find((r) => String(r.id) === String(c.id));
+      return u ? { ...c, ...u } : c;
+    });
+    const {
+      checklist: _c,
+      title: _t,
+      description: _d,
+      notes: _n,
+      shared_view: _s,
+      ...safe
+    } = serverTask;
+    return {
+      ...task,
+      ...safe,
+      checklist: nextChecklist,
+      shared_view: task.shared_view,
+      title: task.title ?? serverTask.title,
+      description: task.description ?? serverTask.description,
+      notes: task.notes ?? serverTask.notes,
+    };
+  };
+
   const updateTask = async (taskId, updates) => {
     const prevTasks = tasks;
     setTasks((p) => p.map((t) => (t.id === taskId ? { ...t, ...updates } : t)));
     try {
       const lid = apiLeadIdForTaskId(taskId);
       const { data } = await api.put(`/crm/leads/${lid}/tasks/${taskId}`, updates);
-      setTasks((p) => p.map((t) => (t.id === taskId ? { ...t, ...data } : t)));
+      setTasks((p) => p.map((t) => (t.id === taskId ? mergeChecklistIntoTaskState(t, data, updates) : t)));
     } catch (e) {
       setTasks(prevTasks);
       alert(e.response?.data?.error || 'Lỗi');
     }
+  };
+
+  const saveTaskChecklist = async (task, nextFullList, changedId = null) => {
+    if (needsPartialChecklistSave(task)) {
+      const changed = changedId
+        ? nextFullList.find((c) => c.id === changedId)
+        : nextFullList[nextFullList.length - 1];
+      if (!changed) return;
+      await updateTask(task.id, { checklist: [changed], checklist_partial: true });
+      return;
+    }
+    await updateTask(task.id, { checklist: nextFullList });
   };
 
   // ─── Checklist con của nhiệm vụ (lưu JSONB crm_tasks.checklist) ───
@@ -1054,11 +1212,11 @@ export default function CRMTasksTab({
       }
     }
     const list = normalizeChecklist(task.checklist).map((c) => (c.id === ckId ? { ...c, done: !c.done } : c));
-    await updateTask(task.id, { checklist: list });
+    await saveTaskChecklist(task, list, ckId);
   };
   const editChecklistItem = (task, ckId, patch) => {
     const list = normalizeChecklist(task.checklist).map((c) => (c.id === ckId ? { ...c, ...patch } : c));
-    updateTask(task.id, { checklist: list });
+    saveTaskChecklist(task, list, ckId);
   };
 
   const resolveChecklistAssignCompanyId = (task, ck) => (
@@ -1074,7 +1232,7 @@ export default function CRMTasksTab({
     const list = normalizeChecklist(task.checklist).map((c) => (
       c.id === ckId ? { ...c, executor_company_id: cid } : c
     ));
-    await updateTask(task.id, { checklist: list });
+    await saveTaskChecklist(task, list, ckId);
   };
 
   const assignChecklistItem = async (task, ckId, assigneeId) => {
@@ -1089,11 +1247,34 @@ export default function CRMTasksTab({
     const list = normalizeChecklist(task.checklist).map((c) => (
       c.id === ckId ? { ...c, assignee_id: uid } : c
     ));
-    await updateTask(task.id, { checklist: list });
+    await saveTaskChecklist(task, list, ckId);
   };
   const removeChecklistItem = (task, ckId) => {
     const list = normalizeChecklist(task.checklist).filter((c) => c.id !== ckId);
     updateTask(task.id, { checklist: list });
+  };
+
+  const restoreChecklistFromTemplate = async (task) => {
+    if (!window.confirm(
+      'Khôi phục checklist từ bộ mẫu xưởng?\nGiữ trạng thái hoàn thành / ghi chú các mục trùng tên.',
+    )) return;
+    try {
+      const owner = sxTemplateCompanyId || leadCompanyId || null;
+      const { data } = await api.post(
+        `/crm/leads/${apiLeadIdForTaskId(task.id)}/tasks/${task.id}/restore-checklist`,
+        {},
+        { params: owner ? { owner_company_id: owner } : {} },
+      );
+      const restored = data?.task;
+      if (restored) {
+        setTasks((p) => p.map((t) => (t.id === task.id ? { ...t, ...restored } : t)));
+      } else {
+        await loadTasks({ silent: true });
+      }
+      alert(`Đã khôi phục ${data?.restored_count || 0} mục checklist`);
+    } catch (e) {
+      alert(e.response?.data?.error || 'Không khôi phục được checklist');
+    }
   };
 
   const taskDnDSensors = useSensors(
@@ -1379,6 +1560,7 @@ export default function CRMTasksTab({
       supervisor_id: task.supervisor_id || '',
       stage_slug: task.stage_slug || '',
       show_excel_quotation_upload: !!task.show_excel_quotation_upload,
+      requires_quick_verdict: !!task.requires_quick_verdict,
       executor_company_id: task.executor_company_id || '',
     });
     requestAnimationFrame(() => updateEditPopoverPosition());
@@ -1437,6 +1619,7 @@ export default function CRMTasksTab({
         supervisor_id: editForm.supervisor_id || null,
         stage_slug: editForm.stage_slug,
         show_excel_quotation_upload: !!editForm.show_excel_quotation_upload,
+        requires_quick_verdict: !!editForm.requires_quick_verdict,
       };
       if (showSxTasksInUi || isProductionScope) {
         payload.executor_company_id = normalizeExecutorForSave(editForm.executor_company_id);
@@ -1464,6 +1647,7 @@ export default function CRMTasksTab({
           taskId,
           assignmentId: data.crm_assignment_id,
           title: data.title || assigningTask.title,
+          isProduction: isProductionScope || showSxTasksInUi || isSxProductionTask(assigningTask),
         });
       }
     } catch (e) {
@@ -1762,6 +1946,35 @@ export default function CRMTasksTab({
   }, [calMonth]);
 
   const [expandedTask, setExpandedTask] = useState(null);
+  const [focusHighlightId, setFocusHighlightId] = useState(null);
+  const focusAppliedRef = useRef(null);
+
+  useEffect(() => {
+    focusAppliedRef.current = null;
+    setFocusHighlightId(null);
+  }, [leadId, focusTaskId]);
+
+  useEffect(() => {
+    const fid = focusTaskId ? String(focusTaskId) : '';
+    if (!fid || loading) return;
+    const task = uiTasks.find((t) => String(t.id) === fid);
+    if (!task) return;
+    if (focusAppliedRef.current === fid) return;
+    focusAppliedRef.current = fid;
+    if (leadType === 'deal' && isSxProductionTask(task) && !isProductionScope) {
+      setDealTaskView('sx');
+    }
+    setExpandedTask(task.id);
+    setFocusHighlightId(fid);
+    const scrollT = window.setTimeout(() => {
+      document.getElementById(`crm-task-row-${fid}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 150);
+    const clearT = window.setTimeout(() => setFocusHighlightId(null), 5000);
+    return () => {
+      window.clearTimeout(scrollT);
+      window.clearTimeout(clearT);
+    };
+  }, [focusTaskId, uiTasks, loading, leadType, isProductionScope]);
   const [expandedChecklistKey, setExpandedChecklistKey] = useState(null);
   const [editingChecklistKey, setEditingChecklistKey] = useState(null);
   const [checklistEditForm, setChecklistEditForm] = useState({
@@ -2125,8 +2338,189 @@ export default function CRMTasksTab({
 
   const excelQuotationLeadId = excelImportTaskId ? apiLeadIdForTaskId(excelImportTaskId) : leadId;
 
+  // Mục checklist giao chéo — không lộ bộ nhiệm vụ nội bộ
+  const renderSharedChecklistEntry = (task, ck) => {
+    const ckKey = ckStateKey(task.id, ck.id);
+    const allAtts = taskAttachments[task.id] || [];
+    const ckAtts = filterChecklistAttachments(allAtts, ck.id);
+    const ckFileCount = ckAtts.filter((a) => a.doc_type !== 'checklist_inline_note' && a.doc_type !== 'task_note').length;
+    const ckHasNotes = !!(ck.notes?.trim() || ckAtts.some((a) => a.doc_type === 'checklist_inline_note' && a.notes?.trim()));
+    const isCkExpanded = expandedChecklistKey === ckKey;
+    const isCkEditing = editingChecklistKey === ckKey;
+    const ckAssignee = (users || []).find((u) => String(u.id) === String(ck.assignee_id));
+    const isMyItem = ck.executor_company_id && user?.company_id
+      && String(ck.executor_company_id) === String(user.company_id);
+
+    return (
+      <div key={ckKey} className="rounded-lg border border-teal-200 bg-teal-50/20 overflow-hidden">
+        <p className="text-[10px] text-teal-700 bg-teal-50 border-b border-teal-100 px-3 py-1.5 flex items-center gap-1">
+          <Lock className="h-3 w-3 shrink-0" />
+          Mục được giao riêng — không hiển thị bộ nhiệm vụ nội bộ
+          {isMyItem && <span className="ml-auto text-teal-800 font-semibold">Giao cho bạn</span>}
+        </p>
+        <div className={`${isCkExpanded ? 'bg-white' : 'bg-white/80'}`}>
+          <div className="flex items-center gap-2 py-2 px-3 group/ck">
+            <button type="button" onClick={() => toggleChecklistItem(task, ck.id)} className="shrink-0 cursor-pointer"
+              title={ck.done ? 'Bỏ hoàn thành' : 'Đánh dấu hoàn thành'}>
+              {ck.done ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : <Circle className="h-4 w-4 text-gray-300" />}
+            </button>
+            <div className="flex-1 min-w-0 cursor-pointer" onClick={() => toggleExpandChecklist(task, ck)}>
+              <p className={`text-sm font-medium ${ck.done ? 'line-through text-gray-400' : 'text-gray-900'}`}>{ck.title}</p>
+              {!isCkExpanded && !isCkEditing && ck.description?.trim() && (
+                <p className="text-[11px] text-slate-500 line-clamp-2 mt-0.5">{ck.description}</p>
+              )}
+              {!isCkExpanded && ckHasNotes && (
+                <p className="text-[11px] text-amber-600 line-clamp-1 mt-0.5 italic">💬 {(ck.notes || '').slice(0, 80)}</p>
+              )}
+              <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                {ckFileCount > 0 && (
+                  <span className="text-[9px] text-blue-600 bg-blue-50 px-1 py-0.5 rounded-full flex items-center gap-0.5">
+                    <Paperclip className="h-2.5 w-2.5" />{ckFileCount}
+                  </span>
+                )}
+                {ckHasNotes && (
+                  <span className="text-[9px] text-amber-600 bg-amber-50 px-1 py-0.5 rounded-full flex items-center gap-0.5">
+                    <MessageSquare className="h-2.5 w-2.5" />Ghi chú
+                  </span>
+                )}
+                {ckAssignee && (
+                  <span className="text-[9px] text-indigo-600 flex items-center gap-0.5">
+                    <User className="h-2.5 w-2.5" />{ckAssignee.full_name}
+                  </span>
+                )}
+                {checklistItemRequiresEvidence(ck) && !ck.done && (
+                  <span className="text-[9px] text-violet-700 bg-violet-50 px-1 py-0.5 rounded-full max-w-[140px] truncate"
+                    title={`Cần nộp: ${formatEvidenceTypesList(ck.required_evidence_file_types)}`}>
+                    📎 {formatEvidenceTypesShort(ck.required_evidence_file_types) || 'Minh chứng'}
+                  </span>
+                )}
+              </div>
+            </div>
+            <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${PRIORITY_COLORS[ck.priority || 'medium']}`}>
+              {PRIORITY_LABELS[ck.priority || 'medium']}
+            </span>
+            <div className="shrink-0 flex flex-col gap-0.5 border-l border-gray-100 pl-1" onClick={(e) => e.stopPropagation()}>
+              <div className="w-[9.5rem]" title="Gán nhân viên">
+                <EmployeePicker
+                  companyId={resolveChecklistAssignCompanyId(task, ck) || undefined}
+                  value={ck.assignee_id || ''}
+                  onChange={(userId) => assignChecklistItem(task, ck.id, userId)}
+                  placeholder="👤 Chưa gán"
+                  size="sm"
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-0.5 shrink-0 border-l border-gray-100 pl-1">
+              <button type="button" onClick={() => toggleExpandChecklist(task, ck)}
+                className={`p-1 rounded-md cursor-pointer ${isCkExpanded ? 'text-blue-600 bg-blue-50' : 'text-gray-500 hover:text-blue-600 hover:bg-blue-50'}`}
+                title="Ghi chú & file">
+                <Paperclip className="h-3.5 w-3.5" />
+              </button>
+              <button type="button" onClick={() => openEditChecklist(task, ck)}
+                className={`p-1 rounded-md cursor-pointer ${isCkEditing ? 'text-blue-600 bg-blue-50' : 'text-blue-600 hover:bg-blue-50'}`}
+                title="Sửa mục">
+                <Edit3 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {isCkEditing && (
+            <div className="mx-3 mb-2 p-3 bg-sky-50 rounded-lg border border-sky-200 space-y-2" onClick={(e) => e.stopPropagation()}>
+              <p className="text-[10px] text-sky-700 font-bold uppercase tracking-wide">✏️ Sửa mục checklist</p>
+              <input
+                value={checklistEditForm.title}
+                onChange={(e) => setChecklistEditForm((f) => ({ ...f, title: e.target.value }))}
+                className="w-full h-8 px-2 rounded border text-sm outline-none focus:ring-2 focus:ring-sky-400"
+                placeholder="Tên mục..."
+              />
+              <textarea
+                value={checklistEditForm.description}
+                onChange={(e) => setChecklistEditForm((f) => ({ ...f, description: e.target.value }))}
+                rows={2}
+                className="w-full px-2 py-1.5 rounded border text-xs outline-none focus:ring-2 focus:ring-sky-400 resize-y min-h-[48px]"
+                placeholder="Mô tả / hướng dẫn (tùy chọn)..."
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={checklistEditForm.priority}
+                  onChange={(e) => setChecklistEditForm((f) => ({ ...f, priority: e.target.value }))}
+                  className="h-8 px-2 rounded border text-xs bg-white"
+                >
+                  <option value="low">Thấp</option>
+                  <option value="medium">TB</option>
+                  <option value="high">Cao</option>
+                  <option value="urgent">Gấp</option>
+                </select>
+                <div className="min-w-[9.5rem]">
+                  <EmployeePicker
+                    companyId={resolveChecklistAssignCompanyId(task, ck) || undefined}
+                    value={checklistEditForm.assignee_id || ''}
+                    onChange={(userId) => setChecklistEditForm((f) => ({ ...f, assignee_id: userId || '' }))}
+                    placeholder="👤 Chưa gán"
+                    size="sm"
+                  />
+                </div>
+                <span className="flex-1" />
+                <button type="button" onClick={() => setEditingChecklistKey(null)}
+                  className="h-8 px-3 rounded-lg text-xs font-medium bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 cursor-pointer">
+                  Hủy
+                </button>
+                <button type="button" onClick={() => saveChecklistEdit(task, ck.id)}
+                  className="h-8 px-3 rounded-lg text-xs font-medium bg-sky-600 text-white hover:bg-sky-700 cursor-pointer flex items-center gap-1">
+                  <Save className="h-3 w-3" /> Lưu
+                </button>
+              </div>
+            </div>
+          )}
+
+          {isCkExpanded && !isCkEditing && (
+            <div className="px-3 pb-3 border-t border-teal-100 pt-2 space-y-2" onClick={(e) => e.stopPropagation()}>
+              {ck.description?.trim() && (
+                <div className="rounded bg-slate-50 border border-slate-100 px-2 py-1.5">
+                  <p className="text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Mô tả</p>
+                  <p className="text-xs text-slate-700 whitespace-pre-wrap">{ck.description}</p>
+                </div>
+              )}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[10px] font-semibold text-gray-500 uppercase">📝 Ghi chú & Đính kèm ({ckAtts.length})</label>
+                  {uploadingChecklistKey === ckKey ? (
+                    <span className="text-[10px] text-orange-600">Đang upload...</span>
+                  ) : (
+                    <button type="button" onClick={() => uploadChecklistFile(task.id, ck.id)}
+                      className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-0.5 cursor-pointer px-1.5 py-0.5 rounded hover:bg-blue-50">
+                      <FileUp className="h-3 w-3" /> Upload file
+                    </button>
+                  )}
+                </div>
+                <textarea
+                  value={checklistNoteText[ckKey] ?? ck.notes ?? ''}
+                  onChange={(e) => setChecklistNoteText((p) => ({ ...p, [ckKey]: e.target.value }))}
+                  placeholder="Nhập ghi chú cho mục checklist..."
+                  rows={2}
+                  className="w-full px-2.5 py-1.5 border rounded-lg text-xs outline-none focus:border-emerald-400 resize-none mb-1.5"
+                />
+                <div className="flex justify-end mb-1">
+                  <button type="button" onClick={() => saveChecklistNotes(task.id, ck.id)} disabled={savingChecklistNote === ckKey}
+                    className={`px-2.5 py-1 rounded text-[10px] font-medium cursor-pointer flex items-center gap-1 disabled:opacity-50 ${
+                      savingChecklistNote === `saved-${ckKey}` ? 'bg-emerald-600 text-white' : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                    }`}>
+                    <Save className="h-2.5 w-2.5" />
+                    {savingChecklistNote === ckKey ? 'Đang lưu...' : savingChecklistNote === `saved-${ckKey}` ? '✓ Đã lưu' : 'Lưu ghi chú'}
+                  </button>
+                </div>
+                {renderChecklistAttachmentList(task.id, ckAtts.filter((a) => a.doc_type !== 'checklist_inline_note'))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   // TaskRow renders inline — see renderTaskRow below
   const renderTaskRow = (task) => {
+    if (isSharedWorkspace && isChecklistOnlyInShared(task)) return null;
     const StatusIcon = STATUS_ICONS[task.status] || Circle;
     const isOverdue = task.deadline && new Date(task.deadline) < new Date() && task.status !== 'completed';
     const isExpanded = expandedTask === task.id;
@@ -2145,9 +2539,11 @@ export default function CRMTasksTab({
     return (
       <SortableTaskWrapper key={task.id} id={task.id}>
         {({ dragHandleProps, isOver }) => (
-      <div className={`rounded-lg ${
+      <div
+        id={`crm-task-row-${task.id}`}
+        className={`rounded-lg ${
         isExpanded ? 'bg-gray-50 border border-gray-200' : 'hover:bg-gray-50'
-      } ${delegated && taskCompanyScope === 'shared' ? 'border border-teal-200 bg-teal-50/25' : ''} ${isOver ? 'ring-2 ring-blue-300 ring-offset-1' : ''}`}>
+      } ${delegated && taskCompanyScope === 'shared' ? 'border border-teal-200 bg-teal-50/25' : ''} ${isOver ? 'ring-2 ring-blue-300 ring-offset-1' : ''} ${String(focusHighlightId) === String(task.id) ? 'ring-2 ring-indigo-500 ring-offset-1 bg-indigo-50/40' : ''}`}>
         {/* Main row */}
         <div className="flex items-center gap-2 py-2 px-3 group">
           {viewMode === 'list' && (
@@ -2281,16 +2677,19 @@ export default function CRMTasksTab({
                   <User className="h-2.5 w-2.5" />{u.full_name}
                 </span>
               ))}
-              {task.crm_assignment_id && (
+              {task.crm_assignment_id && (() => {
+                const asnNav = assignmentNavForTask(task, isProductionScope || showSxTasksInUi);
+                return (
                 <Link
-                  to={`/crm/assignments?open=${task.crm_assignment_id}`}
+                  to={asnNav.openUrl(task.crm_assignment_id)}
                   onClick={(e) => e.stopPropagation()}
                   className="text-[10px] text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-medium"
-                  title="Mở trên trang Giao việc CRM"
+                  title={asnNav.title}
                 >
-                  <ClipboardList className="h-2.5 w-2.5" /> Giao việc CRM
+                  <ClipboardList className="h-2.5 w-2.5" /> {asnNav.label}
                 </Link>
-              )}
+                );
+              })()}
               {task.supervisor && <span className="text-[10px] text-purple-600 flex items-center gap-0.5"><Eye className="h-2.5 w-2.5" />{task.supervisor.full_name}</span>}
               {/* File & Note count badges — always visible */}
               {fileCount > 0 && (
@@ -2386,12 +2785,49 @@ export default function CRMTasksTab({
             >
               <UserPlus className="h-3.5 w-3.5" />
             </button>
+            <button
+              type="button"
+              onClick={async (e) => {
+                e.stopPropagation();
+                try {
+                  const lid = apiLeadIdForTaskId(task.id);
+                  const { data } = await api.put(`/crm/leads/${lid}/tasks/${task.id}`, {
+                    requires_quick_verdict: !task.requires_quick_verdict,
+                  });
+                  const updated = data?.task || data;
+                  if (updated) setTasks((p) => p.map((t) => (t.id === task.id ? { ...t, ...updated } : t)));
+                } catch (err) {
+                  alert(err.response?.data?.error || 'Không cập nhật được ghi chú nhanh Đủ/Chưa');
+                }
+              }}
+              className={`p-1.5 rounded-md cursor-pointer ${
+                task.requires_quick_verdict
+                  ? 'text-sky-600 bg-sky-50 hover:bg-sky-100'
+                  : 'text-gray-500 hover:text-sky-600 hover:bg-sky-50'
+              }`}
+              title={task.requires_quick_verdict ? 'Đang bật Đủ/Chưa — bấm để tắt' : 'Bật ghi chú nhanh: Đã đủ / Chưa (+ lý do)'}
+            >
+              <MessageSquare className="h-3.5 w-3.5" />
+            </button>
             <button type="button" onClick={(e) => { e.stopPropagation(); openEditModal(task, e.currentTarget); }} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer" title="Chỉnh sửa nhiệm vụ">
               <Edit3 className="h-3.5 w-3.5" />
             </button>
             <button type="button" onClick={(e) => { e.stopPropagation(); deleteTask(task.id); }} className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-md cursor-pointer" title="Xóa nhiệm vụ"><Trash2 className="h-3.5 w-3.5" /></button>
           </div>
         </div>
+
+        {!!task.requires_quick_verdict && (
+          <div className="px-3 pb-2" onClick={(e) => e.stopPropagation()}>
+            <TaskQuickVerdictBar
+              compact
+              task={task}
+              leadId={apiLeadIdForTaskId(task.id)}
+              onUpdated={(updated) => {
+                setTasks((p) => p.map((t) => (t.id === task.id ? { ...t, ...updated } : t)));
+              }}
+            />
+          </div>
+        )}
 
         {/* Expanded: Notes + Attachments (gộp 1 khu vực) */}
         {isExpanded && (
@@ -2401,16 +2837,6 @@ export default function CRMTasksTab({
                 <p className="text-xs font-semibold text-slate-500 uppercase mb-1.5">Mô tả / hướng dẫn (từ mẫu CRM)</p>
                 <p className="text-sm text-slate-800 whitespace-pre-wrap leading-relaxed">{descText}</p>
               </div>
-            )}
-
-            {!!task.requires_quick_verdict && (
-              <TaskQuickVerdictBar
-                task={task}
-                leadId={apiLeadIdForTaskId(task.id)}
-                onUpdated={(updated) => {
-                  setTasks((p) => p.map((t) => (t.id === task.id ? { ...t, ...updated } : t)));
-                }}
-              />
             )}
 
             {/* ─── Checklist: parity với nhiệm vụ (toolbar, sửa khi bấm Edit, ghi chú/file riêng) ─── */}
@@ -2425,7 +2851,19 @@ export default function CRMTasksTab({
                       <ListChecks className="h-3.5 w-3.5" /> Checklist
                       {ckItems.length > 0 && <span className="text-emerald-600 normal-case">{ckDone}/{ckItems.length}</span>}
                     </label>
-                    <span className="text-[10px] text-emerald-600/80 normal-case">Mục con của nhiệm vụ — sửa từng dòng bằng ✏️</span>
+                    <div className="flex items-center gap-2">
+                      {!isSharedWorkspace && (showSxTasksInUi || isProductionScope) && ckItems.length > 0 && ckItems.length < 4 && (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); void restoreChecklistFromTemplate(task); }}
+                          className="text-[10px] text-amber-700 hover:text-amber-900 underline cursor-pointer"
+                          title="Lấy lại checklist đầy đủ từ bộ mẫu xưởng (nếu bị thiếu mục)"
+                        >
+                          Khôi phục từ mẫu
+                        </button>
+                      )}
+                      <span className="text-[10px] text-emerald-600/80 normal-case">Mục con của nhiệm vụ — sửa từng dòng bằng ✏️</span>
+                    </div>
                   </div>
                   {ckItems.length > 0 && (
                     <div className="w-full h-1.5 bg-emerald-100 rounded-full overflow-hidden mb-2">
@@ -2860,7 +3298,7 @@ export default function CRMTasksTab({
           </div>
         </div>
         <div className="flex items-center gap-1">
-          {leadType === 'deal' && hasSxTasks && !isProductionScope && (
+          {leadType === 'deal' && hasSxTasks && !isProductionScope && !isSharedWorkspace && (
             <div className="flex items-center gap-1 mr-1 bg-gray-50 border border-gray-200 rounded-lg p-0.5">
               <button
                 type="button"
@@ -2880,7 +3318,7 @@ export default function CRMTasksTab({
               </button>
             </div>
           )}
-          {leadType === 'deal' && (
+          {leadType === 'deal' && !isSharedWorkspace && (
             <button
               onClick={generateProductionTasks}
               disabled={generatingProduction}
@@ -2911,6 +3349,8 @@ export default function CRMTasksTab({
               <ClipboardList className="h-3 w-3" /> Gắn mẫu
             </button>
           )}
+          {!isSharedWorkspace && (
+          <>
           <div className="w-px h-5 bg-gray-200 mx-1" />
           {[{ id: 'list', icon: List, label: 'List' }, { id: 'deadline', icon: AlertTriangle, label: 'Deadline' }, { id: 'planner', icon: Users, label: 'Planner' }, { id: 'calendar', icon: Calendar, label: 'Lịch' }].map(v => (
             <button key={v.id} onClick={() => setViewMode(v.id)}
@@ -2918,23 +3358,39 @@ export default function CRMTasksTab({
               <v.icon className="h-3 w-3" />{v.label}
             </button>
           ))}
+          </>
+          )}
         </div>
       </div>
 
-      {taskCompanyScope === 'shared' && (showSxTasksInUi || isProductionScope) && (
-        <div className="rounded-xl border border-teal-200 bg-teal-50/50 px-3 py-2.5 space-y-1">
-          <p className="text-xs font-semibold text-teal-900 flex items-center gap-1.5">
-            <Globe className="h-3.5 w-3.5" /> Không gian chung — chỉ nhiệm vụ giao công ty khác
-          </p>
-          <p className="text-[11px] text-teal-800">
-            {delegatedTasks.length > 0
-              ? `${delegatedTasks.length} nhiệm vụ giao chéo${leadCompanyId ? ` (chủ deal: ${companyLabelById(leadCompanyId)})` : ''}.`
-              : 'Chưa có nhiệm vụ giao cho công ty khác — gán «Công ty thực hiện» khi sửa nhiệm vụ SX hoặc trong bộ mẫu.'}
-          </p>
+      {isSharedWorkspace && (
+        <div className="rounded-xl border border-teal-300 bg-gradient-to-br from-teal-50 to-white px-4 py-3 space-y-2">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <p className="text-sm font-semibold text-teal-950 flex items-center gap-2">
+                <Globe className="h-4 w-4 text-teal-600" /> Không gian làm việc chung
+              </p>
+              <p className="text-xs text-teal-800 mt-1 max-w-2xl">
+                Hiển thị việc giao cho công ty khác
+                {ownerCompanyId ? ` (chủ dự án: ${companyLabelById(ownerCompanyId)})` : ''}.
+                Nếu chỉ giao một mục checklist thì chỉ thấy mục đó — không lộ bộ nhiệm vụ nội bộ.
+                Việc nội bộ xem ở tab <strong>Công việc</strong>.
+              </p>
+            </div>
+            <div className="text-right shrink-0">
+              <p className="text-2xl font-bold text-teal-900 tabular-nums">{sharedWorkspaceStats.total}</p>
+              <p className="text-[10px] text-teal-700 uppercase tracking-wide">mục giao chéo</p>
+            </div>
+          </div>
+          {sharedWorkspaceStats.total === 0 && (
+            <p className="text-xs text-teal-700 bg-white/70 border border-teal-200 rounded-lg px-3 py-2">
+              Chưa có nhiệm vụ giao cho công ty khác. Mở tab Công việc → sửa nhiệm vụ SX → chọn «Công ty thực hiện» trong bộ mẫu hoặc form sửa.
+            </p>
+          )}
         </div>
       )}
 
-      {isProductionScope && leadType === 'deal' && (
+      {isProductionScope && leadType === 'deal' && !isSharedWorkspace && (
         <div className="rounded-xl border border-sky-200 bg-sky-50/60 p-3 space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs font-semibold text-sky-900">📋 Thông tin dự án</p>
@@ -2985,7 +3441,8 @@ export default function CRMTasksTab({
             </div>
           ))}
           <p className="text-[10px] text-sky-700">
-            Lưu sẽ ghi vào thông tin dự án (Ngày đặt hàng / Ngày giao hàng). Ngày giao hàng cũng đồng bộ `production_deadline` và nhắc hạn nhiệm vụ `sx_giao_hang`.
+            Ngày đặt hàng tự điền khi deal CRM chuyển sang cột Sản xuất (nếu chưa có).
+            Lưu thủ công ghi vào dự án. Ngày giao hàng đồng bộ `production_deadline` và nhắc hạn nhiệm vụ `sx_giao_hang`.
           </p>
         </div>
       )}
@@ -3066,8 +3523,29 @@ export default function CRMTasksTab({
       <DndContext sensors={taskDnDSensors} collisionDetection={closestCenter} onDragEnd={handleTaskDragEnd}>
       <SortableContext items={taskDnDIds} strategy={verticalListSortingStrategy}>
 
-      {/* LIST VIEW */}
-      {viewMode === 'list' && (
+      {/* LIST VIEW — không gian chung: nhóm theo công ty thực hiện */}
+      {isSharedWorkspace && (
+        <div className="space-y-4">
+          {(sharedWorkspaceGroups || []).map((group) => (
+            <div key={group.execId} className="border border-teal-200 rounded-xl overflow-hidden bg-white shadow-sm">
+              <div className="flex items-center gap-2 px-3 py-2.5 bg-teal-50/80 border-b border-teal-100">
+                <Globe className="h-4 w-4 text-teal-600 shrink-0" />
+                <span className="text-sm font-semibold text-teal-950 flex-1 truncate">{group.label}</span>
+                <span className="text-[10px] text-teal-700 bg-white border border-teal-200 px-2 py-0.5 rounded-full tabular-nums">
+                  {group.completed}/{group.total} xong
+                </span>
+              </div>
+              <div className="divide-y divide-gray-100 px-2 py-2 space-y-2">
+                {group.checklistEntries.map(({ task, ck }) => renderSharedChecklistEntry(task, ck))}
+                {group.fullTasks.map((t) => renderTaskRow(t))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* LIST VIEW — tab Công việc thông thường */}
+      {!isSharedWorkspace && viewMode === 'list' && (
         <div className="space-y-3">
           {listStagesToRender.map(stage => {
             const stageTasks = tasksByStage[stage.slug] || [];
@@ -3168,7 +3646,7 @@ export default function CRMTasksTab({
       )}
 
       {/* DEADLINE VIEW */}
-      {viewMode === 'deadline' && (
+      {!isSharedWorkspace && viewMode === 'deadline' && (
         <div className="space-y-3">
           {[
             { key: 'overdue', label: '🔴 Quá hạn', tasks: deadlineGroups.overdue, color: 'border-red-300 bg-red-50' },
@@ -3210,7 +3688,7 @@ export default function CRMTasksTab({
       )}
 
       {/* PLANNER VIEW */}
-      {viewMode === 'planner' && (
+      {!isSharedWorkspace && viewMode === 'planner' && (
         <div className="space-y-3">
           {plannerGroups.assignees.map(group => (
             <div key={group.user.id} className="border rounded-lg">
@@ -3271,7 +3749,7 @@ export default function CRMTasksTab({
       )}
 
       {/* CALENDAR VIEW */}
-      {viewMode === 'calendar' && (
+      {!isSharedWorkspace && viewMode === 'calendar' && (
         <div>
           <div className="flex items-center justify-between mb-3">
             <button onClick={() => setCalMonth(p => { const d = new Date(p.y, p.m - 1); return { y: d.getFullYear(), m: d.getMonth() }; })}
@@ -3455,27 +3933,45 @@ export default function CRMTasksTab({
                   onDefaultNewRoleChange={setDefaultNewMemberRole}
                 />
               </div>
-              {isAdmin && (
-                <div className="md:col-span-2">
-                  <label className="text-[11px] font-semibold text-gray-500 uppercase">Tiện ích (admin)</label>
-                <label className="mt-1 flex items-start gap-2 p-2.5 border border-emerald-200 bg-emerald-50 rounded-lg cursor-pointer select-none">
+              <div className="md:col-span-2 space-y-2">
+                <label className="flex items-start gap-2 p-2.5 border border-sky-200 bg-sky-50 rounded-lg cursor-pointer select-none">
                   <input
                     type="checkbox"
-                    checked={!!editForm.show_excel_quotation_upload}
-                    onChange={(e) => setEditForm((f) => ({ ...f, show_excel_quotation_upload: e.target.checked }))}
-                    className="mt-0.5 accent-emerald-600"
+                    checked={!!editForm.requires_quick_verdict}
+                    onChange={(e) => setEditForm((f) => ({ ...f, requires_quick_verdict: e.target.checked }))}
+                    className="mt-0.5 accent-sky-600"
                   />
                   <span className="flex-1">
-                    <span className="text-xs font-semibold text-emerald-800 flex items-center gap-1">
-                      <FileSpreadsheet className="h-3 w-3" /> Hiện nút "Upload Excel Báo giá"
+                    <span className="text-xs font-semibold text-sky-800 flex items-center gap-1">
+                      <MessageSquare className="h-3 w-3" /> Ghi chú nhanh Đủ / Chưa
                     </span>
-                    <span className="block text-[10px] text-emerald-700 mt-0.5">
-                      Khi bật, nhiệm vụ sẽ có nút <b>📊 Upload Excel BG</b> ở tab Nhiệm vụ để tải file Excel báo giá và tạo báo giá tự động.
+                    <span className="block text-[10px] text-sky-700 mt-0.5">
+                      NV phải chọn <b>Đã đủ</b> hoặc <b>Chưa</b> (kèm lý do) trước khi hoàn thành hoặc chuyển giai đoạn.
                     </span>
                   </span>
                 </label>
-                </div>
-              )}
+                {isAdmin && (
+                  <>
+                    <label className="text-[11px] font-semibold text-gray-500 uppercase">Tiện ích (admin)</label>
+                    <label className="flex items-start gap-2 p-2.5 border border-emerald-200 bg-emerald-50 rounded-lg cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={!!editForm.show_excel_quotation_upload}
+                        onChange={(e) => setEditForm((f) => ({ ...f, show_excel_quotation_upload: e.target.checked }))}
+                        className="mt-0.5 accent-emerald-600"
+                      />
+                      <span className="flex-1">
+                        <span className="text-xs font-semibold text-emerald-800 flex items-center gap-1">
+                          <FileSpreadsheet className="h-3 w-3" /> Hiện nút "Upload Excel Báo giá"
+                        </span>
+                        <span className="block text-[10px] text-emerald-700 mt-0.5">
+                          Khi bật, nhiệm vụ sẽ có nút <b>📊 Upload Excel BG</b> ở tab Nhiệm vụ để tải file Excel báo giá và tạo báo giá tự động.
+                        </span>
+                      </span>
+                    </label>
+                  </>
+                )}
+              </div>
               </div>
             </div>
             <div className="px-5 py-4 border-t bg-gray-50 rounded-b-2xl flex items-center justify-end gap-2 shrink-0">
@@ -3541,24 +4037,27 @@ export default function CRMTasksTab({
         document.body,
       )}
 
-      {lastAssignmentLink && (
+      {lastAssignmentLink && (() => {
+        const asnNav = assignmentNavForTask(null, false, lastAssignmentLink.isProduction);
+        return (
         <div className="fixed bottom-6 right-6 z-50 max-w-sm px-4 py-3 rounded-xl shadow-lg bg-indigo-600 text-white text-sm">
           <p className="font-semibold">Đã gán nhân viên</p>
           <p className="text-indigo-100 text-xs mt-0.5 truncate">{lastAssignmentLink.title}</p>
           <div className="flex items-center gap-2 mt-2">
             <Link
-              to={`/crm/assignments?open=${lastAssignmentLink.assignmentId}`}
+              to={asnNav.openUrl(lastAssignmentLink.assignmentId)}
               className="text-xs font-bold bg-white text-indigo-700 px-3 py-1.5 rounded-lg hover:bg-indigo-50"
               onClick={() => setLastAssignmentLink(null)}
             >
-              Mở Giao việc CRM →
+              Mở {asnNav.label} →
             </Link>
             <button type="button" onClick={() => setLastAssignmentLink(null)} className="text-indigo-200 hover:text-white text-xs cursor-pointer">
               Đóng
             </button>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Toast notification */}
 

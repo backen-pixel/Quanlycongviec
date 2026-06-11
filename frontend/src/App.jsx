@@ -408,6 +408,7 @@ export default function App() {
             <Route path="/crm/customers" element={<CRMCustomersPage />} />
             <Route path="/crm/tasks" element={<CRMTasksPage />} />
             <Route path="/crm/assignments" element={<CRMAssignmentsPage />} />
+            <Route path="/production/assignments" element={<Navigate to="/sx/assignments" replace />} />
             <Route path="/crm/follow-up-care" element={<CrmFollowUpCarePage />} />
             <Route path="/crm/task-templates" element={<RequireCrmElevated><CRMTemplatesPage /></RequireCrmElevated>} />
             <Route path="/crm/auto-project-config" element={<RequireCrmElevated><AutoProjectConfigPage /></RequireCrmElevated>} />

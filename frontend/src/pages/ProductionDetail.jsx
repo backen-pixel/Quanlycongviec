@@ -1130,6 +1130,11 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
 
   useEffect(() => {
     const t = searchParams.get('tab');
+    const crmTask = searchParams.get('crm_task');
+    if (!t && crmTask) {
+      setActiveTab('tasks');
+      return;
+    }
     if (!t) return;
     const next = LEGACY_TAB_MAP[t] || t;
     if (!tabAllowed(next)) {
@@ -1272,14 +1277,19 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     }
     try {
       const taskScope = moduleKey === 'vc' ? 'crm' : 'production';
+      const ownerCompanyId = project?.company_id || project?.company?.id || null;
       const { data } = await api.get(`/crm/leads/${dealId}/tasks`, {
-        params: { task_scope: taskScope, task_company_scope: 'own' },
+        params: {
+          task_scope: taskScope,
+          task_company_scope: 'own',
+          ...(ownerCompanyId ? { owner_company_id: ownerCompanyId } : {}),
+        },
       });
       setCrmDealTaskSummary(summarizeCrmTasks(data));
     } catch {
       setCrmDealTaskSummary({ total: 0, completed: 0, percent: 0 });
     }
-  }, [moduleKey, summarizeCrmTasks]);
+  }, [moduleKey, summarizeCrmTasks, project?.company_id, project?.company?.id]);
 
   const handleCrmTaskSummaryChange = useCallback((summary) => {
     if (!summary || typeof summary.total !== 'number') return;
@@ -1946,6 +1956,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     : resolveSxKanbanCurrentStageId(project, safePipelineStages);
   const primaryCrmDeal = project.crmDeals?.[0];
   const crmLeadId = primaryCrmDeal?.id || fallbackDealIdForTasks;
+  const dealLeadFromUrl = searchParams.get('deal_lead');
+  const tasksLeadId = dealLeadFromUrl || crmLeadId;
+  const focusCrmTaskId = searchParams.get('crm_task');
   const displayCode = primaryCrmDeal?.code || project.code;
   const displayTitle = primaryCrmDeal?.title || project.name;
   const taskCount = crmLeadId
@@ -2274,13 +2287,15 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     Xem tab <strong>Không gian chung</strong> để thấy toàn bộ nhiệm vụ hai bên.
                   </p>
                 )}
-                {crmLeadId ? (
+                {tasksLeadId ? (
                   <CRMTasksTab
-                    leadId={crmLeadId}
+                    key="crm-tasks-own"
+                    leadId={tasksLeadId}
                     leadType="deal"
                     users={taskUsers}
                     taskScope={moduleKey === 'vc' ? 'crm' : 'production'}
                     taskCompanyScope="own"
+                    focusTaskId={focusCrmTaskId}
                     onArtifactsSynced={refreshProjectSilently}
                     onTaskSummaryChange={handleCrmTaskSummaryChange}
                     linkedProjectId={project?.id || null}
@@ -2310,24 +2325,20 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                 </>
               )}
 
-              {activeTab === 'shared-workspace' && crmLeadId && (
-                <div className="space-y-3">
-                  <p className="text-xs text-gray-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-                    Không gian chung — chỉ hiển thị nhiệm vụ đã gán <strong>công ty thực hiện khác</strong> chủ dự án. Nhiệm vụ nội bộ xem ở tab Công việc.
-                  </p>
-                  <CRMTasksTab
-                    leadId={crmLeadId}
-                    leadType="deal"
-                    users={taskUsers}
-                    taskScope="production"
-                    taskCompanyScope="shared"
-                    onArtifactsSynced={refreshProjectSilently}
-                    linkedProjectId={project?.id || null}
-                    embeddedSxKanbanStages={project?.sxKanbanStages || null}
-                    embeddedWorkshopTypeId={project?.workshop_type_id || project?.workshop_type?.id || null}
-                    sxTemplateCompanyId={project?.company_id || project?.company?.id || null}
-                  />
-                </div>
+      {activeTab === 'shared-workspace' && crmLeadId && (
+                <CRMTasksTab
+                  key="crm-tasks-shared"
+                  leadId={crmLeadId}
+                  leadType="deal"
+                  users={taskUsers}
+                  taskScope="production"
+                  taskCompanyScope="shared"
+                  onArtifactsSynced={refreshProjectSilently}
+                  linkedProjectId={project?.id || null}
+                  embeddedSxKanbanStages={project?.sxKanbanStages || null}
+                  embeddedWorkshopTypeId={project?.workshop_type_id || project?.workshop_type?.id || null}
+                  sxTemplateCompanyId={project?.company_id || project?.company?.id || null}
+                />
               )}
 
               {/* Tài liệu */}
