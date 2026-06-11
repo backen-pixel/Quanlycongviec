@@ -59,6 +59,121 @@ function tokenStatusLabel(account) {
   return { text: '—', cls: 'text-slate-400' };
 }
 
+function resolveN8nTriggerLinks(trigger) {
+  if (!trigger?.token) return null;
+  return {
+    inbound: trigger.n8n_auto?.inbound || trigger.n8n_paths?.inbound || null,
+    syncProfile: trigger.n8n_auto?.sync_profile || trigger.n8n_paths?.sync_profile || null,
+    crmCallback: trigger.crm?.sync_profile || null,
+    token: trigger.token,
+    hasN8nBase: !!trigger.n8n_webhook_base_set,
+  };
+}
+
+function CopyBtn({ label, value, title, variant = 'outline' }) {
+  const [ok, setOk] = useState(false);
+  if (!value) return null;
+  const copy = () => {
+    navigator.clipboard.writeText(String(value)).then(() => {
+      setOk(true);
+      setTimeout(() => setOk(false), 1500);
+    }).catch(() => {});
+  };
+  const base = variant === 'solid'
+    ? 'bg-violet-600 text-white border-violet-600 hover:bg-violet-700'
+    : 'bg-white text-violet-800 border-violet-200 hover:bg-violet-50';
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      title={title || value}
+      className={`inline-flex items-center gap-1 px-2 py-1 rounded-md border text-xs font-medium transition-colors ${base}`}
+    >
+      {ok ? <Check size={12} className={variant === 'solid' ? 'text-white' : 'text-green-600 shrink-0'} /> : <Copy size={12} className="shrink-0" />}
+      {label}
+    </button>
+  );
+}
+
+function TriggerLinkCard({ step, title, desc, value }) {
+  if (!value) return null;
+  return (
+    <div className="rounded-lg border border-violet-100 bg-white p-3 flex flex-col sm:flex-row sm:items-center gap-3">
+      <div className="flex-1 min-w-0">
+        <div className="text-xs font-semibold text-violet-900">
+          {step}. {title}
+        </div>
+        <div className="text-[11px] text-slate-500 mt-0.5">{desc}</div>
+        <code className="block mt-1.5 text-[11px] text-slate-700 bg-slate-50 rounded px-2 py-1 break-all line-clamp-2">
+          {value}
+        </code>
+      </div>
+      <CopyBtn label="Copy" value={value} variant="solid" />
+    </div>
+  );
+}
+
+function OaN8nTriggerLinksCompact({ trigger }) {
+  const links = resolveN8nTriggerLinks(trigger);
+  if (!links) {
+    return <span className="text-slate-400 text-xs">Lưu OA để có link</span>;
+  }
+  return (
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap gap-1">
+        <CopyBtn label="Tin mới" value={links.inbound} title="Webhook n8n khi có tin Zalo" />
+        <CopyBtn label="Lấy tên" value={links.syncProfile} title="Webhook n8n lấy tên khách" />
+        <CopyBtn label="→ CRM" value={links.crmCallback} title="n8n POST về CRM lấy tên" />
+      </div>
+      <div className="text-[10px] text-slate-400 font-mono truncate max-w-[220px]" title={links.token}>
+        token …{links.token.slice(-8)}
+      </div>
+    </div>
+  );
+}
+
+function OaN8nTriggerPanel({ trigger }) {
+  const links = resolveN8nTriggerLinks(trigger);
+  if (!links) {
+    return (
+      <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+        Sau khi <strong>Lưu</strong>, link trigger n8n hiện ở đây và cột <strong>Trigger n8n</strong> trong bảng OA.
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-xl border border-violet-200 bg-violet-50/50 p-4 space-y-2">
+      <div className="flex items-center gap-2 text-sm font-semibold text-violet-900">
+        <Zap size={16} className="text-violet-600" />
+        Link trigger n8n — OA này
+      </div>
+      <TriggerLinkCard
+        step="1"
+        title="Tin Zalo mới → n8n"
+        desc="Path/URL dán vào node Webhook workflow n8n"
+        value={links.inbound}
+      />
+      <TriggerLinkCard
+        step="2"
+        title="Lấy tên khách → n8n"
+        desc="Webhook khi CRM cần n8n gọi Zalo lấy tên"
+        value={links.syncProfile}
+      />
+      <TriggerLinkCard
+        step="3"
+        title="n8n → CRM (POST)"
+        desc="HTTP Request từ n8n gửi contact_id về CRM"
+        value={links.crmCallback}
+      />
+      {!links.hasN8nBase && (
+        <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+          Server chưa có <code className="bg-white px-1 rounded">N8N_WEBHOOK_BASE_URL</code> — copy <strong>path</strong> (bắt đầu <code>/webhook/…</code>) và ghép với domain n8n.
+        </p>
+      )}
+    </div>
+  );
+}
+
 const EMPTY_ACCOUNT = {
   oa_id: '',
   oa_name: '',
@@ -70,6 +185,8 @@ const EMPTY_ACCOUNT = {
   auto_create_lead: true,
   auto_reply_message: 'Cảm ơn bạn đã liên hệ! Chúng tôi sẽ phản hồi sớm nhất.',
   webhook_verify_enabled: true,
+  n8n_webhook_url: '',
+  n8n_sync_profile_webhook_url: '',
   default_module_key: '',
   default_target_type: '',
   default_company_id: '',
@@ -102,6 +219,9 @@ export default function ZaloPage() {
   const [syncingProfile, setSyncingProfile] = useState(false);
   const [refreshingNames, setRefreshingNames] = useState(false);
   const [refreshingTokenId, setRefreshingTokenId] = useState(null);
+  const [applyingRouting, setApplyingRouting] = useState(false);
+  const [n8nTriggerDisplay, setN8nTriggerDisplay] = useState(null);
+  const [showN8nOverride, setShowN8nOverride] = useState(false);
   const messagesEndRef = useRef(null);
 
   const loadStats = useCallback(() => {
@@ -326,6 +446,7 @@ export default function ZaloPage() {
     }
     setForm({ ...EMPTY_ACCOUNT });
     setEditingId(null);
+    setN8nTriggerDisplay(d.n8n_trigger || null);
     loadAccounts();
   };
 
@@ -347,6 +468,24 @@ export default function ZaloPage() {
       alert('Lỗi mạng');
     } finally {
       setRefreshingTokenId(null);
+    }
+  };
+
+  const applyOaRoutingBatch = async () => {
+    if (!window.confirm('Cập nhật công ty / khu vực / cột pipeline / NV cho mọi lead đã gắn contact Zalo theo cấu hình OA hiện tại?')) return;
+    setApplyingRouting(true);
+    try {
+      const r = await fetch(`${API}/api/zalo/batch-apply-oa-routing`, { method: 'POST', headers: hdr(), body: JSON.stringify({ limit: 500 }) });
+      const d = await r.json();
+      if (!r.ok) {
+        alert(d.error || 'Thất bại');
+        return;
+      }
+      alert(`Đã cập nhật ${d.updated}/${d.total} lead${d.tasks_created ? `, tạo ${d.tasks_created} nhiệm vụ` : ''}. Mở Kanban tab Lead, công ty Phúc Đạt để kiểm tra.`);
+    } catch {
+      alert('Lỗi mạng');
+    } finally {
+      setApplyingRouting(false);
     }
   };
 
@@ -416,16 +555,28 @@ export default function ZaloPage() {
             <li><strong>Lấy tên KH</strong> — gọi Zalo OA API lấy display_name / avatar (webhook hoặc nút Tên KH)</li>
             <li><strong>Quét SĐT</strong> — đọc tin inbound đã lưu, trích SĐT/địa chỉ → cập nhật KH & lead</li>
             <li><strong>Tạo Lead</strong> — contact chưa có lead (ưu tiên có SĐT)</li>
+            <li><strong>Kanban</strong> — sau khi cấu hình OA, bấm «Áp dụng routing OA» nếu lead cũ chưa vào cột pipeline</li>
             <li><strong>Auto</strong> — lặp quét + tạo lead theo batch (bật công tắc Auto)</li>
           </ol>
+          <div className="flex flex-wrap gap-2 mt-2">
           <button
             type="button"
             onClick={refreshAllProfiles}
             disabled={refreshingNames}
-            className="mt-2 px-3 py-1.5 text-xs font-medium bg-white border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-50 flex items-center gap-1"
+            className="px-3 py-1.5 text-xs font-medium bg-white border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-50 flex items-center gap-1"
           >
             <UserCircle size={14} /> {refreshingNames ? 'Đang lấy tên...' : 'Cập nhật tên tất cả liên hệ'}
           </button>
+          <button
+            type="button"
+            onClick={applyOaRoutingBatch}
+            disabled={applyingRouting}
+            className="px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-1"
+          >
+            <RefreshCw size={14} className={applyingRouting ? 'animate-spin' : ''} />
+            {applyingRouting ? 'Đang cập nhật...' : 'Áp dụng routing OA → Kanban'}
+          </button>
+          </div>
         </div>
       )}
 
@@ -595,6 +746,128 @@ export default function ZaloPage() {
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+            <h2 className="font-semibold mb-2 flex items-center gap-2 text-violet-900">
+              <Zap size={18} /> n8n — trigger theo từng OA
+            </h2>
+            <p className="text-sm text-slate-600">
+              Mỗi OA có link riêng. Copy trực tiếp từ bảng <strong>OA đã cấu hình</strong> bên dưới
+              (cột Trigger n8n). Dán path vào Webhook node trên n8n.
+            </p>
+          </div>
+
+          <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+            <h2 className="font-semibold mb-3">OA đã cấu hình</h2>
+            {!accounts.length ? (
+              <p className="text-sm text-slate-500">Chưa có OA nào.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-slate-500 border-b">
+                      <th className="py-2 pr-4">OA</th>
+                      <th className="py-2 pr-4">Module / Công ty</th>
+                      <th className="py-2 pr-4">App ID</th>
+                      <th className="py-2 pr-4">Token</th>
+                      <th className="py-2 pr-4">Trạng thái</th>
+                      <th className="py-2 pr-4 min-w-[200px]">Trigger n8n</th>
+                      <th className="py-2">Thao tác</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {accounts.map((a) => (
+                      <tr key={a.id} className="border-b border-slate-100">
+                        <td className="py-2 pr-4">
+                          <div className="font-medium">{a.oa_name || a.oa_id}</div>
+                          <div className="text-xs text-slate-400">{a.oa_id}</div>
+                        </td>
+                        <td className="py-2 pr-4 text-xs">
+                          <div>{a.default_module_key === 'production' ? 'Sản xuất' : a.default_module_key === 'logistics' ? 'Vận chuyển' : a.default_module_key === 'crm' ? 'CRM' : '—'}</div>
+                          <div className="text-slate-400">{a.default_company_id ? `Công ty #${String(a.default_company_id).slice(0, 8)}…` : 'Chưa cấu hình'}</div>
+                        </td>
+                        <td className="py-2 pr-4">{a.app_id || '—'}</td>
+                        <td className="py-2 pr-4 text-xs">
+                          {(() => {
+                            const st = tokenStatusLabel(a);
+                            return (
+                              <>
+                                <div className={st.cls}>{st.text}</div>
+                                <div className="text-slate-400">Access → {formatTokenExpiry(a.access_token_expires_at)}</div>
+                                {a.refresh_token_set && (
+                                  <div className="text-slate-400">Refresh → {formatTokenExpiry(a.refresh_token_expires_at)}</div>
+                                )}
+                                {a.last_token_error && (
+                                  <div className="text-red-500 truncate max-w-[180px]" title={a.last_token_error}>{a.last_token_error}</div>
+                                )}
+                              </>
+                            );
+                          })()}
+                        </td>
+                        <td className="py-2 pr-4">{a.is_active ? '✅ Bật' : '⏸ Tắt'}</td>
+                        <td className="py-2 pr-4 align-top">
+                          <OaN8nTriggerLinksCompact trigger={a.n8n_trigger} />
+                        </td>
+                        <td className="py-2 align-top">
+                          <div className="flex flex-wrap gap-2">
+                          {a.refresh_token_set && a.app_id && (
+                            <button
+                              type="button"
+                              className="text-emerald-700 hover:underline flex items-center gap-1"
+                              disabled={refreshingTokenId === a.id}
+                              onClick={() => refreshAccountToken(a.id)}
+                            >
+                              <RefreshCw size={14} className={refreshingTokenId === a.id ? 'animate-spin' : ''} />
+                              Refresh
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="text-blue-600 hover:underline"
+                            onClick={() => {
+                              setEditingId(a.id);
+                              setN8nTriggerDisplay(a.n8n_trigger || null);
+                              setForm({
+                                ...EMPTY_ACCOUNT,
+                                oa_id: a.oa_id,
+                                oa_name: a.oa_name || '',
+                                app_id: a.app_id || '',
+                                access_token: '',
+                                secret_key: '',
+                                is_active: a.is_active,
+                                auto_create_lead: a.auto_create_lead,
+                                auto_reply_message: a.auto_reply_message,
+                                webhook_verify_enabled: a.webhook_verify_enabled,
+                                n8n_webhook_url: a.n8n_webhook_url || '',
+                                n8n_sync_profile_webhook_url: a.n8n_sync_profile_webhook_url || '',
+                                default_module_key: a.default_module_key || (String(a.default_target_type || '').toLowerCase() === 'deal' ? 'production' : 'crm'),
+                                default_target_type: a.default_target_type || '',
+                                default_company_id: a.default_company_id || '',
+                                default_region_id: a.default_region_id || '',
+                                default_lead_type_id: a.default_lead_type_id || '',
+                                default_stage_id: a.default_stage_id || '',
+                                default_lead_owner_id: a.default_lead_owner_id || '',
+                              });
+                            }}
+                          >
+                            Sửa
+                          </button>
+                          <button type="button" className="text-red-600 hover:underline flex items-center gap-1" onClick={() => deleteAccount(a.id)}>
+                            <Trash2 size={14} /> Xóa
+                          </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p className="text-xs text-slate-500 mt-4">
+              Nhập <strong>Refresh Token</strong> lần đầu từ Zalo Developer (OAuth). Migration:{' '}
+              <code className="bg-slate-100 px-1 rounded">328_zalo_oa_n8n_trigger_token.sql</code>
+            </p>
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm lg:col-span-2">
             <h2 className="font-semibold mb-3 flex items-center gap-2">
               {editingId ? <Save size={18} /> : <Plus size={18} />}
               {editingId ? 'Sửa OA' : 'Thêm Official Account'}
@@ -647,6 +920,38 @@ export default function ZaloPage() {
                 />
                 Xác thực chữ ký webhook (khuyến nghị)
               </label>
+              <OaN8nTriggerPanel trigger={n8nTriggerDisplay} />
+              <button
+                type="button"
+                className="text-xs text-slate-500 underline"
+                onClick={() => setShowN8nOverride((v) => !v)}
+              >
+                {showN8nOverride ? 'Ẩn ghi đè URL n8n' : 'Ghi đè URL n8n thủ công (tùy chọn)'}
+              </button>
+              {showN8nOverride && (
+                <>
+                  <div>
+                    <label className="block text-slate-600 mb-1">Ghi đè webhook tin mới</label>
+                    <input
+                      type="url"
+                      value={form.n8n_webhook_url || ''}
+                      onChange={(e) => setForm((f) => ({ ...f, n8n_webhook_url: e.target.value }))}
+                      placeholder="Để trống = dùng N8N_WEBHOOK_BASE_URL + token OA"
+                      className="w-full border rounded-lg px-3 py-2 font-mono text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-600 mb-1">Ghi đè webhook lấy tên</label>
+                    <input
+                      type="url"
+                      value={form.n8n_sync_profile_webhook_url || ''}
+                      onChange={(e) => setForm((f) => ({ ...f, n8n_sync_profile_webhook_url: e.target.value }))}
+                      placeholder="Để trống = dùng N8N_WEBHOOK_BASE_URL + token OA"
+                      className="w-full border rounded-lg px-3 py-2 font-mono text-xs"
+                    />
+                  </div>
+                </>
+              )}
               <IntegrationLeadRoutingFields
                 form={form}
                 setForm={setForm}
@@ -660,7 +965,7 @@ export default function ZaloPage() {
                 {editingId && (
                   <button
                     type="button"
-                    onClick={() => { setEditingId(null); setForm({ ...EMPTY_ACCOUNT }); }}
+                    onClick={() => { setEditingId(null); setForm({ ...EMPTY_ACCOUNT }); setN8nTriggerDisplay(null); }}
                     className="px-4 py-2 border rounded-lg"
                   >
                     Hủy
@@ -668,110 +973,6 @@ export default function ZaloPage() {
                 )}
               </div>
             </div>
-          </div>
-
-          <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-            <h2 className="font-semibold mb-3">OA đã cấu hình</h2>
-            {!accounts.length ? (
-              <p className="text-sm text-slate-500">Chưa có OA nào.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-left text-slate-500 border-b">
-                      <th className="py-2 pr-4">OA</th>
-                      <th className="py-2 pr-4">Module / Công ty</th>
-                      <th className="py-2 pr-4">App ID</th>
-                      <th className="py-2 pr-4">Token</th>
-                      <th className="py-2 pr-4">Trạng thái</th>
-                      <th className="py-2">Thao tác</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {accounts.map((a) => (
-                      <tr key={a.id} className="border-b border-slate-100">
-                        <td className="py-2 pr-4">
-                          <div className="font-medium">{a.oa_name || a.oa_id}</div>
-                          <div className="text-xs text-slate-400">{a.oa_id}</div>
-                        </td>
-                        <td className="py-2 pr-4 text-xs">
-                          <div>{a.default_module_key === 'production' ? 'Sản xuất' : a.default_module_key === 'logistics' ? 'Vận chuyển' : a.default_module_key === 'crm' ? 'CRM' : '—'}</div>
-                          <div className="text-slate-400">{a.default_company_id ? `Công ty #${String(a.default_company_id).slice(0, 8)}…` : 'Chưa cấu hình'}</div>
-                        </td>
-                        <td className="py-2 pr-4">{a.app_id || '—'}</td>
-                        <td className="py-2 pr-4 text-xs">
-                          {(() => {
-                            const st = tokenStatusLabel(a);
-                            return (
-                              <>
-                                <div className={st.cls}>{st.text}</div>
-                                <div className="text-slate-400">Access → {formatTokenExpiry(a.access_token_expires_at)}</div>
-                                {a.refresh_token_set && (
-                                  <div className="text-slate-400">Refresh → {formatTokenExpiry(a.refresh_token_expires_at)}</div>
-                                )}
-                                {a.last_token_error && (
-                                  <div className="text-red-500 truncate max-w-[180px]" title={a.last_token_error}>{a.last_token_error}</div>
-                                )}
-                              </>
-                            );
-                          })()}
-                        </td>
-                        <td className="py-2 pr-4">{a.is_active ? '✅ Bật' : '⏸ Tắt'}</td>
-                        <td className="py-2 flex flex-wrap gap-2">
-                          {a.refresh_token_set && a.app_id && (
-                            <button
-                              type="button"
-                              className="text-emerald-700 hover:underline flex items-center gap-1"
-                              disabled={refreshingTokenId === a.id}
-                              onClick={() => refreshAccountToken(a.id)}
-                            >
-                              <RefreshCw size={14} className={refreshingTokenId === a.id ? 'animate-spin' : ''} />
-                              Refresh token
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            className="text-blue-600 hover:underline"
-                            onClick={() => {
-                              setEditingId(a.id);
-                              setForm({
-                                ...EMPTY_ACCOUNT,
-                                oa_id: a.oa_id,
-                                oa_name: a.oa_name || '',
-                                app_id: a.app_id || '',
-                                access_token: '',
-                                secret_key: '',
-                                is_active: a.is_active,
-                                auto_create_lead: a.auto_create_lead,
-                                auto_reply_message: a.auto_reply_message,
-                                webhook_verify_enabled: a.webhook_verify_enabled,
-                                default_module_key: a.default_module_key || (String(a.default_target_type || '').toLowerCase() === 'deal' ? 'production' : 'crm'),
-                                default_target_type: a.default_target_type || '',
-                                default_company_id: a.default_company_id || '',
-                                default_region_id: a.default_region_id || '',
-                                default_lead_type_id: a.default_lead_type_id || '',
-                                default_stage_id: a.default_stage_id || '',
-                                default_lead_owner_id: a.default_lead_owner_id || '',
-                              });
-                            }}
-                          >
-                            Sửa
-                          </button>
-                          <button type="button" className="text-red-600 hover:underline flex items-center gap-1" onClick={() => deleteAccount(a.id)}>
-                            <Trash2 size={14} /> Xóa
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            <p className="text-xs text-slate-500 mt-4">
-              Nhập <strong>Refresh Token</strong> lần đầu từ Zalo Developer (OAuth). Sau đó hệ thống tự rotate hàng ngày — không cần dán lại access token thủ công.
-              Migration:{' '}
-              <code className="bg-slate-100 px-1 rounded">database/319_zalo_oa_refresh_token.sql</code>
-            </p>
           </div>
         </div>
       )}

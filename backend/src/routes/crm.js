@@ -4393,6 +4393,19 @@ function mapLeadDisplayPhone(rows) {
   }));
 }
 
+/** Lead gắn Zalo inbox — vẫn hiện Kanban khi lọc «Có SĐT» dù chưa quét được SĐT (riêng Zalo, không áp dụng FB). */
+async function loadZaloLinkedLeadIdSet(leadIds) {
+  const ids = [...new Set((leadIds || []).map((id) => String(id)).filter(Boolean))];
+  if (!ids.length) return new Set();
+  const out = new Set();
+  for (let b = 0; b < ids.length; b += 500) {
+    const batch = ids.slice(b, b + 500);
+    const { data: zaloRows } = await supabase.from('zalo_contacts').select('lead_id').in('lead_id', batch);
+    (zaloRows || []).forEach((r) => { if (r.lead_id) out.add(String(r.lead_id)); });
+  }
+  return out;
+}
+
 /** Ưu tiên production_company_id client gửi; nếu trống → crm_lead_types.default_production_company_id của deal. */
 /** Giai đoạn đích khi hồi lại deal/lead đã thua — ưu tiên stage client gửi, rồi lịch sử, rồi cột đầu pipeline. */
 async function resolveReopenTargetStageId(lead, requestedStageId) {
@@ -4756,7 +4769,8 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
 
   let result = mapLeadDisplayPhone(rows);
   if (phone_filter === 'has_phone') {
-    result = result.filter((l) => !!l.display_phone);
+    const zaloIds = await loadZaloLinkedLeadIdSet(result.map((l) => l.id));
+    result = result.filter((l) => !!l.display_phone || zaloIds.has(String(l.id)));
   } else if (phone_filter === 'no_phone') {
     result = result.filter((l) => !l.display_phone);
   }
