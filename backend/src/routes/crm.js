@@ -14837,7 +14837,7 @@ async function notifyLeadCommentMentions(req, leadId, senderId, commentRow, ment
     'lead',
     leadId,
     {
-      nav_tab: 'activities',
+      nav_tab: 'comments',
       mentioned: true,
       sender_name: senderName,
       sender_avatar: senderAvatar,

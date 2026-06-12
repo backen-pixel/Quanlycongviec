@@ -1517,6 +1517,13 @@ function normalizeFacebookModuleKey(value) {
   const mk = String(value || '').trim().toLowerCase();
   return FB_MODULE_KEYS.has(mk) ? mk : 'crm';
 }
+function optionalUuidField(value) {
+  return value != null && String(value).trim() !== '' ? String(value).trim() : null;
+}
+const FACEBOOK_PAGE_OPTIONAL_UUID_FIELDS = [
+  'default_source_id', 'default_stage_id', 'default_pipeline_id',
+  'default_company_id', 'default_region_id', 'default_lead_owner_id', 'default_lead_type_id',
+];
 function resolveFacebookModuleKeyForPage(page) {
   if (page?.default_module_key) return normalizeFacebookModuleKey(page.default_module_key);
   const tt = normalizeFacebookTargetType(page?.default_target_type);
@@ -3064,18 +3071,22 @@ r.post('/pages', authMiddleware, async (req, res) => {
       webhook_verify_token: webhook_verify_token || 'tubep_pro_verify_2024',
       auto_create_lead: auto_create_lead !== false,
       auto_reply_message: auto_reply_message || null,
-      default_source_id: default_source_id || null,
+      default_source_id: optionalUuidField(default_source_id),
       default_module_key: moduleKey,
       default_target_type: inferredTargetType,
-      default_stage_id: default_stage_id || null,
+      default_stage_id: optionalUuidField(default_stage_id),
       created_by: req.user.userId,
       settings_updated_at: now,
       updated_at: now,
     };
-    if (default_company_id) insertData.default_company_id = default_company_id;
-    if (default_region_id && String(default_region_id).trim()) insertData.default_region_id = String(default_region_id).trim();
-    if (default_lead_owner_id) insertData.default_lead_owner_id = default_lead_owner_id;
-    if (default_lead_type_id) insertData.default_lead_type_id = default_lead_type_id;
+    const coId = optionalUuidField(default_company_id);
+    if (coId) insertData.default_company_id = coId;
+    const regionId = optionalUuidField(default_region_id);
+    if (regionId) insertData.default_region_id = regionId;
+    const ownerId = optionalUuidField(default_lead_owner_id);
+    if (ownerId) insertData.default_lead_owner_id = ownerId;
+    const typeId = optionalUuidField(default_lead_type_id);
+    if (typeId) insertData.default_lead_type_id = typeId;
 
     let { data, error } = await supabase.from('facebook_pages').insert(insertData).select().single();
     // Retry without optional columns if they don't exist
@@ -3105,9 +3116,12 @@ r.put('/pages/:id', authMiddleware, async (req, res) => {
   try {
     const update = {};
     ['page_name', 'access_token', 'is_active', 'auto_create_lead', 'auto_reply_message',
-     'webhook_verify_token', 'default_source_id', 'default_module_key', 'default_target_type', 'default_stage_id', 'default_pipeline_id', 'default_company_id', 'default_lead_owner_id', 'default_lead_type_id'].forEach(f => {
+     'webhook_verify_token', 'default_source_id', 'default_module_key', 'default_target_type', 'default_stage_id', 'default_pipeline_id', 'default_company_id', 'default_region_id', 'default_lead_owner_id', 'default_lead_type_id'].forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
+    for (const f of FACEBOOK_PAGE_OPTIONAL_UUID_FIELDS) {
+      if (update[f] !== undefined) update[f] = optionalUuidField(update[f]);
+    }
     if (update.default_module_key !== undefined) {
       update.default_module_key = normalizeFacebookModuleKey(update.default_module_key);
       if (update.default_module_key === 'production' || update.default_module_key === 'logistics') {
@@ -3118,10 +3132,6 @@ r.put('/pages/:id', authMiddleware, async (req, res) => {
     }
     if (update.default_target_type !== undefined) {
       update.default_target_type = normalizeFacebookTargetType(update.default_target_type);
-    }
-    if (req.body.default_region_id !== undefined) {
-      const rv = req.body.default_region_id;
-      update.default_region_id = rv && String(rv).trim() ? String(rv).trim() : null;
     }
     const now = new Date().toISOString();
     update.updated_at = now;
