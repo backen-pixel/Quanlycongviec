@@ -139,6 +139,7 @@ async function syncDepartmentToEcosystem(dept) {
         name: dept.name,
         short_name: dept.short_name || null,
         parent_id: parentUnitId,
+        is_active: dept.is_active !== false,
         updated_at: new Date().toISOString(),
       }).eq('id', existingUnitId);
       return existingUnitId;

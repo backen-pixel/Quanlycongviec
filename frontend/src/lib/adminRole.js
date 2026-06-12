@@ -73,6 +73,12 @@ export function isWorkProductionModuleAdmin(user) {
   return isAdminLike(user) || r === 'manager' || isProductionStaff(user) || isProductionAdmin(user);
 }
 
+/** CRUD phòng ban — khớp backend adminRole.canManageDepartments. */
+export function canManageDepartments(user) {
+  const r = normalizeRole(user?.role);
+  return isWorkProductionModuleAdmin(user) || r === 'superadmin' || r === 'super_admin';
+}
+
 export function isModuleAdmin(user, moduleKey) {
   if (isSystemAdmin(user) || isAdminLike(user)) return true;
   const k = String(moduleKey || '').trim().toLowerCase();

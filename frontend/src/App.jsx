@@ -129,6 +129,7 @@ const CRMSourcesSettingsPage = lazyWithRetry(() => import('./pages/CRMSourcesSet
 const CRMCustomersPage = lazyWithRetry(() => import('./pages/CRMCustomersPage'));
 const CRMTasksPage = lazyWithRetry(() => import('./pages/CRMTasksPage'));
 const CRMAssignmentsPage = lazyWithRetry(() => import('./pages/CRMAssignmentsPage'));
+const CrmDeptPlanPage = lazyWithRetry(() => import('./pages/CrmDeptPlanPage'));
 const CrmFollowUpCarePage = lazyWithRetry(() => import('./pages/CrmFollowUpCarePage'));
 const CRMTemplatesPage = lazyWithRetry(() => import('./pages/CRMTemplatesPage'));
 const AutoProjectConfigPage = lazyWithRetry(() => import('./pages/AutoProjectConfigPage'));
@@ -413,6 +414,7 @@ export default function App() {
             <Route path="/crm/customers" element={<CRMCustomersPage />} />
             <Route path="/crm/tasks" element={<CRMTasksPage />} />
             <Route path="/crm/assignments" element={<CRMAssignmentsPage />} />
+            <Route path="/crm/dept-plan" element={<CrmDeptPlanPage />} />
             <Route path="/production/assignments" element={<Navigate to="/sx/assignments" replace />} />
             <Route path="/crm/follow-up-care" element={<CrmFollowUpCarePage />} />
             <Route path="/crm/task-templates" element={<RequireCrmElevated><CRMTemplatesPage /></RequireCrmElevated>} />

@@ -7,6 +7,7 @@ const { requirePermission } = require('../middleware/newPermission');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { syncDepartmentToEcosystem, syncUserToEcosystem, removeUserFromEcosystem } = require('../helpers/ecosystemSync');
+const { canManageDepartments, isSystemAdmin } = require('../helpers/adminRole');
 const { responseCache, invalidateTags } = require('../middleware/responseCache');
 
 // Upload storage for department chat
@@ -65,6 +66,29 @@ function uniqueDeptSlug({ slugInput, name, companyId }) {
 function formatDbError(err) {
   if (!err) return 'Lỗi';
   return err.message || err.details || err.hint || String(err.code || err);
+}
+
+async function loadDepartmentForManage(id) {
+  const { data, error } = await supabase.from('departments')
+    .select('id, name, company_id, division_unit_id, is_active')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+function assertDepartmentCompanyScope(req, res, dept) {
+  if (!dept) {
+    res.status(404).json({ error: 'Không tìm thấy phòng ban' });
+    return false;
+  }
+  if (isSystemAdmin(req.user)) return true;
+  const userCo = req.user?.company_id;
+  if (userCo && dept.company_id && String(dept.company_id) !== String(userCo)) {
+    res.status(403).json({ error: 'Không được thao tác phòng ban của công ty khác' });
+    return false;
+  }
+  return true;
 }
 
 // ═══════════════════════════════════════════════
@@ -156,8 +180,12 @@ r.get('/:id', async (req, res) => {
 // CREATE department
 r.post('/', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    if (!canManageDepartments(req.user)) return res.status(403).json({ error: 'Không có quyền quản lý phòng ban' });
     const b = req.body;
+    if (!isSystemAdmin(req.user) && req.user?.company_id && b.company_id
+      && String(b.company_id) !== String(req.user.company_id)) {
+      return res.status(403).json({ error: 'Không được tạo phòng ban cho công ty khác' });
+    }
     let divisionUnitId = b.division_unit_id || null;
     if (b.company_id && !divisionUnitId) {
       const { data: co } = await supabase.from('companies').select('division_unit_id').eq('id', b.company_id).maybeSingle();
@@ -188,15 +216,20 @@ r.post('/', async (req, res) => {
 // UPDATE department
 r.put('/:id', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    if (!canManageDepartments(req.user)) return res.status(403).json({ error: 'Không có quyền quản lý phòng ban' });
+    const before = await loadDepartmentForManage(req.params.id);
+    if (!assertDepartmentCompanyScope(req, res, before)) return;
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
     ['name', 'slug', 'description', 'color', 'manager_id', 'parent_id', 'is_active', 'company_id', 'division_unit_id'].forEach(f => {
       if (b[f] !== undefined) update[f] = b[f];
     });
-    const { data: before } = await supabase.from('departments').select('company_id, division_unit_id').eq('id', req.params.id).single();
-    const targetCompany = b.company_id !== undefined ? b.company_id : before?.company_id;
-    let targetDiv = b.division_unit_id !== undefined ? b.division_unit_id : before?.division_unit_id;
+    const targetCompany = b.company_id !== undefined ? b.company_id : before.company_id;
+    let targetDiv = b.division_unit_id !== undefined ? b.division_unit_id : before.division_unit_id;
+    if (!isSystemAdmin(req.user) && req.user?.company_id && targetCompany
+      && String(targetCompany) !== String(req.user.company_id)) {
+      return res.status(403).json({ error: 'Không được gán phòng ban sang công ty khác' });
+    }
     if (targetCompany && !targetDiv) {
       const { data: co } = await supabase.from('companies').select('division_unit_id').eq('id', targetCompany).maybeSingle();
       targetDiv = co?.division_unit_id || null;
@@ -220,37 +253,70 @@ r.put('/:id', async (req, res) => {
 // DELETE (soft) — sync ecosystem
 r.delete('/:id', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    if (!canManageDepartments(req.user)) return res.status(403).json({ error: 'Không có quyền xóa phòng ban' });
 
-    // Get members before deleting
-    const { data: members } = await supabase.from('users').select('id').eq('department_id', req.params.id).eq('is_active', true);
-
-    // Soft delete department
-    await supabase.from('departments').update({ is_active: false }).eq('id', req.params.id);
-
-    // Remove members from department + ecosystem
-    for (const m of (members || [])) {
-      await supabase.from('users').update({ department_id: null, team_id: null }).eq('id', m.id);
-      try { await removeUserFromEcosystem(m.id, req.params.id); } catch {}
+    const dept = await loadDepartmentForManage(req.params.id);
+    if (!assertDepartmentCompanyScope(req, res, dept)) return;
+    if (dept.is_active === false) {
+      return res.json({ message: 'Phòng ban đã được vô hiệu hóa trước đó' });
     }
 
-    // Soft delete teams in this department
-    await supabase.from('teams').update({ is_active: false }).eq('department_id', req.params.id);
+    const { data: members, error: memErr } = await supabase.from('users')
+      .select('id')
+      .eq('department_id', req.params.id)
+      .eq('is_active', true);
+    if (memErr) throw memErr;
 
-    // Soft delete ecosystem unit
-    try {
-      await supabase.from('ecosystem_units').update({ is_active: false })
-        .eq('department_id', req.params.id).eq('is_active', true);
-    } catch {}
+    const { data: updated, error: updErr } = await supabase.from('departments').update({
+      is_active: false,
+      manager_id: null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', req.params.id).select('id, name, company_id, division_unit_id, is_active').single();
+    if (updErr) throw updErr;
 
-    res.json({ message: 'Đã vô hiệu hóa' });
-  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+    for (const m of (members || [])) {
+      const { error: uErr } = await supabase.from('users')
+        .update({ department_id: null, team_id: null })
+        .eq('id', m.id);
+      if (uErr) console.warn('[departments DELETE] clear user', m.id, uErr.message);
+      try { await removeUserFromEcosystem(m.id, req.params.id); } catch (ecoErr) {
+        console.warn('[departments DELETE] ecosystem member', m.id, ecoErr?.message || ecoErr);
+      }
+    }
+
+    // Bảng phụ (nếu có) — không chặn xóa phòng ban
+    const { error: udErr } = await supabase.from('user_departments').delete().eq('department_id', req.params.id);
+    if (udErr) console.warn('[departments DELETE] user_departments', udErr.message);
+
+    const { error: teamErr } = await supabase.from('teams')
+      .update({ is_active: false })
+      .eq('department_id', req.params.id);
+    if (teamErr) console.warn('[departments DELETE] teams', teamErr.message);
+
+    // Đồng bộ vô hiệu hóa trên cây HST
+    if (updated?.company_id) {
+      await syncDepartmentToEcosystem({ ...updated, is_active: false });
+    } else {
+      const { error: ecoErr } = await supabase.from('ecosystem_units').update({
+        is_active: false,
+        updated_at: new Date().toISOString(),
+      }).eq('department_id', req.params.id);
+      if (ecoErr) console.warn('[departments DELETE] ecosystem_units', ecoErr.message);
+    }
+
+    res.json({ message: `Đã vô hiệu hóa phòng ban "${dept.name}"`, department: updated });
+  } catch (e) {
+    console.error('[departments DELETE]', e);
+    res.status(500).json({ error: formatDbError(e) });
+  }
 });
 
 // ADD member to department (update user.department_id)
 r.post('/:id/members', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    if (!canManageDepartments(req.user)) return res.status(403).json({ error: 'Không có quyền quản lý phòng ban' });
+    const dept = await loadDepartmentForManage(req.params.id);
+    if (!assertDepartmentCompanyScope(req, res, dept)) return;
     const { user_id, unit_role } = req.body;
     const { data, error } = await supabase.from('users')
       .update({ department_id: req.params.id }).eq('id', user_id)
@@ -267,7 +333,9 @@ r.post('/:id/members', async (req, res) => {
 // REMOVE member from department
 r.delete('/:id/members/:userId', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    if (!canManageDepartments(req.user)) return res.status(403).json({ error: 'Không có quyền quản lý phòng ban' });
+    const dept = await loadDepartmentForManage(req.params.id);
+    if (!assertDepartmentCompanyScope(req, res, dept)) return;
     await supabase.from('users').update({ department_id: null }).eq('id', req.params.userId).eq('department_id', req.params.id);
 
     // Auto remove from ecosystem

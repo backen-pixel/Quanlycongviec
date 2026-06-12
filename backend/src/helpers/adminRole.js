@@ -99,6 +99,12 @@ function canAccessTrash(user) {
   return isStrictAdmin(user);
 }
 
+/** CRUD phòng ban — admin công ty, manager, admin module Công việc/SX. */
+function canManageDepartments(user) {
+  const r = normalizeRole(user?.role);
+  return isWorkProductionModuleAdmin(user) || r === 'superadmin' || r === 'super_admin';
+}
+
 module.exports = {
   normalizeRole,
   hasCompanyId,
@@ -114,6 +120,7 @@ module.exports = {
   isLogisticsAdmin,
   isWorkProductionModuleAdmin,
   isModuleAdmin,
+  canManageDepartments,
   canViewTrashTab,
   canAccessTrash,
 };

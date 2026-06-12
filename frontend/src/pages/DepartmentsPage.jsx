@@ -1,8 +1,10 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import api from '../lib/api';
 import Modal from '../components/Modal';
 import { useAuth } from '../lib/auth';
+import { canManageDepartments } from '../lib/adminRole';
 import { getInitials, avatarColor, ROLE_LABELS, formatDate } from '../lib/utils';
 import {
   Plus, Search, Users, Trash2, Edit, UserPlus, Building, MessageCircle,
@@ -22,6 +24,8 @@ export default function DepartmentsPage() {
   const [allUsers, setAllUsers] = useState([]);
   const [addUserId, setAddUserId] = useState('');
   const [menuDept, setMenuDept] = useState(null);
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
+  const menuRef = useRef(null);
   const [companies, setCompanies] = useState([]);
   const [filterCompany, setFilterCompany] = useState('');
   const { user } = useAuth();
@@ -68,13 +72,52 @@ export default function DepartmentsPage() {
 
   const deleteDept = async (id, name) => {
     if (!confirm(`Vô hiệu hóa phòng ban "${name}"?`)) return;
-    await api.delete(`/departments/${id}`);
-    if (selectedDept === id) { setSelectedDept(null); setDeptDetail(null); }
-    setMenuDept(null);
-    load();
+    try {
+      await api.delete(`/departments/${id}`);
+      if (selectedDept === id) { setSelectedDept(null); setDeptDetail(null); }
+      setMenuDept(null);
+      load();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Không xóa được phòng ban');
+    }
   };
 
-  const isAdmin = ['admin', 'manager'].includes(user?.role);
+  const isAdmin = canManageDepartments(user);
+  const menuDepartment = menuDept ? departments.find((d) => d.id === menuDept) : null;
+
+  const openDeptMenu = (e, d) => {
+    e.stopPropagation();
+    if (menuDept === d.id) {
+      setMenuDept(null);
+      return;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    const menuWidth = 144;
+    const menuHeight = 108;
+    let top = rect.bottom + 4;
+    let left = rect.right - menuWidth;
+    if (top + menuHeight > window.innerHeight - 8) top = rect.top - menuHeight - 4;
+    left = Math.max(8, Math.min(left, window.innerWidth - menuWidth - 8));
+    setMenuPos({ top, left });
+    setMenuDept(d.id);
+  };
+
+  useEffect(() => {
+    if (!menuDept) return;
+    const close = () => setMenuDept(null);
+    const onPointer = (e) => {
+      if (menuRef.current?.contains(e.target)) return;
+      close();
+    };
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    document.addEventListener('mousedown', onPointer);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+      document.removeEventListener('mousedown', onPointer);
+    };
+  }, [menuDept]);
 
   return (
     <div className="space-y-5">
@@ -108,7 +151,7 @@ export default function DepartmentsPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Left: Department list */}
-        <div className="lg:col-span-1 space-y-2">
+        <div className="lg:col-span-1 space-y-2 overflow-visible">
           {loading ? (
             <div className="text-center py-10"><svg className="animate-spin h-6 w-6 text-gray-400 mx-auto" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg></div>
           ) : departments.filter(d => {
@@ -117,7 +160,7 @@ export default function DepartmentsPage() {
             return d.company_id === filterCompany;
           }).map(d => (
             <div key={d.id} onClick={() => loadDetail(d.id)}
-              className={`bg-white rounded-xl border p-4 cursor-pointer transition-all hover:shadow-md ${selectedDept === d.id ? 'ring-2 ring-blue-500 border-blue-300' : 'border-gray-200'}`}>
+              className={`bg-white rounded-xl border p-4 cursor-pointer transition-all hover:shadow-md ${selectedDept === d.id ? 'ring-2 ring-blue-500 border-blue-300' : 'border-gray-200'} ${menuDept === d.id ? 'relative z-20' : ''}`}>
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl flex items-center justify-center"
                   style={{ backgroundColor: d.color + '20' }}>
@@ -140,31 +183,12 @@ export default function DepartmentsPage() {
 
                 {/* 3-dot menu */}
                 {isAdmin && (
-                  <div className="relative">
-                    <button onClick={(e) => { e.stopPropagation(); setMenuDept(menuDept === d.id ? null : d.id); }}
-                      className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center text-gray-400 hover:text-gray-600 cursor-pointer">
-                      <MoreVertical className="h-4 w-4" />
-                    </button>
-                    {menuDept === d.id && (
-                      <>
-                        <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setMenuDept(null); }} />
-                        <div className="absolute right-0 top-full mt-1 w-36 bg-white rounded-lg shadow-lg border z-50 py-1">
-                          <button onClick={(e) => { e.stopPropagation(); setMenuDept(null); setEditDept(d); setShowCreate(true); }}
-                            className="w-full px-3 py-2 text-xs text-left hover:bg-gray-50 flex items-center gap-2 cursor-pointer text-gray-700">
-                            <Edit className="h-3 w-3" /> Chỉnh sửa
-                          </button>
-                          <button onClick={(e) => { e.stopPropagation(); navigate(`/departments/${d.id}/chat`); }}
-                            className="w-full px-3 py-2 text-xs text-left hover:bg-gray-50 flex items-center gap-2 cursor-pointer text-gray-700">
-                            <MessageCircle className="h-3 w-3" /> Trao đổi
-                          </button>
-                          <button onClick={(e) => { e.stopPropagation(); deleteDept(d.id, d.name); }}
-                            className="w-full px-3 py-2 text-xs text-left hover:bg-red-50 flex items-center gap-2 cursor-pointer text-red-600">
-                            <Trash2 className="h-3 w-3" /> Xóa phòng ban
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
+                  <button
+                    onClick={(e) => openDeptMenu(e, d)}
+                    className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center text-gray-400 hover:text-gray-600 cursor-pointer shrink-0"
+                  >
+                    <MoreVertical className="h-4 w-4" />
+                  </button>
                 )}
               </div>
             </div>
@@ -212,8 +236,12 @@ export default function DepartmentsPage() {
                       </button>
                       <button onClick={async () => {
                         if (!confirm(`Vô hiệu hóa phòng ban "${deptDetail.department.name}"?`)) return;
-                        await api.delete(`/departments/${selectedDept}`);
-                        setSelectedDept(null); setDeptDetail(null); load();
+                        try {
+                          await api.delete(`/departments/${selectedDept}`);
+                          setSelectedDept(null); setDeptDetail(null); load();
+                        } catch (e) {
+                          alert(e.response?.data?.error || 'Không xóa được phòng ban');
+                        }
                       }}
                         className="h-8 px-3 bg-red-50 text-red-600 rounded-lg text-xs font-medium hover:bg-red-100 cursor-pointer flex items-center gap-1">
                         <Trash2 className="h-3 w-3" /> Xóa
@@ -293,6 +321,38 @@ export default function DepartmentsPage() {
         onClose={() => { setShowCreate(false); setEditDept(null); }}
         onSaved={() => { load(); if (selectedDept) loadDetail(selectedDept); }}
       />
+
+      {menuDepartment && typeof document !== 'undefined' && createPortal(
+        <>
+          <div className="fixed inset-0" style={{ zIndex: 99998 }} onClick={() => setMenuDept(null)} />
+          <div
+            ref={menuRef}
+            className="fixed w-36 bg-white rounded-lg shadow-lg border py-1"
+            style={{ zIndex: 99999, top: menuPos.top, left: menuPos.left }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => { setMenuDept(null); setEditDept(menuDepartment); setShowCreate(true); }}
+              className="w-full px-3 py-2 text-xs text-left hover:bg-gray-50 flex items-center gap-2 cursor-pointer text-gray-700"
+            >
+              <Edit className="h-3 w-3" /> Chỉnh sửa
+            </button>
+            <button
+              onClick={() => { setMenuDept(null); navigate(`/departments/${menuDepartment.id}/chat`); }}
+              className="w-full px-3 py-2 text-xs text-left hover:bg-gray-50 flex items-center gap-2 cursor-pointer text-gray-700"
+            >
+              <MessageCircle className="h-3 w-3" /> Trao đổi
+            </button>
+            <button
+              onClick={() => deleteDept(menuDepartment.id, menuDepartment.name)}
+              className="w-full px-3 py-2 text-xs text-left hover:bg-red-50 flex items-center gap-2 cursor-pointer text-red-600"
+            >
+              <Trash2 className="h-3 w-3" /> Xóa phòng ban
+            </button>
+          </div>
+        </>,
+        document.body
+      )}
     </div>
   );
 }

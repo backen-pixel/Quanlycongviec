@@ -50,8 +50,8 @@ const FB_DISABLE_WEBHOOK_LOGS = ['1', 'true', 'yes', 'on'].includes(
   String(process.env.FB_DISABLE_WEBHOOK_LOGS || '').toLowerCase(),
 );
 
-// Sau reboot, auto pipeline không tự chạy lại (mặc định tắt).
-// Đặt FB_AUTO_PIPELINE_RESUME_ON_BOOT=1 để tiếp tục chạy nếu DB đang lưu bật.
+// Sau reboot: giữ nguyên công tắc Tổng (master) trong DB — không tự tắt.
+// Chỉ tự chạy lại các công ty đang bật auto khi FB_AUTO_PIPELINE_RESUME_ON_BOOT=1.
 const FB_AUTO_PIPELINE_RESUME_ON_BOOT = ['1', 'true', 'yes', 'on'].includes(
   String(process.env.FB_AUTO_PIPELINE_RESUME_ON_BOOT || '').toLowerCase(),
 );
@@ -492,12 +492,18 @@ async function migrateLegacyFbPipelineConfig() {
 }
 
 async function loadFbPipelineConfigFromDb() {
+  const prevMaster = getFbMasterEnabledSync();
+  const anyRunning = [...autoPipelineStates.values()].some((s) => s.running);
   try {
     const { data } = await supabase.from('app_settings').select('value').eq('key', 'fb_auto_pipeline').maybeSingle();
     if (data?.value && typeof data.value === 'object' && data.value.companies && typeof data.value.companies === 'object') {
       const companies = {};
       for (const [k, v] of Object.entries(data.value.companies)) companies[k] = normalizeFbPipelineCfg(v);
       fbPipelineState = { master: !!data.value.master, companies };
+      // Đang chạy pipeline: không cho DB cũ (master=false) ghi đè công tắc Tổng trong RAM.
+      if (anyRunning && prevMaster && !fbPipelineState.master) {
+        fbPipelineState.master = true;
+      }
       return fbPipelineState;
     }
   } catch (e) {
@@ -505,6 +511,9 @@ async function loadFbPipelineConfigFromDb() {
   }
   // Chưa có key mới → migrate từ key cũ.
   await migrateLegacyFbPipelineConfig();
+  if (anyRunning && prevMaster && !fbPipelineState.master) {
+    fbPipelineState.master = true;
+  }
   return fbPipelineState;
 }
 
@@ -598,11 +607,13 @@ function pushAutoLog(st, text, status = 'info') {
 function getAutoState(st) {
   const pauseUntilMs = typeof st.pauseUntilMs === 'number' ? st.pauseUntilMs : null;
   const pauseRemainingMs = pauseUntilMs ? Math.max(0, pauseUntilMs - Date.now()) : 0;
+  const cfg = getFbPipelineConfigSync(st.companyKey);
+  const effectiveEnabled = st.running ? st.enabled : !!(cfg.enabled || st.enabled);
   return {
     company_id: companyKeyToId(st.companyKey),
     company_key: st.companyKey,
     master_enabled: getFbMasterEnabledSync(),
-    enabled: st.enabled,
+    enabled: effectiveEnabled,
     running: st.running,
     phase: st.phase,
     step: st.step,
@@ -979,12 +990,13 @@ async function runAutoPipelineLoop(companyKey = FB_GLOBAL_SCOPE_KEY) {
   }
 
   while (autoPipeline.enabled && !autoPipeline.stopRequested && getFbMasterEnabledSync()) {
-    await loadFbPipelineConfigFromDb();
     const pcfg = getFbPipelineConfigSync(companyKey);
     const pageIds = await getPageIdsForCompany(companyId);
     if (Array.isArray(pageIds) && pageIds.length === 0) {
-      pushAutoLog('⚠️ Công ty chưa gán page Facebook nào — bỏ qua vòng này', 'error');
-      break;
+      pushAutoLog('⚠️ Công ty chưa gán page Facebook nào — chờ 60s rồi thử lại', 'error');
+      emitAutoState();
+      await new Promise((resolve) => setTimeout(resolve, 60000));
+      continue;
     }
     autoPipeline.cycleCount += 1;
     autoPipeline.batchOffset = 0;
@@ -1329,9 +1341,29 @@ async function runAutoPipelineLoop(companyKey = FB_GLOBAL_SCOPE_KEY) {
     }
   }
 
+  const cfgEnd = getFbPipelineConfigSync(companyKey);
+  const keepAutoOn = !!(cfgEnd.enabled && getFbMasterEnabledSync() && !autoPipeline.stopRequested);
+
   autoPipeline.running = false;
-  autoPipeline.enabled = false;
   autoPipeline.stopRequested = false;
+
+  if (keepAutoOn) {
+    autoPipeline.enabled = true;
+    autoPipeline.phase = 'idle';
+    autoPipeline.step = -1;
+    autoPipeline.stepLabel = null;
+    pushAutoLog('♻️ Giữ auto bật — khởi động lại sau gián đoạn ngắn…');
+    emitAutoState();
+    setTimeout(() => {
+      const st2 = getAutoPipelineState(companyKey);
+      if (!st2.running && st2.enabled && getFbMasterEnabledSync()) {
+        startAutoPipelineForCompany(companyKey);
+      }
+    }, 2000);
+    return;
+  }
+
+  autoPipeline.enabled = false;
   autoPipeline.phase = 'idle';
   autoPipeline.step = -1;
   autoPipeline.stepLabel = null;
@@ -6079,13 +6111,12 @@ loadFbPipelineConfigFromDb().then(async () => {
   console.log('[FB] ✅ Auto pipeline config loaded (per-company)');
   try {
     const masterOn = getFbMasterEnabledSync();
-    if (masterOn && !FB_AUTO_PIPELINE_RESUME_ON_BOOT) {
-      console.log('[FB] ⏸️ Auto pipeline không tự resume sau reboot (mặc định). Set FB_AUTO_PIPELINE_RESUME_ON_BOOT=1 để resume. Tắt master → OFF.');
-      await setFbPipelineMaster(false).catch(() => {});
-    } else if (masterOn && FB_AUTO_PIPELINE_RESUME_ON_BOOT) {
+    if (masterOn && FB_AUTO_PIPELINE_RESUME_ON_BOOT) {
       const enabledKeys = listFbPipelineCompanyKeys().filter((k) => getFbPipelineConfigSync(k).enabled);
       console.log(`[FB] ▶️ Auto-resume auto pipeline (master=ON + RESUME_ON_BOOT) cho ${enabledKeys.length} công ty`);
       for (const key of enabledKeys) startAutoPipelineForCompany(key);
+    } else if (masterOn) {
+      console.log('[FB] ⏸️ Master vẫn BẬT sau reboot; không tự chạy pipeline (mặc định). Set FB_AUTO_PIPELINE_RESUME_ON_BOOT=1 để resume.');
     }
   } catch (e) { console.warn('[FB] auto-resume check:', e.message); }
 });
@@ -6644,6 +6675,9 @@ r.post('/auto-pipeline/start', authMiddleware, async (req, res) => {
   await loadFbPipelineConfigFromDb();
   const companyKey = resolveAutoCompanyKey(req, res);
   if (companyKey === undefined) return;
+  if (!getFbMasterEnabledSync()) {
+    await setFbPipelineMaster(true);
+  }
   await saveFbPipelineConfigForCompany(companyKey, { enabled: true });
   const st = startAutoPipelineForCompany(companyKey);
   res.json({ ok: true, master_enabled: getFbMasterEnabledSync(), state: getAutoState(st) });
