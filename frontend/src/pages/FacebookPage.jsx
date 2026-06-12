@@ -4062,16 +4062,17 @@ function SettingsTab({ onPagesChanged, fbCompanyQs = '' }) {
   const [leadTypesLoading, setLeadTypesLoading] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const emptyForm = { page_id: '', page_name: '', access_token: '', webhook_verify_token: 'tubep_pro_verify_2024', auto_reply_message: 'Cảm ơn bạn đã liên hệ! Chúng tôi sẽ phản hồi sớm nhất.', auto_create_lead: true, default_module_key: '', default_target_type: '', default_company_id: '', default_region_id: '', default_lead_type_id: '', default_stage_id: '', default_lead_owner_id: '' };
+  const emptyForm = { page_id: '', page_name: '', access_token: '', webhook_verify_token: 'tubep_pro_verify_2024', auto_reply_message: 'Cảm ơn bạn đã liên hệ! Chúng tôi sẽ phản hồi sớm nhất.', auto_create_lead: true, default_module_key: '', default_target_type: 'lead', default_company_id: '', default_region_id: '', default_lead_type_id: '', default_stage_id: '', default_lead_owner_id: '' };
   const [form, setForm] = useState({ ...emptyForm });
   const [formCompanyRegions, setFormCompanyRegions] = useState([]);
   const [regionsByCompanyId, setRegionsByCompanyId] = useState({});
-  const moduleKey = String(form.default_module_key || '').trim().toLowerCase();
-  const targetType = moduleKey === 'production' || moduleKey === 'logistics'
-    ? 'deal'
-    : moduleKey === 'crm'
-      ? 'lead'
-      : '';
+  const recordKind = String(form.default_target_type || 'lead').toLowerCase() === 'deal' ? 'deal' : 'lead';
+  const moduleKey = recordKind === 'lead'
+    ? 'crm'
+    : String(form.default_module_key || 'crm').trim().toLowerCase();
+  const targetType = recordKind === 'lead'
+    ? 'lead'
+    : (moduleKey === 'production' || moduleKey === 'logistics' ? 'deal' : recordKind);
 
   const load = () => {
     const q = fbCompanyQs ? `?${fbCompanyQs}` : '';
@@ -4232,9 +4233,9 @@ function SettingsTab({ onPagesChanged, fbCompanyQs = '' }) {
 
   const addPage = async () => {
     if (!form.page_id || !form.access_token) return alert('Cần nhập Page ID và Access Token');
-    if (!moduleKey) return alert('Cần chọn module tạo mới');
     if (!form.default_company_id) return alert('Cần chọn công ty của module đã chọn');
-    const res = await fetch(`${API}/api/facebook/pages`, { method: 'POST', headers: hdr(), body: JSON.stringify(form) });
+    const payload = { ...form, default_module_key: moduleKey, default_target_type: recordKind };
+    const res = await fetch(`${API}/api/facebook/pages`, { method: 'POST', headers: hdr(), body: JSON.stringify(payload) });
     if (res.ok) { load(); setShowAdd(false); setForm({ ...emptyForm }); } else { const e = await res.json(); alert(e.error || 'Lỗi'); }
   };
   const updatePage = async (id, updates) => {
@@ -4255,8 +4256,8 @@ function SettingsTab({ onPagesChanged, fbCompanyQs = '' }) {
       webhook_verify_token: p.webhook_verify_token || '',
       auto_reply_message: p.auto_reply_message || '',
       auto_create_lead: p.auto_create_lead,
-      default_module_key: p.default_module_key || (String(p.default_target_type || '').toLowerCase() === 'deal' ? 'production' : 'crm'),
-      default_target_type: p.default_target_type || '',
+      default_module_key: p.default_module_key || 'crm',
+      default_target_type: String(p.default_target_type || 'lead').toLowerCase() === 'deal' ? 'deal' : 'lead',
       default_company_id: p.default_company_id || '',
       default_region_id: p.default_region_id || '',
       default_lead_type_id: p.default_lead_type_id || '',
@@ -4265,9 +4266,13 @@ function SettingsTab({ onPagesChanged, fbCompanyQs = '' }) {
     });
   };
   const saveEdit = async (id) => {
-    if (!moduleKey) return alert('Cần chọn module tạo mới');
     if (!form.default_company_id) return alert('Cần chọn công ty của module đã chọn');
-    const updates = { ...form }; if (!updates.access_token) delete updates.access_token;
+    const updates = {
+      ...form,
+      default_module_key: moduleKey,
+      default_target_type: recordKind,
+    };
+    if (!updates.access_token) delete updates.access_token;
             await fetch(`${API}/api/facebook/pages/${id}`, { method: 'PUT', headers: hdr(), body: JSON.stringify(updates) });
     setEditingId(null); load();
   };
@@ -4300,39 +4305,68 @@ function SettingsTab({ onPagesChanged, fbCompanyQs = '' }) {
 
   const CompanyStageSelectors = () => (
     <div className="space-y-3">
-      <div className="rounded-lg border border-gray-200 bg-gray-50/80 px-3 py-2">
-        <p className="text-[11px] font-semibold text-gray-700 uppercase tracking-wide">Module tạo mới & phạm vi CRM</p>
-        <p className="text-[10px] text-gray-500 mt-0.5">
-          Chọn tạo <strong>Lead</strong> hoặc <strong>Deal</strong> cho từng Page. Bản ghi sẽ gán đúng <strong>công ty</strong>, <strong>khu vực</strong>, <strong>phân loại</strong> và <strong>người phụ trách</strong>.
-        </p>
-      </div>
-      <div>
-        <label className="text-xs text-gray-600 mb-1 block font-medium">Module tạo mới *</label>
+      <div
+        className="rounded-xl border-2 border-blue-500 bg-blue-50 px-3 py-3 shadow-sm"
+        data-fb-setup-record-kind
+      >
+        <p className="text-sm font-bold text-blue-900 mb-2">Tạo Lead hay Deal từ Facebook *</p>
         <select
-          value={moduleKey}
-          onChange={(e) =>
+          value={form.default_target_type || 'lead'}
+          onChange={(e) => {
+            const tt = e.target.value === 'deal' ? 'deal' : 'lead';
             setForm({
               ...form,
-              default_module_key: e.target.value || '',
-              default_target_type: e.target.value === 'crm' ? 'lead' : (e.target.value ? 'deal' : ''),
+              default_target_type: tt,
+              default_module_key: tt === 'lead' ? 'crm' : (form.default_module_key && form.default_module_key !== 'crm' ? form.default_module_key : 'crm'),
               default_company_id: '',
               default_region_id: '',
               default_lead_type_id: '',
               default_stage_id: '',
               default_lead_owner_id: '',
-            })
-          }
-          className="w-full px-3 py-2 text-sm border rounded cursor-pointer"
+            });
+          }}
+          className="w-full px-3 py-2.5 text-sm border-2 border-blue-300 rounded-lg bg-white cursor-pointer font-medium"
         >
-          <option value="">-- Chọn module --</option>
-          <option value="crm">CRM</option>
-          <option value="production">Sản xuất</option>
-          <option value="logistics">Vận chuyển</option>
+          <option value="lead">📘 Lead — tạo trên pipeline Lead CRM</option>
+          <option value="deal">🎯 Deal — tạo trên pipeline Deal (hoặc Sản xuất / Vận chuyển)</option>
         </select>
-        <p className="text-[10px] text-gray-500 mt-1">
-          Chọn module <strong>Sản xuất</strong> hoặc <strong>Vận chuyển</strong> sẽ tự tạo bản ghi dạng <strong>Deal</strong>.
+        <p className="text-[11px] text-blue-800 mt-2">
+          {recordKind === 'deal'
+            ? 'Chọn Deal để gán giai đoạn mặc định từ pipeline Deal. Có thể tạo thẳng deal CRM hoặc deal module khác bên dưới.'
+            : 'Chọn Lead để tin nhắn Facebook tạo lead trên Kanban Lead của công ty.'}
         </p>
       </div>
+
+      {recordKind === 'deal' ? (
+        <div>
+          <label className="text-xs text-gray-600 mb-1 block font-medium">Module Deal *</label>
+          <select
+            value={moduleKey || 'crm'}
+            onChange={(e) => {
+              const mk = e.target.value || 'crm';
+              setForm({
+                ...form,
+                default_module_key: mk,
+                default_target_type: 'deal',
+                default_company_id: '',
+                default_region_id: '',
+                default_lead_type_id: '',
+                default_stage_id: '',
+                default_lead_owner_id: '',
+              });
+            }}
+            className="w-full px-3 py-2 text-sm border rounded cursor-pointer"
+          >
+            <option value="crm">CRM — Kanban Deal (pipeline Deal công ty)</option>
+            <option value="production">Sản xuất — pipeline xưởng</option>
+            <option value="logistics">Vận chuyển — pipeline vận chuyển</option>
+          </select>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700">
+          Module: <strong>CRM</strong> (Lead)
+        </div>
+      )}
       <div>
         <label className="text-xs text-gray-600 mb-1 block font-medium">Công ty mặc định của module đã chọn *</label>
         <select
@@ -4515,8 +4549,8 @@ function SettingsTab({ onPagesChanged, fbCompanyQs = '' }) {
                 </div>
                 <div><label className="text-xs text-gray-600 mb-1 block">Token mới (bỏ trống = giữ cũ)</label><textarea value={form.access_token} onChange={e => setForm({...form, access_token: e.target.value})} rows={2} className="w-full px-3 py-2 text-sm border rounded font-mono" placeholder="Paste token..." /></div>
                 <div><label className="text-xs text-gray-600 mb-1 block">Tin nhắn tự động</label><input value={form.auto_reply_message} onChange={e => setForm({...form, auto_reply_message: e.target.value})} className="w-full px-3 py-2 text-sm border rounded" /></div>
-                <div className="flex items-center gap-2"><input type="checkbox" checked={form.auto_create_lead} onChange={e => setForm({...form, auto_create_lead: e.target.checked})} id={`acl-${p.id}`} className="cursor-pointer" /><label htmlFor={`acl-${p.id}`} className="text-sm">Tự động tạo Lead</label></div>
                 <CompanyStageSelectors />
+                <div className="flex items-center gap-2 pt-1"><input type="checkbox" checked={form.auto_create_lead} onChange={e => setForm({...form, auto_create_lead: e.target.checked})} id={`acl-${p.id}`} className="cursor-pointer" /><label htmlFor={`acl-${p.id}`} className="text-sm">Tự động tạo {targetType === 'deal' ? 'Deal' : 'Lead'}</label></div>
                 <div className="flex gap-2 pt-2">
                   <button onClick={() => saveEdit(p.id)} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 cursor-pointer flex items-center gap-1"><Save size={14} /> Lưu</button>
                   <button onClick={() => setEditingId(null)} className="text-gray-500 text-sm cursor-pointer px-4 py-2">Hủy</button>
@@ -4551,7 +4585,9 @@ function SettingsTab({ onPagesChanged, fbCompanyQs = '' }) {
                   </button>
                   <button onClick={() => updatePage(p.id, { auto_create_lead: !p.auto_create_lead })}
                     className={`text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer transition ${p.auto_create_lead ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-gray-100 text-gray-500 border border-gray-200'}`}>
-                    <UserPlus size={14} /> {p.auto_create_lead ? 'Auto Lead: BẬT' : 'Auto Lead: TẮT'}
+                    <UserPlus size={14} /> {p.auto_create_lead
+                      ? `Auto ${String(p.default_target_type || 'lead').toLowerCase() === 'deal' ? 'Deal' : 'Lead'}: BẬT`
+                      : `Auto ${String(p.default_target_type || 'lead').toLowerCase() === 'deal' ? 'Deal' : 'Lead'}: TẮT`}
                   </button>
                   {p.auto_reply_message && <span className="text-xs px-3 py-1.5 rounded-lg bg-purple-50 text-purple-600 border border-purple-200">💬 "{p.auto_reply_message.substring(0, 25)}..."</span>}
                   {p.default_company_id
@@ -4593,8 +4629,8 @@ function SettingsTab({ onPagesChanged, fbCompanyQs = '' }) {
           </div>
           <div><label className="text-xs text-gray-600 mb-1 block">Token *</label><textarea value={form.access_token} onChange={e => setForm({...form, access_token: e.target.value})} rows={2} className="w-full px-3 py-2 text-sm border rounded font-mono" placeholder="Paste token..." /></div>
           <div><label className="text-xs text-gray-600 mb-1 block">Tin nhắn tự động</label><input value={form.auto_reply_message} onChange={e => setForm({...form, auto_reply_message: e.target.value})} className="w-full px-3 py-2 text-sm border rounded" /></div>
-          <div className="flex items-center gap-2"><input type="checkbox" checked={form.auto_create_lead} onChange={e => setForm({...form, auto_create_lead: e.target.checked})} id="acl-new" className="cursor-pointer" /><label htmlFor="acl-new" className="text-sm">Tự động tạo Lead</label></div>
           <CompanyStageSelectors />
+          <div className="flex items-center gap-2 pt-1"><input type="checkbox" checked={form.auto_create_lead} onChange={e => setForm({...form, auto_create_lead: e.target.checked})} id="acl-new" className="cursor-pointer" /><label htmlFor="acl-new" className="text-sm">Tự động tạo {targetType === 'deal' ? 'Deal' : 'Lead'}</label></div>
           <div className="flex gap-2 pt-2">
             <button onClick={addPage} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 cursor-pointer">Lưu</button>
             <button onClick={() => setShowAdd(false)} className="text-gray-500 text-sm cursor-pointer px-4 py-2">Hủy</button>

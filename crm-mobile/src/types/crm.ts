@@ -40,6 +40,8 @@ export type CrmLeadListItem = {
   assignee?: { id?: string; full_name?: string | null } | null;
   lead_owner?: { id?: string; full_name?: string | null } | null;
   source?: { id?: string; name?: string | null; icon?: string | null } | null;
+  lead_type_id?: string | null;
+  lead_type?: { id?: string; name?: string | null; color?: string | null } | null;
   /** Cờ per-user — đồng bộ với web (frontend/CRMDashboard, CrmListView, LeadDetail) */
   is_pinned?: boolean;
   pinned_at?: string | null;

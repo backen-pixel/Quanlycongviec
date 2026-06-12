@@ -52,7 +52,20 @@ function parseVietnameseMeasure(val) {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * Đọc tiền từ cột đã map — giá trị có thể lệch 1–2 cột sang phải (merge header Excel, vd. NextGo).
+ */
+function parseExcelMoneyFromMappedColumn(row, colIdx, scanSpan = 3) {
+  if (colIdx === undefined || !row) return 0;
+  for (let off = 0; off <= scanSpan; off++) {
+    const v = parseVietnameseMoney(row[colIdx + off]);
+    if (v > 0) return v;
+  }
+  return 0;
+}
+
 module.exports = {
   parseVietnameseMoney,
   parseVietnameseMeasure,
+  parseExcelMoneyFromMappedColumn,
 };

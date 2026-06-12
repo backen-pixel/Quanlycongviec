@@ -37,6 +37,10 @@ export function navigateFromAppNotification(n: AppNotification): void {
     });
     return;
   }
+  if (n.type === 'comment_added' && (n.entity_type === 'lead' || n.entity_type === 'crm_lead' || n.entity_type === 'crm_deal') && n.entity_id) {
+    openWebPath(`/crm/leads/${n.entity_id}?tab=activities`);
+    return;
+  }
   if (n.type === 'department_chat' && n.entity_id) {
     // Mobile chưa có native DepartmentChat → mở web theo route đã có.
     openWebPath(`/departments/${n.entity_id}/chat`);

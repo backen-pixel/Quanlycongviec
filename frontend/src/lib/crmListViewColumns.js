@@ -53,6 +53,7 @@ export function buildStaticListColumns(pipelineType) {
     { key: 'region', label: 'Khu vực', group: 'Khách hàng', defaultVisible: false },
     { key: 'source_main', label: 'Nguồn chính', group: 'Nguồn', defaultVisible: false },
     { key: 'source_sub', label: 'Nguồn phụ', group: 'Nguồn', defaultVisible: false },
+    { key: 'referrer_name', label: 'Người giới thiệu', group: 'Nguồn', defaultVisible: true },
     { key: 'needs', label: 'Nhu cầu', group: 'Cơ bản', defaultVisible: false },
     { key: 'lead_owner', label: 'Sale nhận', group: 'Nhân viên', defaultVisible: false },
     { key: 'assignee', label: 'Sale xử lý', group: 'Nhân viên', defaultVisible: true },

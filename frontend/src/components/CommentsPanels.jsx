@@ -6,6 +6,7 @@ import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { getSocket } from '../lib/socket';
 import { FbCrmAvatar, FbCrmCommentComposer, formatCrmFbRelativeTime } from './crmFbCommentUi';
+import { CrmCommentMentionComposer, renderCrmCommentBody } from './crmCommentMentionUi';
 
 const REACTION_PICKER = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
@@ -115,6 +116,9 @@ function CommentThread({
   onRemove,
   onReply,
   onReaction,
+  renderBody,
+  members = [],
+  enableMentions = false,
 }) {
   const commentsByParent = useMemo(() => groupByParent(comments), [comments]);
 
@@ -150,27 +154,35 @@ function CommentThread({
                       </div>
                     </div>
                   ) : (
-                    <p className="mt-1 break-words text-[15px] leading-snug text-[#050505] whitespace-pre-wrap">{getBody(c)}</p>
+                    <p className="mt-1 break-words text-[15px] leading-snug text-[#050505] whitespace-pre-wrap">
+                      {renderBody ? renderBody(getBody(c)) : getBody(c)}
+                    </p>
                   )}
                 </div>
                 {editingId !== c.id && <ReactionCornerBadge comment={c} />}
               </div>
               {editingId !== c.id && (
-                <div className="pt-1">
-                  <ReactionStrip comment={c} disabled={reactionBusy === c.id} onPick={(em) => onReaction(c, em)} />
+                <div
+                  className="overflow-hidden transition-[max-height,opacity] duration-200 ease-out max-h-0 opacity-0 pointer-events-none group-hover/crx:max-h-28 group-hover/crx:opacity-100 group-hover/crx:pointer-events-auto group-focus-within/crx:max-h-28 group-focus-within/crx:opacity-100 group-focus-within/crx:pointer-events-auto"
+                >
+                  <div className="pt-1">
+                    <ReactionStrip comment={c} disabled={reactionBusy === c.id} onPick={(em) => onReaction(c, em)} />
+                  </div>
                 </div>
               )}
               {editingId !== c.id && (
-                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-1 text-[12px]">
-                  <button type="button" className="font-semibold text-[#65676b] hover:underline" onClick={() => onReply(c)}>Trả lời</button>
-                  {String(c.user_id || '') === String(user?.id || user?.userId || '') && (
-                    <>
-                      <span className="text-[#ccd0d5]">·</span>
-                      <button type="button" className="font-semibold text-[#65676b] hover:underline" onClick={() => { setEditingId(c.id); setEditingBody(getBody(c)); }}>Sửa</button>
-                      <span className="text-[#ccd0d5]">·</span>
-                      <button type="button" className="font-semibold text-[#65676b] hover:underline" onClick={() => onRemove(c)}>Xóa</button>
-                    </>
-                  )}
+                <div className="overflow-hidden transition-[max-height,opacity] duration-200 ease-out max-h-0 opacity-0 pointer-events-none group-hover/crx:max-h-10 group-hover/crx:opacity-100 group-hover/crx:pointer-events-auto group-focus-within/crx:max-h-10 group-focus-within/crx:opacity-100 group-focus-within/crx:pointer-events-auto">
+                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-1 text-[12px]">
+                    <button type="button" className="font-semibold text-[#65676b] hover:underline" onClick={() => onReply(c)}>Trả lời</button>
+                    {String(c.user_id || '') === String(user?.id || user?.userId || '') && (
+                      <>
+                        <span className="text-[#ccd0d5]">·</span>
+                        <button type="button" className="font-semibold text-[#65676b] hover:underline" onClick={() => { setEditingId(c.id); setEditingBody(getBody(c)); }}>Sửa</button>
+                        <span className="text-[#ccd0d5]">·</span>
+                        <button type="button" className="font-semibold text-[#65676b] hover:underline" onClick={() => onRemove(c)}>Xóa</button>
+                      </>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -183,7 +195,7 @@ function CommentThread({
 
   return (
     <div className="rounded-xl border border-[#e4e6eb] bg-[#f0f2f5] overflow-hidden">
-      <div className="max-h-[min(480px,60vh)] overflow-y-auto px-2 py-3">
+      <div className="min-h-[320px] max-h-[min(720px,75vh)] overflow-y-auto px-2 py-3">
         {loading && <p className="py-8 text-center text-sm text-[#65676b]">Đang tải…</p>}
         {!loading && !(comments || []).length && (
           <p className="py-8 text-center text-sm text-[#65676b]">Chưa có bình luận. Hãy là người đầu tiên!</p>
@@ -197,14 +209,26 @@ function CommentThread({
             <button type="button" className="shrink-0 font-semibold text-[#65676b] hover:underline" onClick={() => setReplyTo(null)}>Hủy</button>
           </div>
         )}
-        <FbCrmCommentComposer
-          user={user}
-          value={bodyField}
-          onChange={(e) => setBody(e.target.value)}
-          onSubmit={onSubmit}
-          posting={posting}
-          placeholder={replyTo ? `Trả lời ${replyTo.name}…` : `Bình luận với tư cách ${user?.full_name || user?.email || 'bạn'}…`}
-        />
+        {enableMentions ? (
+          <CrmCommentMentionComposer
+            user={user}
+            members={members}
+            value={bodyField}
+            onChange={(e) => setBody(e.target.value)}
+            onSubmit={onSubmit}
+            posting={posting}
+            placeholder={replyTo ? `Trả lời ${replyTo.name}…` : `Bình luận với tư cách ${user?.full_name || user?.email || 'bạn'}…`}
+          />
+        ) : (
+          <FbCrmCommentComposer
+            user={user}
+            value={bodyField}
+            onChange={(e) => setBody(e.target.value)}
+            onSubmit={onSubmit}
+            posting={posting}
+            placeholder={replyTo ? `Trả lời ${replyTo.name}…` : `Bình luận với tư cách ${user?.full_name || user?.email || 'bạn'}…`}
+          />
+        )}
       </div>
     </div>
   );
@@ -221,6 +245,19 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
   const [editingBody, setEditingBody] = useState('');
   const [replyTo, setReplyTo] = useState(null);
   const [reactionBusy, setReactionBusy] = useState(null);
+  const [members, setMembers] = useState([]);
+
+  const loadMembers = useCallback(async () => {
+    if (!leadId) return;
+    try {
+      const r = await api.get(`/crm/leads/${leadId}/members`);
+      setMembers(Array.isArray(r.data) ? r.data : []);
+    } catch {
+      setMembers([]);
+    }
+  }, [leadId]);
+
+  useEffect(() => { void loadMembers(); }, [loadMembers]);
 
   const load = useCallback(async () => {
     if (!leadId) return;
@@ -275,13 +312,14 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
     };
   }, [leadId, onCountChange]);
 
-  const submit = async () => {
+  const submit = async ({ mention_user_ids } = {}) => {
     const v = body.trim();
     if (!v) return;
     setPosting(true);
     try {
       const payload = { body: v };
       if (replyTo?.id != null) payload.parent_id = replyTo.id;
+      if (mention_user_ids?.length) payload.mention_user_ids = mention_user_ids;
       const r = await api.post(`/crm/leads/${leadId}/comments`, payload);
       const row = r.data || {};
       setComments((prev) => {
@@ -361,6 +399,9 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
       onRemove={removeComment}
       onReply={(c) => { setReplyTo({ id: c.id, name: c.user?.full_name || 'Thành viên' }); setEditingId(null); }}
       onReaction={pickReaction}
+      members={members}
+      enableMentions
+      renderBody={(text) => renderCrmCommentBody(text, members)}
     />
   );
 }

@@ -51,6 +51,15 @@ function openFromNotification(n: AppNotification, navigation: TabNav) {
     openWebPath(`/tasks?task=${encodeURIComponent(n.entity_id)}`);
     return;
   }
+  if (n.type === 'comment_added' && (n.entity_type === 'lead' || n.entity_type === 'crm_lead' || n.entity_type === 'crm_deal') && n.entity_id) {
+    const tab = navTab || 'activities';
+    if (tab === 'activities' || tab === 'comments') {
+      openWebPath(`/crm/leads/${n.entity_id}?tab=activities`);
+      return;
+    }
+    navigation.navigate('CrmTab', { screen: 'LeadDetail', params: { id: n.entity_id } });
+    return;
+  }
   if (n.entity_type === 'crm_lead' || n.entity_type === 'crm_deal' || n.entity_type === 'lead') {
     const id = n.entity_id;
     if (id) navigation.navigate('CrmTab', { screen: 'LeadDetail', params: { id } });
