@@ -12,6 +12,7 @@ const REPO_ROOT = path.resolve(__dirname, '../../..');
 /** app_key trên server ≠ tên thư mục project (vd: tubep-demo → demo-mobile). */
 const FOLDER_ALIASES = {
   'tubep-demo': 'demo-mobile',
+  'crm-mobile-v2': 'crm-mobile-v2',
 };
 
 /** Tách chuỗi đường dẫn tùy chỉnh (cho phép nhiều thư mục, ngăn bằng xuống dòng | ; hoặc ,). */
