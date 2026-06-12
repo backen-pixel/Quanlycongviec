@@ -256,7 +256,7 @@ export default function FacebookPage() {
       <div className="flex-1 overflow-hidden">
         {tab === 'inbox' && <InboxTab pageStats={stats?.page_stats} fbCompanyQs={fbCompanyQs} />}
         {tab === 'contacts' && <ContactsTab fbCompanyQs={fbCompanyQs} companyId={effectiveCompanyFilter} isAdmin={isAdmin} />}
-        {tab === 'analytics' && <AnalyticsTab />}
+        {tab === 'analytics' && <AnalyticsTab fbCompanyQs={fbCompanyQs} />}
         {tab === 'lead-ads' && <LeadAdsTab />}
         {tab === 'comments' && <CommentsTab />}
         {tab === 'settings' && <SettingsTab onPagesChanged={loadFbTokenSummary} fbCompanyQs={fbCompanyQs} />}
@@ -3075,7 +3075,7 @@ function CommentsTab() {
 // ANALYTICS TAB — Phân tích hành vi khách hàng
 // ═══════════════════════════════════════════════════════════════
 
-function AnalyticsTab() {
+function AnalyticsTab({ fbCompanyQs = '' }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [pageFilter, setPageFilter] = useState('');
@@ -3083,18 +3083,26 @@ function AnalyticsTab() {
   const [pages, setPages] = useState([]);
 
   useEffect(() => {
-    fetch(`${API}/api/facebook/pages`, { headers: hdr() })
+    const q = fbCompanyQs ? `?${fbCompanyQs}` : '';
+    fetch(`${API}/api/facebook/pages${q}`, { headers: hdr() })
       .then(r => r.ok ? r.json() : []).then(setPages).catch(() => {});
-  }, []);
+  }, [fbCompanyQs]);
+
+  useEffect(() => {
+    setPageFilter('');
+  }, [fbCompanyQs]);
 
   useEffect(() => {
     setLoading(true);
     const params = new URLSearchParams({ days });
     if (pageFilter) params.set('page_id', pageFilter);
+    if (fbCompanyQs) {
+      new URLSearchParams(fbCompanyQs).forEach((v, k) => params.set(k, v));
+    }
     fetch(`${API}/api/facebook/analytics?${params}`, { headers: hdr() })
       .then(r => r.ok ? r.json() : null).then(d => { setData(d); setLoading(false); })
       .catch(() => setLoading(false));
-  }, [pageFilter, days]);
+  }, [pageFilter, days, fbCompanyQs]);
 
   if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full" /></div>;
   if (!data) return <p className="text-center py-8 text-gray-400">Không có dữ liệu</p>;

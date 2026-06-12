@@ -10,7 +10,7 @@ const { supabase } = require('../config/supabase');
 const { auth: authMiddleware } = require('../middleware/auth');
 const { isSystemAdmin } = require('../helpers/adminRole');
 const { extractContactInfo } = require('../helpers/facebookPhoneExtract');
-const { createLeadFromZaloContact, runZaloBatchExtractPhones, runZaloBatchCreateLeads, extractFromZaloContact, syncZaloContactProfile, runZaloBatchRefreshProfiles, isPlaceholderZaloDisplayName, normalizeZaloModuleKey, normalizeZaloTargetType, resolveZaloModuleKeyForOa, resolveZaloCreateType, applyZaloOaRoutingToLead, runZaloBatchApplyOaRouting, ensureZaloLeadAutoTasks } = require('../helpers/zaloBatchTools');
+const { createLeadFromZaloContact, runZaloBatchExtractPhones, runZaloBatchCreateLeads, extractFromZaloContact, syncZaloContactProfile, runZaloBatchRefreshProfiles, isPlaceholderZaloDisplayName, applyZaloDisplayNameToCustomer, normalizeZaloModuleKey, normalizeZaloTargetType, resolveZaloModuleKeyForOa, resolveZaloCreateType, applyZaloOaRoutingToLead, runZaloBatchApplyOaRouting, ensureZaloLeadAutoTasks } = require('../helpers/zaloBatchTools');
 const {
   isUserSendEvent,
   isOaEchoEvent,
@@ -1118,6 +1118,10 @@ r.put('/contacts/:id/link-lead', authMiddleware, async (req, res) => {
     if (!contactAllowedByZaloScope(scope, prev)) {
       return res.status(403).json({ error: 'Không có quyền' });
     }
+    const { data: contactRow } = await supabase.from('zalo_contacts')
+      .select('id, display_name, user_id, customer_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
     const { data, error } = await supabase.from('zalo_contacts')
       .update({ lead_id, updated_at: new Date().toISOString() })
       .eq('id', req.params.id)
@@ -1125,6 +1129,14 @@ r.put('/contacts/:id/link-lead', authMiddleware, async (req, res) => {
       .single();
     if (error) throw error;
     await supabase.from('zalo_messages').update({ lead_id }).eq('contact_id', req.params.id);
+    const { data: linkedLead } = await supabase.from('crm_leads')
+      .select('customer_id')
+      .eq('id', lead_id)
+      .maybeSingle();
+    const syncCustomerId = linkedLead?.customer_id || contactRow?.customer_id;
+    if (syncCustomerId && contactRow?.display_name) {
+      await applyZaloDisplayNameToCustomer(syncCustomerId, contactRow.display_name, { zaloUserId: contactRow.user_id });
+    }
     const oaConfig = await getOaConfig(prev.oa_id);
     const tasksCreated = oaConfig
       ? await ensureZaloLeadAutoTasks(lead_id, oaConfig.default_lead_owner_id || oaConfig.created_by || req.user?.userId)
