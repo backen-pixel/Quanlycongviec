@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import api from '../lib/api';
 import Modal from '../components/Modal';
 import UserRolesModal from '../components/UserRolesModal';
@@ -27,6 +28,8 @@ export default function UsersPage() {
   const [editUser, setEditUser] = useState(null);
   const [showDetail, setShowDetail] = useState(null);
   const [menuUser, setMenuUser] = useState(null);
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
+  const menuRef = useRef(null);
   const [showRolesModal, setShowRolesModal] = useState(null); // { userId, userName }
   const [hardDeleteTarget, setHardDeleteTarget] = useState(null); // { id, full_name, email, role }
 
@@ -86,6 +89,42 @@ export default function UsersPage() {
     setMenuUser(null);
     load();
   };
+
+  const menuUserData = menuUser ? users.find((u) => u.id === menuUser) : null;
+
+  const openUserMenu = (e, u) => {
+    e.stopPropagation();
+    if (menuUser === u.id) {
+      setMenuUser(null);
+      return;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    const menuWidth = 176;
+    const menuHeight = isAdmin && String(u.id) !== String(currentUser?.id) ? 148 : 116;
+    let top = rect.bottom + 4;
+    let left = rect.right - menuWidth;
+    if (top + menuHeight > window.innerHeight - 8) top = rect.top - menuHeight - 4;
+    left = Math.max(8, Math.min(left, window.innerWidth - menuWidth - 8));
+    setMenuPos({ top, left });
+    setMenuUser(u.id);
+  };
+
+  useEffect(() => {
+    if (!menuUser) return;
+    const close = () => setMenuUser(null);
+    const onPointer = (e) => {
+      if (menuRef.current?.contains(e.target)) return;
+      close();
+    };
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    document.addEventListener('mousedown', onPointer);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+      document.removeEventListener('mousedown', onPointer);
+    };
+  }, [menuUser]);
 
   return (
     <div className="space-y-5 max-w-7xl">
@@ -231,9 +270,9 @@ export default function UsersPage() {
       ) : users.length === 0 ? (
         <div className="text-center py-16"><UsersIcon className="h-12 w-12 mx-auto text-gray-300 mb-3" /><p className="text-sm text-gray-400">Không tìm thấy nhân viên</p></div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 overflow-visible">
           {users.map((u, i) => (
-            <div key={u.id} className="bg-white rounded-xl border p-4 flex items-center gap-4 hover:shadow-md transition-all cursor-pointer group relative">
+            <div key={u.id} className={`bg-white rounded-xl border p-4 flex items-center gap-4 hover:shadow-md transition-all cursor-pointer group relative ${menuUser === u.id ? 'z-20' : ''}`}>
               {u.avatar ? (
                 <img src={u.avatar} alt="" className="h-11 w-11 rounded-full object-cover border border-gray-200 shrink-0" />
               ) : (
@@ -262,35 +301,12 @@ export default function UsersPage() {
                   )}
                 </div>
               </div>
-              <div className="relative shrink-0">
-                <button onClick={(e) => { e.stopPropagation(); setMenuUser(menuUser === u.id ? null : u.id); }}
-                  className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center text-gray-400 hover:text-gray-600 cursor-pointer"><MoreVertical className="h-4 w-4" /></button>
-                {menuUser === u.id && (
-                  <>
-                    <div className="fixed inset-0 z-40" onClick={() => setMenuUser(null)} />
-                    <div className="absolute right-0 top-full mt-1 w-44 bg-white rounded-lg shadow-lg border z-50 py-1">
-                      <button onClick={() => { setMenuUser(null); setShowRolesModal({ userId: u.id, userName: u.full_name }); }}
-                        className="w-full px-3 py-2 text-xs text-left hover:bg-purple-50 flex items-center gap-2 cursor-pointer text-purple-700"><Shield className="h-3 w-3" /> Phân quyền</button>
-                      <button onClick={() => { setMenuUser(null); setEditUser(u); setShowCreate(true); }}
-                        className="w-full px-3 py-2 text-xs text-left hover:bg-gray-50 flex items-center gap-2 cursor-pointer text-gray-700"><Edit className="h-3 w-3" /> Chỉnh sửa</button>
-                      <button onClick={() => deactivate(u.id, u.full_name)}
-                        className="w-full px-3 py-2 text-xs text-left hover:bg-red-50 flex items-center gap-2 cursor-pointer text-red-600"><Trash2 className="h-3 w-3" /> Vô hiệu hóa</button>
-                      {isAdmin && String(u.id) !== String(currentUser?.id) && (
-                        <>
-                          <div className="border-t border-gray-100 my-1" />
-                          <button
-                            onClick={() => { setMenuUser(null); setHardDeleteTarget(u); }}
-                            className="w-full px-3 py-2 text-xs text-left hover:bg-red-50 flex items-center gap-2 cursor-pointer text-red-700 font-semibold"
-                            title="Xóa vĩnh viễn — không thể hoàn tác"
-                          >
-                            <AlertTriangle className="h-3 w-3" /> Xóa vĩnh viễn
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
+              <button
+                onClick={(e) => openUserMenu(e, u)}
+                className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center text-gray-400 hover:text-gray-600 cursor-pointer shrink-0"
+              >
+                <MoreVertical className="h-4 w-4" />
+              </button>
             </div>
           ))}
         </div>
@@ -308,6 +324,50 @@ export default function UsersPage() {
       )}
       <StaffDetailModal userId={showDetail} open={!!showDetail} onClose={() => setShowDetail(null)} />
       <HardDeleteUserModal target={hardDeleteTarget} onClose={() => setHardDeleteTarget(null)} onDeleted={onHardDeleted} />
+
+      {menuUserData && typeof document !== 'undefined' && createPortal(
+        <>
+          <div className="fixed inset-0" style={{ zIndex: 99998 }} onClick={() => setMenuUser(null)} />
+          <div
+            ref={menuRef}
+            className="fixed w-44 bg-white rounded-lg shadow-lg border py-1"
+            style={{ zIndex: 99999, top: menuPos.top, left: menuPos.left }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => { setMenuUser(null); setShowRolesModal({ userId: menuUserData.id, userName: menuUserData.full_name }); }}
+              className="w-full px-3 py-2 text-xs text-left hover:bg-purple-50 flex items-center gap-2 cursor-pointer text-purple-700"
+            >
+              <Shield className="h-3 w-3" /> Phân quyền
+            </button>
+            <button
+              onClick={() => { setMenuUser(null); setEditUser(menuUserData); setShowCreate(true); }}
+              className="w-full px-3 py-2 text-xs text-left hover:bg-gray-50 flex items-center gap-2 cursor-pointer text-gray-700"
+            >
+              <Edit className="h-3 w-3" /> Chỉnh sửa
+            </button>
+            <button
+              onClick={() => deactivate(menuUserData.id, menuUserData.full_name)}
+              className="w-full px-3 py-2 text-xs text-left hover:bg-red-50 flex items-center gap-2 cursor-pointer text-red-600"
+            >
+              <Trash2 className="h-3 w-3" /> Vô hiệu hóa
+            </button>
+            {isAdmin && String(menuUserData.id) !== String(currentUser?.id) && (
+              <>
+                <div className="border-t border-gray-100 my-1" />
+                <button
+                  onClick={() => { setMenuUser(null); setHardDeleteTarget(menuUserData); }}
+                  className="w-full px-3 py-2 text-xs text-left hover:bg-red-50 flex items-center gap-2 cursor-pointer text-red-700 font-semibold"
+                  title="Xóa vĩnh viễn — không thể hoàn tác"
+                >
+                  <AlertTriangle className="h-3 w-3" /> Xóa vĩnh viễn
+                </button>
+              </>
+            )}
+          </div>
+        </>,
+        document.body
+      )}
     </div>
   );
 }

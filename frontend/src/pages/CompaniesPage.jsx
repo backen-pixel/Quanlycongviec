@@ -4,6 +4,8 @@ import Modal from '../components/Modal';
 import UserSelect from '../components/UserSelect';
 import { Plus, Building2, Search, Users, Trash2, Edit, FolderKanban, UserPlus, X } from 'lucide-react';
 import { getInitials, avatarColor, ROLE_LABELS } from '../lib/utils';
+import { useAuth } from '../lib/auth';
+import { canManageDepartments } from '../lib/adminRole';
 
 export default function CompaniesPage() {
   const [companies, setCompanies] = useState([]);
@@ -262,6 +264,9 @@ function CompanyFormModal({ open, company, onClose, onSaved }) {
   const [companyDepts, setCompanyDepts] = useState([]);
   const [newDeptNameByDiv, setNewDeptNameByDiv] = useState({});
   const [addingDeptDiv, setAddingDeptDiv] = useState(null);
+  const [deletingDeptId, setDeletingDeptId] = useState(null);
+  const { user } = useAuth();
+  const canManageDepts = canManageDepartments(user);
 
   useEffect(() => {
     if (open) {
@@ -344,6 +349,20 @@ function CompanyFormModal({ open, company, onClose, onSaved }) {
       alert(e.response?.data?.error || 'Không thêm được phòng ban');
     }
     setAddingDeptDiv(null);
+  };
+
+  const deleteDepartmentUnderDivision = async (dep) => {
+    if (!dep?.id) return;
+    if (!confirm(`Vô hiệu hóa phòng ban "${dep.name}"?`)) return;
+    setDeletingDeptId(dep.id);
+    try {
+      await api.delete(`/departments/${dep.id}`);
+      loadCompanyDepts();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Không xóa được phòng ban');
+    } finally {
+      setDeletingDeptId(null);
+    }
   };
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -481,7 +500,20 @@ function CompanyFormModal({ open, company, onClose, onSaved }) {
                     {list.length > 0 && (
                       <ul className="text-xs text-gray-600 space-y-1 pl-2 border-l-2 border-indigo-100">
                         {list.map((dep) => (
-                          <li key={dep.id}>{dep.name}</li>
+                          <li key={dep.id} className="flex items-center justify-between gap-2 group">
+                            <span className="truncate">{dep.name}</span>
+                            {canManageDepts && (
+                              <button
+                                type="button"
+                                onClick={() => deleteDepartmentUnderDivision(dep)}
+                                disabled={deletingDeptId === dep.id}
+                                className="shrink-0 text-red-500 hover:text-red-700 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed p-0.5 rounded hover:bg-red-50"
+                                title="Vô hiệu hóa phòng ban"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </li>
                         ))}
                       </ul>
                     )}

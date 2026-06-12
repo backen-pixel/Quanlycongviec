@@ -11,7 +11,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X, UsersRound,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
-  BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot,
+  BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, CalendarRange, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot,
   Sigma, Calculator, FileUp, History as HistoryIcon,
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
@@ -115,6 +115,7 @@ const CRM_MENU_BOTTOM_GROUPS = [
       { to: '/crm/follow-up-care', icon: CalendarClock, label: 'CSKH theo hạn' },
       { to: '/crm/tasks', icon: CheckSquare, label: 'Công việc CRM', end: true },
       { to: '/crm/assignments', icon: ClipboardList, label: 'Giao việc CRM', end: true },
+      { to: '/crm/dept-plan', icon: CalendarRange, label: 'Kế hoạch phòng ban' },
       { to: '/crm/lead-journey', icon: ArrowRightLeft, label: 'Hành trình Lead' },
     ],
   },
