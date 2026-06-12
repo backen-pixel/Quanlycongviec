@@ -324,6 +324,13 @@ async function resolvePageIdsForCompanyScoped(req, res, companyIdRaw) {
   const companyId = companyIdRaw != null && String(companyIdRaw).trim() !== ''
     ? String(companyIdRaw).trim()
     : null;
+  if (isInternalAutoPipelineRequest(req)) {
+    if (!companyId) {
+      res.status(400).json({ error: 'Thiếu company_id cho auto pipeline nội bộ.' });
+      return undefined;
+    }
+    return await getPageIdsForCompany(companyId);
+  }
   if (isSystemAdmin(req.user)) {
     return companyId ? await getPageIdsForCompany(companyId) : null;
   }
@@ -632,6 +639,12 @@ function getInternalAutoHeaders() {
     Authorization: `Bearer ${token}`,
     'x-auto-pipeline-internal': '1',
   };
+}
+
+/** Gọi nội bộ từ vòng lặp auto-pipeline (localhost) — tin cậy company_id trong body. */
+function isInternalAutoPipelineRequest(req) {
+  return String(req.headers['x-auto-pipeline-internal'] || '') === '1'
+    && String(req.user?.userId || req.user?.id || '') === 'auto-pipeline';
 }
 
 /** Giới hạn dòng chi tiết gửi qua socket (mỗi batch). */
