@@ -91,7 +91,7 @@ const FB_ANALYTICS_CONTACT_IN_BATCH = Math.min(
   Math.max(50, parseInt(process.env.FB_ANALYTICS_CONTACT_IN_BATCH || '150', 10) || 150),
 );
 
-async function fetchAllAnalyticsContacts({ page_id }) {
+async function fetchAllAnalyticsContacts({ page_id, page_ids }) {
   const contacts = [];
   let from = 0;
   while (true) {
@@ -100,6 +100,7 @@ async function fetchAllAnalyticsContacts({ page_id }) {
       .select('id, phone, lead_id, page_id, created_at')
       .order('id', { ascending: true });
     if (page_id) q = q.eq('page_id', page_id);
+    else if (Array.isArray(page_ids) && page_ids.length) q = q.in('page_id', page_ids);
     const { data, error } = await q.range(from, from + FB_ANALYTICS_PAGE_SIZE - 1);
     if (error) throw error;
     const chunk = data || [];
@@ -4066,14 +4067,59 @@ r.get('/stats', authMiddleware, async (req, res) => {
 // ANALYTICS — Phân tích hành vi khách hàng
 // ═══════════════════════════════════════════════════════════════
 
+function emptyFacebookAnalyticsPayload() {
+  return {
+    totalContacts: 0,
+    registeredPages: 0,
+    hasPhone: 0,
+    hasLead: 0,
+    dealCount: 0,
+    totalMessages: 0,
+    inboundMessages: 0,
+    outboundMessages: 0,
+    messagesByDay: [],
+    messagesByHour: Array.from({ length: 24 }, (_, h) => ({
+      hour: `${String(h).padStart(2, '0')}:00`,
+      total: 0,
+      inbound: 0,
+    })),
+    newContactsByDay: {},
+    conversionFunnel: {
+      total_contacts: 0,
+      has_phone: 0,
+      has_lead: 0,
+      has_deal: 0,
+      phone_rate: 0,
+      lead_rate: 0,
+      deal_rate: 0,
+      overall_rate: 0,
+    },
+    pageBreakdown: [],
+    avgResponseTime: null,
+  };
+}
+
 r.get('/analytics', authMiddleware, async (req, res) => {
   try {
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
+    if (scope.mode === 'filter' && !scope.pageIds.length) {
+      return res.json(emptyFacebookAnalyticsPayload());
+    }
+
     const { page_id: rawPageId, days = 30 } = req.query;
     const page_id = rawPageId && String(rawPageId).trim() ? String(rawPageId).trim() : null;
+    if (page_id && scope.mode === 'filter' && !scope.pageIds.some((p) => String(p) === page_id)) {
+      return res.status(403).json({ error: 'Page không thuộc phạm vi công ty.' });
+    }
+    const scopedPageIds = !page_id && scope.mode === 'filter' ? scope.pageIds : null;
     const since = new Date(Date.now() - days * 86400000).toISOString();
+    const analyticsCompanyId = scope.mode === 'filter'
+      ? String(req.query.company_id || req.user?.company_id || '').trim() || null
+      : (req.query.company_id && String(req.query.company_id).trim() ? String(req.query.company_id).trim() : null);
 
     // 1. Contacts — phân trang (Supabase mặc định tối đa ~1000/request)
-    const contacts = await fetchAllAnalyticsContacts({ page_id });
+    const contacts = await fetchAllAnalyticsContacts({ page_id, page_ids: scopedPageIds });
 
     const totalContacts = contacts.length;
     const hasPhone = contacts.filter(c => c.phone).length;
@@ -4085,21 +4131,21 @@ r.get('/analytics', authMiddleware, async (req, res) => {
     const DEAL_IN_BATCH = 500;
     for (let b = 0; b < leadIds.length; b += DEAL_IN_BATCH) {
       const slice = leadIds.slice(b, b + DEAL_IN_BATCH);
-      const { count } = await supabase.from('crm_leads')
+      let dealQ = supabase.from('crm_leads')
         .select('id', { count: 'exact', head: true })
         .in('id', slice)
         .eq('type', 'deal');
+      if (analyticsCompanyId) dealQ = dealQ.eq('company_id', analyticsCompanyId);
+      const { count } = await dealQ;
       dealCount += count || 0;
     }
 
-    // 2. Messages — tải hết trong khoảng ngày (không dừng ở 1000 bản ghi)
+    // 2. Messages — theo contact trong phạm vi (không quét toàn hệ thống khi đã lọc công ty/page)
     const pageContactIds = contacts.map(c => c.id);
     let messages = [];
-    if (page_id && pageContactIds.length) {
+    if (pageContactIds.length) {
       messages = await fetchAllAnalyticsMessagesForContactIds(pageContactIds, since);
-    } else if (page_id) {
-      messages = [];
-    } else {
+    } else if (!page_id && scope.mode === 'all') {
       messages = await fetchAllAnalyticsMessagesSince(since);
     }
 
@@ -4135,8 +4181,10 @@ r.get('/analytics', authMiddleware, async (req, res) => {
       overall_rate: totalContacts ? Math.round(dealCount / totalContacts * 100) : 0,
     };
 
-    // Page breakdown — mọi Page đã đăng ký (kể cả 0 liên hệ) để đối chiếu webhook / nhiều Page
-    const { data: pages } = await supabase.from('facebook_pages').select('page_id, page_name, is_active');
+    // Page breakdown — Page trong phạm vi công ty (admin ?company_id= hoặc NV theo công ty đăng nhập)
+    let pagesQuery = supabase.from('facebook_pages').select('page_id, page_name, is_active');
+    if (scope.mode === 'filter') pagesQuery = pagesQuery.in('page_id', scope.pageIds);
+    const { data: pages } = await pagesQuery;
     const pageBk = {};
     (pages || []).forEach((p) => {
       const label = p.page_name || p.page_id;

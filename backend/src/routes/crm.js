@@ -6876,6 +6876,20 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       return res.status(400).json({ error: 'Lead chưa được liên kết khách hàng. Vào chi tiết Lead → chọn Khách hàng trước khi chuyển Deal.' });
     }
 
+    try {
+      const { applyZaloDisplayNameToCustomer } = require('../helpers/zaloBatchTools');
+      const { data: zc } = await supabase.from('zalo_contacts')
+        .select('display_name, user_id')
+        .eq('lead_id', req.params.id)
+        .limit(1)
+        .maybeSingle();
+      if (zc?.display_name) {
+        await applyZaloDisplayNameToCustomer(lead.customer_id, zc.display_name, { zaloUserId: zc.user_id });
+      }
+    } catch (zaloNameErr) {
+      console.warn('[convert-to-deal] sync Zalo customer name:', zaloNameErr.message);
+    }
+
     const companyId = req.body.company_id || lead.company_id || null;
 
     // Bắt buộc chọn khu vực CRM khi chuyển Lead → Deal (đồng nhất phân quyền theo region).

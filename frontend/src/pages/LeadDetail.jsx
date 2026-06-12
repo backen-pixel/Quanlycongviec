@@ -59,6 +59,25 @@ function isCrmDealStageHoanThanhName(name) {
   return ascii.includes('hoan thanh');
 }
 
+/** Lead từ Zalo OA — chuyển Deal không bắt buộc SĐT (khác Facebook/Messenger). */
+function isZaloInboxLead(lead) {
+  const ch = String(lead?.inbox_channel || '').trim().toLowerCase();
+  if (ch === 'zalo') return true;
+  const src = String(lead?.source?.name || '').toLowerCase();
+  if (/zalo/.test(src)) return true;
+  const title = String(lead?.title || '');
+  if (/^\[Zalo\b/i.test(title)) return true;
+  const desc = String(lead?.description || '');
+  if (/Nguồn:\s*Zalo/i.test(desc)) return true;
+  return false;
+}
+
+function customerReadyForDealConvert(customer, lead) {
+  if (!String(customer?.full_name || '').trim()) return false;
+  if (String(customer?.phone || '').trim()) return true;
+  return isZaloInboxLead(lead);
+}
+
 function findDefaultAdminCompanyPhucDat(companies) {
   if (!companies?.length) return '';
   const hit = companies.find((c) => {
@@ -1591,7 +1610,7 @@ export default function LeadDetail() {
                 </div>
               </div>
             ) : (
-              <CustomerCreateForm leadId={lead?.id} onCreated={(c) => { setCustomer(c); load({ silent: true }); }} />
+              <CustomerCreateForm lead={lead} leadId={lead?.id} onCreated={(c) => { setCustomer(c); load({ silent: true }); }} />
             )}
           </div>
 
@@ -3004,7 +3023,10 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
         payload.assigned_to = value || null;
       }
       else if (field === 'expected_close_date') payload.expected_close_date = value || null;
-      else if (field === 'description') payload.description = value || null;
+      else if (field === 'description') {
+        const text = value != null ? String(value) : '';
+        payload.description = text.trim() ? text : null;
+      }
       else if (field === 'next_follow_up') payload.next_follow_up = value || null;
       else if (field === 'region_id') {
         const rid = value != null && String(value).trim();
@@ -3107,7 +3129,12 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
 
   const EditableRow = ({ icon, label, field, value, displayValue, type = 'text', options }) => {
     const isEditing = editing === field;
+    const isTextarea = type === 'textarea';
     const isSelectEmpty = type === 'select' && ((options || []).length === 0);
+    const startEdit = () => {
+      setEditing(field);
+      setEditVal(value ?? '');
+    };
     return (
       <div className="group">
         <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors">
@@ -3115,7 +3142,11 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
           <div className="flex-1 min-w-0">
             <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">{label}</p>
             {isEditing ? (
-              <div className="flex items-center gap-1.5 min-w-0 relative z-20">
+              <div
+                className={`flex gap-1.5 min-w-0 relative z-30 ${isTextarea ? 'flex-col' : 'items-center'}`}
+                onClick={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
                 {type === 'select' ? (
                   <select
                     value={editVal}
@@ -3132,13 +3163,21 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
                       <option key={o.value} value={o.value}>{o.label}</option>
                     ))}
                   </select>
-                ) : type === 'textarea' ? (
+                ) : isTextarea ? (
                   <textarea
                     value={editVal}
                     onChange={e => setEditVal(e.target.value)}
-                    rows={2}
-                    className="flex-1 min-w-0 w-full px-2 py-1.5 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 resize-none"
+                    rows={5}
+                    className="w-full min-w-0 px-2.5 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 resize-y min-h-[110px] leading-relaxed bg-white"
                     autoFocus
+                    placeholder="Nhập mô tả chi tiết..."
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') setEditing(null);
+                      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                        e.preventDefault();
+                        saveField(field, editVal);
+                      }
+                    }}
                   />
                 ) : (
                   <input
@@ -3150,22 +3189,33 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
                     onKeyDown={e => e.key === 'Enter' && saveField(field, editVal)}
                   />
                 )}
-                <button onClick={() => saveField(field, editVal)} disabled={saving}
-                  className="h-8 w-8 flex items-center justify-center bg-blue-600 text-white rounded-lg cursor-pointer hover:bg-blue-700 disabled:opacity-50 shrink-0">
-                  <Save className="h-3.5 w-3.5" />
-                </button>
-                <button onClick={() => setEditing(null)}
-                  className="h-8 w-8 flex items-center justify-center bg-gray-100 text-gray-500 rounded-lg cursor-pointer hover:bg-gray-200 shrink-0">
-                  <X className="h-3.5 w-3.5" />
-                </button>
+                <div className={`flex items-center gap-1.5 shrink-0 ${isTextarea ? 'justify-end' : ''}`}>
+                  <button type="button" onClick={() => saveField(field, editVal)} disabled={saving}
+                    className={`flex items-center justify-center bg-blue-600 text-white rounded-lg cursor-pointer hover:bg-blue-700 disabled:opacity-50 shrink-0 ${isTextarea ? 'h-8 px-3 gap-1 text-xs font-medium' : 'h-8 w-8'}`}>
+                    <Save className="h-3.5 w-3.5" />
+                    {isTextarea && <span>Lưu</span>}
+                  </button>
+                  <button type="button" onClick={() => setEditing(null)}
+                    className="h-8 w-8 flex items-center justify-center bg-gray-100 text-gray-500 rounded-lg cursor-pointer hover:bg-gray-200 shrink-0">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                {isTextarea && (
+                  <p className="text-[10px] text-gray-400">Enter xuống dòng · Ctrl+Enter để lưu</p>
+                )}
               </div>
             ) : (
               <div
-                onClick={() => { setEditing(field); setEditVal(value ?? ''); }}
+                onClick={startEdit}
                 className="cursor-pointer group/val"
               >
                 {displayValue ? (
-                  <p className="text-sm font-medium" style={{ color: '#000000' }}>{displayValue}</p>
+                  <p
+                    className={`text-sm font-medium ${isTextarea ? 'whitespace-pre-wrap break-words leading-relaxed' : ''}`}
+                    style={{ color: '#000000' }}
+                  >
+                    {displayValue}
+                  </p>
                 ) : (
                   <p className="text-sm text-gray-300 italic group-hover/val:text-blue-400 transition-colors">
                     Nhấn để nhập...
@@ -3175,7 +3225,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
             )}
           </div>
           {!isEditing && (
-            <button onClick={() => { setEditing(field); setEditVal(value ?? ''); }}
+            <button type="button" onClick={startEdit}
               className="p-1 opacity-0 group-hover:opacity-100 text-gray-300 hover:text-blue-500 cursor-pointer transition-opacity shrink-0">
               <Edit2 className="h-3 w-3" />
             </button>
@@ -3188,7 +3238,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
   const prob = lead?.probability ?? 0;
 
   return (
-    <div className="bg-white rounded-xl border p-5 space-y-1">
+    <div className="bg-white rounded-xl border p-5 space-y-1 overflow-visible">
       <h3 className="text-sm font-bold uppercase mb-2" style={{ color: '#000000' }}>Thông tin</h3>
 
       <EditableRow icon="💰" label="Giá trị" field="estimated_value"
@@ -3691,7 +3741,8 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
 }
 
 // ── Form tạo khách hàng mới khi lead chưa có customer ──
-function CustomerCreateForm({ leadId, onCreated }) {
+function CustomerCreateForm({ leadId, lead, onCreated }) {
+  const zaloLead = isZaloInboxLead(lead);
   const [form, setForm] = useState({
     full_name: '', phone: '', email: '', address: '', company: '', tax_code: '',
   });
@@ -3699,7 +3750,7 @@ function CustomerCreateForm({ leadId, onCreated }) {
 
   const fields = [
     { key: 'full_name', label: '👤 Họ tên', required: true, placeholder: 'Nguyễn Văn A' },
-    { key: 'phone', label: '📞 Số điện thoại', required: true, placeholder: '0912 345 678', type: 'tel' },
+    { key: 'phone', label: '📞 Số điện thoại', required: !zaloLead, placeholder: zaloLead ? 'Có thể bổ sung sau (Zalo)' : '0912 345 678', type: 'tel' },
     { key: 'email', label: '✉️ Email', placeholder: 'email@example.com', type: 'email' },
     { key: 'address', label: '📍 Địa chỉ', placeholder: '123 Nguyễn Huệ, Quận 1, TP.HCM' },
     { key: 'company', label: '🏢 Công ty', placeholder: 'Tên công ty' },
@@ -3756,7 +3807,9 @@ function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose,
   const [regionsLoading, setRegionsLoading] = useState(false);
   const [selectedRegion, setSelectedRegion] = useState(lead?.region_id ? String(lead.region_id) : '');
 
-  const canConvert = customer?.full_name && customer?.phone && !!selectedRegion;
+  const zaloLead = isZaloInboxLead(lead);
+  const customerOk = customerReadyForDealConvert(customer, lead);
+  const canConvert = customerOk && !!selectedRegion;
 
   // Load companies + auto-select from lead
   useEffect(() => {
@@ -3837,8 +3890,13 @@ function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose,
           {/* Yêu cầu */}
           <div className="bg-gray-50 rounded-xl p-4 space-y-2">
             <p className="text-xs font-bold text-gray-700 uppercase">Yêu cầu:</p>
-            <div className={`text-sm flex items-center gap-2 ${customer?.full_name && customer?.phone ? 'text-emerald-600' : 'text-red-600'}`}>
-              {customer?.full_name && customer?.phone ? '✅' : '❌'} Khách hàng: {customer?.full_name || '—'}, {customer?.phone || 'Chưa có SĐT'}
+            <div className={`text-sm flex items-center gap-2 ${customerOk ? 'text-emerald-600' : 'text-red-600'}`}>
+              {customerOk ? '✅' : '❌'} Khách hàng: {customer?.full_name || '—'}
+              {customer?.phone
+                ? `, ${customer.phone}`
+                : zaloLead
+                  ? ' (Zalo — không bắt buộc SĐT)'
+                  : ', Chưa có SĐT'}
             </div>
             <div className={`text-sm flex items-center gap-2 ${selectedRegion ? 'text-emerald-600' : 'text-red-600'}`}>
               {selectedRegion ? '✅' : '❌'} Khu vực: {regions.find((r) => String(r.id) === String(selectedRegion))?.name || 'Chưa chọn'}

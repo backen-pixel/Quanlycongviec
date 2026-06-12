@@ -394,11 +394,29 @@ export default function SocialProfileFullCard({ post, currentUserId, currentRole
   const canMod = isModerator(currentRole);
   const showEdit = isAuthor || canMod;
   const showDelete = isAuthor || canMod;
-  const menuRef = useRef(null);
-  const closeMenu = () => {
-    const el = menuRef.current;
-    if (el && typeof el.open === 'boolean') el.open = false;
+  const menuBtnRef = useRef(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuRect, setMenuRect] = useState(null);
+  const closeMenu = () => setMenuOpen(false);
+  const toggleMenu = () => {
+    if (menuOpen) {
+      closeMenu();
+      return;
+    }
+    if (menuBtnRef.current) setMenuRect(menuBtnRef.current.getBoundingClientRect());
+    setMenuOpen(true);
   };
+
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const close = () => closeMenu();
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [menuOpen]);
 
   const [toast, setToast] = useState(null);
   useEffect(() => {
@@ -642,82 +660,98 @@ export default function SocialProfileFullCard({ post, currentUserId, currentRole
             {author.role && <span className="text-gray-400"> · {author.role}</span>}
           </p>
         </div>
-        <details ref={menuRef} className="relative shrink-0">
-          <summary
-            className="list-none cursor-pointer p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 [&::-webkit-details-marker]:hidden"
-            title="Tuỳ chọn bài viết"
-          >
-            <MoreHorizontal className="w-4 h-4" />
-          </summary>
-          <div
-            role="menu"
-            className="absolute right-0 top-full z-30 mt-1 w-56 rounded-lg border border-gray-200 bg-white py-1 text-sm shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {showEdit && (
+        <button
+          ref={menuBtnRef}
+          type="button"
+          className="shrink-0 p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 cursor-pointer"
+          title="Tuỳ chọn bài viết"
+          aria-expanded={menuOpen}
+          aria-haspopup="menu"
+          onClick={toggleMenu}
+        >
+          <MoreHorizontal className="w-4 h-4" />
+        </button>
+        {menuOpen && menuRect && typeof document !== 'undefined' && createPortal(
+          <>
+            <div className="fixed inset-0" style={{ zIndex: 99998 }} onClick={closeMenu} aria-hidden />
+            <div
+              role="menu"
+              style={{
+                position: 'fixed',
+                top: menuRect.bottom + 4,
+                left: Math.max(8, Math.min(menuRect.right - 224, window.innerWidth - 232)),
+                zIndex: 99999,
+              }}
+              className="w-56 rounded-lg border border-gray-200 bg-white py-1 text-sm shadow-lg"
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              {showEdit && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-gray-800 hover:bg-gray-50"
+                  onClick={handleEdit}
+                >
+                  <Pencil className="h-4 w-4 shrink-0 text-gray-500" />
+                  Sửa bài viết
+                </button>
+              )}
               <button
                 type="button"
                 role="menuitem"
                 className="flex w-full items-center gap-2 px-3 py-2 text-left text-gray-800 hover:bg-gray-50"
-                onClick={handleEdit}
+                onClick={handleShare}
               >
-                <Pencil className="h-4 w-4 shrink-0 text-gray-500" />
-                Sửa bài viết
+                <Share2 className="h-4 w-4 shrink-0 text-gray-500" />
+                Sao chép liên kết
               </button>
-            )}
-            <button
-              type="button"
-              role="menuitem"
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-gray-800 hover:bg-gray-50"
-              onClick={handleShare}
-            >
-              <Share2 className="h-4 w-4 shrink-0 text-gray-500" />
-              Sao chép liên kết
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-gray-800 hover:bg-gray-50"
-              onClick={handleHideForMe}
-            >
-              <EyeOff className="h-4 w-4 shrink-0 text-gray-500" />
-              Ẩn khỏi bảng tin của tôi
-            </button>
-            {(isAuthor || canMod) && !localPost.hidden_at && (
               <button
                 type="button"
                 role="menuitem"
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-amber-800 hover:bg-amber-50"
-                onClick={handleHideCompany}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-gray-800 hover:bg-gray-50"
+                onClick={handleHideForMe}
               >
-                <EyeOff className="h-4 w-4 shrink-0" />
-                Ẩn khỏi cả công ty
+                <EyeOff className="h-4 w-4 shrink-0 text-gray-500" />
+                Ẩn khỏi bảng tin của tôi
               </button>
-            )}
-            {(isAuthor || canMod) && localPost.hidden_at && (
-              <button
-                type="button"
-                role="menuitem"
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-emerald-800 hover:bg-emerald-50"
-                onClick={handleUnhideCompany}
-              >
-                <EyeOff className="h-4 w-4 shrink-0" />
-                Hiện lại với công ty
-              </button>
-            )}
-            {showDelete && (
-              <button
-                type="button"
-                role="menuitem"
-                className="flex w-full items-center gap-2 border-t border-gray-100 px-3 py-2 text-left text-red-700 hover:bg-red-50"
-                onClick={handleDelete}
-              >
-                <Trash2 className="h-4 w-4 shrink-0" />
-                Xóa bài viết
-              </button>
-            )}
-          </div>
-        </details>
+              {(isAuthor || canMod) && !localPost.hidden_at && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-amber-800 hover:bg-amber-50"
+                  onClick={handleHideCompany}
+                >
+                  <EyeOff className="h-4 w-4 shrink-0" />
+                  Ẩn khỏi cả công ty
+                </button>
+              )}
+              {(isAuthor || canMod) && localPost.hidden_at && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-emerald-800 hover:bg-emerald-50"
+                  onClick={handleUnhideCompany}
+                >
+                  <EyeOff className="h-4 w-4 shrink-0" />
+                  Hiện lại với công ty
+                </button>
+              )}
+              {showDelete && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex w-full items-center gap-2 border-t border-gray-100 px-3 py-2 text-left text-red-700 hover:bg-red-50"
+                  onClick={handleDelete}
+                >
+                  <Trash2 className="h-4 w-4 shrink-0" />
+                  Xóa bài viết
+                </button>
+              )}
+            </div>
+          </>,
+          document.body,
+        )}
       </header>
 
       {(isScheduled(localPost) || localPost.visibility === 'selected_users' || localPost.visibility === 'selected_companies' || localPost.hidden_at) && (

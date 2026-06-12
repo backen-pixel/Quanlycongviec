@@ -243,9 +243,15 @@ async function createLeadFromZaloContact(oaConfig, contact, content, extractedPh
     }
   }
 
+  const zaloUserId = contact.user_id || null;
+  const zaloDisplayName = String(contact.display_name || '').trim();
+
   if (!customerId) {
+    const initialName = (!zaloDisplayName || isPlaceholderZaloDisplayName(zaloDisplayName, zaloUserId))
+      ? 'Zalo KH'
+      : zaloDisplayName;
     const { data: customer } = await supabase.from('customers').insert({
-      full_name: contact.display_name || 'Zalo KH',
+      full_name: initialName,
       phone: phoneLocal || '',
       address: extractedAddress || null,
       source: 'Zalo OA',
@@ -261,6 +267,10 @@ async function createLeadFromZaloContact(oaConfig, contact, content, extractedPh
     if (Object.keys(custUpd).length) {
       await supabase.from('customers').update(custUpd).eq('id', customerId);
     }
+  }
+
+  if (customerId) {
+    await applyZaloDisplayNameToCustomer(customerId, zaloDisplayName, { zaloUserId });
   }
 
   if (customerId && companyId) {
@@ -460,6 +470,11 @@ async function updateZaloLeadFromExtract(leadId, phone, address, displayName) {
       await supabase.from('customers').update({ phone, updated_at: new Date().toISOString() }).eq('id', cust.id);
       changed = true;
     }
+  }
+
+  if (lead.customer_id && displayName) {
+    const nameSynced = await applyZaloDisplayNameToCustomer(lead.customer_id, displayName);
+    if (nameSynced) changed = true;
   }
 
   const leadUpd = { updated_at: new Date().toISOString() };
@@ -809,6 +824,39 @@ function isPlaceholderZaloDisplayName(name, userId) {
   return false;
 }
 
+/** Tên khách hàng chưa gắn tên Zalo thật (placeholder / trống). */
+function isPlaceholderCustomerName(name, zaloUserId) {
+  const n = String(name || '').trim();
+  if (!n) return true;
+  const lower = n.toLowerCase();
+  if (lower === 'zalo kh' || lower === 'kh zalo') return true;
+  if (/^zalo\s/i.test(n)) return true;
+  if (zaloUserId && n === String(zaloUserId)) return true;
+  if (lower === 'khách hàng' || lower === 'khach hang') return true;
+  return false;
+}
+
+/**
+ * Gắn display_name Zalo OA vào customers.full_name khi KH chưa có tên thật.
+ * Không ghi đè tên đã nhập tay / từ nguồn khác.
+ */
+async function applyZaloDisplayNameToCustomer(customerId, displayName, { zaloUserId } = {}) {
+  if (!customerId) return false;
+  const dn = String(displayName || '').trim();
+  if (!dn || isPlaceholderZaloDisplayName(dn, zaloUserId)) return false;
+
+  const { data: cust } = await supabase.from('customers')
+    .select('id, full_name')
+    .eq('id', customerId)
+    .maybeSingle();
+  if (!cust || !isPlaceholderCustomerName(cust.full_name, zaloUserId)) return false;
+
+  await supabase.from('customers')
+    .update({ full_name: dn, updated_at: new Date().toISOString() })
+    .eq('id', customerId);
+  return true;
+}
+
 /**
  * Gọi Open API Zalo lấy display_name / avatar → cập nhật zalo_contacts (+ lead/customer nếu tên tạm).
  */
@@ -845,18 +893,24 @@ async function syncZaloContactProfile(contact, oaConfig) {
   await supabase.from('zalo_contacts').update(upd).eq('id', contact.id);
 
   if (contact.lead_id && profile.display_name) {
-    const title = `[Zalo] ${profile.display_name}`;
-    await supabase.from('crm_leads')
-      .update({ title, updated_at: new Date().toISOString() })
+    const { data: leadRow } = await supabase.from('crm_leads')
+      .select('id, title, type, customer_id')
       .eq('id', contact.lead_id)
-      .or('title.ilike.%Zalo KH%,title.ilike.%[Zalo] Zalo%,title.ilike.%[Zalo] User%');
-    const { data: leadData } = await supabase.from('crm_leads')
-      .select('customer_id').eq('id', contact.lead_id).maybeSingle();
-    if (leadData?.customer_id) {
-      await supabase.from('customers')
-        .update({ full_name: profile.display_name, updated_at: new Date().toISOString() })
-        .eq('id', leadData.customer_id)
-        .or('full_name.ilike.%Zalo KH%,full_name.eq.Zalo KH');
+      .maybeSingle();
+    if (leadRow) {
+      const curTitle = String(leadRow.title || '').toLowerCase();
+      const titlePlaceholder = !curTitle
+        || /zalo kh|kh zalo|\[zalo/.test(curTitle)
+        || isPlaceholderZaloDisplayName(leadRow.title, contact.user_id);
+      if (titlePlaceholder) {
+        const lbl = leadRow.type === 'deal' ? 'Deal' : 'Lead';
+        await supabase.from('crm_leads')
+          .update({ title: `[Zalo ${lbl}] ${profile.display_name}`, updated_at: new Date().toISOString() })
+          .eq('id', contact.lead_id);
+      }
+      if (leadRow.customer_id) {
+        await applyZaloDisplayNameToCustomer(leadRow.customer_id, profile.display_name, { zaloUserId: contact.user_id });
+      }
     }
   }
 
@@ -948,6 +1002,8 @@ module.exports = {
   runZaloBatchExtractPhones,
   runZaloBatchCreateLeads,
   isPlaceholderZaloDisplayName,
+  isPlaceholderCustomerName,
+  applyZaloDisplayNameToCustomer,
   syncZaloContactProfile,
   runZaloBatchRefreshProfiles,
   normalizeZaloTargetType,
