@@ -14,7 +14,8 @@ import {
   isCrmPipelineStageWon,
   pickDeadlineConfigValueWithSource,
 } from '../lib/crmLeadDeadlineDisplay';
-import { FbCrmAvatar, FbCrmCommentComposer, formatCrmFbRelativeTime } from './crmFbCommentUi';
+import { FbCrmAvatar, formatCrmFbRelativeTime } from './crmFbCommentUi';
+import { CrmCommentMentionComposer, renderCrmCommentBody } from './crmCommentMentionUi';
 import { upsertComment } from './CommentsPanels';
 import {
   Plus, X, Trash2, MessageSquare, GripVertical, Search, Edit2, Settings as SettingsIcon,
@@ -1152,6 +1153,18 @@ function CommentCard({ item, expanded, onToggle, onChanged, navigate }) {
   const [editingBody, setEditingBody] = useState('');
   const [replyTo, setReplyTo] = useState(null);
   const [reactionBusy, setReactionBusy] = useState(null);
+  const [members, setMembers] = useState([]);
+
+  const loadMembers = useCallback(async () => {
+    try {
+      const r = await api.get(`/crm/leads/${item.id}/members`);
+      setMembers(Array.isArray(r.data) ? r.data : []);
+    } catch {
+      setMembers([]);
+    }
+  }, [item.id]);
+
+  useEffect(() => { if (expanded) void loadMembers(); }, [expanded, loadMembers]);
 
   const load = useCallback(async (opts) => {
     const silent = opts?.silent;
@@ -1204,13 +1217,14 @@ function CommentCard({ item, expanded, onToggle, onChanged, navigate }) {
 
   const commentsByParent = useMemo(() => groupCrmCommentsByParent(comments || []), [comments]);
 
-  const submit = async () => {
+  const submit = async ({ mention_user_ids } = {}) => {
     const v = body.trim();
     if (!v) return;
     try {
       setPosting(true);
       const payload = { body: v };
       if (replyTo?.id != null) payload.parent_id = replyTo.id;
+      if (mention_user_ids?.length) payload.mention_user_ids = mention_user_ids;
       const r = await api.post(`/crm/leads/${item.id}/comments`, payload);
       const row = r.data || {};
       setComments((prev) => upsertComment(prev, row));
@@ -1316,14 +1330,14 @@ function CommentCard({ item, expanded, onToggle, onChanged, navigate }) {
                   </div>
                 </div>
               ) : (
-                <p className="mt-1 break-words text-[15px] leading-snug text-[#050505] whitespace-pre-wrap">{c.body}</p>
+                <p className="mt-1 break-words text-[15px] leading-snug text-[#050505] whitespace-pre-wrap">{renderCrmCommentBody(c.body, members)}</p>
               )}
             </div>
             {editingId !== c.id && <CrmCommentReactionCornerBadge comment={c} />}
             </div>
             {editingId !== c.id && (
               <div
-                className="overflow-hidden transition-[max-height,opacity] duration-200 ease-out max-h-28 opacity-100 pointer-events-auto sm:max-h-0 sm:opacity-0 sm:pointer-events-none sm:group-hover/crmrx:max-h-28 sm:group-hover/crmrx:opacity-100 sm:group-hover/crmrx:pointer-events-auto sm:group-focus-within/crmrx:max-h-28 sm:group-focus-within/crmrx:opacity-100 sm:group-focus-within/crmrx:pointer-events-auto"
+                className="overflow-hidden transition-[max-height,opacity] duration-200 ease-out max-h-0 opacity-0 pointer-events-none group-hover/crmrx:max-h-28 group-hover/crmrx:opacity-100 group-hover/crmrx:pointer-events-auto group-focus-within/crmrx:max-h-28 group-focus-within/crmrx:opacity-100 group-focus-within/crmrx:pointer-events-auto"
               >
                 <div className="pt-1">
                   <CrmCommentReactionStrip
@@ -1335,22 +1349,24 @@ function CommentCard({ item, expanded, onToggle, onChanged, navigate }) {
               </div>
             )}
             {editingId !== c.id && (
-              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-1 text-[12px]">
-                <button type="button" className="font-semibold text-[#65676b] hover:underline" onClick={() => startReply(c)}>
-                  Trả lời
-                </button>
-                {String(c.user_id || '') === String(user?.id || '') && (
-                  <>
-                    <span className="text-[#ccd0d5]">·</span>
-                    <button type="button" className="font-semibold text-[#65676b] hover:underline" onClick={() => startEdit(c)}>
-                      Sửa
-                    </button>
-                    <span className="text-[#ccd0d5]">·</span>
-                    <button type="button" className="font-semibold text-[#65676b] hover:underline" onClick={() => removeComment(c)}>
-                      Xóa
-                    </button>
-                  </>
-                )}
+              <div className="overflow-hidden transition-[max-height,opacity] duration-200 ease-out max-h-0 opacity-0 pointer-events-none group-hover/crmrx:max-h-10 group-hover/crmrx:opacity-100 group-hover/crmrx:pointer-events-auto group-focus-within/crmrx:max-h-10 group-focus-within/crmrx:opacity-100 group-focus-within/crmrx:pointer-events-auto">
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-1 text-[12px]">
+                  <button type="button" className="font-semibold text-[#65676b] hover:underline" onClick={() => startReply(c)}>
+                    Trả lời
+                  </button>
+                  {String(c.user_id || '') === String(user?.id || '') && (
+                    <>
+                      <span className="text-[#ccd0d5]">·</span>
+                      <button type="button" className="font-semibold text-[#65676b] hover:underline" onClick={() => startEdit(c)}>
+                        Sửa
+                      </button>
+                      <span className="text-[#ccd0d5]">·</span>
+                      <button type="button" className="font-semibold text-[#65676b] hover:underline" onClick={() => removeComment(c)}>
+                        Xóa
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1423,7 +1439,7 @@ function CommentCard({ item, expanded, onToggle, onChanged, navigate }) {
       </button>
 
       {expanded && (
-        <div className="max-h-[min(360px,55vh)] overflow-y-auto border-t border-[#e4e6eb] bg-[#f0f2f5] px-2 py-2">
+        <div className="min-h-[280px] max-h-[min(560px,70vh)] overflow-y-auto border-t border-[#e4e6eb] bg-[#f0f2f5] px-2 py-2">
           {loading && <p className="py-6 text-center text-sm text-[#65676b]">Đang tải…</p>}
           {!loading && (comments || []).length === 0 && (
             <p className="py-6 text-center text-sm text-[#65676b]">Chưa có bình luận nào.</p>
@@ -1447,8 +1463,9 @@ function CommentCard({ item, expanded, onToggle, onChanged, navigate }) {
             </button>
           </div>
         )}
-        <FbCrmCommentComposer
+        <CrmCommentMentionComposer
           user={user}
+          members={members}
           value={body}
           onChange={(e) => setBody(e.target.value)}
           onSubmit={submit}

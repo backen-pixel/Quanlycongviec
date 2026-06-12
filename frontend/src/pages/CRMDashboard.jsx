@@ -67,7 +67,8 @@ import {
 import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import { logFilter } from '../lib/activityLogger';
-import { FbCrmCommentComposer } from '../components/crmFbCommentUi';
+import { CrmCommentMentionComposer } from '../components/crmCommentMentionUi';
+import { resolveMentionIdsFromContent } from '../lib/crmCommentMentions';
 
 const LEAD_PRIORITY_COLORS = { high: 'bg-red-100 text-red-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-600' };
 
@@ -690,6 +691,7 @@ export default function CRMDashboard() {
   const [kanbanCommentItem, setKanbanCommentItem] = useState(null);
   const [kanbanCommentBody, setKanbanCommentBody] = useState('');
   const [kanbanCommentPosting, setKanbanCommentPosting] = useState(false);
+  const [kanbanCommentMembers, setKanbanCommentMembers] = useState([]);
   /** Deal pipeline: mở popup chọn giờ rồi POST /events sau PATCH stage (bật theo từng pipeline tại Cài đặt pipeline) */
   const [dealKanbanEventCtx, setDealKanbanEventCtx] = useState(null);
   const [dealKanbanEventBusy, setDealKanbanEventBusy] = useState(false);
@@ -810,13 +812,30 @@ export default function CRMDashboard() {
     });
   }, []);
 
-  const submitKanbanQuickComment = useCallback(async () => {
+  useEffect(() => {
+    if (!kanbanCommentItem?.id) {
+      setKanbanCommentMembers([]);
+      return undefined;
+    }
+    let cancelled = false;
+    api.get(`/crm/leads/${kanbanCommentItem.id}/members`)
+      .then((r) => { if (!cancelled) setKanbanCommentMembers(Array.isArray(r.data) ? r.data : []); })
+      .catch(() => { if (!cancelled) setKanbanCommentMembers([]); });
+    return () => { cancelled = true; };
+  }, [kanbanCommentItem?.id]);
+
+  const submitKanbanQuickComment = useCallback(async ({ mention_user_ids } = {}) => {
     const v = kanbanCommentBody.trim();
     const it = kanbanCommentItem;
     if (!v || !it) return;
     setKanbanCommentPosting(true);
     try {
-      await api.post(`/crm/leads/${it.id}/comments`, { body: v });
+      const payload = { body: v };
+      const ids = mention_user_ids?.length
+        ? mention_user_ids
+        : resolveMentionIdsFromContent(v, kanbanCommentMembers, { excludeUserId: user?.id });
+      if (ids.length) payload.mention_user_ids = ids;
+      await api.post(`/crm/leads/${it.id}/comments`, payload);
       setKanbanCommentItem(null);
       setKanbanCommentBody('');
       setCommentsIndex((prev) => ({
@@ -831,7 +850,7 @@ export default function CRMDashboard() {
       alert(e?.response?.data?.error || 'Lỗi gửi bình luận');
     }
     setKanbanCommentPosting(false);
-  }, [kanbanCommentBody, kanbanCommentItem, user?.id]);
+  }, [kanbanCommentBody, kanbanCommentItem, kanbanCommentMembers, user?.id]);
 
   const bulkDeleteSelected = useCallback(() => {
     const ids = [...new Set((manualMergeIds || []).map((x) => String(x)).filter(Boolean))];
@@ -4406,6 +4425,7 @@ export default function CRMDashboard() {
               onToggleSelectAllInColumn={toggleSelectAllInColumn}
               compact
               showCompanyOnCard={isAdmin && !isCompanyScopedAdmin && !dashboardScopeCompanyId}
+              leadTypes={leadTypes}
               kpiLedgerPeriodStart={kpis?.kpi_ledger_period_start || null}
               onOpenKanbanComment={(it) => {
                 setKanbanCommentBody('');
@@ -4584,13 +4604,14 @@ export default function CRMDashboard() {
               </div>
             </div>
             <div className="bg-white">
-              <FbCrmCommentComposer
+              <CrmCommentMentionComposer
                 user={user}
+                members={kanbanCommentMembers}
                 value={kanbanCommentBody}
                 onChange={(e) => setKanbanCommentBody(e.target.value)}
                 onSubmit={submitKanbanQuickComment}
                 posting={kanbanCommentPosting}
-                placeholder="Viết bình luận công khai…"
+                placeholder="Viết bình luận… (@ để nhắc thành viên)"
                 autoFocus
               />
             </div>
@@ -5719,6 +5740,18 @@ function ManualMergeLeadsModal({ open, onClose, ids, itemsById, pipelineType, on
   );
 }
 
+function resolveLeadTypeOnCard(item, leadTypes) {
+  const joined = String(item?.lead_type?.name || '').trim();
+  if (joined) {
+    return { name: joined, color: item.lead_type?.color || null };
+  }
+  const id = item?.lead_type_id;
+  if (!id || !Array.isArray(leadTypes)) return null;
+  const hit = leadTypes.find((t) => String(t.id) === String(id));
+  if (!hit?.name) return null;
+  return { name: String(hit.name).trim(), color: hit.color || null };
+}
+
 // Kanban Stage Card - MISA Style (responsive scroll)
 
 function KanbanStageCard({
@@ -5731,6 +5764,7 @@ function KanbanStageCard({
   onToggleSelectAllInColumn,
   compact,
   showCompanyOnCard,
+  leadTypes,
   kpiLedgerPeriodStart,
   onOpenKanbanComment,
   onTogglePin,
@@ -5862,6 +5896,7 @@ function KanbanStageCard({
               onToggleMergeSelect={onToggleMergeSelect}
               compact={compact}
               showCompanyOnCard={showCompanyOnCard}
+              leadTypes={leadTypes}
               kpiLedgerPeriodStart={kpiLedgerPeriodStart}
               onOpenKanbanComment={onOpenKanbanComment}
               onTogglePin={onTogglePin}
@@ -5876,7 +5911,7 @@ function KanbanStageCard({
 }
 
 // Kanban Item Card - MISA style (redesign: header gọn, value lớn, footer phụ trách + actions)
-function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, showCompanyOnCard, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline }) {
+function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, showCompanyOnCard, leadTypes, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline }) {
   const navigate = useNavigate();
   const dealDragLocked = isDealCrmKanbanDragLocked(item, pipelineType);
   const openLeadDetail = () => {
@@ -5956,6 +5991,7 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
   })();
 
   const assigneeUser = item.assignee || item.lead_owner || null;
+  const leadTypeLabel = resolveLeadTypeOnCard(item, leadTypes);
 
   // Badge SX/VC (giữ logic cũ, gói thành biến)
   const sxVcBadge = (() => {
@@ -6119,6 +6155,21 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
         >
           {item.title || <span className="italic text-slate-400">(Không tiêu đề)</span>}
         </p>
+
+        {/* 2b. Loại Lead/Deal (phân loại sản phẩm) */}
+        {leadTypeLabel && (
+          <span
+            className="inline-flex items-center max-w-full rounded-md border px-1.5 py-0.5 text-[10px] font-semibold truncate"
+            style={{
+              backgroundColor: leadTypeLabel.color ? `${leadTypeLabel.color}14` : '#f5f3ff',
+              borderColor: leadTypeLabel.color ? `${leadTypeLabel.color}45` : '#ddd6fe',
+              color: leadTypeLabel.color || '#6d28d9',
+            }}
+            title={`Loại ${pipelineType === 'deal' ? 'Deal' : 'Lead'}: ${leadTypeLabel.name}`}
+          >
+            {leadTypeLabel.name}
+          </span>
+        )}
 
         {/* 3. Giá trị tiền (lớn, xanh) */}
         {item.estimated_value > 0 && (
@@ -6333,6 +6384,7 @@ function KanbanView({
   onToggleSelectAllInColumn,
   compact,
   showCompanyOnCard,
+  leadTypes,
   kpiLedgerPeriodStart,
   onOpenKanbanComment,
   onTogglePin,
@@ -6531,6 +6583,7 @@ function KanbanView({
               onToggleSelectAllInColumn={onToggleSelectAllInColumn}
               compact={compact}
               showCompanyOnCard={showCompanyOnCard}
+              leadTypes={leadTypes}
               kpiLedgerPeriodStart={kpiLedgerPeriodStart}
               onOpenKanbanComment={onOpenKanbanComment}
               onTogglePin={onTogglePin}

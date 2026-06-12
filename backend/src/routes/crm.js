@@ -45,6 +45,11 @@ const { emitCrmTaskChanged } = require('../helpers/crmTaskRealtime');
 const { normalizeTemplateChecklistForCrmTask } = require('../helpers/templateChecklistNormalize');
 const { resolveExecutorCompanyId, isExecutorColumnError } = require('../helpers/crossCompanyWorkspace');
 const { createNotification: createNotif, notifyMultiple: notifyMultipleShared } = require('../helpers/notifications');
+const {
+  resolveLeadCommentMentionIds,
+  fetchLeadMentionMembers,
+  logLeadCommentMentionActivity,
+} = require('../helpers/crmLeadCommentMentions');
 const { DEFAULT_CHECKLISTS } = require('../helpers/defaultChecklists');
 const { generateFlowTasks, generateStepTasks } = require('../helpers/generateFlowTasks');
 const { autoCreateProjectFromWonDeal } = require('../helpers/autoDealWonProject');
@@ -127,7 +132,7 @@ const {
   buildChecklistLeadDocumentRow,
   parseChecklist,
 } = require('../helpers/crmChecklistArtifacts');
-const { parseVietnameseMoney, parseVietnameseMeasure } = require('../helpers/excelVnNumbers');
+const { parseVietnameseMoney, parseVietnameseMeasure, parseExcelMoneyFromMappedColumn } = require('../helpers/excelVnNumbers');
 const { snapshotOrderRowFromQuotation, mapQuotationItemsToOrderRows } = require('../helpers/orderFromQuotation');
 let autoFlowFns = {};
 try { autoFlowFns = require('../helpers/autoFlow'); } catch (e) { console.warn('⚠️ autoFlow not loaded:', e.message); }
@@ -4356,16 +4361,32 @@ r.get('/leads-by-fb-page', async (req, res) => {
 const CRM_LEAD_LIST_SELECT_EXTRA = ', linked_project:projects!crm_leads_project_id_fkey(id, code, name, order_date, delivery_date, production_deadline, production_note)';
 const CRM_LEAD_REGION_EMBED = ', crm_region:company_regions!crm_leads_region_id_fkey(id, name, code)';
 const CRM_LEAD_LIST_SELECT_BASE =
-  `*, customer:customers(id, full_name, phone, email, company), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type, sync_role, order_index), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies!crm_leads_company_id_fkey(id, name, short_name)${CRM_LEAD_REGION_EMBED}, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name)), vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)`;
+  `*, customer:customers(id, full_name, phone, email, company), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type, sync_role, order_index), source:crm_sources(id, name, icon), lead_type:crm_lead_types(id, name, color), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies!crm_leads_company_id_fkey(id, name, short_name)${CRM_LEAD_REGION_EMBED}, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name)), vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)`;
 let CRM_LEAD_LIST_SELECT = CRM_LEAD_LIST_SELECT_BASE + CRM_LEAD_LIST_SELECT_EXTRA;
 let _crmLeadSelectMigrationChecked = false;
 let _vcPipelineStageAvailable = true; // migration 81
+let _crmLeadTypeColorAvailable = true; // migration 339
+
+function stripCrmLeadTypeColorFromSelect(selectStr) {
+  return String(selectStr || '').replace(
+    'lead_type:crm_lead_types(id, name, color)',
+    'lead_type:crm_lead_types(id, name)',
+  );
+}
+
+function isCrmLeadTypeColorMissingError(err) {
+  const m = String(err?.message || '');
+  return /crm_lead_types.*\bcolor\b|\blead_type\b.*\bcolor\b/i.test(m);
+}
+
 async function getCrmLeadListSelect() {
   if (_crmLeadSelectMigrationChecked) {
+    let sel = CRM_LEAD_LIST_SELECT;
     if (!_vcPipelineStageAvailable) {
-      return CRM_LEAD_LIST_SELECT.replace(', vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)', '');
+      sel = sel.replace(', vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)', '');
     }
-    return CRM_LEAD_LIST_SELECT;
+    if (!_crmLeadTypeColorAvailable) sel = stripCrmLeadTypeColorFromSelect(sel);
+    return sel;
   }
   const { error } = await supabase.from('projects').select('production_deadline').limit(0);
   if (error && error.message?.includes('production_deadline')) {
@@ -4391,6 +4412,11 @@ async function getCrmLeadListSelect() {
     } else {
       console.log('[crm] vc_pipeline_stage join available ✓');
     }
+  }
+  const { error: ltColorErr } = await supabase.from('crm_lead_types').select('color').limit(0);
+  if (ltColorErr && ltColorErr.message?.includes('color')) {
+    _crmLeadTypeColorAvailable = false;
+    console.warn('[crm] Migration 339 not applied — crm_lead_types.color unavailable');
   }
   _crmLeadSelectMigrationChecked = true;
   return getCrmLeadListSelect(); // re-call with flag set
@@ -4699,6 +4725,15 @@ async function fetchCrmLeadsByIdsOrdered(ids) {
       data = r2.data;
       error = r2.error;
     }
+    if (error && isCrmLeadTypeColorMissingError(error)) {
+      _crmLeadTypeColorAvailable = false;
+      _crmLeadSelectMigrationChecked = true;
+      const stripped = stripCrmLeadTypeColorFromSelect(selectStr);
+      console.warn('[crm] Auto-strip crm_lead_types.color embed (migration 339)');
+      const r2 = await supabase.from('crm_leads').select(stripped).in('id', chunk);
+      data = r2.data;
+      error = r2.error;
+    }
     if (error) throw error;
     (data || []).forEach((row) => {
       if (row?.id != null) byId.set(String(row.id), row);
@@ -4853,6 +4888,13 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
     if (error && /region|company_regions|crm_leads_region_id/i.test(String(error.message || ''))) {
       currentSelectStr = currentSelectStr.replace(CRM_LEAD_REGION_EMBED, '');
       console.warn('[crm] Auto-strip crm_region embed (migration 131 / FK)');
+      ({ data, error } = await q.select(currentSelectStr).range(from, from + need - 1));
+    }
+    if (error && isCrmLeadTypeColorMissingError(error)) {
+      _crmLeadTypeColorAvailable = false;
+      _crmLeadSelectMigrationChecked = true;
+      currentSelectStr = stripCrmLeadTypeColorFromSelect(currentSelectStr);
+      console.warn('[crm] Auto-strip crm_lead_types.color embed (migration 339)');
       ({ data, error } = await q.select(currentSelectStr).range(from, from + need - 1));
     }
     if (error) throw error;
@@ -10380,6 +10422,20 @@ function excelRowLooksLikeStaffPhoneContext(rowArr) {
   return excelHeaderTextIsStaffContactContext(blob);
 }
 
+/** Nhận diện mẫu Excel báo giá Bao Bì NextGo (cột QUY CÁCH SẢN PHẨM / header công ty NextGo). */
+function excelDetectNextGoQuotationFormat(rows, headerIdx) {
+  if (headerIdx >= 0) {
+    const hdr = (rows[headerIdx] || []).map((c) => String(c || '').trim().toUpperCase()).join(' ');
+    if (hdr.includes('QUY CÁCH') || hdr.includes('QUY CACH')) return true;
+  }
+  const scanUntil = headerIdx >= 0 ? headerIdx : Math.min(rows.length, 15);
+  for (let i = 0; i < scanUntil; i++) {
+    const blob = (rows[i] || []).map((c) => String(c || '').trim().toUpperCase()).join(' ');
+    if (blob.includes('NEXTGO') || blob.includes('BAO BÌ NEXTGO') || blob.includes('BAO BI NEXTGO')) return true;
+  }
+  return false;
+}
+
 /** Row có giống header báo giá (STT + HẠNG MỤC / TÊN HÀNG) — dùng cho excel-sheets + parse-excel. */
 function excelLooksLikeHeaderRow(rowArr) {
   const upper = (rowArr || []).map((c) => String(c || '').trim().toUpperCase());
@@ -10447,7 +10503,10 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
       // Pass thứ tự ưu tiên: description → name → các cột khác (để DIỄN GIẢI HẠNG MỤC không match name)
       upper.forEach((label, ci) => {
         if (!label) return;
-        if (label.includes('DIỄN GIẢI') || label.includes('MÔ TẢ') || label.includes('CHI TIẾT')) {
+        if (
+          label.includes('DIỄN GIẢI') || label.includes('MÔ TẢ') || label.includes('CHI TIẾT') ||
+          label.includes('QUY CÁCH') || label.includes('QUY CACH')
+        ) {
           if (cm.description === undefined) cm.description = ci;
         }
       });
@@ -10528,24 +10587,27 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
       break;
     }
     if (headerIdx < 0) return res.status(400).json({ error: 'Không tìm thấy dòng tiêu đề (cần có STT + HẠNG MỤC)' });
-    console.log('[parse-excel] sheet:', parsedSheetName, 'headerIdx:', headerIdx, 'colMap:', JSON.stringify(colMap));
+    const isNextGoFormat = excelDetectNextGoQuotationFormat(rows, headerIdx);
+    console.log('[parse-excel] sheet:', parsedSheetName, 'headerIdx:', headerIdx, 'format:', isNextGoFormat ? 'nextgo' : 'default', 'colMap:', JSON.stringify(colMap));
 
-    // ── Fill merged cells trong cột DIỄN GIẢI / GHI CHÚ ──
+    // ── Fill merged cells trong cột DIỄN GIẢI / GHI CHÚ / TÊN SP / STT ──
     // Excel cho phép 1 ô mô tả gộp nhiều dòng sản phẩm. `sheet_to_json` chỉ giữ
     // giá trị ô đầu, các ô dưới rỗng → fan-out giá trị xuống các dòng con để mỗi
-    // sản phẩm đều mang theo mô tả/ghi chú chung.
+    // sản phẩm đều mang theo mô tả/ghi chú/tên nhóm (mẫu NextGo: STT + Tên SP merge dọc).
     const wsMerges = Array.isArray(ws['!merges']) ? ws['!merges'] : [];
-    if (wsMerges.length && (colMap.description !== undefined || colMap.notes !== undefined)) {
+    const mergeFanOutCols = [];
+    if (colMap.description !== undefined) mergeFanOutCols.push(colMap.description);
+    if (colMap.notes !== undefined) mergeFanOutCols.push(colMap.notes);
+    if (colMap.name !== undefined) mergeFanOutCols.push(colMap.name);
+    if (colMap.stt !== undefined) mergeFanOutCols.push(colMap.stt);
+    if (wsMerges.length && mergeFanOutCols.length) {
       let filledDesc = 0;
       for (const m of wsMerges) {
         if (!m || !m.s || !m.e) continue;
         if (m.s.r === m.e.r) continue; // chỉ xử lý merge dọc
         if (m.e.r <= headerIdx) continue; // bỏ qua merge ở vùng header/khách hàng
         const col = m.s.c;
-        const targets = [];
-        if (colMap.description !== undefined && col === colMap.description) targets.push('description');
-        if (colMap.notes !== undefined && col === colMap.notes) targets.push('notes');
-        if (!targets.length) continue;
+        if (!mergeFanOutCols.includes(col)) continue;
         const topRow = rows[m.s.r];
         if (!topRow) continue;
         const val = topRow[col];
@@ -10592,7 +10654,11 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
         }
 
         // Customer name — label "Khách hàng:" / "Tên khách hàng;" (Vạn Phú Thành dùng `;`)
-        if (cellUpper.includes('KHÁCH HÀNG') || cellUpper.includes('KHACH HANG')) {
+        // NextGo: "Kính gửi:" cũng chứa tên khách
+        if (
+          cellUpper.includes('KHÁCH HÀNG') || cellUpper.includes('KHACH HANG') ||
+          cellUpper.includes('KÍNH GỬI') || cellUpper.includes('KINH GUI')
+        ) {
           const match = cell.match(/[:;\-]\s*(.+)/);
           if (match) {
             let namePart = match[1].trim();
@@ -10667,6 +10733,8 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
     // ── 3. Parse items — stop at GHI CHÚ / notes section ──
     const items = [];
     let currentGroup = '';
+    let currentProductName = ''; // NextGo: tên SP merge dọc — dòng con kế thừa
+    let lastProductDesc = ''; // NextGo: quy cách ở dòng đầu, các dòng SL khác kế thừa
     let currentGroupDiscount = 0; // CK% từ header nhóm
     let summaryRows = []; // collect all TỔNG/CK rows
     let reachedNotes = false;
@@ -10703,8 +10771,13 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
       const stt = colMap.stt !== undefined ? String(row[colMap.stt] || '').trim() : '';
       const nameRaw = colMap.name !== undefined ? String(row[colMap.name] || '').trim() : '';
       const skuRaw = colMap.sku !== undefined ? String(row[colMap.sku] || '').trim() : '';
+      const descEarly = colMap.description !== undefined ? String(row[colMap.description] || '').trim() : '';
+      if (nameRaw) {
+        if (nameRaw !== currentProductName) lastProductDesc = '';
+        currentProductName = nameRaw;
+      }
       // Nếu có cả MÃ HÀNG + TÊN SẢN PHẨM (section III) → name = TÊN, prefix mã vào notes/description bên dưới.
-      const name = nameRaw || skuRaw;
+      const name = nameRaw || (isNextGoFormat && currentProductName ? currentProductName : '') || skuRaw;
       const nameUpper = name.toUpperCase();
 
       // Collect all text from this row
@@ -10741,7 +10814,7 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
       const workingNameEarly = name || (!sttIsNumber && stt ? stt : '') || '';
       const isRomanGroupEarly = /^[IVX]+[\.\)\s]/.test(workingNameEarly) || /^[IVX]+[\.\)\s]/.test(fullRowText.trim());
       const hasUnitEarly = colMap.unit !== undefined && String(row[colMap.unit] || '').trim();
-      const hasPriceEarly = colMap.unit_price !== undefined && parseVietnameseMoney(row[colMap.unit_price]) > 0;
+      const hasPriceEarly = parseExcelMoneyFromMappedColumn(row, colMap.unit_price) > 0;
 
       if (isRomanGroupEarly && !hasPriceEarly) {
         const groupName = workingNameEarly || fullRowText.trim();
@@ -10812,12 +10885,14 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
       // Skip truly empty rows (no text at all)
       // Note: don't skip if name is empty but STT has text (merged cells)
       const effectiveName = name || (sttIsNumber ? '' : stt) || '';
-      if (!effectiveName && !name) continue;
+      const rowUnitPrice = parseExcelMoneyFromMappedColumn(row, colMap.unit_price);
+      const rowAmount = parseExcelMoneyFromMappedColumn(row, colMap.amount);
+      if (!effectiveName && !name && !descEarly && rowUnitPrice <= 0 && rowAmount <= 0) continue;
 
       // Detect group title: has name but no STT number AND no unit_price
       const sttNum = parseInt(stt);
       const hasUnit = colMap.unit !== undefined && String(row[colMap.unit] || '').trim();
-      const hasPrice = colMap.unit_price !== undefined && parseVietnameseMoney(row[colMap.unit_price]) > 0;
+      const hasPrice = rowUnitPrice > 0;
       const workingName = effectiveName || name;
       const isGroupRow = (isNaN(sttNum) || !stt || sttIsSummary) && !hasPrice && workingName.length > 5;
 
@@ -10839,21 +10914,24 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
       }
 
       // Normal item row — must have unit_price or amount
-      if (!hasPrice && !(colMap.amount !== undefined && parseVietnameseMoney(row[colMap.amount]) > 0)) continue;
+      if (!hasPrice && rowAmount <= 0) continue;
 
       // Detect "HỖ TRỢ" / "MIỄN PHÍ" / "TẶNG" in amount column → freebie item (CK 100%)
       const rawAmountCell = colMap.amount !== undefined ? String(row[colMap.amount] || '').trim() : '';
-      const parsedAmount = colMap.amount !== undefined ? parseVietnameseMoney(row[colMap.amount]) : 0;
+      const parsedAmount = rowAmount;
       const isFreebieText = /HỖ\s*TRỢ|MIỄN\s*PHÍ|TẶNG|FREE|KM|KHUYẾN/i.test(rawAmountCell);
       const isFreebie = isFreebieText && parsedAmount === 0;
 
       const descCell = colMap.description !== undefined ? String(row[colMap.description] || '').trim() : '';
       const notesCell = colMap.notes !== undefined ? String(row[colMap.notes] || '').trim() : '';
+      if (descCell) lastProductDesc = descCell;
+      const effectiveDescCell = descCell || (isNextGoFormat ? lastProductDesc : '');
+      const itemName = name || (isNextGoFormat && effectiveDescCell ? currentProductName || effectiveDescCell.split('\n')[0].slice(0, 120) : '') || skuRaw;
       // Nếu có MÃ HÀNG riêng (section III VPT): prefix vào description để khỏi mất thông tin.
       const skuPrefix = (skuRaw && skuRaw !== name) ? `[${skuRaw}] ` : '';
       const mergedDescription = [
         skuPrefix ? `${skuPrefix.trim()}` : '',
-        descCell,
+        effectiveDescCell,
         notesCell,
       ].filter(Boolean).join('\n\n');
 
@@ -10873,14 +10951,14 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
         group_name: currentGroup,
         group_discount_percent: effectiveGroupCK,
         sku: skuRaw || null,
-        name,
+        name: itemName,
         description: mergedDescription,
         unit: colMap.unit !== undefined ? String(row[colMap.unit] || '').trim() : 'bộ',
         length: colMap.length !== undefined ? (parseVietnameseMeasure(row[colMap.length]) ?? null) : null,
         width: colMap.width !== undefined ? (parseVietnameseMeasure(row[colMap.width]) ?? null) : null,
         height: colMap.height !== undefined ? (parseVietnameseMeasure(row[colMap.height]) ?? null) : null,
         quantity: colMap.quantity !== undefined ? (parseVietnameseMeasure(row[colMap.quantity]) ?? 1) : 1,
-        unit_price: colMap.unit_price !== undefined ? parseVietnameseMoney(row[colMap.unit_price]) : 0,
+        unit_price: rowUnitPrice,
         amount: parsedAmount,
         vat_rate: colMap.vat_rate !== undefined ? parseFloat(row[colMap.vat_rate]) || 0 : 0,
         notes: notesCell,
@@ -10996,6 +11074,7 @@ r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) =
       columns_detected: colMap,
       header_row: headerIdx,
       total_rows: rows.length,
+      excel_format: isNextGoFormat ? 'nextgo' : 'default',
     });
   } catch (e) {
     console.error('[parse-excel]', e);
@@ -13381,11 +13460,8 @@ r.get('/leads/:id/members', async (req, res) => {
     } catch (syncErr) {
       console.warn('[crm/leads/members] sync production staff:', syncErr.message);
     }
-    const { data } = await supabase.from('lead_members')
-      .select('*, user:users!lead_members_user_id_fkey(id, full_name, email, avatar, role)')
-      .eq('lead_id', req.params.id)
-      .order('created_at');
-    res.json(data || []);
+    const merged = await fetchLeadMentionMembers(supabase, req.params.id);
+    res.json(merged);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -14727,6 +14803,52 @@ r.delete('/planner/items/:id', async (req, res) => {
 // CRM LEAD COMMENTS — bình luận dùng chung cho lead/deal
 // ════════════════════════════════════════════════════════════════════════════
 
+/** Thông báo cho người được @ trong bình luận lead/deal. */
+async function notifyLeadCommentMentions(req, leadId, senderId, commentRow, mentionIds) {
+  const ids = [...new Set((mentionIds || []).map(String).filter(Boolean))]
+    .filter((id) => id !== String(senderId));
+  if (!ids.length) return;
+
+  const senderName = commentRow?.user?.full_name || req.user?.fullName || 'Ai đó';
+  const senderAvatar = commentRow?.user?.avatar || '';
+  let leadTitle = '';
+  let leadCode = '';
+  let leadType = 'lead';
+  try {
+    const { data: leadRow } = await supabase.from('crm_leads')
+      .select('title, code, type')
+      .eq('id', leadId)
+      .maybeSingle();
+    leadTitle = leadRow?.title || '';
+    leadCode = leadRow?.code || '';
+    leadType = leadRow?.type || 'lead';
+  } catch { /* ignore */ }
+
+  const rawBody = String(commentRow?.body || '').trim();
+  const preview = rawBody.length > 160 ? `${rawBody.slice(0, 157)}…` : rawBody;
+  const label = leadTitle || leadCode || 'Lead/Deal';
+
+  await notifyMultiple(
+    req,
+    ids,
+    'comment_added',
+    `${label} · Nhắc bạn`,
+    `${senderName} đã nhắc bạn trong bình luận: ${preview}`,
+    'lead',
+    leadId,
+    {
+      nav_tab: 'activities',
+      mentioned: true,
+      sender_name: senderName,
+      sender_avatar: senderAvatar,
+      lead_title: leadTitle,
+      lead_code: leadCode,
+      lead_type: leadType,
+      comment_id: commentRow?.id != null ? String(commentRow.id) : '',
+    },
+  );
+}
+
 function commentsTableMissing(error) {
   return String(error?.message || '').toLowerCase().includes('crm_lead_comments');
 }
@@ -14853,6 +14975,27 @@ r.post('/leads/:id/comments', async (req, res) => {
     const row = { ...data, reactions: { summary: [], mine: null } };
     const io = req.app.get('io');
     if (io) io.to(`lead:${leadId}`).emit('lead:comment', { lead_id: leadId, action: 'created', comment: row });
+
+    try {
+      const leadMembers = await fetchLeadMentionMembers(supabase, leadId);
+      const mentionIds = resolveLeadCommentMentionIds(req.body, body, leadMembers, userId);
+      if (mentionIds.length) {
+        await notifyLeadCommentMentions(req, leadId, userId, row, mentionIds);
+        const activityRow = await logLeadCommentMentionActivity(supabase, {
+          leadId,
+          senderId: userId,
+          commentRow: row,
+          mentionIds,
+          members: leadMembers,
+        });
+        if (io && activityRow) {
+          io.to(`lead:${leadId}`).emit('lead:activity', { lead_id: leadId, activity: activityRow });
+        }
+      }
+    } catch (notifyErr) {
+      console.warn('[lead-comment-mention-notify]', notifyErr?.message || notifyErr);
+    }
+
     res.json(row);
   } catch (e) {
     console.error('POST /crm/leads/:id/comments:', e);

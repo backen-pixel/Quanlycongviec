@@ -2747,10 +2747,10 @@ export default function CRMTasksTab({
               )}
               {/* Nút Upload Excel Báo giá — hiện khi:
                   (a) nhiệm vụ bật cờ show_excel_quotation_upload ở bộ mẫu CRM, hoặc
-                  (b) legacy: task ở giai đoạn báo giá/hợp đồng trong Deal. */}
+                  (b) legacy: task ở giai đoạn báo giá/hợp đồng trong Deal (kể cả NextGo: quoted). */}
               {(
                 !!task.show_excel_quotation_upload
-                || (leadType === 'deal' && (task.stage_slug === 'deal_quote_contract' || task.stage_slug === 'quotation'))
+                || (leadType === 'deal' && (task.stage_slug === 'deal_quote_contract' || task.stage_slug === 'quotation' || task.stage_slug === 'quoted'))
               ) && task.status !== 'completed' && (
                 <button
                   onClick={(e) => { e.stopPropagation(); setExcelImportTaskId(task.id); }}

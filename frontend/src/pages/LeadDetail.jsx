@@ -12,6 +12,7 @@ import { downloadCrmLeadDocumentsZip } from '../lib/crmDocumentsZipDownload';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import api from '../lib/api';
+import { getSocket } from '../lib/socket';
 import { formatVND, formatDate } from '../lib/utils';
 import CRMTasksTab from '../components/CRMTasksTab';
 import CrmTaskDocumentsPanel from '../components/CrmTaskDocumentsPanel';
@@ -73,6 +74,7 @@ const ACTIVITY_TYPES = [
   { value: 'email', label: 'Email', icon: '📧', color: 'bg-amber-100 text-amber-700' },
   { value: 'zalo', label: 'Zalo', icon: '💬', color: 'bg-blue-100 text-blue-700' },
   { value: 'note', label: 'Ghi chú', icon: '📝', color: 'bg-gray-100 text-gray-700' },
+  { value: 'comment', label: 'Bình luận @', icon: '💬', color: 'bg-sky-100 text-sky-700' },
   { value: 'quote_sent', label: 'Gửi báo giá', icon: '💰', color: 'bg-emerald-100 text-emerald-700' },
 ];
 
@@ -294,7 +296,7 @@ export default function LeadDetail() {
       return;
     }
     if (!t) return;
-    if (t === 'chat' || t === 'activities' || t === 'crm-chat' || t === 'crm-activities' || t === 'timeline') {
+    if (t === 'chat' || t === 'crm-chat' || t === 'timeline') {
       setActiveTab('comments');
       const next = new URLSearchParams(searchParams);
       next.delete('tab');
@@ -310,6 +312,7 @@ export default function LeadDetail() {
       'zalo',
       'team',
       'comments',
+      'activities',
       'calls',
       'voice_crm',
       'approvals',
@@ -507,6 +510,30 @@ export default function LeadDetail() {
   }, [id]);
 
   loadRef.current = load;
+
+  useEffect(() => {
+    if (!id) return undefined;
+    const sock = socket || getSocket();
+    if (!sock) return undefined;
+    sock.emit('join:lead', id);
+    const onActivity = (payload) => {
+      if (String(payload?.lead_id) !== String(id)) return;
+      const row = payload?.activity;
+      if (row?.id) {
+        setActivities((prev) => {
+          const rest = (prev || []).filter((a) => String(a.id) !== String(row.id));
+          return [row, ...rest];
+        });
+        return;
+      }
+      void loadRef.current?.({ silent: true });
+    };
+    sock.on('lead:activity', onActivity);
+    return () => {
+      sock.emit('leave:lead', id);
+      sock.off('lead:activity', onActivity);
+    };
+  }, [id, socket]);
 
   /** Cột pipeline có tên chứa «Hoàn thành» — dùng cho Zalo OA và tab Điểm chéo & KH */
   const isDealHoanThanhForZalo = useMemo(() => {
@@ -1582,7 +1609,13 @@ export default function LeadDetail() {
 
           {/* Quick Stats Card */}
           <div className="grid grid-cols-3 gap-2">
-            <div className="bg-blue-50 rounded-lg border border-blue-100 p-3 text-center">
+            <div className="bg-blue-50 rounded-lg border border-blue-100 p-3 text-center cursor-pointer hover:bg-blue-100/80 transition-colors"
+              onClick={() => setActiveTab('activities')}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setActiveTab('activities'); }}
+              role="button"
+              tabIndex={0}
+              title="Xem tab Hoạt động"
+            >
               <p className="text-xs text-gray-600 mb-1">Hoạt động</p>
               <p className="text-xl font-bold text-blue-600">{activities.length}</p>
             </div>
@@ -1643,6 +1676,17 @@ export default function LeadDetail() {
                 }`}
               >
                 📝 Ghi chú ({noteActivities.length})
+              </button>
+              <button
+                onClick={() => setActiveTab('activities')}
+                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                  activeTab === 'activities'
+                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+                title="Lịch sử hoạt động, gọi điện, @ nhắc trong bình luận"
+              >
+                📋 Hoạt động ({activities.length})
               </button>
               {inboxChannel === 'facebook' && (
               <button
@@ -1845,11 +1889,11 @@ export default function LeadDetail() {
                       <p className="text-sm text-gray-400">Chưa có hoạt động</p>
                     </div>
                   ) : (
-                    <div className="space-y-2 max-h-96 overflow-y-auto">
+                    <div className="space-y-2 min-h-[280px] max-h-[min(560px,70vh)] overflow-y-auto">
                       {/* Vertical timeline line */}
                       <div className="relative">
                         <div className="absolute left-5 top-0 bottom-0 w-0.5 bg-gradient-to-b from-blue-300 to-blue-100" />
-                        {activities.map((act, idx) => {
+                        {activities.map((act) => {
                           const typeInfo = ACTIVITY_TYPES.find(t => t.value === act.type) || ACTIVITY_TYPES[4];
                           return (
                             <div key={act.id} className="p-3 bg-gray-50 rounded-lg border relative z-10 ml-4">
@@ -1857,11 +1901,14 @@ export default function LeadDetail() {
                               <div className="flex items-start gap-2">
                                 <span className="text-lg shrink-0">{typeInfo.icon}</span>
                                 <div className="flex-1 min-w-0">
-                                  <div className="flex items-center justify-between">
+                                  <div className="flex items-center justify-between gap-2">
                                     <p className="text-sm font-medium" style={{ color: '#000000' }}>{act.title}</p>
-                                    <span className="text-[10px] text-gray-400">{formatDate(act.activity_date)}</span>
+                                    <span className="text-[10px] text-gray-400 shrink-0">{formatDate(act.activity_date)}</span>
                                   </div>
-                                  {act.description && <p className="text-xs text-gray-600 mt-1">{act.description}</p>}
+                                  {act.creator?.full_name && (
+                                    <p className="text-[10px] text-gray-400 mt-0.5">{act.creator.full_name}</p>
+                                  )}
+                                  {act.description && <p className="text-xs text-gray-600 mt-1 whitespace-pre-wrap">{act.description}</p>}
                                   {act.outcome && <p className="text-xs text-blue-600 font-medium mt-1">→ {act.outcome}</p>}
                                 </div>
                               </div>

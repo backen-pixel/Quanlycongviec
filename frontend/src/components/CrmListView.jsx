@@ -414,6 +414,8 @@ export function ListView({
         return item.source?.category?.name || item.source_category?.name || item.source?.name || '—';
       case 'source_sub':
         return item.source?.name || '—';
+      case 'referrer_name':
+        return String(item.referrer_name || '').trim() || '—';
       case 'needs':
         return item.description || item.title || '—';
       case 'lead_owner':
@@ -484,7 +486,7 @@ export function ListView({
   }, [historyByLead, parentCodes, calculateDays, allowedStageIds]);
 
   /**
-   * Build dòng Excel theo mẫu cố định 28 cột do khách yêu cầu.
+   * Build dòng Excel theo mẫu cố định (cột chuẩn + người giới thiệu).
    * Số (estimated_value/probability/expected_revenue) → trả number để Excel format được;
    * ngày → chuỗi dd/mm/yyyy; ô trống → '' thay vì '—'.
    */
@@ -522,6 +524,7 @@ export function ListView({
       'Khu_vực': item.crm_region?.name || item.region?.name || '',
       'Nguồn_chính': item.source?.category?.name || item.source_category?.name || item.source?.name || '',
       'Nguồn_phụ': item.source?.name || '',
+      'Người_giới_thiệu': String(item.referrer_name || '').trim(),
       'Nhu_cầu': item.title || item.description || '',
       'Sale_Admin_nguồn': item.lead_owner?.full_name || '',
       'Sale_Kỹ_Thuật': item.assignee?.full_name || item.lead_owner?.full_name || '',
@@ -588,7 +591,7 @@ export function ListView({
             type="button"
             onClick={handleExportExcel}
             disabled={!allItems.length || historyLoading}
-            title="Xuất Excel theo mẫu cố định 28 cột"
+            title="Xuất Excel theo mẫu cố định (gồm người giới thiệu)"
             className="h-8 px-3 inline-flex items-center gap-1.5 text-xs font-medium border border-emerald-300 text-emerald-700 rounded-lg bg-white hover:bg-emerald-50 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <FileSpreadsheet className="h-3.5 w-3.5" />
