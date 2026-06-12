@@ -102,6 +102,7 @@ const {
   getPipelinesList,
   getPipelineZaloSlice,
   getDefaultPipelineIdForCompany,
+  getPipelineIdForCompanyRegion,
   getStagesByPipelineId,
   getCrmSourcesList,
   getCrmSourceCategoriesList,
@@ -2738,7 +2739,7 @@ function normalizePipelineStagesList(rows) {
 // PIPELINE STAGES (CRUD)
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/pipeline-stages', async (req, res) => {
-  const { type, pipeline_id, company_id: companyIdQuery } = req.query;
+  const { type, pipeline_id, company_id: companyIdQuery, region_id: regionIdQuery } = req.query;
   const sacSt = scopedAdminCompanyId(req);
   const activeOnly = req.query.all !== 'true';
 
@@ -2767,7 +2768,10 @@ r.get('/pipeline-stages', async (req, res) => {
       if (!cid) return;
       if (String(companyId) !== String(cid)) return res.status(403).json({ error: 'Không có quyền xem stage pipeline công ty khác' });
     }
-    effectivePipelineId = await getDefaultPipelineIdForCompany(companyId);
+    const regionId = String(regionIdQuery || '').trim();
+    effectivePipelineId = regionId
+      ? await getPipelineIdForCompanyRegion(companyId, regionId)
+      : await getDefaultPipelineIdForCompany(companyId);
   } else if (sacSt) {
     effectivePipelineId = await getDefaultPipelineIdForCompany(sacSt);
   } else if (!userIsAdmin(req.user?.role)) {

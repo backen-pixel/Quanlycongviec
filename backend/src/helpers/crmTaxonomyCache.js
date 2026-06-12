@@ -129,6 +129,91 @@ async function getDefaultPipelineIdForCompany(companyId) {
   });
 }
 
+function normalizePipelineMatchText(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/\s+/g, ' ');
+}
+
+function scorePipelineForRegion(pipeline, regionName, regionCode) {
+  const pn = normalizePipelineMatchText(pipeline?.name);
+  const rName = normalizePipelineMatchText(regionName);
+  const rCode = normalizePipelineMatchText(regionCode);
+  if (!pn) return 0;
+  if (rName && pn === rName) return 100;
+  if (rCode && pn === rCode) return 95;
+  if (rName && pn.includes(rName)) return 80;
+  if (rCode && pn.includes(rCode)) return 75;
+  if (rName && rName.includes(pn) && pn.length >= 3) return 60;
+  return 0;
+}
+
+/**
+ * Pipeline CRM theo công ty + khu vực:
+ * 1) Khớp tên/mã khu vực trong tên pipeline
+ * 2) Suy ra từ pipeline_id phổ biến nhất trên lead/deal thuộc khu vực
+ * 3) Fallback pipeline mặc định của công ty
+ */
+async function getPipelineIdForCompanyRegion(companyId, regionId) {
+  if (!companyId) return null;
+  const rid = String(regionId || '').trim();
+  if (!rid || rid === '__none__') {
+    return getDefaultPipelineIdForCompany(companyId);
+  }
+
+  return crmPipelinesCache.getOrFetch(`region:${companyId}:${rid}`, async () => {
+    const pipelines = await getPipelinesList({ companyFilter: companyId, activeOnly: true });
+    if (!pipelines.length) return null;
+    if (pipelines.length === 1) return pipelines[0].id;
+
+    const { data: region } = await supabase
+      .from('company_regions')
+      .select('id, name, code, company_id')
+      .eq('id', rid)
+      .maybeSingle();
+    if (!region || String(region.company_id || '') !== String(companyId)) {
+      return getDefaultPipelineIdForCompany(companyId);
+    }
+
+    let best = null;
+    let bestScore = 0;
+    for (const p of pipelines) {
+      const sc = scorePipelineForRegion(p, region.name, region.code);
+      if (sc > bestScore) {
+        bestScore = sc;
+        best = p;
+      }
+    }
+    if (best && bestScore >= 60) return best.id;
+
+    const { data: sampleLeads } = await supabase
+      .from('crm_leads')
+      .select('pipeline_id')
+      .eq('company_id', companyId)
+      .eq('region_id', rid)
+      .not('pipeline_id', 'is', null)
+      .limit(80);
+    if (sampleLeads?.length) {
+      const counts = new Map();
+      for (const row of sampleLeads) {
+        const pid = String(row.pipeline_id || '');
+        if (!pid) continue;
+        counts.set(pid, (counts.get(pid) || 0) + 1);
+      }
+      const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+      const topId = ranked[0]?.[0];
+      if (topId && pipelines.some((p) => String(p.id) === String(topId))) {
+        return topId;
+      }
+    }
+
+    return getDefaultPipelineIdForCompany(companyId);
+  });
+}
+
 // ─── Stages ────────────────────────────────────────────────────────────────
 
 /** Stage đơn theo id — dùng cho dealStageIsHoanThanh + permission checks. */
@@ -260,6 +345,7 @@ module.exports = {
   getPipelinesList,
   getPipelineZaloSlice,
   getDefaultPipelineIdForCompany,
+  getPipelineIdForCompanyRegion,
   getCrmStageById,
   getStagesByPipelineId,
   getCrmSourcesList,

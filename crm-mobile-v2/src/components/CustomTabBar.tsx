@@ -1,0 +1,82 @@
+import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import React from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useCreateMenu } from '../context/CreateMenuContext';
+import { Colors } from '../theme';
+import FloatingCreateButton from './FloatingCreateButton';
+
+type TabMeta = {
+  icon: keyof typeof Ionicons.glyphMap;
+  iconActive: keyof typeof Ionicons.glyphMap;
+  label: string;
+};
+
+const META: Record<string, TabMeta> = {
+  Planner: { icon: 'calendar-outline', iconActive: 'calendar', label: 'Planner' },
+  Recordings: { icon: 'mic-outline', iconActive: 'mic', label: 'Ghi âm' },
+  Messages: { icon: 'chatbubble-outline', iconActive: 'chatbubble', label: 'Tin nhắn' },
+  Menu: { icon: 'menu-outline', iconActive: 'menu', label: 'Menu' },
+};
+
+export default function CustomTabBar({ state, navigation }: BottomTabBarProps) {
+  const insets = useSafeAreaInsets();
+  const { open, toggle } = useCreateMenu();
+  const padBottom = Math.max(insets.bottom, 10);
+
+  return (
+    <View style={[styles.bar, { height: 64 + padBottom, paddingBottom: padBottom }]}>
+      {state.routes.map((route, index) => {
+        const focused = state.index === index;
+
+        if (route.name === 'CreatePlaceholder') {
+          return (
+            <View key={route.key} style={styles.fabSlot}>
+              <FloatingCreateButton open={open} onPress={toggle} />
+            </View>
+          );
+        }
+
+        const meta = META[route.name];
+        if (!meta) return null;
+
+        const onPress = () => {
+          const event = navigation.emit({
+            type: 'tabPress',
+            target: route.key,
+            canPreventDefault: true,
+          });
+          if (!focused && !event.defaultPrevented) {
+            navigation.navigate(route.name);
+          }
+        };
+
+        return (
+          <Pressable key={route.key} style={styles.tab} onPress={onPress}>
+            <Ionicons
+              name={focused ? meta.iconActive : meta.icon}
+              size={23}
+              color={focused ? Colors.tabActive : Colors.tabInactive}
+            />
+            <Text style={[styles.label, focused && { color: Colors.tabActive }]}>{meta.label}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  bar: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: Colors.tabBarBg,
+    borderTopWidth: 1,
+    borderTopColor: Colors.tabBarBorder,
+    paddingTop: 9,
+  },
+  tab: { flex: 1, alignItems: 'center', gap: 3 },
+  fabSlot: { width: 88, alignItems: 'center' },
+  label: { fontSize: 10.5, fontWeight: '700', color: Colors.tabInactive },
+});
