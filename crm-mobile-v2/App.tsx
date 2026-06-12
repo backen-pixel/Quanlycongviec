@@ -4,6 +4,7 @@ import React from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import CreateMenuSheet from './src/components/CreateMenuSheet';
+import UpdateGate from './src/components/UpdateGate';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { CreateMenuProvider } from './src/context/CreateMenuContext';
 import RootNavigator from './src/navigation/RootNavigator';
@@ -59,6 +60,7 @@ export default function App() {
     <SafeAreaProvider>
       <AuthProvider>
         <Gate />
+        <UpdateGate />
         <StatusBar style="light" />
       </AuthProvider>
     </SafeAreaProvider>

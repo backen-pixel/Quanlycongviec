@@ -2,32 +2,14 @@
  * Upload APK lên server cập nhật (không cần đăng nhập web).
  * Dùng service key Supabase từ backend/.env
  *
- *   node scripts/upload-apk-release.js --app tubep-demo --file ../demo-mobile/dist/TuBepDemo-1.0.0-release.apk --version 1.0.0 --version-code 1 --notes "v1"
+ *   node scripts/upload-apk-release.js --app crm-mobile-v2 --file ../crm-mobile-v2/dist/crm-mobile-v2-2.0.1-code2-release.apk --version 2.0.1 --version-code 2 --notes "v2"
  */
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const { supabase } = require('../src/config/supabase');
-
-const BUCKET = 'app-releases';
-const MB = 1024 * 1024;
-const MAX_APK_BYTES = Math.min(
-  (parseInt(process.env.APK_MAX_UPLOAD_MB || '512', 10) || 512) * MB,
-  1024 * MB,
-);
-
-async function ensureBucket() {
-  const { data } = await supabase.storage.getBucket(BUCKET);
-  if (!data) {
-    const { error } = await supabase.storage.createBucket(BUCKET, {
-      public: true,
-      // fileSizeLimit: giới hạn global Supabase (free ~50MB) — không set ở đây nếu plan chưa nâng.
-    });
-    if (error) throw new Error('Tạo bucket: ' + error.message);
-    console.log('> Đã tạo bucket', BUCKET);
-  }
-}
+const { importApkFile } = require('../src/helpers/appReleaseImport');
+const { buildStandardApkFilename } = require('../src/helpers/appReleaseFilename');
 
 async function ensureApp(appKey, displayName, androidPackage) {
   const { data: existing } = await supabase.from('mobile_apps').select('*').eq('app_key', appKey).maybeSingle();
@@ -72,7 +54,6 @@ async function main() {
     process.exit(1);
   }
 
-  await ensureBucket();
   const app = await ensureApp(
     appKey,
     args.display_name || args.displayName,
@@ -82,39 +63,29 @@ async function main() {
   const version = args.version || '1.0.0';
   const versionCode = args.version_code != null ? parseInt(args.version_code, 10) : null;
   const channel = args.channel || 'production';
-  const buf = fs.readFileSync(abs);
-  const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
-  const storagePath = `${appKey}/${channel}/${version}_${Date.now()}.apk`;
+  const publicBaseUrl = (
+    args.public_base_url
+    || process.env.PUBLIC_API_URL
+    || 'https://tubep-backend.onrender.com'
+  ).replace(/\/$/, '');
 
-  const { error: upErr } = await supabase.storage.from(BUCKET).upload(storagePath, buf, {
-    contentType: 'application/vnd.android.package-archive',
-    upsert: false,
-  });
-  if (upErr) throw new Error('Upload Storage: ' + upErr.message);
-
-  const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(storagePath);
-
-  const { data: rel, error } = await supabase.from('app_releases').insert({
-    app_id: app.id,
+  const rel = await importApkFile(app, abs, {
     channel,
-    update_type: 'apk',
     version,
     version_code: versionCode,
-    storage_path: storagePath,
-    file_url: urlData.publicUrl,
-    file_size: buf.length,
-    sha256,
     is_mandatory: args.mandatory === true || args.mandatory === 'true',
-    is_active: true,
     release_notes: args.notes || null,
-  }).select('*').single();
-  if (error) throw error;
+    publicBaseUrl,
+  });
 
+  const standardName = buildStandardApkFilename(appKey, version, versionCode, { release: true });
   console.log('✅ Phát hành APK thành công');
   console.log('   release id:', rel.id);
-  console.log('   version:', version, 'code:', versionCode);
-  console.log('   url:', urlData.publicUrl);
-  console.log('   sha256:', sha256);
+  console.log('   version:', rel.version, 'code:', rel.version_code);
+  console.log('   file_url:', rel.file_url);
+  console.log('   download API:', `${publicBaseUrl}/api/app-updates/download/${rel.id}`);
+  console.log('   tên chuẩn:', standardName);
+  console.log('   sha256:', rel.sha256);
 }
 
 main().catch((e) => {
