@@ -370,6 +370,8 @@ function snapshotHasActiveFilters(snap) {
     || snap.filterStage
     || snap.filterRegion
     || snap.filterLeadType
+    || snap.filterReferrer
+    || snap.filterCustomerCompany
     || snap.filterPhone === 'no_phone'
     || snap.showOrphanDealColumn
     || snap.timePreset
@@ -620,6 +622,9 @@ export default function CRMDashboard() {
   const [filterRegion, setFilterRegion] = useState(() => P?.filterRegion ?? '');
   const [companyRegions, setCompanyRegions] = useState([]);
   const [filterLeadType, setFilterLeadType] = useState(() => P?.filterLeadType ?? '');
+  const [filterReferrer, setFilterReferrer] = useState(() => P?.filterReferrer ?? '');
+  const [filterCustomerCompany, setFilterCustomerCompany] = useState(() => P?.filterCustomerCompany ?? '');
+  const [crmReferrers, setCrmReferrers] = useState([]);
   const companyFilterFromLsRef = useRef(false);
   /** Admin + filter rỗng: chỉ tự gán Phúc Đạt một lần; sau đó NV chọn «Tất cả» (= '') vẫn load đúng */
   const adminCompanyDefaultResolvedRef = useRef(false);
@@ -1072,6 +1077,8 @@ export default function CRMDashboard() {
         filterAssignee,
         filterPhone,
         filterLeadType,
+        filterReferrer,
+        filterCustomerCompany,
         customDateFrom,
         customDateTo,
         kanbanLoadLimit,
@@ -1129,6 +1136,8 @@ export default function CRMDashboard() {
     filterAssignee,
     filterCompany,
     filterLeadType,
+    filterReferrer,
+    filterCustomerCompany,
   ]);
 
   // Khi mở view "Bình luận": tải comments-index cho toàn bộ lead/deal đang hiển thị
@@ -1216,6 +1225,38 @@ export default function CRMDashboard() {
     const ok = list.some((t) => String(t.id) === String(filterLeadType));
     if (!ok) setFilterLeadType('');
   }, [filterLeadType, leadTypes, pipelineType]);
+
+  const referrerFilterOptions = useMemo(() => {
+    const names = new Set((crmReferrers || []).map((r) => r.name).filter(Boolean));
+    for (const row of [...(allLeads || []), ...(allDeals || [])]) {
+      const n = String(row?.referrer_name || '').trim();
+      if (n) names.add(n);
+    }
+    return [...names].sort((a, b) => a.localeCompare(b, 'vi'));
+  }, [crmReferrers, allLeads, allDeals]);
+
+  useEffect(() => {
+    if (deferFilterPruneRef.current) return;
+    if (!filterReferrer || filterReferrer === '__none__') return;
+    const ok = referrerFilterOptions.includes(filterReferrer);
+    if (!ok) setFilterReferrer('');
+  }, [filterReferrer, referrerFilterOptions]);
+
+  const customerCompanyFilterOptions = useMemo(() => {
+    const names = new Set();
+    for (const row of [...(allLeads || []), ...(allDeals || [])]) {
+      const n = String(row?.customer?.company || '').trim();
+      if (n) names.add(n);
+    }
+    return [...names].sort((a, b) => a.localeCompare(b, 'vi'));
+  }, [allLeads, allDeals]);
+
+  useEffect(() => {
+    if (deferFilterPruneRef.current) return;
+    if (!filterCustomerCompany || filterCustomerCompany === '__none__') return;
+    const ok = customerCompanyFilterOptions.includes(filterCustomerCompany);
+    if (!ok) setFilterCustomerCompany('');
+  }, [filterCustomerCompany, customerCompanyFilterOptions]);
 
   // ── Realtime: cập nhật badge SX/VC khi project thay đổi stage ──
   useEffect(() => {
@@ -1372,6 +1413,8 @@ export default function CRMDashboard() {
       if (filterAssignee) common.assigned_to = filterAssignee;
       if (filterCompany) common.company_id = filterCompany;
       if (filterLeadType) common.lead_type_id = filterLeadType;
+      if (filterReferrer && filterReferrer !== '__none__') common.referrer_name = filterReferrer;
+      if (filterCustomerCompany) common.customer_company = filterCustomerCompany;
       const res = await api.get('/crm/leads', { params: common });
       const d = res.data;
       const rows = Array.isArray(d) ? d : (d?.data || []);
@@ -1400,6 +1443,8 @@ export default function CRMDashboard() {
     filterAssignee,
     filterCompany,
     filterLeadType,
+    filterReferrer,
+    filterCustomerCompany,
     customDateFrom,
     customDateTo,
     user,
@@ -1514,6 +1559,22 @@ export default function CRMDashboard() {
   }, [dashboardScopeCompanyId]);
 
   useEffect(() => {
+    const cid = dashboardScopeCompanyId;
+    if (!cid) {
+      setCrmReferrers([]);
+      return undefined;
+    }
+    let cancelled = false;
+    api.get('/crm/referrers', { params: { company_id: cid } })
+      .then((r) => {
+        if (cancelled) return;
+        setCrmReferrers(Array.isArray(r.data?.items) ? r.data.items : []);
+      })
+      .catch(() => { if (!cancelled) setCrmReferrers([]); });
+    return () => { cancelled = true; };
+  }, [dashboardScopeCompanyId]);
+
+  useEffect(() => {
     crmLiveVersionRef.current = null;
   }, [dashboardScopeCompanyId, customDateFrom, customDateTo]);
 
@@ -1527,6 +1588,8 @@ export default function CRMDashboard() {
       if (filterAssignee) common.assigned_to = filterAssignee;
       if (filterCompany) common.company_id = filterCompany;
       if (filterLeadType) common.lead_type_id = filterLeadType;
+      if (filterReferrer && filterReferrer !== '__none__') common.referrer_name = filterReferrer;
+      if (filterCustomerCompany) common.customer_company = filterCustomerCompany;
 
       const loadAll = String(kanbanLoadLimit ?? '').trim().toLowerCase() === 'all';
       let rows = [];
@@ -1601,6 +1664,8 @@ export default function CRMDashboard() {
       filterAssignee,
       filterCompany,
       filterLeadType,
+      filterReferrer,
+      filterCustomerCompany,
       kanbanLoadLimit,
       user,
     ],
@@ -1640,6 +1705,8 @@ export default function CRMDashboard() {
         if (filterAssignee) p.assigned_to = filterAssignee;
         if (co) p.company_id = co;
         if (filterLeadType) p.lead_type_id = filterLeadType;
+        if (filterReferrer && filterReferrer !== '__none__') p.referrer_name = filterReferrer;
+        if (filterCustomerCompany) p.customer_company = filterCustomerCompany;
         if (phone_filter) p.phone_filter = phone_filter;
         return p;
       };
@@ -1671,6 +1738,8 @@ export default function CRMDashboard() {
       filterAssignee,
       filterCompany,
       filterLeadType,
+      filterReferrer,
+      filterCustomerCompany,
       dashboardScopeCompanyId,
     ],
   );
@@ -1862,6 +1931,8 @@ export default function CRMDashboard() {
         if (filterAssignee) common.assigned_to = filterAssignee;
         if (resolvedCompanyId) common.company_id = resolvedCompanyId;
         if (filterLeadType) common.lead_type_id = filterLeadType;
+        if (filterReferrer && filterReferrer !== '__none__') common.referrer_name = filterReferrer;
+        if (filterCustomerCompany) common.customer_company = filterCustomerCompany;
         const loadAll =
           String(kanbanLoadLimit ?? '')
             .trim()
@@ -1983,6 +2054,8 @@ export default function CRMDashboard() {
           filterAssignee,
           filterPhone,
           filterLeadType,
+          filterReferrer,
+          filterCustomerCompany,
           customDateFrom,
           customDateTo,
           kanbanLoadLimit,
@@ -2170,6 +2243,8 @@ export default function CRMDashboard() {
     if (snapshotHasProperty(snap, 'filterStage')) setFilterStage(snap.filterStage ?? '');
     if (snapshotHasProperty(snap, 'filterRegion')) setFilterRegion(snap.filterRegion ?? '');
     if (snapshotHasProperty(snap, 'filterLeadType')) setFilterLeadType(snap.filterLeadType ?? '');
+    if (snapshotHasProperty(snap, 'filterReferrer')) setFilterReferrer(snap.filterReferrer ?? '');
+    if (snapshotHasProperty(snap, 'filterCustomerCompany')) setFilterCustomerCompany(snap.filterCustomerCompany ?? '');
     if (snapshotHasProperty(snap, 'filterPhone')) {
       const v = snap.filterPhone;
       if (v === 'no_phone' || v === 'has_phone') setFilterPhone(v);
@@ -2308,6 +2383,24 @@ export default function CRMDashboard() {
       }
     }
 
+    // Người giới thiệu
+    if (filterReferrer) {
+      if (filterReferrer === '__none__') {
+        result = result.filter((l) => !String(l.referrer_name || '').trim());
+      } else {
+        result = result.filter((l) => String(l.referrer_name || '').trim() === String(filterReferrer));
+      }
+    }
+
+    // Tên công ty khách hàng (customers.company)
+    if (filterCustomerCompany) {
+      if (filterCustomerCompany === '__none__') {
+        result = result.filter((l) => !String(l.customer?.company || '').trim());
+      } else {
+        result = result.filter((l) => String(l.customer?.company || '').trim() === String(filterCustomerCompany));
+      }
+    }
+
     // Phone filter
     // Phone filter đã được ưu tiên xử lý ở backend để không bị phụ thuộc vào 500 bản ghi đầu.
 
@@ -2362,6 +2455,8 @@ export default function CRMDashboard() {
     filterSource,
     filterStage,
     filterRegion,
+    filterReferrer,
+    filterCustomerCompany,
     filterPhone,
     fbPageLeadIds,
     hasPhoneNumber,
@@ -2666,6 +2761,8 @@ export default function CRMDashboard() {
     filterStage,
     filterRegion,
     filterLeadType,
+    filterReferrer,
+    filterCustomerCompany,
     filterPhone,
     showAdvSearch,
     pipelineType,
@@ -2687,6 +2784,8 @@ export default function CRMDashboard() {
     filterStage,
     filterRegion,
     filterLeadType,
+    filterReferrer,
+    filterCustomerCompany,
     filterPhone,
     showAdvSearch,
     pipelineType,
@@ -3559,21 +3658,21 @@ export default function CRMDashboard() {
           {/* Toggle advanced filters */}
           <button onClick={() => setShowAdvSearch(!showAdvSearch)}
             className={`h-10 px-4 rounded-xl text-sm font-medium flex items-center gap-2 cursor-pointer transition-all border ${
-              showAdvSearch || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterRegion || filterLeadType || filterPhone
+              showAdvSearch || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterRegion || filterLeadType || filterReferrer || filterCustomerCompany || filterPhone
                 ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
                 : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
             }`}>
             <Filter className="h-4 w-4" />
             Bộ lọc
-            {(filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterRegion || filterLeadType || filterPhone === 'no_phone' || showOrphanDealColumn) && (
+            {(filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterRegion || filterLeadType || filterReferrer || filterCustomerCompany || filterPhone === 'no_phone' || showOrphanDealColumn) && (
               <span className="bg-blue-600 text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center font-bold">
-                {[filterAssignee, filterAssigneeName, filterCompany, filterSource, filterStage, filterRegion, filterLeadType, filterPhone === 'no_phone' ? filterPhone : ''].filter(Boolean).length}
+                {[filterAssignee, filterAssigneeName, filterCompany, filterSource, filterStage, filterRegion, filterLeadType, filterReferrer, filterCustomerCompany, filterPhone === 'no_phone' ? filterPhone : ''].filter(Boolean).length}
               </span>
             )}
           </button>
 
           {/* Clear all filters */}
-          {(searchText || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterRegion || filterLeadType || filterPhone !== 'has_phone' || timePreset) && (
+          {(searchText || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterRegion || filterLeadType || filterReferrer || filterCustomerCompany || filterPhone !== 'has_phone' || timePreset) && (
             <button onClick={() => {
               frozenUiSnapshotRef.current = null;
               deferFilterPruneRef.current = false;
@@ -3587,6 +3686,8 @@ export default function CRMDashboard() {
               setFilterStage('');
               setFilterRegion('');
               setFilterLeadType('');
+              setFilterReferrer('');
+              setFilterCustomerCompany('');
               setFilterPhone('has_phone');
               handleTimePresetChange('');
               try {
@@ -3965,6 +4066,58 @@ export default function CRMDashboard() {
                 </div>
               </div>
 
+              {/* Người giới thiệu */}
+              {dashboardScopeCompanyId && (
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-[10px] text-gray-500 font-medium">Người giới thiệu</label>
+                  <select
+                    value={filterReferrer}
+                    onChange={(e) => setFilterReferrer(e.target.value)}
+                    disabled={referrerFilterOptions.length === 0}
+                    className={`h-8 w-44 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer ${
+                      referrerFilterOptions.length === 0 ? 'opacity-70 cursor-not-allowed' : ''
+                    }`}
+                    title={
+                      referrerFilterOptions.length === 0
+                        ? 'Chưa có người giới thiệu — gán khi tạo Lead/Deal'
+                        : 'Lọc theo người giới thiệu của công ty đang xem'
+                    }
+                  >
+                    <option value="">{referrerFilterOptions.length === 0 ? 'Chưa có' : 'Tất cả'}</option>
+                    <option value="__none__">— Chưa gán —</option>
+                    {referrerFilterOptions.map((name) => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Tên công ty khách hàng */}
+              {dashboardScopeCompanyId && (
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-[10px] text-gray-500 font-medium">Công ty KH</label>
+                  <select
+                    value={filterCustomerCompany}
+                    onChange={(e) => setFilterCustomerCompany(e.target.value)}
+                    disabled={customerCompanyFilterOptions.length === 0}
+                    className={`h-8 w-44 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer ${
+                      customerCompanyFilterOptions.length === 0 ? 'opacity-70 cursor-not-allowed' : ''
+                    }`}
+                    title={
+                      customerCompanyFilterOptions.length === 0
+                        ? 'Chưa có tên công ty khách hàng — nhập khi tạo Lead/Deal'
+                        : 'Lọc theo tên công ty khách hàng (ô «Tên công ty khách hàng» khi tạo)'
+                    }
+                  >
+                    <option value="">{customerCompanyFilterOptions.length === 0 ? 'Chưa có' : 'Tất cả'}</option>
+                    <option value="__none__">— Chưa nhập —</option>
+                    {customerCompanyFilterOptions.map((name) => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               {/* Phone filter */}
               <div className="flex flex-col gap-0.5">
                 <label className="text-[10px] text-gray-500 font-medium">SĐT</label>
@@ -4252,6 +4405,7 @@ export default function CRMDashboard() {
               onToggleMergeSelect={toggleManualMergeSelect}
               onToggleSelectAllInColumn={toggleSelectAllInColumn}
               compact
+              showCompanyOnCard={isAdmin && !isCompanyScopedAdmin && !dashboardScopeCompanyId}
               kpiLedgerPeriodStart={kpis?.kpi_ledger_period_start || null}
               onOpenKanbanComment={(it) => {
                 setKanbanCommentBody('');
@@ -5576,6 +5730,7 @@ function KanbanStageCard({
   onToggleMergeSelect,
   onToggleSelectAllInColumn,
   compact,
+  showCompanyOnCard,
   kpiLedgerPeriodStart,
   onOpenKanbanComment,
   onTogglePin,
@@ -5706,6 +5861,7 @@ function KanbanStageCard({
               mergeSelectedIds={mergeSelectedIds}
               onToggleMergeSelect={onToggleMergeSelect}
               compact={compact}
+              showCompanyOnCard={showCompanyOnCard}
               kpiLedgerPeriodStart={kpiLedgerPeriodStart}
               onOpenKanbanComment={onOpenKanbanComment}
               onTogglePin={onTogglePin}
@@ -5720,7 +5876,7 @@ function KanbanStageCard({
 }
 
 // Kanban Item Card - MISA style (redesign: header gọn, value lớn, footer phụ trách + actions)
-function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline }) {
+function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, showCompanyOnCard, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline }) {
   const navigate = useNavigate();
   const dealDragLocked = isDealCrmKanbanDragLocked(item, pipelineType);
   const openLeadDetail = () => {
@@ -6006,7 +6162,17 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
           </div>
         )}
 
-        {/* 5. Vị trí (Khu vực CRM) — thay vị trí cũ của Công ty */}
+        {/* 5. Công ty (khi xem tất cả công ty) + Khu vực CRM */}
+        {showCompanyOnCard && (item.company?.short_name || item.company?.name) && (
+          <div className="text-[11px] text-slate-600">
+            <span className="inline-flex items-center gap-1 min-w-0 truncate max-w-full">
+              <Building2 className="h-3 w-3 shrink-0 text-indigo-500" />
+              <span className="truncate font-medium text-indigo-800">
+                {item.company.short_name || item.company.name}
+              </span>
+            </span>
+          </div>
+        )}
         {item.crm_region?.name && (
           <div className="text-[11px] text-slate-600">
             <span className="inline-flex items-center gap-1 min-w-0 truncate max-w-full">
@@ -6166,6 +6332,7 @@ function KanbanView({
   onToggleMergeSelect,
   onToggleSelectAllInColumn,
   compact,
+  showCompanyOnCard,
   kpiLedgerPeriodStart,
   onOpenKanbanComment,
   onTogglePin,
@@ -6363,6 +6530,7 @@ function KanbanView({
               onToggleMergeSelect={onToggleMergeSelect}
               onToggleSelectAllInColumn={onToggleSelectAllInColumn}
               compact={compact}
+              showCompanyOnCard={showCompanyOnCard}
               kpiLedgerPeriodStart={kpiLedgerPeriodStart}
               onOpenKanbanComment={onOpenKanbanComment}
               onTogglePin={onTogglePin}
@@ -6383,10 +6551,12 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
     title: '',
     customer_name: '',
     customer_phone: '',
+    customer_company: '',
     source_id: '',
     company_id: defaultCompanyId || '',
     region_id: '',
     lead_type_id: '',
+    referrer_name: '',
     estimated_value: 0,
     probability: 50,
     assigned_to: currentUser?.id || '',
@@ -6394,6 +6564,8 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
   const [saving, setSaving] = useState(false);
   const [modalSources, setModalSources] = useState([]);
   const [modalRegions, setModalRegions] = useState([]);
+  const [referrers, setReferrers] = useState([]);
+  const [referrerPick, setReferrerPick] = useState('');
 
   const visibleLeadTypes = useMemo(() => {
     const cid = String(formData.company_id || '');
@@ -6416,6 +6588,23 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
         setModalSources(Array.isArray(list) ? list : []);
       })
       .catch(() => { if (!cancelled) setModalSources([]); });
+    return () => { cancelled = true; };
+  }, [formData.company_id]);
+
+  useEffect(() => {
+    const cid = String(formData.company_id || '').trim();
+    if (!cid) {
+      setReferrers([]);
+      setReferrerPick('');
+      return;
+    }
+    let cancelled = false;
+    api.get('/crm/referrers', { params: { company_id: cid } })
+      .then((r) => {
+        if (cancelled) return;
+        setReferrers(Array.isArray(r.data?.items) ? r.data.items : []);
+      })
+      .catch(() => { if (!cancelled) setReferrers([]); });
     return () => { cancelled = true; };
   }, [formData.company_id]);
 
@@ -6459,6 +6648,13 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
     }
   }, [isAdmin, defaultCompanyId, currentUser?.company_id]);
 
+  const resolvedReferrerName = useMemo(() => {
+    if (!referrerPick) return '';
+    if (referrerPick === '__new__') return String(formData.referrer_name || '').trim();
+    const hit = referrers.find((x) => String(x.id) === String(referrerPick));
+    return hit?.name?.trim() || '';
+  }, [referrerPick, referrers, formData.referrer_name]);
+
   // Reset lead_type when company changes
   useEffect(() => {
     if (!formData.lead_type_id) return;
@@ -6495,6 +6691,7 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
       const { data: customer } = await api.post('/customers', {
         full_name: formData.customer_name,
         phone: formData.customer_phone || null,
+        company: formData.customer_company?.trim() || null,
         ...(formData.company_id ? { company_id: formData.company_id } : {}),
       });
       const customerId = customer?.id || customer?.customer?.id;
@@ -6518,6 +6715,7 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
         stage_id: firstStage?.id,
         estimated_value: parseFloat(formData.estimated_value) || 0,
         probability: parseInt(formData.probability) || 50,
+        referrer_name: resolvedReferrerName || null,
       });
       onSuccess?.();
       onClose();
@@ -6532,6 +6730,7 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
   const regionName = modalRegions.find((r) => String(r.id) === String(formData.region_id))?.name || '';
   const sourceName = modalSources.find((s) => String(s.id) === String(formData.source_id))?.name || '';
   const leadTypeName = visibleLeadTypes.find((t) => String(t.id) === String(formData.lead_type_id))?.name || '';
+  const referrerDisplayName = resolvedReferrerName || '';
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -6564,7 +6763,10 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
                   <label className="block text-xs font-semibold text-gray-700 mb-1">🏢 Công ty <span className="text-red-500">*</span></label>
                   {isAdmin ? (
                     <select value={formData.company_id}
-                      onChange={(e) => setFormData((prev) => ({ ...prev, company_id: e.target.value, region_id: '' }))}
+                      onChange={(e) => {
+                        setReferrerPick('');
+                        setFormData((prev) => ({ ...prev, company_id: e.target.value, region_id: '', referrer_name: '' }));
+                      }}
                       required
                       className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-400 text-sm ${!formData.company_id ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}>
                       <option value="">-- Chọn --</option>
@@ -6603,6 +6805,13 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-400 text-sm bg-white"
                     placeholder="0901234567" />
                 </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Công ty KH</label>
+                  <input type="text" value={formData.customer_company}
+                    onChange={(e) => setFormData({ ...formData, customer_company: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-400 text-sm bg-white"
+                    placeholder="Tên công ty khách hàng (nếu có)" />
+                </div>
                 <p className="text-[10px] text-blue-500">Thông tin chi tiết sẽ nhập thêm ở trang Lead</p>
               </div>
 
@@ -6628,6 +6837,38 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
                   </div>
                 )}
               </div>
+
+              {formData.company_id && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">🤝 Người giới thiệu</label>
+                  <select
+                    value={referrerPick}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setReferrerPick(v);
+                      if (v !== '__new__') setFormData((prev) => ({ ...prev, referrer_name: '' }));
+                    }}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-400 text-sm"
+                  >
+                    <option value="">— Không chọn —</option>
+                    {referrers.map((r) => (
+                      <option key={r.id} value={r.id}>{r.name}</option>
+                    ))}
+                    <option value="__new__">➕ Nhập người giới thiệu mới…</option>
+                  </select>
+                  {referrerPick === '__new__' && (
+                    <input
+                      type="text"
+                      value={formData.referrer_name}
+                      onChange={(e) => setFormData((prev) => ({ ...prev, referrer_name: e.target.value }))}
+                      className="mt-2 w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-400 text-sm"
+                      placeholder="VD: Chị Lan — giới thiệu từ hội nhóm"
+                      autoFocus
+                    />
+                  )}
+                  <p className="mt-1 text-[10px] text-gray-400">Tùy chọn — tên mới sẽ được lưu để chọn lại lần sau</p>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -6698,6 +6939,7 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
                 {regionName && <div className="flex items-center gap-1.5"><span className="text-gray-400">📍</span><span className="truncate">{regionName}</span></div>}
                 {sourceName && <div className="flex items-center gap-1.5"><span className="text-gray-400">📣</span><span>{sourceName}</span></div>}
                 {leadTypeName && <div className="flex items-center gap-1.5"><span className="text-gray-400">🏷️</span><span>{leadTypeName}</span></div>}
+                {referrerDisplayName && <div className="flex items-center gap-1.5"><span className="text-gray-400">🤝</span><span className="truncate">{referrerDisplayName}</span></div>}
               </div>
 
               {/* Value & probability */}

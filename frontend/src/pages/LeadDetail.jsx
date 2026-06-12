@@ -2809,6 +2809,7 @@ function AddDocumentModal({ onClose, onSave }) {
 function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompaniesSx = [] }) {
   const [sources, setSources] = useState([]);
   const [leadTypes, setLeadTypes] = useState([]);
+  const [referrers, setReferrers] = useState([]);
   /** Khu vực CRM — chỉ theo company_id của lead (company_regions) */
   const [companyRegions, setCompanyRegions] = useState([]);
   const [editing, setEditing] = useState(null);
@@ -2879,6 +2880,26 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
   }, [lead?.company_id, currentUser?.company_id]);
 
   useEffect(() => {
+    const cid = lead?.company_id || currentUser?.company_id;
+    if (!cid) { setReferrers([]); return; }
+    let cancelled = false;
+    api.get('/crm/referrers', { params: { company_id: String(cid) } })
+      .then((r) => {
+        if (cancelled) return;
+        setReferrers(Array.isArray(r.data?.items) ? r.data.items : []);
+      })
+      .catch(() => { if (!cancelled) setReferrers([]); });
+    return () => { cancelled = true; };
+  }, [lead?.company_id, currentUser?.company_id]);
+
+  const referrerOptions = useMemo(() => {
+    const names = new Set((referrers || []).map((r) => r.name).filter(Boolean));
+    const cur = String(lead?.referrer_name || '').trim();
+    if (cur && !names.has(cur)) names.add(cur);
+    return [...names].sort((a, b) => a.localeCompare(b, 'vi')).map((name) => ({ value: name, label: name }));
+  }, [referrers, lead?.referrer_name]);
+
+  useEffect(() => {
     const cid = lead?.company_id;
     if (!cid) {
       setCompanyRegions([]);
@@ -2927,6 +2948,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
       else if (field === 'probability') payload.probability = Math.min(100, Math.max(0, parseInt(value) || 0));
       else if (field === 'source_id') payload.source_id = value || null;
       else if (field === 'lead_type_id') payload.lead_type_id = value || null;
+      else if (field === 'referrer_name') payload.referrer_name = value?.trim() || null;
       else if (field === 'assigned_to') {
         payload.assigned_to = value || null;
         payload.lead_owner_id = value || null;
@@ -3320,6 +3342,17 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
         displayValue={lead?.source ? `${lead.source.icon} ${lead.source.name}` : null}
         type="select"
         options={sources.map(s => ({ value: s.id, label: `${s.icon} ${s.name}` }))} />
+
+      <EditableRow icon="🤝" label="Người giới thiệu" field="referrer_name"
+        value={lead?.referrer_name || ''}
+        displayValue={lead?.referrer_name || null}
+        type="select"
+        options={[
+          ...referrerOptions,
+          ...(lead?.referrer_name && !referrerOptions.some((o) => o.value === lead.referrer_name)
+            ? [{ value: lead.referrer_name, label: lead.referrer_name }]
+            : []),
+        ]} />
 
       <EditableRow icon="🏷️" label="Loại" field="lead_type_id"
         value={lead?.lead_type_id || ''}

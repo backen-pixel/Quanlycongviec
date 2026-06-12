@@ -76,7 +76,7 @@ export function buildStaticListColumns(pipelineType) {
     { key: 'stage_entered_at', label: 'Ngày vào stage hiện tại', group: 'Pipeline', defaultVisible: false },
     { key: 'days_in_stage', label: 'TG stage hiện tại', group: 'Pipeline', defaultVisible: false },
     { key: 'kpi_ledger', label: 'Điểm KPI', group: 'KPI', defaultVisible: false, align: 'right' },
-    { key: 'company', label: 'Công ty', group: 'Cơ bản', defaultVisible: false },
+    { key: 'company', label: 'Công ty', group: 'Cơ bản', defaultVisible: true },
     { key: 'expected_close', label: 'Hạn chốt dự kiến', group: 'Thời gian', defaultVisible: false },
   ].filter((c) => !c.dealOnly || isDeal);
 }

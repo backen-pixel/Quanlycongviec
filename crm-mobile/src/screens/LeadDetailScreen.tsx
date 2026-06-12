@@ -21,7 +21,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api, formatApiError, postMultipart } from '../api/client';
 import { useAuth } from '../context/AuthContext';
-import type { CrmActivity, CrmDocument, CrmLeadDetail, CrmLeadMember, CrmStage, CrmTask } from '../types/crm';
+import type { CrmActivity, CrmCompany, CrmDocument, CrmLeadDetail, CrmLeadMember, CrmStage, CrmTask } from '../types/crm';
 import type { CrmStackParamList } from '../navigation/types';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { formatDate, formatDateTime, formatVND } from '../lib/formatUtils';
@@ -153,6 +153,20 @@ export default function LeadDetailScreen() {
   const [assigneeModal, setAssigneeModal] = useState(false);
   const [pickerUsers, setPickerUsers] = useState<PickerUser[]>([]);
   const [pickerLoading, setPickerLoading] = useState(false);
+  const [crmCompanies, setCrmCompanies] = useState<CrmCompany[]>([]);
+  const [companyDraftId, setCompanyDraftId] = useState('');
+
+  const isSystemAdmin = useMemo(
+    () => String(user?.role || '') === 'admin' && !user?.company_id,
+    [user?.role, user?.company_id],
+  );
+
+  useEffect(() => {
+    api
+      .get<{ companies?: CrmCompany[] }>('/companies', { params: { for_module: 'crm' } })
+      .then((r) => setCrmCompanies(r.data?.companies || []))
+      .catch(() => setCrmCompanies([]));
+  }, []);
 
   const load = useCallback(async () => {
     setErr('');
@@ -176,6 +190,11 @@ export default function LeadDetailScreen() {
       );
       setCreatedAtDraft(L?.created_at ? String(L.created_at).slice(0, 10) : '');
       setAssignDraftId(String(L?.assigned_to || L?.lead_owner_id || ''));
+      setCompanyDraftId(
+        L?.company_id
+          ? String(L.company_id)
+          : (user?.company_id ? String(user.company_id) : ''),
+      );
       const k = L?.customer;
       setCust({
         full_name: k?.full_name || '',
@@ -537,7 +556,12 @@ export default function LeadDetailScreen() {
 
   const saveLeadCoreMeta = async () => {
     if (!lead) return;
-    const pickAssigneeAllowed = !!lead.company_id;
+    const effectiveCompanyId = companyDraftId.trim() || (lead.company_id ? String(lead.company_id) : '');
+    if (!effectiveCompanyId) {
+      Alert.alert('Thiếu công ty', 'Vui lòng chọn công ty cho lead/deal.');
+      return;
+    }
+    const pickAssigneeAllowed = !!effectiveCompanyId;
     const dateStr = createdAtDraft.trim();
     if (dateStr && !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
       Alert.alert('Ngày tạo', 'Dùng định dạng YYYY-MM-DD (ví dụ 2026-04-16).');
@@ -546,7 +570,10 @@ export default function LeadDetailScreen() {
     const digits = valueDraft.replace(/\D/g, '');
     const estimated_value = digits ? parseInt(digits, 10) : 0;
 
-    const body: Record<string, unknown> = { estimated_value };
+    const body: Record<string, unknown> = { estimated_value, company_id: effectiveCompanyId };
+    if (String(lead.company_id || '') !== effectiveCompanyId) {
+      body.region_id = null;
+    }
     if (dateStr) body.created_at = `${dateStr}T12:00:00.000Z`;
     if (pickAssigneeAllowed) {
       body.assigned_to = assignDraftId.trim() || null;
@@ -565,8 +592,9 @@ export default function LeadDetailScreen() {
   };
 
   const convertToDeal = async () => {
-    if (!lead?.company_id) {
-      Alert.alert('Thiếu công ty', 'Lead chưa có công ty — vào chi tiết Lead để gán công ty trước khi chuyển Deal.');
+    const coId = companyDraftId || (lead?.company_id ? String(lead.company_id) : '');
+    if (!coId) {
+      Alert.alert('Thiếu công ty', 'Chọn công ty trong mục Thông tin CRM trước khi chuyển Deal.');
       return;
     }
     setConvertRegionsLoading(true);
@@ -576,7 +604,7 @@ export default function LeadDetailScreen() {
     try {
       const { data } = await api.get<Array<{ id: string; name?: string; is_active?: boolean }>>(
         '/crm/company-regions',
-        { params: { company_id: lead.company_id, for_module: 'crm' } },
+        { params: { company_id: coId, for_module: 'crm' } },
       );
       const list = Array.isArray(data) ? data : [];
       setConvertRegions(list.filter((x) => x.is_active !== false));
@@ -720,7 +748,13 @@ export default function LeadDetailScreen() {
   const c = lead.customer;
   const isDeal = lead.type === 'deal';
   const canConvert = !isDeal;
-  const canPickAssignee = !!lead.company_id;
+  const canPickAssignee = !!(companyDraftId || lead.company_id);
+  const companyDraftLabel =
+    crmCompanies.find((c) => String(c.id) === String(companyDraftId))?.short_name
+    || crmCompanies.find((c) => String(c.id) === String(companyDraftId))?.name
+    || lead.company?.short_name
+    || lead.company?.name
+    || '';
   const assigneeLabel = !assignDraftId
     ? '— Chưa gán —'
     : pickerUsers.find((u) => u.id === assignDraftId)?.full_name ||
@@ -1087,7 +1121,34 @@ export default function LeadDetailScreen() {
           </TouchableOpacity>
           {crmExpanded ? (
             <>
-              <Text style={styles.metaHint}>Giá trị (VNĐ), ngày tạo (YYYY-MM-DD), người phụ trách — lưu chung một nút.</Text>
+              <Text style={styles.metaHint}>Công ty, giá trị (VNĐ), ngày tạo, người phụ trách — lưu chung một nút.</Text>
+
+              <View style={styles.fieldBlock}>
+                <Text style={styles.fieldLabel}>🏢 Công ty *</Text>
+                {isSystemAdmin && crmCompanies.length > 0 ? (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.companyChipScroll}>
+                    {crmCompanies.map((co) => {
+                      const on = String(companyDraftId) === String(co.id);
+                      return (
+                        <TouchableOpacity
+                          key={co.id}
+                          style={[styles.companyChip, on && styles.companyChipOn]}
+                          onPress={() => setCompanyDraftId(String(co.id))}
+                        >
+                          <Text style={[styles.companyChipTxt, on && styles.companyChipTxtOn]} numberOfLines={1}>
+                            {co.short_name || co.name}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                ) : (
+                  <Text style={styles.fieldValue}>{companyDraftLabel || '— Chưa chọn —'}</Text>
+                )}
+                {!companyDraftId ? (
+                  <Text style={styles.metaHintSm}>Chọn công ty để gán khu vực và người phụ trách.</Text>
+                ) : null}
+              </View>
 
               <FieldInp
                 label="💰 Giá trị dự kiến (VNĐ)"
@@ -1105,8 +1166,8 @@ export default function LeadDetailScreen() {
               <View style={styles.fieldBlock}>
                 <Text style={styles.fieldLabel}>👤 Người phụ trách</Text>
                 <Text style={styles.fieldValue}>{assigneeLabel}</Text>
-                {!lead.company_id ? (
-                  <Text style={styles.metaHintSm}>Chọn công ty cho lead/deal trên web trước khi đổi người phụ trách.</Text>
+                {!canPickAssignee ? (
+                  <Text style={styles.metaHintSm}>Chọn công ty trước khi đổi người phụ trách.</Text>
                 ) : (
                   <TouchableOpacity style={styles.pickAssignBtn} onPress={() => void openAssigneePicker()}>
                     <Text style={styles.pickAssignBtnTxt}>Chọn nhân viên…</Text>
@@ -1914,6 +1975,18 @@ const styles = StyleSheet.create({
   docSectionSub: { fontSize: 11, color: CrmColors.gray500, marginBottom: 8, lineHeight: 16 },
   metaHint: { fontSize: 12, color: CrmColors.gray500, marginBottom: 12, lineHeight: 17 },
   metaHintSm: { fontSize: 11, color: CrmColors.gray400, marginTop: 6, lineHeight: 15 },
+  companyChipScroll: { marginTop: 6, marginBottom: 4 },
+  companyChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: CrmRadii.full,
+    backgroundColor: CrmColors.gray100,
+    marginRight: 8,
+    maxWidth: 160,
+  },
+  companyChipOn: { backgroundColor: CrmColors.blue600 },
+  companyChipTxt: { fontSize: 12, fontWeight: '600', color: CrmColors.gray700 },
+  companyChipTxtOn: { color: CrmColors.white },
   pickAssignBtn: {
     marginTop: 8,
     alignSelf: 'flex-start',

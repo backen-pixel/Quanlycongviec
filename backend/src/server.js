@@ -250,6 +250,7 @@ try { app.use('/api/ai-chat-bot', require('./routes/aiChatBot')); } catch (e) { 
 try { app.use('/api/user-activity', require('./routes/userActivityLog')); } catch (e) { console.warn('⚠️ User Activity Log route failed to load:', e.message); }
 try { app.use('/api/auth-events', require('./routes/authEventLog')); } catch (e) { console.warn('⚠️ Auth Event Log route failed to load:', e.message); }
 try { app.use('/api/integrations/stringee', require('./routes/stringee')); } catch (e) { console.warn('⚠️ Stringee route failed to load:', e.message); }
+try { app.use('/api/calc', require('./routes/calc')); } catch (e) { console.warn('⚠️ Calc (Tính toán) route failed to load:', e.message); }
 
 // ─── Serve Frontend (SPA) in production ──
 const frontendDist = path.join(__dirname, '../../frontend/dist');

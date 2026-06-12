@@ -39,6 +39,7 @@ export default function CreateCrmEntityModal({ visible, mode, onClose, onCreated
   const [companyId, setCompanyId] = useState(defaultCompany);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  const [customerCompany, setCustomerCompany] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
   const [sourceId, setSourceId] = useState('');
   const [estimatedValue, setEstimatedValue] = useState('');
@@ -72,6 +73,7 @@ export default function CreateCrmEntityModal({ visible, mode, onClose, onCreated
     setCompanyId(defaultCompany);
     setCustomerName('');
     setCustomerPhone('');
+    setCustomerCompany('');
     setCustomerEmail('');
     setSourceId('');
     setEstimatedValue('');
@@ -116,6 +118,7 @@ export default function CreateCrmEntityModal({ visible, mode, onClose, onCreated
       const { data: customer } = await api.post<{ id: string }>('/customers', {
         full_name: customerName.trim(),
         phone: customerPhone.trim() || null,
+        company: customerCompany.trim() || null,
         ...(mode === 'deal'
           ? {
               email: customerEmail.trim() || null,
@@ -220,6 +223,13 @@ export default function CreateCrmEntityModal({ visible, mode, onClose, onCreated
                 <TextInput style={styles.input} value={customerName} onChangeText={setCustomerName} placeholder="Họ tên" />
                 <Text style={styles.label}>SĐT{mode === 'deal' ? ' *' : ''}</Text>
                 <TextInput style={styles.input} value={customerPhone} onChangeText={setCustomerPhone} keyboardType="phone-pad" placeholder="090…" />
+                <Text style={styles.label}>Công ty KH</Text>
+                <TextInput
+                  style={styles.input}
+                  value={customerCompany}
+                  onChangeText={setCustomerCompany}
+                  placeholder="Tên công ty khách hàng (nếu có)"
+                />
                 {mode === 'deal' ? (
                   <>
                     <Text style={styles.label}>Email</Text>

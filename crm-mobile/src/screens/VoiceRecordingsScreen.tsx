@@ -21,7 +21,7 @@ import type { VoiceStackParamList } from '../navigation/types';
 import { CrmColors, CrmRadii, CrmShadow } from '../theme/crmTheme';
 import { formatDateTime } from '../lib/formatUtils';
 import { voiceRecordingPlayUrl } from '../lib/crmVoicePlayUrl';
-import { isCrmVoiceAdmin } from '../lib/crmMobilePrefs';
+import { canViewCompanyVoiceList, isCrmVoiceAdmin } from '../lib/crmMobilePrefs';
 
 type Nav = NativeStackNavigationProp<VoiceStackParamList, 'VoiceRecordingsList'>;
 
@@ -30,6 +30,7 @@ type PickerUser = { id: string; full_name?: string | null; email?: string | null
 export default function VoiceRecordingsScreen({ navigation }: { navigation: Nav }) {
   const { user } = useAuth();
   const admin = isCrmVoiceAdmin(user?.role);
+  const companyViewer = canViewCompanyVoiceList(user);
   const [list, setList] = useState<CrmVoiceRecording[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
@@ -47,7 +48,8 @@ export default function VoiceRecordingsScreen({ navigation }: { navigation: Nav 
     setErr('');
     try {
       const params: Record<string, string> = {};
-      if (admin && filterUserId) params.user_id = filterUserId;
+      if (companyViewer && filterUserId) params.user_id = filterUserId;
+      if (user?.company_id) params.company_id = String(user.company_id);
       const { data } = await api.get<{ recordings?: CrmVoiceRecording[] }>('/voice-recordings', { params });
       setList(Array.isArray(data?.recordings) ? data.recordings : []);
     } catch (e: unknown) {
@@ -60,7 +62,7 @@ export default function VoiceRecordingsScreen({ navigation }: { navigation: Nav 
     } finally {
       setLoading(false);
     }
-  }, [admin, filterUserId]);
+  }, [companyViewer, filterUserId, user?.company_id]);
 
   useEffect(() => {
     void load();
@@ -231,7 +233,7 @@ export default function VoiceRecordingsScreen({ navigation }: { navigation: Nav 
     navigation.getParent()?.navigate('CrmTab', { screen: 'LeadDetail', params: { id } } as never);
   };
 
-  const filterLabel = admin
+  const filterLabel = companyViewer
     ? filterUserId
       ? pickerUsers.find((u) => u.id === filterUserId)?.full_name || filterUserId
       : 'Tất cả nhân viên'
@@ -241,11 +243,13 @@ export default function VoiceRecordingsScreen({ navigation }: { navigation: Nav 
     <View style={styles.screen}>
       <Text style={styles.banner}>
         {admin
-          ? 'Quản trị: xem mọi ghi âm. Nhân viên chỉ thấy bản ghi do chính họ tải lên. Server tự ghép KH + lead/deal theo SĐT (khi upload hoặc khi bấm quét).'
-          : 'Chỉ hiển thị ghi âm bạn đã gửi lên. Hệ thống tự ghép khách hàng và lead/deal theo số điện thoại trên file.'}
+          ? 'Admin hệ thống: xem ghi âm mọi công ty. Server tự ghép KH + lead/deal theo SĐT.'
+          : companyViewer
+            ? 'Quản lý công ty: chỉ ghi âm do NV công ty bạn upload. Server tự ghép KH + lead/deal theo SĐT.'
+            : 'Chỉ hiển thị ghi âm bạn đã gửi lên. Hệ thống tự ghép khách hàng và lead/deal theo số điện thoại.'}
       </Text>
 
-      {admin ? (
+      {companyViewer ? (
         <View style={styles.filterRow}>
           <Text style={styles.filterLbl}>Lọc theo NV</Text>
           <TouchableOpacity style={[styles.filterBtn, CrmShadow.sm]} onPress={() => void openPicker()}>
@@ -281,7 +285,7 @@ export default function VoiceRecordingsScreen({ navigation }: { navigation: Nav 
         <TouchableOpacity style={styles.btnGhost} onPress={() => void relinkMine()} disabled={relinkBusy}>
           <Text style={styles.btnGhostTxt}>{relinkBusy ? '…' : 'Quét ghép (của tôi)'}</Text>
         </TouchableOpacity>
-        {admin ? (
+        {companyViewer ? (
           <TouchableOpacity style={styles.btnWarn} onPress={() => void relinkCompany()} disabled={relinkBusy}>
             <Text style={styles.btnWarnTxt}>Quét công ty</Text>
           </TouchableOpacity>

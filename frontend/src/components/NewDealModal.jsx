@@ -26,6 +26,7 @@ export default function NewDealModal({
     title: '',
     customer_name: '',
     customer_phone: '',
+    customer_company: '',
     customer_email: '',
     source_id: '',
     company_id: defaultCompanyId || '',
@@ -37,11 +38,14 @@ export default function NewDealModal({
     install_address: '',
     description: '',
     external_company_name: '',
+    referrer_name: '',
   });
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
   const [modalSources, setModalSources] = useState([]);
   const [modalRegions, setModalRegions] = useState([]);
+  const [referrers, setReferrers] = useState([]);
+  const [referrerPick, setReferrerPick] = useState('');
   const [modalWorkTypes, setModalWorkTypes] = useState([]);
   const [externalCompanies, setExternalCompanies] = useState([]);
   const [externalCompanyPick, setExternalCompanyPick] = useState('');
@@ -110,6 +114,24 @@ export default function NewDealModal({
         setModalSources(Array.isArray(list) ? list : []);
       })
       .catch(() => { if (!cancelled) setModalSources([]); });
+    return () => { cancelled = true; };
+  }, [isProduction, formData.company_id]);
+
+  useEffect(() => {
+    if (isProduction) return undefined;
+    const cid = String(formData.company_id || '').trim();
+    if (!cid) {
+      setReferrers([]);
+      setReferrerPick('');
+      return undefined;
+    }
+    let cancelled = false;
+    api.get('/crm/referrers', { params: { company_id: cid } })
+      .then((r) => {
+        if (cancelled) return;
+        setReferrers(Array.isArray(r.data?.items) ? r.data.items : []);
+      })
+      .catch(() => { if (!cancelled) setReferrers([]); });
     return () => { cancelled = true; };
   }, [isProduction, formData.company_id]);
 
@@ -183,6 +205,13 @@ export default function NewDealModal({
     return hit?.name?.trim() || '';
   }, [isProduction, externalCompanyPick, externalCompanies, formData.external_company_name]);
 
+  const resolvedReferrerName = useMemo(() => {
+    if (isProduction || !referrerPick) return '';
+    if (referrerPick === '__new__') return String(formData.referrer_name || '').trim();
+    const hit = referrers.find((x) => String(x.id) === String(referrerPick));
+    return hit?.name?.trim() || '';
+  }, [isProduction, referrerPick, referrers, formData.referrer_name]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.title) return alert('Nhập tên Deal');
@@ -230,6 +259,7 @@ export default function NewDealModal({
       const { data: customer } = await api.post('/customers', {
         full_name: formData.customer_name,
         phone: formData.customer_phone,
+        company: formData.customer_company?.trim() || null,
         email: formData.customer_email || null,
         address: formData.install_address || null,
         ...(formData.company_id ? { company_id: formData.company_id } : {}),
@@ -247,6 +277,7 @@ export default function NewDealModal({
         probability: parseInt(formData.probability, 10) || 50,
         install_address: formData.install_address || null,
         description: formData.description || null,
+        referrer_name: resolvedReferrerName || null,
       });
 
       onSuccess?.(deal);
@@ -265,6 +296,7 @@ export default function NewDealModal({
   const regionName = modalRegions.find((r) => String(r.id) === String(formData.region_id))?.name || '';
   const sourceName = modalSources.find((s) => String(s.id) === String(formData.source_id))?.name || '';
   const leadTypeName = visibleLeadTypes.find((t) => String(t.id) === String(formData.lead_type_id))?.name || '';
+  const referrerDisplayName = resolvedReferrerName || '';
   const workTypeName = visibleWorkTypes.find((t) => String(t.id) === String(formData.workshop_type_id))?.name || '';
 
   const cardBorder = isProduction ? 'border-blue-200' : 'border-purple-200';
@@ -336,7 +368,9 @@ export default function NewDealModal({
                           region_id: '',
                           workshop_type_id: '',
                           external_company_name: '',
+                          referrer_name: '',
                         }));
+                        setReferrerPick('');
                       }}
                       required
                       className={`w-full px-3 py-2 border rounded-lg focus:ring-2 ${ringClass} text-sm ${!formData.company_id ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
@@ -407,6 +441,16 @@ export default function NewDealModal({
                       placeholder="email@example.com"
                     />
                   </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Công ty KH</label>
+                  <input
+                    type="text"
+                    value={formData.customer_company}
+                    onChange={(e) => set('customer_company', e.target.value)}
+                    className={`w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 ${ringClass} text-sm bg-white`}
+                    placeholder="Tên công ty khách hàng (nếu có)"
+                  />
                 </div>
               </div>
 
@@ -485,32 +529,67 @@ export default function NewDealModal({
               </div>
 
               {!isProduction && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-700 mb-1">Nguồn</label>
-                    <select
-                      value={formData.source_id}
-                      onChange={(e) => set('source_id', e.target.value)}
-                      className={`w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 ${ringClass} text-sm`}
-                    >
-                      <option value="">-- Nguồn --</option>
-                      {modalSources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
-                  </div>
-                  {visibleLeadTypes.length > 0 && (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-semibold text-gray-700 mb-1">🏷️ Loại Deal</label>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">Nguồn</label>
                       <select
-                        value={formData.lead_type_id}
-                        onChange={(e) => set('lead_type_id', e.target.value)}
+                        value={formData.source_id}
+                        onChange={(e) => set('source_id', e.target.value)}
                         className={`w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 ${ringClass} text-sm`}
                       >
-                        <option value="">-- Không bắt buộc --</option>
-                        {visibleLeadTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                        <option value="">-- Nguồn --</option>
+                        {modalSources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                       </select>
                     </div>
+                    {visibleLeadTypes.length > 0 && (
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-700 mb-1">🏷️ Loại Deal</label>
+                        <select
+                          value={formData.lead_type_id}
+                          onChange={(e) => set('lead_type_id', e.target.value)}
+                          className={`w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 ${ringClass} text-sm`}
+                        >
+                          <option value="">-- Không bắt buộc --</option>
+                          {visibleLeadTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                  {formData.company_id && (
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">🤝 Người giới thiệu</label>
+                      <select
+                        value={referrerPick}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setReferrerPick(v);
+                          if (v !== '__new__') set('referrer_name', '');
+                        }}
+                        className={`w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 ${ringClass} text-sm`}
+                      >
+                        <option value="">— Không chọn —</option>
+                        {referrers.map((r) => (
+                          <option key={r.id} value={r.id}>{r.name}</option>
+                        ))}
+                        <option value="__new__">➕ Nhập người giới thiệu mới…</option>
+                      </select>
+                      {referrerPick === '__new__' && (
+                        <input
+                          type="text"
+                          value={formData.referrer_name}
+                          onChange={(e) => set('referrer_name', e.target.value)}
+                          className={`mt-2 w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 ${ringClass} text-sm`}
+                          placeholder="VD: Anh Tuấn — đại lý Q1"
+                          autoFocus
+                        />
+                      )}
+                      <p className="mt-1 text-[10px] text-gray-400">
+                        Tùy chọn — tên mới sẽ được lưu để chọn lại lần sau
+                      </p>
+                    </div>
                   )}
-                </div>
+                </>
               )}
 
               <div className={isProduction ? '' : 'grid grid-cols-2 gap-3'}>
@@ -625,6 +704,9 @@ export default function NewDealModal({
                 )}
                 {leadTypeName && (
                   <div className="flex items-center gap-1.5"><span className="text-gray-400">🏷️</span><span>{leadTypeName}</span></div>
+                )}
+                {referrerDisplayName && (
+                  <div className="flex items-center gap-1.5"><span className="text-gray-400">🤝</span><span className="truncate">{referrerDisplayName}</span></div>
                 )}
                 {workTypeName && (
                   <div className="flex items-center gap-1.5"><span className="text-gray-400">📦</span><span>{workTypeName}</span></div>

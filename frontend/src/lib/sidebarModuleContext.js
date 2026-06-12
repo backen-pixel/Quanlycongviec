@@ -67,6 +67,7 @@ export function resolveModuleFromPathname(pathname) {
   }
   if (pathname.startsWith('/sx')) return 'sx';
   if (pathname.startsWith('/vc')) return 'vc';
+  if (pathname.startsWith('/calc')) return 'calc';
   if (pathname.startsWith('/knowledge')) return 'knowledge';
   if (isWorkPrimaryPath(pathname)) return 'work';
   return null;
@@ -75,7 +76,7 @@ export function resolveModuleFromPathname(pathname) {
 export function readStoredModule() {
   try {
     const v = sessionStorage.getItem(STORAGE_KEY);
-    if (v === 'crm' || v === 'work' || v === 'sx' || v === 'vc' || v === 'knowledge') return v;
+    if (v === 'crm' || v === 'work' || v === 'sx' || v === 'vc' || v === 'calc' || v === 'knowledge') return v;
   } catch { /* ignore */ }
   return null;
 }

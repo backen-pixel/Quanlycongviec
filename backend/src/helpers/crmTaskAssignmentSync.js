@@ -5,9 +5,9 @@ const { supabase } = require('../config/supabase');
 const { replaceCrmTaskAssignees } = require('./crmTaskAssignees');
 
 const SHARED_COLUMN_DEFAULTS = [
-  { name: 'Chưa làm', color: '#94A3B8', position: 0, is_done_column: false },
-  { name: 'Đang làm', color: '#3B82F6', position: 1, is_done_column: false },
-  { name: 'Hoàn thành', color: '#10B981', position: 2, is_done_column: true },
+  { name: 'Chưa làm', color: '#94A3B8', position: 0, is_done_column: false, is_in_progress_column: false },
+  { name: 'Đang làm', color: '#3B82F6', position: 1, is_done_column: false, is_in_progress_column: true },
+  { name: 'Hoàn thành', color: '#10B981', position: 2, is_done_column: true, is_in_progress_column: false },
 ];
 
 const ASSIGNMENT_SELECT = `
@@ -33,11 +33,18 @@ async function ensureSharedAssignmentColumns(userId) {
 }
 
 async function loadSharedColumns() {
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('crm_assignment_columns')
-    .select('id, position, is_done_column')
+    .select('id, position, is_done_column, is_in_progress_column')
     .is('company_id', null)
     .order('position', { ascending: true });
+  if (error && /is_in_progress_column/.test(error.message || '')) {
+    ({ data, error } = await supabase
+      .from('crm_assignment_columns')
+      .select('id, position, is_done_column')
+      .is('company_id', null)
+      .order('position', { ascending: true }));
+  }
   if (error) throw error;
   return data || [];
 }
@@ -48,6 +55,8 @@ function columnIdForTaskStatus(cols, status) {
     return cols.find((c) => c.is_done_column)?.id ?? cols[cols.length - 1].id;
   }
   if (status === 'in_progress') {
+    const flagged = cols.find((c) => c.is_in_progress_column);
+    if (flagged) return flagged.id;
     return cols.find((c) => !c.is_done_column && c.position >= 1)?.id ?? cols[0].id;
   }
   return cols.find((c) => !c.is_done_column)?.id ?? cols[0].id;

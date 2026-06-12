@@ -130,6 +130,11 @@ function KanbanLeadCard({
           📞 {item.customer.phone}
         </Text>
       ) : null}
+      {item.company?.short_name || item.company?.name ? (
+        <Text style={styles.kanCompany} numberOfLines={1}>
+          🏢 {item.company?.short_name || item.company?.name}
+        </Text>
+      ) : null}
       {item.source?.name ? (
         <Text style={styles.kanSrc} numberOfLines={1}>
           {(item.source.icon ? `${item.source.icon} ` : '') + item.source.name}
@@ -559,6 +564,7 @@ const styles = StyleSheet.create({
   kanStTxt: { fontSize: 9, fontWeight: '700' },
   kanCardSub: { fontSize: 11, color: CrmColors.gray600, marginTop: 6 },
   kanPhone: { fontSize: 11, color: CrmColors.gray700, marginTop: 2 },
+  kanCompany: { fontSize: 10, fontWeight: '600', color: '#4338ca', marginTop: 3 },
   kanSrc: { fontSize: 10, color: CrmColors.gray500, marginTop: 4 },
   kanCardVal: { fontSize: 12, fontWeight: '800', color: CrmColors.gray900, marginTop: 6 },
   kanCardFoot: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, gap: 8 },
