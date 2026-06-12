@@ -4062,6 +4062,8 @@ function SettingsTab({ onPagesChanged, fbCompanyQs = '' }) {
   const [leadTypesLoading, setLeadTypesLoading] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [editingId, setEditingId] = useState(null);
+  const [pageDeleteTarget, setPageDeleteTarget] = useState(null);
+  const [pageDeleteBusy, setPageDeleteBusy] = useState(false);
   const emptyForm = { page_id: '', page_name: '', access_token: '', webhook_verify_token: 'tubep_pro_verify_2024', auto_reply_message: 'Cảm ơn bạn đã liên hệ! Chúng tôi sẽ phản hồi sớm nhất.', auto_create_lead: true, default_module_key: '', default_target_type: 'lead', default_company_id: '', default_region_id: '', default_lead_type_id: '', default_stage_id: '', default_lead_owner_id: '' };
   const [form, setForm] = useState({ ...emptyForm });
   const [formCompanyRegions, setFormCompanyRegions] = useState([]);
@@ -4242,10 +4244,25 @@ function SettingsTab({ onPagesChanged, fbCompanyQs = '' }) {
     const res = await fetch(`${API}/api/facebook/pages/${id}`, { method: 'PUT', headers: hdr(), body: JSON.stringify(updates) });
     if (res.ok) { const d = await res.json(); setPages(prev => prev.map(p => p.id === id ? { ...p, ...d } : p)); }
   };
-  const deletePage = async (id, name) => {
-    if (!confirm(`Xóa Page "${name}"?`)) return;
-    await fetch(`${API}/api/facebook/pages/${id}`, { method: 'DELETE', headers: hdr() });
-    setPages(prev => prev.filter(p => p.id !== id));
+  const confirmDeletePage = async () => {
+    if (!pageDeleteTarget || pageDeleteBusy) return;
+    setPageDeleteBusy(true);
+    try {
+      const res = await fetch(`${API}/api/facebook/pages/${pageDeleteTarget.id}`, { method: 'DELETE', headers: hdr() });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        alert(e.error || 'Xóa Page thất bại');
+        return;
+      }
+      setPages((prev) => prev.filter((p) => p.id !== pageDeleteTarget.id));
+      if (editingId === pageDeleteTarget.id) setEditingId(null);
+      setPageDeleteTarget(null);
+      onPagesChanged?.();
+    } catch {
+      alert('Xóa Page thất bại');
+    } finally {
+      setPageDeleteBusy(false);
+    }
   };
   const startEdit = (p) => {
     setEditingId(p.id);
@@ -4565,7 +4582,17 @@ function SettingsTab({ onPagesChanged, fbCompanyQs = '' }) {
                   </div>
                   <div className="flex items-center gap-2">
                     <button onClick={() => startEdit(p)} className="text-xs text-gray-500 hover:text-blue-600 px-2 py-1 rounded hover:bg-gray-100 cursor-pointer flex items-center gap-1"><Edit3 size={12} /> Sửa</button>
-                    <button onClick={() => deletePage(p.id, p.page_name)} className="text-xs text-gray-500 hover:text-red-600 px-2 py-1 rounded hover:bg-gray-100 cursor-pointer flex items-center gap-1"><Trash2 size={12} /> Xóa</button>
+                    <button
+                      type="button"
+                      onClick={() => setPageDeleteTarget({
+                        id: p.id,
+                        name: p.page_name || p.page_id,
+                        page_id: p.page_id,
+                      })}
+                      className="text-xs text-gray-500 hover:text-red-600 px-2 py-1 rounded hover:bg-gray-100 cursor-pointer flex items-center gap-1"
+                    >
+                      <Trash2 size={12} /> Xóa
+                    </button>
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -4634,6 +4661,55 @@ function SettingsTab({ onPagesChanged, fbCompanyQs = '' }) {
           <div className="flex gap-2 pt-2">
             <button onClick={addPage} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 cursor-pointer">Lưu</button>
             <button onClick={() => setShowAdd(false)} className="text-gray-500 text-sm cursor-pointer px-4 py-2">Hủy</button>
+          </div>
+        </div>
+      )}
+
+      {pageDeleteTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => !pageDeleteBusy && setPageDeleteTarget(null)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-2xl w-full max-w-md"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5 border-b">
+              <h3 className="text-lg font-bold text-red-700">Xóa Facebook Page?</h3>
+              <p className="text-xs text-gray-500 mt-1">Hành động không thể hoàn tác</p>
+            </div>
+            <div className="p-5 space-y-3">
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-900">
+                <p>
+                  Bạn có chắc muốn xóa Page <strong>«{pageDeleteTarget.name}»</strong>
+                  {pageDeleteTarget.page_id ? <> (ID: {pageDeleteTarget.page_id})</> : null}?
+                </p>
+                <ul className="mt-2 text-xs text-red-800 space-y-1 list-disc list-inside">
+                  <li>Webhook và nhận tin mới từ Page này sẽ dừng</li>
+                  <li>Cấu hình auto Lead/Deal của Page sẽ bị xóa</li>
+                  <li>Danh bạ và tin nhắn cũ trên hệ thống vẫn giữ nguyên</li>
+                </ul>
+              </div>
+            </div>
+            <div className="p-5 border-t flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPageDeleteTarget(null)}
+                disabled={pageDeleteBusy}
+                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg cursor-pointer disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeletePage}
+                disabled={pageDeleteBusy}
+                className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <Trash2 size={14} />
+                {pageDeleteBusy ? 'Đang xóa…' : 'Xóa Page'}
+              </button>
+            </div>
           </div>
         </div>
       )}

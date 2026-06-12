@@ -76,8 +76,19 @@ const ICON_MAP = {
   ai_crm_deadline_digest: Sparkles,
 };
 
-/** Khớp backend `dashboard.js` — chỉ tin nhắn CRM/Messenger, không trộn deadline/task */
+/** Khớp backend `dashboard.js` — tin nhắn CRM/Messenger + @ bình luận lead/deal */
 const CHAT_NOTIFICATION_TYPES = ['lead_chat', 'messenger_chat'];
+
+function isLeadCommentMentionNotification(n) {
+  if (!n || n.type !== 'comment_added') return false;
+  const et = String(n.entity_type || '');
+  if (!['lead', 'crm_lead', 'crm_deal'].includes(et)) return false;
+  return n.metadata?.mentioned === true;
+}
+
+function isChatChannelNotification(n) {
+  return CHAT_NOTIFICATION_TYPES.includes(n?.type) || isLeadCommentMentionNotification(n);
+}
 const EVENT_NOTIFICATION_TYPES = ['event_created', 'event_completed'];
 const ASSIGNMENT_NOTIFICATION_TYPES = [
   'crm_assignment_assigned',
@@ -96,6 +107,7 @@ function isAssignmentNotification(n) {
 
 function isDealActivityNotification(n) {
   if (!n) return false;
+  if (isLeadCommentMentionNotification(n)) return false;
   const type = String(n?.type || '');
   if (DEAL_ACTIVITY_NOTIFICATION_TYPES.includes(type)) return true;
   return String(n?.entity_type || '') === 'crm_deal';
@@ -475,7 +487,7 @@ export default function NotificationCenter({ socket }) {
 
       cancelNotificationSpeech();
 
-      const isChat = CHAT_NOTIFICATION_TYPES.includes(notif?.type);
+      const isChat = isChatChannelNotification(notif);
       const isEvent = EVENT_NOTIFICATION_TYPES.includes(notif?.type);
       const isAssign = isAssignmentNotification(notif);
       if (isChat) {
@@ -979,6 +991,13 @@ export default function NotificationCenter({ socket }) {
                           is_direct: !!n.metadata?.is_direct,
                           peer_id: n.metadata?.peer_id || n.metadata?.sender_id || null,
                         });
+                        setOpen(false);
+                        return;
+                      }
+                      // @ bình luận lead/deal → tab Bình luận
+                      if (isLeadCommentMentionNotification(n) && n.entity_id) {
+                        const navTab = n.metadata?.nav_tab || 'comments';
+                        navigate(`/crm/leads/${n.entity_id}?tab=${navTab}`);
                         setOpen(false);
                         return;
                       }

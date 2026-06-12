@@ -10,8 +10,12 @@ const {
   isExpiryDeadlineNotificationType,
 } = require('./notificationOperationalFilter');
 const { preferenceKeyForNotificationType } = require('./notificationPrefTypes');
-
-const CHAT_NOTIFICATION_TYPES = ['lead_chat', 'messenger_chat'];
+const {
+  CHAT_NOTIFICATION_TYPES,
+  isChatChannelNotification,
+  isLeadCommentMentionNotification,
+  MESSAGES_CHANNEL_SQL,
+} = require('./notificationCenterChannels');
 const EVENT_NOTIFICATION_TYPES = ['event_created', 'event_completed'];
 const ASSIGNMENT_NOTIFICATION_TYPES = [
   'crm_assignment_assigned',
@@ -48,6 +52,7 @@ function isAssignmentNotification(n) {
 
 function isDealActivityNotification(n) {
   if (!n) return false;
+  if (isLeadCommentMentionNotification(n)) return false;
   const type = String(n.type || '');
   if (DEAL_ACTIVITY_NOTIFICATION_TYPES.includes(type)) return true;
   return String(n.entity_type || '') === 'crm_deal';
@@ -65,7 +70,7 @@ function countNotificationStats(rows) {
     const cnt = Number(n.cnt || 1);
     const t = n.type;
     const isExp = isExpiryDeadlineNotificationType(t);
-    const isChat = CHAT_NOTIFICATION_TYPES.includes(t);
+    const isChat = isChatChannelNotification(n);
     const isEvt = EVENT_NOTIFICATION_TYPES.includes(t);
     const isAssign = isAssignmentNotification(n);
     if (isExp) unreadDeadlines += cnt;
@@ -156,7 +161,7 @@ async function pgDashboardNotificationsList(userId, {
   const expiryList = EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST.map((t) => `'${t}'`).join(',');
 
   if (ch === 'messages') {
-    conditions.push(`type IN ('lead_chat', 'messenger_chat')`);
+    conditions.push(MESSAGES_CHANNEL_SQL);
   } else if (ch === 'events') {
     conditions.push(`type IN ('event_created', 'event_completed')`);
   } else if (ch === 'assignments') {

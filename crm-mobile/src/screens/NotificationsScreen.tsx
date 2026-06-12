@@ -52,12 +52,7 @@ function openFromNotification(n: AppNotification, navigation: TabNav) {
     return;
   }
   if (n.type === 'comment_added' && (n.entity_type === 'lead' || n.entity_type === 'crm_lead' || n.entity_type === 'crm_deal') && n.entity_id) {
-    const tab = navTab || 'activities';
-    if (tab === 'activities' || tab === 'comments') {
-      openWebPath(`/crm/leads/${n.entity_id}?tab=activities`);
-      return;
-    }
-    navigation.navigate('CrmTab', { screen: 'LeadDetail', params: { id: n.entity_id } });
+    openWebPath(`/crm/leads/${n.entity_id}?tab=comments`);
     return;
   }
   if (n.entity_type === 'crm_lead' || n.entity_type === 'crm_deal' || n.entity_type === 'lead') {
