@@ -126,3 +126,16 @@ export function isCrmVoiceAdmin(role?: string | null): boolean {
   const r = String(role ?? '').toLowerCase().trim();
   return ['admin', 'superadmin', 'super_admin', 'administrator'].includes(r);
 }
+
+/** Quản lý công ty / sales_admin / region_admin — xem ghi âm toàn công ty (backend ép phạm vi). */
+export function canViewCompanyVoiceList(user?: {
+  role?: string | null;
+  company_id?: string | null;
+} | null): boolean {
+  if (!user) return false;
+  if (isCrmVoiceAdmin(user.role)) return true;
+  const hasCo = user.company_id != null && String(user.company_id).trim() !== '';
+  if (!hasCo) return false;
+  const r = String(user.role ?? '').toLowerCase().trim();
+  return ['sales_admin', 'crm_production_admin', 'region_admin', 'admin'].includes(r);
+}

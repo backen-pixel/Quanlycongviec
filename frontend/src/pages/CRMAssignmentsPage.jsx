@@ -913,7 +913,7 @@ export default function CRMAssignmentsPage({
           columns={columns}
           itemsByColumn={itemsByColumn}
           users={users}
-          onAddColumn={() => setShowColumnModal({ name: '', color: COLUMN_COLORS[0], is_done_column: false })}
+          onAddColumn={() => setShowColumnModal({ name: '', color: COLUMN_COLORS[0], is_done_column: false, is_in_progress_column: false })}
           onEditColumn={(col) => setShowColumnModal(col)}
           onDeleteColumn={removeColumn}
           onAddCard={(colId) => { setEditingItem({ column_id: colId }); setShowItemModal(true); }}
@@ -1052,7 +1052,9 @@ function KanbanView({
             <div className="px-3 py-2 flex items-center gap-2 border-b border-white/40 rounded-t-xl" style={{ borderTopColor: col.color, borderTopWidth: 3, background: 'rgba(255,255,255,0.45)' }}>
               <GripVertical className="h-3.5 w-3.5 text-gray-300" />
               <span className="text-sm font-semibold flex-1 truncate" style={{ color: col.color }}>
-                {col.name} {col.is_done_column ? <CheckCircle2 className="h-3 w-3 inline text-emerald-500" /> : null}
+                {col.name}
+                {col.is_in_progress_column ? <Clock className="h-3 w-3 inline ml-0.5 text-blue-500" title="Cột đang làm" /> : null}
+                {col.is_done_column ? <CheckCircle2 className="h-3 w-3 inline ml-0.5 text-emerald-500" title="Cột hoàn thành" /> : null}
               </span>
               <span className="text-[11px] text-gray-400">{list.length}</span>
               <button onClick={() => onEditColumn(col)} className="text-gray-400 hover:text-blue-600 cursor-pointer"><Pencil className="h-3.5 w-3.5" /></button>
@@ -1937,6 +1939,7 @@ function ColumnModal({ column, onClose, onSave }) {
     name: column?.name || '',
     color: column?.color || COLUMN_COLORS[0],
     is_done_column: !!column?.is_done_column,
+    is_in_progress_column: !!column?.is_in_progress_column,
   });
   const submit = (e) => {
     e.preventDefault();
@@ -1977,10 +1980,26 @@ function ColumnModal({ column, onClose, onSave }) {
         <label className="flex items-center gap-2 text-xs cursor-pointer">
           <input
             type="checkbox"
-            checked={form.is_done_column}
-            onChange={(e) => setForm((p) => ({ ...p, is_done_column: e.target.checked }))}
+            checked={form.is_in_progress_column}
+            onChange={(e) => setForm((p) => ({
+              ...p,
+              is_in_progress_column: e.target.checked,
+              is_done_column: e.target.checked ? false : p.is_done_column,
+            }))}
           />
-          Cột "Hoàn thành" — kéo việc vào đây tự đánh dấu xong
+          Cột &quot;Đang làm&quot; — kéo việc vào đây tự chuyển trạng thái đang làm
+        </label>
+        <label className="flex items-center gap-2 text-xs cursor-pointer">
+          <input
+            type="checkbox"
+            checked={form.is_done_column}
+            onChange={(e) => setForm((p) => ({
+              ...p,
+              is_done_column: e.target.checked,
+              is_in_progress_column: e.target.checked ? false : p.is_in_progress_column,
+            }))}
+          />
+          Cột &quot;Hoàn thành&quot; — kéo việc vào đây tự đánh dấu xong
         </label>
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" onClick={onClose} className="h-9 px-4 rounded-lg border text-sm cursor-pointer">Huỷ</button>

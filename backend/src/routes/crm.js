@@ -3145,6 +3145,59 @@ r.put('/lead-types/:id', async (req, res) => {
   }
 });
 
+// ─── Người giới thiệu (theo công ty) ─────────────────────────────────────────
+r.get('/referrers', async (req, res) => {
+  try {
+    const companyId = req.query.company_id || null;
+    const sacRef = scopedAdminCompanyId(req);
+    if (sacRef) {
+      if (companyId && String(companyId) !== String(sacRef)) {
+        return res.status(403).json({ error: 'Không có quyền xem người giới thiệu của công ty khác' });
+      }
+    } else if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      if (companyId && String(companyId) !== String(cid)) {
+        return res.status(403).json({ error: 'Không có quyền xem người giới thiệu của công ty khác' });
+      }
+    }
+    const cidFinal = companyId || (req.user?.company_id || null);
+    if (!cidFinal) return res.json({ items: [] });
+    const { listCrmReferrers } = require('../helpers/crmReferrers');
+    const items = await listCrmReferrers(cidFinal);
+    res.json({ items });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.post('/referrers', async (req, res) => {
+  try {
+    const b = req.body || {};
+    let company_id = b.company_id || null;
+    if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      company_id = cid;
+    }
+    if (!company_id) return res.status(400).json({ error: 'Thiếu company_id' });
+    const { upsertCrmReferrer, normalizeReferrerName } = require('../helpers/crmReferrers');
+    const nameTrim = normalizeReferrerName(b.name);
+    if (!nameTrim) return res.status(400).json({ error: 'Nhập tên người giới thiệu' });
+    const saved = await upsertCrmReferrer({
+      companyId: company_id,
+      name: nameTrim,
+      userId: req.user.userId,
+    });
+    if (!saved) {
+      return res.status(503).json({ error: 'Chưa cài bảng người giới thiệu — chạy migration 337' });
+    }
+    res.status(saved.created ? 201 : 200).json(saved);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 r.delete('/lead-types/:id', async (req, res) => {
   try {
     const { data: existing, error: exErr } = await supabase.from('crm_lead_types').select('id, company_id').eq('id', req.params.id).single();
@@ -4303,7 +4356,7 @@ r.get('/leads-by-fb-page', async (req, res) => {
 const CRM_LEAD_LIST_SELECT_EXTRA = ', linked_project:projects!crm_leads_project_id_fkey(id, code, name, order_date, delivery_date, production_deadline, production_note)';
 const CRM_LEAD_REGION_EMBED = ', crm_region:company_regions!crm_leads_region_id_fkey(id, name, code)';
 const CRM_LEAD_LIST_SELECT_BASE =
-  `*, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type, sync_role, order_index), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies!crm_leads_company_id_fkey(id, name, short_name)${CRM_LEAD_REGION_EMBED}, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name)), vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)`;
+  `*, customer:customers(id, full_name, phone, email, company), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type, sync_role, order_index), source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies!crm_leads_company_id_fkey(id, name, short_name)${CRM_LEAD_REGION_EMBED}, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name)), vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)`;
 let CRM_LEAD_LIST_SELECT = CRM_LEAD_LIST_SELECT_BASE + CRM_LEAD_LIST_SELECT_EXTRA;
 let _crmLeadSelectMigrationChecked = false;
 let _vcPipelineStageAvailable = true; // migration 81
@@ -4681,13 +4734,36 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
     date_to,
     phone_filter,
     lead_type_id,
+    referrer_name,
+    customer_company,
     pipeline_id,
     next_follow_up_from,
     next_follow_up_to,
     next_follow_up_empty,
   } = reqQuery;
+  const referrerNameTrim = String(referrer_name || '').trim();
+  const customerCompanyTrim = String(customer_company || '').trim();
   const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 2000);
   const parsedOffset = Math.max(parseInt(offset) || 0, 0);
+  let customerIdsForCompanyFilter = null;
+  if (customerCompanyTrim && customerCompanyTrim !== '__none__') {
+    const { data: custRows, error: custErr } = await supabase
+      .from('customers')
+      .select('id')
+      .eq('company', customerCompanyTrim);
+    if (custErr) throw custErr;
+    customerIdsForCompanyFilter = (custRows || []).map((r) => r.id);
+    if (!customerIdsForCompanyFilter.length) {
+      return {
+        data: [],
+        total: 0,
+        offset: parsedOffset,
+        limit: parsedLimit,
+        hasMore: false,
+        nextOffset: parsedOffset,
+      };
+    }
+  }
 
   const nfFrom = sanitizeIsoDateQueryParam(next_follow_up_from);
   const nfTo = sanitizeIsoDateQueryParam(next_follow_up_to);
@@ -4723,6 +4799,8 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
     if (source_id) q = q.eq('source_id', source_id);
     if (company_id) q = q.eq('company_id', company_id);
     if (lead_type_id) q = q.eq('lead_type_id', lead_type_id);
+    if (referrerNameTrim) q = q.eq('referrer_name', referrerNameTrim);
+    if (customerIdsForCompanyFilter) q = q.in('customer_id', customerIdsForCompanyFilter);
     q = applyPipelineFollowUpFilters(q);
     const df = sanitizeIsoDateQueryParam(date_from);
     const dt = sanitizeIsoDateQueryParam(date_to);
@@ -4754,6 +4832,8 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
     if (source_id) q = q.eq('source_id', source_id);
     if (company_id) q = q.eq('company_id', company_id);
     if (lead_type_id) q = q.eq('lead_type_id', lead_type_id);
+    if (referrerNameTrim) q = q.eq('referrer_name', referrerNameTrim);
+    if (customerIdsForCompanyFilter) q = q.in('customer_id', customerIdsForCompanyFilter);
     q = applyPipelineFollowUpFilters(q);
     const df = sanitizeIsoDateQueryParam(date_from);
     const dt = sanitizeIsoDateQueryParam(date_to);
@@ -4783,6 +4863,9 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
   }
 
   let result = mapLeadDisplayPhone(rows);
+  if (customerCompanyTrim === '__none__') {
+    result = result.filter((l) => !String(l.customer?.company || '').trim());
+  }
   if (phone_filter === 'has_phone') {
     const zaloIds = await loadZaloLinkedLeadIdSet(result.map((l) => l.id));
     result = result.filter((l) => !!l.display_phone || zaloIds.has(String(l.id)));
@@ -4942,9 +5025,12 @@ r.get('/leads', responseCache({ ttl: 15, scope: 'user', tags: ['crm:list'] }), a
     const leadAssigneeStrict = type === 'lead' && (!!uuidQueryOrNull(assigned_to) || forcedLeadSelf);
     const rpcAssigneeStrict = dealAssigneeStrict || leadAssigneeStrict;
 
+    const referrerNameQuery = String(mergedQuery.referrer_name || '').trim();
+    const customerCompanyQuery = String(mergedQuery.customer_company || '').trim();
+
     // RPC `crm_leads_page_ids` (database/58_...) không có tham số p_lead_type_id — gửi thêm sẽ khiến PostgREST
-    // không resolve được function → 500. Lọc theo lead_type_id chỉ dùng legacy.
-    if (uuidQueryOrNull(lead_type_id)) {
+    // không resolve được function → 500. Lọc theo lead_type_id / referrer_name / customer_company chỉ dùng legacy.
+    if (uuidQueryOrNull(lead_type_id) || referrerNameQuery || customerCompanyQuery) {
       const legacy = await getCrmLeadsListLegacy(mergedQuery, {
         assigneeStrict: rpcAssigneeStrict,
         viewerUserId: req.user?.userId,
@@ -5541,6 +5627,15 @@ r.post('/leads', async (req, res) => {
       if (lt.applies_to && !['lead','both'].includes(String(lt.applies_to))) return res.status(400).json({ error: 'Loại này không áp dụng cho Lead' });
     }
 
+    if (Object.prototype.hasOwnProperty.call(body, 'referrer_name')) {
+      const { resolveReferrerNameForLead } = require('../helpers/crmReferrers');
+      body.referrer_name = await resolveReferrerNameForLead({
+        companyId: body.company_id,
+        referrerName: body.referrer_name,
+        userId: req.user.userId,
+      });
+    }
+
     const { data, error } = await supabase.from('crm_leads')
       .insert({ ...body, code, type: 'lead', lead_owner_id: body.assigned_to, created_by: req.user.userId, stage_entered_at: new Date().toISOString() })
       .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon)')
@@ -5650,6 +5745,15 @@ r.post('/deals', async (req, res) => {
       if (lt.is_active === false) return res.status(400).json({ error: 'Loại đang bị ẩn' });
       if (lt.applies_to && !['deal','both'].includes(String(lt.applies_to))) return res.status(400).json({ error: 'Loại này không áp dụng cho Deal' });
       leadTypeTriggersWorkshopSx = !!lt.workshop_production_templates;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, 'referrer_name')) {
+      const { resolveReferrerNameForLead } = require('../helpers/crmReferrers');
+      body.referrer_name = await resolveReferrerNameForLead({
+        companyId: body.company_id,
+        referrerName: body.referrer_name,
+        userId: req.user.userId,
+      });
     }
 
     const code = await nextCode('DEAL');
@@ -6099,6 +6203,15 @@ r.put('/leads/:id', async (req, res) => {
           remaining_tasks: taskGate.remaining_tasks,
         });
       }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(safeBody, 'referrer_name')) {
+      const { resolveReferrerNameForLead } = require('../helpers/crmReferrers');
+      safeBody.referrer_name = await resolveReferrerNameForLead({
+        companyId: safeBody.company_id ?? oldLead?.company_id,
+        referrerName: safeBody.referrer_name,
+        userId: req.user.userId,
+      });
     }
 
     if ('deposit_amount' in safeBody) {

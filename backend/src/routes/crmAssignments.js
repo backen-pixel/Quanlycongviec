@@ -103,10 +103,20 @@ const isAdmin = (req) => ADMIN_ROLES.has(String(req.user?.role || '').toLowerCas
 
 /** Cột Kanban dùng chung toàn hệ thống — không theo company_id. */
 const SHARED_COLUMN_DEFAULTS = [
-  { name: 'Chưa làm', color: '#94A3B8', position: 0, is_done_column: false },
-  { name: 'Đang làm', color: '#3B82F6', position: 1, is_done_column: false },
-  { name: 'Hoàn thành', color: '#10B981', position: 2, is_done_column: true },
+  { name: 'Chưa làm', color: '#94A3B8', position: 0, is_done_column: false, is_in_progress_column: false },
+  { name: 'Đang làm', color: '#3B82F6', position: 1, is_done_column: false, is_in_progress_column: true },
+  { name: 'Hoàn thành', color: '#10B981', position: 2, is_done_column: true, is_in_progress_column: false },
 ];
+
+async function clearOtherInProgressColumns(exceptId) {
+  let q = supabase
+    .from('crm_assignment_columns')
+    .update({ is_in_progress_column: false, updated_at: new Date().toISOString() })
+    .eq('is_in_progress_column', true);
+  if (exceptId != null) q = q.neq('id', exceptId);
+  const { error } = await q;
+  if (error && !/is_in_progress_column/.test(error.message || '')) throw error;
+}
 
 async function ensureSharedAssignmentColumns(userId) {
   const { count, error: countErr } = await supabase
@@ -372,7 +382,7 @@ r.get('/columns', async (req, res) => {
 // POST /api/crm/assignments/columns
 r.post('/columns', async (req, res) => {
   try {
-    const { name, color, is_done_column } = req.body || {};
+    const { name, color, is_done_column, is_in_progress_column } = req.body || {};
     if (!name || !name.trim()) return res.status(400).json({ error: 'Cần tên cột' });
 
     const { data: maxRow } = await supabase
@@ -391,12 +401,14 @@ r.post('/columns', async (req, res) => {
         color: color || '#3B82F6',
         company_id: null,
         is_done_column: !!is_done_column,
+        is_in_progress_column: !!is_in_progress_column,
         position: nextPos,
         created_by_id: req.user.userId,
       })
       .select()
       .single();
     if (error) throw error;
+    if (data?.is_in_progress_column) await clearOtherInProgressColumns(data.id);
     invalidateAssignColumns();
     res.status(201).json({ column: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi tạo cột' }); }
@@ -406,7 +418,7 @@ r.post('/columns', async (req, res) => {
 r.put('/columns/:id', async (req, res) => {
   try {
     const update = { updated_at: new Date().toISOString() };
-    ['name', 'color', 'position', 'is_done_column'].forEach((f) => {
+    ['name', 'color', 'position', 'is_done_column', 'is_in_progress_column'].forEach((f) => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
     const { data, error } = await supabase
@@ -416,6 +428,7 @@ r.put('/columns/:id', async (req, res) => {
       .select()
       .single();
     if (error) throw error;
+    if (data?.is_in_progress_column) await clearOtherInProgressColumns(data.id);
     invalidateAssignColumns();
     res.json({ column: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi cập nhật cột' }); }
@@ -715,15 +728,25 @@ r.post('/:id/move', async (req, res) => {
 
     // Auto status khi rớt vào cột Done / Doing / Todo
     if (column_id) {
-      const { data: col } = await supabase
+      let col = null;
+      let colErr = null;
+      ({ data: col, error: colErr } = await supabase
         .from('crm_assignment_columns')
-        .select('is_done_column, position')
+        .select('is_done_column, is_in_progress_column, position')
         .eq('id', column_id)
-        .maybeSingle();
+        .maybeSingle());
+      if (colErr && /is_in_progress_column/.test(colErr.message || '')) {
+        ({ data: col, error: colErr } = await supabase
+          .from('crm_assignment_columns')
+          .select('is_done_column, position')
+          .eq('id', column_id)
+          .maybeSingle());
+      }
       if (col?.is_done_column) {
         update.status = 'completed';
         update.completed_at = new Date().toISOString();
-      } else if ((col?.position ?? 0) >= 1) {
+      } else if (col?.is_in_progress_column === true
+        || (col?.is_in_progress_column == null && (col?.position ?? 0) >= 1)) {
         update.status = 'in_progress';
         update.completed_at = null;
       } else {

@@ -165,6 +165,11 @@ const ThemeSettingsPage = lazyWithRetry(() => import('./pages/ThemeSettingsPage'
 const PasswordSettingsPage = lazyWithRetry(() => import('./pages/PasswordSettingsPage'));
 const LocationSettingsPage = lazyWithRetry(() => import('./pages/LocationSettingsPage'));
 const MyDevicesPage = lazyWithRetry(() => import('./pages/MyDevicesPage'));
+const CalcModuleHome = lazyWithRetry(() => import('./pages/calc/CalcModuleHome'));
+const CalcSetupPage = lazyWithRetry(() => import('./pages/calc/CalcSetupPage'));
+const CalcRunPage = lazyWithRetry(() => import('./pages/calc/CalcRunPage'));
+const CalcImport3DPage = lazyWithRetry(() => import('./pages/calc/CalcImport3DPage'));
+const CalcHistoryPage = lazyWithRetry(() => import('./pages/calc/CalcHistoryPage'));
 
 import { Settings } from 'lucide-react';
 
@@ -435,6 +440,11 @@ export default function App() {
               <Route path="trash" element={<Navigate to="/admin/trash?tab=vc" replace />} />
               <Route path="projects/:id" element={<LogisticsDetail />} />
             </Route>
+            <Route path="/calc" element={<CalcModuleHome />} />
+            <Route path="/calc/setup" element={<CalcSetupPage />} />
+            <Route path="/calc/run" element={<CalcRunPage />} />
+            <Route path="/calc/import-3d" element={<CalcImport3DPage />} />
+            <Route path="/calc/history" element={<CalcHistoryPage />} />
             <Route path="/ecosystem-permissions" element={<EcosystemPermissionsPage />} />
             <Route path="/guide" element={<GuidePage />} />
             <Route path="/knowledge" element={<KnowledgeLibraryPage />} />

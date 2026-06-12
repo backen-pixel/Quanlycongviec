@@ -12,13 +12,21 @@ const {
   digitsOnly,
 } = require('../helpers/phoneCrmLink');
 const { nextCrmCode } = require('../helpers/crmNextCode');
-const { isAdminLike } = require('../helpers/adminRole');
+const { isAdminLike, isCompanyScopedAdmin } = require('../helpers/adminRole');
 const {
   uploadVoiceFromTempFile,
   removeVoiceObject,
   publicUrlForVoiceObject,
 } = require('../helpers/voiceStorageUpload');
-const { fetchCrmLeadsForCustomerScoped, userSeesAllCrmDeals, userSeesAllCrmLeads } = require('../helpers/crmAccessRoles');
+const {
+  fetchCrmLeadsForCustomerScoped,
+  userSeesAllCrmDeals,
+  userSeesAllCrmLeads,
+  isCrmSystemAdminUser,
+  isCrmCompanyAdminUser,
+  isCrmRegionAdminUser,
+  isCrmSalesAdminUser,
+} = require('../helpers/crmAccessRoles');
 
 const r = Router();
 r.use(auth);
@@ -38,7 +46,94 @@ function attachPlayableUrl(rec) {
 
 /** Các trường + join CRM (PostgREST cần FK 63_voice_recordings_crm_link.sql) */
 const RECORDING_SELECT =
-  'id, user_id, file_name, storage_path, mime_type, file_size, duration_sec, source, device_label, notes, created_at, phone_number, direction, call_started_at, call_ended_at, external_call_id, customer_id, lead_id, customer:customers(id, full_name, phone), lead:crm_leads(id, code, title, type), uploader:users!voice_recordings_user_id_fkey(id, full_name, email)';
+  'id, user_id, company_id, file_name, storage_path, mime_type, file_size, duration_sec, source, device_label, notes, created_at, phone_number, direction, call_started_at, call_ended_at, external_call_id, customer_id, lead_id, customer:customers(id, full_name, phone), lead:crm_leads(id, code, title, type, company_id), uploader:users!voice_recordings_user_id_fkey(id, full_name, email, company_id)';
+
+async function resolveVoiceRecordingCompanyId(supabaseClient, { lead_id, customer_id }) {
+  if (lead_id) {
+    const { data } = await supabaseClient
+      .from('crm_leads')
+      .select('company_id')
+      .eq('id', lead_id)
+      .maybeSingle();
+    if (data?.company_id) return data.company_id;
+  }
+  if (customer_id) {
+    const { data } = await supabaseClient
+      .from('customers')
+      .select('company_id')
+      .eq('id', customer_id)
+      .maybeSingle();
+    if (data?.company_id) return data.company_id;
+  }
+  return null;
+}
+
+/** Phạm vi quản lý: chỉ ghi âm do NV thuộc công ty đó upload (users.company_id của uploader). */
+function voiceRecordingInMgmtScope(rec, mgmtCompanyId) {
+  if (!mgmtCompanyId) return true;
+  return String(rec.uploader?.company_id || '') === String(mgmtCompanyId);
+}
+
+function voiceRecordingMatchesLeadCompany(rec, leadCompanyId) {
+  if (!leadCompanyId) return true;
+  return String(rec.lead?.company_id || '') === String(leadCompanyId);
+}
+
+/** Lọc tùy chọn theo công ty nhân viên upload (`?company_id=`). */
+function voiceRecordingMatchesStaffCompany(rec, staffCompanyId) {
+  if (!staffCompanyId) return true;
+  return String(rec.uploader?.company_id || '') === String(staffCompanyId);
+}
+
+function voiceRecordingPassesFilters(rec, { mgmtCompanyId, leadCompanyId, staffCompanyId }) {
+  if (mgmtCompanyId && !voiceRecordingInMgmtScope(rec, mgmtCompanyId)) return false;
+  if (!voiceRecordingMatchesLeadCompany(rec, leadCompanyId)) return false;
+  if (!voiceRecordingMatchesStaffCompany(rec, staffCompanyId)) return false;
+  return true;
+}
+
+/**
+ * Admin hệ thống (`admin` không company_id): không ép phạm vi.
+ * Admin/sales_admin/region_admin/NV có company_id: chỉ công ty NV đó.
+ */
+function resolveVoiceMgmtCompanyId(req) {
+  if (isCrmSystemAdminUser(req.user)) return null;
+  const userCo = req.user?.company_id ? String(req.user.company_id).trim() : null;
+  return userCo || null;
+}
+
+/**
+ * - mgmtCompanyId: ép theo công ty NV (JWT company_id).
+ * - staffCompanyId: lọc thêm theo công ty NV (`?company_id=`).
+ * - leadCompanyId: lọc thêm theo công ty Lead/Deal (`?lead_company_id=`).
+ */
+function resolveVoiceListFilters(req) {
+  const qLeadCo = uuidOrNull(req.query.lead_company_id);
+  const qStaffCo = uuidOrNull(req.query.company_id);
+  if (qLeadCo === false) return { error: 'lead_company_id không hợp lệ', status: 400 };
+  if (qStaffCo === false) return { error: 'company_id không hợp lệ', status: 400 };
+
+  const mgmtCompanyId = resolveVoiceMgmtCompanyId(req);
+  const leadCompanyId = qLeadCo || null;
+  const staffCompanyId = qStaffCo || null;
+
+  if (mgmtCompanyId && staffCompanyId && staffCompanyId !== mgmtCompanyId) {
+    return { error: 'Không có quyền lọc công ty nhân viên khác', status: 403 };
+  }
+
+  return { mgmtCompanyId, leadCompanyId, staffCompanyId };
+}
+
+/** Xem ghi âm mọi NV trong phạm vi (không khóa theo user_id). Admin gắn công ty chỉ NV cùng công ty. */
+function canViewAllVoiceInCompany(req) {
+  if (isCrmSystemAdminUser(req.user)) return true;
+  if (!resolveVoiceMgmtCompanyId(req) && isVoiceRecordingsAdmin(req.user?.role)) return true;
+  if (isCrmSalesAdminUser(req.user)) return true;
+  if (isCrmCompanyAdminUser(req.user)) return true;
+  if (isCrmRegionAdminUser(req.user)) return true;
+  if (isCompanyScopedAdmin(req.user)) return true;
+  return false;
+}
 
 function uuidOrNull(v) {
   if (v === undefined || v === null || v === '') return null;
@@ -113,9 +208,17 @@ async function enrichVoiceRecordingFromMetadataById(supabaseClient, recordId, ac
     const resolved = await resolveCustomerLeadByPhone(supabaseClient, origPhone, uid, actingRole);
     if (!resolved?.customer_id) return null;
     if (resolved.customer_id === row.customer_id && resolved.lead_id === row.lead_id) return null;
+    const company_id = await resolveVoiceRecordingCompanyId(supabaseClient, {
+      lead_id: resolved.lead_id,
+      customer_id: resolved.customer_id,
+    });
     const { data: updated, error: upErr } = await supabaseClient
       .from('voice_recordings')
-      .update({ customer_id: resolved.customer_id, lead_id: resolved.lead_id })
+      .update({
+        customer_id: resolved.customer_id,
+        lead_id: resolved.lead_id,
+        company_id,
+      })
       .eq('id', recordId)
       .select(RECORDING_SELECT)
       .single();
@@ -152,12 +255,14 @@ async function enrichVoiceRecordingFromMetadataById(supabaseClient, recordId, ac
     }
   }
 
+  let company_id = await resolveVoiceRecordingCompanyId(supabaseClient, { lead_id, customer_id });
   const { data: updated, error: upErr } = await supabaseClient
     .from('voice_recordings')
     .update({
       phone_number: phoneNum,
       customer_id,
       lead_id,
+      company_id,
     })
     .eq('id', recordId)
     .select(RECORDING_SELECT)
@@ -169,9 +274,17 @@ async function enrichVoiceRecordingFromMetadataById(supabaseClient, recordId, ac
     try {
       const resolved2 = await resolveCustomerLeadByPhone(supabaseClient, pn, uid, actingRole);
       if (resolved2?.customer_id) {
+        const company_id2 = await resolveVoiceRecordingCompanyId(supabaseClient, {
+          lead_id: resolved2.lead_id,
+          customer_id: resolved2.customer_id,
+        });
         const { data: data2, error: e2 } = await supabaseClient
           .from('voice_recordings')
-          .update({ customer_id: resolved2.customer_id, lead_id: resolved2.lead_id })
+          .update({
+            customer_id: resolved2.customer_id,
+            lead_id: resolved2.lead_id,
+            company_id: company_id2,
+          })
           .eq('id', recordId)
           .select(RECORDING_SELECT)
           .single();
@@ -387,7 +500,17 @@ r.get('/', async (req, res) => {
         .order('created_at', { ascending: false })
         .limit(100);
       if (error) throw error;
-      return res.json({ recordings: (data || []).map(attachPlayableUrl) });
+      const mgmtCompanyId = resolveVoiceMgmtCompanyId(req);
+      let leadRows = data || [];
+      if (mgmtCompanyId) {
+        leadRows = leadRows.filter((row) => voiceRecordingInMgmtScope(row, mgmtCompanyId));
+      }
+      return res.json({ recordings: leadRows.map(attachPlayableUrl) });
+    }
+
+    const listFilters = resolveVoiceListFilters(req);
+    if (listFilters.error) {
+      return res.status(listFilters.status || 400).json({ error: listFilters.error });
     }
 
     const phoneQ = req.query.phone ? String(req.query.phone).replace(/\s+/g, '').trim() : '';
@@ -395,14 +518,14 @@ r.get('/', async (req, res) => {
       req.query.unassigned === '1' || req.query.unassigned === 'true' || req.query.unassigned === 'yes';
     const linkedOnly =
       req.query.linked_only === '1' || req.query.linked_only === 'true' || req.query.linked_only === 'yes';
-    const admin = isVoiceRecordingsAdmin(req.user?.role);
-    const filterUserId = admin && req.query.user_id ? uuidOrNull(req.query.user_id) : null;
-    if (admin && req.query.user_id && filterUserId === false) {
+    const companyViewer = canViewAllVoiceInCompany(req);
+    const filterUserId = companyViewer && req.query.user_id ? uuidOrNull(req.query.user_id) : null;
+    if (companyViewer && req.query.user_id && filterUserId === false) {
       return res.status(400).json({ error: 'user_id không hợp lệ' });
     }
 
     let q = supabase.from('voice_recordings').select(RECORDING_SELECT).order('created_at', { ascending: false });
-    if (admin) {
+    if (companyViewer) {
       if (filterUserId) q = q.eq('user_id', filterUserId);
       q = q.limit(filterUserId ? 300 : 500);
     } else {
@@ -426,6 +549,7 @@ r.get('/', async (req, res) => {
         return hasPhone || r.customer_id;
       });
     }
+    rows = rows.filter((r) => voiceRecordingPassesFilters(r, listFilters));
     res.json({ recordings: rows.map(attachPlayableUrl) });
   } catch (e) {
     console.error('voice-recordings list:', e.message);
@@ -438,17 +562,20 @@ r.get('/', async (req, res) => {
  */
 r.post('/relink-unassigned', async (req, res) => {
   try {
-    const admin = isVoiceRecordingsAdmin(req.user?.role);
+    const companyViewer = canViewAllVoiceInCompany(req);
     const allUsers =
-      admin &&
+      companyViewer &&
       (req.body?.all_users === true ||
         req.body?.all_users === '1' ||
         req.query?.all_users === '1' ||
         req.query?.all_users === 'true');
+    const mgmtCompanyId = resolveVoiceMgmtCompanyId(req);
 
     let rq = supabase
       .from('voice_recordings')
-      .select('id, phone_number, customer_id, lead_id, user_id')
+      .select(
+        'id, phone_number, customer_id, lead_id, user_id, company_id, lead:crm_leads(company_id), uploader:users!voice_recordings_user_id_fkey(company_id)',
+      )
       .not('phone_number', 'is', null)
       .neq('phone_number', '')
       .order('created_at', { ascending: false })
@@ -456,7 +583,11 @@ r.post('/relink-unassigned', async (req, res) => {
     if (!allUsers) rq = rq.eq('user_id', req.user.userId);
     const { data: rows, error } = await rq;
     if (error) throw error;
-    const pending = (rows || []).filter((r) => !r.customer_id || !r.lead_id).slice(0, allUsers ? 80 : 50);
+    let scoped = rows || [];
+    if (mgmtCompanyId) {
+      scoped = scoped.filter((r) => voiceRecordingInMgmtScope(r, mgmtCompanyId));
+    }
+    const pending = scoped.filter((r) => !r.customer_id || !r.lead_id).slice(0, allUsers ? 80 : 50);
     let updated = 0;
     for (const row of pending) {
       const resolved = await resolveCustomerLeadByPhone(
@@ -469,9 +600,10 @@ r.post('/relink-unassigned', async (req, res) => {
       const customer_id = resolved.customer_id;
       const lead_id = resolved.lead_id;
       if (customer_id === row.customer_id && lead_id === row.lead_id) continue;
+      const company_id = await resolveVoiceRecordingCompanyId(supabase, { lead_id, customer_id });
       const { error: upErr } = await supabase
         .from('voice_recordings')
-        .update({ customer_id, lead_id })
+        .update({ customer_id, lead_id, company_id })
         .eq('id', row.id);
       if (!upErr) updated += 1;
     }
@@ -489,19 +621,22 @@ r.post('/relink-unassigned', async (req, res) => {
  */
 r.post('/scan-metadata-phones', async (req, res) => {
   try {
-    const admin = isVoiceRecordingsAdmin(req.user?.role);
-    const filterUserId = admin && req.query.user_id ? uuidOrNull(req.query.user_id) : null;
-    if (admin && req.query.user_id && filterUserId === false) {
+    const companyViewer = canViewAllVoiceInCompany(req);
+    const filterUserId = companyViewer && req.query.user_id ? uuidOrNull(req.query.user_id) : null;
+    if (companyViewer && req.query.user_id && filterUserId === false) {
       return res.status(400).json({ error: 'user_id không hợp lệ' });
     }
+    const mgmtCompanyId = resolveVoiceMgmtCompanyId(req);
 
     let q = supabase
       .from('voice_recordings')
-      .select('id, phone_number, notes, file_name, device_label, customer_id, lead_id, user_id')
+      .select(
+        'id, phone_number, notes, file_name, device_label, customer_id, lead_id, user_id, company_id, lead:crm_leads(company_id), uploader:users!voice_recordings_user_id_fkey(company_id)',
+      )
       .order('created_at', { ascending: false })
       .limit(200);
 
-    if (!admin) {
+    if (!companyViewer) {
       q = q.eq('user_id', req.user.userId);
     } else if (filterUserId) {
       q = q.eq('user_id', filterUserId);
@@ -515,7 +650,11 @@ r.post('/scan-metadata-phones', async (req, res) => {
       return !p;
     };
 
-    const pending = (rows || []).filter(noPhone);
+    let scoped = (rows || []).filter(noPhone);
+    if (mgmtCompanyId) {
+      scoped = scoped.filter((r) => voiceRecordingInMgmtScope(r, mgmtCompanyId));
+    }
+    const pending = scoped;
     const slice = pending.slice(0, 80);
 
     let filledPhone = 0;
@@ -544,7 +683,8 @@ r.post('/scan-metadata-phones', async (req, res) => {
         lead_id = resolved.lead_id;
       }
 
-      const patch = { phone_number: phoneNum, customer_id, lead_id };
+      const company_id = await resolveVoiceRecordingCompanyId(supabase, { lead_id, customer_id });
+      const patch = { phone_number: phoneNum, customer_id, lead_id, company_id };
       const { error: upErr } = await supabase.from('voice_recordings').update(patch).eq('id', row.id);
       if (!upErr) filledPhone += 1;
     }
@@ -715,6 +855,11 @@ r.post('/', upload.single('audio'), async (req, res) => {
       }
     }
 
+    let company_id = await resolveVoiceRecordingCompanyId(supabase, { lead_id, customer_id });
+    if (!company_id && req.user?.company_id) {
+      company_id = String(req.user.company_id).trim();
+    }
+
     const { data, error } = await supabase
       .from('voice_recordings')
       .insert({
@@ -734,6 +879,7 @@ r.post('/', upload.single('audio'), async (req, res) => {
         external_call_id: external_call_id?.trim() || null,
         customer_id,
         lead_id,
+        company_id,
       })
       .select(RECORDING_SELECT)
       .single();
@@ -896,9 +1042,17 @@ r.post('/:id/bootstrap-crm', async (req, res) => {
       leadRow = lRow;
     }
 
+    const bootCompanyId = await resolveVoiceRecordingCompanyId(supabase, {
+      lead_id: leadRow.id,
+      customer_id: customerRow.id,
+    });
     const { data: updated, error: ue } = await supabase
       .from('voice_recordings')
-      .update({ customer_id: customerRow.id, lead_id: leadRow.id })
+      .update({
+        customer_id: customerRow.id,
+        lead_id: leadRow.id,
+        company_id: bootCompanyId || cidBody || null,
+      })
       .eq('id', rec.id)
       .select(RECORDING_SELECT)
       .single();
@@ -1048,7 +1202,8 @@ r.patch('/:id', async (req, res) => {
       }
     }
 
-    const patch = { customer_id, lead_id };
+    const company_id = await resolveVoiceRecordingCompanyId(supabase, { lead_id, customer_id });
+    const patch = { customer_id, lead_id, company_id };
     if (req.body.phone_number !== undefined) patch.phone_number = phone_number || null;
 
     const { data: updated, error: ue } = await supabase

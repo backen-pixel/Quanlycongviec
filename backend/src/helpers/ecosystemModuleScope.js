@@ -12,7 +12,7 @@ const PRODUCTION_STAFF_MODULES = new Set(['tasks', 'production', 'projects']);
 const CRM_PRODUCTION_DUAL_MODULES = new Set(['crm', 'production', 'tasks', 'projects', 'customers']);
 
 /** Khớp module_key dùng trong ecosystem_module_scopes và Sidebar */
-const KNOWN_MODULE_KEYS = ['crm', 'production', 'logistics', 'projects', 'tasks', 'customers'];
+const KNOWN_MODULE_KEYS = ['crm', 'production', 'logistics', 'projects', 'tasks', 'customers', 'tinhtoan'];
 
 // Set<string> không JSON-serializable → cache `string[] | null`, convert sang Set khi trả về.
 const scopeCache = createTTLCache({

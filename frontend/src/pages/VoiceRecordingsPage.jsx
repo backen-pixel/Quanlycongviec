@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isCrmCompanyAdmin } from '../lib/crmAdminScope';
+import { isAdminLike, normalizeRole, hasCompanyId } from '../lib/adminRole';
+import { resolveDefaultCrmAdminCompanyId } from '../lib/crmCompanyFilter';
 import { Mic, Upload, Trash2, RefreshCw, Square, Circle, UserRound, Link2, UserPlus, Inbox, ScanLine, Calendar as CalendarIcon } from 'lucide-react';
 import { formatDateTime } from '../lib/utils';
 import VoiceCalendarPanel from '../components/VoiceCalendarPanel';
@@ -19,6 +22,25 @@ function toLocalISODate(d) {
 function isVoiceRecordingsAdmin(role) {
   const x = String(role ?? '').toLowerCase().trim();
   return ['admin', 'superadmin', 'super_admin', 'administrator'].includes(x);
+}
+
+function isVoiceRegionAdmin(user) {
+  return normalizeRole(user?.role) === 'region_admin' && hasCompanyId(user);
+}
+
+function isVoiceSalesAdmin(user) {
+  const r = normalizeRole(user?.role);
+  return (r === 'sales_admin' || r === 'crm_production_admin') && hasCompanyId(user);
+}
+
+/** Xem ghi âm toàn công ty + lọc theo NV (admin hệ thống, admin công ty, sales_admin, region_admin). */
+function canViewCompanyVoiceList(user) {
+  return (
+    isVoiceRecordingsAdmin(user?.role)
+    || isCrmCompanyAdmin(user)
+    || isVoiceRegionAdmin(user)
+    || isVoiceSalesAdmin(user)
+  );
 }
 
 function recordingAudioUrl(rec) {
@@ -46,9 +68,18 @@ function leadTypeLabel(type) {
 
 export default function VoiceRecordingsPage() {
   const { user } = useAuth();
-  const voiceAdmin = isVoiceRecordingsAdmin(user?.role);
+  const isAdmin = isAdminLike(user);
+  /** Admin công ty / sales_admin — backend khóa theo company_id (giống CRM). */
+  const isCompanyScopedAdmin = isCrmCompanyAdmin(user);
+  const companyViewer = canViewCompanyVoiceList(user);
   const [filterUserId, setFilterUserId] = useState('');
+  /** Công ty NV — admin hệ thống chọn; admin công ty / NV tự khóa theo company_id. */
+  const [filterCompanyId, setFilterCompanyId] = useState('');
+  const [userCompanyId, setUserCompanyId] = useState('');
+  /** Công ty Lead/Deal — lọc thêm (admin hệ thống). */
+  const [filterLeadCompanyId, setFilterLeadCompanyId] = useState('');
   const [staffUsers, setStaffUsers] = useState([]);
+  const [filterCompanies, setFilterCompanies] = useState([]);
 
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -95,6 +126,14 @@ export default function VoiceRecordingsPage() {
   const [companies, setCompanies] = useState([]);
   const [savingBootstrap, setSavingBootstrap] = useState(false);
 
+  /** Công ty đang áp dụng (mirror CRM dashboardScopeCompanyId). */
+  const voiceScopeCompanyId = useMemo(() => {
+    if (isCompanyScopedAdmin && user?.company_id) return String(user.company_id);
+    if (!isAdmin && user?.company_id) return String(user.company_id);
+    if (isAdmin && filterCompanyId) return String(filterCompanyId);
+    return '';
+  }, [isCompanyScopedAdmin, isAdmin, user?.company_id, filterCompanyId]);
+
   const load = async () => {
     setLoading(true);
     setErr('');
@@ -103,7 +142,11 @@ export default function VoiceRecordingsPage() {
       if (listPhoneFilter.trim()) params.phone = listPhoneFilter.trim();
       if (listTab === 'unassigned') params.unassigned = '1';
       if (listTab === 'linked') params.linked_only = '1';
-      if (voiceAdmin && filterUserId) params.user_id = filterUserId;
+      if (companyViewer && filterUserId) params.user_id = filterUserId;
+      if (voiceScopeCompanyId) params.company_id = voiceScopeCompanyId;
+      if (isAdmin && !isCompanyScopedAdmin && filterLeadCompanyId) {
+        params.lead_company_id = filterLeadCompanyId;
+      }
       const { data } = await api.get('/voice-recordings', { params });
       setList(data.recordings || []);
     } catch (e) {
@@ -113,16 +156,47 @@ export default function VoiceRecordingsPage() {
   };
 
   useEffect(() => {
-    if (!voiceAdmin) return;
     void api
-      .get('/users')
+      .get('/companies', { params: { for_module: 'crm' } })
+      .then(({ data }) => {
+        const list = data?.companies || data || [];
+        setFilterCompanies(Array.isArray(list) ? list : []);
+      })
+      .catch(() => setFilterCompanies([]));
+  }, []);
+
+  /** Tự khóa công ty theo JWT — giống CRM Dashboard. */
+  useEffect(() => {
+    if (!user?.company_id) return;
+    const cid = String(user.company_id);
+    setUserCompanyId(cid);
+    if (!isAdmin || isCompanyScopedAdmin) {
+      setFilterCompanyId(cid);
+    }
+  }, [user?.company_id, isAdmin, isCompanyScopedAdmin]);
+
+  /** Admin hệ thống: mặc định công ty đầu danh sách (giống CRM). */
+  useEffect(() => {
+    if (isCompanyScopedAdmin) return;
+    if (!isAdmin || !filterCompanies.length) return;
+    if (filterCompanyId) return;
+    const cid = resolveDefaultCrmAdminCompanyId(filterCompanies);
+    if (cid) setFilterCompanyId(String(cid));
+  }, [isAdmin, isCompanyScopedAdmin, filterCompanies, filterCompanyId]);
+
+  useEffect(() => {
+    if (!companyViewer) return;
+    const params = {};
+    if (voiceScopeCompanyId) params.company_id = voiceScopeCompanyId;
+    void api
+      .get('/users', { params })
       .then(({ data }) => setStaffUsers(Array.isArray(data?.users) ? data.users : []))
       .catch(() => setStaffUsers([]));
-  }, [voiceAdmin]);
+  }, [companyViewer, voiceScopeCompanyId]);
 
   useEffect(() => {
     void load();
-  }, [listTab, filterUserId, voiceAdmin, listPhoneFilter]);
+  }, [listTab, filterUserId, filterCompanyId, filterLeadCompanyId, companyViewer, listPhoneFilter, voiceScopeCompanyId]);
 
   /** Lọc client-side theo ngày đã chọn trong calendar — không cần gọi lại API */
   const filteredList = useMemo(() => {
@@ -281,7 +355,8 @@ export default function VoiceRecordingsPage() {
     setErr('');
     setScanMessage('');
     try {
-      const { data } = await api.post('/voice-recordings/relink-unassigned');
+      const body = companyViewer ? { all_users: true } : {};
+      const { data } = await api.post('/voice-recordings/relink-unassigned', body);
       await load();
       if (data?.updated != null) {
         setScanMessage(`Đã quét ${data.scanned} bản ghi — cập nhật ghép CRM: ${data.updated} bản.`);
@@ -299,7 +374,7 @@ export default function VoiceRecordingsPage() {
     setScanMessage('');
     try {
       const params = {};
-      if (voiceAdmin && filterUserId) params.user_id = filterUserId;
+      if (companyViewer && filterUserId) params.user_id = filterUserId;
       const { data } = await api.post('/voice-recordings/scan-metadata-phones', {}, { params });
       await load();
       if (data?.filled_phone != null) {
@@ -425,9 +500,13 @@ export default function VoiceRecordingsPage() {
           <Mic className="h-7 w-7 text-violet-600 shrink-0" />
           Cuộc gọi &amp; đồng bộ ghi âm
         </h1>
-        {voiceAdmin ? (
+        {isAdmin && !isCompanyScopedAdmin ? (
           <p className="text-sm text-violet-800 mt-2 rounded-lg bg-violet-50 border border-violet-100 px-3 py-2">
-            Quản trị: xem ghi âm của mọi nhân viên. Chọn nhân viên trong «Lọc theo NV» để chỉ xem file do người đó đồng bộ/tải lên.
+            Admin hệ thống: chọn công ty NV để lọc ghi âm (mặc định công ty đầu danh sách). Có thể lọc thêm công ty Lead/Deal.
+          </p>
+        ) : isCompanyScopedAdmin ? (
+          <p className="text-sm text-indigo-800 mt-2 rounded-lg bg-indigo-50 border border-indigo-100 px-3 py-2">
+            Admin công ty: tự lọc theo công ty được phân — chỉ ghi âm do NV công ty bạn upload.
           </p>
         ) : null}
       </div>
@@ -658,7 +737,72 @@ export default function VoiceRecordingsPage() {
             )}
           </h2>
           <div className="flex flex-wrap items-center gap-2">
-            {voiceAdmin ? (
+            {isAdmin && !isCompanyScopedAdmin && filterCompanies.length > 0 ? (
+              <>
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <label htmlFor="voice-filter-company" className="text-xs text-gray-500 shrink-0">
+                    Công ty NV
+                  </label>
+                  <select
+                    id="voice-filter-company"
+                    value={filterCompanyId}
+                    onChange={(e) => {
+                      setFilterCompanyId(e.target.value);
+                      setFilterUserId('');
+                    }}
+                    className="h-9 px-3 border rounded-lg text-sm bg-white min-w-0 max-w-full sm:max-w-[200px] text-gray-800"
+                  >
+                    <option value="">Tất cả công ty</option>
+                    {filterCompanies.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.short_name || c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <label htmlFor="voice-filter-lead-company" className="text-xs text-gray-500 shrink-0">
+                    Công ty Lead/Deal
+                  </label>
+                  <select
+                    id="voice-filter-lead-company"
+                    value={filterLeadCompanyId}
+                    onChange={(e) => setFilterLeadCompanyId(e.target.value)}
+                    className="h-9 px-3 border rounded-lg text-sm bg-white min-w-0 max-w-full sm:max-w-[200px] text-gray-800"
+                  >
+                    <option value="">Tất cả</option>
+                    {filterCompanies.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.short_name || c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            ) : null}
+            {!isAdmin && userCompanyId ? (
+              <span
+                className="h-9 inline-flex items-center px-2.5 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800"
+                title="Công ty của bạn"
+              >
+                🏢{' '}
+                {filterCompanies.find((c) => String(c.id) === String(userCompanyId))?.short_name
+                  || filterCompanies.find((c) => String(c.id) === String(userCompanyId))?.name
+                  || 'Công ty của bạn'}
+              </span>
+            ) : null}
+            {isCompanyScopedAdmin && userCompanyId ? (
+              <span
+                className="h-9 inline-flex items-center px-2.5 bg-indigo-50 border border-indigo-200 rounded-lg text-xs text-indigo-900"
+                title="Admin phạm vi một công ty"
+              >
+                🏢{' '}
+                {filterCompanies.find((c) => String(c.id) === String(userCompanyId))?.short_name
+                  || filterCompanies.find((c) => String(c.id) === String(userCompanyId))?.name
+                  || 'Công ty của bạn'}
+              </span>
+            ) : null}
+            {companyViewer ? (
               <div className="flex items-center gap-2 w-full sm:w-auto">
                 <label htmlFor="voice-filter-user" className="text-xs text-gray-500 shrink-0">
                   Lọc theo NV
@@ -737,7 +881,7 @@ export default function VoiceRecordingsPage() {
                   <p className="font-medium text-gray-900 break-all">{r.file_name}</p>
                   <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-600">
                     <span>{formatDateTime(r.created_at)}</span>
-                    {voiceAdmin && r.uploader?.full_name ? (
+                    {companyViewer && r.uploader?.full_name ? (
                       <span className="font-medium text-violet-800">NV: {r.uploader.full_name}</span>
                     ) : null}
                     {r.phone_number ? (

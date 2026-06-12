@@ -12,6 +12,7 @@ import {
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X, UsersRound,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
   BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot,
+  Sigma, Calculator, FileUp, History as HistoryIcon,
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
@@ -282,6 +283,32 @@ const KNOWLEDGE_MENU_GROUPS = [
   },
 ];
 
+// CALC (TÍNH TOÁN) menu structure
+const CALC_MENU_GROUPS = [
+  {
+    id: 'calc-overview',
+    moduleKey: 'tinhtoan',
+    title: '1. Tổng quan',
+    emoji: '🧮',
+    items: [
+      { to: '/calc', icon: Sigma, label: 'Trang chính', end: true },
+      { to: '/calc/run', icon: Calculator, label: 'Tính nhanh' },
+      { to: '/calc/import-3d', icon: FileUp, label: 'Tính từ file 3D' },
+      { to: '/calc/history', icon: HistoryIcon, label: 'Lịch sử tính' },
+    ],
+  },
+  {
+    id: 'calc-setup',
+    moduleKey: 'tinhtoan',
+    title: '2. Cấu hình',
+    emoji: '⚙️',
+    adminOnly: true,
+    items: [
+      { to: '/calc/setup', icon: Settings, label: 'Danh mục / Loại / Công thức / Rule' },
+    ],
+  },
+];
+
 // LOGISTICS (VẬN CHUYỂN & LẮP ĐẶT) menu structure
 const VC_MENU_GROUPS = [
   {
@@ -318,6 +345,7 @@ function resolveGroupModuleContext(group) {
   if (group.moduleKey === 'crm' || String(group.id || '').startsWith('crm')) return 'crm';
   if (group.moduleKey === 'production' || String(group.id || '').startsWith('sx')) return 'sx';
   if (group.moduleKey === 'logistics' || String(group.id || '').startsWith('vc')) return 'vc';
+  if (group.moduleKey === 'tinhtoan' || String(group.id || '').startsWith('calc')) return 'calc';
   if (String(group.id || '').startsWith('knowledge')) return 'knowledge';
   return 'work';
 }
@@ -484,10 +512,21 @@ export default function Sidebar() {
 
   /** Ghi âm dùng route /tools/… nhưng vẫn dùng menu CRM khi đang xem trang đó. crmOnly: luôn sidebar CRM. */
   const isKnowledge = location.pathname.startsWith('/knowledge') || activeModule === 'knowledge';
-  const isCRM = !isKnowledge && isCrmSidebarActive(location.pathname, activeModule, crmOnly);
-  const isSX = !isKnowledge && (location.pathname.startsWith('/sx') || activeModule === 'sx');
-  const isVC = !isKnowledge && (location.pathname.startsWith('/vc') || activeModule === 'vc');
-  const activeMenuGroups = isKnowledge ? KNOWLEDGE_MENU_GROUPS : isVC ? VC_MENU_GROUPS : isSX ? SX_MENU_GROUPS : isCRM ? null : MENU_GROUPS;
+  const isCalc = !isKnowledge && (location.pathname.startsWith('/calc') || activeModule === 'calc');
+  const isCRM = !isKnowledge && !isCalc && isCrmSidebarActive(location.pathname, activeModule, crmOnly);
+  const isSX = !isKnowledge && !isCalc && (location.pathname.startsWith('/sx') || activeModule === 'sx');
+  const isVC = !isKnowledge && !isCalc && (location.pathname.startsWith('/vc') || activeModule === 'vc');
+  const activeMenuGroups = isKnowledge
+    ? KNOWLEDGE_MENU_GROUPS
+    : isCalc
+      ? CALC_MENU_GROUPS
+      : isVC
+        ? VC_MENU_GROUPS
+        : isSX
+          ? SX_MENU_GROUPS
+          : isCRM
+            ? null
+            : MENU_GROUPS;
 
   const pinModule = (path) => {
     localStorage.setItem('pinned_module', path);
@@ -613,6 +652,29 @@ export default function Sidebar() {
                 </div>
               </div>
               )}
+              {/* Tính toán */}
+              {canAccessModule('tinhtoan') && (
+              <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${isCalc ? 'bg-indigo-50 border-indigo-200' : 'bg-gray-50 border-gray-200 hover:border-indigo-400 hover:bg-indigo-50'}`}>
+                <button onClick={() => { setShowAppSwitcher(false); navigate('/calc'); }}
+                  className="flex items-center gap-4 flex-1 cursor-pointer">
+                  <div className="w-12 h-12 rounded-xl bg-indigo-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                    <Sigma className="h-6 w-6 text-white" />
+                  </div>
+                  <div className="text-left">
+                    <h3 className="text-sm font-bold text-gray-900">Tính toán</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Công thức, rule, tính từ kích thước & file 3D</p>
+                  </div>
+                </button>
+                <div className="flex flex-col items-center gap-1 ml-auto">
+                  {isCalc && <span className="text-[10px] px-2 py-0.5 bg-indigo-600 text-white rounded-full font-bold">Đang dùng</span>}
+                  <button onClick={(e) => { e.stopPropagation(); pinModule('/calc'); }}
+                    title={pinnedModule === '/calc' ? 'Đã ghim — bấm để bỏ ghim' : 'Ghim — đăng nhập vào thẳng module này'}
+                    className={`p-1.5 rounded-lg cursor-pointer transition-all ${pinnedModule === '/calc' ? 'bg-amber-100 text-amber-600 hover:bg-amber-200' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}>
+                    <Pin className={`h-4 w-4 ${pinnedModule === '/calc' ? 'rotate-45' : ''}`} />
+                  </button>
+                </div>
+              </div>
+              )}
               {/* Kiến thức — mọi user đều dùng được */}
               <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${isKnowledge ? 'bg-violet-50 border-violet-200' : 'bg-gray-50 border-gray-200 hover:border-violet-400 hover:bg-violet-50'}`}>
                 <button onClick={() => { setShowAppSwitcher(false); navigate('/knowledge'); }}
@@ -668,13 +730,14 @@ export default function Sidebar() {
             { key: 'crm', mod: 'crm', label: 'CRM', emoji: '💼', path: '/crm', color: 'bg-emerald-500/35 hover:bg-emerald-500/55 ring-emerald-300/40', dot: 'bg-emerald-500/70' },
             { key: 'sx', mod: 'production', label: 'Xưởng SX', emoji: '🏭', path: '/sx', color: 'bg-orange-500/35 hover:bg-orange-500/55 ring-orange-300/40', dot: 'bg-orange-500/70' },
             { key: 'vc', mod: 'logistics', label: 'Vận chuyển', emoji: '🚚', path: '/vc', color: 'bg-amber-500/35 hover:bg-amber-500/55 ring-amber-300/40', dot: 'bg-amber-500/70' },
+            { key: 'calc', mod: 'tinhtoan', label: 'Tính toán', emoji: '🧮', path: '/calc', color: 'bg-indigo-500/35 hover:bg-indigo-500/55 ring-indigo-300/40', dot: 'bg-indigo-500/70' },
             { key: 'knowledge', mod: null, label: 'Kiến thức', emoji: '🎓', path: '/knowledge', color: 'bg-violet-500/35 hover:bg-violet-500/55 ring-violet-300/40', dot: 'bg-violet-500/70' },
           ].filter((m) => {
             if (crmOnly) return m.key === 'crm' || m.key === 'knowledge';
             return !m.mod || canAccessModule(m.mod);
           });
           if (!modList.length) return null;
-          const activeKey = isKnowledge ? 'knowledge' : isVC ? 'vc' : isSX ? 'sx' : isCRM ? 'crm' : 'work';
+          const activeKey = isKnowledge ? 'knowledge' : isCalc ? 'calc' : isVC ? 'vc' : isSX ? 'sx' : isCRM ? 'crm' : 'work';
           let curIdx = modList.findIndex((m) => m.key === activeKey);
           if (curIdx < 0) curIdx = 0;
           const cur = modList[curIdx];
