@@ -106,6 +106,7 @@ const SocialFeedPage = lazyWithRetry(() => import('./pages/SocialFeedPage'));
 const SocialProfilePage = lazyWithRetry(() => import('./pages/SocialProfilePage'));
 const ReleaseNotesPage = lazyWithRetry(() => import('./pages/ReleaseNotesPage'));
 const AppUpdatesPage = lazyWithRetry(() => import('./pages/AppUpdatesPage'));
+const DownloadAppPage = lazyWithRetry(() => import('./pages/DownloadAppPage'));
 const FacebookPage = lazyWithRetry(() => import('./pages/FacebookPage'));
 const FacebookLinkPhoneCleanupPage = lazyWithRetry(() => import('./pages/FacebookLinkPhoneCleanupPage'));
 const ZaloPage = lazyWithRetry(() => import('./pages/ZaloPage'));
@@ -361,7 +362,8 @@ export default function App() {
             <Route path="/template-sets/:setId" element={<TemplateSetDetailPage />} />
             <Route path="/permissions" element={<PermissionsPage />} />
             <Route path="/crm" element={<Navigate to="/crm/dashboard" replace />} />
-            <Route path="/crm/lead-journey" element={<LeadJourneyPage />} />
+            <Route path="/crm/download-app" element={<DownloadAppPage />} />
+            <Route path="/sx/download-app" element={<DownloadAppPage />} />
             <Route path="/crm/events" element={<EventsFeedPage />} />
             <Route path="/crm/events/overview" element={<EventsOverviewPage />} />
             <Route path="/crm/messenger" element={<MessengerHubPage />} />
