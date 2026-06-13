@@ -263,6 +263,19 @@ function scopedCrmCompanyIdForWrite(req) {
 
 function requireUserCompanyId(req, res) {
   const cid = req.user?.company_id;
+  if (cid) return cid;
+  res.status(400).json({ error: 'Thiếu company_id của user. Vui lòng đăng xuất/đăng nhập lại hoặc gán company cho tài khoản.' });
+  return null;
+}
+
+/** Fallback phòng ban → công ty khi JWT chưa có company_id (NV sales). */
+async function requireUserCompanyIdResolved(req, res) {
+  let cid = req.user?.company_id || null;
+  if (!cid && req.user?.userId) {
+    const { resolveCompanyIdForUser } = require('../middleware/auth');
+    cid = await resolveCompanyIdForUser(req.user.userId);
+    if (cid) req.user.company_id = cid;
+  }
   if (!cid) {
     res.status(400).json({ error: 'Thiếu company_id của user. Vui lòng đăng xuất/đăng nhập lại hoặc gán company cho tài khoản.' });
     return null;
@@ -2752,7 +2765,7 @@ r.get('/pipeline-stages', async (req, res) => {
       if (!pl) return res.json([]);
       if (String(pl.company_id || '') !== String(sacSt)) return res.status(403).json({ error: 'Không có quyền xem stage của pipeline công ty khác' });
     } else if (!userIsAdmin(req.user?.role)) {
-      const cid = requireUserCompanyId(req, res);
+      const cid = await requireUserCompanyIdResolved(req, res);
       if (!cid) return;
       const { data: pl } = await supabase.from('crm_pipelines').select('id, company_id').eq('id', pipeline_id).maybeSingle();
       if (!pl) return res.json([]);
@@ -2764,7 +2777,7 @@ r.get('/pipeline-stages', async (req, res) => {
     if (sacSt) {
       if (String(companyId) !== String(sacSt)) return res.status(403).json({ error: 'Không có quyền xem stage pipeline công ty khác' });
     } else if (!userIsAdmin(req.user?.role)) {
-      const cid = requireUserCompanyId(req, res);
+      const cid = await requireUserCompanyIdResolved(req, res);
       if (!cid) return;
       if (String(companyId) !== String(cid)) return res.status(403).json({ error: 'Không có quyền xem stage pipeline công ty khác' });
     }
@@ -2775,7 +2788,7 @@ r.get('/pipeline-stages', async (req, res) => {
   } else if (sacSt) {
     effectivePipelineId = await getDefaultPipelineIdForCompany(sacSt);
   } else if (!userIsAdmin(req.user?.role)) {
-    const cid = requireUserCompanyId(req, res);
+    const cid = await requireUserCompanyIdResolved(req, res);
     if (!cid) return;
     effectivePipelineId = await getDefaultPipelineIdForCompany(cid);
   }
@@ -5048,6 +5061,251 @@ r.get('/leads/picker', async (req, res) => {
   }
 });
 
+function parseCrmStageCountsRpc(raw) {
+  let v = raw;
+  if (typeof v === 'string') {
+    try {
+      v = JSON.parse(v);
+    } catch {
+      return null;
+    }
+  }
+  if (!v || typeof v !== 'object') return null;
+  const total = Number(v.total);
+  if (Number.isNaN(total)) return null;
+  const countsObj = v.counts && typeof v.counts === 'object' ? v.counts : {};
+  const counts = {};
+  for (const [k, val] of Object.entries(countsObj)) {
+    if (k === '__none__') continue;
+    const n = Number(val);
+    if (!Number.isNaN(n)) counts[String(k)] = n;
+  }
+  return { total, counts };
+}
+
+async function invokeCrmLeadsStageCountsRpc(rpcParams) {
+  let { data, error } = await supabase.rpc('crm_leads_stage_counts', rpcParams);
+  if (error && /crm_leads_stage_counts|does not exist|Could not find|argument/i.test(String(error.message || ''))) {
+    const { p_region_ids: _r, p_pipeline_stage_ids: _p, ...noExtras } = rpcParams;
+    const r2 = await supabase.rpc('crm_leads_stage_counts', noExtras);
+    if (!r2.error) {
+      data = r2.data;
+      error = null;
+    }
+  }
+  if (error) {
+    console.warn('[crm/stage-counts] RPC error:', error.message);
+    return null;
+  }
+  return parseCrmStageCountsRpc(data);
+}
+
+function buildCrmLeadsRpcFilterParams(mergedQuery, type, rpcAssigneeStrict, rpcRegionIds) {
+  const { assigned_to, source_id, company_id, date_from, date_to, search, phone_filter } = mergedQuery;
+  return {
+    p_type: type,
+    p_assigned_to: uuidQueryOrNull(assigned_to),
+    p_source_id: uuidQueryOrNull(source_id),
+    p_company_id: uuidQueryOrNull(company_id),
+    p_date_from: sanitizeIsoDateQueryParam(date_from),
+    p_date_to: sanitizeIsoDateQueryParam(date_to),
+    p_search: search || null,
+    p_phone_filter: phone_filter || null,
+    p_assigned_strict: rpcAssigneeStrict,
+    p_region_ids: rpcRegionIds,
+  };
+}
+
+async function resolveCrmLeadsMergedQuery(req, res) {
+  const type = req.query.type || 'lead';
+  const forcedDealSelf = type === 'deal' && req.user?.userId && !userSeesAllCrmDealsForScope(req.user);
+  const forcedLeadSelf = type === 'lead' && req.user?.userId && !userSeesAllCrmLeadsForScope(req.user);
+  let mergedQuery =
+    forcedDealSelf || forcedLeadSelf ? { ...req.query, assigned_to: req.user.userId } : { ...req.query };
+  const sacLeads = scopedAdminCompanyId(req);
+  if (sacLeads) {
+    mergedQuery = { ...mergedQuery, company_id: sacLeads };
+  } else if (!userIsAdmin(req.user?.role)) {
+    const cid = await requireUserCompanyIdResolved(req, res);
+    if (!cid) return null;
+    mergedQuery = { ...mergedQuery, company_id: cid };
+  }
+  const { assigned_to } = mergedQuery;
+  const dealAssigneeStrict = type === 'deal' && (!!uuidQueryOrNull(assigned_to) || forcedDealSelf);
+  const leadAssigneeStrict = type === 'lead' && (!!uuidQueryOrNull(assigned_to) || forcedLeadSelf);
+  const rpcAssigneeStrict = dealAssigneeStrict || leadAssigneeStrict;
+  const rcForRpc = getCrmLeadRegionConstraint(req);
+  const rpcRegionIds = rcForRpc.mode === 'in' && rcForRpc.ids?.length ? rcForRpc.ids : null;
+  return { type, mergedQuery, rpcAssigneeStrict, rpcRegionIds };
+}
+
+async function hydrateCrmLeadsRpcPage(parsedRpc, req, parsedOffset, parsedLimit) {
+  const { total, ids } = parsedRpc;
+  const hydrated = await fetchCrmLeadsByIdsOrdered(ids);
+  const rows = await attachCrmNextOpenTaskDeadline(hydrated);
+  const page = attachLeadNewFlagForList(rows, req.user?.userId);
+  const pageWithUserFlags = await attachLeadUserFlagsForList(page, req.user?.userId);
+  const windowLen = Array.isArray(ids) ? ids.length : page.length;
+  return {
+    data: pageWithUserFlags,
+    total,
+    offset: parsedOffset,
+    limit: parsedLimit,
+    hasMore: parsedOffset + windowLen < total,
+    nextOffset: parsedOffset + windowLen,
+  };
+}
+
+async function resolveKanbanStagesForCompany(type, companyId, regionId) {
+  if (!companyId) return [];
+  const rid = regionId && String(regionId).trim() ? String(regionId).trim() : '';
+  const effectivePipelineId = rid
+    ? await getPipelineIdForCompanyRegion(companyId, rid)
+    : await getDefaultPipelineIdForCompany(companyId);
+  if (!effectivePipelineId) return [];
+  const data = await getStagesByPipelineId(effectivePipelineId, { type: type || null, activeOnly: true });
+  return normalizePipelineStagesList(data || []);
+}
+
+function crmListUsesLegacyFilters(mergedQuery) {
+  const referrerNameQuery = String(mergedQuery.referrer_name || '').trim();
+  const customerCompanyQuery = String(mergedQuery.customer_company || '').trim();
+  if (uuidQueryOrNull(mergedQuery.lead_type_id) || referrerNameQuery || customerCompanyQuery) return true;
+  const legacyFollowUpFrom = sanitizeIsoDateQueryParam(mergedQuery.next_follow_up_from);
+  const legacyFollowUpTo = sanitizeIsoDateQueryParam(mergedQuery.next_follow_up_to);
+  const legacyFollowUpEmpty =
+    mergedQuery.next_follow_up_empty === 'true' || mergedQuery.next_follow_up_empty === '1';
+  const legacyPipelineId = uuidQueryOrNull(mergedQuery.pipeline_id);
+  return !!(legacyFollowUpFrom || legacyFollowUpTo || legacyFollowUpEmpty || legacyPipelineId);
+}
+
+/** GET /crm/stage-counts — đếm tất cả cột trong 1 request (RPC GROUP BY stage_id). */
+r.get('/stage-counts', responseCache({ ttl: 15, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
+  try {
+    const ctx = await resolveCrmLeadsMergedQuery(req, res);
+    if (!ctx) return;
+    const { type, mergedQuery, rpcAssigneeStrict, rpcRegionIds } = ctx;
+    if (crmListUsesLegacyFilters(mergedQuery)) {
+      return res.status(400).json({ error: 'Bộ lọc hiện tại chưa hỗ trợ stage-counts batch. Dùng GET /crm/leads từng cột.' });
+    }
+
+    const stages = await resolveKanbanStagesForCompany(
+      type,
+      uuidQueryOrNull(mergedQuery.company_id),
+      mergedQuery.region_id,
+    );
+    const stageIds = stages.map((s) => s.id).filter(Boolean);
+    const filterParams = buildCrmLeadsRpcFilterParams(mergedQuery, type, rpcAssigneeStrict, rpcRegionIds);
+    const rpcParams = {
+      ...filterParams,
+      p_pipeline_stage_ids: stageIds.length ? stageIds : null,
+    };
+
+    const parsed = await invokeCrmLeadsStageCountsRpc(rpcParams);
+    if (parsed) {
+      return res.json({ total: parsed.total, counts: parsed.counts });
+    }
+
+    const counts = {};
+    for (const sid of stageIds) {
+      const pageRpc = {
+        ...filterParams,
+        p_stage_id: sid,
+        p_limit: 1,
+        p_offset: 0,
+      };
+      let { data: rpcData, error: rpcError } = await supabase.rpc('crm_leads_page_ids', pageRpc);
+      if (rpcError) break;
+      const p = parseCrmLeadsPageRpc(rpcData);
+      if (p) counts[sid] = p.total;
+    }
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    res.json({ total, counts, fallback: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** GET /crm/kanban-bootstrap — stages + counts + trang đầu cột active trong 1 round-trip. */
+r.get('/kanban-bootstrap', responseCache({ ttl: 15, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
+  try {
+    const ctx = await resolveCrmLeadsMergedQuery(req, res);
+    if (!ctx) return;
+    const { type, mergedQuery, rpcAssigneeStrict, rpcRegionIds } = ctx;
+    if (crmListUsesLegacyFilters(mergedQuery)) {
+      return res.status(400).json({ error: 'Bộ lọc hiện tại chưa hỗ trợ kanban-bootstrap. Dùng GET /crm/leads.' });
+    }
+
+    const companyId = uuidQueryOrNull(mergedQuery.company_id);
+    const regionId = mergedQuery.region_id;
+    const parsedLimit = Math.min(Math.max(parseInt(req.query.limit) || 20, 1), 200);
+    const requestedStageId = uuidQueryOrNull(req.query.stage_id);
+
+    const stages = await resolveKanbanStagesForCompany(type, companyId, regionId);
+    const stageIds = stages.map((s) => String(s.id)).filter(Boolean);
+    const initialStageId =
+      requestedStageId && stageIds.includes(String(requestedStageId))
+        ? String(requestedStageId)
+        : (stageIds[0] || '');
+
+    const filterParams = buildCrmLeadsRpcFilterParams(mergedQuery, type, rpcAssigneeStrict, rpcRegionIds);
+
+    const countsPromise = invokeCrmLeadsStageCountsRpc({
+      ...filterParams,
+      p_pipeline_stage_ids: stageIds.length ? stageIds : null,
+    });
+
+    const pagePromise = (async () => {
+      if (!initialStageId) {
+        return { data: [], total: 0, offset: 0, limit: parsedLimit, hasMore: false, nextOffset: 0 };
+      }
+      const pageRpc = {
+        ...filterParams,
+        p_stage_id: initialStageId,
+        p_limit: parsedLimit,
+        p_offset: 0,
+      };
+      let { data: rpcData, error: rpcError } = await supabase.rpc('crm_leads_page_ids', pageRpc);
+      if (rpcError && /crm_leads_page_ids|does not exist|Could not find|argument/i.test(String(rpcError.message || ''))) {
+        const { p_region_ids: _r, ...noRegion } = pageRpc;
+        const r2 = await supabase.rpc('crm_leads_page_ids', noRegion);
+        if (!r2.error) {
+          rpcData = r2.data;
+          rpcError = null;
+        }
+      }
+      const parsedRpc = !rpcError ? parseCrmLeadsPageRpc(rpcData) : null;
+      if (!parsedRpc) return null;
+      return hydrateCrmLeadsRpcPage(parsedRpc, req, 0, parsedLimit);
+    })();
+
+    const [countsParsed, initialPage] = await Promise.all([countsPromise, pagePromise]);
+    if (!initialPage) {
+      return res.status(500).json({ error: 'Không tải được trang kanban' });
+    }
+
+    const stageCounts = countsParsed?.counts || {};
+    if (initialStageId && stageCounts[initialStageId] === undefined) {
+      stageCounts[initialStageId] = initialPage.total;
+    }
+
+    res.json({
+      stages,
+      stageCounts,
+      listTotal: countsParsed?.total ?? initialPage.total,
+      initialStageId,
+      initialPage: {
+        data: initialPage.data,
+        total: initialPage.total,
+        hasMore: initialPage.hasMore,
+        nextOffset: initialPage.nextOffset,
+      },
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 r.get('/leads', responseCache({ ttl: 15, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
   try {
     const type = req.query.type || 'lead';
@@ -5059,7 +5317,7 @@ r.get('/leads', responseCache({ ttl: 15, scope: 'user', tags: ['crm:list'] }), a
     if (sacLeads) {
       mergedQuery = { ...mergedQuery, company_id: sacLeads };
     } else if (!userIsAdmin(req.user?.role)) {
-      const cid = requireUserCompanyId(req, res);
+      const cid = await requireUserCompanyIdResolved(req, res);
       if (!cid) return;
       mergedQuery = { ...mergedQuery, company_id: cid };
     }

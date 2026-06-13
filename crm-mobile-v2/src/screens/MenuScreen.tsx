@@ -1,11 +1,13 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React from 'react';
+import React, { useCallback } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../components/Avatar';
+import { warmCrmHubPipelines } from '../api/crm';
 import { useAuth } from '../context/AuthContext';
+import { currentVersionName } from '../lib/appUpdate';
 import { Colors, Radii } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -58,6 +60,12 @@ export default function MenuScreen() {
   const { user, logout } = useAuth();
   const displayName = user?.full_name || user?.fullName || user?.email || 'Người dùng';
 
+  useFocusEffect(
+    useCallback(() => {
+      void warmCrmHubPipelines(user?.company_id || undefined);
+    }, [user?.company_id]),
+  );
+
   const onItem = (it: Item) => {
     if (it.action === 'logout') {
       void logout();
@@ -101,7 +109,7 @@ export default function MenuScreen() {
         </View>
       ))}
 
-      <Text style={styles.version}>CRM Mobile v2.0.0</Text>
+      <Text style={styles.version}>CRM Mobile v{currentVersionName() || '?'}</Text>
     </ScrollView>
   );
 }

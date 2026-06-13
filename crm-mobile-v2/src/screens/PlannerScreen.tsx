@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -9,16 +9,24 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  fetchPlannerSection,
+  fetchPlannerSectionPage,
   invalidatePlannerCache,
-  peekPlannerCache,
   setPlannerCache,
+  type PlannerFetchOpts,
 } from '../api/crm';
+import { fetchCrmCompanies } from '../api/crmMeta';
 import { currentUserId, useAuth } from '../context/AuthContext';
+import {
+  filterPlannerItems,
+  PLANNER_PAGE_SIZE,
+  plannerSearchPlaceholder,
+  type PlannerQuickFilter,
+} from '../lib/plannerFilters';
 import { Colors, Radii } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
 import type { PlannerItem, PlannerKind } from '../types';
@@ -33,50 +41,47 @@ const KIND_META: Record<
   deal: { label: 'Deals của tôi', icon: 'pricetags', color: Colors.orange, soft: Colors.orangeSoft },
 };
 
-const SECTION_LIMIT = 30;
+const QUICK_FILTERS: { key: PlannerQuickFilter; label: string }[] = [
+  { key: 'all', label: 'Tất cả' },
+  { key: 'overdue', label: 'Quá hạn' },
+  { key: 'today', label: 'Hẹn hôm nay' },
+  { key: 'no_due', label: 'Chưa hẹn' },
+  { key: 'has_phone', label: 'Có SĐT' },
+];
 
-function ItemCard({ item }: { item: PlannerItem }) {
+type SectionState = {
+  items: PlannerItem[];
+  total: number;
+  hasMore: boolean;
+  nextOffset: number;
+};
+
+const EMPTY_SECTION: SectionState = { items: [], total: 0, hasMore: false, nextOffset: 0 };
+
+function CompactCard({ item }: { item: PlannerItem }) {
   const meta = KIND_META[item.kind];
   return (
     <View style={[styles.card, { borderLeftColor: meta.color }]}>
-      <View style={styles.cardHead}>
-        <View style={[styles.kindIcon, { backgroundColor: meta.soft }]}>
-          <Ionicons name={meta.icon} size={14} color={meta.color} />
-        </View>
+      <View style={styles.cardTop}>
         <Text style={styles.cardCode}>{item.code}</Text>
         {item.overdue ? (
           <View style={styles.overduePill}>
             <Text style={styles.overdueTxt}>Quá hạn</Text>
           </View>
         ) : null}
+        <Text style={[styles.cardDue, item.overdue && { color: Colors.red }]} numberOfLines={1}>
+          {item.deadlineLabel}
+        </Text>
       </View>
-      <Text style={styles.cardTitle} numberOfLines={2}>{item.title}</Text>
-      <View style={styles.cardMetaRow}>
-        <Ionicons name="person-outline" size={12} color={Colors.textMuted} />
-        <Text style={styles.cardMeta} numberOfLines={1}>{item.contactName}</Text>
-        {item.valueLabel ? (
-          <>
-            <View style={styles.dot} />
-            <Text style={[styles.cardMeta, { color: Colors.orange, fontWeight: '800' }]}>
-              {item.valueLabel}
-            </Text>
-          </>
-        ) : null}
-      </View>
-      <View style={styles.cardFoot}>
+      <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
+      <View style={styles.cardBottom}>
+        <Text style={styles.cardMeta} numberOfLines={1}>
+          {item.contactName}
+          {item.phone ? ` · ${item.phone}` : ''}
+        </Text>
         <View style={[styles.statusChip, { backgroundColor: meta.soft }]}>
           <Text style={[styles.statusTxt, { color: meta.color }]} numberOfLines={1}>
             {item.status}
-          </Text>
-        </View>
-        <View style={styles.dueRow}>
-          <Ionicons
-            name="time-outline"
-            size={12}
-            color={item.overdue ? Colors.red : Colors.textMuted}
-          />
-          <Text style={[styles.dueTxt, item.overdue && { color: Colors.red }]} numberOfLines={1}>
-            {item.deadlineLabel}
           </Text>
         </View>
       </View>
@@ -84,22 +89,53 @@ function ItemCard({ item }: { item: PlannerItem }) {
   );
 }
 
-function Section({
+function PlannerSection({
   kind,
-  items,
+  state,
   loading,
-  onSeeAll,
+  loadingMore,
+  onLoadMore,
 }: {
   kind: PlannerKind;
-  items: PlannerItem[];
+  state: SectionState;
   loading?: boolean;
-  onSeeAll: () => void;
+  loadingMore?: boolean;
+  onLoadMore: () => void;
 }) {
   const meta = KIND_META[kind];
-  const overdue = items.filter((i) => i.overdue).length;
-  const [expanded, setExpanded] = useState(false);
-  const shown = expanded ? items : items.slice(0, SECTION_LIMIT);
-  const hasMore = items.length > SECTION_LIMIT;
+  const [searchDraft, setSearchDraft] = useState('');
+  const [search, setSearch] = useState('');
+  const [quickFilter, setQuickFilter] = useState<PlannerQuickFilter>('all');
+  const [page, setPage] = useState(0);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchDraft.trim()), 300);
+    return () => clearTimeout(t);
+  }, [searchDraft]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [search, quickFilter]);
+
+  const filtered = useMemo(
+    () => filterPlannerItems(state.items, search, quickFilter),
+    [state.items, search, quickFilter],
+  );
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PLANNER_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageItems = filtered.slice(
+    safePage * PLANNER_PAGE_SIZE,
+    safePage * PLANNER_PAGE_SIZE + PLANNER_PAGE_SIZE,
+  );
+  const filterActive = !!search || quickFilter !== 'all';
+  const overdueCount = state.items.filter((i) => i.overdue).length;
+
+  const loadMoreFromServer = useCallback(() => {
+    if (!state.hasMore || loadingMore) return;
+    onLoadMore();
+  }, [state.hasMore, loadingMore, onLoadMore]);
 
   return (
     <View style={styles.section}>
@@ -109,26 +145,111 @@ function Section({
         </View>
         <Text style={styles.sectionTitle}>{meta.label}</Text>
         <View style={[styles.countBadge, { backgroundColor: meta.color }]}>
-          <Text style={styles.countTxt}>{items.length}</Text>
+          <Text style={styles.countTxt}>{state.items.length}</Text>
         </View>
-        {overdue > 0 ? <Text style={styles.sectionOverdue}>{overdue} quá hạn</Text> : null}
-        <View style={{ flex: 1 }} />
-        <Pressable onPress={onSeeAll} hitSlop={8}>
-          <Text style={[styles.seeAll, { color: meta.color }]}>Xem tất cả</Text>
+        {overdueCount > 0 ? <Text style={styles.sectionOverdue}>{overdueCount} quá hạn</Text> : null}
+      </View>
+
+      <View style={styles.searchRow}>
+        <View style={styles.searchBox}>
+          <Ionicons name="search-outline" size={16} color={Colors.textFaint} />
+          <TextInput
+            value={searchDraft}
+            onChangeText={setSearchDraft}
+            placeholder={plannerSearchPlaceholder(kind)}
+            placeholderTextColor={Colors.textFaint}
+            style={styles.searchInput}
+            returnKeyType="search"
+            keyboardType="default"
+          />
+          {searchDraft ? (
+            <Pressable onPress={() => setSearchDraft('')} hitSlop={8}>
+              <Ionicons name="close-circle" size={16} color={Colors.textFaint} />
+            </Pressable>
+          ) : null}
+        </View>
+        <Pressable
+          style={[styles.filterToggle, (filtersOpen || filterActive) && { borderColor: meta.color, backgroundColor: meta.soft }]}
+          onPress={() => setFiltersOpen((v) => !v)}
+          hitSlop={4}
+        >
+          <Ionicons name="options-outline" size={18} color={filterActive ? meta.color : Colors.text} />
         </Pressable>
       </View>
+
+      {filtersOpen ? (
+        <View style={styles.filterBlock}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+            {QUICK_FILTERS.map((f) => {
+              const active = quickFilter === f.key;
+              return (
+                <Pressable
+                  key={f.key}
+                  style={[styles.chip, active && { backgroundColor: meta.color, borderColor: meta.color }]}
+                  onPress={() => setQuickFilter(f.key)}
+                >
+                  <Text style={[styles.chipTxt, active && { color: '#fff' }]}>{f.label}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+      ) : null}
+
+      {filterActive ? (
+        <Text style={styles.filterHint}>
+          Hiển thị {filtered.length}/{state.items.length} đã tải
+          {state.hasMore ? ' · còn trên server' : ''}
+        </Text>
+      ) : null}
+
       {loading ? (
         <ActivityIndicator color={meta.color} style={{ marginVertical: 16 }} />
-      ) : items.length === 0 ? (
-        <Text style={styles.empty}>Không có {kind === 'lead' ? 'lead' : 'deal'} nào được giao.</Text>
+      ) : filtered.length === 0 ? (
+        <Text style={styles.empty}>
+          {filterActive
+            ? `Không có ${kind === 'lead' ? 'lead' : 'deal'} phù hợp bộ lọc.`
+            : `Không có ${kind === 'lead' ? 'lead' : 'deal'} nào được giao.`}
+        </Text>
       ) : (
         <>
-          {shown.map((it) => <ItemCard key={it.id} item={it} />)}
-          {hasMore && !expanded ? (
-            <Pressable style={styles.showMoreBtn} onPress={() => setExpanded(true)}>
-              <Text style={[styles.showMoreTxt, { color: meta.color }]}>
-                Xem thêm {items.length - SECTION_LIMIT} mục...
+          {pageItems.map((it) => <CompactCard key={it.id} item={it} />)}
+
+          {totalPages > 1 ? (
+            <View style={styles.pageRow}>
+              <Pressable
+                style={[styles.pageBtn, safePage === 0 && styles.pageBtnDisabled]}
+                disabled={safePage === 0}
+                onPress={() => setPage((p) => Math.max(0, p - 1))}
+              >
+                <Ionicons name="chevron-back" size={18} color={safePage === 0 ? Colors.textFaint : meta.color} />
+              </Pressable>
+              <Text style={styles.pageInfo}>
+                Trang {safePage + 1}/{totalPages} · {filtered.length} mục
               </Text>
+              <Pressable
+                style={[styles.pageBtn, safePage >= totalPages - 1 && styles.pageBtnDisabled]}
+                disabled={safePage >= totalPages - 1}
+                onPress={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+              >
+                <Ionicons name="chevron-forward" size={18} color={safePage >= totalPages - 1 ? Colors.textFaint : meta.color} />
+              </Pressable>
+            </View>
+          ) : null}
+
+          {state.hasMore ? (
+            <Pressable
+              style={[styles.loadMoreBtn, { borderColor: meta.color }]}
+              onPress={() => void loadMoreFromServer()}
+              disabled={loadingMore}
+            >
+              {loadingMore ? (
+                <ActivityIndicator size="small" color={meta.color} />
+              ) : (
+                <Text style={[styles.loadMoreTxt, { color: meta.color }]}>
+                  Tải thêm từ server ({state.items.length}/{state.total})
+                </Text>
+              )}
             </Pressable>
           ) : null}
         </>
@@ -143,14 +264,28 @@ export default function PlannerScreen() {
   const { user } = useAuth();
   const userId = currentUserId(user);
 
-  const [leads, setLeads] = useState<PlannerItem[]>(() => peekPlannerCache(userId)?.leads ?? []);
-  const [deals, setDeals] = useState<PlannerItem[]>(() => peekPlannerCache(userId)?.deals ?? []);
-  const [leadsLoading, setLeadsLoading] = useState(() => !peekPlannerCache(userId));
-  const [dealsLoading, setDealsLoading] = useState(() => !peekPlannerCache(userId));
+  const [leadState, setLeadState] = useState<SectionState>(EMPTY_SECTION);
+  const [dealState, setDealState] = useState<SectionState>(EMPTY_SECTION);
+  const [leadsLoading, setLeadsLoading] = useState(true);
+  const [dealsLoading, setDealsLoading] = useState(true);
+  const [leadsLoadingMore, setLeadsLoadingMore] = useState(false);
+  const [dealsLoadingMore, setDealsLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const abortRef = useRef<AbortController | null>(null);
   const loadingRef = useRef(false);
+  const companyIdRef = useRef<string | undefined>(undefined);
+
+  const resolvePlannerCompanyId = useCallback(async (): Promise<string | undefined> => {
+    const fromUser = user?.company_id;
+    if (fromUser) return fromUser;
+    try {
+      const companies = await fetchCrmCompanies();
+      return companies[0]?.id;
+    } catch {
+      return undefined;
+    }
+  }, [user?.company_id]);
 
   const load = useCallback(async (isRefresh = false) => {
     if (!userId) return;
@@ -160,34 +295,36 @@ export default function PlannerScreen() {
     abortRef.current = ac;
     loadingRef.current = true;
 
-    const cached = peekPlannerCache(userId);
-    if (cached && !isRefresh) {
-      setLeads(cached.leads);
-      setDeals(cached.deals);
-      setLeadsLoading(false);
-      setDealsLoading(false);
-      loadingRef.current = false;
-      return;
-    }
-    if (!cached) {
-      setLeadsLoading(true);
-      setDealsLoading(true);
-    }
+    setLeadsLoading(true);
+    setDealsLoading(true);
     if (isRefresh) {
       invalidatePlannerCache(userId);
       setRefreshing(true);
     }
     setError('');
 
+    const companyId = await resolvePlannerCompanyId();
+    if (ac.signal.aborted) {
+      loadingRef.current = false;
+      return;
+    }
+    companyIdRef.current = companyId;
+    const plannerOpts: PlannerFetchOpts = { signal: ac.signal, companyId };
+
     let leadErr = '';
     let dealErr = '';
-    let leadItems: PlannerItem[] = [];
-    let dealItems: PlannerItem[] = [];
+    let leadResult = EMPTY_SECTION;
+    let dealResult = EMPTY_SECTION;
 
-    const leadPromise = fetchPlannerSection('lead', userId, ac.signal)
-      .then((items) => {
-        leadItems = items;
-        if (!ac.signal.aborted) setLeads(items);
+    const leadPromise = fetchPlannerSectionPage('lead', userId, 0, undefined, plannerOpts)
+      .then((page) => {
+        leadResult = {
+          items: page.items,
+          total: page.total,
+          hasMore: page.hasMore,
+          nextOffset: page.nextOffset,
+        };
+        if (!ac.signal.aborted) setLeadState(leadResult);
       })
       .catch((e: unknown) => {
         if (!ac.signal.aborted) {
@@ -201,10 +338,15 @@ export default function PlannerScreen() {
         if (!ac.signal.aborted) setLeadsLoading(false);
       });
 
-    const dealPromise = fetchPlannerSection('deal', userId, ac.signal)
-      .then((items) => {
-        dealItems = items;
-        if (!ac.signal.aborted) setDeals(items);
+    const dealPromise = fetchPlannerSectionPage('deal', userId, 0, undefined, plannerOpts)
+      .then((page) => {
+        dealResult = {
+          items: page.items,
+          total: page.total,
+          hasMore: page.hasMore,
+          nextOffset: page.nextOffset,
+        };
+        if (!ac.signal.aborted) setDealState(dealResult);
       })
       .catch((e: unknown) => {
         if (!ac.signal.aborted) {
@@ -223,10 +365,23 @@ export default function PlannerScreen() {
     if (!ac.signal.aborted) {
       if (leadErr && dealErr) setError(leadErr);
       else setError('');
-      setPlannerCache(userId, { leads: leadItems, deals: dealItems });
+      setPlannerCache(userId, { leads: leadResult.items, deals: dealResult.items });
     }
     loadingRef.current = false;
     setRefreshing(false);
+  }, [userId, resolvePlannerCompanyId]);
+
+  useEffect(() => {
+    if (!userId) {
+      setLeadState(EMPTY_SECTION);
+      setDealState(EMPTY_SECTION);
+      setLeadsLoading(false);
+      setDealsLoading(false);
+      return;
+    }
+    invalidatePlannerCache(userId);
+    setLeadState(EMPTY_SECTION);
+    setDealState(EMPTY_SECTION);
   }, [userId]);
 
   useFocusEffect(
@@ -237,7 +392,7 @@ export default function PlannerScreen() {
   );
 
   const overdueCount =
-    leads.filter((l) => l.overdue).length + deals.filter((d) => d.overdue).length;
+    leadState.items.filter((l) => l.overdue).length + dealState.items.filter((d) => d.overdue).length;
 
   const today = new Date().toLocaleDateString('vi-VN', {
     weekday: 'long',
@@ -249,10 +404,52 @@ export default function PlannerScreen() {
   const displayName = user?.full_name || user?.fullName || '';
 
   const summary = useMemo(() => ({
-    leads: leads.length,
-    deals: deals.length,
+    leads: leadState.items.length,
+    deals: dealState.items.length,
     overdue: overdueCount,
-  }), [leads.length, deals.length, overdueCount]);
+  }), [leadState.items.length, dealState.items.length, overdueCount]);
+
+  const loadMoreLeads = useCallback(async () => {
+    if (!userId || leadsLoadingMore || !leadState.hasMore) return;
+    setLeadsLoadingMore(true);
+    try {
+      const page = await fetchPlannerSectionPage('lead', userId, leadState.nextOffset, undefined, {
+        companyId: companyIdRef.current,
+      });
+      const mergedItems = [...leadState.items, ...page.items];
+      const merged: SectionState = {
+        items: mergedItems,
+        total: mergedItems.length,
+        hasMore: page.hasMore,
+        nextOffset: page.nextOffset,
+      };
+      setLeadState(merged);
+      setPlannerCache(userId, { leads: merged.items, deals: dealState.items });
+    } finally {
+      setLeadsLoadingMore(false);
+    }
+  }, [userId, leadsLoadingMore, leadState, dealState.items]);
+
+  const loadMoreDeals = useCallback(async () => {
+    if (!userId || dealsLoadingMore || !dealState.hasMore) return;
+    setDealsLoadingMore(true);
+    try {
+      const page = await fetchPlannerSectionPage('deal', userId, dealState.nextOffset, undefined, {
+        companyId: companyIdRef.current,
+      });
+      const mergedItems = [...dealState.items, ...page.items];
+      const merged: SectionState = {
+        items: mergedItems,
+        total: mergedItems.length,
+        hasMore: page.hasMore,
+        nextOffset: page.nextOffset,
+      };
+      setDealState(merged);
+      setPlannerCache(userId, { leads: leadState.items, deals: merged.items });
+    } finally {
+      setDealsLoadingMore(false);
+    }
+  }, [userId, dealsLoadingMore, dealState, leadState.items]);
 
   return (
     <View style={styles.root}>
@@ -263,7 +460,6 @@ export default function PlannerScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={Colors.blue} />
         }
       >
-        {/* Header */}
         <View style={styles.header}>
           <View style={{ flex: 1 }}>
             <Text style={styles.greeting}>Kế hoạch của tôi</Text>
@@ -277,7 +473,6 @@ export default function PlannerScreen() {
           </Pressable>
         </View>
 
-        {/* Tổng quan */}
         <View style={styles.summary}>
           <View style={styles.sumItem}>
             <Text style={[styles.sumValue, { color: Colors.blue }]}>{summary.leads}</Text>
@@ -295,11 +490,10 @@ export default function PlannerScreen() {
           </View>
         </View>
 
-        {/* Thao tác nhanh */}
         <View style={styles.quickRow}>
           <Pressable
             style={[styles.quickBtn, { borderColor: Colors.blue }]}
-            onPress={() => navigation.navigate('CrmHub', { initialMode: 'leads' })}
+            onPress={() => navigation.navigate('CrmHub', { initialMode: 'leads', initialAssignee: 'mine' })}
           >
             <View style={[styles.quickIcon, { backgroundColor: Colors.blueSoft }]}>
               <Ionicons name="people" size={22} color={Colors.blue} />
@@ -312,7 +506,7 @@ export default function PlannerScreen() {
           </Pressable>
           <Pressable
             style={[styles.quickBtn, { borderColor: Colors.orange }]}
-            onPress={() => navigation.navigate('CrmHub', { initialMode: 'deals' })}
+            onPress={() => navigation.navigate('CrmHub', { initialMode: 'deals', initialAssignee: 'mine' })}
           >
             <View style={[styles.quickIcon, { backgroundColor: Colors.orangeSoft }]}>
               <Ionicons name="pricetags" size={22} color={Colors.orange} />
@@ -325,7 +519,6 @@ export default function PlannerScreen() {
           </Pressable>
         </View>
 
-        {/* Nội dung — mỗi section load độc lập, không chặn cả trang */}
         <View style={{ paddingHorizontal: 16, marginTop: 18 }}>
           {error && !leadsLoading && !dealsLoading ? (
             <View style={styles.errBox}>
@@ -336,17 +529,19 @@ export default function PlannerScreen() {
               </Pressable>
             </View>
           ) : null}
-          <Section
+          <PlannerSection
             kind="lead"
-            items={leads}
+            state={leadState}
             loading={leadsLoading}
-            onSeeAll={() => navigation.navigate('CrmHub', { initialMode: 'leads' })}
+            loadingMore={leadsLoadingMore}
+            onLoadMore={() => void loadMoreLeads()}
           />
-          <Section
+          <PlannerSection
             kind="deal"
-            items={deals}
+            state={dealState}
             loading={dealsLoading}
-            onSeeAll={() => navigation.navigate('CrmHub', { initialMode: 'deals' })}
+            loadingMore={dealsLoadingMore}
+            onLoadMore={() => void loadMoreDeals()}
           />
         </View>
       </ScrollView>
@@ -408,7 +603,7 @@ const styles = StyleSheet.create({
   quickTitle: { color: Colors.text, fontSize: 15, fontWeight: '800' },
   quickSub: { color: Colors.textMuted, fontSize: 12, marginTop: 2, fontWeight: '600' },
   section: { marginBottom: 22 },
-  sectionHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+  sectionHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
   sectionBadge: { width: 30, height: 30, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   sectionTitle: { color: Colors.text, fontSize: 17, fontWeight: '900' },
   countBadge: {
@@ -421,44 +616,104 @@ const styles = StyleSheet.create({
   },
   countTxt: { color: '#fff', fontSize: 12, fontWeight: '900' },
   sectionOverdue: { color: Colors.red, fontSize: 12, fontWeight: '800', marginLeft: 2 },
-  seeAll: { fontSize: 13, fontWeight: '800' },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  searchBox: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    height: 40,
+    paddingHorizontal: 10,
+    backgroundColor: Colors.card,
+    borderRadius: Radii.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  searchInput: { flex: 1, color: Colors.text, fontSize: 13, paddingVertical: 0 },
+  filterToggle: {
+    width: 40,
+    height: 40,
+    borderRadius: Radii.md,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterBlock: { marginBottom: 8 },
+  chipRow: { flexDirection: 'row', alignItems: 'center', paddingRight: 8 },
+  chip: {
+    paddingHorizontal: 12,
+    height: 30,
+    borderRadius: Radii.pill,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+  },
+  chipTxt: { color: Colors.textMuted, fontSize: 12, fontWeight: '800' },
+  filterHint: { color: Colors.textFaint, fontSize: 11, fontWeight: '600', marginBottom: 8 },
   empty: { color: Colors.textFaint, fontSize: 14, textAlign: 'center', marginVertical: 14 },
   card: {
     backgroundColor: Colors.card,
     borderRadius: Radii.md,
     borderWidth: 1,
     borderColor: Colors.border,
-    borderLeftWidth: 4,
-    padding: 12,
-    marginBottom: 10,
+    borderLeftWidth: 3,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 6,
   },
-  cardHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-  kindIcon: { width: 26, height: 26, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  cardCode: { color: Colors.textMuted, fontSize: 12, fontWeight: '800', flex: 1 },
+  cardTop: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  cardCode: { color: Colors.textMuted, fontSize: 11, fontWeight: '800' },
   overduePill: {
     backgroundColor: Colors.redSoft,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
     borderRadius: Radii.pill,
   },
-  overdueTxt: { color: Colors.red, fontSize: 10, fontWeight: '800' },
-  cardTitle: { color: Colors.text, fontSize: 15, fontWeight: '800', lineHeight: 20 },
-  cardMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 7 },
-  cardMeta: { color: Colors.textMuted, fontSize: 12, fontWeight: '600', flexShrink: 1 },
-  dot: { width: 3, height: 3, borderRadius: 2, backgroundColor: Colors.textFaint, marginHorizontal: 2 },
-  cardFoot: {
+  overdueTxt: { color: Colors.red, fontSize: 9, fontWeight: '800' },
+  cardDue: { flex: 1, textAlign: 'right', color: Colors.textMuted, fontSize: 10, fontWeight: '700' },
+  cardTitle: { color: Colors.text, fontSize: 14, fontWeight: '800', marginTop: 4 },
+  cardBottom: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
+  cardMeta: { flex: 1, color: Colors.textMuted, fontSize: 11, fontWeight: '600' },
+  statusChip: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: Radii.pill, maxWidth: '42%' },
+  statusTxt: { fontSize: 10, fontWeight: '800' },
+  pageRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 10,
-    gap: 8,
+    justifyContent: 'center',
+    gap: 12,
+    marginTop: 4,
+    marginBottom: 4,
   },
-  statusChip: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: Radii.pill, flexShrink: 1 },
-  statusTxt: { fontSize: 11, fontWeight: '800' },
-  dueRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  dueTxt: { color: Colors.textMuted, fontSize: 11, fontWeight: '700' },
-  showMoreBtn: { alignSelf: 'center', paddingVertical: 8, paddingHorizontal: 16, marginTop: 2, marginBottom: 6 },
-  showMoreTxt: { fontSize: 13, fontWeight: '800' },
+  pageBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pageBtnDisabled: { opacity: 0.4 },
+  pageInfo: { color: Colors.textMuted, fontSize: 12, fontWeight: '700' },
+  loadMoreBtn: {
+    alignSelf: 'center',
+    marginTop: 6,
+    marginBottom: 4,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: Radii.pill,
+    borderWidth: 1,
+    minHeight: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadMoreTxt: { fontSize: 12, fontWeight: '800' },
   errBox: { alignItems: 'center', gap: 12, padding: 32, marginTop: 20 },
   errTxt: { color: Colors.textFaint, fontSize: 14, textAlign: 'center', lineHeight: 20 },
   retryBtn: {

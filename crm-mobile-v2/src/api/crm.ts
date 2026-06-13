@@ -13,7 +13,14 @@ import type {
   PlannerItem,
 } from '../types';
 
-type ApiStage = { id?: string; name?: string | null; color?: string | null; icon?: string | null; order_index?: number };
+type ApiStage = {
+  id?: string;
+  name?: string | null;
+  color?: string | null;
+  icon?: string | null;
+  order_index?: number;
+  pipeline_type?: string | null;
+};
 type ApiLead = {
   id: string;
   code?: string | null;
@@ -77,6 +84,16 @@ export const KANBAN_PAGE_SIZE = 20;
 const STAGES_CACHE_TTL_MS = 5 * 60 * 1000;
 const stagesCache = new Map<string, { stages: CrmPipelineStage[]; at: number }>();
 
+function peekPipelineStagesCached(
+  type: 'lead' | 'deal',
+  opts?: CrmStageFetchOpts,
+): CrmPipelineStage[] | null {
+  const key = stagesCacheKey(type, opts);
+  const hit = stagesCache.get(key);
+  if (hit && Date.now() - hit.at < STAGES_CACHE_TTL_MS) return hit.stages;
+  return null;
+}
+
 function stagesCacheKey(type: 'lead' | 'deal', opts?: CrmStageFetchOpts): string {
   return [
     type,
@@ -137,6 +154,8 @@ export type CrmBoardBootstrap = {
   stageCounts: Record<string, number>;
   initialStageId: string;
   initialPage: CrmStagePage;
+  /** Có khi dùng GET /crm/kanban-bootstrap — tránh thêm request listTotal. */
+  listTotal?: number;
 };
 
 export type CrmPage<T> = { data: T[]; hasMore: boolean; total: number; nextOffset: number };
@@ -270,7 +289,7 @@ export function isClassifiedKanbanItem(item: CrmKanbanItem, stageIds: Set<string
   return item.stageId !== '' && stageIds.has(item.stageId);
 }
 
-/** Gắn params lọc chung cho GET /crm/leads. */
+/** Gắn params lọc chung cho GET /crm/leads và batch kanban. */
 function applyListParams(params: Record<string, unknown>, opts?: CrmStageFetchOpts) {
   if (opts?.search?.trim()) params.search = opts.search.trim();
   if (opts?.assignedTo) params.assigned_to = opts.assignedTo;
@@ -279,6 +298,26 @@ function applyListParams(params: Record<string, unknown>, opts?: CrmStageFetchOp
   if (opts?.dateTo) params.date_to = opts.dateTo;
   if (opts?.companyId) params.company_id = opts.companyId;
   if (opts?.regionId && opts.regionId !== '__none__') params.region_id = opts.regionId;
+}
+
+function crmListQueryParams(type: 'lead' | 'deal', opts?: CrmStageFetchOpts): Record<string, unknown> {
+  const params: Record<string, unknown> = { type };
+  applyListParams(params, opts);
+  return params;
+}
+
+function mapApiStages(rows: ApiStage[], type: 'lead' | 'deal'): CrmPipelineStage[] {
+  const list = Array.isArray(rows) ? rows : [];
+  return list
+    .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+    .map((s, i) => ({
+      id: String(s.id || ''),
+      name: s.name || 'Stage',
+      icon: s.icon || (type === 'lead' ? '📋' : '💼'),
+      color: s.color || '',
+      orderIndex: s.order_index ?? i,
+    }))
+    .filter((s) => s.id);
 }
 
 /** Một trang leads/deals theo cột pipeline (server-side stage_id). */
@@ -320,24 +359,79 @@ async function fetchCrmOrphanRows(
   };
 }
 
-/** Tổng số bản ghi từng cột — song song, mỗi cột chỉ lấy limit=1 để đọc total. */
+/** Tổng số bản ghi từng cột — 1 request batch (RPC GROUP BY), fallback N request nếu API cũ. */
+const STAGE_COUNT_CONCURRENCY = 4;
+
+async function fetchStageCountsLegacy(
+  type: 'lead' | 'deal',
+  stageIds: string[],
+  opts?: CrmStageFetchOpts,
+): Promise<Record<string, number>> {
+  if (!stageIds.length) return {};
+  const results: Record<string, number> = {};
+  for (let i = 0; i < stageIds.length; i += STAGE_COUNT_CONCURRENCY) {
+    const chunk = stageIds.slice(i, i + STAGE_COUNT_CONCURRENCY);
+    const pairs = await Promise.all(
+      chunk.map(async (stageId) => {
+        try {
+          const { total } = await fetchCrmRowsForStage(type, stageId, 0, 1, opts);
+          return [stageId, total] as const;
+        } catch {
+          return [stageId, 0] as const;
+        }
+      }),
+    );
+    for (const [stageId, total] of pairs) results[stageId] = total;
+  }
+  return results;
+}
+
+/** Đếm tất cả cột pipeline trong 1 API call. */
+export async function fetchCrmStageCountsBatch(
+  type: 'lead' | 'deal',
+  opts?: CrmStageFetchOpts,
+): Promise<{ counts: Record<string, number>; total: number }> {
+  const params = crmListQueryParams(type, opts);
+  const { data } = await api.get<{ counts?: Record<string, number>; total?: number }>(
+    '/crm/stage-counts',
+    { params, signal: opts?.signal },
+  );
+  return {
+    counts: data?.counts && typeof data.counts === 'object' ? data.counts : {},
+    total: typeof data?.total === 'number' ? data.total : 0,
+  };
+}
+
 export async function fetchStageCounts(
   type: 'lead' | 'deal',
   stageIds: string[],
   opts?: CrmStageFetchOpts,
 ): Promise<Record<string, number>> {
   if (!stageIds.length) return {};
-  const pairs = await Promise.all(
-    stageIds.map(async (stageId) => {
-      try {
-        const { total } = await fetchCrmRowsForStage(type, stageId, 0, 1, opts);
-        return [stageId, total] as const;
-      } catch {
-        return [stageId, 0] as const;
-      }
-    }),
-  );
-  return Object.fromEntries(pairs);
+  try {
+    const batch = await fetchCrmStageCountsBatch(type, opts);
+    const picked: Record<string, number> = {};
+    for (const id of stageIds) {
+      if (batch.counts[id] !== undefined) picked[id] = batch.counts[id];
+    }
+    if (Object.keys(picked).length === stageIds.length) return picked;
+    const missing = stageIds.filter((id) => picked[id] === undefined);
+    const extra = missing.length ? await fetchStageCountsLegacy(type, missing, opts) : {};
+    return { ...picked, ...extra };
+  } catch {
+    return fetchStageCountsLegacy(type, stageIds, opts);
+  }
+}
+
+/** Tổng lead/deal theo bộ lọc hiện tại — khớp KPI «Tổng» trên web (không lọc stage_id). */
+export async function fetchCrmListTotal(
+  type: 'lead' | 'deal',
+  opts?: CrmStageFetchOpts,
+): Promise<number> {
+  const params: Record<string, unknown> = { type, limit: 1, offset: 0 };
+  applyListParams(params, opts);
+  const { data } = await api.get('/crm/leads', { params, signal: opts?.signal });
+  return parsePayload(data, 1).total;
 }
 
 /** Tải một trang bản ghi của cột (đã lọc phân loại). */
@@ -360,15 +454,96 @@ export async function fetchCrmStagePage(
   return { items, hasMore, nextOffset, total: isOrphan ? items.length : total };
 }
 
+/** Bootstrap kanban — 1 request: stages + counts + trang đầu cột active. */
+async function fetchCrmKanbanBootstrapRemote(
+  type: 'lead' | 'deal',
+  initialStageId?: string,
+  opts?: CrmStageFetchOpts,
+): Promise<CrmBoardBootstrap | null> {
+  const params: Record<string, unknown> = {
+    ...crmListQueryParams(type, opts),
+    limit: KANBAN_PAGE_SIZE,
+  };
+  if (initialStageId) params.stage_id = initialStageId;
+  const { data } = await api.get<{
+    stages?: ApiStage[];
+    stageCounts?: Record<string, number>;
+    listTotal?: number;
+    initialStageId?: string;
+    initialPage?: {
+      data?: ApiLead[];
+      total?: number;
+      hasMore?: boolean;
+      nextOffset?: number;
+    };
+  }>('/crm/kanban-bootstrap', { params, signal: opts?.signal });
+
+  const stages = mapApiStages(data?.stages || [], type);
+  if (!stages.length) return null;
+
+  const sid =
+    data?.initialStageId && stages.some((s) => s.id === data.initialStageId)
+      ? data.initialStageId
+      : initialStageId && stages.some((s) => s.id === initialStageId)
+        ? initialStageId
+        : stages[0].id;
+  const ip = data?.initialPage || {};
+  const rows = Array.isArray(ip.data) ? ip.data : [];
+  const stageIds = new Set([sid]);
+  const items = rows
+    .map((it) => mapKanbanItem(it, type))
+    .filter((it) => isClassifiedKanbanItem(it, stageIds));
+  const total = typeof ip.total === 'number' ? ip.total : items.length;
+  const nextOffset = typeof ip.nextOffset === 'number' ? ip.nextOffset : items.length;
+
+  const key = stagesCacheKey(type, opts);
+  stagesCache.set(key, { stages, at: Date.now() });
+
+  return {
+    stages,
+    stageCounts: data?.stageCounts && typeof data.stageCounts === 'object' ? data.stageCounts : { [sid]: total },
+    listTotal: typeof data?.listTotal === 'number' ? data.listTotal : undefined,
+    initialStageId: sid,
+    initialPage: {
+      items,
+      hasMore: typeof ip.hasMore === 'boolean' ? ip.hasMore : nextOffset < total,
+      nextOffset,
+      total,
+    },
+  };
+}
+
 /**
- * Khởi tạo cực nhanh (~1–2 request): stages + trang đầu cột active.
- * Không chờ count các cột khác — gọi fetchStageCounts nền sau.
+ * Khởi tạo cực nhanh: ưu tiên GET /crm/kanban-bootstrap (1 round-trip),
+ * fallback stages cache + trang đầu cột.
  */
 export async function fetchCrmBoardInitial(
   type: 'lead' | 'deal',
   initialStageId?: string,
   opts?: CrmStageFetchOpts,
 ): Promise<CrmBoardBootstrap> {
+  try {
+    const remote = await fetchCrmKanbanBootstrapRemote(type, initialStageId, opts);
+    if (remote?.stages.length) return remote;
+  } catch {
+    /* fallback bên dưới */
+  }
+
+  const cachedStages = peekPipelineStagesCached(type, opts);
+  if (cachedStages?.length) {
+    const sid =
+      initialStageId && cachedStages.some((s) => s.id === initialStageId)
+        ? initialStageId
+        : cachedStages[0].id;
+    const initialPage = await fetchCrmStagePage(type, sid, 0, KANBAN_PAGE_SIZE, opts);
+    return {
+      stages: cachedStages,
+      stageCounts: { [sid]: initialPage.total },
+      initialStageId: sid,
+      initialPage,
+    };
+  }
+
   const stages = await fetchPipelineStagesCached(type, opts);
   if (!stages.length) {
     return {
@@ -389,6 +564,90 @@ export async function fetchCrmBoardInitial(
     initialStageId: sid,
     initialPage,
   };
+}
+
+/** Làm nóng cache pipeline Lead + Deal (gọi sớm từ Menu / mở CrmHub). */
+export async function warmCrmHubPipelines(companyId?: string, signal?: AbortSignal): Promise<void> {
+  const opts: CrmStageFetchOpts = { companyId, signal };
+  await Promise.all([
+    fetchPipelineStagesCached('lead', opts),
+    fetchPipelineStagesCached('deal', opts),
+  ]);
+}
+
+/** Prefetch trang đầu các cột lân cận — chuyển cột không phải chờ mạng. */
+export async function prefetchCrmNeighborStages(
+  type: 'lead' | 'deal',
+  stages: CrmPipelineStage[],
+  centerStageId: string,
+  opts?: CrmStageFetchOpts,
+): Promise<Record<string, CrmStageCache>> {
+  const idx = stages.findIndex((s) => s.id === centerStageId);
+  if (idx < 0) return {};
+  const neighborIds = [stages[idx - 1]?.id, stages[idx + 1]?.id].filter(Boolean) as string[];
+  if (!neighborIds.length) return {};
+  const validStageIds = new Set(stages.map((s) => s.id));
+  const entries = await Promise.all(
+    neighborIds.map(async (stageId) => {
+      try {
+        const page = await fetchCrmStagePage(type, stageId, 0, KANBAN_PAGE_SIZE, opts, validStageIds);
+        return [
+          stageId,
+          {
+            items: page.items,
+            hasMore: page.hasMore,
+            nextOffset: page.nextOffset,
+            loaded: true,
+          } satisfies CrmStageCache,
+        ] as const;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return Object.fromEntries(entries.filter(Boolean) as [string, CrmStageCache][]);
+}
+
+const HUB_CACHE_TTL_MS = 3 * 60 * 1000;
+const hubCache = new Map<string, { snapshot: CrmHubCacheSnapshot; at: number }>();
+
+export type CrmHubCacheSnapshot = {
+  data: CrmHubData;
+  activeStageId: string;
+  activeIndex: number;
+};
+
+function hubCacheKey(userId: string, type: 'lead' | 'deal', filterKey: string): string {
+  return `${userId}|${type}|${filterKey}`;
+}
+
+export function peekCrmHubCache(
+  userId: string,
+  type: 'lead' | 'deal',
+  filterKey: string,
+): CrmHubCacheSnapshot | null {
+  const hit = hubCache.get(hubCacheKey(userId, type, filterKey));
+  if (!hit || Date.now() - hit.at >= HUB_CACHE_TTL_MS) return null;
+  return hit.snapshot;
+}
+
+export function setCrmHubCache(
+  userId: string,
+  type: 'lead' | 'deal',
+  filterKey: string,
+  snapshot: CrmHubCacheSnapshot,
+): void {
+  hubCache.set(hubCacheKey(userId, type, filterKey), { snapshot, at: Date.now() });
+}
+
+export function invalidateCrmHubCache(userId?: string): void {
+  if (!userId) {
+    hubCache.clear();
+    return;
+  }
+  for (const key of hubCache.keys()) {
+    if (key.startsWith(`${userId}|`)) hubCache.delete(key);
+  }
 }
 
 /**
@@ -475,8 +734,79 @@ function toPlannerItem(it: ApiLead, kind: 'lead' | 'deal'): PlannerItem {
   };
 }
 
-/** Số bản ghi tối đa trên Planner (khớp SECTION_LIMIT). */
-export const PLANNER_FETCH_LIMIT = 30;
+function resolveStageId(it: ApiLead): string {
+  return String(it.stage?.id || it.stage_id || '');
+}
+
+/** Chỉ giữ bản ghi đang nằm trong cột pipeline hợp lệ (web không hiện deal lệch stage). */
+function inActivePipeline(it: ApiLead, stageIds: Set<string>, type: 'lead' | 'deal'): boolean {
+  const sid = resolveStageId(it);
+  if (sid === '' || !stageIds.has(sid)) return false;
+  const pt = it.stage?.pipeline_type;
+  if (pt && pt !== type) return false;
+  return true;
+}
+
+/** Khớp bộ lọc «Phụ trách» trên web CRM. */
+function isMineCrmRow(it: ApiLead, userId: string, type: 'lead' | 'deal'): boolean {
+  const uid = userId.toLowerCase();
+  if (type === 'deal') {
+    return String(it.assigned_to || '').toLowerCase() === uid;
+  }
+  const ids = [it.assigned_to, it.lead_owner_id, it.assignee?.id, it.lead_owner?.id]
+    .filter(Boolean)
+    .map((x) => String(x).toLowerCase());
+  return ids.includes(uid);
+}
+
+export type PlannerFetchOpts = {
+  signal?: AbortSignal;
+  companyId?: string;
+};
+
+/** Một trang leads/deals cho Planner — server lọc assigned_to. */
+async function fetchPlannerPage(
+  type: 'lead' | 'deal',
+  userId: string,
+  offset: number,
+  limit: number,
+  opts?: PlannerFetchOpts,
+): Promise<{ rows: ApiLead[]; hasMore: boolean; total: number; nextOffset: number }> {
+  const params: Record<string, unknown> = {
+    type,
+    limit,
+    offset,
+    assigned_to: userId,
+  };
+  if (opts?.companyId) params.company_id = opts.companyId;
+  const { data } = await api.get('/crm/leads', { params, signal: opts?.signal });
+  return parsePayload(data, limit);
+}
+
+async function filterRowsForPlannerKanban(
+  rows: ApiLead[],
+  type: 'lead' | 'deal',
+  userId: string,
+  opts?: PlannerFetchOpts,
+): Promise<ApiLead[]> {
+  if (!rows.length) return [];
+  const stageIds = new Set(
+    (await fetchPipelineStagesCached(type, {
+      companyId: opts?.companyId,
+      signal: opts?.signal,
+    })).map((s) => s.id),
+  );
+  return rows.filter((it) => isMineCrmRow(it, userId, type) && inActivePipeline(it, stageIds, type));
+}
+
+export type PlannerData = { leads: PlannerItem[]; deals: PlannerItem[] };
+
+const plannerByDue = (a: PlannerItem, b: PlannerItem) => {
+  if (a.dueIso && b.dueIso) return new Date(a.dueIso).getTime() - new Date(b.dueIso).getTime();
+  if (a.dueIso) return -1;
+  if (b.dueIso) return 1;
+  return 0;
+};
 
 const PLANNER_CACHE_TTL_MS = 90 * 1000;
 const plannerCache = new Map<string, { data: PlannerData; at: number }>();
@@ -498,57 +828,49 @@ export function setPlannerCache(userId: string, data: PlannerData) {
   plannerCache.set(userId, { data, at: Date.now() });
 }
 
-function resolveStageId(it: ApiLead): string {
-  return String(it.stage?.id || it.stage_id || '');
-}
+/** Số bản ghi mỗi lần tải từ server cho Planner. */
+export const PLANNER_FETCH_LIMIT = 40;
 
-/** Chỉ giữ bản ghi đang nằm trong cột pipeline hợp lệ (web không hiện deal lệch stage). */
-function inActivePipeline(it: ApiLead, stageIds: Set<string>): boolean {
-  const sid = resolveStageId(it);
-  return sid !== '' && stageIds.has(sid);
-}
-
-export type PlannerData = { leads: PlannerItem[]; deals: PlannerItem[] };
-
-const plannerByDue = (a: PlannerItem, b: PlannerItem) => {
-  if (a.dueIso && b.dueIso) return new Date(a.dueIso).getTime() - new Date(b.dueIso).getTime();
-  if (a.dueIso) return -1;
-  if (b.dueIso) return 1;
-  return 0;
+export type PlannerSectionPage = {
+  items: PlannerItem[];
+  total: number;
+  hasMore: boolean;
+  nextOffset: number;
 };
 
-/** Một trang leads/deals cho Planner — server lọc assigned_to. */
-async function fetchPlannerPage(
+/** Leads hoặc Deals cá nhân — có phân trang server. */
+export async function fetchPlannerSectionPage(
   type: 'lead' | 'deal',
   userId: string,
-  signal?: AbortSignal,
-): Promise<{ rows: ApiLead[]; total: number }> {
-  const params: Record<string, unknown> = {
-    type,
-    limit: PLANNER_FETCH_LIMIT,
-    offset: 0,
-    assigned_to: userId,
+  offset = 0,
+  limit = PLANNER_FETCH_LIMIT,
+  opts?: PlannerFetchOpts,
+): Promise<PlannerSectionPage> {
+  const page = await fetchPlannerPage(type, userId, offset, limit, opts);
+  if (!page.rows.length) {
+    return { items: [], total: 0, hasMore: false, nextOffset: page.nextOffset };
+  }
+  const filtered = await filterRowsForPlannerKanban(page.rows, type, userId, opts);
+  const items = filtered
+    .map((it) => toPlannerItem(it, type))
+    .sort(plannerByDue);
+  return {
+    items,
+    total: items.length,
+    hasMore: page.hasMore,
+    nextOffset: page.nextOffset,
   };
-  const { data } = await api.get('/crm/leads', { params, signal });
-  const { rows, total } = parsePayload(data, PLANNER_FETCH_LIMIT);
-  return { rows, total };
 }
 
-/** Leads hoặc Deals cá nhân — tối ưu: không gọi pipeline-stages khi total=0. */
+/** Leads hoặc Deals cá nhân — trang đầu (tương thích cũ). */
 export async function fetchPlannerSection(
   type: 'lead' | 'deal',
   userId: string,
   signal?: AbortSignal,
+  opts?: Omit<PlannerFetchOpts, 'signal'>,
 ): Promise<PlannerItem[]> {
-  const page = await fetchPlannerPage(type, userId, signal);
-  if (page.total === 0) return [];
-  const stageIds = new Set(
-    (await fetchPipelineStagesCached(type, { signal })).map((s) => s.id),
-  );
-  return page.rows
-    .filter((it) => inActivePipeline(it, stageIds))
-    .map((it) => toPlannerItem(it, type))
-    .sort(plannerByDue);
+  const page = await fetchPlannerSectionPage(type, userId, 0, PLANNER_FETCH_LIMIT, { ...opts, signal });
+  return page.items;
 }
 
 /** Lấy Leads + Deals cá nhân — song song, cache 90s, bỏ qua stages khi rỗng. */
