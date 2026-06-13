@@ -110,6 +110,7 @@ export function buildStageFetchOpts(
     dateTo: range.to || undefined,
     companyId: filters.companyId || undefined,
     regionId: filters.regionId || undefined,
+    lite: true,
   };
 }
 

@@ -402,10 +402,12 @@ export async function fetchCrmStageCountsBatch(
     '/crm/stage-counts',
     { params, signal: opts?.signal },
   );
-  return {
+  const result = {
     counts: data?.counts && typeof data.counts === 'object' ? data.counts : {},
     total: typeof data?.total === 'number' ? data.total : 0,
   };
+  setCrmTotalsCache(type, opts, result);
+  return result;
 }
 
 export async function fetchStageCounts(
@@ -589,13 +591,23 @@ export async function fetchCrmBoardInitial(
   };
 }
 
-/** Làm nóng cache pipeline + bootstrap lite Lead/Deal (gọi sớm từ Menu). */
+/** Làm nóng cache pipeline + bootstrap + tổng số Lead/Deal (gọi sớm từ Menu). */
 export async function warmCrmHubPipelines(companyId?: string, signal?: AbortSignal): Promise<void> {
   const opts: CrmStageFetchOpts = { companyId, signal, skipCounts: true, lite: true };
+  void warmCrmHubStageCounts(companyId, signal);
   await Promise.all([
     fetchPipelineStagesCached('lead', opts),
     fetchPipelineStagesCached('deal', opts),
     warmCrmHubBootstrap(companyId, signal),
+  ]);
+}
+
+/** Prefetch tổng + badge cột — mở tab Leads/Deals hiện số ngay. */
+export function warmCrmHubStageCounts(companyId?: string, signal?: AbortSignal): void {
+  const opts: CrmStageFetchOpts = { companyId, signal, lite: true };
+  void Promise.all([
+    fetchCrmStageCountsBatch('lead', opts).catch(() => null),
+    fetchCrmStageCountsBatch('deal', opts).catch(() => null),
   ]);
 }
 
@@ -643,8 +655,36 @@ export async function prefetchCrmNeighborStages(
 
 const HUB_CACHE_TTL_MS = 3 * 60 * 1000;
 const BOOTSTRAP_CACHE_TTL_MS = 2 * 60 * 1000;
+const TOTALS_CACHE_TTL_MS = 5 * 60 * 1000;
 const hubCache = new Map<string, { snapshot: CrmHubCacheSnapshot; at: number }>();
 const bootstrapCache = new Map<string, { boot: CrmBoardBootstrap; at: number }>();
+const totalsCache = new Map<string, { counts: Record<string, number>; total: number; at: number }>();
+
+function totalsCacheKey(type: 'lead' | 'deal', opts?: CrmStageFetchOpts): string {
+  return `totals|${type}|${stagesCacheKey(type, opts)}`;
+}
+
+function setCrmTotalsCache(
+  type: 'lead' | 'deal',
+  opts: CrmStageFetchOpts | undefined,
+  batch: { counts: Record<string, number>; total: number },
+): void {
+  totalsCache.set(totalsCacheKey(type, opts), { ...batch, at: Date.now() });
+}
+
+/** Tổng + badge cột đã cache — hiển thị ngay khi mở lại CrmHub. */
+export function peekCrmTotalsCache(
+  type: 'lead' | 'deal',
+  opts?: CrmStageFetchOpts,
+): { counts: Record<string, number>; total: number } | null {
+  const hit = totalsCache.get(totalsCacheKey(type, opts));
+  if (!hit || Date.now() - hit.at >= TOTALS_CACHE_TTL_MS) return null;
+  return { counts: hit.counts, total: hit.total };
+}
+
+export function invalidateCrmTotalsCache(): void {
+  totalsCache.clear();
+}
 
 function bootstrapCacheKey(
   type: 'lead' | 'deal',
@@ -717,6 +757,7 @@ export function invalidateCrmHubCache(userId?: string): void {
   if (!userId) {
     hubCache.clear();
     bootstrapCache.clear();
+    totalsCache.clear();
     return;
   }
   for (const key of hubCache.keys()) {
