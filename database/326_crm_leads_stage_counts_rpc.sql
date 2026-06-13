@@ -1,5 +1,25 @@
 -- Đếm lead/deal theo cột pipeline trong MỘT truy vấn (thay N lần gọi crm_leads_page_ids limit=1).
 -- Dùng cho GET /api/crm/stage-counts và /api/crm/kanban-bootstrap (mobile Kanban).
+-- Project: https://kdxypztstbeovyedmvem.supabase.co (SQL Editor → Run toàn file)
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'crm_leads'
+  ) THEN
+    RAISE EXCEPTION
+      'SAI SUPABASE PROJECT: bảng public.crm_leads không tồn tại trên database "%". '
+      || 'Backend CRM dùng project kdxypztstbeovyedmvem — mở SQL Editor tại '
+      || 'https://supabase.com/dashboard/project/kdxypztstbeovyedmvem/sql/new '
+      || 'rồi chạy lại. (Chạy database/000_verify_crm_supabase_project.sql để kiểm tra trước.)',
+      current_database();
+  END IF;
+END $$;
+
+DROP FUNCTION IF EXISTS public.crm_leads_stage_counts(
+  text, uuid, uuid, uuid, text, text, text, text, boolean, uuid[], uuid[]
+);
 
 CREATE OR REPLACE FUNCTION public.crm_leads_stage_counts(
   p_type text,
@@ -122,3 +142,14 @@ COMMENT ON FUNCTION public.crm_leads_stage_counts(
 GRANT EXECUTE ON FUNCTION public.crm_leads_stage_counts(
   text, uuid, uuid, uuid, text, text, text, text, boolean, uuid[], uuid[]
 ) TO service_role;
+
+GRANT EXECUTE ON FUNCTION public.crm_leads_stage_counts(
+  text, uuid, uuid, uuid, text, text, text, text, boolean, uuid[], uuid[]
+) TO authenticated;
+
+GRANT EXECUTE ON FUNCTION public.crm_leads_stage_counts(
+  text, uuid, uuid, uuid, text, text, text, text, boolean, uuid[], uuid[]
+) TO anon;
+
+-- Bắt PostgREST (Supabase API) nhận RPC mới ngay
+NOTIFY pgrst, 'reload schema';

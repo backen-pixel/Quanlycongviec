@@ -1,5 +1,19 @@
--- Đếm lead/deal theo cột pipeline trong MỘT truy vấn (thay N lần gọi crm_leads_page_ids limit=1).
--- Dùng cho GET /api/crm/stage-counts và /api/crm/kanban-bootstrap (mobile Kanban).
+-- Sync with database/326_crm_leads_stage_counts_rpc.sql
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'crm_leads'
+  ) THEN
+    RAISE EXCEPTION
+      'Bảng public.crm_leads chưa tồn tại — sai Supabase project hoặc chưa chạy database/19_crm_sales.sql.';
+  END IF;
+END $$;
+
+DROP FUNCTION IF EXISTS public.crm_leads_stage_counts(
+  text, uuid, uuid, uuid, text, text, text, text, boolean, uuid[], uuid[]
+);
 
 CREATE OR REPLACE FUNCTION public.crm_leads_stage_counts(
   p_type text,
@@ -114,11 +128,16 @@ BEGIN
 END;
 $$;
 
-COMMENT ON FUNCTION public.crm_leads_stage_counts(
-  text, uuid, uuid, uuid, text, text, text, text, boolean, uuid[], uuid[]
-) IS
-  'Đếm lead/deal theo stage_id trong 1 query — Kanban mobile/web. Khớp bộ lọc crm_leads_page_ids.';
-
 GRANT EXECUTE ON FUNCTION public.crm_leads_stage_counts(
   text, uuid, uuid, uuid, text, text, text, text, boolean, uuid[], uuid[]
 ) TO service_role;
+
+GRANT EXECUTE ON FUNCTION public.crm_leads_stage_counts(
+  text, uuid, uuid, uuid, text, text, text, text, boolean, uuid[], uuid[]
+) TO authenticated;
+
+GRANT EXECUTE ON FUNCTION public.crm_leads_stage_counts(
+  text, uuid, uuid, uuid, text, text, text, text, boolean, uuid[], uuid[]
+) TO anon;
+
+NOTIFY pgrst, 'reload schema';
