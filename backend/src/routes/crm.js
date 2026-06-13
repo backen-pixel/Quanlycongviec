@@ -4379,6 +4379,15 @@ const CRM_LEAD_LIST_SELECT_EXTRA = ', linked_project:projects!crm_leads_project_
 const CRM_LEAD_REGION_EMBED = ', crm_region:company_regions!crm_leads_region_id_fkey(id, name, code)';
 const CRM_LEAD_LIST_SELECT_BASE =
   `*, customer:customers(id, full_name, phone, email, company), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type, sync_role, order_index), source:crm_sources(id, name, icon), lead_type:crm_lead_types(id, name, color), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies!crm_leads_company_id_fkey(id, name, short_name)${CRM_LEAD_REGION_EMBED}, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name)), vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)`;
+/** Select tối thiểu cho Kanban mobile — giảm payload hydrate ~70%. */
+const CRM_LEAD_KANBAN_LITE_SELECT =
+  'id, code, title, type, phone, estimated_value, created_at, assigned_to, lead_owner_id, stage_id, region_id, next_follow_up_at, expected_close_date, ' +
+  'customer:customers(id, full_name, phone), ' +
+  'stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon), ' +
+  'source:crm_sources(id, name), ' +
+  'assignee:users!crm_leads_assigned_to_fkey(id, full_name), ' +
+  'lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), ' +
+  'company:companies!crm_leads_company_id_fkey(id, name, short_name)';
 let CRM_LEAD_LIST_SELECT = CRM_LEAD_LIST_SELECT_BASE + CRM_LEAD_LIST_SELECT_EXTRA;
 let _crmLeadSelectMigrationChecked = false;
 let _vcPipelineStageAvailable = true; // migration 81
@@ -4716,7 +4725,7 @@ async function attachCrmNextOpenTaskDeadline(rows) {
 }
 
 async function fetchCrmLeadsByIdsOrdered(ids, opts = {}) {
-  const { skipEnrich = false } = opts;
+  const { skipEnrich = false, lite = false } = opts;
   const raw = Array.isArray(ids) ? ids : [];
   if (raw.length === 0) return [];
   // RPC có thể trả trùng id trong một page → hydrate ra hai row giống id khác stage snapshot → Kanban hai cột.
@@ -4729,7 +4738,7 @@ async function fetchCrmLeadsByIdsOrdered(ids, opts = {}) {
     list.push(sid);
   }
   if (list.length === 0) return [];
-  const selectStr = await getCrmLeadListSelect();
+  const selectStr = lite ? CRM_LEAD_KANBAN_LITE_SELECT : await getCrmLeadListSelect();
   // Giảm từ 300 xuống 150: payload mỗi chunk nhẹ hơn (~vài MB → vài trăm KB),
   // hạn chế "TypeError: fetch failed" khi local Windows gặp AV/VPN/keep-alive thối.
   const chunkSize = 150;
@@ -5144,7 +5153,7 @@ async function resolveCrmLeadsMergedQuery(req, res) {
 async function hydrateCrmLeadsRpcPage(parsedRpc, req, parsedOffset, parsedLimit, opts = {}) {
   const { lite = false } = opts;
   const { total, ids } = parsedRpc;
-  const hydrated = await fetchCrmLeadsByIdsOrdered(ids, { skipEnrich: lite });
+  const hydrated = await fetchCrmLeadsByIdsOrdered(ids, { skipEnrich: lite, lite });
   const windowLen = Array.isArray(ids) ? ids.length : hydrated.length;
   if (lite) {
     const page = attachLeadNewFlagForList(hydrated, req.user?.userId);
@@ -5220,7 +5229,7 @@ function crmListUsesLegacyFilters(mergedQuery) {
 }
 
 /** GET /crm/stage-counts — đếm tất cả cột trong 1 request (RPC GROUP BY stage_id). */
-r.get('/stage-counts', responseCache({ ttl: 15, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
+r.get('/stage-counts', responseCache({ ttl: 90, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
   try {
     const ctx = await resolveCrmLeadsMergedQuery(req, res);
     if (!ctx) return;
@@ -5248,17 +5257,28 @@ r.get('/stage-counts', responseCache({ ttl: 15, scope: 'user', tags: ['crm:list'
     }
 
     const counts = {};
-    for (const sid of stageIds) {
-      const pageRpc = {
-        ...filterParams,
-        p_stage_id: sid,
-        p_limit: 1,
-        p_offset: 0,
-      };
-      let { data: rpcData, error: rpcError } = await supabase.rpc('crm_leads_page_ids', pageRpc);
-      if (rpcError) break;
-      const p = parseCrmLeadsPageRpc(rpcData);
-      if (p) counts[sid] = p.total;
+    const STAGE_COUNT_FALLBACK_CONCURRENCY = 6;
+    for (let i = 0; i < stageIds.length; i += STAGE_COUNT_FALLBACK_CONCURRENCY) {
+      const chunk = stageIds.slice(i, i + STAGE_COUNT_FALLBACK_CONCURRENCY);
+      const pairs = await Promise.all(
+        chunk.map(async (sid) => {
+          const pageRpc = {
+            ...filterParams,
+            p_stage_id: sid,
+            p_limit: 1,
+            p_offset: 0,
+          };
+          try {
+            let { data: rpcData, error: rpcError } = await supabase.rpc('crm_leads_page_ids', pageRpc);
+            if (rpcError) return [sid, 0];
+            const p = parseCrmLeadsPageRpc(rpcData);
+            return [sid, p ? p.total : 0];
+          } catch {
+            return [sid, 0];
+          }
+        }),
+      );
+      for (const [sid, total] of pairs) counts[sid] = total;
     }
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
     res.json({ total, counts, fallback: true });
@@ -5460,24 +5480,11 @@ r.get('/leads', responseCache({ ttl: 15, scope: 'user', tags: ['crm:list'] }), a
 
     const parsedRpc = !rpcError ? parseCrmLeadsPageRpc(rpcData) : null;
     const rpcOk = !!parsedRpc;
+    const lite = req.query.lite === '1' || req.query.lite === 'true';
 
     if (rpcOk) {
-      const { total, ids } = parsedRpc;
-      const hydrated = await fetchCrmLeadsByIdsOrdered(ids);
-      const rows = await attachCrmNextOpenTaskDeadline(hydrated);
-      const page = attachLeadNewFlagForList(rows, req.user?.userId);
-      const pageWithUserFlags = await attachLeadUserFlagsForList(page, req.user?.userId);
-      // Phân trang theo cửa sổ RPC (ids), không theo page.length — nếu hydrate thiếu dòng,
-      // dùng page.length sẽ lệch nextOffset và vòng "Tải tất cả" dừng sớm / bỏ sót.
-      const windowLen = Array.isArray(ids) ? ids.length : page.length;
-      return res.json({
-        data: pageWithUserFlags,
-        total,
-        offset: parsedOffset,
-        limit: parsedLimit,
-        hasMore: parsedOffset + windowLen < total,
-        nextOffset: parsedOffset + windowLen,
-      });
+      const pageResult = await hydrateCrmLeadsRpcPage(parsedRpc, req, parsedOffset, parsedLimit, { lite });
+      return res.json(pageResult);
     }
 
     if (rpcError) {

@@ -33,7 +33,6 @@ import {
 } from '../api/crmMeta';
 import {
   fetchCrmBoardInitial,
-  fetchCrmListTotal,
   fetchCrmStageCountsBatch,
   fetchCrmStagePage,
   fetchStageCounts,
@@ -42,6 +41,7 @@ import {
   KANBAN_PAGE_SIZE,
   moveCrmItemStage,
   peekCrmHubCache,
+  peekCrmTotalsCache,
   setCrmHubCache,
   warmCrmHubPipelines,
 } from '../api/crm';
@@ -78,16 +78,6 @@ function sumCounts(counts: Record<string, number>): number {
   return Object.values(counts).reduce((a, b) => a + b, 0);
 }
 
-function priorityStageIds(stages: CrmPipelineStage[], centerStageId?: string): string[] {
-  if (!centerStageId) return stages[0]?.id ? [stages[0].id] : [];
-  const idx = stages.findIndex((s) => s.id === centerStageId);
-  if (idx < 0) return [centerStageId];
-  const ids = [centerStageId];
-  if (stages[idx - 1]) ids.push(stages[idx - 1].id);
-  if (stages[idx + 1]) ids.push(stages[idx + 1].id);
-  return ids;
-}
-
 const TEMP_META: Record<LeadTemp, { label: string; color: string }> = {
   hot: { label: 'Hot', color: Colors.red },
   warm: { label: 'Warm', color: Colors.amber },
@@ -103,6 +93,33 @@ function formatDate(value?: string | null): string {
   } catch {
     return '';
   }
+}
+
+type LoadingNoticeProps = {
+  title: string;
+  hint?: string;
+  variant?: 'card' | 'banner';
+};
+
+function LoadingNotice({ title, hint, variant = 'card' }: LoadingNoticeProps) {
+  if (variant === 'banner') {
+    return (
+      <View style={styles.loadingBanner}>
+        <ActivityIndicator size="small" color={Colors.blue} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.loadingBannerTitle}>{title}</Text>
+          {hint ? <Text style={styles.loadingBannerHint}>{hint}</Text> : null}
+        </View>
+      </View>
+    );
+  }
+  return (
+    <View style={styles.loadingCard}>
+      <ActivityIndicator color={Colors.blue} size="large" />
+      <Text style={styles.loadingTitle}>{title}</Text>
+      {hint ? <Text style={styles.loadingHint}>{hint}</Text> : null}
+    </View>
+  );
 }
 
 const KanbanCard = React.memo(function KanbanCard({
@@ -293,6 +310,7 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadingModeRef = useRef<{ leads: boolean; deals: boolean }>({ leads: false, deals: false });
+  const countsInflightRef = useRef<{ leads: string; deals: string }>({ leads: '', deals: '' });
   const abortByModeRef = useRef<{ leads: AbortController | null; deals: AbortController | null }>({
     leads: null,
     deals: null,
@@ -487,15 +505,23 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     return undefined;
   }, []);
 
-  const refreshStageCounts = useCallback(async (which: Mode, stageIds: string[]) => {
+  const refreshStageCounts = useCallback(async (which: Mode, stageIds: string[], forceBatch = false) => {
     if (!stageIds.length) return;
     const type = which === 'leads' ? 'lead' : 'deal';
     const setter = which === 'leads' ? setLeadData : setDealData;
     const hubNow = which === 'leads' ? leadDataRef.current : dealDataRef.current;
     const missing = stageIds.filter((id) => hubNow.stageCounts[id] === undefined);
-    if (!missing.length) return;
+    if (!forceBatch && !missing.length) return;
+    const fk = serverFilterKey(
+      which === 'leads' ? leadFiltersRef.current : dealFiltersRef.current,
+      search,
+    );
+    if (countsInflightRef.current[which] === fk) return;
+    countsInflightRef.current[which] = fk;
     try {
-      const needAll = missing.length >= Math.max(3, Math.floor(hubNow.stages.length * 0.6));
+      const needAll =
+        forceBatch
+        || missing.length >= Math.max(3, Math.floor(hubNow.stages.length * 0.6));
       if (needAll) {
         const batch = await fetchCrmStageCountsBatch(type, fetchOptsRef.current());
         setter((prev) => ({
@@ -509,33 +535,22 @@ export default function CrmHubScreen({ navigation, route }: Props) {
       setter((prev) => ({ ...prev, stageCounts: { ...prev.stageCounts, ...counts } }));
     } catch {
       /* badge cột vẫn dùng total từng trang đã tải */
+    } finally {
+      if (countsInflightRef.current[which] === fk) countsInflightRef.current[which] = '';
     }
-  }, []);
+  }, [search]);
 
-  const refreshListTotal = useCallback(async (which: Mode, filterKey?: string) => {
+  const applyTotalsCache = useCallback((which: Mode) => {
     const type = which === 'leads' ? 'lead' : 'deal';
+    const cached = peekCrmTotalsCache(type, fetchOptsRef.current());
+    if (!cached) return;
     const setter = which === 'leads' ? setLeadData : setDealData;
-    const fk = filterKey ?? serverFilterKey(
-      which === 'leads' ? leadFiltersRef.current : dealFiltersRef.current,
-      search,
-    );
-    try {
-      const total = await fetchCrmListTotal(type, fetchOptsRef.current());
-      setter((prev) => {
-        const next = { ...prev, listTotal: total };
-        if (myId) {
-          setCrmHubCache(myId, type, fk, {
-            data: next,
-            activeStageId: stageIdAtIndex(which, activeIndexRef.current) || '',
-            activeIndex: which === modeRef.current ? activeIndexRef.current : 0,
-          });
-        }
-        return next;
-      });
-    } catch {
-      /* giữ total cũ */
-    }
-  }, [myId, search]);
+    setter((prev) => ({
+      ...prev,
+      stageCounts: { ...cached.counts, ...prev.stageCounts },
+      listTotal: cached.total || prev.listTotal,
+    }));
+  }, []);
 
   const loadBootstrap = useCallback(async (
     which: Mode,
@@ -550,10 +565,12 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     const fk = serverFilterKey(modeFilters, search);
 
     if (!silent && !isRefresh && applyCachedHub(which, fk)) {
+      applyTotalsCache(which);
       void loadBootstrap(which, false, stageId, true);
       return;
     }
 
+    applyTotalsCache(which);
     abortByModeRef.current[which]?.abort();
     const ac = new AbortController();
     abortByModeRef.current[which] = ac;
@@ -578,11 +595,21 @@ export default function CrmHubScreen({ navigation, route }: Props) {
       const fetchOpts = {
         ...fetchOptsRef.current(),
         signal: ac.signal,
-        ...(isRefresh ? { skipCounts: false, lite: false } : {}),
+        ...(isRefresh ? { skipCounts: false, lite: false } : { skipCounts: true, lite: true }),
       };
+      const typeSetter = which === 'leads' ? setLeadData : setDealData;
+      const countsPromise = fetchCrmStageCountsBatch(type, fetchOpts).catch(() => null);
       const boot = await fetchCrmBoardInitial(type, effectiveStageId, fetchOpts);
       if (ac.signal.aborted) return;
 
+      void countsPromise.then((batch) => {
+        if (ac.signal.aborted || !batch) return;
+        typeSetter((prev) => ({
+          ...prev,
+          stageCounts: { ...prev.stageCounts, ...batch.counts },
+          listTotal: batch.total || prev.listTotal,
+        }));
+      });
       const { activeIdx, activeStageId: activeSid } = applyBootstrap(which, boot, {
         keepIndex,
         preserveView,
@@ -623,16 +650,6 @@ export default function CrmHubScreen({ navigation, route }: Props) {
           activeIndex: preserveView ? activeIndexRef.current : activeIdx,
         });
       }
-
-      const hasFullCounts =
-        boot.stages.length > 0
-        && boot.stages.every((s) => boot.stageCounts[s.id] !== undefined);
-      const fkNow = filterKeyRef.current;
-      if (boot.listTotal == null) void refreshListTotal(which, fkNow);
-      if (!hasFullCounts) {
-        const allStageIds = boot.stages.map((s) => s.id);
-        setTimeout(() => void refreshStageCounts(which, allStageIds), 80);
-      }
     } catch (e) {
       if (!ac.signal.aborted && !silent) setError(formatApiError(e));
     } finally {
@@ -642,7 +659,7 @@ export default function CrmHubScreen({ navigation, route }: Props) {
         setRefreshing(false);
       }
     }
-  }, [applyBootstrap, applyCachedHub, search, leadFilters, dealFilters, refreshStageCounts, refreshListTotal, myId, resolveFetchStageId]);
+  }, [applyBootstrap, applyCachedHub, applyTotalsCache, search, leadFilters, dealFilters, myId, resolveFetchStageId]);
 
   const loadStage = useCallback(async (which: Mode, stageId: string, append = false) => {
     const type = which === 'leads' ? 'lead' : 'deal';
@@ -752,19 +769,16 @@ export default function CrmHubScreen({ navigation, route }: Props) {
 
   useEffect(() => {
     if (!loaded[mode] || !activeStageId) return;
-    if (activeStageId !== ORPHAN_STAGE_ID) {
-      void refreshStageCounts(mode, priorityStageIds(hub.stages, activeStageId));
-    }
     const cur = hub.cache[activeStageId];
     if (!cur?.loaded && !stageLoading && !loading) {
       void loadStage(mode, activeStageId, false);
     }
-  }, [loaded, mode, activeStageId, hub.stages, hub.cache, stageLoading, loading, refreshStageCounts, loadStage]);
+  }, [loaded, mode, activeStageId, hub.cache, stageLoading, loading, loadStage]);
 
   useEffect(() => {
     if (!columnPickerOpen || !loaded[mode]) return;
     const ids = displayStages.map((s) => s.id).filter((id) => id !== ORPHAN_STAGE_ID);
-    void refreshStageCounts(mode, ids);
+    void refreshStageCounts(mode, ids, true);
   }, [columnPickerOpen, loaded, mode, displayStages, refreshStageCounts]);
 
   const canPrev = activeIndex > 0;
@@ -795,6 +809,19 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   const filterBadge = countActiveFilters(filters, search);
 
   const totalRecords = hub.listTotal ?? sumCounts(hub.stageCounts);
+
+  const isInitialLoad = loading && !loaded[mode];
+  const isColumnLoading = stageLoading && !columnItems.length;
+  const waitingForCrm = !canLoadCrm && !loaded[mode];
+  const showFullScreenLoad = waitingForCrm || (isInitialLoad && !hub.stages.length);
+  const showInlineLoadNotice = isColumnLoading || (isInitialLoad && hub.stages.length > 0);
+
+  const inlineLoadTitle = isColumnLoading
+    ? `Đang tải cột «${activeStage?.name ?? '…'}»…`
+    : `Đang tải ${isLeads ? 'Leads' : 'Deals'}…`;
+  const inlineLoadHint = isColumnLoading
+    ? 'Danh sách sẽ hiển thị ngay khi tải xong.'
+    : 'Dữ liệu pipeline đang được đồng bộ, vui lòng đợi trong giây lát.';
 
   const filterChips = useMemo(() => {
     const companyName = companies.find((c) => c.id === filters.companyId)?.name;
@@ -873,11 +900,21 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     [displayStages, setHub, showToast, loadBootstrap, mode, activeStageId],
   );
 
-  if (loading && !loaded[mode] && !hub.stages.length) {
+  if (showFullScreenLoad) {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
-        <ActivityIndicator color={Colors.blue} size="large" />
-        <Text style={styles.loadingText}>Đang tải {isLeads ? 'Leads' : 'Deals'}...</Text>
+        <LoadingNotice
+          title={
+            waitingForCrm
+              ? 'Đang chuẩn bị CRM…'
+              : `Đang tải ${isLeads ? 'Leads' : 'Deals'}…`
+          }
+          hint={
+            waitingForCrm
+              ? 'Đang lấy thông tin công ty và pipeline.'
+              : 'Vui lòng đợi trong giây lát — hệ thống đang tải cột pipeline và danh sách bản ghi.'
+          }
+        />
       </View>
     );
   }
@@ -1085,6 +1122,10 @@ export default function CrmHubScreen({ navigation, route }: Props) {
         </ScrollView>
       </View>
 
+      {showInlineLoadNotice ? (
+        <LoadingNotice variant="banner" title={inlineLoadTitle} hint={inlineLoadHint} />
+      ) : null}
+
       <FlatList
         style={styles.listFlex}
         data={columnItems}
@@ -1097,13 +1138,8 @@ export default function CrmHubScreen({ navigation, route }: Props) {
             tintColor={Colors.blue}
           />
         }
-        ListHeaderComponent={
-          stageLoading && !columnItems.length ? (
-            <ActivityIndicator color={Colors.blue} style={{ marginVertical: 20 }} />
-          ) : null
-        }
         ListEmptyComponent={
-          !stageLoading ? (
+          !isColumnLoading ? (
             <View style={styles.emptyBox}>
               <Ionicons name="file-tray-outline" size={38} color={Colors.textFaint} />
               <Text style={styles.emptyText}>
@@ -1114,7 +1150,10 @@ export default function CrmHubScreen({ navigation, route }: Props) {
         }
         ListFooterComponent={
           moreLoading ? (
-            <ActivityIndicator color={Colors.blue} style={{ marginVertical: 16 }} />
+            <View style={styles.loadMoreRow}>
+              <ActivityIndicator color={Colors.blue} size="small" />
+              <Text style={styles.loadMoreLoadingTxt}>Đang tải thêm bản ghi…</Text>
+            </View>
           ) : columnHasMore && !filterActive ? (
             <Pressable
               style={styles.loadMoreBtn}
@@ -1214,7 +1253,35 @@ export default function CrmHubScreen({ navigation, route }: Props) {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.bg },
   center: { flex: 1, backgroundColor: Colors.bg, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  loadingText: { color: Colors.textMuted, fontSize: 14 },
+  loadingCard: {
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 28,
+    paddingVertical: 32,
+    backgroundColor: Colors.card,
+    borderRadius: Radii.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    maxWidth: 320,
+    marginHorizontal: 24,
+  },
+  loadingTitle: { color: Colors.text, fontSize: 17, fontWeight: '700', textAlign: 'center' },
+  loadingHint: { color: Colors.textMuted, fontSize: 13, textAlign: 'center', lineHeight: 20 },
+  loadingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginHorizontal: 14,
+    marginBottom: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: Colors.blueSoft,
+    borderRadius: Radii.md,
+    borderWidth: 1,
+    borderColor: 'rgba(47,107,255,0.25)',
+  },
+  loadingBannerTitle: { color: Colors.text, fontSize: 13, fontWeight: '700' },
+  loadingBannerHint: { color: Colors.textMuted, fontSize: 11, marginTop: 2, lineHeight: 16 },
   errorText: { color: Colors.textMuted, fontSize: 14, textAlign: 'center', marginTop: 8 },
   retryBtn: {
     marginTop: 8,
@@ -1396,6 +1463,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   loadMoreTxt: { color: Colors.textMuted, fontWeight: '800', fontSize: 13 },
+  loadMoreRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginVertical: 16,
+  },
+  loadMoreLoadingTxt: { color: Colors.textMuted, fontSize: 13, fontWeight: '600' },
   card: {
     backgroundColor: Colors.card,
     borderRadius: Radii.lg,
