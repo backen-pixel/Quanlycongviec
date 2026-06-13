@@ -5156,12 +5156,38 @@ async function hydrateCrmLeadsRpcPage(parsedRpc, req, parsedOffset, parsedLimit)
   };
 }
 
-async function resolveKanbanStagesForCompany(type, companyId, regionId) {
-  if (!companyId) return [];
-  const rid = regionId && String(regionId).trim() ? String(regionId).trim() : '';
-  const effectivePipelineId = rid
-    ? await getPipelineIdForCompanyRegion(companyId, rid)
-    : await getDefaultPipelineIdForCompany(companyId);
+async function resolveKanbanStagesForCompany(type, companyId, regionId, req) {
+  let effectiveCompanyId = companyId ? String(companyId).trim() : '';
+  let effectivePipelineId = null;
+
+  if (effectiveCompanyId) {
+    const rid = regionId && String(regionId).trim() ? String(regionId).trim() : '';
+    effectivePipelineId = rid
+      ? await getPipelineIdForCompanyRegion(effectiveCompanyId, rid)
+      : await getDefaultPipelineIdForCompany(effectiveCompanyId);
+  } else if (req) {
+    const sac = scopedAdminCompanyId(req);
+    if (sac) {
+      effectivePipelineId = await getDefaultPipelineIdForCompany(sac);
+    } else if (!userIsAdmin(req.user?.role)) {
+      const { resolveCompanyIdForUser } = require('../middleware/auth');
+      const cid = await resolveCompanyIdForUser(req.user?.userId);
+      if (cid) {
+        effectiveCompanyId = cid;
+        effectivePipelineId = await getDefaultPipelineIdForCompany(cid);
+      }
+    } else {
+      let q = supabase
+        .from('crm_pipeline_stages')
+        .select('*')
+        .eq('is_active', true)
+        .eq('pipeline_type', type || 'lead')
+        .order('order_index', { ascending: true });
+      const { data: rows } = await q;
+      return normalizePipelineStagesList(rows || []);
+    }
+  }
+
   if (!effectivePipelineId) return [];
   const data = await getStagesByPipelineId(effectivePipelineId, { type: type || null, activeOnly: true });
   return normalizePipelineStagesList(data || []);
@@ -5193,6 +5219,7 @@ r.get('/stage-counts', responseCache({ ttl: 15, scope: 'user', tags: ['crm:list'
       type,
       uuidQueryOrNull(mergedQuery.company_id),
       mergedQuery.region_id,
+      req,
     );
     const stageIds = stages.map((s) => s.id).filter(Boolean);
     const filterParams = buildCrmLeadsRpcFilterParams(mergedQuery, type, rpcAssigneeStrict, rpcRegionIds);
@@ -5241,7 +5268,7 @@ r.get('/kanban-bootstrap', responseCache({ ttl: 15, scope: 'user', tags: ['crm:l
     const parsedLimit = Math.min(Math.max(parseInt(req.query.limit) || 20, 1), 200);
     const requestedStageId = uuidQueryOrNull(req.query.stage_id);
 
-    const stages = await resolveKanbanStagesForCompany(type, companyId, regionId);
+    const stages = await resolveKanbanStagesForCompany(type, companyId, regionId, req);
     const stageIds = stages.map((s) => String(s.id)).filter(Boolean);
     const initialStageId =
       requestedStageId && stageIds.includes(String(requestedStageId))

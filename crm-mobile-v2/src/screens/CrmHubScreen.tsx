@@ -33,6 +33,7 @@ import {
 } from '../api/crmMeta';
 import {
   fetchCrmBoardInitial,
+  fetchCrmListTotal,
   fetchCrmStageCountsBatch,
   fetchCrmStagePage,
   fetchStageCounts,
@@ -60,7 +61,6 @@ import {
   REGION_NONE,
   searchPlaceholder,
   serverFilterKey,
-  withEffectiveCompanyId,
   type CrmHubFilters,
   type SearchField,
 } from '../lib/crmFilters';
@@ -231,6 +231,20 @@ const KanbanCard = React.memo(function KanbanCard({
   );
 });
 
+function defaultCompanyIdForUser(
+  user: { company_id?: string | null } | null,
+  companies: { id: string }[],
+): string {
+  return user?.company_id || (companies.length === 1 ? companies[0]?.id : '') || '';
+}
+
+function resetCrmFilters(
+  user: { company_id?: string | null } | null,
+  companies: { id: string }[],
+): CrmHubFilters {
+  return { ...DEFAULT_CRM_FILTERS, companyId: defaultCompanyIdForUser(user, companies) };
+}
+
 function initialFiltersFromRoute(params?: RootStackParamList['CrmHub']): CrmHubFilters {
   const base = { ...DEFAULT_CRM_FILTERS };
   if (params?.initialAssignee === 'mine') {
@@ -380,20 +394,12 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     void loadOrgMeta(companyId);
   }, [loadOrgMeta]);
 
-  const userCompanyId = user?.company_id || '';
-  const userCompanyIdRef = useRef(userCompanyId);
-  userCompanyIdRef.current = userCompanyId;
-
   const fetchOpts = useCallback(
-    () => buildStageFetchOpts(filters, search, myId, userCompanyId),
-    [filters, search, myId, userCompanyId],
+    () => buildStageFetchOpts(filters, search, myId),
+    [filters, search, myId],
   );
   const fetchOptsRef = useRef(fetchOpts);
   fetchOptsRef.current = fetchOpts;
-
-  const serverFilterKeyFor = useCallback((f: CrmHubFilters, q: string) => {
-    return serverFilterKey(withEffectiveCompanyId(f, userCompanyIdRef.current), q);
-  }, []);
 
   const showToast = useCallback((msg: string, ok: boolean) => {
     setToast({ msg, ok });
@@ -457,7 +463,7 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     if (!myId) return false;
     const type = which === 'leads' ? 'lead' : 'deal';
     const snap = peekCrmHubCache(myId, type, filterKey);
-    if (!snap) return false;
+    if (!snap?.data?.stages?.length) return false;
     if (which === 'leads') setLeadData(snap.data);
     else setDealData(snap.data);
     if (which === mode) setActiveIndex(snap.activeIndex);
@@ -465,21 +471,6 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     filterKeyRef.current = filterKey;
     return true;
   }, [myId, mode]);
-
-  const refreshAllStageCounts = useCallback(async (which: Mode) => {
-    const type = which === 'leads' ? 'lead' : 'deal';
-    const setter = which === 'leads' ? setLeadData : setDealData;
-    try {
-      const batch = await fetchCrmStageCountsBatch(type, fetchOptsRef.current());
-      setter((prev) => ({
-        ...prev,
-        stageCounts: { ...prev.stageCounts, ...batch.counts },
-        listTotal: batch.total,
-      }));
-    } catch {
-      /* giữ count một phần từ bootstrap */
-    }
-  }, []);
 
   const resolveFetchStageId = useCallback((
     which: Mode,
@@ -521,6 +512,31 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     }
   }, []);
 
+  const refreshListTotal = useCallback(async (which: Mode, filterKey?: string) => {
+    const type = which === 'leads' ? 'lead' : 'deal';
+    const setter = which === 'leads' ? setLeadData : setDealData;
+    const fk = filterKey ?? serverFilterKey(
+      which === 'leads' ? leadFiltersRef.current : dealFiltersRef.current,
+      search,
+    );
+    try {
+      const total = await fetchCrmListTotal(type, fetchOptsRef.current());
+      setter((prev) => {
+        const next = { ...prev, listTotal: total };
+        if (myId) {
+          setCrmHubCache(myId, type, fk, {
+            data: next,
+            activeStageId: stageIdAtIndex(which, activeIndexRef.current) || '',
+            activeIndex: which === modeRef.current ? activeIndexRef.current : 0,
+          });
+        }
+        return next;
+      });
+    } catch {
+      /* giữ total cũ */
+    }
+  }, [myId, search]);
+
   const loadBootstrap = useCallback(async (
     which: Mode,
     isRefresh = false,
@@ -530,8 +546,8 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     if (loadingModeRef.current[which] && !isRefresh && !silent) return;
 
     const type = which === 'leads' ? 'lead' : 'deal';
-    const modeFilters = which === 'leads' ? leadFiltersRef.current : dealFiltersRef.current;
-    const fk = serverFilterKeyFor(modeFilters, search);
+    const modeFilters = which === 'leads' ? leadFilters : dealFilters;
+    const fk = serverFilterKey(modeFilters, search);
 
     if (!silent && !isRefresh && applyCachedHub(which, fk)) {
       void loadBootstrap(which, false, stageId, true);
@@ -567,12 +583,22 @@ export default function CrmHubScreen({ navigation, route }: Props) {
         keepIndex,
         preserveView,
       });
+
+      if (boot.stages.length === 0) {
+        if (!silent && !isRefresh) setError('Không tải được cột pipeline. Kéo xuống để thử lại.');
+        return;
+      }
+
       setLoaded((p) => ({ ...p, [which]: true }));
-      filterKeyRef.current = fk;
+      filterKeyRef.current = serverFilterKey(
+        which === 'leads' ? leadFiltersRef.current : dealFiltersRef.current,
+        search,
+      );
 
       if (myId) {
         const prevHub = which === 'leads' ? leadDataRef.current : dealDataRef.current;
-        setCrmHubCache(myId, type, fk, {
+        const fkNow = filterKeyRef.current;
+        setCrmHubCache(myId, type, fkNow, {
           data: {
             stages: boot.stages,
             stageCounts: preserveView
@@ -594,11 +620,15 @@ export default function CrmHubScreen({ navigation, route }: Props) {
         });
       }
 
-      if (boot.listTotal != null) {
-        const setter = which === 'leads' ? setLeadData : setDealData;
-        setter((prev) => ({ ...prev, listTotal: boot.listTotal ?? prev.listTotal }));
+      const hasFullCounts =
+        boot.stages.length > 0
+        && boot.stages.every((s) => boot.stageCounts[s.id] !== undefined);
+      const fkNow = filterKeyRef.current;
+      if (boot.listTotal == null) void refreshListTotal(which, fkNow);
+      if (!hasFullCounts) {
+        const countIds = priorityStageIds(boot.stages, boot.initialStageId);
+        void refreshStageCounts(which, countIds);
       }
-      void refreshAllStageCounts(which);
     } catch (e) {
       if (!ac.signal.aborted && !silent) setError(formatApiError(e));
     } finally {
@@ -608,7 +638,7 @@ export default function CrmHubScreen({ navigation, route }: Props) {
         setRefreshing(false);
       }
     }
-  }, [applyBootstrap, applyCachedHub, search, refreshAllStageCounts, myId, resolveFetchStageId, serverFilterKeyFor]);
+  }, [applyBootstrap, applyCachedHub, search, leadFilters, dealFilters, refreshStageCounts, refreshListTotal, myId, resolveFetchStageId]);
 
   const loadStage = useCallback(async (which: Mode, stageId: string, append = false) => {
     const type = which === 'leads' ? 'lead' : 'deal';
@@ -666,11 +696,10 @@ export default function CrmHubScreen({ navigation, route }: Props) {
       if (!canLoadCrm) return;
       const which = modeRef.current;
       if (loadedRef.current[which]) void loadBootstrap(which, false, undefined, true);
-      else void loadBootstrap(which, false);
       return () => {
         abortByModeRef.current[which]?.abort();
       };
-    }, [canLoadCrm, loadBootstrap, mode]),
+    }, [canLoadCrm, loadBootstrap]),
   );
 
   const hubStages = hub.stages;
@@ -679,25 +708,30 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     return [...hubStages, orphanVirtualStage()];
   }, [hubStages, filters.showOrphan]);
 
-  const filterKey = serverFilterKeyFor(filters, search);
+  const filterKey = serverFilterKey(filters, search);
   useEffect(() => {
-    if (!loaded[mode]) return;
+    if (!canLoadCrm) return;
     if (filterKeyRef.current === filterKey) return;
     const stageId = displayStages[activeIndexRef.current]?.id;
+    if (!loaded[mode]) {
+      void loadBootstrap(mode, false, stageId);
+      return;
+    }
+    filterKeyRef.current = filterKey;
     if (stageId === ORPHAN_STAGE_ID) {
       void loadStage(mode, ORPHAN_STAGE_ID, false);
     } else {
       void loadBootstrap(mode, true, stageId);
     }
-  }, [filterKey, mode, loaded, displayStages, loadBootstrap, loadStage]);
+  }, [filterKey, mode, loaded, canLoadCrm, displayStages, loadBootstrap, loadStage]);
 
   const switchMode = (next: Mode) => {
     if (next === mode) return;
     setMode(next);
     setSearchDraft('');
     setSearch('');
-    setLeadFilters({ ...DEFAULT_CRM_FILTERS });
-    setDealFilters({ ...DEFAULT_CRM_FILTERS });
+    setLeadFilters(resetCrmFilters(user, companies));
+    setDealFilters(resetCrmFilters(user, companies));
     setActiveIndex(0);
     filterKeyRef.current = '';
     if (!loaded[next]) void loadBootstrap(next, false);
@@ -747,7 +781,7 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     || filters.assignee !== 'all'
     || !!filters.assigneeUserId
     || !!filters.timePreset
-    || (!!filters.companyId && filters.companyId !== userCompanyId);
+    || !!filters.companyId;
   const clientDueActive = filters.due !== 'all';
   const clientRegionActive = !!filters.regionId;
   const clientSearchActive =
@@ -977,7 +1011,8 @@ export default function CrmHubScreen({ navigation, route }: Props) {
               style={styles.activeChipClear}
               onPress={() => {
                 setSearchDraft('');
-                setFilters({ ...DEFAULT_CRM_FILTERS });
+                setLeadFilters(resetCrmFilters(user, companies));
+                setDealFilters(resetCrmFilters(user, companies));
               }}
             >
               <Text style={styles.activeChipClearTxt}>Xóa lọc</Text>

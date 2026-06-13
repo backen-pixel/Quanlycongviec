@@ -489,10 +489,7 @@ async function fetchCrmKanbanBootstrapRemote(
         : stages[0].id;
   const ip = data?.initialPage || {};
   const rows = Array.isArray(ip.data) ? ip.data : [];
-  const stageIds = new Set([sid]);
-  const items = rows
-    .map((it) => mapKanbanItem(it, type))
-    .filter((it) => isClassifiedKanbanItem(it, stageIds));
+  const items = rows.map((it) => mapKanbanItem(it, type));
   const total = typeof ip.total === 'number' ? ip.total : items.length;
   const nextOffset = typeof ip.nextOffset === 'number' ? ip.nextOffset : items.length;
 
