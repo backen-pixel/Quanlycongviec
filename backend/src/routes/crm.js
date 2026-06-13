@@ -4715,7 +4715,8 @@ async function attachCrmNextOpenTaskDeadline(rows) {
   });
 }
 
-async function fetchCrmLeadsByIdsOrdered(ids) {
+async function fetchCrmLeadsByIdsOrdered(ids, opts = {}) {
+  const { skipEnrich = false } = opts;
   const raw = Array.isArray(ids) ? ids : [];
   if (raw.length === 0) return [];
   // RPC có thể trả trùng id trong một page → hydrate ra hai row giống id khác stage snapshot → Kanban hai cột.
@@ -4757,6 +4758,7 @@ async function fetchCrmLeadsByIdsOrdered(ids) {
     });
   }
   const rows = list.map((id) => byId.get(String(id))).filter(Boolean);
+  if (skipEnrich) return rows;
   try {
     const { enrichCrmLeadsWithProductionStaff } = require('../helpers/productionWorkshopTypeStaff');
     return await enrichCrmLeadsWithProductionStaff(rows);
@@ -5139,13 +5141,25 @@ async function resolveCrmLeadsMergedQuery(req, res) {
   return { type, mergedQuery, rpcAssigneeStrict, rpcRegionIds };
 }
 
-async function hydrateCrmLeadsRpcPage(parsedRpc, req, parsedOffset, parsedLimit) {
+async function hydrateCrmLeadsRpcPage(parsedRpc, req, parsedOffset, parsedLimit, opts = {}) {
+  const { lite = false } = opts;
   const { total, ids } = parsedRpc;
-  const hydrated = await fetchCrmLeadsByIdsOrdered(ids);
+  const hydrated = await fetchCrmLeadsByIdsOrdered(ids, { skipEnrich: lite });
+  const windowLen = Array.isArray(ids) ? ids.length : hydrated.length;
+  if (lite) {
+    const page = attachLeadNewFlagForList(hydrated, req.user?.userId);
+    return {
+      data: page,
+      total,
+      offset: parsedOffset,
+      limit: parsedLimit,
+      hasMore: parsedOffset + windowLen < total,
+      nextOffset: parsedOffset + windowLen,
+    };
+  }
   const rows = await attachCrmNextOpenTaskDeadline(hydrated);
   const page = attachLeadNewFlagForList(rows, req.user?.userId);
   const pageWithUserFlags = await attachLeadUserFlagsForList(page, req.user?.userId);
-  const windowLen = Array.isArray(ids) ? ids.length : page.length;
   return {
     data: pageWithUserFlags,
     total,
@@ -5267,6 +5281,8 @@ r.get('/kanban-bootstrap', responseCache({ ttl: 15, scope: 'user', tags: ['crm:l
     const regionId = mergedQuery.region_id;
     const parsedLimit = Math.min(Math.max(parseInt(req.query.limit) || 20, 1), 200);
     const requestedStageId = uuidQueryOrNull(req.query.stage_id);
+    const skipCounts = req.query.skip_counts === '1' || req.query.skip_counts === 'true';
+    const lite = req.query.lite === '1' || req.query.lite === 'true';
 
     const stages = await resolveKanbanStagesForCompany(type, companyId, regionId, req);
     const stageIds = stages.map((s) => String(s.id)).filter(Boolean);
@@ -5277,12 +5293,7 @@ r.get('/kanban-bootstrap', responseCache({ ttl: 15, scope: 'user', tags: ['crm:l
 
     const filterParams = buildCrmLeadsRpcFilterParams(mergedQuery, type, rpcAssigneeStrict, rpcRegionIds);
 
-    const countsPromise = invokeCrmLeadsStageCountsRpc({
-      ...filterParams,
-      p_pipeline_stage_ids: stageIds.length ? stageIds : null,
-    });
-
-    const pagePromise = (async () => {
+    const loadInitialPage = async () => {
       if (!initialStageId) {
         return { data: [], total: 0, offset: 0, limit: parsedLimit, hasMore: false, nextOffset: 0 };
       }
@@ -5303,13 +5314,36 @@ r.get('/kanban-bootstrap', responseCache({ ttl: 15, scope: 'user', tags: ['crm:l
       }
       const parsedRpc = !rpcError ? parseCrmLeadsPageRpc(rpcData) : null;
       if (!parsedRpc) return null;
-      return hydrateCrmLeadsRpcPage(parsedRpc, req, 0, parsedLimit);
-    })();
+      return hydrateCrmLeadsRpcPage(parsedRpc, req, 0, parsedLimit, { lite });
+    };
 
-    const [countsParsed, initialPage] = await Promise.all([countsPromise, pagePromise]);
+    const initialPage = await loadInitialPage();
     if (!initialPage) {
       return res.status(500).json({ error: 'Không tải được trang kanban' });
     }
+
+    if (skipCounts) {
+      const stageCounts = {};
+      if (initialStageId) stageCounts[initialStageId] = initialPage.total;
+      return res.json({
+        stages,
+        stageCounts,
+        listTotal: initialPage.total,
+        initialStageId,
+        skipCounts: true,
+        initialPage: {
+          data: initialPage.data,
+          total: initialPage.total,
+          hasMore: initialPage.hasMore,
+          nextOffset: initialPage.nextOffset,
+        },
+      });
+    }
+
+    const countsParsed = await invokeCrmLeadsStageCountsRpc({
+      ...filterParams,
+      p_pipeline_stage_ids: stageIds.length ? stageIds : null,
+    });
 
     const stageCounts = countsParsed?.counts || {};
     if (initialStageId && stageCounts[initialStageId] === undefined) {

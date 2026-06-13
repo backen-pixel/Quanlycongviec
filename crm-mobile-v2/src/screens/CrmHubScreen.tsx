@@ -575,7 +575,11 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     const effectiveStageId = resolveFetchStageId(which, stageId, preserveView || (isRefresh && isCurrentMode));
 
     try {
-      const fetchOpts = { ...fetchOptsRef.current(), signal: ac.signal };
+      const fetchOpts = {
+        ...fetchOptsRef.current(),
+        signal: ac.signal,
+        ...(isRefresh ? { skipCounts: false, lite: false } : {}),
+      };
       const boot = await fetchCrmBoardInitial(type, effectiveStageId, fetchOpts);
       if (ac.signal.aborted) return;
 
@@ -626,8 +630,8 @@ export default function CrmHubScreen({ navigation, route }: Props) {
       const fkNow = filterKeyRef.current;
       if (boot.listTotal == null) void refreshListTotal(which, fkNow);
       if (!hasFullCounts) {
-        const countIds = priorityStageIds(boot.stages, boot.initialStageId);
-        void refreshStageCounts(which, countIds);
+        const allStageIds = boot.stages.map((s) => s.id);
+        setTimeout(() => void refreshStageCounts(which, allStageIds), 80);
       }
     } catch (e) {
       if (!ac.signal.aborted && !silent) setError(formatApiError(e));
