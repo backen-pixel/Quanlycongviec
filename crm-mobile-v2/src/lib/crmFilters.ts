@@ -92,24 +92,36 @@ export function serverFilterKey(f: CrmHubFilters, q: string): string {
   ].join('|');
 }
 
+/** Gắn company_id từ user khi state filter chưa kịp cập nhật (tránh load rỗng lần đầu). */
+export function withEffectiveCompanyId(
+  filters: CrmHubFilters,
+  fallbackCompanyId?: string | null,
+): CrmHubFilters {
+  const cid = filters.companyId || fallbackCompanyId || '';
+  if (cid === filters.companyId) return filters;
+  return { ...filters, companyId: cid };
+}
+
 export function buildStageFetchOpts(
   filters: CrmHubFilters,
   search: string,
   myId: string,
+  fallbackCompanyId?: string | null,
 ): CrmStageFetchOpts {
-  const range = filters.timePreset ? getDateRange(filters.timePreset) : { from: '', to: '' };
+  const f = withEffectiveCompanyId(filters, fallbackCompanyId);
+  const range = f.timePreset ? getDateRange(f.timePreset) : { from: '', to: '' };
   let assignedTo: string | undefined;
-  if (filters.assignee === 'mine' && myId) assignedTo = myId;
-  else if (filters.assignee === 'user' && filters.assigneeUserId) assignedTo = filters.assigneeUserId;
+  if (f.assignee === 'mine' && myId) assignedTo = myId;
+  else if (f.assignee === 'user' && f.assigneeUserId) assignedTo = f.assigneeUserId;
 
   return {
-    search: buildSearchForApi(search, filters.searchField),
+    search: buildSearchForApi(search, f.searchField),
     assignedTo,
-    phoneFilter: filters.phone || undefined,
+    phoneFilter: f.phone || undefined,
     dateFrom: range.from || undefined,
     dateTo: range.to || undefined,
-    companyId: filters.companyId || undefined,
-    regionId: filters.regionId || undefined,
+    companyId: f.companyId || undefined,
+    regionId: f.regionId || undefined,
   };
 }
 
