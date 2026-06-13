@@ -3,6 +3,7 @@
  *
  *  Public (không cần đăng nhập — app gọi trước khi login):
  *    GET  /api/app-updates/check       — so sánh phiên bản, trả link tải APK
+ *    GET  /api/app-updates/latest      — bản APK đầy đủ mới nhất (trang Tải app)
  *    GET  /api/app-updates/ota-current — phiên bản OTA (jsbundle) đang active trên server
  *    GET  /api/app-updates/manifest     — Expo Updates protocol (jsbundle OTA)
  *    GET  /api/app-updates/download/:id — redirect tới file APK
@@ -201,6 +202,61 @@ r.get('/check', async (req, res) => {
     });
   } catch (e) {
     console.error('[appUpdates] check:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /latest?app=crm-mobile-v2&channel=production — bản APK đầy đủ mới nhất (trang Tải app)
+r.get('/latest', async (req, res) => {
+  try {
+    const appKey = String(req.query.app || '').trim();
+    if (!appKey) return res.status(400).json({ error: 'Thiếu tham số app' });
+    const channel = String(req.query.channel || 'production').trim();
+
+    const app = await findApp({ appKey });
+    if (!app || !app.is_active) {
+      return res.status(404).json({ error: 'App không tồn tại hoặc đã tắt' });
+    }
+
+    const { data: rows } = await supabase
+      .from('app_releases')
+      .select('id, version, version_code, file_size, sha256, release_notes, is_mandatory, created_at, updated_at')
+      .eq('app_id', app.id)
+      .eq('channel', channel)
+      .eq('update_type', 'apk')
+      .eq('is_active', true)
+      .order('version_code', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    const latest = rows?.[0] || null;
+    if (!latest) {
+      return res.json({
+        available: false,
+        appKey,
+        displayName: app.display_name || appKey,
+        version: null,
+        versionCode: null,
+        downloadUrl: null,
+      });
+    }
+
+    res.json({
+      available: true,
+      appKey,
+      displayName: app.display_name || appKey,
+      releaseId: latest.id,
+      version: latest.version,
+      versionCode: latest.version_code,
+      downloadUrl: downloadUrlFor(latest, publicBaseUrl(req)),
+      size: latest.file_size,
+      sha256: latest.sha256,
+      releaseNotes: latest.release_notes || null,
+      mandatory: latest.is_mandatory,
+      publishedAt: latest.updated_at || latest.created_at,
+    });
+  } catch (e) {
+    console.error('[appUpdates] latest:', e);
     res.status(500).json({ error: e.message });
   }
 });

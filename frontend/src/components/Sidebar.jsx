@@ -11,7 +11,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X, UsersRound,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
-  BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, CalendarRange, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot,
+  BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, CalendarRange, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot, Download,
   Sigma, Calculator, FileUp, History as HistoryIcon,
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
@@ -200,6 +200,7 @@ const CRM_MENU_BOTTOM_GROUPS = [
       { to: '/settings/password', icon: Lock, label: 'Đổi mật khẩu' },
       { to: '/settings/location', icon: MapPin, label: 'Vị trí làm việc' },
       { to: '/settings/devices', icon: Smartphone, label: 'Thiết bị đăng nhập' },
+      { to: '/crm/download-app', icon: Download, label: 'Tải app CRM' },
       { to: '/knowledge', icon: GraduationCap, label: 'Kiến thức' },
       { to: '/guide', icon: BookOpen, label: 'Hướng dẫn sử dụng', adminOnly: true },
       { to: '/settings/api-keys', icon: Key, label: 'API Key tích hợp', adminOnly: true },
@@ -257,6 +258,15 @@ const SX_MENU_GROUPS = [
       { to: '/sx/handover-settings', icon: UserCog, label: 'Bàn giao CRM → SX (nâng cao)' },
       { to: { pathname: '/admin/trash', search: '?tab=sx' }, icon: Trash2, label: 'Thùng rác SX', adminOnly: true, strictAdminOnly: true },
     ]
+  },
+  {
+    id: 'sx-tools',
+    moduleKey: 'production',
+    title: '4. Hỗ trợ',
+    emoji: '🛠️',
+    items: [
+      { to: '/sx/download-app', icon: Download, label: 'Tải app Xưởng' },
+    ],
   },
 ];
 
