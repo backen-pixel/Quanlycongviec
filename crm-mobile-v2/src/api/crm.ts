@@ -140,6 +140,10 @@ export type CrmStageFetchOpts = {
   companyId?: string;
   regionId?: string;
   pipelineId?: string;
+  /** Kanban bootstrap: bỏ đếm toàn pipeline — trả stages + trang đầu ngay. */
+  skipCounts?: boolean;
+  /** Kanban bootstrap: bỏ deadline task + user flags + production staff enrich. */
+  lite?: boolean;
 };
 
 export type CrmStagePage = {
@@ -298,6 +302,8 @@ function applyListParams(params: Record<string, unknown>, opts?: CrmStageFetchOp
   if (opts?.dateTo) params.date_to = opts.dateTo;
   if (opts?.companyId) params.company_id = opts.companyId;
   if (opts?.regionId && opts.regionId !== '__none__') params.region_id = opts.regionId;
+  if (opts?.skipCounts) params.skip_counts = '1';
+  if (opts?.lite) params.lite = '1';
 }
 
 function crmListQueryParams(type: 'lead' | 'deal', opts?: CrmStageFetchOpts): Record<string, unknown> {
@@ -495,6 +501,18 @@ async function fetchCrmKanbanBootstrapRemote(
 
   const key = stagesCacheKey(type, opts);
   stagesCache.set(key, { stages, at: Date.now() });
+  setCrmBootstrapCache(type, initialStageId, opts, {
+    stages,
+    stageCounts: data?.stageCounts && typeof data.stageCounts === 'object' ? data.stageCounts : { [sid]: total },
+    listTotal: typeof data?.listTotal === 'number' ? data.listTotal : undefined,
+    initialStageId: sid,
+    initialPage: {
+      items,
+      hasMore: typeof ip.hasMore === 'boolean' ? ip.hasMore : nextOffset < total,
+      nextOffset,
+      total,
+    },
+  });
 
   return {
     stages,
@@ -519,8 +537,16 @@ export async function fetchCrmBoardInitial(
   initialStageId?: string,
   opts?: CrmStageFetchOpts,
 ): Promise<CrmBoardBootstrap> {
+  const fastOpts: CrmStageFetchOpts = {
+    ...opts,
+    skipCounts: opts?.skipCounts ?? true,
+    lite: opts?.lite ?? true,
+  };
+  const cached = peekCrmBootstrapCache(type, initialStageId, fastOpts);
+  if (cached?.stages.length) return cached;
+
   try {
-    const remote = await fetchCrmKanbanBootstrapRemote(type, initialStageId, opts);
+    const remote = await fetchCrmKanbanBootstrapRemote(type, initialStageId, fastOpts);
     if (remote?.stages.length) return remote;
   } catch {
     /* fallback bên dưới */
@@ -563,12 +589,22 @@ export async function fetchCrmBoardInitial(
   };
 }
 
-/** Làm nóng cache pipeline Lead + Deal (gọi sớm từ Menu / mở CrmHub). */
+/** Làm nóng cache pipeline + bootstrap lite Lead/Deal (gọi sớm từ Menu). */
 export async function warmCrmHubPipelines(companyId?: string, signal?: AbortSignal): Promise<void> {
-  const opts: CrmStageFetchOpts = { companyId, signal };
+  const opts: CrmStageFetchOpts = { companyId, signal, skipCounts: true, lite: true };
   await Promise.all([
     fetchPipelineStagesCached('lead', opts),
     fetchPipelineStagesCached('deal', opts),
+    warmCrmHubBootstrap(companyId, signal),
+  ]);
+}
+
+/** Prefetch kanban bootstrap lite — mở CrmHub hiển thị ngay không chờ mạng. */
+export async function warmCrmHubBootstrap(companyId?: string, signal?: AbortSignal): Promise<void> {
+  const opts: CrmStageFetchOpts = { companyId, signal, skipCounts: true, lite: true };
+  await Promise.all([
+    fetchCrmBoardInitial('lead', undefined, opts).catch(() => null),
+    fetchCrmBoardInitial('deal', undefined, opts).catch(() => null),
   ]);
 }
 
@@ -606,7 +642,47 @@ export async function prefetchCrmNeighborStages(
 }
 
 const HUB_CACHE_TTL_MS = 3 * 60 * 1000;
+const BOOTSTRAP_CACHE_TTL_MS = 2 * 60 * 1000;
 const hubCache = new Map<string, { snapshot: CrmHubCacheSnapshot; at: number }>();
+const bootstrapCache = new Map<string, { boot: CrmBoardBootstrap; at: number }>();
+
+function bootstrapCacheKey(
+  type: 'lead' | 'deal',
+  initialStageId: string | undefined,
+  opts?: CrmStageFetchOpts,
+): string {
+  return [
+    type,
+    initialStageId || '',
+    opts?.skipCounts ? '1' : '0',
+    opts?.lite ? '1' : '0',
+    stagesCacheKey(type, opts),
+  ].join('|');
+}
+
+function peekCrmBootstrapCache(
+  type: 'lead' | 'deal',
+  initialStageId: string | undefined,
+  opts?: CrmStageFetchOpts,
+): CrmBoardBootstrap | null {
+  const key = bootstrapCacheKey(type, initialStageId, opts);
+  const hit = bootstrapCache.get(key);
+  if (!hit || Date.now() - hit.at >= BOOTSTRAP_CACHE_TTL_MS) return null;
+  return hit.boot;
+}
+
+function setCrmBootstrapCache(
+  type: 'lead' | 'deal',
+  initialStageId: string | undefined,
+  opts: CrmStageFetchOpts | undefined,
+  boot: CrmBoardBootstrap,
+): void {
+  bootstrapCache.set(bootstrapCacheKey(type, initialStageId, opts), { boot, at: Date.now() });
+}
+
+export function invalidateCrmBootstrapCache(): void {
+  bootstrapCache.clear();
+}
 
 export type CrmHubCacheSnapshot = {
   data: CrmHubData;
@@ -640,6 +716,7 @@ export function setCrmHubCache(
 export function invalidateCrmHubCache(userId?: string): void {
   if (!userId) {
     hubCache.clear();
+    bootstrapCache.clear();
     return;
   }
   for (const key of hubCache.keys()) {
