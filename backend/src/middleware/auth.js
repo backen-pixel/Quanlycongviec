@@ -130,4 +130,4 @@ function auth(req, res, next) {
   }
 }
 
-module.exports = { auth, midnightVnTodayMs, isStaleAcrossMidnight };
+module.exports = { auth, midnightVnTodayMs, isStaleAcrossMidnight, resolveCompanyIdForUser };

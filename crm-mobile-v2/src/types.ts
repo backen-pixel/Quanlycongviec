@@ -129,6 +129,8 @@ export type CrmStageCache = {
 export type CrmHubData = {
   stages: CrmPipelineStage[];
   stageCounts: Record<string, number>;
+  /** Tổng từ API (giống web KPI) — không phụ thuộc tổng các cột Kanban. */
+  listTotal: number | null;
   cache: Record<string, CrmStageCache>;
 };
 

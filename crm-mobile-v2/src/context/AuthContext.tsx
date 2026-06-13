@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { api, getStoredToken, setStoredToken, setUnauthorizedHandler } from '../api/client';
+import { invalidatePlannerCache, invalidateCrmHubCache } from '../api/crm';
 
 const USER_KEY = 'crmv2_user_json';
 
@@ -13,6 +14,7 @@ export type AuthUser = {
   role?: string;
   avatar?: string | null;
   phone?: string | null;
+  company_id?: string | null;
 };
 
 type AuthCtx = {
@@ -66,6 +68,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [token]);
 
   const login = useCallback(async (email: string, password: string) => {
+    invalidatePlannerCache();
+    invalidateCrmHubCache();
     const { data } = await api.post('/auth/login', { email: email.trim(), password });
     await setStoredToken(data.token);
     await AsyncStorage.setItem(USER_KEY, JSON.stringify(data.user));
@@ -74,6 +78,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    invalidatePlannerCache();
+    invalidateCrmHubCache();
     await setStoredToken(null);
     await AsyncStorage.removeItem(USER_KEY);
     setToken(null);
