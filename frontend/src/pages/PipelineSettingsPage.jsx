@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
-import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2, Calendar, CheckCircle2, Clock, Factory, Search, X, TrendingUp } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2, Calendar, CheckCircle2, Clock, Factory, Search, X, TrendingUp, RotateCcw } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { resolveDefaultCrmAdminCompanyId, setStoredCrmFilterCompanyId } from '../lib/crmCompanyFilter';
@@ -459,6 +459,23 @@ export default function PipelineSettingsPage() {
     }
   };
 
+  /**
+   * Bật/tắt "Cho phép trả Deal về Lead" cho từng cột deal. Khi bật:
+   * thẻ deal đang ở cột này mới hiện nút "Trả về Lead" (chi tiết + cột Danh sách).
+   */
+  const toggleAllowRevertToLeadColumn = async (stage) => {
+    if (stage.pipeline_type !== 'deal') return;
+    if (stage.is_won) return;
+    try {
+      await api.put(`/crm/pipeline-stages/${stage.id}`, {
+        allow_revert_to_lead: !stage.allow_revert_to_lead,
+      });
+      load();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi');
+    }
+  };
+
   /** Bật/tắt ghi nhận quá hạn khi lead/deal không chuyển tiếp khỏi cột (sla_days=0). */
   const toggleSlaColumn = async (stage) => {
     if (stage.is_won || stage.is_lost) return;
@@ -542,6 +559,7 @@ export default function PipelineSettingsPage() {
       default_probability: '',
       sla_days: '',
       requires_deadline: false,
+      allow_revert_to_lead: false,
     });
   };
 
@@ -564,6 +582,7 @@ export default function PipelineSettingsPage() {
       default_probability: stage.default_probability != null && stage.default_probability !== '' ? String(stage.default_probability) : '',
       sla_days: stage.sla_days != null && stage.sla_days !== '' ? String(stage.sla_days) : '',
       requires_deadline: !!stage.requires_deadline,
+      allow_revert_to_lead: !!stage.allow_revert_to_lead,
     });
   };
 
@@ -964,6 +983,23 @@ export default function PipelineSettingsPage() {
                     <MessageCircle className="h-3 w-3" />
                     Zalo
                   </button>
+                  {!s.is_won && (
+                    <button
+                      type="button"
+                      onClick={() => toggleAllowRevertToLeadColumn(s)}
+                      className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
+                        s.allow_revert_to_lead
+                          ? 'bg-amber-100 text-amber-800 border-amber-300'
+                          : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-amber-300 hover:text-amber-700'
+                      }`}
+                      title={s.allow_revert_to_lead
+                        ? 'Đang cho phép trả deal ở cột này về Lead. Nhấn để tắt.'
+                        : 'Bật để cho phép trả deal đang ở cột này về Lead (chi tiết + cột Danh sách hiện nút "Trả về Lead").'}
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      {s.allow_revert_to_lead ? 'Cho trả Lead' : 'Trả về Lead'}
+                    </button>
+                  )}
                 </>
               )}
               <button onClick={() => toggleActive(s)} className="p-1.5 rounded hover:bg-gray-100 cursor-pointer" title={s.is_active ? 'Ẩn' : 'Hiện'}>
@@ -1845,6 +1881,20 @@ function StageForm({
               className="rounded border-emerald-400"
             />
             <Calendar className="h-3.5 w-3.5 shrink-0" /> Hỏi tạo sự kiện khi deal chuyển vào cột này (chỉ chọn giờ)
+          </label>
+        )}
+        {pipelineType === 'deal' && !form.is_won && (
+          <label
+            className="flex items-center gap-2 text-xs cursor-pointer text-amber-900 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200"
+            title="Tick để cho phép trả deal đang ở cột này về Lead. Khi tick: header chi tiết và cột 'Trả về Lead' ở view Danh sách CRM sẽ hiện nút Trả về Lead."
+          >
+            <input
+              type="checkbox"
+              checked={!!form.allow_revert_to_lead}
+              onChange={(e) => setForm((f) => ({ ...f, allow_revert_to_lead: e.target.checked }))}
+              className="rounded border-amber-400"
+            />
+            <RotateCcw className="h-3.5 w-3.5 text-amber-600" /> Cho phép trả Deal về Lead
           </label>
         )}
         {!form.is_won && !form.is_lost && (

@@ -2863,6 +2863,7 @@ r.post('/pipeline-stages', async (req, res) => {
       default_probability: defaultProbability,
       description: stageDesc,
       ...(b.requires_deadline !== undefined ? { requires_deadline: !!b.requires_deadline } : {}),
+      ...(b.allow_revert_to_lead !== undefined ? { allow_revert_to_lead: !!b.allow_revert_to_lead } : {}),
       ...(slaInsert !== undefined ? { sla_days: slaInsert } : {}),
       ...(b.counts_as_won_revenue !== undefined
         ? { counts_as_won_revenue: b.counts_as_won_revenue == null ? null : !!b.counts_as_won_revenue }
@@ -2878,6 +2879,10 @@ r.post('/pipeline-stages', async (req, res) => {
     // Chưa chạy migration requires_deadline → bỏ cột rồi thử lại để không vỡ tạo cột.
     if (error && /requires_deadline/.test(error.message || '')) {
       delete insertObj.requires_deadline;
+      ({ data, error } = await supabase.from('crm_pipeline_stages').insert(insertObj).select().single());
+    }
+    if (error && /allow_revert_to_lead/.test(error.message || '')) {
+      delete insertObj.allow_revert_to_lead;
       ({ data, error } = await supabase.from('crm_pipeline_stages').insert(insertObj).select().single());
     }
     if (error) throw error;
@@ -2906,6 +2911,7 @@ r.put('/pipeline-stages/:id', async (req, res) => {
       if (b[f] !== undefined) update[f] = (f === 'send_zalo_on_enter' || f === 'create_event_on_enter') ? !!b[f] : b[f];
     });
     if (b.requires_deadline !== undefined) update.requires_deadline = !!b.requires_deadline;
+    if (b.allow_revert_to_lead !== undefined) update.allow_revert_to_lead = !!b.allow_revert_to_lead;
     if (b.counts_as_won_revenue !== undefined) {
       update.counts_as_won_revenue = b.counts_as_won_revenue == null ? null : !!b.counts_as_won_revenue;
     }
@@ -2936,6 +2942,11 @@ r.put('/pipeline-stages/:id', async (req, res) => {
       .eq('id', req.params.id).select().single();
     if (error && /requires_deadline/.test(error.message || '')) {
       delete update.requires_deadline;
+      ({ data, error } = await supabase.from('crm_pipeline_stages').update(update)
+        .eq('id', req.params.id).select().single());
+    }
+    if (error && /allow_revert_to_lead/.test(error.message || '')) {
+      delete update.allow_revert_to_lead;
       ({ data, error } = await supabase.from('crm_pipeline_stages').update(update)
         .eq('id', req.params.id).select().single());
     }
@@ -7411,6 +7422,164 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
     });
   } catch (e) {
     console.error('Convert to deal error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// REVERT DEAL → LEAD
+// Trả deal lại trạng thái lead (giữ data, đổi type/stage/pipeline). Bắt buộc
+// chọn lại người chịu trách nhiệm (assigned_to). Cấm khi deal đã gắn dự án SX.
+// ═══════════════════════════════════════════════════════════════════════════
+r.post('/leads/:id/convert-to-lead', async (req, res) => {
+  try {
+    const { data: lead, error: leadFetchErr } = await supabase
+      .from('crm_leads')
+      .select('*')
+      .eq('id', req.params.id)
+      .single();
+    if (leadFetchErr) throw leadFetchErr;
+    if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead/deal' });
+    if (lead.type !== 'deal') {
+      return res.status(400).json({ error: 'Chỉ áp dụng cho Deal (bản ghi này đã là Lead).' });
+    }
+    if (lead.project_id) {
+      return res.status(400).json({ error: 'Deal đã có dự án SX — không thể trả về Lead. Hủy/xóa dự án trước nếu thật sự cần.' });
+    }
+
+    // Kiểm tra cờ "allow_revert_to_lead" trên cột deal hiện tại (do Cài đặt Pipeline bật/tắt).
+    if (lead.stage_id) {
+      const { data: curStage, error: curStageErr } = await supabase
+        .from('crm_pipeline_stages')
+        .select('id, name, is_won, is_lost, allow_revert_to_lead')
+        .eq('id', lead.stage_id)
+        .maybeSingle();
+      if (!curStageErr && curStage) {
+        if (curStage.is_won) {
+          return res.status(400).json({ error: 'Deal đang ở cột Thắng — không thể trả về Lead.' });
+        }
+        if (curStage.allow_revert_to_lead !== true) {
+          return res.status(400).json({
+            error: `Cột "${curStage.name || 'hiện tại'}" chưa bật "Cho phép trả về Lead". Vào Cài đặt Pipeline để bật trước.`,
+          });
+        }
+      }
+      // Nếu lỗi đọc stage (vd cột chưa có trên DB cũ) → cho qua để không chặn flow.
+    }
+
+    // Quyền: admin công ty/khu vực hoặc đang là người phụ trách deal hiện tại.
+    const uid = req.user?.userId;
+    const isOwnerNow =
+      uid &&
+      (String(lead.assigned_to || '') === String(uid) ||
+        String(lead.lead_owner_id || '') === String(uid));
+    if (!userIsCrmCompanyOrRegionAdmin(req) && !isOwnerNow) {
+      return res.status(403).json({ error: 'Bạn không có quyền trả deal này về Lead.' });
+    }
+
+    // Bắt buộc chọn lại người phụ trách khi trả về Lead.
+    const newOwnerId = req.body?.assigned_to ? String(req.body.assigned_to).trim() : '';
+    if (!newOwnerId) {
+      return res.status(400).json({ error: 'Vui lòng chọn người phụ trách Lead sau khi trả về.' });
+    }
+    if (lead.company_id) {
+      const v = await assertCrmAssigneeUserMatchesLeadCompany(supabase, newOwnerId, lead.company_id);
+      if (!v.ok) return res.status(400).json({ error: v.error });
+    }
+
+    // Pipeline để chọn cột lead đầu tiên: ưu tiên pipeline hiện tại của deal,
+    // fallback theo công ty (pipeline default/active).
+    let pipelineForLead = lead.pipeline_id || null;
+    if (!pipelineForLead && lead.company_id) {
+      const { data: pls } = await supabase
+        .from('crm_pipelines')
+        .select('id, is_default')
+        .eq('company_id', lead.company_id)
+        .eq('is_active', true);
+      const list = pls || [];
+      const def = list.find((p) => p.is_default) || list[0];
+      pipelineForLead = def?.id || null;
+    }
+
+    let stageQ = supabase
+      .from('crm_pipeline_stages')
+      .select('id')
+      .eq('pipeline_type', 'lead')
+      .eq('is_active', true)
+      .order('order_index')
+      .limit(1);
+    if (pipelineForLead) stageQ = stageQ.eq('pipeline_id', pipelineForLead);
+    const { data: firstLeadStage, error: stagePickErr } = await stageQ.maybeSingle();
+    if (stagePickErr) throw stagePickErr;
+    if (!firstLeadStage) {
+      return res.status(500).json({
+        error: pipelineForLead
+          ? 'Không tìm thấy cột Lead đầu tiên trong pipeline. Kiểm tra cấu hình pipeline CRM.'
+          : 'Không tìm thấy giai đoạn Lead đầu tiên trên hệ thống.',
+      });
+    }
+
+    const nowIso = new Date().toISOString();
+    const updatePayload = {
+      type: 'lead',
+      stage_id: firstLeadStage.id,
+      pipeline_id: pipelineForLead || lead.pipeline_id || null,
+      assigned_to: newOwnerId,
+      lead_owner_id: newOwnerId,
+      stage_entered_at: nowIso,
+      updated_at: nowIso,
+      lost_reason: null,
+      lost_at: null,
+    };
+
+    const { data: updatedLead, error: updateErr } = await supabase
+      .from('crm_leads')
+      .update(updatePayload)
+      .eq('id', req.params.id)
+      .select('*')
+      .single();
+    if (updateErr) throw updateErr;
+
+    try {
+      await supabase.from('crm_activities').insert({
+        lead_id: req.params.id,
+        type: 'note',
+        title: '↩️ Trả deal về Lead',
+        description: req.body?.reason
+          ? `Deal được trả về Lead. Lý do: ${String(req.body.reason).slice(0, 500)}`
+          : 'Deal được trả về Lead, gán lại người phụ trách.',
+        created_by: req.user.userId,
+      });
+    } catch (_) { /* ignore activity log error */ }
+
+    try {
+      if (newOwnerId && String(newOwnerId) !== String(req.user.userId)) {
+        await createNotification(
+          req,
+          newOwnerId,
+          'lead_assigned',
+          '↩️ Lead được giao',
+          `Deal "${lead.title || lead.code || ''}" đã trả về Lead và giao cho bạn phụ trách.`,
+          'crm_lead',
+          req.params.id,
+        );
+      }
+    } catch (notifErr) {
+      console.error('[convert-to-lead] notify error:', notifErr.message);
+    }
+
+    emitCrmDashboardChanged(req, {
+      type: 'lead',
+      company_id: updatedLead?.company_id,
+      lead_id: req.params.id,
+      action: 'reverted_to_lead',
+    });
+    res.status(200).json({
+      lead: updatedLead,
+      message: 'Đã trả Deal về Lead. Đã gán người phụ trách mới.',
+    });
+  } catch (e) {
+    console.error('Convert to lead (revert) error:', e);
     res.status(500).json({ error: e.message });
   }
 });
