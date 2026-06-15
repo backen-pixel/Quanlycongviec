@@ -798,6 +798,7 @@ r.put('/releases/:id', requireAdmin, releaseFileUploadSingle, async (req, res) =
           channel: req.body.channel || existing.channel,
           version: req.body.version ? String(req.body.version).trim() : undefined,
           version_code: req.body.version_code,
+          originalFilename: req.file?.originalname || undefined,
           publicBaseUrl: publicBaseUrl(req),
         });
       } else if (existing.update_type === 'jsbundle') {
