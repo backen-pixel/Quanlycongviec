@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { supabase } = require('../config/supabase');
-const { parseReleaseFilename } = require('./appReleaseFilename');
+const { parseReleaseFilename, buildStandardApkFilename } = require('./appReleaseFilename');
 const { deleteAppReleaseBucketFiles } = require('./appReleaseDelete');
 
 const BUCKET = 'app-releases';
@@ -29,16 +29,17 @@ async function copyToLocalServe(appKey, sourcePath, filename) {
  * @returns {{ storage_path, file_url, sha256, file_size, suggestedVersion, suggestedVersionCode }}
  */
 async function uploadApkFromPath(app, filePath, opts = {}) {
-  const filename = path.basename(filePath);
+  const filename = opts.originalFilename || path.basename(filePath);
   const parsed = parseReleaseFilename(filename);
-  if (!parsed.ok) throw new Error(parsed.error);
+  if (!parsed.ok && !opts.version) throw new Error(parsed.error);
 
   const channel = opts.channel || 'production';
   const buf = fs.readFileSync(filePath);
   const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
   const fileSize = buf.length;
 
-  const version = opts.version || parsed.version;
+  const version = opts.version || (parsed.ok ? parsed.version : null);
+  if (!version) throw new Error(parsed.error || 'Thiếu version');
   const safeVersion = String(version).replace(/[^0-9A-Za-z._-]/g, '_');
   const storagePath = `${app.app_key}/${channel}/${safeVersion}_${Date.now()}.apk`;
 
@@ -55,7 +56,12 @@ async function uploadApkFromPath(app, filePath, opts = {}) {
     fileUrl = urlData.publicUrl;
     finalStoragePath = storagePath;
   } else if (isStorageSizeLimitError(upErr)) {
-    const localName = filename.replace(/[^0-9A-Za-z._-]/g, '_');
+    const versionCode = opts.version_code != null
+      ? parseInt(opts.version_code, 10)
+      : (parsed.ok ? parsed.versionCode : null);
+    const localName = parsed.ok
+      ? filename.replace(/[^0-9A-Za-z._-]/g, '_')
+      : buildStandardApkFilename(app.app_key, version, versionCode, { release: true });
     await copyToLocalServe(app.app_key, filePath, localName);
     const base = (opts.publicBaseUrl || '').replace(/\/$/, '');
     fileUrl = `${base}/uploads/app-releases/${app.app_key}/${localName}`;
@@ -65,14 +71,14 @@ async function uploadApkFromPath(app, filePath, opts = {}) {
 
   const versionCode = opts.version_code != null
     ? parseInt(opts.version_code, 10)
-    : parsed.versionCode;
+    : (parsed.ok ? parsed.versionCode : null);
 
   return {
     storage_path: finalStoragePath,
     file_url: fileUrl,
     sha256,
     file_size: fileSize,
-    suggestedVersion: parsed.version,
+    suggestedVersion: version,
     suggestedVersionCode: Number.isFinite(versionCode) ? versionCode : null,
   };
 }
