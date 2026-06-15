@@ -16,6 +16,7 @@
  *    PUT    /api/app-updates/releases/:id
  *    DELETE /api/app-updates/releases/:id
  */
+const axios = require('axios');
 const { Router } = require('express');
 const multer = require('multer');
 const path = require('path');
@@ -118,11 +119,32 @@ async function findApp({ appKey, appId }) {
 }
 
 function downloadUrlFor(release, publicBase) {
-  if (release.external_url) return release.external_url;
   const apiUrl = buildPublicDownloadUrl(publicBase, release.id);
   if (apiUrl) return apiUrl;
+  if (release.external_url) return release.external_url;
   if (release.file_url && /^https?:\/\//i.test(release.file_url)) return release.file_url;
   return null;
+}
+
+async function streamRemoteApk(res, remoteUrl, filename, expectedSize) {
+  const upstream = await axios.get(remoteUrl, {
+    responseType: 'stream',
+    maxRedirects: 5,
+    timeout: 600000,
+    validateStatus: (s) => s >= 200 && s < 400,
+  });
+  const ct = String(upstream.headers['content-type'] || '').toLowerCase();
+  if (ct.includes('application/json') || ct.includes('text/html')) {
+    upstream.data.destroy?.();
+    return res.status(502).json({ error: 'Nguồn APK ngoài trả về dữ liệu lỗi' });
+  }
+  res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  const len = upstream.headers['content-length'];
+  if (len) res.setHeader('Content-Length', String(len));
+  else if (expectedSize) res.setHeader('Content-Length', String(expectedSize));
+  upstream.data.pipe(res);
 }
 
 /** Ưu tiên file trên disk (uploads local) trước khi redirect Storage/external. */
@@ -375,7 +397,8 @@ r.get('/download/:releaseId', async (req, res) => {
           error: 'File APK không còn trên server — admin hãy upload lại bản phát hành (Phát hành → chọn .apk)',
         });
       }
-      return res.redirect(302, remote);
+      await streamRemoteApk(res, remote, filename, rel.file_size);
+      return;
     }
 
     return res.status(404).json({

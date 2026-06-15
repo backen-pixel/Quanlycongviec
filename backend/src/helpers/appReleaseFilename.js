@@ -10,7 +10,7 @@
  *   tubep-demo-1.0.0.apk
  *   TuBepDemo-1.0.0-code2-release.apk
  */
-const SEMVER_IN_NAME = /(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/;
+const SEMVER_IN_NAME = /(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/g;
 const CODE_IN_NAME = /(?:^|[-_])code(\d+)/i;
 
 const FILENAME_RULE_TEXT =
@@ -24,16 +24,15 @@ function parseReleaseFilename(filename) {
   if (!/\.apk$/i.test(name)) return { ok: false, error: 'File phải có đuôi .apk' };
 
   const base = name.replace(/\.apk$/i, '');
-  const verMatch = base.match(SEMVER_IN_NAME);
+  const verMatch = [...base.matchAll(SEMVER_IN_NAME)].pop()?.[1] || null;
   if (!verMatch) {
     return {
       ok: false,
-      error: 'Tên file phải chứa số phiên bản (vd: 1.0.0, 1.3.35). '
-        + 'Ví dụ: crm-mobile-1.3.35-code51-release.apk',
+      error: 'Không đọc được version từ tên file — nhập version trong form phát hành.',
     };
   }
 
-  const version = verMatch[1];
+  const version = verMatch;
   const codeMatch = base.match(CODE_IN_NAME);
   const versionCode = codeMatch ? parseInt(codeMatch[1], 10) : null;
 
@@ -49,7 +48,11 @@ function parseReleaseFilename(filename) {
 function buildStandardApkFilename(appKey, version, versionCode, opts = {}) {
   const safeKey = String(appKey).replace(/[^0-9A-Za-z._-]/g, '-');
   const safeVer = String(version).replace(/[^0-9A-Za-z._-]/g, '_');
-  const parts = [safeKey, safeVer];
+  // crm-mobile-v2 + 2.0.23 → crm-mobile-v2.0.23-... (tránh crm-mobile-v2-2.0.23)
+  const stem = /-v\d+$/i.test(safeKey)
+    ? `${safeKey}.${safeVer}`
+    : `${safeKey}-${safeVer}`;
+  const parts = [stem];
   if (versionCode != null && versionCode !== '') parts.push(`code${versionCode}`);
   if (opts.release) parts.push('release');
   return `${parts.join('-')}.apk`;
