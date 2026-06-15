@@ -486,6 +486,23 @@ function dealCountsTowardPipelineEstimate(item, stagesDeal) {
   return true;
 }
 
+function hasExplicitExpectedRevenueStage(stagesDeal) {
+  return Array.isArray(stagesDeal) && stagesDeal.some((s) => !!s?.counts_as_expected_revenue);
+}
+
+/**
+ * Deal tính vào «Giá trị kỳ vọng»:
+ *   - Nếu pipeline có >= 1 cột tick `counts_as_expected_revenue` → chỉ các cột đó.
+ *   - Ngược lại → fallback `dealCountsTowardPipelineEstimate` (pipeline mở).
+ */
+function dealCountsTowardExpectedValue(item, stagesDeal) {
+  if (!hasExplicitExpectedRevenueStage(stagesDeal)) {
+    return dealCountsTowardPipelineEstimate(item, stagesDeal);
+  }
+  const st = resolveDealStageForKpi(item, stagesDeal);
+  return !!st?.counts_as_expected_revenue;
+}
+
 /** % xác suất của từng deal — ưu tiên cột probability, fallback theo cột pipeline. */
 function dealProbabilityPercent(deal, stagesDeal) {
   const raw = deal?.probability;
@@ -2472,6 +2489,11 @@ export default function CRMDashboard() {
     return typeof t === 'number' ? t : leads.length;
   }, [kpiUsesClientOnlyFilters, leads.length, loadMoreState.leadTotal]);
 
+  const explicitExpectedKvStages = useMemo(
+    () => hasExplicitExpectedRevenueStage(stagesDeal),
+    [stagesDeal],
+  );
+
   /** KPI Deal (tổng / đàm phán / thắng / doanh thu thắng / đã DT hoàn thành / KPI sổ cái) — cùng bộ lọc Kanban, không dùng kpis API thuần server. */
   const dealKpisFromFilters = useMemo(() => {
     const won = deals.filter((d) => dealIsWonStage(d, stagesDeal));
@@ -2479,11 +2501,12 @@ export default function CRMDashboard() {
     const revenueCompleted = deals.filter((d) => dealIsRevenueCompletedStage(d, stagesDeal));
     const completedRevenueValue = revenueCompleted.reduce((s, l) => s + (Number(l.estimated_value) || 0), 0);
     const pipelineDeals = deals.filter((d) => dealCountsTowardPipelineEstimate(d, stagesDeal));
+    const expectedDeals = deals.filter((d) => dealCountsTowardExpectedValue(d, stagesDeal));
     const pipeline_estimated_value = pipelineDeals.reduce(
       (s, d) => s + (Number(d.estimated_value) || 0),
       0,
     );
-    const expected_value = pipelineDeals.reduce(
+    const expected_value = expectedDeals.reduce(
       (s, d) => s + dealWeightedValue(d, stagesDeal),
       0,
     );
@@ -4192,7 +4215,9 @@ export default function CRMDashboard() {
               iconColor="text-violet-700"
               label="Giá trị kỳ vọng"
               value={formatVND(dealKpisFromFilters.expected_value)}
-              hint="Tổng (giá trị dự kiến × xác suất %) của từng deal trên pipeline"
+              hint={explicitExpectedKvStages
+                ? 'Tổng KV các cột đã tick «Giá trị kỳ vọng» trong Pipeline Settings'
+                : 'Tổng (giá trị dự kiến × xác suất %) — mặc định loại cột Thắng/Thua/Hoàn thành DT'}
               trend={null}
             />
             <KPICard
@@ -4364,6 +4389,7 @@ export default function CRMDashboard() {
               onToggleInteracted={toggleInteractedFlag}
               onOpenDeadline={openDeadlineFromCard}
               remeasureToken={showAdvSearch ? 1 : 0}
+              explicitExpectedKv={explicitExpectedKvStages}
             />
             {/* Chú thích màu sắc thẻ Kanban — chỉ hiện sau khi load xong dữ liệu */}
             {!firstLoading && (
@@ -5577,6 +5603,7 @@ function KanbanStageCard({
   onTogglePin,
   onToggleInteracted,
   onOpenDeadline,
+  explicitExpectedKv,
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
@@ -5585,8 +5612,11 @@ function KanbanStageCard({
   const columnItemIds = (items || []).map((i) => i.id);
   const columnStagesCtx = [stage];
   const columnRawValue = (items || []).reduce((sum, item) => sum + (Number(item.estimated_value) || 0), 0);
-  const columnExpectedValue = pipelineType === 'deal'
-    ? (items || []).reduce((sum, item) => sum + dealWeightedValue(item, columnStagesCtx), 0)
+  const showColumnExpectedKv = pipelineType === 'deal' && (!explicitExpectedKv || !!stage.counts_as_expected_revenue);
+  const columnExpectedValue = showColumnExpectedKv
+    ? (items || []).reduce((sum, item) => (
+      dealCountsTowardExpectedValue(item, columnStagesCtx) ? sum + dealWeightedValue(item, columnStagesCtx) : sum
+    ), 0)
     : 0;
   const allInColumnSelected =
     columnItemIds.length > 0 &&
@@ -5679,8 +5709,12 @@ function KanbanStageCard({
           {pipelineType === 'deal' ? (
             <>
               <span>Dự kiến: {formatVND(columnRawValue)}</span>
-              <span className="mx-1 text-gray-300">·</span>
-              <span className="text-violet-700 font-medium">KV: {formatVND(columnExpectedValue)}</span>
+              {showColumnExpectedKv && (
+                <>
+                  <span className="mx-1 text-gray-300">·</span>
+                  <span className="text-violet-700 font-medium">KV: {formatVND(columnExpectedValue)}</span>
+                </>
+              )}
             </>
           ) : (
             <>Giá trị: {formatVND(columnRawValue)}</>
@@ -6235,6 +6269,7 @@ function KanbanView({
   onToggleInteracted,
   onOpenDeadline,
   remeasureToken,
+  explicitExpectedKv,
 }) {
   const kanbanHScrollRef = useRef(null);
   const kanbanWrapRef = useRef(null);
@@ -6433,6 +6468,7 @@ function KanbanView({
               onTogglePin={onTogglePin}
               onToggleInteracted={onToggleInteracted}
               onOpenDeadline={onOpenDeadline}
+              explicitExpectedKv={explicitExpectedKv}
             />
           ))}
         </div>

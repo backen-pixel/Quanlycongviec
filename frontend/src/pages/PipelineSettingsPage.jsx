@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
-import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2, Calendar, CheckCircle2, Clock, Factory, Search, X } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2, Calendar, CheckCircle2, Clock, Factory, Search, X, TrendingUp } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { resolveDefaultCrmAdminCompanyId, setStoredCrmFilterCompanyId } from '../lib/crmCompanyFilter';
@@ -85,6 +85,7 @@ export default function PipelineSettingsPage() {
     is_lost: false,
     counts_as_won_revenue: false,
     counts_as_completed_revenue: false,
+    counts_as_expected_revenue: false,
     send_zalo_on_enter: false,
     create_event_on_enter: false,
     sync_role: '',
@@ -534,6 +535,7 @@ export default function PipelineSettingsPage() {
       is_lost: false,
       counts_as_won_revenue: false,
       counts_as_completed_revenue: false,
+      counts_as_expected_revenue: false,
       send_zalo_on_enter: false,
       create_event_on_enter: false,
       sync_role: '',
@@ -555,6 +557,7 @@ export default function PipelineSettingsPage() {
       is_lost: stage.is_lost,
       counts_as_won_revenue: !!stage.counts_as_won_revenue,
       counts_as_completed_revenue: !!stage.counts_as_completed_revenue,
+      counts_as_expected_revenue: !!stage.counts_as_expected_revenue,
       send_zalo_on_enter: !!stage.send_zalo_on_enter,
       create_event_on_enter: !!stage.create_event_on_enter,
       sync_role: stage.sync_role || '',
@@ -824,6 +827,12 @@ export default function PipelineSettingsPage() {
                   <span className="text-gray-500">
                     SLA {s.sla_days != null && s.sla_days !== '' ? `${s.sla_days} ngày` : '7 ngày (mặc định)'}
                   </span>
+                )}
+                {s.counts_as_completed_revenue && (
+                  <span className="text-teal-700 font-medium">✓ DT hoàn thành</span>
+                )}
+                {s.counts_as_expected_revenue && (
+                  <span className="text-violet-700 font-medium">◎ KV</span>
                 )}
                 {s.sync_role && (
                   <span className="bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 rounded font-medium">
@@ -1800,6 +1809,20 @@ function StageForm({
               className="rounded border-teal-400"
             />
             <CheckCircle2 className="h-3.5 w-3.5 text-teal-600" /> Tính vào «Doanh thu đã hoàn thành»
+          </label>
+        )}
+        {pipelineType === 'deal' && !form.is_lost && (
+          <label
+            className="flex items-center gap-2 text-xs cursor-pointer text-violet-900 bg-violet-50 px-2 py-1 rounded-lg border border-violet-200"
+            title="Tick các cột muốn cộng vào ô 'Giá trị kỳ vọng' trên CRM dashboard. Nếu không tick cột nào, dashboard tự loại cột Thắng / Thua / Hoàn thành DT."
+          >
+            <input
+              type="checkbox"
+              checked={!!form.counts_as_expected_revenue}
+              onChange={(e) => setForm((f) => ({ ...f, counts_as_expected_revenue: e.target.checked }))}
+              className="rounded border-violet-400"
+            />
+            <TrendingUp className="h-3.5 w-3.5 text-violet-600" /> Tính vào «Giá trị kỳ vọng»
           </label>
         )}
         {pipelineType === 'deal' && (
