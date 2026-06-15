@@ -52,6 +52,33 @@ function buildPublicDownloadUrl(baseUrl, releaseId) {
   return `${base}/api/app-updates/download/${releaseId}`;
 }
 
+/** Trích đường dẫn uploads local từ file_url (tương đối hoặc URL đầy đủ cùng host). */
+function resolveDiskPathFromFileUrl(fileUrl) {
+  if (!fileUrl) return null;
+  const raw = String(fileUrl).trim();
+  if (!raw) return null;
+
+  let rel = null;
+  if (raw.startsWith('/uploads/')) {
+    rel = raw.replace(/^\//, '');
+  } else {
+    const m = raw.match(/\/uploads\/app-releases\/[^?#]+/i);
+    if (m) rel = m[0].replace(/^\//, '');
+  }
+  if (!rel) return null;
+
+  const diskPath = path.join(__dirname, '../..', rel);
+  return fs.existsSync(diskPath) ? diskPath : null;
+}
+
+function statFileSizeSafe(filePath) {
+  try {
+    return fs.statSync(filePath).size;
+  } catch {
+    return null;
+  }
+}
+
 function downloadUrlForRelease(release, publicBase) {
   return release.external_url || release.file_url || buildPublicDownloadUrl(publicBase, release.id);
 }
@@ -59,6 +86,8 @@ function downloadUrlForRelease(release, publicBase) {
 module.exports = {
   apkFilenameForRelease,
   resolveLocalApkPath,
+  resolveDiskPathFromFileUrl,
+  statFileSizeSafe,
   buildPublicDownloadUrl,
   downloadUrlForRelease,
 };

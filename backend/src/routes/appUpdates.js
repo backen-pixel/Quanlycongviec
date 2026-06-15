@@ -32,6 +32,8 @@ const { deleteAppReleaseById, clearReleaseBucketFilesOnly } = require('../helper
 const {
   apkFilenameForRelease,
   resolveLocalApkPath,
+  resolveDiskPathFromFileUrl,
+  statFileSizeSafe,
   buildPublicDownloadUrl,
 } = require('../helpers/appReleaseDownload');
 const config = require('../config');
@@ -121,6 +123,30 @@ function downloadUrlFor(release, publicBase) {
   return buildPublicDownloadUrl(publicBase, release.id);
 }
 
+/** Ưu tiên file trên disk (uploads local) trước khi redirect Storage/external. */
+function resolveReleaseApkDiskPath(release, appKey) {
+  return resolveLocalApkPath(release, appKey) || resolveDiskPathFromFileUrl(release.file_url);
+}
+
+function effectiveReleaseFileSize(release, appKey) {
+  const diskPath = resolveReleaseApkDiskPath(release, appKey);
+  if (diskPath) {
+    const onDisk = statFileSizeSafe(diskPath);
+    if (onDisk != null && onDisk > 0) return onDisk;
+  }
+  const sz = Number(release.file_size);
+  return Number.isFinite(sz) && sz > 0 ? sz : null;
+}
+
+function sendApkFile(res, diskPath, filename) {
+  const size = statFileSizeSafe(diskPath);
+  res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  if (size != null && size > 0) res.setHeader('Content-Length', String(size));
+  return res.sendFile(diskPath);
+}
+
 function computeStorageStats(releases) {
   let total_bytes = 0;
   let release_count = 0;
@@ -196,7 +222,7 @@ r.get('/check', async (req, res) => {
       latestVersion: latest.version,
       latestVersionCode: latest.version_code,
       downloadUrl: hasNewer ? downloadUrlFor(latest, publicBaseUrl(req)) : null,
-      size: latest.file_size,
+      size: effectiveReleaseFileSize(latest, appKey),
       sha256: latest.sha256,
       releaseNotes: latest.release_notes || null,
     });
@@ -249,7 +275,7 @@ r.get('/latest', async (req, res) => {
       version: latest.version,
       versionCode: latest.version_code,
       downloadUrl: downloadUrlFor(latest, publicBaseUrl(req)),
-      size: latest.file_size,
+      size: effectiveReleaseFileSize(latest, appKey),
       sha256: latest.sha256,
       releaseNotes: latest.release_notes || null,
       mandatory: latest.is_mandatory,
@@ -321,7 +347,7 @@ r.get('/download/:releaseId', async (req, res) => {
     }
 
     const appKey = rel.mobile_apps?.app_key || null;
-    const localPath = resolveLocalApkPath(rel, appKey);
+    const localPath = resolveReleaseApkDiskPath(rel, appKey);
     const filename = localPath
       ? path.basename(localPath)
       : apkFilenameForRelease(rel, appKey || 'app');
@@ -332,10 +358,7 @@ r.get('/download/:releaseId', async (req, res) => {
     }).then(() => {}, () => {});
 
     if (localPath) {
-      res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.setHeader('Cache-Control', 'public, max-age=3600');
-      return res.sendFile(localPath);
+      return sendApkFile(res, localPath, filename);
     }
 
     let remote = rel.external_url
@@ -351,16 +374,6 @@ r.get('/download/:releaseId', async (req, res) => {
         });
       }
       return res.redirect(302, remote);
-    }
-
-    if (rel.file_url && String(rel.file_url).startsWith('/uploads/')) {
-      const diskPath = path.join(__dirname, '../..', rel.file_url.replace(/^\//, ''));
-      if (fs.existsSync(diskPath)) {
-        res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-        res.setHeader('Content-Disposition', `attachment; filename="${path.basename(diskPath)}"`);
-        res.setHeader('Cache-Control', 'public, max-age=3600');
-        return res.sendFile(diskPath);
-      }
     }
 
     return res.status(404).json({
