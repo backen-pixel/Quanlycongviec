@@ -11,6 +11,8 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: FB_AUTO_PIPELINE_RESUME_ON_BOOT
+        value: "1"
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_ANON_KEY

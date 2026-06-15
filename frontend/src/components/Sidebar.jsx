@@ -1,7 +1,7 @@
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
 import { useAuth } from '../lib/auth';
-import { isAdminLike, isCrmModuleAdmin, isStrictAdmin, isWorkProductionModuleAdmin } from '../lib/adminRole';
+import { isAdminLike, isCrmModuleAdmin, isStrictAdmin, isWorkProductionModuleAdmin, canAccessCrmSocialInbox } from '../lib/adminRole';
 import NotificationCenter from './NotificationCenter';
 import SidebarTooltip from './SidebarTooltip';
 import { getInitials, avatarColor } from '../lib/utils';
@@ -174,14 +174,22 @@ const CRM_MENU_BOTTOM_GROUPS = [
     ],
   },
   {
+    id: 'crm-social',
+    moduleKey: 'crm',
+    title: 'Kênh chat',
+    emoji: '💬',
+    items: [
+      { to: '/crm/facebook', icon: MessageCircle, label: 'Facebook', socialInboxAccess: true },
+      { to: '/crm/zalo', icon: MessageCircle, label: 'Zalo OA', socialInboxAccess: true },
+    ],
+  },
+  {
     id: 'crm-admin',
     moduleKey: 'crm',
     title: 'Quản trị CRM',
     emoji: '⚙️',
     adminOnly: true,
     items: [
-      { to: '/crm/facebook', icon: MessageCircle, label: 'Facebook', adminOnly: true },
-      { to: '/crm/zalo', icon: MessageCircle, label: 'Zalo OA', adminOnly: true },
       { to: '/crm/facebook/link-phone-cleanup', icon: Phone, label: 'Dọn SĐT từ link', adminOnly: true },
       { to: '/crm/blocked-phones', icon: ShieldOff, label: 'Chặn KH (SĐT)', adminOnly: true },
       { to: '/crm/pipeline-settings', icon: Settings, label: 'Pipeline', adminOnly: true },
@@ -412,7 +420,7 @@ function SideLink({ to, icon: Icon, label, collapsed, end, badge, moduleContext 
   );
 }
 
-function MenuGroup({ group, collapsed, isAdmin, isWorkModuleAdmin, isStrictAdminUser, isExecutive, canAccessModule, userRole, updatesUnread = 0, assignmentsUnread = 0, sxAssignmentsUnread = 0, socialUnread = 0 }) {
+function MenuGroup({ group, collapsed, isAdmin, isWorkModuleAdmin, isStrictAdminUser, isExecutive, canAccessModule, canAccessSocialInbox, userRole, updatesUnread = 0, assignmentsUnread = 0, sxAssignmentsUnread = 0, socialUnread = 0 }) {
   const [open, setOpen] = useState(true);
   const moduleContext = resolveGroupModuleContext(group);
   const moduleAdmin = (moduleContext === 'work' || moduleContext === 'sx')
@@ -426,6 +434,7 @@ function MenuGroup({ group, collapsed, isAdmin, isWorkModuleAdmin, isStrictAdmin
 
   // Filter items based on role + ecosystem module scope
   const items = group.items.filter((item) => {
+    if (item.socialInboxAccess && !canAccessSocialInbox) return false;
     if (item.adminOnly && !moduleAdmin) return false;
     if (item.strictAdminOnly && !isStrictAdminUser) return false;
     if (item.executiveOnly && !isExecutive) return false;
@@ -512,6 +521,7 @@ export default function Sidebar() {
   const isStrictAdminUser = isStrictAdmin(user);
   /** Sidebar CRM: admin CRM (hệ thống, sales_admin, admin CRM+SX) thấy đủ mục cài đặt CRM. */
   const isCrmMenuAdmin = isCrmModuleAdmin(user);
+  const canAccessSocialInbox = canAccessCrmSocialInbox(user);
   const isExecutive = ['admin', 'manager', 'director', 'supervisor', 'sales_admin', 'crm_production_admin'].includes(user?.role);
   const [activeModule, setActiveModule] = useState(() => readStoredModule() || 'crm');
 
@@ -794,6 +804,7 @@ export default function Sidebar() {
                 isStrictAdminUser={isStrictAdminUser}
                 isExecutive={isExecutive}
                 canAccessModule={canAccessModule}
+                canAccessSocialInbox={canAccessSocialInbox}
                 userRole={user?.role}
                 updatesUnread={updatesUnread}
                 assignmentsUnread={assignmentsUnread}
@@ -815,6 +826,7 @@ export default function Sidebar() {
                     isStrictAdminUser={isStrictAdminUser}
                     isExecutive={isExecutive}
                     canAccessModule={canAccessModule}
+                    canAccessSocialInbox={canAccessSocialInbox}
                     userRole={user?.role}
                     updatesUnread={updatesUnread}
                     assignmentsUnread={assignmentsUnread}
@@ -836,6 +848,7 @@ export default function Sidebar() {
                 isStrictAdminUser={isStrictAdminUser}
                 isExecutive={isExecutive}
                 canAccessModule={canAccessModule}
+                canAccessSocialInbox={canAccessSocialInbox}
                 userRole={user?.role}
                 updatesUnread={updatesUnread}
                 assignmentsUnread={assignmentsUnread}

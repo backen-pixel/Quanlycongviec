@@ -209,6 +209,21 @@ function parseAudienceCompanyIds(body) {
   return out;
 }
 
+function parseBlockedCompanyIds(body) {
+  const raw = body?.blocked_company_ids ?? body?.blockedCompanyIds;
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const x of raw) {
+    const id = x != null ? String(x).trim() : '';
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    if (out.length >= 200) break;
+    out.push(id);
+  }
+  return out;
+}
+
 async function validateCompanyIds(companyIds) {
   const uniq = [...new Set((companyIds || []).map(String).filter(Boolean))];
   if (!uniq.length) return { ok: false, error: 'Chọn ít nhất một công ty được xem bài.' };
@@ -381,14 +396,98 @@ async function replacePostCompanies(postId, visibility, companyIds, primaryCompa
   return null;
 }
 
+async function fetchPostBlockedCompanyIds(postId) {
+  const { data, error } = await supabase
+    .from('internal_social_post_blocked_companies')
+    .select('company_id')
+    .eq('post_id', postId);
+  if (error) {
+    const msg = String(error.message || '').toLowerCase();
+    if (error.code === '42P01' || (msg.includes('internal_social_post_blocked_companies') && msg.includes('does not exist'))) {
+      return [];
+    }
+    throw error;
+  }
+  return (data || []).map((r) => r.company_id);
+}
+
+async function fetchBlockedCompaniesByPostIds(postIds) {
+  if (!postIds.length) return {};
+  const { data, error } = await supabase
+    .from('internal_social_post_blocked_companies')
+    .select('post_id, company_id')
+    .in('post_id', postIds);
+  if (error) {
+    const msg = String(error.message || '').toLowerCase();
+    if (error.code === '42P01' || (msg.includes('internal_social_post_blocked_companies') && msg.includes('does not exist'))) {
+      return {};
+    }
+    throw error;
+  }
+  const by = {};
+  for (const row of data || []) {
+    if (!by[row.post_id]) by[row.post_id] = [];
+    by[row.post_id].push(row.company_id);
+  }
+  return by;
+}
+
+async function replacePostBlockedCompanies(postId, companyIds) {
+  const { error: delErr } = await supabase.from('internal_social_post_blocked_companies').delete().eq('post_id', postId);
+  if (delErr) {
+    const msg = String(delErr.message || '').toLowerCase();
+    if (delErr.code === '42P01' || (msg.includes('internal_social_post_blocked_companies') && msg.includes('does not exist'))) {
+      return { hint: 'Chạy migration database/343_internal_social_post_blocked_companies.sql' };
+    }
+    throw delErr;
+  }
+  const set = new Set((companyIds || []).map(String).filter(Boolean));
+  if (!set.size) return null;
+  const rows = [...set].map((company_id) => ({ post_id: postId, company_id }));
+  const { error: insErr } = await supabase.from('internal_social_post_blocked_companies').insert(rows);
+  if (insErr) throw insErr;
+  return null;
+}
+
+async function isPostBlockedForCompany(postId, companyId) {
+  if (!postId || !companyId) return false;
+  const { data, error } = await supabase
+    .from('internal_social_post_blocked_companies')
+    .select('company_id')
+    .eq('post_id', postId)
+    .eq('company_id', companyId)
+    .maybeSingle();
+  if (error) {
+    const msg = String(error.message || '').toLowerCase();
+    if (error.code === '42P01' || (msg.includes('internal_social_post_blocked_companies') && msg.includes('does not exist'))) {
+      return false;
+    }
+    throw error;
+  }
+  return !!data;
+}
+
+/** Loại bài đã chặn công ty đang xem (p_company_id / bộ lọc). Tác giả vẫn thấy bài của mình. */
+async function filterPostsBlockedForCompany(posts, companyId, viewerUserId) {
+  if (!posts?.length || !companyId) return posts || [];
+  const blockedBy = await fetchBlockedCompaniesByPostIds(posts.map((p) => p.id));
+  const cid = String(companyId);
+  return posts.filter((p) => {
+    if (sameUserId(p.author_id, viewerUserId)) return true;
+    const blocked = (blockedBy[p.id] || []).some((id) => String(id) === cid);
+    return !blocked;
+  });
+}
+
 async function hydratePostsToResponse(page, me) {
   const authorMap = await fetchUsersByIds(page.map((p) => p.author_id));
   const ids = page.map((p) => p.id);
-  const [likesByPost, { data: commentsRows, error: commentsErr }, audBy, compBy] = await Promise.all([
+  const [likesByPost, { data: commentsRows, error: commentsErr }, audBy, compBy, blockedBy] = await Promise.all([
     fetchLikesForPosts(ids),
     supabase.from('internal_social_comments').select('post_id').in('post_id', ids),
     fetchAudienceByPostIds(ids),
     fetchAudienceCompaniesByPostIds(ids),
+    fetchBlockedCompaniesByPostIds(ids),
   ]);
   if (commentsErr) throw commentsErr;
   const commentCount = {};
@@ -409,6 +508,7 @@ async function hydratePostsToResponse(page, me) {
   const allCompanyIds = new Set();
   for (const p of page) allCompanyIds.add(String(p.company_id));
   for (const arr of Object.values(compBy)) for (const cid of arr) allCompanyIds.add(String(cid));
+  for (const arr of Object.values(blockedBy)) for (const cid of arr) allCompanyIds.add(String(cid));
   let companyMap = new Map();
   if (allCompanyIds.size) {
     const { data: cmps } = await supabase
@@ -436,6 +536,9 @@ async function hydratePostsToResponse(page, me) {
         audience_companies.push(companyMap.get(cid) || { id: cid, name: null, short_name: null });
       }
     }
+    const blocked_companies = (blockedBy[p.id] || []).map(
+      (cid) => companyMap.get(String(cid)) || { id: cid, name: null, short_name: null },
+    );
     return {
       ...p,
       author: authorMap.get(p.author_id) || { id: p.author_id, full_name: null, email: null, role: null },
@@ -447,6 +550,7 @@ async function hydratePostsToResponse(page, me) {
       attachments: attByPost[p.id] || [],
       audience_users,
       audience_companies,
+      blocked_companies,
     };
   });
 }
@@ -577,6 +681,13 @@ async function getPostForUser(req, postId) {
     throw error;
   }
   if (!post || post.deleted_at) return { ok: false, status: 404, error: 'Không tìm thấy bài viết' };
+
+  const me = req.user.userId || req.user.id;
+  // Tác giả luôn đọc/sửa được bài của mình (kể cả đã ẩn khỏi công ty).
+  if (sameUserId(post.author_id, me)) {
+    return { ok: true, post };
+  }
+
   if (!isCrmSystemAdminUser(req.user)) {
     const my = userCompanyId(req);
     let allowed = !!my && String(post.company_id) === String(my);
@@ -590,7 +701,23 @@ async function getPostForUser(req, postId) {
       return { ok: false, status: 403, error: 'Không có quyền với bài viết này' };
     }
   }
-  const me = req.user.userId || req.user.id;
+  if (!sameUserId(post.author_id, me)) {
+    const viewingCompany = (() => {
+      if (isCrmSystemAdminUser(req.user)) {
+        const q = req.query?.company_id && String(req.query.company_id).trim();
+        return q || userCompanyId(req);
+      }
+      return userCompanyId(req);
+    })();
+    if (viewingCompany) {
+      try {
+        const blocked = await isPostBlockedForCompany(post.id, viewingCompany);
+        if (blocked) {
+          return { ok: false, status: 404, error: 'Không tìm thấy bài viết' };
+        }
+      } catch { /* ignore */ }
+    }
+  }
   const access = await assertUserCanAccessPostContent(req, post, me);
   if (!access.ok) return access;
   return { ok: true, post };
@@ -1116,7 +1243,18 @@ r.get('/profile/:userId/posts', async (req, res) => {
     const visible = [];
     for (const post of all) {
       let allow = isCrmSystemAdminUser(req.user);
-      if (!allow) {
+      // Trang cá nhân của chính mình: luôn thấy mọi bài mình đăng (kể cả đã ẩn khỏi công ty).
+      if (!allow && sameUserId(authorId, me)) {
+        const access = await assertUserCanAccessPostContent(req, post, me);
+        if (access.ok) {
+          const { count: hideCount } = await supabase
+            .from('internal_social_post_user_hides')
+            .select('user_id', { head: true, count: 'exact' })
+            .eq('post_id', post.id)
+            .eq('user_id', me);
+          if (!Number(hideCount)) allow = true;
+        }
+      } else if (!allow) {
         const my = userCompanyId(req);
         if (my) {
           let companyOk = String(post.company_id) === String(my);
@@ -1128,6 +1266,15 @@ r.get('/profile/:userId/posts', async (req, res) => {
           }
           if (companyOk) {
             const access = await assertUserCanAccessPostContent(req, post, me);
+            if (access.ok && !sameUserId(post.author_id, me)) {
+              const my = userCompanyId(req);
+              if (my) {
+                try {
+                  const blocked = await isPostBlockedForCompany(post.id, my);
+                  if (blocked) continue;
+                } catch { /* ignore */ }
+              }
+            }
             if (access.ok) {
               const { count: hideCount } = await supabase
                 .from('internal_social_post_user_hides')
@@ -1167,26 +1314,44 @@ r.get('/posts', async (req, res) => {
 
     const me = req.user.userId || req.user.id;
 
-    const rpc = await supabase.rpc('internal_social_feed_posts', {
-      p_company_id: companyId,
-      p_user_id: me,
-      p_can_moderate: canModerate(req),
-      p_limit: limit + 1,
-      p_offset: offset,
-    });
-    if (rpc.error) {
-      const msg = String(rpc.error.message || '').toLowerCase();
-      const code = rpc.error.code;
-      if (code === '42883' || msg.includes('internal_social_feed_posts') || msg.includes('does not exist')) {
-        return res.status(503).json({
-          error: 'Chạy migration 180_internal_social_schedule_visibility_hide_share.sql để dùng lọc bảng tin (lịch đăng, ẩn, phạm vi người xem).',
-        });
+    const target = limit + 1;
+    let scanOffset = offset;
+    let visibleRows = [];
+    let rpcExhausted = false;
+    const maxScan = Math.min(MAX_OFFSET, offset + limit * 8);
+
+    while (visibleRows.length < target && scanOffset <= maxScan && !rpcExhausted) {
+      const batchLimit = Math.min(100, Math.max(target * 2, 30));
+      const rpc = await supabase.rpc('internal_social_feed_posts', {
+        p_company_id: companyId,
+        p_user_id: me,
+        p_can_moderate: canModerate(req),
+        p_limit: batchLimit,
+        p_offset: scanOffset,
+      });
+      if (rpc.error) {
+        const msg = String(rpc.error.message || '').toLowerCase();
+        const code = rpc.error.code;
+        if (code === '42883' || msg.includes('internal_social_feed_posts') || msg.includes('does not exist')) {
+          return res.status(503).json({
+            error: 'Chạy migration 180_internal_social_schedule_visibility_hide_share.sql để dùng lọc bảng tin (lịch đăng, ẩn, phạm vi người xem).',
+          });
+        }
+        throw rpc.error;
       }
-      throw rpc.error;
+      const batch = rpc.data || [];
+      if (!batch.length) {
+        rpcExhausted = true;
+        break;
+      }
+      const filtered = await filterPostsBlockedForCompany(batch, companyId, me);
+      visibleRows.push(...filtered);
+      scanOffset += batch.length;
+      if (batch.length < batchLimit) rpcExhausted = true;
     }
-    const allRows = rpc.data || [];
-    const hasMore = allRows.length > limit;
-    const page = hasMore ? allRows.slice(0, limit) : allRows;
+
+    const hasMore = visibleRows.length > limit || (!rpcExhausted && scanOffset <= maxScan);
+    const page = visibleRows.length > limit ? visibleRows.slice(0, limit) : visibleRows;
     if (!page.length) {
       return res.json({ posts: [], next_offset: null, has_more: false });
     }
@@ -1375,6 +1540,14 @@ r.post('/posts', async (req, res) => {
       return res.status(503).json({ error: compHint.hint });
     }
 
+    const blockedIdsRaw = parseBlockedCompanyIds(req.body);
+    if (blockedIdsRaw.length) {
+      const bv = await validateCompanyIds(blockedIdsRaw);
+      if (!bv.ok) return res.status(400).json({ error: bv.error });
+      const blockHint = await replacePostBlockedCompanies(data.id, bv.ids);
+      if (blockHint?.hint) return res.status(503).json({ error: blockHint.hint });
+    }
+
     let savedAttachments = [];
     if (atts.length) {
       const rows = atts.map((a, i) => ({
@@ -1509,6 +1682,22 @@ r.put('/posts/:id', async (req, res) => {
       }
     }
 
+    if (Array.isArray(req.body?.blocked_company_ids) || Array.isArray(req.body?.blockedCompanyIds)) {
+      if (!sameUserId(row.author_id, me) && !canModerate(req) && !isCrmSystemAdminUser(req.user)) {
+        return res.status(403).json({ error: 'Chỉ tác giả hoặc quản lý mới chặn công ty xem bài.' });
+      }
+      const blockedList = parseBlockedCompanyIds(req.body);
+      if (blockedList.length) {
+        const bv = await validateCompanyIds(blockedList);
+        if (!bv.ok) return res.status(400).json({ error: bv.error });
+        const blockHint = await replacePostBlockedCompanies(postId, bv.ids);
+        if (blockHint?.hint) return res.status(503).json({ error: blockHint.hint });
+      } else {
+        const blockHint = await replacePostBlockedCompanies(postId, []);
+        if (blockHint?.hint) return res.status(503).json({ error: blockHint.hint });
+      }
+    }
+
     if (Array.isArray(req.body.attachments)) {
       await supabase.from('internal_social_attachments').delete().eq('post_id', postId);
       if (atts.length) {
@@ -1541,6 +1730,44 @@ r.put('/posts/:id', async (req, res) => {
     }
     if (msg.includes('internal_social_posts_visibility_chk') || msg.includes('selected_companies')) {
       return res.status(503).json({ error: 'Chạy migration 200_internal_social_post_companies.sql để chia sẻ bài cho nhiều công ty.' });
+    }
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** PUT /api/internal-social/posts/:id/blocked-companies — cập nhật danh sách công ty bị chặn xem */
+r.put('/posts/:id/blocked-companies', async (req, res) => {
+  try {
+    const gate = await getPostForUser(req, req.params.id);
+    if (!gate.ok) return res.status(gate.status).json({ error: gate.error });
+    const postId = req.params.id;
+    const me = req.user.userId || req.user.id;
+    if (!sameUserId(gate.post.author_id, me) && !canModerate(req) && !isCrmSystemAdminUser(req.user)) {
+      return res.status(403).json({ error: 'Chỉ tác giả hoặc quản lý mới chặn công ty xem bài.' });
+    }
+    const blockedList = parseBlockedCompanyIds(req.body);
+    if (blockedList.length) {
+      const bv = await validateCompanyIds(blockedList);
+      if (!bv.ok) return res.status(400).json({ error: bv.error });
+      const blockHint = await replacePostBlockedCompanies(postId, bv.ids);
+      if (blockHint?.hint) return res.status(503).json({ error: blockHint.hint });
+    } else {
+      const blockHint = await replacePostBlockedCompanies(postId, []);
+      if (blockHint?.hint) return res.status(503).json({ error: blockHint.hint });
+    }
+    const { data: fullRow, error: refErr } = await supabase
+      .from('internal_social_posts')
+      .select('id, company_id, author_id, body, link_url, link_title, image_url, video_url, created_at, updated_at, deleted_at, published_at, visibility, hidden_at')
+      .eq('id', postId)
+      .single();
+    if (refErr) throw refErr;
+    const [postOut] = await hydratePostsToResponse([fullRow], me);
+    res.json({ post: postOut });
+  } catch (e) {
+    console.error('PUT /internal-social/posts/:id/blocked-companies:', e);
+    const msg = e.message || '';
+    if (msg.includes('internal_social_post_blocked_companies')) {
+      return res.status(503).json({ error: 'Chạy migration database/343_internal_social_post_blocked_companies.sql' });
     }
     res.status(500).json({ error: e.message });
   }

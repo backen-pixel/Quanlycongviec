@@ -123,6 +123,29 @@ function setConfig(partial) {
   }, { onConflict: 'key' }).then(() => {}).catch(() => {});
 }
 
+async function persistEnabledFlag(enabled) {
+  try {
+    await supabase.from('app_settings').upsert({
+      key: 'auto_tool_enabled',
+      value: { enabled: !!enabled },
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'key' });
+  } catch (e) {
+    console.warn('[AutoTool] persistEnabledFlag:', e.message);
+  }
+}
+
+async function loadEnabledFlagFromDb() {
+  try {
+    const { data } = await supabase.from('app_settings')
+      .select('value').eq('key', 'auto_tool_enabled').maybeSingle();
+    return !!(data?.value?.enabled);
+  } catch (e) {
+    console.warn('[AutoTool] loadEnabledFlag:', e.message);
+    return false;
+  }
+}
+
 async function loadConfigFromDb() {
   try {
     const { data } = await supabase.from('app_settings')
@@ -418,6 +441,8 @@ async function startLoop() {
   state.logs = [];
   emit();
 
+  void persistEnabledFlag(true);
+
   pushLog('🚀 Auto Tool bắt đầu chạy (liên tục, user mới nhất trước)');
 
   while (state.enabled && !state.stopRequested) {
@@ -508,6 +533,7 @@ async function startLoop() {
 function stop() {
   state.stopRequested = true;
   state.enabled = false;
+  void persistEnabledFlag(false);
   pushLog('🛑 Đang dừng Auto Tool...');
   emit();
 }
@@ -517,6 +543,7 @@ module.exports = {
   getConfig,
   setConfig,
   loadConfigFromDb,
+  loadEnabledFlagFromDb,
   setIO,
   injectCoreFunctions,
   startLoop,

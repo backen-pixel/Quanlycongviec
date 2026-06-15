@@ -5,6 +5,7 @@ const r = express.Router();
 const { supabase } = require('../config/supabase');
 const axios = require('axios');
 const { isAdminLike, isSystemAdmin } = require('../helpers/adminRole');
+const { resolveCrmSocialInboxCompanyId } = require('../helpers/crmSocialInboxScope');
 const {
   activityTimestampMs,
   sortFacebookContactsNewestFirst,
@@ -50,11 +51,18 @@ const FB_DISABLE_WEBHOOK_LOGS = ['1', 'true', 'yes', 'on'].includes(
   String(process.env.FB_DISABLE_WEBHOOK_LOGS || '').toLowerCase(),
 );
 
-// Sau reboot: giữ nguyên công tắc Tổng (master) trong DB — không tự tắt.
-// Chỉ tự chạy lại các công ty đang bật auto khi FB_AUTO_PIPELINE_RESUME_ON_BOOT=1.
-const FB_AUTO_PIPELINE_RESUME_ON_BOOT = ['1', 'true', 'yes', 'on'].includes(
-  String(process.env.FB_AUTO_PIPELINE_RESUME_ON_BOOT || '').toLowerCase(),
-);
+// Sau reboot/deploy: giữ nguyên công tắc Tổng (master) trong DB — không tự tắt.
+// Tự chạy lại pipeline + Auto Tool đã bật (mặc định BẬT trên production).
+// Tắt: FB_AUTO_PIPELINE_RESUME_ON_BOOT=0 (hoặc false/no/off).
+function fbToolsResumeOnBoot() {
+  const raw = process.env.FB_AUTO_PIPELINE_RESUME_ON_BOOT;
+  if (raw != null && String(raw).trim() !== '') {
+    const v = String(raw).toLowerCase();
+    if (['0', 'false', 'no', 'off'].includes(v)) return false;
+    return ['1', 'true', 'yes', 'on'].includes(v);
+  }
+  return process.env.NODE_ENV === 'production';
+}
 
 // ═══════════════════════════════════════════════════════════════
 // AUTO PIPELINE STATE (backend-managed, realtime)
@@ -331,6 +339,14 @@ async function resolvePageIdsForCompanyScoped(req, res, companyIdRaw) {
       return undefined;
     }
     return await getPageIdsForCompany(companyId);
+  }
+  const socialCid = await resolveCrmSocialInboxCompanyId(req.user);
+  if (socialCid) {
+    if (companyId && String(companyId) !== String(socialCid)) {
+      res.status(403).json({ error: 'Chỉ được chạy tool Facebook cho công ty NextGo.' });
+      return undefined;
+    }
+    return await getPageIdsForCompany(socialCid);
   }
   if (isSystemAdmin(req.user)) {
     return companyId ? await getPageIdsForCompany(companyId) : null;
@@ -2945,6 +2961,23 @@ async function resolveFacebookPageScope(req, res, opts = {}) {
   const { data: pages, error } = await supabase.from('facebook_pages').select('page_id, default_company_id');
   if (error) { res.status(500).json({ error: error.message }); return null; }
   const rows = pages || [];
+  const socialCid = await resolveCrmSocialInboxCompanyId(req.user);
+  if (socialCid) {
+    const reqCo = req.query.company_id && String(req.query.company_id).trim();
+    if (reqCo && String(reqCo) !== String(socialCid)) {
+      res.status(403).json({ error: 'Chỉ được xem dữ liệu Facebook công ty NextGo.' });
+      return null;
+    }
+    if (forcedLeadCompanyId && String(forcedLeadCompanyId) !== String(socialCid)) {
+      res.status(403).json({ error: 'Không có quyền xem dữ liệu Facebook của deal công ty khác.' });
+      return null;
+    }
+    return {
+      mode: 'filter',
+      companyId: socialCid,
+      pageIds: rows.filter((p) => p.default_company_id && String(p.default_company_id) === String(socialCid)).map((p) => p.page_id),
+    };
+  }
   if (isSystemAdmin(req.user)) {
     if (forcedLeadCompanyId) {
       return {
@@ -2954,9 +2987,9 @@ async function resolveFacebookPageScope(req, res, opts = {}) {
     }
     const co = req.query.company_id && String(req.query.company_id).trim();
     if (co) {
-      return { mode: 'filter', pageIds: rows.filter((p) => String(p.default_company_id || '') === co).map((p) => p.page_id) };
+      return { mode: 'filter', companyId: co, pageIds: rows.filter((p) => String(p.default_company_id || '') === co).map((p) => p.page_id) };
     }
-    return { mode: 'all', pageIds: null };
+    return { mode: 'all', pageIds: null, companyId: null };
   }
   const cid = req.user?.company_id;
   if (!cid) { res.status(400).json({ error: 'Thiếu company_id trên tài khoản — gán công ty cho nhân viên.' }); return null; }
@@ -2966,6 +2999,7 @@ async function resolveFacebookPageScope(req, res, opts = {}) {
   }
   return {
     mode: 'filter',
+    companyId: String(cid),
     pageIds: rows.filter((p) => p.default_company_id && String(p.default_company_id) === String(cid)).map((p) => p.page_id),
   };
 }
@@ -4115,7 +4149,7 @@ r.get('/analytics', authMiddleware, async (req, res) => {
     const scopedPageIds = !page_id && scope.mode === 'filter' ? scope.pageIds : null;
     const since = new Date(Date.now() - days * 86400000).toISOString();
     const analyticsCompanyId = scope.mode === 'filter'
-      ? String(req.query.company_id || req.user?.company_id || '').trim() || null
+      ? String(scope.companyId || req.query.company_id || req.user?.company_id || '').trim() || null
       : (req.query.company_id && String(req.query.company_id).trim() ? String(req.query.company_id).trim() : null);
 
     // 1. Contacts — phân trang (Supabase mặc định tối đa ~1000/request)
@@ -6159,12 +6193,12 @@ loadFbPipelineConfigFromDb().then(async () => {
   console.log('[FB] ✅ Auto pipeline config loaded (per-company)');
   try {
     const masterOn = getFbMasterEnabledSync();
-    if (masterOn && FB_AUTO_PIPELINE_RESUME_ON_BOOT) {
+    if (masterOn && fbToolsResumeOnBoot()) {
       const enabledKeys = listFbPipelineCompanyKeys().filter((k) => getFbPipelineConfigSync(k).enabled);
-      console.log(`[FB] ▶️ Auto-resume auto pipeline (master=ON + RESUME_ON_BOOT) cho ${enabledKeys.length} công ty`);
+      console.log(`[FB] ▶️ Auto-resume auto pipeline sau deploy (master=ON) cho ${enabledKeys.length} công ty`);
       for (const key of enabledKeys) startAutoPipelineForCompany(key);
     } else if (masterOn) {
-      console.log('[FB] ⏸️ Master vẫn BẬT sau reboot; không tự chạy pipeline (mặc định). Set FB_AUTO_PIPELINE_RESUME_ON_BOOT=1 để resume.');
+      console.log('[FB] ⏸️ Master BẬT nhưng không tự chạy pipeline (FB_AUTO_PIPELINE_RESUME_ON_BOOT=0 hoặc NODE_ENV≠production).');
     }
   } catch (e) { console.warn('[FB] auto-resume check:', e.message); }
 });
@@ -7741,8 +7775,20 @@ setInterval(() => {
   }
 }, 500);
 
-// Load config from DB on startup
-autoTool.loadConfigFromDb().then(() => console.log('[AutoTool] ✅ Config loaded'));
+// Load config + tự resume Auto Tool sau deploy nếu đã bật trước đó
+autoTool.loadConfigFromDb().then(async () => {
+  console.log('[AutoTool] ✅ Config loaded');
+  try {
+    if (!fbToolsResumeOnBoot()) return;
+    const wasEnabled = await autoTool.loadEnabledFlagFromDb();
+    if (wasEnabled && !autoTool.getState().running) {
+      console.log('[AutoTool] ▶️ Auto-resume sau deploy');
+      autoTool.startLoop().catch((err) => console.error('[AutoTool] resume FATAL', err.message));
+    }
+  } catch (e) {
+    console.warn('[AutoTool] auto-resume check:', e.message);
+  }
+});
 
 r.get('/auto-tool/status', authMiddleware, async (_req, res) => {
   res.json(autoTool.getState());

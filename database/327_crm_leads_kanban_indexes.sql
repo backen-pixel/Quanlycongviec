@@ -10,8 +10,8 @@ BEGIN
   ) THEN
     RAISE EXCEPTION
       'SAI SUPABASE PROJECT: bảng public.crm_leads không tồn tại trên database "%". '
-      || 'Backend CRM dùng project kdxypztstbeovyedmvem — mở SQL Editor tại '
-      || 'https://supabase.com/dashboard/project/kdxypztstbeovyedmvem/sql/new',
+      'Backend CRM dùng project kdxypztstbeovyedmvem — mở SQL Editor tại '
+      'https://supabase.com/dashboard/project/kdxypztstbeovyedmvem/sql/new',
       current_database();
   END IF;
 END $$;

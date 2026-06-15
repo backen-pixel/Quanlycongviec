@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { Upload, FileSpreadsheet, AlertTriangle, CheckCircle2, FileText, Trash2, Loader2 } from 'lucide-react';
+import { Upload, FileSpreadsheet, AlertTriangle, CheckCircle2, FileText, Trash2, Loader2, Sparkles, UploadCloud } from 'lucide-react';
 import api from '../../lib/api';
 
 const STATUS_BADGE = {
@@ -22,6 +22,7 @@ export default function CalcImport3DPage() {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState(null);
   const [activeImport, setActiveImport] = useState(null);
+  const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef(null);
 
   const loadImports = () =>
@@ -33,8 +34,7 @@ export default function CalcImport3DPage() {
     loadImports();
   }, []);
 
-  const onUpload = async (e) => {
-    const file = e.target.files?.[0];
+  const uploadFile = async (file) => {
     if (!file) return;
     setUploading(true);
     setUploadError(null);
@@ -53,6 +53,15 @@ export default function CalcImport3DPage() {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = '';
     }
+  };
+
+  const onUpload = (e) => uploadFile(e.target.files?.[0]);
+
+  const onDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (uploading) return;
+    uploadFile(e.dataTransfer.files?.[0]);
   };
 
   const openImport = async (id) => {
@@ -79,56 +88,97 @@ export default function CalcImport3DPage() {
         </div>
       </div>
 
-      {/* Định dạng được hỗ trợ */}
-      <div className="bg-white border border-gray-200 rounded-xl p-4">
-        <h3 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-          <FileSpreadsheet className="h-4 w-4 text-gray-500" /> Định dạng hỗ trợ
+      {/* Cách khuyên dùng: OpenCutList → CSV/XLSX */}
+      <div className="bg-gradient-to-br from-emerald-50 to-white border border-emerald-200 rounded-xl p-4">
+        <h3 className="text-sm font-semibold text-emerald-800 mb-3 flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-emerald-600" /> Cách dễ & chính xác nhất: OpenCutList → CSV/XLSX
         </h3>
-        <div className="flex flex-wrap gap-2">
-          {parsers.map((p) => (
-            <span key={p.key} className={`text-xs font-mono px-2 py-1 rounded ${STATUS_BADGE[p.status]?.cls || 'bg-gray-100'}`}>
-              {p.exts.join(' / ')} — {STATUS_BADGE[p.status]?.label || p.status}
-            </span>
+        <ol className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {[
+            { n: 1, t: 'Cài OpenCutList', d: 'Trong SketchUp: Extension Warehouse → tìm "OpenCutList" → Install (miễn phí).' },
+            { n: 2, t: 'Xuất bảng cắt', d: 'Mở OpenCutList → tab Cutlist → nút Export → chọn CSV hoặc XLSX.' },
+            { n: 3, t: 'Kéo file vào đây', d: 'Thả file CSV/XLSX vừa xuất vào ô bên dưới — hệ thống tự đọc kích thước & tính giá.' },
+          ].map((s) => (
+            <li key={s.n} className="bg-white border border-emerald-100 rounded-lg p-3">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="w-5 h-5 rounded-full bg-emerald-600 text-white text-xs font-bold flex items-center justify-center">{s.n}</span>
+                <span className="text-sm font-semibold text-gray-800">{s.t}</span>
+              </div>
+              <p className="text-[11px] text-gray-500 leading-snug">{s.d}</p>
+            </li>
           ))}
-        </div>
-        <p className="text-[11px] text-gray-400 mt-2">
-          <strong>SketchUp:</strong> File → Export → 3D Model → chọn <code className="bg-gray-100 px-1">.dae</code> hoặc <code className="bg-gray-100 px-1">.kmz</code> để tải lên (giữ tên Component + W/H/D).
-          Định dạng còn ở trạng thái <strong>Sắp ra mắt</strong> (IFC/DXF/SKP/OBJ…): xuất tạm sang CSV/XLSX/JSON từ phần mềm gốc.
+        </ol>
+        <p className="text-[11px] text-emerald-700/80 mt-2">
+          CSV/XLSX giữ đúng kích thước do OpenCutList tính sẵn, nên chuẩn hơn cách xuất <code className="bg-emerald-100 px-1 rounded">.dae</code>/<code className="bg-emerald-100 px-1 rounded">.kmz</code> (hệ thống phải tự đoán hộp bao).
         </p>
       </div>
 
       {/* Upload */}
-      <div className="bg-white border border-gray-200 rounded-xl p-4">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Danh mục (tùy chọn)</label>
-            <select className="input" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-              <option value="">— Tự động map theo từ khóa —</option>
-              {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-            <p className="text-[10px] text-gray-400 mt-1">Chọn để chỉ map item về các loại trong danh mục này.</p>
-          </div>
-          <div className="md:col-span-2">
-            <label className="block text-xs font-medium text-gray-600 mb-1">File cutlist / 3D</label>
-            <div className="flex items-center gap-2">
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".csv,.tsv,.xlsx,.xls,.ods,.json,.dae,.kmz,.ifc,.dxf,.dwg,.obj,.gltf,.glb,.fbx,.3ds,.skp,.xml"
-                onChange={onUpload}
-                disabled={uploading}
-                className="block w-full text-sm text-gray-700 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-              />
-              {uploading && <Loader2 className="h-5 w-5 animate-spin text-blue-600" />}
-            </div>
-          </div>
+      <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Danh mục (tùy chọn)</label>
+          <select className="input max-w-sm" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+            <option value="">— Tự động map theo từ khóa —</option>
+            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <p className="text-[10px] text-gray-400 mt-1">Chọn để chỉ map item về các loại trong danh mục này.</p>
         </div>
+
+        <div
+          onClick={() => !uploading && fileRef.current?.click()}
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={onDrop}
+          className={`cursor-pointer border-2 border-dashed rounded-xl p-6 text-center transition-colors ${
+            dragOver ? 'border-emerald-500 bg-emerald-50' : 'border-gray-300 hover:border-emerald-400 hover:bg-gray-50'
+          } ${uploading ? 'opacity-60 pointer-events-none' : ''}`}
+        >
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".csv,.tsv,.xlsx,.xls,.ods,.json,.dae,.kmz,.xml"
+            onChange={onUpload}
+            disabled={uploading}
+            className="hidden"
+          />
+          {uploading ? (
+            <div className="flex flex-col items-center gap-2 text-emerald-600">
+              <Loader2 className="h-7 w-7 animate-spin" />
+              <span className="text-sm font-medium">Đang xử lý file…</span>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-1.5">
+              <UploadCloud className={`h-8 w-8 ${dragOver ? 'text-emerald-500' : 'text-gray-400'}`} />
+              <p className="text-sm font-medium text-gray-700">Kéo & thả file vào đây, hoặc bấm để chọn</p>
+              <p className="text-[11px] text-gray-400">Ưu tiên <strong>CSV / XLSX</strong> (OpenCutList) · cũng nhận JSON / DAE / KMZ</p>
+            </div>
+          )}
+        </div>
+
         {uploadError && (
-          <div className="mt-3 border border-rose-200 bg-rose-50 rounded-lg p-3 text-sm text-rose-700 flex items-start gap-2">
+          <div className="border border-rose-200 bg-rose-50 rounded-lg p-3 text-sm text-rose-700 flex items-start gap-2">
             <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
             <div>{uploadError}</div>
           </div>
         )}
+
+        {/* Định dạng được hỗ trợ */}
+        <div className="pt-1">
+          <h4 className="text-[11px] font-semibold text-gray-500 mb-1.5 flex items-center gap-1.5">
+            <FileSpreadsheet className="h-3.5 w-3.5" /> Tất cả định dạng hỗ trợ
+          </h4>
+          <div className="flex flex-wrap gap-1.5">
+            {parsers.map((p) => (
+              <span key={p.key} className={`text-[11px] font-mono px-2 py-0.5 rounded ${STATUS_BADGE[p.status]?.cls || 'bg-gray-100'}`}>
+                {p.exts.join(' / ')} — {STATUS_BADGE[p.status]?.label || p.status}
+              </span>
+            ))}
+          </div>
+          <p className="text-[10px] text-gray-400 mt-1.5">
+            <strong>SketchUp không cài OpenCutList?</strong> File → Export → 3D Model → chọn <code className="bg-gray-100 px-1">.dae</code> hoặc <code className="bg-gray-100 px-1">.kmz</code>.
+            Các định dạng <strong>Sắp ra mắt</strong> (IFC/DXF/SKP/OBJ…) cần xuất tạm sang CSV/XLSX/JSON.
+          </p>
+        </div>
       </div>
 
       {/* History list + active import */}

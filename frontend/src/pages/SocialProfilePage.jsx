@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Camera, Image as ImageIcon, Loader2, Pencil,
   Building2, ArrowLeft, Calendar, Mail, Phone, Trash2,
@@ -11,6 +11,8 @@ import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { getInitials } from '../lib/utils';
 import SocialProfileFullCard from '../components/SocialProfileFullCard';
+import SocialPostEditComposer from '../components/SocialPostEditComposer';
+import { normalizeSocialPost } from '../lib/internalSocialPost';
 
 const UPLOAD_STREAM_BYTES = 48 * 1024 * 1024;
 
@@ -301,6 +303,10 @@ export default function SocialProfilePage() {
   const { userId } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const [editingPost, setEditingPost] = useState(null);
+  const composerRef = useRef(null);
 
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -410,6 +416,41 @@ export default function SocialProfilePage() {
     loadPosts(0, false);
     loadCerts();
   }, [loadProfile, loadPosts, loadCerts]);
+
+  const beginEditPost = useCallback((post) => {
+    setTab('posts');
+    setEditingPost(post);
+  }, []);
+
+  useEffect(() => {
+    if (!editingPost) return;
+    const frame = requestAnimationFrame(() => {
+      composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [editingPost?.id]);
+
+  useEffect(() => {
+    const editId = searchParams.get('edit');
+    if (!editId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get(`/internal-social/posts/${editId}`);
+        if (cancelled || !data?.post) return;
+        beginEditPost(normalizeSocialPost(data.post));
+      } catch {
+        /* ignore */
+      } finally {
+        setSearchParams((sp) => {
+          const next = new URLSearchParams(sp);
+          next.delete('edit');
+          return next;
+        }, { replace: true });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [searchParams, setSearchParams, beginEditPost]);
 
   useEffect(() => {
     if (tab === 'photos') loadMedia(0, false, 'image');
@@ -760,12 +801,25 @@ export default function SocialProfilePage() {
               </div>
             )}
             <div className="mx-auto max-w-[816px] space-y-4">
+              {editingPost && (
+                <SocialPostEditComposer
+                  ref={composerRef}
+                  post={editingPost}
+                  user={user}
+                  onClose={() => setEditingPost(null)}
+                  onSaved={(next) => {
+                    setPosts((prev) => prev.map((x) => (String(x.id) === String(next.id) ? { ...x, ...next } : x)));
+                    setEditingPost(null);
+                  }}
+                />
+              )}
               {posts.map((p) => (
                 <SocialProfileFullCard
                   key={p.id}
                   post={p}
                   currentUserId={user?.id}
                   currentRole={user?.role}
+                  onEdit={beginEditPost}
                   onChange={(next) => setPosts((prev) => prev.map((x) => (x.id === next.id ? { ...x, ...next } : x)))}
                   onDelete={(id) => {
                     setPosts((prev) => prev.filter((x) => String(x.id) !== String(id)));

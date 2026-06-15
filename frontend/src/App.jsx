@@ -182,7 +182,7 @@ import { MessengerDockProvider } from './context/MessengerDockContext';
 import { CallProvider } from './context/CallContext';
 import CallOverlay from './components/CallOverlay';
 import MessengerDock from './components/MessengerDock';
-import { RequireCrmElevated, RequireExecutive } from './components/RequireRole';
+import { RequireCrmElevated, RequireCrmSocialInbox, RequireExecutive } from './components/RequireRole';
 import { useActivityRouteTracker } from './hooks/useActivityRouteTracker';
 import { isCrmSharedPath } from './lib/sidebarModuleContext';
 import ReleaseNoteLoginModal from './components/ReleaseNoteLoginModal';
@@ -395,9 +395,9 @@ export default function App() {
             <Route path="/crm/admin/sla-watchlist" element={<RequireExecutive><CrmSlaWatchlistPage /></RequireExecutive>} />
             <Route path="/crm/settings/deal-stage-report" element={<RequireExecutive><CrmDealStageReportSettingsPage /></RequireExecutive>} />
             <Route path="/crm/deadline-settings" element={<RequireExecutive><CrmDeadlineSettingsPage /></RequireExecutive>} />
-            <Route path="/crm/facebook" element={<RequireCrmElevated><FacebookPage /></RequireCrmElevated>} />
+            <Route path="/crm/facebook" element={<RequireCrmSocialInbox><FacebookPage /></RequireCrmSocialInbox>} />
             <Route path="/crm/facebook/link-phone-cleanup" element={<RequireCrmElevated><FacebookLinkPhoneCleanupPage /></RequireCrmElevated>} />
-            <Route path="/crm/zalo" element={<RequireCrmElevated><ZaloPage /></RequireCrmElevated>} />
+            <Route path="/crm/zalo" element={<RequireCrmSocialInbox><ZaloPage /></RequireCrmSocialInbox>} />
             <Route path="/crm/blocked-phones" element={<RequireCrmElevated><CrmBlockedPhonesPage /></RequireCrmElevated>} />
             <Route path="/crm/pipeline-settings" element={<RequireCrmElevated><PipelineSettingsPage /></RequireCrmElevated>} />
             <Route path="/crm/sources-settings" element={<RequireCrmElevated><CRMSourcesSettingsPage /></RequireCrmElevated>} />
