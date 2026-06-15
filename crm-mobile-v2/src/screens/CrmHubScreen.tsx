@@ -122,6 +122,27 @@ function LoadingNotice({ title, hint, variant = 'card' }: LoadingNoticeProps) {
   );
 }
 
+/**
+ * Trả về true chỉ khi `active` giữ nguyên đủ `delayMs`.
+ * Dùng để báo "đang tải lâu" — load nhanh sẽ không kích hoạt nên không flash banner.
+ */
+function useDelayedFlag(active: boolean, delayMs: number): boolean {
+  const [delayed, setDelayed] = useState(false);
+  useEffect(() => {
+    if (!active) {
+      setDelayed(false);
+      return undefined;
+    }
+    const timer = setTimeout(() => setDelayed(true), delayMs);
+    return () => clearTimeout(timer);
+  }, [active, delayMs]);
+  return delayed;
+}
+
+/** Ngưỡng coi là "tải lâu" — dưới mức này không hiện thông báo để tránh nhấp nháy. */
+const SLOW_LOAD_BANNER_MS = 2500;
+const SLOW_LOAD_HINT_MS = 4000;
+
 const KanbanCard = React.memo(function KanbanCard({
   item,
   accent,
@@ -814,14 +835,17 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   const isColumnLoading = stageLoading && !columnItems.length;
   const waitingForCrm = !canLoadCrm && !loaded[mode];
   const showFullScreenLoad = waitingForCrm || (isInitialLoad && !hub.stages.length);
-  const showInlineLoadNotice = isColumnLoading || (isInitialLoad && hub.stages.length > 0);
+
+  // Chỉ coi là "tải lâu" khi đã chờ quá ngưỡng — load nhanh không hiện banner để tránh nhấp nháy.
+  const inlineLoadingActive = isColumnLoading || (isInitialLoad && hub.stages.length > 0);
+  const inlineLoadingSlow = useDelayedFlag(inlineLoadingActive, SLOW_LOAD_BANNER_MS);
+  const fullScreenSlow = useDelayedFlag(showFullScreenLoad, SLOW_LOAD_HINT_MS);
+  const showInlineLoadNotice = inlineLoadingActive && inlineLoadingSlow;
 
   const inlineLoadTitle = isColumnLoading
     ? `Đang tải cột «${activeStage?.name ?? '…'}»…`
     : `Đang tải ${isLeads ? 'Leads' : 'Deals'}…`;
-  const inlineLoadHint = isColumnLoading
-    ? 'Danh sách sẽ hiển thị ngay khi tải xong.'
-    : 'Dữ liệu pipeline đang được đồng bộ, vui lòng đợi trong giây lát.';
+  const inlineLoadHint = 'Dữ liệu hơi nhiều nên tải lâu hơn bình thường, vui lòng đợi một chút.';
 
   const filterChips = useMemo(() => {
     const companyName = companies.find((c) => c.id === filters.companyId)?.name;
@@ -901,6 +925,11 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   );
 
   if (showFullScreenLoad) {
+    const fullScreenHint = waitingForCrm
+      ? 'Đang lấy thông tin công ty và pipeline.'
+      : fullScreenSlow
+        ? 'Dữ liệu hơi nhiều nên tải lâu hơn bình thường, vui lòng đợi một chút.'
+        : undefined;
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
         <LoadingNotice
@@ -909,11 +938,7 @@ export default function CrmHubScreen({ navigation, route }: Props) {
               ? 'Đang chuẩn bị CRM…'
               : `Đang tải ${isLeads ? 'Leads' : 'Deals'}…`
           }
-          hint={
-            waitingForCrm
-              ? 'Đang lấy thông tin công ty và pipeline.'
-              : 'Vui lòng đợi trong giây lát — hệ thống đang tải cột pipeline và danh sách bản ghi.'
-          }
+          hint={fullScreenHint}
         />
       </View>
     );

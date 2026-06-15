@@ -35,6 +35,7 @@ type ApiLead = {
   stage_id?: string | null;
   region_id?: string | null;
   crm_next_open_task_deadline?: string | null;
+  next_follow_up?: string | null;
   next_follow_up_at?: string | null;
   expected_close_date?: string | null;
   stage?: ApiStage | null;
@@ -68,7 +69,7 @@ function ownerIdOf(it: ApiLead): string {
 }
 
 function dueOf(it: ApiLead): string | null {
-  return it.crm_next_open_task_deadline || it.next_follow_up_at || it.expected_close_date || null;
+  return it.crm_next_open_task_deadline || it.next_follow_up || it.next_follow_up_at || it.expected_close_date || null;
 }
 
 function startOfToday(): number {
