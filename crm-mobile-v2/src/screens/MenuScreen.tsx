@@ -1,13 +1,19 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useCallback, useMemo } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../components/Avatar';
 import { warmCrmHubPipelines } from '../api/crm';
 import { useAuth } from '../context/AuthContext';
 import { currentVersionName } from '../lib/appUpdate';
+import { loadCrmMobilePrefs, saveCrmMobilePrefs, type CrmMobilePrefs } from '../lib/crmMobilePrefs';
+import {
+  startVoiceBackgroundSyncLoop,
+  stopVoiceBackgroundSyncLoop,
+  syncVoiceBackgroundTaskWithPrefs,
+} from '../lib/voiceBackgroundSync';
 import { Radii, useColors, useTheme, type ThemeColors } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -65,6 +71,22 @@ export default function MenuScreen() {
   const navigation = useNavigation<Nav>();
   const { user, logout } = useAuth();
   const displayName = user?.full_name || user?.fullName || user?.email || 'Người dùng';
+  const [prefs, setPrefs] = useState<CrmMobilePrefs | null>(null);
+
+  useEffect(() => {
+    void loadCrmMobilePrefs().then(setPrefs);
+  }, []);
+
+  const updatePrefs = async (next: CrmMobilePrefs) => {
+    setPrefs(next);
+    await saveCrmMobilePrefs(next);
+    if (next.voiceCaptureEnabled && next.voiceBackgroundSyncEnabled) {
+      startVoiceBackgroundSyncLoop();
+      void syncVoiceBackgroundTaskWithPrefs();
+    } else {
+      stopVoiceBackgroundSyncLoop();
+    }
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -115,6 +137,41 @@ export default function MenuScreen() {
           <View style={[styles.themeKnob, mode === 'light' && styles.themeKnobOn]} />
         </View>
       </Pressable>
+
+      {prefs ? (
+        <View style={styles.voiceCard}>
+          <View style={styles.voiceHead}>
+            <Ionicons name="mic" size={18} color={Colors.purple} />
+            <Text style={styles.voiceTitle}>Ghi âm & đồng bộ</Text>
+          </View>
+          <View style={styles.toggleRow}>
+            <Text style={styles.toggleLbl}>Bật ghi âm / upload</Text>
+            <Switch
+              value={prefs.voiceCaptureEnabled}
+              onValueChange={(v) => void updatePrefs({ ...prefs, voiceCaptureEnabled: v })}
+              trackColor={{ false: Colors.border, true: Colors.purple }}
+            />
+          </View>
+          <View style={styles.toggleRow}>
+            <Text style={styles.toggleLbl}>Đồng bộ nền (Android)</Text>
+            <Switch
+              value={prefs.voiceBackgroundSyncEnabled}
+              onValueChange={(v) => void updatePrefs({ ...prefs, voiceBackgroundSyncEnabled: v })}
+              disabled={!prefs.voiceCaptureEnabled}
+              trackColor={{ false: Colors.border, true: Colors.purple }}
+            />
+          </View>
+          <View style={styles.toggleRow}>
+            <Text style={styles.toggleLbl}>Tự ghép Lead theo SĐT</Text>
+            <Switch
+              value={prefs.autoLinkVoiceByPhone}
+              onValueChange={(v) => void updatePrefs({ ...prefs, autoLinkVoiceByPhone: v })}
+              disabled={!prefs.voiceCaptureEnabled}
+              trackColor={{ false: Colors.border, true: Colors.purple }}
+            />
+          </View>
+        </View>
+      ) : null}
 
       {SECTIONS.map((sec) => (
         <View key={sec.title} style={{ marginTop: 18 }}>
@@ -179,6 +236,26 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     backgroundColor: Colors.textMuted,
   },
   themeKnobOn: { backgroundColor: Colors.white, alignSelf: 'flex-end' },
+  voiceCard: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 14,
+    backgroundColor: Colors.card,
+    borderRadius: Radii.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  voiceHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  voiceTitle: { color: Colors.text, fontSize: 15, fontWeight: '800' },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderSoft,
+  },
+  toggleLbl: { color: Colors.textMuted, fontSize: 13, fontWeight: '600', flex: 1, paddingRight: 12 },
   profile: {
     flexDirection: 'row',
     alignItems: 'center',

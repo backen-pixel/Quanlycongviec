@@ -119,8 +119,10 @@ async function findApp({ appKey, appId }) {
 
 function downloadUrlFor(release, publicBase) {
   if (release.external_url) return release.external_url;
+  const apiUrl = buildPublicDownloadUrl(publicBase, release.id);
+  if (apiUrl) return apiUrl;
   if (release.file_url && /^https?:\/\//i.test(release.file_url)) return release.file_url;
-  return buildPublicDownloadUrl(publicBase, release.id);
+  return null;
 }
 
 /** Ưu tiên file trên disk (uploads local) trước khi redirect Storage/external. */
