@@ -2715,6 +2715,9 @@ r.post('/pipelines/:id/copy', async (req, res) => {
         sync_role: s.sync_role || null,
         default_probability: s.default_probability != null && s.default_probability !== '' ? s.default_probability : null,
         description: s.description != null && String(s.description).trim() !== '' ? String(s.description).trim() : null,
+        counts_as_won_revenue: !!s.counts_as_won_revenue,
+        counts_as_completed_revenue: !!s.counts_as_completed_revenue,
+        counts_as_expected_revenue: !!s.counts_as_expected_revenue,
       }));
       await supabase.from('crm_pipeline_stages').insert(inserts);
     }
@@ -2867,6 +2870,9 @@ r.post('/pipeline-stages', async (req, res) => {
       ...(b.counts_as_completed_revenue !== undefined
         ? { counts_as_completed_revenue: b.counts_as_completed_revenue == null ? null : !!b.counts_as_completed_revenue }
         : {}),
+      ...(b.counts_as_expected_revenue !== undefined
+        ? { counts_as_expected_revenue: b.counts_as_expected_revenue == null ? null : !!b.counts_as_expected_revenue }
+        : {}),
     };
     let { data, error } = await supabase.from('crm_pipeline_stages').insert(insertObj).select().single();
     // Chưa chạy migration requires_deadline → bỏ cột rồi thử lại để không vỡ tạo cột.
@@ -2905,6 +2911,9 @@ r.put('/pipeline-stages/:id', async (req, res) => {
     }
     if (b.counts_as_completed_revenue !== undefined) {
       update.counts_as_completed_revenue = b.counts_as_completed_revenue == null ? null : !!b.counts_as_completed_revenue;
+    }
+    if (b.counts_as_expected_revenue !== undefined) {
+      update.counts_as_expected_revenue = b.counts_as_expected_revenue == null ? null : !!b.counts_as_expected_revenue;
     }
     if (b.sla_days !== undefined) {
       update.sla_days = normalizePipelineStageSlaDaysForDb(b.sla_days);

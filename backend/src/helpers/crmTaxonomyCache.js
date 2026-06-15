@@ -223,7 +223,7 @@ async function getCrmStageById(stageId) {
     const { data } = await supabase
       .from('crm_pipeline_stages')
       .select(
-        'id, name, pipeline_id, pipeline_type, is_won, is_lost, is_active, order_index, sla_days, default_probability, send_zalo_on_enter, create_event_on_enter, sync_role, color, icon, description, counts_as_won_revenue, counts_as_completed_revenue',
+        'id, name, pipeline_id, pipeline_type, is_won, is_lost, is_active, order_index, sla_days, default_probability, send_zalo_on_enter, create_event_on_enter, sync_role, color, icon, description, counts_as_won_revenue, counts_as_completed_revenue, counts_as_expected_revenue',
       )
       .eq('id', stageId)
       .maybeSingle();
