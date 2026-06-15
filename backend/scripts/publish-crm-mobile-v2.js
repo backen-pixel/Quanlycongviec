@@ -13,15 +13,15 @@ const crypto = require('crypto');
 const { supabase } = require('../src/config/supabase');
 
 const APP_KEY = 'crm-mobile-v2';
-const VERSION = process.env.PUB_VERSION || '2.0.20';
-const VERSION_CODE = parseInt(process.env.PUB_CODE || '21', 10);
+const VERSION = process.env.PUB_VERSION || '2.0.21';
+const VERSION_CODE = parseInt(process.env.PUB_CODE || '22', 10);
 const PUBLIC_HOST = (process.env.PUB_HOST || 'https://tubep-backend.onrender.com').replace(/\/$/, '');
 const FILE_NAME = `crm-mobile-v2-${VERSION}-code${VERSION_CODE}-release.apk`;
 const APK = path.resolve(__dirname, `../uploads/app-releases/crm-mobile-v2/${FILE_NAME}`);
 const FILE_URL = `${PUBLIC_HOST}/uploads/app-releases/crm-mobile-v2/${FILE_NAME}`;
 const RELEASE_NOTES =
   process.env.PUB_NOTES
-  || 'Sửa lỗi app bị thoát đột ngột khi mở (crash). Icon mới + giao diện Sáng/Tối (chuyển trong Menu).';
+  || 'Tạo Lead/Deal giao diện mới 2 bước (đồng bộ web): chọn công ty/khu vực/nguồn/loại/người giới thiệu, người phụ trách, deadline. Deadline đồng bộ với web; nhân viên chỉ tạo cho công ty mình.';
 
 (async () => {
   if (!fs.existsSync(APK)) throw new Error(`Không thấy file APK: ${APK}`);

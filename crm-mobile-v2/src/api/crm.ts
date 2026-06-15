@@ -34,6 +34,7 @@ type ApiLead = {
   lead_owner_id?: string | null;
   stage_id?: string | null;
   region_id?: string | null;
+  kanban_deadline_at?: string | null;
   crm_next_open_task_deadline?: string | null;
   next_follow_up?: string | null;
   next_follow_up_at?: string | null;
@@ -69,7 +70,16 @@ function ownerIdOf(it: ApiLead): string {
 }
 
 function dueOf(it: ApiLead): string | null {
-  return it.crm_next_open_task_deadline || it.next_follow_up || it.next_follow_up_at || it.expected_close_date || null;
+  // Ưu tiên "Deadline thẻ" (kanban_deadline_at) — đồng bộ với web Kanban,
+  // sau đó tới deadline task mở, follow-up, rồi expected_close_date.
+  return (
+    it.kanban_deadline_at ||
+    it.crm_next_open_task_deadline ||
+    it.next_follow_up ||
+    it.next_follow_up_at ||
+    it.expected_close_date ||
+    null
+  );
 }
 
 function startOfToday(): number {
@@ -1024,25 +1034,165 @@ export async function fetchCrmStats(): Promise<CrmStats> {
   }
 }
 
-/** Tạo khách hàng + lead/deal. */
-export async function createEntity(input: {
+// ---------------------------------------------------------------------------
+// Meta cho form Tạo Lead/Deal (đồng bộ với web): công ty, khu vực, nguồn,
+// loại, người giới thiệu, người phụ trách.
+// ---------------------------------------------------------------------------
+
+export type CrmOption = { id: string; name: string };
+export type CrmCompanyOption = CrmOption & { shortName?: string; divisionUnitId?: string | null };
+export type CrmLeadTypeOption = CrmOption & { appliesTo: string };
+
+function asArray<T = unknown>(data: unknown, ...keys: string[]): T[] {
+  if (Array.isArray(data)) return data as T[];
+  const obj = (data ?? {}) as Record<string, unknown>;
+  for (const k of keys) {
+    if (Array.isArray(obj[k])) return obj[k] as T[];
+  }
+  return [];
+}
+
+/** Danh sách công ty cho module CRM. */
+export async function fetchCrmCompanies(signal?: AbortSignal): Promise<CrmCompanyOption[]> {
+  const { data } = await api.get('/companies', { params: { for_module: 'crm' }, signal });
+  return asArray<Record<string, unknown>>(data, 'companies').map((c) => ({
+    id: String(c.id),
+    name: String(c.name || c.short_name || 'Công ty'),
+    shortName: c.short_name ? String(c.short_name) : undefined,
+    divisionUnitId: c.division_unit_id != null ? String(c.division_unit_id) : null,
+  }));
+}
+
+/** Khu vực theo công ty (load sau khi chọn công ty). */
+export async function fetchCrmCompanyRegions(
+  companyId: string,
+  divisionUnitId?: string | null,
+  signal?: AbortSignal,
+): Promise<CrmOption[]> {
+  if (!companyId) return [];
+  const params: Record<string, string> = { company_id: companyId, for_module: 'crm' };
+  if (divisionUnitId) params.division_unit_id = divisionUnitId;
+  const { data } = await api.get('/crm/company-regions', { params, signal });
+  return asArray<Record<string, unknown>>(data, 'regions')
+    .filter((r) => r.is_active !== false)
+    .map((r) => ({ id: String(r.id), name: String(r.name || 'Khu vực') }));
+}
+
+/** Nguồn theo công ty. */
+export async function fetchCrmSources(companyId: string, signal?: AbortSignal): Promise<CrmOption[]> {
+  if (!companyId) return [];
+  const { data } = await api.get('/crm/sources', { params: { company_id: companyId }, signal });
+  return asArray<Record<string, unknown>>(data, 'sources')
+    .filter((s) => s.is_active !== false)
+    .map((s) => ({ id: String(s.id), name: String(s.name || 'Nguồn') }));
+}
+
+/** Loại Lead/Deal theo công ty, lọc theo applies_to. */
+export async function fetchCrmLeadTypes(
+  companyId: string,
+  kind: 'lead' | 'deal',
+  signal?: AbortSignal,
+): Promise<CrmLeadTypeOption[]> {
+  if (!companyId) return [];
+  const { data } = await api.get('/crm/lead-types', { params: { company_id: companyId }, signal });
+  return asArray<Record<string, unknown>>(data, 'lead_types', 'types')
+    .filter((t) => String(t.company_id || '') === String(companyId))
+    .filter((t) => {
+      const a = String(t.applies_to || 'both');
+      return a === 'both' || a === kind;
+    })
+    .filter((t) => t.is_active !== false)
+    .map((t) => ({ id: String(t.id), name: String(t.name || 'Loại'), appliesTo: String(t.applies_to || 'both') }));
+}
+
+/** Người giới thiệu theo công ty. */
+export async function fetchCrmReferrers(companyId: string, signal?: AbortSignal): Promise<CrmOption[]> {
+  if (!companyId) return [];
+  const { data } = await api.get('/crm/referrers', { params: { company_id: companyId }, signal });
+  return asArray<Record<string, unknown>>(data, 'items', 'referrers')
+    .map((r) => ({ id: String(r.id), name: String(r.name || '') }))
+    .filter((r) => r.name);
+}
+
+/** Người dùng (người phụ trách) — lọc theo công ty nếu có. */
+export async function fetchCrmCompanyUsers(
+  companyId?: string | null,
+  signal?: AbortSignal,
+): Promise<CrmOption[]> {
+  const params: Record<string, string> = {};
+  if (companyId) params.company_id = companyId;
+  const { data } = await api.get('/users', { params, signal });
+  return asArray<Record<string, unknown>>(data, 'users')
+    .filter((u) => u.is_active !== false)
+    .map((u) => ({ id: String(u.id), name: String(u.full_name || u.email || 'Người dùng') }));
+}
+
+export type CreateCrmInput = {
   kind: 'lead' | 'deal';
-  name: string;
-  phone: string;
+  title: string;
+  companyId?: string | null;
+  regionId?: string | null;
+  installAddress?: string;
+  sourceId?: string | null;
+  leadTypeId?: string | null;
+  /** Tên người giới thiệu (backend upsert), chỉ gửi khi có chọn/nhập. */
+  referrerName?: string | null;
   value?: number;
   note?: string;
-  assigneeId?: string | null;
-}): Promise<void> {
-  const { data: customer } = await api.post<{ id: string }>('/customers', {
-    full_name: input.name.trim() || 'Khách mới',
-    phone: input.phone.trim() || null,
-  });
+  assignedTo?: string | null;
+  /** Hạn (expected_close_date) dạng yyyy-mm-dd. */
+  deadline?: string | null;
+  probability?: number;
+  customer: { name: string; phone?: string; email?: string; company?: string };
+};
+
+/**
+ * Tạo khách hàng + Lead/Deal — đồng bộ payload với web:
+ * POST /customers → POST /crm/leads | /crm/deals.
+ */
+export async function createCrmEntity(input: CreateCrmInput): Promise<{ id: string; code?: string }> {
+  const companyId = input.companyId || null;
+  const installAddress = input.installAddress?.trim() || null;
+
+  const customerPayload: Record<string, unknown> = {
+    full_name: input.customer.name.trim() || 'Khách mới',
+    phone: input.customer.phone?.trim() || null,
+    company: input.customer.company?.trim() || null,
+  };
+  if (input.customer.email?.trim()) customerPayload.email = input.customer.email.trim();
+  if (installAddress) customerPayload.address = installAddress;
+  if (companyId) customerPayload.company_id = companyId;
+
+  const { data: cRes } = await api.post<{ customer?: { id?: string }; id?: string }>(
+    '/customers',
+    customerPayload,
+  );
+  const customerId = cRes?.customer?.id || cRes?.id || null;
+
+  const base: Record<string, unknown> = {
+    title: input.title.trim(),
+    customer_id: customerId,
+    source_id: input.sourceId || null,
+    company_id: companyId,
+    region_id: input.regionId || null,
+    lead_type_id: input.leadTypeId || null,
+    estimated_value: input.value || 0,
+    probability: input.probability ?? 50,
+    install_address: installAddress,
+  };
+  if (input.note?.trim()) base.description = input.note.trim();
+  if (input.assignedTo) base.assigned_to = input.assignedTo;
+  if (input.referrerName && input.referrerName.trim()) base.referrer_name = input.referrerName.trim();
+  // Lưu ý: KHÔNG gửi expected_close_date. Deadline ghi qua PATCH .../deadline
+  // (kanban_deadline_at) để đồng bộ với "Deadline thẻ" trên web (tránh deadline trùng).
+
+  let created: { id: string; code?: string };
   if (input.kind === 'lead') {
     let stageId: string | undefined;
     try {
-      const { data: stagesRaw } = await api.get<ApiStage[]>('/crm/pipeline-stages', {
-        params: { type: 'lead' },
-      });
+      const params: Record<string, string> = { type: 'lead' };
+      if (companyId) params.company_id = companyId;
+      const { data: stagesRaw } = await api.get<ApiStage[]>('/crm/pipeline-stages', { params });
       const ordered = (Array.isArray(stagesRaw) ? stagesRaw : []).sort(
         (a, b) => (a.order_index ?? 0) - (b.order_index ?? 0),
       );
@@ -1050,22 +1200,35 @@ export async function createEntity(input: {
     } catch {
       /* để backend tự gán nếu thiếu */
     }
-    await api.post('/crm/leads', {
-      title: input.name.trim(),
-      customer_id: customer?.id || null,
-      assigned_to: input.assigneeId || null,
+    const { data } = await api.post<{ id: string; code?: string }>('/crm/leads', {
+      ...base,
       type: 'lead',
       stage_id: stageId,
-      estimated_value: input.value || 0,
-      probability: 50,
     });
+    created = { id: data?.id, code: data?.code };
   } else {
-    await api.post('/crm/deals', {
-      title: input.name.trim(),
-      customer_id: customer?.id || null,
-      estimated_value: input.value || 0,
-      probability: 50,
-      description: input.note?.trim() || null,
-    });
+    const { data } = await api.post<{ id: string; code?: string }>('/crm/deals', base);
+    created = { id: data?.id, code: data?.code };
   }
+
+  // Đặt "Deadline thẻ" giống web (PATCH /crm/leads/:id/deadline → kanban_deadline_at).
+  if (input.deadline && created.id) {
+    try {
+      await api.patch(`/crm/leads/${created.id}/deadline`, {
+        kanban_deadline_at: deadlineDateToIso(input.deadline),
+        reason: '',
+      });
+    } catch {
+      /* không chặn việc tạo nếu set deadline lỗi */
+    }
+  }
+
+  return created;
+}
+
+/** yyyy-mm-dd → ISO datetime tại 09:00 giờ địa phương (khớp datetime web). */
+function deadlineDateToIso(date: string): string {
+  const d = new Date(`${date}T09:00:00`);
+  if (Number.isNaN(d.getTime())) return new Date(date).toISOString();
+  return d.toISOString();
 }
