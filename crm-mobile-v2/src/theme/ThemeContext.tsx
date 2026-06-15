@@ -23,13 +23,10 @@ type ThemeContextValue = {
   toggle: () => void;
 };
 
-const ThemeContext = createContext<ThemeContextValue>({
-  mode: 'dark',
-  colors: Palettes.dark,
-  ready: false,
-  setMode: () => {},
-  toggle: () => {},
-});
+// Default = undefined để KHÔNG truy cập `Palettes` lúc khởi tạo module.
+// (index.ts re-export './ThemeContext' bị Babel nâng lên đầu → nếu đọc Palettes
+//  ngay đây sẽ gặp vòng lặp import và Palettes chưa kịp định nghĩa → crash.)
+const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [mode, setModeState] = useState<ThemeMode>('dark');
@@ -80,9 +77,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 }
 
 export function useTheme(): ThemeContextValue {
-  return useContext(ThemeContext);
+  const ctx = useContext(ThemeContext);
+  // Fallback an toàn nếu dùng ngoài Provider (Palettes đọc lúc runtime nên không lỗi).
+  if (ctx) return ctx;
+  return { mode: 'dark', colors: Palettes.dark, ready: false, setMode: () => {}, toggle: () => {} };
 }
 
 export function useColors(): ThemeColors {
-  return useContext(ThemeContext).colors;
+  return useTheme().colors;
 }
