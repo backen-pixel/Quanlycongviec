@@ -11,7 +11,7 @@ import {
   Video, Smile, MapPin, ImagePlus, Globe, MoreHorizontal,
   ChevronLeft, ChevronRight, Maximize2, Pencil, Share2, EyeOff, Search, User,
   Plus, Users, Megaphone, BarChart3, FolderOpen, TrendingUp, Cake,
-  Sparkles, Filter, MessageSquare,
+  Sparkles, Filter, MessageSquare, Ban,
 } from 'lucide-react';
 
 import ScopeFilterBar from '../shared/components/ScopeFilterBar';
@@ -47,6 +47,7 @@ function normalizeSocialPost(p) {
     hidden_at: p.hidden_at || null,
     audience_users: Array.isArray(p.audience_users) ? p.audience_users : [],
     audience_companies: Array.isArray(p.audience_companies) ? p.audience_companies : [],
+    blocked_companies: Array.isArray(p.blocked_companies) ? p.blocked_companies : [],
   };
 }
 
@@ -75,6 +76,7 @@ function emptyComposerFields() {
     visibility: 'company',
     audienceUserIds: [],
     audienceCompanyIds: [],
+    blockedCompanyIds: [],
   };
 }
 
@@ -827,6 +829,7 @@ function PostCard({
   onHideCompany,
   onUnhideCompany,
   onHideForMe,
+  onBlockCompanies,
   commentsOpen,
   onToggleComments,
   comments,
@@ -844,7 +847,7 @@ function PostCard({
   onOpenReactionList,
 }) {
   const author = post.author || {};
-  const isAuthor = author.id === currentUserId;
+  const isAuthor = String(author.id) === String(currentUserId);
   const showDelete = isAuthor || canModerate(currentRole);
   const showEdit = showDelete;
   const canMod = canModerate(currentRole);
@@ -956,6 +959,17 @@ function PostCard({
                       Hiện lại với công ty
                     </button>
                   )}
+                  {(isAuthor || canMod) && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-800 hover:bg-slate-200/70 transition-colors"
+                      onClick={() => { onBlockCompanies?.(post); closePostMenu(); }}
+                    >
+                      <Ban className="h-4 w-4 shrink-0 text-slate-500" />
+                      Chặn công ty xem…
+                    </button>
+                  )}
                   {showDelete && (
                     <button
                       type="button"
@@ -974,31 +988,11 @@ function PostCard({
         </div>
       </div>
 
-      {(isScheduledPost(post) || post.visibility === 'selected_users' || post.visibility === 'selected_companies' || post.hidden_at) && (
+      {(isAuthor || canMod) && isScheduledPost(post) && (
         <div className="px-4 pb-1 flex flex-wrap gap-1.5">
-          {isScheduledPost(post) && (
-            <span className="text-[11px] font-medium rounded-full bg-amber-100 text-amber-900 px-2 py-0.5">
-              Lên lịch: {new Date(post.published_at).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' })}
-            </span>
-          )}
-          {post.visibility === 'selected_users' && (
-            <span className="text-[11px] font-medium rounded-full bg-indigo-100 text-indigo-900 px-2 py-0.5">
-              Chỉ người được chọn ({post.audience_users?.length || 0})
-            </span>
-          )}
-          {post.visibility === 'selected_companies' && (
-            <span
-              className="text-[11px] font-medium rounded-full bg-emerald-100 text-emerald-900 px-2 py-0.5"
-              title={(post.audience_companies || []).map((c) => c?.name || c?.short_name).filter(Boolean).join(', ') || undefined}
-            >
-              Chia sẻ {post.audience_companies?.length || 0} công ty
-            </span>
-          )}
-          {post.hidden_at && (
-            <span className="text-[11px] font-medium rounded-full bg-gray-200 text-gray-700 px-2 py-0.5">
-              Đã ẩn khỏi công ty
-            </span>
-          )}
+          <span className="text-[11px] font-medium rounded-full bg-amber-100 text-amber-900 px-2 py-0.5">
+            Lên lịch: {new Date(post.published_at).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' })}
+          </span>
         </div>
       )}
 
@@ -1195,6 +1189,9 @@ export default function SocialFeedPage() {
   const [userSuggest, setUserSuggest] = useState([]);
   const [toast, setToast] = useState(null);
   const [sharePost, setSharePost] = useState(null);
+  const [blockModalPost, setBlockModalPost] = useState(null);
+  const [blockCompanyIds, setBlockCompanyIds] = useState([]);
+  const [blockSaving, setBlockSaving] = useState(false);
   const audienceSearchTimer = useRef(null);
   const [memberSearchQ, setMemberSearchQ] = useState('');
   const [memberSearchHits, setMemberSearchHits] = useState([]);
@@ -1202,6 +1199,7 @@ export default function SocialFeedPage() {
   const memberSearchTimer = useRef(null);
   const fileInputRef = useRef(null);
   const videoInputRef = useRef(null);
+  const composerRef = useRef(null);
 
   const [openComments, setOpenComments] = useState({});
   const [commentsByPost, setCommentsByPost] = useState({});
@@ -1336,9 +1334,17 @@ export default function SocialFeedPage() {
     let cancelled = false;
     (async () => {
       try {
-        const { data } = await api.get(`/internal-social/posts/${postId}`);
+        const params = {};
+        if (isSystemAdmin && effectiveCompanyId) params.company_id = effectiveCompanyId;
+        const { data } = await api.get(`/internal-social/posts/${postId}`, { params });
         if (cancelled || !data?.post) return;
         const n = normalizeSocialPost(data.post);
+        const viewingBlocked = (n.blocked_companies || []).some(
+          (c) => String(c?.id) === String(effectiveCompanyId),
+        );
+        if (viewingBlocked && String(n.author?.id) !== String(user?.id || user?.userId)) {
+          return;
+        }
         setPosts((prev) => {
           if (prev.some((p) => String(p.id) === String(n.id))) return prev;
           return [n, ...prev];
@@ -1365,7 +1371,9 @@ export default function SocialFeedPage() {
     let cancelled = false;
     (async () => {
       try {
-        const { data } = await api.get(`/internal-social/posts/${editId}`);
+        const params = {};
+        if (isSystemAdmin && effectiveCompanyId) params.company_id = effectiveCompanyId;
+        const { data } = await api.get(`/internal-social/posts/${editId}`, { params });
         if (cancelled || !data?.post) return;
         const n = normalizeSocialPost(data.post);
         beginEditPost(n);
@@ -1482,13 +1490,24 @@ export default function SocialFeedPage() {
           visibility,
           audience_user_ids: visibility === 'selected_users' ? composer.audienceUserIds : [],
           audience_company_ids: visibility === 'selected_companies' ? extraCompanyIds : [],
-          published_at: composer.publishMode === 'scheduled' && (composer.scheduledAt || '').trim()
-            ? new Date(composer.scheduledAt).toISOString()
-            : new Date().toISOString(),
+          blocked_company_ids: composer.blockedCompanyIds || [],
         };
+        if (composer.publishMode === 'scheduled' && (composer.scheduledAt || '').trim()) {
+          payload.published_at = new Date(composer.scheduledAt).toISOString();
+        } else if (composer.publishMode === 'now' && isScheduledPost(editingPost)) {
+          payload.published_at = new Date().toISOString();
+        }
         const { data } = await api.put(`/internal-social/posts/${editingPost.id}`, payload);
         const next = normalizeSocialPost(data.post);
-        setPosts((prev) => prev.map((p) => (p.id === editingPost.id ? next : p)));
+        const viewingBlocked = (next.blocked_companies || []).some(
+          (c) => String(c?.id) === String(effectiveCompanyId),
+        );
+        setPosts((prev) => {
+          if (viewingBlocked && String(next.author?.id) !== String(user?.id || user?.userId)) {
+            return prev.filter((p) => String(p.id) !== String(next.id));
+          }
+          return prev.map((p) => (String(p.id) === String(next.id) ? next : p));
+        });
       } else {
         const payload = {
           body: body || '',
@@ -1501,6 +1520,9 @@ export default function SocialFeedPage() {
           audience_user_ids: visibility === 'selected_users' ? composer.audienceUserIds : [],
           ...(visibility === 'selected_companies' && extraCompanyIds.length
             ? { audience_company_ids: extraCompanyIds }
+            : {}),
+          ...((composer.blockedCompanyIds || []).length
+            ? { blocked_company_ids: composer.blockedCompanyIds }
             : {}),
           ...(composer.publishMode === 'scheduled' && (composer.scheduledAt || '').trim()
             ? { published_at: new Date(composer.scheduledAt).toISOString() }
@@ -1678,6 +1700,37 @@ export default function SocialFeedPage() {
     }
   };
 
+  const openBlockCompaniesModal = (post) => {
+    if (!post?.id) return;
+    setBlockModalPost(post);
+    setBlockCompanyIds((post.blocked_companies || []).map((c) => String(c?.id || '')).filter(Boolean));
+  };
+
+  const saveBlockedCompanies = async () => {
+    if (!blockModalPost?.id || blockSaving) return;
+    setBlockSaving(true);
+    try {
+      const { data } = await api.put(`/internal-social/posts/${blockModalPost.id}/blocked-companies`, {
+        blocked_company_ids: blockCompanyIds,
+      });
+      const next = normalizeSocialPost(data.post);
+      setPosts((prev) => {
+        const viewingBlocked = blockCompanyIds.some((id) => String(id) === String(effectiveCompanyId));
+        if (viewingBlocked) {
+          return prev.filter((p) => String(p.id) !== String(next.id));
+        }
+        return prev.map((p) => (String(p.id) === String(next.id) ? next : p));
+      });
+      setBlockModalPost(null);
+      setBlockCompanyIds([]);
+      setToast('Đã cập nhật danh sách công ty bị chặn');
+    } catch (e) {
+      alert(e.response?.data?.error || e.message);
+    } finally {
+      setBlockSaving(false);
+    }
+  };
+
   const toggleComments = async (postId) => {
     const nextOpen = !openComments[postId];
     setOpenComments((prev) => ({ ...prev, [postId]: nextOpen }));
@@ -1772,10 +1825,17 @@ export default function SocialFeedPage() {
 
   useEffect(() => {
     if (!composerOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = prev; };
-  }, [composerOpen]);
+    const frame = requestAnimationFrame(() => {
+      composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [composerOpen, editingPost?.id]);
+
+  const scrollComposerIntoView = () => {
+    requestAnimationFrame(() => {
+      composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
 
   const openComposerModal = () => {
     if (!effectiveCompanyId) return;
@@ -1784,6 +1844,7 @@ export default function SocialFeedPage() {
     setAudienceSearch('');
     setAttachSlots([]);
     setComposerOpen(true);
+    scrollComposerIntoView();
   };
 
   const openComposerAndPickFiles = () => {
@@ -1793,6 +1854,7 @@ export default function SocialFeedPage() {
     setAudienceSearch('');
     setAttachSlots([]);
     setComposerOpen(true);
+    scrollComposerIntoView();
     requestAnimationFrame(() => {
       fileInputRef.current?.click();
     });
@@ -1816,6 +1878,9 @@ export default function SocialFeedPage() {
       audienceCompanyIds: (post.audience_companies || [])
         .map((c) => String(c?.id || ''))
         .filter((cid) => cid && cid !== String(post.company_id)),
+      blockedCompanyIds: (post.blocked_companies || [])
+        .map((c) => String(c?.id || ''))
+        .filter(Boolean),
     });
     setAudienceSearch('');
     setAttachSlots(
@@ -1832,6 +1897,7 @@ export default function SocialFeedPage() {
       })),
     );
     setComposerOpen(true);
+    scrollComposerIntoView();
   };
 
   /* ── Derived sidebar / KPI data ── */
@@ -1886,6 +1952,95 @@ export default function SocialFeedPage() {
           onClose={() => setSharePost(null)}
           onSent={() => setToast('Đã gửi qua tin nhắn.')}
         />
+      )}
+      {blockModalPost && createPortal(
+        <div
+          className="fixed inset-0 z-[130] flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Chặn công ty xem bài"
+          onClick={() => { if (!blockSaving) { setBlockModalPost(null); setBlockCompanyIds([]); } }}
+        >
+          <div
+            className="flex max-h-[85vh] w-full max-w-md flex-col rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-4 py-3">
+              <h2 className="text-base font-semibold text-gray-900">Chặn công ty xem bài</h2>
+              <button
+                type="button"
+                className="rounded-full p-2 text-gray-500 hover:bg-gray-100"
+                aria-label="Đóng"
+                disabled={blockSaving}
+                onClick={() => { setBlockModalPost(null); setBlockCompanyIds([]); }}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 space-y-3">
+              <p className="text-sm text-gray-600">
+                Nhân viên thuộc công ty bị chọn sẽ không thấy bài này trên bảng tin (mọi vai trò).
+              </p>
+              {(blockCompanyIds || []).length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {blockCompanyIds.map((id) => {
+                    const c = companies.find((x) => String(x.id) === String(id));
+                    const label = c?.name || c?.short_name || `${String(id).slice(0, 8)}…`;
+                    return (
+                      <span
+                        key={id}
+                        className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-xs text-rose-900"
+                      >
+                        <span className="truncate max-w-[180px]">{label}</span>
+                        <button
+                          type="button"
+                          className="shrink-0 text-rose-700 hover:text-rose-950"
+                          onClick={() => setBlockCompanyIds((prev) => prev.filter((x) => x !== id))}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+              <ul className="max-h-56 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 text-sm">
+                {companies.map((c) => {
+                  const id = String(c.id);
+                  const picked = blockCompanyIds.includes(id);
+                  return (
+                    <li key={id}>
+                      <label className="flex w-full items-center gap-2 px-3 py-2 hover:bg-white cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={picked}
+                          onChange={() => setBlockCompanyIds((prev) => (
+                            picked ? prev.filter((x) => x !== id) : [...prev, id]
+                          ))}
+                        />
+                        <span className="truncate">{c.name || c.short_name || id}</span>
+                      </label>
+                    </li>
+                  );
+                })}
+                {!companies.length && (
+                  <li className="px-3 py-3 text-xs text-gray-500">Chưa có danh sách công ty.</li>
+                )}
+              </ul>
+            </div>
+            <div className="shrink-0 border-t border-gray-100 p-3">
+              <button
+                type="button"
+                disabled={blockSaving}
+                onClick={saveBlockedCompanies}
+                className="w-full rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 py-2.5 text-sm font-semibold text-white hover:from-blue-700 hover:to-indigo-700 disabled:opacity-60"
+              >
+                {blockSaving ? 'Đang lưu…' : 'Lưu danh sách chặn'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
       )}
       <div className="max-w-[1280px] mx-auto px-3 py-4 md:py-6">
         {/* ──────────── HERO HEADER — Cover gradient + KPI tiles + 2 buttons ──────────── */}
@@ -2116,9 +2271,10 @@ export default function SocialFeedPage() {
           </div>
         )}
 
-        {/* Thanh kích hoạt soạn bài — glass */}
+        {/* Thanh kích hoạt / khung soạn bài — inline, rộng */}
         {effectiveCompanyId && (
           <>
+            {!composerOpen ? (
             <div className="flex items-center gap-3 bg-white/65 backdrop-blur-xl rounded-2xl shadow-md border border-white/60 p-3 hover:shadow-lg transition-shadow">
               {user?.id ? (
                 <Link to={`/social/u/${user.id}`} className="shrink-0 rounded-full hover:opacity-90 ring-2 ring-white/70 hover:ring-blue-300 transition" title="Trang cá nhân của bạn">
@@ -2161,399 +2317,448 @@ export default function SocialFeedPage() {
                 </button>
               </div>
             </div>
+            ) : (
+            <div
+              ref={composerRef}
+              id="social-composer"
+              role="region"
+              aria-labelledby="social-composer-title"
+              className="w-full rounded-2xl bg-white/95 backdrop-blur-xl shadow-xl border border-white/70 flex flex-col overflow-hidden ring-1 ring-slate-200/60 scroll-mt-24"
+            >
+              <div className="relative flex items-center justify-center px-14 py-4 border-b border-slate-200 bg-gradient-to-r from-blue-50/70 via-white to-indigo-50/70 shrink-0">
+                <h2 id="social-composer-title" className="text-xl font-bold" style={{ color: '#0f172a' }}>
+                  {editingPost ? 'Sửa bài viết' : 'Tạo bài viết'}
+                </h2>
+                <button
+                  type="button"
+                  onClick={closeComposer}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-2.5 rounded-full text-slate-500 hover:bg-slate-200/70 transition-colors"
+                  aria-label="Đóng"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
 
-            {composerOpen && createPortal(
-              (
-                <div className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto p-4 pt-8 sm:pt-14">
-                  <button
-                    type="button"
-                    className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm"
-                    aria-label="Đóng"
-                    onClick={closeComposer}
-                  />
-                  <div
-                    role="dialog"
-                    aria-modal="true"
-                    aria-labelledby="social-composer-title"
-                    className="relative z-10 my-auto w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-white/40 flex flex-col max-h-[min(90vh,720px)] overflow-hidden ring-1 ring-black/5"
-                  >
-                    <div className="relative flex items-center justify-center px-12 py-3.5 border-b border-slate-200 bg-gradient-to-r from-blue-50/60 via-white to-indigo-50/60 shrink-0">
-                      <h2 id="social-composer-title" className="text-lg font-bold" style={{ color: '#0f172a' }}>
-                        {editingPost ? 'Sửa bài viết' : 'Tạo bài viết'}
-                      </h2>
-                      <button
-                        type="button"
-                        onClick={closeComposer}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-full text-slate-500 hover:bg-slate-200/70 transition-colors"
-                        aria-label="Đóng"
+              <div className="px-5 sm:px-7 py-5 space-y-4">
+                <div className="flex items-start gap-4">
+                  <Avatar user={user} />
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold text-gray-900 text-base">{user?.full_name || user?.email || 'Thành viên'}</p>
+                    <button
+                      type="button"
+                      className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg bg-gray-100 px-2.5 py-1 text-sm font-medium text-gray-700 hover:bg-gray-200"
+                    >
+                      <Globe className="w-4 h-4 text-gray-600" />
+                      Nội bộ công ty
+                    </button>
+                  </div>
+                </div>
+
+                <textarea
+                  value={composer.body}
+                  onChange={(e) => setComposer((c) => ({ ...c, body: e.target.value }))}
+                  placeholder={`${composerFirstName} ơi, bạn đang nghĩ gì thế?`}
+                  rows={8}
+                  className="w-full resize-y min-h-[220px] border border-slate-200 rounded-xl focus:border-blue-400 focus:ring-2 focus:ring-blue-200/60 text-[18px] leading-relaxed text-gray-900 placeholder:text-gray-400 px-4 py-3"
+                  autoFocus
+                />
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  accept="image/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.zip,.rar,.dwg,.dxf"
+                  onChange={onPickFiles}
+                />
+                <input
+                  ref={videoInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  accept="video/*"
+                  onChange={onPickFiles}
+                />
+
+                {attachSlots.length > 0 && (
+                  <ul className="flex flex-col gap-2">
+                    {attachSlots.map((s) => (
+                      <li
+                        key={s.localId}
+                        className="flex items-center gap-2 text-sm rounded-xl border border-gray-100 bg-gray-50 px-3 py-2"
                       >
-                        <X className="w-5 h-5" />
-                      </button>
+                        <span className="truncate flex-1 text-gray-800">{s.fileName}</span>
+                        {s.uploading && <Loader2 className="w-4 h-4 animate-spin text-blue-600 shrink-0" />}
+                        {s.error && <span className="text-xs text-red-600 truncate max-w-[200px] sm:max-w-[280px]" title={s.error}>{s.error}</span>}
+                        {s.result?.file_url && <span className="text-xs text-emerald-600 shrink-0">Đã tải lên</span>}
+                        <button
+                          type="button"
+                          onClick={() => removeAttach(s.localId)}
+                          className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 shrink-0"
+                          title="Bỏ"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+                  <span className="text-sm font-medium text-gray-600">Thêm vào bài viết của bạn</span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      title="Ảnh / file"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={attachSlots.length >= MAX_ATTACHMENTS || attachSlots.some((s) => s.uploading)}
+                      className="p-2.5 rounded-full hover:bg-white text-green-600 disabled:opacity-40"
+                    >
+                      <ImagePlus className="w-6 h-6" />
+                    </button>
+                    <button
+                      type="button"
+                      title="Video"
+                      onClick={() => videoInputRef.current?.click()}
+                      disabled={attachSlots.length >= MAX_ATTACHMENTS || attachSlots.some((s) => s.uploading)}
+                      className="p-2.5 rounded-full hover:bg-white text-red-500 disabled:opacity-40"
+                    >
+                      <Video className="w-6 h-6" />
+                    </button>
+                    <button type="button" className="p-2.5 rounded-full hover:bg-white text-amber-500 opacity-60" title="Cảm xúc (sắp có)" onClick={(e) => e.preventDefault()}>
+                      <Smile className="w-6 h-6" />
+                    </button>
+                    <button type="button" className="p-2.5 rounded-full hover:bg-white text-blue-600 opacity-50" title="Địa điểm (sắp có)" onClick={(e) => e.preventDefault()}>
+                      <MapPin className="w-6 h-6" />
+                    </button>
+                    <button type="button" className="p-2.5 rounded-full hover:bg-white text-gray-500 opacity-50" title="Thêm (sắp có)" onClick={(e) => e.preventDefault()}>
+                      <MoreHorizontal className="w-6 h-6" />
+                    </button>
+                  </div>
+                </div>
+
+                <details className="group rounded-xl border border-gray-100 bg-white text-sm">
+                  <summary className="cursor-pointer px-4 py-3 font-medium text-gray-600 hover:bg-gray-50 rounded-xl list-none flex items-center gap-2 [&::-webkit-details-marker]:hidden">
+                    <Link2 className="w-4 h-4" />
+                    Liên kết / URL ảnh hoặc video ngoài
+                  </summary>
+                  <div className="p-4 pt-0 space-y-2 border-t border-gray-100">
+                    <div className="relative">
+                      <Link2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                      <input
+                        value={composer.link_url}
+                        onChange={(e) => setComposer((c) => ({ ...c, link_url: e.target.value }))}
+                        className="w-full pl-9 pr-3 py-2 border rounded-lg"
+                        placeholder="URL liên kết"
+                      />
                     </div>
-
-                    <div className="flex-1 overflow-y-auto min-h-0 px-4 py-3 space-y-3">
-                      <div className="flex items-start gap-3">
-                        <Avatar user={user} />
-                        <div className="min-w-0 flex-1">
-                          <p className="font-semibold text-gray-900">{user?.full_name || user?.email || 'Thành viên'}</p>
-                          <button
-                            type="button"
-                            className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-200"
-                          >
-                            <Globe className="w-3.5 h-3.5 text-gray-600" />
-                            Nội bộ công ty
-                          </button>
-                        </div>
-                      </div>
-
-                      <textarea
-                        value={composer.body}
-                        onChange={(e) => setComposer((c) => ({ ...c, body: e.target.value }))}
-                        placeholder={`${composerFirstName} ơi, bạn đang nghĩ gì thế?`}
-                        rows={5}
-                        className="w-full resize-y min-h-[120px] border-0 focus:ring-0 text-[17px] text-gray-900 placeholder:text-gray-400 p-0"
-                        autoFocus
-                      />
-
+                    <input
+                      value={composer.link_title}
+                      onChange={(e) => setComposer((c) => ({ ...c, link_title: e.target.value }))}
+                      className="w-full px-3 py-2 border rounded-lg"
+                      placeholder="Tiêu đề hiển thị"
+                    />
+                    <div className="relative">
+                      <ImageIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                       <input
-                        ref={fileInputRef}
-                        type="file"
-                        multiple
-                        className="hidden"
-                        accept="image/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.zip,.rar,.dwg,.dxf"
-                        onChange={onPickFiles}
+                        value={composer.image_url}
+                        onChange={(e) => setComposer((c) => ({ ...c, image_url: e.target.value }))}
+                        className="w-full pl-9 pr-3 py-2 border rounded-lg"
+                        placeholder="URL ảnh (tuỳ chọn)"
                       />
+                    </div>
+                    <div className="relative">
+                      <Video className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                       <input
-                        ref={videoInputRef}
-                        type="file"
-                        multiple
-                        className="hidden"
-                        accept="video/*"
-                        onChange={onPickFiles}
+                        value={composer.video_url}
+                        onChange={(e) => setComposer((c) => ({ ...c, video_url: e.target.value }))}
+                        className="w-full pl-9 pr-3 py-2 border rounded-lg"
+                        placeholder="URL video trực tiếp (.mp4, .webm…)"
                       />
+                    </div>
+                  </div>
+                </details>
 
-                      {attachSlots.length > 0 && (
-                        <ul className="flex flex-col gap-1.5">
-                          {attachSlots.map((s) => (
-                            <li
-                              key={s.localId}
-                              className="flex items-center gap-2 text-sm rounded-lg border border-gray-100 bg-gray-50 px-2 py-1.5"
-                            >
-                              <span className="truncate flex-1 text-gray-800">{s.fileName}</span>
-                              {s.uploading && <Loader2 className="w-4 h-4 animate-spin text-blue-600 shrink-0" />}
-                              {s.error && <span className="text-xs text-red-600 truncate max-w-[140px] sm:max-w-[180px]" title={s.error}>{s.error}</span>}
-                              {s.result?.file_url && <span className="text-xs text-emerald-600 shrink-0">Đã tải lên</span>}
-                              <button
-                                type="button"
-                                onClick={() => removeAttach(s.localId)}
-                                className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 shrink-0"
-                                title="Bỏ"
-                              >
-                                <X className="w-4 h-4" />
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
+                <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 space-y-4 text-sm">
+                  <div>
+                    <p className="text-xs font-semibold text-gray-600 mb-2">Thời điểm đăng</p>
+                    <div className="flex flex-wrap gap-4">
+                      <label className="inline-flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="publish-mode"
+                          checked={composer.publishMode === 'now'}
+                          onChange={() => setComposer((c) => ({ ...c, publishMode: 'now' }))}
+                        />
+                        <span>Đăng ngay</span>
+                      </label>
+                      <label className="inline-flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="publish-mode"
+                          checked={composer.publishMode === 'scheduled'}
+                          onChange={() => setComposer((c) => ({ ...c, publishMode: 'scheduled' }))}
+                        />
+                        <span>Hẹn giờ</span>
+                      </label>
+                    </div>
+                    {composer.publishMode === 'scheduled' && (
+                      <input
+                        type="datetime-local"
+                        value={composer.scheduledAt}
+                        onChange={(e) => setComposer((c) => ({ ...c, scheduledAt: e.target.value }))}
+                        className="mt-2 w-full max-w-sm rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                      />
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-gray-600 mb-2">Ai được xem</p>
+                    <select
+                      value={composer.visibility}
+                      onChange={(e) => {
+                        const v = e.target.value === 'selected_users'
+                          ? 'selected_users'
+                          : (e.target.value === 'selected_companies' ? 'selected_companies' : 'company');
+                        setComposer((c) => ({
+                          ...c,
+                          visibility: v,
+                          audienceUserIds: v === 'selected_users' ? c.audienceUserIds : [],
+                          audienceCompanyIds: v === 'selected_companies' ? c.audienceCompanyIds : [],
+                        }));
+                      }}
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                    >
+                      <option value="company">Cả công ty</option>
+                      <option value="selected_users">Chỉ nhân viên được chọn</option>
+                      {isSystemAdmin && (
+                        <option value="selected_companies">Nhiều công ty</option>
                       )}
-
-                      <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
-                        <span className="text-sm font-medium text-gray-600">Thêm vào bài viết của bạn</span>
-                        <div className="flex items-center gap-0.5">
-                          <button
-                            type="button"
-                            title="Ảnh / file"
-                            onClick={() => fileInputRef.current?.click()}
-                            disabled={attachSlots.length >= MAX_ATTACHMENTS || attachSlots.some((s) => s.uploading)}
-                            className="p-2 rounded-full hover:bg-white text-green-600 disabled:opacity-40"
-                          >
-                            <ImagePlus className="w-6 h-6" />
-                          </button>
-                          <button
-                            type="button"
-                            title="Video"
-                            onClick={() => videoInputRef.current?.click()}
-                            disabled={attachSlots.length >= MAX_ATTACHMENTS || attachSlots.some((s) => s.uploading)}
-                            className="p-2 rounded-full hover:bg-white text-red-500 disabled:opacity-40"
-                          >
-                            <Video className="w-6 h-6" />
-                          </button>
-                          <button type="button" className="p-2 rounded-full hover:bg-white text-amber-500 opacity-60" title="Cảm xúc (sắp có)" onClick={(e) => e.preventDefault()}>
-                            <Smile className="w-6 h-6" />
-                          </button>
-                          <button type="button" className="p-2 rounded-full hover:bg-white text-blue-600 opacity-50" title="Địa điểm (sắp có)" onClick={(e) => e.preventDefault()}>
-                            <MapPin className="w-6 h-6" />
-                          </button>
-                          <button type="button" className="p-2 rounded-full hover:bg-white text-gray-500 opacity-50" title="Thêm (sắp có)" onClick={(e) => e.preventDefault()}>
-                            <MoreHorizontal className="w-6 h-6" />
-                          </button>
-                        </div>
+                    </select>
+                    {composer.visibility === 'selected_companies' && (
+                      <div className="mt-3 space-y-2">
+                        <p className="text-[11px] text-gray-500">
+                          Công ty gốc (
+                          {(companies.find((c) => String(c.id) === String(effectiveCompanyId))?.name)
+                            || 'chưa chọn'}
+                          ) sẽ luôn được xem bài. Chọn thêm công ty khác bên dưới.
+                        </p>
+                        {(composer.audienceCompanyIds || []).length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {(composer.audienceCompanyIds || []).map((id) => {
+                              const c = companies.find((x) => String(x.id) === String(id));
+                              const label = c?.name || c?.short_name || `${String(id).slice(0, 8)}…`;
+                              return (
+                                <span
+                                  key={id}
+                                  className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-900 max-w-[220px]"
+                                >
+                                  <span className="truncate">{label}</span>
+                                  <button
+                                    type="button"
+                                    className="shrink-0 text-emerald-700 hover:text-emerald-950"
+                                    onClick={() => setComposer((cur) => ({
+                                      ...cur,
+                                      audienceCompanyIds: (cur.audienceCompanyIds || []).filter((x) => x !== id),
+                                    }))}
+                                    aria-label="Bỏ"
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              );
+                            })}
+                          </div>
+                        )}
+                        <ul className="max-h-52 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50 text-sm">
+                          {companies
+                            .filter((c) => String(c.id) !== String(effectiveCompanyId))
+                            .map((c) => {
+                              const id = String(c.id);
+                              const picked = (composer.audienceCompanyIds || []).includes(id);
+                              return (
+                                <li key={id}>
+                                  <label className="flex w-full items-center gap-2 px-3 py-2 hover:bg-white cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={picked}
+                                      onChange={() => setComposer((cur) => ({
+                                        ...cur,
+                                        audienceCompanyIds: picked
+                                          ? (cur.audienceCompanyIds || []).filter((x) => x !== id)
+                                          : [...(cur.audienceCompanyIds || []), id],
+                                      }))}
+                                    />
+                                    <span className="truncate">{c.name || c.short_name || id}</span>
+                                  </label>
+                                </li>
+                              );
+                            })}
+                          {companies.filter((c) => String(c.id) !== String(effectiveCompanyId)).length === 0 && (
+                            <li className="px-3 py-2 text-xs text-gray-500">Không còn công ty nào để chia sẻ.</li>
+                          )}
+                        </ul>
                       </div>
-
-                      <details className="group rounded-lg border border-gray-100 bg-white text-sm">
-                        <summary className="cursor-pointer px-3 py-2 font-medium text-gray-600 hover:bg-gray-50 rounded-lg list-none flex items-center gap-2 [&::-webkit-details-marker]:hidden">
-                          <Link2 className="w-4 h-4" />
-                          Liên kết / URL ảnh hoặc video ngoài
-                        </summary>
-                        <div className="p-3 pt-0 space-y-2 border-t border-gray-100">
-                          <div className="relative">
-                            <Link2 className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                            <input
-                              value={composer.link_url}
-                              onChange={(e) => setComposer((c) => ({ ...c, link_url: e.target.value }))}
-                              className="w-full pl-8 pr-2 py-1.5 border rounded-lg"
-                              placeholder="URL liên kết"
-                            />
+                    )}
+                    {composer.visibility === 'selected_users' && (
+                      <div className="mt-3 space-y-2">
+                        <input
+                          type="search"
+                          value={audienceSearch}
+                          onChange={(e) => setAudienceSearch(e.target.value)}
+                          placeholder="Tìm theo tên hoặc email…"
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                        />
+                        {(composer.audienceUserIds || []).length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {(composer.audienceUserIds || []).map((id) => {
+                              const fromSuggest = userSuggest.find((u) => String(u.id) === String(id));
+                              const fromAudience = (editingPost?.audience_users || []).find((u) => String(u.id) === String(id));
+                              const label = fromAudience?.full_name || fromAudience?.email
+                                || fromSuggest?.full_name || fromSuggest?.email
+                                || `${String(id).slice(0, 8)}…`;
+                              return (
+                                <span
+                                  key={id}
+                                  className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-xs text-indigo-900 max-w-[200px]"
+                                >
+                                  <span className="truncate">{label}</span>
+                                  <button
+                                    type="button"
+                                    className="shrink-0 text-indigo-700 hover:text-indigo-950"
+                                    onClick={() => setComposer((c) => ({
+                                      ...c,
+                                      audienceUserIds: (c.audienceUserIds || []).filter((x) => x !== id),
+                                    }))}
+                                    aria-label="Bỏ"
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              );
+                            })}
                           </div>
-                          <input
-                            value={composer.link_title}
-                            onChange={(e) => setComposer((c) => ({ ...c, link_title: e.target.value }))}
-                            className="w-full px-2 py-1.5 border rounded-lg"
-                            placeholder="Tiêu đề hiển thị"
-                          />
-                          <div className="relative">
-                            <ImageIcon className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                            <input
-                              value={composer.image_url}
-                              onChange={(e) => setComposer((c) => ({ ...c, image_url: e.target.value }))}
-                              className="w-full pl-8 pr-2 py-1.5 border rounded-lg"
-                              placeholder="URL ảnh (tuỳ chọn)"
-                            />
-                          </div>
-                          <div className="relative">
-                            <Video className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                            <input
-                              value={composer.video_url}
-                              onChange={(e) => setComposer((c) => ({ ...c, video_url: e.target.value }))}
-                              className="w-full pl-8 pr-2 py-1.5 border rounded-lg"
-                              placeholder="URL video trực tiếp (.mp4, .webm…)"
-                            />
-                          </div>
-                        </div>
-                      </details>
-
-                      <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 space-y-3 text-sm">
-                        <div>
-                          <p className="text-xs font-semibold text-gray-600 mb-1.5">Thời điểm đăng</p>
-                          <div className="flex flex-wrap gap-3">
-                            <label className="inline-flex items-center gap-2 cursor-pointer">
-                              <input
-                                type="radio"
-                                name="publish-mode"
-                                checked={composer.publishMode === 'now'}
-                                onChange={() => setComposer((c) => ({ ...c, publishMode: 'now' }))}
-                              />
-                              <span>Đăng ngay</span>
-                            </label>
-                            <label className="inline-flex items-center gap-2 cursor-pointer">
-                              <input
-                                type="radio"
-                                name="publish-mode"
-                                checked={composer.publishMode === 'scheduled'}
-                                onChange={() => setComposer((c) => ({ ...c, publishMode: 'scheduled' }))}
-                              />
-                              <span>Hẹn giờ</span>
-                            </label>
-                          </div>
-                          {composer.publishMode === 'scheduled' && (
-                            <input
-                              type="datetime-local"
-                              value={composer.scheduledAt}
-                              onChange={(e) => setComposer((c) => ({ ...c, scheduledAt: e.target.value }))}
-                              className="mt-2 w-full max-w-xs rounded-lg border border-gray-200 px-2 py-1.5 text-sm"
-                            />
-                          )}
-                        </div>
-                        <div>
-                          <p className="text-xs font-semibold text-gray-600 mb-1.5">Ai được xem</p>
-                          <select
-                            value={composer.visibility}
-                            onChange={(e) => {
-                              const v = e.target.value === 'selected_users'
-                                ? 'selected_users'
-                                : (e.target.value === 'selected_companies' ? 'selected_companies' : 'company');
-                              setComposer((c) => ({
-                                ...c,
-                                visibility: v,
-                                audienceUserIds: v === 'selected_users' ? c.audienceUserIds : [],
-                                audienceCompanyIds: v === 'selected_companies' ? c.audienceCompanyIds : [],
-                              }));
-                            }}
-                            className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm"
-                          >
-                            <option value="company">Cả công ty</option>
-                            <option value="selected_users">Chỉ nhân viên được chọn</option>
-                            {isSystemAdmin && (
-                              <option value="selected_companies">Nhiều công ty</option>
-                            )}
-                          </select>
-                          {composer.visibility === 'selected_companies' && (
-                            <div className="mt-2 space-y-2">
-                              <p className="text-[11px] text-gray-500">
-                                Công ty gốc (
-                                {(companies.find((c) => String(c.id) === String(effectiveCompanyId))?.name)
-                                  || 'chưa chọn'}
-                                ) sẽ luôn được xem bài. Chọn thêm công ty khác bên dưới.
-                              </p>
-                              {(composer.audienceCompanyIds || []).length > 0 && (
-                                <div className="flex flex-wrap gap-1">
-                                  {(composer.audienceCompanyIds || []).map((id) => {
-                                    const c = companies.find((x) => String(x.id) === String(id));
-                                    const label = c?.name || c?.short_name || `${String(id).slice(0, 8)}…`;
-                                    return (
-                                      <span
-                                        key={id}
-                                        className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-900 max-w-[220px]"
-                                      >
-                                        <span className="truncate">{label}</span>
-                                        <button
-                                          type="button"
-                                          className="shrink-0 text-emerald-700 hover:text-emerald-950"
-                                          onClick={() => setComposer((cur) => ({
-                                            ...cur,
-                                            audienceCompanyIds: (cur.audienceCompanyIds || []).filter((x) => x !== id),
-                                          }))}
-                                          aria-label="Bỏ"
-                                        >
-                                          ×
-                                        </button>
-                                      </span>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                              <ul className="max-h-40 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50 text-sm">
-                                {companies
-                                  .filter((c) => String(c.id) !== String(effectiveCompanyId))
-                                  .map((c) => {
-                                    const id = String(c.id);
-                                    const picked = (composer.audienceCompanyIds || []).includes(id);
-                                    return (
-                                      <li key={id}>
-                                        <label className="flex w-full items-center gap-2 px-2 py-1.5 hover:bg-white cursor-pointer">
-                                          <input
-                                            type="checkbox"
-                                            checked={picked}
-                                            onChange={() => setComposer((cur) => ({
-                                              ...cur,
-                                              audienceCompanyIds: picked
-                                                ? (cur.audienceCompanyIds || []).filter((x) => x !== id)
-                                                : [...(cur.audienceCompanyIds || []), id],
-                                            }))}
-                                          />
-                                          <span className="truncate">{c.name || c.short_name || id}</span>
-                                        </label>
-                                      </li>
-                                    );
-                                  })}
-                                {companies.filter((c) => String(c.id) !== String(effectiveCompanyId)).length === 0 && (
-                                  <li className="px-2 py-2 text-xs text-gray-500">Không còn công ty nào để chia sẻ.</li>
-                                )}
-                              </ul>
-                            </div>
-                          )}
-                          {composer.visibility === 'selected_users' && (
-                            <div className="mt-2 space-y-2">
-                              <input
-                                type="search"
-                                value={audienceSearch}
-                                onChange={(e) => setAudienceSearch(e.target.value)}
-                                placeholder="Tìm theo tên hoặc email…"
-                                className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm"
-                              />
-                              {(composer.audienceUserIds || []).length > 0 && (
-                                <div className="flex flex-wrap gap-1">
-                                  {(composer.audienceUserIds || []).map((id) => {
-                                    const fromSuggest = userSuggest.find((u) => String(u.id) === String(id));
-                                    const label = fromPost?.full_name || fromPost?.email
-                                      || fromSuggest?.full_name || fromSuggest?.email
-                                      || `${String(id).slice(0, 8)}…`;
-                                    return (
-                                      <span
-                                        key={id}
-                                        className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-xs text-indigo-900 max-w-[200px]"
-                                      >
-                                        <span className="truncate">{label}</span>
-                                        <button
-                                          type="button"
-                                          className="shrink-0 text-indigo-700 hover:text-indigo-950"
-                                          onClick={() => setComposer((c) => ({
-                                            ...c,
-                                            audienceUserIds: (c.audienceUserIds || []).filter((x) => x !== id),
-                                          }))}
-                                          aria-label="Bỏ"
-                                        >
-                                          ×
-                                        </button>
-                                      </span>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                              {userSuggest.length > 0 && (
-                                <ul className="max-h-36 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50 text-sm">
-                                  {userSuggest.map((u) => {
-                                    const id = String(u.id);
-                                    const picked = (composer.audienceUserIds || []).includes(id);
-                                    return (
-                                      <li key={id}>
-                                        <button
-                                          type="button"
-                                          disabled={picked}
-                                          className="flex w-full items-center justify-between px-2 py-1.5 text-left hover:bg-white disabled:opacity-50"
-                                          onClick={() => {
-                                            if (picked) return;
-                                            setComposer((c) => ({
-                                              ...c,
-                                              audienceUserIds: [...(c.audienceUserIds || []), id],
-                                            }));
-                                          }}
-                                        >
-                                          <span className="truncate">{u.full_name || u.email}</span>
-                                          <span className="text-xs text-gray-500 truncate max-w-[120px]">{u.email}</span>
-                                        </button>
-                                      </li>
-                                    );
-                                  })}
-                                </ul>
-                              )}
-                            </div>
-                          )}
-                        </div>
+                        )}
+                        {userSuggest.length > 0 && (
+                          <ul className="max-h-48 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50 text-sm">
+                            {userSuggest.map((u) => {
+                              const id = String(u.id);
+                              const picked = (composer.audienceUserIds || []).includes(id);
+                              return (
+                                <li key={id}>
+                                  <button
+                                    type="button"
+                                    disabled={picked}
+                                    className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-white disabled:opacity-50"
+                                    onClick={() => {
+                                      if (picked) return;
+                                      setComposer((c) => ({
+                                        ...c,
+                                        audienceUserIds: [...(c.audienceUserIds || []), id],
+                                      }));
+                                    }}
+                                  >
+                                    <span className="truncate">{u.full_name || u.email}</span>
+                                    <span className="text-xs text-gray-500 truncate max-w-[160px]">{u.email}</span>
+                                  </button>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
                       </div>
-
-                      <p className="text-[11px] text-gray-400">
-                        Tối đa {MAX_ATTACHMENTS} tệp · file lớn (&gt;48MB) dùng upload tạm đĩa trên server.
+                    )}
+                    <div className="mt-4 pt-4 border-t border-gray-100">
+                      <p className="text-xs font-semibold text-gray-600 mb-2">Chặn công ty không được xem</p>
+                      <p className="text-[11px] text-gray-500 mb-2">
+                        Nhân viên thuộc công ty bị chọn sẽ không thấy bài (mọi vai trò). Tác giả vẫn thấy bài của mình.
                       </p>
-                    </div>
-
-                    <div className="shrink-0 border-t border-slate-200 p-3 bg-gradient-to-r from-slate-50 via-white to-slate-50">
-                      <button
-                        type="button"
-                        disabled={
-                          posting
-                          || attachSlots.some((s) => s.uploading)
-                          || (!(composer.body ?? '').trim()
-                            && !attachSlots.some((s) => s.result?.file_url)
-                            && !(composer.link_url ?? '').trim()
-                            && !(composer.image_url ?? '').trim()
-                            && !(composer.video_url ?? '').trim())
-                          || (composer.visibility === 'selected_users' && !(composer.audienceUserIds || []).length)
-                          || (composer.visibility === 'selected_companies'
-                            && !((composer.audienceCompanyIds || []).filter((cid) => cid && cid !== String(effectiveCompanyId)).length))
-                          || (composer.publishMode === 'scheduled' && !(composer.scheduledAt || '').trim())
-                        }
-                        onClick={handlePost}
-                        className="w-full py-2.5 rounded-xl text-[15px] font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 disabled:from-slate-300 disabled:to-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed shadow-md hover:shadow-lg transition-all"
-                      >
-                        {posting
-                          ? (editingPost ? 'Đang lưu…' : 'Đang đăng…')
-                          : (editingPost ? 'Lưu' : 'Đăng')}
-                      </button>
+                      {(composer.blockedCompanyIds || []).length > 0 && (
+                        <div className="flex flex-wrap gap-1 mb-2">
+                          {(composer.blockedCompanyIds || []).map((id) => {
+                            const c = companies.find((x) => String(x.id) === String(id));
+                            const label = c?.name || c?.short_name || `${String(id).slice(0, 8)}…`;
+                            return (
+                              <span
+                                key={id}
+                                className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-xs text-rose-900 max-w-[220px]"
+                              >
+                                <span className="truncate">{label}</span>
+                                <button
+                                  type="button"
+                                  className="shrink-0 text-rose-700 hover:text-rose-950"
+                                  onClick={() => setComposer((cur) => ({
+                                    ...cur,
+                                    blockedCompanyIds: (cur.blockedCompanyIds || []).filter((x) => x !== id),
+                                  }))}
+                                  aria-label="Bỏ"
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <ul className="max-h-48 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50 text-sm">
+                        {companies.map((c) => {
+                          const id = String(c.id);
+                          const picked = (composer.blockedCompanyIds || []).includes(id);
+                          return (
+                            <li key={id}>
+                              <label className="flex w-full items-center gap-2 px-3 py-2 hover:bg-white cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={picked}
+                                  onChange={() => setComposer((cur) => ({
+                                    ...cur,
+                                    blockedCompanyIds: picked
+                                      ? (cur.blockedCompanyIds || []).filter((x) => x !== id)
+                                      : [...(cur.blockedCompanyIds || []), id],
+                                  }))}
+                                />
+                                <span className="truncate">{c.name || c.short_name || id}</span>
+                              </label>
+                            </li>
+                          );
+                        })}
+                        {!companies.length && (
+                          <li className="px-3 py-2 text-xs text-gray-500">Chưa có danh sách công ty.</li>
+                        )}
+                      </ul>
                     </div>
                   </div>
                 </div>
-              ),
-              document.body,
+
+                <p className="text-xs text-gray-400">
+                  Tối đa {MAX_ATTACHMENTS} tệp · file lớn (&gt;48MB) dùng upload tạm đĩa trên server.
+                </p>
+              </div>
+
+              <div className="shrink-0 border-t border-slate-200 px-5 sm:px-7 py-4 bg-gradient-to-r from-slate-50 via-white to-slate-50">
+                <button
+                  type="button"
+                  disabled={
+                    posting
+                    || attachSlots.some((s) => s.uploading)
+                    || (!(composer.body ?? '').trim()
+                      && !attachSlots.some((s) => s.result?.file_url)
+                      && !(composer.link_url ?? '').trim()
+                      && !(composer.image_url ?? '').trim()
+                      && !(composer.video_url ?? '').trim())
+                    || (composer.visibility === 'selected_users' && !(composer.audienceUserIds || []).length)
+                    || (composer.visibility === 'selected_companies'
+                      && !((composer.audienceCompanyIds || []).filter((cid) => cid && cid !== String(effectiveCompanyId)).length))
+                    || (composer.publishMode === 'scheduled' && !(composer.scheduledAt || '').trim())
+                  }
+                  onClick={handlePost}
+                  className="w-full py-3 rounded-xl text-base font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 disabled:from-slate-300 disabled:to-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed shadow-md hover:shadow-lg transition-all"
+                >
+                  {posting
+                    ? (editingPost ? 'Đang lưu…' : 'Đang đăng…')
+                    : (editingPost ? 'Lưu thay đổi' : 'Đăng bài viết')}
+                </button>
+              </div>
+            </div>
             )}
           </>
         )}
@@ -2578,6 +2783,7 @@ export default function SocialFeedPage() {
                 onHideCompany={handleHideCompany}
                 onUnhideCompany={handleUnhideCompany}
                 onHideForMe={handleHideForMe}
+                onBlockCompanies={openBlockCompaniesModal}
                 commentsOpen={!!openComments[post.id]}
                 onToggleComments={toggleComments}
                 comments={commentsByPost[post.id]}

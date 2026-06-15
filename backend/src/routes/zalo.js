@@ -9,6 +9,7 @@ const r = express.Router();
 const { supabase } = require('../config/supabase');
 const { auth: authMiddleware } = require('../middleware/auth');
 const { isSystemAdmin } = require('../helpers/adminRole');
+const { resolveCrmSocialInboxCompanyId } = require('../helpers/crmSocialInboxScope');
 const { extractContactInfo } = require('../helpers/facebookPhoneExtract');
 const { createLeadFromZaloContact, runZaloBatchExtractPhones, runZaloBatchCreateLeads, extractFromZaloContact, syncZaloContactProfile, runZaloBatchRefreshProfiles, isPlaceholderZaloDisplayName, applyZaloDisplayNameToCustomer, normalizeZaloModuleKey, normalizeZaloTargetType, resolveZaloModuleKeyForOa, resolveZaloCreateType, applyZaloOaRoutingToLead, runZaloBatchApplyOaRouting, ensureZaloLeadAutoTasks } = require('../helpers/zaloBatchTools');
 const {
@@ -531,17 +532,31 @@ async function resolveZaloOaScope(req, res) {
   const { data: accounts, error } = await supabase.from('zalo_oa_accounts').select('oa_id, default_company_id');
   if (error) { res.status(500).json({ error: error.message }); return null; }
   const rows = accounts || [];
+  const socialCid = await resolveCrmSocialInboxCompanyId(req.user);
+  if (socialCid) {
+    const reqCo = req.query.company_id && String(req.query.company_id).trim();
+    if (reqCo && String(reqCo) !== String(socialCid)) {
+      res.status(403).json({ error: 'Chỉ được xem Zalo OA công ty NextGo.' });
+      return null;
+    }
+    return {
+      mode: 'filter',
+      companyId: socialCid,
+      oaIds: rows.filter((a) => a.default_company_id && String(a.default_company_id) === String(socialCid)).map((a) => a.oa_id),
+    };
+  }
   if (isSystemAdmin(req.user)) {
     const co = req.query.company_id && String(req.query.company_id).trim();
     if (co) {
-      return { mode: 'filter', oaIds: rows.filter((a) => String(a.default_company_id || '') === co).map((a) => a.oa_id) };
+      return { mode: 'filter', companyId: co, oaIds: rows.filter((a) => String(a.default_company_id || '') === co).map((a) => a.oa_id) };
     }
-    return { mode: 'all', oaIds: null };
+    return { mode: 'all', oaIds: null, companyId: null };
   }
   const cid = req.user?.company_id;
   if (!cid) { res.status(400).json({ error: 'Thiếu company_id trên tài khoản' }); return null; }
   return {
     mode: 'filter',
+    companyId: String(cid),
     oaIds: rows.filter((a) => a.default_company_id && String(a.default_company_id) === String(cid)).map((a) => a.oa_id),
   };
 }

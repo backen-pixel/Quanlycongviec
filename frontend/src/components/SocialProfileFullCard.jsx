@@ -387,7 +387,7 @@ function CommentItem({ c }) {
   );
 }
 
-export default function SocialProfileFullCard({ post, currentUserId, currentRole, onChange, onDelete }) {
+export default function SocialProfileFullCard({ post, currentUserId, currentRole, onChange, onDelete, onEdit }) {
   const author = post.author || {};
   const navigate = useNavigate();
   const isAuthor = !!currentUserId && String(author.id || '') === String(currentUserId);
@@ -555,6 +555,15 @@ export default function SocialProfileFullCard({ post, currentUserId, currentRole
 
   const handleEdit = () => {
     closeMenu();
+    if (onEdit) {
+      onEdit(localPost);
+      return;
+    }
+    const authorId = localPost.author?.id;
+    if (authorId) {
+      navigate(`/social/u/${authorId}?edit=${localPost.id}`);
+      return;
+    }
     navigate(`/social?edit=${localPost.id}`);
   };
 
@@ -754,31 +763,11 @@ export default function SocialProfileFullCard({ post, currentUserId, currentRole
         )}
       </header>
 
-      {(isScheduled(localPost) || localPost.visibility === 'selected_users' || localPost.visibility === 'selected_companies' || localPost.hidden_at) && (
+      {(isAuthor || canMod) && isScheduled(localPost) && (
         <div className="px-4 pb-1 flex flex-wrap gap-1.5">
-          {isScheduled(localPost) && (
-            <span className="text-[11px] font-medium rounded-full bg-amber-100 text-amber-900 px-2 py-0.5">
-              Lên lịch: {new Date(localPost.published_at).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' })}
-            </span>
-          )}
-          {localPost.visibility === 'selected_users' && (
-            <span className="text-[11px] font-medium rounded-full bg-indigo-100 text-indigo-900 px-2 py-0.5">
-              Chỉ người được chọn ({localPost.audience_users?.length || 0})
-            </span>
-          )}
-          {localPost.visibility === 'selected_companies' && (
-            <span
-              className="text-[11px] font-medium rounded-full bg-emerald-100 text-emerald-900 px-2 py-0.5"
-              title={(localPost.audience_companies || []).map((c) => c?.name || c?.short_name).filter(Boolean).join(', ') || undefined}
-            >
-              Chia sẻ {localPost.audience_companies?.length || 0} công ty
-            </span>
-          )}
-          {localPost.hidden_at && (
-            <span className="text-[11px] font-medium rounded-full bg-gray-200 text-gray-700 px-2 py-0.5">
-              Đã ẩn khỏi công ty
-            </span>
-          )}
+          <span className="text-[11px] font-medium rounded-full bg-amber-100 text-amber-900 px-2 py-0.5">
+            Lên lịch: {new Date(localPost.published_at).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' })}
+          </span>
         </div>
       )}
 

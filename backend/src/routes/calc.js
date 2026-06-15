@@ -40,6 +40,74 @@ const onErr = (res, e, msg = 'Lỗi') => {
 };
 
 // ─────────────────────────────────────────────────────────────
+// Helper: map list item → product_type theo match_keywords + auto-tính giá trị.
+// Dùng chung cho /import-3d (upload file) và /import-items (plugin SketchUp).
+// Trả về { enriched, total }.
+async function matchAndComputeItems({ items, categoryId }) {
+  let productTypes = [];
+  {
+    let q = supabase.from('calc_product_types').select('*').eq('is_active', true);
+    if (categoryId) q = q.eq('category_id', categoryId);
+    const { data } = await q;
+    productTypes = data || [];
+  }
+
+  const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const matchItem = (item) => {
+    const hay = norm(item.name);
+    for (const pt of productTypes) {
+      const kws = (pt.match_keywords || []).map(norm);
+      if (kws.some((k) => k && hay.includes(k))) return pt;
+    }
+    return null;
+  };
+
+  const bundleCache = new Map();
+  const getBundle = async (id) => {
+    if (!bundleCache.has(id)) bundleCache.set(id, await loadProductTypeBundle(id));
+    return bundleCache.get(id);
+  };
+
+  const enriched = [];
+  let total = 0;
+  for (const item of items) {
+    const pt = matchItem(item);
+    const row = { ...item, matched_type_id: pt?.id || null, matched_type_name: pt?.name || null };
+    if (pt) {
+      try {
+        const bundle = await getBundle(pt.id);
+        const inputs = {};
+        bundle.variables.forEach((v) => {
+          if (v.is_dimension) {
+            if (v.dim_axis === 'W') inputs[v.var_key] = Number(item.w) || 0;
+            else if (v.dim_axis === 'H') inputs[v.var_key] = Number(item.h) || 0;
+            else if (v.dim_axis === 'D') inputs[v.var_key] = Number(item.d) || 0;
+          } else if (v.default_value !== null && v.default_value !== undefined) {
+            inputs[v.var_key] = Number(v.default_value);
+          }
+        });
+        const out = computeForProductType({
+          rules: bundle.rules,
+          formulasById: bundle.formulasById,
+          inputs,
+        });
+        const qty = Number(item.qty) || 1;
+        row.unit_value = out.result;
+        row.qty_value = out.result * qty;
+        row.applied_formula_id = out.applied_formula_id;
+        row.matched_rule_id = out.matched_rule_id;
+        row.inputs = inputs;
+        total += row.qty_value;
+      } catch (e) {
+        row.compute_error = e.message;
+      }
+    }
+    enriched.push(row);
+  }
+  return { enriched, total };
+}
+
+// ─────────────────────────────────────────────────────────────
 // Helper: load đầy đủ rules + formulas của 1 product_type
 async function loadProductTypeBundle(productTypeId) {
   const [variablesRes, formulasRes, rulesRes, typeRes] = await Promise.all([
@@ -462,70 +530,10 @@ r.post('/import-3d', upload.single('file'), async (req, res) => {
     };
     const parsed = await parse3dFile({ buffer: f.buffer, file: fileMeta });
 
-    // Map item → product_type theo match_keywords
-    let productTypes = [];
-    {
-      let q = supabase.from('calc_product_types').select('*').eq('is_active', true);
-      if (req.body?.category_id) q = q.eq('category_id', req.body.category_id);
-      const { data } = await q;
-      productTypes = data || [];
-    }
-
-    const matchItem = (item) => {
-      const hay = String(item.name || '').toLowerCase()
-        .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-      let best = null;
-      for (const pt of productTypes) {
-        const kws = (pt.match_keywords || []).map((k) => String(k).toLowerCase()
-          .normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
-        if (kws.some((k) => k && hay.includes(k))) { best = pt; break; }
-      }
-      return best;
-    };
-
-    // Cache bundle theo product_type để tránh load nhiều lần
-    const bundleCache = new Map();
-    const getBundle = async (id) => {
-      if (!bundleCache.has(id)) bundleCache.set(id, await loadProductTypeBundle(id));
-      return bundleCache.get(id);
-    };
-
-    const enriched = [];
-    let total = 0;
-    for (const item of parsed.items) {
-      const pt = matchItem(item);
-      const row = { ...item, matched_type_id: pt?.id || null, matched_type_name: pt?.name || null };
-      if (pt) {
-        try {
-          const bundle = await getBundle(pt.id);
-          const inputs = {};
-          bundle.variables.forEach((v) => {
-            if (v.is_dimension) {
-              if (v.dim_axis === 'W') inputs[v.var_key] = Number(item.w) || 0;
-              else if (v.dim_axis === 'H') inputs[v.var_key] = Number(item.h) || 0;
-              else if (v.dim_axis === 'D') inputs[v.var_key] = Number(item.d) || 0;
-            } else if (v.default_value !== null && v.default_value !== undefined) {
-              inputs[v.var_key] = Number(v.default_value);
-            }
-          });
-          const out = computeForProductType({
-            rules: bundle.rules,
-            formulasById: bundle.formulasById,
-            inputs,
-          });
-          const qty = Number(item.qty) || 1;
-          row.unit_value = out.result;
-          row.qty_value = out.result * qty;
-          row.applied_formula_id = out.applied_formula_id;
-          row.matched_rule_id = out.matched_rule_id;
-          row.inputs = inputs;
-          total += row.qty_value;
-        } catch (e) {
-          row.compute_error = e.message;
-        }
-      }
-      enriched.push(row);
-    }
+    const { enriched, total } = await matchAndComputeItems({
+      items: parsed.items,
+      categoryId: req.body?.category_id,
+    });
 
     const { data: imp, error } = await supabase.from('calc_3d_imports').insert({
       file_name: f.originalname,
@@ -541,6 +549,58 @@ r.post('/import-3d', upload.single('file'), async (req, res) => {
     if (error) throw error;
 
     res.status(201).json({ import: imp, parser_status: parsed.parser_status });
+  } catch (e) {
+    res.status(400).json({ error: e?.message || 'Import lỗi' });
+  }
+});
+
+/**
+ * Nhận danh sách item đã trích xuất sẵn (vd: từ plugin SketchUp 1 nút bấm).
+ * Body JSON: {
+ *   items: [{ name, w, h, d, qty }],   // w/h/d đơn vị mm
+ *   category_id?: uuid,                // giới hạn ngữ cảnh map
+ *   source_name?: string,              // tên model / file gốc để hiển thị
+ *   source_format?: string,            // mặc định 'sketchup'
+ * }
+ */
+r.post('/import-items', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const rawItems = Array.isArray(b.items) ? b.items : [];
+    if (!rawItems.length) return res.status(400).json({ error: 'Thiếu danh sách items' });
+
+    const items = rawItems
+      .map((it) => ({
+        name: String(it.name || '').trim() || '(no name)',
+        w: Number(it.w) || 0,
+        h: Number(it.h) || 0,
+        d: Number(it.d) || 0,
+        qty: Number(it.qty) > 0 ? Number(it.qty) : 1,
+        raw: it.raw || `${it.name} | ${it.w}×${it.h}×${it.d}mm × ${it.qty || 1}`,
+      }))
+      .filter((it) => it.w || it.h || it.d);
+
+    if (!items.length) return res.status(400).json({ error: 'Items không có kích thước hợp lệ' });
+
+    const { enriched, total } = await matchAndComputeItems({ items, categoryId: b.category_id });
+
+    const sourceName = String(b.source_name || 'SketchUp model').slice(0, 200);
+    const format = String(b.source_format || 'sketchup').slice(0, 40);
+
+    const { data: imp, error } = await supabase.from('calc_3d_imports').insert({
+      file_name: sourceName,
+      file_path: `(plugin)/${sourceName}`,
+      file_size: null,
+      format,
+      status: 'parsed',
+      raw_meta: { source: format, item_count: items.length, via: 'plugin' },
+      items: enriched,
+      total_result: total,
+      created_by: req.user.userId,
+    }).select().single();
+    if (error) throw error;
+
+    res.status(201).json({ import: imp });
   } catch (e) {
     res.status(400).json({ error: e?.message || 'Import lỗi' });
   }

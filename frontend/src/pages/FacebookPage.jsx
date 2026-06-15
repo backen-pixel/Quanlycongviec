@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAuth } from '../lib/auth';
-import { isAdminLike } from '../lib/adminRole';
+import { isAdminLike, isCrmSocialInboxUser, isCrmSocialInboxCompanyLocked } from '../lib/adminRole';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import api from '../lib/api';
 import {
@@ -81,9 +81,10 @@ const LS_FB_COMPANY_INIT = 'facebook_filter_company_initialized';
 
 export default function FacebookPage() {
   const { socket, user } = useAuth();
-  const isAdmin = isAdminLike(user);
+  const socialInboxLocked = isCrmSocialInboxCompanyLocked(user);
+  const isAdmin = isAdminLike(user) && !isCrmSocialInboxUser(user);
   const loginCompanyId = String(user?.company_id || user?.companyId || '').trim();
-  const lockToLoginCompany = !!loginCompanyId;
+  const lockToLoginCompany = socialInboxLocked || !!loginCompanyId;
   const [companies, setCompanies] = useState([]);
   const [filterFbCompany, setFilterFbCompany] = useState(() => {
     try { return localStorage.getItem(LS_FB_COMPANY) || ''; } catch { return ''; }

@@ -53,6 +53,33 @@ function isCrmModuleAdmin(user) {
   return isAdminLike(user) || isCrmProductionAdmin(user);
 }
 
+/** Email được xem trang Facebook / Zalo OA (không cần full admin CRM). */
+const CRM_SOCIAL_INBOX_EMAILS = new Set([
+  'luonggiayen@gmail.com',
+]);
+
+const CRM_SOCIAL_INBOX_COMPANY_KEYS = {
+  'luonggiayen@gmail.com': 'nextgo',
+};
+
+function getCrmSocialInboxCompanyKey(user) {
+  if (!isCrmSocialInboxUser(user)) return null;
+  return CRM_SOCIAL_INBOX_COMPANY_KEYS[normalizeEmail(user?.email)] || null;
+}
+
+function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+function isCrmSocialInboxUser(user) {
+  return CRM_SOCIAL_INBOX_EMAILS.has(normalizeEmail(user?.email));
+}
+
+/** Trang hộp thư Facebook + Zalo OA (admin CRM hoặc user được cấp riêng). */
+function canAccessCrmSocialInbox(user) {
+  return isCrmModuleAdmin(user) || isCrmSocialInboxUser(user);
+}
+
 /** Admin module Sản xuất (crm_production_staff = NV CRM nhưng admin SX trong phạm vi công ty). */
 function isProductionAdmin(user) {
   const r = normalizeRole(user?.role);
@@ -115,6 +142,10 @@ module.exports = {
   isCrmProductionStaff,
   isCrmProductionAdmin,
   isCrmModuleAdmin,
+  isCrmSocialInboxUser,
+  getCrmSocialInboxCompanyKey,
+  canAccessCrmSocialInbox,
+  normalizeEmail,
   isProductionAdmin,
   isProductionStaff,
   isLogisticsAdmin,

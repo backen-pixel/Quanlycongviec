@@ -51,6 +51,39 @@ export function isCrmModuleAdmin(user) {
   return isAdminLike(user) || isCrmProductionAdmin(user);
 }
 
+/** Email được xem trang Facebook / Zalo OA (không cần full admin CRM). */
+const CRM_SOCIAL_INBOX_EMAILS = new Set([
+  'luonggiayen@gmail.com',
+]);
+
+/** Phạm vi công ty cho từng email hộp thư riêng. */
+const CRM_SOCIAL_INBOX_COMPANY_KEYS = {
+  'luonggiayen@gmail.com': 'nextgo',
+};
+
+export function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+export function isCrmSocialInboxUser(user) {
+  return CRM_SOCIAL_INBOX_EMAILS.has(normalizeEmail(user?.email));
+}
+
+export function getCrmSocialInboxCompanyKey(user) {
+  if (!isCrmSocialInboxUser(user)) return null;
+  return CRM_SOCIAL_INBOX_COMPANY_KEYS[normalizeEmail(user?.email)] || null;
+}
+
+/** User hộp thư riêng — luôn khóa theo công ty (NextGo), không đổi filter. */
+export function isCrmSocialInboxCompanyLocked(user) {
+  return !!getCrmSocialInboxCompanyKey(user);
+}
+
+/** Trang hộp thư Facebook + Zalo OA (admin CRM hoặc user được cấp riêng). */
+export function canAccessCrmSocialInbox(user) {
+  return isCrmModuleAdmin(user) || isCrmSocialInboxUser(user);
+}
+
 /** Admin module Sản xuất (crm_production_staff = NV CRM nhưng admin SX trong phạm vi công ty). */
 export function isProductionAdmin(user) {
   const r = normalizeRole(user?.role);
