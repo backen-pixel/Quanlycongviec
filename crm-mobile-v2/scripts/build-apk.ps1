@@ -30,7 +30,7 @@ $version = $appJson.expo.version
 if (-not $version) { $version = '1.0.0' }
 $versionCode = $appJson.expo.android.versionCode
 New-Item -ItemType Directory -Force -Path 'dist' | Out-Null
-$dest = Join-Path $root "dist\crm-mobile-v2-$version-code$versionCode-release.apk"
+$dest = Join-Path $root "dist\crm-mobile-v2.$version-code$versionCode-release.apk"
 Copy-Item $apk.FullName $dest -Force
 Write-Host ''
 Write-Host "OK: $dest"

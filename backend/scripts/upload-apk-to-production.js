@@ -100,9 +100,9 @@ async function uploadRelease(base, token, releaseId, filePath, meta) {
 
 async function main() {
   const args = parseArgs();
-  const releaseId = args.release || args.release_id || '5371d20e-7ade-4e78-9d09-faa500829742';
+  const releaseId = args.release || args.release_id || 'ba91d47e-a8e7-4e4f-bb86-a435afe9d3d7';
   const filePath = args.file
-    || path.join(__dirname, '../uploads/app-releases/crm-mobile-v2/crm-mobile-v2-2.0.23-code24-release.apk');
+    || path.join(__dirname, '../uploads/app-releases/crm-mobile-v2/crm-mobile-v2.2.0.23-code24-release.apk');
   const abs = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath);
   if (!fs.existsSync(abs)) {
     console.error('Không thấy file APK:', abs);

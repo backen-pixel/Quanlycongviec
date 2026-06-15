@@ -80,7 +80,10 @@ function statFileSizeSafe(filePath) {
 }
 
 function downloadUrlForRelease(release, publicBase) {
-  return release.external_url || release.file_url || buildPublicDownloadUrl(publicBase, release.id);
+  return buildPublicDownloadUrl(publicBase, release.id)
+    || release.external_url
+    || release.file_url
+    || null;
 }
 
 module.exports = {

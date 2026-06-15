@@ -11,8 +11,9 @@ import {
 function parseFilenameClient(name) {
   if (!name || !/\.apk$/i.test(name)) return { ok: false, error: 'File phải là .apk' };
   const base = name.replace(/\.apk$/i, '');
-  const verMatch = base.match(/(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/);
-  if (!verMatch) return { ok: false, error: 'Tên file phải chứa số phiên bản (vd: 1.0.0)' };
+  const verMatches = [...base.matchAll(/(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/g)];
+  const verMatch = verMatches.length ? verMatches[verMatches.length - 1] : null;
+  if (!verMatch) return { ok: false, error: 'Không đọc được version từ tên file — nhập version trong form.' };
   const codeMatch = base.match(/(?:^|[-_])code(\d+)/i);
   return {
     ok: true,
@@ -38,7 +39,9 @@ function apkDownloadHref(release) {
 function apkDownloadFilename(release, appKey) {
   if (!release?.version) return 'app-release.apk';
   const code = release.version_code != null ? `-code${release.version_code}` : '';
-  return `${appKey || 'app'}-${release.version}${code}-release.apk`;
+  const key = appKey || 'app';
+  const stem = /-v\d+$/i.test(key) ? `${key}.${release.version}` : `${key}-${release.version}`;
+  return `${stem}${code}-release.apk`;
 }
 
 function formatDateVN(iso) {
