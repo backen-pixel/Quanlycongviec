@@ -277,19 +277,41 @@ function defaultCompanyIdForUser(
 }
 
 function resetCrmFilters(
-  user: { company_id?: string | null } | null,
+  user: { company_id?: string | null; role?: string } | null,
   companies: { id: string }[],
 ): CrmHubFilters {
-  return { ...DEFAULT_CRM_FILTERS, companyId: defaultCompanyIdForUser(user, companies) };
+  const base: CrmHubFilters = { ...DEFAULT_CRM_FILTERS, companyId: defaultCompanyIdForUser(user, companies) };
+  // Nhân viên thường: khóa "Của tôi" + công ty, không cho đổi.
+  if (!canViewAllCrm(user)) {
+    base.assignee = 'mine';
+    base.assigneeUserId = '';
+  }
+  return base;
+}
+
+/** Vai trò xem được toàn bộ CRM — không mặc định lọc "Của tôi". */
+const ELEVATED_CRM_ROLES = new Set([
+  'admin',
+  'sales_admin',
+  'manager',
+  'region_admin',
+  'super_admin',
+  'superadmin',
+  'owner',
+  'director',
+]);
+
+function canViewAllCrm(user: { role?: string } | null): boolean {
+  return ELEVATED_CRM_ROLES.has(String(user?.role ?? '').trim().toLowerCase());
 }
 
 function initialFiltersFromRoute(
-  params?: RootStackParamList['CrmHub'],
-  companyId?: string | null,
+  params: RootStackParamList['CrmHub'] | undefined,
+  user: { role?: string } | null,
 ): CrmHubFilters {
-  // Đặt companyId ngay từ đầu để filterKey khớp cache khi quay lại tab → hiển thị tức thì.
-  const base = { ...DEFAULT_CRM_FILTERS, companyId: companyId || '' };
-  if (params?.initialAssignee === 'mine') {
+  const base = { ...DEFAULT_CRM_FILTERS };
+  // Nhân viên thường: luôn khóa "Của tôi". Admin/quản lý: xem tất cả (bỏ qua mặc định mine).
+  if (!canViewAllCrm(user)) {
     return { ...base, assignee: 'mine' };
   }
   return base;
@@ -301,17 +323,11 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   const { toggle } = useCreateMenu();
   const myId = user?.id || user?.userId || '';
 
-  const initialMode: Mode = route.params?.initialMode ?? 'leads';
-  const [mode, setMode] = useState<Mode>(initialMode);
+  const [mode, setMode] = useState<Mode>(route.params?.initialMode ?? 'leads');
   const isLeads = mode === 'leads';
 
-  // Seed từ cache module-level để khi quay lại tab hiển thị NGAY, không chờ load lại.
-  const initialFilterKey0 = serverFilterKey(initialFiltersFromRoute(route.params, user?.company_id), '');
-  const initialLeadSnap = myId ? peekCrmHubCache(myId, 'lead', initialFilterKey0) : null;
-  const initialDealSnap = myId ? peekCrmHubCache(myId, 'deal', initialFilterKey0) : null;
-
-  const [leadData, setLeadData] = useState<CrmHubData>(() => initialLeadSnap?.data ?? EMPTY_HUB);
-  const [dealData, setDealData] = useState<CrmHubData>(() => initialDealSnap?.data ?? EMPTY_HUB);
+  const [leadData, setLeadData] = useState<CrmHubData>(EMPTY_HUB);
+  const [dealData, setDealData] = useState<CrmHubData>(EMPTY_HUB);
   const [loadingByMode, setLoadingByMode] = useState<{ leads: boolean; deals: boolean }>({
     leads: false,
     deals: false,
@@ -320,15 +336,20 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   const [moreLoading, setMoreLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
-  const [loaded, setLoaded] = useState<{ leads: boolean; deals: boolean }>(() => ({
-    leads: !!initialLeadSnap,
-    deals: !!initialDealSnap,
-  }));
+  const [loaded, setLoaded] = useState<{ leads: boolean; deals: boolean }>({ leads: false, deals: false });
 
   const [searchDraft, setSearchDraft] = useState('');
   const [search, setSearch] = useState('');
-  const [leadFilters, setLeadFilters] = useState<CrmHubFilters>(() => initialFiltersFromRoute(route.params, user?.company_id));
-  const [dealFilters, setDealFilters] = useState<CrmHubFilters>(() => initialFiltersFromRoute(route.params, user?.company_id));
+  // Gán companyId ngay từ đầu để lần load đầu tiên giống hệt khi bấm tab (resetCrmFilters).
+  // Nếu để rỗng, load lần đầu chạy với companyId='' → sai filter → màn trống tới khi bấm tab.
+  const [leadFilters, setLeadFilters] = useState<CrmHubFilters>(() => ({
+    ...initialFiltersFromRoute(route.params, user),
+    companyId: initialFiltersFromRoute(route.params, user).companyId || user?.company_id || '',
+  }));
+  const [dealFilters, setDealFilters] = useState<CrmHubFilters>(() => ({
+    ...initialFiltersFromRoute(route.params, user),
+    companyId: initialFiltersFromRoute(route.params, user).companyId || user?.company_id || '',
+  }));
   const [filterOpen, setFilterOpen] = useState(false);
   const [companies, setCompanies] = useState<CrmCompany[]>([]);
   const [companiesReady, setCompaniesReady] = useState(false);
@@ -336,9 +357,7 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   const [departments, setDepartments] = useState<CrmDepartment[]>([]);
   const [employees, setEmployees] = useState<CrmEmployee[]>([]);
   const [metaLoading, setMetaLoading] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(
-    () => (initialMode === 'leads' ? initialLeadSnap : initialDealSnap)?.activeIndex ?? 0,
-  );
+  const [activeIndex, setActiveIndex] = useState(0);
   const [movingId, setMovingId] = useState<string | null>(null);
   const [moveItem, setMoveItem] = useState<CrmKanbanItem | null>(null);
   const [columnPickerOpen, setColumnPickerOpen] = useState(false);
@@ -353,10 +372,7 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   });
   const leadDataRef = useRef(leadData);
   const dealDataRef = useRef(dealData);
-  // Nếu mode hiện tại đã có cache → đặt filterKeyRef khớp luôn để KHÔNG kích hoạt refresh thừa khi mount.
-  const filterKeyRef = useRef(
-    (initialMode === 'leads' ? initialLeadSnap : initialDealSnap) ? initialFilterKey0 : '',
-  );
+  const filterKeyRef = useRef('');
   const activeIndexRef = useRef(activeIndex);
   const modeRef = useRef(mode);
   const leadFiltersRef = useRef(leadFilters);
@@ -380,6 +396,8 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   const loading = loadingByMode[mode];
   const filters = isLeads ? leadFilters : dealFilters;
   const setFilters = isLeads ? setLeadFilters : setDealFilters;
+  // Nhân viên thường bị khóa lọc theo Công ty + Người phụ trách.
+  const lockScope = !canViewAllCrm(user);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -597,7 +615,9 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     stageId?: string,
     silent = false,
   ) => {
-    if (loadingModeRef.current[which] && !isRefresh && !silent) return;
+    // Chặn load trùng KHI đã có dữ liệu. Nếu CHƯA loaded (load lần đầu) thì cho phép
+    // load mới thay thế load đang chạy (vd: companyId vừa được gán) — abort bên dưới lo việc hủy.
+    if (loadingModeRef.current[which] && !isRefresh && !silent && loadedRef.current[which]) return;
 
     const type = which === 'leads' ? 'lead' : 'deal';
     const modeFilters = which === 'leads' ? leadFilters : dealFilters;
@@ -895,8 +915,9 @@ export default function CrmHubScreen({ navigation, route }: Props) {
       { companyName, regionName, assigneeName: assigneeName || undefined },
       (patch) => setFilters((prev) => ({ ...prev, ...patch })),
       () => setSearchDraft(''),
+      lockScope,
     );
-  }, [filters, search, setFilters, companies, regions, employees]);
+  }, [filters, search, setFilters, companies, regions, employees, lockScope]);
 
   const countByStageId = hub.stageCounts;
 
@@ -1273,6 +1294,7 @@ export default function CrmHubScreen({ navigation, route }: Props) {
         departments={departments}
         employees={employees}
         metaLoading={metaLoading}
+        lockScope={lockScope}
         onApply={(next) => {
           setFilters(next);
           if (next.companyId !== filters.companyId) void loadOrgMeta(next.companyId);

@@ -141,6 +141,7 @@ export function activeFilterChips(
   },
   onPatch: (patch: Partial<CrmHubFilters>) => void,
   onClearSearch: () => void,
+  lockScope = false,
 ): ActiveFilterChip[] {
   const chips: ActiveFilterChip[] = [];
   if (search.trim()) {
@@ -161,7 +162,8 @@ export function activeFilterChips(
   } else if (filters.phone === '') {
     chips.push({ key: 'phone-all', label: 'Mọi SĐT', onClear: () => onPatch({ phone: DEFAULT_CRM_FILTERS.phone }) });
   }
-  if (filters.companyId && labels.companyName) {
+  // Khi bị khóa phạm vi (nhân viên), không hiển thị chip xóa nhanh cho Công ty.
+  if (!lockScope && filters.companyId && labels.companyName) {
     chips.push({
       key: 'co',
       label: labels.companyName,
@@ -176,7 +178,12 @@ export function activeFilterChips(
     });
   }
   if (filters.assignee === 'mine') {
-    chips.push({ key: 'mine', label: 'Của tôi', onClear: () => onPatch({ assignee: 'all', assigneeUserId: '' }) });
+    // Nhân viên bị khóa "Của tôi" → không cho xóa chip này.
+    chips.push({
+      key: 'mine',
+      label: 'Của tôi',
+      onClear: lockScope ? () => {} : () => onPatch({ assignee: 'all', assigneeUserId: '' }),
+    });
   } else if (filters.assignee === 'user' && filters.assigneeUserId) {
     chips.push({
       key: 'user',
