@@ -33,6 +33,8 @@ type Props = {
   departments: CrmDepartment[];
   employees: CrmEmployee[];
   metaLoading: boolean;
+  /** Nhân viên thường: khóa lọc Công ty + Người phụ trách (không cho đổi). */
+  lockScope?: boolean;
   onApply: (filters: CrmHubFilters) => void;
   onCompanyChange: (companyId: string) => void;
   onClose: () => void;
@@ -68,11 +70,13 @@ function ChipRow<T extends string>({
   value,
   onChange,
   accent,
+  disabled = false,
 }: {
   options: { value: T; label: string }[];
   value: T;
   onChange: (v: T) => void;
   accent: string;
+  disabled?: boolean;
 }) {
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.hScroll}>
@@ -81,7 +85,12 @@ function ChipRow<T extends string>({
         return (
           <TouchableOpacity
             key={opt.value || 'all'}
-            style={[styles.miniChip, active && { backgroundColor: accent + '22', borderColor: accent }]}
+            disabled={disabled}
+            style={[
+              styles.miniChip,
+              active && { backgroundColor: accent + '22', borderColor: accent },
+              disabled && !active && styles.miniChipDisabled,
+            ]}
             onPress={() => onChange(opt.value)}
           >
             <Text style={[styles.miniChipTxt, active && { color: accent }]} numberOfLines={1}>
@@ -122,6 +131,7 @@ export default function CrmFilterSheet({
   departments,
   employees,
   metaLoading,
+  lockScope = false,
   onApply,
   onCompanyChange,
   onClose,
@@ -161,6 +171,7 @@ export default function CrmFilterSheet({
   }, [employees, draft.departmentId, draft.regionId]);
 
   const handleCompany = (companyId: string) => {
+    if (lockScope) return;
     patch({ companyId, regionId: '', departmentId: '', assigneeUserId: '', assignee: 'all' });
     onCompanyChange(companyId);
   };
@@ -199,7 +210,10 @@ export default function CrmFilterSheet({
           ) : null}
 
           <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
-            <FilterSection title="Công ty" subtitle="Lọc qua API theo company_id">
+            <FilterSection
+              title="Công ty"
+              subtitle={lockScope ? 'Đã khóa theo tài khoản của bạn' : 'Lọc qua API theo company_id'}
+            >
               {metaLoading && !companies.length ? (
                 <ActivityIndicator color={accent} style={{ marginVertical: 8 }} />
               ) : (
@@ -208,8 +222,15 @@ export default function CrmFilterSheet({
                   value={draft.companyId}
                   onChange={handleCompany}
                   accent={accent}
+                  disabled={lockScope}
                 />
               )}
+              {lockScope ? (
+                <View style={styles.lockHint}>
+                  <Ionicons name="lock-closed" size={13} color={Colors.textFaint} />
+                  <Text style={styles.lockHintTxt}>Bạn chỉ xem dữ liệu trong công ty của mình.</Text>
+                </View>
+              ) : null}
             </FilterSection>
 
             <FilterSection title="Khu vực" subtitle="Lọc trên danh sách cột (region_id)">
@@ -221,14 +242,28 @@ export default function CrmFilterSheet({
               />
             </FilterSection>
 
-            <FilterSection title="Người phụ trách" subtitle="Chọn phòng ban → chọn nhân viên">
+            <FilterSection
+              title="Người phụ trách"
+              subtitle={lockScope ? 'Đã khóa: chỉ xem bản ghi của bạn' : 'Chọn phòng ban → chọn nhân viên'}
+            >
               <ChipRow
-                options={ASSIGNEE_OPTS.map((o) => ({ value: o.value, label: o.label }))}
-                value={draft.assignee === 'user' ? 'all' : draft.assignee}
+                options={
+                  lockScope
+                    ? [{ value: 'mine' as AssigneeFilter, label: 'Của tôi' }]
+                    : ASSIGNEE_OPTS.map((o) => ({ value: o.value, label: o.label }))
+                }
+                value={lockScope ? 'mine' : draft.assignee === 'user' ? 'all' : draft.assignee}
                 onChange={(v) => patch({ assignee: v, assigneeUserId: '' })}
                 accent={accent}
+                disabled={lockScope}
               />
-              {departments.length > 0 ? (
+              {lockScope ? (
+                <View style={styles.lockHint}>
+                  <Ionicons name="lock-closed" size={13} color={Colors.textFaint} />
+                  <Text style={styles.lockHintTxt}>Không thể đổi người phụ trách.</Text>
+                </View>
+              ) : null}
+              {!lockScope && departments.length > 0 ? (
                 <>
                   <Text style={styles.subLbl}>Phòng ban</Text>
                   <ChipRow
@@ -239,7 +274,7 @@ export default function CrmFilterSheet({
                   />
                 </>
               ) : null}
-              {metaLoading && !employees.length ? (
+              {lockScope ? null : metaLoading && !employees.length ? (
                 <ActivityIndicator color={accent} style={{ marginTop: 8 }} />
               ) : filteredEmployees.length > 0 ? (
                 <View style={styles.userList}>
@@ -322,7 +357,16 @@ export default function CrmFilterSheet({
           </ScrollView>
 
           <View style={styles.footer}>
-            <TouchableOpacity style={styles.resetBtn} onPress={() => setDraft({ ...DEFAULT_CRM_FILTERS })}>
+            <TouchableOpacity
+              style={styles.resetBtn}
+              onPress={() =>
+                setDraft(
+                  lockScope
+                    ? { ...DEFAULT_CRM_FILTERS, companyId: draft.companyId, assignee: 'mine', assigneeUserId: '' }
+                    : { ...DEFAULT_CRM_FILTERS },
+                )
+              }
+            >
               <Text style={styles.resetTxt}>Đặt lại</Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -397,6 +441,9 @@ const styles = StyleSheet.create({
     marginRight: 8,
     maxWidth: 180,
   },
+  miniChipDisabled: { opacity: 0.45 },
+  lockHint: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
+  lockHintTxt: { color: Colors.textFaint, fontSize: 11, fontWeight: '600', flex: 1 },
   miniChipTxt: { color: Colors.textMuted, fontSize: 12, fontWeight: '700' },
   userList: { marginTop: 8, gap: 6 },
   userRow: {

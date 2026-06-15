@@ -654,10 +654,9 @@ export async function prefetchCrmNeighborStages(
   return Object.fromEntries(entries.filter(Boolean) as [string, CrmStageCache][]);
 }
 
-// TTL rộng vì khi quay lại tab luôn refresh ngầm → hiển thị tức thì mà vẫn cập nhật.
-const HUB_CACHE_TTL_MS = 10 * 60 * 1000;
-const BOOTSTRAP_CACHE_TTL_MS = 5 * 60 * 1000;
-const TOTALS_CACHE_TTL_MS = 10 * 60 * 1000;
+const HUB_CACHE_TTL_MS = 3 * 60 * 1000;
+const BOOTSTRAP_CACHE_TTL_MS = 2 * 60 * 1000;
+const TOTALS_CACHE_TTL_MS = 5 * 60 * 1000;
 const hubCache = new Map<string, { snapshot: CrmHubCacheSnapshot; at: number }>();
 const bootstrapCache = new Map<string, { boot: CrmBoardBootstrap; at: number }>();
 const totalsCache = new Map<string, { counts: Record<string, number>; total: number; at: number }>();
