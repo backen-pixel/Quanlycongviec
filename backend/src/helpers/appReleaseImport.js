@@ -31,15 +31,15 @@ async function copyToLocalServe(appKey, sourcePath, filename) {
 async function uploadApkFromPath(app, filePath, opts = {}) {
   const filename = opts.originalFilename || path.basename(filePath);
   const parsed = parseReleaseFilename(filename);
-  if (!parsed.ok && !opts.version) throw new Error(parsed.error);
-
   const channel = opts.channel || 'production';
   const buf = fs.readFileSync(filePath);
   const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
   const fileSize = buf.length;
 
   const version = opts.version || (parsed.ok ? parsed.version : null);
-  if (!version) throw new Error(parsed.error || 'Thiếu version');
+  if (!version) {
+    throw new Error('Thiếu version — nhập version trong form phát hành (tên file APK không bắt buộc chứa số phiên bản).');
+  }
   const safeVersion = String(version).replace(/[^0-9A-Za-z._-]/g, '_');
   const storagePath = `${app.app_key}/${channel}/${safeVersion}_${Date.now()}.apk`;
 
@@ -59,9 +59,7 @@ async function uploadApkFromPath(app, filePath, opts = {}) {
     const versionCode = opts.version_code != null
       ? parseInt(opts.version_code, 10)
       : (parsed.ok ? parsed.versionCode : null);
-    const localName = parsed.ok
-      ? filename.replace(/[^0-9A-Za-z._-]/g, '_')
-      : buildStandardApkFilename(app.app_key, version, versionCode, { release: true });
+    const localName = buildStandardApkFilename(app.app_key, version, versionCode, { release: true });
     await copyToLocalServe(app.app_key, filePath, localName);
     const base = (opts.publicBaseUrl || '').replace(/\/$/, '');
     fileUrl = `${base}/uploads/app-releases/${app.app_key}/${localName}`;
@@ -130,8 +128,9 @@ async function replaceReleaseApkFile(release, app, filePath, opts = {}) {
   const channel = opts.channel || release.channel || 'production';
   const uploaded = await uploadApkFromPath(app, filePath, {
     channel,
-    version: opts.version,
-    version_code: opts.version_code,
+    version: opts.version || release.version,
+    version_code: opts.version_code ?? release.version_code,
+    originalFilename: opts.originalFilename,
     publicBaseUrl: opts.publicBaseUrl,
   });
 
@@ -140,10 +139,9 @@ async function replaceReleaseApkFile(release, app, filePath, opts = {}) {
     file_url: uploaded.file_url,
     sha256: uploaded.sha256,
     file_size: uploaded.file_size,
+    external_url: null,
     updated_at: new Date().toISOString(),
   };
-
-  if (uploaded.storage_path) patch.external_url = null;
 
   if (!opts.version && uploaded.suggestedVersion) patch.version = uploaded.suggestedVersion;
   if (opts.version_code != null && opts.version_code !== '') {

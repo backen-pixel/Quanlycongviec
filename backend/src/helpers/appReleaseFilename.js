@@ -14,7 +14,8 @@ const SEMVER_IN_NAME = /(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/;
 const CODE_IN_NAME = /(?:^|[-_])code(\d+)/i;
 
 const FILENAME_RULE_TEXT =
-  'Tên file APK phải chứa số phiên bản (vd: 1.0.0 hoặc 1.3.35). '
+  'Nhập version / version code trong form phát hành (bắt buộc). '
+  + 'Tên file APK có thể bất kỳ (.apk); nếu tên chứa số phiên bản thì hệ thống tự điền thêm. '
   + 'Khuyến nghị: {app_key}-{version}[-code{version_code}][-release].apk';
 
 function parseReleaseFilename(filename) {

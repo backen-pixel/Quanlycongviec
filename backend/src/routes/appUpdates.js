@@ -716,16 +716,12 @@ r.post('/apps/:appId/releases', requireAdmin, apkUploadSingle, async (req, res) 
       const parsed = parseReleaseFilename(req.file.originalname);
       if (!resolvedVersion && parsed.ok) resolvedVersion = parsed.version;
       if (resolvedCode == null && parsed.ok && parsed.versionCode != null) resolvedCode = parsed.versionCode;
-      if (!parsed.ok && !resolvedVersion) {
-        fs.unlink(tmpPath, () => {});
-        return res.status(400).json({ error: parsed.error });
-      }
     }
 
     if (!resolvedVersion) {
       if (tmpPath) fs.unlink(tmpPath, () => {});
       return res.status(400).json({
-        error: 'version là bắt buộc — nhập tay hoặc đặt tên file có số phiên bản (vd: app-1.0.0-code2.apk)',
+        error: 'version là bắt buộc — nhập trong form phát hành (tên file APK không bắt buộc chứa số phiên bản).',
       });
     }
 
@@ -735,6 +731,7 @@ r.post('/apps/:appId/releases', requireAdmin, apkUploadSingle, async (req, res) 
         channel: channel || 'production',
         version: resolvedVersion,
         version_code: resolvedCode,
+        originalFilename: req.file?.originalname || undefined,
         is_mandatory: is_mandatory === true || is_mandatory === 'true',
         is_active: is_active === undefined ? true : (is_active === true || is_active === 'true'),
         release_notes: release_notes || null,
