@@ -1,27 +1,40 @@
 /**
- * Google Drive service - dùng Service Account để thao tác trên 1 folder gốc đã share.
- * Tài liệu: https://developers.google.com/drive/api/guides/about-files
+ * Google Drive service — hỗ trợ 2 chế độ xác thực:
  *
- * Khởi tạo:
- *   - ENV GDRIVE_SERVICE_ACCOUNT_JSON: chuỗi JSON đầy đủ của file key.json (khuyến nghị cho production).
- *   - hoặc ENV GDRIVE_SERVICE_ACCOUNT_FILE: đường dẫn tới file key.json (dev local).
- *   - ENV GDRIVE_ROOT_FOLDER_ID: id folder gốc trên Drive (bạn tạo thủ công và share quyền Editor cho service account email).
- *   - ENV GDRIVE_IMPERSONATE_USER (tuỳ chọn): email Workspace user để impersonate (domain-wide delegation).
+ *  (A) Service Account (khuyến nghị cho Workspace tổ chức):
+ *      - GDRIVE_SERVICE_ACCOUNT_JSON: chuỗi JSON đầy đủ key.json (prod).
+ *      - hoặc GDRIVE_SERVICE_ACCOUNT_FILE: đường dẫn file key.json (dev local).
+ *      - GDRIVE_IMPERSONATE_USER (tuỳ chọn, domain-wide delegation).
+ *      - Folder gốc PHẢI share Editor cho service-account email.
+ *      - File thuộc về service account, không dùng quota cá nhân.
+ *
+ *  (B) OAuth Refresh Token (dễ thiết lập với 1 tài khoản Gmail/Workspace cá nhân):
+ *      - GDRIVE_OAUTH_CLIENT_ID, GDRIVE_OAUTH_CLIENT_SECRET, GDRIVE_OAUTH_REFRESH_TOKEN.
+ *      - Lấy 3 giá trị trên qua https://developers.google.com/oauthplayground
+ *        + Chọn scope: https://www.googleapis.com/auth/drive (KHUYẾN NGHỊ — không dùng drive.file
+ *          vì scope đó chỉ cho phép truy cập file do app tạo).
+ *      - File sẽ thuộc về user đã uỷ quyền, dùng quota của user (15GB Free hoặc theo Workspace).
+ *      - Folder gốc lấy từ Drive của chính user đó.
+ *
+ *  GDRIVE_ROOT_FOLDER_ID: id folder gốc (bắt buộc, cả 2 chế độ).
+ *
+ * Ưu tiên: Service Account → OAuth (nếu cả hai cùng đặt thì service account thắng).
  *
  * Module trả về null nếu chưa cấu hình → routes phải bắt và trả 503 thân thiện.
  */
 const fs = require('fs');
 const path = require('path');
 const { google } = require('googleapis');
-const { JWT } = require('google-auth-library');
+const { JWT, OAuth2Client } = require('google-auth-library');
 const config = require('../config');
 
 const SCOPES = ['https://www.googleapis.com/auth/drive'];
 
 let _client = null;
 let _initError = null;
+let _authMode = null;
 
-function loadCredentials() {
+function loadServiceAccountCreds() {
   if (config.gdriveServiceAccountJson) {
     try {
       return JSON.parse(config.gdriveServiceAccountJson);
@@ -39,27 +52,52 @@ function loadCredentials() {
   return null;
 }
 
+function hasServiceAccountConfig() {
+  return !!(config.gdriveServiceAccountJson || config.gdriveServiceAccountFile);
+}
+
+function hasOauthConfig() {
+  return !!(config.gdriveOauthClientId && config.gdriveOauthClientSecret && config.gdriveOauthRefreshToken);
+}
+
 function isConfigured() {
-  return !!(config.gdriveServiceAccountJson || config.gdriveServiceAccountFile) && !!config.gdriveRootFolderId;
+  return (hasServiceAccountConfig() || hasOauthConfig()) && !!config.gdriveRootFolderId;
+}
+
+function getAuthMode() {
+  if (_authMode) return _authMode;
+  if (hasServiceAccountConfig()) _authMode = 'service_account';
+  else if (hasOauthConfig()) _authMode = 'oauth';
+  else _authMode = 'none';
+  return _authMode;
 }
 
 function getDriveClient() {
   if (_client) return _client;
   if (_initError) throw _initError;
   try {
-    const creds = loadCredentials();
-    if (!creds) {
-      _initError = new Error('Google Drive chưa được cấu hình (thiếu GDRIVE_SERVICE_ACCOUNT_JSON/_FILE)');
-      throw _initError;
+    const mode = getAuthMode();
+    if (mode === 'service_account') {
+      const creds = loadServiceAccountCreds();
+      if (!creds) throw new Error('GDRIVE_SERVICE_ACCOUNT_JSON/_FILE không hợp lệ');
+      const auth = new JWT({
+        email: creds.client_email,
+        key: creds.private_key,
+        scopes: SCOPES,
+        subject: config.gdriveImpersonateUser || undefined,
+      });
+      _client = google.drive({ version: 'v3', auth });
+      return _client;
     }
-    const auth = new JWT({
-      email: creds.client_email,
-      key: creds.private_key,
-      scopes: SCOPES,
-      subject: config.gdriveImpersonateUser || undefined,
-    });
-    _client = google.drive({ version: 'v3', auth });
-    return _client;
+    if (mode === 'oauth') {
+      const oauth2 = new OAuth2Client(config.gdriveOauthClientId, config.gdriveOauthClientSecret);
+      oauth2.setCredentials({ refresh_token: config.gdriveOauthRefreshToken });
+      // google-auth-library tự gọi /token để refresh access_token khi cần.
+      _client = google.drive({ version: 'v3', auth: oauth2 });
+      return _client;
+    }
+    _initError = new Error('Google Drive chưa được cấu hình (cần Service Account JSON hoặc OAuth refresh token)');
+    throw _initError;
   } catch (e) {
     _initError = e;
     throw e;
@@ -244,6 +282,7 @@ async function listChanges(pageToken) {
 
 module.exports = {
   isConfigured,
+  getAuthMode,
   getDriveClient,
   getRootFolderId,
   ensureScopeFolderOnDrive,

@@ -176,6 +176,7 @@ async function applyWorkshopTypeDefaultStaffToProject(projectId, companyId, work
     ? String(primaryUserId)
     : String(userIds[0]);
 
+  const previousUserIds = await loadProjectProductionStaffUserIds(projectId);
   const nowIso = new Date().toISOString();
 
   let staffInserted = false;
@@ -230,7 +231,7 @@ async function applyWorkshopTypeDefaultStaffToProject(projectId, companyId, work
       .eq('id', deal.id);
   }
 
-  await syncLeadMembersForProject(projectId, userIds, primaryId);
+  await syncLeadMembersForProject(projectId, userIds, primaryId, { previousUserIds });
 
   return primaryId;
 }
@@ -316,8 +317,14 @@ async function ensureLeadMembersFromProjectStaff(leadId) {
 }
 
 /** Đồng bộ lead_members cho mọi deal gắn project. */
-async function syncLeadMembersForProject(projectId, userIds, primaryUserId, addedBy = null) {
+async function syncLeadMembersForProject(projectId, userIds, primaryUserId, opts = {}) {
   if (!projectId || !userIds?.length) return { synced: 0 };
+  const { previousUserIds = [] } = opts;
+  const newSet = new Set(userIds.map(String));
+  const staleUserIds = [...new Set(
+    (previousUserIds || []).map(String).filter((uid) => uid && !newSet.has(uid)),
+  )];
+
   const { data: deals } = await supabase
     .from('crm_leads')
     .select('id')
@@ -325,15 +332,66 @@ async function syncLeadMembersForProject(projectId, userIds, primaryUserId, adde
     .eq('type', 'deal');
   let total = 0;
   for (const deal of deals || []) {
+    if (staleUserIds.length) {
+      const { error: delErr } = await supabase
+        .from('lead_members')
+        .delete()
+        .eq('lead_id', deal.id)
+        .in('user_id', staleUserIds);
+      if (delErr) {
+        console.warn('[productionWorkshopTypeStaff] lead_members cleanup:', delErr.message);
+      }
+    }
     const r = await syncProductionStaffToLeadMembers({
       dealId: deal.id,
       userIds,
       primaryUserId,
-      addedBy,
+      addedBy: opts.addedBy || null,
     });
     total += r.synced || 0;
   }
   return { synced: total };
+}
+
+/**
+ * Áp dụng NV mặc định theo phân loại cho mọi dự án SX đang có phân loại đó.
+ * Ghi đè project_production_staff, production_person_id, deal assigned_to + lead_members.
+ */
+async function applyWorkshopTypeDefaultStaffToAllProjects(companyId, workshopTypeId) {
+  if (!companyId || !workshopTypeId) {
+    return { updated: 0, project_ids: [] };
+  }
+
+  const { data: wt } = await supabase
+    .from('workshop_project_types')
+    .select('id, company_id, name')
+    .eq('id', workshopTypeId)
+    .maybeSingle();
+  if (!wt || String(wt.company_id) !== String(companyId)) {
+    throw new Error('Phân loại không thuộc công ty sản xuất');
+  }
+
+  const { data: projects, error } = await supabase
+    .from('projects')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('workshop_type_id', workshopTypeId);
+  if (error) throw error;
+
+  const projectIds = (projects || []).map((p) => p.id).filter(Boolean);
+  if (!projectIds.length) {
+    return { updated: 0, project_ids: [], workshop_type_name: wt.name };
+  }
+
+  for (const projectId of projectIds) {
+    await applyWorkshopTypeDefaultStaffToProject(projectId, companyId, workshopTypeId);
+  }
+
+  return {
+    updated: projectIds.length,
+    project_ids: projectIds,
+    workshop_type_name: wt.name,
+  };
 }
 
 /** Tự gán NV mặc định cho dự án đã có phân loại nhưng chưa có dòng project_production_staff. */
@@ -543,6 +601,7 @@ module.exports = {
   enrichCrmLeadsWithProductionStaff,
   loadProjectProductionStaffForApi,
   applyWorkshopTypeDefaultStaffToProject,
+  applyWorkshopTypeDefaultStaffToAllProjects,
   saveWorkshopTypeDefaultStaff,
   formatDefaultsForApi,
   userBelongsToProductionCompany,

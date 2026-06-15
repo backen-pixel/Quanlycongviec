@@ -337,16 +337,41 @@ export default function DrivePage() {
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-6">
           <div className="flex items-start gap-3">
             <AlertCircle className="text-amber-600 shrink-0 mt-0.5" size={22} />
-            <div>
+            <div className="flex-1">
               <h2 className="text-amber-900 font-semibold">Google Drive chưa được cấu hình</h2>
-              <p className="text-amber-800 text-sm mt-1.5">
-                Vui lòng đặt các biến môi trường backend trước khi sử dụng module Drive:
-              </p>
-              <ul className="text-amber-800 text-sm mt-2 space-y-1 list-disc pl-5">
-                <li><code className="bg-amber-100 px-1.5 rounded">GDRIVE_SERVICE_ACCOUNT_JSON</code> hoặc <code className="bg-amber-100 px-1.5 rounded">GDRIVE_SERVICE_ACCOUNT_FILE</code></li>
-                <li><code className="bg-amber-100 px-1.5 rounded">GDRIVE_ROOT_FOLDER_ID</code> (folder gốc Drive đã share Editor cho service account)</li>
-              </ul>
-              <p className="text-amber-800 text-sm mt-3">Sau khi đặt biến môi trường, khởi động lại backend.</p>
+              <p className="text-amber-800 text-xs mt-1">Chế độ phát hiện: <code className="bg-amber-100 px-1.5 rounded">{health.auth_mode || 'none'}</code></p>
+
+              <p className="text-amber-900 font-semibold text-sm mt-4">Chọn MỘT trong hai cách cấu hình:</p>
+
+              <div className="mt-3 bg-white border border-amber-200 rounded-lg p-3">
+                <p className="text-sm font-semibold text-slate-700">Cách 1 — OAuth Refresh Token (đơn giản, dùng tài khoản Gmail/Workspace cá nhân)</p>
+                <p className="text-xs text-slate-500 mt-1">Thêm 4 biến vào <code className="bg-slate-100 px-1">backend/.env</code>:</p>
+                <pre className="text-xs bg-slate-50 border rounded p-2 mt-1.5 overflow-x-auto">
+{`GDRIVE_OAUTH_CLIENT_ID=<client_id>.apps.googleusercontent.com
+GDRIVE_OAUTH_CLIENT_SECRET=<client_secret>
+GDRIVE_OAUTH_REFRESH_TOKEN=<refresh_token từ OAuth Playground>
+GDRIVE_ROOT_FOLDER_ID=<id folder gốc Drive của user>`}</pre>
+                <p className="text-[11px] text-slate-500 mt-1.5">Lấy refresh_token bằng <a href="https://developers.google.com/oauthplayground" target="_blank" rel="noreferrer" className="text-blue-600 underline">OAuth Playground</a> với scope <code className="bg-slate-100 px-1">https://www.googleapis.com/auth/drive</code>.</p>
+              </div>
+
+              <div className="mt-3 bg-white border border-amber-200 rounded-lg p-3">
+                <p className="text-sm font-semibold text-slate-700">Cách 2 — Service Account (cho Workspace tổ chức)</p>
+                <p className="text-xs text-slate-500 mt-1">Thêm vào <code className="bg-slate-100 px-1">backend/.env</code>:</p>
+                <pre className="text-xs bg-slate-50 border rounded p-2 mt-1.5 overflow-x-auto">
+{`GDRIVE_SERVICE_ACCOUNT_JSON='{"type":"service_account",...toàn bộ key.json...}'
+GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
+                <p className="text-[11px] text-slate-500 mt-1.5">Tạo Service Account ở Google Cloud Console → tải JSON key → share folder gốc với email service account.</p>
+              </div>
+
+              <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <p className="text-sm font-semibold text-blue-900">Sau khi cấu hình</p>
+                <ol className="text-xs text-blue-800 mt-1.5 space-y-0.5 list-decimal pl-5">
+                  <li>Save file <code className="bg-blue-100 px-1">backend/.env</code></li>
+                  <li>Restart backend (Ctrl+C trong terminal → <code className="bg-blue-100 px-1">npm run dev</code>)</li>
+                  <li>Thấy log <code className="bg-blue-100 px-1">[drive-sync] started</code> là OK</li>
+                  <li>Refresh trang này (F5)</li>
+                </ol>
+              </div>
             </div>
           </div>
         </div>

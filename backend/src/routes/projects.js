@@ -2509,6 +2509,57 @@ async function fetchProjectCommentReactionsAggregate(commentIds, userId) {
   return out;
 }
 
+function projectCommentReadReceiptsTableMissing(error) {
+  return String(error?.message || '').toLowerCase().includes('project_comment_read_receipts');
+}
+
+/** Thành viên có thể xem bình luận dự án — ưu tiên lead_members nếu deal liên kết. */
+async function fetchProjectCommentAudienceUserIds(projectId) {
+  const { data: proj } = await supabase
+    .from('projects')
+    .select('sales_person_id, designer_id, project_manager_id, supervisor_id, production_person_id, responsible_person_id, created_by')
+    .eq('id', projectId)
+    .maybeSingle();
+  if (!proj) return [];
+
+  const { data: deal } = await supabase
+    .from('crm_leads')
+    .select('id')
+    .eq('project_id', projectId)
+    .eq('type', 'deal')
+    .maybeSingle();
+  if (deal?.id) {
+    const { data: members } = await supabase.from('lead_members').select('user_id').eq('lead_id', deal.id);
+    const ids = (members || []).map((m) => m.user_id).filter(Boolean);
+    if (ids.length) return [...new Set(ids)];
+  }
+
+  const { data: taskAssignees } = await supabase
+    .from('tasks')
+    .select('assignee_id')
+    .eq('project_id', projectId)
+    .not('assignee_id', 'is', null);
+  const taskIds = (taskAssignees || []).map((t) => t.assignee_id).filter(Boolean);
+  const baseTeam = proj.production_person_id
+    ? [proj.production_person_id, proj.responsible_person_id]
+    : [proj.sales_person_id, proj.designer_id, proj.project_manager_id, proj.supervisor_id, proj.responsible_person_id];
+  const ids = [...new Set([...baseTeam, ...taskIds, proj.created_by].filter(Boolean))];
+  return ids;
+}
+
+async function fetchProjectCommentAudienceMembers(projectId) {
+  const userIds = await fetchProjectCommentAudienceUserIds(projectId);
+  if (!userIds.length) return [];
+  const { data: users } = await supabase
+    .from('users')
+    .select('id, full_name, email, avatar')
+    .in('id', userIds);
+  return (users || []).map((u) => ({
+    user_id: u.id,
+    user: u,
+  }));
+}
+
 r.get('/:id/comments', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -2594,6 +2645,69 @@ r.post('/:id/comments', async (req, res) => {
 
     res.status(201).json({ comment: data });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+/** Đánh dấu đã đọc bình luận dự án (cập nhật last_read_at). */
+r.patch('/:id/comments/read', async (req, res) => {
+  try {
+    const pid = req.params.id;
+    const uid = req.user.userId;
+    const last_read_at = new Date().toISOString();
+    const { error } = await supabase.from('project_comment_read_receipts').upsert(
+      { project_id: pid, user_id: uid, last_read_at },
+      { onConflict: 'project_id,user_id' },
+    );
+    if (error) {
+      if (projectCommentReadReceiptsTableMissing(error)) {
+        return res.status(500).json({
+          error: 'Bảng read receipt chưa có. Chạy migration database/353_project_comment_read_receipts.sql.',
+        });
+      }
+      throw error;
+    }
+
+    try {
+      await supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('user_id', uid)
+        .eq('is_read', false)
+        .eq('type', 'comment_added')
+        .eq('entity_type', 'project')
+        .eq('entity_id', pid);
+    } catch { /* best-effort */ }
+
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`project:${pid}`).emit('project:comment:read', { project_id: pid, user_id: uid, last_read_at });
+      io.emit('project:comment:read', { project_id: pid, user_id: uid, last_read_at });
+    }
+    res.json({ ok: true, last_read_at });
+  } catch (e) {
+    console.error('PATCH /projects/:id/comments/read:', e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
+/** Read receipts + danh sách thành viên audience — hiển thị Đã xem / Đã nhận. */
+r.get('/:id/comments/read-receipts', async (req, res) => {
+  try {
+    const pid = req.params.id;
+    const [receiptsRes, members] = await Promise.all([
+      supabase.from('project_comment_read_receipts').select('user_id, last_read_at').eq('project_id', pid),
+      fetchProjectCommentAudienceMembers(pid),
+    ]);
+    if (receiptsRes.error) {
+      if (projectCommentReadReceiptsTableMissing(receiptsRes.error)) {
+        return res.json({ receipts: [], members });
+      }
+      throw receiptsRes.error;
+    }
+    res.json({ receipts: receiptsRes.data || [], members });
+  } catch (e) {
+    console.error('GET /projects/:id/comments/read-receipts:', e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
 });
 
 r.delete('/:id/comments/:commentId', async (req, res) => {

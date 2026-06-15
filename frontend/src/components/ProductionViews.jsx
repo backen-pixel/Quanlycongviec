@@ -4,11 +4,11 @@ import {
   Plus, Edit2, Trash2, X, Search, GripVertical, ChevronLeft, ChevronRight, MessageSquare,
 } from 'lucide-react';
 import api from '../lib/api';
-import { getSocket } from '../lib/socket';
 import { useAuth } from '../lib/auth';
 import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
-import { FbCrmAvatar, FbCrmCommentComposer, formatCrmFbRelativeTime } from './crmFbCommentUi';
-import { upsertComment } from './CommentsPanels';
+import { FbCrmAvatar, FbCrmCommentComposer, formatCrmCommentFullDateTime, formatCrmFbRelativeTime } from './crmFbCommentUi';
+import { upsertComment, CommentAttachmentsBlock } from './CommentsPanels';
+import { FilePreview, FileUploadButton } from './FileUpload';
 import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
 
 /** Bộ emoji được phép — đồng bộ với backend PROJECT_COMMENT_ALLOWED_REACTION_EMOJI */
@@ -1420,9 +1420,11 @@ export function ProductionCommentsView({ pipeline, commentsIndex, onRefreshIndex
 }
 
 function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, user }) {
+  const { socket } = useAuth();
   const [comments, setComments] = useState(null);
   const [loading, setLoading] = useState(false);
   const [body, setBody] = useState('');
+  const [pendingFiles, setPendingFiles] = useState([]);
   const [posting, setPosting] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editingBody, setEditingBody] = useState('');
@@ -1447,14 +1449,14 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
   useEffect(() => { if (!expanded) setReplyTo(null); }, [expanded]);
 
   useEffect(() => {
-    if (!expanded) return;
-    const socket = getSocket();
-    if (!socket) return;
-    socket.emit('join:project', item.id);
+    if (!expanded || !socket) return;
+    const join = () => socket.emit('join:project', item.id);
+    join();
+    socket.on('connect', join);
     const merge = (payload) => {
       if (String(payload?.project_id) !== String(item.id)) return;
       const action = payload?.action;
-      if (action === 'deleted' || payload?.comment_id) {
+      if (action === 'deleted') {
         const cid = payload.comment_id || payload.comment?.id;
         if (cid) setComments((prev) => (prev || []).filter((c) => String(c.id) !== String(cid)));
         return;
@@ -1467,25 +1469,30 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
       }
       setComments((prev) => upsertComment(prev, row));
     };
+    const onDeleted = (p) => merge({ ...p, action: 'deleted' });
+    const onUpdated = (p) => merge({ ...p, action: 'updated' });
     socket.on('project:comment', merge);
-    socket.on('project:comment:deleted', (p) => merge({ ...p, action: 'deleted' }));
-    socket.on('project:comment:updated', (p) => merge({ ...p, action: 'updated' }));
+    socket.on('project:comment:deleted', onDeleted);
+    socket.on('project:comment:updated', onUpdated);
     return () => {
+      socket.off('connect', join);
+      socket.emit('leave:project', item.id);
       socket.off('project:comment', merge);
-      socket.off('project:comment:deleted', merge);
-      socket.off('project:comment:updated', merge);
+      socket.off('project:comment:deleted', onDeleted);
+      socket.off('project:comment:updated', onUpdated);
     };
-  }, [expanded, item.id]);
+  }, [expanded, item.id, socket]);
 
   const commentsByParent = useMemo(() => groupProjectCommentsByParent(comments || []), [comments]);
 
   const submit = async () => {
     const text = body.trim();
-    if (!text) return;
+    if (!text && !pendingFiles.length) return;
     try {
       setPosting(true);
       const payload = { content: text };
       if (replyTo?.id != null) payload.parent_id = replyTo.id;
+      if (pendingFiles.length) payload.attachments = pendingFiles;
       const r = await api.post(`/projects/${item.id}/comments`, payload);
       const row = r.data?.comment || r.data;
       if (row?.id) {
@@ -1494,6 +1501,7 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
         await load({ silent: true });
       }
       setBody('');
+      setPendingFiles([]);
       setReplyTo(null);
       onChanged?.();
     } catch (e) {
@@ -1566,7 +1574,9 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0">
                     <span className="text-[13px] font-semibold text-[#050505]">{c.user?.full_name || 'Thành viên'}</span>
                     <span className="text-[11px] text-[#65676b]">
-                      {formatCrmFbRelativeTime(c.created_at)}
+                      <time dateTime={c.created_at || ''} title={formatCrmCommentFullDateTime(c.created_at)}>
+                        {formatCrmFbRelativeTime(c.created_at)}
+                      </time>
                       {c.updated_at && c.updated_at !== c.created_at && (
                         <span className="text-[#65676b]/70"> · Đã chỉnh sửa</span>
                       )}
@@ -1587,7 +1597,12 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
                       </div>
                     </div>
                   ) : (
-                    <p className="mt-1 break-words text-[15px] leading-snug text-[#050505] whitespace-pre-wrap">{c.content || ''}</p>
+                    <>
+                      {(c.content || '').trim() ? (
+                        <p className="mt-1 break-words text-[15px] leading-snug text-[#050505] whitespace-pre-wrap">{c.content || ''}</p>
+                      ) : null}
+                      <CommentAttachmentsBlock attachments={c.attachments} />
+                    </>
                   )}
                 </div>
                 {editingId !== c.id && <ProjectCommentReactionCornerBadge comment={c} />}
@@ -1703,18 +1718,31 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
                     onClick={() => setReplyTo(null)}>Hủy</button>
           </div>
         )}
-        <FbCrmCommentComposer
-          user={user}
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          onSubmit={submit}
-          posting={posting}
-          placeholder={
-            replyTo
-              ? `Trả lời ${replyTo.name}…`
-              : `Bình luận với tư cách ${user?.full_name || user?.email || 'bạn'}…`
-          }
-        />
+        {pendingFiles.length > 0 && (
+          <div className="px-3 pt-2">
+            <FilePreview files={pendingFiles} onRemove={(i) => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i))} small />
+          </div>
+        )}
+        <div className="flex items-end gap-1">
+          <div className="shrink-0 pb-2 pl-2">
+            <FileUploadButton compact onFilesUploaded={(files) => setPendingFiles((prev) => [...prev, ...(files || [])])} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <FbCrmCommentComposer
+              user={user}
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              onSubmit={submit}
+              posting={posting}
+              canSubmit={Boolean(body.trim() || pendingFiles.length)}
+              placeholder={
+                replyTo
+                  ? `Trả lời ${replyTo.name}…`
+                  : `Bình luận với tư cách ${user?.full_name || user?.email || 'bạn'}…`
+              }
+            />
+          </div>
+        </div>
       </div>
     </div>
   );

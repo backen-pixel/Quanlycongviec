@@ -132,6 +132,7 @@ async function loadFile(id) {
 r.get('/health', async (req, res) => {
   res.json({
     configured: gdrive.isConfigured(),
+    auth_mode: gdrive.getAuthMode(),
     root_folder_id: gdrive.isConfigured() ? require('../config').gdriveRootFolderId : null,
   });
 });
@@ -210,7 +211,19 @@ r.post('/roots/ensure-personal', async (req, res) => {
       })
       .select()
       .single();
-    if (error) throw error;
+    if (error) {
+      // Race condition: 2 request đồng thời cùng tạo — bên kia đã thành công, mình lấy lại record đó.
+      if (error.code === '23505') {
+        const { data: dup } = await supabase
+          .from('drive_roots')
+          .select('*')
+          .eq('scope', 'user')
+          .eq('owner_id', userId)
+          .maybeSingle();
+        if (dup) return res.json({ root: dup });
+      }
+      throw error;
+    }
     await logDriveActivity({ user: req.user, action: 'create_root', targetType: 'root', targetId: data.id, targetName: data.name, rootId: data.id });
     res.status(201).json({ root: data });
   } catch (e) {
@@ -252,7 +265,18 @@ r.post('/roots/ensure-company', async (req, res) => {
       })
       .select()
       .single();
-    if (error) throw error;
+    if (error) {
+      if (error.code === '23505') {
+        const { data: dup } = await supabase
+          .from('drive_roots')
+          .select('*')
+          .eq('scope', 'company')
+          .eq('owner_id', companyId)
+          .maybeSingle();
+        if (dup) return res.json({ root: dup });
+      }
+      throw error;
+    }
     await logDriveActivity({ user: req.user, action: 'create_root', targetType: 'root', targetId: data.id, targetName: data.name, rootId: data.id });
     res.status(201).json({ root: data });
   } catch (e) {

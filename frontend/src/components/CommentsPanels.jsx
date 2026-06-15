@@ -1,14 +1,291 @@
 /**
  * Panel bình luận (thread + reactions) dùng chung cho chi tiết CRM và Sản xuất.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Check, CheckCheck, Paperclip } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { getSocket } from '../lib/socket';
-import { FbCrmAvatar, FbCrmCommentComposer, formatCrmFbRelativeTime } from './crmFbCommentUi';
+import { FbCrmAvatar, FbCrmCommentComposer, formatCrmCommentFullDateTime, formatCrmFbRelativeTime } from './crmFbCommentUi';
 import { CrmCommentMentionComposer, renderCrmCommentBody } from './crmCommentMentionUi';
+import { FilePreview, FileUploadButton } from './FileUpload';
+import { publicFileUrl as pubUrl } from '../lib/publicFileUrl';
 
 const REACTION_PICKER = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+
+function normalizeCommentAttachment(att) {
+  if (!att) return null;
+  const url = att.file_url || att.url || '';
+  if (!url) return null;
+  return {
+    url,
+    name: att.file_name || att.name || 'file',
+    mime: att.mime_type || att.type || '',
+    size: att.file_size || att.size || 0,
+  };
+}
+
+function commentAttachmentList(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  return list.map(normalizeCommentAttachment).filter(Boolean);
+}
+
+function isCommentImage(att) {
+  const mime = att.mime || '';
+  const name = att.name || '';
+  return mime.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg|heic|heif)$/i.test(name);
+}
+
+export function CommentAttachmentsBlock({ attachments }) {
+  const items = commentAttachmentList(attachments);
+  if (!items.length) return null;
+  const images = items.filter(isCommentImage);
+  const otherFiles = items.filter((f) => !isCommentImage(f));
+  return (
+    <div className="mt-2 space-y-2">
+      {images.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {images.map((img, ii) => {
+            const href = pubUrl(img.url);
+            return (
+              <a key={ii} href={href} target="_blank" rel="noopener noreferrer" className="block">
+                <img
+                  src={href}
+                  alt={img.name || 'image'}
+                  className="max-h-48 max-w-xs rounded-lg border border-[#e4e6eb] object-cover hover:opacity-90 transition-opacity"
+                />
+              </a>
+            );
+          })}
+        </div>
+      )}
+      {otherFiles.length > 0 && (
+        <div className="space-y-1">
+          {otherFiles.map((f, fi) => {
+            const href = pubUrl(f.url);
+            return (
+              <a
+                key={fi}
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 rounded-lg bg-[#f0f2f5] px-2.5 py-1.5 hover:bg-[#e4e6eb] transition-colors"
+              >
+                <Paperclip className="h-3.5 w-3.5 shrink-0 text-[#65676b]" />
+                <span className="min-w-0 flex-1 truncate text-xs text-[#1877f2]">{f.name}</span>
+                {f.size > 0 && (
+                  <span className="shrink-0 text-[10px] text-[#65676b] tabular-nums">
+                    {f.size < 1048576 ? `${(f.size / 1024).toFixed(0)} KB` : `${(f.size / 1048576).toFixed(1)} MB`}
+                  </span>
+                )}
+              </a>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function useProjectCommentSocket(projectId, onEvent, onRead) {
+  const { socket } = useAuth();
+
+  useEffect(() => {
+    if (!projectId || !socket) return;
+
+    const join = () => socket.emit('join:project', projectId);
+    join();
+    socket.on('connect', join);
+
+    const merge = (payload) => {
+      if (String(payload?.project_id) !== String(projectId)) return;
+      onEvent(payload);
+    };
+    const onDeleted = (p) => merge({ ...p, action: 'deleted' });
+    const onUpdated = (p) => merge({ ...p, action: 'updated' });
+    const onReadEvt = (payload) => {
+      if (String(payload?.project_id) !== String(projectId)) return;
+      onRead?.(payload);
+    };
+    socket.on('project:comment', merge);
+    socket.on('project:comment:deleted', onDeleted);
+    socket.on('project:comment:updated', onUpdated);
+    if (onRead) socket.on('project:comment:read', onReadEvt);
+
+    return () => {
+      socket.off('connect', join);
+      socket.emit('leave:project', projectId);
+      socket.off('project:comment', merge);
+      socket.off('project:comment:deleted', onDeleted);
+      socket.off('project:comment:updated', onUpdated);
+      if (onRead) socket.off('project:comment:read', onReadEvt);
+    };
+  }, [projectId, socket, onEvent, onRead]);
+}
+
+function useLeadCommentSocket(leadId, onEvent) {
+  const { socket } = useAuth();
+
+  useEffect(() => {
+    if (!leadId || !socket) return;
+
+    const join = () => socket.emit('join:lead', leadId);
+    join();
+    socket.on('connect', join);
+
+    const handler = (payload) => {
+      if (String(payload?.lead_id) !== String(leadId)) return;
+      onEvent(payload);
+    };
+    socket.on('lead:comment', handler);
+
+    return () => {
+      socket.off('connect', join);
+      socket.emit('leave:lead', leadId);
+      socket.off('lead:comment', handler);
+    };
+  }, [leadId, socket, onEvent]);
+}
+
+function memberDisplayName(userId, members) {
+  const mem = (members || []).find((m) => String(m.user_id || m.id) === String(userId));
+  return mem?.user?.full_name || mem?.full_name || mem?.user?.email || mem?.email || '';
+}
+
+function getSeenByUsersForComment(comment, readReceipts, excludeUserId) {
+  if (!comment?.created_at || !readReceipts || readReceipts.size === 0) return [];
+  const ts = new Date(comment.created_at).getTime();
+  if (!Number.isFinite(ts)) return [];
+  const excludeStr = String(excludeUserId || '');
+  const out = [];
+  for (const [userId, lastReadAt] of readReceipts) {
+    if (String(userId) === excludeStr) continue;
+    const readTs = new Date(lastReadAt).getTime();
+    if (Number.isFinite(readTs) && readTs >= ts) {
+      out.push({ user_id: userId, last_read_at: lastReadAt });
+    }
+  }
+  return out;
+}
+
+function getNotSeenMembersForComment(seenBy, members, excludeUserId) {
+  const seenIds = new Set(seenBy.map((r) => String(r.user_id)));
+  const excludeStr = String(excludeUserId || '');
+  return (members || []).filter((m) => {
+    const id = String(m.user_id || m.id || '');
+    return id && id !== excludeStr && !seenIds.has(id);
+  });
+}
+
+function formatReadStatusTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const time = d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  return isToday ? time : `${d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })} ${time}`;
+}
+
+function ProjectCommentReadStatus({
+  comment,
+  readReceipts,
+  members,
+  selfUid,
+  openDetailId,
+  onOpenDetail,
+}) {
+  const wrapRef = useRef(null);
+  const msgId = String(comment?.id || '');
+  const detailOpen = openDetailId === msgId;
+  const isOwn = String(comment?.user_id || '') === String(selfUid || '');
+
+  useEffect(() => {
+    if (!detailOpen) return undefined;
+    const onDoc = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) onOpenDetail?.(null);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [detailOpen, onOpenDetail]);
+
+  if (!comment) return null;
+
+  const excludeUid = isOwn ? selfUid : comment.user_id;
+  const seenBy = getSeenByUsersForComment(comment, readReceipts, excludeUid);
+  const notSeen = getNotSeenMembersForComment(seenBy, members, excludeUid);
+  const seenCount = seenBy.length;
+  const Icon = seenCount > 0 ? CheckCheck : Check;
+  const activeCls = seenCount > 0 ? 'text-sky-500 font-medium' : 'text-[#65676b]';
+
+  const compactLabel = isOwn
+    ? seenCount === 0
+      ? 'Đã gửi'
+      : `Đã xem (${seenCount})`
+    : seenCount === 0
+      ? 'Chưa xem'
+      : `Đã xem (${seenCount})`;
+
+  return (
+    <span ref={wrapRef} className="relative inline-flex">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpenDetail?.(detailOpen ? null : msgId);
+        }}
+        className={`inline-flex items-center gap-0.5 rounded px-0.5 -mx-0.5 hover:bg-black/[0.04] transition cursor-pointer ${activeCls}`}
+        title="Bấm xem ai đã xem / đã nhận"
+        aria-expanded={detailOpen}
+      >
+        <Icon size={11} className="shrink-0" aria-hidden />
+        <span className="text-[10px]">{compactLabel}</span>
+      </button>
+      {detailOpen ? (
+        <div
+          className="absolute bottom-full right-0 mb-1 z-30 min-w-[168px] max-w-[240px] rounded-lg border border-[#e4e6eb] bg-white shadow-lg py-1.5 px-2 text-left"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <p className="text-[9px] text-[#65676b] mb-1.5 pb-1 border-b border-[#e4e6eb]">
+            {formatCrmCommentFullDateTime(comment.created_at)}
+          </p>
+          {seenBy.length > 0 ? (
+            <div className="mb-1.5">
+              <p className="text-[9px] font-semibold uppercase tracking-wide text-sky-600 mb-0.5">
+                Đã xem ({seenBy.length})
+              </p>
+              <ul className="space-y-0.5 max-h-28 overflow-y-auto">
+                {seenBy.map((r) => (
+                  <li key={r.user_id} className="text-[10px] text-[#050505] leading-snug">
+                    <span className="font-medium">{memberDisplayName(r.user_id, members) || 'Thành viên'}</span>
+                    {r.last_read_at ? (
+                      <span className="text-[#65676b] ml-1">{formatReadStatusTime(r.last_read_at)}</span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <p className="text-[10px] text-[#65676b] mb-1">Chưa có ai xem bình luận này</p>
+          )}
+          {notSeen.length > 0 ? (
+            <div>
+              <p className="text-[9px] font-semibold uppercase tracking-wide text-amber-600 mb-0.5">
+                Đã nhận, chưa xem ({notSeen.length})
+              </p>
+              <ul className="space-y-0.5 max-h-28 overflow-y-auto">
+                {notSeen.map((m) => (
+                  <li key={m.user_id || m.id} className="text-[10px] text-[#65676b] leading-snug">
+                    {memberDisplayName(m.user_id || m.id, members) || 'Thành viên'}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </span>
+  );
+}
 
 function commentId(c) {
   return c?.id != null && c.id !== '' ? String(c.id) : '';
@@ -119,7 +396,18 @@ function CommentThread({
   renderBody,
   members = [],
   enableMentions = false,
+  enableAttachments = false,
+  pendingFiles = [],
+  onFilesUploaded,
+  onRemovePendingFile,
+  canSubmit,
+  readReceipts,
+  commentMembers = [],
+  readDetailId,
+  onOpenReadDetail,
+  showReadStatus = false,
 }) {
+  const selfUid = user?.userId || user?.id;
   const commentsByParent = useMemo(() => groupByParent(comments), [comments]);
 
   const renderBranch = (parentKey, depth) => {
@@ -136,7 +424,9 @@ function CommentThread({
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0">
                     <span className="text-[13px] font-semibold text-[#050505]">{c.user?.full_name || 'Thành viên'}</span>
                     <span className="text-[11px] text-[#65676b]">
-                      {formatCrmFbRelativeTime(c.created_at)}
+                      <time dateTime={c.created_at || ''} title={formatCrmCommentFullDateTime(c.created_at)}>
+                        {formatCrmFbRelativeTime(c.created_at)}
+                      </time>
                       {c.updated_at && c.updated_at !== c.created_at && <span className="text-[#65676b]/70"> · Đã chỉnh sửa</span>}
                     </span>
                   </div>
@@ -154,13 +444,30 @@ function CommentThread({
                       </div>
                     </div>
                   ) : (
-                    <p className="mt-1 break-words text-[15px] leading-snug text-[#050505] whitespace-pre-wrap">
-                      {renderBody ? renderBody(getBody(c)) : getBody(c)}
-                    </p>
+                    <>
+                      {(getBody(c) || '').trim() ? (
+                        <p className="mt-1 break-words text-[15px] leading-snug text-[#050505] whitespace-pre-wrap">
+                          {renderBody ? renderBody(getBody(c)) : getBody(c)}
+                        </p>
+                      ) : null}
+                      <CommentAttachmentsBlock attachments={c.attachments} />
+                    </>
                   )}
                 </div>
                 {editingId !== c.id && <ReactionCornerBadge comment={c} />}
               </div>
+              {showReadStatus && editingId !== c.id && (
+                <div className="mt-0.5 flex justify-end pr-1">
+                  <ProjectCommentReadStatus
+                    comment={c}
+                    readReceipts={readReceipts}
+                    members={commentMembers}
+                    selfUid={selfUid}
+                    openDetailId={readDetailId}
+                    onOpenDetail={onOpenReadDetail}
+                  />
+                </div>
+              )}
               {editingId !== c.id && (
                 <div
                   className="overflow-hidden transition-[max-height,opacity] duration-200 ease-out max-h-0 opacity-0 pointer-events-none group-hover/crx:max-h-28 group-hover/crx:opacity-100 group-hover/crx:pointer-events-auto group-focus-within/crx:max-h-28 group-focus-within/crx:opacity-100 group-focus-within/crx:pointer-events-auto"
@@ -209,25 +516,49 @@ function CommentThread({
             <button type="button" className="shrink-0 font-semibold text-[#65676b] hover:underline" onClick={() => setReplyTo(null)}>Hủy</button>
           </div>
         )}
+        {enableAttachments && pendingFiles.length > 0 && (
+          <div className="px-3 pt-2">
+            <FilePreview files={pendingFiles} onRemove={onRemovePendingFile} small />
+          </div>
+        )}
         {enableMentions ? (
-          <CrmCommentMentionComposer
-            user={user}
-            members={members}
-            value={bodyField}
-            onChange={(e) => setBody(e.target.value)}
-            onSubmit={onSubmit}
-            posting={posting}
-            placeholder={replyTo ? `Trả lời ${replyTo.name}…` : `Bình luận với tư cách ${user?.full_name || user?.email || 'bạn'}…`}
-          />
+          <div className="flex items-end gap-1">
+            {enableAttachments && (
+              <div className="shrink-0 pb-2 pl-2">
+                <FileUploadButton compact onFilesUploaded={onFilesUploaded} />
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <CrmCommentMentionComposer
+                user={user}
+                members={members}
+                value={bodyField}
+                onChange={(e) => setBody(e.target.value)}
+                onSubmit={onSubmit}
+                posting={posting}
+                placeholder={replyTo ? `Trả lời ${replyTo.name}…` : `Bình luận với tư cách ${user?.full_name || user?.email || 'bạn'}…`}
+              />
+            </div>
+          </div>
         ) : (
-          <FbCrmCommentComposer
-            user={user}
-            value={bodyField}
-            onChange={(e) => setBody(e.target.value)}
-            onSubmit={onSubmit}
-            posting={posting}
-            placeholder={replyTo ? `Trả lời ${replyTo.name}…` : `Bình luận với tư cách ${user?.full_name || user?.email || 'bạn'}…`}
-          />
+          <div className="flex items-end gap-1">
+            {enableAttachments && (
+              <div className="shrink-0 pb-2 pl-2">
+                <FileUploadButton compact onFilesUploaded={onFilesUploaded} />
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <FbCrmCommentComposer
+                user={user}
+                value={bodyField}
+                onChange={(e) => setBody(e.target.value)}
+                onSubmit={onSubmit}
+                posting={posting}
+                canSubmit={canSubmit}
+                placeholder={replyTo ? `Trả lời ${replyTo.name}…` : `Bình luận với tư cách ${user?.full_name || user?.email || 'bạn'}…`}
+              />
+            </div>
+          </div>
         )}
       </div>
     </div>
@@ -277,40 +608,30 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
 
   useEffect(() => { void load(); }, [load]);
 
-  useEffect(() => {
-    if (!leadId) return;
-    const socket = getSocket();
-    if (!socket) return;
-    socket.emit('join:lead', leadId);
-    const handler = (payload) => {
-      if (String(payload?.lead_id) !== String(leadId)) return;
-      const action = payload?.action || 'created';
-      if (action === 'deleted') {
-        setComments((prev) => {
-          const next = removeCommentById(prev, payload.comment_id);
-          onCountChange?.(next.length);
-          return next;
-        });
-        return;
-      }
-      const row = payload.comment;
-      if (!row?.id) return;
-      if (action === 'updated') {
-        setComments((prev) => replaceComment(prev, row));
-        return;
-      }
+  const handleLeadCommentEvent = useCallback((payload) => {
+    const action = payload?.action || 'created';
+    if (action === 'deleted') {
       setComments((prev) => {
-        const next = upsertComment(prev, row);
-        if (next.length !== (prev || []).length) onCountChange?.(next.length);
+        const next = removeCommentById(prev, payload.comment_id);
+        onCountChange?.(next.length);
         return next;
       });
-    };
-    socket.on('lead:comment', handler);
-    return () => {
-      socket.emit('leave:lead', leadId);
-      socket.off('lead:comment', handler);
-    };
-  }, [leadId, onCountChange]);
+      return;
+    }
+    const row = payload.comment;
+    if (!row?.id) return;
+    if (action === 'updated') {
+      setComments((prev) => replaceComment(prev, row));
+      return;
+    }
+    setComments((prev) => {
+      const next = upsertComment(prev, row);
+      if (next.length !== (prev || []).length) onCountChange?.(next.length);
+      return next;
+    });
+  }, [onCountChange]);
+
+  useLeadCommentSocket(leadId, handleLeadCommentEvent);
 
   const submit = async ({ mention_user_ids } = {}) => {
     const v = body.trim();
@@ -412,11 +733,51 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
   const [comments, setComments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [body, setBody] = useState('');
+  const [pendingFiles, setPendingFiles] = useState([]);
   const [posting, setPosting] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editingBody, setEditingBody] = useState('');
   const [replyTo, setReplyTo] = useState(null);
   const [reactionBusy, setReactionBusy] = useState(null);
+  const [readReceipts, setReadReceipts] = useState(() => new Map());
+  const [commentMembers, setCommentMembers] = useState([]);
+  const [readDetailId, setReadDetailId] = useState(null);
+  const selfUid = user?.userId || user?.id;
+
+  const applyReadReceipt = useCallback((payload) => {
+    if (!payload?.user_id || !payload?.last_read_at) return;
+    setReadReceipts((prev) => {
+      const next = new Map(prev);
+      next.set(String(payload.user_id), payload.last_read_at);
+      return next;
+    });
+  }, []);
+
+  const loadReadMeta = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const r = await api.get(`/projects/${projectId}/comments/read-receipts`);
+      const next = new Map();
+      for (const row of r.data?.receipts || []) {
+        if (row?.user_id && row?.last_read_at) next.set(String(row.user_id), row.last_read_at);
+      }
+      setReadReceipts(next);
+      setCommentMembers(Array.isArray(r.data?.members) ? r.data.members : []);
+    } catch {
+      setReadReceipts(new Map());
+      setCommentMembers([]);
+    }
+  }, [projectId]);
+
+  const markCommentsRead = useCallback(async () => {
+    if (!projectId || !selfUid) return;
+    try {
+      const r = await api.patch(`/projects/${projectId}/comments/read`);
+      if (r.data?.last_read_at) {
+        applyReadReceipt({ user_id: selfUid, last_read_at: r.data.last_read_at });
+      }
+    } catch { /* bảng chưa migrate — bỏ qua */ }
+  }, [projectId, selfUid, applyReadReceipt]);
 
   const load = useCallback(async () => {
     if (!projectId) return;
@@ -434,56 +795,51 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
     }
   }, [projectId, onCountChange]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    void loadReadMeta();
+  }, [load, loadReadMeta]);
 
   useEffect(() => {
-    if (!projectId) return;
-    const socket = getSocket();
-    if (!socket) return;
-    socket.emit('join:project', projectId);
-    const merge = (payload) => {
-      if (String(payload?.project_id) !== String(projectId)) return;
-      const action = payload?.action;
-      if (action === 'deleted' || payload?.comment_id) {
-        const cid = payload.comment_id || payload.comment?.id;
-        if (cid) {
-          setComments((prev) => {
-            const next = removeCommentById(prev, cid);
-            if (next.length !== (prev || []).length) onCountChange?.(next.length);
-            return next;
-          });
-        }
-        return;
+    if (!loading) void markCommentsRead();
+  }, [loading, comments.length, markCommentsRead]);
+
+  const handleProjectCommentEvent = useCallback((payload) => {
+    const action = payload?.action;
+    if (action === 'deleted') {
+      const cid = payload.comment_id || payload.comment?.id;
+      if (cid) {
+        setComments((prev) => {
+          const next = removeCommentById(prev, cid);
+          if (next.length !== (prev || []).length) onCountChange?.(next.length);
+          return next;
+        });
       }
-      const row = payload.comment;
-      if (!row?.id) return;
-      if (action === 'updated') {
-        setComments((prev) => replaceComment(prev, row));
-        return;
-      }
-      setComments((prev) => {
-        const next = upsertComment(prev, row);
-        if (next.length !== (prev || []).length) onCountChange?.(next.length);
-        return next;
-      });
-    };
-    socket.on('project:comment', merge);
-    socket.on('project:comment:deleted', (p) => merge({ ...p, action: 'deleted' }));
-    socket.on('project:comment:updated', (p) => merge({ ...p, action: 'updated' }));
-    return () => {
-      socket.off('project:comment', merge);
-      socket.off('project:comment:deleted', merge);
-      socket.off('project:comment:updated', merge);
-    };
-  }, [projectId]);
+      return;
+    }
+    const row = payload.comment;
+    if (!row?.id) return;
+    if (action === 'updated') {
+      setComments((prev) => replaceComment(prev, row));
+      return;
+    }
+    setComments((prev) => {
+      const next = upsertComment(prev, row);
+      if (next.length !== (prev || []).length) onCountChange?.(next.length);
+      return next;
+    });
+  }, [onCountChange]);
+
+  useProjectCommentSocket(projectId, handleProjectCommentEvent, applyReadReceipt);
 
   const submit = async () => {
     const v = body.trim();
-    if (!v) return;
+    if (!v && !pendingFiles.length) return;
     setPosting(true);
     try {
       const payload = { content: v };
       if (replyTo?.id != null) payload.parent_id = replyTo.id;
+      if (pendingFiles.length) payload.attachments = pendingFiles;
       const r = await api.post(`/projects/${projectId}/comments`, payload);
       const row = r.data?.comment || r.data;
       if (row?.id) {
@@ -494,6 +850,7 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
         });
       } else await load();
       setBody('');
+      setPendingFiles([]);
       setReplyTo(null);
     } catch (e) {
       alert(e?.response?.data?.error || 'Lỗi gửi bình luận');
@@ -565,6 +922,16 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
       onRemove={removeComment}
       onReply={(c) => { setReplyTo({ id: c.id, name: c.user?.full_name || 'Thành viên' }); setEditingId(null); }}
       onReaction={pickReaction}
+      enableAttachments
+      pendingFiles={pendingFiles}
+      onFilesUploaded={(files) => setPendingFiles((prev) => [...prev, ...(files || [])])}
+      onRemovePendingFile={(i) => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i))}
+      canSubmit={Boolean(body.trim() || pendingFiles.length)}
+      readReceipts={readReceipts}
+      commentMembers={commentMembers}
+      readDetailId={readDetailId}
+      onOpenReadDetail={setReadDetailId}
+      showReadStatus
     />
   );
 }

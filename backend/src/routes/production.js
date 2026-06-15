@@ -3806,6 +3806,29 @@ r.get('/workshop-type-staff-defaults/:companyId', requirePermission('projects', 
   }
 });
 
+r.post('/workshop-type-staff-defaults/:companyId/apply-to-projects', requirePermission('projects', 'edit'), async (req, res) => {
+  try {
+    const companyId = req.params.companyId;
+    const v = await validateProductionCompanyId(companyId);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+    if (!userCanAccessProductionHandover(req, companyId)) {
+      return res.status(403).json({ error: 'Không có quyền sửa cấu hình công ty này' });
+    }
+
+    const workshopTypeId = req.body?.workshop_type_id && String(req.body.workshop_type_id).trim();
+    if (!workshopTypeId) {
+      return res.status(400).json({ error: 'Thiếu workshop_type_id' });
+    }
+
+    const { applyWorkshopTypeDefaultStaffToAllProjects } = require('../helpers/productionWorkshopTypeStaff');
+    const result = await applyWorkshopTypeDefaultStaffToAllProjects(companyId, workshopTypeId);
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    console.error(e);
+    res.status(400).json({ error: e.message });
+  }
+});
+
 r.put('/workshop-type-staff-defaults/:companyId', requirePermission('projects', 'edit'), async (req, res) => {
   try {
     const companyId = req.params.companyId;

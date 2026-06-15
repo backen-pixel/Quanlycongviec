@@ -20,6 +20,21 @@ export function formatCrmFbRelativeTime(iso) {
   return new Date(iso).toLocaleString('vi-VN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+/** Thời gian đầy đủ — tooltip / dòng phụ dưới bình luận. */
+export function formatCrmCommentFullDateTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('vi-VN', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 export function FbCrmAvatar({ user, className = 'h-8 w-8' }) {
   const name = user?.full_name || user?.email || '?';
   const initials = name
@@ -53,6 +68,7 @@ export function FbCrmCommentComposer({
   submitLabel = 'Đăng',
   minRows = 1,
   autoFocus = false,
+  canSubmit,
 }) {
   const textareaRef = useRef(null);
 
@@ -97,7 +113,7 @@ export function FbCrmCommentComposer({
       </div>
       <button
         type="button"
-        disabled={posting || !String(value || '').trim()}
+        disabled={posting || !(canSubmit ?? String(value || '').trim())}
         onClick={onSubmit}
         className="shrink-0 rounded-full bg-[#1877f2] px-4 py-2 text-[13px] font-semibold text-white shadow-sm hover:bg-[#166fe5] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
       >
