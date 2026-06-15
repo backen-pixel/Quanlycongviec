@@ -2,7 +2,7 @@
   "expo": {
     "name": "CRM Mobile",
     "slug": "crm-mobile-v2",
-    "version": "2.0.14",
+    "version": "2.0.16",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
@@ -19,7 +19,7 @@
     },
     "android": {
       "package": "vn.tubeppro.crmobilev2",
-      "versionCode": 15,
+      "versionCode": 17,
       "edgeToEdgeEnabled": false,
       "permissions": [
         "android.permission.RECORD_AUDIO",

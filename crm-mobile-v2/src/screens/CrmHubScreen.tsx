@@ -283,8 +283,12 @@ function resetCrmFilters(
   return { ...DEFAULT_CRM_FILTERS, companyId: defaultCompanyIdForUser(user, companies) };
 }
 
-function initialFiltersFromRoute(params?: RootStackParamList['CrmHub']): CrmHubFilters {
-  const base = { ...DEFAULT_CRM_FILTERS };
+function initialFiltersFromRoute(
+  params?: RootStackParamList['CrmHub'],
+  companyId?: string | null,
+): CrmHubFilters {
+  // Đặt companyId ngay từ đầu để filterKey khớp cache khi quay lại tab → hiển thị tức thì.
+  const base = { ...DEFAULT_CRM_FILTERS, companyId: companyId || '' };
   if (params?.initialAssignee === 'mine') {
     return { ...base, assignee: 'mine' };
   }
@@ -297,11 +301,17 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   const { toggle } = useCreateMenu();
   const myId = user?.id || user?.userId || '';
 
-  const [mode, setMode] = useState<Mode>(route.params?.initialMode ?? 'leads');
+  const initialMode: Mode = route.params?.initialMode ?? 'leads';
+  const [mode, setMode] = useState<Mode>(initialMode);
   const isLeads = mode === 'leads';
 
-  const [leadData, setLeadData] = useState<CrmHubData>(EMPTY_HUB);
-  const [dealData, setDealData] = useState<CrmHubData>(EMPTY_HUB);
+  // Seed từ cache module-level để khi quay lại tab hiển thị NGAY, không chờ load lại.
+  const initialFilterKey0 = serverFilterKey(initialFiltersFromRoute(route.params, user?.company_id), '');
+  const initialLeadSnap = myId ? peekCrmHubCache(myId, 'lead', initialFilterKey0) : null;
+  const initialDealSnap = myId ? peekCrmHubCache(myId, 'deal', initialFilterKey0) : null;
+
+  const [leadData, setLeadData] = useState<CrmHubData>(() => initialLeadSnap?.data ?? EMPTY_HUB);
+  const [dealData, setDealData] = useState<CrmHubData>(() => initialDealSnap?.data ?? EMPTY_HUB);
   const [loadingByMode, setLoadingByMode] = useState<{ leads: boolean; deals: boolean }>({
     leads: false,
     deals: false,
@@ -310,12 +320,15 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   const [moreLoading, setMoreLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
-  const [loaded, setLoaded] = useState<{ leads: boolean; deals: boolean }>({ leads: false, deals: false });
+  const [loaded, setLoaded] = useState<{ leads: boolean; deals: boolean }>(() => ({
+    leads: !!initialLeadSnap,
+    deals: !!initialDealSnap,
+  }));
 
   const [searchDraft, setSearchDraft] = useState('');
   const [search, setSearch] = useState('');
-  const [leadFilters, setLeadFilters] = useState<CrmHubFilters>(() => initialFiltersFromRoute(route.params));
-  const [dealFilters, setDealFilters] = useState<CrmHubFilters>(() => initialFiltersFromRoute(route.params));
+  const [leadFilters, setLeadFilters] = useState<CrmHubFilters>(() => initialFiltersFromRoute(route.params, user?.company_id));
+  const [dealFilters, setDealFilters] = useState<CrmHubFilters>(() => initialFiltersFromRoute(route.params, user?.company_id));
   const [filterOpen, setFilterOpen] = useState(false);
   const [companies, setCompanies] = useState<CrmCompany[]>([]);
   const [companiesReady, setCompaniesReady] = useState(false);
@@ -323,7 +336,9 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   const [departments, setDepartments] = useState<CrmDepartment[]>([]);
   const [employees, setEmployees] = useState<CrmEmployee[]>([]);
   const [metaLoading, setMetaLoading] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [activeIndex, setActiveIndex] = useState(
+    () => (initialMode === 'leads' ? initialLeadSnap : initialDealSnap)?.activeIndex ?? 0,
+  );
   const [movingId, setMovingId] = useState<string | null>(null);
   const [moveItem, setMoveItem] = useState<CrmKanbanItem | null>(null);
   const [columnPickerOpen, setColumnPickerOpen] = useState(false);
@@ -338,7 +353,10 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   });
   const leadDataRef = useRef(leadData);
   const dealDataRef = useRef(dealData);
-  const filterKeyRef = useRef('');
+  // Nếu mode hiện tại đã có cache → đặt filterKeyRef khớp luôn để KHÔNG kích hoạt refresh thừa khi mount.
+  const filterKeyRef = useRef(
+    (initialMode === 'leads' ? initialLeadSnap : initialDealSnap) ? initialFilterKey0 : '',
+  );
   const activeIndexRef = useRef(activeIndex);
   const modeRef = useRef(mode);
   const leadFiltersRef = useRef(leadFilters);
@@ -732,16 +750,31 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   loadedRef.current = loaded;
 
   const canLoadCrm = Boolean(user?.company_id) || companiesReady;
+  const canLoadCrmRef = useRef(canLoadCrm);
+  canLoadCrmRef.current = canLoadCrm;
+  const loadBootstrapRef = useRef(loadBootstrap);
+  loadBootstrapRef.current = loadBootstrap;
+  const loadStageRef = useRef(loadStage);
+  loadStageRef.current = loadStage;
 
+  // Deps rỗng: chỉ chạy khi focus/blur, KHÔNG re-subscribe khi loadBootstrap đổi identity
+  // (nếu phụ thuộc loadBootstrap, mỗi lần filters/search đổi sẽ hủy request đang chạy → cột trống).
   useFocusEffect(
     useCallback(() => {
-      if (!canLoadCrm) return;
       const which = modeRef.current;
-      if (loadedRef.current[which]) void loadBootstrap(which, false, undefined, true);
+      if (canLoadCrmRef.current && loadedRef.current[which]) {
+        // Đã có dữ liệu trong phiên trước → làm mới ngầm, giữ nguyên cột đang xem.
+        void loadBootstrapRef.current(which, false, undefined, true);
+        // Phục hồi nếu cột đang xem bị rỗng (cache đã bị dọn lúc rời màn hình).
+        const hubNow = which === 'leads' ? leadDataRef.current : dealDataRef.current;
+        const sid = stageIdAtIndex(which, activeIndexRef.current);
+        if (sid && !hubNow.cache[sid]?.loaded) void loadStageRef.current(which, sid, false);
+      }
       return () => {
         abortByModeRef.current[which]?.abort();
       };
-    }, [canLoadCrm, loadBootstrap]),
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []),
   );
 
   const hubStages = hub.stages;
@@ -791,10 +824,12 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   useEffect(() => {
     if (!loaded[mode] || !activeStageId) return;
     const cur = hub.cache[activeStageId];
-    if (!cur?.loaded && !stageLoading && !loading) {
+    // Cột đang xem chưa có dữ liệu → nạp lại. Không phụ thuộc cờ `loading` cấp board
+    // (tránh kẹt khi cờ này không được reset đúng lúc); loadStage tự chống nạp trùng.
+    if (!cur?.loaded && !stageLoading) {
       void loadStage(mode, activeStageId, false);
     }
-  }, [loaded, mode, activeStageId, hub.cache, stageLoading, loading, loadStage]);
+  }, [loaded, mode, activeStageId, hub.cache, stageLoading, loadStage]);
 
   useEffect(() => {
     if (!columnPickerOpen || !loaded[mode]) return;
