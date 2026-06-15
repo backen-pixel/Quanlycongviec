@@ -4381,7 +4381,7 @@ const CRM_LEAD_LIST_SELECT_BASE =
   `*, customer:customers(id, full_name, phone, email, company), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type, sync_role, order_index), source:crm_sources(id, name, icon), lead_type:crm_lead_types(id, name, color), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies!crm_leads_company_id_fkey(id, name, short_name)${CRM_LEAD_REGION_EMBED}, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name)), vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)`;
 /** Select tối thiểu cho Kanban mobile — giảm payload hydrate ~70%. */
 const CRM_LEAD_KANBAN_LITE_SELECT =
-  'id, code, title, type, phone, estimated_value, created_at, assigned_to, lead_owner_id, stage_id, region_id, next_follow_up_at, expected_close_date, ' +
+  'id, code, title, type, phone, estimated_value, created_at, assigned_to, lead_owner_id, stage_id, region_id, next_follow_up, expected_close_date, ' +
   'customer:customers(id, full_name, phone), ' +
   'stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon), ' +
   'source:crm_sources(id, name), ' +
