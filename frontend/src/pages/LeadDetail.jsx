@@ -7,7 +7,7 @@ import {
   shareModuleLabels,
 } from '../lib/documentShareScope';
 import DocumentShareModulePicker from '../components/DocumentShareModulePicker';
-import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
+import { publicFileUrl, getFileOpenAnchorProps, getFileDownloadAnchorProps } from '../lib/publicFileUrl';
 import { downloadCrmLeadDocumentsZip } from '../lib/crmDocumentsZipDownload';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
@@ -2515,8 +2515,12 @@ function DocumentRow({ doc, onDelete }) {
   const [sharedToWorkshop, setSharedToWorkshop] = useState(!!doc.shared_to_workshop);
   const [allowedShareModules, setAllowedShareModules] = useState(() => parseShareModules(doc.allowed_share_modules) || []);
   const typeInfo = DOC_TYPES.find(t => t.value === doc.doc_type) || DOC_TYPES[5];
-  const fileHref = doc.file_url ? publicFileUrl(doc.file_url) : '';
-  const fileOpenProps = fileHref ? getFileOpenAnchorProps(doc.file_url, { fileName: doc.file_name }) : null;
+  const rawFileRef = doc.file_url || doc.file_path || '';
+  const fileHref = rawFileRef ? publicFileUrl(rawFileRef) : '';
+  const fileOpenProps = fileHref ? getFileOpenAnchorProps(rawFileRef, { fileName: doc.file_name }) : null;
+  const fileDownloadProps = fileHref
+    ? getFileDownloadAnchorProps(rawFileRef, { fileName: doc.file_name || doc.name || 'tai-lieu' })
+    : null;
   const isFile = !!fileHref;
   const isImage = isFile && (doc.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(doc.file_name || doc.file_url || ''));
   const isVideo = isFile && (doc.mime_type?.startsWith('video/') || /\.(mp4|mov|webm|avi|mkv)$/i.test(doc.file_name || doc.file_url || ''));
@@ -2595,10 +2599,19 @@ function DocumentRow({ doc, onDelete }) {
               )}
             </div>
           </div>
-          {isFile && !isImage && !isVideo && fileOpenProps && (
-            <a {...fileOpenProps} className="text-xs text-blue-600 hover:underline shrink-0 px-2" onClick={e => e.stopPropagation()}>
-              Mở
-            </a>
+          {isFile && (fileOpenProps || fileDownloadProps) && (
+            <div className="flex items-center gap-2 shrink-0 px-2" onClick={(e) => e.stopPropagation()}>
+              {fileOpenProps && (
+                <a {...fileOpenProps} className="text-xs text-blue-600 hover:underline">
+                  Mở
+                </a>
+              )}
+              {fileDownloadProps && (
+                <a {...fileDownloadProps} className="text-xs text-emerald-600 hover:underline">
+                  Tải
+                </a>
+              )}
+            </div>
           )}
           {hasExtra && <ChevronDown className={`h-3 w-3 text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`} />}
         </div>
@@ -2895,6 +2908,131 @@ function AddDocumentModal({ onClose, onSave }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// LeadInfoEditableRow — tách ra ngoài + draft cục bộ để gõ tiếng Việt (IME) ổn định
+// ═══════════════════════════════════════════════════════════════════════════
+function LeadInfoEditableRow({
+  icon, label, field, value, displayValue, type = 'text', options,
+  editing, setEditing, saving, onSave,
+}) {
+  const isEditing = editing === field;
+  const isTextarea = type === 'textarea';
+  const isSelectEmpty = type === 'select' && ((options || []).length === 0);
+  const [draft, setDraft] = useState('');
+  const composingRef = useRef(false);
+
+  const startEdit = () => {
+    setDraft(value ?? '');
+    setEditing(field);
+  };
+
+  const handleSave = () => onSave(field, draft);
+
+  return (
+    <div className="group">
+      <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors">
+        <span className="text-sm mt-0.5 shrink-0">{icon}</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">{label}</p>
+          {isEditing ? (
+            <div
+              className={`flex gap-1.5 min-w-0 relative z-30 ${isTextarea ? 'flex-col' : 'items-center'}`}
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              {type === 'select' ? (
+                <select
+                  value={draft}
+                  onChange={e => setDraft(e.target.value)}
+                  className="flex-1 min-w-0 w-full h-8 px-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                  autoFocus
+                  title={(options || []).find(o => String(o.value) === String(draft))?.label || ''}
+                >
+                  <option value="">-- Chọn --</option>
+                  {isSelectEmpty && (
+                    <option value="" disabled>(Chưa có lựa chọn)</option>
+                  )}
+                  {(options || []).map(o => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              ) : isTextarea ? (
+                <textarea
+                  value={draft}
+                  onChange={e => setDraft(e.target.value)}
+                  onCompositionStart={() => { composingRef.current = true; }}
+                  onCompositionEnd={(e) => {
+                    composingRef.current = false;
+                    setDraft(e.currentTarget.value);
+                  }}
+                  rows={5}
+                  className="w-full min-w-0 px-2.5 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 resize-y min-h-[110px] leading-relaxed bg-white"
+                  autoFocus
+                  placeholder="Nhập mô tả chi tiết..."
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') setEditing(null);
+                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !composingRef.current) {
+                      e.preventDefault();
+                      handleSave();
+                    }
+                  }}
+                />
+              ) : (
+                <input
+                  type={type}
+                  value={draft}
+                  onChange={e => setDraft(e.target.value)}
+                  className="flex-1 min-w-0 w-full h-8 px-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
+                  autoFocus
+                  onKeyDown={e => e.key === 'Enter' && handleSave()}
+                />
+              )}
+              <div className={`flex items-center gap-1.5 shrink-0 ${isTextarea ? 'justify-end' : ''}`}>
+                <button type="button" onClick={handleSave} disabled={saving}
+                  className={`flex items-center justify-center bg-blue-600 text-white rounded-lg cursor-pointer hover:bg-blue-700 disabled:opacity-50 shrink-0 ${isTextarea ? 'h-8 px-3 gap-1 text-xs font-medium' : 'h-8 w-8'}`}>
+                  <Save className="h-3.5 w-3.5" />
+                  {isTextarea && <span>Lưu</span>}
+                </button>
+                <button type="button" onClick={() => setEditing(null)}
+                  className="h-8 w-8 flex items-center justify-center bg-gray-100 text-gray-500 rounded-lg cursor-pointer hover:bg-gray-200 shrink-0">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              {isTextarea && (
+                <p className="text-[10px] text-gray-400">Enter xuống dòng · Ctrl+Enter để lưu</p>
+              )}
+            </div>
+          ) : (
+            <div
+              onClick={startEdit}
+              className="cursor-pointer group/val"
+            >
+              {displayValue ? (
+                <p
+                  className={`text-sm font-medium ${isTextarea ? 'whitespace-pre-wrap break-words leading-relaxed' : ''}`}
+                  style={{ color: '#000000' }}
+                >
+                  {displayValue}
+                </p>
+              ) : (
+                <p className="text-sm text-gray-300 italic group-hover/val:text-blue-400 transition-colors">
+                  Nhấn để nhập...
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+        {!isEditing && (
+          <button type="button" onClick={startEdit}
+            className="p-1 opacity-0 group-hover:opacity-100 text-gray-300 hover:text-blue-500 cursor-pointer transition-opacity shrink-0">
+            <Edit2 className="h-3 w-3" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // LeadInfoPanel — Inline editable fields (always visible)
 // ═══════════════════════════════════════════════════════════════════════════
 function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompaniesSx = [] }) {
@@ -2904,7 +3042,6 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
   /** Khu vực CRM — chỉ theo company_id của lead (company_regions) */
   const [companyRegions, setCompanyRegions] = useState([]);
   const [editing, setEditing] = useState(null);
-  const [editVal, setEditVal] = useState('');
   const [saving, setSaving] = useState(false);
   const [companies, setCompanies] = useState([]);
   const [deadlineModalOpen, setDeadlineModalOpen] = useState(false);
@@ -3152,113 +3289,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
     if (next && deadlineHistory.length === 0) loadDeadlineHistory();
   };
 
-  const EditableRow = ({ icon, label, field, value, displayValue, type = 'text', options }) => {
-    const isEditing = editing === field;
-    const isTextarea = type === 'textarea';
-    const isSelectEmpty = type === 'select' && ((options || []).length === 0);
-    const startEdit = () => {
-      setEditing(field);
-      setEditVal(value ?? '');
-    };
-    return (
-      <div className="group">
-        <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors">
-          <span className="text-sm mt-0.5 shrink-0">{icon}</span>
-          <div className="flex-1 min-w-0">
-            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">{label}</p>
-            {isEditing ? (
-              <div
-                className={`flex gap-1.5 min-w-0 relative z-30 ${isTextarea ? 'flex-col' : 'items-center'}`}
-                onClick={(e) => e.stopPropagation()}
-                onMouseDown={(e) => e.stopPropagation()}
-              >
-                {type === 'select' ? (
-                  <select
-                    value={editVal}
-                    onChange={e => setEditVal(e.target.value)}
-                    className="flex-1 min-w-0 w-full h-8 px-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-                    autoFocus
-                    title={(options || []).find(o => String(o.value) === String(editVal))?.label || ''}
-                  >
-                    <option value="">-- Chọn --</option>
-                    {isSelectEmpty && (
-                      <option value="" disabled>(Chưa có lựa chọn)</option>
-                    )}
-                    {(options || []).map(o => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
-                ) : isTextarea ? (
-                  <textarea
-                    value={editVal}
-                    onChange={e => setEditVal(e.target.value)}
-                    rows={5}
-                    className="w-full min-w-0 px-2.5 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 resize-y min-h-[110px] leading-relaxed bg-white"
-                    autoFocus
-                    placeholder="Nhập mô tả chi tiết..."
-                    onKeyDown={(e) => {
-                      if (e.key === 'Escape') setEditing(null);
-                      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                        e.preventDefault();
-                        saveField(field, editVal);
-                      }
-                    }}
-                  />
-                ) : (
-                  <input
-                    type={type}
-                    value={editVal}
-                    onChange={e => setEditVal(e.target.value)}
-                    className="flex-1 min-w-0 w-full h-8 px-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
-                    autoFocus
-                    onKeyDown={e => e.key === 'Enter' && saveField(field, editVal)}
-                  />
-                )}
-                <div className={`flex items-center gap-1.5 shrink-0 ${isTextarea ? 'justify-end' : ''}`}>
-                  <button type="button" onClick={() => saveField(field, editVal)} disabled={saving}
-                    className={`flex items-center justify-center bg-blue-600 text-white rounded-lg cursor-pointer hover:bg-blue-700 disabled:opacity-50 shrink-0 ${isTextarea ? 'h-8 px-3 gap-1 text-xs font-medium' : 'h-8 w-8'}`}>
-                    <Save className="h-3.5 w-3.5" />
-                    {isTextarea && <span>Lưu</span>}
-                  </button>
-                  <button type="button" onClick={() => setEditing(null)}
-                    className="h-8 w-8 flex items-center justify-center bg-gray-100 text-gray-500 rounded-lg cursor-pointer hover:bg-gray-200 shrink-0">
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-                {isTextarea && (
-                  <p className="text-[10px] text-gray-400">Enter xuống dòng · Ctrl+Enter để lưu</p>
-                )}
-              </div>
-            ) : (
-              <div
-                onClick={startEdit}
-                className="cursor-pointer group/val"
-              >
-                {displayValue ? (
-                  <p
-                    className={`text-sm font-medium ${isTextarea ? 'whitespace-pre-wrap break-words leading-relaxed' : ''}`}
-                    style={{ color: '#000000' }}
-                  >
-                    {displayValue}
-                  </p>
-                ) : (
-                  <p className="text-sm text-gray-300 italic group-hover/val:text-blue-400 transition-colors">
-                    Nhấn để nhập...
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-          {!isEditing && (
-            <button type="button" onClick={startEdit}
-              className="p-1 opacity-0 group-hover:opacity-100 text-gray-300 hover:text-blue-500 cursor-pointer transition-opacity shrink-0">
-              <Edit2 className="h-3 w-3" />
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  };
+  const editableRowProps = { editing, setEditing, saving, onSave: saveField };
 
   const prob = lead?.probability ?? 0;
 
@@ -3266,7 +3297,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
     <div className="bg-white rounded-xl border p-5 space-y-1 overflow-visible">
       <h3 className="text-sm font-bold uppercase mb-2" style={{ color: '#000000' }}>Thông tin</h3>
 
-      <EditableRow icon="💰" label="Giá trị" field="estimated_value"
+      <LeadInfoEditableRow {...editableRowProps} icon="💰" label="Giá trị" field="estimated_value"
         value={lead?.estimated_value || ''}
         displayValue={lead?.estimated_value > 0 ? formatVND(lead.estimated_value) : null}
         type="number" />
@@ -3336,7 +3367,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
       </div>
 
       {lead?.type === 'deal' && (
-        <EditableRow icon="📅" label="Dự kiến chốt" field="expected_close_date"
+        <LeadInfoEditableRow {...editableRowProps} icon="📅" label="Dự kiến chốt" field="expected_close_date"
           value={lead?.expected_close_date || ''}
           displayValue={lead?.expected_close_date ? formatDate(lead.expected_close_date) : null}
           type="date" />
@@ -3445,7 +3476,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
       )}
 
       <div>
-        <EditableRow icon="📊" label="Xác suất" field="probability"
+        <LeadInfoEditableRow {...editableRowProps} icon="📊" label="Xác suất" field="probability"
           value={lead?.probability ?? ''}
           displayValue={lead?.probability != null ? `${lead.probability}%` : null}
           type="number" />
@@ -3459,13 +3490,13 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
         )}
       </div>
 
-      <EditableRow icon="🔗" label="Nguồn" field="source_id"
+      <LeadInfoEditableRow {...editableRowProps} icon="🔗" label="Nguồn" field="source_id"
         value={lead?.source_id || ''}
         displayValue={lead?.source ? `${lead.source.icon} ${lead.source.name}` : null}
         type="select"
         options={sources.map(s => ({ value: s.id, label: `${s.icon} ${s.name}` }))} />
 
-      <EditableRow icon="🤝" label="Người giới thiệu" field="referrer_name"
+      <LeadInfoEditableRow {...editableRowProps} icon="🤝" label="Người giới thiệu" field="referrer_name"
         value={lead?.referrer_name || ''}
         displayValue={lead?.referrer_name || null}
         type="select"
@@ -3476,7 +3507,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
             : []),
         ]} />
 
-      <EditableRow icon="🏷️" label="Loại" field="lead_type_id"
+      <LeadInfoEditableRow {...editableRowProps} icon="🏷️" label="Loại" field="lead_type_id"
         value={lead?.lead_type_id || ''}
         displayValue={
           lead?.lead_type_id
@@ -3492,14 +3523,14 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
           .map((t) => ({ value: t.id, label: t.name }))} />
 
       {/* Công ty */}
-      <EditableRow icon="🏢" label="Công ty" field="company_id"
+      <LeadInfoEditableRow {...editableRowProps} icon="🏢" label="Công ty" field="company_id"
         value={lead?.company_id || ''}
         displayValue={lead?.company_id ? companies.find(c => c.id === lead.company_id)?.name || null : null}
         type="select"
         options={companies.map(c => ({ value: c.id, label: c.name }))} />
 
       {lead?.company_id ? (
-        <EditableRow
+        <LeadInfoEditableRow {...editableRowProps}
           icon="📍"
           label="Khu vực"
           field="region_id"
@@ -3552,17 +3583,17 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
         </div>
       </div>
 
-      <EditableRow icon="📅" label="Dự kiến chốt" field="expected_close_date"
+      <LeadInfoEditableRow {...editableRowProps} icon="📅" label="Dự kiến chốt" field="expected_close_date"
         value={lead?.expected_close_date || ''}
         displayValue={lead?.expected_close_date ? formatDate(lead.expected_close_date) : null}
         type="date" />
 
-      <EditableRow icon="🔔" label="Theo dõi tiếp" field="next_follow_up"
+      <LeadInfoEditableRow {...editableRowProps} icon="🔔" label="Theo dõi tiếp" field="next_follow_up"
         value={lead?.next_follow_up || ''}
         displayValue={lead?.next_follow_up ? formatDate(lead.next_follow_up) : null}
         type="date" />
 
-      <EditableRow icon="📝" label="Mô tả" field="description"
+      <LeadInfoEditableRow {...editableRowProps} icon="📝" label="Mô tả" field="description"
         value={lead?.description || ''}
         displayValue={lead?.description || null}
         type="textarea" />

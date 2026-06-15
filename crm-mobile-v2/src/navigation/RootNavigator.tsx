@@ -3,6 +3,7 @@ import React from 'react';
 import ChatDetailScreen from '../screens/ChatDetailScreen';
 import CreateEntityScreen from '../screens/CreateEntityScreen';
 import CrmHubScreen from '../screens/CrmHubScreen';
+import DriveScreen from '../screens/DriveScreen';
 import VoiceLocalRecordingsScreen from '../screens/VoiceLocalRecordingsScreen';
 import RootTabs from './RootTabs';
 import type { RootStackParamList } from './types';
@@ -21,6 +22,7 @@ export default function RootNavigator() {
         options={{ presentation: 'modal' }}
       />
       <Stack.Screen name="VoiceLocalRecordings" component={VoiceLocalRecordingsScreen} />
+      <Stack.Screen name="Drive" component={DriveScreen} />
     </Stack.Navigator>
   );
 }

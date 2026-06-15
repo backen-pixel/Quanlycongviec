@@ -72,4 +72,17 @@ export function getFileOpenAnchorProps(pathOrUrl, opts = {}) {
     rel: 'noopener noreferrer',
   };
 }
-
+
+/** Anchor props ưu tiên tải file về máy (không chỉ mở tab mới). */
+export function getFileDownloadAnchorProps(pathOrUrl, opts = {}) {
+  const href = publicFileUrl(pathOrUrl);
+  if (!href) return null;
+  const fileName = opts.fileName;
+  return {
+    href,
+    target: '_blank',
+    rel: 'noopener noreferrer',
+    ...(fileName ? { download: fileName } : {}),
+  };
+}
+

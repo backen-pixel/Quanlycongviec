@@ -29,7 +29,7 @@ type Item = {
   label: string;
   color: string;
   target?: ItemTarget;
-  action?: 'logout';
+  action?: 'logout' | 'drive';
 };
 
 function buildSections(Colors: ThemeColors): { title: string; items: Item[] }[] {
@@ -50,6 +50,7 @@ function buildSections(Colors: ThemeColors): { title: string; items: Item[] }[] 
       items: [
         { icon: 'checkbox', label: 'Nhiệm vụ', color: Colors.blue },
         { icon: 'calendar', label: 'Sự kiện', color: Colors.cyan },
+        { icon: 'cloud-upload', label: 'Drive lưu trữ', color: Colors.purple, action: 'drive' },
         { icon: 'notifications', label: 'Thông báo', color: Colors.red },
         { icon: 'stats-chart', label: 'Báo cáo', color: Colors.green },
       ],
@@ -103,6 +104,10 @@ export default function MenuScreen() {
   const onItem = (it: Item) => {
     if (it.action === 'logout') {
       void logout();
+      return;
+    }
+    if (it.action === 'drive') {
+      navigation.navigate('Drive');
       return;
     }
     if (it.target) navigation.navigate('CrmHub', { initialMode: it.target.kind });

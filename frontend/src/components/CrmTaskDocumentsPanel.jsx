@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
+import { publicFileUrl, getFileOpenAnchorProps, getFileDownloadAnchorProps } from '../lib/publicFileUrl';
 import { buildCrmTaskDocumentSections } from '../lib/crmTaskDocumentTree';
 
 function getFileIcon(name) {
@@ -24,7 +24,11 @@ function TaskArtifactRow({ f }) {
   const isImage = f.doc_type === 'image' || f.mime_type?.startsWith('image/')
     || /\.(jpg|jpeg|png|gif|webp)$/i.test(f.file_name || '');
   const isNote = isNoteArtifact(f);
-  const taskFileOpen = f.file_url ? getFileOpenAnchorProps(f.file_url, { fileName: f.file_name }) : null;
+  const rawFileRef = f.file_url || f.file_path || '';
+  const taskFileOpen = rawFileRef ? getFileOpenAnchorProps(rawFileRef, { fileName: f.file_name }) : null;
+  const taskFileDownload = rawFileRef
+    ? getFileDownloadAnchorProps(rawFileRef, { fileName: f.file_name || f.name || 'tai-lieu' })
+    : null;
 
   return (
     <div className="px-4 py-2 hover:bg-blue-50 transition">
@@ -48,27 +52,26 @@ function TaskArtifactRow({ f }) {
                 {new Date(f.created_at).toLocaleDateString('vi-VN')}
               </span>
             )}
-            {taskFileOpen && (
-              <a {...taskFileOpen} className="text-[10px] text-blue-500 hover:underline">Mở ↗</a>
-            )}
+            {taskFileOpen && <a {...taskFileOpen} className="text-[10px] text-blue-500 hover:underline">Mở ↗</a>}
+            {taskFileDownload && <a {...taskFileDownload} className="text-[10px] text-emerald-600 hover:underline">Tải ↓</a>}
           </div>
         </div>
       </div>
-      {isVideo && f.file_url && (
+      {isVideo && rawFileRef && (
         <div className="mt-2 ml-8">
           <video
-            src={publicFileUrl(f.file_url)}
+            src={publicFileUrl(rawFileRef)}
             controls
             preload="metadata"
             className="max-w-full max-h-64 rounded-lg border border-gray-200 bg-black shadow-sm"
           />
         </div>
       )}
-      {isImage && f.file_url && taskFileOpen && (
+      {isImage && rawFileRef && taskFileOpen && (
         <div className="mt-2 ml-8">
           <a {...taskFileOpen}>
             <img
-              src={publicFileUrl(f.file_url)}
+              src={publicFileUrl(rawFileRef)}
               alt={f.name}
               className="max-h-40 max-w-full rounded-lg border border-gray-200 object-contain hover:opacity-90 cursor-pointer"
             />

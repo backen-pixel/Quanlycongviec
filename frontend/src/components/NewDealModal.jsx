@@ -216,8 +216,10 @@ export default function NewDealModal({
     e.preventDefault();
     if (!formData.title) return alert('Nhập tên Deal');
     if (!formData.company_id) return alert('Vui lòng chọn công ty');
-    if (!formData.customer_name) return alert('Nhập tên khách hàng');
-    if (!formData.customer_phone) return alert('Nhập số điện thoại khách hàng');
+    if (!isProduction) {
+      if (!formData.customer_name) return alert('Nhập tên khách hàng');
+      if (!formData.customer_phone) return alert('Nhập số điện thoại khách hàng');
+    }
     if (modalRegions.length > 0 && !formData.region_id) return alert('Chọn khu vực');
     if (isProduction) {
       if (!visibleWorkTypes.length) return alert('Công ty chưa cấu hình phân loại xưởng');
@@ -409,26 +411,30 @@ export default function NewDealModal({
               <div className="bg-blue-50 rounded-xl p-3.5 space-y-2.5">
                 <p className="text-[11px] font-bold text-blue-700 uppercase tracking-wide">👤 Thông tin khách hàng</p>
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Tên khách hàng <span className="text-red-500">*</span></label>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Tên khách hàng {isProduction ? <span className="text-gray-400 font-normal">(tùy chọn)</span> : <span className="text-red-500">*</span>}
+                  </label>
                   <input
                     type="text"
-                    required
+                    required={!isProduction}
                     value={formData.customer_name}
                     onChange={(e) => set('customer_name', e.target.value)}
                     className={`w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 ${ringClass} text-sm bg-white`}
-                    placeholder="Nguyễn Văn A"
+                    placeholder={isProduction ? 'Để trống nếu chưa có' : 'Nguyễn Văn A'}
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Số điện thoại <span className="text-red-500">*</span></label>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      Số điện thoại {isProduction ? <span className="text-gray-400 font-normal">(tùy chọn)</span> : <span className="text-red-500">*</span>}
+                    </label>
                     <input
                       type="text"
-                      required
+                      required={!isProduction}
                       value={formData.customer_phone}
                       onChange={(e) => set('customer_phone', e.target.value)}
                       className={`w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 ${ringClass} text-sm bg-white`}
-                      placeholder="0901234567"
+                      placeholder={isProduction ? 'Để trống nếu chưa có' : '0901234567'}
                     />
                   </div>
                   <div>

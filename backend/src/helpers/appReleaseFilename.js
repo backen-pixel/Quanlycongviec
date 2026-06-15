@@ -1,9 +1,8 @@
 /**
  * Quy tắc tên file APK để hệ thống tự đọc phiên bản.
  *
- * Bắt buộc: tên file phải chứa số phiên bản semver (x.y hoặc x.y.z).
- * Khuyến nghị:
- *   {app_key}-{version}[-code{version_code}][-release].apk
+ * Khuyến nghị tên file:
+ *   {app_key}-{version}-code{version_code}-release.apk
  *
  * Ví dụ hợp lệ:
  *   crm-mobile-1.3.35-code51-release.apk
@@ -24,7 +23,18 @@ function parseReleaseFilename(filename) {
   if (!/\.apk$/i.test(name)) return { ok: false, error: 'File phải có đuôi .apk' };
 
   const base = name.replace(/\.apk$/i, '');
-  const verMatch = [...base.matchAll(SEMVER_IN_NAME)].pop()?.[1] || null;
+  const codeFirst = base.match(/(?:^|[-.])(\d+\.\d+(?:\.\d+)?)-code(\d+)/i);
+  if (codeFirst) {
+    return {
+      ok: true,
+      filename: name,
+      version: codeFirst[1],
+      versionCode: parseInt(codeFirst[2], 10),
+    };
+  }
+
+  const verMatches = [...base.matchAll(SEMVER_IN_NAME)];
+  const verMatch = verMatches.length ? verMatches[verMatches.length - 1] : null;
   if (!verMatch) {
     return {
       ok: false,
@@ -32,7 +42,7 @@ function parseReleaseFilename(filename) {
     };
   }
 
-  const version = verMatch;
+  const version = verMatch[1];
   const codeMatch = base.match(CODE_IN_NAME);
   const versionCode = codeMatch ? parseInt(codeMatch[1], 10) : null;
 
@@ -48,11 +58,7 @@ function parseReleaseFilename(filename) {
 function buildStandardApkFilename(appKey, version, versionCode, opts = {}) {
   const safeKey = String(appKey).replace(/[^0-9A-Za-z._-]/g, '-');
   const safeVer = String(version).replace(/[^0-9A-Za-z._-]/g, '_');
-  // crm-mobile-v2 + 2.0.23 → crm-mobile-v2.0.23-... (tránh crm-mobile-v2-2.0.23)
-  const stem = /-v\d+$/i.test(safeKey)
-    ? `${safeKey}.${safeVer}`
-    : `${safeKey}-${safeVer}`;
-  const parts = [stem];
+  const parts = [safeKey, safeVer];
   if (versionCode != null && versionCode !== '') parts.push(`code${versionCode}`);
   if (opts.release) parts.push('release');
   return `${parts.join('-')}.apk`;
