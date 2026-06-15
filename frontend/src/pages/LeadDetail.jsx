@@ -122,6 +122,7 @@ export default function LeadDetail() {
   const [loading, setLoading] = useState(true);
   const [showAddActivity, setShowAddActivity] = useState(false);
   const [showConvertModal, setShowConvertModal] = useState(false);
+  const [showRevertModal, setShowRevertModal] = useState(false);
   const [showAddDoc, setShowAddDoc] = useState(false);
   const [editingField, setEditingField] = useState(null);
   const [editValue, setEditValue] = useState('');
@@ -1141,6 +1142,12 @@ export default function LeadDetail() {
   const currentStageIdx = stages.findIndex(s => s.id === lead.stage_id);
   const isPipelineComplete = stages.some(s => s.id === lead.stage_id && s.is_won);
   const canConvert = (lead.type === 'lead' || !lead.type || lead.type === '') && !lead.project_id;
+  const currentStageObj = stages.find((s) => s.id === lead.stage_id) || null;
+  const canRevertToLead =
+    lead.type === 'deal'
+    && !lead.project_id
+    && !currentStageObj?.is_won
+    && currentStageObj?.allow_revert_to_lead === true;
 
   const deleteDocument = async (docId) => {
     if (!confirm('Xóa tài liệu?')) return;
@@ -1432,6 +1439,16 @@ export default function LeadDetail() {
           {canConvert && (
             <button onClick={() => setShowConvertModal(true)} className="h-9 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer">
               <Zap className="h-4 w-4" /> Chuyển Deal
+            </button>
+          )}
+          {canRevertToLead && (
+            <button
+              type="button"
+              onClick={() => setShowRevertModal(true)}
+              title="Trả deal lại về Lead và chọn lại người phụ trách"
+              className="h-9 px-3 bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-200 rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer"
+            >
+              <RotateCcw className="h-4 w-4" /> Trả về Lead
             </button>
           )}
           {/* Deal Thắng + chưa có project → nút Tạo dự án */}
@@ -2014,6 +2031,14 @@ export default function LeadDetail() {
           flows={flows}
           onClose={() => setShowConvertModal(false)}
           onSuccess={(dealId) => { setShowConvertModal(false); navigateToCrmDealFocused(dealId || id); }}
+        />
+      )}
+      {showRevertModal && (
+        <RevertToLeadModal
+          leadId={id}
+          lead={lead}
+          onClose={() => setShowRevertModal(false)}
+          onSuccess={() => { setShowRevertModal(false); load({ silent: true }); }}
         />
       )}
 
@@ -3983,6 +4008,123 @@ function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose,
             className="flex-1 h-10 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium disabled:opacity-50 cursor-pointer transition-colors"
           >
             {converting ? 'Đang xử lý...' : '🚀 Chuyển sang Deal'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RevertToLeadModal({ leadId, lead, onClose, onSuccess }) {
+  const [submitting, setSubmitting] = useState(false);
+  const [newOwner, setNewOwner] = useState(lead?.assigned_to || lead?.lead_owner_id || '');
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState('');
+
+  const canSubmit = !!newOwner && !submitting;
+
+  const handleSubmit = async () => {
+    if (!newOwner) {
+      setError('Vui lòng chọn người phụ trách Lead mới.');
+      return;
+    }
+    setSubmitting(true);
+    setError('');
+    try {
+      const { data } = await api.post(`/crm/leads/${leadId}/convert-to-lead`, {
+        assigned_to: newOwner,
+        reason: reason.trim() || undefined,
+      });
+      if (data?.message) {
+        // eslint-disable-next-line no-alert
+        alert(`✅ ${data.message}`);
+      }
+      onSuccess?.(data?.lead?.id || leadId);
+    } catch (e) {
+      setError(e.response?.data?.error || 'Có lỗi khi trả deal về Lead.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-lg p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-bold flex items-center gap-2">
+            <RotateCcw className="h-5 w-5 text-amber-600" />
+            Trả Deal về Lead
+          </h2>
+          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded cursor-pointer">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="space-y-4 mb-6">
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-900">
+            Deal <strong>{lead?.code || ''}</strong> sẽ được chuyển về trạng thái <strong>Lead</strong> và đặt lại
+            về cột đầu tiên của pipeline. Mọi dữ liệu (báo giá, tài liệu, lịch sử) vẫn được giữ nguyên.
+          </div>
+
+          {(lead?.lead_owner || lead?.assignee) && (
+            <div className="bg-purple-50 rounded-xl p-3 border border-purple-200">
+              <p className="text-xs font-bold text-purple-700 mb-1">👤 Người phụ trách deal hiện tại</p>
+              <p className="text-sm text-purple-900">
+                {lead?.assignee?.full_name || lead?.lead_owner?.full_name || '—'}
+              </p>
+            </div>
+          )}
+
+          <div>
+            <label className="text-xs font-bold text-gray-700 mb-1 block">
+              👤 Người phụ trách Lead mới <span className="text-red-500">*</span>
+            </label>
+            <EmployeePicker
+              companyId={lead?.company_id || ''}
+              value={newOwner}
+              onChange={(uid) => setNewOwner(uid || '')}
+              placeholder="Chọn nhân viên phụ trách Lead..."
+              size="md"
+            />
+            <p className="text-[10px] text-gray-500 mt-1">
+              Lead sau khi trả về sẽ thuộc người này. Nhân viên phải cùng công ty với bản ghi.
+            </p>
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-gray-700 mb-1 block">📝 Lý do (không bắt buộc)</label>
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={2}
+              placeholder="VD: Khách chưa sẵn sàng, cần nuôi tiếp ở Lead…"
+              className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+            />
+          </div>
+
+          {error && (
+            <div className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-lg p-2">
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="flex-1 h-10 border rounded-lg font-medium cursor-pointer disabled:opacity-50"
+          >
+            Hủy
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!canSubmit}
+            className="flex-1 h-10 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium disabled:opacity-50 cursor-pointer transition-colors"
+          >
+            {submitting ? 'Đang xử lý...' : '↩️ Trả về Lead'}
           </button>
         </div>
       </div>

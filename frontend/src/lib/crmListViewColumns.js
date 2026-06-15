@@ -79,6 +79,7 @@ export function buildStaticListColumns(pipelineType) {
     { key: 'kpi_ledger', label: 'Điểm KPI', group: 'KPI', defaultVisible: false, align: 'right' },
     { key: 'company', label: 'Công ty', group: 'Cơ bản', defaultVisible: true },
     { key: 'expected_close', label: 'Hạn chốt dự kiến', group: 'Thời gian', defaultVisible: false },
+    { key: 'revert_to_lead', label: 'Trả về Lead', group: 'Hành động', defaultVisible: isDeal, dealOnly: true, align: 'center' },
   ].filter((c) => !c.dealOnly || isDeal);
 }
 

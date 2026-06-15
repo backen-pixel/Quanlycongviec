@@ -13,8 +13,9 @@ import {
   isoWeekAndParts,
   MILESTONE_SLUG_GROUPS,
 } from '../lib/crmListViewColumns';
-import { Columns3, X, Check, Pin, CheckCircle2, FileSpreadsheet } from 'lucide-react';
+import { Columns3, X, Check, Pin, CheckCircle2, FileSpreadsheet, RotateCcw } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import EmployeePicker from './EmployeePicker';
 
 function formatDate(d) {
   if (!d) return '';
@@ -168,6 +169,130 @@ function ColumnPickerModal({ open, onClose, allColumns, visibility, onApply }) {
   );
 }
 
+function RevertDealToLeadModal({ item, onClose, onDone }) {
+  const [newOwner, setNewOwner] = useState(item?.assigned_to || item?.lead_owner_id || '');
+  const [reason, setReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  if (!item) return null;
+  const hasProject = !!item.project_id;
+
+  const handleSubmit = async () => {
+    if (!newOwner) {
+      setError('Vui lòng chọn người phụ trách Lead mới.');
+      return;
+    }
+    setSubmitting(true);
+    setError('');
+    try {
+      await api.post(`/crm/leads/${item.id}/convert-to-lead`, {
+        assigned_to: newOwner,
+        reason: reason.trim() || undefined,
+      });
+      onDone?.();
+    } catch (e) {
+      setError(e.response?.data?.error || 'Có lỗi khi trả deal về Lead.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl"
+        onClick={(ev) => ev.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-base font-bold flex items-center gap-2">
+            <RotateCcw className="h-4 w-4 text-amber-600" />
+            Trả Deal về Lead
+          </h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 hover:bg-gray-100 rounded"
+            aria-label="Đóng"
+          >
+            <X className="h-4 w-4 text-gray-500" />
+          </button>
+        </div>
+
+        {hasProject ? (
+          <div className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-lg p-3">
+            Deal đã có dự án SX gắn vào — không thể trả về Lead. Hãy xử lý dự án trước.
+          </div>
+        ) : (
+          <>
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-900 mb-3">
+              Deal <strong>{item.code || ''}</strong>
+              {item.title ? ` · ${item.title}` : ''} sẽ chuyển về <strong>Lead</strong> và đặt
+              lại cột đầu tiên của pipeline. Dữ liệu cũ vẫn được giữ.
+            </div>
+
+            <div className="space-y-3 mb-4">
+              <div>
+                <label className="text-xs font-bold text-gray-700 mb-1 block">
+                  👤 Người phụ trách Lead mới <span className="text-red-500">*</span>
+                </label>
+                <EmployeePicker
+                  companyId={item.company_id || item.company?.id || ''}
+                  value={newOwner}
+                  onChange={(uid) => setNewOwner(uid || '')}
+                  placeholder="Chọn nhân viên phụ trách Lead..."
+                  size="md"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-gray-700 mb-1 block">
+                  📝 Lý do (không bắt buộc)
+                </label>
+                <textarea
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  rows={2}
+                  placeholder="VD: Khách chưa sẵn sàng, cần nuôi tiếp ở Lead…"
+                  className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              {error && (
+                <div className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-lg p-2">
+                  {error}
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={submitting}
+                className="flex-1 h-9 border rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={handleSubmit}
+                disabled={!newOwner || submitting}
+                className="flex-1 h-9 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-semibold disabled:opacity-50"
+              >
+                {submitting ? 'Đang xử lý...' : '↩️ Trả về Lead'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function ListView({
   pipeline,
   pipelineType,
@@ -272,6 +397,7 @@ export function ListView({
   const [historyByLead, setHistoryByLead] = useState({});
   const [parentCodes, setParentCodes] = useState({});
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [revertTarget, setRevertTarget] = useState(null);
 
   // Lazy render: hiện 150 dòng đầu, tự tải thêm theo batch 300 khi cuộn gần đáy.
   // First paint nhanh, batch lớn để giảm số lần re-render khi scroll dài.
@@ -648,7 +774,8 @@ export function ListView({
                   className="group/row hover:bg-blue-100 cursor-pointer transition-colors"
                 >
                   {visibleColumns.map((col) => {
-                    const raw = getCellValue(item, col);
+                    const isRevert = col.key === 'revert_to_lead';
+                    const raw = isRevert ? '' : getCellValue(item, col);
                     const isStage = col.key === 'stage';
                     const isDaysTotal = col.key === 'days_total';
                     const isDaysStage = col.key === 'days_in_stage';
@@ -671,7 +798,27 @@ export function ListView({
                         }`}
                         title={typeof raw === 'string' && !stackedCell ? raw : undefined}
                       >
-                        {isCode ? (
+                        {isRevert ? (
+                          item.type === 'deal'
+                          && !item.project_id
+                          && item._stage?.allow_revert_to_lead === true
+                          && !item._stage?.is_won ? (
+                            <button
+                              type="button"
+                              title="Trả deal về Lead và chọn lại người phụ trách"
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                setRevertTarget(item);
+                              }}
+                              className="inline-flex items-center gap-1 h-7 px-2 rounded-md border border-amber-300 bg-amber-50 text-amber-800 text-[11px] font-semibold hover:bg-amber-100"
+                            >
+                              <RotateCcw className="h-3 w-3" />
+                              Trả về Lead
+                            </button>
+                          ) : (
+                            <span className="text-gray-300 text-[11px]">—</span>
+                          )
+                        ) : isCode ? (
                           <div className="flex items-start gap-1.5 min-w-0">
                             <div className="flex shrink-0 items-center gap-0.5 pt-0.5">
                               <button
@@ -802,6 +949,20 @@ export function ListView({
         visibility={visibility}
         onApply={applyVisibility}
       />
+
+      {revertTarget && (
+        <RevertDealToLeadModal
+          item={revertTarget}
+          onClose={() => setRevertTarget(null)}
+          onDone={() => {
+            // Optimistic: tạm thời ẩn hành động (đợi socket 'crm:dashboard_changed' refresh kanban).
+            if (revertTarget) {
+              revertTarget.type = 'lead';
+            }
+            setRevertTarget(null);
+          }}
+        />
+      )}
     </div>
   );
 }
