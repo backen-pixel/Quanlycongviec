@@ -15,11 +15,12 @@ import DocumentShareModulePicker from '../components/DocumentShareModulePicker';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
-import { publicFileUrl as pubUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
+import { publicFileUrl as pubUrl, getFileOpenAnchorProps, getFileDownloadAnchorProps } from '../lib/publicFileUrl';
+import { downloadWorkshopDocumentsZip } from '../lib/workshopDocumentsZipDownload';
 import {
   ArrowLeft, FolderKanban, MessageSquare, Plus, X,
   FileUp, Edit2, Save, ChevronDown, Trash2, Send, Paperclip,
-  AlertTriangle, CheckCircle2, Circle, Clock, Truck, Wrench, ArrowRightLeft, Loader2,
+  AlertTriangle, CheckCircle2, Circle, Clock, Truck, Wrench, ArrowRightLeft, Loader2, Download,
 } from 'lucide-react';
 import CRMTasksTab from '../components/CRMTasksTab';
 import UnifiedTaskHistoryWidget from '../components/UnifiedTaskHistoryWidget';
@@ -444,6 +445,15 @@ function getFileIcon(name) {
   return map[ext] || '📄';
 }
 
+function getUploadFilePayload(uploadResponse) {
+  if (!uploadResponse || typeof uploadResponse !== 'object') return null;
+  if (Array.isArray(uploadResponse.files) && uploadResponse.files.length > 0) {
+    return uploadResponse.files[0] || null;
+  }
+  if (uploadResponse.file_url || uploadResponse.url) return uploadResponse;
+  return null;
+}
+
 const CRM_DOC_TYPES = [
   { value: 'requirement', label: 'Yêu cầu KH', icon: '📝' },
   { value: 'drawing', label: 'Bản vẽ', icon: '📐' },
@@ -661,8 +671,12 @@ function DocRow({
   const displayTitle = crmPresentation
     ? resolveCrmDocDisplayTitle(doc, { preferFileName: nested })
     : (fileName || doc.name || 'Tài liệu');
-  const fileHref = doc.file_url ? pubUrl(doc.file_url) : '';
-  const fileOpenProps = fileHref ? getFileOpenAnchorProps(doc.file_url, { fileName: fileName || displayTitle }) : null;
+  const rawFileRef = doc.file_url || doc.file_path || '';
+  const fileHref = rawFileRef ? pubUrl(rawFileRef) : '';
+  const fileOpenProps = fileHref ? getFileOpenAnchorProps(rawFileRef, { fileName: fileName || displayTitle }) : null;
+  const fileDownloadProps = fileHref
+    ? getFileDownloadAnchorProps(rawFileRef, { fileName: fileName || displayTitle || 'tai-lieu' })
+    : null;
   const isFile = !!fileHref;
   const mime = doc.mime_type || '';
   const isImage = isFile && (mime.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(fileName || doc.file_url || ''));
@@ -720,7 +734,9 @@ function DocRow({
                   {isVideo ? ' · 🎬' : ''}
                 </span>
               ) : (
-                <span className="text-xs text-gray-500">{isImage ? '🖼️ Ảnh' : isVideo ? '🎬 Video' : '📄 File'}</span>
+                <span className="text-xs text-gray-500">
+                  {isFile ? (isImage ? '🖼️ Ảnh' : isVideo ? '🎬 Video' : '📄 File') : '⚠️ Thiếu URL file'}
+                </span>
               )}
               {doc.file_size > 0 && <span className="text-[10px] text-gray-400">{doc.file_size > 1048576 ? `${(doc.file_size/1048576).toFixed(1)} MB` : `${(doc.file_size/1024).toFixed(1)} KB`}</span>}
               {doc.created_at && <span className="text-[10px] text-gray-400">{new Date(doc.created_at).toLocaleDateString('vi-VN')}</span>}
@@ -739,8 +755,18 @@ function DocRow({
               )}
             </div>
           </div>
-          {isFile && !isImage && !isVideo && fileOpenProps && (
-            <a {...fileOpenProps} className="text-xs text-blue-600 hover:underline shrink-0 px-2" onClick={e => e.stopPropagation()}>Mở</a>
+          {isFile && (fileOpenProps || fileDownloadProps) && (
+            <div
+              className={`flex items-center gap-2 shrink-0 ${nested ? 'px-1' : 'px-2'}`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {fileOpenProps && (
+                <a {...fileOpenProps} className={`hover:underline ${nested ? 'text-[10px]' : 'text-xs'} text-blue-600`}>Mở</a>
+              )}
+              {fileDownloadProps && (
+                <a {...fileDownloadProps} className={`hover:underline ${nested ? 'text-[10px]' : 'text-xs'} text-emerald-600`}>Tải</a>
+              )}
+            </div>
           )}
           {hasExtra && <ChevronDown className={`h-3 w-3 text-gray-400 transition-transform shrink-0 ${expanded ? 'rotate-180' : ''}`} />}
         </div>
@@ -974,6 +1000,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
 
   // Document upload state
   const [uploadingDoc, setUploadingDoc] = useState(false);
+  const [downloadingDocsZip, setDownloadingDocsZip] = useState(false);
 
   // Incidents
   const [incidents, setIncidents] = useState([]);
@@ -1822,8 +1849,17 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
           const fd = new FormData();
           fd.append('file', file);
           const { data } = await api.post('/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-          uploaded.push({ original_name: file.name, file_url: data.url || data.file_url, file_name: data.file_name || file.name, file_size: data.file_size || file.size, mime_type: data.mime_type || file.type });
+          const up = getUploadFilePayload(data);
+          if (!up?.file_url && !up?.url) continue;
+          uploaded.push({
+            original_name: file.name,
+            file_url: up.file_url || up.url,
+            file_name: up.file_name || file.name,
+            file_size: up.file_size || file.size,
+            mime_type: up.mime_type || file.type,
+          });
         }
+        if (!uploaded.length) throw new Error('Upload chưa trả URL file hợp lệ');
         await api.post(`/projects/${project.id}/documents/bulk`, { items: uploaded });
         await loadProjectDocs(project.id);
       } catch (err) { alert(err.response?.data?.error || 'Lỗi upload file'); }
@@ -1856,8 +1892,17 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
           const fd = new FormData();
           fd.append('file', file);
           const { data } = await api.post('/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-          uploaded.push({ name: file.name, file_url: data.url || data.file_url, file_name: file.name });
+          const up = getUploadFilePayload(data);
+          if (!up?.file_url && !up?.url) continue;
+          uploaded.push({
+            name: file.name,
+            file_url: up.file_url || up.url,
+            file_name: up.file_name || file.name,
+            file_size: up.file_size || file.size,
+            mime_type: up.mime_type || file.type,
+          });
         }
+        if (!uploaded.length) throw new Error('Upload chưa trả URL file hợp lệ');
         await api.post(`/crm/leads/${dealId}/documents/bulk`, { documents: uploaded });
         const { data: docs } = await api.get(`/crm/leads/${dealId}/documents`);
         setCrmDealDocs(Array.isArray(docs) ? docs : []);
@@ -1965,6 +2010,27 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     ? (crmDealTaskSummary.total || 0)
     : (productionTaskSummary.total || 0);
   const taskUsers = safeTaskUsers;
+  const documentsForZipTotal = safeProjectDocs.length + visibleCrmSharedDocs.length + safeTaskFiles.length;
+
+  const handleDownloadAllDocuments = async () => {
+    if (downloadingDocsZip || documentsForZipTotal === 0) return;
+    setDownloadingDocsZip(true);
+    try {
+      const result = await downloadWorkshopDocumentsZip({
+        projectLabel: displayCode || displayTitle || project?.name || 'Du-an',
+        moduleLabel: moduleKey === 'vc' ? 'VC' : 'SX',
+        projectDocs: safeProjectDocs,
+        crmDocs: visibleCrmSharedDocs,
+        taskFiles: safeTaskFiles,
+      });
+      if (result?.missing > 0) {
+        alert(`Đã tải ${result.added}/${result.total} file. Có ${result.missing} mục lỗi, xem BAO_CAO_FILE_LOI.txt trong file ZIP.`);
+      }
+    } catch (e) {
+      alert(e?.message || 'Không tải được tài liệu');
+    }
+    setDownloadingDocsZip(false);
+  };
 
   const tabBtn = (tab, label) => (
     <button
@@ -2268,7 +2334,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
             <div className="flex border-b flex-wrap">
               {tabBtn('tasks', `✅ Công việc${taskCount ? ` (${taskCount})` : ''}`)}
               {crmLeadId && moduleKey !== 'vc' && tabBtn('shared-workspace', '🤝 Không gian chung')}
-              {tabBtn('documents', `📋 Tài liệu (${safeProjectDocs.length + visibleCrmSharedDocs.length + safeTaskFiles.length})`)}
+              {tabBtn('documents', `📋 Tài liệu (${documentsForZipTotal})`)}
               {tabBtn('notes', `📝 Ghi chú (${sharedNotes.length})`)}
               {tabBtn('comments', `💬 Bình luận${commentCount > 0 ? ` (${commentCount})` : ''}`)}
               {tabBtn('incidents', incidents.filter(i => i.status === 'open' || i.status === 'in_progress').length > 0
@@ -2358,6 +2424,25 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     <button type="button" onClick={() => setShowAddTextDoc(true)} className="h-8 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
                       <Plus className="h-3.5 w-3.5" /> Nhập văn bản
                     </button>
+                    {documentsForZipTotal > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleDownloadAllDocuments}
+                        disabled={downloadingDocsZip}
+                        className="h-8 px-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer"
+                        title="Tải ZIP tất cả tài liệu trong tab này"
+                      >
+                        {downloadingDocsZip ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang nén...
+                          </>
+                        ) : (
+                          <>
+                            <Download className="h-3.5 w-3.5" /> Tải tất cả ({documentsForZipTotal})
+                          </>
+                        )}
+                      </button>
+                    )}
                   </div>
 
                   <CrmSharedDocumentsPanel
@@ -2393,7 +2478,10 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                               {f.task?.title && <p className="text-[10px] text-purple-600 truncate">📌 {f.task.title}</p>}
                             </div>
                             {f.file_url && (
-                              <a {...getFileOpenAnchorProps(f.file_url, { fileName: f.file_name })} className="text-[10px] text-blue-600 hover:underline shrink-0">Mở</a>
+                              <div className="shrink-0 flex items-center gap-2">
+                                <a {...getFileOpenAnchorProps(f.file_url, { fileName: f.file_name })} className="text-[10px] text-blue-600 hover:underline">Mở</a>
+                                <a {...getFileDownloadAnchorProps(f.file_url, { fileName: f.file_name || 'tai-lieu' })} className="text-[10px] text-emerald-600 hover:underline">Tải</a>
+                              </div>
                             )}
                           </div>
                         ))}
@@ -3018,8 +3106,16 @@ function ProjectChatTab({ projectId, socket }) {
         const fd = new FormData();
         fd.append('file', file);
         const { data: up } = await api.post('/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-        uploaded.push({ url: up.url || up.file_url, name: file.name, type: file.type, size: file.size });
+        const upFile = getUploadFilePayload(up);
+        if (!upFile?.file_url && !upFile?.url) continue;
+        uploaded.push({
+          url: upFile.file_url || upFile.url,
+          name: upFile.file_name || file.name,
+          type: upFile.mime_type || file.type,
+          size: upFile.file_size || file.size,
+        });
       }
+      if (!uploaded.length) throw new Error('Upload chưa trả URL file hợp lệ');
       const { data } = await api.post(`/projects/${projectId}/comments`, { content: text.trim() || '', attachments: uploaded });
       setMessages(prev => [...prev, data.comment]);
       setText('');

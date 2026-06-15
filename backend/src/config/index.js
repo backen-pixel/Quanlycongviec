@@ -22,4 +22,15 @@ module.exports = {
     (process.env.FRONTEND_URL ||
       (process.env.CORS_ORIGINS || 'http://localhost:5173').split(',')[0] ||
       'http://localhost:5173').trim().replace(/\/+$/, ''),
+  // ── Google Drive integration (module Drive) ──
+  // Service Account JSON (chuỗi đầy đủ key.json) — có thể đặt cả file path qua GDRIVE_SERVICE_ACCOUNT_FILE.
+  gdriveServiceAccountJson: process.env.GDRIVE_SERVICE_ACCOUNT_JSON || '',
+  gdriveServiceAccountFile: process.env.GDRIVE_SERVICE_ACCOUNT_FILE || '',
+  // Folder gốc trên Google Drive (đã share quyền Editor cho service account). Bắt buộc.
+  gdriveRootFolderId: process.env.GDRIVE_ROOT_FOLDER_ID || '',
+  // (Tuỳ chọn) Email Workspace user để impersonate qua domain-wide delegation.
+  gdriveImpersonateUser: process.env.GDRIVE_IMPERSONATE_USER || '',
+  // Bật/tắt job sync incremental (changes.list). Mặc định bật.
+  gdriveSyncEnabled: process.env.GDRIVE_SYNC_DISABLED !== '1',
+  gdriveSyncIntervalMs: Math.max(60_000, parseInt(process.env.GDRIVE_SYNC_INTERVAL_MS || '300000', 10)),
 };

@@ -39,9 +39,7 @@ function apkDownloadHref(release) {
 function apkDownloadFilename(release, appKey) {
   if (!release?.version) return 'app-release.apk';
   const code = release.version_code != null ? `-code${release.version_code}` : '';
-  const key = appKey || 'app';
-  const stem = /-v\d+$/i.test(key) ? `${key}.${release.version}` : `${key}-${release.version}`;
-  return `${stem}${code}-release.apk`;
+  return `${appKey || 'app'}-${release.version}${code}-release.apk`;
 }
 
 function formatDateVN(iso) {

@@ -110,17 +110,20 @@ async function validateWorkshopType(companyId, workshopTypeId) {
   return { ok: true, type: wt };
 }
 
-async function ensureCustomerId(companyId, incomingCustomerId, customerName, customerPhone, customerEmail, installAddress) {
+async function ensureCustomerId(companyId, incomingCustomerId, customerName, customerPhone, customerEmail, installAddress, fallbackName) {
   if (incomingCustomerId) return { ok: true, customerId: incomingCustomerId };
   const nameTrim = String(customerName || '').trim();
   const phoneTrim = String(customerPhone || '').trim();
-  if (!nameTrim) return { ok: false, error: 'Nhập tên khách hàng', statusCode: 400 };
-  if (!phoneTrim) return { ok: false, error: 'Nhập số điện thoại khách hàng', statusCode: 400 };
+  // Module Xưởng: tên KH & SĐT không bắt buộc — fallback từ tên đơn để vẫn lưu được customer record
+  // (cột customers.full_name & phone NOT NULL).
+  const fallbackTrim = String(fallbackName || '').trim();
+  const effectiveName = nameTrim || fallbackTrim || 'Khách hàng xưởng';
+  const effectivePhone = phoneTrim || '';
   const { data: customer, error: custErr } = await supabase
     .from('customers')
     .insert({
-      full_name: nameTrim,
-      phone: phoneTrim,
+      full_name: effectiveName,
+      phone: effectivePhone,
       email: customerEmail || null,
       address: installAddress || null,
       company_id: companyId,
@@ -271,7 +274,7 @@ async function createWorkshopIntakeOrder(opts) {
 
   const [wtCheck, customerResult, pipelineInfo, flowId, dealCode] = await Promise.all([
     validateWorkshopType(companyUuid, workshopTypeId),
-    ensureCustomerId(companyUuid, incomingCustomerId, customerName, customerPhone, customerEmail, installAddress),
+    ensureCustomerId(companyUuid, incomingCustomerId, customerName, customerPhone, customerEmail, installAddress, titleTrim),
     getPipelineAndWonStage(companyUuid),
     resolveDefaultFlowId(),
     nextCrmCode('DEAL'),

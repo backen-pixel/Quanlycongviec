@@ -252,6 +252,7 @@ try { app.use('/api/user-activity', require('./routes/userActivityLog')); } catc
 try { app.use('/api/auth-events', require('./routes/authEventLog')); } catch (e) { console.warn('⚠️ Auth Event Log route failed to load:', e.message); }
 try { app.use('/api/integrations/stringee', require('./routes/stringee')); } catch (e) { console.warn('⚠️ Stringee route failed to load:', e.message); }
 try { app.use('/api/calc', require('./routes/calc')); } catch (e) { console.warn('⚠️ Calc (Tính toán) route failed to load:', e.message); }
+try { app.use('/api/drive', require('./routes/drive')); } catch (e) { console.warn('⚠️ Drive route failed to load:', e.message); }
 
 // ─── Serve Frontend (SPA) in production ──
 const frontendDist = path.join(__dirname, '../../frontend/dist');
@@ -980,6 +981,13 @@ server.listen(config.port, () => {
     require('./jobs/aiChatBotRunner').start(io);
   } catch (e) {
     console.warn('[ai-bot-cron] Failed to start:', e.message);
+  }
+
+  // Cron Google Drive sync — chạy `changes.list` mỗi GDRIVE_SYNC_INTERVAL_MS (mặc định 5'). Disable: GDRIVE_SYNC_DISABLED=1
+  try {
+    require('./jobs/driveSync').start();
+  } catch (e) {
+    console.warn('[drive-sync] Failed to start:', e.message);
   }
 
   // ─── DEADLINE CHECKER — every hour (defer 60s to not impact startup) ──

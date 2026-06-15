@@ -14,4 +14,5 @@ export type RootStackParamList = {
   ChatDetail: { threadId: string; title: string; color: string };
   CreateEntity: { kind: 'lead' | 'deal' };
   VoiceLocalRecordings: undefined;
+  Drive: undefined;
 };

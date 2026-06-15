@@ -7447,26 +7447,6 @@ r.post('/leads/:id/convert-to-lead', async (req, res) => {
       return res.status(400).json({ error: 'Deal đã có dự án SX — không thể trả về Lead. Hủy/xóa dự án trước nếu thật sự cần.' });
     }
 
-    // Kiểm tra cờ "allow_revert_to_lead" trên cột deal hiện tại (do Cài đặt Pipeline bật/tắt).
-    if (lead.stage_id) {
-      const { data: curStage, error: curStageErr } = await supabase
-        .from('crm_pipeline_stages')
-        .select('id, name, is_won, is_lost, allow_revert_to_lead')
-        .eq('id', lead.stage_id)
-        .maybeSingle();
-      if (!curStageErr && curStage) {
-        if (curStage.is_won) {
-          return res.status(400).json({ error: 'Deal đang ở cột Thắng — không thể trả về Lead.' });
-        }
-        if (curStage.allow_revert_to_lead !== true) {
-          return res.status(400).json({
-            error: `Cột "${curStage.name || 'hiện tại'}" chưa bật "Cho phép trả về Lead". Vào Cài đặt Pipeline để bật trước.`,
-          });
-        }
-      }
-      // Nếu lỗi đọc stage (vd cột chưa có trên DB cũ) → cho qua để không chặn flow.
-    }
-
     // Quyền: admin công ty/khu vực hoặc đang là người phụ trách deal hiện tại.
     const uid = req.user?.userId;
     const isOwnerNow =

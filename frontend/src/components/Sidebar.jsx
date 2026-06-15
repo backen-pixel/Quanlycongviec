@@ -12,7 +12,7 @@ import {
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X, UsersRound,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
   BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, CalendarRange, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot, Download,
-  Sigma, Calculator, FileUp, History as HistoryIcon,
+  Sigma, Calculator, FileUp, History as HistoryIcon, HardDrive,
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
@@ -51,6 +51,7 @@ const MENU_GROUPS = [
       { to: '/customers', icon: UserCircle, label: 'Khách hàng', adminOnly: true, moduleKey: 'customers' },
       { to: '/products', icon: Package, label: 'Sản phẩm', adminOnly: true },
       { to: '/workflow-hub', icon: GitBranch, label: 'Quản lý quy trình', adminOnly: true },
+      { to: '/drive', icon: HardDrive, label: 'Drive lưu trữ' },
     ]
   },
   {
