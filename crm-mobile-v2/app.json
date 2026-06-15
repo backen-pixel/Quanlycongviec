@@ -2,12 +2,14 @@
   "expo": {
     "name": "CRM Mobile",
     "slug": "crm-mobile-v2",
-    "version": "2.0.18",
+    "version": "2.0.19",
     "orientation": "portrait",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "backgroundColor": "#0B0F17",
+    "icon": "./assets/icon.png",
     "splash": {
+      "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#0B0F17"
     },
@@ -19,8 +21,12 @@
     },
     "android": {
       "package": "vn.tubeppro.crmobilev2",
-      "versionCode": 19,
+      "versionCode": 20,
       "edgeToEdgeEnabled": false,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0B0F17"
+      },
       "permissions": [
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",

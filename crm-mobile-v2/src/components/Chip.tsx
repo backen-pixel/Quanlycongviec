@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text } from 'react-native';
-import { Colors, Radii } from '../theme';
+import { Radii, useColors, type ThemeColors } from '../theme';
 
 type Props = {
   label: string;
@@ -12,27 +12,30 @@ type Props = {
   onPress?: () => void;
 };
 
-export default function Chip({ label, active, icon, accent = Colors.blue, count, onPress }: Props) {
+export default function Chip({ label, active, icon, accent, count, onPress }: Props) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+  const tint = accent ?? Colors.blue;
   return (
     <Pressable
       onPress={onPress}
       style={[
         styles.chip,
-        active && { backgroundColor: accent + '26', borderColor: accent },
+        active && { backgroundColor: tint + '26', borderColor: tint },
       ]}
     >
       {icon ? (
-        <Ionicons name={icon} size={14} color={active ? accent : Colors.textMuted} />
+        <Ionicons name={icon} size={14} color={active ? tint : Colors.textMuted} />
       ) : null}
-      <Text style={[styles.label, active && { color: accent }]}>{label}</Text>
+      <Text style={[styles.label, active && { color: tint }]}>{label}</Text>
       {typeof count === 'number' ? (
-        <Text style={[styles.count, active && { color: accent }]}>{count}</Text>
+        <Text style={[styles.count, active && { color: tint }]}>{count}</Text>
       ) : null}
     </Pressable>
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   chip: {
     flexDirection: 'row',
     alignItems: 'center',

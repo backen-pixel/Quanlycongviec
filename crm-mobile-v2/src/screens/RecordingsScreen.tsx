@@ -18,7 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Chip from '../components/Chip';
 import { formatApiError } from '../api/client';
 import { fetchRecordings, type RecordingItem } from '../api/recordings';
-import { Colors, Radii } from '../theme';
+import { Radii, useColors, type ThemeColors } from '../theme';
 
 function fmt(sec: number): string {
   const m = Math.floor(sec / 60);
@@ -27,6 +27,8 @@ function fmt(sec: number): string {
 }
 
 function PlayerBar({ rec }: { rec: RecordingItem }) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const [playing, setPlaying] = useState(false);
   const [posMs, setPosMs] = useState(0);
   const [durMs, setDurMs] = useState(rec.durationSec * 1000);
@@ -95,6 +97,8 @@ function PlayerBar({ rec }: { rec: RecordingItem }) {
 }
 
 const RecCard = React.memo(function RecCard({ rec }: { rec: RecordingItem }) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   return (
     <View style={styles.card}>
       <Text style={styles.cardTitle}>{rec.title}</Text>
@@ -159,6 +163,8 @@ function ActionBtn({
   danger?: boolean;
   wide?: boolean;
 }) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   return (
     <Pressable
       style={[
@@ -174,6 +180,8 @@ function ActionBtn({
 }
 
 export default function RecordingsScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const insets = useSafeAreaInsets();
   const [list, setList] = useState<RecordingItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -287,7 +295,7 @@ export default function RecordingsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.bg },
   listContent: { paddingHorizontal: 14, paddingBottom: 120 },
   hero: {

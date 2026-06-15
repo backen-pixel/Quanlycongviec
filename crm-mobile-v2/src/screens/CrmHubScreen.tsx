@@ -64,7 +64,7 @@ import {
   type CrmHubFilters,
   type SearchField,
 } from '../lib/crmFilters';
-import { Colors, Radii, Spacing, stageColor } from '../theme';
+import { Radii, Spacing, stageColor, useColors, type ThemeColors } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
 import type { CrmHubData, CrmKanbanItem, CrmPipelineStage, CrmStageCache, LeadTemp } from '../types';
 
@@ -78,12 +78,14 @@ function sumCounts(counts: Record<string, number>): number {
   return Object.values(counts).reduce((a, b) => a + b, 0);
 }
 
-const TEMP_META: Record<LeadTemp, { label: string; color: string }> = {
-  hot: { label: 'Hot', color: Colors.red },
-  warm: { label: 'Warm', color: Colors.amber },
-  cold: { label: 'Cold', color: Colors.cyan },
-  new: { label: 'Mới', color: Colors.green },
-};
+function tempMetaMap(Colors: ThemeColors): Record<LeadTemp, { label: string; color: string }> {
+  return {
+    hot: { label: 'Hot', color: Colors.red },
+    warm: { label: 'Warm', color: Colors.amber },
+    cold: { label: 'Cold', color: Colors.cyan },
+    new: { label: 'Mới', color: Colors.green },
+  };
+}
 
 function formatDate(value?: string | null): string {
   if (!value) return '';
@@ -102,6 +104,8 @@ type LoadingNoticeProps = {
 };
 
 function LoadingNotice({ title, hint, variant = 'card' }: LoadingNoticeProps) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   if (variant === 'banner') {
     return (
       <View style={styles.loadingBanner}>
@@ -154,9 +158,11 @@ const KanbanCard = React.memo(function KanbanCard({
   isMoving: boolean;
   onMove: () => void;
 }) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const deadlineStr = item.dueIso ? formatDate(item.dueIso) : '';
   const createdStr = formatDate(item.createdAt);
-  const tempMeta = item.temp ? TEMP_META[item.temp] : null;
+  const tempMeta = item.temp ? tempMetaMap(Colors)[item.temp] : null;
 
   return (
     <View style={[styles.card, { borderLeftColor: accent }]}>
@@ -318,6 +324,8 @@ function initialFiltersFromRoute(
 }
 
 export default function CrmHubScreen({ navigation, route }: Props) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const { toggle } = useCreateMenu();
@@ -1332,7 +1340,7 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.bg },
   center: { flex: 1, backgroundColor: Colors.bg, alignItems: 'center', justifyContent: 'center', gap: 12 },
   loadingCard: {

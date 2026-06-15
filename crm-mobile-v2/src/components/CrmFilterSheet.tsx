@@ -21,7 +21,7 @@ import {
   type PhoneFilter,
   type TimePreset,
 } from '../lib/crmFilters';
-import { Colors, Radii } from '../theme';
+import { Radii, useColors, type ThemeColors } from '../theme';
 
 type Props = {
   visible: boolean;
@@ -78,6 +78,8 @@ function ChipRow<T extends string>({
   accent: string;
   disabled?: boolean;
 }) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.hScroll}>
       {options.map((opt) => {
@@ -112,6 +114,8 @@ function FilterSection({
   subtitle?: string;
   children: React.ReactNode;
 }) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{title}</Text>
@@ -136,6 +140,8 @@ export default function CrmFilterSheet({
   onCompanyChange,
   onClose,
 }: Props) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const insets = useSafeAreaInsets();
   const accent = mode === 'leads' ? Colors.blue : Colors.orange;
   const [draft, setDraft] = useState(filters);
@@ -382,7 +388,7 @@ export default function CrmFilterSheet({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' },
   sheet: {
     backgroundColor: Colors.card,

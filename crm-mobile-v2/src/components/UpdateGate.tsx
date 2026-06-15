@@ -1,7 +1,7 @@
 /**
  * Kiểm tra cập nhật APK lúc mở app — giống TuBep Demo.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -12,9 +12,11 @@ import {
   View,
 } from 'react-native';
 import { checkForUpdate, downloadAndInstall, type UpdateCheckResult } from '../lib/appUpdate';
-import { Colors, Radii } from '../theme';
+import { Radii, useColors, type ThemeColors } from '../theme';
 
 export default function UpdateGate() {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const [info, setInfo] = useState<UpdateCheckResult | null>(null);
   const [visible, setVisible] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -111,7 +113,7 @@ export default function UpdateGate() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.65)',

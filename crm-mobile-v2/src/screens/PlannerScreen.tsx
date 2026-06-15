@@ -27,19 +27,20 @@ import {
   plannerSearchPlaceholder,
   type PlannerQuickFilter,
 } from '../lib/plannerFilters';
-import { Colors, Radii } from '../theme';
+import { Radii, useColors, type ThemeColors } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
 import type { PlannerItem, PlannerKind } from '../types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
-const KIND_META: Record<
-  PlannerKind,
-  { label: string; icon: keyof typeof Ionicons.glyphMap; color: string; soft: string }
-> = {
-  lead: { label: 'Leads của tôi', icon: 'people', color: Colors.blue, soft: Colors.blueSoft },
-  deal: { label: 'Deals của tôi', icon: 'pricetags', color: Colors.orange, soft: Colors.orangeSoft },
-};
+type KindMeta = { label: string; icon: keyof typeof Ionicons.glyphMap; color: string; soft: string };
+
+function kindMeta(Colors: ThemeColors): Record<PlannerKind, KindMeta> {
+  return {
+    lead: { label: 'Leads của tôi', icon: 'people', color: Colors.blue, soft: Colors.blueSoft },
+    deal: { label: 'Deals của tôi', icon: 'pricetags', color: Colors.orange, soft: Colors.orangeSoft },
+  };
+}
 
 const QUICK_FILTERS: { key: PlannerQuickFilter; label: string }[] = [
   { key: 'all', label: 'Tất cả' },
@@ -59,7 +60,9 @@ type SectionState = {
 const EMPTY_SECTION: SectionState = { items: [], total: 0, hasMore: false, nextOffset: 0 };
 
 function CompactCard({ item }: { item: PlannerItem }) {
-  const meta = KIND_META[item.kind];
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+  const meta = kindMeta(Colors)[item.kind];
   return (
     <View style={[styles.card, { borderLeftColor: meta.color }]}>
       <View style={styles.cardTop}>
@@ -102,7 +105,9 @@ function PlannerSection({
   loadingMore?: boolean;
   onLoadMore: () => void;
 }) {
-  const meta = KIND_META[kind];
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+  const meta = kindMeta(Colors)[kind];
   const [searchDraft, setSearchDraft] = useState('');
   const [search, setSearch] = useState('');
   const [quickFilter, setQuickFilter] = useState<PlannerQuickFilter>('all');
@@ -259,6 +264,8 @@ function PlannerSection({
 }
 
 export default function PlannerScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<Nav>();
   const { user } = useAuth();
@@ -549,7 +556,7 @@ export default function PlannerScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.bg },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, marginBottom: 16 },
   greeting: { color: Colors.text, fontSize: 24, fontWeight: '900' },
