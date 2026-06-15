@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
-import { Colors } from '../theme';
+import { useColors, type ThemeColors } from '../theme';
 
 type Props = {
   name: string;
@@ -22,16 +22,19 @@ export default function Avatar({
   name,
   initials,
   size = 40,
-  color = Colors.blue,
+  color,
   online,
   avatarUrl,
 }: Props) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+  const circleColor = color ?? Colors.blue;
   return (
     <View style={{ width: size, height: size }}>
       <View
         style={[
           styles.circle,
-          { width: size, height: size, borderRadius: size / 2, backgroundColor: color },
+          { width: size, height: size, borderRadius: size / 2, backgroundColor: circleColor },
         ]}
       >
         {avatarUrl ? (
@@ -54,7 +57,7 @@ export default function Avatar({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   circle: { alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   text: { color: '#FFFFFF', fontWeight: '800' },
   dot: {

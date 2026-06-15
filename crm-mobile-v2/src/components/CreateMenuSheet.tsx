@@ -1,11 +1,11 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCreateMenu } from '../context/CreateMenuContext';
 import { navigate } from '../navigation/navigationRef';
-import { Colors, Radii } from '../theme';
+import { Radii, useColors, type ThemeColors } from '../theme';
 
 type ActionProps = {
   icon: keyof typeof Ionicons.glyphMap;
@@ -17,6 +17,8 @@ type ActionProps = {
 };
 
 function ActionButton({ icon, label, sub, colors, delay, onPress }: ActionProps) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const translate = delay.interpolate({ inputRange: [0, 1], outputRange: [24, 0] });
   return (
     <Animated.View style={{ opacity: delay, transform: [{ translateY: translate }] }}>
@@ -40,6 +42,8 @@ function ActionButton({ icon, label, sub, colors, delay, onPress }: ActionProps)
 }
 
 export default function CreateMenuSheet() {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const { open, close } = useCreateMenu();
   const insets = useSafeAreaInsets();
   const fade = useRef(new Animated.Value(0)).current;
@@ -94,7 +98,7 @@ export default function CreateMenuSheet() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   backdrop: { backgroundColor: 'rgba(5,8,14,0.72)' },
   sheet: {
     position: 'absolute',

@@ -1,8 +1,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
-import { Colors, CreateGradient, Shadow } from '../theme';
+import { CreateGradient, Shadow, useColors, type ThemeColors } from '../theme';
 
 type Props = {
   open: boolean;
@@ -17,6 +17,8 @@ type Props = {
  * - Bấm xoay dấu + thành ×
  */
 export default function FloatingCreateButton({ open, onPress }: Props) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const rotate = useRef(new Animated.Value(0)).current;
   const glow = useRef(new Animated.Value(0)).current;
 
@@ -82,7 +84,7 @@ export default function FloatingCreateButton({ open, onPress }: Props) {
 
 const BTN = 60;
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   wrap: {
     alignItems: 'center',
     justifyContent: 'flex-start',

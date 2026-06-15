@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -15,7 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import { createEntity } from '../api/crm';
 import { currentUserId, useAuth } from '../context/AuthContext';
-import { Colors, Radii } from '../theme';
+import { Radii, useColors, type ThemeColors } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CreateEntity'>;
@@ -33,6 +33,8 @@ function Field({
   onChange: (t: string) => void;
   keyboardType?: 'default' | 'phone-pad' | 'numeric';
 }) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   return (
     <View style={styles.field}>
       <Text style={styles.label}>{label}</Text>
@@ -49,6 +51,8 @@ function Field({
 }
 
 export default function CreateEntityScreen({ navigation, route }: Props) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const isLead = route.params.kind === 'lead';
@@ -142,7 +146,7 @@ export default function CreateEntityScreen({ navigation, route }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.bg },
   header: {
     flexDirection: 'row',

@@ -1,8 +1,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text } from 'react-native';
 import type { SearchField } from '../lib/crmFilters';
-import { Colors, Radii } from '../theme';
+import { Radii, useColors, type ThemeColors } from '../theme';
 
 const FIELDS: { id: SearchField; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
   { id: 'all', label: 'Tất cả', icon: 'search' },
@@ -18,7 +18,10 @@ type Props = {
   accent?: string;
 };
 
-export default function CrmSearchFieldBar({ value, onChange, accent = Colors.blue }: Props) {
+export default function CrmSearchFieldBar({ value, onChange, accent }: Props) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+  const tint = accent ?? Colors.blue;
   return (
     <ScrollView
       horizontal
@@ -36,11 +39,11 @@ export default function CrmSearchFieldBar({ value, onChange, accent = Colors.blu
             style={[
               styles.chip,
               idx > 0 && styles.chipGap,
-              active && { backgroundColor: accent + '22', borderColor: accent },
+              active && { backgroundColor: tint + '22', borderColor: tint },
             ]}
           >
-            <Ionicons name={f.icon} size={12} color={active ? accent : Colors.textMuted} />
-            <Text style={[styles.chipTxt, active && { color: accent }]}>{f.label}</Text>
+            <Ionicons name={f.icon} size={12} color={active ? tint : Colors.textMuted} />
+            <Text style={[styles.chipTxt, active && { color: tint }]}>{f.label}</Text>
           </Pressable>
         );
       })}
@@ -48,7 +51,7 @@ export default function CrmSearchFieldBar({ value, onChange, accent = Colors.blu
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   scroll: { maxHeight: 34, marginTop: 8 },
   content: { paddingRight: 8 },
   chip: {

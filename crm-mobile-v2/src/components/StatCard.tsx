@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import React from 'react';
+import React, { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { Colors, Radii } from '../theme';
+import { Radii, useColors, type ThemeColors } from '../theme';
 
 type Props = {
   icon: keyof typeof Ionicons.glyphMap;
@@ -11,14 +11,17 @@ type Props = {
   accent?: string;
 };
 
-export default function StatCard({ icon, label, value, hint, accent = Colors.blue }: Props) {
+export default function StatCard({ icon, label, value, hint, accent }: Props) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+  const tint = accent ?? Colors.blue;
   return (
     <View style={styles.card}>
       <View style={styles.head}>
         <Ionicons name={icon} size={14} color={Colors.textFaint} />
         <Text style={styles.label}>{label}</Text>
       </View>
-      <Text style={[styles.value, { color: accent }]} numberOfLines={1}>
+      <Text style={[styles.value, { color: tint }]} numberOfLines={1}>
         {value}
       </Text>
       {hint ? <Text style={styles.hint}>{hint}</Text> : null}
@@ -26,7 +29,7 @@ export default function StatCard({ icon, label, value, hint, accent = Colors.blu
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   card: {
     flex: 1,
     backgroundColor: Colors.card,

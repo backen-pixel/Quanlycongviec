@@ -1,10 +1,10 @@
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCreateMenu } from '../context/CreateMenuContext';
-import { Colors } from '../theme';
+import { useColors, type ThemeColors } from '../theme';
 import FloatingCreateButton from './FloatingCreateButton';
 
 type TabMeta = {
@@ -21,6 +21,8 @@ const META: Record<string, TabMeta> = {
 };
 
 export default function CustomTabBar({ state, navigation }: BottomTabBarProps) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const insets = useSafeAreaInsets();
   const { open, toggle } = useCreateMenu();
   const padBottom = Math.max(insets.bottom, 10);
@@ -67,7 +69,7 @@ export default function CustomTabBar({ state, navigation }: BottomTabBarProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   bar: {
     flexDirection: 'row',
     alignItems: 'flex-start',

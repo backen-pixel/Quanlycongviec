@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   FlatList,
   Modal,
@@ -10,7 +10,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Colors, Radii, Spacing, stageColor } from '../theme';
+import { Radii, Spacing, stageColor, useColors, type ThemeColors } from '../theme';
 import type { CrmPipelineStage } from '../types';
 
 type Props = {
@@ -28,6 +28,8 @@ export default function MoveStageModal({
   onSelect,
   onClose,
 }: Props) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const insets = useSafeAreaInsets();
   const options = stages.filter((s) => String(s.id) !== String(currentStageId || ''));
 
@@ -77,7 +79,7 @@ export default function MoveStageModal({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' },
   sheet: {
     backgroundColor: Colors.bgElevated,

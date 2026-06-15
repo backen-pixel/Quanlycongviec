@@ -18,13 +18,15 @@ import Avatar from '../components/Avatar';
 import { formatApiError } from '../api/client';
 import { fetchThreads, type ThreadItem } from '../api/messenger';
 import { currentUserId, useAuth } from '../context/AuthContext';
-import { Colors, Radii } from '../theme';
+import { Radii, useColors, type ThemeColors } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type HubTab = 'chats' | 'calls';
 
 function ThreadRow({ item, onPress }: { item: ThreadItem; onPress: () => void }) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   return (
     <Pressable style={styles.row} onPress={onPress} android_ripple={{ color: Colors.surfaceSoft }}>
       <Avatar name={item.name} size={52} color={item.color} online={item.online} avatarUrl={item.avatarUrl} />
@@ -54,6 +56,8 @@ function ThreadRow({ item, onPress }: { item: ThreadItem; onPress: () => void })
 }
 
 export default function MessagesScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
@@ -188,7 +192,7 @@ export default function MessagesScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.bg },
   header: {
     flexDirection: 'row',

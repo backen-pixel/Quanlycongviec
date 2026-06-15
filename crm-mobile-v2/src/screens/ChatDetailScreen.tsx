@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -16,13 +16,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../components/Avatar';
 import { fetchMessages, sendMessage } from '../api/messenger';
 import { currentUserId, useAuth } from '../context/AuthContext';
-import { Colors, Radii } from '../theme';
+import { Radii, useColors, type ThemeColors } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
 import type { ChatMessage } from '../types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ChatDetail'>;
 
 function Bubble({ m }: { m: ChatMessage }) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   return (
     <View style={[styles.bubbleRow, { justifyContent: m.mine ? 'flex-end' : 'flex-start' }]}>
       <View style={{ maxWidth: '82%' }}>
@@ -46,6 +48,8 @@ function Bubble({ m }: { m: ChatMessage }) {
 }
 
 export default function ChatDetailScreen({ navigation, route }: Props) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const insets = useSafeAreaInsets();
   const { threadId, title, color } = route.params;
   const { user } = useAuth();
@@ -155,7 +159,7 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.bg },
   header: {
     flexDirection: 'row',
