@@ -14,6 +14,10 @@ import {
   stopVoiceBackgroundSyncLoop,
   syncVoiceBackgroundTaskWithPrefs,
 } from '../lib/voiceBackgroundSync';
+import {
+  registerVoiceBackgroundTask,
+  unregisterVoiceBackgroundTask,
+} from '../lib/voiceBackgroundTask';
 import { Radii, useColors, useTheme, type ThemeColors } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -83,8 +87,10 @@ export default function MenuScreen() {
     if (next.voiceCaptureEnabled && next.voiceBackgroundSyncEnabled) {
       startVoiceBackgroundSyncLoop();
       void syncVoiceBackgroundTaskWithPrefs();
+      void registerVoiceBackgroundTask();
     } else {
       stopVoiceBackgroundSyncLoop();
+      void unregisterVoiceBackgroundTask();
     }
   };
 
@@ -165,7 +171,12 @@ export default function MenuScreen() {
             />
           </View>
           <View style={styles.toggleRow}>
-            <Text style={styles.toggleLbl}>Đồng bộ nền (Android)</Text>
+            <View style={{ flex: 1, paddingRight: 10 }}>
+              <Text style={styles.toggleLbl}>Tự động quét & đẩy lên (Android)</Text>
+              <Text style={styles.toggleHint}>
+                Tự đọc ghi âm cuộc gọi, quét và tải lên hệ thống — chạy cả khi app đang đóng.
+              </Text>
+            </View>
             <Switch
               value={prefs.voiceBackgroundSyncEnabled}
               onValueChange={(v) => void updatePrefs({ ...prefs, voiceBackgroundSyncEnabled: v })}
@@ -290,6 +301,7 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     borderTopColor: Colors.borderSoft,
   },
   toggleLbl: { color: Colors.textMuted, fontSize: 13, fontWeight: '600', flex: 1, paddingRight: 12 },
+  toggleHint: { color: Colors.textFaint, fontSize: 11, lineHeight: 15, marginTop: 3 },
   profile: {
     flexDirection: 'row',
     alignItems: 'center',

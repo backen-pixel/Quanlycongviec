@@ -6,6 +6,10 @@ import {
   startVoiceBackgroundSyncLoop,
   stopVoiceBackgroundSyncLoop,
 } from '../lib/voiceBackgroundSync';
+import {
+  registerVoiceBackgroundTask,
+  unregisterVoiceBackgroundTask,
+} from '../lib/voiceBackgroundTask';
 import { loadCrmMobilePrefs } from '../lib/crmMobilePrefs';
 
 /** Khởi chạy quét ghi âm nền sau đăng nhập (Android). */
@@ -15,6 +19,7 @@ export default function VoiceSyncRunner() {
   useEffect(() => {
     if (loading || !token || Platform.OS !== 'android') {
       stopVoiceBackgroundSyncLoop();
+      void unregisterVoiceBackgroundTask();
       return;
     }
 
@@ -22,9 +27,12 @@ export default function VoiceSyncRunner() {
       const prefs = await loadCrmMobilePrefs();
       if (!prefs.voiceBackgroundSyncEnabled || !prefs.voiceCaptureEnabled) {
         stopVoiceBackgroundSyncLoop();
+        await unregisterVoiceBackgroundTask();
         return;
       }
       startVoiceBackgroundSyncLoop();
+      // Quét nền định kỳ cả khi app không mở (WorkManager trên Android).
+      await registerVoiceBackgroundTask();
     })();
 
     const sub = AppState.addEventListener('change', (state) => {

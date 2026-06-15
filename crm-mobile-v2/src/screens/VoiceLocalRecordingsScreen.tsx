@@ -243,7 +243,7 @@ export default function VoiceLocalRecordingsScreen() {
         </Pressable>
         <Text style={styles.h1}>Ghi âm trên máy</Text>
         <Text style={styles.banner}>
-          Quét file ghi cuộc gọi trên điện thoại và so với server. Bấm «Đồng bộ ngay» để gửi bản ghi mới lên.
+          App tự động quét file ghi cuộc gọi và đẩy lên hệ thống (kể cả khi đóng app). Bấm «Đồng bộ ngay» nếu muốn gửi liền.
         </Text>
       </View>
 
