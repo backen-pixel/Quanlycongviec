@@ -6,6 +6,7 @@ import { Platform } from 'react-native';
 import * as Application from 'expo-application';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as FileSystem from 'expo-file-system/legacy';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_ORIGIN } from '../config';
 
 /** Định danh app trong registry server (bảng mobile_apps.app_key). */
@@ -31,6 +32,9 @@ export function currentVersionCode(): number | null {
 export function currentVersionName(): string {
   return Application.nativeApplicationVersion || '';
 }
+
+const UPDATE_PENDING_CODE_KEY = '@crmv2_update_pending_code';
+const UPDATE_PENDING_VERSION_KEY = '@crmv2_update_pending_version';
 
 export async function checkForUpdate(): Promise<UpdateCheckResult> {
   if (Platform.OS !== 'android') return { updateAvailable: false };
@@ -151,6 +155,21 @@ export async function downloadAndInstall(
 ): Promise<boolean> {
   if (Platform.OS !== 'android') throw new Error('Chỉ hỗ trợ Android');
 
+  const apk = await downloadApkToCache(url, version, opts);
+  await openDownloadedApk(apk.uri, {
+    version,
+    versionCode: null,
+  });
+  return true;
+}
+
+export async function downloadApkToCache(
+  url: string,
+  version: string,
+  opts: { expectedSize?: number | null; onProgress?: (ratio: number) => void } = {},
+): Promise<{ uri: string }> {
+  if (Platform.OS !== 'android') throw new Error('Chỉ hỗ trợ Android');
+
   await assertDownloadReady(url);
 
   const safeVersion = String(version || 'latest').replace(/[^0-9A-Za-z._-]/g, '_');
@@ -171,14 +190,68 @@ export async function downloadAndInstall(
 
   const result = await resumable.downloadAsync();
   if (!result?.uri) throw new Error('Tải APK thất bại');
-
   await assertDownloadedApk(result.uri, opts.expectedSize);
+  return { uri: result.uri };
+}
 
-  const contentUri = await FileSystem.getContentUriAsync(result.uri);
+export async function openDownloadedApk(
+  apkUri: string,
+  opts: { version?: string | null; versionCode?: number | null } = {},
+): Promise<void> {
+  if (Platform.OS !== 'android') throw new Error('Chỉ hỗ trợ Android');
+  const contentUri = await FileSystem.getContentUriAsync(apkUri);
+  await markPendingUpdateInstall(opts);
   await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
     data: contentUri,
     flags: 1,
     type: 'application/vnd.android.package-archive',
   });
-  return true;
+}
+
+async function markPendingUpdateInstall(opts: {
+  version?: string | null;
+  versionCode?: number | null;
+}): Promise<void> {
+  try {
+    const code = opts.versionCode;
+    if (code != null && Number.isFinite(code)) {
+      await AsyncStorage.setItem(UPDATE_PENDING_CODE_KEY, String(code));
+    }
+    const ver = (opts.version || '').trim();
+    if (ver) await AsyncStorage.setItem(UPDATE_PENDING_VERSION_KEY, ver);
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function consumeUpdateSuccessMessage(): Promise<string | null> {
+  try {
+    const [pendingCodeRaw, pendingVer] = await Promise.all([
+      AsyncStorage.getItem(UPDATE_PENDING_CODE_KEY),
+      AsyncStorage.getItem(UPDATE_PENDING_VERSION_KEY),
+    ]);
+    if (!pendingCodeRaw && !pendingVer) return null;
+
+    const currentCode = currentVersionCode();
+    const pendingCode = pendingCodeRaw ? Number(pendingCodeRaw) : null;
+    const currentVer = currentVersionName();
+
+    const okByCode =
+      pendingCode != null &&
+      Number.isFinite(pendingCode) &&
+      currentCode != null &&
+      Number.isFinite(currentCode) &&
+      currentCode >= pendingCode;
+    const okByVersion = !!pendingVer && !!currentVer && pendingVer === currentVer;
+
+    if (!okByCode && !okByVersion) return null;
+
+    await Promise.all([
+      AsyncStorage.removeItem(UPDATE_PENDING_CODE_KEY),
+      AsyncStorage.removeItem(UPDATE_PENDING_VERSION_KEY),
+    ]);
+    return `Đã cập nhật thành công lên phiên bản ${currentVer || pendingVer || ''}`.trim();
+  } catch {
+    return null;
+  }
 }

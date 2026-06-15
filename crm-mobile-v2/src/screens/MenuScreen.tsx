@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../components/Avatar';
 import { warmCrmHubPipelines } from '../api/crm';
 import { useAuth } from '../context/AuthContext';
-import { currentVersionName } from '../lib/appUpdate';
+import { currentVersionCode, currentVersionName } from '../lib/appUpdate';
 import { loadCrmMobilePrefs, saveCrmMobilePrefs, type CrmMobilePrefs } from '../lib/crmMobilePrefs';
 import {
   startVoiceBackgroundSyncLoop,
@@ -138,6 +138,18 @@ export default function MenuScreen() {
         </View>
       </Pressable>
 
+      <View style={styles.versionCard}>
+        <View style={styles.versionIcon}>
+          <Ionicons name="phone-portrait-outline" size={18} color={Colors.blue} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.versionTitle}>Phiên bản ứng dụng</Text>
+          <Text style={styles.versionSub}>
+            v{currentVersionName() || '?'} · code {currentVersionCode() ?? '?'}
+          </Text>
+        </View>
+      </View>
+
       {prefs ? (
         <View style={styles.voiceCard}>
           <View style={styles.voiceHead}>
@@ -236,6 +248,28 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     backgroundColor: Colors.textMuted,
   },
   themeKnobOn: { backgroundColor: Colors.white, alignSelf: 'flex-end' },
+  versionCard: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 14,
+    backgroundColor: Colors.card,
+    borderRadius: Radii.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  versionIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.blueSoft,
+  },
+  versionTitle: { color: Colors.text, fontSize: 14, fontWeight: '800' },
+  versionSub: { color: Colors.textMuted, fontSize: 12, marginTop: 2, fontWeight: '600' },
   voiceCard: {
     marginHorizontal: 16,
     marginTop: 12,
