@@ -389,6 +389,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('join:project', (id) => socket.join(`project:${id}`));
+  socket.on('leave:project', (id) => id && socket.leave(`project:${id}`));
   socket.on('join:lead', (id) => socket.join(`lead:${id}`));
   socket.on('leave:lead', (id) => socket.leave(`lead:${id}`));
   socket.on('join:messenger_group', (id) => id && socket.join(`messenger_group:${id}`));

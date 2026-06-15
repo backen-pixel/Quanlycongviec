@@ -23,12 +23,20 @@ module.exports = {
       (process.env.CORS_ORIGINS || 'http://localhost:5173').split(',')[0] ||
       'http://localhost:5173').trim().replace(/\/+$/, ''),
   // ── Google Drive integration (module Drive) ──
-  // Service Account JSON (chuỗi đầy đủ key.json) — có thể đặt cả file path qua GDRIVE_SERVICE_ACCOUNT_FILE.
+  // Hỗ trợ 2 chế độ xác thực — đặt MỘT trong hai:
+  //  (A) Service Account: GDRIVE_SERVICE_ACCOUNT_JSON (chuỗi JSON đầy đủ key.json)
+  //                       hoặc GDRIVE_SERVICE_ACCOUNT_FILE (đường dẫn file key.json).
+  //  (B) OAuth Refresh Token (cho tài khoản cá nhân/Workspace):
+  //                       GDRIVE_OAUTH_CLIENT_ID + GDRIVE_OAUTH_CLIENT_SECRET + GDRIVE_OAUTH_REFRESH_TOKEN.
+  //                       File sẽ thuộc về user đã uỷ quyền (dùng quota của user đó).
   gdriveServiceAccountJson: process.env.GDRIVE_SERVICE_ACCOUNT_JSON || '',
   gdriveServiceAccountFile: process.env.GDRIVE_SERVICE_ACCOUNT_FILE || '',
-  // Folder gốc trên Google Drive (đã share quyền Editor cho service account). Bắt buộc.
+  gdriveOauthClientId: process.env.GDRIVE_OAUTH_CLIENT_ID || '',
+  gdriveOauthClientSecret: process.env.GDRIVE_OAUTH_CLIENT_SECRET || '',
+  gdriveOauthRefreshToken: process.env.GDRIVE_OAUTH_REFRESH_TOKEN || '',
+  // Folder gốc trên Google Drive (đã share quyền Editor cho service account hoặc thuộc về user OAuth). Bắt buộc.
   gdriveRootFolderId: process.env.GDRIVE_ROOT_FOLDER_ID || '',
-  // (Tuỳ chọn) Email Workspace user để impersonate qua domain-wide delegation.
+  // (Tuỳ chọn, chỉ Service Account) Email Workspace user để impersonate qua domain-wide delegation.
   gdriveImpersonateUser: process.env.GDRIVE_IMPERSONATE_USER || '',
   // Bật/tắt job sync incremental (changes.list). Mặc định bật.
   gdriveSyncEnabled: process.env.GDRIVE_SYNC_DISABLED !== '1',
