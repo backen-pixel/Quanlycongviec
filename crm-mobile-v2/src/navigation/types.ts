@@ -13,4 +13,5 @@ export type RootStackParamList = {
   CrmHub: { initialMode?: 'leads' | 'deals'; initialAssignee?: 'mine' } | undefined;
   ChatDetail: { threadId: string; title: string; color: string };
   CreateEntity: { kind: 'lead' | 'deal' };
+  VoiceLocalRecordings: undefined;
 };
