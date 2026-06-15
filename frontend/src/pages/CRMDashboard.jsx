@@ -486,53 +486,8 @@ function dealCountsTowardPipelineEstimate(item, stagesDeal) {
   return true;
 }
 
-const LS_CRM_DASH_STAFF_EXPECTED_PCT = 'crm_dash_staff_expected_pct_v1';
-
-function readStaffExpectedPctMap() {
-  if (typeof window === 'undefined') return {};
-  try {
-    const raw = JSON.parse(localStorage.getItem(LS_CRM_DASH_STAFF_EXPECTED_PCT) || '{}');
-    return raw && typeof raw === 'object' ? raw : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeStaffExpectedPct(userId, pct) {
-  if (!userId || typeof window === 'undefined') return;
-  const map = readStaffExpectedPctMap();
-  const n = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
-  map[String(userId)] = n;
-  try {
-    localStorage.setItem(LS_CRM_DASH_STAFF_EXPECTED_PCT, JSON.stringify(map));
-  } catch { /* ignore */ }
-}
-
-function getStaffExpectedPct(userId, staffPctMap, fallback = 50) {
-  if (!userId) return fallback;
-  const v = staffPctMap[String(userId)];
-  if (v === undefined || v === null || v === '') return fallback;
-  const n = Number(v);
-  return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : fallback;
-}
-
-/** @param {{ userId: string|number, pct: number }|null} staffPctPreview — % đang gõ trên KPI, áp ngay cho deal của NV đó */
-function dealProbabilityPercent(deal, stagesDeal, staffPctMap, staffPctPreview = null) {
-  const ownerId = deal?.assigned_to || deal?.lead_owner_id;
-  if (
-    staffPctPreview?.userId != null
-    && staffPctPreview.pct != null
-    && ownerId
-    && String(ownerId) === String(staffPctPreview.userId)
-  ) {
-    const n = Number(staffPctPreview.pct);
-    if (Number.isFinite(n)) return Math.max(0, Math.min(100, n));
-  }
-  const fromStaff = ownerId ? staffPctMap[String(ownerId)] : undefined;
-  if (fromStaff !== undefined && fromStaff !== null && fromStaff !== '') {
-    const n = Number(fromStaff);
-    if (Number.isFinite(n)) return Math.max(0, Math.min(100, Math.round(n)));
-  }
+/** % xác suất của từng deal — ưu tiên cột probability, fallback theo cột pipeline. */
+function dealProbabilityPercent(deal, stagesDeal) {
   const raw = deal?.probability;
   if (raw != null && raw !== '') {
     const n = Number(raw);
@@ -545,6 +500,13 @@ function dealProbabilityPercent(deal, stagesDeal, staffPctMap, staffPctPreview =
     if (Number.isFinite(n)) return Math.max(0, Math.min(100, Math.round(n)));
   }
   return 50;
+}
+
+/** Giá trị kỳ vọng một deal = giá trị dự kiến × xác suất %. */
+function dealWeightedValue(item, stagesDeal) {
+  const val = Number(item?.estimated_value) || 0;
+  const pct = dealProbabilityPercent(item, stagesDeal);
+  return Math.round((val * pct) / 100);
 }
 
 /**
@@ -613,10 +575,6 @@ export default function CRMDashboard() {
   const [assigneeListSearch, setAssigneeListSearch] = useState(() => P?.assigneeListSearch ?? '');
   /** Lọc lead/deal theo tên người phụ trách / chủ lead (không lẫn tên khách hàng) */
   const [filterAssigneeName, setFilterAssigneeName] = useState(() => P?.filterAssigneeName ?? '');
-  /** Bump khi NV lưu % kỳ vọng (localStorage theo userId). */
-  const [staffExpectedPctVersion, setStaffExpectedPctVersion] = useState(0);
-  /** % đang gõ ở ô KPI — tính giá trị kỳ vọng ngay, chưa ghi localStorage */
-  const [expectedPctDraft, setExpectedPctDraft] = useState(null);
   const [filterSource, setFilterSource] = useState(() => P?.filterSource ?? '');
   const [filterStage, setFilterStage] = useState(() => P?.filterStage ?? '');
   /** Lọc pipeline theo khu vực CRM (company_regions); `__none__` = chưa gán khu vực */
@@ -2515,17 +2473,6 @@ export default function CRMDashboard() {
   }, [kpiUsesClientOnlyFilters, leads.length, loadMoreState.leadTotal]);
 
   /** KPI Deal (tổng / đàm phán / thắng / doanh thu thắng / đã DT hoàn thành / KPI sổ cái) — cùng bộ lọc Kanban, không dùng kpis API thuần server. */
-  const staffExpectedPctMap = useMemo(
-    () => readStaffExpectedPctMap(),
-    [staffExpectedPctVersion],
-  );
-
-  const expectedPctEditUserId = filterAssignee || user?.userId || '';
-
-  useEffect(() => {
-    setExpectedPctDraft(null);
-  }, [expectedPctEditUserId]);
-
   const dealKpisFromFilters = useMemo(() => {
     const won = deals.filter((d) => dealIsWonStage(d, stagesDeal));
     const wonValue = won.reduce((s, l) => s + (Number(l.estimated_value) || 0), 0);
@@ -2536,15 +2483,10 @@ export default function CRMDashboard() {
       (s, d) => s + (Number(d.estimated_value) || 0),
       0,
     );
-    const staffPctPreview =
-      expectedPctEditUserId && expectedPctDraft != null
-        ? { userId: expectedPctEditUserId, pct: expectedPctDraft }
-        : null;
-    const expected_value = pipelineDeals.reduce((s, d) => {
-      const val = Number(d.estimated_value) || 0;
-      const pct = dealProbabilityPercent(d, stagesDeal, staffExpectedPctMap, staffPctPreview);
-      return s + (val * pct) / 100;
-    }, 0);
+    const expected_value = pipelineDeals.reduce(
+      (s, d) => s + dealWeightedValue(d, stagesDeal),
+      0,
+    );
     const totalHeadline = kpiUsesClientOnlyFilters
       ? deals.length
       : typeof loadMoreState.dealTotal === 'number'
@@ -2564,9 +2506,6 @@ export default function CRMDashboard() {
     stagesDeal,
     kpiUsesClientOnlyFilters,
     loadMoreState.dealTotal,
-    staffExpectedPctMap,
-    expectedPctEditUserId,
-    expectedPctDraft,
   ]);
 
   const ledgerMapLead = dataLead?.ledger_net_by_lead || {};
@@ -4246,25 +4185,15 @@ export default function CRMDashboard() {
               value={formatVND(dealKpisFromFilters.pipeline_estimated_value)}
               trend={null}
             />
-            <DealExpectedValueKpiCard
+            <KPICard
               compact
-              expectedValue={dealKpisFromFilters.expected_value}
-              editUserId={expectedPctEditUserId}
-              pct={getStaffExpectedPct(expectedPctEditUserId, staffExpectedPctMap, 50)}
-              assigneeLabel={
-                filterAssignee
-                  ? (employeeFilterListByRegion.find((u) => String(u.id) === String(filterAssignee))?.full_name
-                    || users.find((u) => String(u.id) === String(filterAssignee))?.full_name
-                    || 'NV đã chọn')
-                  : (user?.full_name || 'Bạn')
-              }
-              onDraftPctChange={setExpectedPctDraft}
-              onPctChange={(val) => {
-                if (!expectedPctEditUserId) return;
-                writeStaffExpectedPct(expectedPctEditUserId, val);
-                setExpectedPctDraft(null);
-                setStaffExpectedPctVersion((v) => v + 1);
-              }}
+              icon={<TrendingUp className="h-3 w-3" />}
+              iconBgColor="bg-violet-100"
+              iconColor="text-violet-700"
+              label="Giá trị kỳ vọng"
+              value={formatVND(dealKpisFromFilters.expected_value)}
+              hint="Tổng (giá trị dự kiến × xác suất %) của từng deal trên pipeline"
+              trend={null}
             />
             <KPICard
               compact
@@ -5129,128 +5058,6 @@ function DealCountSummaryKpiCard({ total, negotiating, won, filterNote, classNam
   );
 }
 
-/** Giá trị kỳ vọng — giá trị dự kiến × % NV phụ trách (localStorage theo userId). */
-function DealExpectedValueKpiCard({
-  expectedValue,
-  editUserId,
-  pct,
-  assigneeLabel,
-  onDraftPctChange,
-  onPctChange,
-  sublabel,
-  compact,
-}) {
-  const [draftPct, setDraftPct] = useState(String(pct ?? 50));
-  const [editorOpen, setEditorOpen] = useState(false);
-
-  useEffect(() => {
-    setDraftPct(String(pct ?? 50));
-    onDraftPctChange?.(null);
-  }, [pct, editUserId]);
-
-  useEffect(() => {
-    if (!editorOpen) onDraftPctChange?.(null);
-  }, [editorOpen]);
-
-  const pushDraftPct = (raw) => {
-    setDraftPct(raw);
-    if (raw === '' || raw === '-') {
-      onDraftPctChange?.(null);
-      return;
-    }
-    const n = Number(raw);
-    if (Number.isFinite(n)) {
-      onDraftPctChange?.(Math.max(0, Math.min(100, n)));
-    }
-  };
-
-  const commitPct = () => {
-    const n = Math.max(0, Math.min(100, Math.round(Number(draftPct) || 0)));
-    setDraftPct(String(n));
-    onDraftPctChange?.(null);
-    onPctChange?.(n);
-    setEditorOpen(false);
-  };
-
-  return (
-    <div
-      className={`relative h-full min-w-0 flex flex-col items-center justify-center text-center rounded-lg border border-violet-200 bg-white shadow-sm ${
-        compact ? 'gap-1 px-2 py-2' : 'gap-1.5 px-2 py-2.5'
-      }`}
-    >
-      <div className="shrink-0 rounded-md bg-violet-100 text-violet-700 p-1">
-        <TrendingUp className={compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
-      </div>
-      <div className="min-w-0 w-full flex flex-col items-center justify-center gap-0.5">
-        <p
-          className={`text-gray-500 font-semibold uppercase tracking-wide leading-tight max-w-full ${
-            compact ? 'text-[9px]' : 'text-[10px] md:text-[11px] leading-snug'
-          }`}
-          title="Giá trị kỳ vọng"
-        >
-          Giá trị kỳ vọng
-        </p>
-        <p
-          className={`font-bold tabular-nums leading-snug ${
-            compact ? 'text-sm' : 'text-sm md:text-base'
-          }`}
-          style={{ color: '#000000' }}
-        >
-          {formatVND(expectedValue)}
-        </p>
-      </div>
-      {editUserId && (
-        <>
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); setEditorOpen((v) => !v); }}
-            className="absolute top-1 right-1 inline-flex items-center rounded border border-violet-200 bg-violet-50 px-1 py-0.5 text-[9px] font-semibold text-violet-700 hover:bg-violet-100 transition-colors cursor-pointer tabular-nums"
-            title={`Đổi % kỳ vọng cho ${assigneeLabel} (hiện ${pct}%)`}
-          >
-            {pct}%
-          </button>
-          {editorOpen && (
-            <>
-              <div className="fixed inset-0 z-[60]" onClick={() => setEditorOpen(false)} />
-              <div
-                className="absolute top-7 right-1 z-[70] w-48 rounded-lg border border-violet-200 bg-white shadow-lg p-2 text-left"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <p className="text-[10px] text-gray-500 truncate mb-1" title={assigneeLabel}>
-                  % kỳ vọng cho <span className="font-semibold text-gray-700">{assigneeLabel}</span>
-                </p>
-                <div className="flex items-center gap-1">
-                  <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    autoFocus
-                    value={draftPct}
-                    onChange={(e) => pushDraftPct(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') { e.preventDefault(); commitPct(); }
-                      if (e.key === 'Escape') { setEditorOpen(false); }
-                    }}
-                    className="flex-1 h-7 px-1.5 text-xs font-semibold border border-violet-300 rounded text-center tabular-nums focus:outline-none focus:ring-1 focus:ring-violet-500"
-                  />
-                  <span className="text-xs text-gray-500">%</span>
-                  <button
-                    type="button"
-                    onClick={commitPct}
-                    className="h-7 px-2 text-[11px] font-semibold text-white bg-violet-600 hover:bg-violet-700 rounded cursor-pointer"
-                  >
-                    Lưu
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
 // KPI — layout ngang, kích thước ~một nửa bản trước (Lead + Deal)
 function KPICard({ icon, iconBgColor, iconColor, label, value, sublabel, trend, compact, hint }) {
   const displayValue = typeof value === 'number' ? value.toLocaleString('vi-VN') : value;
@@ -5776,6 +5583,11 @@ function KanbanStageCard({
 
   const stageColor = stage.color || '#e5e7eb';
   const columnItemIds = (items || []).map((i) => i.id);
+  const columnStagesCtx = [stage];
+  const columnRawValue = (items || []).reduce((sum, item) => sum + (Number(item.estimated_value) || 0), 0);
+  const columnExpectedValue = pipelineType === 'deal'
+    ? (items || []).reduce((sum, item) => sum + dealWeightedValue(item, columnStagesCtx), 0)
+    : 0;
   const allInColumnSelected =
     columnItemIds.length > 0 &&
     columnItemIds.every((id) => (mergeSelectedIds || []).some((x) => String(x) === String(id)));
@@ -5864,7 +5676,15 @@ function KanbanStageCard({
           </div>
         </div>
         <p className={compact ? 'text-[10px] text-gray-500' : 'text-xs text-gray-500'}>
-          Giá trị: {formatVND(items.reduce((sum, item) => sum + (item.estimated_value || 0), 0))}
+          {pipelineType === 'deal' ? (
+            <>
+              <span>Dự kiến: {formatVND(columnRawValue)}</span>
+              <span className="mx-1 text-gray-300">·</span>
+              <span className="text-violet-700 font-medium">KV: {formatVND(columnExpectedValue)}</span>
+            </>
+          ) : (
+            <>Giá trị: {formatVND(columnRawValue)}</>
+          )}
         </p>
         </div>
       </div>
@@ -5992,6 +5812,11 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
 
   const assigneeUser = item.assignee || item.lead_owner || null;
   const leadTypeLabel = resolveLeadTypeOnCard(item, leadTypes);
+  const isDealCard = pipelineType === 'deal' || item.type === 'deal';
+  const dealPct = isDealCard ? dealProbabilityPercent(item, [stage]) : null;
+  const dealExpectedOnCard = isDealCard && (Number(item.estimated_value) || 0) > 0
+    ? dealWeightedValue(item, [stage])
+    : 0;
 
   // Badge SX/VC (giữ logic cũ, gói thành biến)
   const sxVcBadge = (() => {
@@ -6171,14 +5996,33 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
           </span>
         )}
 
-        {/* 3. Giá trị tiền (lớn, xanh) */}
-        {item.estimated_value > 0 && (
-          <p className={`font-bold tabular-nums leading-none text-emerald-600 ${compact ? 'text-[15px]' : 'text-[16px]'}`}>
-            {formatVND(item.estimated_value)}
-          </p>
+        {/* 3. Giá trị tiền (lớn, xanh) + % xác suất (deal) */}
+        {(item.estimated_value > 0 || (isDealCard && dealPct != null)) && (
+          <div className="flex items-center justify-between gap-2 min-w-0">
+            {item.estimated_value > 0 ? (
+              <p className={`font-bold tabular-nums leading-none text-emerald-600 min-w-0 truncate ${compact ? 'text-[15px]' : 'text-[16px]'}`}>
+                {formatVND(item.estimated_value)}
+              </p>
+            ) : (
+              <span className="text-[11px] text-slate-400 italic">Chưa định giá</span>
+            )}
+            {isDealCard && dealPct != null && (
+              <span
+                className="shrink-0 inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-bold tabular-nums text-violet-700"
+                title={`Xác suất chốt ${dealPct}%${dealExpectedOnCard > 0 ? ` · Giá trị kỳ vọng ${formatVND(dealExpectedOnCard)}` : ''}`}
+              >
+                {dealPct}%
+              </span>
+            )}
+          </div>
         )}
-        {item.estimated_value <= 0 && !slaBadge && (
+        {item.estimated_value <= 0 && !isDealCard && !slaBadge && (
           <span className="text-[11px] text-slate-400 italic">Chưa định giá</span>
+        )}
+        {isDealCard && dealExpectedOnCard > 0 && (
+          <p className="text-[10px] font-semibold tabular-nums text-violet-600 leading-none">
+            KV {formatVND(dealExpectedOnCard)}
+          </p>
         )}
         {/* Badge hạn — full width khi quá hạn / sắp quá hạn để dễ nhìn */}
         {slaBadge && (
