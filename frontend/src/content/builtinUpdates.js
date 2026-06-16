@@ -15,12 +15,16 @@ export const BUILTIN_UPDATES = [
 - Dropdown **"Tất cả module"** trên trang Drive cho phép lọc nhanh.
 - Folder tổ chức phẳng theo cấu trúc: **Module → Công ty → Khu vực → Loại → Phòng ban → Nhân viên → Kind → Mã deal**.
 
+![Trang Drive — cây thư mục, lọc module & danh sách file](/release-notes/drive-trang-chu.png)
+
 ## Tab ☁️ Drive trên Lead / Deal / Dự án
 
 - Tab **☁️ Drive (N)** hiển thị số file đã gắn — gắn file Drive vào từng entity riêng biệt.
 - Nút **Tải lên từ máy** → upload thẳng vào đúng thư mục entity trên Google Drive.
 - Nút **Liên kết file Drive** → chọn file đã có sẵn trong Drive.
 - Tạo **Google Doc / Sheet** gắn thẳng vào deal — mở preview với toolbar chỉnh sửa đầy đủ.
+
+![Tab Drive trên chi tiết Lead/Deal — upload, liên kết & tạo Doc/Sheet](/release-notes/drive-tab-lead-deal.png)
 
 ## Chia sẻ file Drive qua Chat
 
