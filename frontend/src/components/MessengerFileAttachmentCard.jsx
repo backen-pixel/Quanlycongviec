@@ -23,7 +23,10 @@ function fileExtension(name, mime = '') {
   return '';
 }
 
-function FileTypeBadge({ name, mime }) {
+/**
+ * Thẻ file đính kèm kiểu Zalo — icon, tên, dung lượng, mở / tải.
+ */
+export function FileTypeBadge({ name, mime, compact = false }) {
   const ext = fileExtension(name, mime);
   const cfg = useMemo(() => {
     if (['doc', 'docx'].includes(ext)) return { bg: 'bg-[#2B579A]', letter: 'W', fold: 'bg-[#1e3d6d]' };
@@ -36,14 +39,18 @@ function FileTypeBadge({ name, mime }) {
 
   return (
     <div
-      className={`relative w-11 h-11 shrink-0 rounded-md ${cfg.bg} shadow-sm flex items-center justify-center overflow-hidden`}
+      className={`relative shrink-0 rounded-md ${cfg.bg} shadow-sm flex items-center justify-center overflow-hidden ${
+        compact ? 'w-9 h-9' : 'w-11 h-11'
+      }`}
       aria-hidden
     >
       <span
         className={`absolute top-0 right-0 w-3.5 h-3.5 ${cfg.fold}`}
         style={{ clipPath: 'polygon(100% 0, 0 0, 100% 100%)' }}
       />
-      <span className="text-white font-bold text-lg leading-none select-none">{cfg.letter}</span>
+      <span className={`text-white font-bold leading-none select-none ${compact ? 'text-base' : 'text-lg'}`}>
+        {cfg.letter}
+      </span>
     </div>
   );
 }
@@ -95,16 +102,16 @@ export default function MessengerFileAttachmentCard({ attachment, compact = fals
 
   return (
     <div
-      className={`flex items-center gap-3 rounded-xl border border-sky-100/90 bg-gradient-to-r from-sky-50/95 to-slate-50/90 shadow-sm w-fit max-w-full ${
+      className={`flex items-center gap-2 rounded-xl border border-sky-100/90 bg-gradient-to-r from-sky-50/95 to-slate-50/90 shadow-sm box-border min-w-0 overflow-hidden ${
         alignEnd ? 'ml-auto' : ''
       } ${
-        compact ? 'px-3 py-2.5 min-w-[240px] max-w-[min(100%,300px)]' : 'px-3.5 py-3 min-w-[260px] max-w-[min(100%,360px)]'
+        compact ? 'w-full max-w-[248px] px-2.5 py-2' : 'w-full max-w-[320px] px-3.5 py-3'
       }`}
     >
-      <FileTypeBadge name={name} mime={attachment?.type} />
+      <FileTypeBadge name={name} mime={attachment?.type} compact={compact} />
 
-      <div className="flex-1 min-w-0">
-        <p className="text-[13px] font-semibold text-slate-900 truncate leading-snug" title={name}>
+      <div className="flex-1 min-w-0 basis-0 overflow-hidden">
+        <p className="block w-full text-[13px] font-semibold text-slate-900 truncate leading-snug" title={name}>
           {name}
         </p>
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">

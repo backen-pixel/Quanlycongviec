@@ -162,7 +162,9 @@ export function DriveFilesListHeader({ actionsLabel = '' }) {
 }
 
 /** Một dòng file trong bảng list */
-export function DriveFileListRow({ file, formatBytes, onPreview, renderActions, className = '' }) {
+export function DriveFileListRow({
+  file, formatBytes, onPreview, renderActions, className = '', alwaysShowActions = false,
+}) {
   const isImg = isImageMime(file.mime_type, file.name);
   const quickOpen = isQuickPreviewFile(file);
   return (
@@ -182,7 +184,7 @@ export function DriveFileListRow({ file, formatBytes, onPreview, renderActions, 
         {fmtDriveDate(file.created_at)}
       </div>
       <div className="text-right text-xs text-slate-500">{formatBytes(file.size_bytes)}</div>
-      <div className="flex items-center gap-0.5 justify-self-end opacity-0 group-hover:opacity-100 transition">
+      <div className={`flex items-center gap-0.5 justify-self-end ${alwaysShowActions ? '' : 'opacity-0 group-hover:opacity-100 transition'}`}>
         {renderActions?.(file)}
       </div>
     </div>
@@ -190,11 +192,13 @@ export function DriveFileListRow({ file, formatBytes, onPreview, renderActions, 
 }
 
 /** Bảng list đầy đủ */
-export function DriveFilesListView({ files, formatBytes, onPreview, renderActions }) {
+export function DriveFilesListView({
+  files, formatBytes, onPreview, renderActions, alwaysShowActions = false, actionsLabel = '',
+}) {
   if (!files?.length) return null;
   return (
-    <div className="bg-white border rounded-lg overflow-hidden">
-      <DriveFilesListHeader />
+    <div className="bg-white border rounded-lg overflow-hidden min-w-0">
+      <DriveFilesListHeader actionsLabel={actionsLabel} />
       <div className="divide-y">
         {files.map((f) => (
           <DriveFileListRow
@@ -203,6 +207,7 @@ export function DriveFilesListView({ files, formatBytes, onPreview, renderAction
             formatBytes={formatBytes}
             onPreview={onPreview}
             renderActions={renderActions}
+            alwaysShowActions={alwaysShowActions}
           />
         ))}
       </div>
@@ -210,11 +215,18 @@ export function DriveFilesListView({ files, formatBytes, onPreview, renderAction
   );
 }
 
+const GRID_COLS = {
+  default: 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3',
+  picker: 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3',
+};
+
 /** Grid card lớn có thumbnail */
-export function DriveFilesGridView({ files, formatBytes, onPreview, renderActions }) {
+export function DriveFilesGridView({
+  files, formatBytes, onPreview, renderActions, columns = 'default', alwaysShowActions = false,
+}) {
   if (!files?.length) return null;
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+    <div className={GRID_COLS[columns] || GRID_COLS.default}>
       {files.map((f) => {
         const thumb = f.thumbnail_url;
         const isImg = isImageMime(f.mime_type, f.name);
@@ -236,7 +248,7 @@ export function DriveFilesGridView({ files, formatBytes, onPreview, renderAction
               >
                 {f.name}
               </p>
-              <div className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className={`shrink-0 ${alwaysShowActions ? '' : 'opacity-0 group-hover:opacity-100 transition-opacity'}`}>
                 {renderActions?.(f)}
               </div>
             </div>
