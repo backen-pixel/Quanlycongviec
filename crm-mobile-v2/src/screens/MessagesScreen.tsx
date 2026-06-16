@@ -1,8 +1,9 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   ActivityIndicator,
   FlatList,
   Pressable,
@@ -16,20 +17,54 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../components/Avatar';
 import { formatApiError } from '../api/client';
-import { fetchThreads, type ThreadItem } from '../api/messenger';
-import { currentUserId, useAuth } from '../context/AuthContext';
-import { Radii, useColors, type ThemeColors } from '../theme';
+import { fetchActivityUsers, type ActivityUserItem } from '../api/users';
+import { useAuth } from '../context/AuthContext';
+import { useMessenger } from '../context/MessengerContext';
+import {
+  createDirectChat,
+  fetchCallHistoryItems,
+} from '../lib/messengerApi';
+import ConversationActionsSheet from '../components/messenger/ConversationActionsSheet';
+import { markThreadDeleted, loadDeletedThreadIds } from '../lib/messengerThreadStorage';
+import type { CallHistoryItem } from '../lib/messengerCallLog';
+import { formatPresenceLabel } from '../lib/messengerPresence';
+import { avatarColorFromName } from '../lib/messengerTheme';
 import type { RootStackParamList } from '../navigation/types';
+import { Radii, useColors, type ThemeColors } from '../theme';
+import type { MessengerThread } from '../types/messenger';
 
-type Nav = NativeStackNavigationProp<RootStackParamList>;
 type HubTab = 'chats' | 'calls';
+type Nav = NativeStackNavigationProp<RootStackParamList>;
 
-function ThreadRow({ item, onPress }: { item: ThreadItem; onPress: () => void }) {
+function firstName(name: string): string {
+  const part = name.trim().split(/\s+/).filter(Boolean)[0];
+  return part || name || '?';
+}
+
+function ThreadRow({
+  item,
+  onPress,
+  onLongPress,
+  activityLabel,
+}: {
+  item: MessengerThread;
+  onPress: () => void;
+  onLongPress?: () => void;
+  activityLabel?: string | null;
+}) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
+  const color = item.avatarColor || avatarColorFromName(item.name);
+
   return (
-    <Pressable style={styles.row} onPress={onPress} android_ripple={{ color: Colors.surfaceSoft }}>
-      <Avatar name={item.name} size={52} color={item.color} online={item.online} avatarUrl={item.avatarUrl} />
+    <Pressable
+      style={styles.row}
+      onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={320}
+      android_ripple={{ color: Colors.surfaceSoft }}
+    >
+      <Avatar name={item.name} size={52} color={color} online={item.online} avatarUrl={item.avatarUrl} />
       <View style={styles.rowBody}>
         <View style={styles.rowTop}>
           <Text style={styles.rowName} numberOfLines={1}>{item.name}</Text>
@@ -37,6 +72,9 @@ function ThreadRow({ item, onPress }: { item: ThreadItem; onPress: () => void })
             {item.timeLabel}
           </Text>
         </View>
+        {activityLabel ? (
+          <Text style={styles.activityLabel} numberOfLines={1}>{activityLabel}</Text>
+        ) : null}
         <View style={styles.rowBottom}>
           <Text
             style={[styles.rowPreview, item.unread > 0 && { color: Colors.text, fontWeight: '600' }]}
@@ -55,54 +93,174 @@ function ThreadRow({ item, onPress }: { item: ThreadItem; onPress: () => void })
   );
 }
 
+function CallHistoryRow({
+  item,
+  onPress,
+}: {
+  item: CallHistoryItem;
+  onPress: () => void;
+}) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+  const iconName = item.status === 'missed' || item.status === 'rejected' ? 'call-outline' : 'call';
+  const iconColor = item.status === 'missed' || item.status === 'rejected' ? Colors.red : Colors.blue;
+  const timeLabel = useMemo(() => {
+    try {
+      return new Date(item.createdAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return '';
+    }
+  }, [item.createdAt]);
+
+  return (
+    <Pressable style={styles.row} onPress={onPress} android_ripple={{ color: Colors.surfaceSoft }}>
+      <Avatar
+        name={item.groupName}
+        size={52}
+        color={avatarColorFromName(item.groupName)}
+        avatarUrl={item.groupAvatarUrl}
+      />
+      <View style={styles.rowBody}>
+        <View style={styles.rowTop}>
+          <Text style={styles.rowName} numberOfLines={1}>{item.groupName}</Text>
+          <Text style={styles.rowTime}>{timeLabel}</Text>
+        </View>
+        <Text style={styles.rowPreview} numberOfLines={2}>{item.label}</Text>
+      </View>
+      <View style={[styles.callIcon, { backgroundColor: Colors.surfaceSoft }]}>
+        <Ionicons name={iconName} size={20} color={iconColor} />
+      </View>
+    </Pressable>
+  );
+}
+
 export default function MessagesScreen() {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const myId = currentUserId(user);
+  const myUserId = user?.id || user?.userId || '';
+  const { threads, loading, error, refreshThreads, getPeerPresence } = useMessenger();
+
   const [hub, setHub] = useState<HubTab>('chats');
   const [query, setQuery] = useState('');
-  const [threads, setThreads] = useState<ThreadItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [onlineUsers, setOnlineUsers] = useState<ActivityUserItem[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState('');
+  const [callHistory, setCallHistory] = useState<CallHistoryItem[]>([]);
+  const [callsLoading, setCallsLoading] = useState(false);
+  const [onlineError, setOnlineError] = useState('');
+  const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
+  const [actionThread, setActionThread] = useState<MessengerThread | null>(null);
 
-  const load = useCallback(
-    async (isRefresh = false) => {
-      if (isRefresh) setRefreshing(true);
-      else setLoading(true);
-      setError('');
-      try {
-        setThreads(await fetchThreads(myId));
-      } catch (e) {
-        setError(formatApiError(e));
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
-      }
-    },
-    [myId],
-  );
+  useEffect(() => {
+    void loadDeletedThreadIds(String(myUserId)).then(setDeletedIds);
+  }, [myUserId]);
+
+  const loadOnline = useCallback(async () => {
+    try {
+      const list = await fetchActivityUsers();
+      setOnlineUsers(list.filter((u) => u.online && String(u.id) !== String(myUserId)));
+      setOnlineError('');
+    } catch {
+      setOnlineUsers([]);
+    }
+  }, [myUserId]);
+
+  const loadCallHistory = useCallback(async () => {
+    if (!myUserId) return;
+    setCallsLoading(true);
+    try {
+      setCallHistory(await fetchCallHistoryItems(threads, myUserId));
+    } finally {
+      setCallsLoading(false);
+    }
+  }, [myUserId, threads]);
 
   useFocusEffect(
     useCallback(() => {
-      void load();
-    }, [load]),
+      void refreshThreads(true);
+      void loadOnline();
+    }, [refreshThreads, loadOnline]),
   );
 
-  const directContacts = useMemo(() => threads.filter((t) => t.isDirect).slice(0, 12), [threads]);
+  useEffect(() => {
+    if (hub === 'calls') void loadCallHistory();
+  }, [hub, loadCallHistory]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return threads;
-    return threads.filter(
+    let list = threads.filter((t) => !deletedIds.has(String(t.id)));
+    if (!q) return list;
+    return list.filter(
       (t) => t.name.toLowerCase().includes(q) || t.preview.toLowerCase().includes(q),
     );
-  }, [query, threads]);
+  }, [query, threads, deletedIds]);
 
-  const openChat = (t: ThreadItem) => {
-    navigation.navigate('ChatDetail', { threadId: t.id, title: t.name, color: t.color });
+  const onRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await refreshThreads(true);
+      await loadOnline();
+      if (hub === 'calls') await loadCallHistory();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const handleThreadAction = useCallback(
+    (action: 'createGroup' | 'delete', thread: MessengerThread) => {
+      if (action === 'createGroup') {
+        const peerId = thread.peerId;
+        if (!peerId) return;
+        navigation.navigate('CreateGroupChat', {
+          preselectedUserIds: [String(peerId)],
+          suggestedName: `${thread.name} + bạn bè`,
+        });
+        return;
+      }
+      Alert.alert(
+        'Xóa cuộc hội thoại',
+        'Cuộc hội thoại sẽ được ẩn khỏi danh sách. Bạn vẫn có thể mở lại khi có tin nhắn mới.',
+        [
+          { text: 'Huỷ', style: 'cancel' },
+          {
+            text: 'Xóa',
+            style: 'destructive',
+            onPress: () => {
+              void markThreadDeleted(String(myUserId), thread.id).then(setDeletedIds);
+            },
+          },
+        ],
+      );
+    },
+    [myUserId, navigation],
+  );
+
+  const openChat = (threadId: string, title: string) => {
+    navigation.navigate('ChatDetail', { threadId, title });
+  };
+
+  const openOnlineUser = async (u: ActivityUserItem) => {
+    const existing = threads.find((t) => t.isDirect && t.peerId && String(t.peerId) === String(u.id));
+    if (existing) {
+      openChat(existing.id, existing.name);
+      return;
+    }
+    try {
+      const threadId = await createDirectChat(u.id);
+      await refreshThreads(true);
+      openChat(threadId, u.name);
+    } catch (e) {
+      setOnlineError(formatApiError(e));
+    }
+  };
+
+  const threadActivityLabel = (t: MessengerThread): string | null => {
+    if (!t.isDirect || !t.peerId) return null;
+    const pres = getPeerPresence(t.peerId);
+    const label = formatPresenceLabel(pres || (t.online ? { online: true } : { online: false }));
+    return label || null;
   };
 
   return (
@@ -113,7 +271,10 @@ export default function MessagesScreen() {
           <Pressable style={styles.iconBtn}>
             <Ionicons name="search-outline" size={20} color={Colors.text} />
           </Pressable>
-          <Pressable style={styles.composeBtn}>
+          <Pressable
+            style={styles.composeBtn}
+            onPress={() => navigation.navigate('CreateGroupChat', { preselectedUserIds: [] })}
+          >
             <Ionicons name="create-outline" size={20} color="#fff" />
           </Pressable>
         </View>
@@ -130,20 +291,38 @@ export default function MessagesScreen() {
         />
       </View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.stories}>
-        <View style={styles.storyItem}>
-          <View style={styles.storyAdd}>
-            <Ionicons name="add" size={26} color={Colors.blue} />
+      {hub === 'chats' ? (
+        <View style={styles.onlineSection}>
+          <View style={styles.onlineHeader}>
+            <View style={styles.onlineTitleRow}>
+              <View style={styles.onlineDot} />
+              <Text style={styles.onlineTitle}>Đang online</Text>
+            </View>
+            <Text style={styles.onlineCount}>{onlineUsers.length}</Text>
           </View>
-          <Text style={styles.storyLabel}>Của bạn</Text>
+          {onlineError ? (
+            <Text style={[styles.onlineEmpty, { color: Colors.red }]}>{onlineError}</Text>
+          ) : onlineUsers.length === 0 ? (
+            <Text style={styles.onlineEmpty}>Chưa có ai online</Text>
+          ) : (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.stories}
+              style={styles.storiesScroll}
+            >
+              {onlineUsers.map((u) => (
+                <Pressable key={u.id} style={styles.storyItem} onPress={() => void openOnlineUser(u)}>
+                  <Avatar name={u.name} size={56} color={u.color} online avatarUrl={u.avatarUrl} />
+                  <Text style={styles.storyLabel} numberOfLines={2}>
+                    {firstName(u.name)}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          )}
         </View>
-        {directContacts.map((c) => (
-          <Pressable key={c.id} style={styles.storyItem} onPress={() => openChat(c)}>
-            <Avatar name={c.name} size={56} color={c.color} online={c.online} avatarUrl={c.avatarUrl} />
-            <Text style={styles.storyLabel} numberOfLines={1}>{c.name.split(' ')[0]}</Text>
-          </Pressable>
-        ))}
-      </ScrollView>
+      ) : null}
 
       <View style={styles.hubBar}>
         {([
@@ -170,23 +349,61 @@ export default function MessagesScreen() {
         })}
       </View>
 
-      <FlatList
-        data={filtered}
-        keyExtractor={(i) => i.id}
-        contentContainerStyle={{ paddingBottom: 120 }}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={Colors.blue} />
-        }
-        renderItem={({ item }) => <ThreadRow item={item} onPress={() => openChat(item)} />}
-        ListEmptyComponent={
-          loading ? (
-            <ActivityIndicator color={Colors.blue} style={{ marginTop: 40 }} />
-          ) : error ? (
-            <Text style={[styles.empty, { color: Colors.red }]}>{error}</Text>
-          ) : (
-            <Text style={styles.empty}>Không có hội thoại</Text>
-          )
-        }
+      {hub === 'chats' ? (
+        <FlatList
+          data={filtered}
+          keyExtractor={(i) => i.id}
+          contentContainerStyle={{ paddingBottom: 120 }}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={Colors.blue} />
+          }
+          renderItem={({ item }) => (
+            <ThreadRow
+              item={item}
+              activityLabel={threadActivityLabel(item)}
+              onPress={() => openChat(item.id, item.name)}
+              onLongPress={() => setActionThread(item)}
+            />
+          )}
+          ListEmptyComponent={
+            loading ? (
+              <ActivityIndicator color={Colors.blue} style={{ marginTop: 40 }} />
+            ) : error ? (
+              <Text style={[styles.empty, { color: Colors.red }]}>{error}</Text>
+            ) : (
+              <Text style={styles.empty}>Không có hội thoại</Text>
+            )
+          }
+        />
+      ) : (
+        <FlatList
+          data={callHistory}
+          keyExtractor={(item) => `${item.groupId}-${item.id}`}
+          contentContainerStyle={{ paddingBottom: 120 }}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={Colors.blue} />
+          }
+          renderItem={({ item }) => (
+            <CallHistoryRow item={item} onPress={() => openChat(item.groupId, item.groupName)} />
+          )}
+          ListHeaderComponent={
+            <Text style={styles.callsHeader}>Lịch sử cuộc gọi</Text>
+          }
+          ListEmptyComponent={
+            callsLoading || loading ? (
+              <ActivityIndicator color={Colors.blue} style={{ marginTop: 40 }} />
+            ) : (
+              <Text style={styles.empty}>Chưa có cuộc gọi trong lịch sử chat</Text>
+            )
+          }
+        />
+      )}
+
+      <ConversationActionsSheet
+        visible={!!actionThread}
+        thread={actionThread}
+        onDismiss={() => setActionThread(null)}
+        onAction={handleThreadAction}
       />
     </View>
   );
@@ -235,19 +452,54 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     borderColor: Colors.border,
   },
   searchInput: { flex: 1, color: Colors.text, fontSize: 15, paddingVertical: 0 },
-  stories: { paddingHorizontal: 16, gap: 16, paddingVertical: 16 },
-  storyItem: { alignItems: 'center', width: 60 },
-  storyAdd: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    borderWidth: 2,
-    borderColor: Colors.blue,
-    borderStyle: 'dashed',
-    alignItems: 'center',
-    justifyContent: 'center',
+  onlineSection: {
+    marginTop: 8,
+    marginBottom: 4,
+    minHeight: 108,
   },
-  storyLabel: { color: Colors.textMuted, fontSize: 11, marginTop: 6, fontWeight: '600' },
+  onlineHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    marginBottom: 8,
+  },
+  onlineTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  onlineDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.green,
+  },
+  onlineTitle: { color: Colors.text, fontSize: 13, fontWeight: '800' },
+  onlineCount: { color: Colors.textMuted, fontSize: 12, fontWeight: '700' },
+  onlineEmpty: {
+    color: Colors.textFaint,
+    fontSize: 12,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+  },
+  storiesScroll: { flexGrow: 0 },
+  stories: {
+    paddingHorizontal: 16,
+    gap: 14,
+    paddingBottom: 4,
+    alignItems: 'flex-start',
+  },
+  storyItem: {
+    alignItems: 'center',
+    width: 72,
+    minHeight: 84,
+  },
+  storyLabel: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    marginTop: 8,
+    fontWeight: '600',
+    width: '100%',
+    textAlign: 'center',
+    lineHeight: 14,
+  },
   hubBar: {
     flexDirection: 'row',
     paddingHorizontal: 16,
@@ -275,6 +527,7 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   rowBody: { flex: 1, minWidth: 0 },
   rowTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   rowName: { color: Colors.text, fontSize: 16, fontWeight: '800', flex: 1 },
+  activityLabel: { color: Colors.textFaint, fontSize: 12, marginTop: 2 },
   rowTime: { color: Colors.textFaint, fontSize: 12 },
   rowBottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 3 },
   rowPreview: { color: Colors.textMuted, fontSize: 14, flex: 1 },
@@ -288,5 +541,20 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     paddingHorizontal: 6,
   },
   badgeTxt: { color: '#fff', fontSize: 11, fontWeight: '800' },
+  callIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  callsHeader: {
+    color: Colors.textMuted,
+    fontSize: 12,
+    fontWeight: '700',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    textTransform: 'uppercase',
+  },
   empty: { textAlign: 'center', color: Colors.textFaint, marginTop: 40 },
 });

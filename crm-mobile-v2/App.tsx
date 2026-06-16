@@ -13,7 +13,11 @@ import PermissionBootstrap from './src/components/PermissionBootstrap';
 import VoiceSyncRunner from './src/components/VoiceSyncRunner';
 import UpdateGate from './src/components/UpdateGate';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
+import { FileActionsProvider } from './src/context/FileActionsContext';
+import { CallProvider } from './src/context/CallContext';
 import { CreateMenuProvider } from './src/context/CreateMenuContext';
+import { MessengerProvider } from './src/context/MessengerContext';
+import { MessengerRealtimeProvider } from './src/context/MessengerRealtimeContext';
 import RootNavigator from './src/navigation/RootNavigator';
 import { navigationRef } from './src/navigation/navigationRef';
 import LoginScreen from './src/screens/LoginScreen';
@@ -59,14 +63,22 @@ function Gate() {
 
   return (
     <CreateMenuProvider>
-      <View style={styles.root}>
-        <NavigationContainer ref={navigationRef} theme={navTheme}>
-          <RootNavigator />
-        </NavigationContainer>
-        <CreateMenuSheet />
-        <PermissionBootstrap />
-        <VoiceSyncRunner />
-      </View>
+      <MessengerRealtimeProvider>
+        <MessengerProvider>
+          <CallProvider>
+            <FileActionsProvider>
+            <View style={styles.root}>
+              <NavigationContainer ref={navigationRef} theme={navTheme}>
+                <RootNavigator />
+              </NavigationContainer>
+              <CreateMenuSheet />
+              <PermissionBootstrap />
+              <VoiceSyncRunner />
+            </View>
+            </FileActionsProvider>
+          </CallProvider>
+        </MessengerProvider>
+      </MessengerRealtimeProvider>
     </CreateMenuProvider>
   );
 }

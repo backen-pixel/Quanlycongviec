@@ -24,6 +24,7 @@ export type AuthUser = {
   company_id?: string | null;
   avatar?: string | null;
   phone?: string | null;
+  crm_region_ids?: string[];
 };
 
 type AuthCtx = {

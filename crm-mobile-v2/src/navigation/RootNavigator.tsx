@@ -1,6 +1,9 @@
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import React from 'react';
+import ChatDetailInfoScreen from '../screens/ChatDetailInfoScreen';
+import CreateGroupChatScreen from '../screens/CreateGroupChatScreen';
 import ChatDetailScreen from '../screens/ChatDetailScreen';
+import MessengerForwardScreen from '../screens/MessengerForwardScreen';
 import CreateEntityScreen from '../screens/CreateEntityScreen';
 import CrmHubScreen from '../screens/CrmHubScreen';
 import DriveScreen from '../screens/DriveScreen';
@@ -26,6 +29,13 @@ export default function RootNavigator() {
       <Stack.Screen name="Tabs" component={RootTabs} />
       <Stack.Screen name="CrmHub" component={CrmHubScreen} />
       <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
+      <Stack.Screen
+        name="MessengerForward"
+        component={MessengerForwardScreen}
+        options={{ presentation: 'modal' }}
+      />
+      <Stack.Screen name="ChatDetailInfo" component={ChatDetailInfoScreen} />
+      <Stack.Screen name="CreateGroupChat" component={CreateGroupChatScreen} />
       <Stack.Screen
         name="CreateEntity"
         component={CreateEntityScreen}

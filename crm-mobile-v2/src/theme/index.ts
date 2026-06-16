@@ -151,6 +151,7 @@ export const Radii = {
   lg: 16,
   xl: 20,
   pill: 999,
+  full: 999,
 } as const;
 
 export const Spacing = {

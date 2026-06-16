@@ -43,6 +43,8 @@ export type ProductionProject = {
   company_name?: string | null;
   company_id?: string | null;
   workshop_type_name?: string | null;
+  region_id?: string | null;
+  region_name?: string | null;
 };
 
 /** Cột Planner cá nhân (sx_user_planner_columns). */

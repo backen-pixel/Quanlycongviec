@@ -11,7 +11,25 @@ export type TabParamList = {
 export type RootStackParamList = {
   Tabs: NavigatorScreenParams<TabParamList> | undefined;
   CrmHub: { initialMode?: 'leads' | 'deals'; initialAssignee?: 'mine' } | undefined;
-  ChatDetail: { threadId: string; title: string; color: string };
+  ChatDetail: { threadId: string; title: string; peerId?: string | null; openSearch?: boolean };
+  MessengerForward: {
+    excludeGroupId: string;
+    sourceTitle: string;
+    messagesJson: string;
+  };
+  ChatDetailInfo: {
+    threadId: string;
+    title: string;
+    avatarColor?: string;
+    avatarUrl?: string | null;
+    isDirect?: boolean;
+    peerId?: string | null;
+    messagesJson: string;
+  };
+  CreateGroupChat: {
+    preselectedUserIds?: string[];
+    suggestedName?: string;
+  };
   CreateEntity: { kind: 'lead' | 'deal' };
   VoiceLocalRecordings: undefined;
   Drive: undefined;

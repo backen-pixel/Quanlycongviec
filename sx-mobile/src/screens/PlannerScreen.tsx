@@ -7,10 +7,13 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
+import PlannerFilterModal, { type PlannerFilterDimension } from '../components/PlannerFilterModal';
+import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { fetchPersonalPlanner, fetchProductionBoard } from '../lib/productionApi';
@@ -18,6 +21,10 @@ import { formatMoneyAmount, Radii, Spacing, stageColor } from '../theme';
 import type { PersonalPlanner, ProductionBoard, ProductionProject } from '../types';
 
 type SubTab = 'by_owner' | 'personal';
+
+/** Số dự án hiển thị ban đầu mỗi nhóm người phụ trách; bấm "Xem thêm" để tải tiếp. */
+const OWNER_PAGE_SIZE = 5;
+const UNASSIGNED_KEY = '__unassigned__';
 
 function formatMoneyDisplay(value?: number | null): string {
   const formatted = formatMoneyAmount(value);
@@ -27,12 +34,36 @@ function formatMoneyDisplay(value?: number | null): string {
 export default function PlannerScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
+  const isSystemAdmin = user?.role === 'admin' && !user?.company_id;
+  const scopedCompanyId = isSystemAdmin ? undefined : (user?.company_id || undefined);
   const [tab, setTab] = useState<SubTab>('by_owner');
   const [board, setBoard] = useState<ProductionBoard>({ stages: [], projects: [], kpis: null });
   const [personal, setPersonal] = useState<PersonalPlanner>({ columns: [], items: [] });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [ownerVisible, setOwnerVisible] = useState<Record<string, number>>({});
+  const [search, setSearch] = useState('');
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filters, setFilters] = useState<Record<PlannerFilterDimension, string>>({
+    region: '',
+    person: '',
+    stage: '',
+    type: '',
+  });
+  const activeFilterCount = Object.values(filters).filter(Boolean).length;
+
+  const ownerLimit = useCallback(
+    (key: string) => ownerVisible[key] || OWNER_PAGE_SIZE,
+    [ownerVisible],
+  );
+  const showMoreOwner = useCallback((key: string, total: number) => {
+    setOwnerVisible((prev) => ({
+      ...prev,
+      [key]: Math.min((prev[key] || OWNER_PAGE_SIZE) + OWNER_PAGE_SIZE, total),
+    }));
+  }, []);
 
   const load = useCallback(async (mode: 'init' | 'refresh' = 'init') => {
     if (mode === 'init') setLoading(true);
@@ -40,18 +71,19 @@ export default function PlannerScreen() {
     setError(null);
     try {
       const [boardData, personalData] = await Promise.all([
-        fetchProductionBoard(),
+        fetchProductionBoard(false, { companyId: scopedCompanyId }),
         fetchPersonalPlanner().catch(() => ({ columns: [], items: [] }) as PersonalPlanner),
       ]);
       setBoard(boardData);
       setPersonal(personalData);
+      setOwnerVisible({});
     } catch (e) {
       setError(formatApiError(e));
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [scopedCompanyId]);
 
   useEffect(() => {
     void load('init');
@@ -75,11 +107,53 @@ export default function PlannerScreen() {
     return map;
   }, [board.projects]);
 
+  const needle = search.trim().toLowerCase();
+
+  const matchesSearch = useCallback(
+    (p: ProductionProject) => {
+      if (filters.region && String(p.region_id || '') !== filters.region) return false;
+      if (filters.person && String(p.production_person_id || '') !== filters.person) return false;
+      if (filters.stage && String(p.resolved_column_id || '') !== filters.stage) return false;
+      if (filters.type && String(p.workshop_type_id || '') !== filters.type) return false;
+      if (!needle) return true;
+      const hay = `${p.code || ''} ${p.name || ''} ${p.customer_name || ''} ${p.customer_phone || ''} ${p.production_person_name || ''}`.toLowerCase();
+      return hay.includes(needle);
+    },
+    [needle, filters],
+  );
+
+  // Tùy chọn bộ lọc — suy ra từ dữ liệu board hiện có.
+  const filterOptions = useMemo(() => {
+    const regionMap = new Map<string, string>();
+    const personMap = new Map<string, string>();
+    const typeMap = new Map<string, string>();
+    board.projects.forEach((p) => {
+      if (p.region_id && p.region_name) regionMap.set(String(p.region_id), p.region_name);
+      if (p.production_person_id && p.production_person_name) {
+        personMap.set(String(p.production_person_id), p.production_person_name);
+      }
+      if (p.workshop_type_id && p.workshop_type_name) typeMap.set(String(p.workshop_type_id), p.workshop_type_name);
+    });
+    const toOpts = (m: Map<string, string>, allLabel: string) => [
+      { id: '', label: allLabel },
+      ...[...m.entries()].sort((a, b) => a[1].localeCompare(b[1])).map(([id, label]) => ({ id, label })),
+    ];
+    return {
+      region: toOpts(regionMap, 'Tất cả khu vực'),
+      person: toOpts(personMap, 'Tất cả nhân viên'),
+      stage: [
+        { id: '', label: 'Tất cả giai đoạn' },
+        ...board.stages.map((s) => ({ id: s.id, label: `${s.icon || ''} ${s.name}`.trim() })),
+      ],
+      type: toOpts(typeMap, 'Tất cả phân loại'),
+    };
+  }, [board.projects, board.stages]);
+
   // Nhóm theo người phụ trách (giống tab web "Theo người phụ trách").
   const ownerGroups = useMemo(() => {
     const map = new Map<string, { name: string; items: ProductionProject[]; total: number }>();
     const unassigned: ProductionProject[] = [];
-    board.projects.forEach((p) => {
+    board.projects.filter(matchesSearch).forEach((p) => {
       const id = p.production_person_id;
       const name = p.production_person_name;
       if (id && name) {
@@ -95,7 +169,7 @@ export default function PlannerScreen() {
       .map(([id, g]) => ({ id, ...g }))
       .sort((a, b) => b.items.length - a.items.length);
     return { groups, unassigned };
-  }, [board.projects]);
+  }, [board.projects, matchesSearch]);
 
   const personalColumns = useMemo(() => {
     const itemsByCol = new Map<string, ProductionProject[]>();
@@ -104,22 +178,37 @@ export default function PlannerScreen() {
       .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
       .forEach((it) => {
         const proj = projectById.get(it.project_id);
-        if (proj && itemsByCol.has(it.column_id)) itemsByCol.get(it.column_id)!.push(proj);
+        if (proj && matchesSearch(proj) && itemsByCol.has(it.column_id)) itemsByCol.get(it.column_id)!.push(proj);
       });
     return personal.columns
       .slice()
       .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
       .map((c, i) => ({ col: c, color: stageColor(c.color, i), items: itemsByCol.get(c.id) || [] }));
-  }, [personal, projectById]);
+  }, [personal, projectById, matchesSearch]);
 
   const styles = useMemo(
     () =>
       StyleSheet.create({
         container: { flex: 1, backgroundColor: colors.bg },
         center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, paddingHorizontal: Spacing.xl, paddingVertical: 48 },
-        header: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.md, paddingBottom: Spacing.sm },
+        header: {
+          flexDirection: 'row', alignItems: 'center',
+          paddingHorizontal: Spacing.lg, paddingTop: Spacing.md, paddingBottom: Spacing.sm,
+        },
         title: { color: colors.text, fontSize: 20, fontWeight: '800' },
         subtitle: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
+        filterBtn: {
+          width: 40, height: 40, borderRadius: Radii.md,
+          backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border,
+          alignItems: 'center', justifyContent: 'center',
+        },
+        filterBtnActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
+        filterBadge: {
+          position: 'absolute', top: -5, right: -5, minWidth: 18, height: 18,
+          borderRadius: 9, paddingHorizontal: 4, backgroundColor: colors.primary,
+          alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: colors.bg,
+        },
+        filterBadgeText: { color: colors.white, fontSize: 10, fontWeight: '800' },
         tabRow: {
           flexDirection: 'row',
           gap: 6,
@@ -135,6 +224,19 @@ export default function PlannerScreen() {
         tabBtnActive: { backgroundColor: colors.primary },
         tabText: { color: colors.textMuted, fontSize: 13, fontWeight: '700' },
         tabTextActive: { color: colors.white },
+        searchRow: { paddingHorizontal: Spacing.md, paddingBottom: Spacing.sm },
+        searchBox: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          backgroundColor: colors.card,
+          borderWidth: 1,
+          borderColor: colors.border,
+          borderRadius: Radii.md,
+          paddingHorizontal: 12,
+          height: 42,
+        },
+        searchInput: { flex: 1, color: colors.text, fontSize: 14 },
         errorText: { color: colors.textMuted, textAlign: 'center' },
         empty: { color: colors.textMuted, textAlign: 'center', marginTop: 8, fontSize: 14 },
         emptySub: { color: colors.textFaint, textAlign: 'center', fontSize: 12 },
@@ -192,6 +294,19 @@ export default function PlannerScreen() {
         plannerColTitle: { color: colors.text, fontSize: 14, fontWeight: '800', flex: 1 },
         plannerColCount: { color: colors.textMuted, fontSize: 12, fontWeight: '700' },
         plannerColEmpty: { color: colors.textFaint, fontSize: 12, textAlign: 'center', paddingVertical: 16 },
+        moreBtn: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 6,
+          paddingVertical: 10,
+          borderRadius: Radii.md,
+          borderWidth: 1,
+          borderColor: colors.border,
+          borderStyle: 'dashed',
+          backgroundColor: colors.cardAlt,
+        },
+        moreBtnText: { color: colors.primary, fontSize: 13, fontWeight: '700' },
       }),
     [colors],
   );
@@ -222,8 +337,28 @@ export default function PlannerScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
-        <Text style={styles.title}>Planner</Text>
-        <Text style={styles.subtitle}>Sắp xếp & phân bổ dự án sản xuất</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.title}>Planner</Text>
+          <Text style={styles.subtitle}>
+            {isSystemAdmin ? 'Tất cả công ty' : 'Sắp xếp & phân bổ dự án sản xuất'}
+          </Text>
+        </View>
+        <Pressable
+          style={[styles.filterBtn, activeFilterCount > 0 && styles.filterBtnActive]}
+          onPress={() => setFilterOpen(true)}
+          hitSlop={6}
+        >
+          <Ionicons
+            name="options-outline"
+            size={20}
+            color={activeFilterCount > 0 ? colors.primary : colors.text}
+          />
+          {activeFilterCount > 0 ? (
+            <View style={styles.filterBadge}>
+              <Text style={styles.filterBadgeText}>{activeFilterCount}</Text>
+            </View>
+          ) : null}
+        </Pressable>
       </View>
 
       <View style={styles.tabRow}>
@@ -244,6 +379,25 @@ export default function PlannerScreen() {
         })}
       </View>
 
+      <View style={styles.searchRow}>
+        <View style={styles.searchBox}>
+          <Ionicons name="search-outline" size={17} color={colors.textFaint} />
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            placeholder={tab === 'by_owner' ? 'Tìm người phụ trách, mã, khách...' : 'Tìm mã, tên dự án, khách...'}
+            placeholderTextColor={colors.textFaint}
+            style={styles.searchInput}
+            returnKeyType="search"
+          />
+          {search ? (
+            <Pressable onPress={() => setSearch('')} hitSlop={8}>
+              <Ionicons name="close-circle" size={17} color={colors.textFaint} />
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator color={colors.primary} size="large" />
@@ -262,35 +416,65 @@ export default function PlannerScreen() {
         >
           {tab === 'by_owner' ? (
             !ownerGroups.groups.length && !ownerGroups.unassigned.length ? (
-              <Text style={styles.empty}>Không có dự án xưởng</Text>
+              <Text style={styles.empty}>
+                {needle ? `Không tìm thấy kết quả cho "${search.trim()}"` : 'Không có dự án xưởng'}
+              </Text>
             ) : (
               <>
-                {ownerGroups.groups.map((g) => (
-                  <View key={g.id} style={styles.groupCard}>
-                    <View style={styles.groupHeader}>
-                      <View style={styles.avatar}>
-                        <Text style={styles.avatarText}>{g.name.charAt(0).toUpperCase()}</Text>
+                {ownerGroups.groups.map((g) => {
+                  const limit = ownerLimit(g.id);
+                  const remaining = g.items.length - limit;
+                  return (
+                    <View key={g.id} style={styles.groupCard}>
+                      <View style={styles.groupHeader}>
+                        <View style={styles.avatar}>
+                          <Text style={styles.avatarText}>{g.name.charAt(0).toUpperCase()}</Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.groupName} numberOfLines={1}>{g.name}</Text>
+                          <Text style={styles.groupMeta}>
+                            {g.items.length} dự án • {formatMoneyDisplay(g.total)}
+                          </Text>
+                        </View>
                       </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.groupName} numberOfLines={1}>{g.name}</Text>
-                        <Text style={styles.groupMeta}>
-                          {g.items.length} dự án • {formatMoneyDisplay(g.total)}
+                      <View style={styles.groupBody}>
+                        {g.items.slice(0, limit).map(renderCard)}
+                        {remaining > 0 ? (
+                          <Pressable style={styles.moreBtn} onPress={() => showMoreOwner(g.id, g.items.length)}>
+                            <Ionicons name="chevron-down" size={16} color={colors.primary} />
+                            <Text style={styles.moreBtnText}>
+                              Xem thêm {Math.min(remaining, OWNER_PAGE_SIZE)} / {remaining} dự án
+                            </Text>
+                          </Pressable>
+                        ) : null}
+                      </View>
+                    </View>
+                  );
+                })}
+                {ownerGroups.unassigned.length ? (() => {
+                  const limit = ownerLimit(UNASSIGNED_KEY);
+                  const remaining = ownerGroups.unassigned.length - limit;
+                  return (
+                    <View style={[styles.groupCard, styles.groupCardDashed]}>
+                      <View style={styles.groupHeader}>
+                        <Text style={styles.groupNameMuted}>
+                          Chưa gán SX ({ownerGroups.unassigned.length})
                         </Text>
                       </View>
+                      <View style={styles.groupBody}>
+                        {ownerGroups.unassigned.slice(0, limit).map(renderCard)}
+                        {remaining > 0 ? (
+                          <Pressable style={styles.moreBtn} onPress={() => showMoreOwner(UNASSIGNED_KEY, ownerGroups.unassigned.length)}>
+                            <Ionicons name="chevron-down" size={16} color={colors.primary} />
+                            <Text style={styles.moreBtnText}>
+                              Xem thêm {Math.min(remaining, OWNER_PAGE_SIZE)} / {remaining} dự án
+                            </Text>
+                          </Pressable>
+                        ) : null}
+                      </View>
                     </View>
-                    <View style={styles.groupBody}>{g.items.map(renderCard)}</View>
-                  </View>
-                ))}
-                {ownerGroups.unassigned.length ? (
-                  <View style={[styles.groupCard, styles.groupCardDashed]}>
-                    <View style={styles.groupHeader}>
-                      <Text style={styles.groupNameMuted}>
-                        Chưa gán SX ({ownerGroups.unassigned.length})
-                      </Text>
-                    </View>
-                    <View style={styles.groupBody}>{ownerGroups.unassigned.map(renderCard)}</View>
-                  </View>
-                ) : null}
+                  );
+                })() : null}
               </>
             )
           ) : personalColumns.length === 0 ? (
@@ -323,6 +507,15 @@ export default function PlannerScreen() {
           )}
         </ScrollView>
       )}
+
+      <PlannerFilterModal
+        visible={filterOpen}
+        onClose={() => setFilterOpen(false)}
+        options={filterOptions}
+        values={filters}
+        onChange={(dimension, id) => setFilters((prev) => ({ ...prev, [dimension]: id }))}
+        onClear={() => setFilters({ region: '', person: '', stage: '', type: '' })}
+      />
     </View>
   );
 }

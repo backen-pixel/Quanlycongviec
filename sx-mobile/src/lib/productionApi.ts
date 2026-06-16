@@ -13,6 +13,9 @@ export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
   const productionPerson = (raw.production_person || {}) as { id?: string; full_name?: string };
   const company = (raw.company || {}) as { id?: string; short_name?: string; name?: string };
   const workshopType = (raw.workshop_type || {}) as { id?: string; name?: string };
+  const crmDeals = Array.isArray(raw.crm_deals) ? (raw.crm_deals as Array<Record<string, unknown>>) : [];
+  const dealWithRegion = crmDeals.find((d) => d && (d.region_id || d.crm_region));
+  const crmRegion = (dealWithRegion?.crm_region || {}) as { id?: string; name?: string };
   return {
     id: String(raw.id || ''),
     code: String(raw.code || ''),
@@ -41,6 +44,8 @@ export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
     company_name: company.short_name || company.name || null,
     company_id: (raw.company_id as string) ?? company.id ?? null,
     workshop_type_name: workshopType.name ?? null,
+    region_id: (dealWithRegion?.region_id as string) ?? crmRegion.id ?? null,
+    region_name: crmRegion.name ?? null,
   };
 }
 
@@ -103,22 +108,48 @@ export type BoardFilters = {
   workshopTypeId?: string;
 };
 
-/** Lấy toàn bộ dự án sản xuất (đủ trang) từ /production/projects. */
+/**
+ * Lấy toàn bộ dự án sản xuất (đủ trang) từ /production/projects.
+ * Tối ưu cho dữ liệu lớn (vài nghìn card): tải trang 1 để biết tổng số trang,
+ * rồi tải các trang còn lại SONG SONG theo từng lô (concurrency có giới hạn) thay vì
+ * tuần tự — giảm độ trễ mạng từ N×round-trip xuống còn ~ceil(N/CONCURRENCY)×round-trip.
+ */
+const PROJECTS_PAGE_LIMIT = 200;
+const PROJECTS_MAX_PAGES = 40;
+const PROJECTS_FETCH_CONCURRENCY = 5;
+
 async function fetchAllProjects(noCache = false, filters: BoardFilters = {}): Promise<ProductionProject[]> {
-  const limit = 200;
-  const out: ProductionProject[] = [];
-  for (let page = 1; page <= 25; page += 1) {
-    const params: Record<string, unknown> = { page, limit };
+  const buildParams = (page: number): Record<string, unknown> => {
+    const params: Record<string, unknown> = { page, limit: PROJECTS_PAGE_LIMIT };
     if (noCache) params._t = Date.now();
     if (filters.companyId) params.company_id = filters.companyId;
+    return params;
+  };
+  const getPage = async (page: number) => {
     const { data } = await api.get<{
       projects?: Array<Record<string, unknown>>;
       totalPages?: number;
-    }>('/production/projects', { params });
-    const rows = Array.isArray(data?.projects) ? data.projects : [];
-    out.push(...rows.map(mapProjectRow));
-    const totalPages = Number(data?.totalPages || 1);
-    if (rows.length < limit || page >= totalPages) break;
+    }>('/production/projects', { params: buildParams(page) });
+    return {
+      rows: Array.isArray(data?.projects) ? data.projects : [],
+      totalPages: Number(data?.totalPages || 1),
+    };
+  };
+
+  const first = await getPage(1);
+  const out: ProductionProject[] = first.rows.map(mapProjectRow);
+  const totalPages = Math.min(first.totalPages, PROJECTS_MAX_PAGES);
+  if (totalPages <= 1 || first.rows.length < PROJECTS_PAGE_LIMIT) return out;
+
+  const remaining: number[] = [];
+  for (let p = 2; p <= totalPages; p += 1) remaining.push(p);
+
+  for (let i = 0; i < remaining.length; i += PROJECTS_FETCH_CONCURRENCY) {
+    const batch = remaining.slice(i, i + PROJECTS_FETCH_CONCURRENCY);
+    const results = await Promise.all(batch.map((p) => getPage(p)));
+    results.forEach((r) => {
+      for (const row of r.rows) out.push(mapProjectRow(row));
+    });
   }
   return out;
 }
@@ -276,8 +307,15 @@ export async function fetchPersonalPlanner(): Promise<PersonalPlanner> {
 export type CompanyOption = { id: string; name: string };
 
 export async function fetchCompanies(): Promise<CompanyOption[]> {
-  const { data } = await api.get<unknown>('/companies', { params: { for_module: 'production' } });
-  const list = Array.isArray(data) ? data : [];
+  const { data } = await api.get<{ companies?: unknown[] } | unknown[]>(
+    '/companies',
+    { params: { for_module: 'production' } },
+  );
+  const list = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.companies)
+      ? data.companies
+      : [];
   return list.map((c) => {
     const row = c as Record<string, unknown>;
     return {
@@ -393,4 +431,86 @@ export async function fetchWorkshopTypes(companyId?: string | null): Promise<Wor
     const row = t as Record<string, unknown>;
     return { id: String(row.id || ''), name: String(row.name || row.id || '') };
   }).filter((t) => t.id);
+}
+
+export type ExternalCompanyOption = { id: string; name: string };
+
+export async function fetchExternalCompanies(companyId: string): Promise<ExternalCompanyOption[]> {
+  const { data } = await api.get<{ items?: unknown[] }>('/production/external-companies', {
+    params: { company_id: companyId },
+  });
+  const list = Array.isArray(data?.items) ? data.items : [];
+  return list.map((c) => {
+    const row = c as Record<string, unknown>;
+    return { id: String(row.id || ''), name: String(row.name || row.id || '') };
+  }).filter((c) => c.id);
+}
+
+export type RegionOption = { id: string; name: string; divisionName?: string | null };
+
+/**
+ * Khu vực thuộc công ty. Mặc định không lọc for_module để hiện đủ khu vực đã cấu hình
+ * (for_module=production thường chỉ còn 1 khu vực nếu khối SX không bao phủ hết).
+ */
+export async function fetchCompanyRegions(
+  companyId: string,
+  opts?: { forModule?: 'production' | 'crm' | null },
+): Promise<RegionOption[]> {
+  const params: Record<string, string> = { company_id: companyId };
+  if (opts?.forModule) params.for_module = opts.forModule;
+  const { data } = await api.get<unknown>('/crm/company-regions', { params });
+  const list = Array.isArray(data) ? data : [];
+  return list
+    .filter((r) => (r as Record<string, unknown>).is_active !== false)
+    .map((r) => {
+      const row = r as Record<string, unknown>;
+      const division = (row.division || {}) as Record<string, unknown>;
+      const divisionName = division.short_name || division.name || null;
+      return {
+        id: String(row.id || ''),
+        name: String(row.name || row.id || ''),
+        divisionName: divisionName ? String(divisionName) : null,
+      };
+    })
+    .filter((r) => r.id);
+}
+
+export type WorkshopIntakeInput = {
+  title: string;
+  company_id: string;
+  workshop_type_id: string;
+  region_id?: string | null;
+  customer_name: string;
+  customer_phone: string;
+  customer_email?: string | null;
+  install_address?: string | null;
+  estimated_value?: number;
+  description?: string | null;
+  external_company_name?: string | null;
+};
+
+export type WorkshopIntakeResult = {
+  project_id?: string;
+  project_code?: string;
+  project_name?: string;
+  deal_id?: string;
+  deal_code?: string;
+};
+
+/** Tạo đơn xưởng trực tiếp trên Kanban SX — không qua pipeline CRM. */
+export async function createWorkshopIntake(input: WorkshopIntakeInput): Promise<WorkshopIntakeResult> {
+  const { data } = await api.post<WorkshopIntakeResult>('/production/workshop-intake', {
+    title: input.title.trim(),
+    company_id: input.company_id,
+    workshop_type_id: input.workshop_type_id,
+    region_id: input.region_id || null,
+    customer_name: input.customer_name.trim(),
+    customer_phone: input.customer_phone.trim(),
+    customer_email: input.customer_email?.trim() || null,
+    install_address: input.install_address?.trim() || null,
+    estimated_value: input.estimated_value ?? 0,
+    description: input.description?.trim() || null,
+    external_company_name: input.external_company_name?.trim() || null,
+  });
+  return data || {};
 }
