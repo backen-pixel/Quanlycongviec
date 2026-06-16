@@ -15,15 +15,15 @@ const { supabase } = require('../src/config/supabase');
 const { buildStandardApkFilename } = require('../src/helpers/appReleaseFilename');
 
 const APP_KEY = 'crm-mobile-v2';
-const VERSION = process.env.PUB_VERSION || '2.0.24';
-const VERSION_CODE = parseInt(process.env.PUB_CODE || '25', 10);
+const VERSION = process.env.PUB_VERSION || '2.0.29';
+const VERSION_CODE = parseInt(process.env.PUB_CODE || '30', 10);
 const PUBLIC_HOST = (process.env.PUB_HOST || 'https://tubep-backend.onrender.com').replace(/\/$/, '');
 const FILE_NAME = buildStandardApkFilename(APP_KEY, VERSION, VERSION_CODE, { release: true });
 const APK = path.resolve(__dirname, `../uploads/app-releases/crm-mobile-v2/${FILE_NAME}`);
 const FILE_URL = `${PUBLIC_HOST}/uploads/app-releases/crm-mobile-v2/${FILE_NAME}`;
 const RELEASE_NOTES =
   process.env.PUB_NOTES
-  || 'Ghi âm: tự động đọc → quét → đẩy ghi âm cuộc gọi lên hệ thống, chạy nền định kỳ cả khi không mở app (Android). Giữ nguyên tạo Lead/Deal 2 bước đồng bộ web & deadline đồng bộ.';
+  || 'Thông báo hệ thống (FCM): hiển thị trên thanh thông báo điện thoại kể cả khi app đóng. Màn Thông báo + badge đếm chưa đọc, Sự kiện đồng bộ web, Cài đặt (theme + ghi âm). Sửa badge không cập nhật và sự kiện không hiển thị.';
 
 (async () => {
   if (!fs.existsSync(APK)) throw new Error(`Không thấy file APK: ${APK}`);

@@ -26,7 +26,7 @@ async function probePushTokensTablePg() {
 
 async function fetchUserTokensPg(userId) {
   const result = await pgRun(
-    'SELECT token, platform FROM public.push_device_tokens WHERE user_id = $1::uuid',
+    'SELECT token, platform, device_id, last_seen_at FROM public.push_device_tokens WHERE user_id = $1::uuid',
     [userId],
   );
   if (!result) return null;

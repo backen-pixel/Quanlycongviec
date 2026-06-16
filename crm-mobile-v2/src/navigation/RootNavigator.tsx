@@ -4,6 +4,9 @@ import ChatDetailScreen from '../screens/ChatDetailScreen';
 import CreateEntityScreen from '../screens/CreateEntityScreen';
 import CrmHubScreen from '../screens/CrmHubScreen';
 import DriveScreen from '../screens/DriveScreen';
+import EventsScreen from '../screens/EventsScreen';
+import NotificationsScreen from '../screens/NotificationsScreen';
+import SettingsScreen from '../screens/SettingsScreen';
 import VoiceLocalRecordingsScreen from '../screens/VoiceLocalRecordingsScreen';
 import RootTabs from './RootTabs';
 import type { RootStackParamList } from './types';
@@ -23,6 +26,9 @@ export default function RootNavigator() {
       />
       <Stack.Screen name="VoiceLocalRecordings" component={VoiceLocalRecordingsScreen} />
       <Stack.Screen name="Drive" component={DriveScreen} />
+      <Stack.Screen name="Settings" component={SettingsScreen} />
+      <Stack.Screen name="Notifications" component={NotificationsScreen} />
+      <Stack.Screen name="Events" component={EventsScreen} />
     </Stack.Navigator>
   );
 }

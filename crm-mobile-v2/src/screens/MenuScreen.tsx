@@ -1,24 +1,16 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import React, { useCallback, useMemo } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../components/Avatar';
+import NotificationBadge from '../components/NotificationBadge';
 import { warmCrmHubPipelines } from '../api/crm';
 import { useAuth } from '../context/AuthContext';
-import { currentVersionCode, currentVersionName } from '../lib/appUpdate';
-import { loadCrmMobilePrefs, saveCrmMobilePrefs, type CrmMobilePrefs } from '../lib/crmMobilePrefs';
-import {
-  startVoiceBackgroundSyncLoop,
-  stopVoiceBackgroundSyncLoop,
-  syncVoiceBackgroundTaskWithPrefs,
-} from '../lib/voiceBackgroundSync';
-import {
-  registerVoiceBackgroundTask,
-  unregisterVoiceBackgroundTask,
-} from '../lib/voiceBackgroundTask';
-import { Radii, useColors, useTheme, type ThemeColors } from '../theme';
+import { useUnreadNotificationCount } from '../hooks/useUnreadNotificationCount';
+import { currentVersionName } from '../lib/appUpdate';
+import { Radii, useColors, type ThemeColors } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -29,7 +21,7 @@ type Item = {
   label: string;
   color: string;
   target?: ItemTarget;
-  action?: 'logout' | 'drive';
+  action?: 'logout' | 'drive' | 'settings' | 'notifications' | 'events';
 };
 
 function buildSections(Colors: ThemeColors): { title: string; items: Item[] }[] {
@@ -49,9 +41,9 @@ function buildSections(Colors: ThemeColors): { title: string; items: Item[] }[] 
       title: 'Công việc',
       items: [
         { icon: 'checkbox', label: 'Nhiệm vụ', color: Colors.blue },
-        { icon: 'calendar', label: 'Sự kiện', color: Colors.cyan },
+        { icon: 'calendar', label: 'Sự kiện', color: Colors.cyan, action: 'events' },
         { icon: 'cloud-upload', label: 'Drive lưu trữ', color: Colors.purple, action: 'drive' },
-        { icon: 'notifications', label: 'Thông báo', color: Colors.red },
+        { icon: 'notifications', label: 'Thông báo', color: Colors.red, action: 'notifications' },
         { icon: 'stats-chart', label: 'Báo cáo', color: Colors.green },
       ],
     },
@@ -60,7 +52,7 @@ function buildSections(Colors: ThemeColors): { title: string; items: Item[] }[] 
       items: [
         { icon: 'person-circle', label: 'Tài khoản', color: Colors.blue },
         { icon: 'phone-portrait', label: 'Thiết bị', color: Colors.purple },
-        { icon: 'settings', label: 'Cài đặt', color: Colors.textMuted },
+        { icon: 'settings', label: 'Cài đặt', color: Colors.textMuted, action: 'settings' },
         { icon: 'log-out', label: 'Đăng xuất', color: Colors.red, action: 'logout' },
       ],
     },
@@ -69,31 +61,13 @@ function buildSections(Colors: ThemeColors): { title: string; items: Item[] }[] 
 
 export default function MenuScreen() {
   const Colors = useColors();
-  const { mode, toggle } = useTheme();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const SECTIONS = useMemo(() => buildSections(Colors), [Colors]);
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<Nav>();
   const { user, logout } = useAuth();
   const displayName = user?.full_name || user?.fullName || user?.email || 'Người dùng';
-  const [prefs, setPrefs] = useState<CrmMobilePrefs | null>(null);
-
-  useEffect(() => {
-    void loadCrmMobilePrefs().then(setPrefs);
-  }, []);
-
-  const updatePrefs = async (next: CrmMobilePrefs) => {
-    setPrefs(next);
-    await saveCrmMobilePrefs(next);
-    if (next.voiceCaptureEnabled && next.voiceBackgroundSyncEnabled) {
-      startVoiceBackgroundSyncLoop();
-      void syncVoiceBackgroundTaskWithPrefs();
-      void registerVoiceBackgroundTask();
-    } else {
-      stopVoiceBackgroundSyncLoop();
-      void unregisterVoiceBackgroundTask();
-    }
-  };
+  const unreadNotifCount = useUnreadNotificationCount();
 
   useFocusEffect(
     useCallback(() => {
@@ -108,6 +82,18 @@ export default function MenuScreen() {
     }
     if (it.action === 'drive') {
       navigation.navigate('Drive');
+      return;
+    }
+    if (it.action === 'settings') {
+      navigation.navigate('Settings');
+      return;
+    }
+    if (it.action === 'notifications') {
+      navigation.navigate('Notifications');
+      return;
+    }
+    if (it.action === 'events') {
+      navigation.navigate('Events');
       return;
     }
     if (it.target) navigation.navigate('CrmHub', { initialMode: it.target.kind });
@@ -132,83 +118,19 @@ export default function MenuScreen() {
         <Ionicons name="chevron-forward" size={20} color={Colors.textFaint} />
       </View>
 
-      <Pressable style={styles.themeRow} onPress={toggle}>
-        <View style={[styles.themeIcon, { backgroundColor: (mode === 'dark' ? Colors.blue : Colors.amber) + '22' }]}>
-          <Ionicons
-            name={mode === 'dark' ? 'moon' : 'sunny'}
-            size={20}
-            color={mode === 'dark' ? Colors.blue : Colors.amber}
-          />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.themeTitle}>Giao diện</Text>
-          <Text style={styles.themeSub}>{mode === 'dark' ? 'Tối' : 'Sáng'} · chạm để đổi</Text>
-        </View>
-        <View style={[styles.themeSwitch, mode === 'light' && styles.themeSwitchOn]}>
-          <View style={[styles.themeKnob, mode === 'light' && styles.themeKnobOn]} />
-        </View>
-      </Pressable>
-
-      <View style={styles.versionCard}>
-        <View style={styles.versionIcon}>
-          <Ionicons name="phone-portrait-outline" size={18} color={Colors.blue} />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.versionTitle}>Phiên bản ứng dụng</Text>
-          <Text style={styles.versionSub}>
-            v{currentVersionName() || '?'} · code {currentVersionCode() ?? '?'}
-          </Text>
-        </View>
-      </View>
-
-      {prefs ? (
-        <View style={styles.voiceCard}>
-          <View style={styles.voiceHead}>
-            <Ionicons name="mic" size={18} color={Colors.purple} />
-            <Text style={styles.voiceTitle}>Ghi âm & đồng bộ</Text>
-          </View>
-          <View style={styles.toggleRow}>
-            <Text style={styles.toggleLbl}>Bật ghi âm / upload</Text>
-            <Switch
-              value={prefs.voiceCaptureEnabled}
-              onValueChange={(v) => void updatePrefs({ ...prefs, voiceCaptureEnabled: v })}
-              trackColor={{ false: Colors.border, true: Colors.purple }}
-            />
-          </View>
-          <View style={styles.toggleRow}>
-            <View style={{ flex: 1, paddingRight: 10 }}>
-              <Text style={styles.toggleLbl}>Tự động quét & đẩy lên (Android)</Text>
-              <Text style={styles.toggleHint}>
-                Tự đọc ghi âm cuộc gọi, quét và tải lên hệ thống — chạy cả khi app đang đóng.
-              </Text>
-            </View>
-            <Switch
-              value={prefs.voiceBackgroundSyncEnabled}
-              onValueChange={(v) => void updatePrefs({ ...prefs, voiceBackgroundSyncEnabled: v })}
-              disabled={!prefs.voiceCaptureEnabled}
-              trackColor={{ false: Colors.border, true: Colors.purple }}
-            />
-          </View>
-          <View style={styles.toggleRow}>
-            <Text style={styles.toggleLbl}>Tự ghép Lead theo SĐT</Text>
-            <Switch
-              value={prefs.autoLinkVoiceByPhone}
-              onValueChange={(v) => void updatePrefs({ ...prefs, autoLinkVoiceByPhone: v })}
-              disabled={!prefs.voiceCaptureEnabled}
-              trackColor={{ false: Colors.border, true: Colors.purple }}
-            />
-          </View>
-        </View>
-      ) : null}
-
       {SECTIONS.map((sec) => (
         <View key={sec.title} style={{ marginTop: 18 }}>
           <Text style={styles.secTitle}>{sec.title}</Text>
           <View style={styles.grid}>
             {sec.items.map((it) => (
               <Pressable key={it.label} style={styles.tile} onPress={() => onItem(it)}>
-                <View style={[styles.tileIcon, { backgroundColor: it.color + '22' }]}>
-                  <Ionicons name={it.icon} size={22} color={it.color} />
+                <View style={styles.tileIconWrap}>
+                  <View style={[styles.tileIcon, { backgroundColor: it.color + '22' }]}>
+                    <Ionicons name={it.icon} size={22} color={it.color} />
+                  </View>
+                  {it.action === 'notifications' ? (
+                    <NotificationBadge count={unreadNotifCount} size="sm" style={styles.tileBadge} />
+                  ) : null}
                 </View>
                 <Text style={styles.tileLabel}>{it.label}</Text>
               </Pressable>
@@ -225,88 +147,6 @@ export default function MenuScreen() {
 const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.bg },
   h1: { color: Colors.text, fontSize: 28, fontWeight: '900', paddingHorizontal: 16 },
-  themeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    marginHorizontal: 16,
-    marginTop: 12,
-    padding: 14,
-    backgroundColor: Colors.card,
-    borderRadius: Radii.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  themeIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  themeTitle: { color: Colors.text, fontSize: 15, fontWeight: '800' },
-  themeSub: { color: Colors.textMuted, fontSize: 12, marginTop: 2 },
-  themeSwitch: {
-    width: 48,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: Colors.surfaceSoft,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: 3,
-    justifyContent: 'center',
-  },
-  themeSwitchOn: { backgroundColor: Colors.amber },
-  themeKnob: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: Colors.textMuted,
-  },
-  themeKnobOn: { backgroundColor: Colors.white, alignSelf: 'flex-end' },
-  versionCard: {
-    marginHorizontal: 16,
-    marginTop: 12,
-    padding: 14,
-    backgroundColor: Colors.card,
-    borderRadius: Radii.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  versionIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.blueSoft,
-  },
-  versionTitle: { color: Colors.text, fontSize: 14, fontWeight: '800' },
-  versionSub: { color: Colors.textMuted, fontSize: 12, marginTop: 2, fontWeight: '600' },
-  voiceCard: {
-    marginHorizontal: 16,
-    marginTop: 12,
-    padding: 14,
-    backgroundColor: Colors.card,
-    borderRadius: Radii.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  voiceHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
-  voiceTitle: { color: Colors.text, fontSize: 15, fontWeight: '800' },
-  toggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 8,
-    borderTopWidth: 1,
-    borderTopColor: Colors.borderSoft,
-  },
-  toggleLbl: { color: Colors.textMuted, fontSize: 13, fontWeight: '600', flex: 1, paddingRight: 12 },
-  toggleHint: { color: Colors.textFaint, fontSize: 11, lineHeight: 15, marginTop: 3 },
   profile: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -337,6 +177,7 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     gap: 0,
   },
   tile: { width: '25%', alignItems: 'center', paddingVertical: 10 },
+  tileIconWrap: { position: 'relative' },
   tileIcon: {
     width: 52,
     height: 52,
@@ -344,6 +185,7 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  tileBadge: { top: -2, right: -4 },
   tileLabel: { color: Colors.textMuted, fontSize: 11.5, fontWeight: '700', marginTop: 7, textAlign: 'center' },
   version: { color: Colors.textFaint, fontSize: 12, textAlign: 'center', marginTop: 24 },
 });
