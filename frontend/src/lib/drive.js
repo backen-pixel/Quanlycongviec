@@ -35,6 +35,8 @@ export const driveListFolderChildren = (folderId) =>
   api.get(`/drive/folders/${folderId}/children`).then((r) => r.data);
 export const driveFolderBreadcrumb = (folderId) =>
   api.get(`/drive/breadcrumb/folder/${folderId}`).then((r) => r.data);
+export const driveEntityBreadcrumb = (entityType, entityId) =>
+  api.get(`/drive/breadcrumb/entity/${entityType}/${entityId}`).then((r) => r.data);
 export const driveFileBreadcrumb = (fileId) =>
   api.get(`/drive/breadcrumb/file/${fileId}`).then((r) => r.data);
 
@@ -97,6 +99,18 @@ export const driveCreateGoogleForEntity = ({ entity_type, entity_id, kind, name 
   api.post('/drive/entity/create-google', { entity_type, entity_id, kind, name }).then((r) => r.data);
 
 export const driveGetFile = (id) => api.get(`/drive/files/${id}`).then((r) => r.data);
+
+/** URL proxy thumbnail — `<img src>` với access_token (fallback khi Google URL trực tiếp lỗi). */
+export function driveFileThumbnailUrl(id) {
+  const token = localStorage.getItem('token');
+  const base = `${api.defaults.baseURL}/drive/files/${id}/thumbnail`;
+  return token ? `${base}?access_token=${encodeURIComponent(token)}` : base;
+}
+
+/** Lấy thumbnailLink mới từ Google API, cập nhật DB. */
+export const driveRefreshFileThumbnail = (id) =>
+  api.post(`/drive/files/${id}/refresh-thumbnail`).then((r) => r.data);
+
 export const driveDownloadFileUrl = (id) => {
   const token = localStorage.getItem('token');
   return `${api.defaults.baseURL}/drive/files/${id}/download${token ? `?_t=${Date.now()}` : ''}`;

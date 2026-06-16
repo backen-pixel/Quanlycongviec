@@ -6,10 +6,11 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Search, Loader2, FolderOpen, ChevronRight, Link2, LayoutGrid, List as ListIcon, Eye } from 'lucide-react';
 import {
-  driveListRoots, driveListRootChildren, driveListFolderChildren, driveSearch,
+  driveListRoots, driveListRootChildren, driveListFolderChildren, driveFolderBreadcrumb, driveSearch,
   driveLinkFile, driveFormatBytes, drivePreview, driveOpenDownload,
 } from '../../lib/drive';
 import DriveFileIcon from './DriveFileIcon';
+import DriveLocationBar, { enrichDriveBreadcrumb } from './DriveLocationBar';
 import PreviewModal from './PreviewModal';
 import {
   DriveFilesGridView, DriveFilesListView,
@@ -58,7 +59,9 @@ export default function DriveFilePicker({
     setLoading(true);
     setActiveRoot(root);
     setFolder(null);
-    setCrumb([{ type: 'root', id: root.id, name: root.name }]);
+    setCrumb(enrichDriveBreadcrumb([
+      { type: 'root', id: root.id, name: root.name, scope: root.scope },
+    ], root));
     setQuery('');
     try {
       const r = await driveListRootChildren(root.id);
@@ -70,28 +73,39 @@ export default function DriveFilePicker({
   async function openFolder(f) {
     setLoading(true);
     try {
-      const r = await driveListFolderChildren(f.id);
-      setFolder(r.folder);
-      setFolders(r.folders || []);
-      setFiles(r.files || []);
-      setCrumb((c) => [...c, { type: 'folder', id: f.id, name: f.name }]);
+      const [children, crumb] = await Promise.all([
+        driveListFolderChildren(f.id),
+        driveFolderBreadcrumb(f.id),
+      ]);
+      setFolder(children.folder);
+      setFolders(children.folders || []);
+      setFiles(children.files || []);
+      setCrumb(enrichDriveBreadcrumb(crumb.breadcrumb || [], activeRoot));
+    } finally { setLoading(false); }
+  }
+
+  async function jumpToFolder(folderId) {
+    setLoading(true);
+    try {
+      const [children, crumbData] = await Promise.all([
+        driveListFolderChildren(folderId),
+        driveFolderBreadcrumb(folderId),
+      ]);
+      setFolder(children.folder);
+      setFolders(children.folders || []);
+      setFiles(children.files || []);
+      setCrumb(enrichDriveBreadcrumb(crumbData.breadcrumb || [], activeRoot));
     } finally { setLoading(false); }
   }
 
   async function jumpCrumb(idx) {
     const c = crumb[idx];
-    if (c.type === 'root') {
-      const root = roots.find((x) => x.id === c.id);
+    if (c.type === 'scope' || c.type === 'root') {
+      const root = roots.find((x) => x.id === (c.rootId || c.id));
       if (root) return openRoot(root);
     }
     if (c.type === 'folder') {
-      setLoading(true);
-      const r = await driveListFolderChildren(c.id);
-      setFolder(r.folder);
-      setFolders(r.folders || []);
-      setFiles(r.files || []);
-      setCrumb((cur) => cur.slice(0, idx + 1));
-      setLoading(false);
+      return jumpToFolder(c.id);
     }
   }
 
@@ -194,7 +208,7 @@ export default function DriveFilePicker({
           </div>
         </header>
 
-        <div className="px-4 py-2 border-b bg-slate-50 flex items-center gap-2 shrink-0 flex-wrap">
+        <div className="px-4 py-2 border-b bg-white flex items-center gap-2 shrink-0 flex-wrap">
           <select
             value={activeRoot?.id || ''}
             onChange={(e) => {
@@ -205,17 +219,7 @@ export default function DriveFilePicker({
           >
             {roots.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
           </select>
-          <nav className="flex items-center gap-1 text-sm flex-1 min-w-0 overflow-x-auto">
-            {crumb.map((c, i) => (
-              <span key={`${c.type}-${c.id}`} className="flex items-center gap-1 shrink-0">
-                {i > 0 && <ChevronRight size={12} className="text-slate-400" />}
-                <button type="button" onClick={() => jumpCrumb(i)} className="px-2 py-1 rounded hover:bg-white text-slate-600 truncate max-w-[140px]">
-                  {c.name}
-                </button>
-              </span>
-            ))}
-          </nav>
-          <div className="relative">
+          <div className="relative ml-auto">
             <Search size={12} className="absolute left-2 top-2 text-slate-400" />
             <input
               value={query}
@@ -225,6 +229,8 @@ export default function DriveFilePicker({
             />
           </div>
         </div>
+
+        <DriveLocationBar items={crumb} onNavigate={(_, idx) => jumpCrumb(idx)} />
 
         <div className="flex-1 overflow-auto p-3">
           {loading ? (

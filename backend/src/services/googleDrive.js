@@ -112,7 +112,7 @@ function getRootFolderId() {
 }
 
 // Fields chuẩn lấy về mỗi lần lookup file/folder.
-const FILE_FIELDS = 'id,name,mimeType,size,md5Checksum,parents,trashed,webViewLink,thumbnailLink,modifiedTime,createdTime,version';
+const FILE_FIELDS = 'id,name,mimeType,size,md5Checksum,parents,trashed,webViewLink,thumbnailLink,iconLink,hasThumbnail,modifiedTime,createdTime,version';
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
 const GOOGLE_DOC_MIME = 'application/vnd.google-apps.document';
 const GOOGLE_SHEET_MIME = 'application/vnd.google-apps.spreadsheet';
@@ -221,6 +221,11 @@ function buildGoogleEditEmbedUrl(googleFileId, mimeType) {
     return `https://docs.google.com/presentation/d/${id}/edit?${qs}`;
   }
   return null;
+}
+
+/** URL embed xem PDF / file trên Google Drive trong iframe (zoom, lật trang). */
+function buildDriveFilePreviewEmbedUrl(googleFileId) {
+  return `https://drive.google.com/file/d/${googleFileId}/preview?usp=drivesdk&embedded=true`;
 }
 
 /**
@@ -381,6 +386,7 @@ module.exports = {
   createFolder,
   createGoogleFile,
   buildGoogleEditEmbedUrl,
+  buildDriveFilePreviewEmbedUrl,
   ensureAnyoneLinkAccess,
   uploadFile,
   renameItem,

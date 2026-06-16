@@ -13,10 +13,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link2, Upload, Loader2, LayoutGrid, List as ListIcon, FileText, Table2 } from 'lucide-react';
 import {
   driveLinksByEntity, driveUnlinkFile, drivePreview, driveOpenDownload, driveFormatBytes,
-  driveUploadToEntity, driveCreateGoogleForEntity,
+  driveUploadToEntity, driveCreateGoogleForEntity, driveEntityBreadcrumb,
 } from '../../lib/drive';
 import DriveFilePicker from './DriveFilePicker';
 import PreviewModal from './PreviewModal';
+import DriveLocationBar, { enrichDriveBreadcrumb } from './DriveLocationBar';
 import { DriveFilesListView, DriveFilesGridView, filterImageFiles, DriveFileMoreMenu } from './DriveFileViews';
 
 function readViewMode() {
@@ -31,6 +32,7 @@ export default function DriveAttachments({ entityType, entityId, className = '',
   const [uploads, setUploads] = useState([]);
   const [creatingGoogle, setCreatingGoogle] = useState(null);
   const [viewMode, setViewMode] = useState(readViewMode);
+  const [locationPath, setLocationPath] = useState([]);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -47,6 +49,23 @@ export default function DriveAttachments({ entityType, entityId, className = '',
   }, [entityType, entityId]);
 
   useEffect(() => { void reload(); }, [reload]);
+
+  useEffect(() => {
+    if (!entityType || !entityId) {
+      setLocationPath([]);
+      return;
+    }
+    let cancelled = false;
+    driveEntityBreadcrumb(entityType, entityId)
+      .then((r) => {
+        if (cancelled) return;
+        setLocationPath(enrichDriveBreadcrumb(r.breadcrumb || []));
+      })
+      .catch(() => {
+        if (!cancelled) setLocationPath([]);
+      });
+    return () => { cancelled = true; };
+  }, [entityType, entityId, links.length]);
 
   useEffect(() => {
     onCountChange?.(links.length);
@@ -226,6 +245,10 @@ export default function DriveAttachments({ entityType, entityId, className = '',
           />
         </div>
       </div>
+
+      {locationPath.length > 0 && (
+        <DriveLocationBar items={locationPath} readOnly className="rounded-lg border mb-3 -mx-1" />
+      )}
 
       {uploads.length > 0 && (
         <div className="mb-3 space-y-1.5">

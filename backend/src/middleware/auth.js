@@ -130,4 +130,19 @@ function auth(req, res, next) {
   }
 }
 
-module.exports = { auth, midnightVnTodayMs, isStaleAcrossMidnight, resolveCompanyIdForUser };
+/** Cho `<img src>` — JWT từ query `access_token` khi không có Authorization header. */
+function authWithQueryToken(req, res, next) {
+  if (!req.headers.authorization && req.query?.access_token) {
+    const t = String(req.query.access_token).trim();
+    if (t) req.headers.authorization = `Bearer ${t}`;
+  }
+  return auth(req, res, next);
+}
+
+module.exports = {
+  auth,
+  authWithQueryToken,
+  midnightVnTodayMs,
+  isStaleAcrossMidnight,
+  resolveCompanyIdForUser,
+};
