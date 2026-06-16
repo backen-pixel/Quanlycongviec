@@ -32,6 +32,7 @@ import UploadDropzone from '../components/drive/UploadDropzone';
 import PreviewModal from '../components/drive/PreviewModal';
 import ShareModal from '../components/drive/ShareModal';
 import { useAuth } from '../lib/auth';
+import { appendDriveModuleQuery, resolveModuleFromDriveQuery, storeModule } from '../lib/sidebarModuleContext';
 
 function scopeIcon(scope) {
   if (scope === 'user') return UserIcon;
@@ -67,6 +68,15 @@ export default function DrivePage() {
   const view = params.view || null; // recent|starred|shared|trash
   const rootIdParam = params.rootId || null;
   const folderIdParam = params.folderId || null;
+
+  const driveNavigate = useCallback((path, options) => {
+    navigate(appendDriveModuleQuery(path, lockedModule), options);
+  }, [navigate, lockedModule]);
+
+  useEffect(() => {
+    const sidebarModule = resolveModuleFromDriveQuery(lockedModule);
+    if (sidebarModule) storeModule(sidebarModule);
+  }, [lockedModule]);
 
   const [health, setHealth] = useState(null);
   const [roots, setRoots] = useState([]);
@@ -173,7 +183,7 @@ export default function DrivePage() {
     } finally {
       setLoading(false);
     }
-    navigate(`/drive/root/${root.id}`, { replace: true });
+    driveNavigate(`/drive/root/${root.id}`, { replace: true });
   }
 
   // ── Mở folder ──
@@ -195,7 +205,7 @@ export default function DrivePage() {
         const r = roots.find((x) => x.id === rootCrumb.id) || activeRoot;
         if (r) setActiveRoot(r);
       }
-      navigate(`/drive/folder/${folderId}`, { replace: true });
+      driveNavigate(`/drive/folder/${folderId}`, { replace: true });
     } catch (e) {
       console.error('open folder error', e);
     } finally {
@@ -234,7 +244,7 @@ export default function DrivePage() {
       setFiles(files);
     } catch (e) { console.error(e); }
     setLoading(false);
-    navigate(`/drive/view/${viewKey}`, { replace: true });
+    driveNavigate(`/drive/view/${viewKey}`, { replace: true });
   }
 
   // ── Search ──
