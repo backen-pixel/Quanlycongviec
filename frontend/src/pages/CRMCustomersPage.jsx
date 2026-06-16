@@ -116,17 +116,6 @@ export default function CRMCustomersPage() {
     return { leads, deals };
   }, [customers]);
 
-  const sourceBreakdown = useMemo(() => {
-    const map = new Map();
-    (customers || []).forEach((c) => {
-      (c.leads || []).forEach((l) => {
-        const name = (l.source?.name || 'Không nguồn').trim() || 'Không nguồn';
-        map.set(name, (map.get(name) || 0) + 1);
-      });
-    });
-    return [...map.entries()].sort((a, b) => b[1] - a[1]);
-  }, [customers]);
-
   // Summary
   const totalCustomers = customers.length;
   const activeCustomers = customers.filter(c => c.stats.lead_count > 0 || c.stats.order_count > 0).length;
@@ -183,20 +172,6 @@ export default function CRMCustomersPage() {
           <p className="text-xs text-gray-400">{leadDealCounts.leads} lead · {leadDealCounts.deals} deal · {customers.reduce((s, c) => s + c.stats.won_count, 0)} đã chốt</p>
         </div>
       </div>
-
-      {sourceBreakdown.length > 0 && (
-        <div className="bg-white rounded-xl border p-4">
-          <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Lead & deal theo nguồn (theo phạm vi công ty đang xem)</p>
-          <div className="flex flex-wrap gap-2">
-            {sourceBreakdown.map(([name, n]) => (
-              <span key={name} className="inline-flex items-center gap-1 text-xs bg-slate-50 border border-slate-200 rounded-full px-2.5 py-1 text-slate-700">
-                <span className="font-medium">{name}</span>
-                <span className="text-slate-500">{n}</span>
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Search */}
       <div className="relative max-w-md">
