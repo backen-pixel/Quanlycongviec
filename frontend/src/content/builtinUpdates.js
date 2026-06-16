@@ -4,6 +4,54 @@
  */
 export const BUILTIN_UPDATES = [
   {
+    id: '2026-06-drive-module-chat-share',
+    version: '2.3.0',
+    category: 'feature',
+    publishedAt: '2026-06-16T06:00:00.000Z',
+    title: '☁️ Google Drive tích hợp — lưu trữ theo module, chia sẻ qua chat & nhắc file lớn',
+    content: `## Google Drive theo module (CRM / SX / VC)
+
+- Menu sidebar có nút **Drive CRM**, **Drive SX**, **Drive VC** — mỗi module chỉ hiện đúng thư mục công ty thuộc module đó.
+- Dropdown **"Tất cả module"** trên trang Drive cho phép lọc nhanh.
+- Folder tổ chức phẳng theo cấu trúc: **Module → Công ty → Khu vực → Loại → Phòng ban → Nhân viên → Kind → Mã deal**.
+
+## Tab ☁️ Drive trên Lead / Deal / Dự án
+
+- Tab **☁️ Drive (N)** hiển thị số file đã gắn — gắn file Drive vào từng entity riêng biệt.
+- Nút **Tải lên từ máy** → upload thẳng vào đúng thư mục entity trên Google Drive.
+- Nút **Liên kết file Drive** → chọn file đã có sẵn trong Drive.
+- Tạo **Google Doc / Sheet** gắn thẳng vào deal — mở preview với toolbar chỉnh sửa đầy đủ.
+
+## Chia sẻ file Drive qua Chat
+
+- Ô chat (Lead chat & Messenger) có nút ☁️ **HardDrive** — chọn file từ Drive → gửi dưới dạng thẻ file.
+- Thẻ file hiển thị: icon loại file (PDF/Doc/Sheet), tên rút gọn, dung lượng, nút 👁 Xem trước + ⬇️ Tải.
+- **DriveFilePicker** mở qua portal (không bị kẹp trong khung chat), dạng danh sách mặc định, modal rộng.
+
+## Nhắc nhở gửi file lớn qua Drive
+
+- Đính kèm file **≥ 10 MB** trực tiếp trong chat → popup nhắc **"File dung lượng lớn — nên gửi qua Drive"**.
+  - Nút **Chọn trên Drive** → mở picker Drive luôn.
+  - Nút **Vẫn gửi từ máy** → tiếp tục upload bình thường.
+- Dòng gợi ý hiển thị dưới ô chat: *"File từ 10 MB nên gửi qua Google Drive (☁️). Giới hạn đính kèm trực tiếp: 50 MB/file."*
+- Ngưỡng nhắc cấu hình qua biến môi trường \`VITE_CHAT_DRIVE_REMIND_MB\` (mặc định 10 MB).
+
+## Xem trước & chỉnh sửa Doc/Sheet
+
+- Preview Google Doc / Sheet hiển thị **toolbar chỉnh sửa đầy đủ** (đã bỏ tham số \`rm=minimal\`).
+- Nút **"Chỉnh sửa (tab mới)"** mở Google Docs/Sheets trên tab riêng.
+- Modal preview cao hơn (96vh) để đủ diện tích làm việc.
+
+## Cài đặt kỹ thuật (admin)
+
+Chạy các migration Supabase theo thứ tự:
+- \`database/354_drive_module_and_category.sql\` — thêm cột \`module\` & \`category_tag\` vào \`drive_roots\`
+- \`database/355_drive_acl_region.sql\` — thêm cột \`region_id\` vào bảng \`drive_acl\`
+- \`database/356_drive_roots_module_meta.sql\` — thêm cột meta \`ecosystem_module_key\`, \`company_id\`, \`region_id\` vào \`drive_roots\`
+
+Sau khi chạy migration, vào **Quản trị → Drive → Roots** để gán module cho từng root folder.`,
+  },
+  {
     id: '2026-06-crm-assignments-pipeline-notify',
     version: '2.2.0',
     category: 'feature',
