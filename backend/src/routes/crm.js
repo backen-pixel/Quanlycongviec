@@ -10269,11 +10269,31 @@ function crmLeadRowVisibleToRequestUser(row, userId, role) {
 }
 
 const CUSTOMERS_OVERVIEW_NO_MATCH_ID = '00000000-0000-0000-0000-000000000000';
+const CUSTOMERS_IN_CHUNK = 80;
+
+function chunkArray(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+/** Supabase/PostgREST giới hạn số phần tử trong .in() — tách batch hoặc dùng .or(). */
+function applyCustomerIdInFilter(q, ids) {
+  const list = (ids || []).filter(Boolean);
+  if (!list.length) return q.in('id', [CUSTOMERS_OVERVIEW_NO_MATCH_ID]);
+  if (list.length <= CUSTOMERS_IN_CHUNK) return q.in('id', list);
+  const orParts = chunkArray(list, CUSTOMERS_IN_CHUNK).map(
+    (ch) => `id.in.(${ch.join(',')})`,
+  );
+  return q.or(orParts.join(','));
+}
 
 function applyCustomersOverviewSearch(q, search) {
   const s = String(search || '').trim();
   if (!s) return q;
-  return q.or(`full_name.ilike.%${s}%,phone.ilike.%${s}%,email.ilike.%${s}%,company.ilike.%${s}%`);
+  const safe = s.replace(/[%_,().]/g, ' ').trim();
+  if (!safe) return q;
+  return q.or(`full_name.ilike.%${safe}%,phone.ilike.%${safe}%,email.ilike.%${safe}%,company.ilike.%${safe}%`);
 }
 
 async function fetchActivityCustomerIds(effectiveCompanyId, activity) {
@@ -10406,23 +10426,27 @@ async function buildCustomersOverviewSummary(effectiveCompanyId, uid, role, sear
   custQ = applyCustomersOverviewSearch(custQ, search);
   if (activity && activity !== 'all') {
     const activityIds = await fetchActivityCustomerIds(effectiveCompanyId, activity);
-    if (activityIds) custQ = custQ.in('id', activityIds);
+    if (activityIds) custQ = applyCustomerIdInFilter(custQ, activityIds);
   }
   const { data: custRows, error } = await custQ;
   if (error) throw error;
-  const customerIds = (custRows || []).map((c) => c.id);
-  if (!customerIds.length) {
+  const idSet = new Set((custRows || []).map((c) => c.id));
+  if (!idSet.size) {
     return { total: 0, active: 0, leads: 0, deals: 0, won: 0, revenue: 0, debt: 0 };
   }
-  const { leads, orders, invoices } = await fetchScopedCrmBundles(effectiveCompanyId, uid, role, customerIds);
-  return computeCustomersOverviewSummary(custRows, leads, orders, invoices);
+  // Không truyền hàng nghìn id vào .in() — lấy theo phạm vi công ty rồi lọc trong bộ nhớ.
+  const { leads, orders, invoices } = await fetchScopedCrmBundles(effectiveCompanyId, uid, role, null);
+  const filteredLeads = (leads || []).filter((l) => idSet.has(l.customer_id));
+  const filteredOrders = (orders || []).filter((o) => idSet.has(o.customer_id));
+  const filteredInvoices = (invoices || []).filter((i) => idSet.has(i.customer_id));
+  return computeCustomersOverviewSummary(custRows, filteredLeads, filteredOrders, filteredInvoices);
 }
 
 r.get('/customers-overview', async (req, res) => {
   try {
     let effectiveCompanyId = null;
     if (!isSystemAdmin(req.user)) {
-      const cid = requireUserCompanyId(req, res);
+      const cid = await requireUserCompanyIdResolved(req, res);
       if (!cid) return;
       effectiveCompanyId = cid;
     } else {
@@ -10461,7 +10485,7 @@ r.get('/customers-overview', async (req, res) => {
     custQ = applyCustomersOverviewSearch(custQ, search);
     if (activity !== 'all') {
       const activityIds = await fetchActivityCustomerIds(effectiveCompanyId, activity);
-      if (activityIds) custQ = custQ.in('id', activityIds);
+      if (activityIds) custQ = applyCustomerIdInFilter(custQ, activityIds);
     }
     custQ = custQ.order('created_at', { ascending: sort === 'oldest' });
     const from = (page - 1) * limit;
@@ -10479,10 +10503,23 @@ r.get('/customers-overview', async (req, res) => {
       mapCustomerOverviewRow(c, leads, quotes, orders, invoices, false),
     );
     const total = count || 0;
-    const summary =
-      page === 1
-        ? await buildCustomersOverviewSummary(effectiveCompanyId, uid, role, search, activity)
-        : undefined;
+    let summary;
+    if (page === 1) {
+      try {
+        summary = await buildCustomersOverviewSummary(effectiveCompanyId, uid, role, search, activity);
+      } catch (summaryErr) {
+        console.error('[customers-overview] summary failed:', summaryErr?.message || summaryErr);
+        summary = {
+          total,
+          active: 0,
+          leads: 0,
+          deals: 0,
+          won: 0,
+          revenue: 0,
+          debt: 0,
+        };
+      }
+    }
 
     res.json({
       customers: items,
