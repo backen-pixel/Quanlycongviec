@@ -21,7 +21,7 @@ type Item = {
   label: string;
   color: string;
   target?: ItemTarget;
-  action?: 'logout' | 'drive' | 'settings' | 'notifications' | 'events' | 'quotations' | 'orders' | 'products' | 'customers';
+  action?: 'logout' | 'drive' | 'settings' | 'notifications' | 'events' | 'quotations' | 'orders' | 'products' | 'customers' | 'tasks' | 'account' | 'devices';
 };
 
 function buildSections(Colors: ThemeColors): { title: string; items: Item[] }[] {
@@ -40,7 +40,7 @@ function buildSections(Colors: ThemeColors): { title: string; items: Item[] }[] 
     {
       title: 'Công việc',
       items: [
-        { icon: 'checkbox', label: 'Nhiệm vụ', color: Colors.blue },
+        { icon: 'checkbox', label: 'Nhiệm vụ', color: Colors.blue, action: 'tasks' },
         { icon: 'calendar', label: 'Sự kiện', color: Colors.cyan, action: 'events' },
         { icon: 'cloud-upload', label: 'Drive lưu trữ', color: Colors.purple, action: 'drive' },
         { icon: 'notifications', label: 'Thông báo', color: Colors.red, action: 'notifications' },
@@ -50,13 +50,17 @@ function buildSections(Colors: ThemeColors): { title: string; items: Item[] }[] 
     {
       title: 'Hệ thống',
       items: [
-        { icon: 'person-circle', label: 'Tài khoản', color: Colors.blue },
-        { icon: 'phone-portrait', label: 'Thiết bị', color: Colors.purple },
+        { icon: 'person-circle', label: 'Tài khoản', color: Colors.blue, action: 'account' },
+        { icon: 'phone-portrait', label: 'Thiết bị', color: Colors.purple, action: 'devices' },
         { icon: 'settings', label: 'Cài đặt', color: Colors.textMuted, action: 'settings' },
         { icon: 'log-out', label: 'Đăng xuất', color: Colors.red, action: 'logout' },
       ],
     },
   ];
+}
+
+function isInteractive(it: Item): boolean {
+  return !!(it.action || it.target);
 }
 
 export default function MenuScreen() {
@@ -65,14 +69,15 @@ export default function MenuScreen() {
   const SECTIONS = useMemo(() => buildSections(Colors), [Colors]);
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<Nav>();
-  const { user, logout } = useAuth();
+  const { user, logout, refreshProfile } = useAuth();
   const displayName = user?.full_name || user?.fullName || user?.email || 'Người dùng';
   const unreadNotifCount = useUnreadNotificationCount();
 
   useFocusEffect(
     useCallback(() => {
       void warmCrmHubPipelines(user?.company_id || undefined);
-    }, [user?.company_id]),
+      void refreshProfile();
+    }, [user?.company_id, refreshProfile]),
   );
 
   const onItem = (it: Item) => {
@@ -112,6 +117,18 @@ export default function MenuScreen() {
       navigation.navigate('Customers');
       return;
     }
+    if (it.action === 'tasks') {
+      navigation.navigate('Tasks');
+      return;
+    }
+    if (it.action === 'account') {
+      navigation.navigate('Account');
+      return;
+    }
+    if (it.action === 'devices') {
+      navigation.navigate('Devices');
+      return;
+    }
     if (it.target) navigation.navigate('CrmHub', { initialMode: it.target.kind });
   };
 
@@ -123,8 +140,11 @@ export default function MenuScreen() {
     >
       <Text style={styles.h1}>Menu</Text>
 
-      <View style={styles.profile}>
-        <Avatar name={displayName} size={52} color={Colors.blue} />
+      <Pressable
+        style={({ pressed }) => [styles.profile, pressed && styles.profilePressed]}
+        onPress={() => navigation.navigate('Account')}
+      >
+        <Avatar name={displayName} size={52} color={Colors.blue} avatarUrl={user?.avatar} />
         <View style={{ flex: 1 }}>
           <Text style={styles.profileName} numberOfLines={1}>{displayName}</Text>
           <Text style={styles.profileRole} numberOfLines={1}>
@@ -132,25 +152,56 @@ export default function MenuScreen() {
           </Text>
         </View>
         <Ionicons name="chevron-forward" size={20} color={Colors.textFaint} />
-      </View>
+      </Pressable>
 
       {SECTIONS.map((sec) => (
         <View key={sec.title} style={{ marginTop: 18 }}>
           <Text style={styles.secTitle}>{sec.title}</Text>
           <View style={styles.grid}>
-            {sec.items.map((it) => (
-              <Pressable key={it.label} style={styles.tile} onPress={() => onItem(it)}>
-                <View style={styles.tileIconWrap}>
-                  <View style={[styles.tileIcon, { backgroundColor: it.color + '22' }]}>
-                    <Ionicons name={it.icon} size={22} color={it.color} />
-                  </View>
-                  {it.action === 'notifications' ? (
-                    <NotificationBadge count={unreadNotifCount} size="sm" style={styles.tileBadge} />
-                  ) : null}
-                </View>
-                <Text style={styles.tileLabel}>{it.label}</Text>
-              </Pressable>
-            ))}
+            {sec.items.map((it) => {
+              const interactive = isInteractive(it);
+              return (
+                <Pressable
+                  key={it.label}
+                  style={({ pressed }) => [
+                    styles.tile,
+                    interactive && pressed && styles.tilePressed,
+                    !interactive && styles.tileDisabled,
+                  ]}
+                  onPress={() => onItem(it)}
+                  disabled={!interactive}
+                >
+                  {({ pressed }) => (
+                    <>
+                      <View style={styles.tileIconWrap}>
+                        <View
+                          style={[
+                            styles.tileIcon,
+                            { backgroundColor: (interactive && pressed ? it.color + '44' : it.color + '22') },
+                            interactive && styles.tileIconBorder,
+                            interactive && pressed && { borderColor: it.color, borderWidth: 1.5 },
+                          ]}
+                        >
+                          <Ionicons name={it.icon} size={22} color={it.color} />
+                        </View>
+                        {it.action === 'notifications' ? (
+                          <NotificationBadge count={unreadNotifCount} size="sm" style={styles.tileBadge} />
+                        ) : null}
+                      </View>
+                      <Text
+                        style={[
+                          styles.tileLabel,
+                          !interactive && styles.tileLabelDisabled,
+                          interactive && pressed && { color: Colors.text, fontWeight: '800' },
+                        ]}
+                      >
+                        {it.label}
+                      </Text>
+                    </>
+                  )}
+                </Pressable>
+              );
+            })}
           </View>
         </View>
       ))}
@@ -175,6 +226,11 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
   },
+  profilePressed: {
+    backgroundColor: Colors.surfaceSoft,
+    borderColor: Colors.blue,
+    transform: [{ scale: 0.985 }],
+  },
   profileName: { color: Colors.text, fontSize: 17, fontWeight: '800' },
   profileRole: { color: Colors.textMuted, fontSize: 12, marginTop: 3 },
   secTitle: {
@@ -193,6 +249,8 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     gap: 0,
   },
   tile: { width: '25%', alignItems: 'center', paddingVertical: 10 },
+  tilePressed: { opacity: 0.92, transform: [{ scale: 0.94 }] },
+  tileDisabled: { opacity: 0.45 },
   tileIconWrap: { position: 'relative' },
   tileIcon: {
     width: 52,
@@ -201,7 +259,12 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  tileIconBorder: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
   tileBadge: { top: -2, right: -4 },
   tileLabel: { color: Colors.textMuted, fontSize: 11.5, fontWeight: '700', marginTop: 7, textAlign: 'center' },
+  tileLabelDisabled: { color: Colors.textFaint },
   version: { color: Colors.textFaint, fontSize: 12, textAlign: 'center', marginTop: 24 },
 });

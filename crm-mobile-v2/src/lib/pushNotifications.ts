@@ -116,11 +116,7 @@ async function ensurePermission(): Promise<boolean> {
   }
 }
 
-function buildDeviceId(): string {
-  const part = Device.osBuildId || Device.modelName || 'android';
-  const safe = String(part).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32);
-  return `crmv2-${safe || 'android'}`;
-}
+import { getOrCreateDeviceId } from './deviceHeartbeat';
 
 /**
  * Đăng ký FCM token lên server. Idempotent — luôn ping để cập nhật last_seen_at.
@@ -148,7 +144,7 @@ export async function registerPushTokenV2(): Promise<boolean> {
       await api.post('/push/device-token', {
         token: fcmToken,
         platform: 'fcm',
-        device_id: buildDeviceId(),
+        device_id: await getOrCreateDeviceId(),
       });
       return true;
     } catch {

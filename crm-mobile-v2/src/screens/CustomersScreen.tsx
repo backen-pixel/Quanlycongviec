@@ -481,10 +481,6 @@ export default function CustomersScreen() {
             </View>
           </View>
         </View>
-        <Pressable style={styles.addTopBtn} onPress={() => showComingSoon('thêm khách hàng')}>
-          <Ionicons name="add" size={16} color={Colors.text} />
-          <Text style={styles.addTopTxt}>Thêm KH</Text>
-        </Pressable>
       </View>
 
       {showCompanyPicker ? (
@@ -696,19 +692,6 @@ const makeStyles = (Colors: ThemeColors) =>
     },
     headerTitle: { color: Colors.text, fontSize: 22, fontWeight: '900' },
     headerSub: { color: Colors.textMuted, fontSize: 13, marginTop: 2 },
-    addTopBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 4,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
-      borderRadius: Radii.pill,
-      borderWidth: 1,
-      borderColor: Colors.border,
-      backgroundColor: Colors.card,
-      marginTop: 4,
-    },
-    addTopTxt: { color: Colors.text, fontSize: 12, fontWeight: '800' },
     companyPill: {
       flexDirection: 'row',
       alignItems: 'center',

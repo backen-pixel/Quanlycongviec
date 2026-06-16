@@ -2,7 +2,7 @@
   "expo": {
     "name": "CRM Mobile",
     "slug": "crm-mobile-v2",
-    "version": "2.0.37",
+    "version": "2.0.41",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -21,7 +21,7 @@
     },
     "android": {
       "package": "vn.tubeppro.crmobilev2",
-      "versionCode": 38,
+      "versionCode": 42,
       "edgeToEdgeEnabled": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
