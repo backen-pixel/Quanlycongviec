@@ -6,6 +6,7 @@ import {
   stopVoiceBackgroundSyncLoop,
   syncVoiceBackgroundTaskWithPrefs,
 } from '../lib/voiceBackgroundSync';
+import { registerPushTokenV2, unregisterPushTokenV2 } from '../lib/pushNotifications';
 
 const USER_KEY = 'crmv2_user_json';
 
@@ -54,6 +55,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!token) return;
+    // Đăng ký FCM token để nhận thông báo trên thanh hệ thống (kể cả khi app đóng).
+    void registerPushTokenV2();
     const controller = new AbortController();
     void (async () => {
       try {
@@ -86,6 +89,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     invalidatePlannerCache();
     invalidateCrmHubCache();
     stopVoiceBackgroundSyncLoop();
+    await unregisterPushTokenV2();
     await setStoredToken(null);
     await AsyncStorage.removeItem(USER_KEY);
     setToken(null);

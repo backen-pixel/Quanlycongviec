@@ -114,7 +114,7 @@ async function fetchUserTokens(userId) {
   const empty = { expo: [], fcm: [] };
   const { data, error } = await supabase
     .from('push_device_tokens')
-    .select('token, platform, last_seen_at')
+    .select('token, platform, last_seen_at, device_id')
     .eq('user_id', userId);
   if (error) {
     if (isRestTableMissingError(error)) {
@@ -377,6 +377,15 @@ function isExpoPushToken(token) {
   return typeof token === 'string' && token.startsWith('ExponentPushToken[');
 }
 
+/**
+ * Token thuộc CRM Mobile v2 (vn.tubeppro.crmobilev2) — đăng ký device_id tiền tố "crmv2".
+ * v2 dùng FCM native hiển thị tray cho MỌI loại thông báo; tách riêng để không đổi
+ * hành vi của app cũ (crm-mobile v1).
+ */
+function isCrmV2Row(row) {
+  return String(row?.device_id || '').startsWith('crmv2');
+}
+
 function pickFcmTokens(rows) {
   const list = rows.fcm || [];
   const seen = new Set(list.map((r) => r.token));
@@ -555,8 +564,15 @@ async function sendMobilePush(userId, notification) {
 
     const rows = await fetchUserTokens(userId);
     const expoRows = rows.expo.filter((r) => isExpoPushToken(r.token));
-    const fcmRows = isCall ? pickFcmTokens(rows) : pickActiveFcmTokens(rows);
-    if (!expoRows.length && !fcmRows.length) {
+
+    // Tách token v2 (FCM native tray) khỏi token v1 để giữ nguyên hành vi app cũ.
+    const allFcm = rows.fcm || [];
+    const v2FcmAll = allFcm.filter(isCrmV2Row);
+    const legacyRows = { fcm: allFcm.filter((r) => !isCrmV2Row(r)), expo: rows.expo };
+    const fcmRows = isCall ? pickFcmTokens(legacyRows) : pickActiveFcmTokens(legacyRows);
+    const v2FcmRows = pickActiveFcmTokens({ fcm: v2FcmAll, expo: [] });
+
+    if (!expoRows.length && !fcmRows.length && !v2FcmRows.length) {
       if (isCall) console.warn('[pushSender] incoming_call: no device tokens for user', userId);
       return;
     }
@@ -591,6 +607,12 @@ async function sendMobilePush(userId, notification) {
       await sendFcmTrayNotification(fcmRows, notification);
     } else if (fcmRows.length && isProductionCommentNotification(notification)) {
       await sendFcmTrayNotification(fcmRows, notification);
+    }
+
+    // CRM Mobile v2: FCM native hiển thị tray cho MỌI loại thông báo (trừ cuộc gọi —
+    // v2 chưa có service hiển thị cuộc gọi native). Tôn trọng pref đã kiểm tra ở trên.
+    if (v2FcmRows.length && !isCall) {
+      await sendFcmTrayNotification(v2FcmRows, notification);
     }
   } catch (e) {
     console.warn('[pushSender]', e.message || e);

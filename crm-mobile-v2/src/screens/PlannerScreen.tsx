@@ -20,6 +20,8 @@ import {
   type PlannerFetchOpts,
 } from '../api/crm';
 import { fetchCrmCompanies } from '../api/crmMeta';
+import NotificationBadge from '../components/NotificationBadge';
+import { useUnreadNotificationCount } from '../hooks/useUnreadNotificationCount';
 import { currentUserId, useAuth } from '../context/AuthContext';
 import {
   filterPlannerItems,
@@ -279,6 +281,7 @@ export default function PlannerScreen() {
   const [dealsLoadingMore, setDealsLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const unreadNotifCount = useUnreadNotificationCount();
   const abortRef = useRef<AbortController | null>(null);
   const loadingRef = useRef(false);
   const companyIdRef = useRef<string | undefined>(undefined);
@@ -474,9 +477,9 @@ export default function PlannerScreen() {
               {today}{displayName ? ` · ${displayName}` : ''}
             </Text>
           </View>
-          <Pressable style={styles.bellBtn}>
+          <Pressable style={styles.bellBtn} onPress={() => navigation.navigate('Notifications')}>
             <Ionicons name="notifications-outline" size={20} color={Colors.text} />
-            {overdueCount > 0 && <View style={styles.bellDot} />}
+            <NotificationBadge count={unreadNotifCount} style={styles.bellBadge} />
           </Pressable>
         </View>
 
@@ -571,15 +574,7 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  bellDot: {
-    position: 'absolute',
-    top: 9,
-    right: 10,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: Colors.red,
-  },
+  bellBadge: { top: -4, right: -4 },
   summary: {
     flexDirection: 'row',
     alignItems: 'center',

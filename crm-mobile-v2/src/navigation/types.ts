@@ -15,4 +15,7 @@ export type RootStackParamList = {
   CreateEntity: { kind: 'lead' | 'deal' };
   VoiceLocalRecordings: undefined;
   Drive: undefined;
+  Settings: undefined;
+  Notifications: undefined;
+  Events: undefined;
 };
