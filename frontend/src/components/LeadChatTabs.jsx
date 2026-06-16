@@ -33,6 +33,7 @@ import {
   parseCallLogPayload,
 } from '../lib/messengerCallLog';
 import ChatLargeFileDriveReminder from './ChatLargeFileDriveReminder';
+import ChatAudioAttachment from './ChatAudioAttachment';
 import {
   MESSENGER_ATTACH_HINT,
   MESSENGER_MAX_FILE_MB,
@@ -1390,7 +1391,7 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
     setTimeout(() => setHighlightId(null), 1600);
   }, []);
 
-  const renderAttachments = (message) => {
+  const renderAttachments = (message, isMe = false) => {
     const items = Array.isArray(message.attachments) && message.attachments.length
       ? message.attachments
       : message.attachment_url
@@ -1432,7 +1433,7 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
               onClick={() => setMediaPreview({ ...att, url: fileUrl })}
             />
           ) : isAudio ? (
-            <audio src={fileUrl} controls className="w-full max-w-xs" />
+            <ChatAudioAttachment attachment={att} compact={compact} alignEnd={isMe} isMe={isMe} />
           ) : (
             <a
               href={fileUrl}
@@ -1497,7 +1498,7 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
               }`}
             >
               {!isMe && <Avatar name={m.user?.full_name} url={m.user?.avatar} size={7} />}
-              <div className="flex items-center gap-1 max-w-[78%]">
+              <div className="flex items-center gap-1 max-w-[78%] min-w-0">
                 {isMe && (
                   <button
                     type="button"
@@ -1509,13 +1510,13 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
                     <Reply className="h-4 w-4" />
                   </button>
                 )}
-                <div className={`rounded-2xl px-3.5 py-2 shadow-sm ${
+                <div className={`rounded-2xl px-3.5 py-2 shadow-sm min-w-0 max-w-full overflow-hidden ${
                   isMe ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-br-md' : 'bg-white text-gray-800 rounded-bl-md border border-gray-100'
                 }`}>
                   {!isMe && <p className={`text-[10px] font-medium mb-0.5 ${isMe ? 'text-blue-200' : 'text-blue-600'}`}>{m.user?.full_name}</p>}
                   {parent && <ReplyQuoteInBubble parent={parent} isMe={isMe} onJump={jumpToMessage} />}
                   <p className="text-[13px] leading-relaxed whitespace-pre-wrap break-words">{m.content}</p>
-                  {renderAttachments(m)}
+                  {renderAttachments(m, isMe)}
                   <p className={`text-[9px] mt-1 ${isMe ? 'text-blue-200' : 'text-gray-400'}`}>{formatTime(m.created_at)}</p>
                 </div>
                 {!isMe && (
@@ -1709,6 +1710,16 @@ function isImageOnlyMessengerMessage(message, contentStr = '') {
   if (!items.length) return false;
   const { images, videos, audios, files } = groupMessengerAttachments(items);
   return images.length > 0 && !videos.length && !audios.length && !files.length;
+}
+
+/** Tin chỉ có âm thanh / ghi âm → thẻ audio trần, không bọc bubble tím/trắng. */
+function isAudioOnlyMessengerMessage(message, contentStr = '') {
+  const text = String(contentStr || message?.content || '').trim();
+  if (text && !isStickerContent(text)) return false;
+  const items = collectMessengerAttachments(message);
+  if (!items.length) return false;
+  const { images, videos, audios, files } = groupMessengerAttachments(items);
+  return audios.length > 0 && !images.length && !videos.length && !files.length;
 }
 
 /** Tin chỉ có file tài liệu → thẻ file trần, không bọc bubble tím/trắng. */
@@ -2490,6 +2501,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
   const renderAttachmentsGrouped = (message, opts = {}) => {
     const bare = !!opts.bare;
     const alignEnd = !!opts.alignEnd;
+    const isMe = !!opts.isMe;
     const items = collectMessengerAttachments(message);
     if (!items.length) return null;
     const { images, videos, audios, files } = groupMessengerAttachments(items);
@@ -2499,7 +2511,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
     if (audios.length) sections.push({ key: 'aud', label: 'Âm thanh', items: audios });
     if (files.length) sections.push({ key: 'fil', label: 'Tệp', items: files });
     return sections.map((sec) => {
-      const hideLabel = bare && (sec.key === 'img' || sec.key === 'fil');
+      const hideLabel = bare && (sec.key === 'img' || sec.key === 'fil' || sec.key === 'aud');
       return (
         <div
           key={sec.key}
@@ -2552,7 +2564,13 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                       onClick={() => setMediaPreview({ ...att, url: fileUrl })}
                     />
                   ) : isAudio ? (
-                    <audio src={fileUrl} controls className="w-full max-w-xs" />
+                    <ChatAudioAttachment
+                      attachment={att}
+                      compact={bare || compact}
+                      alignEnd={alignEnd}
+                      isMe={isMe}
+                      showLabel={bare}
+                    />
                   ) : (
                     <MessengerFileAttachmentCard attachment={att} compact={bare} alignEnd={alignEnd} />
                   )}
@@ -2645,9 +2663,10 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
           const reactionGroups = groupMessengerReactions(m.reactions, uid);
           const contentStr = String(m.content || '');
           const isSticker = !recalled && isStickerContent(contentStr);
+          const isAudioOnly = !recalled && isAudioOnlyMessengerMessage(m, contentStr);
           const isImageOnly = !recalled && isImageOnlyMessengerMessage(m, contentStr);
           const isFileOnly = !recalled && isFileOnlyMessengerMessage(m, contentStr);
-          const bubbleless = isSticker || isImageOnly || isFileOnly;
+          const bubbleless = isSticker || isAudioOnly || isImageOnly || isFileOnly;
           const recalledLabel = isMe ? 'Đã thu hồi tin nhắn' : 'Tin nhắn bị thu hồi';
 
           const bareMediaBlock = (align) => (
@@ -2663,7 +2682,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                   align === 'end' ? 'items-end' : 'items-start'
                 }`}
               >
-                {renderAttachmentsGrouped(m, { bare: true, alignEnd: align === 'end' })}
+                {renderAttachmentsGrouped(m, { bare: true, alignEnd: align === 'end', isMe: align === 'end' })}
               </div>
             </>
           );
@@ -2745,7 +2764,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                             <StickerImage emoji={stripStickerPrefix(contentStr)} size={compact ? 84 : 128} />
                           </div>
                         </>
-                      ) : isImageOnly || isFileOnly ? (
+                      ) : isImageOnly || isFileOnly || isAudioOnly ? (
                         bareMediaBlock(isMe ? 'end' : 'start')
                       ) : (
                         <div
@@ -2766,7 +2785,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                           <div className="text-[13.5px] leading-relaxed whitespace-pre-wrap break-words">
                             {renderMessengerTextContent(m.content, isMe, uid)}
                           </div>
-                          {renderAttachmentsGrouped(m, { alignEnd: isMe })}
+                          {renderAttachmentsGrouped(m, { alignEnd: isMe, isMe })}
                         </div>
                       )}
                     </div>
@@ -2804,7 +2823,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                             <StickerImage emoji={stripStickerPrefix(contentStr)} size={compact ? 84 : 128} />
                           </div>
                         </>
-                      ) : isImageOnly || isFileOnly ? (
+                      ) : isImageOnly || isFileOnly || isAudioOnly ? (
                         bareMediaBlock(isMe ? 'end' : 'start')
                       ) : (
                         <div
@@ -2835,7 +2854,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                           <div className="text-[13.5px] leading-relaxed whitespace-pre-wrap break-words">
                             {renderMessengerTextContent(m.content, isMe, uid)}
                           </div>
-                          {renderAttachmentsGrouped(m, { alignEnd: isMe })}
+                          {renderAttachmentsGrouped(m, { alignEnd: isMe, isMe })}
                         </div>
                       )}
                     </MessengerMessageHoverActions>

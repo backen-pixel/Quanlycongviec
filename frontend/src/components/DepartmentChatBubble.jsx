@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Send, Paperclip, ExternalLink } from 'lucide-react';
+import ChatAudioAttachment from './ChatAudioAttachment';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useMessengerDock } from '../context/MessengerDockContext';
@@ -160,12 +161,12 @@ export default function DepartmentChatBubble({ deptId, socket, fillParent }) {
                     </div>
                   )}
                 </div>
-                <div className={`max-w-[78%] ${isMe ? 'items-end' : 'items-start'}`}>
+                <div className={`max-w-[78%] min-w-0 ${isMe ? 'items-end' : 'items-start'}`}>
                   {!isMe && showAvatar && (
                     <p className="text-[9px] font-medium mb-0.5 text-slate-500">{senderName}</p>
                   )}
                   <div
-                    className={`relative rounded-2xl px-2.5 py-1.5 text-[12px] leading-snug shadow-sm ${
+                    className={`relative min-w-0 max-w-full rounded-2xl px-2.5 py-1.5 text-[12px] leading-snug shadow-sm overflow-hidden ${
                       isMe
                         ? 'bg-gradient-to-br from-sky-500 to-cyan-600 text-white rounded-tr-md'
                         : 'bg-white text-slate-800 rounded-tl-md border border-slate-100'
@@ -178,11 +179,24 @@ export default function DepartmentChatBubble({ deptId, socket, fillParent }) {
                       <div className="mt-1 space-y-1">
                         {m.attachments.map((a, ai) => {
                           const isImage = a.type?.startsWith('image');
+                          const isAudio = a.type?.startsWith('audio');
                           if (isImage) {
                             return (
                               <a key={ai} href={a.url} target="_blank" rel="noopener noreferrer">
                                 <img src={a.url} alt={a.name || ''} className="max-w-[180px] rounded-lg" />
                               </a>
+                            );
+                          }
+                          if (isAudio) {
+                            return (
+                              <ChatAudioAttachment
+                                key={ai}
+                                attachment={a}
+                                compact
+                                alignEnd={isMe}
+                                isMe={isMe}
+                                showLabel
+                              />
                             );
                           }
                           return (

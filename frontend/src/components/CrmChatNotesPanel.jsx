@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import ChatAudioAttachment from './ChatAudioAttachment';
 import {
   StickyNote,
   Send,
@@ -507,7 +508,7 @@ export default function CrmChatNotesPanel({
             return (
               <div key={`v-${r.id}`} className={`flex ${mineV ? 'justify-end' : 'justify-start'}`}>
                 <div
-                  className={`relative max-w-[92%] rounded-2xl px-3.5 py-2.5 shadow-sm border ${
+                  className={`relative min-w-0 max-w-[min(100%,92%)] rounded-2xl px-3.5 py-2.5 shadow-sm border ${
                     mineV
                       ? 'bg-gradient-to-br from-violet-600 to-fuchsia-700 text-white border-violet-500/30 rounded-br-md'
                       : 'bg-white text-gray-900 border-violet-100 rounded-bl-md'
@@ -518,7 +519,7 @@ export default function CrmChatNotesPanel({
                     <span className="text-[11px] font-bold uppercase tracking-wide">Ghi âm</span>
                   </div>
                   {!mineV && <p className="text-[10px] font-semibold text-violet-600 mb-1">{nvVoice}</p>}
-                  <p className={`text-xs font-medium break-all ${mineV ? 'text-white' : 'text-gray-800'}`}>
+                  <p className={`text-xs font-medium break-words ${mineV ? 'text-white' : 'text-gray-800'}`}>
                     {r.file_name || 'File'}
                   </p>
                   {metaBits.length > 0 && (
@@ -531,12 +532,9 @@ export default function CrmChatNotesPanel({
                       {r.notes}
                     </p>
                   ) : null}
-                  <audio
-                    controls
-                    className={`mt-2 w-full max-w-xs h-9 ${mineV ? 'opacity-95' : ''}`}
-                    src={recordingAudioUrl(r)}
-                    preload="none"
-                  />
+                  <div className="mt-2 min-w-0">
+                    <ChatAudioAttachment src={recordingAudioUrl(r)} compact isMe={mineV} alignEnd={mineV} />
+                  </div>
                   <p className={`text-[10px] mt-1.5 tabular-nums ${mineV ? 'text-violet-100' : 'text-gray-400'}`}>
                     {whenVoice}
                   </p>
