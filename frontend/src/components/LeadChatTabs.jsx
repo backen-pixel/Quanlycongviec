@@ -1540,7 +1540,7 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
       {/* Input */}
       <div className={`${compact ? 'px-2.5 pt-1.5 pb-2' : 'px-3 pt-2 pb-3'} border-t border-slate-200/70 bg-white rounded-b-xl shrink-0 relative`}>
         <ReplyComposerBar replyTo={replyTo} onCancel={() => setReplyTo(null)} />
-        <div className="flex gap-2 items-center">
+        <div className={`flex gap-1.5 items-center min-w-0 w-full ${compact ? '' : 'gap-2'}`}>
           <input type="file" multiple className="hidden" ref={fileInputRef} onChange={(e) => handlePickedFiles(e.target.files)} />
           <input
             type="file"
@@ -1552,7 +1552,7 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
               e.target.value = '';
             }}
           />
-          <div className={`flex-1 flex items-center gap-1 ${compact ? 'px-1.5 py-0.5 min-h-[36px]' : 'px-2 py-1 min-h-[42px]'} rounded-full bg-slate-100/90 border border-slate-200/80 focus-within:border-blue-400 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-200/60 transition-all`}>
+          <div className={`flex-1 min-w-0 flex items-center gap-0.5 ${compact ? 'px-1 py-0.5 min-h-[36px]' : 'px-2 py-1 min-h-[42px] gap-1'} rounded-full bg-slate-100/90 border border-slate-200/80 focus-within:border-blue-400 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-200/60 transition-all`}>
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
@@ -1629,22 +1629,35 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
                 />
               )}
             </div>
+            {compact ? (
+              <button
+                type="button"
+                onClick={() => void send()}
+                disabled={sending || !text.trim()}
+                className="shrink-0 w-8 h-8 min-w-[32px] bg-gradient-to-br from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-full flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition shadow-sm"
+                title="Gửi"
+              >
+                {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+              </button>
+            ) : null}
           </div>
+          {!compact ? (
           <button
             type="button"
             onClick={() => void send()}
             disabled={sending || !text.trim()}
-            className={`bg-gradient-to-br from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-full flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition shadow-md shrink-0 ${
-              compact ? 'w-9 h-9' : 'w-11 h-11'
-            }`}
+            className="bg-gradient-to-br from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-full flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition shadow-md shrink-0 w-11 h-11"
             title="Gửi"
           >
-            {sending ? <Loader2 size={compact ? 14 : 16} className="animate-spin" /> : <Send size={compact ? 14 : 16} />}
+            {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
           </button>
+          ) : null}
         </div>
-        <p className={`mt-1.5 text-slate-400 leading-snug ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
+        {!compact ? (
+        <p className="mt-1.5 text-slate-400 leading-snug text-[11px]">
           {CHAT_DRIVE_REMIND_HINT}. Giới hạn đính kèm trực tiếp: {MESSENGER_MAX_FILE_MB} MB/file.
         </p>
+        ) : null}
       </div>
 
       {largeFileReminder ? (
@@ -3015,7 +3028,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
           </ul>
         )}
 
-        <div className="flex gap-2 items-center">
+        <div className={`flex gap-1.5 items-center min-w-0 w-full ${compact ? '' : 'gap-2'}`}>
           <input type="file" multiple className="hidden" ref={fileInputRef} onChange={(e) => handlePickedFiles(e.target.files)} />
           <input
             type="file"
@@ -3029,7 +3042,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
           />
 
           {/* Input pill — bao gọn paperclip + textarea + mic + emoji */}
-          <div className={`flex-1 flex items-center gap-1 ${compact ? 'px-1.5 py-0.5 min-h-[36px]' : 'px-2 py-1 min-h-[42px]'} rounded-full bg-slate-100/90 border border-slate-200/80 focus-within:border-violet-400 focus-within:bg-white focus-within:ring-2 focus-within:ring-violet-200/60 transition-all`}>
+          <div className={`flex-1 min-w-0 flex items-center gap-0.5 ${compact ? 'px-1 py-0.5 min-h-[36px]' : 'px-2 py-1 min-h-[42px] gap-1'} rounded-full bg-slate-100/90 border border-slate-200/80 focus-within:border-violet-400 focus-within:bg-white focus-within:ring-2 focus-within:ring-violet-200/60 transition-all`}>
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
@@ -3142,27 +3155,44 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                 />
               )}
             </div>
+            {compact ? (
+              <button
+                type="button"
+                onClick={() => void send()}
+                disabled={sending || (!text.trim() && !uploadState)}
+                className="shrink-0 w-8 h-8 min-w-[32px] bg-gradient-to-br from-violet-500 to-violet-600 hover:from-violet-600 hover:to-violet-700 text-white rounded-full flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition shadow-sm"
+                title={sending ? 'Đang gửi…' : 'Gửi'}
+              >
+                {sending && !uploadState ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Send size={14} className="-rotate-12" />
+                )}
+              </button>
+            ) : null}
           </div>
 
+          {!compact ? (
           <button
             type="button"
             onClick={() => void send()}
             disabled={sending || (!text.trim() && !uploadState)}
-            className={`bg-gradient-to-br from-violet-500 to-violet-600 hover:from-violet-600 hover:to-violet-700 text-white rounded-full flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition shadow-md shrink-0 ${
-              compact ? 'w-9 h-9' : 'w-11 h-11'
-            }`}
+            className="bg-gradient-to-br from-violet-500 to-violet-600 hover:from-violet-600 hover:to-violet-700 text-white rounded-full flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition shadow-md shrink-0 w-11 h-11"
             title={sending ? 'Đang gửi…' : 'Gửi'}
           >
             {sending && !uploadState ? (
-              <Loader2 size={compact ? 14 : 16} className="animate-spin" />
+              <Loader2 size={16} className="animate-spin" />
             ) : (
-              <Send size={compact ? 14 : 16} className="-rotate-12" />
+              <Send size={16} className="-rotate-12" />
             )}
           </button>
+          ) : null}
         </div>
-        <p className={`mt-1.5 text-slate-400 leading-snug ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
+        {!compact ? (
+        <p className="mt-1.5 text-slate-400 leading-snug text-[11px]">
           {CHAT_DRIVE_REMIND_HINT}. Giới hạn đính kèm trực tiếp: {MESSENGER_MAX_FILE_MB} MB/file.
         </p>
+        ) : null}
       </div>
 
       {largeFileReminder ? (
