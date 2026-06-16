@@ -6,7 +6,7 @@ import { formatDate } from '../lib/utils';
 import {
   Trash2, Send, Users, Crown, Shield, Building2, Eye, Paperclip, X, Mic, Reply,
   CornerDownRight, Smile, Zap, Undo2, Check, CheckCheck, Phone, Loader2, ClipboardList,
-  Calendar, CheckCircle2, Circle, Clock, Plus,
+  Calendar, CheckCircle2, Circle, Clock, Plus, HardDrive,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
@@ -22,6 +22,9 @@ import {
   copyTextToClipboard,
   normalizeForwardDisplayContent,
 } from '../lib/messengerMessageActions';
+import DriveFilePicker from './drive/DriveFilePicker';
+import DriveChatAttachmentCard from './drive/DriveChatAttachmentCard';
+import { driveShareToLeadChat, driveShareToMessengerChat } from '../lib/drive';
 import { buildMessengerMessagePreview } from '../lib/messengerPreview';
 import {
   callLogDisplayText,
@@ -1225,8 +1228,11 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
   const [mediaPreview, setMediaPreview] = useState(null);
   const [replyTo, setReplyTo] = useState(null);
   const [highlightId, setHighlightId] = useState(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [drivePickerOpen, setDrivePickerOpen] = useState(false);
   const fileInputRef = useRef(null);
   const audioInputRef = useRef(null);
+  const textareaRef = useRef(null);
   const messagesEndRef = useRef(null);
   const scrollContainerRef = useRef(null);
   const initialScrolledRef = useRef(false);
@@ -1327,6 +1333,24 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
     setSending(false);
   };
 
+  const sendDriveFile = async (file) => {
+    if (!file?.id || sending) return;
+    setSending(true);
+    try {
+      await driveShareToLeadChat(leadId, {
+        file_ids: [file.id],
+        content: text.trim() || undefined,
+        reply_to: replyTo?.id || undefined,
+      });
+      setText('');
+      setReplyTo(null);
+      setDrivePickerOpen(false);
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Không gửi được file Drive');
+    }
+    setSending(false);
+  };
+
   const jumpToMessage = useCallback((id) => {
     if (!id) return;
     const el = messageRefs.current.get(String(id));
@@ -1346,6 +1370,13 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
     if (!items.length) return null;
 
     return items.map((att, i) => {
+      if (att.is_drive || att.drive_file_id) {
+        return (
+          <div key={i} className="mt-2">
+            <DriveChatAttachmentCard attachment={att} />
+          </div>
+        );
+      }
       const isImg = att.type?.startsWith('image/');
       const isVideo = att.type?.startsWith('video/');
       const isAudio = att.type?.startsWith('audio/');
@@ -1476,10 +1507,10 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
       </div>
 
       {/* Input */}
-      <div className={`${compact ? 'p-2' : 'p-3'} border-t bg-white rounded-b-xl shrink-0`}>
+      <div className={`${compact ? 'px-2.5 pt-1.5 pb-2' : 'px-3 pt-2 pb-3'} border-t border-slate-200/70 bg-white rounded-b-xl shrink-0 relative`}>
         <ReplyComposerBar replyTo={replyTo} onCancel={() => setReplyTo(null)} />
-        <div className={`flex items-center ${compact ? 'gap-1' : 'gap-2'}`}>
-          <input type="file" multiple className="hidden" ref={fileInputRef} onChange={e => send(e.target.files)} />
+        <div className="flex gap-2 items-center">
+          <input type="file" multiple className="hidden" ref={fileInputRef} onChange={(e) => send(e.target.files)} />
           <input
             type="file"
             accept="audio/*"
@@ -1490,26 +1521,106 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
               e.target.value = '';
             }}
           />
-          <button type="button" onClick={() => fileInputRef.current?.click()} className={`text-gray-400 hover:text-blue-500 cursor-pointer ${compact ? 'p-1.5' : 'p-2'}`} title="Đính kèm">
-            <Paperclip size={compact ? 16 : 18} />
-          </button>
-          <button type="button" onClick={() => audioInputRef.current?.click()} className={`text-gray-400 hover:text-violet-600 cursor-pointer ${compact ? 'p-1.5' : 'p-2'}`} title="Ghi âm / file âm thanh">
-            <Mic size={compact ? 16 : 18} />
-          </button>
-          <input value={text} onChange={e => setText(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && send()}
-            placeholder={replyTo ? 'Trả lời tin nhắn…' : 'Nhập tin nhắn...'}
-            className={`flex-1 min-w-0 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 ${
-              compact ? 'px-3 py-1.5 text-[13px]' : 'px-4 py-2.5 text-sm'
-            }`} />
-          <button type="button" onClick={() => send()} disabled={sending || (!text.trim())}
-            className={`bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl flex items-center justify-center hover:from-blue-600 hover:to-blue-700 disabled:opacity-40 cursor-pointer transition shadow-sm shrink-0 ${
-              compact ? 'w-9 h-9' : 'w-10 h-10'
-            }`}>
-            <Send size={compact ? 14 : 16} />
+          <div className={`flex-1 flex items-center gap-1 ${compact ? 'px-1.5 py-0.5 min-h-[36px]' : 'px-2 py-1 min-h-[42px]'} rounded-full bg-slate-100/90 border border-slate-200/80 focus-within:border-blue-400 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-200/60 transition-all`}>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className={`shrink-0 ${compact ? 'w-7 h-7' : 'w-8 h-8'} rounded-full text-slate-500 hover:text-blue-600 hover:bg-white/80 flex items-center justify-center transition-colors`}
+              title="Đính kèm file từ máy"
+            >
+              <Paperclip size={compact ? 14 : 16} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setDrivePickerOpen(true)}
+              className={`shrink-0 ${compact ? 'w-7 h-7' : 'w-8 h-8'} rounded-full text-slate-500 hover:text-sky-600 hover:bg-white/80 flex items-center justify-center transition-colors`}
+              title="Chia sẻ file Google Drive"
+            >
+              <HardDrive size={compact ? 14 : 16} />
+            </button>
+            <textarea
+              ref={textareaRef}
+              value={text}
+              rows={1}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  void send();
+                }
+              }}
+              placeholder={replyTo ? 'Trả lời tin nhắn…' : 'Nhập tin nhắn…'}
+              className={`flex-1 min-w-0 bg-transparent border-0 outline-none focus:ring-0 resize-none placeholder:text-slate-400 ${
+                compact ? 'text-[13px] py-1 max-h-24' : 'text-sm py-1.5 max-h-32'
+              }`}
+            />
+            <button
+              type="button"
+              onClick={() => audioInputRef.current?.click()}
+              className={`shrink-0 ${compact ? 'w-7 h-7' : 'w-8 h-8'} rounded-full text-slate-500 hover:text-violet-600 hover:bg-white/80 flex items-center justify-center transition-colors`}
+              title="Ghi âm / file âm thanh"
+            >
+              <Mic size={compact ? 14 : 16} />
+            </button>
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => setPickerOpen((v) => !v)}
+                className={`${compact ? 'w-7 h-7' : 'w-8 h-8'} rounded-full hover:bg-white/80 flex items-center justify-center transition-colors ${
+                  pickerOpen ? 'text-amber-500 bg-white/80' : 'text-slate-500 hover:text-amber-500'
+                }`}
+                title="Icon & Sticker"
+              >
+                <Smile size={compact ? 14 : 16} />
+              </button>
+              {pickerOpen && (
+                <EmojiStickerPicker
+                  onClose={() => setPickerOpen(false)}
+                  onPickEmoji={(emoji) => {
+                    const el = textareaRef.current;
+                    const start = el?.selectionStart ?? text.length;
+                    const end = el?.selectionEnd ?? text.length;
+                    const next = text.slice(0, start) + emoji + text.slice(end);
+                    setText(next);
+                    requestAnimationFrame(() => {
+                      if (textareaRef.current) {
+                        const pos = start + emoji.length;
+                        textareaRef.current.focus();
+                        textareaRef.current.setSelectionRange(pos, pos);
+                      }
+                    });
+                  }}
+                  onPickSticker={(emoji) => {
+                    setPickerOpen(false);
+                    setText(`${STICKER_PREFIX}${emoji}`);
+                    void send();
+                  }}
+                />
+              )}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => void send()}
+            disabled={sending || !text.trim()}
+            className={`bg-gradient-to-br from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-full flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition shadow-md shrink-0 ${
+              compact ? 'w-9 h-9' : 'w-11 h-11'
+            }`}
+            title="Gửi"
+          >
+            {sending ? <Loader2 size={compact ? 14 : 16} className="animate-spin" /> : <Send size={compact ? 14 : 16} />}
           </button>
         </div>
       </div>
+
+      {drivePickerOpen && (
+        <DriveFilePicker
+          title="Chia sẻ file Drive vào chat"
+          pickLabel="Gửi"
+          onPicked={(file) => void sendDriveFile(file)}
+          onClose={() => setDrivePickerOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -1683,6 +1794,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
   /** Tin nhóm đang mở popup chi tiết đã xem (chỉ một popup/lần). */
   const [readDetailMsgId, setReadDetailMsgId] = useState(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [drivePickerOpen, setDrivePickerOpen] = useState(false);
   const [moreMenuMsgId, setMoreMenuMsgId] = useState(null);
   const [forwardMsg, setForwardMsg] = useState(null);
   const [forwardMsgs, setForwardMsgs] = useState(null);
@@ -2277,6 +2389,33 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
     }
   };
 
+  const sendDriveFile = async (file) => {
+    if (!file?.id || sending) return;
+    setSending(true);
+    const trimmed = text.trim();
+    const members = groupMeta?.members || [];
+    const meId = user?.userId || user?.id;
+    const mentionIds = isGroupMentionEnabled
+      ? resolveMentionIdsFromContent(trimmed, members, { excludeUserId: meId })
+      : [];
+    try {
+      await driveShareToMessengerChat(groupId, {
+        file_ids: [file.id],
+        content: trimmed || undefined,
+        reply_to: replyTo?.id || undefined,
+        mention_user_ids: mentionIds,
+      });
+      setText('');
+      setReplyTo(null);
+      setDrivePickerOpen(false);
+      emitStopTyping();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Không gửi được file Drive');
+    } finally {
+      setSending(false);
+    }
+  };
+
   const jumpToMessage = useCallback((id) => {
     if (!id) return;
     const el = messageRefs.current.get(String(id));
@@ -2309,6 +2448,13 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
           ) : null}
           <div className="space-y-1.5">
             {sec.items.map((att, i) => {
+              if (att.is_drive || att.drive_file_id) {
+                return (
+                  <div key={`${sec.key}-${i}`}>
+                    <DriveChatAttachmentCard attachment={att} compact={bare} alignEnd={alignEnd} />
+                  </div>
+                );
+              }
               const isImg = att.type?.startsWith('image/');
               const isVideo = att.type?.startsWith('video/');
               const isAudio = att.type?.startsWith('audio/');
@@ -2807,6 +2953,14 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
             >
               <Paperclip size={compact ? 14 : 16} />
             </button>
+            <button
+              type="button"
+              onClick={() => setDrivePickerOpen(true)}
+              className={`shrink-0 ${compact ? 'w-7 h-7' : 'w-8 h-8'} rounded-full text-slate-500 hover:text-sky-600 hover:bg-white/80 flex items-center justify-center transition-colors`}
+              title="Chia sẻ file Google Drive"
+            >
+              <HardDrive size={compact ? 14 : 16} />
+            </button>
             <textarea
               ref={textareaRef}
               value={text}
@@ -2922,6 +3076,15 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
           </button>
         </div>
       </div>
+
+      {drivePickerOpen && (
+        <DriveFilePicker
+          title="Chia sẻ file Drive vào chat"
+          pickLabel="Gửi"
+          onPicked={(file) => void sendDriveFile(file)}
+          onClose={() => setDrivePickerOpen(false)}
+        />
+      )}
     </div>
   );
 }

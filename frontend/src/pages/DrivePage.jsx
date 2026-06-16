@@ -7,24 +7,31 @@
  *   /drive/view/recent|starred|shared|trash → các view tổng hợp
  */
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   HardDrive, FolderPlus, Upload, Star, StarOff, Search, Trash2, RotateCcw, Share2,
-  ChevronRight, Home, Users, Clock, Download, Pencil, Move, Link2, MoreHorizontal,
+  ChevronRight, ChevronDown, Home, Users, Clock, Download, Pencil, Move, Link2, MoreHorizontal,
   Loader2, Building2, User as UserIcon, Globe, Plus, X, FolderOpen, Eye, AlertCircle,
+  Network, MapPin, LayoutGrid, List as ListIcon, Folder as FolderIcon, ZoomIn,
+  FilePlus, FileText, Table2, Tag, Briefcase,
 } from 'lucide-react';
 import {
-  driveListRoots, driveEnsurePersonalRoot, driveEnsureCompanyRoot, driveCreateSharedRoot,
+  driveListRoots, driveEnsurePersonalRoot, driveCreateSharedRoot,
   driveListRootChildren, driveListFolderChildren, driveFolderBreadcrumb,
   driveCreateFolder, driveTrashFolder, driveTrashFile, driveUpdateFolder, driveUpdateFile,
   driveStar, driveUnstar, driveStarred, driveRecent, driveSharedWithMe, driveTrashList,
   driveRestoreFile, driveRestoreFolder, driveDeleteFileForever, driveDeleteFolderForever,
   driveSearch, driveOpenDownload, drivePreview, driveHealth, driveFormatBytes,
+  driveOrgTree, driveEnsureUserDrive,
+  driveEnsureSharedCompany, driveEnsureSharedRegion,
+  driveCreateGoogleFile,
 } from '../lib/drive';
 import DriveFileIcon from '../components/drive/DriveFileIcon';
+import { DRIVE_FILE_LIST_GRID, UploaderCell, fmtDriveDate, fmtDriveDateTime, isImageMime, isQuickPreviewFile, isGoogleWorkspaceFile, filterImageFiles } from '../components/drive/DriveFileViews';
 import UploadDropzone from '../components/drive/UploadDropzone';
 import PreviewModal from '../components/drive/PreviewModal';
 import ShareModal from '../components/drive/ShareModal';
+import { useAuth } from '../lib/auth';
 
 function scopeIcon(scope) {
   if (scope === 'user') return UserIcon;
@@ -39,9 +46,24 @@ function scopeBadge(scope) {
   return { label: 'Drive', cls: 'bg-slate-100 text-slate-600' };
 }
 
+function moduleScopeLabel(key) {
+  const k = String(key || '').toLowerCase();
+  if (k === 'crm') return 'CRM';
+  if (k === 'sx') return 'Sản xuất';
+  if (k === 'vc') return 'Vận chuyển';
+  if (k === 'mkt') return 'Marketing';
+  return 'Khác';
+}
+
 export default function DrivePage() {
   const navigate = useNavigate();
   const params = useParams();
+  const [searchParams] = useSearchParams();
+  const { user } = useAuth();
+  const lockedModule = (searchParams.get('module') || '').toLowerCase() || null;
+  const myModuleKey = (user?.drive_module || 'other').toLowerCase();
+  const scopeModuleKey = lockedModule || myModuleKey;
+  const isAdmin = ['admin', 'sales_admin', 'manager'].includes(user?.role);
   const view = params.view || null; // recent|starred|shared|trash
   const rootIdParam = params.rootId || null;
   const folderIdParam = params.folderId || null;
@@ -57,6 +79,9 @@ export default function DrivePage() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [showUpload, setShowUpload] = useState(false);
+  const [showCreateMenu, setShowCreateMenu] = useState(false);
+  const [creatingGoogle, setCreatingGoogle] = useState(null); // doc | sheet | slides
+  const createMenuRef = useRef(null);
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
@@ -64,7 +89,23 @@ export default function DrivePage() {
   const [shareItem, setShareItem] = useState(null);
   const [contextMenu, setContextMenu] = useState(null); // { x, y, item }
   const [starredIds, setStarredIds] = useState(new Set());
+  const [viewMode, setViewMode] = useState(() => {
+    try { return localStorage.getItem('drive.viewMode') || 'grid'; } catch (_) { return 'grid'; }
+  });
   const searchTimer = useRef(null);
+
+  useEffect(() => {
+    try { localStorage.setItem('drive.viewMode', viewMode); } catch (_) {}
+  }, [viewMode]);
+
+  useEffect(() => {
+    if (!showCreateMenu) return undefined;
+    const onDocClick = (e) => {
+      if (createMenuRef.current && !createMenuRef.current.contains(e.target)) setShowCreateMenu(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [showCreateMenu]);
 
   // ── Bootstrap: load health + roots ──
   useEffect(() => {
@@ -294,6 +335,35 @@ export default function DrivePage() {
     } catch (e) { alert(e?.response?.data?.error || e?.message); }
   }
 
+  async function handleCreateGoogle(kind) {
+    if (!activeRoot && !activeFolder) return;
+    setShowCreateMenu(false);
+    setCreatingGoogle(kind);
+    try {
+      const r = await driveCreateGoogleFile({
+        folder_id: activeFolder?.id || null,
+        root_id: activeFolder ? null : activeRoot?.id,
+        kind,
+      });
+      await reload();
+      if (r?.file) {
+        setPreviewItem({
+          ...r.file,
+          preview: r.preview || {
+            preview_mode: 'google_edit',
+            edit_embed_url: r.edit_embed_url,
+            edit_url: r.edit_url,
+            mime_type: r.file.mime_type,
+          },
+        });
+      }
+    } catch (e) {
+      alert(e?.response?.data?.error || e?.message || 'Không tạo được file');
+    } finally {
+      setCreatingGoogle(null);
+    }
+  }
+
   async function handleCreateSharedDrive() {
     const name = prompt('Tên Drive chung mới');
     if (!name) return;
@@ -305,14 +375,18 @@ export default function DrivePage() {
     } catch (e) { alert(e?.response?.data?.error || e?.message); }
   }
 
-  async function handleEnsureCompany() {
+  // Refresh danh sách roots — cây tổ chức gọi khi mở Drive của user khác để có root mới.
+  const refreshRootsList = useCallback(async () => {
     try {
-      const r = await driveEnsureCompanyRoot();
-      const newRoots = roots.some((x) => x.id === r.root.id) ? roots : [...roots, r.root];
-      setRoots(newRoots);
-      await openRoot(r.root);
-    } catch (e) { alert(e?.response?.data?.error || e?.message); }
-  }
+      const r = await driveListRoots();
+      const list = r.roots || [];
+      setRoots(list);
+      return list;
+    } catch (e) {
+      console.error('refresh roots error', e);
+      return [];
+    }
+  }, []);
 
   // Close context menu on click outside
   useEffect(() => {
@@ -324,9 +398,15 @@ export default function DrivePage() {
   const isTrashView = view === 'trash';
   const showRoots = useMemo(() => ({
     personal: roots.filter((r) => r.scope === 'user'),
-    company: roots.filter((r) => r.scope === 'company'),
-    shared: roots.filter((r) => r.scope === 'shared'),
-  }), [roots]);
+    moduleShared: roots.filter((r) =>
+      r.scope === 'shared'
+      && ['shared_company', 'shared_region'].includes(r.shared_kind)
+      && (r.module_key || 'other').toLowerCase() === scopeModuleKey
+    ),
+    otherShared: roots.filter((r) =>
+      r.scope === 'shared' && !['shared_company', 'shared_region'].includes(r.shared_kind)
+    ),
+  }), [roots, scopeModuleKey]);
 
   const displayFolders = searchResults?.folders ?? folders;
   const displayFiles = searchResults?.files ?? files;
@@ -386,7 +466,15 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
         <div className="p-4">
           <h1 className="text-base font-bold text-slate-800 flex items-center gap-2">
             <HardDrive size={20} className="text-blue-600" /> Drive
+            {lockedModule && (
+              <span className="text-xs font-semibold text-violet-700 bg-violet-50 border border-violet-100 px-2 py-0.5 rounded-full">
+                {moduleScopeLabel(lockedModule)}
+              </span>
+            )}
           </h1>
+          {lockedModule && (
+            <p className="text-[11px] text-slate-500 mt-1">Chỉ công ty thuộc khối {moduleScopeLabel(lockedModule)}</p>
+          )}
         </div>
 
         <div className="px-3 space-y-1 overflow-auto flex-1">
@@ -411,29 +499,48 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
             ))}
           </SidebarSection>
 
-          <SidebarSection title="Drive công ty">
-            {showRoots.company.length === 0 && (
-              <button onClick={handleEnsureCompany} className="text-xs text-blue-600 hover:underline px-2">
-                + Tạo Drive công ty
-              </button>
-            )}
-            {showRoots.company.map((r) => (
-              <SidebarLink key={r.id} icon={Building2} label={r.name} active={activeRoot?.id === r.id && !view} onClick={() => openRoot(r)} />
-            ))}
-          </SidebarSection>
+          {showRoots.moduleShared.length > 0 && (
+            <SidebarSection title="Drive chung module">
+              {showRoots.moduleShared.map((r) => (
+                <SidebarLink
+                  key={r.id}
+                  icon={Globe}
+                  label={r.shared_kind === 'shared_company' ? `Chung công ty · ${r.name}` : r.name}
+                  active={activeRoot?.id === r.id && !view}
+                  onClick={() => openRoot(r)}
+                />
+              ))}
+            </SidebarSection>
+          )}
+
+          {isAdmin && showRoots.otherShared.length > 0 && (
+            <SidebarSection title={
+              <span className="flex items-center justify-between">
+                <span>Drive chung khác</span>
+                <button onClick={handleCreateSharedDrive} className="text-blue-600 hover:underline text-[10px]">+ Tạo</button>
+              </span>
+            }>
+              {showRoots.otherShared.map((r) => (
+                <SidebarLink key={r.id} icon={Globe} label={r.name} active={activeRoot?.id === r.id && !view} onClick={() => openRoot(r)} />
+              ))}
+            </SidebarSection>
+          )}
 
           <SidebarSection title={
-            <span className="flex items-center justify-between">
-              <span>Drive chung</span>
-              <button onClick={handleCreateSharedDrive} className="text-blue-600 hover:underline text-[10px]">+ Tạo</button>
+            <span className="flex items-center gap-1.5">
+              <Network size={11} className="text-slate-400" />
+              <span>Drive theo module</span>
             </span>
           }>
-            {showRoots.shared.length === 0 && (
-              <p className="text-[11px] text-slate-400 px-2">Chưa có Drive chung</p>
-            )}
-            {showRoots.shared.map((r) => (
-              <SidebarLink key={r.id} icon={Globe} label={r.name} active={activeRoot?.id === r.id && !view} onClick={() => openRoot(r)} />
-            ))}
+            <OrgTreeNav
+              activeRootId={activeRoot?.id}
+              onOpenRoot={openRoot}
+              refreshRoots={refreshRootsList}
+              isAdmin={isAdmin}
+              myModuleKey={myModuleKey}
+              scopeModuleKey={scopeModuleKey}
+              lockModule={lockedModule}
+            />
           </SidebarSection>
         </div>
       </aside>
@@ -476,6 +583,24 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
             />
           </div>
 
+          {/* View toggle: List ↔ Grid */}
+          <div className="flex items-center border rounded-lg overflow-hidden">
+            <button
+              onClick={() => setViewMode('list')}
+              title="Dạng danh sách"
+              className={`h-9 w-9 flex items-center justify-center transition ${viewMode === 'list' ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-50'}`}
+            >
+              <ListIcon size={16} />
+            </button>
+            <button
+              onClick={() => setViewMode('grid')}
+              title="Dạng lớn"
+              className={`h-9 w-9 flex items-center justify-center transition ${viewMode === 'grid' ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-50'}`}
+            >
+              <LayoutGrid size={16} />
+            </button>
+          </div>
+
           {/* Action buttons - chỉ hiện khi đang ở root/folder, không phải view tổng hợp */}
           {(activeRoot || activeFolder) && !isTrashView && (
             <>
@@ -491,6 +616,35 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
               >
                 <Upload size={16} /> Tải lên
               </button>
+              <div className="relative" ref={createMenuRef}>
+                <button
+                  onClick={() => setShowCreateMenu((s) => !s)}
+                  disabled={!!creatingGoogle}
+                  className="h-9 px-3 border rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-slate-50 disabled:opacity-60"
+                >
+                  {creatingGoogle ? <Loader2 size={16} className="animate-spin" /> : <FilePlus size={16} />}
+                  Tạo mới
+                  <ChevronDown size={14} className="text-slate-400" />
+                </button>
+                {showCreateMenu && (
+                  <div className="absolute right-0 top-full mt-1 z-30 min-w-[200px] bg-white border rounded-lg shadow-lg py-1 text-sm">
+                    <button
+                      type="button"
+                      onClick={() => handleCreateGoogle('doc')}
+                      className="w-full px-3 py-2 text-left flex items-center gap-2 hover:bg-slate-50"
+                    >
+                      <FileText size={16} className="text-blue-600" /> Google Doc
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleCreateGoogle('sheet')}
+                      className="w-full px-3 py-2 text-left flex items-center gap-2 hover:bg-slate-50"
+                    >
+                      <Table2 size={16} className="text-emerald-600" /> Google Sheet
+                    </button>
+                  </div>
+                )}
+              </div>
             </>
           )}
         </div>
@@ -532,68 +686,30 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
             </div>
           ) : (
             <>
-              {/* Folders */}
-              {displayFolders.length > 0 && (
-                <section className="mb-6">
-                  <h3 className="text-xs font-semibold text-slate-500 uppercase mb-2">Thư mục</h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
-                    {displayFolders.map((f) => {
-                      const isStarred = starredIds.has('folder:' + f.id);
-                      return (
-                        <div
-                          key={f.id}
-                          onDoubleClick={() => !isTrashView && openFolder(f.id)}
-                          onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, item: f, type: 'folder' }); }}
-                          className="group bg-white border rounded-lg p-3 hover:border-blue-400 hover:shadow-sm cursor-pointer flex items-center gap-3"
-                        >
-                          <DriveFileIcon isFolder size={28} />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-slate-800 truncate">{f.name}</p>
-                            {f.trashed_at && <p className="text-[10px] text-red-500">Đã xoá</p>}
-                          </div>
-                          {isStarred && <Star size={14} className="text-amber-400 fill-amber-400" />}
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, item: f, type: 'folder' }); }}
-                            className="opacity-0 group-hover:opacity-100 p-1 hover:bg-slate-100 rounded">
-                            <MoreHorizontal size={16} className="text-slate-400" />
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </section>
-              )}
-
-              {/* Files */}
-              {displayFiles.length > 0 && (
-                <section>
-                  <h3 className="text-xs font-semibold text-slate-500 uppercase mb-2">File</h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
-                    {displayFiles.map((f) => {
-                      const isStarred = starredIds.has('file:' + f.id);
-                      return (
-                        <div
-                          key={f.id}
-                          onDoubleClick={() => !isTrashView && handlePreview(f)}
-                          onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, item: f, type: 'file' }); }}
-                          className="group bg-white border rounded-lg p-3 hover:border-blue-400 hover:shadow-sm cursor-pointer flex items-center gap-3"
-                        >
-                          <DriveFileIcon mime={f.mime_type} size={28} />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-slate-800 truncate" title={f.name}>{f.name}</p>
-                            <p className="text-[11px] text-slate-400">{driveFormatBytes(f.size_bytes)}</p>
-                          </div>
-                          {isStarred && <Star size={14} className="text-amber-400 fill-amber-400" />}
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, item: f, type: 'file' }); }}
-                            className="opacity-0 group-hover:opacity-100 p-1 hover:bg-slate-100 rounded">
-                            <MoreHorizontal size={16} className="text-slate-400" />
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </section>
+              {viewMode === 'list' ? (
+                <DriveListView
+                  folders={displayFolders}
+                  files={displayFiles}
+                  starredIds={starredIds}
+                  isTrashView={isTrashView}
+                  onOpenFolder={(id) => openFolder(id)}
+                  onPreview={(f) => handlePreview(f)}
+                  onShare={(item, type) => setShareItem({ ...item, target_type: type })}
+                  onContextMenu={(e, item, type) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, item, type }); }}
+                  formatBytes={driveFormatBytes}
+                />
+              ) : (
+                <DriveGridView
+                  folders={displayFolders}
+                  files={displayFiles}
+                  starredIds={starredIds}
+                  isTrashView={isTrashView}
+                  onOpenFolder={(id) => openFolder(id)}
+                  onPreview={(f) => handlePreview(f)}
+                  onShare={(item, type) => setShareItem({ ...item, target_type: type })}
+                  onContextMenu={(e, item, type) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, item, type }); }}
+                  formatBytes={driveFormatBytes}
+                />
               )}
 
               {displayFolders.length === 0 && displayFiles.length === 0 && (
@@ -645,7 +761,14 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
         </div>
       )}
 
-      {previewItem && <PreviewModal item={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => handleDownload(previewItem)} />}
+      {previewItem && (
+        <PreviewModal
+          item={previewItem}
+          galleryFiles={filterImageFiles(displayFiles)}
+          onClose={() => setPreviewItem(null)}
+          onDownload={(f) => handleDownload(f || previewItem)}
+        />
+      )}
       {shareItem && (
         <ShareModal
           targetType={shareItem.target_type}
@@ -691,5 +814,541 @@ function MenuBtn({ icon: Icon, label, onClick, danger }) {
     >
       <Icon size={14} /> {label}
     </button>
+  );
+}
+
+function fmtDate(iso) {
+  return fmtDriveDate(iso);
+}
+
+/**
+ * Dạng danh sách: bảng tên / kích thước / ngày sửa / hành động.
+ */
+function DriveListView({ folders, files, starredIds, isTrashView, onOpenFolder, onPreview, onShare, onContextMenu, formatBytes }) {
+  if (!folders.length && !files.length) return null;
+  return (
+    <div className="bg-white border rounded-lg overflow-hidden">
+      <div className={`grid ${DRIVE_FILE_LIST_GRID} gap-2 px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase border-b bg-slate-50`}>
+        <div>Tên</div>
+        <div>Người tải lên</div>
+        <div>Ngày tải lên</div>
+        <div className="text-right">Kích thước</div>
+        <div />
+      </div>
+      <div className="divide-y">
+        {folders.map((f) => {
+          const isStarred = starredIds.has('folder:' + f.id);
+          return (
+            <div
+              key={`folder-${f.id}`}
+              onDoubleClick={() => !isTrashView && onOpenFolder(f.id)}
+              onContextMenu={(e) => onContextMenu(e, f, 'folder')}
+              className={`group grid ${DRIVE_FILE_LIST_GRID} gap-2 px-3 py-2 items-center hover:bg-slate-50 cursor-pointer`}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <FolderIcon size={18} className="text-amber-500 shrink-0" fill="currentColor" />
+                <span className="text-sm text-slate-800 truncate font-medium" title={f.name}>{f.name}</span>
+                {isStarred && <Star size={12} className="text-amber-400 fill-amber-400 shrink-0" />}
+                {f.trashed_at && <span className="text-[10px] text-red-500 shrink-0">đã xoá</span>}
+              </div>
+              <div className="text-xs text-slate-400">—</div>
+              <div className="text-xs text-slate-500">{fmtDriveDate(f.updated_at || f.created_at)}</div>
+              <div className="text-right text-xs text-slate-500">—</div>
+              <div className="flex items-center gap-0.5 justify-self-end opacity-0 group-hover:opacity-100">
+                <button
+                  onClick={(e) => { e.stopPropagation(); onShare?.(f, 'folder'); }}
+                  className="p-1 hover:bg-blue-50 text-blue-600 rounded" title="Chia sẻ (Xem / Sửa)">
+                  <Share2 size={14} />
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onContextMenu(e, f, 'folder'); }}
+                  className="p-1 hover:bg-slate-100 rounded">
+                  <MoreHorizontal size={16} className="text-slate-400" />
+                </button>
+              </div>
+            </div>
+          );
+        })}
+        {files.map((f) => {
+          const isStarred = starredIds.has('file:' + f.id);
+          const quickOpen = !isTrashView && isQuickPreviewFile(f);
+          const isImg = isImageMime(f.mime_type, f.name);
+          return (
+            <div
+              key={`file-${f.id}`}
+              onClick={() => { if (quickOpen) onPreview(f); }}
+              onDoubleClick={() => !isTrashView && onPreview(f)}
+              onContextMenu={(e) => onContextMenu(e, f, 'file')}
+              className={`group grid ${DRIVE_FILE_LIST_GRID} gap-2 px-3 py-2 items-center hover:bg-slate-50 cursor-pointer`}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <DriveFileIcon mime={f.mime_type} size={18} />
+                <span className={`text-sm truncate ${quickOpen ? 'text-blue-700 hover:underline' : 'text-slate-800'}`} title={f.name}>{f.name}</span>
+                {isStarred && <Star size={12} className="text-amber-400 fill-amber-400 shrink-0" />}
+              </div>
+              <UploaderCell file={f} />
+              <div className="text-xs text-slate-500" title={fmtDriveDateTime(f.created_at)}>
+                {fmtDriveDate(f.created_at)}
+              </div>
+              <div className="text-right text-xs text-slate-500">{formatBytes(f.size_bytes)}</div>
+              <div className="flex items-center gap-0.5 justify-self-end opacity-0 group-hover:opacity-100">
+                <button
+                  onClick={(e) => { e.stopPropagation(); onShare?.(f, 'file'); }}
+                  className="p-1 hover:bg-blue-50 text-blue-600 rounded" title="Chia sẻ (Xem / Sửa)">
+                  <Share2 size={14} />
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onContextMenu(e, f, 'file'); }}
+                  className="p-1 hover:bg-slate-100 rounded">
+                  <MoreHorizontal size={16} className="text-slate-400" />
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Dạng lớn (grid): folders dạng pill nhỏ, files dạng card có thumbnail to giống Google Drive.
+ */
+function DriveGridView({ folders, files, starredIds, isTrashView, onOpenFolder, onPreview, onShare, onContextMenu, formatBytes }) {
+  return (
+    <>
+      {folders.length > 0 && (
+        <section className="mb-6">
+          <h3 className="text-xs font-semibold text-slate-500 uppercase mb-2">Thư mục</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2">
+            {folders.map((f) => {
+              const isStarred = starredIds.has('folder:' + f.id);
+              return (
+                <div
+                  key={f.id}
+                  onDoubleClick={() => !isTrashView && onOpenFolder(f.id)}
+                  onContextMenu={(e) => onContextMenu(e, f, 'folder')}
+                  className="group bg-slate-50 hover:bg-blue-50 border rounded-lg px-3 py-2.5 cursor-pointer flex items-center gap-2"
+                >
+                  <FolderIcon size={18} className="text-amber-500 shrink-0" fill="currentColor" />
+                  <p className="text-sm font-medium text-slate-800 truncate flex-1" title={f.name}>{f.name}</p>
+                  {isStarred && <Star size={12} className="text-amber-400 fill-amber-400 shrink-0" />}
+                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 shrink-0">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onShare?.(f, 'folder'); }}
+                      className="p-1 hover:bg-white text-blue-600 rounded" title="Chia sẻ (Xem / Sửa)">
+                      <Share2 size={13} />
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onContextMenu(e, f, 'folder'); }}
+                      className="p-1 hover:bg-white rounded">
+                      <MoreHorizontal size={14} className="text-slate-400" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {files.length > 0 && (
+        <section>
+          <h3 className="text-xs font-semibold text-slate-500 uppercase mb-2">File</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+            {files.map((f) => {
+              const isStarred = starredIds.has('file:' + f.id);
+              const thumb = f.thumbnail_url;
+              const isImg = isImageMime(f.mime_type, f.name);
+              const isGws = isGoogleWorkspaceFile(f.mime_type);
+              const quickOpen = !isTrashView && isQuickPreviewFile(f);
+              const showThumb = isImg || isGws || !!thumb;
+              return (
+                <div
+                  key={f.id}
+                  onDoubleClick={() => !isTrashView && onPreview(f)}
+                  onContextMenu={(e) => onContextMenu(e, f, 'file')}
+                  className="group bg-white border rounded-lg overflow-hidden hover:border-blue-400 hover:shadow-md cursor-pointer flex flex-col transition"
+                >
+                  <div className="px-3 pt-2.5 pb-1.5 flex items-center gap-2">
+                    <DriveFileIcon mime={f.mime_type} size={16} />
+                    <p
+                      className={`text-[13px] font-medium truncate flex-1 ${quickOpen ? 'text-blue-700' : 'text-slate-800'}`}
+                      title={f.name}
+                      onClick={(e) => { if (quickOpen) { e.stopPropagation(); onPreview(f); } }}
+                    >
+                      {f.name}
+                    </p>
+                    {isStarred && <Star size={12} className="text-amber-400 fill-amber-400 shrink-0" />}
+                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 shrink-0">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onShare?.(f, 'file'); }}
+                        className="p-1 hover:bg-blue-50 text-blue-600 rounded" title="Chia sẻ (Xem / Sửa)">
+                        <Share2 size={13} />
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onContextMenu(e, f, 'file'); }}
+                        className="p-1 hover:bg-slate-100 rounded">
+                        <MoreHorizontal size={14} className="text-slate-400" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div
+                    className={`relative mx-2 mb-2 aspect-[4/3] bg-slate-50 border rounded flex items-center justify-center overflow-hidden group/thumb ${quickOpen ? 'cursor-pointer' : ''}`}
+                    onClick={(e) => {
+                      if (quickOpen) { e.stopPropagation(); onPreview(f); }
+                    }}
+                    title={isImg ? 'Xem ảnh full màn hình' : isGws ? 'Mở chỉnh sửa' : undefined}
+                  >
+                    {showThumb && thumb ? (
+                      <>
+                        <img
+                          src={thumb}
+                          alt={f.name}
+                          loading="lazy"
+                          className="w-full h-full object-cover"
+                          onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                        />
+                        {isImg && !isTrashView && (
+                          <span className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover/thumb:bg-black/30 transition-colors pointer-events-none">
+                            <ZoomIn size={28} className="text-white opacity-0 group-hover/thumb:opacity-100 drop-shadow-lg transition-opacity" />
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <DriveFileIcon mime={f.mime_type} size={52} />
+                    )}
+                  </div>
+
+                  <div className="px-3 pb-1 flex items-center gap-1.5 min-w-0">
+                    <UploaderCell file={f} compact />
+                  </div>
+                  <div className="px-3 pb-2 text-[11px] text-slate-400 flex items-center justify-between">
+                    <span>{formatBytes(f.size_bytes)}</span>
+                    <span title={fmtDriveDateTime(f.created_at)}>{fmtDriveDate(f.created_at)}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+    </>
+  );
+}
+
+/**
+ * Cây Drive — Module → Công ty → Khu vực → Loại → Phòng ban → Nhân viên (không có folder nhãn trung gian).
+ */
+function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, myModuleKey, scopeModuleKey, lockModule }) {
+  const [tree, setTree] = useState(null);
+  const [myModule, setMyModule] = useState(scopeModuleKey || myModuleKey || 'other');
+  const [moduleFilter, setModuleFilter] = useState(lockModule || (isAdmin ? '' : (scopeModuleKey || myModuleKey || 'other')));
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [expanded, setExpanded] = useState({
+    modules: new Set(),
+    companies: new Set(),
+    regions: new Set(),
+    categories: new Set(),
+    departments: new Set(),
+  });
+
+  const loadTree = useCallback(async (modKey) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const effectiveMod = lockModule || modKey || scopeModuleKey || myModuleKey || undefined;
+      const r = await driveOrgTree(effectiveMod || undefined);
+      const modules = r.modules || [];
+      setMyModule(r.my_module || scopeModuleKey || myModuleKey || 'other');
+      setTree(modules);
+
+      const initModules = new Set();
+      const initCompanies = new Set();
+      const initRegions = new Set();
+      const initCategories = new Set();
+      const initDepartments = new Set();
+      const focusKey = lockModule || r.filter_module || scopeModuleKey || myModuleKey;
+      const focusMod = modules.find((m) => m.key === focusKey) || modules[0];
+      if (focusMod) {
+        initModules.add(focusMod.key);
+        const co = focusMod.companies?.[0];
+        if (co) {
+          initCompanies.add(`${focusMod.key}:${co.id}`);
+          const rg = co.regions?.[0];
+          if (rg) {
+            initRegions.add(`${focusMod.key}:${co.id}:${rg.id || 'none'}`);
+            const cat = rg.categories?.[0];
+            if (cat) {
+              initCategories.add(`${focusMod.key}:${co.id}:${rg.id || 'none'}:${cat.name}`);
+              const dept = cat.departments?.[0];
+              if (dept) {
+                initDepartments.add(`${focusMod.key}:${co.id}:${rg.id || 'none'}:${cat.name}:${dept.id || dept.name}`);
+              }
+            }
+          }
+        }
+      }
+      setExpanded({
+        modules: initModules,
+        companies: initCompanies,
+        regions: initRegions,
+        categories: initCategories,
+        departments: initDepartments,
+      });
+      await refreshRoots();
+    } catch (e) {
+      setError(e?.response?.data?.error || e?.message || 'Không tải được cây module');
+    } finally {
+      setLoading(false);
+    }
+  }, [isAdmin, myModuleKey, scopeModuleKey, lockModule, refreshRoots]);
+
+  useEffect(() => {
+    if (lockModule) setModuleFilter(lockModule);
+  }, [lockModule]);
+
+  useEffect(() => { loadTree(moduleFilter); }, [loadTree, moduleFilter]);
+
+  function toggle(kind, key) {
+    setExpanded((s) => {
+      const set = new Set(s[kind]);
+      if (set.has(key)) set.delete(key); else set.add(key);
+      return { ...s, [kind]: set };
+    });
+  }
+
+  async function openRootById(rootId) {
+    if (!rootId) return;
+    const latest = await refreshRoots();
+    const root = (latest || []).find((x) => x.id === rootId);
+    if (root) onOpenRoot(root);
+  }
+
+  async function openUserDrive(userNode) {
+    try {
+      let rootId = userNode.drive_root_id;
+      if (!rootId) {
+        const r = await driveEnsureUserDrive(userNode.id);
+        rootId = r?.root?.id;
+        userNode.drive_root_id = rootId;
+      }
+      await openRootById(rootId);
+    } catch (e) { alert(e?.response?.data?.error || e?.message || 'Không mở được Drive nhân viên'); }
+  }
+
+  async function openSharedCompany(companyId, moduleKey, existingRootId) {
+    try {
+      if (existingRootId) {
+        await openRootById(existingRootId);
+        return;
+      }
+      const r = await driveEnsureSharedCompany(companyId, moduleKey);
+      await openRootById(r?.root?.id);
+    } catch (e) { alert(e?.response?.data?.error || e?.message || 'Không mở được Drive chung công ty'); }
+  }
+
+  async function openSharedRegion(regionId, moduleKey, existingRootId) {
+    try {
+      if (existingRootId) {
+        await openRootById(existingRootId);
+        return;
+      }
+      const r = await driveEnsureSharedRegion(regionId, moduleKey);
+      await openRootById(r?.root?.id);
+    } catch (e) { alert(e?.response?.data?.error || e?.message || 'Không mở được Drive chung khu vực'); }
+  }
+
+  function countRegionEmployees(rg) {
+    return (rg.categories || []).reduce(
+      (acc, cat) => acc + (cat.departments || []).reduce((a2, d) => a2 + (d.employees?.length || 0), 0),
+      0,
+    );
+  }
+
+  function countEmployees(mod) {
+    return (mod.companies || []).reduce(
+      (acc, c) => acc + (c.regions || []).reduce((a2, r) => a2 + countRegionEmployees(r), 0),
+      0,
+    );
+  }
+
+  if (loading) {
+    return <div className="px-2 py-1 text-[11px] text-slate-400 flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> Đang tải…</div>;
+  }
+  if (error) {
+    return <p className="px-2 py-1 text-[11px] text-rose-500">{error}</p>;
+  }
+  if (!tree || tree.length === 0) {
+    return <p className="px-2 py-1 text-[11px] text-slate-400">Chưa có dữ liệu module.</p>;
+  }
+
+  return (
+    <div className="space-y-1 text-sm">
+      {isAdmin && !lockModule && (
+        <select
+          value={moduleFilter}
+          onChange={(e) => setModuleFilter(e.target.value)}
+          className="w-full mb-1 px-2 py-1 text-[11px] border rounded-lg bg-white"
+        >
+          <option value="">Tất cả module</option>
+          {tree.map((m) => <option key={m.key} value={m.key}>{m.name}</option>)}
+        </select>
+      )}
+      {(lockModule || !isAdmin) && (
+        <p className="px-1 text-[10px] text-slate-400 mb-1">Module: {moduleScopeLabel(lockModule || tree[0]?.key || myModule)}</p>
+      )}
+
+      {tree.map((mod) => {
+        const modOpen = expanded.modules.has(mod.key);
+        return (
+          <div key={mod.key}>
+            <button
+              onClick={() => toggle('modules', mod.key)}
+              className="flex items-center gap-1 w-full text-left px-1 py-1 rounded hover:bg-slate-50"
+            >
+              {modOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              <HardDrive size={12} className="text-violet-600 shrink-0" />
+              <span className="text-[12px] font-semibold text-slate-700 truncate">{mod.name}</span>
+              <span className="ml-auto text-[10px] text-slate-400 shrink-0">{countEmployees(mod)}</span>
+            </button>
+            {modOpen && (
+              <div className="ml-3 border-l border-slate-100 pl-1 mt-0.5 space-y-0.5">
+                {(mod.companies || []).map((co) => {
+                  const coKey = `${mod.key}:${co.id}`;
+                  const coOpen = expanded.companies.has(coKey);
+                  return (
+                    <div key={coKey}>
+                      <button
+                        onClick={() => toggle('companies', coKey)}
+                        className="flex items-center gap-1 w-full text-left px-1 py-0.5 rounded hover:bg-slate-50"
+                      >
+                        {coOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                        <Building2 size={11} className="text-emerald-600 shrink-0" />
+                        <span className="text-[12px] text-slate-700 truncate">{co.name}</span>
+                      </button>
+                      {coOpen && (
+                        <div className="ml-3 border-l border-slate-100 pl-1 mt-0.5 space-y-0.5">
+                          <button
+                            onClick={() => openSharedCompany(co.id, mod.key, co.shared_root_id)}
+                            className={`w-full flex items-center gap-1.5 px-1.5 py-0.5 rounded text-left text-[12px] ${
+                              activeRootId === co.shared_root_id && co.shared_root_id
+                                ? 'bg-emerald-50 text-emerald-800 font-medium'
+                                : 'text-emerald-700 hover:bg-emerald-50'
+                            }`}
+                            title={`Drive chung công ty — ${mod.name}`}
+                          >
+                            <Globe size={11} className="text-emerald-500 shrink-0" />
+                            <span className="truncate">Chung công ty</span>
+                          </button>
+                          {(co.regions || []).map((rg) => {
+                            const rgKey = `${coKey}:${rg.id || 'none'}`;
+                            const rgOpen = expanded.regions.has(rgKey);
+                            const rgCount = countRegionEmployees(rg);
+                            return (
+                              <div key={rgKey}>
+                                <button
+                                  onClick={() => toggle('regions', rgKey)}
+                                  className="flex items-center gap-1 w-full text-left px-1 py-0.5 rounded hover:bg-slate-50"
+                                >
+                                  {rgOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                                  <MapPin size={11} className="text-amber-600 shrink-0" />
+                                  <span className="text-[12px] text-slate-700 truncate">{rg.name}</span>
+                                  <span className="ml-auto text-[9px] text-slate-400">{rgCount}</span>
+                                </button>
+                                {rgOpen && (
+                                  <div className="ml-3 border-l border-slate-100 pl-1 mt-0.5 space-y-0.5">
+                                    {rg.id && (
+                                      <button
+                                        onClick={() => openSharedRegion(rg.id, mod.key, rg.shared_root_id)}
+                                        className={`w-full flex items-center gap-1.5 px-1.5 py-0.5 rounded text-left text-[12px] ${
+                                          activeRootId === rg.shared_root_id && rg.shared_root_id
+                                            ? 'bg-amber-50 text-amber-800 font-medium'
+                                            : 'text-amber-700 hover:bg-amber-50'
+                                        }`}
+                                      >
+                                        <FolderIcon size={11} className="text-amber-500 shrink-0" fill="currentColor" />
+                                        <span className="truncate">Chung khu vực</span>
+                                      </button>
+                                    )}
+                                    {(rg.categories || []).map((cat) => {
+                                      const catKey = `${rgKey}:${cat.name}`;
+                                      const catOpen = expanded.categories.has(catKey);
+                                      const catCount = (cat.departments || []).reduce((a, d) => a + (d.employees?.length || 0), 0);
+                                      return (
+                                        <div key={catKey}>
+                                          <button
+                                            onClick={() => toggle('categories', catKey)}
+                                            className="flex items-center gap-1 w-full text-left px-1 py-0.5 rounded hover:bg-slate-50"
+                                          >
+                                            {catOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                                            <Tag size={10} className="text-violet-500 shrink-0" />
+                                            <span className="text-[11px] text-slate-700 truncate">{cat.name}</span>
+                                            <span className="ml-auto text-[9px] text-slate-400">{catCount}</span>
+                                          </button>
+                                          {catOpen && (
+                                            <div className="ml-3 border-l border-slate-100 pl-1 mt-0.5 space-y-0.5">
+                                              {(cat.departments || []).map((dept) => {
+                                                const deptKey = `${catKey}:${dept.id || dept.name}`;
+                                                const deptOpen = expanded.departments.has(deptKey);
+                                                return (
+                                                  <div key={deptKey}>
+                                                    <button
+                                                      onClick={() => toggle('departments', deptKey)}
+                                                      className="flex items-center gap-1 w-full text-left px-1 py-0.5 rounded hover:bg-slate-50"
+                                                    >
+                                                      {deptOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                                                      <Briefcase size={10} className="text-slate-500 shrink-0" />
+                                                      <span className="text-[11px] text-slate-700 truncate">{dept.name}</span>
+                                                      <span className="ml-auto text-[9px] text-slate-400">{(dept.employees || []).length}</span>
+                                                    </button>
+                                                    {deptOpen && (
+                                                      <div className="ml-3 border-l border-slate-100 pl-1 mt-0.5 space-y-0.5">
+                                                        {(dept.employees || []).map((u) => (
+                                                          <button
+                                                            key={u.id}
+                                                            onClick={() => openUserDrive(u)}
+                                                            className={`w-full flex items-center gap-1.5 px-1.5 py-0.5 rounded text-left text-[12px] truncate ${
+                                                              activeRootId && activeRootId === u.drive_root_id
+                                                                ? 'bg-blue-50 text-blue-700 font-medium'
+                                                                : 'text-slate-600 hover:bg-slate-50'
+                                                            }`}
+                                                          >
+                                                            {u.avatar ? (
+                                                              <img src={u.avatar} alt="" className="w-4 h-4 rounded-full shrink-0" />
+                                                            ) : (
+                                                              <UserIcon size={11} className="text-blue-600 shrink-0" />
+                                                            )}
+                                                            <span className="truncate">{u.name}</span>
+                                                          </button>
+                                                        ))}
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }

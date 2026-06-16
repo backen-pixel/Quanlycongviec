@@ -114,6 +114,26 @@ function getRootFolderId() {
 // Fields chuẩn lấy về mỗi lần lookup file/folder.
 const FILE_FIELDS = 'id,name,mimeType,size,md5Checksum,parents,trashed,webViewLink,thumbnailLink,modifiedTime,createdTime,version';
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
+const GOOGLE_DOC_MIME = 'application/vnd.google-apps.document';
+const GOOGLE_SHEET_MIME = 'application/vnd.google-apps.spreadsheet';
+const GOOGLE_SLIDES_MIME = 'application/vnd.google-apps.presentation';
+
+const GOOGLE_CREATE_KINDS = {
+  doc: GOOGLE_DOC_MIME,
+  sheet: GOOGLE_SHEET_MIME,
+  slides: GOOGLE_SLIDES_MIME,
+};
+
+/** Export Google Docs/Sheets/Slides → PDF để xem trong app (không cần login Google). */
+const GOOGLE_EXPORT_PDF = {
+  [GOOGLE_DOC_MIME]: 'application/pdf',
+  [GOOGLE_SHEET_MIME]: 'application/pdf',
+  [GOOGLE_SLIDES_MIME]: 'application/pdf',
+};
+
+function isGoogleNativeExportable(mimeType) {
+  return !!GOOGLE_EXPORT_PDF[mimeType];
+}
 
 async function findChildByName(parentId, name, mimeType) {
   const drive = getDriveClient();
@@ -148,23 +168,78 @@ async function createFolder({ parentId, name }) {
 
 /**
  * Đảm bảo folder gốc (root) tồn tại trên Drive cho scope/owner. Trả về { google_folder_id, name }.
- * Layout: GDRIVE_ROOT_FOLDER_ID/{users|companies|shared}/<owner_id>
- *   - scope='user'     → users/<userId>
- *   - scope='company'  → companies/<companyId>
- *   - scope='shared'   → shared/<rootName>
+ *
+ * Cấu trúc mới — phân loại theo cây tổ chức:
+ *   - scope='user'     → <Cty>/Khu vực/<KV>/Phòng ban/<PB>/Nhân viên/<Tên NV>
+ *   - scope='company'  → <Cty>/                                       (root cấp công ty)
+ *   - scope='shared'   → shared/<rootName>                            (Drive chung tự do)
+ *
+ * Helper `driveOrgPath` lo phần tra cứu user → cty/khu vực/phòng ban và tạo từng cấp idempotent.
  */
 async function ensureScopeFolderOnDrive({ scope, ownerId, name }) {
   const rootId = getRootFolderId();
-  let bucketName;
-  let leafName;
-  if (scope === 'user') { bucketName = 'users'; leafName = String(ownerId); }
-  else if (scope === 'company') { bucketName = 'companies'; leafName = String(ownerId); }
-  else if (scope === 'shared') { bucketName = 'shared'; leafName = String(name || ownerId); }
-  else throw new Error('Scope không hợp lệ: ' + scope);
+  if (scope === 'user') {
+    const orgPath = require('../helpers/driveOrgPath');
+    const res = await orgPath.ensureUserOrgPath(ownerId);
+    return { google_folder_id: res.google_folder_id, name: res.name, segments: res.segments, org: res.org };
+  }
+  if (scope === 'company') {
+    const orgPath = require('../helpers/driveOrgPath');
+    const res = await orgPath.ensureCompanyOrgPath(ownerId);
+    return { google_folder_id: res.google_folder_id, name: res.name, segments: res.segments };
+  }
+  if (scope === 'shared') {
+    const bucket = await createFolder({ parentId: rootId, name: 'shared' });
+    const leaf = await createFolder({ parentId: bucket.id, name: String(name || ownerId) });
+    return { google_folder_id: leaf.id, name: leaf.name };
+  }
+  throw new Error('Scope không hợp lệ: ' + scope);
+}
 
-  const bucket = await createFolder({ parentId: rootId, name: bucketName });
-  const leaf = await createFolder({ parentId: bucket.id, name: leafName });
-  return { google_folder_id: leaf.id, name: leaf.name };
+/** Tạo Google Docs / Sheets / Slides trống. */
+async function createGoogleFile({ parentId, name, googleMimeType }) {
+  const drive = getDriveClient();
+  const { data } = await drive.files.create({
+    requestBody: { name, mimeType: googleMimeType, parents: [parentId] },
+    fields: FILE_FIELDS,
+    supportsAllDrives: true,
+  });
+  return data;
+}
+
+/** URL embed chỉnh sửa Google Doc/Sheet/Slides trong iframe CRM (giữ đủ menu + thanh công cụ). */
+function buildGoogleEditEmbedUrl(googleFileId, mimeType) {
+  const id = googleFileId;
+  const qs = 'usp=drivesdk&embedded=true';
+  if (mimeType === GOOGLE_DOC_MIME) {
+    return `https://docs.google.com/document/d/${id}/edit?${qs}`;
+  }
+  if (mimeType === GOOGLE_SHEET_MIME) {
+    return `https://docs.google.com/spreadsheets/d/${id}/edit?${qs}`;
+  }
+  if (mimeType === GOOGLE_SLIDES_MIME) {
+    return `https://docs.google.com/presentation/d/${id}/edit?${qs}`;
+  }
+  return null;
+}
+
+/**
+ * Chia sẻ link công khai để embed Google Docs/Sheets chỉnh sửa trong iframe (không bắt login CRM).
+ * Idempotent — bỏ qua nếu permission đã tồn tại.
+ */
+async function ensureAnyoneLinkAccess(googleFileId, role = 'writer') {
+  const drive = getDriveClient();
+  try {
+    await drive.permissions.create({
+      fileId: googleFileId,
+      requestBody: { type: 'anyone', role },
+      supportsAllDrives: true,
+    });
+  } catch (e) {
+    const msg = String(e?.message || e?.errors?.[0]?.reason || '');
+    if (msg.includes('already exists') || msg.includes('duplicate') || e?.code === 409) return;
+    console.warn('[gdrive] ensureAnyoneLinkAccess:', msg);
+  }
 }
 
 /**
@@ -259,6 +334,23 @@ async function getDownloadStream(googleFileId) {
   return res.data; // Node stream
 }
 
+/**
+ * Google Docs/Sheets/Slides → export PDF stream (xem trong app, không iframe Google).
+ * File thường → getDownloadStream.
+ */
+async function getPreviewStream(googleFileId, mimeType) {
+  const exportMime = GOOGLE_EXPORT_PDF[mimeType];
+  if (!exportMime) {
+    return { stream: await getDownloadStream(googleFileId), contentType: mimeType || 'application/octet-stream' };
+  }
+  const drive = getDriveClient();
+  const res = await drive.files.export(
+    { fileId: googleFileId, mimeType: exportMime },
+    { responseType: 'stream' },
+  );
+  return { stream: res.data, contentType: exportMime };
+}
+
 /** Lấy startPageToken (lần đầu của 1 root). */
 async function getStartPageToken() {
   const drive = getDriveClient();
@@ -287,6 +379,9 @@ module.exports = {
   getRootFolderId,
   ensureScopeFolderOnDrive,
   createFolder,
+  createGoogleFile,
+  buildGoogleEditEmbedUrl,
+  ensureAnyoneLinkAccess,
   uploadFile,
   renameItem,
   moveItem,
@@ -295,7 +390,13 @@ module.exports = {
   deleteForever,
   getFileMeta,
   getDownloadStream,
+  getPreviewStream,
+  isGoogleNativeExportable,
   getStartPageToken,
   listChanges,
   FOLDER_MIME,
+  GOOGLE_DOC_MIME,
+  GOOGLE_SHEET_MIME,
+  GOOGLE_SLIDES_MIME,
+  GOOGLE_CREATE_KINDS,
 };

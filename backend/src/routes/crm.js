@@ -14529,6 +14529,85 @@ r.post('/leads/:id/chat', leadChatJsonOrFiles, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// POST /leads/:id/chat/drive — chia sẻ file Google Drive vào chat
+r.post('/leads/:id/chat/drive', async (req, res) => {
+  try {
+    const uid = req.user?.userId ?? req.user?.id;
+    if (!uid) return res.status(401).json({ error: 'Token không có user id' });
+    const { file_ids, content, reply_to } = req.body || {};
+    const { buildDriveChatAttachments } = require('../helpers/driveChatAttachments');
+    const attachments = await buildDriveChatAttachments(req.user, file_ids);
+    if (!attachments.length) return res.status(403).json({ error: 'Không có quyền với file Drive đã chọn' });
+    if (!content && !attachments.length) return res.status(400).json({ error: 'Thiếu nội dung' });
+
+    const { data: inserted, error } = await supabase.from('lead_messages').insert({
+      lead_id: req.params.id,
+      user_id: String(uid),
+      content: content || '',
+      message_type: 'file',
+      attachments,
+      reply_to: reply_to || null,
+    }).select('id').single();
+    if (error) return res.status(400).json({ error: error.message });
+
+    const { data: basic } = await supabase.from('lead_messages')
+      .select('*, user:users!lead_messages_user_id_fkey(id, full_name, avatar)')
+      .eq('id', inserted.id)
+      .single();
+    const [hydrated] = await attachLeadReplyParents([basic]);
+    const data = hydrated || basic;
+
+    const io = req.app.get('io');
+    if (io) io.to(`lead:${req.params.id}`).emit('lead:chat', data);
+
+    try {
+      const { data: chatMembers } = await supabase.from('lead_members')
+        .select('user_id')
+        .eq('lead_id', req.params.id)
+        .neq('user_id', String(uid));
+      if (chatMembers?.length) {
+        const senderName = data?.user?.full_name || 'Ai đó';
+        const senderAvatar = data?.user?.avatar || '';
+        const preview = attachments.length === 1
+          ? `[☁️ ${attachments[0].name || 'File Drive'}]`
+          : `[☁️ ${attachments.length} file Drive]`;
+        let leadName = '';
+        try {
+          const { data: leadRow } = await supabase.from('leads')
+            .select('name')
+            .eq('id', req.params.id)
+            .single();
+          leadName = leadRow?.name || '';
+        } catch { /* ignore */ }
+        await notifyMultipleShared(
+          req,
+          chatMembers.map((m) => m.user_id),
+          'lead_chat',
+          `Tin nhắn mới: ${senderName}`,
+          preview,
+          'lead',
+          req.params.id,
+          {
+            nav_tab: 'chat',
+            sender_name: senderName,
+            sender_avatar: senderAvatar,
+            group_name: leadName,
+            bubble_key: `lead:${req.params.id}`,
+            bubble_wake: true,
+            message_id: data?.id ? String(data.id) : '',
+            sender_id: String(uid),
+            message_type: 'file',
+          },
+        );
+      }
+    } catch (notifyErr) {
+      console.warn('[lead-chat-drive-notify]', notifyErr?.message || notifyErr);
+    }
+
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // POST /leads/:id/chat/upload — upload file/image/video/audio
 const chatUpload = multer({ storage: multer.diskStorage({
   destination: 'uploads/lead-chat/',

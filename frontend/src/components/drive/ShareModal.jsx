@@ -1,22 +1,22 @@
 import { useEffect, useState } from 'react';
-import { X, Users, Building, UserCheck, Globe2, Trash2 } from 'lucide-react';
+import { X, Building, UserCheck, Globe2, Trash2, MapPin, Briefcase } from 'lucide-react';
 import api from '../../lib/api';
 import { driveShare, driveUnshare, driveListShares } from '../../lib/drive';
 
 const ROLES = [
   { value: 'viewer', label: 'Xem' },
-  { value: 'commenter', label: 'Bình luận' },
-  { value: 'editor', label: 'Chỉnh sửa' },
-  { value: 'owner', label: 'Chủ sở hữu' },
+  { value: 'editor', label: 'Sửa' },
 ];
 
 /**
- * ShareModal — phân quyền nội bộ cho user/dept/company/role/everyone.
+ * ShareModal — phân quyền nội bộ cho user/dept/company/region/everyone.
  * props: { targetType: 'file'|'folder'|'root', targetId, targetName, onClose }
  */
 export default function ShareModal({ targetType, targetId, targetName, onClose }) {
   const [users, setUsers] = useState([]);
   const [departments, setDepartments] = useState([]);
+  const [regions, setRegions] = useState([]);
+  const [companies, setCompanies] = useState([]);
   const [acls, setAcls] = useState([]);
   const [loading, setLoading] = useState(true);
   const [picking, setPicking] = useState({ principal_type: 'user', principal_id: '', role: 'viewer' });
@@ -26,10 +26,14 @@ export default function ShareModal({ targetType, targetId, targetName, onClose }
     Promise.all([
       api.get('/users').then((r) => r.data?.users || r.data || []).catch(() => []),
       api.get('/departments').then((r) => r.data?.departments || r.data || []).catch(() => []),
+      api.get('/crm/company-regions').then((r) => r.data?.regions || r.data || []).catch(() => []),
+      api.get('/companies').then((r) => r.data?.companies || r.data || []).catch(() => []),
       driveListShares(targetType, targetId).catch(() => ({ acls: [] })),
-    ]).then(([u, d, s]) => {
+    ]).then(([u, d, rg, co, s]) => {
       setUsers(u);
       setDepartments(d);
+      setRegions(rg);
+      setCompanies(co);
       setAcls(s.acls || []);
       setLoading(false);
     });
@@ -70,7 +74,14 @@ export default function ShareModal({ targetType, targetId, targetName, onClose }
       const d = departments.find((x) => x.id === a.principal_id);
       return d ? `${d.name} (Phòng ban)` : `Dept ${a.principal_id?.slice(0, 8)}...`;
     }
-    if (a.principal_type === 'company') return `Công ty ${a.principal_id?.slice(0, 8)}...`;
+    if (a.principal_type === 'region') {
+      const rg = regions.find((x) => x.id === a.principal_id);
+      return rg ? `${rg.name} (Khu vực)` : `Khu vực ${a.principal_id?.slice(0, 8)}...`;
+    }
+    if (a.principal_type === 'company') {
+      const co = companies.find((x) => x.id === a.principal_id);
+      return co ? `${co.name} (Công ty)` : `Công ty ${a.principal_id?.slice(0, 8)}...`;
+    }
     return a.principal_type;
   }
 
@@ -78,6 +89,10 @@ export default function ShareModal({ targetType, targetId, targetName, onClose }
     ? users.filter((u) => !search || (u.full_name || u.email || '').toLowerCase().includes(search.toLowerCase()))
     : picking.principal_type === 'department'
     ? departments.filter((d) => !search || d.name?.toLowerCase().includes(search.toLowerCase()))
+    : picking.principal_type === 'region'
+    ? regions.filter((r) => !search || r.name?.toLowerCase().includes(search.toLowerCase()))
+    : picking.principal_type === 'company'
+    ? companies.filter((c) => !search || c.name?.toLowerCase().includes(search.toLowerCase()))
     : [];
 
   return (
@@ -97,8 +112,10 @@ export default function ShareModal({ targetType, targetId, targetName, onClose }
             <h3 className="text-xs font-semibold text-slate-500 uppercase">Thêm người / nhóm</h3>
             <div className="flex gap-2 flex-wrap">
               {[
-                { v: 'user', icon: UserCheck, label: 'User' },
-                { v: 'department', icon: Building, label: 'Phòng ban' },
+                { v: 'user', icon: UserCheck, label: 'Người' },
+                { v: 'department', icon: Briefcase, label: 'Phòng ban' },
+                { v: 'region', icon: MapPin, label: 'Khu vực' },
+                { v: 'company', icon: Building, label: 'Công ty' },
                 { v: 'everyone', icon: Globe2, label: 'Mọi người' },
               ].map((opt) => (
                 <button
@@ -118,7 +135,12 @@ export default function ShareModal({ targetType, targetId, targetName, onClose }
                 <input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder={picking.principal_type === 'user' ? 'Tìm user...' : 'Tìm phòng ban...'}
+                  placeholder={
+                    picking.principal_type === 'user' ? 'Tìm người…' :
+                    picking.principal_type === 'department' ? 'Tìm phòng ban…' :
+                    picking.principal_type === 'region' ? 'Tìm khu vực…' :
+                    picking.principal_type === 'company' ? 'Tìm công ty…' : 'Tìm…'
+                  }
                   className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:border-blue-400"
                 />
                 <div className="border rounded-lg max-h-44 overflow-auto">
@@ -131,7 +153,11 @@ export default function ShareModal({ targetType, targetId, targetName, onClose }
                       {picking.principal_type === 'user' ? (p.full_name || p.email) : p.name}
                     </button>
                   ))}
-                  {principalsList.length === 0 && <p className="px-3 py-2 text-xs text-slate-400">Không có kết quả</p>}
+                  {principalsList.length === 0 && (
+                    <p className="px-3 py-2 text-xs text-slate-400">
+                      Không có kết quả. {picking.principal_type === 'region' && '(/api/crm/company-regions chưa có hoặc bạn không có quyền truy cập)'}
+                    </p>
+                  )}
                 </div>
               </>
             )}

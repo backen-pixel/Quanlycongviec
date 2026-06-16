@@ -1741,6 +1741,48 @@ r.post('/groups/:id/chat', messengerChatJsonOrMultipart, async (req, res) => {
   }
 });
 
+r.post('/groups/:id/chat/drive', async (req, res) => {
+  try {
+    const ok = await assertGroupMember(req.params.id, req.authUserId);
+    if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
+    const { file_ids, content, reply_to } = req.body || {};
+    const { buildDriveChatAttachments } = require('../helpers/driveChatAttachments');
+    const attachments = await buildDriveChatAttachments(req.user, file_ids);
+    if (!attachments.length) return res.status(403).json({ error: 'Không có quyền với file Drive đã chọn' });
+    if (!content && !attachments.length) return res.status(400).json({ error: 'Thiếu nội dung' });
+
+    const mentionIds = await resolveGroupMentionIds(req.params.id, req.authUserId, req.body);
+    const { id: insertedId, mentionIds: storedMentions } = await insertMessengerGroupMessage(
+      {
+        group_id: req.params.id,
+        user_id: req.authUserId,
+        content: content || '',
+        message_type: 'file',
+        attachments,
+        reply_to: reply_to || null,
+      },
+      { mentionIds },
+    );
+    let data = (await fetchMessengerMessageById(insertedId)) || { id: insertedId };
+    if (storedMentions.length) data = { ...data, mention_user_ids: storedMentions };
+    const io = req.app.get('io');
+    if (io) io.to(`messenger_group:${req.params.id}`).emit('messenger_group:chat', data);
+    const { data: grpRow } = await supabase.from('messenger_groups').select('name').eq('id', req.params.id).maybeSingle();
+    await notifyMessengerGroupChatRecipients(
+      req,
+      req.params.id,
+      req.authUserId,
+      data,
+      grpRow?.name || '',
+      storedMentions,
+    );
+    triggerAiHookIfNeeded(data, req.params.id, io);
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 r.post('/groups/:id/chat/upload', messengerMemoryUpload.single('file'), async (req, res) => {
   try {
     const ok = await assertGroupMember(req.params.id, req.authUserId);

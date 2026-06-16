@@ -33,6 +33,8 @@ import Modal from '../components/Modal';
 import DealCrossScoresPanel from '../components/DealCrossScoresPanel';
 import LeadKpiLedgerPanel from '../components/LeadKpiLedgerPanel';
 import { CrmLeadCommentsPanel } from '../components/CommentsPanels';
+import DriveAttachments from '../components/drive/DriveAttachments';
+import { driveLinksCountByEntity } from '../lib/drive';
 import { useCrmNotesFab } from '../context/CrmNotesFabContext';
 import PipelineStepper from '../components/PipelineStepper';
 import {
@@ -190,6 +192,7 @@ export default function LeadDetail() {
   /** Tăng khi cần tab Công việc refetch (ví dụ sau kéo giai đoạn) mà không «tải lại» cả trang. */
   const [crmTasksRefreshKey, setCrmTasksRefreshKey] = useState(0);
   const [reopeningLost, setReopeningLost] = useState(false);
+  const [driveFileCount, setDriveFileCount] = useState(0);
 
   /**
    * Fetch danh sách phân loại theo công ty SX đang chọn ở 2 modal:
@@ -285,6 +288,16 @@ export default function LeadDetail() {
   useEffect(() => {
     setCrmTasksRefreshKey(0);
   }, [id]);
+
+  useEffect(() => {
+    if (!id || !lead) return;
+    let cancelled = false;
+    const entityType = lead.type === 'deal' ? 'deal' : 'lead';
+    driveLinksCountByEntity(entityType, id)
+      .then((count) => { if (!cancelled) setDriveFileCount(count); })
+      .catch(() => { if (!cancelled) setDriveFileCount(0); });
+    return () => { cancelled = true; };
+  }, [id, lead?.type, lead]);
 
   // Lead/Deal types (phân loại) cho header: load theo company của lead (fallback company user)
   useEffect(() => {
@@ -1704,6 +1717,17 @@ export default function LeadDetail() {
                 📋 Tài liệu ({documentsTabTotal})
               </button>
               <button
+                onClick={() => setActiveTab('drive')}
+                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                  activeTab === 'drive'
+                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+                title="File trên Google Drive đã gắn vào lead/deal này"
+              >
+                ☁️ Drive ({driveFileCount})
+              </button>
+              <button
                 onClick={() => setActiveTab('notes')}
                 className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'notes'
@@ -1955,6 +1979,12 @@ export default function LeadDetail() {
                     </div>
                   )}
                 </>
+              ) : activeTab === 'drive' ? (
+                <DriveAttachments
+                  entityType={lead?.type === 'deal' ? 'deal' : 'lead'}
+                  entityId={id}
+                  onCountChange={setDriveFileCount}
+                />
               ) : activeTab === 'notes' ? (
                 <CrmChatNotesPanel
                   variant="embedded"

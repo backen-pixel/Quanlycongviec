@@ -1,17 +1,33 @@
 /**
- * DriveFilePicker — modal chọn 1 file từ Drive để gắn vào entity (lead/task/...).
- * props: { entityType, entityId, onPicked(file), onClose }
- *   - Nếu có entityType + entityId thì gọi link luôn; nếu không, chỉ trả về file.
+ * DriveFilePicker — modal chọn file từ Drive để gắn vào entity (lead/task/...).
+ * Hiển thị list / grid giống trang Drive, có người tải + ngày tải.
  */
 import { useEffect, useState } from 'react';
-import { X, Search, Loader2, FolderOpen, ChevronRight, Link2 } from 'lucide-react';
+import { X, Search, Loader2, FolderOpen, ChevronRight, Link2, LayoutGrid, List as ListIcon, Eye } from 'lucide-react';
 import {
   driveListRoots, driveListRootChildren, driveListFolderChildren, driveSearch,
-  driveLinkFile, driveFormatBytes,
+  driveLinkFile, driveFormatBytes, drivePreview, driveOpenDownload,
 } from '../../lib/drive';
 import DriveFileIcon from './DriveFileIcon';
+import PreviewModal from './PreviewModal';
+import {
+  DriveFilesGridView, DriveFilesListHeader, DriveFileListRow,
+  isImageMime, filterImageFiles,
+} from './DriveFileViews';
 
-export default function DriveFilePicker({ entityType, entityId, onPicked, onClose }) {
+function readViewMode() {
+  try { return localStorage.getItem('drive.viewMode') || 'grid'; } catch (_) { return 'grid'; }
+}
+
+export default function DriveFilePicker({
+  entityType,
+  entityId,
+  onPicked,
+  onClose,
+  title = 'Chọn file từ Drive',
+  pickLabel,
+}) {
+  const actionLabel = pickLabel || (entityType && entityId ? 'Gắn' : 'Chọn');
   const [roots, setRoots] = useState([]);
   const [activeRoot, setActiveRoot] = useState(null);
   const [folder, setFolder] = useState(null);
@@ -21,6 +37,12 @@ export default function DriveFilePicker({ entityType, entityId, onPicked, onClos
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState('');
   const [submitting, setSubmitting] = useState(null);
+  const [viewMode, setViewMode] = useState(readViewMode);
+  const [previewing, setPreviewing] = useState(null);
+
+  useEffect(() => {
+    try { localStorage.setItem('drive.viewMode', viewMode); } catch (_) {}
+  }, [viewMode]);
 
   useEffect(() => {
     (async () => {
@@ -84,6 +106,13 @@ export default function DriveFilePicker({ entityType, entityId, onPicked, onClos
     return () => clearTimeout(t);
   }, [query, activeRoot?.id]);
 
+  async function openPreview(file) {
+    try {
+      const meta = await drivePreview(file.id);
+      setPreviewing({ ...file, preview: meta });
+    } catch (e) { alert(e?.response?.data?.error || e?.message); }
+  }
+
   async function pick(file) {
     if (entityType && entityId) {
       try {
@@ -99,22 +128,70 @@ export default function DriveFilePicker({ entityType, entityId, onPicked, onClos
     }
   }
 
+  function renderPickAction(file) {
+    return (
+      <>
+        {isImageMime(file.mime_type, file.name) && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); openPreview(file); }}
+            className="p-1.5 hover:bg-blue-50 text-blue-600 rounded"
+            title="Xem ảnh"
+          >
+            <Eye size={14} />
+          </button>
+        )}
+        <button
+          type="button"
+          disabled={submitting === file.id}
+          onClick={(e) => { e.stopPropagation(); pick(file); }}
+          className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded flex items-center gap-1 disabled:opacity-50"
+        >
+          {submitting === file.id ? <Loader2 size={12} className="animate-spin" /> : <Link2 size={12} />}
+          {actionLabel}
+        </button>
+      </>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl h-[80vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
-        <header className="h-14 px-4 border-b flex items-center justify-between gap-3">
-          <h2 className="font-semibold text-slate-800">Chọn file từ Drive</h2>
-          <button onClick={onClose} className="h-9 w-9 flex items-center justify-center rounded-lg hover:bg-slate-100"><X size={16} /></button>
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <header className="h-14 px-4 border-b flex items-center justify-between gap-3 shrink-0">
+          <h2 className="font-semibold text-slate-800">{title}</h2>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center border rounded-lg overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setViewMode('list')}
+                title="Dạng danh sách"
+                className={`h-8 w-8 flex items-center justify-center transition ${viewMode === 'list' ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-50'}`}
+              >
+                <ListIcon size={15} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('grid')}
+                title="Dạng lớn"
+                className={`h-8 w-8 flex items-center justify-center transition ${viewMode === 'grid' ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-50'}`}
+              >
+                <LayoutGrid size={15} />
+              </button>
+            </div>
+            <button type="button" onClick={onClose} className="h-9 w-9 flex items-center justify-center rounded-lg hover:bg-slate-100">
+              <X size={16} />
+            </button>
+          </div>
         </header>
 
-        <div className="px-4 py-2 border-b bg-slate-50 flex items-center gap-2">
+        <div className="px-4 py-2 border-b bg-slate-50 flex items-center gap-2 shrink-0 flex-wrap">
           <select
             value={activeRoot?.id || ''}
             onChange={(e) => {
               const r = roots.find((x) => x.id === e.target.value);
               if (r) openRoot(r);
             }}
-            className="px-2 py-1.5 border rounded-lg text-sm bg-white focus:outline-none focus:border-blue-400"
+            className="px-2 py-1.5 border rounded-lg text-sm bg-white focus:outline-none focus:border-blue-400 max-w-[180px]"
           >
             {roots.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
           </select>
@@ -122,7 +199,7 @@ export default function DriveFilePicker({ entityType, entityId, onPicked, onClos
             {crumb.map((c, i) => (
               <span key={`${c.type}-${c.id}`} className="flex items-center gap-1 shrink-0">
                 {i > 0 && <ChevronRight size={12} className="text-slate-400" />}
-                <button onClick={() => jumpCrumb(i)} className="px-2 py-1 rounded hover:bg-white text-slate-600 truncate max-w-[140px]">
+                <button type="button" onClick={() => jumpCrumb(i)} className="px-2 py-1 rounded hover:bg-white text-slate-600 truncate max-w-[140px]">
                   {c.name}
                 </button>
               </span>
@@ -147,42 +224,53 @@ export default function DriveFilePicker({ entityType, entityId, onPicked, onClos
           ) : (
             <>
               {folders.length > 0 && (
-                <div className="grid grid-cols-2 gap-1.5 mb-3">
-                  {folders.map((f) => (
-                    <button
-                      key={f.id}
-                      onClick={() => openFolder(f)}
-                      className="text-left flex items-center gap-2 px-2 py-1.5 border rounded-lg hover:border-blue-400 hover:bg-blue-50"
-                    >
-                      <DriveFileIcon isFolder size={20} />
-                      <span className="text-sm truncate">{f.name}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-              {files.length > 0 && (
-                <ul className="space-y-1">
-                  {files.map((f) => (
-                    <li
-                      key={f.id}
-                      className="flex items-center gap-2 px-2 py-2 border rounded-lg hover:border-blue-400 hover:bg-blue-50 cursor-pointer"
-                      onClick={() => pick(f)}
-                    >
-                      <DriveFileIcon mime={f.mime_type} size={20} />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{f.name}</p>
-                        <p className="text-[11px] text-slate-400">{driveFormatBytes(f.size_bytes)}</p>
-                      </div>
+                <section className="mb-4">
+                  <h3 className="text-[11px] font-semibold text-slate-500 uppercase mb-2">Thư mục</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                    {folders.map((f) => (
                       <button
-                        disabled={submitting === f.id}
-                        className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded flex items-center gap-1 disabled:opacity-50"
+                        key={f.id}
+                        type="button"
+                        onClick={() => openFolder(f)}
+                        className="text-left flex items-center gap-2 px-3 py-2 border rounded-lg hover:border-blue-400 hover:bg-blue-50 bg-white"
                       >
-                        <Link2 size={12} /> Gắn
+                        <DriveFileIcon isFolder size={20} />
+                        <span className="text-sm truncate">{f.name}</span>
                       </button>
-                    </li>
-                  ))}
-                </ul>
+                    ))}
+                  </div>
+                </section>
               )}
+
+              {files.length > 0 && (
+                <section>
+                  <h3 className="text-[11px] font-semibold text-slate-500 uppercase mb-2">File</h3>
+                  {viewMode === 'list' ? (
+                    <div className="bg-white border rounded-lg overflow-hidden">
+                      <DriveFilesListHeader />
+                      <div className="divide-y">
+                        {files.map((f) => (
+                          <DriveFileListRow
+                            key={f.id}
+                            file={f}
+                            formatBytes={driveFormatBytes}
+                            onPreview={openPreview}
+                            renderActions={renderPickAction}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <DriveFilesGridView
+                      files={files}
+                      formatBytes={driveFormatBytes}
+                      onPreview={openPreview}
+                      renderActions={renderPickAction}
+                    />
+                  )}
+                </section>
+              )}
+
               {folders.length === 0 && files.length === 0 && (
                 <div className="text-center py-12 text-slate-400">
                   <FolderOpen className="mx-auto mb-2" size={36} />
@@ -193,6 +281,15 @@ export default function DriveFilePicker({ entityType, entityId, onPicked, onClos
           )}
         </div>
       </div>
+
+      {previewing && (
+        <PreviewModal
+          item={previewing}
+          galleryFiles={filterImageFiles(files)}
+          onClose={() => setPreviewing(null)}
+          onDownload={(f) => driveOpenDownload((f || previewing).id, (f || previewing).name)}
+        />
+      )}
     </div>
   );
 }

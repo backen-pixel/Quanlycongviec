@@ -28,12 +28,12 @@ function maxRole(a, b) {
   return (ROLE_ORDER[a] || 0) >= (ROLE_ORDER[b] || 0) ? a : b;
 }
 
-/** Trả về danh sách principal id user thuộc về: { user_id, dept_ids, company_id, role_ids } */
+/** Trả về danh sách principal id user thuộc về: { user_id, dept_ids, company_id, role_ids, region_ids } */
 async function resolveUserPrincipals(user) {
   const userId = user?.userId || user?.id;
-  if (!userId) return { user_id: null, dept_ids: [], company_id: null, role_ids: [] };
+  if (!userId) return { user_id: null, dept_ids: [], company_id: null, role_ids: [], region_ids: [] };
 
-  const out = { user_id: userId, dept_ids: [], company_id: user?.company_id || null, role_ids: [] };
+  const out = { user_id: userId, dept_ids: [], company_id: user?.company_id || null, role_ids: [], region_ids: [] };
 
   // department + company
   try {
@@ -55,6 +55,15 @@ async function resolveUserPrincipals(user) {
     for (const r of ud || []) if (r.department_id) out.dept_ids.push(r.department_id);
   } catch (_) {}
 
+  // user_company_regions → region_ids
+  try {
+    const { data: ur } = await supabase
+      .from('user_company_regions')
+      .select('region_id')
+      .eq('user_id', userId);
+    for (const r of ur || []) if (r.region_id) out.region_ids.push(r.region_id);
+  } catch (_) {}
+
   // role names → ids (đối chiếu với bảng roles)
   try {
     const names = Array.from(new Set([user?.role, ...(Array.isArray(user?.roles) ? user.roles : [])].filter(Boolean)));
@@ -65,6 +74,7 @@ async function resolveUserPrincipals(user) {
   } catch (_) {}
 
   out.dept_ids = Array.from(new Set(out.dept_ids));
+  out.region_ids = Array.from(new Set(out.region_ids));
   return out;
 }
 
@@ -148,6 +158,8 @@ async function aclRoleForChain(chain, principals) {
     } else if (a.principal_type === 'company' && a.principal_id === principals.company_id) {
       best = maxRole(best, a.role);
     } else if (a.principal_type === 'role' && principals.role_ids.includes(a.principal_id)) {
+      best = maxRole(best, a.role);
+    } else if (a.principal_type === 'region' && principals.region_ids.includes(a.principal_id)) {
       best = maxRole(best, a.role);
     }
   }
@@ -256,6 +268,10 @@ async function listAccessibleRoots(user) {
 
   // Roots/file/folder được share qua ACL → trace ngược root_id.
   const principalFilters = [];
+  if (principals.region_ids?.length) {
+    const list = principals.region_ids.join(',');
+    principalFilters.push(`and(principal_type.eq.region,principal_id.in.(${list}))`);
+  }
   if (principals.user_id) principalFilters.push(`and(principal_type.eq.user,principal_id.eq.${principals.user_id})`);
   if (principals.dept_ids.length) {
     const list = principals.dept_ids.join(',');
