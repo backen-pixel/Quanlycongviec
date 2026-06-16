@@ -21,7 +21,7 @@ type Item = {
   label: string;
   color: string;
   target?: ItemTarget;
-  action?: 'logout' | 'drive' | 'settings' | 'notifications' | 'events';
+  action?: 'logout' | 'drive' | 'settings' | 'notifications' | 'events' | 'quotations' | 'orders' | 'products' | 'customers';
 };
 
 function buildSections(Colors: ThemeColors): { title: string; items: Item[] }[] {
@@ -31,10 +31,10 @@ function buildSections(Colors: ThemeColors): { title: string; items: Item[] }[] 
       items: [
         { icon: 'people', label: 'Leads', color: Colors.blue, target: { kind: 'leads' } },
         { icon: 'pricetags', label: 'Deals', color: Colors.orange, target: { kind: 'deals' } },
-        { icon: 'person-circle', label: 'Khách hàng', color: Colors.cyan },
-        { icon: 'cube', label: 'Sản phẩm', color: Colors.green },
-        { icon: 'document-text', label: 'Báo giá', color: Colors.amber },
-        { icon: 'cart', label: 'Đơn hàng', color: Colors.purple },
+        { icon: 'person-circle', label: 'Khách hàng', color: Colors.cyan, action: 'customers' },
+        { icon: 'cube', label: 'Sản phẩm', color: Colors.green, action: 'products' },
+        { icon: 'document-text', label: 'Báo giá', color: Colors.amber, action: 'quotations' },
+        { icon: 'cart', label: 'Đơn hàng', color: Colors.purple, action: 'orders' },
       ],
     },
     {
@@ -94,6 +94,22 @@ export default function MenuScreen() {
     }
     if (it.action === 'events') {
       navigation.navigate('Events');
+      return;
+    }
+    if (it.action === 'quotations') {
+      navigation.navigate('Quotations');
+      return;
+    }
+    if (it.action === 'orders') {
+      navigation.navigate('Orders');
+      return;
+    }
+    if (it.action === 'products') {
+      navigation.navigate('Products');
+      return;
+    }
+    if (it.action === 'customers') {
+      navigation.navigate('Customers');
       return;
     }
     if (it.target) navigation.navigate('CrmHub', { initialMode: it.target.kind });

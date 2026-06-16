@@ -18,4 +18,8 @@ export type RootStackParamList = {
   Settings: undefined;
   Notifications: undefined;
   Events: undefined;
+  Quotations: undefined;
+  Orders: undefined;
+  Products: undefined;
+  Customers: undefined;
 };

@@ -10268,6 +10268,156 @@ function crmLeadRowVisibleToRequestUser(row, userId, role) {
   );
 }
 
+const CUSTOMERS_OVERVIEW_NO_MATCH_ID = '00000000-0000-0000-0000-000000000000';
+
+function applyCustomersOverviewSearch(q, search) {
+  const s = String(search || '').trim();
+  if (!s) return q;
+  return q.or(`full_name.ilike.%${s}%,phone.ilike.%${s}%,email.ilike.%${s}%,company.ilike.%${s}%`);
+}
+
+async function fetchActivityCustomerIds(effectiveCompanyId, activity) {
+  if (activity === 'active') {
+    let lq = supabase.from('crm_leads').select('customer_id');
+    if (effectiveCompanyId) lq = lq.eq('company_id', effectiveCompanyId);
+    let oq = supabase.from('orders').select('customer_id');
+    if (effectiveCompanyId) oq = oq.eq('company_id', effectiveCompanyId);
+    const [{ data: lr }, { data: or }] = await Promise.all([lq, oq]);
+    const ids = [...new Set([...(lr || []), ...(or || [])].map((r) => r.customer_id).filter(Boolean))];
+    return ids.length ? ids : [CUSTOMERS_OVERVIEW_NO_MATCH_ID];
+  }
+  if (activity === 'debt') {
+    let iq = supabase.from('invoices').select('customer_id, total, paid_amount');
+    if (effectiveCompanyId) iq = iq.eq('company_id', effectiveCompanyId);
+    const { data: invs } = await iq;
+    const ids = [
+      ...new Set(
+        (invs || [])
+          .filter((i) => (i.total || 0) - (i.paid_amount || 0) > 0)
+          .map((i) => i.customer_id)
+          .filter(Boolean),
+      ),
+    ];
+    return ids.length ? ids : [CUSTOMERS_OVERVIEW_NO_MATCH_ID];
+  }
+  return null;
+}
+
+async function fetchScopedCrmBundles(effectiveCompanyId, uid, role, customerIds = null) {
+  let leadsQ = supabase
+    .from('crm_leads')
+    .select(
+      'id, customer_id, company_id, source_id, title, estimated_value, stage_id, code, created_at, type, assigned_to, lead_owner_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name, icon, is_won), source:crm_sources(id, name, icon)',
+    );
+  if (effectiveCompanyId) leadsQ = leadsQ.eq('company_id', effectiveCompanyId);
+  if (customerIds?.length) leadsQ = leadsQ.in('customer_id', customerIds);
+
+  let quotesQ = supabase.from('quotations').select('id, customer_id, code, title, total, status, created_at, company_id');
+  if (effectiveCompanyId) quotesQ = quotesQ.eq('company_id', effectiveCompanyId);
+  if (!userIsAdmin(role) && uid) quotesQ = quotesQ.eq('created_by', uid);
+  if (customerIds?.length) quotesQ = quotesQ.in('customer_id', customerIds);
+
+  let ordersQ = supabase.from('orders').select('id, customer_id, code, title, total, status, paid_amount, created_at, company_id');
+  if (effectiveCompanyId) ordersQ = ordersQ.eq('company_id', effectiveCompanyId);
+  if (customerIds?.length) ordersQ = ordersQ.in('customer_id', customerIds);
+
+  let invoicesQ = supabase.from('invoices').select('id, customer_id, code, title, total, paid_amount, payment_status, created_at, company_id');
+  if (effectiveCompanyId) invoicesQ = invoicesQ.eq('company_id', effectiveCompanyId);
+  if (customerIds?.length) invoicesQ = invoicesQ.in('customer_id', customerIds);
+
+  const [{ data: leadsRaw, error: leadsErr }, { data: quotes }, { data: orders }, { data: invoices }] =
+    await Promise.all([leadsQ, quotesQ, ordersQ, invoicesQ]);
+  if (leadsErr) throw leadsErr;
+
+  const leads = (leadsRaw || []).filter((l) => crmLeadRowVisibleToRequestUser(l, uid, role));
+  return { leads, quotes: quotes || [], orders: orders || [], invoices: invoices || [] };
+}
+
+function mapCustomerOverviewRow(c, leads, quotes, orders, invoices, includeNested = true) {
+  const cLeads = (leads || []).filter((l) => l.customer_id === c.id);
+  const cQuotes = (quotes || []).filter((q) => q.customer_id === c.id);
+  const cOrders = (orders || []).filter((o) => o.customer_id === c.id);
+  const cInvoices = (invoices || []).filter((i) => i.customer_id === c.id);
+  const totalOrders = cOrders.reduce((s, o) => s + (o.total || 0), 0);
+  const totalPaid = cInvoices.reduce((s, i) => s + (i.paid_amount || 0), 0);
+  const totalDebt = cInvoices.reduce((s, i) => s + ((i.total || 0) - (i.paid_amount || 0)), 0);
+  const row = {
+    ...c,
+    stats: {
+      lead_count: cLeads.length,
+      won_count: cLeads.filter((l) => l.stage?.is_won).length,
+      quote_count: cQuotes.length,
+      order_count: cOrders.length,
+      invoice_count: cInvoices.length,
+      total_orders: totalOrders,
+      total_paid: totalPaid,
+      total_debt: totalDebt,
+      lead_value: cLeads.reduce((s, l) => s + (l.estimated_value || 0), 0),
+    },
+  };
+  if (includeNested) {
+    row.leads = cLeads;
+    row.quotes = cQuotes;
+    row.orders = cOrders;
+    row.invoices = cInvoices;
+  }
+  return row;
+}
+
+function computeCustomersOverviewSummary(customerRows, leads, orders, invoices) {
+  const idSet = new Set((customerRows || []).map((c) => c.id));
+  let leadsCount = 0;
+  let dealsCount = 0;
+  let won = 0;
+  let revenue = 0;
+  let debt = 0;
+  let active = 0;
+
+  for (const c of customerRows || []) {
+    const cLeads = (leads || []).filter((l) => l.customer_id === c.id);
+    const cOrders = (orders || []).filter((o) => o.customer_id === c.id);
+    const cInvoices = (invoices || []).filter((i) => i.customer_id === c.id);
+    if (cLeads.length > 0 || cOrders.length > 0) active += 1;
+    revenue += cInvoices.reduce((s, i) => s + (i.paid_amount || 0), 0);
+    debt += cInvoices.reduce((s, i) => s + ((i.total || 0) - (i.paid_amount || 0)), 0);
+  }
+
+  for (const l of leads || []) {
+    if (!idSet.has(l.customer_id)) continue;
+    if (l.type === 'deal') dealsCount += 1;
+    else leadsCount += 1;
+    if (l.stage?.is_won) won += 1;
+  }
+
+  return {
+    total: customerRows?.length || 0,
+    active,
+    leads: leadsCount,
+    deals: dealsCount,
+    won,
+    revenue,
+    debt,
+  };
+}
+
+async function buildCustomersOverviewSummary(effectiveCompanyId, uid, role, search, activity) {
+  let custQ = supabase.from('customers').select('id');
+  if (effectiveCompanyId) custQ = custQ.eq('company_id', effectiveCompanyId);
+  custQ = applyCustomersOverviewSearch(custQ, search);
+  if (activity && activity !== 'all') {
+    const activityIds = await fetchActivityCustomerIds(effectiveCompanyId, activity);
+    if (activityIds) custQ = custQ.in('id', activityIds);
+  }
+  const { data: custRows, error } = await custQ;
+  if (error) throw error;
+  const customerIds = (custRows || []).map((c) => c.id);
+  if (!customerIds.length) {
+    return { total: 0, active: 0, leads: 0, deals: 0, won: 0, revenue: 0, debt: 0 };
+  }
+  const { leads, orders, invoices } = await fetchScopedCrmBundles(effectiveCompanyId, uid, role, customerIds);
+  return computeCustomersOverviewSummary(custRows, leads, orders, invoices);
+}
+
 r.get('/customers-overview', async (req, res) => {
   try {
     let effectiveCompanyId = null;
@@ -10280,47 +10430,68 @@ r.get('/customers-overview', async (req, res) => {
       effectiveCompanyId = q && String(q).trim() ? String(q).trim() : null;
     }
 
-    let custQ = supabase.from('customers').select('*').order('full_name');
-    if (effectiveCompanyId) custQ = custQ.eq('company_id', effectiveCompanyId);
-    const { data: customers, error: custErr } = await custQ;
-    if (custErr) throw custErr;
-
-    let leadsQ = supabase
-      .from('crm_leads')
-      .select(
-        'id, customer_id, company_id, source_id, title, estimated_value, stage_id, code, created_at, type, assigned_to, lead_owner_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name, icon, is_won), source:crm_sources(id, name, icon)',
-      );
-    if (effectiveCompanyId) leadsQ = leadsQ.eq('company_id', effectiveCompanyId);
-    const { data: leadsRaw, error: leadsErr } = await leadsQ;
-    if (leadsErr) throw leadsErr;
     const uid = req.user?.userId;
     const role = req.user?.role;
-    const leads = (leadsRaw || []).filter((l) => crmLeadRowVisibleToRequestUser(l, uid, role));
-    let quotesQ = supabase.from('quotations').select('id, customer_id, code, title, total, status, created_at, company_id');
-    if (effectiveCompanyId) quotesQ = quotesQ.eq('company_id', effectiveCompanyId);
-    if (!userIsAdmin(req.user?.role) && uid) quotesQ = quotesQ.eq('created_by', uid);
-    let ordersQ = supabase.from('orders').select('id, customer_id, code, title, total, status, paid_amount, created_at, company_id');
-    if (effectiveCompanyId) ordersQ = ordersQ.eq('company_id', effectiveCompanyId);
-    let invoicesQ = supabase.from('invoices').select('id, customer_id, code, title, total, paid_amount, payment_status, created_at, company_id');
-    if (effectiveCompanyId) invoicesQ = invoicesQ.eq('company_id', effectiveCompanyId);
-    const [{ data: quotes }, { data: orders }, { data: invoices }] = await Promise.all([quotesQ, ordersQ, invoicesQ]);
+    const paginated = req.query.page != null || req.query.limit != null;
 
-    const result = (customers || []).map(c => {
-      const cLeads = (leads || []).filter(l => l.customer_id === c.id);
-      const cQuotes = (quotes || []).filter(q => q.customer_id === c.id);
-      const cOrders = (orders || []).filter(o => o.customer_id === c.id);
-      const cInvoices = (invoices || []).filter(i => i.customer_id === c.id);
-      const totalOrders = cOrders.reduce((s, o) => s + (o.total || 0), 0);
-      const totalPaid = cInvoices.reduce((s, i) => s + (i.paid_amount || 0), 0);
-      const totalDebt = cInvoices.reduce((s, i) => s + ((i.total || 0) - (i.paid_amount || 0)), 0);
-      return { ...c, leads: cLeads, quotes: cQuotes, orders: cOrders, invoices: cInvoices,
-        stats: { lead_count: cLeads.length, won_count: cLeads.filter(l => l.stage?.is_won).length,
-          quote_count: cQuotes.length, order_count: cOrders.length, invoice_count: cInvoices.length,
-          total_orders: totalOrders, total_paid: totalPaid, total_debt: totalDebt,
-          lead_value: cLeads.reduce((s, l) => s + (l.estimated_value || 0), 0) }
-      };
+    if (!paginated) {
+      let custQ = supabase.from('customers').select('*').order('full_name');
+      if (effectiveCompanyId) custQ = custQ.eq('company_id', effectiveCompanyId);
+      const { data: customers, error: custErr } = await custQ;
+      if (custErr) throw custErr;
+
+      const { leads, quotes, orders, invoices } = await fetchScopedCrmBundles(effectiveCompanyId, uid, role);
+      const result = (customers || []).map((c) =>
+        mapCustomerOverviewRow(c, leads, quotes, orders, invoices, true),
+      );
+      res.json(result);
+      return;
+    }
+
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 30));
+    const sort = req.query.sort === 'oldest' ? 'oldest' : 'newest';
+    const search = String(req.query.search || '').trim();
+    const activity = ['active', 'debt'].includes(String(req.query.activity || ''))
+      ? String(req.query.activity)
+      : 'all';
+
+    let custQ = supabase.from('customers').select('*', { count: 'exact' });
+    if (effectiveCompanyId) custQ = custQ.eq('company_id', effectiveCompanyId);
+    custQ = applyCustomersOverviewSearch(custQ, search);
+    if (activity !== 'all') {
+      const activityIds = await fetchActivityCustomerIds(effectiveCompanyId, activity);
+      if (activityIds) custQ = custQ.in('id', activityIds);
+    }
+    custQ = custQ.order('created_at', { ascending: sort === 'oldest' });
+    const from = (page - 1) * limit;
+    custQ = custQ.range(from, from + limit - 1);
+
+    const { data: customers, count, error: custErr } = await custQ;
+    if (custErr) throw custErr;
+
+    const pageIds = (customers || []).map((c) => c.id);
+    const { leads, quotes, orders, invoices } = pageIds.length
+      ? await fetchScopedCrmBundles(effectiveCompanyId, uid, role, pageIds)
+      : { leads: [], quotes: [], orders: [], invoices: [] };
+
+    const items = (customers || []).map((c) =>
+      mapCustomerOverviewRow(c, leads, quotes, orders, invoices, false),
+    );
+    const total = count || 0;
+    const summary =
+      page === 1
+        ? await buildCustomersOverviewSummary(effectiveCompanyId, uid, role, search, activity)
+        : undefined;
+
+    res.json({
+      customers: items,
+      total,
+      page,
+      limit,
+      hasMore: from + items.length < total,
+      summary,
     });
-    res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

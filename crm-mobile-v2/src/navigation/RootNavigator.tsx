@@ -6,6 +6,10 @@ import CrmHubScreen from '../screens/CrmHubScreen';
 import DriveScreen from '../screens/DriveScreen';
 import EventsScreen from '../screens/EventsScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
+import OrdersScreen from '../screens/OrdersScreen';
+import CustomersScreen from '../screens/CustomersScreen';
+import ProductsScreen from '../screens/ProductsScreen';
+import QuotationsScreen from '../screens/QuotationsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import VoiceLocalRecordingsScreen from '../screens/VoiceLocalRecordingsScreen';
 import RootTabs from './RootTabs';
@@ -29,6 +33,10 @@ export default function RootNavigator() {
       <Stack.Screen name="Settings" component={SettingsScreen} />
       <Stack.Screen name="Notifications" component={NotificationsScreen} />
       <Stack.Screen name="Events" component={EventsScreen} />
+      <Stack.Screen name="Quotations" component={QuotationsScreen} />
+      <Stack.Screen name="Orders" component={OrdersScreen} />
+      <Stack.Screen name="Products" component={ProductsScreen} />
+      <Stack.Screen name="Customers" component={CustomersScreen} />
     </Stack.Navigator>
   );
 }
