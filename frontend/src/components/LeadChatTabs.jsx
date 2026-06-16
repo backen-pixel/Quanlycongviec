@@ -32,9 +32,14 @@ import {
   isMessengerCallLogMessage,
   parseCallLogPayload,
 } from '../lib/messengerCallLog';
+import ChatLargeFileDriveReminder from './ChatLargeFileDriveReminder';
 import {
   MESSENGER_ATTACH_HINT,
+  MESSENGER_MAX_FILE_MB,
   validateMessengerFiles,
+  validateChatUploadFiles,
+  getLargeChatFilesForDriveReminder,
+  CHAT_DRIVE_REMIND_HINT,
   formatFileSize,
 } from '../lib/messengerUploadLimits';
 import {
@@ -43,6 +48,12 @@ import {
   mergeMessengerMessage,
   normalizeMessengerReactions,
 } from '../lib/messengerReactions';
+
+function clearChatFileInputs(...refs) {
+  refs.filter(Boolean).forEach((r) => {
+    if (r?.current) r.current.value = '';
+  });
+}
 
 function Avatar({ name, url, size = 8 }) {
   if (url) {
@@ -1230,6 +1241,7 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
   const [highlightId, setHighlightId] = useState(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [drivePickerOpen, setDrivePickerOpen] = useState(false);
+  const [largeFileReminder, setLargeFileReminder] = useState(null);
   const fileInputRef = useRef(null);
   const audioInputRef = useRef(null);
   const textareaRef = useRef(null);
@@ -1328,9 +1340,27 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
       }
       setText('');
       setReplyTo(null);
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      clearChatFileInputs(fileInputRef, audioInputRef);
     } catch (e) { alert(e.response?.data?.error || 'Lỗi gửi tin nhắn'); }
     setSending(false);
+  };
+
+  const handlePickedFiles = (files) => {
+    const rawPicked = Array.from(files || []).filter(Boolean);
+    if (!rawPicked.length) return;
+    const validation = validateChatUploadFiles(rawPicked);
+    if (!validation.ok) {
+      alert(validation.error);
+      clearChatFileInputs(fileInputRef, audioInputRef);
+      return;
+    }
+    const picked = validation.valid;
+    const large = getLargeChatFilesForDriveReminder(picked);
+    if (large.length) {
+      setLargeFileReminder({ files: picked, large });
+      return;
+    }
+    void send(picked);
   };
 
   const sendDriveFile = async (file) => {
@@ -1372,8 +1402,8 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
     return items.map((att, i) => {
       if (att.is_drive || att.drive_file_id) {
         return (
-          <div key={i} className="mt-2">
-            <DriveChatAttachmentCard attachment={att} />
+          <div key={i} className="mt-2 w-full min-w-0 max-w-[248px] overflow-hidden">
+            <DriveChatAttachmentCard attachment={att} compact alignEnd />
           </div>
         );
       }
@@ -1510,14 +1540,14 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
       <div className={`${compact ? 'px-2.5 pt-1.5 pb-2' : 'px-3 pt-2 pb-3'} border-t border-slate-200/70 bg-white rounded-b-xl shrink-0 relative`}>
         <ReplyComposerBar replyTo={replyTo} onCancel={() => setReplyTo(null)} />
         <div className="flex gap-2 items-center">
-          <input type="file" multiple className="hidden" ref={fileInputRef} onChange={(e) => send(e.target.files)} />
+          <input type="file" multiple className="hidden" ref={fileInputRef} onChange={(e) => handlePickedFiles(e.target.files)} />
           <input
             type="file"
             accept="audio/*"
             className="hidden"
             ref={audioInputRef}
             onChange={(e) => {
-              send(e.target.files);
+              handlePickedFiles(e.target.files);
               e.target.value = '';
             }}
           />
@@ -1526,7 +1556,7 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
               type="button"
               onClick={() => fileInputRef.current?.click()}
               className={`shrink-0 ${compact ? 'w-7 h-7' : 'w-8 h-8'} rounded-full text-slate-500 hover:text-blue-600 hover:bg-white/80 flex items-center justify-center transition-colors`}
-              title="Đính kèm file từ máy"
+              title={`Đính kèm — ${MESSENGER_ATTACH_HINT}. ${CHAT_DRIVE_REMIND_HINT}.`}
             >
               <Paperclip size={compact ? 14 : 16} />
             </button>
@@ -1611,7 +1641,30 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
             {sending ? <Loader2 size={compact ? 14 : 16} className="animate-spin" /> : <Send size={compact ? 14 : 16} />}
           </button>
         </div>
+        <p className={`mt-1.5 text-slate-400 leading-snug ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
+          {CHAT_DRIVE_REMIND_HINT}. Giới hạn đính kèm trực tiếp: {MESSENGER_MAX_FILE_MB} MB/file.
+        </p>
       </div>
+
+      {largeFileReminder ? (
+        <ChatLargeFileDriveReminder
+          largeFiles={largeFileReminder.large}
+          onUseDrive={() => {
+            setLargeFileReminder(null);
+            clearChatFileInputs(fileInputRef, audioInputRef);
+            setDrivePickerOpen(true);
+          }}
+          onProceed={() => {
+            const pending = largeFileReminder.files;
+            setLargeFileReminder(null);
+            void send(pending);
+          }}
+          onClose={() => {
+            setLargeFileReminder(null);
+            clearChatFileInputs(fileInputRef, audioInputRef);
+          }}
+        />
+      ) : null}
 
       {drivePickerOpen && (
         <DriveFilePicker
@@ -1795,6 +1848,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
   const [readDetailMsgId, setReadDetailMsgId] = useState(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [drivePickerOpen, setDrivePickerOpen] = useState(false);
+  const [largeFileReminder, setLargeFileReminder] = useState(null);
   const [moreMenuMsgId, setMoreMenuMsgId] = useState(null);
   const [forwardMsg, setForwardMsg] = useState(null);
   const [forwardMsgs, setForwardMsgs] = useState(null);
@@ -2324,15 +2378,6 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
     const trimmed = rawText.trim();
     if ((!trimmed && rawPicked.length === 0) || sending) return;
 
-    const validation = rawPicked.length ? validateMessengerFiles(rawPicked) : { ok: true, valid: [], error: null };
-    if (!validation.ok) {
-      alert(validation.error);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      if (audioInputRef.current) audioInputRef.current.value = '';
-      return;
-    }
-    const pickedFiles = validation.valid;
-
     setSending(true);
     const members = groupMeta?.members || [];
     const meId = user?.userId || user?.id;
@@ -2341,12 +2386,12 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
       : [];
     const replyId = replyTo?.id || null;
     try {
-      if (pickedFiles.length > 0) {
-        for (let i = 0; i < pickedFiles.length; i++) {
-          const file = pickedFiles[i];
+      if (rawPicked.length > 0) {
+        for (let i = 0; i < rawPicked.length; i++) {
+          const file = rawPicked[i];
           setUploadState({
             fileIndex: i + 1,
-            fileTotal: pickedFiles.length,
+            fileTotal: rawPicked.length,
             fileName: file.name,
             fileSize: file.size,
             percent: 0,
@@ -2379,14 +2424,31 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
       if (overrideText == null) setText('');
       setReplyTo(null);
       emitStopTyping();
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      if (audioInputRef.current) audioInputRef.current.value = '';
+      clearChatFileInputs(fileInputRef, audioInputRef);
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Lỗi gửi tin nhắn');
     } finally {
       setUploadState(null);
       setSending(false);
     }
+  };
+
+  const handlePickedFiles = (files) => {
+    const rawPicked = Array.from(files || []).filter(Boolean);
+    if (!rawPicked.length) return;
+    const validation = validateMessengerFiles(rawPicked);
+    if (!validation.ok) {
+      alert(validation.error);
+      clearChatFileInputs(fileInputRef, audioInputRef);
+      return;
+    }
+    const picked = validation.valid;
+    const large = getLargeChatFilesForDriveReminder(picked);
+    if (large.length) {
+      setLargeFileReminder({ files: picked, large });
+      return;
+    }
+    void send(picked);
   };
 
   const sendDriveFile = async (file) => {
@@ -2449,9 +2511,13 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
           <div className="space-y-1.5">
             {sec.items.map((att, i) => {
               if (att.is_drive || att.drive_file_id) {
+                const cardMax = bare || compact ? 'max-w-[248px]' : 'max-w-[320px]';
                 return (
-                  <div key={`${sec.key}-${i}`}>
-                    <DriveChatAttachmentCard attachment={att} compact={bare} alignEnd={alignEnd} />
+                  <div
+                    key={`${sec.key}-${i}`}
+                    className={`w-full min-w-0 overflow-hidden ${cardMax} ${alignEnd ? 'ml-auto' : ''}`}
+                  >
+                    <DriveChatAttachmentCard attachment={att} compact={bare || compact} alignEnd={alignEnd} />
                   </div>
                 );
               }
@@ -2593,7 +2659,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
               )}
               {parent ? <ReplyQuoteInBubble parent={parent} isMe={isMe} onJump={jumpToMessage} /> : null}
               <div
-                className={`flex flex-col gap-1.5 w-full ${
+                className={`flex flex-col gap-1.5 max-w-full min-w-0 overflow-hidden ${
                   align === 'end' ? 'items-end' : 'items-start'
                 }`}
               >
@@ -2700,7 +2766,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                           <div className="text-[13.5px] leading-relaxed whitespace-pre-wrap break-words">
                             {renderMessengerTextContent(m.content, isMe, uid)}
                           </div>
-                          {renderAttachmentsGrouped(m)}
+                          {renderAttachmentsGrouped(m, { alignEnd: isMe })}
                         </div>
                       )}
                     </div>
@@ -2769,7 +2835,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                           <div className="text-[13.5px] leading-relaxed whitespace-pre-wrap break-words">
                             {renderMessengerTextContent(m.content, isMe, uid)}
                           </div>
-                          {renderAttachmentsGrouped(m)}
+                          {renderAttachmentsGrouped(m, { alignEnd: isMe })}
                         </div>
                       )}
                     </MessengerMessageHoverActions>
@@ -2931,14 +2997,14 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
         )}
 
         <div className="flex gap-2 items-center">
-          <input type="file" multiple className="hidden" ref={fileInputRef} onChange={(e) => send(e.target.files)} />
+          <input type="file" multiple className="hidden" ref={fileInputRef} onChange={(e) => handlePickedFiles(e.target.files)} />
           <input
             type="file"
             accept="audio/*"
             className="hidden"
             ref={audioInputRef}
             onChange={(e) => {
-              send(e.target.files);
+              handlePickedFiles(e.target.files);
               e.target.value = '';
             }}
           />
@@ -2949,7 +3015,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
               type="button"
               onClick={() => fileInputRef.current?.click()}
               className={`shrink-0 ${compact ? 'w-7 h-7' : 'w-8 h-8'} rounded-full text-slate-500 hover:text-violet-600 hover:bg-white/80 flex items-center justify-center transition-colors`}
-              title={`Đính kèm — ${MESSENGER_ATTACH_HINT}`}
+              title={`Đính kèm — ${MESSENGER_ATTACH_HINT}. ${CHAT_DRIVE_REMIND_HINT}.`}
             >
               <Paperclip size={compact ? 14 : 16} />
             </button>
@@ -3075,7 +3141,30 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
             )}
           </button>
         </div>
+        <p className={`mt-1.5 text-slate-400 leading-snug ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
+          {CHAT_DRIVE_REMIND_HINT}. Giới hạn đính kèm trực tiếp: {MESSENGER_MAX_FILE_MB} MB/file.
+        </p>
       </div>
+
+      {largeFileReminder ? (
+        <ChatLargeFileDriveReminder
+          largeFiles={largeFileReminder.large}
+          onUseDrive={() => {
+            setLargeFileReminder(null);
+            clearChatFileInputs(fileInputRef, audioInputRef);
+            setDrivePickerOpen(true);
+          }}
+          onProceed={() => {
+            const pending = largeFileReminder.files;
+            setLargeFileReminder(null);
+            void send(pending);
+          }}
+          onClose={() => {
+            setLargeFileReminder(null);
+            clearChatFileInputs(fileInputRef, audioInputRef);
+          }}
+        />
+      ) : null}
 
       {drivePickerOpen && (
         <DriveFilePicker

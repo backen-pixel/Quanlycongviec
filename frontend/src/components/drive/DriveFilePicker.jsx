@@ -3,6 +3,7 @@
  * Hiển thị list / grid giống trang Drive, có người tải + ngày tải.
  */
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Search, Loader2, FolderOpen, ChevronRight, Link2, LayoutGrid, List as ListIcon, Eye } from 'lucide-react';
 import {
   driveListRoots, driveListRootChildren, driveListFolderChildren, driveSearch,
@@ -11,12 +12,12 @@ import {
 import DriveFileIcon from './DriveFileIcon';
 import PreviewModal from './PreviewModal';
 import {
-  DriveFilesGridView, DriveFilesListHeader, DriveFileListRow,
+  DriveFilesGridView, DriveFilesListView,
   isImageMime, filterImageFiles,
 } from './DriveFileViews';
 
 function readViewMode() {
-  try { return localStorage.getItem('drive.viewMode') || 'grid'; } catch (_) { return 'grid'; }
+  try { return localStorage.getItem('drive.pickerViewMode') || 'list'; } catch (_) { return 'list'; }
 }
 
 export default function DriveFilePicker({
@@ -41,7 +42,7 @@ export default function DriveFilePicker({
   const [previewing, setPreviewing] = useState(null);
 
   useEffect(() => {
-    try { localStorage.setItem('drive.viewMode', viewMode); } catch (_) {}
+    try { localStorage.setItem('drive.pickerViewMode', viewMode); } catch (_) {}
   }, [viewMode]);
 
   useEffect(() => {
@@ -154,32 +155,41 @@ export default function DriveFilePicker({
     );
   }
 
-  return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+  const modal = (
+    <div
+      className="fixed inset-0 z-[10050] bg-black/55 flex items-center justify-center p-3 sm:p-6"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+    >
+      <div
+        className="bg-white rounded-xl shadow-2xl w-full max-w-5xl h-[min(92vh,880px)] flex flex-col overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
         <header className="h-14 px-4 border-b flex items-center justify-between gap-3 shrink-0">
           <h2 className="font-semibold text-slate-800">{title}</h2>
           <div className="flex items-center gap-2">
-            <div className="flex items-center border rounded-lg overflow-hidden">
+            <div className="flex items-center border rounded-md overflow-hidden shrink-0">
               <button
                 type="button"
                 onClick={() => setViewMode('list')}
                 title="Dạng danh sách"
-                className={`h-8 w-8 flex items-center justify-center transition ${viewMode === 'list' ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-50'}`}
+                className={`h-7 w-7 flex items-center justify-center transition ${viewMode === 'list' ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-50'}`}
               >
-                <ListIcon size={15} />
+                <ListIcon className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />
               </button>
               <button
                 type="button"
                 onClick={() => setViewMode('grid')}
-                title="Dạng lớn"
-                className={`h-8 w-8 flex items-center justify-center transition ${viewMode === 'grid' ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-50'}`}
+                title="Dạng lưới"
+                className={`h-7 w-7 flex items-center justify-center transition ${viewMode === 'grid' ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-50'}`}
               >
-                <LayoutGrid size={15} />
+                <LayoutGrid className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />
               </button>
             </div>
-            <button type="button" onClick={onClose} className="h-9 w-9 flex items-center justify-center rounded-lg hover:bg-slate-100">
-              <X size={16} />
+            <button type="button" onClick={onClose} className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-slate-100 shrink-0">
+              <X className="h-4 w-4 shrink-0" />
             </button>
           </div>
         </header>
@@ -226,16 +236,17 @@ export default function DriveFilePicker({
               {folders.length > 0 && (
                 <section className="mb-4">
                   <h3 className="text-[11px] font-semibold text-slate-500 uppercase mb-2">Thư mục</h3>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                  <div className="bg-white border rounded-lg divide-y overflow-hidden">
                     {folders.map((f) => (
                       <button
                         key={f.id}
                         type="button"
                         onClick={() => openFolder(f)}
-                        className="text-left flex items-center gap-2 px-3 py-2 border rounded-lg hover:border-blue-400 hover:bg-blue-50 bg-white"
+                        className="w-full text-left flex items-center gap-2.5 px-3 py-2.5 hover:bg-blue-50/80 transition-colors"
                       >
-                        <DriveFileIcon isFolder size={20} />
-                        <span className="text-sm truncate">{f.name}</span>
+                        <DriveFileIcon isFolder size={18} className="shrink-0" />
+                        <span className="text-sm text-slate-800 truncate flex-1">{f.name}</span>
+                        <ChevronRight size={14} className="text-slate-400 shrink-0" />
                       </button>
                     ))}
                   </div>
@@ -246,26 +257,22 @@ export default function DriveFilePicker({
                 <section>
                   <h3 className="text-[11px] font-semibold text-slate-500 uppercase mb-2">File</h3>
                   {viewMode === 'list' ? (
-                    <div className="bg-white border rounded-lg overflow-hidden">
-                      <DriveFilesListHeader />
-                      <div className="divide-y">
-                        {files.map((f) => (
-                          <DriveFileListRow
-                            key={f.id}
-                            file={f}
-                            formatBytes={driveFormatBytes}
-                            onPreview={openPreview}
-                            renderActions={renderPickAction}
-                          />
-                        ))}
-                      </div>
-                    </div>
+                    <DriveFilesListView
+                      files={files}
+                      formatBytes={driveFormatBytes}
+                      onPreview={openPreview}
+                      renderActions={renderPickAction}
+                      alwaysShowActions
+                      actionsLabel="Chọn"
+                    />
                   ) : (
                     <DriveFilesGridView
                       files={files}
                       formatBytes={driveFormatBytes}
                       onPreview={openPreview}
                       renderActions={renderPickAction}
+                      columns="picker"
+                      alwaysShowActions
                     />
                   )}
                 </section>
@@ -292,4 +299,7 @@ export default function DriveFilePicker({
       )}
     </div>
   );
+
+  if (typeof document === 'undefined') return modal;
+  return createPortal(modal, document.body);
 }
