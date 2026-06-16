@@ -6,6 +6,7 @@ import {
   stopVoiceBackgroundSyncLoop,
   syncVoiceBackgroundTaskWithPrefs,
 } from '../lib/voiceBackgroundSync';
+import { startDeviceHeartbeat, stopDeviceHeartbeat } from '../lib/deviceHeartbeat';
 import { registerPushTokenV2, unregisterPushTokenV2 } from '../lib/pushNotifications';
 
 const USER_KEY = 'crmv2_user_json';
@@ -20,7 +21,18 @@ export type AuthUser = {
   avatar?: string | null;
   phone?: string | null;
   company_id?: string | null;
+  position?: string | null;
+  department_id?: string | null;
 };
+
+function mergeAuthUser(prev: AuthUser | null, next: Partial<AuthUser>): AuthUser {
+  return {
+    id: next.id || prev?.id || next.userId || prev?.userId || '',
+    email: next.email || prev?.email || '',
+    ...prev,
+    ...next,
+  };
+}
 
 type AuthCtx = {
   user: AuthUser | null;
@@ -28,6 +40,7 @@ type AuthCtx = {
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  refreshProfile: (next?: AuthUser | null) => Promise<void>;
 };
 
 const Ctx = createContext<AuthCtx | null>(null);
@@ -53,8 +66,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
+  const refreshProfile = useCallback(async (next?: AuthUser | null) => {
+    try {
+      if (next) {
+        await AsyncStorage.setItem(USER_KEY, JSON.stringify(next));
+        setUser(next);
+        return;
+      }
+      const { data } = await api.get<{ user?: AuthUser }>('/auth/me');
+      if (data?.user) {
+        setUser((prev) => {
+          const merged = mergeAuthUser(prev, data.user!);
+          void AsyncStorage.setItem(USER_KEY, JSON.stringify(merged));
+          return merged;
+        });
+      }
+    } catch {
+      /* giữ cache cũ */
+    }
+  }, []);
+
   useEffect(() => {
     if (!token) return;
+    startDeviceHeartbeat();
     // Đăng ký FCM token để nhận thông báo trên thanh hệ thống (kể cả khi app đóng).
     void registerPushTokenV2();
     const controller = new AbortController();
@@ -62,9 +96,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const { data } = await api.get<{ user?: AuthUser }>('/auth/me', { signal: controller.signal });
         if (data?.user) {
-          const merged = { ...(user || {}), ...data.user };
-          await AsyncStorage.setItem(USER_KEY, JSON.stringify(merged));
-          setUser(merged);
+          setUser((prev) => {
+            const merged = mergeAuthUser(prev, data.user!);
+            void AsyncStorage.setItem(USER_KEY, JSON.stringify(merged));
+            return merged;
+          });
         }
       } catch {
         /* giữ cache cũ */
@@ -82,6 +118,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await AsyncStorage.setItem(USER_KEY, JSON.stringify(data.user));
     setToken(data.token);
     setUser(data.user);
+    startDeviceHeartbeat();
     void syncVoiceBackgroundTaskWithPrefs();
   }, []);
 
@@ -89,6 +126,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     invalidatePlannerCache();
     invalidateCrmHubCache();
     stopVoiceBackgroundSyncLoop();
+    stopDeviceHeartbeat();
     await unregisterPushTokenV2();
     await setStoredToken(null);
     await AsyncStorage.removeItem(USER_KEY);
@@ -106,8 +144,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ user, token, loading, login, logout }),
-    [user, token, loading, login, logout],
+    () => ({ user, token, loading, login, logout, refreshProfile }),
+    [user, token, loading, login, logout, refreshProfile],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

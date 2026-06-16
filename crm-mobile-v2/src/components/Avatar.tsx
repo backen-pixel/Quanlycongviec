@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
+import { resolveMediaUrl } from '../lib/media';
 import { useColors, type ThemeColors } from '../theme';
 
 type Props = {
@@ -29,6 +30,7 @@ export default function Avatar({
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const circleColor = color ?? Colors.blue;
+  const resolvedAvatar = resolveMediaUrl(avatarUrl);
   return (
     <View style={{ width: size, height: size }}>
       <View
@@ -37,8 +39,8 @@ export default function Avatar({
           { width: size, height: size, borderRadius: size / 2, backgroundColor: circleColor },
         ]}
       >
-        {avatarUrl ? (
-          <Image source={{ uri: avatarUrl }} style={{ width: size, height: size }} />
+        {resolvedAvatar ? (
+          <Image source={{ uri: resolvedAvatar }} style={{ width: size, height: size }} />
         ) : (
           <Text style={[styles.text, { fontSize: Math.max(11, size * 0.36) }]}>
             {initials || initialsFromName(name)}

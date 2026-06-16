@@ -8,6 +8,9 @@ import EventsScreen from '../screens/EventsScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import OrdersScreen from '../screens/OrdersScreen';
 import CustomersScreen from '../screens/CustomersScreen';
+import TasksScreen from '../screens/TasksScreen';
+import AccountScreen from '../screens/AccountScreen';
+import DevicesScreen from '../screens/DevicesScreen';
 import ProductsScreen from '../screens/ProductsScreen';
 import QuotationsScreen from '../screens/QuotationsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
@@ -37,6 +40,9 @@ export default function RootNavigator() {
       <Stack.Screen name="Orders" component={OrdersScreen} />
       <Stack.Screen name="Products" component={ProductsScreen} />
       <Stack.Screen name="Customers" component={CustomersScreen} />
+      <Stack.Screen name="Tasks" component={TasksScreen} />
+      <Stack.Screen name="Account" component={AccountScreen} />
+      <Stack.Screen name="Devices" component={DevicesScreen} />
     </Stack.Navigator>
   );
 }
