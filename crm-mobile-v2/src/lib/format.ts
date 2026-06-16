@@ -11,3 +11,11 @@ export function daysSince(iso?: string | null): number {
   if (Number.isNaN(d.getTime())) return 0;
   return Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000));
 }
+
+/** Ngày ngắn kiểu vi-VN: 16/6/2026 */
+export function formatDateShort(iso?: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('vi-VN');
+}
