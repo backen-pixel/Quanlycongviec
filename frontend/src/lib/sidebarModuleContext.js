@@ -32,6 +32,25 @@ export function isCrmCrossModulePath(pathname) {
   return CRM_CROSS_MODULE_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
+export function isDrivePath(pathname) {
+  return pathname === '/drive' || pathname.startsWith('/drive/');
+}
+
+/** ?module=crm|sx|vc → khóa sidebar đúng module khi mở Drive */
+export function resolveModuleFromDriveQuery(moduleParam) {
+  const m = String(moduleParam || '').toLowerCase();
+  if (m === 'crm') return 'crm';
+  if (m === 'sx') return 'sx';
+  if (m === 'vc') return 'vc';
+  return null;
+}
+
+export function appendDriveModuleQuery(path, moduleKey) {
+  if (!moduleKey) return path;
+  const sep = path.includes('?') ? '&' : '?';
+  return `${path}${sep}module=${encodeURIComponent(moduleKey)}`;
+}
+
 export function isWorkPrimaryPath(pathname) {
   if (pathname.startsWith('/crm') || pathname.startsWith('/sx') || pathname.startsWith('/vc')) return false;
   return (
@@ -87,7 +106,17 @@ export function storeModule(module) {
   } catch { /* ignore */ }
 }
 
-export function resolveActiveModule(pathname, navStateModuleContext) {
+export function resolveActiveModule(pathname, navStateModuleContext, searchParams) {
+  // Drive dùng chung route — giữ sidebar module theo ?module= hoặc context đã lưu
+  if (isDrivePath(pathname)) {
+    const moduleParam = searchParams?.get?.('module') ?? (typeof searchParams === 'string'
+      ? new URLSearchParams(searchParams).get('module')
+      : null);
+    const fromQuery = resolveModuleFromDriveQuery(moduleParam);
+    if (fromQuery) return fromQuery;
+    if (navStateModuleContext) return navStateModuleContext;
+    return readStoredModule() || 'work';
+  }
   // Trang CRM dùng chung (events/activity/messenger): ưu tiên context từ state
   // hoặc sessionStorage — chỉ rơi về 'crm' khi không có gì.
   if (isCrmCrossModulePath(pathname)) {
@@ -104,5 +133,6 @@ export function isCrmSidebarActive(pathname, activeModule, crmOnly) {
   if (crmOnly) return true;
   if (pathname.startsWith('/tools/voice-recordings')) return true;
   if (pathname.startsWith('/crm') && !isCrmCrossModulePath(pathname)) return true;
+  if (isDrivePath(pathname) && activeModule === 'crm') return true;
   return activeModule === 'crm' && (isCrmSharedPath(pathname) || isCrmCrossModulePath(pathname));
 }

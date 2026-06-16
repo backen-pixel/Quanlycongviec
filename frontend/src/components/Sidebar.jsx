@@ -1,4 +1,4 @@
-import { NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { NavLink, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isCrmModuleAdmin, isStrictAdmin, isWorkProductionModuleAdmin, canAccessCrmSocialInbox } from '../lib/adminRole';
@@ -527,13 +527,14 @@ export default function Sidebar() {
   const isCrmMenuAdmin = isCrmModuleAdmin(user);
   const canAccessSocialInbox = canAccessCrmSocialInbox(user);
   const isExecutive = ['admin', 'manager', 'director', 'supervisor', 'sales_admin', 'crm_production_admin'].includes(user?.role);
+  const [searchParams] = useSearchParams();
   const [activeModule, setActiveModule] = useState(() => readStoredModule() || 'crm');
 
   useEffect(() => {
-    const next = resolveActiveModule(location.pathname, location.state?.moduleContext);
+    const next = resolveActiveModule(location.pathname, location.state?.moduleContext, searchParams);
     setActiveModule(next);
     storeModule(next);
-  }, [location.pathname, location.state?.moduleContext]);
+  }, [location.pathname, location.state?.moduleContext, searchParams]);
 
   /** Ghi âm dùng route /tools/… nhưng vẫn dùng menu CRM khi đang xem trang đó. crmOnly: luôn sidebar CRM. */
   const isKnowledge = location.pathname.startsWith('/knowledge') || activeModule === 'knowledge';

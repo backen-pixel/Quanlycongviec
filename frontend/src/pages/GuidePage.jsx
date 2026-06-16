@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BookOpen, ChevronDown, ChevronRight, ExternalLink, Zap, Target, FileText, ShoppingCart, Receipt, FolderKanban, Users, Settings, ArrowRight, CheckCircle2, Star, Lightbulb } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronRight, ExternalLink, Zap, Target, FileText, ShoppingCart, Receipt, FolderKanban, Users, Settings, ArrowRight, CheckCircle2, Star, Lightbulb, HardDrive } from 'lucide-react';
 
 const GUIDES = [
   {
@@ -169,6 +169,47 @@ const GUIDES = [
       },
     ],
   },
+  {
+    id: 'drive',
+    icon: '☁️',
+    title: 'Google Drive tích hợp',
+    desc: 'Lưu trữ tài liệu, bản vẽ, báo cáo trực tiếp trên Google Drive — gắn vào Lead/Deal/Dự án',
+    color: 'from-sky-500 to-blue-600',
+    steps: [
+      {
+        title: 'Drive là gì & tại sao dùng?',
+        content: 'Drive tích hợp cho phép:\n• Lưu tài liệu lên Google Drive của công ty (không chiếm server)\n• Gắn file vào Lead / Deal / Dự án để tra cứu nhanh\n• Phân quyền theo Công ty / Khu vực / Module (CRM, SX, VC)\n• Mở / chỉnh sửa Google Doc, Sheet, Slide ngay trong app\n• Chia sẻ file qua tin nhắn chat\n\n📌 Khuyến nghị: File từ 10 MB nên tải lên Drive thay vì đính kèm chat trực tiếp.',
+        screenshot: '/uploads/knowledge-screenshots/drive/drive-04-trang-chinh-full.png',
+      },
+      {
+        title: 'Truy cập trang Drive chính',
+        content: 'Có 2 cách vào Drive:\n\n① Từ Sidebar:\n  • App "Công việc": Menu → "☁️ Drive"\n  • App "CRM": Menu → "Drive CRM"\n\n② Từ Overview module:\n  • CRM → sidebar có nút "Vào Drive CRM"\n  • SX / VC tương tự\n\nTrang Drive gồm:\n  ← Sidebar trái: Cây thư mục org (Module → Công ty → Khu vực → Phòng ban → Nhân viên)\n  ← Panel phải: File / thư mục của node đang chọn\n  ← Thanh công cụ: Tìm kiếm, Tải lên, Tạo Doc/Sheet/Folder',
+        screenshot: '/uploads/knowledge-screenshots/drive/drive-01-trang-chu-full.png',
+        link: { to: '/drive', label: 'Mở Drive' },
+      },
+      {
+        title: 'Upload & tạo file mới',
+        content: '▸ Tải file từ máy:\n  1. Chọn thư mục đích trong cây bên trái\n  2. Bấm "Tải lên" (xanh dương, góc trên)\n  3. Chọn 1 hoặc nhiều file → Xác nhận\n\n▸ Tạo Google Doc / Sheet / Slide:\n  1. Bấm "Thư mục" → chọn "Tạo Google Doc" / "Tạo Sheet"\n  2. Đặt tên → Hệ thống tạo trên Drive và gắn vào công ty\n\n▸ Kéo thả: Kéo file từ máy tính vào vùng file là tải lên luôn.\n\n📌 File lớn (>10MB): Tải lên Drive để không chiếm băng thông chat.',
+      },
+      {
+        title: 'Gắn file Drive vào Lead / Deal',
+        content: 'Trong trang chi tiết Lead / Deal:\n  1. Bấm tab "☁️ Drive (N)" — số N là số file đã gắn\n  2. Bấm "Tải lên từ máy" để upload thẳng vào folder entity\n     → File tự vào đúng thư mục: Mod → Cty → Kv → Phòng ban → NV → Mã deal\n  3. Bấm "Liên kết file Drive" → Chọn file đã có sẵn trong Drive\n  4. Bấm "Doc" hoặc "Sheet" → Tạo Google Doc/Sheet gắn thẳng vào deal\n\nĐể xem / sửa file:\n  • Click vào file → Mở preview ngay trong app\n  • Bấm "Chỉnh sửa (tab mới)" → Mở Google Doc với toolbar đầy đủ',
+        screenshot: '/uploads/knowledge-screenshots/drive/drive-03-tab-drive-lead.png',
+      },
+      {
+        title: 'Chia sẻ file Drive qua Chat',
+        content: 'Trong ô chat (Lead chat hoặc Messenger):\n  1. Bấm icon ☁️ (nút HardDrive) trên thanh soạn thảo\n  2. Modal Drive mở ra → Duyệt thư mục hoặc tìm kiếm\n  3. Click file → Bấm "Gửi" → File gắn vào tin nhắn\n\nFile trong chat hiển thị:\n  • Tên file, loại (PDF/Doc/Sheet...), dung lượng\n  • Nút 👁 Xem trước + nút ⬇️ Tải xuống\n\n⚠️ Giới hạn đính kèm trực tiếp: 50 MB/file.\nFile ≥ 10 MB → hệ thống tự nhắc "Gửi qua Drive thay thế".',
+      },
+      {
+        title: 'Lọc Drive theo Module (CRM / SX / VC)',
+        content: 'Trang Drive hỗ trợ lọc theo module:\n  • Dropdown "Tất cả module" → chọn CRM / Sản xuất / Vật công\n  • Cây thư mục tự lọc chỉ hiển thị công ty trong module đó\n\nCách truy cập Drive đã lọc sẵn:\n  • "Drive CRM" trong sidebar CRM → Tự lọc module CRM\n  • "Drive SX" → Lọc module Sản xuất\n  • "Drive VC" → Lọc module Vật công\n\nAdmin cấu hình module trong: Quản trị → Ecosystem module scopes.',
+      },
+      {
+        title: 'Xem trước & chỉnh sửa Google Doc / Sheet',
+        content: 'Click vào file Drive → Cửa sổ Preview mở ra:\n\n▸ File Google Doc / Sheet / Slide:\n  • Hiển thị iframe với toolbar chỉnh sửa đầy đủ\n  • Bấm "Chỉnh sửa (tab mới)" để mở full Google Docs\n  • Các thay đổi lưu trực tiếp trên Google Drive\n\n▸ File PDF / ảnh:\n  • Preview ngay trong app\n  • Nút tải về\n\n▸ File .docx / .xlsx upload từ máy:\n  • Preview dạng PDF read-only\n  • Để chỉnh sửa: Tải về máy và mở bằng Office',
+      },
+    ],
+  },
 ];
 
 function StepCard({ step, index, isLast }) {
@@ -186,6 +227,16 @@ function StepCard({ step, index, isLast }) {
         <h4 className="text-sm font-bold text-gray-900 mb-2">{step.title}</h4>
         <div className="bg-white rounded-xl border p-4 shadow-sm">
           <p className="text-sm text-gray-700 whitespace-pre-line leading-relaxed">{step.content}</p>
+          {step.screenshot && (
+            <div className="mt-3 rounded-xl overflow-hidden border border-slate-200 shadow-sm">
+              <img
+                src={step.screenshot}
+                alt="Ảnh minh họa"
+                className="w-full object-cover object-top max-h-64 bg-slate-50"
+                loading="lazy"
+              />
+            </div>
+          )}
           {step.tip && (
             <div className="mt-3 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3">
               <Lightbulb className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
@@ -297,6 +348,7 @@ export default function GuidePage() {
             { to: '/projects', icon: FolderKanban, label: 'Dự án', color: 'text-indigo-600 bg-indigo-50' },
             { to: '/projects/create', icon: FolderKanban, label: 'Tạo dự án', color: 'text-teal-600 bg-teal-50' },
             { to: '/users', icon: Users, label: 'Nhân viên', color: 'text-gray-600 bg-gray-50' },
+            { to: '/drive', icon: HardDrive, label: 'Drive (Công việc)', color: 'text-sky-600 bg-sky-50' },
             { to: '/crm/pipeline-settings', icon: Settings, label: 'Cài đặt Pipeline', color: 'text-rose-600 bg-rose-50' },
           ].map(item => (
             <Link key={item.to} to={item.to} className={`flex items-center gap-2.5 p-3 rounded-xl border hover:shadow-md transition-all ${item.color}`}>
