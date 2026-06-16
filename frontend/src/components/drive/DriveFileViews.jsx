@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { User as UserIcon, ZoomIn, MoreHorizontal, Eye, Download, Trash2 } from 'lucide-react';
 import DriveFileIcon from './DriveFileIcon';
+import { driveFileThumbnailUrl, driveFetchFileBlobUrl } from '../../lib/drive';
 
 /** Cột grid cho bảng list file (Tên | Người tải | Ngày tải | Kích thước | Hành động) */
 export const DRIVE_FILE_LIST_GRID = 'grid-cols-[1fr_minmax(130px,170px)_110px_90px_96px]';
@@ -42,13 +43,98 @@ export function isGoogleWorkspaceFile(mime) {
     && mime !== 'application/vnd.google-apps.folder';
 }
 
-/** Click 1 lần mở preview: ảnh full màn hoặc Doc/Sheet embed. */
+/** PDF upload lên Drive. */
+export function isPdfFile(mime, filename) {
+  if (mime === 'application/pdf') return true;
+  if (filename && /\.pdf$/i.test(filename)) return true;
+  return false;
+}
+
+/** Click 1 lần mở preview: ảnh / PDF / Doc/Sheet embed. */
 export function isQuickPreviewFile(file) {
-  return isImageMime(file?.mime_type, file?.name) || isGoogleWorkspaceFile(file?.mime_type);
+  return isImageMime(file?.mime_type, file?.name)
+    || isGoogleWorkspaceFile(file?.mime_type)
+    || isPdfFile(file?.mime_type, file?.name);
 }
 
 export function filterImageFiles(files) {
   return (files || []).filter((f) => isImageMime(f.mime_type, f.name));
+}
+
+/** Thumbnail grid — ảnh: luôn tải file gốc (/download, cùng preview); Doc/Sheet: proxy thumbnail. */
+export function DriveFileThumbnail({
+  file, size = 52, className = 'w-full h-full object-cover', zoomHint = false,
+}) {
+  const isImg = isImageMime(file?.mime_type, file?.name);
+  const isGws = isGoogleWorkspaceFile(file?.mime_type);
+  const isPdf = isPdfFile(file?.mime_type, file?.name);
+  const canTryThumb = isImg || isGws || isPdf || !!file?.thumbnail_url;
+  const [src, setSrc] = useState(null);
+  const [failed, setFailed] = useState(false);
+  const blobRef = useRef(null);
+
+  useEffect(() => {
+    setFailed(false);
+    setSrc(null);
+    if (blobRef.current) {
+      URL.revokeObjectURL(blobRef.current);
+      blobRef.current = null;
+    }
+    if (!file?.id || !canTryThumb) return undefined;
+
+    let cancelled = false;
+
+    if (isImg) {
+      driveFetchFileBlobUrl(file.id)
+        .then((url) => {
+          if (cancelled) {
+            URL.revokeObjectURL(url);
+            return;
+          }
+          blobRef.current = url;
+          setSrc(url);
+        })
+        .catch(() => {
+          if (!cancelled) setFailed(true);
+        });
+    } else {
+      setSrc(driveFileThumbnailUrl(file.id));
+    }
+
+    return () => { cancelled = true; };
+  }, [file?.id, canTryThumb, isImg]);
+
+  useEffect(() => () => {
+    if (blobRef.current) {
+      URL.revokeObjectURL(blobRef.current);
+      blobRef.current = null;
+    }
+  }, []);
+
+  if (!canTryThumb || failed) {
+    return <DriveFileIcon mime={file?.mime_type} size={size} />;
+  }
+
+  if (!src) {
+    return null;
+  }
+
+  return (
+    <>
+      <img
+        src={src}
+        alt=""
+        loading="lazy"
+        className={className}
+        onError={() => setFailed(true)}
+      />
+      {zoomHint && isImg && (
+        <span className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover/thumb:bg-black/30 transition-colors pointer-events-none">
+          <ZoomIn size={28} className="text-white opacity-0 group-hover/thumb:opacity-100 drop-shadow-lg transition-opacity" />
+        </span>
+      )}
+    </>
+  );
 }
 
 /** Menu ⋯ gom Xem / Tải / Bỏ gắn — tiết kiệm chỗ tên file. */
@@ -228,11 +314,11 @@ export function DriveFilesGridView({
   return (
     <div className={GRID_COLS[columns] || GRID_COLS.default}>
       {files.map((f) => {
-        const thumb = f.thumbnail_url;
         const isImg = isImageMime(f.mime_type, f.name);
         const isGws = isGoogleWorkspaceFile(f.mime_type);
+        const isPdf = isPdfFile(f.mime_type, f.name);
         const quickOpen = isQuickPreviewFile(f);
-        const showThumb = isImg || isGws || !!thumb;
+        const showThumbArea = isImg || isGws || isPdf || !!f.thumbnail_url;
         return (
           <div
             key={f.id}
@@ -257,26 +343,13 @@ export function DriveFilesGridView({
               onClick={(e) => {
                 if (quickOpen) { e.stopPropagation(); onPreview?.(f); }
               }}
-              title={isImg ? 'Xem ảnh full màn hình' : isGws ? 'Mở chỉnh sửa' : undefined}
+              title={isImg ? 'Xem ảnh full màn hình' : isGws ? 'Mở chỉnh sửa' : isPdf ? 'Xem PDF' : undefined}
               role={quickOpen ? 'button' : undefined}
               tabIndex={quickOpen ? 0 : undefined}
               onKeyDown={(e) => { if (quickOpen && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onPreview?.(f); } }}
             >
-              {showThumb && thumb ? (
-                <>
-                  <img
-                    src={thumb}
-                    alt={f.name}
-                    loading="lazy"
-                    className="w-full h-full object-cover"
-                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                  />
-                  {isImg && (
-                    <span className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover/thumb:bg-black/30 transition-colors pointer-events-none">
-                      <ZoomIn size={28} className="text-white opacity-0 group-hover/thumb:opacity-100 drop-shadow-lg transition-opacity" />
-                    </span>
-                  )}
-                </>
+              {showThumbArea ? (
+                <DriveFileThumbnail file={f} size={52} zoomHint={isImg} />
               ) : (
                 <DriveFileIcon mime={f.mime_type} size={52} />
               )}

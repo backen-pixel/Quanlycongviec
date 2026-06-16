@@ -67,7 +67,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { supabase } = require('../config/supabase');
-const { auth } = require('../middleware/auth');
+const { auth, authWithQueryToken } = require('../middleware/auth');
+const { fetchFreshThumbnailLink, getThumbnailStream } = require('../helpers/driveThumbnail');
 const gdrive = require('../services/googleDrive');
 const driveAcl = require('../helpers/drivePermissions');
 const driveOrgPath = require('../helpers/driveOrgPath');
@@ -75,6 +76,47 @@ const { logDriveActivity } = require('../helpers/driveActivity');
 const { isAdminLike } = require('../helpers/adminRole');
 
 const r = Router();
+
+/** Proxy thumbnail — `<img>` dùng access_token query; fallback khi URL Google trực tiếp lỗi. */
+r.get('/files/:id/thumbnail', authWithQueryToken, async (req, res) => {
+  if (!requireGdrive(req, res)) return;
+  try {
+    const file = await loadFile(req.params.id);
+    if (!file) return res.status(404).json({ error: 'File không tồn tại' });
+    const access = await driveAcl.canAccess({ user: req.user, targetType: 'file', targetId: file.id, requiredRole: 'viewer' });
+    if (!access.ok) return res.status(403).json({ error: 'Không có quyền' });
+
+    const thumb = await getThumbnailStream(file.google_file_id, { mimeType: file.mime_type });
+    if (!thumb?.stream) return res.status(404).json({ error: 'Không có thumbnail' });
+
+    if (thumb.freshThumbnailLink) {
+      void supabase.from('drive_files')
+        .update({ thumbnail_url: thumb.freshThumbnailLink, updated_at: new Date().toISOString() })
+        .eq('id', file.id);
+    }
+
+    res.setHeader('Content-Type', thumb.contentType || 'image/jpeg');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    let aborted = false;
+    req.on('close', () => {
+      if (!res.writableEnded) {
+        aborted = true;
+        try { thumb.stream.destroy(); } catch (_) {}
+      }
+    });
+    thumb.stream.on('error', (err) => {
+      if (aborted || err.code === 'ERR_STREAM_PREMATURE_CLOSE') return;
+      console.error('[drive] thumbnail stream:', err.message);
+      if (!res.headersSent) res.status(500).json({ error: 'Lỗi thumbnail' });
+      else res.end();
+    });
+    thumb.stream.pipe(res);
+  } catch (e) {
+    console.error('[drive] thumbnail:', e.message);
+    if (!res.headersSent) res.status(500).json({ error: e.message });
+  }
+});
+
 r.use(auth);
 
 const MB = 1024 * 1024;
@@ -531,6 +573,37 @@ r.get('/breadcrumb/folder/:id', async (req, res) => {
   }
 });
 
+/** Breadcrumb folder entity (Lead/Deal/Dự án…) — lấy từ file đã gắn. */
+r.get('/breadcrumb/entity/:entity_type/:entity_id', async (req, res) => {
+  try {
+    const { entity_type, entity_id } = req.params;
+    const { data: links } = await supabase
+      .from('drive_entity_links')
+      .select('file_id')
+      .eq('entity_type', entity_type)
+      .eq('entity_id', entity_id)
+      .limit(20);
+    const fileIds = (links || []).map((l) => l.file_id).filter(Boolean);
+    if (!fileIds.length) {
+      return res.json({ breadcrumb: [], folder_id: null });
+    }
+    const { data: files } = await supabase
+      .from('drive_files')
+      .select('folder_id')
+      .in('id', fileIds)
+      .not('folder_id', 'is', null)
+      .limit(1);
+    const folderId = files?.[0]?.folder_id;
+    if (!folderId) {
+      return res.json({ breadcrumb: [], folder_id: null });
+    }
+    const chain = await breadcrumbForFolder(folderId);
+    res.json({ breadcrumb: chain, folder_id: folderId });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 r.get('/breadcrumb/file/:id', async (req, res) => {
   try {
     const f = await loadFile(req.params.id);
@@ -854,6 +927,28 @@ r.get('/files/:id', async (req, res) => {
   }
 });
 
+/** Lấy thumbnailLink mới từ Google, cập nhật DB — frontend gọi khi URL cũ lỗi. */
+r.post('/files/:id/refresh-thumbnail', async (req, res) => {
+  if (!requireGdrive(req, res)) return;
+  try {
+    const file = await loadFile(req.params.id);
+    if (!file) return res.status(404).json({ error: 'File không tồn tại' });
+    const access = await driveAcl.canAccess({ user: req.user, targetType: 'file', targetId: file.id, requiredRole: 'viewer' });
+    if (!access.ok) return res.status(403).json({ error: 'Không có quyền' });
+
+    const fresh = await fetchFreshThumbnailLink(file.google_file_id);
+    if (fresh.thumbnail_url) {
+      await supabase.from('drive_files')
+        .update({ thumbnail_url: fresh.thumbnail_url, updated_at: new Date().toISOString() })
+        .eq('id', file.id);
+    }
+    res.json({ thumbnail_url: fresh.thumbnail_url || null });
+  } catch (e) {
+    console.error('[drive] refresh-thumbnail:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 r.get('/files/:id/download', async (req, res) => {
   if (!requireGdrive(req, res)) return;
   try {
@@ -904,6 +999,24 @@ r.get('/files/:id/preview', async (req, res) => {
         name: file.name,
       });
     }
+
+    const isPdf = file.mime_type === 'application/pdf'
+      || String(file.name || '').toLowerCase().endsWith('.pdf');
+    if (isPdf) {
+      await gdrive.ensureAnyoneLinkAccess(file.google_file_id, 'reader');
+      const edit_embed_url = gdrive.buildDriveFilePreviewEmbedUrl(file.google_file_id);
+      return res.json({
+        view_url: file.google_view_url,
+        edit_url: file.google_view_url || null,
+        edit_embed_url,
+        embed_url: edit_embed_url,
+        thumbnail_url: file.thumbnail_url,
+        preview_mode: 'google_edit',
+        mime_type: file.mime_type,
+        name: file.name,
+      });
+    }
+
     res.json({
       view_url: file.google_view_url,
       edit_url: file.google_view_url || null,

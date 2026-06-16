@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Download, ExternalLink, Loader2, Pencil, ChevronLeft, ChevronRight } from 'lucide-react';
 import { driveFormatBytes, driveFetchFileBlobUrl, driveFetchPreviewBlobUrl } from '../../lib/drive';
-import { filterImageFiles, isImageMime, isGoogleWorkspaceFile } from './DriveFileViews';
+import { filterImageFiles, isImageMime, isGoogleWorkspaceFile, isPdfFile } from './DriveFileViews';
 
 function portal(node) {
   if (typeof document === 'undefined') return node;
@@ -41,6 +41,7 @@ export default function PreviewModal({ item, onClose, onDownload, galleryFiles }
   const preview = currentItem?.preview || {};
   const mime = currentItem?.mime_type || preview.mime_type || '';
   const isImage = itemIsImage && isImageMime(mime, currentItem?.name);
+  const isPdf = isPdfFile(mime, currentItem?.name);
   const isVideo = mime.startsWith('video/');
   const isAudio = mime.startsWith('audio/');
   const previewMode = preview.preview_mode || (isGoogleWorkspaceFile(mime) ? 'google_edit' : 'iframe');
@@ -50,14 +51,16 @@ export default function PreviewModal({ item, onClose, onDownload, galleryFiles }
   const embedUrl = !usePdfExport && !useGoogleEdit ? (preview.embed_url || preview.view_url) : null;
   const editUrl = preview.edit_url || preview.view_url;
   const hasGallery = isImage && gallery.length > 1;
+  /** Doc/Sheet/Slides/PDF — iframe Google full màn hình tương tác. */
+  const useFullEmbed = useGoogleEdit && !!editEmbedUrl;
 
   const [imgSrc, setImgSrc] = useState(null);
   const [pdfSrc, setPdfSrc] = useState(null);
-  const [contentLoading, setContentLoading] = useState(() => previewMode === 'google_edit');
+  const [contentLoading, setContentLoading] = useState(() => useFullEmbed);
 
   useEffect(() => {
-    if (useGoogleEdit && editEmbedUrl) setContentLoading(true);
-  }, [currentItem?.id, useGoogleEdit, editEmbedUrl]);
+    if (useFullEmbed && editEmbedUrl) setContentLoading(true);
+  }, [currentItem?.id, useFullEmbed, editEmbedUrl]);
 
   const goPrev = useCallback((e) => {
     e?.stopPropagation();
@@ -239,29 +242,32 @@ export default function PreviewModal({ item, onClose, onDownload, galleryFiles }
       <div
         className="bg-white rounded-xl shadow-2xl flex flex-col overflow-hidden"
         style={{
-          width: useGoogleEdit ? '96vw' : '90vw',
-          height: useGoogleEdit ? '96vh' : '90vh',
-          maxWidth: useGoogleEdit ? '96vw' : '90vw',
-          maxHeight: useGoogleEdit ? '96vh' : '90vh',
+          width: useFullEmbed ? '96vw' : '90vw',
+          height: useFullEmbed ? '96vh' : '90vh',
+          maxWidth: useFullEmbed ? '96vw' : '90vw',
+          maxHeight: useFullEmbed ? '96vh' : '90vh',
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <header className={`px-4 border-b flex items-center justify-between gap-3 shrink-0 ${useGoogleEdit ? 'py-2.5 min-h-[3.5rem]' : 'h-14'}`}>
+        <header className={`px-4 border-b flex items-center justify-between gap-3 shrink-0 ${useFullEmbed ? 'py-2.5 min-h-[3.5rem]' : 'h-14'}`}>
           <div className="flex-1 min-w-0">
             <h2 className="font-semibold text-slate-800 truncate" title={currentItem.name}>{currentItem.name}</h2>
             <p className="text-xs text-slate-400">
               {mime || 'unknown'} · {driveFormatBytes(currentItem.size_bytes)}
-              {useGoogleEdit && <span className="text-emerald-600"> · Chỉnh sửa trực tiếp</span>}
+              {useGoogleEdit && !isPdf && <span className="text-emerald-600"> · Chỉnh sửa trực tiếp</span>}
+              {useGoogleEdit && isPdf && <span className="text-emerald-600"> · Xem PDF tương tác</span>}
               {usePdfExport && <span className="text-slate-400"> · Xem PDF</span>}
             </p>
-            {useGoogleEdit && (
+            {useFullEmbed && (
               <p className="text-[11px] text-slate-500 mt-0.5">
-                Nếu không thấy thanh công cụ, bấm <strong>Chỉnh sửa (tab mới)</strong> hoặc đăng nhập Google trên trình duyệt.
+                {isPdf
+                  ? 'Zoom, lật trang trong khung xem. Bấm tab mới nếu không thấy nội dung.'
+                  : 'Nếu không thấy thanh công cụ, bấm Chỉnh sửa (tab mới) hoặc đăng nhập Google trên trình duyệt.'}
               </p>
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            {useGoogleEdit && editUrl && (
+            {useGoogleEdit && editUrl && !isPdf && (
               <a
                 href={editUrl}
                 target="_blank"
@@ -270,6 +276,17 @@ export default function PreviewModal({ item, onClose, onDownload, galleryFiles }
                 title="Mở tab mới với đầy đủ thanh công cụ Google"
               >
                 <Pencil size={14} /> Chỉnh sửa (tab mới)
+              </a>
+            )}
+            {useGoogleEdit && editUrl && isPdf && (
+              <a
+                href={editUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="h-9 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5"
+                title="Mở PDF trên Google Drive tab mới"
+              >
+                <ExternalLink size={14} /> Mở tab mới
               </a>
             )}
             {editUrl && isGoogleWorkspaceFile(mime) && !useGoogleEdit && (
@@ -305,17 +322,17 @@ export default function PreviewModal({ item, onClose, onDownload, galleryFiles }
           </div>
         </header>
         <div className="flex-1 bg-slate-100 overflow-hidden flex items-center justify-center min-h-0 relative">
-          {contentLoading && !useGoogleEdit ? (
+          {contentLoading && !useFullEmbed ? (
             <div className="flex flex-col items-center gap-3 text-slate-500">
               <Loader2 size={32} className="animate-spin" />
               <span className="text-sm">Đang tải xem trước...</span>
             </div>
-          ) : useGoogleEdit && editEmbedUrl ? (
+          ) : useFullEmbed && editEmbedUrl ? (
             <>
               {contentLoading && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-slate-500 bg-slate-100 z-10">
                   <Loader2 size={32} className="animate-spin" />
-                  <span className="text-sm">Đang mở trình soạn thảo...</span>
+                  <span className="text-sm">{isPdf ? 'Đang mở PDF...' : 'Đang mở trình soạn thảo...'}</span>
                 </div>
               )}
               <iframe

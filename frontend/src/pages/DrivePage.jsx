@@ -12,8 +12,8 @@ import {
   HardDrive, FolderPlus, Upload, Star, StarOff, Search, Trash2, RotateCcw, Share2,
   ChevronRight, ChevronDown, Home, Users, Clock, Download, Pencil, Move, Link2, MoreHorizontal,
   Loader2, Building2, User as UserIcon, Globe, Plus, X, FolderOpen, Eye, AlertCircle,
-  Network, MapPin, LayoutGrid, List as ListIcon, Folder as FolderIcon, ZoomIn,
-  FilePlus, FileText, Table2, Tag, Briefcase,
+  Network, MapPin, LayoutGrid, List as ListIcon, Folder as FolderIcon,
+  FilePlus, FileText, Table2, Tag, Briefcase, PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react';
 import {
   driveListRoots, driveEnsurePersonalRoot, driveCreateSharedRoot,
@@ -27,7 +27,8 @@ import {
   driveCreateGoogleFile,
 } from '../lib/drive';
 import DriveFileIcon from '../components/drive/DriveFileIcon';
-import { DRIVE_FILE_LIST_GRID, UploaderCell, fmtDriveDate, fmtDriveDateTime, isImageMime, isQuickPreviewFile, isGoogleWorkspaceFile, filterImageFiles } from '../components/drive/DriveFileViews';
+import DriveLocationBar, { enrichDriveBreadcrumb } from '../components/drive/DriveLocationBar';
+import { DRIVE_FILE_LIST_GRID, UploaderCell, fmtDriveDate, fmtDriveDateTime, isImageMime, isQuickPreviewFile, isGoogleWorkspaceFile, isPdfFile, filterImageFiles, DriveFileThumbnail } from '../components/drive/DriveFileViews';
 import UploadDropzone from '../components/drive/UploadDropzone';
 import PreviewModal from '../components/drive/PreviewModal';
 import ShareModal from '../components/drive/ShareModal';
@@ -102,7 +103,14 @@ export default function DrivePage() {
   const [viewMode, setViewMode] = useState(() => {
     try { return localStorage.getItem('drive.viewMode') || 'grid'; } catch (_) { return 'grid'; }
   });
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    try { return localStorage.getItem('drive.sidebarOpen') !== '0'; } catch (_) { return true; }
+  });
   const searchTimer = useRef(null);
+
+  useEffect(() => {
+    try { localStorage.setItem('drive.sidebarOpen', sidebarOpen ? '1' : '0'); } catch (_) {}
+  }, [sidebarOpen]);
 
   useEffect(() => {
     try { localStorage.setItem('drive.viewMode', viewMode); } catch (_) {}
@@ -170,7 +178,9 @@ export default function DrivePage() {
   async function openRoot(root) {
     setActiveRoot(root);
     setActiveFolder(null);
-    setBreadcrumb([{ type: 'root', id: root.id, name: root.name, scope: root.scope }]);
+    setBreadcrumb(enrichDriveBreadcrumb([
+      { type: 'root', id: root.id, name: root.name, scope: root.scope },
+    ], root));
     setSearchResults(null);
     setQuery('');
     setLoading(true);
@@ -199,12 +209,10 @@ export default function DrivePage() {
       setActiveFolder(children.folder);
       setFolders(children.folders || []);
       setFiles(children.files || []);
-      setBreadcrumb(crumb.breadcrumb || []);
       const rootCrumb = crumb.breadcrumb?.find((c) => c.type === 'root');
-      if (rootCrumb) {
-        const r = roots.find((x) => x.id === rootCrumb.id) || activeRoot;
-        if (r) setActiveRoot(r);
-      }
+      const r = roots.find((x) => x.id === rootCrumb?.id) || activeRoot;
+      setBreadcrumb(enrichDriveBreadcrumb(crumb.breadcrumb || [], r));
+      if (r) setActiveRoot(r);
       driveNavigate(`/drive/folder/${folderId}`, { replace: true });
     } catch (e) {
       console.error('open folder error', e);
@@ -260,6 +268,15 @@ export default function DrivePage() {
       } catch (e) { console.error('search error', e); }
     }, 300);
   }, [query, activeRoot?.id]);
+
+  function handleLocationNav(item) {
+    if (item.type === 'scope' || item.type === 'root') {
+      const r = roots.find((x) => x.id === (item.rootId || item.id));
+      if (r) void openRoot(r);
+    } else if (item.type === 'folder') {
+      void openFolder(item.id);
+    }
+  }
 
   // ── Actions ──
   async function reload() {
@@ -472,10 +489,12 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
   return (
     <div className="h-[calc(100vh-3.5rem)] flex bg-slate-50">
       {/* Sidebar trái */}
-      <aside className="w-64 border-r bg-white flex flex-col">
-        <div className="p-4">
+      {sidebarOpen && (
+      <aside className="w-64 shrink-0 border-r bg-white flex flex-col">
+        <div className="p-4 flex items-start justify-between gap-2">
+          <div className="min-w-0">
           <h1 className="text-base font-bold text-slate-800 flex items-center gap-2">
-            <HardDrive size={20} className="text-blue-600" /> Drive
+            <HardDrive size={20} className="text-blue-600 shrink-0" /> Drive
             {lockedModule && (
               <span className="text-xs font-semibold text-violet-700 bg-violet-50 border border-violet-100 px-2 py-0.5 rounded-full">
                 {moduleScopeLabel(lockedModule)}
@@ -485,6 +504,16 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
           {lockedModule && (
             <p className="text-[11px] text-slate-500 mt-1">Chỉ công ty thuộc khối {moduleScopeLabel(lockedModule)}</p>
           )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(false)}
+            className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-700 shrink-0"
+            title="Thu gọn sidebar"
+            aria-label="Thu gọn sidebar Drive"
+          >
+            <PanelLeftClose size={18} />
+          </button>
         </div>
 
         <div className="px-3 space-y-1 overflow-auto flex-1">
@@ -554,33 +583,24 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
           </SidebarSection>
         </div>
       </aside>
+      )}
 
       {/* Main */}
-      <main className="flex-1 flex flex-col overflow-hidden">
+      <main className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Toolbar */}
         <div className="h-14 border-b bg-white px-4 flex items-center gap-3">
-          {/* Breadcrumb */}
-          <nav className="flex items-center gap-1 text-sm flex-1 min-w-0 overflow-hidden">
-            {breadcrumb.map((c, idx) => (
-              <span key={`${c.type}-${c.id}`} className="flex items-center gap-1 min-w-0">
-                {idx > 0 && <ChevronRight size={14} className="text-slate-400 shrink-0" />}
-                <button
-                  onClick={() => {
-                    if (c.type === 'root') {
-                      const r = roots.find((x) => x.id === c.id);
-                      if (r) openRoot(r);
-                    } else if (c.type === 'folder') {
-                      openFolder(c.id);
-                    }
-                  }}
-                  className={`truncate px-2 py-1 rounded hover:bg-slate-100 ${idx === breadcrumb.length - 1 ? 'font-semibold text-slate-900' : 'text-slate-600'}`}
-                >
-                  {c.type === 'root' && idx === 0 && <Home size={12} className="inline mr-1" />}
-                  {c.name}
-                </button>
-              </span>
-            ))}
-          </nav>
+          {!sidebarOpen && (
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(true)}
+              className="p-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 shrink-0"
+              title="Mở sidebar Drive"
+              aria-label="Mở sidebar Drive"
+            >
+              <PanelLeftOpen size={18} />
+            </button>
+          )}
+          <div className="flex-1 min-w-0" />
 
           {/* Search */}
           <div className="relative">
@@ -658,6 +678,8 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
             </>
           )}
         </div>
+
+        <DriveLocationBar items={breadcrumb} onNavigate={handleLocationNav} />
 
         {/* Body */}
         <div className="flex-1 overflow-auto p-4">
@@ -968,11 +990,11 @@ function DriveGridView({ folders, files, starredIds, isTrashView, onOpenFolder, 
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
             {files.map((f) => {
               const isStarred = starredIds.has('file:' + f.id);
-              const thumb = f.thumbnail_url;
               const isImg = isImageMime(f.mime_type, f.name);
               const isGws = isGoogleWorkspaceFile(f.mime_type);
+              const isPdf = isPdfFile(f.mime_type, f.name);
               const quickOpen = !isTrashView && isQuickPreviewFile(f);
-              const showThumb = isImg || isGws || !!thumb;
+              const showThumbArea = isImg || isGws || isPdf || !!f.thumbnail_url;
               return (
                 <div
                   key={f.id}
@@ -1009,23 +1031,10 @@ function DriveGridView({ folders, files, starredIds, isTrashView, onOpenFolder, 
                     onClick={(e) => {
                       if (quickOpen) { e.stopPropagation(); onPreview(f); }
                     }}
-                    title={isImg ? 'Xem ảnh full màn hình' : isGws ? 'Mở chỉnh sửa' : undefined}
+                    title={isImg ? 'Xem ảnh full màn hình' : isGws ? 'Mở chỉnh sửa' : isPdf ? 'Xem PDF' : undefined}
                   >
-                    {showThumb && thumb ? (
-                      <>
-                        <img
-                          src={thumb}
-                          alt={f.name}
-                          loading="lazy"
-                          className="w-full h-full object-cover"
-                          onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                        />
-                        {isImg && !isTrashView && (
-                          <span className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover/thumb:bg-black/30 transition-colors pointer-events-none">
-                            <ZoomIn size={28} className="text-white opacity-0 group-hover/thumb:opacity-100 drop-shadow-lg transition-opacity" />
-                          </span>
-                        )}
-                      </>
+                    {showThumbArea ? (
+                      <DriveFileThumbnail file={f} size={52} zoomHint={isImg && !isTrashView} />
                     ) : (
                       <DriveFileIcon mime={f.mime_type} size={52} />
                     )}
