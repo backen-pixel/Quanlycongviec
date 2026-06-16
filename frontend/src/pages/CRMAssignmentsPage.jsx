@@ -7,7 +7,7 @@ import {
   LayoutGrid, List as ListIcon, Users as UsersIcon, AlertTriangle, Search, Plus,
   Building2, X, CheckCircle2, Circle, Clock, Calendar, User as UserIcon, Trash2,
   Pencil, GripVertical, Flag, MoreVertical, MessageSquare, Send, Paperclip,
-  FileText as FileIcon, Download, Upload,
+  FileText as FileIcon, Download, Upload, Repeat2, CalendarClock, ChevronDown,
 } from 'lucide-react';
 import {
   RequirementFilesGallery,
@@ -53,6 +53,12 @@ const STATUS_OPTIONS = [
 const STATUS_MAP = Object.fromEntries(STATUS_OPTIONS.map((s) => [s.value, s]));
 
 const COLUMN_COLORS = ['#3B82F6', '#8B5CF6', '#F59E0B', '#10B981', '#EF4444', '#EC4899', '#6B7280', '#0EA5E9'];
+
+const RECURRENCE_OPTIONS = [
+  { value: 'daily', label: 'Hàng ngày' },
+  { value: 'weekly', label: 'Hàng tuần' },
+  { value: 'monthly', label: 'Hàng tháng' },
+];
 
 const DEFAULT_LS_COMPANY = 'crm_assignments_company_id';
 const DEFAULT_LS_VIEW_SCOPE = 'crm_assignments_view_scope';
@@ -271,6 +277,8 @@ export default function CRMAssignmentsPage({
   const [personalDeadlineCols, setPersonalDeadlineCols] = useState([]);
   const [personalPlannerMap, setPersonalPlannerMap] = useState({});
   const [personalDeadlineMap, setPersonalDeadlineMap] = useState({});
+  const [schedules, setSchedules] = useState([]);
+  const [showSchedulesPanel, setShowSchedulesPanel] = useState(false);
 
   // NV thường: chỉ xem việc giao cho mình
   useEffect(() => {
@@ -397,12 +405,14 @@ export default function CRMAssignmentsPage({
       if (search) params.q = search;
       if (assignmentModule) params.assignment_module = assignmentModule;
 
-      const [colRes, itRes] = await Promise.all([
+      const [colRes, itRes, schedRes] = await Promise.all([
         api.get(`${apiBase}/columns`),
         api.get(apiBase, { params }),
+        api.get(`${apiBase}/schedules`, { params: { assignment_module: assignmentModule, ...(isAdmin && filterCompanyId ? { company_id: filterCompanyId } : {}) } }).catch(() => ({ data: { schedules: [] } })),
       ]);
       setColumns(colRes.data?.columns || []);
       setItems(itRes.data?.assignments || []);
+      setSchedules(schedRes.data?.schedules || []);
     } catch (e) { console.error(e); }
     setLoading(false);
   }, [isAdmin, filterCompanyId, filterDepartmentId, filterAssignee, filterStatus, filterPriority, search, apiBase, assignmentModule, uid]);
@@ -544,6 +554,30 @@ export default function CRMAssignmentsPage({
   }, [openItems, personalDeadlineCols, personalDeadlineMap]);
 
   // ─── Mutations ──
+  const uploadStagedFiles = async (targetBase, targetId, stagedFiles) => {
+    if (!targetId || !stagedFiles.length) return;
+    for (const item of stagedFiles) {
+      try {
+        if (item?._stagedUrl) {
+          await api.post(`${targetBase}/${targetId}/files/link`, {
+            url: item.url,
+            file_name: item.name,
+            kind: 'req',
+          });
+        } else {
+          const fd = new FormData();
+          fd.append('file', item);
+          fd.append('kind', 'req');
+          await api.post(`${targetBase}/${targetId}/files`, fd, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+          });
+        }
+      } catch (upErr) {
+        console.warn('Upload error:', upErr.response?.data?.error || upErr.message);
+      }
+    }
+  };
+
   const upsertItem = async (payload, stagedFiles = []) => {
     try {
       let assignmentId = payload.id;
@@ -552,33 +586,30 @@ export default function CRMAssignmentsPage({
       } else {
         const r = await api.post(apiBase, { ...payload, assignment_module: assignmentModule });
         assignmentId = r.data?.assignment?.id || r.data?.id;
-      }
-      // Upload file yêu cầu đã chọn ở bước tạo
-      if (assignmentId && stagedFiles.length) {
-        for (const item of stagedFiles) {
-          try {
-            if (item?._stagedUrl) {
-              await api.post(`${apiBase}/${assignmentId}/files/link`, {
-                url: item.url,
-                file_name: item.name,
-                kind: 'req',
-              });
-            } else {
-              const fd = new FormData();
-              fd.append('file', item);
-              fd.append('kind', 'req');
-              await api.post(`${apiBase}/${assignmentId}/files`, fd, {
-                headers: { 'Content-Type': 'multipart/form-data' },
-              });
-            }
-          } catch (upErr) {
-            console.warn('Upload error:', upErr.response?.data?.error || upErr.message);
-          }
+        const scheduleId = r.data?.schedule?.id;
+        if (scheduleId && stagedFiles.length && !assignmentId) {
+          await uploadStagedFiles(`${apiBase}/schedules`, scheduleId, stagedFiles);
         }
+        if (r.data?.schedule && !r.data?.spawned) {
+          alert(`Đã lên lịch giao việc — chạy lúc ${new Date(r.data.schedule.next_run_at).toLocaleString('vi-VN')}`);
+        }
+      }
+      if (assignmentId && stagedFiles.length) {
+        await uploadStagedFiles(apiBase, assignmentId, stagedFiles);
       }
       setShowItemModal(false); setEditingItem(null);
       void load();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi lưu nhiệm vụ'); }
+  };
+
+  const cancelSchedule = async (scheduleId) => {
+    if (!confirm('Huỷ lịch giao việc này?')) return;
+    try {
+      await api.delete(`${apiBase}/schedules/${scheduleId}`);
+      void load();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Không huỷ được lịch');
+    }
   };
   const removeItem = async (id) => {
     if (!confirm('Xoá nhiệm vụ này?')) return;
@@ -759,8 +790,53 @@ export default function CRMAssignmentsPage({
           >
             <Plus className="h-4 w-4" />Giao việc
           </button>
+          {schedules.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowSchedulesPanel((v) => !v)}
+              className="h-8 px-3 rounded-lg bg-violet-50 hover:bg-violet-100 text-violet-800 text-xs font-medium flex items-center gap-1 cursor-pointer border border-violet-200"
+            >
+              <CalendarClock className="h-3.5 w-3.5" />
+              Lịch ({schedules.length})
+              <ChevronDown className={`h-3.5 w-3.5 transition ${showSchedulesPanel ? 'rotate-180' : ''}`} />
+            </button>
+          )}
         </div>
       </div>
+
+      {showSchedulesPanel && schedules.length > 0 && (
+        <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-3 space-y-2">
+          <p className="text-xs font-semibold text-violet-900 flex items-center gap-1">
+            <CalendarClock className="h-3.5 w-3.5" /> Lịch giao việc đang chờ
+          </p>
+          <div className="space-y-1.5 max-h-48 overflow-y-auto">
+            {schedules.map((s) => (
+              <div key={s.id} className="flex items-center justify-between gap-2 bg-white rounded-lg border border-violet-100 px-3 py-2 text-xs">
+                <div className="min-w-0">
+                  <p className="font-medium text-gray-900 truncate">{s.title}</p>
+                  <p className="text-gray-500">
+                    {new Date(s.next_run_at).toLocaleString('vi-VN')}
+                    {s.recurrence_type && (
+                      <span className="ml-1 text-violet-600">
+                        · <Repeat2 className="inline h-3 w-3" /> {RECURRENCE_OPTIONS.find((o) => o.value === s.recurrence_type)?.label || s.recurrence_type}
+                      </span>
+                    )}
+                    {' · '}{(s.assignee_ids || []).length} NV
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => cancelSchedule(s.id)}
+                  className="shrink-0 text-red-500 hover:text-red-700 cursor-pointer"
+                  title="Huỷ lịch"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* KPI */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -1603,6 +1679,12 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
     status: item?.status || 'pending',
     deadline: item?.deadline ? new Date(item.deadline).toISOString().slice(0, 16) : '',
     company_id: item?.company_id || defaultCompanyId || '',
+    schedule_enabled: false,
+    scheduled_start: '',
+    recurrence_enabled: false,
+    recurrence_type: 'weekly',
+    recurrence_interval: 1,
+    recurrence_end_at: '',
   }));
   const set = (k, v) => setForm((p) => ({ ...p, [k]: v }));
 
@@ -1612,6 +1694,7 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
   const [selDepts, setSelDepts] = useState(new Set());
   const [selUsers, setSelUsers] = useState(new Set(initialAssigneeIds));
   const [userSearch, setUserSearch] = useState('');
+  const [showAssigneePicker, setShowAssigneePicker] = useState(false);
   const [stagedFiles, setStagedFiles] = useState([]);
 
   // Tải lookups mỗi khi đổi công ty
@@ -1677,6 +1760,14 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
   const submit = (e) => {
     e.preventDefault();
     if (!form.title.trim()) return;
+    if (!form.id && form.schedule_enabled && !form.scheduled_start) {
+      alert('Chọn thời gian bắt đầu lịch giao việc');
+      return;
+    }
+    if (!selUsers.size) {
+      alert('Chọn ít nhất một nhân viên');
+      return;
+    }
     onSave({
       ...form,
       assignee_ids: [...selUsers],
@@ -1685,6 +1776,17 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
       column_id: form.column_id || null,
       deadline: form.deadline ? new Date(form.deadline).toISOString() : null,
       company_id: form.company_id || null,
+      schedule_enabled: !form.id && form.schedule_enabled,
+      scheduled_start: form.schedule_enabled && form.scheduled_start
+        ? new Date(form.scheduled_start).toISOString()
+        : null,
+      recurrence_type: !form.id && form.schedule_enabled && form.recurrence_enabled
+        ? form.recurrence_type
+        : null,
+      recurrence_interval: form.recurrence_interval || 1,
+      recurrence_end_at: form.recurrence_enabled && form.recurrence_end_at
+        ? new Date(form.recurrence_end_at).toISOString()
+        : null,
     }, stagedFiles);
   };
 
@@ -1759,7 +1861,7 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
                 {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
               </select>
             </div>
-            <div className="md:col-span-2">
+            <div>
               <label className="text-xs text-gray-600 block mb-1">Deadline</label>
               <input
                 type="datetime-local"
@@ -1768,19 +1870,118 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
                 className="w-full h-9 px-3 border rounded-lg text-sm outline-none focus:border-blue-500"
               />
             </div>
+            {!form.id && (
+              <div className="md:col-span-2 rounded-xl border border-violet-200 bg-violet-50/50 p-3 space-y-3">
+                <label className="flex items-center gap-2 text-sm font-medium text-violet-900 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.schedule_enabled}
+                    onChange={(e) => set('schedule_enabled', e.target.checked)}
+                    className="cursor-pointer"
+                  />
+                  <CalendarClock className="h-4 w-4" />
+                  Giao việc theo lịch
+                </label>
+                {form.schedule_enabled && (
+                  <>
+                    <div>
+                      <label className="text-xs text-gray-600 block mb-1">Thời gian bắt đầu <span className="text-red-500">*</span></label>
+                      <input
+                        type="datetime-local"
+                        value={form.scheduled_start}
+                        onChange={(e) => set('scheduled_start', e.target.value)}
+                        className="w-full h-9 px-3 border rounded-lg text-sm outline-none focus:border-violet-500 bg-white"
+                        required={form.schedule_enabled}
+                      />
+                    </div>
+                    <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={form.recurrence_enabled}
+                        onChange={(e) => set('recurrence_enabled', e.target.checked)}
+                        className="cursor-pointer"
+                      />
+                      <Repeat2 className="h-3.5 w-3.5 text-violet-600" />
+                      Lặp lại định kỳ
+                    </label>
+                    {form.recurrence_enabled && (
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <div>
+                          <label className="text-[11px] text-gray-500 block mb-1">Chu kỳ</label>
+                          <select
+                            value={form.recurrence_type}
+                            onChange={(e) => set('recurrence_type', e.target.value)}
+                            className="w-full h-8 px-2 border rounded-lg text-xs bg-white"
+                          >
+                            {RECURRENCE_OPTIONS.map((o) => (
+                              <option key={o.value} value={o.value}>{o.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-gray-500 block mb-1">Mỗi (N lần)</label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={365}
+                            value={form.recurrence_interval}
+                            onChange={(e) => set('recurrence_interval', Math.max(1, Number(e.target.value) || 1))}
+                            className="w-full h-8 px-2 border rounded-lg text-xs bg-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-gray-500 block mb-1">Kết thúc lặp (tuỳ chọn)</label>
+                          <input
+                            type="datetime-local"
+                            value={form.recurrence_end_at}
+                            onChange={(e) => set('recurrence_end_at', e.target.value)}
+                            className="w-full h-8 px-2 border rounded-lg text-xs bg-white"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
           </div>
 
-          {/* Người được giao */}
+          {/* Người được giao — thu gọn, bấm Tìm để mở */}
           <div className="border-t pt-3">
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-2 gap-2">
               <label className="text-sm font-semibold text-gray-800">
                 Giao cho ({selUsers.size} nhân viên)
               </label>
-              {selUsers.size > 0 && (
-                <button type="button" onClick={clearAllSelected} className="text-xs text-red-500 hover:underline cursor-pointer">Bỏ chọn tất cả</button>
-              )}
+              <div className="flex items-center gap-2">
+                {selUsers.size > 0 && (
+                  <button type="button" onClick={clearAllSelected} className="text-xs text-red-500 hover:underline cursor-pointer">Bỏ chọn</button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowAssigneePicker((v) => !v)}
+                  className="h-8 px-3 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 text-xs font-medium flex items-center gap-1.5 cursor-pointer hover:bg-blue-100"
+                >
+                  <Search className="h-3.5 w-3.5" />
+                  {showAssigneePicker ? 'Thu gọn' : 'Tìm nhân viên'}
+                </button>
+              </div>
             </div>
 
+            {selectedUserObjects.length > 0 && (
+              <div className="flex flex-wrap gap-1 mb-2 p-2 bg-emerald-50 rounded-lg max-h-24 overflow-y-auto">
+                {selectedUserObjects.map((u) => (
+                  <span key={u.id} className="inline-flex items-center gap-1 bg-white border border-emerald-300 rounded-full px-2 py-0.5 text-xs">
+                    {u.full_name}
+                    <button type="button" onClick={() => setSelUsers((p) => toggleSet(p, u.id))} className="text-gray-400 hover:text-red-500 cursor-pointer">
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {showAssigneePicker && (
+              <>
             {/* Khu vực */}
             {lookups.regions.length > 0 && (
               <div className="mb-2">
@@ -1854,6 +2055,7 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
                     onChange={(e) => setUserSearch(e.target.value)}
                     placeholder="Tìm nhân viên..."
                     className="w-full h-8 pl-8 pr-2 border rounded-lg text-xs outline-none focus:border-blue-500"
+                    autoFocus
                   />
                 </div>
                 <button
@@ -1864,20 +2066,6 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
                   + Chọn tất cả ({filteredUsers.length})
                 </button>
               </div>
-
-              {/* Chip đã chọn */}
-              {selectedUserObjects.length > 0 && (
-                <div className="flex flex-wrap gap-1 mb-2 p-2 bg-emerald-50 rounded-lg max-h-24 overflow-y-auto">
-                  {selectedUserObjects.map((u) => (
-                    <span key={u.id} className="inline-flex items-center gap-1 bg-white border border-emerald-300 rounded-full px-2 py-0.5 text-xs">
-                      {u.full_name}
-                      <button type="button" onClick={() => setSelUsers((p) => toggleSet(p, u.id))} className="text-gray-400 hover:text-red-500 cursor-pointer">
-                        <X className="h-3 w-3" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
 
               <div className="max-h-56 overflow-y-auto border rounded-lg divide-y">
                 {loadingLk ? (
@@ -1905,6 +2093,8 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
                 )}
               </div>
             </div>
+              </>
+            )}
           </div>
 
           {form.id ? (
@@ -1925,7 +2115,7 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
         <div className="flex justify-end gap-2 px-5 py-3 border-t bg-gray-50 rounded-b-2xl">
           <button type="button" onClick={onClose} className="h-9 px-4 rounded-lg border text-sm cursor-pointer">Huỷ</button>
           <button type="submit" className="h-9 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium cursor-pointer">
-            {form.id ? 'Lưu' : `Giao cho ${selUsers.size} NV`}
+            {form.id ? 'Lưu' : form.schedule_enabled ? `Lên lịch (${selUsers.size} NV)` : `Giao cho ${selUsers.size} NV`}
           </button>
         </div>
       </form>

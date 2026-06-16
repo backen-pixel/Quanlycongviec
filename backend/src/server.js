@@ -253,6 +253,7 @@ try { app.use('/api/auth-events', require('./routes/authEventLog')); } catch (e)
 try { app.use('/api/integrations/stringee', require('./routes/stringee')); } catch (e) { console.warn('⚠️ Stringee route failed to load:', e.message); }
 try { app.use('/api/calc', require('./routes/calc')); } catch (e) { console.warn('⚠️ Calc (Tính toán) route failed to load:', e.message); }
 try { app.use('/api/drive', require('./routes/drive')); } catch (e) { console.warn('⚠️ Drive route failed to load:', e.message); }
+try { app.use('/api/batch-jobs', require('./routes/batchJobs')); } catch (e) { console.warn('⚠️ Batch jobs route failed to load:', e.message); }
 
 // ─── Serve Frontend (SPA) in production ──
 const frontendDist = path.join(__dirname, '../../frontend/dist');
@@ -960,6 +961,23 @@ server.listen(config.port, () => {
     require('./jobs/crmAssignmentDeadlineReminder').start(io);
   } catch (e) {
     console.warn('[crm-assignment-reminder] Failed to start:', e.message);
+  }
+
+  // Cron spawn giao việc theo lịch/lặp lại (mỗi phút) — disable: CRM_ASSIGNMENT_SCHEDULE_DISABLED=1
+  try {
+    require('./jobs/crmAssignmentScheduleRunner').start(io);
+  } catch (e) {
+    console.warn('[crm-assignment-schedule] Failed to start:', e.message);
+  }
+
+  // System batch queue worker (Redis + Supabase) — disable: BATCH_QUEUE_DISABLED=1
+  try {
+    const { setBatchQueueIO, startBatchQueueWorker } = require('./helpers/batchQueue');
+    require('./helpers/batchJobHandlers'); // đăng ký handlers
+    setBatchQueueIO(io);
+    startBatchQueueWorker();
+  } catch (e) {
+    console.warn('[batch-queue] Failed to start:', e.message);
   }
 
   // Cron nhắc hạn deadline thẻ CRM (mỗi 30') — disable: CRM_KANBAN_DEADLINE_REMINDER_DISABLED=1

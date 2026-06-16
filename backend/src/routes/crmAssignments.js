@@ -16,6 +16,7 @@ const {
   deleteCrmAssignment: deleteCrmAssignmentCore,
   addCrmAssignmentComment: addCrmAssignmentCommentCore,
 } = require('../helpers/crmAssignmentMutations');
+const { createCrmAssignmentSchedule } = require('../helpers/crmAssignmentSchedule');
 const { createTTLCache } = require('../helpers/ttlCache');
 const {
   syncCrmTaskFromAssignment,
@@ -582,7 +583,14 @@ r.get('/', async (req, res) => {
 // POST /api/crm/assignments
 r.post('/', async (req, res) => {
   try {
-    const result = await createCrmAssignmentCore(req, req.body || {});
+    const body = req.body || {};
+    if (body.schedule_enabled && body.scheduled_start) {
+      const schedResult = await createCrmAssignmentSchedule(req, body);
+      if (schedResult.error) return res.status(schedResult.status || 500).json({ error: schedResult.error });
+      return res.status(schedResult.status).json(schedResult.data);
+    }
+
+    const result = await createCrmAssignmentCore(req, body);
     if (result.error) return res.status(result.status || 500).json({ error: result.error });
     const data = result.data?.assignment;
     const finalAssignees = result.data?.assignee_ids?.length
@@ -1130,6 +1138,87 @@ r.delete('/:id/comments/:cid', async (req, res) => {
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi xóa bình luận' }); }
+});
+
+// ─── SCHEDULES — giao việc theo lịch / lặp lại ───────────────────────────────
+// GET /api/crm/assignments/schedules?assignment_module=crm|production
+r.get('/schedules', async (req, res) => {
+  try {
+    const moduleFilter = req.query.assignment_module === 'production' ? 'production' : 'crm';
+    let q = supabase
+      .from('crm_assignment_schedules')
+      .select('*')
+      .eq('is_active', true)
+      .eq('assignment_module', moduleFilter)
+      .order('next_run_at', { ascending: true })
+      .limit(100);
+    if (!isAdmin(req)) {
+      q = q.eq('created_by_id', req.user.userId);
+    } else if (req.query.company_id) {
+      q = q.eq('company_id', req.query.company_id);
+    }
+    const { data, error } = await q;
+    if (error) {
+      if (/crm_assignment_schedules/.test(error.message || '')) return res.json({ schedules: [] });
+      throw error;
+    }
+    res.json({ schedules: data || [] });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi tải lịch giao việc' }); }
+});
+
+// DELETE /api/crm/assignments/schedules/:sid — huỷ lịch (chỉ người tạo hoặc admin)
+r.delete('/schedules/:sid', async (req, res) => {
+  try {
+    const { data: row } = await supabase
+      .from('crm_assignment_schedules')
+      .select('id, created_by_id')
+      .eq('id', req.params.sid)
+      .maybeSingle();
+    if (!row) return res.status(404).json({ error: 'Không tìm thấy lịch' });
+    if (!isAdmin(req) && String(row.created_by_id) !== String(req.user.userId)) {
+      return res.status(403).json({ error: 'Không có quyền huỷ lịch này' });
+    }
+    const { error } = await supabase
+      .from('crm_assignment_schedules')
+      .update({ is_active: false, updated_at: new Date().toISOString() })
+      .eq('id', req.params.sid);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi huỷ lịch' }); }
+});
+
+// POST /api/crm/assignments/schedules/:sid/files — file yêu cầu gắn lịch (spawn kèm nhiệm vụ)
+r.post('/schedules/:sid/files', uploadMw.single('file'), async (req, res) => {
+  try {
+    const { data: sched } = await supabase
+      .from('crm_assignment_schedules')
+      .select('id, created_by_id')
+      .eq('id', req.params.sid)
+      .maybeSingle();
+    if (!sched) return res.status(404).json({ error: 'Không tìm thấy lịch' });
+    if (!isAdmin(req) && String(sched.created_by_id) !== String(req.user.userId)) {
+      return res.status(403).json({ error: 'Không có quyền' });
+    }
+    if (!req.file) return res.status(400).json({ error: 'Thiếu file' });
+    const uploaded = await uploadAssignmentFileToStorage(req.file, `sched_${sched.id}`, 'req');
+    const { data, error } = await supabase
+      .from('crm_assignment_schedule_files')
+      .insert({
+        schedule_id: sched.id,
+        kind: 'req',
+        ...uploaded,
+        uploaded_by: req.user.userId,
+      })
+      .select('*')
+      .single();
+    if (error) {
+      if (/crm_assignment_schedule_files/.test(error.message || '')) {
+        return res.status(503).json({ error: 'Database chưa có bảng file lịch (migration 357)' });
+      }
+      throw error;
+    }
+    res.status(201).json({ file: data });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message || 'Lỗi tải file lịch' }); }
 });
 
 // ─── LOOKUPS — để form "Giao việc" lọc theo công ty/khu vực/phòng/NV ──────────
