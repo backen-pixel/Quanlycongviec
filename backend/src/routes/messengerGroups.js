@@ -28,6 +28,26 @@ function sanitizeStatsLastMessagePreview(text, forUserId) {
 }
 const { responseCache, invalidateTags: rcInvalidateTagsMessenger } = require('../middleware/responseCache');
 
+async function ensureMessengerGroupAvatarColumn() {
+  try {
+    await pgSessionQuery('ALTER TABLE messenger_groups ADD COLUMN IF NOT EXISTS avatar TEXT');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function updateGroupAvatar(gid, avatarUrl) {
+  let { error } = await supabase.from('messenger_groups').update({ avatar: avatarUrl }).eq('id', gid);
+  if (error && String(error.message || '').includes('avatar')) {
+    const ensured = await ensureMessengerGroupAvatarColumn();
+    if (ensured) {
+      ({ error } = await supabase.from('messenger_groups').update({ avatar: avatarUrl }).eq('id', gid));
+    }
+  }
+  return error;
+}
+
 /** Bucket Supabase Storage (mặc định giống upload CRM). */
 const MESSENGER_STORAGE_BUCKET = process.env.SUPABASE_MESSENGER_BUCKET || 'attachments';
 /** Thư mục trong bucket, mặc định `messenger` — có thể set `messsenger` trong .env nếu đã tạo đúng tên đó. */
@@ -1248,10 +1268,7 @@ r.patch('/groups/:id/avatar', messengerMemoryUpload.single('file'), async (req, 
     const stored = await storeMessengerUploadedFile(gid, req.file);
     const avatarUrl = stored.url;
 
-    const { error: uErr } = await supabase
-      .from('messenger_groups')
-      .update({ avatar: avatarUrl })
-      .eq('id', gid);
+    const { error: uErr } = await updateGroupAvatar(gid, avatarUrl);
     if (uErr) return res.status(400).json({ error: uErr.message });
 
     const io = req.app.get('io');
@@ -1307,7 +1324,7 @@ r.delete('/groups/:id/avatar', async (req, res) => {
     const gid = req.params.id;
     const ok = await assertGroupLeader(gid, req.authUserId);
     if (!ok) return res.status(403).json({ error: 'Chỉ trưởng/phó nhóm mới được đổi avatar' });
-    const { error: uErr } = await supabase.from('messenger_groups').update({ avatar: null }).eq('id', gid);
+    const { error: uErr } = await updateGroupAvatar(gid, null);
     if (uErr) return res.status(400).json({ error: uErr.message });
     const io = req.app.get('io');
     if (io) io.to(`messenger_group:${gid}`).emit('messenger_group:updated', { group_id: gid, avatar: null });

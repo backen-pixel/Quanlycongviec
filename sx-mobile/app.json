@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "Xưởng SX",
+    "name": "Quản lý sản xuất",
     "slug": "sx-mobile",
-    "version": "1.0.45",
+    "version": "1.0.52",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -18,17 +18,17 @@
     "splash": {
       "image": "./assets/icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0B2540"
+      "backgroundColor": "#2568B8"
     },
     "android": {
       "package": "vn.tubeppro.sxmobile",
-      "versionCode": 48,
+      "versionCode": 55,
       "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": false,
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/icon.png",
-        "backgroundColor": "#0B2540"
+        "foregroundImage": "./assets/adaptive-icon-foreground.png",
+        "backgroundColor": "#2568B8"
       },
       "googleServicesFile": "./google-services.json",
       "permissions": [
@@ -52,7 +52,7 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/icon.png",
+          "icon": "./assets/notification-icon.png",
           "color": "#2563EB",
           "defaultChannel": "sx_comments"
         }

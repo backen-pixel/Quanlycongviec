@@ -44,6 +44,9 @@ import type { KanbanStage, ProductionBoard, ProductionProject } from '../types';
 
 type QuickFilter = 'all' | 'mine' | 'overdue' | 'today';
 
+/** Số card render ban đầu + mỗi lần tải thêm khi cuộn — giúp cột nhiều dự án mở nhanh. */
+const CARD_PAGE_SIZE = 10;
+
 const INTAKE_BUCKET = 'won_pending';
 const ORPHAN_COL_ID = '__orphan_no_type__';
 /** Cột ảo gom project chưa có workshop_type_id — giống web. */
@@ -160,6 +163,7 @@ export default function KanbanScreen() {
   const [activeIndex, setActiveIndex] = useState(0);
   const [movingId, setMovingId] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
+  const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [quickFilter, setQuickFilter] = useState<QuickFilter>('all');
   const [filterCompany, setFilterCompany] = useState('');
@@ -171,6 +175,8 @@ export default function KanbanScreen() {
   // Ref cache danh sách công ty — không bao giờ bị xóa khi board reload theo filter.
   const allCompaniesRef = useRef<CompanyOption[]>([]);
   const [workTypePickerOpen, setWorkTypePickerOpen] = useState(false);
+  const [colPickerOpen, setColPickerOpen] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(CARD_PAGE_SIZE);
   const [moveModalProject, setMoveModalProject] = useState<ProductionProject | null>(null);
   const [commentProject, setCommentProject] = useState<ProductionProject | null>(null);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -184,6 +190,13 @@ export default function KanbanScreen() {
 
   const isSystemAdmin = user?.role === 'admin' && !user?.company_id;
   const companyForTypes = filterCompany || user?.company_id || null;
+
+  // Debounce ô tìm kiếm: gõ phím cập nhật `searchInput` ngay, nhưng việc lọc nặng
+  // (chạy trên toàn bộ vài nghìn dự án) chỉ chạy sau 250ms ngừng gõ → không lag khi nhập.
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchInput), 250);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
   const showToast = useCallback((message: string, kind: ToastKind) => {
     setToast({ message, kind });
@@ -306,16 +319,6 @@ export default function KanbanScreen() {
     });
   }, [subscribeComment]);
 
-  useEffect(() => {
-    const ids = board.projects.map((p) => p.id).filter(Boolean);
-    if (!ids.length) {
-      setCommentIndex({});
-      return;
-    }
-    void fetchProjectCommentIndex(ids)
-      .then(setCommentIndex)
-      .catch(() => setCommentIndex({}));
-  }, [board.projects]);
 
   useEffect(() => {
     void fetchCompanies()
@@ -478,6 +481,43 @@ export default function KanbanScreen() {
   }, [displayStages, filteredProjects]);
 
   const columnProjects = activeStage ? (projectsByStage.get(activeStage.id) || []) : [];
+
+  // Phân trang phía client: chỉ render `visibleCount` card đầu, tải thêm khi cuộn tới cuối.
+  const pagedProjects = useMemo(
+    () => columnProjects.slice(0, visibleCount),
+    [columnProjects, visibleCount],
+  );
+  const hasMoreCards = visibleCount < columnProjects.length;
+
+  // Reset về trang đầu khi đổi cột hoặc đổi bộ lọc.
+  useEffect(() => {
+    setVisibleCount(CARD_PAGE_SIZE);
+  }, [activeStage?.id, search, quickFilter, filterWorkTypeId, filterCompany]);
+
+  const loadMoreCards = useCallback(() => {
+    setVisibleCount((prev) => (prev < columnProjects.length ? prev + CARD_PAGE_SIZE : prev));
+  }, [columnProjects.length]);
+
+  // Chỉ tải comment-index cho các card ĐANG hiển thị (cột active + phân trang),
+  // không tải cho toàn bộ vài nghìn dự án — tránh URL khổng lồ và query nặng.
+  // Merge vào map cũ để badge các cột đã xem trước đó không mất.
+  useEffect(() => {
+    const ids = pagedProjects.map((p) => p.id).filter(Boolean);
+    if (!ids.length) return;
+    void fetchProjectCommentIndex(ids)
+      .then((idx) => setCommentIndex((prev) => ({ ...prev, ...idx })))
+      .catch(() => {});
+  }, [pagedProjects]);
+
+  const columnPickerOptions = useMemo(
+    () =>
+      displayStages.map((s) => {
+        const count = projectsByStage.get(s.id)?.length ?? 0;
+        const icon = s.icon ? `${s.icon} ` : '';
+        return { id: s.id, label: `${icon}${s.name} (${count})` };
+      }),
+    [displayStages, projectsByStage],
+  );
   const filterActive = search.trim().length > 0 || quickFilter !== 'all'
     || !!filterCompany || !!filterWorkTypeId;
 
@@ -591,7 +631,7 @@ export default function KanbanScreen() {
       {/* ── HEADER ── */}
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.appTitle}>Xưởng SX</Text>
+          <Text style={styles.appTitle}>Quản lý sản xuất</Text>
           <Text style={styles.appSub}>Bảng điều hành sản xuất</Text>
         </View>
         <View style={styles.headerBtns}>
@@ -653,15 +693,15 @@ export default function KanbanScreen() {
         <View style={styles.searchBox}>
           <Ionicons name="search-outline" size={17} color={colors.textFaint} />
           <TextInput
-            value={search}
-            onChangeText={setSearch}
+            value={searchInput}
+            onChangeText={setSearchInput}
             placeholder="Tên mã, tên khách, SĐT..."
             placeholderTextColor={colors.textFaint}
             style={styles.searchInput}
             returnKeyType="search"
           />
-          {search ? (
-            <Pressable onPress={() => setSearch('')} hitSlop={8}>
+          {searchInput ? (
+            <Pressable onPress={() => { setSearchInput(''); setSearch(''); }} hitSlop={8}>
               <Ionicons name="close-circle" size={17} color={colors.textFaint} />
             </Pressable>
           ) : null}
@@ -698,6 +738,7 @@ export default function KanbanScreen() {
         {filterActive ? (
           <Pressable
             onPress={() => {
+              setSearchInput('');
               setSearch('');
               setQuickFilter('all');
               setFilterCompany('');
@@ -799,13 +840,19 @@ export default function KanbanScreen() {
           <Ionicons name="chevron-back" size={20} color={canPrev ? colors.text : colors.textFaint} />
         </Pressable>
 
-        <View style={styles.colHeaderCenter}>
+        <Pressable
+          style={styles.colHeaderCenter}
+          onPress={() => setColPickerOpen(true)}
+          disabled={displayStages.length === 0}
+          hitSlop={6}
+        >
           <Text style={styles.colIcon}>{activeStage?.icon || '📋'}</Text>
           <Text style={styles.colName} numberOfLines={1}>{activeStage?.name || '—'}</Text>
           <View style={[styles.colBadge, { backgroundColor: accent }]}>
             <Text style={styles.colBadgeText}>{columnProjects.length}</Text>
           </View>
-        </View>
+          <Ionicons name="chevron-down" size={16} color={colors.textMuted} />
+        </Pressable>
 
         <Pressable
           onPress={() => setActiveIndex((i) => Math.min(displayStages.length - 1, i + 1))}
@@ -845,9 +892,25 @@ export default function KanbanScreen() {
       {/* ── CARD LIST ── */}
       <FlatList
         style={styles.listFlex}
-        data={columnProjects}
+        data={pagedProjects}
         keyExtractor={(item) => item.id}
         contentContainerStyle={[styles.listContent, { paddingBottom: 88 + insets.bottom }]}
+        initialNumToRender={CARD_PAGE_SIZE}
+        maxToRenderPerBatch={CARD_PAGE_SIZE}
+        windowSize={7}
+        removeClippedSubviews
+        onEndReachedThreshold={0.4}
+        onEndReached={loadMoreCards}
+        ListFooterComponent={
+          hasMoreCards ? (
+            <View style={styles.listFooter}>
+              <ActivityIndicator color={colors.primary} size="small" />
+              <Text style={styles.listFooterText}>
+                Đang tải thêm ({pagedProjects.length}/{columnProjects.length})
+              </Text>
+            </View>
+          ) : null
+        }
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -1090,6 +1153,18 @@ export default function KanbanScreen() {
         selectedId={filterWorkTypeId}
         onSelect={setFilterWorkTypeId}
         onClose={() => setWorkTypePickerOpen(false)}
+      />
+
+      <FilterPickerModal
+        visible={colPickerOpen}
+        title="Chọn cột"
+        options={columnPickerOptions}
+        selectedId={activeStage?.id || ''}
+        onSelect={(id) => {
+          const idx = displayStages.findIndex((s) => String(s.id) === String(id));
+          if (idx >= 0) setActiveIndex(idx);
+        }}
+        onClose={() => setColPickerOpen(false)}
       />
 
       <Toast state={toast} />
@@ -1349,5 +1424,7 @@ function createKanbanStyles(c: AppColors) {
 
   emptyBox: { alignItems: 'center', paddingVertical: 52, gap: 10 },
   emptyText: { color: c.textMuted, fontSize: 13, textAlign: 'center' },
+  listFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 16 },
+  listFooterText: { color: c.textMuted, fontSize: 12, fontWeight: '600' },
   });
 }

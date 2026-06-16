@@ -160,7 +160,7 @@ export default function MainTabs() {
 
       <CreateDealModal
         visible={dealOpen}
-        companyId={user?.company_id ?? null}
+        user={user}
         onClose={() => setDealOpen(false)}
         onCreated={(msg) => showToast(msg)}
       />

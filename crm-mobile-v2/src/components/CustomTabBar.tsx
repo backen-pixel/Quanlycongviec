@@ -1,9 +1,10 @@
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import React, { useMemo } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Keyboard, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCreateMenu } from '../context/CreateMenuContext';
+import { useMessenger } from '../context/MessengerContext';
 import { useColors, type ThemeColors } from '../theme';
 import FloatingCreateButton from './FloatingCreateButton';
 
@@ -25,7 +26,22 @@ export default function CustomTabBar({ state, navigation }: BottomTabBarProps) {
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const insets = useSafeAreaInsets();
   const { open, toggle } = useCreateMenu();
+  const { unreadTotal } = useMessenger();
   const padBottom = Math.max(insets.bottom, 10);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, () => setKeyboardVisible(true));
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardVisible(false));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  if (keyboardVisible) return null;
 
   return (
     <View style={[styles.bar, { height: 64 + padBottom, paddingBottom: padBottom }]}>
@@ -56,11 +72,18 @@ export default function CustomTabBar({ state, navigation }: BottomTabBarProps) {
 
         return (
           <Pressable key={route.key} style={styles.tab} onPress={onPress}>
-            <Ionicons
-              name={focused ? meta.iconActive : meta.icon}
-              size={23}
-              color={focused ? Colors.tabActive : Colors.tabInactive}
-            />
+            <View>
+              <Ionicons
+                name={focused ? meta.iconActive : meta.icon}
+                size={23}
+                color={focused ? Colors.tabActive : Colors.tabInactive}
+              />
+              {route.name === 'Messages' && unreadTotal > 0 ? (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeTxt}>{unreadTotal > 99 ? '99+' : unreadTotal}</Text>
+                </View>
+              ) : null}
+            </View>
             <Text style={[styles.label, focused && { color: Colors.tabActive }]}>{meta.label}</Text>
           </Pressable>
         );
@@ -81,4 +104,17 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   tab: { flex: 1, alignItems: 'center', gap: 3 },
   fabSlot: { width: 88, alignItems: 'center' },
   label: { fontSize: 10.5, fontWeight: '700', color: Colors.tabInactive },
+  badge: {
+    position: 'absolute',
+    top: -4,
+    right: -10,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: Colors.blue,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  badgeTxt: { color: '#fff', fontSize: 9, fontWeight: '800' },
 });

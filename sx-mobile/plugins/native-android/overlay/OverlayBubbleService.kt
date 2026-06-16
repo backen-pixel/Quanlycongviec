@@ -521,7 +521,7 @@ class OverlayBubbleService : Service() {
     )
     val notif: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
       .setSmallIcon(android.R.drawable.stat_notify_chat)
-      .setContentTitle("Xưởng SX · Tin nhắn")
+      .setContentTitle("Quản lý sản xuất · Tin nhắn")
       .setContentText("Sẵn sàng nhận tin nhắn")
       .setContentIntent(tap)
       .setOngoing(true)

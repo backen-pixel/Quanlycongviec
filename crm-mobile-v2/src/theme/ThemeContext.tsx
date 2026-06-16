@@ -18,6 +18,7 @@ const STORAGE_KEY = 'crm.theme.mode';
 type ThemeContextValue = {
   mode: ThemeMode;
   colors: ThemeColors;
+  isDark: boolean;
   ready: boolean;
   setMode: (m: ThemeMode) => void;
   toggle: () => void;
@@ -69,7 +70,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }, [persist]);
 
   const value = useMemo<ThemeContextValue>(
-    () => ({ mode, colors: Palettes[mode], ready, setMode, toggle }),
+    () => ({ mode, colors: Palettes[mode], isDark: mode === 'dark', ready, setMode, toggle }),
     [mode, ready, setMode, toggle],
   );
 
@@ -80,7 +81,7 @@ export function useTheme(): ThemeContextValue {
   const ctx = useContext(ThemeContext);
   // Fallback an toàn nếu dùng ngoài Provider (Palettes đọc lúc runtime nên không lỗi).
   if (ctx) return ctx;
-  return { mode: 'dark', colors: Palettes.dark, ready: false, setMode: () => {}, toggle: () => {} };
+  return { mode: 'dark', colors: Palettes.dark, isDark: true, ready: false, setMode: () => {}, toggle: () => {} };
 }
 
 export function useColors(): ThemeColors {

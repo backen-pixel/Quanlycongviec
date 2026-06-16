@@ -54,6 +54,26 @@ async function runMigrations() {
     console.log('⚠️ push_device_tokens check error:', e.message);
   }
 
+  // ═══ 5. messenger_groups.avatar (đổi avatar nhóm chat) ═══
+  try {
+    const { pgSessionQuery, isPgEnabled } = require('../config/db');
+    if (isPgEnabled()) {
+      await pgSessionQuery('ALTER TABLE messenger_groups ADD COLUMN IF NOT EXISTS avatar TEXT');
+      console.log('✅ messenger_groups.avatar OK');
+    } else {
+      const { error } = await supabase.from('messenger_groups').select('avatar').limit(1);
+      if (error && error.message.includes('avatar')) {
+        console.log(
+          '⚠️ messenger_groups.avatar missing. Chạy backend/migrations/279_messenger_group_avatar.sql trên Supabase SQL Editor.',
+        );
+      } else {
+        console.log('✅ messenger_groups.avatar OK');
+      }
+    }
+  } catch (e) {
+    console.log('⚠️ messenger_groups.avatar check error:', e.message);
+  }
+
   console.log('🔄 Migration check complete.');
 }
 

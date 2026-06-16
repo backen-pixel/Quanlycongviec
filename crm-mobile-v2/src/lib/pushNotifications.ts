@@ -85,6 +85,19 @@ function handleNotificationData(data: Record<string, unknown> | undefined): void
     navigate('Events');
     return;
   }
+  if (
+    type === 'messenger_chat'
+    || entity === 'messenger_group'
+    || data.group_id
+    || data.entity_id
+  ) {
+    const groupId = String(data.group_id || data.entity_id || '');
+    const title = String(data.group_name || data.title || 'Tin nhắn');
+    if (groupId) {
+      navigate('ChatDetail', { threadId: groupId, title });
+      return;
+    }
+  }
   navigate('Notifications');
 }
 

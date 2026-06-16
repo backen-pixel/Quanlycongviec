@@ -114,7 +114,7 @@ export default function LoginScreen() {
           <View style={styles.brandIcon}>
             <Text style={styles.brandIconTxt}>🏭</Text>
           </View>
-          <Text style={styles.brandTitle}>Xưởng SX</Text>
+          <Text style={styles.brandTitle}>Quản lý sản xuất</Text>
           <Text style={styles.brandTag}>Quản lý sản xuất · đồng bộ hệ thống</Text>
         </View>
 

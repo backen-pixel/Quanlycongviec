@@ -34,6 +34,29 @@ export function initialsFromName(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
+/** Thời gian hoạt động gần nhất — dùng khi user offline. */
+export function formatActivityAgo(iso?: string | null): string {
+  if (!iso) return 'Chưa có hoạt động';
+  const ts = new Date(iso).getTime();
+  if (Number.isNaN(ts)) return 'Chưa có hoạt động';
+  const diff = Date.now() - ts;
+  if (diff < 60_000) return 'Hoạt động vừa xong';
+  if (diff < 3600_000) return `Hoạt động ${Math.floor(diff / 60_000)} phút trước`;
+  if (diff < 86400_000) return `Hoạt động ${Math.floor(diff / 3600_000)} giờ trước`;
+  if (diff < 86400_000 * 7) return `Hoạt động ${Math.floor(diff / 86400_000)} ngày trước`;
+  return `Hoạt động ${new Date(iso).toLocaleDateString('vi-VN', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  })}`;
+}
+
+/** Nhãn trạng thái offline cho messenger (online dùng chấm xanh trên avatar). */
+export function formatPresenceLabel(online: boolean, lastPingAt?: string | null): string {
+  if (online) return '';
+  return formatActivityAgo(lastPingAt);
+}
+
 /** Nhãn thời gian tương đối ngắn gọn (cho list tin nhắn / ghi âm). */
 export function relativeTime(iso?: string | null): string {
   if (!iso) return '';
