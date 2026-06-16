@@ -129,7 +129,7 @@ const RecCard = React.memo(function RecCard({
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const canDelete = !!(myId && rec.userId && rec.userId === myId);
-  const canBootstrap = !rec.linked && !!rec.phoneNumber && rec.phone !== '—';
+  const canBootstrap = true;
   const canRelink = !!rec.phoneNumber && (!rec.leadId || !rec.customerId);
   return (
     <View style={styles.card}>
@@ -181,7 +181,7 @@ const RecCard = React.memo(function RecCard({
         {canBootstrap ? (
           <ActionBtn
             icon="add-circle"
-            label="Tạo KH + Lead"
+            label={rec.leadId ? 'Tạo thêm Lead/Deal' : rec.customerId ? 'Tạo Lead/Deal' : 'Tạo KH + Lead'}
             wide
             onPress={() => onBootstrap(rec)}
             disabled={busyId === rec.id}
@@ -251,6 +251,8 @@ export default function RecordingsScreen() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [bootstrapRec, setBootstrapRec] = useState<RecordingItem | null>(null);
   const [bootstrapName, setBootstrapName] = useState('');
+  const [bootstrapPhone, setBootstrapPhone] = useState('');
+  const [bootstrapType, setBootstrapType] = useState<'lead' | 'deal'>('lead');
   const [bootstrapBusy, setBootstrapBusy] = useState(false);
 
   const load = useCallback(async (isRefresh = false) => {
@@ -331,30 +333,46 @@ export default function RecordingsScreen() {
 
   const openBootstrap = (rec: RecordingItem) => {
     setBootstrapRec(rec);
-    setBootstrapName(rec.phone !== '—' ? `Khách ${rec.phone}` : '');
+    setBootstrapName(rec.customerName || (rec.phone !== '—' ? `Khách ${rec.phone}` : ''));
+    setBootstrapPhone(rec.phone !== '—' ? rec.phone : '');
+    setBootstrapType('lead');
   };
 
   const submitBootstrap = async () => {
     if (!bootstrapRec) return;
+    const hasCustomer = !!bootstrapRec.customerId;
     const name = bootstrapName.trim();
-    if (!name) {
-      Alert.alert('Tạo KH', 'Nhập tên khách hàng.');
+    const phone = bootstrapPhone.replace(/\s+/g, '').trim();
+    if (!hasCustomer && !name) {
+      Alert.alert('Tạo Lead/Deal', 'Nhập tên khách hàng.');
+      return;
+    }
+    if (!hasCustomer && !phone) {
+      Alert.alert('Tạo Lead/Deal', 'Nhập số điện thoại.');
+      return;
+    }
+    if (bootstrapType === 'deal' && !user?.company_id) {
+      Alert.alert('Tạo Deal', 'Cần company_id — đăng nhập lại hoặc chọn công ty trên web.');
       return;
     }
     setBootstrapBusy(true);
     try {
+      const titleLabel = phone || name || bootstrapRec.customerName || 'Ghi âm';
       await bootstrapCrmFromRecording(bootstrapRec.id, {
-        full_name: name,
-        title: `Lead — ${bootstrapRec.phone}`,
-        type: 'lead',
-        company_id: user?.company_id || undefined,
+        full_name: name || undefined,
+        title: `${bootstrapType === 'deal' ? 'Deal' : 'Lead'} — ${titleLabel}`,
+        type: bootstrapType,
+        company_id: bootstrapType === 'deal' ? user?.company_id || undefined : undefined,
+        phone_number: !bootstrapRec.phoneNumber && phone ? phone : undefined,
+        force_new: true,
       });
       setBootstrapRec(null);
       setBootstrapName('');
+      setBootstrapPhone('');
       await load(true);
-      Alert.alert('Tạo KH + Lead', 'Đã tạo và gắn vào bản ghi.');
+      Alert.alert('Tạo Lead/Deal', 'Đã tạo và gắn vào bản ghi.');
     } catch (e) {
-      Alert.alert('Tạo KH + Lead', formatApiError(e));
+      Alert.alert('Tạo Lead/Deal', formatApiError(e));
     } finally {
       setBootstrapBusy(false);
     }
@@ -454,16 +472,51 @@ export default function RecordingsScreen() {
       <Modal visible={!!bootstrapRec} transparent animationType="fade" onRequestClose={() => setBootstrapRec(null)}>
         <Pressable style={styles.modalBackdrop} onPress={() => setBootstrapRec(null)}>
           <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.modalTitle}>Tạo KH + Lead</Text>
-            <Text style={styles.modalSub}>SĐT: {bootstrapRec?.phone || '—'}</Text>
-            <TextInput
-              style={styles.modalInput}
-              placeholder="Tên khách hàng"
-              placeholderTextColor={Colors.textFaint}
-              value={bootstrapName}
-              onChangeText={setBootstrapName}
-              autoFocus
-            />
+            <Text style={styles.modalTitle}>
+              {bootstrapRec?.customerId ? 'Tạo Lead/Deal' : 'Tạo KH + Lead/Deal'}
+            </Text>
+            {bootstrapRec?.customerName ? (
+              <Text style={styles.modalSub}>KH: {bootstrapRec.customerName}</Text>
+            ) : null}
+            {bootstrapRec?.phone !== '—' ? (
+              <Text style={styles.modalSub}>SĐT: {bootstrapRec?.phone}</Text>
+            ) : null}
+            {!bootstrapRec?.customerId ? (
+              <>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="Tên khách hàng"
+                  placeholderTextColor={Colors.textFaint}
+                  value={bootstrapName}
+                  onChangeText={setBootstrapName}
+                  autoFocus
+                />
+                {!bootstrapRec?.phoneNumber ? (
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder="Số điện thoại"
+                    placeholderTextColor={Colors.textFaint}
+                    value={bootstrapPhone}
+                    onChangeText={setBootstrapPhone}
+                    keyboardType="phone-pad"
+                  />
+                ) : null}
+              </>
+            ) : null}
+            <View style={styles.typeRow}>
+              <Pressable
+                style={[styles.typeBtn, bootstrapType === 'lead' && styles.typeBtnActive]}
+                onPress={() => setBootstrapType('lead')}
+              >
+                <Text style={[styles.typeBtnTxt, bootstrapType === 'lead' && styles.typeBtnTxtActive]}>Lead</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.typeBtn, bootstrapType === 'deal' && styles.typeBtnActive]}
+                onPress={() => setBootstrapType('deal')}
+              >
+                <Text style={[styles.typeBtnTxt, bootstrapType === 'deal' && styles.typeBtnTxtActive]}>Deal</Text>
+              </Pressable>
+            </View>
             <View style={styles.modalActions}>
               <Pressable style={styles.modalCancel} onPress={() => setBootstrapRec(null)} disabled={bootstrapBusy}>
                 <Text style={styles.modalCancelTxt}>Hủy</Text>
@@ -630,6 +683,20 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     fontSize: 15,
     backgroundColor: Colors.surfaceSoft,
   },
+  typeRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  typeBtn: {
+    flex: 1,
+    height: 38,
+    borderRadius: Radii.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.surfaceSoft,
+  },
+  typeBtnActive: { backgroundColor: Colors.purple, borderColor: Colors.purple },
+  typeBtnTxt: { color: Colors.textMuted, fontWeight: '800', fontSize: 13 },
+  typeBtnTxtActive: { color: '#fff' },
   modalActions: { flexDirection: 'row', gap: 10, marginTop: 16 },
   modalCancel: {
     flex: 1,

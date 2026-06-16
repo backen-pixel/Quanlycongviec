@@ -194,36 +194,44 @@ r.post('/change-password', auth, async (req, res) => {
 // Thông tin user hiện tại
 r.get('/me', auth, async (req, res) => {
   try {
-    const { data: u } = await supabase.from('users')
-      .select('id,email,full_name,role,avatar,phone,department_id,company_id,position,is_active')
+    const { data: u, error: uErr } = await supabase.from('users')
+      .select('id,email,full_name,role,avatar,phone,department_id,company_id,position,is_active,drive_module')
       .eq('id', req.user.userId).single();
-    if (!u) return res.status(404).json({ error: 'User not found' });
-    let company_id = u.company_id || null;
-    if (!company_id && u.department_id) {
-      const { data: dept } = await supabase.from('departments').select('company_id').eq('id', u.department_id).single();
+    let userRow = u;
+    if (uErr) {
+      const { data: u2 } = await supabase.from('users')
+        .select('id,email,full_name,role,avatar,phone,department_id,company_id,position,is_active')
+        .eq('id', req.user.userId).single();
+      userRow = u2 ? { ...u2, drive_module: null } : null;
+    }
+    if (!userRow) return res.status(404).json({ error: 'User not found' });
+    let company_id = userRow.company_id || null;
+    if (!company_id && userRow.department_id) {
+      const { data: dept } = await supabase.from('departments').select('company_id').eq('id', userRow.department_id).single();
       company_id = dept?.company_id || null;
     }
     let crm_region_ids = [];
     try {
-      const { data: ur } = await supabase.from('user_company_regions').select('region_id').eq('user_id', u.id);
+      const { data: ur } = await supabase.from('user_company_regions').select('region_id').eq('user_id', userRow.id);
       crm_region_ids = (ur || []).map((r) => r.region_id).filter(Boolean);
     } catch (_) {
       crm_region_ids = [];
     }
     res.json({
       user: {
-        id: u.id,
-        userId: u.id,
-        email: u.email,
-        fullName: u.full_name,
-        full_name: u.full_name,
-        role: u.role,
-        avatar: u.avatar,
-        phone: u.phone,
-        department_id: u.department_id,
+        id: userRow.id,
+        userId: userRow.id,
+        email: userRow.email,
+        fullName: userRow.full_name,
+        full_name: userRow.full_name,
+        role: userRow.role,
+        avatar: userRow.avatar,
+        phone: userRow.phone,
+        department_id: userRow.department_id,
         company_id,
         crm_region_ids,
-        position: u.position,
+        drive_module: userRow.drive_module || null,
+        position: userRow.position,
       },
     });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi server' }); }

@@ -102,6 +102,7 @@ const CRM_MENU_TOP_GROUP = {
     { to: '/crm/activity', icon: Activity, label: 'Đang hoạt động' },
     { to: '/social', icon: Share2, label: 'Bảng tin nội bộ' },
     { to: '/tools/voice-recordings', icon: Mic, label: 'Cuộc gọi & ghi âm' },
+    { to: '/drive?module=crm', icon: HardDrive, label: 'Drive CRM' },
   ],
 };
 
@@ -244,6 +245,7 @@ const SX_MENU_GROUPS = [
     emoji: '🏭',
     items: [
       { to: '/sx/dashboard', icon: LayoutDashboard, label: 'Dashboard xưởng', end: true },
+      { to: '/drive?module=sx', icon: HardDrive, label: 'Drive Sản xuất' },
     ]
   },
   {
@@ -338,6 +340,7 @@ const VC_MENU_GROUPS = [
     emoji: '🚚',
     items: [
       { to: '/vc/dashboard', icon: LayoutDashboard, label: 'Dashboard VC', end: true },
+      { to: '/drive?module=vc', icon: HardDrive, label: 'Drive Vận chuyển' },
     ]
   },
   {

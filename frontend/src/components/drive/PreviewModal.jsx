@@ -1,34 +1,287 @@
-import { X, Download, ExternalLink } from 'lucide-react';
-import { driveFormatBytes } from '../../lib/drive';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { X, Download, ExternalLink, Loader2, Pencil, ChevronLeft, ChevronRight } from 'lucide-react';
+import { driveFormatBytes, driveFetchFileBlobUrl, driveFetchPreviewBlobUrl } from '../../lib/drive';
+import { filterImageFiles, isImageMime, isGoogleWorkspaceFile } from './DriveFileViews';
+
+function portal(node) {
+  if (typeof document === 'undefined') return node;
+  return createPortal(node, document.body);
+}
 
 /**
- * PreviewModal — hiện thị preview file Drive.
- * Ưu tiên embed Google Drive (https://drive.google.com/file/d/<id>/preview) cho mọi loại;
- * fallback hiển thị icon + thông tin nếu không có view_url.
+ * PreviewModal — xem file Drive.
+ * Ảnh: full viewport + prev/next trong galleryFiles.
+ * Doc/Sheet: 90% màn hình, embed Google tương tác.
  */
-export default function PreviewModal({ item, onClose, onDownload }) {
-  const preview = item?.preview || {};
-  const mime = item.mime_type || preview.mime_type || '';
-  const isImage = mime.startsWith('image/');
+export default function PreviewModal({ item, onClose, onDownload, galleryFiles }) {
+  const itemIsImage = isImageMime(item?.mime_type || item?.preview?.mime_type, item?.name);
+
+  const gallery = useMemo(() => {
+    if (!itemIsImage) return [];
+    const list = filterImageFiles(galleryFiles);
+    if (list.length) return list;
+    if (item) return [item];
+    return [];
+  }, [galleryFiles, item, itemIsImage]);
+
+  const [index, setIndex] = useState(() => {
+    const i = gallery.findIndex((f) => f.id === item?.id);
+    return i >= 0 ? i : 0;
+  });
+
+  useEffect(() => {
+    if (!itemIsImage) return;
+    const i = gallery.findIndex((f) => f.id === item?.id);
+    if (i >= 0) setIndex(i);
+  }, [item?.id, gallery, itemIsImage]);
+
+  /** Doc/Sheet không dùng gallery — luôn giữ đúng file user bấm. */
+  const currentItem = itemIsImage && gallery.length ? (gallery[index] || item) : item;
+  const preview = currentItem?.preview || {};
+  const mime = currentItem?.mime_type || preview.mime_type || '';
+  const isImage = itemIsImage && isImageMime(mime, currentItem?.name);
   const isVideo = mime.startsWith('video/');
   const isAudio = mime.startsWith('audio/');
-  const embedUrl = preview.embed_url || preview.view_url;
+  const previewMode = preview.preview_mode || (isGoogleWorkspaceFile(mime) ? 'google_edit' : 'iframe');
+  const useGoogleEdit = previewMode === 'google_edit';
+  const usePdfExport = previewMode === 'pdf_export';
+  const editEmbedUrl = preview.edit_embed_url || null;
+  const embedUrl = !usePdfExport && !useGoogleEdit ? (preview.embed_url || preview.view_url) : null;
+  const editUrl = preview.edit_url || preview.view_url;
+  const hasGallery = isImage && gallery.length > 1;
 
-  return (
+  const [imgSrc, setImgSrc] = useState(null);
+  const [pdfSrc, setPdfSrc] = useState(null);
+  const [contentLoading, setContentLoading] = useState(() => previewMode === 'google_edit');
+
+  useEffect(() => {
+    if (useGoogleEdit && editEmbedUrl) setContentLoading(true);
+  }, [currentItem?.id, useGoogleEdit, editEmbedUrl]);
+
+  const goPrev = useCallback((e) => {
+    e?.stopPropagation();
+    setIndex((i) => (i - 1 + gallery.length) % gallery.length);
+  }, [gallery.length]);
+
+  const goNext = useCallback((e) => {
+    e?.stopPropagation();
+    setIndex((i) => (i + 1) % gallery.length);
+  }, [gallery.length]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose?.();
+      if (hasGallery && e.key === 'ArrowLeft') goPrev();
+      if (hasGallery && e.key === 'ArrowRight') goNext();
+    };
+    document.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
+  }, [onClose, hasGallery, goPrev, goNext]);
+
+  useEffect(() => {
+    if (!isImage || !currentItem?.id) return undefined;
+    let blobUrl = null;
+    let cancelled = false;
+    setContentLoading(true);
+    setImgSrc(null);
+
+    (async () => {
+      try {
+        blobUrl = await driveFetchFileBlobUrl(currentItem.id);
+        if (!cancelled) setImgSrc(blobUrl);
+      } catch (_) {
+        const thumb = currentItem.thumbnail_url || preview.thumbnail_url;
+        if (!cancelled) setImgSrc(thumb || null);
+      } finally {
+        if (!cancelled) setContentLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
+  }, [currentItem?.id, currentItem?.thumbnail_url, isImage, preview.thumbnail_url]);
+
+  useEffect(() => {
+    if (isImage || !usePdfExport || !currentItem?.id) return undefined;
+    let blobUrl = null;
+    let cancelled = false;
+    setContentLoading(true);
+    setPdfSrc(null);
+
+    (async () => {
+      try {
+        blobUrl = await driveFetchPreviewBlobUrl(currentItem.id);
+        if (!cancelled) setPdfSrc(blobUrl);
+      } catch (_) {
+        if (!cancelled) setPdfSrc(null);
+      } finally {
+        if (!cancelled) setContentLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
+  }, [currentItem?.id, isImage, usePdfExport]);
+
+  const downloadCurrent = () => onDownload?.(currentItem ?? item);
+
+  if (isImage) {
+    return portal(
+      <div
+        className="fixed inset-0 z-[9999] bg-black"
+        style={{ width: '100vw', height: '100dvh' }}
+        role="dialog"
+        aria-modal="true"
+        aria-label={currentItem.name}
+      >
+        <header
+          className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between gap-3 px-4 py-3 bg-gradient-to-b from-black/80 to-transparent pointer-events-none"
+        >
+          <div className="flex-1 min-w-0 text-white pointer-events-auto">
+            <h2 className="font-medium truncate text-sm" title={currentItem.name}>{currentItem.name}</h2>
+            <p className="text-xs text-white/60">
+              {driveFormatBytes(currentItem.size_bytes)}
+              {hasGallery && <span> · {index + 1} / {gallery.length}</span>}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 pointer-events-auto">
+            <button
+              type="button"
+              onClick={downloadCurrent}
+              className="h-9 px-3 bg-white/10 hover:bg-white/20 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 backdrop-blur"
+            >
+              <Download size={14} /> Tải xuống
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="h-9 w-9 flex items-center justify-center rounded-lg bg-white/10 hover:bg-white/20 text-white backdrop-blur"
+              aria-label="Đóng"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </header>
+
+        {hasGallery && (
+          <>
+            <button
+              type="button"
+              onClick={goPrev}
+              className="absolute left-3 top-1/2 -translate-y-1/2 z-10 h-12 w-12 flex items-center justify-center rounded-full bg-black/40 hover:bg-black/60 text-white backdrop-blur transition"
+              aria-label="Ảnh trước"
+            >
+              <ChevronLeft size={28} />
+            </button>
+            <button
+              type="button"
+              onClick={goNext}
+              className="absolute right-3 top-1/2 -translate-y-1/2 z-10 h-12 w-12 flex items-center justify-center rounded-full bg-black/40 hover:bg-black/60 text-white backdrop-blur transition"
+              aria-label="Ảnh sau"
+            >
+              <ChevronRight size={28} />
+            </button>
+          </>
+        )}
+
+        <div
+          className="absolute inset-0 flex items-center justify-center cursor-zoom-out"
+          onClick={onClose}
+        >
+          {contentLoading ? (
+            <div className="flex flex-col items-center gap-3 text-white/70">
+              <Loader2 size={36} className="animate-spin" />
+              <span className="text-sm">Đang tải ảnh...</span>
+            </div>
+          ) : imgSrc ? (
+            <img
+              key={currentItem.id}
+              src={imgSrc}
+              alt={currentItem.name}
+              className="max-w-[100vw] max-h-[100dvh] w-auto h-auto object-contain select-none cursor-default"
+              onClick={(e) => e.stopPropagation()}
+              draggable={false}
+            />
+          ) : (
+            <div className="text-center text-white/70 pointer-events-auto">
+              <p className="mb-3">Không tải được ảnh.</p>
+              <button
+                type="button"
+                onClick={downloadCurrent}
+                className="px-4 py-2 bg-blue-600 rounded-lg text-white text-sm font-medium"
+              >
+                Tải xuống để xem
+              </button>
+            </div>
+          )}
+        </div>
+      </div>,
+    );
+  }
+
+  return portal(
     <div
-      className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
+      className="fixed inset-0 z-[9999] bg-black/75 flex items-center justify-center"
+      style={{ width: '100vw', height: '100dvh' }}
       onClick={onClose}
+      role="dialog"
+      aria-modal="true"
     >
       <div
-        className="bg-white rounded-xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden"
+        className="bg-white rounded-xl shadow-2xl flex flex-col overflow-hidden"
+        style={{
+          width: useGoogleEdit ? '96vw' : '90vw',
+          height: useGoogleEdit ? '96vh' : '90vh',
+          maxWidth: useGoogleEdit ? '96vw' : '90vw',
+          maxHeight: useGoogleEdit ? '96vh' : '90vh',
+        }}
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="h-14 px-4 border-b flex items-center justify-between gap-3">
+        <header className={`px-4 border-b flex items-center justify-between gap-3 shrink-0 ${useGoogleEdit ? 'py-2.5 min-h-[3.5rem]' : 'h-14'}`}>
           <div className="flex-1 min-w-0">
-            <h2 className="font-semibold text-slate-800 truncate" title={item.name}>{item.name}</h2>
-            <p className="text-xs text-slate-400">{mime || 'unknown'} · {driveFormatBytes(item.size_bytes)}</p>
+            <h2 className="font-semibold text-slate-800 truncate" title={currentItem.name}>{currentItem.name}</h2>
+            <p className="text-xs text-slate-400">
+              {mime || 'unknown'} · {driveFormatBytes(currentItem.size_bytes)}
+              {useGoogleEdit && <span className="text-emerald-600"> · Chỉnh sửa trực tiếp</span>}
+              {usePdfExport && <span className="text-slate-400"> · Xem PDF</span>}
+            </p>
+            {useGoogleEdit && (
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Nếu không thấy thanh công cụ, bấm <strong>Chỉnh sửa (tab mới)</strong> hoặc đăng nhập Google trên trình duyệt.
+              </p>
+            )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
+            {useGoogleEdit && editUrl && (
+              <a
+                href={editUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="h-9 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5"
+                title="Mở tab mới với đầy đủ thanh công cụ Google"
+              >
+                <Pencil size={14} /> Chỉnh sửa (tab mới)
+              </a>
+            )}
+            {editUrl && isGoogleWorkspaceFile(mime) && !useGoogleEdit && (
+              <a
+                href={editUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="h-9 px-3 border rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-slate-50"
+              >
+                <Pencil size={14} /> Chỉnh sửa
+              </a>
+            )}
             {preview.view_url && (
               <a
                 href={preview.view_url}
@@ -36,47 +289,84 @@ export default function PreviewModal({ item, onClose, onDownload }) {
                 rel="noopener noreferrer"
                 className="h-9 px-3 border rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-slate-50"
               >
-                <ExternalLink size={14} /> Mở Google Drive
+                <ExternalLink size={14} /> Google Drive
               </a>
             )}
             <button
-              onClick={onDownload}
+              type="button"
+              onClick={downloadCurrent}
               className="h-9 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5"
             >
               <Download size={14} /> Tải xuống
             </button>
-            <button onClick={onClose} className="h-9 w-9 flex items-center justify-center rounded-lg hover:bg-slate-100">
+            <button type="button" onClick={onClose} className="h-9 w-9 flex items-center justify-center rounded-lg hover:bg-slate-100">
               <X size={16} />
             </button>
           </div>
         </header>
-        <div className="flex-1 bg-slate-900 overflow-hidden flex items-center justify-center">
-          {embedUrl ? (
+        <div className="flex-1 bg-slate-100 overflow-hidden flex items-center justify-center min-h-0 relative">
+          {contentLoading && !useGoogleEdit ? (
+            <div className="flex flex-col items-center gap-3 text-slate-500">
+              <Loader2 size={32} className="animate-spin" />
+              <span className="text-sm">Đang tải xem trước...</span>
+            </div>
+          ) : useGoogleEdit && editEmbedUrl ? (
+            <>
+              {contentLoading && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-slate-500 bg-slate-100 z-10">
+                  <Loader2 size={32} className="animate-spin" />
+                  <span className="text-sm">Đang mở trình soạn thảo...</span>
+                </div>
+              )}
+              <iframe
+                src={editEmbedUrl}
+                className="w-full h-full bg-white border-0"
+                title={currentItem.name}
+                allow="clipboard-read; clipboard-write; autoplay; encrypted-media; fullscreen"
+                onLoad={() => setContentLoading(false)}
+              />
+            </>
+          ) : usePdfExport && pdfSrc ? (
+            <iframe
+              src={pdfSrc}
+              className="w-full h-full bg-white border-0"
+              title={currentItem.name}
+            />
+          ) : embedUrl ? (
             <iframe
               src={embedUrl}
-              className="w-full h-full bg-white"
-              title={item.name}
+              className="w-full h-full bg-white border-0"
+              title={currentItem.name}
               allow="autoplay; encrypted-media; fullscreen"
             />
-          ) : isImage && preview.thumbnail_url ? (
-            <img src={preview.thumbnail_url} alt={item.name} className="max-w-full max-h-full object-contain" />
           ) : (
-            <div className="text-center text-slate-300">
-              <p className="mb-2">Không có bản xem trước trực tiếp.</p>
-              <button onClick={onDownload} className="px-4 py-2 bg-blue-600 rounded-lg text-white text-sm font-medium">
-                Tải xuống để xem
-              </button>
+            <div className="text-center text-slate-500 p-6">
+              <p className="mb-3">Không có bản xem trước trực tiếp.</p>
+              {editUrl && (
+                <a
+                  href={editUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 rounded-lg text-white text-sm font-medium mb-2"
+                >
+                  <ExternalLink size={14} /> Mở trên Google Drive
+                </a>
+              )}
+              <div>
+                <button type="button" onClick={downloadCurrent} className="px-4 py-2 border rounded-lg text-sm font-medium hover:bg-slate-50">
+                  Tải xuống để xem
+                </button>
+              </div>
             </div>
           )}
-          {/* Audio: phát đè */}
-          {isAudio && !embedUrl && (
+          {isAudio && !embedUrl && !pdfSrc && (
             <audio controls src={preview.view_url} className="w-3/4" />
           )}
-          {isVideo && !embedUrl && (
+          {isVideo && !embedUrl && !pdfSrc && (
             <video controls src={preview.view_url} className="max-w-full max-h-full" />
           )}
         </div>
       </div>
-    </div>
+    </div>,
   );
 }

@@ -66,6 +66,22 @@ function leadTypeLabel(type) {
   return type || 'CRM';
 }
 
+function recordingCustomerId(r) {
+  return r?.customer_id || r?.customer?.id || '';
+}
+
+function recordingLeadId(r) {
+  return r?.lead_id || r?.lead?.id || '';
+}
+
+function recordingHasCustomer(r) {
+  return !!recordingCustomerId(r);
+}
+
+function recordingHasLead(r) {
+  return !!recordingLeadId(r);
+}
+
 export default function VoiceRecordingsPage() {
   const { user } = useAuth();
   const isAdmin = isAdminLike(user);
@@ -123,7 +139,8 @@ export default function VoiceRecordingsPage() {
   const [bootTitle, setBootTitle] = useState('');
   const [bootType, setBootType] = useState('lead');
   const [bootCompanyId, setBootCompanyId] = useState('');
-  const [companies, setCompanies] = useState([]);
+  const [bootPhone, setBootPhone] = useState('');
+  const [bootErr, setBootErr] = useState('');
   const [savingBootstrap, setSavingBootstrap] = useState(false);
 
   /** Công ty đang áp dụng (mirror CRM dashboardScopeCompanyId). */
@@ -328,27 +345,20 @@ export default function VoiceRecordingsPage() {
 
   const openBootstrap = (row) => {
     setBootstrapRecording(row);
-    setBootFullName('');
-    setBootTitle(row.phone_number ? `Cuộc gọi ${row.phone_number}` : '');
+    setBootFullName(row.customer?.full_name || '');
+    setBootPhone(row.phone_number || '');
+    const label = row.phone_number || row.customer?.full_name || '';
+    setBootTitle(label ? `Cuộc gọi ${label}` : '');
     setBootType('lead');
-    setBootCompanyId('');
+    setBootCompanyId(voiceScopeCompanyId || (user?.company_id ? String(user.company_id) : ''));
+    setBootErr('');
   };
 
   const closeBootstrap = () => {
     setBootstrapRecording(null);
     setSavingBootstrap(false);
+    setBootErr('');
   };
-
-  useEffect(() => {
-    if (!bootstrapRecording || bootType !== 'deal') {
-      setCompanies([]);
-      return;
-    }
-    void api
-      .get('/ecosystem/available-companies')
-      .then(({ data }) => setCompanies(data.companies || []))
-      .catch(() => setCompanies([]));
-  }, [bootstrapRecording, bootType]);
 
   const runAutoRelinkScan = async () => {
     setRelinking(true);
@@ -390,28 +400,41 @@ export default function VoiceRecordingsPage() {
 
   const saveBootstrap = async () => {
     if (!bootstrapRecording) return;
+    const hasCustomer = recordingHasCustomer(bootstrapRecording);
     const name = bootFullName.trim();
-    if (!name) {
-      setErr('Nhập tên khách hàng');
+    const phone = bootPhone.replace(/\s/g, '').trim();
+    const recordingPhone = bootstrapRecording.phone_number
+      ? String(bootstrapRecording.phone_number).replace(/\s/g, '').trim()
+      : '';
+    if (!hasCustomer && !name) {
+      setBootErr('Nhập tên khách hàng');
+      return;
+    }
+    if (!hasCustomer && !phone && !recordingPhone) {
+      setBootErr('Nhập số điện thoại');
       return;
     }
     if (bootType === 'deal' && !bootCompanyId) {
-      setErr('Chọn công ty cho Deal');
+      setBootErr('Chọn công ty cho Deal');
       return;
     }
     setSavingBootstrap(true);
+    setBootErr('');
     setErr('');
     try {
       await api.post(`/voice-recordings/${bootstrapRecording.id}/bootstrap-crm`, {
-        full_name: name,
+        full_name: name || undefined,
         title: bootTitle.trim() || undefined,
         type: bootType,
         company_id: bootType === 'deal' ? bootCompanyId : undefined,
+        phone_number: !recordingPhone && phone ? phone : undefined,
+        force_new: true,
       });
       closeBootstrap();
       await load();
     } catch (e) {
-      setErr(e.response?.data?.error || e.message || 'Tạo CRM thất bại');
+      const msg = e.response?.data?.error || e.message || 'Tạo CRM thất bại';
+      setBootErr(msg);
     }
     setSavingBootstrap(false);
   };
@@ -606,9 +629,9 @@ export default function VoiceRecordingsPage() {
               />
               <p className="mt-1 text-xs text-gray-500">
                 Nếu không nhập ở đây, khi tải lên hệ thống sẽ quét số di động Việt Nam trong ghi chú, tên file và nhãn
-                thiết bị để gắn khách hàng. Sau đó nếu trong phạm vi của bạn chỉ có một cơ hội CRM, hoặc chỉ có một
-                Lead (kèm Deal hay không), hoặc không có Lead nào và chỉ một Deal — hệ thống gắn luôn; nhiều Lead hoặc
-                nhiều Deal song song thì chỉ gắn khách — chọn Deal/Lead trong «Gắn KH / Lead» hoặc «Quét gắn Lead».
+                thiết bị. Sau đó tự ghép lead/deal có sẵn (nếu rõ ràng theo SĐT) hoặc{' '}
+                <span className="font-medium text-amber-800">tạo Lead mới</span> và gắn vào ghi âm. Nhiều lead hoặc
+                nhiều deal song song thì tạo lead mới — vẫn có thể chọn tay trong «Gắn KH / Lead».
               </p>
             </div>
             <div>
@@ -954,16 +977,18 @@ export default function VoiceRecordingsPage() {
                     <ScanLine className={`h-3.5 w-3.5 shrink-0 ${relinkingRowId === r.id ? 'animate-pulse' : ''}`} />
                     {relinkingRowId === r.id ? 'Đang quét…' : 'Quét gắn Lead'}
                   </button>
-                  {!r.customer_id && r.phone_number ? (
-                    <button
-                      type="button"
-                      onClick={() => openBootstrap(r)}
-                      className="h-9 px-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-sm hover:bg-amber-100 flex items-center gap-1 cursor-pointer"
-                    >
-                      <UserPlus className="h-4 w-4" />
-                      Tạo KH + Lead/Deal
-                    </button>
-                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => openBootstrap(r)}
+                    className="h-9 px-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-sm hover:bg-amber-100 flex items-center gap-1 cursor-pointer"
+                  >
+                    <UserPlus className="h-4 w-4" />
+                    {recordingHasLead(r)
+                      ? 'Tạo thêm Lead/Deal'
+                      : recordingHasCustomer(r)
+                        ? 'Tạo Lead/Deal'
+                        : 'Tạo KH + Lead/Deal'}
+                  </button>
                   <button
                     type="button"
                     onClick={() => void remove(r.id)}
@@ -984,21 +1009,70 @@ export default function VoiceRecordingsPage() {
           <div className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-5 space-y-4">
             <h3 className="font-semibold text-gray-900 flex items-center gap-2">
               <UserPlus className="h-5 w-5 text-amber-600" />
-              Tạo khách &amp; Lead/Deal rồi liên kết
+              {recordingHasLead(bootstrapRecording)
+                ? 'Tạo thêm Lead/Deal rồi liên kết'
+                : recordingHasCustomer(bootstrapRecording)
+                  ? 'Tạo Lead/Deal rồi liên kết'
+                  : 'Tạo khách & Lead/Deal rồi liên kết'}
             </h3>
-            <p className="text-xs text-gray-600">
-              Số trên ghi âm: <span className="font-mono font-medium">{bootstrapRecording.phone_number}</span>. Nếu SĐT đã
-              có trong CRM, hệ thống dùng khách đó và chỉ tạo thêm cơ hội.
-            </p>
-            <div>
-              <label className="text-xs font-medium text-gray-500 uppercase">Tên khách hàng *</label>
-              <input
-                value={bootFullName}
-                onChange={(e) => setBootFullName(e.target.value)}
-                className="mt-1 w-full h-9 px-3 border rounded-lg text-sm"
-                placeholder="Họ tên hiển thị trên CRM"
-              />
-            </div>
+            {bootErr ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 text-red-800 text-sm px-3 py-2">
+                {bootErr}
+              </div>
+            ) : null}
+            {recordingHasLead(bootstrapRecording) ? (
+              <p className="text-xs text-amber-800 rounded-lg border border-amber-100 bg-amber-50/80 px-3 py-2">
+                Ghi âm đã gắn {leadTypeLabel(bootstrapRecording.lead?.type)} — thao tác này sẽ tạo cơ hội mới và
+                cập nhật liên kết sang lead/deal vừa tạo.
+              </p>
+            ) : null}
+            {recordingHasCustomer(bootstrapRecording) ? (
+              <p className="text-xs text-gray-600">
+                Khách đã gắn:{' '}
+                <span className="font-medium">{bootstrapRecording.customer?.full_name || '—'}</span>
+                {bootstrapRecording.phone_number ? (
+                  <>
+                    {' '}
+                    · SĐT: <span className="font-mono">{bootstrapRecording.phone_number}</span>
+                  </>
+                ) : null}
+              </p>
+            ) : (
+              <p className="text-xs text-gray-600">
+                {bootstrapRecording.phone_number ? (
+                  <>
+                    Số trên ghi âm: <span className="font-mono font-medium">{bootstrapRecording.phone_number}</span>. Nếu SĐT đã
+                    có trong CRM, hệ thống dùng khách đó và chỉ tạo thêm cơ hội.
+                  </>
+                ) : (
+                  'Nhập tên và SĐT để tạo khách mới (hoặc ghép khách có sẵn theo số).'
+                )}
+              </p>
+            )}
+            {!recordingHasCustomer(bootstrapRecording) ? (
+              <>
+                <div>
+                  <label className="text-xs font-medium text-gray-500 uppercase">Tên khách hàng *</label>
+                  <input
+                    value={bootFullName}
+                    onChange={(e) => setBootFullName(e.target.value)}
+                    className="mt-1 w-full h-9 px-3 border rounded-lg text-sm"
+                    placeholder="Họ tên hiển thị trên CRM"
+                  />
+                </div>
+                {!bootstrapRecording.phone_number ? (
+                  <div>
+                    <label className="text-xs font-medium text-gray-500 uppercase">Số điện thoại *</label>
+                    <input
+                      value={bootPhone}
+                      onChange={(e) => setBootPhone(e.target.value)}
+                      className="mt-1 w-full h-9 px-3 border rounded-lg text-sm"
+                      placeholder="+84…"
+                    />
+                  </div>
+                ) : null}
+              </>
+            ) : null}
             <div>
               <label className="text-xs font-medium text-gray-500 uppercase">Tên Lead / Deal</label>
               <input
@@ -1028,9 +1102,9 @@ export default function VoiceRecordingsPage() {
                   className="mt-1 w-full h-9 px-3 border rounded-lg text-sm bg-white"
                 >
                   <option value="">— Chọn —</option>
-                  {companies.map((c) => (
+                  {filterCompanies.map((c) => (
                     <option key={c.id} value={c.id}>
-                      {c.name || c.short_name || c.id}
+                      {c.short_name || c.name || c.id}
                     </option>
                   ))}
                 </select>
@@ -1046,7 +1120,7 @@ export default function VoiceRecordingsPage() {
                 onClick={() => void saveBootstrap()}
                 className="h-9 px-4 rounded-lg bg-amber-600 text-white text-sm font-medium disabled:opacity-50"
               >
-                {savingBootstrap ? 'Đang tạo…' : 'Tạo &amp; liên kết'}
+                {savingBootstrap ? 'Đang tạo…' : 'Tạo & liên kết'}
               </button>
             </div>
           </div>

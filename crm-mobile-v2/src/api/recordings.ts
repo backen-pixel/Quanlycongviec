@@ -117,7 +117,7 @@ export async function relinkUnassigned(allUsers = false): Promise<{ scanned: num
 
 export async function bootstrapCrmFromRecording(
   id: string,
-  body: { full_name: string; title?: string; type?: 'lead' | 'deal'; company_id?: string },
+  body: { full_name?: string; title?: string; type?: 'lead' | 'deal'; company_id?: string; phone_number?: string; force_new?: boolean },
 ): Promise<RecordingItem> {
   const { data } = await api.post<{ recording?: ApiRecording }>(`/voice-recordings/${id}/bootstrap-crm`, body);
   if (!data?.recording) throw new Error('Không tạo được KH/Lead');

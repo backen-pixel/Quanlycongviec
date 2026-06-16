@@ -37,6 +37,8 @@ import { buildCrmLeadDocTaskSections, normalizeCrmChecklist } from '../lib/crmTa
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
 import { buildSxPipelineStageMeta } from '../lib/sxPipelineRevenue';
 import { ProjectCommentsPanel } from '../components/CommentsPanels';
+import DriveAttachments from '../components/drive/DriveAttachments';
+import { driveLinksCountByEntity } from '../lib/drive';
 
 /** Cùng tên tab với LeadDetail (chi tiết deal) — bỏ facebook và calls */
 const DEAL_TAB_KEYS = new Set(['tasks', 'shared-workspace', 'documents', 'notes', 'comments', 'team', 'approvals', 'incidents']);
@@ -973,6 +975,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [loadError, setLoadError] = useState(null);
   const [allUsers, setAllUsers] = useState([]);
   const [projectDocs, setProjectDocs] = useState([]); // production-native documents
+  const [driveFileCount, setDriveFileCount] = useState(0);
   const [taskFiles, setTaskFiles] = useState([]); // task file attachments
   const [projectActivities, setProjectActivities] = useState([]); // production-native activities
   const [showAddActivity, setShowAddActivity] = useState(false);
@@ -1179,6 +1182,16 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       setSearchParams(p, { replace: true });
     }
   }, [id, searchParams, moduleKey, setSearchParams]);
+
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    const entityType = moduleKey === 'vc' ? 'vc_project' : 'production_project';
+    driveLinksCountByEntity(entityType, id)
+      .then((count) => { if (!cancelled) setDriveFileCount(count); })
+      .catch(() => { if (!cancelled) setDriveFileCount(0); });
+    return () => { cancelled = true; };
+  }, [id, moduleKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2335,6 +2348,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               {tabBtn('tasks', `✅ Công việc${taskCount ? ` (${taskCount})` : ''}`)}
               {crmLeadId && moduleKey !== 'vc' && tabBtn('shared-workspace', '🤝 Không gian chung')}
               {tabBtn('documents', `📋 Tài liệu (${documentsForZipTotal})`)}
+              {tabBtn('drive', `☁️ Drive (${driveFileCount})`)}
               {tabBtn('notes', `📝 Ghi chú (${sharedNotes.length})`)}
               {tabBtn('comments', `💬 Bình luận${commentCount > 0 ? ` (${commentCount})` : ''}`)}
               {tabBtn('incidents', incidents.filter(i => i.status === 'open' || i.status === 'in_progress').length > 0
@@ -2503,6 +2517,15 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     </div>
                   )}
                 </>
+              )}
+
+              {/* Drive — file gắn từ Google Drive */}
+              {activeTab === 'drive' && (
+                <DriveAttachments
+                  entityType={moduleKey === 'vc' ? 'vc_project' : 'production_project'}
+                  entityId={id}
+                  onCountChange={setDriveFileCount}
+                />
               )}
 
               {/* Hoạt động */}
