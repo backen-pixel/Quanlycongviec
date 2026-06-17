@@ -1,9 +1,10 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { formatDate } from '../lib/utils';
+import { loadXlsx } from '../lib/xlsxLoader';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import {
   getStoredCrmFilterCompanyId,
@@ -26,7 +27,25 @@ import {
   CheckCircle2,
   Circle,
   ArrowRightCircle,
+  Download,
+  ChevronDown,
 } from 'lucide-react';
+
+function parseStageIdsFromSearchParams(sp) {
+  const multi = sp.get('stage_ids');
+  if (multi) return multi.split(',').map((s) => s.trim()).filter(Boolean);
+  const single = sp.get('stage_id');
+  return single ? [single] : [];
+}
+
+function sanitizeExcelSheetName(name, fallback = 'Pipeline') {
+  const cleaned = String(name || fallback)
+    .replace(/[\\/*?:\[\]]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 31);
+  return cleaned || fallback;
+}
 
 function startOfDay(d) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -116,9 +135,9 @@ export default function CrmFollowUpCarePage() {
       return 'lead';
     }
   });
-  const [stageId, setStageId] = useState(() => {
-    return new URLSearchParams(window.location.search).get('stage_id') || '';
-  });
+  const [stageIds, setStageIds] = useState(() => parseStageIdsFromSearchParams(new URLSearchParams(window.location.search)));
+  const [stageDropdownOpen, setStageDropdownOpen] = useState(false);
+  const stageDropdownRef = useRef(null);
   const [timePreset, setTimePreset] = useState(() => {
     const qt = new URLSearchParams(window.location.search).get('time');
     return qt || 'w1';
@@ -155,23 +174,35 @@ export default function CrmFollowUpCarePage() {
   const [lostReason, setLostReason] = useState('');
   const [lostSubmitting, setLostSubmitting] = useState(false);
   const [lostError, setLostError] = useState('');
+  const [exporting, setExporting] = useState(false);
 
   // Áp filter từ URL search params mỗi khi URL thay đổi (kể cả khi component đã mount sẵn,
   // ví dụ user bấm thông báo CSKH lần thứ hai). Không xóa params để giữ làm "source of truth"
   // — refresh hay copy URL vẫn lọc đúng.
   useEffect(() => {
     const qPipeline = searchParams.get('pipeline_id');
-    const qStage = searchParams.get('stage_id');
+    const qStageIds = parseStageIdsFromSearchParams(searchParams);
     const qCompany = searchParams.get('company_id');
     const qTime = searchParams.get('time');
     const qType = searchParams.get('type');
 
     if (qType === 'lead' || qType === 'deal') setPipelineType(qType);
     if (qPipeline) setPipelineId(qPipeline);
-    if (qStage) setStageId(qStage);
+    if (qStageIds.length) setStageIds(qStageIds);
     if (qCompany) setFilterCompany(qCompany);
     if (qTime) setTimePreset(qTime);
   }, [searchParams]);
+
+  useEffect(() => {
+    if (!stageDropdownOpen) return undefined;
+    const onDocClick = (e) => {
+      if (stageDropdownRef.current && !stageDropdownRef.current.contains(e.target)) {
+        setStageDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [stageDropdownOpen]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -280,11 +311,12 @@ export default function CrmFollowUpCarePage() {
   }, [isAdmin, filterCompany, pipelines, pipelineId]);
 
   useEffect(() => {
-    if (!stageId || !filterStages.length) return;
+    if (!stageIds.length || !filterStages.length) return;
     if (pipelineId && !filterStages.some((s) => String(s.pipeline_id) === String(pipelineId))) return;
-    const ok = filterStages.some((s) => String(s.id) === String(stageId));
-    if (!ok) setStageId('');
-  }, [stageId, filterStages, pipelineId]);
+    const valid = new Set(filterStages.map((s) => String(s.id)));
+    const next = stageIds.filter((id) => valid.has(String(id)));
+    if (next.length !== stageIds.length) setStageIds(next);
+  }, [stageIds, filterStages, pipelineId]);
 
   useEffect(() => {
     api.get('/users').then((r) => setUsers(r.data?.users || [])).catch(() => setUsers([]));
@@ -313,16 +345,20 @@ export default function CrmFollowUpCarePage() {
     return () => { cancel = true; };
   }, [isAdmin, filterCompany]);
 
-  const buildParams = useCallback(() => {
+  const buildParams = useCallback((overrides = {}) => {
     const params = {
       type: pipelineType,
       limit: 2000,
       offset: 0,
       phone_filter: 'has_phone',
+      ...overrides,
     };
     if (isAdmin && filterCompany) params.company_id = filterCompany;
-    if (pipelineId) params.pipeline_id = pipelineId;
-    if (stageId) params.stage_id = stageId;
+    const pid = overrides.pipeline_id !== undefined ? overrides.pipeline_id : pipelineId;
+    if (pid) params.pipeline_id = pid;
+    const stages = overrides.stage_ids !== undefined ? overrides.stage_ids : stageIds;
+    if (Array.isArray(stages) && stages.length === 1) params.stage_id = stages[0];
+    else if (Array.isArray(stages) && stages.length > 1) params.stage_ids = stages.join(',');
     if (isAdmin && filterAssignee) params.assigned_to = filterAssignee;
     if (filterSourceId) params.source_id = filterSourceId;
     if (debouncedSearch.trim()) params.search = debouncedSearch.trim();
@@ -344,7 +380,7 @@ export default function CrmFollowUpCarePage() {
     isAdmin,
     filterCompany,
     pipelineId,
-    stageId,
+    stageIds,
     filterAssignee,
     filterSourceId,
     debouncedSearch,
@@ -644,6 +680,125 @@ export default function CrmFollowUpCarePage() {
     }).length;
   }, [filtered]);
 
+  const toggleStageId = useCallback((id) => {
+    const sid = String(id);
+    setStageIds((prev) => {
+      if (prev.some((x) => String(x) === sid)) return prev.filter((x) => String(x) !== sid);
+      return [...prev, sid];
+    });
+  }, []);
+
+  /** Các cột sẽ xuất Excel — mỗi cột = 1 sheet. */
+  const stagesForExport = useMemo(() => {
+    const all = filterStages.slice().sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+    if (!stageIds.length) return all;
+    const picked = new Set(stageIds.map(String));
+    return all.filter((s) => picked.has(String(s.id)));
+  }, [filterStages, stageIds]);
+
+  const rowToExcelRow = useCallback((row, careMarkMap) => {
+    const st = row.stage;
+    const assignee = row.assignee || row.lead_owner;
+    const phone = row.display_phone || row.customer?.phone || row.phone;
+    const src = row.source;
+    const nf = row.next_follow_up;
+    const nfMs = nf ? new Date(nf).getTime() : null;
+    const today0 = startOfDay(new Date()).getTime();
+    const overdue = nfMs != null && nfMs < today0;
+    const mark = careMarkMap[row.id];
+    return {
+      'Loại': row.type === 'deal' ? 'Deal' : 'Lead',
+      'Mã': row.code || '',
+      'Tiêu đề': row.title || '',
+      'Khách hàng': row.customer?.full_name || '',
+      'Nguồn': src?.name || '',
+      'SĐT': phone || '',
+      'Cột pipeline': st ? `${st.icon ? `${st.icon} ` : ''}${st.name}` : '',
+      'Theo dõi tiếp': nf ? formatDate(nf) + (overdue ? ' (quá hạn)' : '') : 'Chưa hẹn',
+      'Phụ trách': assignee?.full_name || '',
+      'Đã CSKH': mark ? 'Có' : 'Không',
+      'Ngày tạo': row.created_at ? formatDate(row.created_at) : '',
+      'Lý do mất': row.lost_reason || '',
+    };
+  }, []);
+
+  const exportExcel = useCallback(async () => {
+    if (!stageIds.length) {
+      alert('Vui lòng chọn ít nhất một cột giai đoạn trước khi xuất Excel (mỗi cột = 1 sheet).');
+      return;
+    }
+    if (!stagesForExport.length) {
+      alert('Không tìm thấy cột đã chọn — thử chọn lại pipeline hoặc loại Lead/Deal.');
+      return;
+    }
+    setExporting(true);
+    try {
+      const XLSX = await loadXlsx();
+      const wb = XLSX.utils.book_new();
+      const usedSheetNames = new Set();
+
+      for (const stage of stagesForExport) {
+        const params = buildParams({
+          pipeline_id: stage.pipeline_id || pipelineId || undefined,
+          stage_ids: [String(stage.id)],
+        });
+
+        const { data } = await api.get('/crm/leads', { params });
+        let rows = data?.data || [];
+        if (onlyOpenStages) {
+          rows = rows.filter((l) => {
+            const st = l.stage;
+            return !st?.is_won && !st?.is_lost;
+          });
+        }
+
+        const sheetData = rows.length
+          ? rows.map((row) => rowToExcelRow(row, careMarks))
+          : [{
+              'Loại': '',
+              'Mã': '',
+              'Tiêu đề': '(Không có lead/deal trong cột này)',
+              'Khách hàng': '',
+              'Nguồn': '',
+              'SĐT': '',
+              'Cột pipeline': stage.name || '',
+              'Theo dõi tiếp': '',
+              'Phụ trách': '',
+              'Đã CSKH': '',
+              'Ngày tạo': '',
+              'Lý do mất': '',
+            }];
+
+        let baseName = sanitizeExcelSheetName(stage.name || 'Cot');
+        let sheetName = baseName;
+        let n = 2;
+        while (usedSheetNames.has(sheetName)) {
+          const suffix = ` ${n}`;
+          sheetName = sanitizeExcelSheetName(`${baseName.slice(0, 31 - suffix.length)}${suffix}`);
+          n += 1;
+        }
+        usedSheetNames.add(sheetName);
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetData), sheetName);
+      }
+
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(wb, `CSKH_${dateStamp}.xlsx`);
+    } catch (e) {
+      console.error(e);
+      alert(e.response?.data?.error || e.message || 'Lỗi xuất Excel');
+    } finally {
+      setExporting(false);
+    }
+  }, [
+    stagesForExport,
+    stageIds.length,
+    pipelineId,
+    buildParams,
+    onlyOpenStages,
+    rowToExcelRow,
+    careMarks,
+  ]);
+
   return (
     <div className="space-y-5 max-w-[1400px] mx-auto px-3 sm:px-4 pb-10">
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
@@ -653,14 +808,26 @@ export default function CrmFollowUpCarePage() {
             CSKH — Lead theo tuổi & pipeline
           </h1>
         </div>
-        <button
-          type="button"
-          onClick={() => load()}
-          className="inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 cursor-pointer shrink-0"
-        >
-          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-          Làm mới
-        </button>
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => void exportExcel()}
+            disabled={exporting || loading}
+            className="inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Xuất Excel — mỗi cột giai đoạn đã chọn = 1 sheet"
+          >
+            <Download className={`h-4 w-4 ${exporting ? 'animate-pulse' : ''}`} />
+            {exporting ? 'Đang xuất…' : 'Xuất Excel'}
+          </button>
+          <button
+            type="button"
+            onClick={() => load()}
+            className="inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 cursor-pointer shrink-0"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            Làm mới
+          </button>
+        </div>
       </div>
 
       <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm space-y-4">
@@ -677,6 +844,7 @@ export default function CrmFollowUpCarePage() {
                 onChange={(e) => {
                   setFilterCompany(e.target.value);
                   setPipelineId('');
+                  setStageIds([]);
                 }}
                 className="h-9 px-2 rounded-lg border border-gray-200 text-sm bg-white"
               >
@@ -694,7 +862,7 @@ export default function CrmFollowUpCarePage() {
               value={pipelineType}
               onChange={(e) => {
                 setPipelineType(e.target.value);
-                setStageId('');
+                setStageIds([]);
               }}
               className="h-9 px-2 rounded-lg border border-gray-200 text-sm bg-white"
             >
@@ -717,19 +885,68 @@ export default function CrmFollowUpCarePage() {
             </select>
           </label>
 
-          <label className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1" ref={stageDropdownRef}>
             <span className="text-xs text-gray-500">Cột giai đoạn</span>
-            <select
-              value={stageId}
-              onChange={(e) => setStageId(e.target.value)}
-              className="h-9 px-2 rounded-lg border border-gray-200 text-sm bg-white"
-            >
-              <option value="">Tất cả cột</option>
-              {filterStages.map((s) => (
-                <option key={s.id} value={s.id}>{s.icon ? `${s.icon} ` : ''}{s.name}</option>
-              ))}
-            </select>
-          </label>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setStageDropdownOpen((o) => !o)}
+                className="w-full h-9 px-2 rounded-lg border border-gray-200 text-sm bg-white flex items-center justify-between gap-2 hover:border-emerald-400 cursor-pointer"
+              >
+                <span className="truncate text-left">
+                  {stageIds.length === 0
+                    ? 'Tất cả cột'
+                    : `${stageIds.length} cột đã chọn`}
+                </span>
+                <ChevronDown className={`h-4 w-4 shrink-0 text-gray-400 transition-transform ${stageDropdownOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {stageDropdownOpen && (
+                <div className="absolute z-30 mt-1 w-full min-w-[14rem] max-h-64 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg py-1">
+                  {filterStages.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-gray-500">Chưa có cột — chọn pipeline CRM.</p>
+                  ) : (
+                    <>
+                      <div className="px-2 py-1 border-b border-gray-100 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setStageIds(filterStages.map((s) => String(s.id)))}
+                          className="text-[11px] text-emerald-700 hover:underline cursor-pointer"
+                        >
+                          Chọn tất cả
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setStageIds([])}
+                          className="text-[11px] text-gray-500 hover:underline cursor-pointer"
+                        >
+                          Bỏ chọn
+                        </button>
+                      </div>
+                      {filterStages.map((s) => {
+                        const checked = stageIds.some((id) => String(id) === String(s.id));
+                        return (
+                          <label
+                            key={s.id}
+                            className={`flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-emerald-50 ${checked ? 'bg-emerald-50/60' : ''}`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleStageId(s.id)}
+                              className="rounded border-gray-300 accent-emerald-600"
+                            />
+                            <span className="truncate">
+                              {s.icon ? `${s.icon} ` : ''}{s.name}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
 
           <label className="flex flex-col gap-1">
             <span className="text-xs text-gray-500 flex items-center gap-1"><CalendarClock className="h-3.5 w-3.5" /> Tuổi lead</span>

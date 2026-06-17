@@ -50,6 +50,11 @@ const {
   fetchLeadMentionMembers,
   logLeadCommentMentionActivity,
 } = require('../helpers/crmLeadCommentMentions');
+const {
+  fetchCrmLeadCommentNotifyUserIds,
+  notifyDealCommentMentions,
+  notifyDealCommentParticipants,
+} = require('../helpers/dealCommentNotifications');
 const { DEFAULT_CHECKLISTS } = require('../helpers/defaultChecklists');
 const { generateFlowTasks, generateStepTasks } = require('../helpers/generateFlowTasks');
 const { autoCreateProjectFromWonDeal } = require('../helpers/autoDealWonProject');
@@ -92,6 +97,8 @@ const {
   autoGenCrmTasksForNewLead,
   applyCrmTaskTemplatesToCompanyRegions,
   resyncCrmPipelineTasksForLead,
+  ensureMissingCrmTasksForPipelineStage,
+  ensureMissingCrmTasksForLead,
   filterCrmTasksForLeadType,
 } = require('../helpers/autoGenCrmTasks');
 const { normalizeTimestamp } = require('../helpers/normalizeTimestamp');
@@ -115,7 +122,7 @@ const {
   attachLeadUserFlagsForList,
   setLeadFlag,
 } = require('../helpers/crmLeadUserFlags');
-const { createFulfillmentChildDeal, applyProductionTemplateToFulfillmentLead } = require('../helpers/projectOrderFulfillment');
+const { createFulfillmentChildDeal, applyProductionTemplateToFulfillmentLead, applyProductionTemplatesOnPipelineEnter, ensureMissingSxTasksForLead } = require('../helpers/projectOrderFulfillment');
 const { isPostgresUniqueViolation, nextTbProjectCode } = require('../helpers/projectCode');
 const { validateProductionCompanyId } = require('../helpers/productionCompanyGate');
 const { assertDealCrmManualStageChange } = require('../helpers/crmDealStageGate');
@@ -4645,6 +4652,24 @@ function uuidQueryOrNull(v) {
   return s || null;
 }
 
+/** stage_id (đơn) hoặc stage_ids (UUID cách nhau bởi dấu phẩy) từ query string. */
+function parseStageIdsFromQuery(reqQuery) {
+  const raw = reqQuery?.stage_ids;
+  if (raw != null && raw !== '') {
+    const parts = String(raw).split(',').map((s) => s.trim()).filter(Boolean);
+    const uuids = parts.filter((s) => isUuidString(s));
+    if (uuids.length) return uuids;
+  }
+  const single = uuidQueryOrNull(reqQuery?.stage_id);
+  return single && isUuidString(single) ? [single] : [];
+}
+
+function applyStageIdFilterToQuery(q, stageIds) {
+  if (!stageIds?.length) return q;
+  if (stageIds.length === 1) return q.eq('stage_id', stageIds[0]);
+  return q.in('stage_id', stageIds);
+}
+
 /** Chỉ chấp nhận YYYY-MM-DD — tránh lỗi cast timestamptz trong RPC Postgres */
 function sanitizeIsoDateQueryParam(v) {
   if (v == null) return null;
@@ -4804,8 +4829,8 @@ async function hydrateCrmLeadsByIdsWithStaff(raw) {
 /** Fallback: dùng .range() — giới hạn parsedLimit dòng để tránh egress lớn. */
 async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
   const { assigneeStrict = false, viewerUserId = null, req: scopeReq = null } = opts;
+  const stageIds = parseStageIdsFromQuery(reqQuery);
   const {
-    stage_id,
     assigned_to,
     source_id,
     search,
@@ -4874,7 +4899,7 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
       .eq('type', type)
       .is('parent_lead_id', null)
       .order(orderByFollowUp ? 'next_follow_up' : 'created_at', { ascending: orderByFollowUp });
-    if (stage_id) q = q.eq('stage_id', stage_id);
+    q = applyStageIdFilterToQuery(q, stageIds);
     if (assigned_to) {
       if (assigneeStrict) q = q.eq('assigned_to', assigned_to);
       else q = q.or(`assigned_to.eq.${assigned_to},lead_owner_id.eq.${assigned_to}`);
@@ -4907,7 +4932,7 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
       .eq('type', type)
       .is('parent_lead_id', null)
       .order(orderByFollowUp ? 'next_follow_up' : 'created_at', { ascending: orderByFollowUp });
-    if (stage_id) q = q.eq('stage_id', stage_id);
+    q = applyStageIdFilterToQuery(q, stageIds);
     if (assigned_to) {
       if (assigneeStrict) q = q.eq('assigned_to', assigned_to);
       else q = q.or(`assigned_to.eq.${assigned_to},lead_owner_id.eq.${assigned_to}`);
@@ -7656,8 +7681,8 @@ r.patch('/leads/:id/stage', async (req, res) => {
         .single());
     }
     
-    // Validate: lead can only move to lead stages, deals to deal stages
-    if (lead?.type !== stage?.pipeline_type) {
+    // Validate: lead/deal chỉ vào cột pipeline_type khớp (lead | deal | both)
+    if (!crmTemplateMatchesLeadType(stage?.pipeline_type, lead?.type)) {
       return res.status(400).json({ error: `${lead?.type === 'lead' ? 'Lead' : 'Deal'} chỉ có thể di chuyển trong pipeline riêng của nó` });
     }
 
@@ -7796,6 +7821,31 @@ r.patch('/leads/:id/stage', async (req, res) => {
     }
     if (error) throw error;
     let responseLead = updatedLeadRow;
+
+    // Bổ sung nhiệm vụ CRM thiếu theo bộ mẫu của cột đích (chỉ thêm phần chưa có).
+    if (isStageChange && stage_id) {
+      try {
+        const taskLeadId = await resolveCrmTaskWriteLeadId(req.params.id);
+        const ensureResult = await ensureMissingCrmTasksForPipelineStage({
+          leadId: taskLeadId,
+          pipelineStageId: stage_id,
+          userId: req.user.userId,
+          req,
+        });
+        if (ensureResult.created > 0) {
+          console.log(
+            `[crm/stage] ensure missing tasks: +${ensureResult.created} for lead=${taskLeadId} stage=${stage_id}`,
+          );
+          await emitCrmTaskChanged(req, {
+            leadId: taskLeadId,
+            action: 'bulk_created',
+            count: ensureResult.created,
+          });
+        }
+      } catch (ensureErr) {
+        console.warn('[crm/stage] ensureMissingCrmTasksForPipelineStage:', ensureErr.message);
+      }
+    }
 
     // Ghi lịch sử deadline khi đặt deadline lúc chuyển cột.
     if (hasDeadlineInput) {
@@ -7942,12 +7992,29 @@ r.patch('/leads/:id/stage', async (req, res) => {
 
     emitCrmDashboardChanged(req, { type: lead?.type, company_id: lead?.company_id, lead_id: req.params.id, action: 'stage_changed', stage_id });
 
-    // CRM → SX: Sale kéo deal sang cột «Sản xuất» (sync_role) → gán Kanban xưởng
+    // CRM → SX: Sale kéo deal sang cột «Sản xuất» (sync_role) → gán Kanban xưởng + bổ sung nhiệm vụ SX thiếu
     if (lead?.type === 'deal' && stage?.sync_role === 'sx_production') {
       const pidForSx = projectAutoCreated?.project_id || responseLead?.project_id || lead?.project_id;
       if (pidForSx) {
         try {
-          await syncSxKanbanFromCrmProductionStage(req.params.id);
+          const sxSync = await syncSxKanbanFromCrmProductionStage(req.params.id);
+          if (sxSync?.ok && sxSync.sx_pipeline_stage_id) {
+            try {
+              const sxTpl = await applyProductionTemplatesOnPipelineEnter({
+                projectId: pidForSx,
+                pipelineStageId: sxSync.sx_pipeline_stage_id,
+                userId: req.user.userId,
+                req,
+              });
+              if (sxTpl?.created > 0) {
+                console.log(
+                  `[crm/stage] SX templates on CRM→SX: project=${pidForSx} stage=${sxSync.sx_pipeline_stage_id} +${sxTpl.created}`,
+                );
+              }
+            } catch (tplErr) {
+              console.warn('[crm/stage] applyProductionTemplatesOnPipelineEnter:', tplErr.message);
+            }
+          }
         } catch (sxErr) {
           console.warn('[crm/stage] syncSxKanbanFromCrmProductionStage:', sxErr.message);
         }
@@ -12227,6 +12294,16 @@ r.get('/leads/:id/tasks', async (req, res) => {
       data = filterCrmTasksForLeadType(data, lead.type);
     }
 
+    let ownerCompanyId = String(req.query?.owner_company_id || '').trim() || null;
+    if (!ownerCompanyId && lead?.project_id) {
+      const { data: projOwnerEarly } = await supabase
+        .from('projects')
+        .select('company_id')
+        .eq('id', lead.project_id)
+        .maybeSingle();
+      ownerCompanyId = projOwnerEarly?.company_id || null;
+    }
+
     // Đếm số file + ghi chú cho mỗi task (RPC GROUP BY — tránh timeout khi nhiều đính kèm)
     if (data?.length) {
       const taskIds = data.map((t) => t.id);
@@ -12247,8 +12324,16 @@ r.get('/leads/:id/tasks', async (req, res) => {
       const workshopTypeId = String(req.query?.workshop_type_id || '').trim() || null;
       if (workshopTypeId) {
         const { getProductionPipelineStagesForWorkshopType, filterSxTasksToWorkshopPipeline } = require('../helpers/sxPipelineStageSlug');
-        const companyId = lead?.company_id || null;
-        const stages = await getProductionPipelineStagesForWorkshopType(companyId, workshopTypeId);
+        let sxCompanyId = ownerCompanyId || lead?.company_id || null;
+        if (lead?.project_id) {
+          const { data: projSx } = await supabase
+            .from('projects')
+            .select('company_id')
+            .eq('id', lead.project_id)
+            .maybeSingle();
+          sxCompanyId = projSx?.company_id || sxCompanyId;
+        }
+        const stages = await getProductionPipelineStagesForWorkshopType(sxCompanyId, workshopTypeId);
         data = filterSxTasksToWorkshopPipeline(data, stages);
       } else if (lead?.project_id) {
         const { data: proj } = await supabase
@@ -12271,7 +12356,6 @@ r.get('/leads/:id/tasks', async (req, res) => {
 
     const { filterCrmTasksByCompanyScope, sanitizeTasksForSharedWorkspace } = require('../helpers/crossCompanyWorkspace');
     const taskCompanyScope = String(req.query?.task_company_scope || 'own').toLowerCase();
-    let ownerCompanyId = String(req.query?.owner_company_id || '').trim() || null;
     if (!ownerCompanyId && lead?.project_id) {
       const { data: projOwner } = await supabase
         .from('projects')
@@ -12314,6 +12398,115 @@ r.post('/leads/:id/tasks/resync-pipeline', async (req, res) => {
 
     const result = await resyncCrmPipelineTasksForLead(req.params.id, req.user?.userId, req);
     if (!result.ok) return res.status(400).json(result);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Quét & bổ sung nhiệm vụ CRM thiếu theo bộ mẫu pipeline (không xóa task cũ).
+// Body: { pipeline_stage_id?, all_stages?: boolean } — mặc định quét cột hiện tại.
+r.post('/leads/:id/tasks/ensure-missing', async (req, res) => {
+  try {
+    const { data: leadRow } = await supabase
+      .from('crm_leads')
+      .select('id, company_id, region_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!leadRow) return res.status(404).json({ error: 'Lead/deal không tồn tại' });
+
+    const regionCheck = assertLeadReadableByRegionScope(req, leadRow);
+    if (!regionCheck.ok) return res.status(403).json({ error: regionCheck.error });
+
+    const pipelineStageId = req.body?.pipeline_stage_id || null;
+    const allStages = !!req.body?.all_stages;
+
+    const result = await ensureMissingCrmTasksForLead({
+      leadId: req.params.id,
+      userId: req.user?.userId,
+      req,
+      pipelineStageId,
+      allStages,
+    });
+    if (!result.ok) return res.status(400).json(result);
+
+    if (result.created > 0) {
+      await emitCrmTaskChanged(req, {
+        leadId: req.params.id,
+        action: 'bulk_created',
+        count: result.created,
+      });
+    }
+
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Quét & bổ sung nhiệm vụ SX (sx_*) thiếu theo bộ mẫu xưởng (không xóa task cũ).
+r.post('/leads/:id/tasks/ensure-missing-sx', async (req, res) => {
+  try {
+    const targetLeadId = await resolveCrmTaskWriteLeadId(req.params.id);
+    const { data: leadRow } = await supabase
+      .from('crm_leads')
+      .select('id, type, company_id, region_id, sx_template_company_id, project_id')
+      .eq('id', targetLeadId)
+      .maybeSingle();
+    if (!leadRow) return res.status(404).json({ error: 'Deal không tồn tại' });
+    if (leadRow.type !== 'deal') return res.status(400).json({ error: 'Chỉ áp dụng cho deal' });
+
+    const regionCheck = assertLeadReadableByRegionScope(req, leadRow);
+    if (!regionCheck.ok) return res.status(403).json({ error: regionCheck.error });
+
+    let templateSourceCompanyId = null;
+    const bodyPc = req.body?.production_company_id;
+    if (bodyPc != null && String(bodyPc).trim() !== '') {
+      const vPc = await validateProductionCompanyId(bodyPc);
+      if (!vPc.ok) return res.status(400).json({ error: vPc.error, requires_production_company: true });
+      templateSourceCompanyId = vPc.company.id;
+    } else if (leadRow.sx_template_company_id) {
+      const vStored = await validateProductionCompanyId(leadRow.sx_template_company_id);
+      if (vStored.ok) templateSourceCompanyId = vStored.company.id;
+    }
+
+    if (templateSourceCompanyId && leadRow.project_id) {
+      const { data: projRow } = await supabase
+        .from('projects')
+        .select('workshop_type_id, company_id')
+        .eq('id', leadRow.project_id)
+        .maybeSingle();
+      const { applyWorkshopTypeDefaultStaffToProject } = require('../helpers/productionWorkshopTypeStaff');
+      try {
+        await applyWorkshopTypeDefaultStaffToProject(
+          leadRow.project_id,
+          projRow?.company_id || templateSourceCompanyId,
+          projRow?.workshop_type_id || null,
+        );
+      } catch (staffErr) {
+        console.warn('[crm/ensure-sx] apply default staff:', staffErr.message);
+      }
+    }
+
+    const result = await ensureMissingSxTasksForLead({
+      leadId: targetLeadId,
+      userId: req.user?.userId,
+      req,
+      templateSourceCompanyId,
+      dealCompanyId: leadRow.company_id || null,
+      pipelineStageId: req.body?.pipeline_stage_id || null,
+      allPipelineStages: req.body?.all_stages !== false,
+    });
+    if (!result.ok) return res.status(400).json(result);
+
+    if (result.created > 0) {
+      await emitCrmTaskChanged(req, {
+        leadId: targetLeadId,
+        action: 'bulk_created',
+        count: result.created,
+      });
+    }
+
     res.json(result);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -15592,52 +15785,6 @@ r.delete('/planner/items/:id', async (req, res) => {
 // CRM LEAD COMMENTS — bình luận dùng chung cho lead/deal
 // ════════════════════════════════════════════════════════════════════════════
 
-/** Thông báo cho người được @ trong bình luận lead/deal. */
-async function notifyLeadCommentMentions(req, leadId, senderId, commentRow, mentionIds) {
-  const ids = [...new Set((mentionIds || []).map(String).filter(Boolean))]
-    .filter((id) => id !== String(senderId));
-  if (!ids.length) return;
-
-  const senderName = commentRow?.user?.full_name || req.user?.fullName || 'Ai đó';
-  const senderAvatar = commentRow?.user?.avatar || '';
-  let leadTitle = '';
-  let leadCode = '';
-  let leadType = 'lead';
-  try {
-    const { data: leadRow } = await supabase.from('crm_leads')
-      .select('title, code, type')
-      .eq('id', leadId)
-      .maybeSingle();
-    leadTitle = leadRow?.title || '';
-    leadCode = leadRow?.code || '';
-    leadType = leadRow?.type || 'lead';
-  } catch { /* ignore */ }
-
-  const rawBody = String(commentRow?.body || '').trim();
-  const preview = rawBody.length > 160 ? `${rawBody.slice(0, 157)}…` : rawBody;
-  const label = leadTitle || leadCode || 'Lead/Deal';
-
-  await notifyMultiple(
-    req,
-    ids,
-    'comment_added',
-    `${label} · Nhắc bạn`,
-    `${senderName} đã nhắc bạn trong bình luận: ${preview}`,
-    'lead',
-    leadId,
-    {
-      nav_tab: 'comments',
-      mentioned: true,
-      sender_name: senderName,
-      sender_avatar: senderAvatar,
-      lead_title: leadTitle,
-      lead_code: leadCode,
-      lead_type: leadType,
-      comment_id: commentRow?.id != null ? String(commentRow.id) : '',
-    },
-  );
-}
-
 function commentsTableMissing(error) {
   return String(error?.message || '').toLowerCase().includes('crm_lead_comments');
 }
@@ -15768,8 +15915,12 @@ r.post('/leads/:id/comments', async (req, res) => {
     try {
       const leadMembers = await fetchLeadMentionMembers(supabase, leadId);
       const mentionIds = resolveLeadCommentMentionIds(req.body, body, leadMembers, userId);
+      const notifyIds = await fetchCrmLeadCommentNotifyUserIds(supabase, leadId);
+
+      await notifyDealCommentParticipants(req, notifyMultiple, leadId, userId, row, notifyIds, mentionIds);
+
       if (mentionIds.length) {
-        await notifyLeadCommentMentions(req, leadId, userId, row, mentionIds);
+        await notifyDealCommentMentions(req, notifyMultiple, leadId, userId, row, mentionIds);
         const activityRow = await logLeadCommentMentionActivity(supabase, {
           leadId,
           senderId: userId,

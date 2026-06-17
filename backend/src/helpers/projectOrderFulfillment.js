@@ -23,6 +23,9 @@ const {
   legacySxSlugFromStageName,
   getProductionPipelineStagesForWorkshopType,
   filterSxTemplatesToWorkshopPipeline,
+  matchProductionStageForLabel,
+  matchProductionStageForLegacySlug,
+  sxStageSlugFromPipelineRow,
 } = require('./sxPipelineStageSlug');
 
 const SX_TEMPLATE_ITEM_COLS_FULL =
@@ -97,11 +100,73 @@ function sxNoBundleResult(workshopTypeId, companyId, extra = {}) {
   };
 }
 
-function resolveSxTaskStageSlug(prodStageId, slugByProdStageId, slugByTemplateId, templateId) {
+function resolveSxTaskStageSlug(prodStageId, slugByProdStageId, slugByTemplateId, templateId, stageRow = null) {
   if (prodStageId && slugByProdStageId?.has(String(prodStageId))) {
     return slugByProdStageId.get(String(prodStageId));
   }
+  if (stageRow?.id) return sxStageSlugFromPipelineRow(stageRow);
   return slugByTemplateId?.get(String(templateId)) || 'sx_other';
+}
+
+function resolveSxStageFromTemplate(tpl, stageRows, slugByProdStageId, slugByTemplateId) {
+  const prodStageId = tpl?.production_stage_id || null;
+  let matchedStage = prodStageId
+    ? (stageRows || []).find((s) => String(s.id) === String(prodStageId)) || null
+    : null;
+  if (!matchedStage && tpl?.name) {
+    matchedStage = matchProductionStageForLabel(tpl.name, stageRows)
+      || matchProductionStageForLegacySlug(legacySxSlugFromStageName(tpl.name), stageRows);
+  }
+  const effectiveProdStageId = prodStageId || matchedStage?.id || null;
+  const stageSlug = resolveSxTaskStageSlug(
+    effectiveProdStageId,
+    slugByProdStageId,
+    slugByTemplateId,
+    tpl?.id,
+    matchedStage,
+  );
+  return { production_pipeline_stage_id: effectiveProdStageId, stage_slug: stageSlug };
+}
+
+/** Gắn lại production_pipeline_stage_id + stage_slug cho task sx_* legacy (sx_other). */
+async function backfillSxTaskPipelineLinksForLead({ leadId, companyId, workshopTypeId }) {
+  if (!leadId) return { updated: 0 };
+  const stages = await getProductionPipelineStagesForWorkshopType(companyId, workshopTypeId);
+  if (!stages?.length) return { updated: 0 };
+
+  const slugMap = buildSxStageSlugByProductionStageId(stages);
+  const { data: tasks, error } = await supabase
+    .from('crm_tasks')
+    .select('id, title, stage_slug, production_pipeline_stage_id')
+    .eq('lead_id', leadId)
+    .like('stage_slug', 'sx_%');
+  if (error) throw error;
+
+  let updated = 0;
+  for (const t of tasks || []) {
+    const pid = t.production_pipeline_stage_id ? String(t.production_pipeline_stage_id) : null;
+    if (pid && slugMap.has(pid)) {
+      const wantSlug = slugMap.get(pid);
+      if (wantSlug && t.stage_slug !== wantSlug && (t.stage_slug === 'sx_other' || !t.stage_slug)) {
+        const { error: uErr } = await supabase.from('crm_tasks').update({ stage_slug: wantSlug }).eq('id', t.id);
+        if (!uErr) updated += 1;
+      }
+      continue;
+    }
+    if (pid) continue;
+
+    const matched = matchProductionStageForLabel(t.title, stages)
+      || matchProductionStageForLegacySlug(t.stage_slug, stages);
+    if (!matched?.id) continue;
+
+    const wantSlug = slugMap.get(String(matched.id)) || sxStageSlugFromPipelineRow(matched);
+    const { error: uErr } = await supabase.from('crm_tasks').update({
+      production_pipeline_stage_id: matched.id,
+      stage_slug: wantSlug,
+    }).eq('id', t.id);
+    if (!uErr) updated += 1;
+  }
+  return { updated };
 }
 
 function isSxTemplateEvidenceColumnError(err) {
@@ -308,8 +373,13 @@ async function applyProductionTemplateToFulfillmentLead({
       .select('title, stage_slug')
       .eq('lead_id', leadId)
       .like('stage_slug', 'sx_%');
+    const titleKeys = new Set((existingSx || []).map((t) => normalizeSxTaskText(t.title)));
     const keys = new Set((existingSx || []).map((t) => sxTaskFingerprint(t.title, t.stage_slug)));
-    return inserts.filter((row) => !keys.has(sxTaskFingerprint(row.title, row.stage_slug)));
+    return inserts.filter((row) => {
+      const titleKey = normalizeSxTaskText(row.title);
+      if (titleKey && titleKeys.has(titleKey)) return false;
+      return !keys.has(sxTaskFingerprint(row.title, row.stage_slug));
+    });
   };
 
   /** Map stage slug theo TÊN BỘ MẫU (template.name) — fallback khi chưa gắn production_stage_id. */
@@ -471,6 +541,8 @@ async function applyProductionTemplateToFulfillmentLead({
         .map((t) => [String(t.id), t.production_stage_id || null]),
     );
     const slugByProdStageId = await loadSxStageSlugMapForCompany(mustCompanyId, workshopTypeId);
+    const stageRowsStrict = await getProductionPipelineStagesForWorkshopType(mustCompanyId, workshopTypeId);
+    const tplByIdStrict = new Map((templates || []).filter((t) => t?.id).map((t) => [String(t.id), t]));
     const templateOrder = new Map(templateIds.map((id, idx) => [String(id), idx]));
     const sortedItems = [...items].sort((a, b) => {
       const ta = templateOrder.get(String(a.template_id)) ?? 9999;
@@ -484,13 +556,8 @@ async function applyProductionTemplateToFulfillmentLead({
     for (let idx = 0; idx < sortedItems.length; idx++) {
       const it = sortedItems[idx];
       const checklist = toCrmChecklist(it.checklist, mustCompanyId, it);
-      const prodStageId = pipelineColByTemplateId.get(String(it.template_id)) || null;
-      const stageSlug = resolveSxTaskStageSlug(
-        prodStageId,
-        slugByProdStageId,
-        stageSlugByTemplateId,
-        it.template_id,
-      );
+      const tpl = tplByIdStrict.get(String(it.template_id));
+      const sxStage = resolveSxStageFromTemplate(tpl, stageRowsStrict, slugByProdStageId, stageSlugByTemplateId);
       const execCo = resolveExecutorCompanyId(it, mustCompanyId);
       const maps = await loadHandoverMapsCached(handoverCacheStrict, execCo);
       const assigneeIds = resolveSxAssigneesForTemplateItem(it, maps);
@@ -501,7 +568,7 @@ async function applyProductionTemplateToFulfillmentLead({
         checklist,
         status: 'pending',
         priority: it.priority || 'medium',
-        stage_slug: stageSlug,
+        stage_slug: sxStage.stage_slug,
         order_index: Number.isFinite(Number(it.order_index)) ? Number(it.order_index) : (idx + 1),
         assignee_id: assigneeIds[0] || null,
         __template_assignee_ids: assigneeIds,
@@ -511,7 +578,7 @@ async function applyProductionTemplateToFulfillmentLead({
         blocks_stage_advance: !!it.blocks_stage_advance,
         ...sxEvidenceFieldsFromTemplateItem(it),
         ...sxExecutorFieldsFromTemplateItem(it, mustCompanyId),
-        production_pipeline_stage_id: pipelineColByTemplateId.get(String(it.template_id)) || null,
+        production_pipeline_stage_id: sxStage.production_pipeline_stage_id,
       });
     }
 
@@ -729,6 +796,8 @@ async function applyProductionTemplateToFulfillmentLead({
       .map((t) => [String(t.id), t.production_stage_id || null]),
   );
   const slugByProdStageIdLoose = await loadSxStageSlugMapForCompany(targetCompanyId, workshopTypeId);
+  const stageRowsLoose = await getProductionPipelineStagesForWorkshopType(targetCompanyId, workshopTypeId);
+  const tplByIdLoose = new Map((templates || []).filter((t) => t?.id).map((t) => [String(t.id), t]));
 
   const templateOrder = new Map(templateIds.map((id, idx) => [String(id), idx]));
   const sortedItems = [...items].sort((a, b) => {
@@ -743,13 +812,8 @@ async function applyProductionTemplateToFulfillmentLead({
   for (let idx = 0; idx < sortedItems.length; idx++) {
     const it = sortedItems[idx];
     const checklist = toCrmChecklist(it.checklist, targetCompanyId, it);
-    const prodStageIdLoose = pipelineColByTemplateId.get(String(it.template_id)) || null;
-    const stageSlug = resolveSxTaskStageSlug(
-      prodStageIdLoose,
-      slugByProdStageIdLoose,
-      stageSlugByTemplateId,
-      it.template_id,
-    );
+    const tpl = tplByIdLoose.get(String(it.template_id));
+    const sxStage = resolveSxStageFromTemplate(tpl, stageRowsLoose, slugByProdStageIdLoose, stageSlugByTemplateId);
     const execCo = resolveExecutorCompanyId(it, targetCompanyId);
     const maps = await loadHandoverMapsCached(handoverCacheLoose, execCo);
     const assigneeIds = resolveSxAssigneesForTemplateItem(it, maps);
@@ -760,7 +824,7 @@ async function applyProductionTemplateToFulfillmentLead({
       description: (it.description || '').trim() || null,
       status: 'pending',
       priority: it.priority || 'medium',
-      stage_slug: stageSlug,
+      stage_slug: sxStage.stage_slug,
       order_index: Number.isFinite(Number(it.order_index)) ? Number(it.order_index) : (idx + 1),
       assignee_id: assigneeIds[0] || null,
       __template_assignee_ids: assigneeIds,
@@ -770,7 +834,7 @@ async function applyProductionTemplateToFulfillmentLead({
       blocks_stage_advance: !!it.blocks_stage_advance,
       ...sxEvidenceFieldsFromTemplateItem(it),
       ...sxExecutorFieldsFromTemplateItem(it, targetCompanyId),
-      production_pipeline_stage_id: pipelineColByTemplateId.get(String(it.template_id)) || null,
+      production_pipeline_stage_id: sxStage.production_pipeline_stage_id,
     });
   }
 
@@ -1247,6 +1311,9 @@ async function applyProductionTemplatesOnPipelineEnter({
   const existingKeys = new Set(
     (existingSx || []).map((t) => sxTaskFingerprint(t.title, t.stage_slug)),
   );
+  const existingTitleKeys = new Set(
+    (existingSx || []).map((t) => normalizeSxTaskText(t.title)),
+  );
 
   const slugByTemplateNameLocal = (nameRaw) => legacySxSlugFromStageName(nameRaw) || 'sx_other';
 
@@ -1294,7 +1361,8 @@ async function applyProductionTemplatesOnPipelineEnter({
       ...sxExecutorFieldsFromTemplateItem(it, ownerCompanyId),
       production_pipeline_stage_id: pipelineStageId,
     };
-    if (!existingKeys.has(sxTaskFingerprint(row.title, row.stage_slug))) inserts.push(row);
+    if (!existingKeys.has(sxTaskFingerprint(row.title, row.stage_slug))
+      && !(normalizeSxTaskText(row.title) && existingTitleKeys.has(normalizeSxTaskText(row.title)))) inserts.push(row);
   }
 
   if (!inserts.length) {
@@ -1362,6 +1430,115 @@ async function applyProductionTemplatesOnPipelineEnter({
   };
 }
 
+/**
+ * Quét & bổ sung nhiệm vụ SX (sx_*) thiếu theo bộ mẫu xưởng — không xóa task cũ.
+ * 1) Bộ mặc định theo công ty + phân loại (applyProductionTemplateToFulfillmentLead, force=false)
+ * 2) Bộ gắn từng cột pipeline (applyProductionTemplatesOnPipelineEnter cho mọi cột)
+ */
+async function ensureMissingSxTasksForLead({
+  leadId,
+  userId,
+  req = null,
+  templateSourceCompanyId = null,
+  dealCompanyId = null,
+  pipelineStageId = null,
+  allPipelineStages = true,
+}) {
+  if (!leadId || !userId) {
+    return { ok: false, error: 'Thiếu lead/user', created: 0 };
+  }
+
+  const { data: leadRow, error: leadErr } = await supabase
+    .from('crm_leads')
+    .select('id, type, company_id, project_id, sx_template_company_id')
+    .eq('id', leadId)
+    .maybeSingle();
+  if (leadErr) throw leadErr;
+  if (!leadRow?.id) return { ok: false, error: 'Deal không tồn tại', created: 0 };
+  if (leadRow.type !== 'deal') return { ok: false, error: 'Chỉ áp dụng cho deal', created: 0 };
+
+  const effectiveTemplateCo = templateSourceCompanyId || leadRow.sx_template_company_id || null;
+  const effectiveDealCo = dealCompanyId || leadRow.company_id || null;
+
+  const stageResults = [];
+  let totalCreated = 0;
+  let projectRow = null;
+  if (leadRow.project_id) {
+    const { data: project } = await supabase
+      .from('projects')
+      .select('id, company_id, workshop_type_id')
+      .eq('id', leadRow.project_id)
+      .maybeSingle();
+    projectRow = project || null;
+  }
+
+  const bulk = await applyProductionTemplateToFulfillmentLead({
+    req,
+    leadId,
+    createdBy: userId,
+    force: false,
+    requireTemplateCompanyMatch: false,
+    dealCompanyId: effectiveDealCo,
+    templateSourceCompanyId: effectiveTemplateCo,
+  });
+  totalCreated += bulk.created || 0;
+  stageResults.push({ scope: 'default_bundles', ...bulk });
+
+  if (projectRow?.id && (allPipelineStages || pipelineStageId)) {
+      let stageIds = [];
+      if (pipelineStageId) {
+        stageIds = [pipelineStageId];
+      } else if (allPipelineStages) {
+        const co = projectRow.company_id || effectiveTemplateCo || null;
+        let q = supabase
+          .from('production_pipeline_stages')
+          .select('id, bucket_slug')
+          .eq('is_active', true)
+          .order('order_index');
+        if (co) q = q.eq('company_id', co);
+        if (projectRow.workshop_type_id) q = q.eq('workshop_type_id', projectRow.workshop_type_id);
+        const { data: stages, error: stErr } = await q;
+        if (stErr) throw stErr;
+        stageIds = (stages || [])
+          .filter((s) => String(s.bucket_slug || '') !== 'won_pending')
+          .map((s) => s.id);
+      }
+
+      for (const sid of stageIds) {
+        const r = await applyProductionTemplatesOnPipelineEnter({
+          projectId: projectRow.id,
+          pipelineStageId: sid,
+          userId,
+          req,
+        });
+        totalCreated += r.created || 0;
+        stageResults.push({ scope: 'pipeline_column', pipeline_stage_id: sid, ...r });
+      }
+  }
+
+  const backfillCo = effectiveTemplateCo || projectRow?.company_id || effectiveDealCo || null;
+  const backfill = await backfillSxTaskPipelineLinksForLead({
+    leadId,
+    companyId: backfillCo,
+    workshopTypeId: projectRow?.workshop_type_id || null,
+  });
+
+  console.log(
+    `[AUTO-TASK] ensure SX: lead=${leadId} created=${totalCreated} backfill=${backfill.updated || 0} `
+    + `bundles=${bulk.created || 0} stages_scanned=${stageResults.length}`,
+  );
+
+  return {
+    ok: true,
+    created: totalCreated,
+    backfill_updated: backfill.updated || 0,
+    reason: totalCreated > 0 || (backfill.updated || 0) > 0 ? 'ok' : (bulk.reason || 'no_missing_sx_tasks'),
+    stages: stageResults,
+    company_id: effectiveDealCo,
+    template_company_id: effectiveTemplateCo,
+  };
+}
+
 module.exports = {
   ORDER_PHASES,
   nextDhCode,
@@ -1373,6 +1550,7 @@ module.exports = {
   resolveVcIntakeStageId,
   applyProductionTemplateToFulfillmentLead,
   applyProductionTemplatesOnPipelineEnter,
+  ensureMissingSxTasksForLead,
   migrateDealInternalsToFulfillmentLead,
   syncExistingCrmOrdersToProject,
   scheduleNextSxCrmTaskAfterComplete,

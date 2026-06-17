@@ -491,7 +491,7 @@ function hasExplicitExpectedRevenueStage(stagesDeal) {
 }
 
 /**
- * Deal tính vào «Giá trị kỳ vọng»:
+ * Deal tính vào «Giá trị dự kiến» và «Giá trị kỳ vọng» (cùng phạm vi cột):
  *   - Nếu pipeline có >= 1 cột tick `counts_as_expected_revenue` → chỉ các cột đó.
  *   - Ngược lại → fallback `dealCountsTowardPipelineEstimate` (pipeline mở).
  */
@@ -2500,13 +2500,12 @@ export default function CRMDashboard() {
     const wonValue = won.reduce((s, l) => s + (Number(l.estimated_value) || 0), 0);
     const revenueCompleted = deals.filter((d) => dealIsRevenueCompletedStage(d, stagesDeal));
     const completedRevenueValue = revenueCompleted.reduce((s, l) => s + (Number(l.estimated_value) || 0), 0);
-    const pipelineDeals = deals.filter((d) => dealCountsTowardPipelineEstimate(d, stagesDeal));
-    const expectedDeals = deals.filter((d) => dealCountsTowardExpectedValue(d, stagesDeal));
-    const pipeline_estimated_value = pipelineDeals.reduce(
+    const forecastDeals = deals.filter((d) => dealCountsTowardExpectedValue(d, stagesDeal));
+    const pipeline_estimated_value = forecastDeals.reduce(
       (s, d) => s + (Number(d.estimated_value) || 0),
       0,
     );
-    const expected_value = expectedDeals.reduce(
+    const expected_value = forecastDeals.reduce(
       (s, d) => s + dealWeightedValue(d, stagesDeal),
       0,
     );
@@ -4206,6 +4205,9 @@ export default function CRMDashboard() {
               iconColor="text-sky-700"
               label="Giá trị dự kiến"
               value={formatVND(dealKpisFromFilters.pipeline_estimated_value)}
+              hint={explicitExpectedKvStages
+                ? 'Tổng giá trị dự kiến các cột đã tick «Giá trị kỳ vọng» trong Pipeline Settings'
+                : 'Tổng estimated_value — mặc định loại cột Thắng/Thua/Hoàn thành DT'}
               trend={null}
             />
             <KPICard
@@ -4216,7 +4218,7 @@ export default function CRMDashboard() {
               label="Giá trị kỳ vọng"
               value={formatVND(dealKpisFromFilters.expected_value)}
               hint={explicitExpectedKvStages
-                ? 'Tổng KV các cột đã tick «Giá trị kỳ vọng» trong Pipeline Settings'
+                ? 'Cùng phạm vi cột với «Giá trị dự kiến» — nhân xác suất %'
                 : 'Tổng (giá trị dự kiến × xác suất %) — mặc định loại cột Thắng/Thua/Hoàn thành DT'}
               trend={null}
             />
@@ -5612,8 +5614,8 @@ function KanbanStageCard({
   const columnItemIds = (items || []).map((i) => i.id);
   const columnStagesCtx = [stage];
   const columnRawValue = (items || []).reduce((sum, item) => sum + (Number(item.estimated_value) || 0), 0);
-  const showColumnExpectedKv = pipelineType === 'deal' && (!explicitExpectedKv || !!stage.counts_as_expected_revenue);
-  const columnExpectedValue = showColumnExpectedKv
+  const showColumnForecastKpis = pipelineType === 'deal' && (!explicitExpectedKv || !!stage.counts_as_expected_revenue);
+  const columnExpectedValue = showColumnForecastKpis
     ? (items || []).reduce((sum, item) => (
       dealCountsTowardExpectedValue(item, columnStagesCtx) ? sum + dealWeightedValue(item, columnStagesCtx) : sum
     ), 0)
@@ -5707,15 +5709,13 @@ function KanbanStageCard({
         </div>
         <p className={compact ? 'text-[10px] text-gray-500' : 'text-xs text-gray-500'}>
           {pipelineType === 'deal' ? (
-            <>
-              <span>Dự kiến: {formatVND(columnRawValue)}</span>
-              {showColumnExpectedKv && (
-                <>
-                  <span className="mx-1 text-gray-300">·</span>
-                  <span className="text-violet-700 font-medium">KV: {formatVND(columnExpectedValue)}</span>
-                </>
-              )}
-            </>
+            showColumnForecastKpis ? (
+              <>
+                <span>Dự kiến: {formatVND(columnRawValue)}</span>
+                <span className="mx-1 text-gray-300">·</span>
+                <span className="text-violet-700 font-medium">KV: {formatVND(columnExpectedValue)}</span>
+              </>
+            ) : null
           ) : (
             <>Giá trị: {formatVND(columnRawValue)}</>
           )}

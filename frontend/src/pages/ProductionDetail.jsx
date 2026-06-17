@@ -16,7 +16,11 @@ import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
 import { publicFileUrl as pubUrl, getFileOpenAnchorProps, getFileDownloadAnchorProps } from '../lib/publicFileUrl';
-import UploadFileLightbox, { isUploadImageFile } from '../components/UploadFileLightbox';
+import UploadFileLightbox, {
+  collectUploadLightboxItems,
+  findUploadLightboxIndex,
+  isUploadImageFile,
+} from '../components/UploadFileLightbox';
 import { downloadWorkshopDocumentsZip } from '../lib/workshopDocumentsZipDownload';
 import {
   ArrowLeft, FolderKanban, MessageSquare, Plus, X,
@@ -37,7 +41,7 @@ import {
 import { buildCrmLeadDocTaskSections, normalizeCrmChecklist } from '../lib/crmTaskDocumentTree';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
 import { buildSxPipelineStageMeta } from '../lib/sxPipelineRevenue';
-import { ProjectCommentsPanel } from '../components/CommentsPanels';
+import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
 import DriveAttachments from '../components/drive/DriveAttachments';
 import { driveLinksCountByEntity } from '../lib/drive';
 
@@ -546,7 +550,7 @@ function buildCrmSharedDocSections(docs, taskMetaMap, stageSlugLabelMap = {}) {
 
 /** Khối tài liệu CRM — mỗi file một dòng, nhóm theo giai đoạn → nhiệm vụ */
 function CrmSharedDocumentsPanel({
-  docs, workshopModule, crmLeadId, dealLabel, onVisibilitySaved, taskMetaMap = {}, stageSlugLabelMap = {},
+  docs, workshopModule, crmLeadId, dealLabel, onVisibilitySaved, taskMetaMap = {}, stageSlugLabelMap = {}, onOpenImage,
 }) {
   const { taskSections, manualDocs } = useMemo(
     () => buildCrmSharedDocSections(docs, taskMetaMap, stageSlugLabelMap),
@@ -620,6 +624,7 @@ function CrmSharedDocumentsPanel({
                                   onVisibilitySaved={onVisibilitySaved}
                                   stageSlugLabelMap={stageSlugLabelMap}
                                   taskMetaMap={taskMetaMap}
+                                  onOpenImage={onOpenImage}
                                 />
                               </div>
                             ))}
@@ -649,6 +654,7 @@ function CrmSharedDocumentsPanel({
                   onVisibilitySaved={onVisibilitySaved}
                   stageSlugLabelMap={stageSlugLabelMap}
                   taskMetaMap={taskMetaMap}
+                  onOpenImage={onOpenImage}
                 />
               ))}
             </div>
@@ -660,13 +666,16 @@ function CrmSharedDocumentsPanel({
 }
 
 /** File đính kèm nhiệm vụ — xem ảnh inline, không cần tải */
-function TaskFileRow({ file }) {
-  const [imageLightbox, setImageLightbox] = useState(false);
+function TaskFileRow({ file, onOpenImage }) {
   const rawRef = file.file_url || '';
   const href = rawRef ? pubUrl(rawRef) : '';
   const isImage = href && isUploadImageFile(file.mime_type, file.file_name || rawRef);
   const openProps = href && !isImage ? getFileOpenAnchorProps(rawRef, { fileName: file.file_name }) : null;
   const downloadProps = href ? getFileDownloadAnchorProps(rawRef, { fileName: file.file_name || 'tai-lieu' }) : null;
+
+  const openImage = () => {
+    if (onOpenImage) onOpenImage(rawRef);
+  };
 
   return (
     <div className="bg-gray-50 border rounded-lg overflow-hidden">
@@ -679,7 +688,7 @@ function TaskFileRow({ file }) {
         {href && (
           <div className="shrink-0 flex items-center gap-2">
             {isImage ? (
-              <button type="button" onClick={() => setImageLightbox(true)} className="text-[10px] text-blue-600 hover:underline cursor-pointer">Mở</button>
+              <button type="button" onClick={openImage} className="text-[10px] text-blue-600 hover:underline cursor-pointer">Mở</button>
             ) : openProps ? (
               <a {...openProps} className="text-[10px] text-blue-600 hover:underline">Mở</a>
             ) : null}
@@ -691,19 +700,11 @@ function TaskFileRow({ file }) {
       </div>
       {isImage && href && (
         <div className="px-3 pb-2">
-          <button type="button" onClick={() => setImageLightbox(true)} className="block text-left">
+          <button type="button" onClick={openImage} className="block text-left">
             <img src={href} alt={file.file_name || ''} loading="lazy"
               className="max-h-28 rounded-lg border border-gray-200 object-contain cursor-zoom-in hover:opacity-90 transition-opacity" />
           </button>
         </div>
-      )}
-      {imageLightbox && (
-        <UploadFileLightbox
-          url={href}
-          title={file.file_name}
-          rawPath={rawRef}
-          onClose={() => setImageLightbox(false)}
-        />
       )}
     </div>
   );
@@ -711,11 +712,10 @@ function TaskFileRow({ file }) {
 
 /** Row tài liệu — rich preview như CRM DocumentRow; crmVisibility = chia sẻ từ lead_documents */
 function DocRow({
-  doc, onDelete, workshopModule, onVisibilitySaved, crmPresentation = false, nested = false, stageSlugLabelMap = {}, taskMetaMap = {},
+  doc, onDelete, workshopModule, onVisibilitySaved, crmPresentation = false, nested = false, stageSlugLabelMap = {}, taskMetaMap = {}, onOpenImage,
 }) {
   const [expanded, setExpanded] = useState(false);
   const [showVis, setShowVis] = useState(false);
-  const [imageLightbox, setImageLightbox] = useState(false);
   const [sharedToWorkshop, setSharedToWorkshop] = useState(!!doc.shared_to_workshop);
   const [allowedMods, setAllowedMods] = useState(() => parseShareModules(doc.allowed_share_modules) || []);
   const [savingVis, setSavingVis] = useState(false);
@@ -814,19 +814,17 @@ function DocRow({
               className={`flex items-center gap-2 shrink-0 ${nested ? 'px-1' : 'px-2'}`}
               onClick={(e) => e.stopPropagation()}
             >
-              {fileOpenProps && (
-                isImage ? (
+              {isImage ? (
                   <button
                     type="button"
-                    onClick={() => setImageLightbox(true)}
+                    onClick={() => onOpenImage?.(rawFileRef)}
                     className={`hover:underline ${nested ? 'text-[10px]' : 'text-xs'} text-blue-600 cursor-pointer`}
                   >
                     Mở
                   </button>
-                ) : (
+                ) : fileOpenProps ? (
                   <a {...fileOpenProps} className={`hover:underline ${nested ? 'text-[10px]' : 'text-xs'} text-blue-600`}>Mở</a>
-                )
-              )}
+                ) : null}
               {fileDownloadProps && (
                 <a {...fileDownloadProps} className={`hover:underline ${nested ? 'text-[10px]' : 'text-xs'} text-emerald-600`}>Tải</a>
               )}
@@ -857,7 +855,7 @@ function DocRow({
       )}
       {isImage && !expanded && fileHref && (
         <div className="px-3 pb-2">
-          <button type="button" onClick={() => setImageLightbox(true)} className="block text-left">
+          <button type="button" onClick={() => onOpenImage?.(rawFileRef)} className="block text-left">
             <img src={fileHref} alt={displayTitle} loading="lazy"
               className="max-h-24 rounded-lg border border-gray-200 object-contain cursor-zoom-in hover:opacity-90 transition-opacity" />
           </button>
@@ -866,22 +864,13 @@ function DocRow({
       {expanded && (
         <div className="px-3 pb-3 space-y-2">
           {isImage && fileHref && (
-            <button type="button" onClick={() => setImageLightbox(true)} className="block text-left">
+            <button type="button" onClick={() => onOpenImage?.(rawFileRef)} className="block text-left">
               <img src={fileHref} alt={displayTitle} loading="lazy"
                 className="max-h-64 max-w-full rounded-lg border border-gray-200 object-contain cursor-zoom-in hover:opacity-90" />
             </button>
           )}
           {doc.notes && <div className="bg-white rounded-lg p-3 text-sm text-gray-700 whitespace-pre-wrap border">{doc.notes}</div>}
         </div>
-      )}
-
-      {imageLightbox && isImage && (
-        <UploadFileLightbox
-          url={fileHref}
-          title={displayTitle}
-          rawPath={rawFileRef}
-          onClose={() => setImageLightbox(false)}
-        />
       )}
 
       {showVis && crmShareUi && (
@@ -935,10 +924,10 @@ function WorkshopTasksFallbackPanel({ tasks, moduleLabel, onToggleDone, onEnsure
             className="h-8 px-3 rounded-lg bg-amber-900 text-amber-50 text-xs font-semibold hover:bg-amber-950 disabled:opacity-60"
             title="Tạo deal CRM gắn project_id và gen nhiệm vụ sx_*"
           >
-            {ensuringCrmDeal ? 'Đang gen…' : 'Gen nhiệm vụ SX (tự tạo deal)'}
+            {ensuringCrmDeal ? 'Đang quét…' : 'Bổ sung thiếu SX'}
           </button>
           <p className="text-[11px] text-amber-900/80">
-            Nếu lúc đầu lỗi / mạng chập chờn, bấm nút này để thử lại (không ảnh hưởng nhiệm vụ đang có trên dự án).
+            Tạo deal CRM gắn dự án (nếu chưa có) và bổ sung nhiệm vụ sx_* thiếu theo bộ mẫu xưởng.
           </p>
         </div>
       </div>
@@ -1088,8 +1077,20 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [incidentForm, setIncidentForm] = useState({ title: '', description: '', severity: 'medium' });
   const [savingIncident, setSavingIncident] = useState(false);
   const [commentCount, setCommentCount] = useState(0);
+  const [docLightboxIndex, setDocLightboxIndex] = useState(null);
+
+  const dealIdForCommentCount = project?.crmDeals?.[0]?.id || fallbackDealIdForTasks;
 
   useEffect(() => {
+    if (dealIdForCommentCount) {
+      api.get(`/crm/lead-comments/index?lead_ids=${dealIdForCommentCount}`)
+        .then((r) => {
+          const meta = r.data?.[dealIdForCommentCount] || r.data?.[String(dealIdForCommentCount)];
+          setCommentCount(meta?.count || 0);
+        })
+        .catch(() => setCommentCount(0));
+      return;
+    }
     if (!project?.id) return;
     api.get(`/projects/comments/index?project_ids=${project.id}`)
       .then((r) => {
@@ -1097,7 +1098,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         setCommentCount(meta?.count || 0);
       })
       .catch(() => setCommentCount(0));
-  }, [project?.id]);
+  }, [project?.id, dealIdForCommentCount]);
 
   const noteActivities = useMemo(
     () => (crmActivities || []).filter((a) => a.type === 'note'),
@@ -1123,6 +1124,20 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     () => (project?.sharedDocuments || []).filter((d) => isLeadDocVisibleInModule(d, workshopShareMod)),
     [project?.sharedDocuments, workshopShareMod],
   );
+
+  const docImageGallery = useMemo(
+    () => collectUploadLightboxItems([
+      ...(visibleCrmSharedDocs || []),
+      ...(projectDocs || []),
+      ...(taskFiles || []),
+    ]),
+    [visibleCrmSharedDocs, projectDocs, taskFiles],
+  );
+
+  const openDocImage = useCallback((rawPath) => {
+    const idx = findUploadLightboxIndex(docImageGallery, rawPath);
+    if (idx >= 0) setDocLightboxIndex(idx);
+  }, [docImageGallery]);
 
   const crmDealIdForDocs = project?.crmDeals?.[0]?.id || fallbackDealIdForTasks;
 
@@ -1670,20 +1685,34 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   }, [switchWorkshopModal, switchWorkshopSaving, id, refreshProjectSilently]);
 
   const ensureCrmDealAndSxTasks = useCallback(async () => {
-    if (ensuringCrmDeal) return;
+    if (ensuringCrmDeal || !id) return;
     setEnsuringCrmDeal(true);
     try {
-      // Backend GET /production/projects/:id đã tự đảm bảo có crmDeals + sx_* nếu thiếu.
+      const { data } = await api.post(
+        `/production/projects/${encodeURIComponent(id)}/tasks/ensure-missing-sx`,
+        { all_stages: true },
+      );
+      if ((data.created || 0) > 0) {
+        alert(`Đã bổ sung ${data.created} nhiệm vụ Sản xuất thiếu theo bộ mẫu xưởng.`);
+      } else if (data.error) {
+        alert(data.error);
+      } else if (data.reason === 'no_default_bundle_for_workshop_type' || data.reason === 'no_default_bundle') {
+        alert(
+          'Chưa có bộ mẫu Sản xuất cho phân loại này.\n\n'
+          + 'Vào SX → Bộ mẫu nhiệm vụ: chọn Công ty + Phân loại → tạo/bật bộ mẫu (hoặc «Đặt bộ mặc định deal SX»).',
+        );
+      } else {
+        alert('Đã quét — không thiếu nhiệm vụ Sản xuất nào (hoặc cột chưa có bộ mẫu).');
+      }
       await refreshProjectSilently();
-      // Sau refresh silent, gọi load lại nhẹ để cập nhật fallbackDealIdForTasks nếu cần.
       await load();
     } catch (e) {
       console.error(e);
-      alert(e.response?.data?.error || e.message || 'Không gen được nhiệm vụ SX');
+      alert(e.response?.data?.error || e.message || 'Không bổ sung được nhiệm vụ SX');
     } finally {
       setEnsuringCrmDeal(false);
     }
-  }, [ensuringCrmDeal, refreshProjectSilently]);
+  }, [ensuringCrmDeal, id, refreshProjectSilently, load]);
 
   /** Phải đặt trước mọi return sớm (loadError / loading) — Rules of Hooks */
   const scopedWorkshopTasksForTab = useMemo(
@@ -2544,6 +2573,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     taskMetaMap={crmTaskMetaMap}
                     stageSlugLabelMap={crmStageSlugLabelMap}
                     onVisibilitySaved={refreshProjectSilently}
+                    onOpenImage={openDocImage}
                   />
 
                   {/* Production-native documents */}
@@ -2551,7 +2581,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     <div className="mb-4">
                       <p className="text-xs font-bold text-gray-500 uppercase mb-2">📁 Tài liệu xưởng ({projectDocs.length})</p>
                       <div className="space-y-2">
-                        {projectDocs.map(doc => <DocRow key={doc.id} doc={doc} onDelete={() => deleteProjectDocument(doc.id)} />)}
+                        {projectDocs.map(doc => (
+                          <DocRow key={doc.id} doc={doc} onDelete={() => deleteProjectDocument(doc.id)} onOpenImage={openDocImage} />
+                        ))}
                       </div>
                     </div>
                   )}
@@ -2562,7 +2594,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                       <p className="text-xs font-bold text-gray-500 uppercase mb-2">📌 File đính kèm nhiệm vụ ({taskFiles.length})</p>
                       <div className="space-y-1">
                         {taskFiles.map((f) => (
-                          <TaskFileRow key={f.id} file={f} />
+                          <TaskFileRow key={f.id} file={f} onOpenImage={openDocImage} />
                         ))}
                       </div>
                     </div>
@@ -2801,7 +2833,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               {/* Bình luận deal / dự án — realtime */}
               {activeTab === 'comments' && (
                 project?.id
-                  ? <ProjectCommentsPanel projectId={project.id} onCountChange={setCommentCount} />
+                  ? (crmLeadId
+                    ? <CrmLeadCommentsPanel leadId={crmLeadId} onCountChange={setCommentCount} />
+                    : <ProjectCommentsPanel projectId={project.id} onCountChange={setCommentCount} />)
                   : <p className="text-sm text-gray-500 text-center py-8">Chưa có dữ liệu để bình luận.</p>
               )}
 
@@ -3063,6 +3097,15 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
             </div>
           </div>
         </div>
+      )}
+
+      {docLightboxIndex != null && docImageGallery.length > 0 && (
+        <UploadFileLightbox
+          items={docImageGallery}
+          index={docLightboxIndex}
+          onIndexChange={setDocLightboxIndex}
+          onClose={() => setDocLightboxIndex(null)}
+        />
       )}
     </div>
   );

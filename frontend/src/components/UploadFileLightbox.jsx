@@ -1,19 +1,53 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Download } from 'lucide-react';
-import { getFileDownloadAnchorProps } from '../lib/publicFileUrl';
+import { X, Download, ChevronLeft, ChevronRight } from 'lucide-react';
+import { getFileDownloadAnchorProps, publicFileUrl } from '../lib/publicFileUrl';
 
-/** Xem ảnh upload (/uploads/...) full màn hình — không cần tải file hay mở tab mới. */
-export default function UploadFileLightbox({ url, title, rawPath, onClose }) {
+/** Xem ảnh upload (/uploads/...) full màn hình — hỗ trợ gallery qua lại giữa các ảnh liền kề. */
+export default function UploadFileLightbox({
+  url,
+  title,
+  rawPath,
+  onClose,
+  items: itemsProp,
+  index: indexProp = 0,
+  onIndexChange,
+}) {
+  const items = itemsProp?.length
+    ? itemsProp
+    : (url ? [{ url, title, rawPath }] : []);
+
+  const index = Math.min(Math.max(indexProp ?? 0, 0), Math.max(items.length - 1, 0));
+  const cur = items[index];
+  const multi = items.length > 1;
+  const canPrev = multi && index > 0;
+  const canNext = multi && index < items.length - 1;
+
+  const goPrev = () => {
+    if (!canPrev) return;
+    onIndexChange?.(index - 1);
+  };
+
+  const goNext = () => {
+    if (!canNext) return;
+    onIndexChange?.(index + 1);
+  };
+
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose?.();
+      if (e.key === 'ArrowLeft' && items.length > 1 && index > 0) onIndexChange?.(index - 1);
+      if (e.key === 'ArrowRight' && items.length > 1 && index < items.length - 1) onIndexChange?.(index + 1);
+    };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [index, items.length, onClose, onIndexChange]);
 
-  if (!url) return null;
+  if (!cur?.url) return null;
 
-  const downloadProps = rawPath ? getFileDownloadAnchorProps(rawPath, { fileName: title }) : null;
+  const downloadProps = cur.rawPath
+    ? getFileDownloadAnchorProps(cur.rawPath, { fileName: cur.title })
+    : null;
 
   return createPortal(
     <div
@@ -21,35 +55,72 @@ export default function UploadFileLightbox({ url, title, rawPath, onClose }) {
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label={title || 'Xem ảnh'}
+      aria-label={cur.title || 'Xem ảnh'}
     >
-      <div className="absolute top-4 right-4 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-        {downloadProps && (
-          <a
-            {...downloadProps}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm"
+      <div className="absolute top-4 left-4 right-4 flex items-center justify-between gap-3 pointer-events-none" onClick={(e) => e.stopPropagation()}>
+        <div className="min-w-0 flex-1 pointer-events-auto">
+          {items.length > 1 && (
+            <span className="inline-flex items-center rounded-lg bg-white/10 px-2.5 py-1 text-xs font-medium text-white/90 tabular-nums">
+              {index + 1} / {items.length}
+            </span>
+          )}
+          {cur.title && (
+            <p className="mt-1 text-white/80 text-sm max-w-[50vw] truncate">{cur.title}</p>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0 pointer-events-auto">
+          {downloadProps && (
+            <a
+              {...downloadProps}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm"
+            >
+              <Download size={16} /> Tải xuống
+            </a>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-2 text-white hover:bg-white/10 rounded-full"
+            aria-label="Đóng"
           >
-            <Download size={16} /> Tải xuống
-          </a>
-        )}
-        <button
-          type="button"
-          onClick={onClose}
-          className="p-2 text-white hover:bg-white/10 rounded-full"
-          aria-label="Đóng"
-        >
-          <X size={22} />
-        </button>
+            <X size={22} />
+          </button>
+        </div>
       </div>
-      {title && (
-        <p className="absolute top-4 left-4 text-white/80 text-sm max-w-[60vw] truncate">{title}</p>
-      )}
-      <img
-        src={url}
-        alt={title || ''}
-        className="max-h-[85vh] max-w-full rounded-lg object-contain shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      />
+
+      <div className="relative flex items-center justify-center w-full max-w-[96vw] min-h-[50vh]" onClick={(e) => e.stopPropagation()}>
+        {multi && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); goPrev(); }}
+            disabled={!canPrev}
+            className={`absolute left-2 sm:left-6 z-10 rounded-full p-3 text-white shadow-lg transition-colors ${
+              canPrev ? 'bg-white/20 hover:bg-white/35 cursor-pointer' : 'bg-white/5 opacity-40 cursor-not-allowed'
+            }`}
+            aria-label="Ảnh trước"
+          >
+            <ChevronLeft size={32} />
+          </button>
+        )}
+        <img
+          src={cur.url}
+          alt={cur.title || ''}
+          className="max-h-[85vh] max-w-[calc(100%-7rem)] rounded-lg object-contain shadow-2xl"
+        />
+        {multi && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); goNext(); }}
+            disabled={!canNext}
+            className={`absolute right-2 sm:right-6 z-10 rounded-full p-3 text-white shadow-lg transition-colors ${
+              canNext ? 'bg-white/20 hover:bg-white/35 cursor-pointer' : 'bg-white/5 opacity-40 cursor-not-allowed'
+            }`}
+            aria-label="Ảnh sau"
+          >
+            <ChevronRight size={32} />
+          </button>
+        )}
+      </div>
     </div>,
     document.body,
   );
@@ -58,4 +129,47 @@ export default function UploadFileLightbox({ url, title, rawPath, onClose }) {
 export function isUploadImageFile(mime, fileNameOrUrl) {
   if (typeof mime === 'string' && mime.startsWith('image/')) return true;
   return /\.(jpe?g|png|gif|webp|bmp|svg|avif|heic|heif)$/i.test(fileNameOrUrl || '');
+}
+
+/** Chuẩn hoá 1 file/attachment thành item gallery. */
+export function buildUploadLightboxItem(ref) {
+  if (!ref) return null;
+  const rawPath = ref.file_url || ref.file_path || ref.url || ref.attachment_url || '';
+  const url = publicFileUrl(rawPath);
+  if (!url) return null;
+  const name = ref.file_name || ref.name || ref.attachment_name || '';
+  const mime = ref.mime_type || ref.type || ref.attachment_mime || '';
+  const docType = String(ref.doc_type || '');
+  const pathHint = [name, rawPath].filter(Boolean).join(' ');
+  const isImage = docType === 'image' || isUploadImageFile(mime, pathHint);
+  if (!isImage) return null;
+  const key = String(rawPath || url).trim();
+  return { url, title: name || 'Ảnh', rawPath: rawPath || undefined, key };
+}
+
+/** Gom danh sách ảnh (bỏ trùng) theo thứ tự xuất hiện. */
+export function collectUploadLightboxItems(refs) {
+  const items = [];
+  const seen = new Set();
+  for (const ref of refs || []) {
+    const item = buildUploadLightboxItem(ref);
+    if (!item) continue;
+    const k = item.key || item.rawPath || item.url;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    items.push(item);
+  }
+  return items;
+}
+
+/** Tìm index ảnh trong gallery theo path/url. */
+export function findUploadLightboxIndex(items, rawPathOrUrl) {
+  const target = String(rawPathOrUrl || '').trim();
+  if (!target || !items?.length) return -1;
+  const targetUrl = publicFileUrl(target);
+  return items.findIndex((it) => {
+    const rp = String(it.rawPath || '').trim();
+    const u = String(it.url || '').trim();
+    return target === rp || target === u || targetUrl === u || publicFileUrl(rp) === targetUrl;
+  });
 }

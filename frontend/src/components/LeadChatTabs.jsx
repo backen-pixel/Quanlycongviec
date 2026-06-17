@@ -25,6 +25,7 @@ import {
 import DriveFilePicker from './drive/DriveFilePicker';
 import DriveChatAttachmentCard from './drive/DriveChatAttachmentCard';
 import { driveShareToLeadChat, driveShareToMessengerChat } from '../lib/drive';
+import UploadFileLightbox, { collectUploadLightboxItems, findUploadLightboxIndex } from './UploadFileLightbox';
 import { buildMessengerMessagePreview } from '../lib/messengerPreview';
 import {
   callLogDisplayText,
@@ -1238,6 +1239,7 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [mediaPreview, setMediaPreview] = useState(null);
+  const [imageLightboxIndex, setImageLightboxIndex] = useState(null);
   const [replyTo, setReplyTo] = useState(null);
   const [highlightId, setHighlightId] = useState(null);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -1262,6 +1264,23 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
   useEffect(() => {
     emitMessages(messages);
   }, [messages, emitMessages]);
+
+  const chatImageGallery = useMemo(() => {
+    const refs = [];
+    for (const m of messages || []) {
+      const items = Array.isArray(m.attachments) && m.attachments.length
+        ? m.attachments
+        : m.attachment_url
+          ? [{ url: m.attachment_url, name: m.attachment_name, type: m.attachment_mime }]
+          : [];
+      for (const att of items) {
+        if (att.is_drive || att.drive_file_id) continue;
+        if (!att.type?.startsWith('image/')) continue;
+        refs.push({ ...att, url: att.url || m.attachment_url });
+      }
+    }
+    return collectUploadLightboxItems(refs);
+  }, [messages]);
 
   useEffect(() => {
     return registerLeadChatPresence(leadId);
@@ -1423,7 +1442,10 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
                 e.currentTarget.onerror = null;
                 e.currentTarget.src = BROKEN_MEDIA_PLACEHOLDER;
               }}
-              onClick={() => setMediaPreview({ ...att, url: fileUrl })}
+              onClick={() => {
+                const idx = findUploadLightboxIndex(chatImageGallery, att.url || fileUrl);
+                if (idx >= 0) setImageLightboxIndex(idx);
+              }}
             />
           ) : isVideo ? (
             <video
@@ -1451,23 +1473,18 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
 
   return (
     <div className={fillParent ? 'flex flex-col flex-1 min-h-0' : 'flex flex-col'} style={fillParent ? undefined : { height: '450px' }}>
-      {/* Media Lightbox */}
-      {mediaPreview && (
+      {imageLightboxIndex != null && chatImageGallery.length > 0 && (
+        <UploadFileLightbox
+          items={chatImageGallery}
+          index={imageLightboxIndex}
+          onIndexChange={setImageLightboxIndex}
+          onClose={() => setImageLightboxIndex(null)}
+        />
+      )}
+      {mediaPreview && !mediaPreview.type?.startsWith('image/') && (
         <div className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center p-4">
           <button type="button" onClick={() => setMediaPreview(null)} className="absolute top-4 right-4 text-white p-2 hover:bg-white/10 rounded-full"><X /></button>
-          {mediaPreview.type?.startsWith('image/') ? (
-            <img
-              src={resolveMediaUrl(mediaPreview.url)}
-              className="max-h-[80vh] max-w-full rounded-lg object-contain"
-              alt=""
-              onError={(e) => {
-                e.currentTarget.onerror = null;
-                e.currentTarget.src = BROKEN_MEDIA_PLACEHOLDER;
-              }}
-            />
-          ) : (
-            <video src={resolveMediaUrl(mediaPreview.url)} controls autoPlay className="max-h-[80vh] max-w-full rounded-lg" />
-          )}
+          <video src={resolveMediaUrl(mediaPreview.url)} controls autoPlay className="max-h-[80vh] max-w-full rounded-lg" />
         </div>
       )}
 
