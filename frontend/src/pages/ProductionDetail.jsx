@@ -16,6 +16,7 @@ import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
 import { publicFileUrl as pubUrl, getFileOpenAnchorProps, getFileDownloadAnchorProps } from '../lib/publicFileUrl';
+import UploadFileLightbox, { isUploadImageFile } from '../components/UploadFileLightbox';
 import { downloadWorkshopDocumentsZip } from '../lib/workshopDocumentsZipDownload';
 import {
   ArrowLeft, FolderKanban, MessageSquare, Plus, X,
@@ -658,12 +659,63 @@ function CrmSharedDocumentsPanel({
   );
 }
 
+/** File đính kèm nhiệm vụ — xem ảnh inline, không cần tải */
+function TaskFileRow({ file }) {
+  const [imageLightbox, setImageLightbox] = useState(false);
+  const rawRef = file.file_url || '';
+  const href = rawRef ? pubUrl(rawRef) : '';
+  const isImage = href && isUploadImageFile(file.mime_type, file.file_name || rawRef);
+  const openProps = href && !isImage ? getFileOpenAnchorProps(rawRef, { fileName: file.file_name }) : null;
+  const downloadProps = href ? getFileDownloadAnchorProps(rawRef, { fileName: file.file_name || 'tai-lieu' }) : null;
+
+  return (
+    <div className="bg-gray-50 border rounded-lg overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2">
+        <span className="text-sm shrink-0">{getFileIcon(file.file_name)}</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-medium text-gray-800 truncate">{file.file_name}</p>
+          {file.task?.title && <p className="text-[10px] text-purple-600 truncate">📌 {file.task.title}</p>}
+        </div>
+        {href && (
+          <div className="shrink-0 flex items-center gap-2">
+            {isImage ? (
+              <button type="button" onClick={() => setImageLightbox(true)} className="text-[10px] text-blue-600 hover:underline cursor-pointer">Mở</button>
+            ) : openProps ? (
+              <a {...openProps} className="text-[10px] text-blue-600 hover:underline">Mở</a>
+            ) : null}
+            {downloadProps && (
+              <a {...downloadProps} className="text-[10px] text-emerald-600 hover:underline">Tải</a>
+            )}
+          </div>
+        )}
+      </div>
+      {isImage && href && (
+        <div className="px-3 pb-2">
+          <button type="button" onClick={() => setImageLightbox(true)} className="block text-left">
+            <img src={href} alt={file.file_name || ''} loading="lazy"
+              className="max-h-28 rounded-lg border border-gray-200 object-contain cursor-zoom-in hover:opacity-90 transition-opacity" />
+          </button>
+        </div>
+      )}
+      {imageLightbox && (
+        <UploadFileLightbox
+          url={href}
+          title={file.file_name}
+          rawPath={rawRef}
+          onClose={() => setImageLightbox(false)}
+        />
+      )}
+    </div>
+  );
+}
+
 /** Row tài liệu — rich preview như CRM DocumentRow; crmVisibility = chia sẻ từ lead_documents */
 function DocRow({
   doc, onDelete, workshopModule, onVisibilitySaved, crmPresentation = false, nested = false, stageSlugLabelMap = {}, taskMetaMap = {},
 }) {
   const [expanded, setExpanded] = useState(false);
   const [showVis, setShowVis] = useState(false);
+  const [imageLightbox, setImageLightbox] = useState(false);
   const [sharedToWorkshop, setSharedToWorkshop] = useState(!!doc.shared_to_workshop);
   const [allowedMods, setAllowedMods] = useState(() => parseShareModules(doc.allowed_share_modules) || []);
   const [savingVis, setSavingVis] = useState(false);
@@ -681,7 +733,7 @@ function DocRow({
     : null;
   const isFile = !!fileHref;
   const mime = doc.mime_type || '';
-  const isImage = isFile && (mime.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(fileName || doc.file_url || ''));
+  const isImage = isFile && isUploadImageFile(mime, fileName || doc.file_url || doc.file_path || '');
   const isVideo = isFile && (mime.startsWith('video/') || /\.(mp4|mov|webm|avi|mkv)$/i.test(fileName || doc.file_url || ''));
   const hasExtra = doc.notes || isImage || isVideo;
   const crmShareUi = typeof doc.shared_to_workshop === 'boolean' && doc.id && onVisibilitySaved;
@@ -763,7 +815,17 @@ function DocRow({
               onClick={(e) => e.stopPropagation()}
             >
               {fileOpenProps && (
-                <a {...fileOpenProps} className={`hover:underline ${nested ? 'text-[10px]' : 'text-xs'} text-blue-600`}>Mở</a>
+                isImage ? (
+                  <button
+                    type="button"
+                    onClick={() => setImageLightbox(true)}
+                    className={`hover:underline ${nested ? 'text-[10px]' : 'text-xs'} text-blue-600 cursor-pointer`}
+                  >
+                    Mở
+                  </button>
+                ) : (
+                  <a {...fileOpenProps} className={`hover:underline ${nested ? 'text-[10px]' : 'text-xs'} text-blue-600`}>Mở</a>
+                )
               )}
               {fileDownloadProps && (
                 <a {...fileDownloadProps} className={`hover:underline ${nested ? 'text-[10px]' : 'text-xs'} text-emerald-600`}>Tải</a>
@@ -793,18 +855,33 @@ function DocRow({
           <video src={fileHref} controls preload="metadata" className={`w-full rounded-lg border border-gray-200 bg-black shadow-sm ${expanded ? 'max-h-96' : 'max-h-40'}`} />
         </div>
       )}
-      {isImage && !expanded && fileOpenProps && (
+      {isImage && !expanded && fileHref && (
         <div className="px-3 pb-2">
-          <a {...fileOpenProps} className="block"><img src={fileHref} alt={displayTitle} className="max-h-24 rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity" /></a>
+          <button type="button" onClick={() => setImageLightbox(true)} className="block text-left">
+            <img src={fileHref} alt={displayTitle} loading="lazy"
+              className="max-h-24 rounded-lg border border-gray-200 object-contain cursor-zoom-in hover:opacity-90 transition-opacity" />
+          </button>
         </div>
       )}
       {expanded && (
         <div className="px-3 pb-3 space-y-2">
-          {isImage && fileOpenProps && (
-            <a {...fileOpenProps} className="block"><img src={fileHref} alt={displayTitle} className="max-h-64 max-w-full rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90" /></a>
+          {isImage && fileHref && (
+            <button type="button" onClick={() => setImageLightbox(true)} className="block text-left">
+              <img src={fileHref} alt={displayTitle} loading="lazy"
+                className="max-h-64 max-w-full rounded-lg border border-gray-200 object-contain cursor-zoom-in hover:opacity-90" />
+            </button>
           )}
           {doc.notes && <div className="bg-white rounded-lg p-3 text-sm text-gray-700 whitespace-pre-wrap border">{doc.notes}</div>}
         </div>
+      )}
+
+      {imageLightbox && isImage && (
+        <UploadFileLightbox
+          url={fileHref}
+          title={displayTitle}
+          rawPath={rawFileRef}
+          onClose={() => setImageLightbox(false)}
+        />
       )}
 
       {showVis && crmShareUi && (
@@ -2484,20 +2561,8 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     <div className="mb-4">
                       <p className="text-xs font-bold text-gray-500 uppercase mb-2">📌 File đính kèm nhiệm vụ ({taskFiles.length})</p>
                       <div className="space-y-1">
-                        {taskFiles.map(f => (
-                          <div key={f.id} className="flex items-center gap-2 px-3 py-2 bg-gray-50 border rounded-lg">
-                            <span className="text-sm shrink-0">{getFileIcon(f.file_name)}</span>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-medium text-gray-800 truncate">{f.file_name}</p>
-                              {f.task?.title && <p className="text-[10px] text-purple-600 truncate">📌 {f.task.title}</p>}
-                            </div>
-                            {f.file_url && (
-                              <div className="shrink-0 flex items-center gap-2">
-                                <a {...getFileOpenAnchorProps(f.file_url, { fileName: f.file_name })} className="text-[10px] text-blue-600 hover:underline">Mở</a>
-                                <a {...getFileDownloadAnchorProps(f.file_url, { fileName: f.file_name || 'tai-lieu' })} className="text-[10px] text-emerald-600 hover:underline">Tải</a>
-                              </div>
-                            )}
-                          </div>
+                        {taskFiles.map((f) => (
+                          <TaskFileRow key={f.id} file={f} />
                         ))}
                       </div>
                     </div>
