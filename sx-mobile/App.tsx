@@ -7,12 +7,10 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import OtaBlockingScreen from './src/components/OtaBlockingScreen';
 import OtaSuccessNotice from './src/components/OtaSuccessNotice';
 import PushNotificationBridge from './src/components/PushNotificationBridge';
-import CallNotificationBridge from './src/components/call/CallNotificationBridge';
-import CallOverlay from './src/components/call/CallOverlay';
+import { CallProvider, CallScreen, IncomingCallBridge } from './src/calling';
 import SystemBubbleSync from './src/components/SystemBubbleSync';
 import UpdateGate from './src/components/UpdateGate';
 import { AuthProvider } from './src/context/AuthContext';
-import { CallProvider } from './src/context/CallContext';
 import { MessengerProvider } from './src/context/MessengerContext';
 import { NotificationProvider } from './src/context/NotificationContext';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
@@ -72,8 +70,8 @@ function AppShell() {
   return (
     <NavigationContainer ref={navigationRef} theme={navTheme}>
       <RootNavigator />
-      <CallOverlay />
-      <CallNotificationBridge />
+      <CallScreen />
+      <IncomingCallBridge />
       <SystemBubbleSync />
       <PushNotificationBridge />
       <OtaSuccessNotice />

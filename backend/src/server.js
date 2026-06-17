@@ -22,6 +22,22 @@ const io = new Server(server, {
 });
 app.set('io', io);
 
+// ── Redis adapter (tùy chọn) — để scale Socket.IO nhiều instance ──
+// Chỉ bật khi có REDIS_URL VÀ đã cài @socket.io/redis-adapter. Không có thì chạy in-memory
+// như cũ (single instance). Cài: npm i @socket.io/redis-adapter
+if (process.env.REDIS_URL) {
+  try {
+    const { createAdapter } = require('@socket.io/redis-adapter');
+    const IORedis = require('ioredis');
+    const pubClient = new IORedis(process.env.REDIS_URL);
+    const subClient = pubClient.duplicate();
+    io.adapter(createAdapter(pubClient, subClient));
+    console.log('✅ Socket.IO Redis adapter enabled');
+  } catch (e) {
+    console.warn('⚠️ Redis adapter not enabled (cài @socket.io/redis-adapter để scale):', e.message);
+  }
+}
+
 setPresenceBroadcast((userId, last_ping_at) => {
   io.emit('presence:update', {
     user_id: userId,
@@ -244,6 +260,7 @@ app.use('/api/workshop', require('./routes/workshopTypes'));
 app.use('/api/workshop-teams', require('./routes/workshopTeams'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/external', require('./routes/external'));
+try { app.use('/api/turn', require('./routes/turn')); } catch (e) { console.warn('⚠️ TURN route failed to load:', e.message); }
 try { app.use('/api/push', require('./routes/push')); } catch (e) { console.warn('⚠️ Push route failed to load:', e.message); }
 try { app.use('/api/devices', require('./routes/devices')); } catch (e) { console.warn('⚠️ Devices route failed to load:', e.message); }
 try { app.use('/api/assistant', require('./routes/assistant')); } catch (e) { console.warn('⚠️ Assistant route failed to load:', e.message); }
@@ -296,6 +313,10 @@ const {
 // Cho route REST (vd /push/call-reject khi app bị kill) truy cập + finalize log cuộc gọi.
 app.set('activeDirectCalls', activeDirectCalls);
 app.set('finalizeDirectCallLog', finalizeDirectCallLog);
+
+// Signaling cuộc gọi 1-1 thế hệ mới (hợp đồng event hyphen). Xem docs/CALL_SYSTEM.md.
+const { attachCallSignaling } = require('./realtime/callSignaling');
+const registerCallSignaling = attachCallSignaling(io);
 
 /** Callee đang có socket CRM mở — không cần FCM (tránh chuông reo lần 2). */
 function isUserSocketOnline(userId) {
@@ -378,6 +399,9 @@ io.on('connection', (socket) => {
     socket.join(`user:${userId}`);
     syncPendingIncomingCalls(userId, socket);
   }
+
+  // Đăng ký handler signaling cuộc gọi 1-1 thế hệ mới.
+  registerCallSignaling(socket);
 
   // Presence: ping ngay khi kết nối socket (bổ sung HTTP POST /users/ping)
   if (userId) {
