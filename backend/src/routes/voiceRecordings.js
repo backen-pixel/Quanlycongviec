@@ -89,13 +89,61 @@ function expandFileNameLookupKeys(raw) {
 }
 
 /** Các trường + join CRM (PostgREST cần FK 63_voice_recordings_crm_link.sql) */
+const UPLOADER_SELECT =
+  'id, full_name, email, company_id, department:departments!users_department_id_fkey(company_id)';
 const RECORDING_SELECT =
-  'id, user_id, company_id, file_name, storage_path, mime_type, file_size, duration_sec, source, device_label, notes, created_at, phone_number, direction, call_started_at, call_ended_at, external_call_id, customer_id, lead_id, customer:customers(id, full_name, phone), lead:crm_leads(id, code, title, type, company_id), uploader:users!voice_recordings_user_id_fkey(id, full_name, email, company_id)';
+  `id, user_id, company_id, file_name, storage_path, mime_type, file_size, duration_sec, source, device_label, notes, created_at, phone_number, direction, call_started_at, call_ended_at, external_call_id, customer_id, lead_id, customer:customers(id, full_name, phone), lead:crm_leads(id, code, title, type, company_id), uploader:users!voice_recordings_user_id_fkey(${UPLOADER_SELECT})`;
 
-/** Phạm vi quản lý: chỉ ghi âm do NV thuộc công ty đó upload (users.company_id của uploader). */
+/** Công ty NV upload — ưu tiên users.company_id, fallback phòng ban, rồi company_id trên bản ghi. */
+function resolveVoiceUploaderCompanyId(rec) {
+  const u = rec?.uploader;
+  if (u?.company_id != null && String(u.company_id).trim() !== '') return String(u.company_id).trim();
+  if (u?.department?.company_id != null && String(u.department.company_id).trim() !== '') {
+    return String(u.department.company_id).trim();
+  }
+  if (rec?.company_id != null && String(rec.company_id).trim() !== '') return String(rec.company_id).trim();
+  return '';
+}
+
+/** Danh sách user_id thuộc công ty (phòng ban + users.company_id trực tiếp). */
+async function resolveVoiceCompanyUserIds(supabaseClient, companyId) {
+  if (!companyId) return [];
+  const cid = String(companyId).trim();
+  const ids = new Set();
+
+  const { data: depts } = await supabaseClient
+    .from('departments')
+    .select('id')
+    .eq('company_id', cid)
+    .eq('is_active', true);
+  const deptIds = (depts || []).map((d) => d.id).filter(Boolean);
+  if (deptIds.length) {
+    const { data: deptUsers } = await supabaseClient
+      .from('users')
+      .select('id')
+      .in('department_id', deptIds)
+      .neq('is_active', false);
+    for (const u of deptUsers || []) {
+      if (u?.id) ids.add(String(u.id));
+    }
+  }
+
+  const { data: directUsers } = await supabaseClient
+    .from('users')
+    .select('id')
+    .eq('company_id', cid)
+    .neq('is_active', false);
+  for (const u of directUsers || []) {
+    if (u?.id) ids.add(String(u.id));
+  }
+
+  return [...ids];
+}
+
+/** Phạm vi quản lý: chỉ ghi âm do NV thuộc công ty đó upload. */
 function voiceRecordingInMgmtScope(rec, mgmtCompanyId) {
   if (!mgmtCompanyId) return true;
-  return String(rec.uploader?.company_id || '') === String(mgmtCompanyId);
+  return resolveVoiceUploaderCompanyId(rec) === String(mgmtCompanyId);
 }
 
 function voiceRecordingMatchesLeadCompany(rec, leadCompanyId) {
@@ -106,7 +154,13 @@ function voiceRecordingMatchesLeadCompany(rec, leadCompanyId) {
 /** Lọc tùy chọn theo công ty nhân viên upload (`?company_id=`). */
 function voiceRecordingMatchesStaffCompany(rec, staffCompanyId) {
   if (!staffCompanyId) return true;
-  return String(rec.uploader?.company_id || '') === String(staffCompanyId);
+  return resolveVoiceUploaderCompanyId(rec) === String(staffCompanyId);
+}
+
+/** Công ty NV dùng để lọc danh sách (JWT hoặc query admin hệ thống). */
+function resolveEffectiveVoiceStaffCompanyId(listFilters) {
+  if (!listFilters) return null;
+  return listFilters.mgmtCompanyId || listFilters.staffCompanyId || null;
 }
 
 function voiceRecordingPassesFilters(rec, { mgmtCompanyId, leadCompanyId, staffCompanyId }) {
@@ -170,7 +224,7 @@ function uuidOrNull(v) {
 async function loadVoiceRecordingForManage(req, recordId, selectFields) {
   const fields =
     selectFields ||
-    'id, phone_number, customer_id, lead_id, user_id, company_id, lead:crm_leads(company_id), uploader:users!voice_recordings_user_id_fkey(company_id)';
+    `id, phone_number, customer_id, lead_id, user_id, company_id, lead:crm_leads(company_id), uploader:users!voice_recordings_user_id_fkey(${UPLOADER_SELECT})`;
   const { data: rec, error: re } = await supabase
     .from('voice_recordings')
     .select(fields)
@@ -516,9 +570,25 @@ r.get('/', async (req, res) => {
       return res.status(400).json({ error: 'user_id không hợp lệ' });
     }
 
+    const effectiveStaffCo = resolveEffectiveVoiceStaffCompanyId(listFilters);
+    let companyUserIds = null;
+    if (effectiveStaffCo) {
+      companyUserIds = await resolveVoiceCompanyUserIds(supabase, effectiveStaffCo);
+      if (!companyUserIds.length) {
+        return res.json({ recordings: [] });
+      }
+    }
+
     let q = supabase.from('voice_recordings').select(RECORDING_SELECT).order('created_at', { ascending: false });
     if (companyViewer) {
-      if (filterUserId) q = q.eq('user_id', filterUserId);
+      if (filterUserId) {
+        if (companyUserIds && !companyUserIds.includes(String(filterUserId))) {
+          return res.status(403).json({ error: 'Không có quyền xem ghi âm nhân viên khác công ty' });
+        }
+        q = q.eq('user_id', filterUserId);
+      } else if (companyUserIds) {
+        q = q.in('user_id', companyUserIds);
+      }
       q = q.limit(filterUserId ? 300 : 500);
     } else {
       q = q.eq('user_id', req.user.userId).limit(200);
@@ -561,18 +631,34 @@ r.post('/relink-unassigned', async (req, res) => {
         req.body?.all_users === '1' ||
         req.query?.all_users === '1' ||
         req.query?.all_users === 'true');
-    const mgmtCompanyId = resolveVoiceMgmtCompanyId(req);
+    const listFilters = resolveVoiceListFilters(req);
+    if (listFilters.error) {
+      return res.status(listFilters.status || 400).json({ error: listFilters.error });
+    }
+    const effectiveStaffCo = resolveEffectiveVoiceStaffCompanyId(listFilters);
+    let companyUserIds = null;
+    if (effectiveStaffCo) {
+      companyUserIds = await resolveVoiceCompanyUserIds(supabase, effectiveStaffCo);
+      if (!companyUserIds.length && allUsers) {
+        return res.json({ ok: true, scanned: 0, updated: 0, auto_created: 0 });
+      }
+    }
+    const mgmtCompanyId = listFilters.mgmtCompanyId;
 
     let rq = supabase
       .from('voice_recordings')
       .select(
-        'id, phone_number, customer_id, lead_id, user_id, company_id, lead:crm_leads(company_id), uploader:users!voice_recordings_user_id_fkey(company_id)',
+        `id, phone_number, customer_id, lead_id, user_id, company_id, lead:crm_leads(company_id), uploader:users!voice_recordings_user_id_fkey(${UPLOADER_SELECT})`,
       )
       .not('phone_number', 'is', null)
       .neq('phone_number', '')
       .order('created_at', { ascending: false })
       .limit(allUsers ? 200 : 80);
-    if (!allUsers) rq = rq.eq('user_id', req.user.userId);
+    if (!allUsers) {
+      rq = rq.eq('user_id', req.user.userId);
+    } else if (companyUserIds) {
+      rq = rq.in('user_id', companyUserIds);
+    }
     const { data: rows, error } = await rq;
     if (error) throw error;
     let scoped = rows || [];
@@ -611,12 +697,24 @@ r.post('/scan-metadata-phones', async (req, res) => {
     if (companyViewer && req.query.user_id && filterUserId === false) {
       return res.status(400).json({ error: 'user_id không hợp lệ' });
     }
-    const mgmtCompanyId = resolveVoiceMgmtCompanyId(req);
+    const listFilters = resolveVoiceListFilters(req);
+    if (listFilters.error) {
+      return res.status(listFilters.status || 400).json({ error: listFilters.error });
+    }
+    const effectiveStaffCo = resolveEffectiveVoiceStaffCompanyId(listFilters);
+    let companyUserIds = null;
+    if (effectiveStaffCo) {
+      companyUserIds = await resolveVoiceCompanyUserIds(supabase, effectiveStaffCo);
+      if (!companyUserIds.length && companyViewer) {
+        return res.json({ ok: true, filled_phone: 0, crm_linked: 0, scanned: 0 });
+      }
+    }
+    const mgmtCompanyId = listFilters.mgmtCompanyId;
 
     let q = supabase
       .from('voice_recordings')
       .select(
-        'id, phone_number, notes, file_name, device_label, customer_id, lead_id, user_id, company_id, lead:crm_leads(company_id), uploader:users!voice_recordings_user_id_fkey(company_id)',
+        `id, phone_number, notes, file_name, device_label, customer_id, lead_id, user_id, company_id, lead:crm_leads(company_id), uploader:users!voice_recordings_user_id_fkey(${UPLOADER_SELECT})`,
       )
       .order('created_at', { ascending: false })
       .limit(200);
@@ -624,7 +722,12 @@ r.post('/scan-metadata-phones', async (req, res) => {
     if (!companyViewer) {
       q = q.eq('user_id', req.user.userId);
     } else if (filterUserId) {
+      if (companyUserIds && !companyUserIds.includes(String(filterUserId))) {
+        return res.status(403).json({ error: 'Không có quyền quét ghi âm nhân viên khác công ty' });
+      }
       q = q.eq('user_id', filterUserId);
+    } else if (companyUserIds) {
+      q = q.in('user_id', companyUserIds);
     }
 
     const { data: rows, error } = await q;
@@ -1035,7 +1138,7 @@ r.patch('/:id', async (req, res) => {
     const loaded = await loadVoiceRecordingForManage(
       req,
       req.params.id,
-      'id, phone_number, customer_id, lead_id, user_id, notes, file_name, device_label, company_id, lead:crm_leads(company_id), uploader:users!voice_recordings_user_id_fkey(company_id)',
+      `id, phone_number, customer_id, lead_id, user_id, notes, file_name, device_label, company_id, lead:crm_leads(company_id), uploader:users!voice_recordings_user_id_fkey(${UPLOADER_SELECT})`,
     );
     if (loaded.error) return res.status(loaded.status || 403).json({ error: loaded.error });
     const row = loaded.rec;
