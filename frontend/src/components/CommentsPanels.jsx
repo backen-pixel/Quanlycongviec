@@ -376,6 +376,7 @@ function ReactionCornerBadge({ comment }) {
 function CommentThread({
   comments,
   loading,
+  loadError = '',
   user,
   bodyField,
   getBody,
@@ -504,10 +505,13 @@ function CommentThread({
     <div className="rounded-xl border border-[#e4e6eb] bg-[#f0f2f5] overflow-hidden">
       <div className="min-h-[320px] max-h-[min(720px,75vh)] overflow-y-auto px-2 py-3">
         {loading && <p className="py-8 text-center text-sm text-[#65676b]">Đang tải…</p>}
-        {!loading && !(comments || []).length && (
+        {!loading && loadError && (
+          <p className="py-8 text-center text-sm text-red-600 px-4">{loadError}</p>
+        )}
+        {!loading && !loadError && !(comments || []).length && (
           <p className="py-8 text-center text-sm text-[#65676b]">Chưa có bình luận. Hãy là người đầu tiên!</p>
         )}
-        {!loading && renderBranch('__root__', 0)}
+        {!loading && !loadError && renderBranch('__root__', 0)}
       </div>
       <div className="border-t border-[#e4e6eb] bg-white">
         {replyTo && (
@@ -577,14 +581,17 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
   const [replyTo, setReplyTo] = useState(null);
   const [reactionBusy, setReactionBusy] = useState(null);
   const [members, setMembers] = useState([]);
+  const [loadError, setLoadError] = useState('');
 
   const loadMembers = useCallback(async () => {
     if (!leadId) return;
     try {
       const r = await api.get(`/crm/leads/${leadId}/members`);
       setMembers(Array.isArray(r.data) ? r.data : []);
-    } catch {
+      setLoadError((prev) => (prev && prev.includes('bình luận') ? prev : ''));
+    } catch (e) {
       setMembers([]);
+      setLoadError(e?.response?.data?.error || 'Không tải được danh sách thành viên');
     }
   }, [leadId]);
 
@@ -593,14 +600,16 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
   const load = useCallback(async () => {
     if (!leadId) return;
     setLoading(true);
+    setLoadError('');
     try {
       const r = await api.get(`/crm/leads/${leadId}/comments`);
       const rows = Array.isArray(r.data) ? r.data : [];
       setComments(rows.map((c) => ({ ...c, reactions: c.reactions || { summary: [], mine: null } })));
       onCountChange?.(rows.length);
-    } catch {
+    } catch (e) {
       setComments([]);
       onCountChange?.(0);
+      setLoadError(e?.response?.data?.error || 'Không tải được bình luận');
     } finally {
       setLoading(false);
     }
@@ -703,6 +712,7 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
     <CommentThread
       comments={comments}
       loading={loading}
+      loadError={loadError}
       user={user}
       bodyField={body}
       getBody={(c) => c.body}
