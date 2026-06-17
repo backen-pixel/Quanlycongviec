@@ -3,6 +3,11 @@ const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { generateStepTasks } = require('../helpers/generateFlowTasks');
 const { createNotification: createNotif, notifyMultiple: notifyMultipleShared } = require('../helpers/notifications');
+const {
+  fetchProjectCommentAudienceUserIds,
+  notifyProjectCommentParticipants,
+  resolveDealByProjectId,
+} = require('../helpers/dealCommentNotifications');
 let autoFlow;
 try { autoFlow = require('../helpers/autoFlow'); } catch (e) { autoFlow = null; }
 let stageFlow;
@@ -2513,42 +2518,8 @@ function projectCommentReadReceiptsTableMissing(error) {
   return String(error?.message || '').toLowerCase().includes('project_comment_read_receipts');
 }
 
-/** Thành viên có thể xem bình luận dự án — ưu tiên lead_members nếu deal liên kết. */
-async function fetchProjectCommentAudienceUserIds(projectId) {
-  const { data: proj } = await supabase
-    .from('projects')
-    .select('sales_person_id, designer_id, project_manager_id, supervisor_id, production_person_id, responsible_person_id, created_by')
-    .eq('id', projectId)
-    .maybeSingle();
-  if (!proj) return [];
-
-  const { data: deal } = await supabase
-    .from('crm_leads')
-    .select('id')
-    .eq('project_id', projectId)
-    .eq('type', 'deal')
-    .maybeSingle();
-  if (deal?.id) {
-    const { data: members } = await supabase.from('lead_members').select('user_id').eq('lead_id', deal.id);
-    const ids = (members || []).map((m) => m.user_id).filter(Boolean);
-    if (ids.length) return [...new Set(ids)];
-  }
-
-  const { data: taskAssignees } = await supabase
-    .from('tasks')
-    .select('assignee_id')
-    .eq('project_id', projectId)
-    .not('assignee_id', 'is', null);
-  const taskIds = (taskAssignees || []).map((t) => t.assignee_id).filter(Boolean);
-  const baseTeam = proj.production_person_id
-    ? [proj.production_person_id, proj.responsible_person_id]
-    : [proj.sales_person_id, proj.designer_id, proj.project_manager_id, proj.supervisor_id, proj.responsible_person_id];
-  const ids = [...new Set([...baseTeam, ...taskIds, proj.created_by].filter(Boolean))];
-  return ids;
-}
-
 async function fetchProjectCommentAudienceMembers(projectId) {
-  const userIds = await fetchProjectCommentAudienceUserIds(projectId);
+  const { userIds } = await fetchProjectCommentAudienceUserIds(supabase, projectId);
   if (!userIds.length) return [];
   const { data: users } = await supabase
     .from('users')
@@ -2620,27 +2591,9 @@ r.post('/:id/comments', async (req, res) => {
       io.emit('project:comment', evt);
     }
 
-    // Notify project team — production project: only production_person + task assignees; CRM: full team
+    // Thông báo thành viên deal / audience bình luận dự án
     try {
-      const { data: proj } = await supabase.from('projects').select('sales_person_id,designer_id,project_manager_id,supervisor_id,production_person_id,code').eq('id', req.params.id).single();
-      const { data: taskAssignees } = await supabase.from('tasks').select('assignee_id').eq('project_id', req.params.id).not('assignee_id', 'is', null);
-      const taskAssigneeIds = (taskAssignees || []).map(t => t.assignee_id).filter(Boolean);
-      const baseTeam = proj?.production_person_id
-        ? [proj.production_person_id]  // production project → only production person
-        : [proj?.sales_person_id, proj?.designer_id, proj?.project_manager_id, proj?.supervisor_id].filter(Boolean);
-      const allIds = [...new Set([...baseTeam, ...taskAssigneeIds])].filter(id => id !== req.user.userId);
-      const shortContent = (req.body.content || '').substring(0, 80);
-      const isProductionProject = Boolean(proj?.production_person_id);
-      await notifyMultiple(req, allIds, 'comment_added',
-        '💬 Bình luận dự án',
-        `${req.user.fullName} trong ${proj?.code || 'dự án'}: "${shortContent}${shortContent.length >= 80 ? '...' : ''}"`,
-        'project', req.params.id,
-        {
-          project_id: req.params.id,
-          nav_tab: 'comments',
-          ecosystem_module_key: isProductionProject ? 'production' : 'projects',
-          project_code: proj?.code || null,
-        });
+      await notifyProjectCommentParticipants(req, notifyMultiple, pid, req.user.userId, data);
     } catch (notifErr) { console.error('Comment notify error:', notifErr.message); }
 
     res.status(201).json({ comment: data });
@@ -2675,6 +2628,17 @@ r.patch('/:id/comments/read', async (req, res) => {
         .eq('type', 'comment_added')
         .eq('entity_type', 'project')
         .eq('entity_id', pid);
+      const deal = await resolveDealByProjectId(supabase, pid);
+      if (deal?.id) {
+        await supabase
+          .from('notifications')
+          .update({ is_read: true })
+          .eq('user_id', uid)
+          .eq('is_read', false)
+          .eq('type', 'comment_added')
+          .eq('entity_type', 'lead')
+          .eq('entity_id', deal.id);
+      }
     } catch { /* best-effort */ }
 
     const io = req.app.get('io');

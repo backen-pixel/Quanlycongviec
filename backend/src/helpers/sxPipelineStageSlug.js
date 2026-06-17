@@ -69,22 +69,25 @@ async function getProductionPipelineStagesForWorkshopType(companyId, workshopTyp
 }
 
 /**
- * Chỉ giữ bộ mẫu gắn đúng cột pipeline của phân loại + bộ mặc định (is_default).
- * Không lấy bộ global / phân loại khác → tránh tạo nhiệm vụ dư.
+ * Giữ bộ mẫu gắn cột pipeline của phân loại. Ưu tiên is_default;
+ * nếu chưa đặt mặc định → dùng mọi bộ khớp cột/phân loại (quét bổ sung thiếu).
+ * Bộ chưa gắn production_stage_id vẫn được giữ (map slug theo tên bộ mẫu).
  */
 function filterSxTemplatesToWorkshopPipeline(templates, pipelineStages, workshopTypeId) {
   const allowedStageIds = new Set((pipelineStages || []).map((s) => String(s.id)));
   const wkt = workshopTypeId ? String(workshopTypeId).trim() : '';
-  return (templates || []).filter((t) => {
+  const pool = (templates || []).filter((t) => {
     if (!t?.id) return false;
     const stageId = t.production_stage_id ? String(t.production_stage_id) : '';
-    if (!stageId || !allowedStageIds.has(stageId)) return false;
+    if (stageId && !allowedStageIds.has(stageId)) return false;
     if (wkt) {
-      return t.workshop_type_id && String(t.workshop_type_id) === wkt && !!t.is_default;
+      return t.workshop_type_id && String(t.workshop_type_id) === wkt;
     }
     if (t.workshop_type_id) return false;
-    return !!t.is_default;
+    return true;
   });
+  const defaults = pool.filter((t) => !!t.is_default);
+  return defaults.length ? defaults : pool;
 }
 
 function resolveSxTaskProductionStageId(task, stageRows) {
@@ -106,12 +109,83 @@ function resolveSxTaskProductionStageId(task, stageRows) {
   return null;
 }
 
+/** Gợi ý từ khóa bundle mẫu ↔ tên cột pipeline (khi bộ mẫu chưa gắn production_stage_id). */
+const SX_STAGE_MATCH_HINTS = [
+  ['tiep nhan', 'tiep nhan'],
+  ['len ke hoach', 'ke hoach'],
+  ['len ke hoach', 'thiet ke'],
+  ['thiet ke', 'thiet ke'],
+  ['kiem tra cheo', 'kiem tra'],
+  ['vat tu', 'vat tu'],
+  ['cat kinh', 'cat'],
+  ['san xuat', 'san xuat'],
+  ['hoan thien', 'hoan thien'],
+  ['dong goi', 'dong goi'],
+  ['van chuyen', 'giao'],
+  ['van chuyen', 'van chuyen'],
+  ['da giao', 'da giao'],
+  ['cong no', 'cong no'],
+  ['thu tien', 'thu tien'],
+  ['kcs', 'kcs'],
+  ['san pham', 'san pham'],
+];
+
+function scoreProductionStageLabelMatch(labelNorm, stageNorm) {
+  if (!labelNorm || !stageNorm) return 0;
+  let score = 0;
+  const legacyL = legacySxSlugFromStageName(labelNorm);
+  const legacyS = legacySxSlugFromStageName(stageNorm);
+  if (legacyL && legacyS && legacyL === legacyS) score += 24;
+
+  const words = labelNorm.split(/\s+/).filter((w) => w.length > 2);
+  for (const w of words) {
+    if (stageNorm.includes(w)) score += 3;
+  }
+  for (const [a, b] of SX_STAGE_MATCH_HINTS) {
+    if (labelNorm.includes(a) && stageNorm.includes(b)) score += 6;
+  }
+  return score;
+}
+
+/**
+ * Suy cột pipeline SX từ tên bộ mẫu / tiêu đề nhiệm vụ (fallback khi chưa gắn production_stage_id).
+ */
+function matchProductionStageForLabel(label, stageRows) {
+  const labelNorm = normalizeSxStageText(label);
+  if (!labelNorm || !stageRows?.length) return null;
+
+  let best = null;
+  let bestScore = 0;
+  for (const s of stageRows) {
+    const stageNorm = normalizeSxStageText(s?.name);
+    const sc = scoreProductionStageLabelMatch(labelNorm, stageNorm);
+    if (sc > bestScore) {
+      bestScore = sc;
+      best = s;
+    }
+  }
+  return bestScore >= 3 ? best : null;
+}
+
+function matchProductionStageForLegacySlug(slug, stageRows) {
+  const s = String(slug || '').trim();
+  if (!s || !stageRows?.length) return null;
+  const legacyMap = buildLegacySxSlugToStageId(stageRows);
+  const id = legacyMap.get(s);
+  if (!id) return null;
+  return stageRows.find((row) => String(row.id) === String(id)) || null;
+}
+
 /** Chỉ giữ nhiệm vụ SX thuộc pipeline của phân loại hiện tại. */
 function filterSxTasksToWorkshopPipeline(tasks, pipelineStages) {
+  const allowedStageIds = new Set((pipelineStages || []).map((s) => String(s.id)));
   return (tasks || []).filter((t) => {
     const isSx = String(t?.stage_slug || '').startsWith('sx_') || !!t?.production_pipeline_stage_id;
     if (!isSx) return false;
-    return resolveSxTaskProductionStageId(t, pipelineStages) != null;
+    const pid = t?.production_pipeline_stage_id ? String(t.production_pipeline_stage_id) : null;
+    if (pid) return allowedStageIds.has(pid);
+    // Legacy / sx_other chưa gắn cột: vẫn hiển thị (đã lọc theo lead_id ở tầng trên)
+    return true;
   });
 }
 
@@ -125,4 +199,7 @@ module.exports = {
   filterSxTemplatesToWorkshopPipeline,
   resolveSxTaskProductionStageId,
   filterSxTasksToWorkshopPipeline,
+  matchProductionStageForLabel,
+  matchProductionStageForLegacySlug,
+  scoreProductionStageLabelMatch,
 };

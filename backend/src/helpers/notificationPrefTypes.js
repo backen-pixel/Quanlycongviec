@@ -64,12 +64,21 @@ function preferenceKeyForNotificationType(type, entityType, metadata = null) {
   const eco =
     metadata && typeof metadata === 'object' ? String(metadata.ecosystem_module_key || '').trim() : '';
 
-  /** Xưởng SX — không gom vào project_notifications (CRM module Dự án). */
-  if (eco === 'production') {
+  /** Xưởng SX / CRM deal — không gom vào project_notifications (CRM module Dự án). */
+  if (eco === 'production' || eco === 'crm') {
     const mapped = NOTIFICATION_TYPE_PREF_MAP[type];
     if (mapped) return mapped;
     if (type === 'comment_added') return 'comment_added';
     return null;
+  }
+
+  if (
+    entityType === 'lead' ||
+    entityType === 'crm_lead' ||
+    entityType === 'crm_deal'
+  ) {
+    const mapped = NOTIFICATION_TYPE_PREF_MAP[type];
+    if (mapped) return mapped;
   }
 
   if (

@@ -18,7 +18,7 @@ function isNoteArtifact(f) {
   return dt === 'task_note' || dt === 'checklist_inline_note' || dt === 'task_inline_note';
 }
 
-function TaskArtifactRow({ f }) {
+function TaskArtifactRow({ f, onOpenImage }) {
   const isVideo = f.doc_type === 'video' || f.mime_type?.startsWith('video/')
     || /\.(mp4|mov|webm|avi)$/i.test(f.file_name || '');
   const isImage = f.doc_type === 'image' || f.mime_type?.startsWith('image/')
@@ -52,7 +52,12 @@ function TaskArtifactRow({ f }) {
                 {new Date(f.created_at).toLocaleDateString('vi-VN')}
               </span>
             )}
-            {taskFileOpen && <a {...taskFileOpen} className="text-[10px] text-blue-500 hover:underline">Mở ↗</a>}
+            {isImage && rawFileRef && onOpenImage ? (
+              <button type="button" onClick={() => onOpenImage(rawFileRef)} className="text-[10px] text-blue-500 hover:underline cursor-pointer">
+                Xem ảnh
+              </button>
+            ) : null}
+            {taskFileOpen && !isImage && <a {...taskFileOpen} className="text-[10px] text-blue-500 hover:underline">Mở ↗</a>}
             {taskFileDownload && <a {...taskFileDownload} className="text-[10px] text-emerald-600 hover:underline">Tải ↓</a>}
           </div>
         </div>
@@ -67,15 +72,15 @@ function TaskArtifactRow({ f }) {
           />
         </div>
       )}
-      {isImage && rawFileRef && taskFileOpen && (
+      {isImage && rawFileRef && (
         <div className="mt-2 ml-8">
-          <a {...taskFileOpen}>
+          <button type="button" onClick={() => onOpenImage?.(rawFileRef)} className="block text-left">
             <img
               src={publicFileUrl(rawFileRef)}
               alt={f.name}
-              className="max-h-40 max-w-full rounded-lg border border-gray-200 object-contain hover:opacity-90 cursor-pointer"
+              className="max-h-40 max-w-full rounded-lg border border-gray-200 object-contain hover:opacity-90 cursor-zoom-in"
             />
-          </a>
+          </button>
         </div>
       )}
     </div>
@@ -92,6 +97,7 @@ export default function CrmTaskDocumentsPanel({
   leadCurrentStageId = null,
   leadType = 'lead',
   title = 'File nhiệm vụ',
+  onOpenImage,
 }) {
   const { sections, totalCount } = useMemo(
     () => buildCrmTaskDocumentSections({
@@ -164,7 +170,7 @@ export default function CrmTaskDocumentsPanel({
                       )}
                       <div className="divide-y divide-gray-50">
                         {ckGroup.artifacts.map((f) => (
-                          <TaskArtifactRow key={f.id} f={f} />
+                          <TaskArtifactRow key={f.id} f={f} onOpenImage={onOpenImage} />
                         ))}
                       </div>
                     </div>

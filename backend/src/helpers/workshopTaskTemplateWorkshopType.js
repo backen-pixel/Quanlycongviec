@@ -66,7 +66,7 @@ async function validateWorkshopTemplateWorkshopType({
   return { ok: true, workshop_type_id: wkt };
 }
 
-/** Chọn bộ mẫu SX: chỉ bộ mặc định (is_default) của phân loại — không lấy hết bộ trong phân loại. */
+/** Chọn bộ mẫu SX: ưu tiên bộ mặc định (is_default); nếu chưa đặt → dùng mọi bộ active của phân loại. */
 function pickProductionTemplatesForWorkshopType(allRows, workshopTypeId) {
   const rows = Array.isArray(allRows) ? allRows : [];
   const wkt = workshopTypeId ? String(workshopTypeId).trim() : '';
@@ -75,11 +75,11 @@ function pickProductionTemplatesForWorkshopType(allRows, workshopTypeId) {
     const defaults = globalRows.filter((t) => t.is_default);
     return defaults.length ? defaults : globalRows;
   }
-  return rows.filter(
-    (t) => t.workshop_type_id
-      && String(t.workshop_type_id) === wkt
-      && t.is_default,
+  const typed = rows.filter(
+    (t) => t.workshop_type_id && String(t.workshop_type_id) === wkt,
   );
+  const defaults = typed.filter((t) => t.is_default);
+  return defaults.length ? defaults : typed;
 }
 
 /**

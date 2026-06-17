@@ -8,6 +8,11 @@ import {
 } from '../lib/documentShareScope';
 import DocumentShareModulePicker from '../components/DocumentShareModulePicker';
 import { publicFileUrl, getFileOpenAnchorProps, getFileDownloadAnchorProps } from '../lib/publicFileUrl';
+import UploadFileLightbox, {
+  collectUploadLightboxItems,
+  findUploadLightboxIndex,
+  isUploadImageFile,
+} from '../components/UploadFileLightbox';
 import { downloadCrmLeadDocumentsZip } from '../lib/crmDocumentsZipDownload';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
@@ -142,6 +147,7 @@ export default function LeadDetail() {
   }, [id]);
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [downloadingDocsZip, setDownloadingDocsZip] = useState(false);
+  const [docLightboxIndex, setDocLightboxIndex] = useState(null);
   const [showExcelImport, setShowExcelImport] = useState(false);
   /** Báo giá deal có file Excel gốc — mở lại từ header */
   const [dealExcelQuotations, setDealExcelQuotations] = useState([]);
@@ -609,6 +615,21 @@ export default function LeadDetail() {
     const total = manual.length + (taskDocuments || []).length + orphan.length;
     return { manualLeadDocs: manual, orphanSyncedLeadDocs: orphan, documentsTabTotal: total };
   }, [documents, taskDocuments]);
+
+  const docImageGallery = useMemo(
+    () => collectUploadLightboxItems([
+      ...(documents || []),
+      ...(taskDocuments || []),
+      ...orphanSyncedLeadDocs,
+      ...manualLeadDocs,
+    ]),
+    [documents, taskDocuments, orphanSyncedLeadDocs, manualLeadDocs],
+  );
+
+  const openDocImage = useCallback((rawPath) => {
+    const idx = findUploadLightboxIndex(docImageGallery, rawPath);
+    if (idx >= 0) setDocLightboxIndex(idx);
+  }, [docImageGallery]);
 
   const pipelineStagesForDocs = useMemo(
     () => (lead?.type === 'deal' ? stagesDeal : stagesLead),
@@ -1898,6 +1919,7 @@ export default function LeadDetail() {
                     pipelineStages={pipelineStagesForDocs}
                     leadCurrentStageId={lead?.stage_id}
                     leadType={lead?.type || 'lead'}
+                    onOpenImage={openDocImage}
                   />
 
                   {orphanSyncedLeadDocs.length > 0 && (
@@ -1907,7 +1929,7 @@ export default function LeadDetail() {
                       </p>
                       <div className="space-y-2 max-h-96 overflow-y-auto">
                         {orphanSyncedLeadDocs.map((doc) => (
-                          <DocumentRow key={doc.id} doc={doc} onDelete={() => deleteDocument(doc.id)} />
+                          <DocumentRow key={doc.id} doc={doc} onDelete={() => deleteDocument(doc.id)} onOpenImage={openDocImage} />
                         ))}
                       </div>
                     </div>
@@ -1929,7 +1951,7 @@ export default function LeadDetail() {
                     ) : (
                       <div className="space-y-2 max-h-96 overflow-y-auto">
                         {manualLeadDocs.map((doc) => (
-                          <DocumentRow key={doc.id} doc={doc} onDelete={() => deleteDocument(doc.id)} />
+                          <DocumentRow key={doc.id} doc={doc} onDelete={() => deleteDocument(doc.id)} onOpenImage={openDocImage} />
                         ))}
                       </div>
                     )}
@@ -2514,6 +2536,15 @@ export default function LeadDetail() {
         }}
       />
 
+      {docLightboxIndex != null && docImageGallery.length > 0 && (
+        <UploadFileLightbox
+          items={docImageGallery}
+          index={docLightboxIndex}
+          onIndexChange={setDocLightboxIndex}
+          onClose={() => setDocLightboxIndex(null)}
+        />
+      )}
+
     </div>
   );
 }
@@ -2534,7 +2565,7 @@ function getFileIcon(name) {
   return map[ext] || '📄';
 }
 
-function DocumentRow({ doc, onDelete }) {
+function DocumentRow({ doc, onDelete, onOpenImage }) {
   const [expanded, setExpanded] = useState(false);
   const [showVis, setShowVis] = useState(false);
   const [companies, setCompanies] = useState([]);
@@ -2552,7 +2583,7 @@ function DocumentRow({ doc, onDelete }) {
     ? getFileDownloadAnchorProps(rawFileRef, { fileName: doc.file_name || doc.name || 'tai-lieu' })
     : null;
   const isFile = !!fileHref;
-  const isImage = isFile && (doc.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(doc.file_name || doc.file_url || ''));
+  const isImage = isFile && isUploadImageFile(doc.mime_type, [doc.file_name, doc.file_url, doc.file_path, doc.name].filter(Boolean).join(' '));
   const isVideo = isFile && (doc.mime_type?.startsWith('video/') || /\.(mp4|mov|webm|avi|mkv)$/i.test(doc.file_name || doc.file_url || ''));
   const hasExtra = doc.notes || isImage || isVideo;
 
@@ -2631,11 +2662,19 @@ function DocumentRow({ doc, onDelete }) {
           </div>
           {isFile && (fileOpenProps || fileDownloadProps) && (
             <div className="flex items-center gap-2 shrink-0 px-2" onClick={(e) => e.stopPropagation()}>
-              {fileOpenProps && (
+              {isImage ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenImage?.(rawFileRef)}
+                  className="text-xs text-blue-600 hover:underline cursor-pointer"
+                >
+                  Mở
+                </button>
+              ) : fileOpenProps ? (
                 <a {...fileOpenProps} className="text-xs text-blue-600 hover:underline">
                   Mở
                 </a>
-              )}
+              ) : null}
               {fileDownloadProps && (
                 <a {...fileDownloadProps} className="text-xs text-emerald-600 hover:underline">
                   Tải
@@ -2665,19 +2704,23 @@ function DocumentRow({ doc, onDelete }) {
         </div>
       )}
       {/* Image preview — show thumbnail even when collapsed */}
-      {isImage && !expanded && fileOpenProps && (
+      {isImage && !expanded && (
         <div className="px-3 pb-2">
-          <a {...fileOpenProps} className="block">
-            <img src={fileHref} alt={doc.name} className="max-h-24 rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity" />
-          </a>
+          <button
+            type="button"
+            onClick={() => onOpenImage?.(rawFileRef)}
+            className="block text-left"
+          >
+            <img src={fileHref} alt={doc.name} className="max-h-24 rounded-lg border border-gray-200 object-contain cursor-zoom-in hover:opacity-90 transition-opacity" />
+          </button>
         </div>
       )}
       {expanded && (
         <div className="px-3 pb-3 pt-0 space-y-2">
-          {isImage && fileOpenProps && (
-            <a {...fileOpenProps} className="block">
-              <img src={fileHref} alt={doc.name} className="max-h-64 max-w-full rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity" />
-            </a>
+          {isImage && (
+            <button type="button" onClick={() => onOpenImage?.(rawFileRef)} className="block text-left">
+              <img src={fileHref} alt={doc.name} className="max-h-64 max-w-full rounded-lg border border-gray-200 object-contain cursor-zoom-in hover:opacity-90 transition-opacity" />
+            </button>
           )}
           {doc.notes && (
             <div className="bg-white rounded-lg p-3 text-sm text-gray-700 whitespace-pre-wrap border">{doc.notes}</div>

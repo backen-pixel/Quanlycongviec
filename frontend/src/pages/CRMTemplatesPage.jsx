@@ -467,7 +467,7 @@ export default function CRMTemplatesPage() {
       + 'Hệ thống sẽ:\n'
       + '• Chỉ gen nhiệm vụ cho lead/deal CHƯA CÓ nhiệm vụ CRM (mới tạo / tab Công việc rỗng)\n'
       + '• Lead/deal cũ đã có nhiệm vụ → giữ nguyên bộ cũ (bỏ qua)\n\n'
-      + 'Muốn chuyển một lead/deal cũ sang bộ mới: mở tab Công việc → 「Gen lại đúng bộ mẫu」.\n'
+      + 'Muốn bổ sung nhiệm vụ thiếu cho lead/deal cũ: mở tab Công việc → 「Bổ sung thiếu CRM」 hoặc 「Bổ sung thiếu SX」.\n'
       + 'Tiếp tục?',
     );
     if (!ok) return;

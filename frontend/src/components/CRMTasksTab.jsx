@@ -12,7 +12,7 @@ import {
   Plus, CheckCircle2, Circle, Clock, User, Eye, Trash2, ChevronDown, ChevronRight,
   Calendar, List, Users, Target, AlertTriangle, X, Save, ListChecks, ClipboardList,
   Paperclip, FileUp, MessageSquare, FileText, Image as ImageIcon, Share2, Lock, Film,
-  FileSpreadsheet, Edit3, RefreshCw, UserPlus, GripVertical, Globe,
+  FileSpreadsheet, Edit3, UserPlus, GripVertical, Globe,
 } from 'lucide-react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
@@ -726,8 +726,8 @@ export default function CRMTasksTab({
   }, [usePipelineTaskUi, isLegacyCrmTaskSet, pipelineStages.length, STAGES, leadType]);
 
   const [loading, setLoading] = useState(true);
-  const [generatingProduction, setGeneratingProduction] = useState(false);
-  const [resyncingPipeline, setResyncingPipeline] = useState(false);
+  const [ensuringMissing, setEnsuringMissing] = useState(false);
+  const [ensuringMissingSx, setEnsuringMissingSx] = useState(false);
   const [viewMode, setViewMode] = useState('list'); // list, deadline, planner, calendar
   const [expandedStages, setExpandedStages] = useState({});
   const [bulkCompleting, setBulkCompleting] = useState(false);
@@ -1041,88 +1041,74 @@ export default function CRMTasksTab({
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
-  /** Xóa nhiệm vụ CRM theo loại lead/deal rồi tạo lại từ bộ mẫu pipeline của công ty. */
-  const resyncPipelineTasks = async () => {
-    if (resyncingPipeline) return;
+  /** Quét & bổ sung nhiệm vụ CRM thiếu theo bộ mẫu pipeline (không xóa task cũ). */
+  const ensureMissingPipelineTasks = async () => {
+    if (ensuringMissing) return;
 
-    const ok = window.confirm(
-      'Tạo lại nhiệm vụ CRM theo bộ mẫu của công ty?\n\n'
-      + '• Xóa các nhiệm vụ CRM đang gắn pipeline (cùng loại Lead/Deal)\n'
-      + '• Tạo lại từ template đã cấu hình cho từng giai đoạn\n'
-      + '• Giai đoạn chưa có bộ mẫu sẽ không có nhiệm vụ\n\n'
-      + 'Nhiệm vụ Sản xuất (sx_*) không bị xóa.\n'
-      + 'KHÔNG thể hoàn tác.',
-    );
-    if (!ok) return;
-
-    setResyncingPipeline(true);
+    setEnsuringMissing(true);
     try {
-      const { data } = await api.post(`/crm/leads/${leadId}/tasks/resync-pipeline`);
-      const parts = [
-        data.deleted > 0 ? `Đã xóa ${data.deleted} nhiệm vụ cũ` : null,
-        data.tasks_created > 0 ? `Tạo ${data.tasks_created} nhiệm vụ từ bộ mẫu` : null,
-      ].filter(Boolean);
-      alert(parts.length ? parts.join('.\n') : 'Đã đồng bộ — không có thay đổi (có thể chưa cấu hình bộ mẫu).');
+      const { data } = await api.post(`/crm/leads/${leadId}/tasks/ensure-missing`, { all_stages: true });
+      if ((data.created || 0) > 0) {
+        alert(`Đã bổ sung ${data.created} nhiệm vụ CRM thiếu theo bộ mẫu ${data.entity_type === 'deal' ? 'Deal' : 'Lead'}.`);
+      } else if (data.error) {
+        alert(data.error);
+      } else {
+        alert(
+          `Đã quét pipeline ${data.entity_type === 'deal' ? 'Deal' : 'Lead'}`
+          + `${data.company_id ? ' (đúng công ty lead/deal)' : ''}`
+          + ' — không thiếu nhiệm vụ nào (hoặc cột chưa có bộ mẫu mặc định).',
+        );
+      }
       await loadTasks();
     } catch (e) {
-      alert(e.response?.data?.error || e.message || 'Lỗi gen lại nhiệm vụ');
+      alert(e.response?.data?.error || e.message || 'Lỗi quét nhiệm vụ thiếu');
     } finally {
-      setResyncingPipeline(false);
+      setEnsuringMissing(false);
     }
   };
 
-  const generateProductionTasks = async () => {
-    if (generatingProduction) return;
-    if (leadType !== 'deal') return;
-    setGeneratingProduction(true);
+  /** Quét & bổ sung nhiệm vụ SX (sx_*) thiếu theo bộ mẫu xưởng (không xóa task cũ). */
+  const ensureMissingSxTasks = async () => {
+    if (ensuringMissingSx || leadType !== 'deal') return;
+
+    setEnsuringMissingSx(true);
     try {
-      const genPayload = (force) => {
-        const o = { force };
-        if (sxTemplateCompanyId) o.production_company_id = sxTemplateCompanyId;
-        return o;
-      };
-      const r1 = await api.post(`/crm/leads/${encodeURIComponent(leadId)}/tasks/generate-production-template`, genPayload(false));
-      const data = r1.data || {};
+      const payload = { all_stages: true };
+      const prodCo = sxTemplateCompanyId || ownerCompanyId || null;
+      if (prodCo) payload.production_company_id = prodCo;
+      const { data } = await api.post(`/crm/leads/${encodeURIComponent(leadId)}/tasks/ensure-missing-sx`, payload);
+      const stageCreated = (data.stages || [])
+        .filter((s) => s.scope === 'pipeline_column' && (s.created || 0) > 0)
+        .reduce((n, s) => n + (s.created || 0), 0);
       if ((data.created || 0) > 0) {
-        alert(`Đã tạo ${data.created} nhiệm vụ Sản xuất`);
-        await loadTasks();
-        return;
-      }
-      if (data.reason === 'no_default_bundle_for_workshop_type' || data.reason === 'no_default_bundle') {
+        const detail = stageCreated > 0 && stageCreated !== data.created
+          ? ` (${data.created - stageCreated} từ bộ mặc định, ${stageCreated} từ cột pipeline)`
+          : '';
+        alert(`Đã bổ sung ${data.created} nhiệm vụ Sản xuất thiếu theo bộ mẫu xưởng${detail}.`);
+      } else if ((data.backfill_updated || 0) > 0) {
+        alert(`Đã gắn lại ${data.backfill_updated} nhiệm vụ SX vào cột pipeline (task cũ bị ẩn do chưa gắn cột).`);
+      } else if (data.error) {
+        alert(data.error);
+      } else if (data.reason === 'no_default_bundle_for_workshop_type' || data.reason === 'no_default_bundle') {
         alert(
-          'Deal có phân loại Sản xuất nhưng chưa đặt bộ mặc định cho phân loại này.\n\n'
-          + 'Vào SX → Bộ mẫu nhiệm vụ: chọn Công ty + Phân loại + Pipeline → bấm «Đặt bộ mặc định deal SX».',
+          'Chưa có bộ mẫu Sản xuất cho phân loại này.\n\n'
+          + 'Vào SX → Bộ mẫu nhiệm vụ: chọn Công ty + Phân loại → tạo/bật bộ mẫu (hoặc «Đặt bộ mặc định deal SX»).',
         );
-        await loadTasks();
-        return;
-      }
-      if (data.reason === 'no_missing_sx_tasks') {
-        const ok = window.confirm(
-          'Theo bộ mẫu SX hiện tại, không còn nhiệm vụ nào thiếu (đã bổ sung hết hoặc trùng tiêu đề + cột).\n\n'
-            + 'Bạn có muốn xóa toàn bộ nhiệm vụ sx_* và gen lại từ đầu theo mẫu công ty?',
+      } else {
+        const colHints = (data.stages || [])
+          .filter((s) => s.scope === 'pipeline_column' && s.reason === 'no_templates_for_stage')
+          .length;
+        alert(
+          colHints > 0
+            ? `Đã quét ${colHints} cột pipeline — không thiếu nhiệm vụ (hoặc cột chưa gắn bộ mẫu).`
+            : 'Đã quét — không thiếu nhiệm vụ Sản xuất nào (hoặc cột chưa có bộ mẫu).',
         );
-        if (!ok) {
-          await loadTasks();
-          return;
-        }
-        const r2 = await api.post(`/crm/leads/${encodeURIComponent(leadId)}/tasks/generate-production-template`, genPayload(true));
-        alert(`Đã tạo lại ${r2.data?.created || 0} nhiệm vụ Sản xuất`);
-        await loadTasks();
-        return;
       }
-      if (data.reason === 'already_has_sx_tasks') {
-        const ok = window.confirm('Deal đã có nhiệm vụ Sản xuất (sx_*).\n\nBạn có muốn tạo lại (xóa & gen lại) theo bộ mẫu công ty của deal không?');
-        if (!ok) return;
-        const r2 = await api.post(`/crm/leads/${encodeURIComponent(leadId)}/tasks/generate-production-template`, genPayload(true));
-        alert(`Đã tạo lại ${r2.data?.created || 0} nhiệm vụ Sản xuất`);
-        await loadTasks();
-        return;
-      }
-      alert('Không có nhiệm vụ Sản xuất được tạo.');
+      await loadTasks();
     } catch (e) {
-      alert(e.response?.data?.error || e.message || 'Lỗi gen nhiệm vụ Sản xuất');
+      alert(e.response?.data?.error || e.message || 'Lỗi quét nhiệm vụ SX thiếu');
     } finally {
-      setGeneratingProduction(false);
+      setEnsuringMissingSx(false);
     }
   };
 
@@ -3320,27 +3306,30 @@ export default function CRMTasksTab({
           )}
           {leadType === 'deal' && !isSharedWorkspace && (
             <button
-              onClick={generateProductionTasks}
-              disabled={generatingProduction}
-              className="h-7 px-2.5 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60"
-              title="Gen nhiệm vụ Sản xuất (sx_*) từ bộ mẫu xưởng — bắt buộc đúng công ty của deal"
+              type="button"
+              onClick={() => void ensureMissingSxTasks()}
+              disabled={ensuringMissingSx}
+              className="h-7 px-2.5 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors disabled:opacity-60 bg-slate-100 text-slate-800 border border-slate-300 hover:bg-slate-200"
+              title="Quét mọi cột pipeline SX và bổ sung nhiệm vụ thiếu theo bộ mẫu xưởng (không xóa task cũ)"
             >
-              {generatingProduction ? <span className="animate-spin h-3 w-3 border-2 border-white/80 border-t-transparent rounded-full" /> : <span>🏭</span>}
-              Gen SX
+              {ensuringMissingSx
+                ? <span className="animate-spin h-3 w-3 border-2 border-current border-t-transparent rounded-full" />
+                : <span>🏭</span>}
+              Bổ sung thiếu SX
             </button>
           )}
           {showCrmTemplatesUi && usePipelineTaskUi && (
             <button
               type="button"
-              onClick={() => void resyncPipelineTasks()}
-              disabled={resyncingPipeline}
-              className="h-7 px-2.5 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors disabled:opacity-60 bg-violet-50 text-violet-800 border border-violet-300 hover:bg-violet-100"
-              title="Xóa nhiệm vụ CRM theo loại Lead/Deal và tạo lại từ bộ mẫu pipeline của công ty"
+              onClick={() => void ensureMissingPipelineTasks()}
+              disabled={ensuringMissing}
+              className="h-7 px-2.5 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors disabled:opacity-60 bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100"
+              title="Quét mọi cột pipeline CRM và bổ sung nhiệm vụ thiếu theo bộ mẫu (không xóa task cũ)"
             >
-              {resyncingPipeline
+              {ensuringMissing
                 ? <span className="animate-spin h-3 w-3 border-2 border-current border-t-transparent rounded-full" />
-                : <RefreshCw className="h-3 w-3" />}
-              Gen lại đúng bộ mẫu
+                : <span>🔍</span>}
+              Bổ sung thiếu CRM
             </button>
           )}
           {showCrmTemplatesUi && pipelineTemplates.length > 0 && (

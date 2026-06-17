@@ -39,6 +39,7 @@ const {
 const {
   applyProductionTemplateToFulfillmentLead,
   applyProductionTemplatesOnPipelineEnter,
+  ensureMissingSxTasksForLead,
 } = require('../helpers/projectOrderFulfillment');
 const { assertSxKanbanAdvanceAllowed } = require('../helpers/workshopStageAdvanceGate');
 const { notifyMultiple: notifyMultipleShared, createNotification: createNotif } = require('../helpers/notifications');
@@ -1595,12 +1596,13 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
           if (insRes.error) throw insRes.error;
           const newDeal = insRes.data;
 
-          await applyProductionTemplateToFulfillmentLead({
-            req,
+          await ensureMissingSxTasksForLead({
             leadId: newDeal.id,
-            createdBy: req.user.userId,
-            requireTemplateCompanyMatch: true,
+            userId: req.user.userId,
+            req,
+            templateSourceCompanyId: project.company_id || null,
             dealCompanyId: newDeal.company_id || project.company_id || null,
+            allPipelineStages: true,
           });
         }
         crmSummary = await loadCrmDealsSummaryForProductionProject(project.id);
@@ -3457,6 +3459,67 @@ r.post('/projects/:id/tasks/generate-from-templates', requirePermission('project
       return res.status(st).json({ error: out.error });
     }
     res.json(out);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Quét & bổ sung nhiệm vụ SX (sx_*) thiếu theo bộ mẫu xưởng — không xóa task cũ. */
+r.post('/projects/:id/tasks/ensure-missing-sx', requirePermission('projects', 'edit'), async (req, res) => {
+  try {
+    const projectId = req.params.id;
+    const { data: project } = await supabase
+      .from('projects')
+      .select('id, company_id')
+      .eq('id', projectId)
+      .maybeSingle();
+    if (!project?.id) return res.status(404).json({ error: 'Không tìm thấy dự án' });
+
+    const { data: deals } = await supabase
+      .from('crm_leads')
+      .select('id')
+      .eq('project_id', projectId)
+      .eq('type', 'deal')
+      .order('created_at', { ascending: true })
+      .limit(1);
+    const dealId = deals?.[0]?.id || null;
+    if (!dealId) {
+      return res.status(400).json({
+        error: 'Dự án chưa có deal CRM gắn project_id — hệ thống sẽ tự tạo khi tải lại trang chi tiết.',
+      });
+    }
+
+    let templateSourceCompanyId = project.company_id || null;
+    const bodyPc = req.body?.production_company_id;
+    if (bodyPc != null && String(bodyPc).trim() !== '') {
+      const { validateProductionCompanyId } = require('../helpers/productionCompanyGate');
+      const vPc = await validateProductionCompanyId(bodyPc);
+      if (!vPc.ok) return res.status(400).json({ error: vPc.error });
+      templateSourceCompanyId = vPc.company.id;
+    }
+
+    const result = await ensureMissingSxTasksForLead({
+      leadId: dealId,
+      userId: req.user.userId,
+      req,
+      templateSourceCompanyId,
+      dealCompanyId: project.company_id || null,
+      pipelineStageId: req.body?.pipeline_stage_id || null,
+      allPipelineStages: req.body?.all_stages !== false,
+    });
+    if (!result.ok) return res.status(400).json(result);
+
+    if (result.created > 0) {
+      const { emitCrmTaskChanged } = require('../helpers/crmTaskRealtime');
+      await emitCrmTaskChanged(req, {
+        leadId: dealId,
+        action: 'bulk_created',
+        count: result.created,
+      });
+    }
+
+    res.json(result);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });

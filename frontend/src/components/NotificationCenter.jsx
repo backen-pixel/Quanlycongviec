@@ -76,14 +76,14 @@ const ICON_MAP = {
   ai_crm_deadline_digest: Sparkles,
 };
 
-/** Khớp backend `dashboard.js` — tin nhắn CRM/Messenger + @ bình luận lead/deal */
+/** Khớp backend `dashboard.js` — tin nhắn CRM/Messenger + bình luận lead/deal */
 const CHAT_NOTIFICATION_TYPES = ['lead_chat', 'messenger_chat'];
 
 function isLeadCommentMentionNotification(n) {
   if (!n || n.type !== 'comment_added') return false;
   const et = String(n.entity_type || '');
   if (!['lead', 'crm_lead', 'crm_deal'].includes(et)) return false;
-  return n.metadata?.mentioned === true;
+  return true;
 }
 
 function isChatChannelNotification(n) {
@@ -191,6 +191,11 @@ function navigateCrmAssignment(navigate, nOrEntityId) {
 }
 
 function inferNotificationModuleKey(n) {
+  if (isLeadCommentMentionNotification(n)) {
+    const emk = n?.metadata?.ecosystem_module_key || n?.metadata?.module_key;
+    if (emk === 'production') return 'production';
+    return 'crm';
+  }
   const mk = n?.metadata && typeof n.metadata === 'object' ? String(n.metadata.module_key || '').trim() : '';
   if (mk) return mk;
   if (isAssignmentNotification(n)) return 'crm';
@@ -201,6 +206,20 @@ function inferNotificationModuleKey(n) {
   if (ty.includes('logistics_task_deadline')) return 'logistics';
   if (ty.includes('project_pipeline_deadline') || ty === 'deadline_warning' || ty === 'deadline_overdue') return 'project';
   return '';
+}
+
+/** Bình luận deal — mở tab Bình luận ở SX nếu deal gắn dự án xưởng. */
+function navigateLeadCommentMention(navigate, n, setOpen) {
+  const meta = n?.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  const navTab = meta.nav_tab || 'comments';
+  const pid = meta.project_id;
+  const isProd = meta.ecosystem_module_key === 'production' || meta.module_key === 'production';
+  if (pid && isProd) {
+    navigate(`/sx/projects/${pid}?tab=${navTab}`);
+  } else if (n?.entity_id) {
+    navigate(`/crm/leads/${n.entity_id}?tab=${navTab}`);
+  }
+  setOpen?.(false);
 }
 
 function moduleChipLabel(key) {
@@ -616,6 +635,10 @@ export default function NotificationCenter({ socket }) {
           notification={toastNotification}
           onDismiss={() => setToastNotification(null)}
           onNavigate={(notif) => {
+            if (isLeadCommentMentionNotification(notif) && notif.entity_id) {
+              navigateLeadCommentMention(navigate, notif, setOpen);
+              return;
+            }
             if (notif.metadata?.nav_url) {
               navigate(notif.metadata.nav_url);
               setOpen(false);
@@ -994,11 +1017,9 @@ export default function NotificationCenter({ socket }) {
                         setOpen(false);
                         return;
                       }
-                      // @ bình luận lead/deal → tab Bình luận
+                      // Bình luận lead/deal → tab Bình luận (SX nếu có project_id)
                       if (isLeadCommentMentionNotification(n) && n.entity_id) {
-                        const navTab = n.metadata?.nav_tab || 'comments';
-                        navigate(`/crm/leads/${n.entity_id}?tab=${navTab}`);
-                        setOpen(false);
+                        navigateLeadCommentMention(navigate, n, setOpen);
                         return;
                       }
                       // Chat trên Lead/Deal → mở Lead chat dock

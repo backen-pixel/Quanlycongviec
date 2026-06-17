@@ -4,12 +4,14 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 const { supabase } = require('../config/supabase');
-const { getDefaultPipelineIdForCompany } = require('./crmTaxonomyCache');
+const { getDefaultPipelineIdForCompany, getPipelineIdForCompanyRegion } = require('./crmTaxonomyCache');
 const {
   normalizeTemplateItemAssigneeIds,
   primaryTemplateItemAssigneeId,
   applyAssigneesToInsertedCrmTasks,
 } = require('./templateItemAssignees');
+const { resolveExecutorCompanyId, isExecutorColumnError } = require('./crossCompanyWorkspace');
+const { normalizeTemplateChecklistForCrmTask } = require('./templateChecklistNormalize');
 
 function isSxCrmTaskRow(t) {
   return String(t?.stage_slug || '').startsWith('sx_');
@@ -71,6 +73,29 @@ function stageTypesMatchEntity(stagePipelineType, entityType) {
   const st = String(stagePipelineType || '').toLowerCase();
   const et = entityType === 'deal' ? 'deal' : 'lead';
   return st === et || st === 'both';
+}
+
+/** Khớp crm_task_templates.pipeline_type với loại lead/deal (giống resolveCrmBundleTemplateScope). */
+function crmTemplateMatchesEntityType(templatePipelineType, entityType) {
+  const et = entityType === 'deal' ? 'deal' : 'lead';
+  const pt = String(templatePipelineType || '').toLowerCase();
+  return !pt || pt === 'both' || pt === et;
+}
+
+/** Pipeline CRM của lead/deal: pipeline_id → khu vực → mặc định công ty. */
+async function resolvePipelineIdForLead(lead) {
+  if (lead?.pipeline_id) return lead.pipeline_id;
+  if (!lead?.company_id) return null;
+  try {
+    if (lead.region_id) {
+      const pid = await getPipelineIdForCompanyRegion(lead.company_id, lead.region_id);
+      if (pid) return pid;
+    }
+    return await getDefaultPipelineIdForCompany(lead.company_id);
+  } catch (e) {
+    console.warn('[AUTO-TASK] resolvePipelineIdForLead:', e.message);
+    return null;
+  }
 }
 
 function buildTaskInsertsFromTemplates(templates, allItems, userId, leadId) {
@@ -195,16 +220,28 @@ async function autoGenCrmTasksForNewLead(leadId, userId, req = null) {
 
   const { data: allTplRows, error: tplErr } = await supabase
     .from('crm_task_templates')
-    .select('id, name, stage_slug, pipeline_stage_id, is_default')
+    .select('id, name, stage_slug, pipeline_stage_id, pipeline_type, is_default')
     .eq('is_active', true)
     .in('pipeline_stage_id', stageIds)
     .order('order_index');
   if (tplErr) throw tplErr;
 
-  let templates = (allTplRows || []).filter((t) => t.is_default);
+  let templates = (allTplRows || []).filter(
+    (t) => t.is_default && crmTemplateMatchesEntityType(t.pipeline_type, entityType),
+  );
   if (!templates.length && (allTplRows || []).length) {
-    console.log(`[AUTO-TASK] ${entityType} ${leadId}: pipeline có bộ mẫu nhưng chưa đặt bộ mặc định → skip`);
-    return 0;
+    const typeMatched = (allTplRows || []).filter(
+      (t) => crmTemplateMatchesEntityType(t.pipeline_type, entityType),
+    );
+    if (typeMatched.length) {
+      templates = typeMatched;
+      console.log(
+        `[AUTO-TASK] ${entityType} ${leadId}: chưa đặt bộ mặc định → dùng ${templates.length} bộ mẫu active`,
+      );
+    } else {
+      console.log(`[AUTO-TASK] ${entityType} ${leadId}: pipeline có bộ mẫu nhưng không khớp loại → skip`);
+      return 0;
+    }
   }
   if (!templates.length) {
     console.log(`[AUTO-TASK] ${entityType} ${leadId}: chưa có bộ mẫu gắn pipeline_stage → skip`);
@@ -431,10 +468,316 @@ async function applyCrmTaskTemplatesToCompanyRegions({
   return stats;
 }
 
+function crmTaskTitleKey(raw) {
+  return String(raw || '').trim().toLowerCase();
+}
+
+function crmExecutorFieldsFromTemplateItem(it, ownerCompanyId) {
+  const execId = resolveExecutorCompanyId(it, ownerCompanyId);
+  if (!execId || String(execId) === String(ownerCompanyId || '')) return { executor_company_id: null };
+  return { executor_company_id: execId };
+}
+
+function toCrmTaskChecklist(raw, ownerCompanyId, templateItem) {
+  const ckDefaultExec = crmExecutorFieldsFromTemplateItem(templateItem || {}, ownerCompanyId).executor_company_id;
+  return normalizeTemplateChecklistForCrmTask(raw, ckDefaultExec);
+}
+
+function buildCrmTaskInsertFromTemplateItem(item, tpl, leadId, pipelineStageId, userId, ownerCompanyId) {
+  const deadlineDays = item.deadline_days;
+  let deadline = null;
+  if (deadlineDays != null && Number(deadlineDays) > 0) {
+    const d = new Date();
+    d.setDate(d.getDate() + Number(deadlineDays));
+    deadline = d.toISOString();
+  }
+  return {
+    lead_id: leadId,
+    title: item.title,
+    description: item.description || null,
+    checklist: toCrmTaskChecklist(item.checklist, ownerCompanyId, item),
+    priority: item.priority || 'medium',
+    stage_slug: tpl?.stage_slug || null,
+    pipeline_stage_id: pipelineStageId,
+    order_index: item.order_index,
+    deadline,
+    created_by: userId,
+    completion_requires_file_or_note: !!item.completion_requires_file_or_note
+      || (Array.isArray(item.required_evidence_file_types) && item.required_evidence_file_types.length > 0),
+    required_evidence_file_types: Array.isArray(item.required_evidence_file_types) ? item.required_evidence_file_types : [],
+    completion_requires_customer_note: !!item.completion_requires_customer_note,
+    completion_requires_customer_contact: !!item.completion_requires_customer_contact,
+    requires_quick_verdict: !!item.requires_quick_verdict,
+    blocks_stage_advance: !!item.blocks_stage_advance,
+    show_excel_quotation_upload: !!item.show_excel_quotation_upload,
+    assignee_id: primaryTemplateItemAssigneeId(item),
+    ...crmExecutorFieldsFromTemplateItem(item, ownerCompanyId),
+  };
+}
+
+/**
+ * Kiểm tra & bổ sung nhiệm vụ CRM thiếu theo bộ mẫu mặc định của một cột pipeline.
+ * Idempotent: chỉ thêm task chưa có (so theo title trong cùng pipeline_stage_id).
+ */
+async function ensureMissingCrmTasksForPipelineStage({ leadId, pipelineStageId, userId, req = null }) {
+  if (!leadId || !pipelineStageId) {
+    return { created: 0, skipped: 0, reason: 'missing_params' };
+  }
+
+  const { data: lead, error: leadErr } = await supabase
+    .from('crm_leads')
+    .select('id, type, company_id, pipeline_id, region_id, created_by')
+    .eq('id', leadId)
+    .maybeSingle();
+  if (leadErr) throw leadErr;
+  if (!lead) return { created: 0, skipped: 0, reason: 'no_lead' };
+
+  const entityType = lead.type === 'deal' ? 'deal' : 'lead';
+  const actorId = userId || lead.created_by || null;
+  const ownerCompanyId = lead.company_id || null;
+
+  const pipelineId = await resolvePipelineIdForLead(lead);
+
+  const { data: stage, error: stageErr } = await supabase
+    .from('crm_pipeline_stages')
+    .select('id, pipeline_id, pipeline_type, is_active')
+    .eq('id', pipelineStageId)
+    .maybeSingle();
+  if (stageErr) throw stageErr;
+  if (!stage?.id) return { created: 0, skipped: 0, reason: 'no_stage' };
+  if (!stageTypesMatchEntity(stage.pipeline_type, entityType)) {
+    return { created: 0, skipped: 0, reason: 'stage_type_mismatch', pipeline_stage_id: pipelineStageId };
+  }
+
+  // Lấy mọi bộ mẫu active gắn cột này. Ưu tiên bộ mặc định (is_default);
+  // nếu chưa cấu hình mặc định → dùng toàn bộ bộ mẫu của cột (để quét vẫn hoạt động).
+  const { data: allStageTemplates, error: tplErr } = await supabase
+    .from('crm_task_templates')
+    .select('id, name, stage_slug, pipeline_stage_id, pipeline_type, is_default')
+    .eq('is_active', true)
+    .eq('pipeline_stage_id', pipelineStageId)
+    .order('order_index');
+  if (tplErr) throw tplErr;
+
+  const typeMatched = (allStageTemplates || []).filter(
+    (t) => crmTemplateMatchesEntityType(t.pipeline_type, entityType),
+  );
+  const defaults = typeMatched.filter((t) => t.is_default);
+  const matchedTemplates = defaults.length ? defaults : typeMatched;
+
+  if (!matchedTemplates.length) {
+    console.log(
+      `[AUTO-TASK] ensure: lead=${leadId} stage=${pipelineStageId} type=${entityType} → `
+      + `không có bộ mẫu (stage_templates=${(allStageTemplates || []).length})`,
+    );
+    return {
+      created: 0,
+      skipped: 0,
+      reason: 'no_templates',
+      pipeline_stage_id: pipelineStageId,
+      entity_type: entityType,
+      company_id: ownerCompanyId,
+      pipeline_id: pipelineId,
+    };
+  }
+
+  const tplIds = matchedTemplates.map((t) => t.id);
+  const { data: allItems, error: itemErr } = await supabase
+    .from('crm_task_template_items')
+    .select('*')
+    .in('template_id', tplIds)
+    .order('order_index');
+  if (itemErr) throw itemErr;
+  if (!allItems?.length) {
+    return {
+      created: 0,
+      skipped: 0,
+      reason: 'empty_templates',
+      pipeline_stage_id: pipelineStageId,
+      template_count: matchedTemplates.length,
+    };
+  }
+
+  const tplMap = {};
+  matchedTemplates.forEach((t) => { tplMap[t.id] = t; });
+  const dedupedItems = dedupeTemplateItemsForInsert(
+    allItems,
+    tplMap,
+    pipelineStageId,
+    `ensure lead=${leadId} stage=${pipelineStageId}`,
+  );
+
+  // Task đã có trên lead khớp cột này: theo pipeline_stage_id HOẶC theo stage_slug
+  // (task cũ/legacy có thể có pipeline_stage_id = null nhưng vẫn thuộc cột qua slug).
+  const stageSlugSet = new Set(
+    matchedTemplates.map((t) => String(t.stage_slug || '').trim().toLowerCase()).filter(Boolean),
+  );
+  const { data: existingRows, error: exErr } = await supabase
+    .from('crm_tasks')
+    .select('title, stage_slug, pipeline_stage_id')
+    .eq('lead_id', leadId);
+  if (exErr) throw exErr;
+
+  const existingTitleKeys = new Set(
+    (existingRows || [])
+      .filter((t) => {
+        if (String(t.pipeline_stage_id || '') === String(pipelineStageId)) return true;
+        const slug = String(t.stage_slug || '').trim().toLowerCase();
+        return slug && stageSlugSet.has(slug);
+      })
+      .map((t) => crmTaskTitleKey(t.title))
+      .filter(Boolean),
+  );
+
+  const toInsertItems = dedupedItems.filter(
+    (item) => !existingTitleKeys.has(crmTaskTitleKey(item.title)),
+  );
+  const skipped = dedupedItems.length - toInsertItems.length;
+
+  console.log(
+    `[AUTO-TASK] ensure: lead=${leadId} stage=${pipelineStageId} type=${entityType} `
+    + `templates=${matchedTemplates.length} items=${dedupedItems.length} `
+    + `existing_match=${existingTitleKeys.size} missing=${toInsertItems.length}`,
+  );
+
+  if (!toInsertItems.length) {
+    return {
+      created: 0,
+      skipped,
+      reason: 'no_missing_tasks',
+      pipeline_stage_id: pipelineStageId,
+      template_count: matchedTemplates.length,
+    };
+  }
+
+  const inserts = toInsertItems.map((item) => {
+    const tpl = tplMap[item.template_id] || {};
+    return buildCrmTaskInsertFromTemplateItem(
+      item,
+      tpl,
+      leadId,
+      pipelineStageId,
+      actorId,
+      ownerCompanyId,
+    );
+  });
+  const assigneeIdsList = toInsertItems.map((item) => normalizeTemplateItemAssigneeIds(item));
+
+  const selCols = 'id, title, stage_slug, pipeline_stage_id, lead_id, assignee_id, description, status, priority, deadline, executor_company_id';
+  let { data: inserted, error: insErr } = await supabase.from('crm_tasks').insert(inserts).select(selCols);
+  if (insErr && String(insErr.message || '').toLowerCase().includes('checklist')) {
+    const stripped = inserts.map(({ checklist: _c, ...rest }) => rest);
+    ({ data: inserted, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selCols));
+  }
+  if (insErr && isExecutorColumnError(insErr)) {
+    const stripped = inserts.map(({ executor_company_id: _e, ...rest }) => rest);
+    ({ data: inserted, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selCols));
+  }
+  if (insErr) throw insErr;
+
+  await applyAssigneesToInsertedCrmTasks(
+    inserted || [],
+    assigneeIdsList,
+    req || { user: { userId: actorId } },
+  );
+
+  console.log(
+    `[AUTO-TASK] ensure missing: +${inserts.length} tasks for ${entityType} ${leadId} stage=${pipelineStageId}`,
+  );
+
+  return {
+    created: inserts.length,
+    skipped,
+    reason: 'ok',
+    pipeline_stage_id: pipelineStageId,
+    template_count: matchedTemplates.length,
+    entity_type: entityType,
+    company_id: ownerCompanyId,
+    pipeline_id: pipelineId,
+    tasks: inserted || [],
+  };
+}
+
+/**
+ * Quét một hoặc mọi cột pipeline CRM — bổ sung nhiệm vụ thiếu theo bộ mẫu mặc định.
+ */
+async function ensureMissingCrmTasksForLead({
+  leadId,
+  userId,
+  req = null,
+  pipelineStageId = null,
+  allStages = false,
+}) {
+  const { data: lead, error: leadErr } = await supabase
+    .from('crm_leads')
+    .select('id, type, company_id, pipeline_id, region_id, stage_id, created_by')
+    .eq('id', leadId)
+    .maybeSingle();
+  if (leadErr) throw leadErr;
+  if (!lead) return { ok: false, error: 'Lead/deal không tồn tại' };
+
+  const actorId = userId || lead.created_by || null;
+  const entityType = lead.type === 'deal' ? 'deal' : 'lead';
+
+  let stageIds = [];
+  if (pipelineStageId) {
+    stageIds = [pipelineStageId];
+  } else if (allStages) {
+    const pipelineId = await resolvePipelineIdForLead(lead);
+    if (!pipelineId) {
+      return { ok: false, error: 'Lead/deal chưa có pipeline CRM (công ty/khu vực chưa cấu hình)' };
+    }
+    const { data: stages, error: stErr } = await supabase
+      .from('crm_pipeline_stages')
+      .select('id, pipeline_type')
+      .eq('pipeline_id', pipelineId)
+      .eq('is_active', true)
+      .order('order_index');
+    if (stErr) throw stErr;
+    stageIds = (stages || [])
+      .filter((s) => stageTypesMatchEntity(s.pipeline_type, entityType))
+      .map((s) => s.id);
+  } else {
+    const sid = lead.stage_id || null;
+    if (!sid) return { ok: false, error: 'Lead/deal chưa ở cột pipeline nào' };
+    stageIds = [sid];
+  }
+
+  if (!stageIds.length) {
+    return { ok: true, created: 0, skipped: 0, stages: [], entity_type: entityType };
+  }
+
+  const stageResults = [];
+  let totalCreated = 0;
+  let totalSkipped = 0;
+  for (const sid of stageIds) {
+    const r = await ensureMissingCrmTasksForPipelineStage({
+      leadId,
+      pipelineStageId: sid,
+      userId: actorId,
+      req,
+    });
+    stageResults.push(r);
+    totalCreated += r.created || 0;
+    totalSkipped += r.skipped || 0;
+  }
+
+  return {
+    ok: true,
+    created: totalCreated,
+    skipped: totalSkipped,
+    stages: stageResults,
+    entity_type: entityType,
+    company_id: lead.company_id || null,
+  };
+}
+
 module.exports = {
   autoGenCrmTasksForNewLead,
   applyCrmTaskTemplatesToCompanyRegions,
   resyncCrmPipelineTasksForLead,
+  ensureMissingCrmTasksForPipelineStage,
+  ensureMissingCrmTasksForLead,
   filterCrmTasksForLeadType,
   dedupeTemplateItemsForInsert,
   isSxCrmTaskRow,

@@ -1850,7 +1850,7 @@ function StageForm({
         {pipelineType === 'deal' && !form.is_lost && (
           <label
             className="flex items-center gap-2 text-xs cursor-pointer text-violet-900 bg-violet-50 px-2 py-1 rounded-lg border border-violet-200"
-            title="Tick các cột muốn cộng vào ô 'Giá trị kỳ vọng' trên CRM dashboard. Nếu không tick cột nào, dashboard tự loại cột Thắng / Thua / Hoàn thành DT."
+            title="Tick các cột muốn cộng vào ô 'Giá trị dự kiến' và 'Giá trị kỳ vọng' trên CRM dashboard. Nếu không tick cột nào, dashboard tự loại cột Thắng / Thua / Hoàn thành DT."
           >
             <input
               type="checkbox"
@@ -1858,7 +1858,7 @@ function StageForm({
               onChange={(e) => setForm((f) => ({ ...f, counts_as_expected_revenue: e.target.checked }))}
               className="rounded border-violet-400"
             />
-            <TrendingUp className="h-3.5 w-3.5 text-violet-600" /> Tính vào «Giá trị kỳ vọng»
+            <TrendingUp className="h-3.5 w-3.5 text-violet-600" /> Tính vào «Giá trị dự kiến / kỳ vọng»
           </label>
         )}
         {pipelineType === 'deal' && (
