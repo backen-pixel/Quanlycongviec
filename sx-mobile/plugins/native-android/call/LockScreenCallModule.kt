@@ -157,8 +157,14 @@ class LockScreenCallModule(private val reactContext: ReactApplicationContext) :
       emitEvent("LockScreenCallEnd", callId)
     }
 
-    fun emitRejectCall(callId: String) {
-      emitEvent("LockScreenCallReject", callId)
+    fun emitRejectCall(callId: String, fromUserId: String = "") {
+      val ctx = instance?.reactContext ?: return
+      if (!ctx.hasActiveReactInstance()) return
+      val map = Arguments.createMap()
+      map.putString("callId", callId)
+      map.putString("fromUserId", fromUserId)
+      ctx.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+        .emit("LockScreenCallReject", map)
     }
 
     fun emitAcceptCall(callId: String) {

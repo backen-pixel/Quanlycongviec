@@ -8,11 +8,9 @@ import TapHighlight from '../TapHighlight';
 
 import MessengerAvatar from './MessengerAvatar';
 
-import { useCall } from '../../context/CallContext';
+import { useCall } from '../../calling';
 
 import { useTheme } from '../../context/ThemeContext';
-
-import { fetchMessengerGroupDetail } from '../../lib/messengerApi';
 
 import { getMessengerColors } from '../../lib/messengerTheme';
 
@@ -82,15 +80,15 @@ export default function ChatHeader({
 
   const mc = getMessengerColors(colors, isDark);
 
-  const { startCall, startGroupCall, status: callStatus } = useCall();
+  const { startCall, session } = useCall();
 
   const [calling, setCalling] = useState(false);
 
+  const busy = !!session && session.state !== 'IDLE';
 
+  const beginCall = async (media: 'audio' | 'video') => {
 
-  const onCall = async () => {
-
-    if (callStatus !== 'idle' || calling) {
+    if (busy || calling) {
 
       Alert.alert('Cuộc gọi', 'Đang có cuộc gọi khác.');
 
@@ -98,27 +96,17 @@ export default function ChatHeader({
 
     }
 
-    if (isDirect) {
+    if (!isDirect) {
 
-      if (!peerId) {
+      Alert.alert('Cuộc gọi nhóm', 'Cuộc gọi nhóm tạm thời chưa khả dụng.');
 
-        Alert.alert('Cuộc gọi', 'Không xác định được người nhận.');
+      return;
 
-        return;
+    }
 
-      }
+    if (!peerId) {
 
-      setCalling(true);
-
-      try {
-
-        await startCall({ id: String(peerId), name: displayName, avatar: avatarUrl || null });
-
-      } finally {
-
-        setCalling(false);
-
-      }
+      Alert.alert('Cuộc gọi', 'Không xác định được người nhận.');
 
       return;
 
@@ -128,27 +116,7 @@ export default function ChatHeader({
 
     try {
 
-      const detail = await fetchMessengerGroupDetail(threadId);
-
-      const members = (detail.members || [])
-
-        .filter((m) => String(m.id) !== String(myUserId))
-
-        .map((m) => ({ id: m.id, name: m.name, avatar: m.avatar }));
-
-      if (!members.length) {
-
-        Alert.alert('Cuộc gọi nhóm', 'Nhóm không có thành viên khác.');
-
-        return;
-
-      }
-
-      await startGroupCall({ id: threadId, name: displayName, members });
-
-    } catch {
-
-      Alert.alert('Cuộc gọi nhóm', 'Không thể bắt đầu cuộc gọi nhóm.');
+      await startCall({ id: String(peerId), name: displayName, avatar: avatarUrl || null }, media);
 
     } finally {
 
@@ -158,13 +126,9 @@ export default function ChatHeader({
 
   };
 
+  const onCall = () => beginCall('audio');
 
-
-  const onVideoCall = () => {
-
-    Alert.alert('Gọi video', 'Gọi video sẽ được bổ sung trong bản cập nhật tiếp theo.');
-
-  };
+  const onVideoCall = () => beginCall('video');
 
 
 

@@ -18,9 +18,11 @@ class IncomingCallActionReceiver : BroadcastReceiver() {
       IncomingCallHelper.ACTION_REJECT -> {
         // Dọn UI/chuông ngay để người dùng thấy phản hồi tức thì.
         IncomingCallHelper.cancelCallNotification(context, data.callId)
-        // Nếu RN còn sống → emit socket call:reject (nhanh, đáng tin cậy).
+        // Nếu RN còn sống → emit socket call:reject (nhanh, đáng tin cậy). Kèm fromUserId để
+        // RN gửi được call:reject dù chưa có state cuộc gọi (vd cuộc gọi tới qua FCM lúc socket
+        // offline) — tránh tình trạng chỉ tắt phía mobile còn web vẫn đổ chuông.
         if (LockScreenCallModule.hasLiveReactInstance()) {
-          LockScreenCallModule.emitRejectCall(data.callId)
+          LockScreenCallModule.emitRejectCall(data.callId, data.fromUserId)
         }
         // REST đồng bộ trong goAsync() — giữ tiến trình sống tới khi HTTP xong,
         // tránh bị hệ thống kill giữa chừng khiến caller không nhận được lệnh từ chối.

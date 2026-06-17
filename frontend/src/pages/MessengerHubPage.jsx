@@ -28,7 +28,7 @@ import {
   PhoneCall,
 } from 'lucide-react';
 import { useMessengerDock } from '../context/MessengerDockContext';
-import { useCall } from '../context/CallContext';
+import { useCall } from '../calling';
 import GroupCallMemberPickerModal from '../components/GroupCallMemberPickerModal';
 import { MessengerGroupChatTab } from '../components/LeadChatTabs';
 import { useAuth } from '../lib/auth';
