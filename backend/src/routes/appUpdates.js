@@ -36,6 +36,7 @@ const {
   resolveDiskPathFromFileUrl,
   statFileSizeSafe,
   buildPublicDownloadUrl,
+  isReleaseApkAvailable,
 } = require('../helpers/appReleaseDownload');
 const config = require('../config');
 
@@ -124,6 +125,36 @@ function downloadUrlFor(release, publicBase) {
   if (release.external_url) return release.external_url;
   if (release.file_url && /^https?:\/\//i.test(release.file_url)) return release.file_url;
   return null;
+}
+
+/** So sánh semver đơn giản: âm nếu a < b, 0 nếu bằng, dương nếu a > b. */
+function compareVersionNames(a, b) {
+  const pa = String(a || '').trim().split('.').map((x) => parseInt(x, 10) || 0);
+  const pb = String(b || '').trim().split('.').map((x) => parseInt(x, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const da = pa[i] || 0;
+    const db = pb[i] || 0;
+    if (da !== db) return da - db;
+  }
+  return 0;
+}
+
+function clientNeedsUpdate(clientCode, clientVersion, latest) {
+  if (!latest) return false;
+  const latestCode = latest.version_code;
+  const latestVer = String(latest.version || '').trim();
+  const clientVer = String(clientVersion || '').trim();
+
+  if (Number.isFinite(clientCode) && latestCode != null) {
+    if (clientCode >= latestCode) return false;
+  } else if (clientVer && latestVer) {
+    if (compareVersionNames(clientVer, latestVer) >= 0) return false;
+  }
+
+  if (Number.isFinite(clientCode) && latestCode != null && clientCode < latestCode) return true;
+  if (clientVer && latestVer && compareVersionNames(clientVer, latestVer) < 0) return true;
+  return false;
 }
 
 async function streamRemoteApk(res, remoteUrl, filename, expectedSize) {
@@ -236,9 +267,9 @@ r.get('/check', async (req, res) => {
       return res.json({ updateAvailable: false, latestVersion: null });
     }
 
-    const hasNewer = Number.isFinite(clientCode) && latest.version_code != null
-      ? latest.version_code > clientCode
-      : false;
+    const needsUpdate = clientNeedsUpdate(clientCode, clientVersion, latest);
+    const apkReady = isReleaseApkAvailable(latest, appKey);
+    const hasNewer = needsUpdate && apkReady;
 
     res.json({
       updateAvailable: hasNewer,
@@ -249,6 +280,8 @@ r.get('/check', async (req, res) => {
       size: effectiveReleaseFileSize(latest, appKey),
       sha256: latest.sha256,
       releaseNotes: latest.release_notes || null,
+      apkReady,
+      needsUpdate,
     });
   } catch (e) {
     console.error('[appUpdates] check:', e);
@@ -270,7 +303,7 @@ r.get('/latest', async (req, res) => {
 
     const { data: rows } = await supabase
       .from('app_releases')
-      .select('id, version, version_code, file_size, sha256, release_notes, is_mandatory, created_at, updated_at')
+      .select('id, version, version_code, file_size, sha256, release_notes, is_mandatory, created_at, updated_at, storage_path, file_url, external_url, update_type')
       .eq('app_id', app.id)
       .eq('channel', channel)
       .eq('update_type', 'apk')
@@ -291,19 +324,22 @@ r.get('/latest', async (req, res) => {
       });
     }
 
+    const apkReady = isReleaseApkAvailable(latest, appKey);
+
     res.json({
-      available: true,
+      available: apkReady,
       appKey,
       displayName: app.display_name || appKey,
       releaseId: latest.id,
       version: latest.version,
       versionCode: latest.version_code,
-      downloadUrl: downloadUrlFor(latest, publicBaseUrl(req)),
+      downloadUrl: apkReady ? downloadUrlFor(latest, publicBaseUrl(req)) : null,
       size: effectiveReleaseFileSize(latest, appKey),
       sha256: latest.sha256,
       releaseNotes: latest.release_notes || null,
       mandatory: latest.is_mandatory,
       publishedAt: latest.updated_at || latest.created_at,
+      apkReady,
     });
   } catch (e) {
     console.error('[appUpdates] latest:', e);

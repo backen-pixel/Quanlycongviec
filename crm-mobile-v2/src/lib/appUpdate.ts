@@ -21,12 +21,20 @@ export type UpdateCheckResult = {
   size?: number | null;
   sha256?: string | null;
   releaseNotes?: string | null;
+  apkReady?: boolean;
+  needsUpdate?: boolean;
 };
 
 export function currentVersionCode(): number | null {
   if (Platform.OS !== 'android') return null;
-  const n = parseInt(String(Application.nativeBuildVersion ?? ''), 10);
-  return Number.isFinite(n) ? n : null;
+  const raw = String(Application.nativeBuildVersion ?? '').trim();
+  if (!raw) return null;
+  // Android versionCode là số nguyên; tránh parseInt("2.0.43") === 2
+  if (/^\d+$/.test(raw)) {
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
 }
 
 export function currentVersionName(): string {
