@@ -114,6 +114,13 @@ export default function SettingsScreen() {
               trackColor={{ false: Colors.border, true: Colors.purple }}
             />
           </View>
+          <View style={styles.shareHint}>
+            <Ionicons name="share-social-outline" size={16} color={Colors.purple} />
+            <Text style={styles.shareHintTxt}>
+              ROM quốc tế (Google Phone): mở bản ghi trong Cuộc gọi → Chia sẻ → chọn{' '}
+              <Text style={styles.shareHintBold}>CRM Mobile</Text>. App sẽ tự tải lên sau khi bạn đăng nhập.
+            </Text>
+          </View>
         </View>
       ) : null}
 
@@ -221,5 +228,16 @@ const makeStyles = (Colors: ThemeColors) =>
     },
     toggleLbl: { color: Colors.textMuted, fontSize: 13, fontWeight: '600', flex: 1, paddingRight: 12 },
     toggleHint: { color: Colors.textFaint, fontSize: 11, lineHeight: 15, marginTop: 3 },
+    shareHint: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 8,
+      marginTop: 10,
+      paddingTop: 10,
+      borderTopWidth: 1,
+      borderTopColor: Colors.borderSoft,
+    },
+    shareHintTxt: { flex: 1, color: Colors.textMuted, fontSize: 12, lineHeight: 17, fontWeight: '600' },
+    shareHintBold: { color: Colors.text, fontWeight: '800' },
     infoRow: { flexDirection: 'row', alignItems: 'center', gap: 12, width: '100%' },
   });

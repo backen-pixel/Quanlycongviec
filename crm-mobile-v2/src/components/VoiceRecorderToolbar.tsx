@@ -236,6 +236,13 @@ export default function VoiceRecorderToolbar({ onUploaded, disabled }: Props) {
         </View>
       </View>
 
+      <View style={styles.shareTip}>
+        <Ionicons name="share-outline" size={14} color={Colors.purple} />
+        <Text style={styles.shareTipTxt}>
+          Google Phone: Gần đây → bản ghi → Chia sẻ → CRM Mobile
+        </Text>
+      </View>
+
       <Text style={styles.label}>Ghi chú kèm file (tùy chọn)</Text>
       <TextInput
         style={styles.noteInput}
@@ -318,6 +325,17 @@ const makeStyles = (Colors: ThemeColors) =>
       justifyContent: 'center',
     },
     permSyncTxt: { color: Colors.text, fontWeight: '700', fontSize: 12 },
+    shareTip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginBottom: 10,
+      paddingVertical: 8,
+      paddingHorizontal: 10,
+      borderRadius: Radii.sm,
+      backgroundColor: Colors.purple + '14',
+    },
+    shareTipTxt: { flex: 1, color: Colors.textMuted, fontSize: 11, fontWeight: '600', lineHeight: 15 },
     label: { color: Colors.textMuted, fontSize: 12, fontWeight: '700', marginBottom: 6 },
     noteInput: {
       minHeight: 68,
