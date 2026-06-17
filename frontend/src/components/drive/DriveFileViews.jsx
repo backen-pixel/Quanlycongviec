@@ -2,9 +2,9 @@
  * Hiển thị file Drive dạng list / grid — dùng chung cho DrivePage, DriveAttachments, DriveFilePicker.
  */
 import { useEffect, useRef, useState } from 'react';
-import { User as UserIcon, ZoomIn, MoreHorizontal, Eye, Download, Trash2, FolderInput } from 'lucide-react';
+import { User as UserIcon, ZoomIn, MoreHorizontal, Eye, Download, Trash2, FolderInput, Play, Pencil, Star, StarOff } from 'lucide-react';
 import DriveFileIcon from './DriveFileIcon';
-import { driveFileThumbnailUrl, driveFetchFileBlobUrl } from '../../lib/drive';
+import { driveFileThumbnailUrl, driveFetchFileBlobUrl, driveRefreshFileThumbnail } from '../../lib/drive';
 import DriveMarqueeSelectArea, { shouldIgnoreDriveMarqueeClick } from './DriveMarqueeSelectArea';
 
 /** Cột grid cho bảng list file (Tên | Người tải | Ngày tải | Kích thước | Hành động) */
@@ -71,32 +71,135 @@ export function isPdfFile(mime, filename) {
   return false;
 }
 
-/** Click 1 lần mở preview: ảnh / PDF / Doc/Sheet embed. */
+/** Video lớn hơn ngưỡng này — khuyên tải xuống thay vì phát trong trình duyệt. */
+export const LARGE_VIDEO_BYTES = 80 * 1024 * 1024;
+
+export function driveSelectId(id) {
+  return id == null ? '' : String(id);
+}
+
+/** Video upload lên Drive. */
+export function isVideoFile(mime, filename) {
+  if (typeof mime === 'string' && mime.startsWith('video/')) return true;
+  if (filename && /\.(mp4|webm|mov|avi|mkv|m4v|wmv)$/i.test(filename)) return true;
+  return false;
+}
+
+/** Click 1 lần mở preview: ảnh / PDF / Doc/Sheet embed / video. */
 export function isQuickPreviewFile(file) {
   return isImageMime(file?.mime_type, file?.name)
     || isGoogleWorkspaceFile(file?.mime_type)
-    || isPdfFile(file?.mime_type, file?.name);
+    || isPdfFile(file?.mime_type, file?.name)
+    || isVideoFile(file?.mime_type, file?.name);
 }
 
 export function filterImageFiles(files) {
   return (files || []).filter((f) => isImageMime(f.mime_type, f.name));
 }
 
-/** Thumbnail grid — ảnh: luôn tải file gốc (/download, cùng preview); Doc/Sheet: proxy thumbnail. */
+const VIDEO_POSTER_MAX_BYTES = 120 * 1024 * 1024;
+
+/** Trích khung hình đầu từ video (fallback khi Google chưa có thumbnail). */
+function VideoFramePoster({ file, className, size, onFailed }) {
+  const [poster, setPoster] = useState(null);
+  const blobRef = useRef(null);
+
+  useEffect(() => {
+    if (!file?.id) return undefined;
+    if (file.size_bytes != null && file.size_bytes > VIDEO_POSTER_MAX_BYTES) {
+      onFailed?.();
+      return undefined;
+    }
+
+    let cancelled = false;
+    let video = null;
+
+    (async () => {
+      try {
+        const blobUrl = await driveFetchFileBlobUrl(file.id);
+        if (cancelled) {
+          URL.revokeObjectURL(blobUrl);
+          return;
+        }
+        blobRef.current = blobUrl;
+
+        video = document.createElement('video');
+        video.muted = true;
+        video.playsInline = true;
+        video.preload = 'auto';
+        video.src = blobUrl;
+
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('timeout')), 20000);
+          video.onloadeddata = () => { clearTimeout(timer); resolve(); };
+          video.onerror = () => { clearTimeout(timer); reject(new Error('video error')); };
+        });
+
+        const seekTo = Math.min(0.5, Math.max(0.05, (video.duration || 1) * 0.05));
+        video.currentTime = seekTo;
+        await new Promise((resolve) => {
+          const timer = setTimeout(resolve, 4000);
+          video.onseeked = () => { clearTimeout(timer); resolve(); };
+        });
+
+        const w = video.videoWidth || 640;
+        const h = video.videoHeight || 360;
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext('2d')?.drawImage(video, 0, 0, w, h);
+        if (!cancelled) setPoster(canvas.toDataURL('image/jpeg', 0.82));
+      } catch {
+        if (!cancelled) onFailed?.();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (video) {
+        video.src = '';
+        video.load();
+      }
+      if (blobRef.current) {
+        URL.revokeObjectURL(blobRef.current);
+        blobRef.current = null;
+      }
+    };
+  }, [file?.id, file?.size_bytes]);
+
+  if (!poster) {
+    return (
+      <div className="flex items-center justify-center w-full h-full min-h-[52px]">
+        <DriveFileIcon mime={file?.mime_type} size={size} />
+      </div>
+    );
+  }
+
+  return (
+    <img src={poster} alt="" loading="lazy" draggable={false} className={className} />
+  );
+}
+
+/** Thumbnail grid — ảnh: luôn tải file gốc (/download, cùng preview); Doc/Sheet/video: proxy thumbnail. */
 export function DriveFileThumbnail({
   file, size = 52, className = 'w-full h-full object-cover', zoomHint = false,
 }) {
   const isImg = isImageMime(file?.mime_type, file?.name);
   const isGws = isGoogleWorkspaceFile(file?.mime_type);
   const isPdf = isPdfFile(file?.mime_type, file?.name);
-  const canTryThumb = isImg || isGws || isPdf || !!file?.thumbnail_url;
+  const isVid = isVideoFile(file?.mime_type, file?.name);
+  const canTryThumb = isImg || isGws || isPdf || isVid || !!file?.thumbnail_url;
   const [src, setSrc] = useState(null);
   const [failed, setFailed] = useState(false);
+  const [useVideoPoster, setUseVideoPoster] = useState(false);
+  const [refreshAttempted, setRefreshAttempted] = useState(false);
   const blobRef = useRef(null);
 
   useEffect(() => {
     setFailed(false);
     setSrc(null);
+    setUseVideoPoster(false);
+    setRefreshAttempted(false);
     if (blobRef.current) {
       URL.revokeObjectURL(blobRef.current);
       blobRef.current = null;
@@ -132,8 +235,41 @@ export function DriveFileThumbnail({
     }
   }, []);
 
-  if (!canTryThumb || failed) {
+  const handleThumbError = () => {
+    if (isVid && !refreshAttempted) {
+      setRefreshAttempted(true);
+      driveRefreshFileThumbnail(file.id)
+        .then((r) => {
+          if (r?.thumbnail_url) {
+            const base = driveFileThumbnailUrl(file.id);
+            setSrc(`${base}${base.includes('?') ? '&' : '?'}_r=${Date.now()}`);
+            return;
+          }
+          setUseVideoPoster(true);
+        })
+        .catch(() => setUseVideoPoster(true));
+      return;
+    }
+    if (isVid && !useVideoPoster) {
+      setUseVideoPoster(true);
+      return;
+    }
+    setFailed(true);
+  };
+
+  if (!canTryThumb || (failed && !useVideoPoster)) {
     return <DriveFileIcon mime={file?.mime_type} size={size} />;
+  }
+
+  if (useVideoPoster && isVid) {
+    return (
+      <VideoFramePoster
+        file={file}
+        className={className}
+        size={size}
+        onFailed={() => setFailed(true)}
+      />
+    );
   }
 
   if (!src) {
@@ -146,8 +282,9 @@ export function DriveFileThumbnail({
         src={src}
         alt=""
         loading="lazy"
+        draggable={false}
         className={className}
-        onError={() => setFailed(true)}
+        onError={handleThumbError}
       />
       {zoomHint && isImg && (
         <span className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover/thumb:bg-black/30 transition-colors pointer-events-none">
@@ -158,10 +295,13 @@ export function DriveFileThumbnail({
   );
 }
 
-/** Menu ⋯ gom Xem / Tải / Bỏ gắn — tiết kiệm chỗ tên file. */
+/** Menu ⋯ gom Xem / Tải / Đổi tên / Sao / Di chuyển / Bỏ gắn */
 export function DriveFileMoreMenu({
   onPreview,
   onDownload,
+  onRename,
+  onToggleStar,
+  isStarred = false,
   onMove,
   onUnlink,
   unlinkLabel = 'Bỏ gắn',
@@ -212,6 +352,29 @@ export function DriveFileMoreMenu({
               onClick={(e) => { e.stopPropagation(); setOpen(false); onDownload(); }}
             >
               <Download size={14} className="text-blue-600 shrink-0" /> Tải xuống
+            </button>
+          )}
+          {onRename && (
+            <button
+              type="button"
+              className="w-full px-3 py-2 text-left flex items-center gap-2 hover:bg-slate-50 text-slate-700"
+              onClick={(e) => { e.stopPropagation(); setOpen(false); onRename(); }}
+            >
+              <Pencil size={14} className="text-slate-600 shrink-0" /> Đổi tên
+            </button>
+          )}
+          {onToggleStar && (
+            <button
+              type="button"
+              className="w-full px-3 py-2 text-left flex items-center gap-2 hover:bg-slate-50 text-slate-700"
+              onClick={(e) => { e.stopPropagation(); setOpen(false); onToggleStar(); }}
+            >
+              {isStarred ? (
+                <StarOff size={14} className="text-amber-600 shrink-0" />
+              ) : (
+                <Star size={14} className="text-amber-500 shrink-0" />
+              )}
+              {isStarred ? 'Bỏ gắn dấu' : 'Gắn dấu sao'}
             </button>
           )}
           {onMove && (
@@ -298,19 +461,25 @@ export function DriveFilesListHeader({
 /** Một dòng file trong bảng list */
 export function DriveFileListRow({
   file, formatBytes, onPreview, renderActions, className = '', alwaysShowActions = false,
-  selectable = false, selected = false, onToggleSelect,
+  selectable = false, selected = false, onToggleSelect, onContextMenu,
 }) {
   const isImg = isImageMime(file.mime_type, file.name);
   const quickOpen = isQuickPreviewFile(file);
   const grid = selectable ? DRIVE_FILE_LIST_GRID_SELECTABLE : DRIVE_FILE_LIST_GRID;
   return (
     <div
-      data-drive-select-id={selectable ? file.id : undefined}
-      onClick={() => {
+      data-drive-select-id={selectable ? driveSelectId(file.id) : undefined}
+      onClick={(e) => {
         if (shouldIgnoreDriveMarqueeClick()) return;
+        if (selectable && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          onToggleSelect?.(file);
+          return;
+        }
         if (quickOpen) onPreview?.(file);
       }}
       onDoubleClick={() => onPreview?.(file)}
+      onContextMenu={(e) => onContextMenu?.(e, file)}
       className={`group grid ${grid} gap-2 px-3 py-2.5 items-center hover:bg-slate-50 cursor-pointer ${
         selected ? 'bg-blue-50/70 hover:bg-blue-50/70' : ''
       } ${className}`}
@@ -345,15 +514,50 @@ export function DriveFileListRow({
 /** Bảng list đầy đủ */
 export function DriveFilesListView({
   files, formatBytes, onPreview, renderActions, alwaysShowActions = false, actionsLabel = '',
-  selectedIds, onToggleSelect, onSelectAll, onSelectionChange,
+  selectedIds, onToggleSelect, onSelectAll, onSelectionChange, onContextMenu,
+  bare = false,
+  embedMarquee = true,
 }) {
   if (!files?.length) return null;
   const selectable = !!onToggleSelect;
   const idSet = selectedIds instanceof Set ? selectedIds : new Set(selectedIds || []);
-  const allSelected = selectable && files.length > 0 && files.every((f) => idSet.has(f.id));
-  const someSelected = selectable && files.some((f) => idSet.has(f.id)) && !allSelected;
+  const allSelected = selectable && files.length > 0 && files.every((f) => idSet.has(driveSelectId(f.id)));
+  const someSelected = selectable && files.some((f) => idSet.has(driveSelectId(f.id))) && !allSelected;
+
+  const rowsInner = (
+    <div className="divide-y">
+      {files.map((f) => (
+        <DriveFileListRow
+          key={f.id}
+          file={f}
+          formatBytes={formatBytes}
+          onPreview={onPreview}
+          renderActions={renderActions}
+          alwaysShowActions={alwaysShowActions}
+          selectable={selectable}
+          selected={idSet.has(driveSelectId(f.id))}
+          onToggleSelect={onToggleSelect}
+          onContextMenu={onContextMenu}
+        />
+      ))}
+    </div>
+  );
+
+  const rows = embedMarquee ? (
+    <DriveMarqueeSelectArea
+      enabled={selectable && !!onSelectionChange}
+      selectedIds={selectedIds}
+      onSelectionChange={onSelectionChange}
+      className={bare ? 'min-h-[120px]' : undefined}
+    >
+      {rowsInner}
+    </DriveMarqueeSelectArea>
+  ) : rowsInner;
+
+  if (bare) return rows;
+
   return (
-    <div className="bg-white border rounded-lg overflow-hidden min-w-0">
+    <div className="bg-white border rounded-lg min-w-0">
       <DriveFilesListHeader
         actionsLabel={actionsLabel}
         selectable={selectable}
@@ -361,27 +565,7 @@ export function DriveFilesListView({
         someSelected={someSelected}
         onSelectAll={onSelectAll}
       />
-      <DriveMarqueeSelectArea
-        enabled={selectable}
-        selectedIds={selectedIds}
-        onSelectionChange={onSelectionChange}
-      >
-        <div className="divide-y">
-          {files.map((f) => (
-            <DriveFileListRow
-              key={f.id}
-              file={f}
-              formatBytes={formatBytes}
-              onPreview={onPreview}
-              renderActions={renderActions}
-              alwaysShowActions={alwaysShowActions}
-              selectable={selectable}
-              selected={idSet.has(f.id)}
-              onToggleSelect={onToggleSelect}
-            />
-          ))}
-        </div>
-      </DriveMarqueeSelectArea>
+      {rows}
     </div>
   );
 }
@@ -394,30 +578,35 @@ const GRID_COLS = {
 /** Grid card lớn có thumbnail */
 export function DriveFilesGridView({
   files, formatBytes, onPreview, renderActions, columns = 'default', alwaysShowActions = false,
-  selectedIds, onToggleSelect, onSelectionChange,
+  selectedIds, onToggleSelect, onSelectionChange, onContextMenu,
+  embedMarquee = true,
 }) {
   if (!files?.length) return null;
   const selectable = !!onToggleSelect;
   const idSet = selectedIds instanceof Set ? selectedIds : new Set(selectedIds || []);
-  return (
-    <DriveMarqueeSelectArea
-      enabled={selectable}
-      selectedIds={selectedIds}
-      onSelectionChange={onSelectionChange}
-      className={GRID_COLS[columns] || GRID_COLS.default}
-    >
-      {files.map((f) => {
+  const gridClass = GRID_COLS[columns] || GRID_COLS.default;
+
+  const cards = files.map((f) => {
         const isImg = isImageMime(f.mime_type, f.name);
         const isGws = isGoogleWorkspaceFile(f.mime_type);
         const isPdf = isPdfFile(f.mime_type, f.name);
+        const isVid = isVideoFile(f.mime_type, f.name);
         const quickOpen = isQuickPreviewFile(f);
-        const showThumbArea = isImg || isGws || isPdf || !!f.thumbnail_url;
-        const selected = idSet.has(f.id);
+        const showThumbArea = isImg || isGws || isPdf || isVid || !!f.thumbnail_url;
+        const selected = idSet.has(driveSelectId(f.id));
         return (
           <div
             key={f.id}
-            data-drive-select-id={selectable ? f.id : undefined}
+            data-drive-select-id={selectable ? driveSelectId(f.id) : undefined}
+            onClick={(e) => {
+              if (shouldIgnoreDriveMarqueeClick()) return;
+              if (selectable && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                onToggleSelect?.(f);
+              }
+            }}
             onDoubleClick={() => onPreview?.(f)}
+            onContextMenu={(e) => onContextMenu?.(e, f)}
             className={`group bg-white border rounded-lg overflow-hidden hover:border-blue-400 hover:shadow-md cursor-pointer flex flex-col transition relative ${
               selected ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50/40' : ''
             }`}
@@ -454,13 +643,22 @@ export function DriveFilesGridView({
                 if (shouldIgnoreDriveMarqueeClick()) return;
                 if (quickOpen) { e.stopPropagation(); onPreview?.(f); }
               }}
-              title={isImg ? 'Xem ảnh full màn hình' : isGws ? 'Mở chỉnh sửa' : isPdf ? 'Xem PDF' : undefined}
+              title={isImg ? 'Xem ảnh full màn hình' : isGws ? 'Mở chỉnh sửa' : isPdf ? 'Xem PDF' : isVid ? 'Xem video' : undefined}
               role={quickOpen ? 'button' : undefined}
               tabIndex={quickOpen ? 0 : undefined}
               onKeyDown={(e) => { if (quickOpen && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onPreview?.(f); } }}
             >
               {showThumbArea ? (
-                <DriveFileThumbnail file={f} size={52} zoomHint={isImg} />
+                <>
+                  <DriveFileThumbnail file={f} size={52} zoomHint={isImg} />
+                  {isVid && (
+                    <span className="absolute inset-0 flex items-center justify-center bg-black/25 pointer-events-none">
+                      <span className="w-11 h-11 rounded-full bg-white/90 flex items-center justify-center shadow-md">
+                        <Play size={22} className="text-slate-800 ml-0.5" fill="currentColor" />
+                      </span>
+                    </span>
+                  )}
+                </>
               ) : (
                 <DriveFileIcon mime={f.mime_type} size={52} />
               )}
@@ -474,7 +672,20 @@ export function DriveFilesGridView({
             </div>
           </div>
         );
-      })}
+  });
+
+  const grid = <div className={gridClass}>{cards}</div>;
+
+  if (!embedMarquee) return grid;
+
+  return (
+    <DriveMarqueeSelectArea
+      enabled={selectable && !!onSelectionChange}
+      selectedIds={selectedIds}
+      onSelectionChange={onSelectionChange}
+      className={gridClass}
+    >
+      {cards}
     </DriveMarqueeSelectArea>
   );
 }

@@ -2,6 +2,17 @@
  * Drive module — REST client (gọi backend /api/drive).
  */
 import api from './api';
+import {
+  createTransferId,
+  addDriveUpload,
+  patchDriveUpload,
+  addDriveDownload,
+  patchDriveDownload,
+  registerUploadAbort,
+  scheduleRemoveUpload,
+  scheduleRemoveDownload,
+  isUploadCancelledError,
+} from '../components/drive/driveTransferStore';
 
 // ── Roots ──
 export const driveListRoots = () => api.get('/drive/roots').then((r) => r.data);
@@ -66,18 +77,55 @@ export const driveDeleteFolderForever = (id) =>
 /**
  * Upload file. options: { folder_id?, root_id?, name?, onProgress(p) }
  */
-export function driveUploadFile(file, { folder_id, root_id, name, onProgress } = {}) {
+export function driveUploadFile(file, { folder_id, root_id, name, onProgress, signal, track = true } = {}) {
   const fd = new FormData();
   fd.append('file', file);
   if (folder_id) fd.append('folder_id', folder_id);
   if (root_id) fd.append('root_id', root_id);
   if (name) fd.append('name', name);
+
+  const controller = signal ? null : new AbortController();
+  const abortSignal = signal || controller?.signal;
+  const transferId = track ? createTransferId() : null;
+
+  if (transferId) {
+    addDriveUpload({
+      id: transferId,
+      name: name || file.name,
+      progress: 0,
+      status: 'uploading',
+    });
+    if (controller) registerUploadAbort(transferId, controller);
+  }
+
   return api.post('/drive/files/upload', fd, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    signal: abortSignal,
     onUploadProgress: (e) => {
-      if (onProgress && e.total) onProgress(Math.round((e.loaded * 100) / e.total));
+      const p = e.total ? Math.round((e.loaded * 100) / e.total) : 0;
+      onProgress?.(p);
+      if (transferId) patchDriveUpload(transferId, { progress: p });
     },
-  }).then((r) => r.data);
+  }).then((r) => {
+    if (transferId) {
+      patchDriveUpload(transferId, { status: 'done', progress: 100 });
+      scheduleRemoveUpload(transferId);
+    }
+    return r.data;
+  }).catch((err) => {
+    if (transferId) {
+      if (isUploadCancelledError(err)) {
+        patchDriveUpload(transferId, { status: 'cancelled', progress: 0 });
+      } else {
+        patchDriveUpload(transferId, {
+          status: 'error',
+          error: err?.response?.data?.error || err?.message || 'Lỗi upload',
+        });
+      }
+      scheduleRemoveUpload(transferId, isUploadCancelledError(err) ? 1500 : 6000);
+    }
+    throw err;
+  });
 }
 
 /**
@@ -86,19 +134,56 @@ export function driveUploadFile(file, { folder_id, root_id, name, onProgress } =
  *
  * options: { entity_type, entity_id, name?, onProgress(p) }
  */
-export function driveUploadToEntity(file, { entity_type, entity_id, folder_id, name, onProgress } = {}) {
+export function driveUploadToEntity(file, { entity_type, entity_id, folder_id, name, onProgress, signal, track = true } = {}) {
   const fd = new FormData();
   fd.append('file', file);
   fd.append('entity_type', entity_type);
   fd.append('entity_id', entity_id);
   if (folder_id) fd.append('folder_id', folder_id);
   if (name) fd.append('name', name);
+
+  const controller = signal ? null : new AbortController();
+  const abortSignal = signal || controller?.signal;
+  const transferId = track ? createTransferId() : null;
+
+  if (transferId) {
+    addDriveUpload({
+      id: transferId,
+      name: name || file.name,
+      progress: 0,
+      status: 'uploading',
+    });
+    if (controller) registerUploadAbort(transferId, controller);
+  }
+
   return api.post('/drive/entity/upload', fd, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    signal: abortSignal,
     onUploadProgress: (e) => {
-      if (onProgress && e.total) onProgress(Math.round((e.loaded * 100) / e.total));
+      const p = e.total ? Math.round((e.loaded * 100) / e.total) : 0;
+      onProgress?.(p);
+      if (transferId) patchDriveUpload(transferId, { progress: p });
     },
-  }).then((r) => r.data);
+  }).then((r) => {
+    if (transferId) {
+      patchDriveUpload(transferId, { status: 'done', progress: 100 });
+      scheduleRemoveUpload(transferId);
+    }
+    return r.data;
+  }).catch((err) => {
+    if (transferId) {
+      if (isUploadCancelledError(err)) {
+        patchDriveUpload(transferId, { status: 'cancelled', progress: 0 });
+      } else {
+        patchDriveUpload(transferId, {
+          status: 'error',
+          error: err?.response?.data?.error || err?.message || 'Lỗi upload',
+        });
+      }
+      scheduleRemoveUpload(transferId, isUploadCancelledError(err) ? 1500 : 6000);
+    }
+    throw err;
+  });
 }
 
 /** Tạo Google Doc / Sheet / Slides trống trong folder hoặc root. */
@@ -126,17 +211,45 @@ export const driveDownloadFileUrl = (id) => {
   const token = localStorage.getItem('token');
   return `${api.defaults.baseURL}/drive/files/${id}/download${token ? `?_t=${Date.now()}` : ''}`;
 };
-export const driveOpenDownload = async (id, filename) => {
-  // Tải qua axios để gắn Authorization header → blob → save.
-  const resp = await api.get(`/drive/files/${id}/download`, { responseType: 'blob' });
-  const url = URL.createObjectURL(resp.data);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename || 'download';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+export const driveOpenDownload = async (id, filename, { onProgress, track = true } = {}) => {
+  const transferId = track ? createTransferId() : null;
+  const name = filename || 'download';
+
+  if (transferId) {
+    addDriveDownload({ id: transferId, name, progress: 0, status: 'downloading' });
+  }
+
+  try {
+    const resp = await api.get(`/drive/files/${id}/download`, {
+      responseType: 'blob',
+      onDownloadProgress: (e) => {
+        const p = e.total ? Math.round((e.loaded * 100) / e.total) : 0;
+        onProgress?.(p);
+        if (transferId) patchDriveDownload(transferId, { progress: p });
+      },
+    });
+    const url = URL.createObjectURL(resp.data);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    if (transferId) {
+      patchDriveDownload(transferId, { status: 'done', progress: 100 });
+      scheduleRemoveDownload(transferId);
+    }
+  } catch (err) {
+    if (transferId) {
+      patchDriveDownload(transferId, {
+        status: 'error',
+        error: err?.response?.data?.error || err?.message || 'Lỗi tải xuống',
+      });
+      scheduleRemoveDownload(transferId, 6000);
+    }
+    throw err;
+  }
 };
 export const drivePreview = (id) => api.get(`/drive/files/${id}/preview`).then((r) => r.data);
 
@@ -144,6 +257,12 @@ export const drivePreview = (id) => api.get(`/drive/files/${id}/preview`).then((
 export async function driveFetchPreviewBlobUrl(id) {
   const resp = await api.get(`/drive/files/${id}/preview-content`, { responseType: 'blob' });
   return URL.createObjectURL(resp.data);
+}
+
+export function driveFileStreamUrl(id) {
+  const token = localStorage.getItem('token');
+  const base = `${api.defaults.baseURL}/drive/files/${id}/stream`;
+  return token ? `${base}?access_token=${encodeURIComponent(token)}` : base;
 }
 
 /** Tải file qua API (có auth) → blob URL để hiển thị ảnh full màn hình. */

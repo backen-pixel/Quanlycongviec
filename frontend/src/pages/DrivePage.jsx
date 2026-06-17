@@ -13,7 +13,7 @@ import {
   ChevronRight, ChevronDown, Home, Users, Clock, Download, Pencil, Move, Link2, MoreHorizontal,
   Loader2, Building2, User as UserIcon, Globe, Plus, X, FolderOpen, Eye, AlertCircle,
   Network, MapPin, LayoutGrid, List as ListIcon, Folder as FolderIcon,
-  FilePlus, FileText, Table2, Tag, Briefcase, PanelLeftClose, PanelLeftOpen,
+  FilePlus, FileText, Table2, Tag, Briefcase, PanelLeftClose, PanelLeftOpen, FolderInput,
 } from 'lucide-react';
 import {
   driveListRoots, driveEnsurePersonalRoot, driveCreateSharedRoot,
@@ -26,9 +26,10 @@ import {
   driveEnsureSharedCompany, driveEnsureSharedRegion,
   driveCreateGoogleFile,
 } from '../lib/drive';
-import DriveFileIcon from '../components/drive/DriveFileIcon';
 import DriveLocationBar, { enrichDriveBreadcrumb } from '../components/drive/DriveLocationBar';
-import { DRIVE_FILE_LIST_GRID, UploaderCell, fmtDriveDate, fmtDriveDateTime, isImageMime, isQuickPreviewFile, isGoogleWorkspaceFile, isPdfFile, filterImageFiles, DriveFileThumbnail } from '../components/drive/DriveFileViews';
+import { DRIVE_FILE_LIST_GRID, fmtDriveDate, filterImageFiles, DriveFilesListView, DriveFilesGridView, DriveFileMoreMenu, driveSelectId } from '../components/drive/DriveFileViews';
+import DriveFolderPickerModal from '../components/drive/DriveFolderPickerModal';
+import DriveMarqueeSelectArea from '../components/drive/DriveMarqueeSelectArea';
 import UploadDropzone from '../components/drive/UploadDropzone';
 import PreviewModal from '../components/drive/PreviewModal';
 import ShareModal from '../components/drive/ShareModal';
@@ -95,7 +96,9 @@ export default function DrivePage() {
   const createMenuRef = useRef(null);
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState(null);
-  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkWorking, setBulkWorking] = useState(false);
+  const [moveTarget, setMoveTarget] = useState(null);
   const [previewItem, setPreviewItem] = useState(null);
   const [shareItem, setShareItem] = useState(null);
   const [contextMenu, setContextMenu] = useState(null); // { x, y, item }
@@ -115,6 +118,30 @@ export default function DrivePage() {
   useEffect(() => {
     try { localStorage.setItem('drive.viewMode', viewMode); } catch (_) {}
   }, [viewMode]);
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
+  const toggleSelectFile = useCallback((file) => {
+    const id = driveSelectId(file.id);
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleSelectAllFiles = useCallback((checked, fileList) => {
+    if (!checked) {
+      clearSelection();
+      return;
+    }
+    setSelectedIds(new Set((fileList || []).map((f) => driveSelectId(f.id))));
+  }, [clearSelection]);
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [activeFolder?.id, activeRoot?.id, view, searchResults]);
 
   useEffect(() => {
     if (!showCreateMenu) return undefined;
@@ -347,6 +374,7 @@ export default function DrivePage() {
         await driveStar(type, item.id);
       }
       await refreshStarred();
+      await reload();
     } catch (e) { alert(e?.response?.data?.error || e?.message); }
   }
 
@@ -355,11 +383,143 @@ export default function DrivePage() {
     catch (e) { alert(e?.response?.data?.error || e?.message); }
   }
 
+  async function bulkDownload() {
+    const list = searchResults?.files ?? files;
+    const picked = list.filter((f) => selectedIds.has(driveSelectId(f.id)));
+    if (!picked.length) return;
+    setBulkWorking(true);
+    try {
+      for (const f of picked) {
+        await driveOpenDownload(f.id, f.name);
+      }
+    } catch (e) {
+      alert(e?.response?.data?.error || e?.message || 'Lỗi tải xuống');
+    } finally {
+      setBulkWorking(false);
+    }
+  }
+
+  async function bulkTrash() {
+    if (!confirm(`Đưa ${selectedIds.size} file vào thùng rác?`)) return;
+    setBulkWorking(true);
+    try {
+      for (const id of selectedIds) {
+        await driveTrashFile(id);
+      }
+      clearSelection();
+      await reload();
+    } catch (e) {
+      alert(e?.response?.data?.error || e?.message || 'Lỗi xoá');
+    } finally {
+      setBulkWorking(false);
+    }
+  }
+
+  async function bulkRestore() {
+    setBulkWorking(true);
+    try {
+      for (const id of selectedIds) {
+        await driveRestoreFile(id);
+      }
+      clearSelection();
+      await reload();
+    } catch (e) {
+      alert(e?.response?.data?.error || e?.message || 'Lỗi khôi phục');
+    } finally {
+      setBulkWorking(false);
+    }
+  }
+
+  async function bulkDeleteForever() {
+    if (!confirm(`Xoá vĩnh viễn ${selectedIds.size} file? Không thể khôi phục.`)) return;
+    setBulkWorking(true);
+    try {
+      for (const id of selectedIds) {
+        await driveDeleteFileForever(id);
+      }
+      clearSelection();
+      await reload();
+    } catch (e) {
+      alert(e?.response?.data?.error || e?.message || 'Lỗi xoá');
+    } finally {
+      setBulkWorking(false);
+    }
+  }
+
   async function handlePreview(file) {
     try {
       const meta = await drivePreview(file.id);
       setPreviewItem({ ...file, preview: meta });
     } catch (e) { alert(e?.response?.data?.error || e?.message); }
+  }
+
+  function openMoveDialog({ fileIds = [], folderIds = [], restrictRootId: fixedRootId = null } = {}) {
+    if (!fileIds.length && !folderIds.length) return;
+    let restrictRootId = fixedRootId || null;
+    if (!restrictRootId && folderIds.length) {
+      const allFolders = searchResults?.folders ?? folders;
+      const folder = allFolders.find((f) => f.id === folderIds[0]);
+      restrictRootId = folder?.root_id || activeRoot?.id || null;
+    }
+    setMoveTarget({ fileIds, folderIds, restrictRootId });
+  }
+
+  async function handleMoveToDestination(dest) {
+    if (!moveTarget) return;
+    const { fileIds, folderIds } = moveTarget;
+    const { folderId, rootId } = dest;
+
+    if (folderId && folderIds.includes(folderId)) {
+      alert('Không thể di chuyển thư mục vào chính nó.');
+      return;
+    }
+
+    const fileBody = folderId != null
+      ? { folder_id: folderId }
+      : { folder_id: null, root_id: rootId };
+    const folderBody = folderId != null
+      ? { parent_id: folderId }
+      : { parent_id: null };
+
+    const allFiles = searchResults?.files ?? files;
+    const filesToMove = allFiles.filter((f) => fileIds.includes(f.id));
+    const allFolders = searchResults?.folders ?? folders;
+    const foldersToMove = allFolders.filter((f) => folderIds.includes(f.id));
+
+    const filesAlreadyThere = filesToMove.length > 0 && filesToMove.every((f) => {
+      if (folderId) return f.folder_id === folderId;
+      return f.folder_id == null && f.root_id === rootId;
+    });
+    const foldersAlreadyThere = foldersToMove.length > 0 && foldersToMove.every((f) => {
+      if (folderId) return f.parent_id === folderId;
+      return f.parent_id == null;
+    });
+    const hasFiles = fileIds.length > 0;
+    const hasFolders = folderIds.length > 0;
+    if (
+      (hasFiles || hasFolders)
+      && (!hasFiles || filesAlreadyThere)
+      && (!hasFolders || foldersAlreadyThere)
+    ) {
+      alert('Các mục đã nằm trong thư mục đích.');
+      setMoveTarget(null);
+      return;
+    }
+
+    setBulkWorking(true);
+    try {
+      await Promise.all([
+        ...fileIds.map((id) => driveUpdateFile(id, fileBody)),
+        ...folderIds.map((id) => driveUpdateFolder(id, folderBody)),
+      ]);
+      setMoveTarget(null);
+      clearSelection();
+      await reload();
+    } catch (e) {
+      alert(e?.response?.data?.error || e?.message || 'Không di chuyển được');
+    } finally {
+      setBulkWorking(false);
+    }
   }
 
   async function handleCreateGoogle(kind) {
@@ -417,9 +577,12 @@ export default function DrivePage() {
 
   // Close context menu on click outside
   useEffect(() => {
-    const h = () => setContextMenu(null);
-    document.addEventListener('click', h);
-    return () => document.removeEventListener('click', h);
+    const h = (e) => {
+      if (e.target instanceof Element && e.target.closest('[data-drive-context-menu]')) return;
+      setContextMenu(null);
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
   }, []);
 
   const isTrashView = view === 'trash';
@@ -437,6 +600,35 @@ export default function DrivePage() {
 
   const displayFolders = searchResults?.folders ?? folders;
   const displayFiles = searchResults?.files ?? files;
+
+  const renderFileActions = useCallback((f) => (
+    <>
+      {!isTrashView && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setShareItem({ ...f, target_type: 'file' }); }}
+          className="p-1 hover:bg-blue-50 text-blue-600 rounded"
+          title="Chia sẻ (Xem / Sửa)"
+        >
+          <Share2 size={14} />
+        </button>
+      )}
+      <DriveFileMoreMenu
+        onPreview={!isTrashView ? () => { void handlePreview(f); } : undefined}
+        onDownload={!isTrashView ? () => { void handleDownload(f); } : undefined}
+        onRename={!isTrashView ? () => { void handleRename(f, 'file'); } : undefined}
+        onToggleStar={!isTrashView ? () => { void handleToggleStar(f, 'file'); } : undefined}
+        isStarred={starredIds.has(`file:${f.id}`)}
+        onMove={!isTrashView ? () => openMoveDialog({ fileIds: [f.id] }) : undefined}
+        showUnlink={false}
+      />
+    </>
+  ), [starredIds, isTrashView]);
+
+  const handleFileContextMenu = useCallback((e, f) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, item: f, type: 'file' });
+  }, []);
 
   if (health && !health.configured) {
     return (
@@ -718,30 +910,153 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
             </div>
           ) : (
             <>
+              {displayFiles.length > 0 && selectedIds.size === 0 && !isTrashView && (
+                <p className="text-xs text-slate-400 mb-2">
+                  Kéo chuột trên vùng file để chọn nhiều · Giữ Ctrl/Cmd để cộng thêm · Click checkbox hoặc Ctrl+click từng file
+                </p>
+              )}
+
+              {displayFiles.length > 0 && selectedIds.size > 0 && (
+                <div className="mb-3 flex items-center flex-wrap gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-sm">
+                  <span className="text-slate-700">
+                    Đã chọn <strong className="text-blue-800">{selectedIds.size}</strong> file
+                  </span>
+                  {!isTrashView && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => void bulkDownload()}
+                        disabled={bulkWorking}
+                        className="h-7 px-2.5 bg-white border border-slate-200 hover:bg-slate-50 rounded-md text-xs font-medium flex items-center gap-1 disabled:opacity-60"
+                      >
+                        <Download size={13} className="text-blue-600" /> Tải xuống
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openMoveDialog({ fileIds: [...selectedIds] })}
+                        disabled={bulkWorking}
+                        className="h-7 px-2.5 bg-white border border-slate-200 hover:bg-slate-50 rounded-md text-xs font-medium flex items-center gap-1 disabled:opacity-60"
+                      >
+                        <FolderInput size={13} className="text-amber-600" /> Di chuyển
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void bulkTrash()}
+                        disabled={bulkWorking}
+                        className="h-7 px-2.5 bg-white border border-red-200 hover:bg-red-50 text-red-600 rounded-md text-xs font-medium flex items-center gap-1 disabled:opacity-60"
+                      >
+                        <Trash2 size={13} /> Xoá
+                      </button>
+                    </>
+                  )}
+                  {isTrashView && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => void bulkRestore()}
+                        disabled={bulkWorking}
+                        className="h-7 px-2.5 bg-white border border-slate-200 hover:bg-slate-50 rounded-md text-xs font-medium flex items-center gap-1 disabled:opacity-60"
+                      >
+                        <RotateCcw size={13} className="text-emerald-600" /> Khôi phục
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void bulkDeleteForever()}
+                        disabled={bulkWorking}
+                        className="h-7 px-2.5 bg-white border border-red-200 hover:bg-red-50 text-red-600 rounded-md text-xs font-medium flex items-center gap-1 disabled:opacity-60"
+                      >
+                        <Trash2 size={13} /> Xoá vĩnh viễn
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    onClick={clearSelection}
+                    className="h-7 px-2 text-slate-500 hover:text-slate-700 text-xs"
+                  >
+                    Bỏ chọn
+                  </button>
+                </div>
+              )}
+
               {viewMode === 'list' ? (
-                <DriveListView
-                  folders={displayFolders}
-                  files={displayFiles}
-                  starredIds={starredIds}
-                  isTrashView={isTrashView}
-                  onOpenFolder={(id) => openFolder(id)}
-                  onPreview={(f) => handlePreview(f)}
-                  onShare={(item, type) => setShareItem({ ...item, target_type: type })}
-                  onContextMenu={(e, item, type) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, item, type }); }}
-                  formatBytes={driveFormatBytes}
-                />
+                <DriveMarqueeSelectArea
+                  enabled={displayFiles.length > 0}
+                  selectedIds={selectedIds}
+                  onSelectionChange={setSelectedIds}
+                >
+                  {displayFolders.length > 0 && (
+                    <DriveFolderListBlock
+                      folders={displayFolders}
+                      starredIds={starredIds}
+                      isTrashView={isTrashView}
+                      onOpenFolder={(id) => openFolder(id)}
+                      onShare={(item, type) => setShareItem({ ...item, target_type: type })}
+                      onContextMenu={(e, item, type) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, item, type }); }}
+                    />
+                  )}
+                  {displayFiles.length > 0 && (
+                    <DriveFilesListView
+                      files={displayFiles}
+                      formatBytes={driveFormatBytes}
+                      onPreview={(f) => handlePreview(f)}
+                      renderActions={renderFileActions}
+                      selectedIds={selectedIds}
+                      onToggleSelect={toggleSelectFile}
+                      onSelectAll={(checked) => handleSelectAllFiles(checked, displayFiles)}
+                      onSelectionChange={setSelectedIds}
+                      onContextMenu={handleFileContextMenu}
+                      embedMarquee={false}
+                    />
+                  )}
+                </DriveMarqueeSelectArea>
               ) : (
-                <DriveGridView
-                  folders={displayFolders}
-                  files={displayFiles}
-                  starredIds={starredIds}
-                  isTrashView={isTrashView}
-                  onOpenFolder={(id) => openFolder(id)}
-                  onPreview={(f) => handlePreview(f)}
-                  onShare={(item, type) => setShareItem({ ...item, target_type: type })}
-                  onContextMenu={(e, item, type) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, item, type }); }}
-                  formatBytes={driveFormatBytes}
-                />
+                <DriveMarqueeSelectArea
+                  enabled={displayFiles.length > 0}
+                  selectedIds={selectedIds}
+                  onSelectionChange={setSelectedIds}
+                >
+                  {displayFolders.length > 0 && (
+                    <DriveFolderGridBlock
+                      folders={displayFolders}
+                      starredIds={starredIds}
+                      isTrashView={isTrashView}
+                      onOpenFolder={(id) => openFolder(id)}
+                      onShare={(item, type) => setShareItem({ ...item, target_type: type })}
+                      onContextMenu={(e, item, type) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, item, type }); }}
+                    />
+                  )}
+                  {displayFiles.length > 0 && (
+                    <section className={displayFolders.length > 0 ? 'mt-2' : ''}>
+                      {displayFolders.length > 0 && (
+                        <h3 className="text-xs font-semibold text-slate-500 uppercase mb-2">File</h3>
+                      )}
+                      <DriveFilesGridView
+                        files={displayFiles}
+                        formatBytes={driveFormatBytes}
+                        onPreview={(f) => handlePreview(f)}
+                        renderActions={renderFileActions}
+                        selectedIds={selectedIds}
+                        onToggleSelect={toggleSelectFile}
+                        onSelectionChange={setSelectedIds}
+                        onContextMenu={handleFileContextMenu}
+                        embedMarquee={false}
+                      />
+                    </section>
+                  )}
+                </DriveMarqueeSelectArea>
+              )}
+
+              {viewMode === 'grid' && displayFiles.length > 1 && selectedIds.size === 0 && (
+                <div className="mt-2 text-right">
+                  <button
+                    type="button"
+                    onClick={() => handleSelectAllFiles(true, displayFiles)}
+                    className="text-xs text-blue-600 hover:underline"
+                  >
+                    Chọn tất cả ({displayFiles.length})
+                  </button>
+                </div>
               )}
 
               {displayFolders.length === 0 && displayFiles.length === 0 && (
@@ -758,6 +1073,7 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
       {/* Context menu */}
       {contextMenu && (
         <div
+          data-drive-context-menu
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
           className="fixed z-50 bg-white border rounded-lg shadow-xl py-1 min-w-[200px] text-sm"
@@ -780,6 +1096,21 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
                 onClick={() => { handleToggleStar(contextMenu.item, contextMenu.type); setContextMenu(null); }}
               />
               <MenuBtn icon={Share2} label="Chia sẻ" onClick={() => { setShareItem({ ...contextMenu.item, target_type: contextMenu.type }); setContextMenu(null); }} />
+              <MenuBtn
+                icon={Move}
+                label="Di chuyển"
+                onClick={() => {
+                  if (contextMenu.type === 'file') {
+                    openMoveDialog({ fileIds: [contextMenu.item.id] });
+                  } else {
+                    openMoveDialog({
+                      folderIds: [contextMenu.item.id],
+                      restrictRootId: contextMenu.item.root_id,
+                    });
+                  }
+                  setContextMenu(null);
+                }}
+              />
               <div className="border-t my-1" />
               <MenuBtn icon={Trash2} danger label="Xoá (thùng rác)" onClick={() => { handleTrash(contextMenu.item, contextMenu.type); setContextMenu(null); }} />
             </>
@@ -807,6 +1138,16 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
           targetId={shareItem.id}
           targetName={shareItem.name}
           onClose={() => setShareItem(null)}
+        />
+      )}
+      {moveTarget && (
+        <DriveFolderPickerModal
+          itemCount={(moveTarget.fileIds?.length || 0) + (moveTarget.folderIds?.length || 0)}
+          restrictRootId={moveTarget.restrictRootId}
+          excludeFolderIds={moveTarget.folderIds || []}
+          submitting={bulkWorking}
+          onConfirm={handleMoveToDestination}
+          onClose={() => !bulkWorking && setMoveTarget(null)}
         />
       )}
     </div>
@@ -849,22 +1190,18 @@ function MenuBtn({ icon: Icon, label, onClick, danger }) {
   );
 }
 
-function fmtDate(iso) {
-  return fmtDriveDate(iso);
-}
-
 /**
- * Dạng danh sách: bảng tên / kích thước / ngày sửa / hành động.
+ * Khối thư mục — dạng danh sách (không nằm trong vùng marquee chọn file).
  */
-function DriveListView({ folders, files, starredIds, isTrashView, onOpenFolder, onPreview, onShare, onContextMenu, formatBytes }) {
-  if (!folders.length && !files.length) return null;
+function DriveFolderListBlock({ folders, starredIds, isTrashView, onOpenFolder, onShare, onContextMenu }) {
+  if (!folders.length) return null;
   return (
-    <div className="bg-white border rounded-lg overflow-hidden">
+    <div className="bg-white border rounded-lg overflow-hidden mb-3">
       <div className={`grid ${DRIVE_FILE_LIST_GRID} gap-2 px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase border-b bg-slate-50`}>
-        <div>Tên</div>
-        <div>Người tải lên</div>
-        <div>Ngày tải lên</div>
-        <div className="text-right">Kích thước</div>
+        <div>Thư mục</div>
+        <div />
+        <div />
+        <div />
         <div />
       </div>
       <div className="divide-y">
@@ -901,159 +1238,49 @@ function DriveListView({ folders, files, starredIds, isTrashView, onOpenFolder, 
             </div>
           );
         })}
-        {files.map((f) => {
-          const isStarred = starredIds.has('file:' + f.id);
-          const quickOpen = !isTrashView && isQuickPreviewFile(f);
-          const isImg = isImageMime(f.mime_type, f.name);
-          return (
-            <div
-              key={`file-${f.id}`}
-              onClick={() => { if (quickOpen) onPreview(f); }}
-              onDoubleClick={() => !isTrashView && onPreview(f)}
-              onContextMenu={(e) => onContextMenu(e, f, 'file')}
-              className={`group grid ${DRIVE_FILE_LIST_GRID} gap-2 px-3 py-2 items-center hover:bg-slate-50 cursor-pointer`}
-            >
-              <div className="flex items-center gap-2.5 min-w-0">
-                <DriveFileIcon mime={f.mime_type} size={18} />
-                <span className={`text-sm truncate ${quickOpen ? 'text-blue-700 hover:underline' : 'text-slate-800'}`} title={f.name}>{f.name}</span>
-                {isStarred && <Star size={12} className="text-amber-400 fill-amber-400 shrink-0" />}
-              </div>
-              <UploaderCell file={f} />
-              <div className="text-xs text-slate-500" title={fmtDriveDateTime(f.created_at)}>
-                {fmtDriveDate(f.created_at)}
-              </div>
-              <div className="text-right text-xs text-slate-500">{formatBytes(f.size_bytes)}</div>
-              <div className="flex items-center gap-0.5 justify-self-end opacity-0 group-hover:opacity-100">
-                <button
-                  onClick={(e) => { e.stopPropagation(); onShare?.(f, 'file'); }}
-                  className="p-1 hover:bg-blue-50 text-blue-600 rounded" title="Chia sẻ (Xem / Sửa)">
-                  <Share2 size={14} />
-                </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); onContextMenu(e, f, 'file'); }}
-                  className="p-1 hover:bg-slate-100 rounded">
-                  <MoreHorizontal size={16} className="text-slate-400" />
-                </button>
-              </div>
-            </div>
-          );
-        })}
       </div>
     </div>
   );
 }
 
 /**
- * Dạng lớn (grid): folders dạng pill nhỏ, files dạng card có thumbnail to giống Google Drive.
+ * Khối thư mục — dạng grid.
  */
-function DriveGridView({ folders, files, starredIds, isTrashView, onOpenFolder, onPreview, onShare, onContextMenu, formatBytes }) {
+function DriveFolderGridBlock({ folders, starredIds, isTrashView, onOpenFolder, onShare, onContextMenu }) {
+  if (!folders.length) return null;
   return (
-    <>
-      {folders.length > 0 && (
-        <section className="mb-6">
-          <h3 className="text-xs font-semibold text-slate-500 uppercase mb-2">Thư mục</h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2">
-            {folders.map((f) => {
-              const isStarred = starredIds.has('folder:' + f.id);
-              return (
-                <div
-                  key={f.id}
-                  onDoubleClick={() => !isTrashView && onOpenFolder(f.id)}
-                  onContextMenu={(e) => onContextMenu(e, f, 'folder')}
-                  className="group bg-slate-50 hover:bg-blue-50 border rounded-lg px-3 py-2.5 cursor-pointer flex items-center gap-2"
-                >
-                  <FolderIcon size={18} className="text-amber-500 shrink-0" fill="currentColor" />
-                  <p className="text-sm font-medium text-slate-800 truncate flex-1" title={f.name}>{f.name}</p>
-                  {isStarred && <Star size={12} className="text-amber-400 fill-amber-400 shrink-0" />}
-                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 shrink-0">
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onShare?.(f, 'folder'); }}
-                      className="p-1 hover:bg-white text-blue-600 rounded" title="Chia sẻ (Xem / Sửa)">
-                      <Share2 size={13} />
-                    </button>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onContextMenu(e, f, 'folder'); }}
-                      className="p-1 hover:bg-white rounded">
-                      <MoreHorizontal size={14} className="text-slate-400" />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
-
-      {files.length > 0 && (
-        <section>
-          <h3 className="text-xs font-semibold text-slate-500 uppercase mb-2">File</h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-            {files.map((f) => {
-              const isStarred = starredIds.has('file:' + f.id);
-              const isImg = isImageMime(f.mime_type, f.name);
-              const isGws = isGoogleWorkspaceFile(f.mime_type);
-              const isPdf = isPdfFile(f.mime_type, f.name);
-              const quickOpen = !isTrashView && isQuickPreviewFile(f);
-              const showThumbArea = isImg || isGws || isPdf || !!f.thumbnail_url;
-              return (
-                <div
-                  key={f.id}
-                  onDoubleClick={() => !isTrashView && onPreview(f)}
-                  onContextMenu={(e) => onContextMenu(e, f, 'file')}
-                  className="group bg-white border rounded-lg overflow-hidden hover:border-blue-400 hover:shadow-md cursor-pointer flex flex-col transition"
-                >
-                  <div className="px-3 pt-2.5 pb-1.5 flex items-center gap-2">
-                    <DriveFileIcon mime={f.mime_type} size={16} />
-                    <p
-                      className={`text-[13px] font-medium truncate flex-1 ${quickOpen ? 'text-blue-700' : 'text-slate-800'}`}
-                      title={f.name}
-                      onClick={(e) => { if (quickOpen) { e.stopPropagation(); onPreview(f); } }}
-                    >
-                      {f.name}
-                    </p>
-                    {isStarred && <Star size={12} className="text-amber-400 fill-amber-400 shrink-0" />}
-                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 shrink-0">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); onShare?.(f, 'file'); }}
-                        className="p-1 hover:bg-blue-50 text-blue-600 rounded" title="Chia sẻ (Xem / Sửa)">
-                        <Share2 size={13} />
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); onContextMenu(e, f, 'file'); }}
-                        className="p-1 hover:bg-slate-100 rounded">
-                        <MoreHorizontal size={14} className="text-slate-400" />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div
-                    className={`relative mx-2 mb-2 aspect-[4/3] bg-slate-50 border rounded flex items-center justify-center overflow-hidden group/thumb ${quickOpen ? 'cursor-pointer' : ''}`}
-                    onClick={(e) => {
-                      if (quickOpen) { e.stopPropagation(); onPreview(f); }
-                    }}
-                    title={isImg ? 'Xem ảnh full màn hình' : isGws ? 'Mở chỉnh sửa' : isPdf ? 'Xem PDF' : undefined}
-                  >
-                    {showThumbArea ? (
-                      <DriveFileThumbnail file={f} size={52} zoomHint={isImg && !isTrashView} />
-                    ) : (
-                      <DriveFileIcon mime={f.mime_type} size={52} />
-                    )}
-                  </div>
-
-                  <div className="px-3 pb-1 flex items-center gap-1.5 min-w-0">
-                    <UploaderCell file={f} compact />
-                  </div>
-                  <div className="px-3 pb-2 text-[11px] text-slate-400 flex items-center justify-between">
-                    <span>{formatBytes(f.size_bytes)}</span>
-                    <span title={fmtDriveDateTime(f.created_at)}>{fmtDriveDate(f.created_at)}</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
-    </>
+    <section className="mb-6">
+      <h3 className="text-xs font-semibold text-slate-500 uppercase mb-2">Thư mục</h3>
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2">
+        {folders.map((f) => {
+          const isStarred = starredIds.has('folder:' + f.id);
+          return (
+            <div
+              key={f.id}
+              onDoubleClick={() => !isTrashView && onOpenFolder(f.id)}
+              onContextMenu={(e) => onContextMenu(e, f, 'folder')}
+              className="group bg-slate-50 hover:bg-blue-50 border rounded-lg px-3 py-2.5 cursor-pointer flex items-center gap-2"
+            >
+              <FolderIcon size={18} className="text-amber-500 shrink-0" fill="currentColor" />
+              <p className="text-sm font-medium text-slate-800 truncate flex-1" title={f.name}>{f.name}</p>
+              {isStarred && <Star size={12} className="text-amber-400 fill-amber-400 shrink-0" />}
+              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 shrink-0">
+                <button
+                  onClick={(e) => { e.stopPropagation(); onShare?.(f, 'folder'); }}
+                  className="p-1 hover:bg-white text-blue-600 rounded" title="Chia sẻ (Xem / Sửa)">
+                  <Share2 size={13} />
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onContextMenu(e, f, 'folder'); }}
+                  className="p-1 hover:bg-white rounded">
+                  <MoreHorizontal size={14} className="text-slate-400" />
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

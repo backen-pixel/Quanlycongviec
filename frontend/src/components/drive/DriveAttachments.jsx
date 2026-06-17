@@ -40,7 +40,6 @@ export default function DriveAttachments({ entityType, entityId, className = '',
   const [loading, setLoading] = useState(true);
   const [picking, setPicking] = useState(false);
   const [previewing, setPreviewing] = useState(null);
-  const [uploads, setUploads] = useState([]);
   const [creatingGoogle, setCreatingGoogle] = useState(null);
   const [viewMode, setViewMode] = useState(readViewMode);
   const [locationPath, setLocationPath] = useState([]);
@@ -247,36 +246,17 @@ export default function DriveAttachments({ entityType, entityId, className = '',
     e.target.value = '';
     if (!selected.length) return;
 
-    const initial = selected.map((f) => ({
-      id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
-      name: f.name,
-      size: f.size,
-      progress: 0,
-      status: 'uploading',
-      error: null,
-    }));
-    setUploads((cur) => [...cur, ...initial]);
-
-    for (let i = 0; i < selected.length; i++) {
-      const file = selected[i];
-      const item = initial[i];
+    for (const file of selected) {
       try {
         await driveUploadToEntity(file, {
           entity_type: entityType,
           entity_id: entityId,
           folder_id: activeFolderId || undefined,
-          onProgress: (p) => {
-            setUploads((cur) => cur.map((x) => (x.id === item.id ? { ...x, progress: p } : x)));
-          },
         });
-        setUploads((cur) => cur.map((x) => (x.id === item.id ? { ...x, progress: 100, status: 'done' } : x)));
-      } catch (err) {
-        setUploads((cur) => cur.map((x) => (x.id === item.id ? { ...x, status: 'error', error: err?.response?.data?.error || err?.message || 'Lỗi upload' } : x)));
-      }
+      } catch (_) { /* panel góc phải hiển thị lỗi */ }
     }
 
     await reload();
-    setTimeout(() => { setUploads((cur) => cur.filter((x) => x.status !== 'done')); }, 4000);
   }
 
   async function handleCreateGoogle(kind) {
@@ -468,29 +448,6 @@ export default function DriveAttachments({ entityType, entityId, className = '',
           >
             <X size={14} />
           </button>
-        </div>
-      )}
-
-      {uploads.length > 0 && (
-        <div className="mb-3 space-y-1.5">
-          {uploads.map((u) => (
-            <div key={u.id} className="flex items-center gap-2 text-xs px-2 py-1.5 bg-slate-50 rounded border">
-              {u.status === 'uploading' && <Loader2 size={12} className="animate-spin text-blue-600 shrink-0" />}
-              {u.status === 'done' && <span className="text-emerald-600 text-base leading-none">✓</span>}
-              {u.status === 'error' && <span className="text-rose-600 text-base leading-none">✗</span>}
-              <span className="flex-1 truncate text-slate-700" title={u.name}>{u.name}</span>
-              {u.status === 'uploading' && (
-                <>
-                  <div className="w-24 h-1.5 bg-slate-200 rounded overflow-hidden">
-                    <div className="h-full bg-blue-600 transition-all" style={{ width: `${u.progress}%` }} />
-                  </div>
-                  <span className="text-slate-500 w-9 text-right">{u.progress}%</span>
-                </>
-              )}
-              {u.status === 'done' && <span className="text-emerald-600 text-[11px]">Đã tải lên</span>}
-              {u.status === 'error' && <span className="text-rose-500 text-[11px] max-w-[200px] truncate" title={u.error}>{u.error}</span>}
-            </div>
-          ))}
         </div>
       )}
 

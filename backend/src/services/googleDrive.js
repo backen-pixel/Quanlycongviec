@@ -330,13 +330,20 @@ async function getFileMeta(googleFileId) {
 }
 
 /** Stream download nội dung file → trả ReadableStream để route proxy về client. */
-async function getDownloadStream(googleFileId) {
+async function getDownloadStream(googleFileId, { range } = {}) {
   const drive = getDriveClient();
+  const opts = { responseType: 'stream' };
+  if (range) opts.headers = { Range: range };
   const res = await drive.files.get(
     { fileId: googleFileId, alt: 'media', supportsAllDrives: true },
-    { responseType: 'stream' },
+    opts,
   );
-  return res.data; // Node stream
+  return {
+    stream: res.data,
+    status: res.status,
+    contentRange: res.headers['content-range'],
+    contentLength: res.headers['content-length'],
+  };
 }
 
 /**
@@ -346,7 +353,8 @@ async function getDownloadStream(googleFileId) {
 async function getPreviewStream(googleFileId, mimeType) {
   const exportMime = GOOGLE_EXPORT_PDF[mimeType];
   if (!exportMime) {
-    return { stream: await getDownloadStream(googleFileId), contentType: mimeType || 'application/octet-stream' };
+    const { stream } = await getDownloadStream(googleFileId);
+    return { stream, contentType: mimeType || 'application/octet-stream' };
   }
   const drive = getDriveClient();
   const res = await drive.files.export(

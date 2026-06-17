@@ -98,6 +98,10 @@ async function getThumbnailStream(googleFileId, { mimeType } = {}) {
   const urls = [];
   if (freshLink) urls.push(freshLink);
   urls.push(`https://drive.google.com/thumbnail?id=${encodeURIComponent(googleFileId)}&sz=w800`);
+  if (mime?.startsWith('video/')) {
+    urls.push(`https://drive.google.com/thumbnail?id=${encodeURIComponent(googleFileId)}&sz=w400-h300`);
+    urls.push(`https://drive.google.com/thumbnail?id=${encodeURIComponent(googleFileId)}&sz=w200`);
+  }
 
   for (let i = 0; i < urls.length; i++) {
     const hit = await fetchUrlStream(urls[i], i === 0 ? 'link' : 'drive.thumbnail');
@@ -106,7 +110,7 @@ async function getThumbnailStream(googleFileId, { mimeType } = {}) {
 
   if (mime?.startsWith('image/')) {
     try {
-      const stream = await gdrive.getDownloadStream(googleFileId);
+      const { stream } = await gdrive.getDownloadStream(googleFileId);
       return { stream, contentType: mime, freshThumbnailLink: freshLink };
     } catch (e) {
       console.warn('[driveThumbnail] download-stream:', e.message);

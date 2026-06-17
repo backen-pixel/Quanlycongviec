@@ -118,6 +118,38 @@ r.get('/files/:id/thumbnail', authWithQueryToken, async (req, res) => {
   }
 });
 
+/** Stream phát video/audio inline — `<video src>` với access_token, không cần tải hết blob trước. */
+r.get('/files/:id/stream', authWithQueryToken, async (req, res) => {
+  if (!requireGdrive(req, res)) return;
+  try {
+    const file = await loadFile(req.params.id);
+    if (!file) return res.status(404).json({ error: 'File không tồn tại' });
+    const access = await driveAcl.canAccess({ user: req.user, targetType: 'file', targetId: file.id, requiredRole: 'viewer' });
+    if (!access.ok) return res.status(403).json({ error: 'Không có quyền' });
+
+    const range = req.get('Range');
+    const { stream, status, contentRange, contentLength } = await gdrive.getDownloadStream(file.google_file_id, { range });
+
+    res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(file.name)}`);
+    res.setHeader('Accept-Ranges', 'bytes');
+    if (status === 206) res.status(206);
+    if (contentRange) res.setHeader('Content-Range', contentRange);
+    if (contentLength) res.setHeader('Content-Length', contentLength);
+    else if (file.size_bytes && !range) res.setHeader('Content-Length', String(file.size_bytes));
+
+    stream.on('error', (err) => {
+      console.error('[drive] stream error:', err.message);
+      if (!res.headersSent) res.status(500).json({ error: 'Lỗi phát stream' });
+      else res.end();
+    });
+    stream.pipe(res);
+  } catch (e) {
+    console.error('[drive] stream:', e.message);
+    if (!res.headersSent) res.status(500).json({ error: e.message });
+  }
+});
+
 r.use(auth);
 
 const MB = 1024 * 1024;
@@ -1035,7 +1067,7 @@ r.get('/files/:id/download', async (req, res) => {
     const access = await driveAcl.canAccess({ user: req.user, targetType: 'file', targetId: file.id, requiredRole: 'viewer' });
     if (!access.ok) return res.status(403).json({ error: 'Không có quyền' });
 
-    const stream = await gdrive.getDownloadStream(file.google_file_id);
+    const { stream } = await gdrive.getDownloadStream(file.google_file_id);
     res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
     res.setHeader(
       'Content-Disposition',
