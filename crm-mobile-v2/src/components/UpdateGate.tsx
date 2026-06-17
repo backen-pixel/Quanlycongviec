@@ -15,6 +15,8 @@ import {
 import {
   checkForUpdate,
   consumeUpdateSuccessMessage,
+  currentVersionCode,
+  currentVersionName,
   downloadApkToCache,
   openDownloadedApk,
   type UpdateCheckResult,
@@ -39,7 +41,19 @@ export default function UpdateGate() {
       const successMsg = await consumeUpdateSuccessMessage();
       if (mounted && successMsg) setToast(successMsg);
       const res = await checkForUpdate();
-      if (mounted && res.updateAvailable && res.downloadUrl) {
+      if (!mounted) return;
+
+      const localCode = currentVersionCode();
+      const localVer = currentVersionName();
+      const latestCode = res.latestVersionCode ?? null;
+      const latestVer = res.latestVersion ?? null;
+      const alreadyLatest =
+        (localCode != null && latestCode != null && localCode >= latestCode)
+        || (!!localVer && !!latestVer && localVer === latestVer && localCode != null && latestCode != null && localCode >= latestCode);
+
+      if (alreadyLatest) return;
+
+      if (res.updateAvailable && res.downloadUrl) {
         setInfo(res);
         setVisible(true);
       }
