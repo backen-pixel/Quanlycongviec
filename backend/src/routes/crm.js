@@ -55,6 +55,7 @@ const {
   notifyDealCommentMentions,
   notifyDealCommentParticipants,
 } = require('../helpers/dealCommentNotifications');
+const { userCanAccessCrmLeadAsParticipant } = require('../helpers/crmLeadParticipantAccess');
 const { DEFAULT_CHECKLISTS } = require('../helpers/defaultChecklists');
 const { generateFlowTasks, generateStepTasks } = require('../helpers/generateFlowTasks');
 const { autoCreateProjectFromWonDeal } = require('../helpers/autoDealWonProject');
@@ -727,7 +728,7 @@ async function enforceCrmDealAssigneeAccess(req, res, next) {
     const leadId = parts[1];
     const { data: lead, error } = await supabase
       .from('crm_leads')
-      .select('id, type, assigned_to, lead_owner_id, parent_lead_id')
+      .select('id, type, assigned_to, lead_owner_id, parent_lead_id, project_id')
       .eq('id', leadId)
       .maybeSingle();
     if (error || !lead) return next();
@@ -758,9 +759,10 @@ async function enforceCrmDealAssigneeAccess(req, res, next) {
       if (!uid) {
         return res.status(403).json({ error: 'Bạn chỉ được xem/sửa deal mà bạn phụ trách.' });
       }
-      const ok = await userOwnsDealViaAncestor(uid, lead);
+      const ok = await userOwnsDealViaAncestor(uid, lead)
+        || await userCanAccessCrmLeadAsParticipant(supabase, uid, lead);
       if (!ok) {
-        return res.status(403).json({ error: 'Bạn chỉ được xem/sửa deal mà bạn phụ trách.' });
+        return res.status(403).json({ error: 'Bạn chỉ được xem/sửa deal mà bạn phụ trách hoặc tham gia.' });
       }
       return next();
     }
@@ -769,8 +771,9 @@ async function enforceCrmDealAssigneeAccess(req, res, next) {
       const owns =
         uid &&
         (String(lead.assigned_to || '') === String(uid) || String(lead.lead_owner_id || '') === String(uid));
-      if (!owns) {
-        return res.status(403).json({ error: 'Bạn chỉ được xem/sửa lead mà bạn phụ trách.' });
+      const participant = uid && await userCanAccessCrmLeadAsParticipant(supabase, uid, lead);
+      if (!owns && !participant) {
+        return res.status(403).json({ error: 'Bạn chỉ được xem/sửa lead mà bạn phụ trách hoặc tham gia.' });
       }
       return next();
     }
