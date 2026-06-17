@@ -3,7 +3,7 @@
     "name": "CRM Mobile",
     "slug": "crm-mobile-v2",
     "scheme": "crmv2",
-    "version": "2.0.43",
+    "version": "2.0.44",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -22,7 +22,7 @@
     },
     "android": {
       "package": "vn.tubeppro.crmobilev2",
-      "versionCode": 44,
+      "versionCode": 45,
       "edgeToEdgeEnabled": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -64,10 +64,10 @@
         "expo-share-intent",
         {
           "disableIOS": true,
-          "androidIntentFilters": ["audio/*", "application/octet-stream", "video/mp4"],
-          "androidMultiIntentFilters": ["audio/*"]
+          "disableAndroid": true
         }
-      ]
+      ],
+      "./plugins/withAndroidShareIntentFilters.js"
     ]
   }
 }
