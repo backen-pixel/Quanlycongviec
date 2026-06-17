@@ -1,7 +1,8 @@
 /**
  * Vùng chọn file bằng kéo chuột (marquee) — giống Explorer / Google Drive.
  */
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 const DRAG_THRESHOLD = 4;
 
@@ -30,9 +31,9 @@ function isInteractiveTarget(target) {
   return !!target.closest('button, a, input, textarea, select, label, [data-no-marquee]');
 }
 
-function getIntersectingIds(container, box) {
+function getIntersectingIds(root, box) {
   const ids = [];
-  container.querySelectorAll('[data-drive-select-id]').forEach((el) => {
+  root.querySelectorAll('[data-drive-select-id]').forEach((el) => {
     const r = el.getBoundingClientRect();
     if (rectsIntersect(box, r)) {
       const id = el.getAttribute('data-drive-select-id');
@@ -50,8 +51,14 @@ export default function DriveMarqueeSelectArea({
   className = '',
 }) {
   const containerRef = useRef(null);
+  const contentRef = useRef(null);
   const dragRef = useRef(null);
+  const selectedIdsRef = useRef(selectedIds);
+  const onSelectionChangeRef = useRef(onSelectionChange);
   const [marquee, setMarquee] = useState(null);
+
+  selectedIdsRef.current = selectedIds;
+  onSelectionChangeRef.current = onSelectionChange;
 
   const finishDrag = useCallback(() => {
     dragRef.current = null;
@@ -59,20 +66,23 @@ export default function DriveMarqueeSelectArea({
   }, []);
 
   const handleMouseDown = useCallback((e) => {
-    if (!enabled || e.button !== 0 || !onSelectionChange) return;
+    if (!enabled || e.button !== 0 || !onSelectionChangeRef.current) return;
     if (isInteractiveTarget(e.target)) return;
 
-    const container = containerRef.current;
-    if (!container) return;
+    const root = containerRef.current;
+    if (!root) return;
+
+    e.preventDefault();
 
     const additive = e.ctrlKey || e.metaKey;
+    const base = selectedIdsRef.current;
     dragRef.current = {
       startX: e.clientX,
       startY: e.clientY,
       dragging: false,
       additive,
       baseSelection: additive
-        ? new Set(selectedIds instanceof Set ? selectedIds : selectedIds || [])
+        ? new Set(base instanceof Set ? base : base || [])
         : new Set(),
     };
 
@@ -92,18 +102,17 @@ export default function DriveMarqueeSelectArea({
       ev.preventDefault();
 
       const box = normalizeBox(d.startX, d.startY, ev.clientX, ev.clientY);
-      const cRect = container.getBoundingClientRect();
       setMarquee({
-        left: box.left - cRect.left + container.scrollLeft,
-        top: box.top - cRect.top + container.scrollTop,
+        left: box.left,
+        top: box.top,
         width: box.right - box.left,
         height: box.bottom - box.top,
       });
 
-      const ids = getIntersectingIds(container, box);
+      const ids = getIntersectingIds(root, box);
       const next = new Set(d.baseSelection);
       ids.forEach((id) => next.add(id));
-      onSelectionChange(next);
+      onSelectionChangeRef.current?.(next);
     };
 
     const onUp = (ev) => {
@@ -119,7 +128,7 @@ export default function DriveMarqueeSelectArea({
         const clickedItem = ev.target instanceof Element
           ? ev.target.closest('[data-drive-select-id]')
           : null;
-        if (!clickedItem) onSelectionChange(new Set());
+        if (!clickedItem) onSelectionChangeRef.current?.(new Set());
       }
 
       finishDrag();
@@ -127,18 +136,33 @@ export default function DriveMarqueeSelectArea({
 
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
-  }, [enabled, selectedIds, onSelectionChange, finishDrag]);
+  }, [enabled, finishDrag]);
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const el = containerRef.current;
+    if (!el) return undefined;
+
+    const onNativeDragStart = (e) => {
+      if (e.target instanceof HTMLImageElement) e.preventDefault();
+    };
+    el.addEventListener('dragstart', onNativeDragStart);
+    return () => el.removeEventListener('dragstart', onNativeDragStart);
+  }, [enabled]);
 
   return (
     <div
       ref={containerRef}
-      className={`relative ${enabled ? 'select-none cursor-default' : ''} ${className}`}
-      onMouseDown={handleMouseDown}
+      data-drive-marquee-zone={enabled ? '1' : undefined}
+      className={`relative w-full ${enabled ? 'select-none' : ''}`}
+      onMouseDownCapture={handleMouseDown}
     >
-      {children}
-      {marquee && (
+      <div ref={contentRef} className={`${className || ''} ${enabled ? 'min-h-[140px]' : ''}`.trim()}>
+        {children}
+      </div>
+      {marquee && createPortal(
         <div
-          className="absolute pointer-events-none z-30 border border-blue-500 bg-blue-500/15 rounded-sm"
+          className="fixed pointer-events-none z-[10040] border-2 border-blue-500 bg-blue-500/20 rounded-sm shadow-sm"
           style={{
             left: marquee.left,
             top: marquee.top,
@@ -146,7 +170,8 @@ export default function DriveMarqueeSelectArea({
             height: marquee.height,
           }}
           aria-hidden
-        />
+        />,
+        document.body,
       )}
     </div>
   );

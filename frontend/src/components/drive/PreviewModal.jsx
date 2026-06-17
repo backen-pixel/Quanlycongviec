@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Download, ExternalLink, Loader2, Pencil, ChevronLeft, ChevronRight } from 'lucide-react';
-import { driveFormatBytes, driveFetchFileBlobUrl, driveFetchPreviewBlobUrl } from '../../lib/drive';
-import { filterImageFiles, isImageMime, isGoogleWorkspaceFile, isPdfFile } from './DriveFileViews';
+import { driveFormatBytes, driveFetchFileBlobUrl, driveFetchPreviewBlobUrl, driveFileStreamUrl } from '../../lib/drive';
+import { filterImageFiles, isImageMime, isGoogleWorkspaceFile, isPdfFile, isVideoFile, LARGE_VIDEO_BYTES } from './DriveFileViews';
 
 function portal(node) {
   if (typeof document === 'undefined') return node;
@@ -42,13 +42,14 @@ export default function PreviewModal({ item, onClose, onDownload, galleryFiles }
   const mime = currentItem?.mime_type || preview.mime_type || '';
   const isImage = itemIsImage && isImageMime(mime, currentItem?.name);
   const isPdf = isPdfFile(mime, currentItem?.name);
-  const isVideo = mime.startsWith('video/');
+  const isVideo = isVideoFile(mime, currentItem?.name);
+  const isLargeVideo = isVideo && (Number(currentItem?.size_bytes) || 0) > LARGE_VIDEO_BYTES;
   const isAudio = mime.startsWith('audio/');
   const previewMode = preview.preview_mode || (isGoogleWorkspaceFile(mime) ? 'google_edit' : 'iframe');
   const useGoogleEdit = previewMode === 'google_edit';
   const usePdfExport = previewMode === 'pdf_export';
   const editEmbedUrl = preview.edit_embed_url || null;
-  const embedUrl = !usePdfExport && !useGoogleEdit ? (preview.embed_url || preview.view_url) : null;
+  const embedUrl = !isVideo && !usePdfExport && !useGoogleEdit ? (preview.embed_url || preview.view_url) : null;
   const editUrl = preview.edit_url || preview.view_url;
   const hasGallery = isImage && gallery.length > 1;
   /** Doc/Sheet/Slides/PDF — iframe Google full màn hình tương tác. */
@@ -56,6 +57,7 @@ export default function PreviewModal({ item, onClose, onDownload, galleryFiles }
 
   const [imgSrc, setImgSrc] = useState(null);
   const [pdfSrc, setPdfSrc] = useState(null);
+  const [videoSrc, setVideoSrc] = useState(null);
   const [contentLoading, setContentLoading] = useState(() => useFullEmbed);
 
   useEffect(() => {
@@ -134,6 +136,17 @@ export default function PreviewModal({ item, onClose, onDownload, galleryFiles }
       if (blobUrl) URL.revokeObjectURL(blobUrl);
     };
   }, [currentItem?.id, isImage, usePdfExport]);
+
+  useEffect(() => {
+    if (!isVideo || !currentItem?.id || isLargeVideo) {
+      setVideoSrc(null);
+      setContentLoading(false);
+      return undefined;
+    }
+    setContentLoading(true);
+    setVideoSrc(driveFileStreamUrl(currentItem.id));
+    return undefined;
+  }, [currentItem?.id, isVideo, isLargeVideo]);
 
   const downloadCurrent = () => onDownload?.(currentItem ?? item);
 
@@ -322,7 +335,7 @@ export default function PreviewModal({ item, onClose, onDownload, galleryFiles }
           </div>
         </header>
         <div className="flex-1 bg-slate-100 overflow-hidden flex items-center justify-center min-h-0 relative">
-          {contentLoading && !useFullEmbed ? (
+          {contentLoading && !useFullEmbed && !isVideo ? (
             <div className="flex flex-col items-center gap-3 text-slate-500">
               <Loader2 size={32} className="animate-spin" />
               <span className="text-sm">Đang tải xem trước...</span>
@@ -349,6 +362,58 @@ export default function PreviewModal({ item, onClose, onDownload, galleryFiles }
               className="w-full h-full bg-white border-0"
               title={currentItem.name}
             />
+          ) : isVideo && isLargeVideo ? (
+            <div className="text-center text-slate-600 p-8 max-w-lg">
+              <p className="text-base font-semibold text-slate-800 mb-2">Video quá lớn để phát trực tiếp</p>
+              <p className="text-sm text-slate-500 mb-5">
+                File <strong>{driveFormatBytes(currentItem.size_bytes)}</strong> — vui lòng tải xuống và mở bằng trình phát trên máy (VLC, Windows Media Player…).
+              </p>
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={downloadCurrent}
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium"
+                >
+                  <Download size={16} /> Tải xuống để xem
+                </button>
+                {editUrl && (
+                  <a
+                    href={editUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-4 py-2.5 border rounded-lg text-sm font-medium hover:bg-slate-50"
+                  >
+                    <ExternalLink size={14} /> Mở trên Google Drive
+                  </a>
+                )}
+              </div>
+            </div>
+          ) : isVideo && videoSrc ? (
+            <>
+              {contentLoading && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-slate-500 bg-slate-100/90 z-10">
+                  <Loader2 size={32} className="animate-spin" />
+                  <span className="text-sm">Đang mở video...</span>
+                </div>
+              )}
+              <video
+                key={currentItem.id}
+                controls
+                autoPlay
+                playsInline
+                preload="metadata"
+                src={videoSrc}
+                className="max-w-full max-h-full bg-black"
+                onLoadedData={() => setContentLoading(false)}
+                onCanPlay={() => setContentLoading(false)}
+                onError={() => setContentLoading(false)}
+              />
+            </>
+          ) : isVideo && contentLoading ? (
+            <div className="flex flex-col items-center gap-3 text-slate-500">
+              <Loader2 size={32} className="animate-spin" />
+              <span className="text-sm">Đang mở video...</span>
+            </div>
           ) : embedUrl ? (
             <iframe
               src={embedUrl}
@@ -378,9 +443,6 @@ export default function PreviewModal({ item, onClose, onDownload, galleryFiles }
           )}
           {isAudio && !embedUrl && !pdfSrc && (
             <audio controls src={preview.view_url} className="w-3/4" />
-          )}
-          {isVideo && !embedUrl && !pdfSrc && (
-            <video controls src={preview.view_url} className="max-w-full max-h-full" />
           )}
         </div>
       </div>
