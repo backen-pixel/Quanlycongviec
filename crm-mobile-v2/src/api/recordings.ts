@@ -72,6 +72,8 @@ export async function uploadRecording(opts: {
   durationSec?: number;
   notes?: string;
   phoneNumber?: string | null;
+  source?: string;
+  deviceLabel?: string;
 }): Promise<RecordingItem> {
   const form = new FormData();
   const safeName = normalizeVoiceRecordingFileName(opts.fileName) || opts.fileName;
@@ -80,8 +82,8 @@ export async function uploadRecording(opts: {
     name: safeName,
     type: opts.mime,
   } as unknown as Parameters<FormData['append']>[1]);
-  form.append('source', 'crm_mobile_v2');
-  form.append('device_label', `${Platform.OS} crm-mobile-v2`);
+  form.append('source', opts.source || 'crm_mobile_v2');
+  form.append('device_label', opts.deviceLabel || `${Platform.OS} crm-mobile-v2`);
   if (opts.notes?.trim()) form.append('notes', opts.notes.trim().slice(0, 2000));
   if (opts.durationSec != null && opts.durationSec > 0) {
     form.append('duration_sec', String(Math.round(opts.durationSec * 10) / 10));

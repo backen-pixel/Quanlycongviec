@@ -4,13 +4,15 @@ import {
   NavigationContainer,
   type Theme,
 } from '@react-navigation/native';
+import { ShareIntentProvider } from 'expo-share-intent';
 import { StatusBar } from 'expo-status-bar';
 import React, { useMemo } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import CreateMenuSheet from './src/components/CreateMenuSheet';
 import PermissionBootstrap from './src/components/PermissionBootstrap';
 import VoiceSyncRunner from './src/components/VoiceSyncRunner';
+import VoiceShareHandler, { VoiceShareLoginHint } from './src/components/VoiceShareHandler';
 import UpdateGate from './src/components/UpdateGate';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { FileActionsProvider } from './src/context/FileActionsContext';
@@ -57,6 +59,7 @@ function Gate() {
     return (
       <View style={styles.root}>
         <LoginScreen />
+        <VoiceShareLoginHint />
       </View>
     );
   }
@@ -88,16 +91,33 @@ function ThemedStatusBar() {
   return <StatusBar style={mode === 'dark' ? 'light' : 'dark'} />;
 }
 
+function AppBody() {
+  const { token, loading } = useAuth();
+  return (
+    <>
+      <Gate />
+      <VoiceShareHandler enabled={!!token && !loading} />
+      <UpdateGate />
+      <ThemedStatusBar />
+    </>
+  );
+}
+
 export default function App() {
   return (
     <SafeAreaProvider>
-      <ThemeProvider>
-        <AuthProvider>
-          <Gate />
-          <UpdateGate />
-          <ThemedStatusBar />
-        </AuthProvider>
-      </ThemeProvider>
+      <ShareIntentProvider
+        options={{
+          resetOnBackground: false,
+          disabled: Platform.OS !== 'android',
+        }}
+      >
+        <ThemeProvider>
+          <AuthProvider>
+            <AppBody />
+          </AuthProvider>
+        </ThemeProvider>
+      </ShareIntentProvider>
     </SafeAreaProvider>
   );
 }
