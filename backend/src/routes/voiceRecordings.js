@@ -45,7 +45,47 @@ const UPLOAD_ROOT = path.join(__dirname, '../../uploads/voice_recordings');
 function attachPlayableUrl(rec) {
   if (!rec) return rec;
   const url = publicUrlForVoiceObject(supabase, rec.storage_path);
-  return { ...rec, audio_url: url };
+  return {
+    ...rec,
+    file_name: rec.file_name ? normalizeVoiceFileName(rec.file_name) : rec.file_name,
+    audio_url: url,
+  };
+}
+
+/** Android/MediaStore đôi khi gửi tên file URL-encoded — lưu UTF-8 để hiển thị đúng. */
+function normalizeVoiceFileName(raw) {
+  if (raw == null) return '';
+  let s = String(raw).trim().slice(0, 256);
+  if (!s) return '';
+  if (!/%[0-9A-Fa-f]{2}/.test(s)) return s;
+  try {
+    for (let i = 0; i < 2; i += 1) {
+      const next = decodeURIComponent(s.replace(/\+/g, ' '));
+      if (next === s) break;
+      s = next;
+    }
+  } catch {
+    /* keep */
+  }
+  return s.slice(0, 256);
+}
+
+function voiceFileNameFromUpload(file) {
+  return normalizeVoiceFileName(file?.originalname || file?.filename || '');
+}
+
+function expandFileNameLookupKeys(raw) {
+  const normalized = normalizeVoiceFileName(raw);
+  if (!normalized) return [];
+  const keys = new Set([normalized]);
+  const rawTrim = raw != null ? String(raw).trim().slice(0, 256) : '';
+  if (rawTrim) keys.add(rawTrim);
+  try {
+    keys.add(encodeURIComponent(normalized));
+  } catch {
+    /* ignore */
+  }
+  return [...keys];
 }
 
 /** Các trường + join CRM (PostgREST cần FK 63_voice_recordings_crm_link.sql) */
@@ -313,9 +353,11 @@ r.post('/bulk-check', async (req, res) => {
     const safe = items.slice(0, MAX_ITEMS);
     const fileNames = Array.from(
       new Set(
-        safe
-          .map((it) => (it && typeof it.file_name === 'string' ? it.file_name.trim().slice(0, 256) : ''))
-          .filter((n) => !!n),
+        safe.flatMap((it) =>
+          it && typeof it.file_name === 'string'
+            ? expandFileNameLookupKeys(it.file_name)
+            : [],
+        ),
       ),
     );
     if (fileNames.length === 0) return res.json({ existing: [], tombstoned: [] });
@@ -323,14 +365,15 @@ r.post('/bulk-check', async (req, res) => {
     // Map theo "name" → mảng size client gửi lên (có thể nhiều size cùng tên).
     const sizeIndex = new Map();
     for (const it of safe) {
-      const n = it && typeof it.file_name === 'string' ? it.file_name.trim().slice(0, 256) : '';
+      const n = it && typeof it.file_name === 'string' ? normalizeVoiceFileName(it.file_name) : '';
       if (!n) continue;
       const sz = Number(it.file_size);
       if (!sizeIndex.has(n)) sizeIndex.set(n, []);
       sizeIndex.get(n).push(Number.isFinite(sz) ? sz : null);
     }
     const matchByName = (rowName, rowSize) => {
-      const sizes = sizeIndex.get(rowName);
+      const key = normalizeVoiceFileName(rowName);
+      const sizes = sizeIndex.get(key);
       if (!sizes) return false;
       const wantsAnySize = sizes.some((s) => s == null || s <= 0);
       return wantsAnySize || sizes.includes(rowSize);
@@ -384,7 +427,8 @@ r.get('/exists', async (req, res) => {
   try {
     const fileName = req.query.file_name != null ? String(req.query.file_name).trim() : '';
     if (!fileName) return res.status(400).json({ error: 'Thiếu file_name' });
-    const safeName = fileName.slice(0, 256);
+    const lookupNames = expandFileNameLookupKeys(fileName);
+    if (!lookupNames.length) return res.status(400).json({ error: 'file_name không hợp lệ' });
     const fileSizeRaw = req.query.file_size != null ? String(req.query.file_size).trim() : '';
     let sizeNum = null;
     if (fileSizeRaw) {
@@ -396,7 +440,7 @@ r.get('/exists', async (req, res) => {
       .from('voice_recordings')
       .select('id, file_name, file_size, created_at')
       .eq('user_id', req.user.userId)
-      .eq('file_name', safeName);
+      .in('file_name', lookupNames);
     if (sizeNum != null) activeQ = activeQ.eq('file_size', sizeNum);
     activeQ = activeQ.order('created_at', { ascending: false }).limit(1);
 
@@ -410,7 +454,7 @@ r.get('/exists', async (req, res) => {
       .from('voice_recordings_deleted')
       .select('original_id, file_name, file_size, deleted_at')
       .eq('user_id', req.user.userId)
-      .eq('file_name', safeName);
+      .in('file_name', lookupNames);
     if (sizeNum != null) tombQ = tombQ.eq('file_size', sizeNum);
     tombQ = tombQ.order('deleted_at', { ascending: false }).limit(1);
 
@@ -701,7 +745,7 @@ r.post('/', upload.single('audio'), async (req, res) => {
     // hoặc cài lại app làm reset cache local. Chỉ dedup khi cả tên + size khớp để tránh "false positive"
     // với các file khác cùng tên.
     {
-      const baseName = (req.file.originalname || req.file.filename || '').slice(0, 256);
+      const baseName = voiceFileNameFromUpload(req.file);
       const fileSize = Number(req.file.size || 0);
       if (baseName && Number.isFinite(fileSize) && fileSize > 0) {
         const { data: dup, error: dupErr } = await supabase
@@ -754,7 +798,7 @@ r.post('/', upload.single('audio'), async (req, res) => {
       }
     }
 
-    const fileBaseName = req.file.originalname || req.file.filename || '';
+    const fileBaseName = voiceFileNameFromUpload(req.file);
     const metaTextBlob = [notes, fileBaseName, device_label].filter(Boolean).join('\n');
 
     let customer_id = null;
@@ -804,7 +848,7 @@ r.post('/', upload.single('audio'), async (req, res) => {
       .from('voice_recordings')
       .insert({
         user_id: req.user.userId,
-        file_name: req.file.originalname || req.file.filename,
+        file_name: voiceFileNameFromUpload(req.file),
         storage_path,
         mime_type: req.file.mimetype || null,
         file_size: req.file.size || 0,
@@ -828,7 +872,7 @@ r.post('/', upload.single('audio'), async (req, res) => {
 
     // User chủ động upload file đã từng bị xóa → gỡ tombstone để không hiển thị "deleted_on_server" nữa.
     try {
-      const fnameForTomb = (req.file.originalname || req.file.filename || '').slice(0, 256);
+      const fnameForTomb = voiceFileNameFromUpload(req.file);
       const fsizeForTomb = Number(req.file.size || 0);
       if (fnameForTomb) {
         let delQ = supabase

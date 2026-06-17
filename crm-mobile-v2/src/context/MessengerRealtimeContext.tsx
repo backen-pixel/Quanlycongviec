@@ -244,7 +244,7 @@ export function MessengerRealtimeProvider({ children }: { children: React.ReactN
         type: 'updated',
         groupId: String(p.group_id),
         name: p.name != null ? String(p.name) : undefined,
-        avatar: p.avatar ?? undefined,
+        avatar: p.avatar != null ? resolveMediaUrl(p.avatar) : p.avatar ?? undefined,
       });
     });
     s.on('presence:update', onPresenceUpdate);

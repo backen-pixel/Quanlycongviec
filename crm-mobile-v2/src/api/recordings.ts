@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import { dateLabel, resolveMediaUrl, timeLabel } from '../lib/media';
+import { normalizeVoiceRecordingFileName, voiceRecordingDisplayTitle } from '../lib/voiceRecordingName';
 import { api, postMultipart } from './client';
 import type { Recording } from '../types';
 
@@ -37,7 +38,7 @@ export type RecordingItem = Recording & {
 function mapRecording(r: ApiRecording): RecordingItem {
   return {
     id: r.id,
-    title: r.file_name || 'Ghi âm',
+    title: voiceRecordingDisplayTitle(r.file_name),
     timeLabel: timeLabel(r.created_at),
     dateLabel: dateLabel(r.created_at),
     ownerName: r.uploader?.full_name || '—',
@@ -73,9 +74,10 @@ export async function uploadRecording(opts: {
   phoneNumber?: string | null;
 }): Promise<RecordingItem> {
   const form = new FormData();
+  const safeName = normalizeVoiceRecordingFileName(opts.fileName) || opts.fileName;
   form.append('audio', {
     uri: opts.localUri,
-    name: opts.fileName,
+    name: safeName,
     type: opts.mime,
   } as unknown as Parameters<FormData['append']>[1]);
   form.append('source', 'crm_mobile_v2');

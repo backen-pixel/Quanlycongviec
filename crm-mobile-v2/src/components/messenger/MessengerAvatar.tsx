@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
+import { resolveMediaUrl } from '../../lib/messengerApi';
 import { avatarColorFromName, initialsFromName } from '../../lib/messengerTheme';
 
 type Props = {
@@ -22,6 +23,7 @@ export default function MessengerAvatar({
   children,
 }: Props) {
   const bg = color || avatarColorFromName(name);
+  const resolvedAvatar = resolveMediaUrl(avatarUrl);
   const styles = useMemo(
     () =>
       StyleSheet.create({
@@ -63,10 +65,10 @@ export default function MessengerAvatar({
     <View style={styles.wrap}>
       <View style={styles.circle}>
         {children}
-        {!dashed && !children && avatarUrl ? (
-          <Image source={{ uri: avatarUrl }} style={styles.image} />
+        {!dashed && !children && resolvedAvatar ? (
+          <Image source={{ uri: resolvedAvatar }} style={styles.image} />
         ) : null}
-        {!dashed && !children && !avatarUrl ? (
+        {!dashed && !children && !resolvedAvatar ? (
           <Text style={styles.text}>{initialsFromName(name)}</Text>
         ) : null}
       </View>
