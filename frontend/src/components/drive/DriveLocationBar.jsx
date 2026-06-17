@@ -1,7 +1,7 @@
 /**
  * Thanh vị trí — breadcrumb kiểu Google Drive (Drive của tôi › Root › Folder).
  */
-import { ChevronRight, ChevronDown, Home } from 'lucide-react';
+import { ChevronRight, ChevronDown, ChevronLeft, Home } from 'lucide-react';
 
 export function driveScopeHomeLabel(scope, root) {
   if (scope === 'user') return 'Drive của tôi';
@@ -37,11 +37,42 @@ export default function DriveLocationBar({
   onNavigate,
   readOnly = false,
   className = '',
+  canGoBack = false,
+  canGoForward = false,
+  onBack,
+  onForward,
 }) {
-  if (!items.length) return null;
+  if (!items.length && !canGoBack && !canGoForward) return null;
+
+  const showNav = onBack || onForward;
 
   return (
-    <div className={`shrink-0 border-b bg-[#f8f9fa] px-4 py-2.5 ${className}`}>
+    <div className={`shrink-0 border-b bg-[#f8f9fa] px-3 py-2 flex items-center gap-2 min-w-0 ${className}`}>
+      {showNav && (
+        <div className="flex items-center shrink-0 border border-slate-200 rounded-md overflow-hidden bg-white">
+          <button
+            type="button"
+            onClick={onBack}
+            disabled={!canGoBack}
+            title="Quay lại"
+            aria-label="Quay lại thư mục"
+            className="h-8 w-8 flex items-center justify-center text-slate-600 hover:bg-slate-50 disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-transparent transition"
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <button
+            type="button"
+            onClick={onForward}
+            disabled={!canGoForward}
+            title="Tiến tới"
+            aria-label="Tiến tới thư mục"
+            className="h-8 w-8 flex items-center justify-center text-slate-600 hover:bg-slate-50 border-l border-slate-200 disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-transparent transition"
+          >
+            <ChevronRight size={18} />
+          </button>
+        </div>
+      )}
+      {items.length > 0 && (
       <nav
         className="flex items-center gap-0.5 text-sm flex-1 min-w-0 overflow-x-auto"
         aria-label="Vị trí hiện tại trên Drive"
@@ -80,6 +111,7 @@ export default function DriveLocationBar({
           );
         })}
       </nav>
+      )}
     </div>
   );
 }

@@ -2,12 +2,33 @@
  * Hiển thị file Drive dạng list / grid — dùng chung cho DrivePage, DriveAttachments, DriveFilePicker.
  */
 import { useEffect, useRef, useState } from 'react';
-import { User as UserIcon, ZoomIn, MoreHorizontal, Eye, Download, Trash2 } from 'lucide-react';
+import { User as UserIcon, ZoomIn, MoreHorizontal, Eye, Download, Trash2, FolderInput } from 'lucide-react';
 import DriveFileIcon from './DriveFileIcon';
 import { driveFileThumbnailUrl, driveFetchFileBlobUrl } from '../../lib/drive';
+import DriveMarqueeSelectArea, { shouldIgnoreDriveMarqueeClick } from './DriveMarqueeSelectArea';
 
 /** Cột grid cho bảng list file (Tên | Người tải | Ngày tải | Kích thước | Hành động) */
 export const DRIVE_FILE_LIST_GRID = 'grid-cols-[1fr_minmax(130px,170px)_110px_90px_96px]';
+export const DRIVE_FILE_LIST_GRID_SELECTABLE = 'grid-cols-[28px_1fr_minmax(130px,170px)_110px_90px_96px]';
+
+export function DriveFileSelectCheckbox({ checked, indeterminate, onChange, className = '', title }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = !!indeterminate;
+  }, [indeterminate]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={!!checked}
+      onChange={onChange}
+      onClick={(e) => e.stopPropagation()}
+      title={title}
+      aria-label={title || 'Chọn file'}
+      className={`w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 shrink-0 cursor-pointer ${className}`}
+    />
+  );
+}
 
 export function fmtDriveDate(iso) {
   if (!iso) return '—';
@@ -141,6 +162,7 @@ export function DriveFileThumbnail({
 export function DriveFileMoreMenu({
   onPreview,
   onDownload,
+  onMove,
   onUnlink,
   unlinkLabel = 'Bỏ gắn',
   showUnlink = true,
@@ -158,7 +180,7 @@ export function DriveFileMoreMenu({
   }, [open]);
 
   return (
-    <div className="relative shrink-0" ref={ref}>
+    <div className="relative shrink-0" ref={ref} data-no-marquee>
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
@@ -190,6 +212,15 @@ export function DriveFileMoreMenu({
               onClick={(e) => { e.stopPropagation(); setOpen(false); onDownload(); }}
             >
               <Download size={14} className="text-blue-600 shrink-0" /> Tải xuống
+            </button>
+          )}
+          {onMove && (
+            <button
+              type="button"
+              className="w-full px-3 py-2 text-left flex items-center gap-2 hover:bg-slate-50 text-slate-700"
+              onClick={(e) => { e.stopPropagation(); setOpen(false); onMove(); }}
+            >
+              <FolderInput size={14} className="text-amber-600 shrink-0" /> Di chuyển
             </button>
           )}
           {showUnlink && onUnlink && (
@@ -235,9 +266,26 @@ export function UploaderCell({ file, compact = false }) {
 }
 
 /** Header bảng list file */
-export function DriveFilesListHeader({ actionsLabel = '' }) {
+export function DriveFilesListHeader({
+  actionsLabel = '',
+  selectable = false,
+  allSelected = false,
+  someSelected = false,
+  onSelectAll,
+}) {
+  const grid = selectable ? DRIVE_FILE_LIST_GRID_SELECTABLE : DRIVE_FILE_LIST_GRID;
   return (
-    <div className={`grid ${DRIVE_FILE_LIST_GRID} gap-2 px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase border-b bg-slate-50`}>
+    <div className={`grid ${grid} gap-2 px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase border-b bg-slate-50`}>
+      {selectable && (
+        <div className="flex items-center justify-center">
+          <DriveFileSelectCheckbox
+            checked={allSelected}
+            indeterminate={someSelected}
+            onChange={(e) => onSelectAll?.(e.target.checked)}
+            title="Chọn tất cả"
+          />
+        </div>
+      )}
       <div>Tên</div>
       <div>Người tải lên</div>
       <div>Ngày tải lên</div>
@@ -250,15 +298,32 @@ export function DriveFilesListHeader({ actionsLabel = '' }) {
 /** Một dòng file trong bảng list */
 export function DriveFileListRow({
   file, formatBytes, onPreview, renderActions, className = '', alwaysShowActions = false,
+  selectable = false, selected = false, onToggleSelect,
 }) {
   const isImg = isImageMime(file.mime_type, file.name);
   const quickOpen = isQuickPreviewFile(file);
+  const grid = selectable ? DRIVE_FILE_LIST_GRID_SELECTABLE : DRIVE_FILE_LIST_GRID;
   return (
     <div
-      onClick={() => { if (quickOpen) onPreview?.(file); }}
+      data-drive-select-id={selectable ? file.id : undefined}
+      onClick={() => {
+        if (shouldIgnoreDriveMarqueeClick()) return;
+        if (quickOpen) onPreview?.(file);
+      }}
       onDoubleClick={() => onPreview?.(file)}
-      className={`group grid ${DRIVE_FILE_LIST_GRID} gap-2 px-3 py-2.5 items-center hover:bg-slate-50 cursor-pointer ${className}`}
+      className={`group grid ${grid} gap-2 px-3 py-2.5 items-center hover:bg-slate-50 cursor-pointer ${
+        selected ? 'bg-blue-50/70 hover:bg-blue-50/70' : ''
+      } ${className}`}
     >
+      {selectable && (
+        <div className="flex items-center justify-center" data-no-marquee>
+          <DriveFileSelectCheckbox
+            checked={selected}
+            onChange={() => onToggleSelect?.(file)}
+            title={selected ? 'Bỏ chọn' : 'Chọn file'}
+          />
+        </div>
+      )}
       <div className="flex items-center gap-2.5 min-w-0">
         <DriveFileIcon mime={file.mime_type} size={18} />
         <span className={`text-sm truncate ${quickOpen ? 'text-blue-700 hover:underline' : 'text-slate-800'}`} title={file.name}>
@@ -280,23 +345,43 @@ export function DriveFileListRow({
 /** Bảng list đầy đủ */
 export function DriveFilesListView({
   files, formatBytes, onPreview, renderActions, alwaysShowActions = false, actionsLabel = '',
+  selectedIds, onToggleSelect, onSelectAll, onSelectionChange,
 }) {
   if (!files?.length) return null;
+  const selectable = !!onToggleSelect;
+  const idSet = selectedIds instanceof Set ? selectedIds : new Set(selectedIds || []);
+  const allSelected = selectable && files.length > 0 && files.every((f) => idSet.has(f.id));
+  const someSelected = selectable && files.some((f) => idSet.has(f.id)) && !allSelected;
   return (
     <div className="bg-white border rounded-lg overflow-hidden min-w-0">
-      <DriveFilesListHeader actionsLabel={actionsLabel} />
-      <div className="divide-y">
-        {files.map((f) => (
-          <DriveFileListRow
-            key={f.id}
-            file={f}
-            formatBytes={formatBytes}
-            onPreview={onPreview}
-            renderActions={renderActions}
-            alwaysShowActions={alwaysShowActions}
-          />
-        ))}
-      </div>
+      <DriveFilesListHeader
+        actionsLabel={actionsLabel}
+        selectable={selectable}
+        allSelected={allSelected}
+        someSelected={someSelected}
+        onSelectAll={onSelectAll}
+      />
+      <DriveMarqueeSelectArea
+        enabled={selectable}
+        selectedIds={selectedIds}
+        onSelectionChange={onSelectionChange}
+      >
+        <div className="divide-y">
+          {files.map((f) => (
+            <DriveFileListRow
+              key={f.id}
+              file={f}
+              formatBytes={formatBytes}
+              onPreview={onPreview}
+              renderActions={renderActions}
+              alwaysShowActions={alwaysShowActions}
+              selectable={selectable}
+              selected={idSet.has(f.id)}
+              onToggleSelect={onToggleSelect}
+            />
+          ))}
+        </div>
+      </DriveMarqueeSelectArea>
     </div>
   );
 }
@@ -309,28 +394,53 @@ const GRID_COLS = {
 /** Grid card lớn có thumbnail */
 export function DriveFilesGridView({
   files, formatBytes, onPreview, renderActions, columns = 'default', alwaysShowActions = false,
+  selectedIds, onToggleSelect, onSelectionChange,
 }) {
   if (!files?.length) return null;
+  const selectable = !!onToggleSelect;
+  const idSet = selectedIds instanceof Set ? selectedIds : new Set(selectedIds || []);
   return (
-    <div className={GRID_COLS[columns] || GRID_COLS.default}>
+    <DriveMarqueeSelectArea
+      enabled={selectable}
+      selectedIds={selectedIds}
+      onSelectionChange={onSelectionChange}
+      className={GRID_COLS[columns] || GRID_COLS.default}
+    >
       {files.map((f) => {
         const isImg = isImageMime(f.mime_type, f.name);
         const isGws = isGoogleWorkspaceFile(f.mime_type);
         const isPdf = isPdfFile(f.mime_type, f.name);
         const quickOpen = isQuickPreviewFile(f);
         const showThumbArea = isImg || isGws || isPdf || !!f.thumbnail_url;
+        const selected = idSet.has(f.id);
         return (
           <div
             key={f.id}
+            data-drive-select-id={selectable ? f.id : undefined}
             onDoubleClick={() => onPreview?.(f)}
-            className="group bg-white border rounded-lg overflow-hidden hover:border-blue-400 hover:shadow-md cursor-pointer flex flex-col transition"
+            className={`group bg-white border rounded-lg overflow-hidden hover:border-blue-400 hover:shadow-md cursor-pointer flex flex-col transition relative ${
+              selected ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50/40' : ''
+            }`}
           >
+            {selectable && (
+              <div className="absolute top-2 left-2 z-10" data-no-marquee>
+                <DriveFileSelectCheckbox
+                  checked={selected}
+                  onChange={() => onToggleSelect?.(f)}
+                  title={selected ? 'Bỏ chọn' : 'Chọn file'}
+                  className="bg-white/90 shadow-sm"
+                />
+              </div>
+            )}
             <div className="px-3 pt-2.5 pb-1.5 flex items-center gap-1.5 min-w-0">
               <DriveFileIcon mime={f.mime_type} size={16} className="shrink-0" />
               <p
                 className={`text-[13px] font-medium truncate min-w-0 flex-1 ${quickOpen ? 'text-blue-700' : 'text-slate-800'}`}
                 title={f.name}
-                onClick={(e) => { if (quickOpen) { e.stopPropagation(); onPreview?.(f); } }}
+                onClick={(e) => {
+                  if (shouldIgnoreDriveMarqueeClick()) return;
+                  if (quickOpen) { e.stopPropagation(); onPreview?.(f); }
+                }}
               >
                 {f.name}
               </p>
@@ -341,6 +451,7 @@ export function DriveFilesGridView({
             <div
               className={`relative mx-2 mb-2 aspect-[4/3] bg-slate-50 border rounded flex items-center justify-center overflow-hidden group/thumb ${quickOpen ? 'cursor-pointer' : ''}`}
               onClick={(e) => {
+                if (shouldIgnoreDriveMarqueeClick()) return;
                 if (quickOpen) { e.stopPropagation(); onPreview?.(f); }
               }}
               title={isImg ? 'Xem ảnh full màn hình' : isGws ? 'Mở chỉnh sửa' : isPdf ? 'Xem PDF' : undefined}
@@ -364,6 +475,6 @@ export function DriveFilesGridView({
           </div>
         );
       })}
-    </div>
+    </DriveMarqueeSelectArea>
   );
 }
