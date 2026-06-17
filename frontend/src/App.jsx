@@ -102,6 +102,7 @@ const InvoiceDetail = lazyWithRetry(() => import('./pages/InvoiceDetail'));
 const OrderForm = lazyWithRetry(() => import('./pages/OrderForm'));
 const InvoiceForm = lazyWithRetry(() => import('./pages/InvoiceForm'));
 const EventsFeedPage = lazyWithRetry(() => import('./pages/EventsFeedPage'));
+const LeaveSchedulePage = lazyWithRetry(() => import('./pages/LeaveSchedulePage'));
 const EventsOverviewPage = lazyWithRetry(() => import('./pages/EventsOverviewPage'));
 const SocialFeedPage = lazyWithRetry(() => import('./pages/SocialFeedPage'));
 const SocialProfilePage = lazyWithRetry(() => import('./pages/SocialProfilePage'));
@@ -367,6 +368,7 @@ export default function App() {
             <Route path="/crm/download-app" element={<DownloadAppPage />} />
             <Route path="/sx/download-app" element={<DownloadAppPage />} />
             <Route path="/crm/events" element={<EventsFeedPage />} />
+            <Route path="/crm/leaves" element={<LeaveSchedulePage />} />
             <Route path="/crm/events/overview" element={<EventsOverviewPage />} />
             <Route path="/crm/messenger" element={<MessengerHubPage />} />
             <Route path="/crm/activity" element={<ActiveUsersPage />} />

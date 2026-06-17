@@ -581,6 +581,12 @@ export default function EventsFeedPage() {
             </div>
           )}
           <Link
+            to="/crm/leaves"
+            className="h-9 px-3 border rounded-lg text-sm font-medium flex items-center gap-1.5 text-gray-700 hover:bg-gray-50"
+          >
+            <CalendarRange className="h-4 w-4 text-purple-600" /> Lịch nghỉ
+          </Link>
+          <Link
             to="/crm/events/overview"
             className="h-9 px-3 border rounded-lg text-sm font-medium flex items-center gap-1.5 text-gray-700 hover:bg-gray-50"
           >

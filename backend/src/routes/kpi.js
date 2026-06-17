@@ -128,12 +128,22 @@ async function resolveTargetUsers({ userIds = null, companyId = null, department
 // Filter: company_id, department_id, q (search). Mặc định trả nhiều role CRM (sales, sales_admin, CSKH, designer, SX/VC…).
 r.get('/users', async (req, res) => {
   try {
-    const list = await resolveTargetUsers({
+    let list = await resolveTargetUsers({
       companyId: req.query.company_id || null,
       departmentId: req.query.department_id || null,
       q: req.query.q || null,
       roles: req.query.roles ? String(req.query.roles).split(',').filter(Boolean) : null,
     });
+    const regionId = req.query.region_id ? String(req.query.region_id).trim() : '';
+    if (regionId) {
+      const { data: regionRows, error: regErr } = await supabase
+        .from('user_company_regions')
+        .select('user_id')
+        .eq('region_id', regionId);
+      if (regErr) throw regErr;
+      const regionSet = new Set((regionRows || []).map((r) => r.user_id).filter(Boolean));
+      list = list.filter((u) => regionSet.has(u.id));
+    }
     res.json({ users: list });
   } catch (e) {
     console.error('GET /kpi/users:', e);
@@ -1383,39 +1393,93 @@ r.delete('/holidays/:id', async (req, res) => {
 });
 
 // ─── /api/kpi/leaves ─────────────────────────────────────────────────────────
+async function resolveLeaveScopedUserIds(req) {
+  const manager = isManager(req);
+  const uid = req.user?.userId || null;
+  if (!manager) return uid ? [uid] : [];
+
+  let ids = null;
+  const companyId = req.query.company_id ? String(req.query.company_id).trim() : '';
+  const departmentId = req.query.department_id ? String(req.query.department_id).trim() : '';
+  const regionId = req.query.region_id ? String(req.query.region_id).trim() : '';
+
+  if (companyId || departmentId) {
+    const usersInCo = await resolveTargetUsers({ companyId: companyId || null, departmentId: departmentId || null });
+    ids = usersInCo.map((u) => u.id);
+  }
+
+  if (regionId) {
+    const { data: regionRows, error: regErr } = await supabase
+      .from('user_company_regions')
+      .select('user_id')
+      .eq('region_id', regionId);
+    if (regErr) throw regErr;
+    const regionSet = new Set((regionRows || []).map((r) => r.user_id).filter(Boolean));
+    ids = ids ? ids.filter((id) => regionSet.has(id)) : [...regionSet];
+  }
+
+  if (req.query.user_id) {
+    const one = String(req.query.user_id).trim();
+    if (ids === null) return [one];
+    return ids.includes(one) ? [one] : [];
+  }
+
+  return ids;
+}
+
 r.get('/leaves', async (req, res) => {
   try {
-    const params = supabase.from('kpi_user_leaves')
+    const scopedUserIds = await resolveLeaveScopedUserIds(req);
+    if (Array.isArray(scopedUserIds) && scopedUserIds.length === 0) {
+      return res.json({ leaves: [] });
+    }
+
+    let q = supabase.from('kpi_user_leaves')
       .select('id, user_id, start_date, end_date, leave_type, half_day, reason, status, approved_at, approved_by, created_at')
       .order('start_date', { ascending: false }).limit(500);
-    let q = params;
-    if (req.query.user_id) q = q.eq('user_id', req.query.user_id);
-    if (req.query.status)  q = q.eq('status', req.query.status);
-    if (req.query.from)    q = q.gte('end_date', req.query.from);
-    if (req.query.to)      q = q.lte('start_date', req.query.to);
+    if (scopedUserIds) q = q.in('user_id', scopedUserIds);
+    if (req.query.status) q = q.eq('status', req.query.status);
+    if (req.query.from) q = q.gte('end_date', req.query.from);
+    if (req.query.to) q = q.lte('start_date', req.query.to);
     const { data, error } = await q;
     if (error) throw error;
-    res.json({ leaves: data || [] });
+
+    const userIds = [...new Set((data || []).map((l) => l.user_id).filter(Boolean))];
+    const usersList = userIds.length ? await resolveTargetUsers({ userIds }) : [];
+    const userMap = Object.fromEntries(usersList.map((u) => [u.id, u]));
+    const leaves = (data || []).map((l) => ({
+      ...l,
+      user: userMap[l.user_id]
+        ? { id: userMap[l.user_id].id, full_name: userMap[l.user_id].full_name, email: userMap[l.user_id].email }
+        : null,
+    }));
+    res.json({ leaves });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 r.post('/leaves', async (req, res) => {
   try {
-    if (!isManager(req)) return res.status(403).json({ error: 'Chỉ manager+' });
     const b = req.body || {};
-    if (!b.user_id || !b.start_date || !b.end_date) {
-      return res.status(400).json({ error: 'user_id, start_date, end_date bắt buộc' });
+    const manager = isManager(req);
+    const uid = req.user?.userId || null;
+    if (!b.start_date || !b.end_date) {
+      return res.status(400).json({ error: 'start_date, end_date bắt buộc' });
     }
-    const status = b.status || 'approved';
+    const targetUserId = b.user_id || uid;
+    if (!targetUserId) return res.status(400).json({ error: 'user_id bắt buộc' });
+    if (!manager && String(targetUserId) !== String(uid)) {
+      return res.status(403).json({ error: 'Chỉ tạo đơn nghỉ cho chính mình' });
+    }
+    const status = manager ? (b.status || 'approved') : 'pending';
     const { data, error } = await supabase.from('kpi_user_leaves').insert({
-      user_id: b.user_id,
+      user_id: targetUserId,
       start_date: b.start_date,
       end_date: b.end_date,
       leave_type: b.leave_type || 'paid',
       half_day: b.half_day || 'full',
       reason: b.reason || null,
       status,
-      approved_by: status === 'approved' ? (req.user?.userId || null) : null,
+      approved_by: status === 'approved' ? (uid || null) : null,
       approved_at: status === 'approved' ? new Date().toISOString() : null,
     }).select().single();
     if (error) throw error;
@@ -1426,12 +1490,41 @@ r.post('/leaves', async (req, res) => {
 
 r.patch('/leaves/:id', async (req, res) => {
   try {
-    if (!isManager(req)) return res.status(403).json({ error: 'Chỉ manager+' });
+    const manager = isManager(req);
+    const uid = req.user?.userId || null;
+    const body = req.body || {};
+    const { data: existing, error: fetchErr } = await supabase.from('kpi_user_leaves')
+      .select('id, user_id, status')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (fetchErr) throw fetchErr;
+    if (!existing) return res.status(404).json({ error: 'Không tìm thấy đơn nghỉ' });
+
+    const isOwner = String(existing.user_id) === String(uid);
+    const fieldKeys = ['start_date', 'end_date', 'leave_type', 'half_day', 'reason'];
+    const hasFieldEdit = fieldKeys.some((k) => Object.hasOwn(body, k));
+    const nextStatus = body.status;
+
+    if (!manager) {
+      if (!isOwner) {
+        return res.status(403).json({ error: 'Không có quyền sửa đơn nghỉ này' });
+      }
+      if (hasFieldEdit && existing.status !== 'pending') {
+        return res.status(400).json({ error: 'Chỉ sửa được đơn đang chờ duyệt' });
+      }
+      if (nextStatus === 'approved' || nextStatus === 'rejected') {
+        return res.status(403).json({ error: 'Không có quyền duyệt đơn' });
+      }
+      if (nextStatus === 'cancelled' && existing.status !== 'pending') {
+        return res.status(400).json({ error: 'Chỉ hủy được đơn đang chờ duyệt' });
+      }
+    }
+
     const allowed = ['start_date', 'end_date', 'leave_type', 'half_day', 'reason', 'status'];
     const patch = {};
-    for (const k of allowed) if (Object.hasOwn(req.body || {}, k)) patch[k] = req.body[k];
-    if (patch.status === 'approved') {
-      patch.approved_by = req.user?.userId || null;
+    for (const k of allowed) if (Object.hasOwn(body, k)) patch[k] = body[k];
+    if (patch.status === 'approved' || patch.status === 'rejected') {
+      patch.approved_by = uid || null;
       patch.approved_at = new Date().toISOString();
     }
     patch.updated_at = new Date().toISOString();
@@ -1445,7 +1538,24 @@ r.patch('/leaves/:id', async (req, res) => {
 
 r.delete('/leaves/:id', async (req, res) => {
   try {
-    if (!isManager(req)) return res.status(403).json({ error: 'Chỉ manager+' });
+    const manager = isManager(req);
+    const uid = req.user?.userId || null;
+    const { data: existing, error: fetchErr } = await supabase.from('kpi_user_leaves')
+      .select('id, user_id, status')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (fetchErr) throw fetchErr;
+    if (!existing) return res.status(404).json({ error: 'Không tìm thấy đơn nghỉ' });
+
+    if (!manager) {
+      if (String(existing.user_id) !== String(uid)) {
+        return res.status(403).json({ error: 'Không có quyền xóa đơn nghỉ này' });
+      }
+      if (existing.status !== 'pending') {
+        return res.status(400).json({ error: 'Chỉ xóa được đơn đang chờ duyệt' });
+      }
+    }
+
     const { error } = await supabase.from('kpi_user_leaves').delete().eq('id', req.params.id);
     if (error) throw error;
     clearBizCache();

@@ -11,7 +11,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Inbox, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X, UsersRound,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
-  BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, CalendarRange, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot, Download,
+  BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, CalendarRange, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot, Download, UserMinus,
   Sigma, Calculator, FileUp, History as HistoryIcon, HardDrive,
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
@@ -98,6 +98,7 @@ const CRM_MENU_TOP_GROUP = {
   items: [
     { to: '/crm/dashboard', icon: LayoutDashboard, label: 'Dashboard CRM', end: true },
     { to: '/crm/events', icon: Calendar, label: 'Sự kiện' },
+    { to: '/crm/leaves', icon: UserMinus, label: 'Lịch nghỉ' },
     { to: '/crm/messenger', icon: MessageCircle, label: 'Nhóm chat' },
     { to: '/crm/activity', icon: Activity, label: 'Đang hoạt động' },
     { to: '/social', icon: Share2, label: 'Bảng tin nội bộ' },
@@ -229,6 +230,7 @@ function buildSharedTopLinks(moduleScope) {
   return [
     { to: '/social', icon: Share2, label: 'Bảng tin nội bộ' },
     { to: eventsTo, icon: Calendar, label: 'Sự kiện' },
+    { to: '/crm/leaves', icon: UserMinus, label: 'Lịch nghỉ' },
     { to: '/crm/activity', icon: Activity, label: 'Đang hoạt động' },
     { to: '/crm/messenger', icon: MessageCircle, label: 'Nhóm chat' },
   ];
