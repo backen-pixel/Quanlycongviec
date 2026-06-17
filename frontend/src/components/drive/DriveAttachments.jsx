@@ -12,13 +12,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Link2, Upload, Loader2, LayoutGrid, List as ListIcon, FileText, Table2,
-  FolderPlus, ChevronRight, X,
+  FolderPlus, ChevronRight, X, Download, Trash2, FolderInput,
 } from 'lucide-react';
 import {
   driveLinksByEntity, driveUnlinkFile, drivePreview, driveOpenDownload, driveFormatBytes,
   driveUploadToEntity, driveCreateGoogleForEntity, driveEntityChildren, driveEntityCreateFolder,
+  driveUpdateFile,
 } from '../../lib/drive';
 import DriveFilePicker from './DriveFilePicker';
+import DriveEntityFolderPickerModal from './DriveEntityFolderPickerModal';
 import PreviewModal from './PreviewModal';
 import DriveLocationBar, { enrichDriveBreadcrumb } from './DriveLocationBar';
 import DriveFileIcon from './DriveFileIcon';
@@ -33,7 +35,8 @@ export default function DriveAttachments({ entityType, entityId, className = '',
   const [subFolders, setSubFolders] = useState([]);
   const [folderFiles, setFolderFiles] = useState([]);
   const [entityFolderId, setEntityFolderId] = useState(null);
-  const [currentFolderId, setCurrentFolderId] = useState(null);
+  const [folderNav, setFolderNav] = useState({ history: [null], index: 0 });
+  const currentFolderId = folderNav.history[folderNav.index] ?? null;
   const [loading, setLoading] = useState(true);
   const [picking, setPicking] = useState(false);
   const [previewing, setPreviewing] = useState(null);
@@ -44,9 +47,36 @@ export default function DriveAttachments({ entityType, entityId, className = '',
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [savingFolder, setSavingFolder] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkWorking, setBulkWorking] = useState(false);
+  const [moveTarget, setMoveTarget] = useState(null);
   const fileInputRef = useRef(null);
 
   const activeFolderId = currentFolderId || entityFolderId;
+
+  const canGoBack = folderNav.index > 0;
+  const canGoForward = folderNav.index < folderNav.history.length - 1;
+
+  function navigateToFolder(folderId) {
+    setFolderNav(({ history, index }) => {
+      const next = [...history.slice(0, index + 1), folderId ?? null];
+      return { history: next, index: next.length - 1 };
+    });
+  }
+
+  function goBack() {
+    setFolderNav(({ history, index }) => {
+      if (index <= 0) return { history, index };
+      return { history, index: index - 1 };
+    });
+  }
+
+  function goForward() {
+    setFolderNav(({ history, index }) => {
+      if (index >= history.length - 1) return { history, index };
+      return { history, index: index + 1 };
+    });
+  }
 
   useEffect(() => {
     try { localStorage.setItem('drive.viewMode', viewMode); } catch (_) {}
@@ -78,9 +108,14 @@ export default function DriveAttachments({ entityType, entityId, className = '',
   }, [entityType, entityId, reloadLinks, reloadBrowse]);
 
   useEffect(() => {
-    setCurrentFolderId(null);
     setEntityFolderId(null);
+    setFolderNav({ history: [null], index: 0 });
+    setSelectedIds(new Set());
   }, [entityType, entityId]);
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [currentFolderId]);
 
   useEffect(() => { void reload(); }, [reload]);
 
@@ -94,8 +129,102 @@ export default function DriveAttachments({ entityType, entityId, className = '',
     return m;
   }, [links]);
 
+  function toggleSelect(file) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(file.id)) next.delete(file.id);
+      else next.add(file.id);
+      return next;
+    });
+  }
+
+  function handleSelectAll(checked) {
+    if (checked) setSelectedIds(new Set(folderFiles.map((f) => f.id)));
+    else setSelectedIds(new Set());
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
+
+  const selectedFiles = useMemo(
+    () => folderFiles.filter((f) => selectedIds.has(f.id)),
+    [folderFiles, selectedIds],
+  );
+
+  const selectedLinkIds = useMemo(
+    () => selectedFiles.map((f) => linkByFileId.get(f.id)).filter(Boolean),
+    [selectedFiles, linkByFileId],
+  );
+
+  async function bulkDownload() {
+    if (!selectedFiles.length) return;
+    setBulkWorking(true);
+    try {
+      for (const f of selectedFiles) {
+        await driveOpenDownload(f.id, f.name);
+      }
+    } finally {
+      setBulkWorking(false);
+    }
+  }
+
+  async function bulkUnlink() {
+    if (!selectedLinkIds.length) return;
+    if (!confirm(`Xóa ${selectedLinkIds.length} file đã chọn?`)) return;
+    setBulkWorking(true);
+    try {
+      await Promise.all(selectedLinkIds.map((id) => driveUnlinkFile(id)));
+      setLinks((cur) => cur.filter((l) => !selectedLinkIds.includes(l.id)));
+      clearSelection();
+    } catch (e) {
+      alert(e?.response?.data?.error || e?.message);
+    } finally {
+      setBulkWorking(false);
+    }
+  }
+
+  function openMoveDialog(fileIds) {
+    if (!fileIds?.length) return;
+    setMoveTarget({ fileIds });
+  }
+
+  async function handleMoveToFolder(dest) {
+    const ids = moveTarget?.fileIds || [];
+    const { folderId, rootId } = typeof dest === 'object' && dest !== null
+      ? dest
+      : { folderId: dest, rootId: undefined };
+
+    if (!ids.length) return;
+    if (folderId == null && !rootId) return;
+
+    const filesToMove = folderFiles.filter((f) => ids.includes(f.id));
+    const alreadyThere = filesToMove.length > 0 && filesToMove.every((f) => {
+      if (folderId) return f.folder_id === folderId;
+      return f.folder_id == null && f.root_id === rootId;
+    });
+    if (alreadyThere) {
+      alert('Các file đã nằm trong thư mục này.');
+      return;
+    }
+
+    const body = folderId != null ? { folder_id: folderId } : { folder_id: null, root_id: rootId };
+
+    setBulkWorking(true);
+    try {
+      await Promise.all(ids.map((id) => driveUpdateFile(id, body)));
+      setMoveTarget(null);
+      clearSelection();
+      await reloadBrowse();
+    } catch (e) {
+      alert(e?.response?.data?.error || e?.message || 'Không di chuyển được file');
+    } finally {
+      setBulkWorking(false);
+    }
+  }
+
   async function unlink(linkId) {
-    if (!confirm('Bỏ gắn file này?')) return;
+    if (!confirm('Xóa file này?')) return;
     try {
       await driveUnlinkFile(linkId);
       setLinks((cur) => cur.filter((l) => l.id !== linkId));
@@ -199,9 +328,9 @@ export default function DriveAttachments({ entityType, entityId, className = '',
 
   function handleLocationNav(item) {
     if (item.type === 'folder') {
-      setCurrentFolderId(item.id);
-    } else if (item.type === 'root' && entityFolderId) {
-      setCurrentFolderId(null);
+      navigateToFolder(item.id);
+    } else if (item.type === 'root') {
+      navigateToFolder(null);
     }
   }
 
@@ -211,7 +340,9 @@ export default function DriveAttachments({ entityType, entityId, className = '',
       <DriveFileMoreMenu
         onPreview={() => preview(file)}
         onDownload={() => driveOpenDownload(file.id, file.name)}
+        onMove={() => openMoveDialog([file.id])}
         onUnlink={linkId ? () => unlink(linkId) : undefined}
+        unlinkLabel="Xóa"
         showUnlink={!!linkId}
       />
     );
@@ -296,10 +427,14 @@ export default function DriveAttachments({ entityType, entityId, className = '',
         </div>
       </div>
 
-      {locationPath.length > 0 && (
+      {(locationPath.length > 0 || canGoBack || canGoForward) && (
         <DriveLocationBar
           items={locationPath}
           onNavigate={handleLocationNav}
+          canGoBack={canGoBack}
+          canGoForward={canGoForward}
+          onBack={goBack}
+          onForward={goForward}
           className="rounded-lg border mb-3 -mx-1"
         />
       )}
@@ -373,7 +508,7 @@ export default function DriveAttachments({ entityType, entityId, className = '',
                   <button
                     key={f.id}
                     type="button"
-                    onClick={() => setCurrentFolderId(f.id)}
+                    onClick={() => navigateToFolder(f.id)}
                     className="w-full text-left flex items-center gap-2.5 px-3 py-2.5 hover:bg-blue-50/80 transition-colors"
                   >
                     <DriveFileIcon isFolder size={18} className="shrink-0" />
@@ -386,21 +521,83 @@ export default function DriveAttachments({ entityType, entityId, className = '',
           )}
 
           {folderFiles.length > 0 ? (
-            viewMode === 'list' ? (
-              <DriveFilesListView
-                files={folderFiles}
-                formatBytes={driveFormatBytes}
-                onPreview={preview}
-                renderActions={renderActions}
-              />
-            ) : (
-              <DriveFilesGridView
-                files={folderFiles}
-                formatBytes={driveFormatBytes}
-                onPreview={preview}
-                renderActions={renderActions}
-              />
-            )
+            <>
+              {selectedIds.size > 0 && (
+                <div className="mb-3 flex items-center flex-wrap gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-sm">
+                  <span className="text-slate-700">
+                    Đã chọn <strong className="text-blue-800">{selectedIds.size}</strong> file
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void bulkDownload()}
+                    disabled={bulkWorking}
+                    className="h-7 px-2.5 bg-white border border-slate-200 hover:bg-slate-50 rounded-md text-xs font-medium flex items-center gap-1 disabled:opacity-60"
+                  >
+                    <Download size={13} className="text-blue-600" /> Tải xuống
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openMoveDialog(selectedFiles.map((f) => f.id))}
+                    disabled={bulkWorking}
+                    className="h-7 px-2.5 bg-white border border-slate-200 hover:bg-slate-50 rounded-md text-xs font-medium flex items-center gap-1 disabled:opacity-60"
+                  >
+                    <FolderInput size={13} className="text-amber-600" /> Di chuyển
+                  </button>
+                  {selectedLinkIds.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => void bulkUnlink()}
+                      disabled={bulkWorking}
+                      className="h-7 px-2.5 bg-white border border-red-200 hover:bg-red-50 text-red-600 rounded-md text-xs font-medium flex items-center gap-1 disabled:opacity-60"
+                    >
+                      <Trash2 size={13} /> Xóa ({selectedLinkIds.length})
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={clearSelection}
+                    className="h-7 px-2 text-slate-500 hover:text-slate-700 text-xs"
+                  >
+                    Bỏ chọn
+                  </button>
+                </div>
+              )}
+
+              {viewMode === 'list' ? (
+                <DriveFilesListView
+                  files={folderFiles}
+                  formatBytes={driveFormatBytes}
+                  onPreview={preview}
+                  renderActions={renderActions}
+                  selectedIds={selectedIds}
+                  onToggleSelect={toggleSelect}
+                  onSelectAll={handleSelectAll}
+                  onSelectionChange={setSelectedIds}
+                />
+              ) : (
+                <DriveFilesGridView
+                  files={folderFiles}
+                  formatBytes={driveFormatBytes}
+                  onPreview={preview}
+                  renderActions={renderActions}
+                  selectedIds={selectedIds}
+                  onToggleSelect={toggleSelect}
+                  onSelectionChange={setSelectedIds}
+                />
+              )}
+
+              {viewMode === 'grid' && selectedIds.size === 0 && folderFiles.length > 1 && (
+                <div className="mt-2 text-right">
+                  <button
+                    type="button"
+                    onClick={() => handleSelectAll(true)}
+                    className="text-xs text-blue-600 hover:underline"
+                  >
+                    Chọn tất cả ({folderFiles.length})
+                  </button>
+                </div>
+              )}
+            </>
           ) : isEmpty ? (
             <div className="text-center py-12 text-slate-400 text-sm border border-dashed rounded-lg bg-slate-50/50">
               Chưa có file trong thư mục này. Tạo thư mục hoặc tải file lên.
@@ -409,6 +606,16 @@ export default function DriveAttachments({ entityType, entityId, className = '',
         </>
       )}
 
+      {moveTarget && (
+        <DriveEntityFolderPickerModal
+          entityType={entityType}
+          entityId={entityId}
+          fileCount={moveTarget.fileIds.length}
+          submitting={bulkWorking}
+          onConfirm={handleMoveToFolder}
+          onClose={() => !bulkWorking && setMoveTarget(null)}
+        />
+      )}
       {picking && (
         <DriveFilePicker
           entityType={entityType}

@@ -1144,7 +1144,7 @@ r.patch('/files/:id', async (req, res) => {
     const access = await driveAcl.canAccess({ user: req.user, targetType: 'file', targetId: file.id, requiredRole: 'editor' });
     if (!access.ok) return res.status(403).json({ error: 'Cần quyền editor' });
 
-    const { name, folder_id } = req.body || {};
+    const { name, folder_id, root_id: bodyRootId } = req.body || {};
     const patch = { updated_at: new Date().toISOString() };
     let action = null;
 
@@ -1153,19 +1153,29 @@ r.patch('/files/:id', async (req, res) => {
       patch.name = name;
       action = 'rename';
     }
-    if (folder_id !== undefined && folder_id !== file.folder_id) {
+    const moveRequested = folder_id !== undefined && (
+      folder_id !== file.folder_id
+      || (folder_id === null && bodyRootId && bodyRootId !== file.root_id)
+    );
+    if (moveRequested) {
       let newParentGoogleId;
       let oldParentGoogleId;
+      let targetRootId;
+
       if (folder_id === null) {
-        const root = await loadRoot(file.root_id);
+        targetRootId = bodyRootId || file.root_id;
+        const root = await loadRoot(targetRootId);
+        if (!root) return res.status(404).json({ error: 'root_id đích không tồn tại' });
+        const moveAccess = await driveAcl.canAccess({ user: req.user, targetType: 'root', targetId: root.id, requiredRole: 'editor' });
+        if (!moveAccess.ok) return res.status(403).json({ error: 'Cần quyền editor trên Drive đích' });
         newParentGoogleId = root.google_folder_id;
       } else {
         const newFolder = await loadFolder(folder_id);
         if (!newFolder) return res.status(404).json({ error: 'folder_id mới không tồn tại' });
-        if (newFolder.root_id !== file.root_id) return res.status(400).json({ error: 'Di chuyển sang Drive khác chưa hỗ trợ' });
         const moveAccess = await driveAcl.canAccess({ user: req.user, targetType: 'folder', targetId: newFolder.id, requiredRole: 'editor' });
         if (!moveAccess.ok) return res.status(403).json({ error: 'Cần quyền editor trên folder đích' });
         newParentGoogleId = newFolder.google_folder_id;
+        targetRootId = newFolder.root_id;
       }
       if (file.folder_id) {
         const oldFolder = await loadFolder(file.folder_id);
@@ -1176,6 +1186,7 @@ r.patch('/files/:id', async (req, res) => {
       }
       await gdrive.moveItem(file.google_file_id, newParentGoogleId, oldParentGoogleId);
       patch.folder_id = folder_id;
+      if (targetRootId) patch.root_id = targetRootId;
       action = action ? 'move' : 'move';
     }
 
