@@ -2522,6 +2522,14 @@ export default function CRMTasksTab({
     const executorLabel = delegated ? companyLabelById(task.executor_company_id) : '';
     const isMyExecutorTask = task.executor_company_id && user?.company_id
       && String(task.executor_company_id) === String(user.company_id);
+    const showInternalBadge = !delegated && taskCompanyScope !== 'shared' && (showSxTasksInUi || isProductionScope) && isSxStageSlug(task.stage_slug) && leadCompanyId;
+    const showEvidenceBadge = (!!task.completion_requires_file_or_note ||
+      (Array.isArray(task.required_evidence_file_types) && task.required_evidence_file_types.length > 0) ||
+      !!task.completion_requires_customer_note ||
+      !!task.completion_requires_customer_contact) &&
+      task.status !== 'completed';
+    const assignees = taskAssigneeList(task);
+    const hasCollapsedMeta = showInternalBadge || showEvidenceBadge || assignees.length > 0;
     return (
       <SortableTaskWrapper key={task.id} id={task.id}>
         {({ dragHandleProps, isOver }) => (
@@ -2549,7 +2557,7 @@ export default function CRMTasksTab({
           <div
             className="flex-1 min-w-0 cursor-pointer"
             onClick={() => toggleExpand(task)}
-            title="Click: ghi chú & đính kèm · Double-click: chỉnh sửa nhiệm vụ"
+            title="Click hoặc Chi tiết: xem minh chứng, người gán, ghi chú & file"
           >
             <div className="flex flex-wrap items-center gap-1.5 min-w-0">
               <p
@@ -2576,7 +2584,16 @@ export default function CRMTasksTab({
                   {isMyExecutorTask ? 'Giao cho bạn' : `Giao ${executorLabel}`}
                 </span>
               )}
-              {!delegated && taskCompanyScope !== 'shared' && (showSxTasksInUi || isProductionScope) && isSxStageSlug(task.stage_slug) && leadCompanyId && (
+              {!isExpanded && hasCollapsedMeta && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); toggleExpand(task); }}
+                  className="shrink-0 text-[10px] font-medium text-sky-700 hover:text-sky-900 bg-sky-50 hover:bg-sky-100 border border-sky-200 px-1.5 py-0.5 rounded cursor-pointer"
+                >
+                  Chi tiết
+                </button>
+              )}
+              {isExpanded && showInternalBadge && (
                 <span className="shrink-0 text-[10px] text-slate-500 bg-slate-50 border border-slate-100 px-1.5 py-0.5 rounded">
                   Nội bộ
                 </span>
@@ -2589,11 +2606,7 @@ export default function CRMTasksTab({
                   {task.quick_verdict === 'sufficient' ? '✓ Đủ' : task.quick_verdict === 'insufficient' ? '✗ Chưa' : '❓ Đủ/Chưa'}
                 </span>
               )}
-              {(!!task.completion_requires_file_or_note ||
-                (Array.isArray(task.required_evidence_file_types) && task.required_evidence_file_types.length > 0) ||
-                !!task.completion_requires_customer_note ||
-                !!task.completion_requires_customer_contact) &&
-                task.status !== 'completed' && (
+              {isExpanded && showEvidenceBadge && (
                 <span
                   className="shrink-0 text-[10px] font-medium text-violet-900 bg-violet-50 border border-violet-100 px-1.5 py-0.5 rounded max-w-[220px] truncate"
                   title={(() => {
@@ -2658,7 +2671,7 @@ export default function CRMTasksTab({
                   )}
                 </span>
               )}
-              {taskAssigneeList(task).map((u) => (
+              {isExpanded && assignees.map((u) => (
                 <span key={u.id} className="text-[10px] text-blue-600 flex items-center gap-0.5">
                   <User className="h-2.5 w-2.5" />{u.full_name}
                 </span>
