@@ -187,7 +187,9 @@ export async function fetchMessengerGroupDetail(groupId: string): Promise<{
   avatar?: string | null;
   members: MessengerGroupMember[];
 }> {
-  const { data } = await api.get<Record<string, unknown>>(`/messenger/groups/${groupId}`);
+  const { data } = await api.get<Record<string, unknown>>(`/messenger/groups/${groupId}`, {
+    params: { _ts: Date.now() },
+  });
   const membersRaw = Array.isArray(data.members) ? data.members : [];
   const members = membersRaw.map((row) => {
     const m = row as Record<string, unknown>;

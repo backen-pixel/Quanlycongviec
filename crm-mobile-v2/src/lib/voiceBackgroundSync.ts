@@ -4,6 +4,7 @@ import { AppState, Platform } from 'react-native';
 import { api, getStoredToken } from '../api/client';
 import { uploadRecording } from '../api/recordings';
 import { guessAudioMimeFromFileName } from './guessAudioMime';
+import { normalizeVoiceRecordingFileName } from './voiceRecordingName';
 import { loadCrmMobilePrefs } from './crmMobilePrefs';
 
 const LAST_SYNC_MS_KEY = '@crmv2_voice_last_sync_ms';
@@ -113,13 +114,14 @@ export async function listLocalCallRecordings(opts: {
   for (const asset of page.assets) {
     if (out.length >= limit) break;
     const name = asset.filename || `audio_${asset.id}`;
+    const decodedName = normalizeVoiceRecordingFileName(name) || name;
     if (!includeAll && !looksLikeCallRecording(name, asset.uri)) continue;
     const info = await MediaLibrary.getAssetInfoAsync(asset);
     const localUri = info.localUri || asset.uri;
     if (!localUri) continue;
     out.push({
       id: asset.id,
-      name,
+      name: decodedName,
       size: 0,
       dateAddedMs: (asset.creationTime || 0) * 1000,
       mime: guessAudioMimeFromFileName(name),

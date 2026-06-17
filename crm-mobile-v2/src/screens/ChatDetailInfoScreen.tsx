@@ -1,5 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useFocusEffect } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -25,6 +26,7 @@ import ChatMediaGalleryPanel, { type GalleryTab } from '../components/messenger/
 import MessengerAvatar from '../components/messenger/MessengerAvatar';
 import TapHighlight from '../components/TapHighlight';
 import { useAuth } from '../context/AuthContext';
+import { useMessenger } from '../context/MessengerContext';
 import { useTheme } from '../theme';
 import {
   addMessengerGroupMembers,
@@ -108,6 +110,8 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const myUserId = String(user?.id || user?.userId || '');
+  const { threads, patchThreadMeta, refreshThreads } = useMessenger();
+  const thread = threads.find((t) => t.id === threadId);
 
   const [panel, setPanel] = useState<Panel>('main');
   const [galleryTab, setGalleryTab] = useState<GalleryTab>('photos');
@@ -121,7 +125,9 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
   const [leaving, setLeaving] = useState(false);
   const [notifyOn, setNotifyOn] = useState(true);
   const [groupName, setGroupName] = useState(title);
-  const [groupAvatarUrl, setGroupAvatarUrl] = useState<string | null>(avatarUrl || null);
+  const [groupAvatarUrl, setGroupAvatarUrl] = useState<string | null>(
+    () => resolveMediaUrl(thread?.avatarUrl || avatarUrl || null),
+  );
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameDraft, setRenameDraft] = useState(title);
   const [renaming, setRenaming] = useState(false);
@@ -144,11 +150,28 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
         setMembers(g.members);
         setGroupName(g.name);
         setRenameDraft(g.name);
-        setGroupAvatarUrl(g.avatar ? resolveMediaUrl(g.avatar) : null);
+        setGroupAvatarUrl((prev) => {
+          const next = g.avatar ? resolveMediaUrl(g.avatar) : null;
+          return next || prev;
+        });
       })
       .catch(() => setMembers([]))
       .finally(() => setMembersLoading(false));
   }, [isDirect, threadId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (thread?.avatarUrl) {
+        setGroupAvatarUrl(thread.avatarUrl);
+      }
+    }, [thread?.avatarUrl]),
+  );
+
+  useEffect(() => {
+    if (thread?.avatarUrl) {
+      setGroupAvatarUrl(thread.avatarUrl);
+    }
+  }, [thread?.avatarUrl]);
 
   const myMember = members.find((m) => String(m.id) === myUserId);
   const canManageGroup = !isDirect && ['leader', 'deputy', 'admin'].includes(String(myMember?.role || '').toLowerCase());
@@ -169,6 +192,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
       setGroupName(next);
       setRenameOpen(false);
       navigation.setParams({ title: next });
+      patchThreadMeta(threadId, { name: next });
     } catch (e) {
       Alert.alert('Lỗi', formatApiError(e));
     } finally {
@@ -198,7 +222,11 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
         name: asset.fileName || 'avatar.jpg',
         type: asset.mimeType || 'image/jpeg',
       });
-      setGroupAvatarUrl(uploaded ? resolveMediaUrl(uploaded) : null);
+      const resolved = uploaded ? resolveMediaUrl(uploaded) : null;
+      setGroupAvatarUrl(resolved);
+      navigation.setParams({ avatarUrl: resolved });
+      patchThreadMeta(threadId, { avatarUrl: uploaded || null });
+      void refreshThreads(true);
     } catch (e) {
       Alert.alert('Lỗi', formatApiError(e));
     } finally {
@@ -683,7 +711,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
               name={groupName}
               size={88}
               color={avatarColor || avatarColorFromName(groupName)}
-              avatarUrl={groupAvatarUrl || avatarUrl}
+              avatarUrl={groupAvatarUrl || thread?.avatarUrl || resolveMediaUrl(avatarUrl)}
             />
             {canManageGroup ? (
               avatarUploading ? (
