@@ -17,6 +17,22 @@ if (-not (Test-Path 'android\gradlew.bat')) {
   npx expo prebuild --platform android --no-install
 }
 
+function Sync-AndroidVersionFromAppJson {
+  $appJson = Get-Content app.json -Raw | ConvertFrom-Json
+  $version = $appJson.expo.version
+  if (-not $version) { $version = '1.0.0' }
+  $versionCode = $appJson.expo.android.versionCode
+  $gradle = Join-Path $root 'android\app\build.gradle'
+  if (-not (Test-Path $gradle)) { return }
+  $content = Get-Content $gradle -Raw
+  $content = $content -replace 'versionCode\s+\d+', "versionCode $versionCode"
+  $content = $content -replace 'versionName\s+"[^"]*"', "versionName `"$version`""
+  Set-Content -Path $gradle -Value $content -NoNewline
+  Write-Host ">> Synced native version from app.json: $version (code $versionCode)"
+}
+
+Sync-AndroidVersionFromAppJson
+
 Write-Host '>> gradlew assembleRelease...'
 Set-Location android
 .\gradlew.bat assembleRelease --no-daemon
