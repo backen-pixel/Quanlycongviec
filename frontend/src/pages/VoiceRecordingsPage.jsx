@@ -143,13 +143,14 @@ export default function VoiceRecordingsPage() {
   const [bootErr, setBootErr] = useState('');
   const [savingBootstrap, setSavingBootstrap] = useState(false);
 
-  /** Công ty đang áp dụng (mirror CRM dashboardScopeCompanyId). */
+  /** Công ty đang áp dụng — NV có company_id luôn khóa; admin hệ thống chọn dropdown. */
   const voiceScopeCompanyId = useMemo(() => {
-    if (isCompanyScopedAdmin && user?.company_id) return String(user.company_id);
-    if (!isAdmin && user?.company_id) return String(user.company_id);
-    if (isAdmin && filterCompanyId) return String(filterCompanyId);
+    const userCo = user?.company_id ? String(user.company_id) : '';
+    const isSystemAdminUnscoped = isAdmin && !isCompanyScopedAdmin;
+    if (userCo && !isSystemAdminUnscoped) return userCo;
+    if (isSystemAdminUnscoped && filterCompanyId) return String(filterCompanyId);
     return '';
-  }, [isCompanyScopedAdmin, isAdmin, user?.company_id, filterCompanyId]);
+  }, [isAdmin, isCompanyScopedAdmin, user?.company_id, filterCompanyId]);
 
   const load = async () => {
     setLoading(true);
@@ -360,13 +361,22 @@ export default function VoiceRecordingsPage() {
     setBootErr('');
   };
 
+  const voiceListScopeParams = () => {
+    const params = {};
+    if (companyViewer && filterUserId) params.user_id = filterUserId;
+    if (voiceScopeCompanyId) params.company_id = voiceScopeCompanyId;
+    return params;
+  };
+
   const runAutoRelinkScan = async () => {
     setRelinking(true);
     setErr('');
     setScanMessage('');
     try {
       const body = companyViewer ? { all_users: true } : {};
-      const { data } = await api.post('/voice-recordings/relink-unassigned', body);
+      const { data } = await api.post('/voice-recordings/relink-unassigned', body, {
+        params: voiceListScopeParams(),
+      });
       await load();
       if (data?.updated != null) {
         setScanMessage(`Đã quét ${data.scanned} bản ghi — cập nhật ghép CRM: ${data.updated} bản.`);
@@ -383,9 +393,9 @@ export default function VoiceRecordingsPage() {
     setErr('');
     setScanMessage('');
     try {
-      const params = {};
-      if (companyViewer && filterUserId) params.user_id = filterUserId;
-      const { data } = await api.post('/voice-recordings/scan-metadata-phones', {}, { params });
+      const { data } = await api.post('/voice-recordings/scan-metadata-phones', {}, {
+        params: voiceListScopeParams(),
+      });
       await load();
       if (data?.filled_phone != null) {
         setScanMessage(
@@ -530,6 +540,10 @@ export default function VoiceRecordingsPage() {
         ) : isCompanyScopedAdmin ? (
           <p className="text-sm text-indigo-800 mt-2 rounded-lg bg-indigo-50 border border-indigo-100 px-3 py-2">
             Admin công ty: tự lọc theo công ty được phân — chỉ ghi âm do NV công ty bạn upload.
+          </p>
+        ) : companyViewer && userCompanyId ? (
+          <p className="text-sm text-blue-800 mt-2 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2">
+            Chỉ hiển thị ghi âm của nhân viên thuộc công ty bạn — lọc theo NV nếu cần.
           </p>
         ) : null}
       </div>
@@ -803,25 +817,18 @@ export default function VoiceRecordingsPage() {
                 </div>
               </>
             ) : null}
-            {!isAdmin && userCompanyId ? (
+            {voiceScopeCompanyId && !(isAdmin && !isCompanyScopedAdmin) ? (
               <span
-                className="h-9 inline-flex items-center px-2.5 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800"
+                className={`h-9 inline-flex items-center px-2.5 rounded-lg text-xs ${
+                  isCompanyScopedAdmin
+                    ? 'bg-indigo-50 border border-indigo-200 text-indigo-900'
+                    : 'bg-blue-50 border border-blue-200 text-blue-800'
+                }`}
                 title="Công ty của bạn"
               >
                 🏢{' '}
-                {filterCompanies.find((c) => String(c.id) === String(userCompanyId))?.short_name
-                  || filterCompanies.find((c) => String(c.id) === String(userCompanyId))?.name
-                  || 'Công ty của bạn'}
-              </span>
-            ) : null}
-            {isCompanyScopedAdmin && userCompanyId ? (
-              <span
-                className="h-9 inline-flex items-center px-2.5 bg-indigo-50 border border-indigo-200 rounded-lg text-xs text-indigo-900"
-                title="Admin phạm vi một công ty"
-              >
-                🏢{' '}
-                {filterCompanies.find((c) => String(c.id) === String(userCompanyId))?.short_name
-                  || filterCompanies.find((c) => String(c.id) === String(userCompanyId))?.name
+                {filterCompanies.find((c) => String(c.id) === String(voiceScopeCompanyId))?.short_name
+                  || filterCompanies.find((c) => String(c.id) === String(voiceScopeCompanyId))?.name
                   || 'Công ty của bạn'}
               </span>
             ) : null}
