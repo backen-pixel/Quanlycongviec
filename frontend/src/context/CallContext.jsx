@@ -1011,7 +1011,24 @@ export function CallProvider({ children }) {
     /** Direct: peer accept → mình tạo offer. */
     const onAccepted = async ({ callId: acceptedId }) => {
       if (acceptedId !== callIdRef.current || modeRef.current !== 'direct' || !directPcRef.current || !peerRef.current?.id) return;
-      if (directPcRef.current.signalingState !== 'stable' || directMakingOfferRef.current) return;
+      if (directMakingOfferRef.current) return;
+      const pcAccepted = directPcRef.current;
+      // Callee trên màn khóa: bấm nghe → server báo `call:accepted` qua REST NGAY khi socket
+      // callee chưa kết nối → offer đầu tiên gửi vào room rỗng và MẤT. Khi callee boot xong,
+      // reconnect và re-emit call:accept → ta nhận `call:accepted` lần 2 nhưng PC đang ở
+      // 'have-local-offer'. Thay vì bỏ qua (khiến callee kẹt "đang kết nối"), GỬI LẠI offer
+      // hiện có để callee nhận được và trả answer.
+      if (pcAccepted.signalingState === 'have-local-offer' && pcAccepted.localDescription) {
+        try {
+          socket.emit('call:signal', {
+            callId: acceptedId,
+            toUserId: peerRef.current.id,
+            signal: { type: 'offer', sdp: pcAccepted.localDescription.sdp },
+          });
+        } catch { /* noop */ }
+        return;
+      }
+      if (pcAccepted.signalingState !== 'stable') return;
       if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
       setStatus('connecting');
       if (ringbackAudioRef.current) { ringbackAudioRef.current.pause(); ringbackAudioRef.current = null; }
