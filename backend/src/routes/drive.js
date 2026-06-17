@@ -72,6 +72,7 @@ const { fetchFreshThumbnailLink, getThumbnailStream } = require('../helpers/driv
 const gdrive = require('../services/googleDrive');
 const driveAcl = require('../helpers/drivePermissions');
 const driveOrgPath = require('../helpers/driveOrgPath');
+const driveEntityFolder = require('../helpers/driveEntityFolder');
 const { logDriveActivity } = require('../helpers/driveActivity');
 const { isAdminLike } = require('../helpers/adminRole');
 
@@ -573,33 +574,110 @@ r.get('/breadcrumb/folder/:id', async (req, res) => {
   }
 });
 
-/** Breadcrumb folder entity (Lead/Deal/Dự án…) — lấy từ file đã gắn. */
+/** Breadcrumb folder entity (Lead/Deal/Dự án…) — luôn trả folder gốc entity. */
 r.get('/breadcrumb/entity/:entity_type/:entity_id', async (req, res) => {
   try {
     const { entity_type, entity_id } = req.params;
-    const { data: links } = await supabase
-      .from('drive_entity_links')
-      .select('file_id')
-      .eq('entity_type', entity_type)
-      .eq('entity_id', entity_id)
-      .limit(20);
-    const fileIds = (links || []).map((l) => l.file_id).filter(Boolean);
-    if (!fileIds.length) {
-      return res.json({ breadcrumb: [], folder_id: null });
+    const queryFolderId = req.query.folder_id;
+    if (queryFolderId && isUuid(String(queryFolderId))) {
+      const chain = await breadcrumbForFolder(queryFolderId);
+      return res.json({ breadcrumb: chain, folder_id: queryFolderId });
     }
-    const { data: files } = await supabase
-      .from('drive_files')
-      .select('folder_id')
-      .in('id', fileIds)
-      .not('folder_id', 'is', null)
-      .limit(1);
-    const folderId = files?.[0]?.folder_id;
-    if (!folderId) {
-      return res.json({ breadcrumb: [], folder_id: null });
-    }
-    const chain = await breadcrumbForFolder(folderId);
-    res.json({ breadcrumb: chain, folder_id: folderId });
+    const ctx = await driveEntityFolder.ensureEntityDriveContext({
+      entityType: entity_type,
+      entityId: entity_id,
+      uploaderUserId: req.user.userId || req.user.id,
+    });
+    const chain = await breadcrumbForFolder(ctx.entityMirror.id);
+    res.json({
+      breadcrumb: chain,
+      folder_id: ctx.entityMirror.id,
+      entity_folder_id: ctx.entityMirror.id,
+    });
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Duyệt folder + file trong cây entity (tab Drive chi tiết Lead/Deal). */
+r.get('/entity/:entity_type/:entity_id/children', async (req, res) => {
+  if (!requireGdrive(req, res)) return;
+  try {
+    const { entity_type, entity_id } = req.params;
+    if (!entity_type || !isUuid(entity_id)) {
+      return res.status(400).json({ error: 'entity_type / entity_id không hợp lệ' });
+    }
+    const ctx = await driveEntityFolder.ensureEntityDriveContext({
+      entityType: entity_type,
+      entityId: entity_id,
+      uploaderUserId: req.user.userId || req.user.id,
+    });
+    const browseFolderId = req.query.folder_id || ctx.entityMirror.id;
+    const target = await driveEntityFolder.resolveEntityTargetFolder(ctx, browseFolderId);
+    const out = await listChildrenForRootOrFolder({
+      rootId: target.root.id,
+      folderId: target.folder.id,
+    });
+    const breadcrumb = await breadcrumbForFolder(target.folder.id);
+    res.json({
+      ...out,
+      folder: target.folder,
+      entity_folder_id: ctx.entityMirror.id,
+      breadcrumb,
+    });
+  } catch (e) {
+    console.error('[drive] entity children:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Tạo thư mục con trong folder entity. */
+r.post('/entity/:entity_type/:entity_id/folders', async (req, res) => {
+  if (!requireGdrive(req, res)) return;
+  try {
+    const { entity_type, entity_id } = req.params;
+    const { name, parent_folder_id } = req.body || {};
+    if (!entity_type || !isUuid(entity_id)) {
+      return res.status(400).json({ error: 'entity_type / entity_id không hợp lệ' });
+    }
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ error: 'Thiếu tên thư mục' });
+    }
+    const ctx = await driveEntityFolder.ensureEntityDriveContext({
+      entityType: entity_type,
+      entityId: entity_id,
+      uploaderUserId: req.user.userId || req.user.id,
+    });
+    const parentId = parent_folder_id || ctx.entityMirror.id;
+    const parentTarget = await driveEntityFolder.resolveEntityTargetFolder(ctx, parentId);
+    const created = await gdrive.createFolder({
+      parentId: parentTarget.googleParentId,
+      name: String(name).trim(),
+    });
+    const { data, error } = await supabase
+      .from('drive_folders')
+      .insert({
+        root_id: parentTarget.root.id,
+        parent_id: parentTarget.folder.id,
+        name: created.name,
+        google_folder_id: created.id,
+        created_by: req.user.userId || null,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    await logDriveActivity({
+      user: req.user,
+      action: 'create_folder',
+      targetType: 'folder',
+      targetId: data.id,
+      targetName: data.name,
+      rootId: data.root_id,
+      meta: { entity_type, entity_id },
+    });
+    res.status(201).json({ folder: data });
+  } catch (e) {
+    console.error('[drive] entity create folder:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -2037,86 +2115,29 @@ r.post('/entity/upload', diskUpload.single('file'), async (req, res) => {
   let cleanupPath = req.file?.path || null;
   try {
     if (!req.file) return res.status(400).json({ error: 'Thiếu file' });
-    const { entity_type, entity_id } = req.body || {};
+    const { entity_type, entity_id, folder_id: bodyFolderId } = req.body || {};
     if (!entity_type || !isUuid(entity_id)) {
       return res.status(400).json({ error: 'entity_type / entity_id không hợp lệ' });
     }
 
-    // 1) Ensure entity org path (auto tạo lồng folder Module→…→EntityCode)
-    const ep = await driveOrgPath.ensureEntityOrgPath({
+    const ctx = await driveEntityFolder.ensureEntityDriveContext({
       entityType: entity_type,
       entityId: entity_id,
       uploaderUserId: req.user.userId || req.user.id,
     });
-
-    // 2) Đảm bảo drive_root của owner (file phải gắn vào 1 root để vào ACL).
-    const ownerId = ep.owner_user_id || req.user.userId || req.user.id;
-    let { data: ownerRoot } = await supabase
-      .from('drive_roots')
-      .select('*')
-      .eq('scope', 'user')
-      .eq('owner_id', ownerId)
-      .maybeSingle();
-    if (!ownerRoot) {
-      // Tạo root mới — google_folder_id trỏ tới folder NV vừa tạo trong entity path.
-      const ownerDriveName = ep.org?.employee_name || 'Drive cá nhân';
-      const ins = await supabase
-        .from('drive_roots')
-        .insert({
-          scope: 'user',
-          owner_id: ownerId,
-          name: ownerDriveName,
-          google_folder_id: ep.google_user_folder_id,
-          created_by: req.user.userId || null,
-        })
-        .select()
-        .single();
-      if (ins.error) {
-        if (ins.error.code === '23505') {
-          const dup = await supabase.from('drive_roots').select('*').eq('scope', 'user').eq('owner_id', ownerId).maybeSingle();
-          ownerRoot = dup.data;
-        } else { throw ins.error; }
-      } else {
-        ownerRoot = ins.data;
-      }
-    }
-
-    // 3) Mirror folder EntityKind + EntityCode trong drive_folders (file cần folder_id).
-    async function ensureMirrorFolder({ root_id, parent_id, name, google_folder_id }) {
-      const existing = await supabase
-        .from('drive_folders')
-        .select('*')
-        .eq('root_id', root_id)
-        .eq('google_folder_id', google_folder_id)
-        .maybeSingle();
-      if (existing.data) return existing.data;
-      const ins = await supabase
-        .from('drive_folders')
-        .insert({ root_id, parent_id, name, google_folder_id, created_by: req.user.userId || null })
-        .select()
-        .single();
-      if (ins.error) {
-        // Race: maybe another concurrent insert created it
-        const again = await supabase.from('drive_folders').select('*').eq('root_id', root_id).eq('google_folder_id', google_folder_id).maybeSingle();
-        if (again.data) return again.data;
-        throw ins.error;
-      }
-      return ins.data;
-    }
-    const kindMirror = await ensureMirrorFolder({
-      root_id: ownerRoot.id, parent_id: null,
-      name: ep.entity_kind_label, google_folder_id: ep.google_kind_folder_id,
-    });
-    const entityMirror = await ensureMirrorFolder({
-      root_id: ownerRoot.id, parent_id: kindMirror.id,
-      name: ep.entity_folder_name, google_folder_id: ep.google_folder_id,
-    });
+    const target = await driveEntityFolder.resolveEntityTargetFolder(
+      ctx,
+      bodyFolderId || ctx.entityMirror.id,
+    );
+    const ep = ctx.ep;
+    const ownerRoot = ctx.ownerRoot;
+    const entityMirror = target.folder;
 
     // 4) Upload file thật lên GDrive
     const safeName = req.body?.name || fixFilename(req.file.originalname);
     const stream = fs.createReadStream(req.file.path);
     const uploaded = await gdrive.uploadFile({
-      parentId: ep.google_folder_id,
+      parentId: target.googleParentId,
       name: safeName,
       mimeType: req.file.mimetype,
       stream,
@@ -2182,72 +2203,23 @@ r.post('/entity/upload', diskUpload.single('file'), async (req, res) => {
 r.post('/entity/create-google', async (req, res) => {
   if (!requireGdrive(req, res)) return;
   try {
-    const { entity_type, entity_id, kind, name } = req.body || {};
+    const { entity_type, entity_id, kind, name, folder_id: bodyFolderId } = req.body || {};
     const googleMime = gdrive.GOOGLE_CREATE_KINDS[kind];
     if (!googleMime) return res.status(400).json({ error: 'kind phải là doc, sheet hoặc slides' });
     if (!entity_type || !isUuid(entity_id)) return res.status(400).json({ error: 'entity_type / entity_id không hợp lệ' });
 
-    const ep = await driveOrgPath.ensureEntityOrgPath({
+    const ctx = await driveEntityFolder.ensureEntityDriveContext({
       entityType: entity_type,
       entityId: entity_id,
       uploaderUserId: req.user.userId || req.user.id,
     });
-
-    const ownerId = ep.owner_user_id || req.user.userId || req.user.id;
-    let { data: ownerRoot } = await supabase
-      .from('drive_roots')
-      .select('*')
-      .eq('scope', 'user')
-      .eq('owner_id', ownerId)
-      .maybeSingle();
-    if (!ownerRoot) {
-      const ins = await supabase
-        .from('drive_roots')
-        .insert({
-          scope: 'user',
-          owner_id: ownerId,
-          name: ep.org?.employee_name || 'Drive cá nhân',
-          google_folder_id: ep.google_user_folder_id,
-          created_by: req.user.userId || null,
-        })
-        .select()
-        .single();
-      if (ins.error && ins.error.code === '23505') {
-        const dup = await supabase.from('drive_roots').select('*').eq('scope', 'user').eq('owner_id', ownerId).maybeSingle();
-        ownerRoot = dup.data;
-      } else if (ins.error) throw ins.error;
-      else ownerRoot = ins.data;
-    }
-
-    async function ensureMirrorFolder({ root_id, parent_id, name, google_folder_id }) {
-      const existing = await supabase
-        .from('drive_folders')
-        .select('*')
-        .eq('root_id', root_id)
-        .eq('google_folder_id', google_folder_id)
-        .maybeSingle();
-      if (existing.data) return existing.data;
-      const ins = await supabase
-        .from('drive_folders')
-        .insert({ root_id, parent_id, name, google_folder_id, created_by: req.user.userId || null })
-        .select()
-        .single();
-      if (ins.error) {
-        const again = await supabase.from('drive_folders').select('*').eq('root_id', root_id).eq('google_folder_id', google_folder_id).maybeSingle();
-        if (again.data) return again.data;
-        throw ins.error;
-      }
-      return ins.data;
-    }
-
-    const kindMirror = await ensureMirrorFolder({
-      root_id: ownerRoot.id, parent_id: null,
-      name: ep.entity_kind_label, google_folder_id: ep.google_kind_folder_id,
-    });
-    const entityMirror = await ensureMirrorFolder({
-      root_id: ownerRoot.id, parent_id: kindMirror.id,
-      name: ep.entity_folder_name, google_folder_id: ep.google_folder_id,
-    });
+    const target = await driveEntityFolder.resolveEntityTargetFolder(
+      ctx,
+      bodyFolderId || ctx.entityMirror.id,
+    );
+    const ep = ctx.ep;
+    const ownerRoot = ctx.ownerRoot;
+    const entityMirror = target.folder;
 
     const defaultNames = {
       doc: `${ep.entity_folder_name || 'Tài liệu'}`,
@@ -2257,7 +2229,7 @@ r.post('/entity/create-google', async (req, res) => {
     const fileName = (name || defaultNames[kind] || 'File mới').trim();
 
     const created = await gdrive.createGoogleFile({
-      parentId: ep.google_folder_id,
+      parentId: target.googleParentId,
       name: fileName,
       googleMimeType: googleMime,
     });

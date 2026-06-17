@@ -35,8 +35,18 @@ export const driveListFolderChildren = (folderId) =>
   api.get(`/drive/folders/${folderId}/children`).then((r) => r.data);
 export const driveFolderBreadcrumb = (folderId) =>
   api.get(`/drive/breadcrumb/folder/${folderId}`).then((r) => r.data);
-export const driveEntityBreadcrumb = (entityType, entityId) =>
-  api.get(`/drive/breadcrumb/entity/${entityType}/${entityId}`).then((r) => r.data);
+export const driveEntityBreadcrumb = (entityType, entityId, folderId) =>
+  api.get(`/drive/breadcrumb/entity/${entityType}/${entityId}`, {
+    params: folderId ? { folder_id: folderId } : {},
+  }).then((r) => r.data);
+
+export const driveEntityChildren = (entityType, entityId, folderId) =>
+  api.get(`/drive/entity/${entityType}/${entityId}/children`, {
+    params: folderId ? { folder_id: folderId } : {},
+  }).then((r) => r.data);
+
+export const driveEntityCreateFolder = (entityType, entityId, { name, parent_folder_id } = {}) =>
+  api.post(`/drive/entity/${entityType}/${entityId}/folders`, { name, parent_folder_id }).then((r) => r.data);
 export const driveFileBreadcrumb = (fileId) =>
   api.get(`/drive/breadcrumb/file/${fileId}`).then((r) => r.data);
 
@@ -76,11 +86,12 @@ export function driveUploadFile(file, { folder_id, root_id, name, onProgress } =
  *
  * options: { entity_type, entity_id, name?, onProgress(p) }
  */
-export function driveUploadToEntity(file, { entity_type, entity_id, name, onProgress } = {}) {
+export function driveUploadToEntity(file, { entity_type, entity_id, folder_id, name, onProgress } = {}) {
   const fd = new FormData();
   fd.append('file', file);
   fd.append('entity_type', entity_type);
   fd.append('entity_id', entity_id);
+  if (folder_id) fd.append('folder_id', folder_id);
   if (name) fd.append('name', name);
   return api.post('/drive/entity/upload', fd, {
     headers: { 'Content-Type': 'multipart/form-data' },
@@ -95,8 +106,8 @@ export const driveCreateGoogleFile = ({ folder_id, root_id, kind, name }) =>
   api.post('/drive/files/create-google', { folder_id, root_id, kind, name }).then((r) => r.data);
 
 /** Tạo Google Doc / Sheet / Slides trong folder entity + auto liên kết. */
-export const driveCreateGoogleForEntity = ({ entity_type, entity_id, kind, name }) =>
-  api.post('/drive/entity/create-google', { entity_type, entity_id, kind, name }).then((r) => r.data);
+export const driveCreateGoogleForEntity = ({ entity_type, entity_id, kind, name, folder_id }) =>
+  api.post('/drive/entity/create-google', { entity_type, entity_id, kind, name, folder_id }).then((r) => r.data);
 
 export const driveGetFile = (id) => api.get(`/drive/files/${id}`).then((r) => r.data);
 
