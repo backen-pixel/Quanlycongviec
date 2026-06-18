@@ -11,6 +11,13 @@ export type TabParamList = {
 export type RootStackParamList = {
   Tabs: NavigatorScreenParams<TabParamList> | undefined;
   CrmHub: { initialMode?: 'leads' | 'deals'; initialAssignee?: 'mine' } | undefined;
+  LeadDealDetail: {
+    leadId: string;
+    kind?: 'lead' | 'deal';
+    code?: string;
+    title?: string;
+    initialTab?: string;
+  };
   ChatDetail: { threadId: string; title: string; peerId?: string | null; openSearch?: boolean };
   MessengerForward: {
     excludeGroupId: string;
