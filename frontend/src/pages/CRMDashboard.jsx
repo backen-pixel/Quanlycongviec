@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue, memo, startTransition } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -360,9 +360,6 @@ const KANBAN_LOAD_OPTIONS = ['500', '1000', '2000', 'all'];
 const KANBAN_INITIAL_PAGE_SIZE = 80;
 /** Mỗi lần cuộn gần cuối Kanban. */
 const KANBAN_SCROLL_PAGE_SIZE = 100;
-/** Số thẻ render ban đầu trong mỗi cột (mở rộng khi cuộn tới sentinel). */
-const KANBAN_COLUMN_INITIAL_CARDS = 10;
-const KANBAN_COLUMN_CARD_STEP = 8;
 /** Mặc định trần auto-load khi cuộn (chọn «Tải tất cả» để vượt trần). */
 const KANBAN_DEFAULT_LOAD_LIMIT = '500';
 /** Trần khi chọn «Tải tất cả» — tránh vòng lặp API vô hạn. */
@@ -1598,11 +1595,15 @@ export default function CRMDashboard() {
         viewedLocal.has(String(l.id)) ? { ...l, is_new_for_current_user: false } : l,
       );
       if (type === 'lead') {
-        setAllLeads((prev) => dedupeCrmKanbanRows([...prev, ...merged]));
-        setLoadMoreState((s) => ({ ...s, leadOffset: newNextOffset, leadTotal: newTotal, loading: false }));
+        startTransition(() => {
+          setAllLeads((prev) => dedupeCrmKanbanRows([...prev, ...merged]));
+          setLoadMoreState((s) => ({ ...s, leadOffset: newNextOffset, leadTotal: newTotal, loading: false }));
+        });
       } else {
-        setAllDeals((prev) => dedupeCrmKanbanRows([...prev, ...merged]));
-        setLoadMoreState((s) => ({ ...s, dealOffset: newNextOffset, dealTotal: newTotal, loading: false }));
+        startTransition(() => {
+          setAllDeals((prev) => dedupeCrmKanbanRows([...prev, ...merged]));
+          setLoadMoreState((s) => ({ ...s, dealOffset: newNextOffset, dealTotal: newTotal, loading: false }));
+        });
       }
       const newIds = merged.map((l) => l.id).filter(Boolean);
       if (newIds.length) {
@@ -2969,6 +2970,9 @@ export default function CRMDashboard() {
     if (orphanDealColumn) return [...currentPipeline, orphanDealColumn];
     return currentPipeline;
   }, [currentPipeline, orphanDealColumn]);
+
+  /** Defer pipeline render — tránh block main thread khi vừa load thêm bản ghi. */
+  const kanbanPipelineForView = useDeferredValue(kanbanPipeline);
 
   /** Cuộn Kanban → tải thêm từ API (trang đầu 80, mỗi lần +100). */
   const kanbanScrollLoad = useMemo(() => {
@@ -4739,7 +4743,7 @@ export default function CRMDashboard() {
           {viewMode === 'kanban' && (
           <div data-tour="kanban-pipeline" className="rounded-xl overflow-hidden">
             <KanbanView
-              pipeline={kanbanPipeline}
+              pipeline={kanbanPipelineForView}
               onMoveStage={handleMoveStage}
               pipelineType={pipelineType}
               mergeSelectedIds={manualMergeIds}
@@ -5961,7 +5965,7 @@ function resolveLeadTypeOnCard(item, leadTypes) {
 
 // Kanban Stage Card - MISA Style (responsive scroll)
 
-function KanbanStageCard({
+const KanbanStageCard = memo(function KanbanStageCard({
   stage,
   items,
   onMoveStage,
@@ -5980,29 +5984,7 @@ function KanbanStageCard({
   explicitExpectedKv,
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
-  const [visibleCount, setVisibleCount] = useState(KANBAN_COLUMN_INITIAL_CARDS);
   const containerRef = useRef(null);
-  const columnSentinelRef = useRef(null);
-
-  useEffect(() => {
-    setVisibleCount(KANBAN_COLUMN_INITIAL_CARDS);
-  }, [stage.id]);
-
-  useEffect(() => {
-    const node = columnSentinelRef.current;
-    const total = items?.length || 0;
-    if (!node || visibleCount >= total) return undefined;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          setVisibleCount((c) => Math.min(total, c + KANBAN_COLUMN_CARD_STEP));
-        }
-      },
-      { root: null, rootMargin: '120px', threshold: 0.01 },
-    );
-    obs.observe(node);
-    return () => obs.disconnect();
-  }, [items?.length, visibleCount]);
 
   const stageColor = stage.color || '#e5e7eb';
   const columnItemIds = (items || []).map((i) => i.id);
@@ -6020,8 +6002,6 @@ function KanbanStageCard({
 
   const isVirtualColumn = !!stage?.__virtual;
   const totalInColumn = items?.length || 0;
-  const visibleItems = (items || []).slice(0, visibleCount);
-  const hiddenInColumn = Math.max(0, totalInColumn - visibleCount);
 
   const handleColumnDragOver = (e) => {
     if (isVirtualColumn) return;
@@ -6136,8 +6116,7 @@ function KanbanStageCard({
             </p>
           </div>
         ) : (
-          <>
-          {visibleItems.map(item => (
+          (items || []).map((item) => (
             <KanbanCard
               key={item.id}
               item={item}
@@ -6155,24 +6134,15 @@ function KanbanStageCard({
               onToggleInteracted={onToggleInteracted}
               onOpenDeadline={onOpenDeadline}
             />
-          ))}
-          {hiddenInColumn > 0 && (
-            <div
-              ref={columnSentinelRef}
-              className="py-2 text-center text-[10px] text-gray-400 border border-dashed border-gray-200 rounded-md bg-gray-50/80"
-            >
-              +{hiddenInColumn} thẻ — cuộn để xem thêm
-            </div>
-          )}
-          </>
+          ))
         )}
       </div>
     </div>
   );
-}
+});
 
 // Kanban Item Card - MISA style (redesign: header gọn, value lớn, footer phụ trách + actions)
-function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, showCompanyOnCard, leadTypes, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline }) {
+const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, showCompanyOnCard, leadTypes, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline }) {
   const navigate = useNavigate();
   const dealDragLocked = isDealCrmKanbanDragLocked(item, pipelineType);
   const openLeadDetail = () => {
@@ -6354,7 +6324,7 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
         }
         openLeadDetail();
       }}
-      className={`relative overflow-hidden rounded-lg border border-gray-200 !bg-white transition-all duration-200 group/card hover:-translate-y-0.5 hover:shadow-md ${
+      className={`relative overflow-hidden rounded-lg border border-gray-200 !bg-white transition-[box-shadow,transform] duration-150 group/card hover:-translate-y-0.5 hover:shadow-md ${
         dealDragLocked ? 'cursor-default' : 'cursor-pointer'
       } ${selectedForMerge ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
       style={{ borderTop: `3px solid ${stageColor}` }}
@@ -6657,7 +6627,7 @@ function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, 
       </div>
     </div>
   );
-}
+});
 
 // Kanban View Container - MISA Style
 function KanbanView({
@@ -6683,6 +6653,7 @@ function KanbanView({
   const kanbanHScrollRef = useRef(null);
   const kanbanWrapRef = useRef(null);
   const kanbanLoadSentinelRef = useRef(null);
+  const loadMoreCooldownRef = useRef(false);
   const pipelineDraggingRef = useRef(false);
   const scrollRafRef = useRef(0);
   const lastPointerRef = useRef({ x: 0, y: 0 });
@@ -6690,8 +6661,12 @@ function KanbanView({
   const [scrollMaxH, setScrollMaxH] = useState('70vh');
 
   const tryLoadMore = useCallback(() => {
-    if (!scrollLoad?.hasMore || scrollLoad?.loading || !onLoadMore) return;
+    if (loadMoreCooldownRef.current || !scrollLoad?.hasMore || scrollLoad?.loading || !onLoadMore) return;
+    loadMoreCooldownRef.current = true;
     onLoadMore();
+    window.setTimeout(() => {
+      loadMoreCooldownRef.current = false;
+    }, 700);
   }, [scrollLoad?.hasMore, scrollLoad?.loading, onLoadMore]);
 
   useEffect(() => {
@@ -6702,27 +6677,10 @@ function KanbanView({
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) tryLoadMore();
       },
-      { root, rootMargin: '120px', threshold: 0.01 },
+      { root, rootMargin: '160px', threshold: 0 },
     );
     obs.observe(sentinel);
     return () => obs.disconnect();
-  }, [scrollLoad?.hasMore, scrollLoad?.loading, tryLoadMore]);
-
-  useEffect(() => {
-    const el = kanbanHScrollRef.current;
-    if (!el || !scrollLoad?.hasMore) return undefined;
-    let ticking = false;
-    const onScroll = () => {
-      if (ticking) return;
-      ticking = true;
-      requestAnimationFrame(() => {
-        ticking = false;
-        const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 140;
-        if (nearBottom) tryLoadMore();
-      });
-    };
-    el.addEventListener('scroll', onScroll, { passive: true });
-    return () => el.removeEventListener('scroll', onScroll);
   }, [scrollLoad?.hasMore, scrollLoad?.loading, tryLoadMore]);
 
   // Chiều cao Kanban cố định ~3 card mỗi cột (~720px). Không phụ thuộc viewport
@@ -6892,8 +6850,8 @@ function KanbanView({
 
       <div
         ref={kanbanHScrollRef}
-        className="overflow-auto pb-4 [scrollbar-gutter:stable]"
-        style={{ maxHeight: scrollMaxH }}
+        className="overflow-auto overscroll-y-contain pb-4 [scrollbar-gutter:stable] [overflow-anchor:none]"
+        style={{ maxHeight: scrollMaxH, WebkitOverflowScrolling: 'touch' }}
       >
         <div className={`flex min-w-max items-stretch ${compact ? 'gap-2' : 'gap-3'}`}>
           {pipeline.map((stage) => (
