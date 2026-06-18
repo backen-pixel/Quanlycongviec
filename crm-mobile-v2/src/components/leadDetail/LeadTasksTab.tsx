@@ -441,7 +441,7 @@ export default function LeadTasksTab({ leadId, companyId }: Props) {
     if (u) void Linking.openURL(u);
   };
 
-  const renderAttachments = (taskId: string, ckId?: string | null) => {
+  const renderAttachments = (taskId: string, ckId?: string | null, scopeLabel?: string) => {
     const all = attachments[taskId] || [];
     const rows = ckId
       ? all.filter((a) => String(a.checklist_id || '') === String(ckId))
@@ -451,6 +451,7 @@ export default function LeadTasksTab({ leadId, companyId }: Props) {
     const fileRows = rows.filter((a) => !isImageFile(a));
     return (
       <View style={styles.attList}>
+        {scopeLabel ? <Text style={styles.attScopeLabel}>{scopeLabel}</Text> : null}
         {imageRows.length > 0 ? (
           <View style={styles.attImgGrid}>
             {imageRows.map((att) => (
@@ -503,14 +504,26 @@ export default function LeadTasksTab({ leadId, companyId }: Props) {
   const renderChecklist = (task: LeadCrmTask) => {
     const list = normalizeChecklist(task.checklist);
     return (
-      <View style={styles.ckBlock}>
-        <Text style={styles.subTitle}>Checklist ({list.filter((c) => c.done).length}/{list.length})</Text>
-        {list.map((ck) => {
+      <View style={styles.ckSection}>
+        <View style={styles.ckSectionHead}>
+          <View style={styles.ckSectionBadge}>
+            <Ionicons name="list-outline" size={14} color={Colors.purple} />
+            <Text style={styles.ckSectionBadgeTxt}>Checklist</Text>
+          </View>
+          <Text style={styles.ckSectionCount}>
+            {list.filter((c) => c.done).length}/{list.length} hoàn thành
+          </Text>
+        </View>
+        {list.map((ck, idx) => {
           const key = ckStateKey(task.id, ck.id);
           const open = expandedCk === key;
           const assignee = employeeName(empMap, ck.assignee_id) || (task.assignee as { full_name?: string } | undefined)?.full_name;
           return (
             <View key={ck.id} style={styles.ckItem}>
+              <View style={styles.ckItemBadge}>
+                <Text style={styles.ckItemBadgeTxt}>{idx + 1}</Text>
+              </View>
+              <View style={styles.ckItemBody}>
               <View style={styles.ckHead}>
                 <Pressable onPress={() => void toggleCk(task, ck.id)} hitSlop={6}>
                   <Ionicons
@@ -567,10 +580,11 @@ export default function LeadTasksTab({ leadId, companyId }: Props) {
                       <Text style={styles.saveNoteTxt}>+ Ghi chú</Text>
                     </Pressable>
                   </View>
-                  {renderAttachments(task.id, ck.id)}
+                  {renderAttachments(task.id, ck.id, 'Ảnh / file checklist')}
                   {uploading === key ? <ActivityIndicator color={Colors.blue} style={{ marginTop: 6 }} /> : null}
                 </View>
               ) : null}
+              </View>
             </View>
           );
         })}
@@ -610,10 +624,18 @@ export default function LeadTasksTab({ leadId, companyId }: Props) {
             />
           </Pressable>
           <View style={{ flex: 1 }}>
+            <View style={styles.taskBadgeRow}>
+              <View style={styles.taskBadge}>
+                <Ionicons name="briefcase-outline" size={12} color={Colors.blue} />
+                <Text style={styles.taskBadgeTxt}>Nhiệm vụ</Text>
+              </View>
+              {stageName ? (
+                <Text style={styles.taskStageChip} numberOfLines={1}>{stageName}</Text>
+              ) : null}
+            </View>
             <Text style={[styles.cardTitle, task.status === 'completed' && styles.taskDone]} numberOfLines={2}>
               {task.title || 'Nhiệm vụ'}
             </Text>
-            {stageName ? <Text style={styles.metaTxt}>{stageName}</Text> : null}
             {assignee ? <Text style={styles.metaTxt}>👤 {assignee}</Text> : null}
           </View>
           <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={20} color={Colors.textMuted} />
@@ -642,20 +664,25 @@ export default function LeadTasksTab({ leadId, companyId }: Props) {
 
             {renderChecklist(task)}
 
-            <Text style={styles.subTitle}>Ghi chú nhiệm vụ</Text>
-            <TextInput
-              style={styles.noteInput}
-              multiline
-              placeholder="Ghi chú chung…"
-              placeholderTextColor={Colors.textFaint}
-              value={noteDraft[task.id] ?? task.notes ?? ''}
-              onChangeText={(t) => setNoteDraft((p) => ({ ...p, [task.id]: t }))}
-            />
-            <Pressable style={styles.saveNoteBtn} onPress={() => void saveTaskNote(task.id)}>
-              <Text style={styles.saveNoteTxt}>{saving === `note-${task.id}` ? 'Đang lưu…' : 'Lưu ghi chú'}</Text>
-            </Pressable>
-            {renderAttachments(task.id, null)}
-            {uploading === task.id ? <ActivityIndicator color={Colors.blue} style={{ marginTop: 8 }} /> : null}
+            <View style={styles.taskOnlySection}>
+              <View style={styles.taskOnlyHead}>
+                <Ionicons name="document-text-outline" size={14} color={Colors.blue} />
+                <Text style={styles.taskOnlyTitle}>Nhiệm vụ — ghi chú & file</Text>
+              </View>
+              <TextInput
+                style={styles.noteInput}
+                multiline
+                placeholder="Ghi chú chung của nhiệm vụ…"
+                placeholderTextColor={Colors.textFaint}
+                value={noteDraft[task.id] ?? task.notes ?? ''}
+                onChangeText={(t) => setNoteDraft((p) => ({ ...p, [task.id]: t }))}
+              />
+              <Pressable style={styles.saveNoteBtn} onPress={() => void saveTaskNote(task.id)}>
+                <Text style={styles.saveNoteTxt}>{saving === `note-${task.id}` ? 'Đang lưu…' : 'Lưu ghi chú'}</Text>
+              </Pressable>
+              {renderAttachments(task.id, null, 'Ảnh / file nhiệm vụ')}
+              {uploading === task.id ? <ActivityIndicator color={Colors.blue} style={{ marginTop: 8 }} /> : null}
+            </View>
           </View>
         ) : null}
       </View>
@@ -857,15 +884,65 @@ function makeStyles(C: ThemeColors) {
     toolBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 6, backgroundColor: C.surfaceSoft, borderRadius: Radii.sm },
     toolTxt: { fontSize: 12, fontWeight: '600', color: C.text },
     subTitle: { fontSize: 12, fontWeight: '700', color: C.textMuted, textTransform: 'uppercase', marginBottom: 8, marginTop: 4 },
+    taskBadgeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' },
+    taskBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: Radii.sm,
+      backgroundColor: C.blueSoft,
+    },
+    taskBadgeTxt: { fontSize: 10, fontWeight: '700', color: C.blue, textTransform: 'uppercase' },
+    taskStageChip: { fontSize: 11, color: C.textMuted, flexShrink: 1 },
+    taskOnlySection: {
+      marginTop: 12,
+      padding: 10,
+      borderRadius: Radii.md,
+      backgroundColor: C.card,
+      borderWidth: 1,
+      borderColor: C.borderSoft,
+    },
+    taskOnlyHead: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
+    taskOnlyTitle: { fontSize: 12, fontWeight: '700', color: C.blue, textTransform: 'uppercase' },
+    ckSection: {
+      marginTop: 8,
+      marginBottom: 4,
+      padding: 10,
+      borderRadius: Radii.md,
+      backgroundColor: C.surfaceSoft,
+      borderWidth: 1,
+      borderColor: C.borderSoft,
+      borderLeftWidth: 3,
+      borderLeftColor: C.purple,
+    },
+    ckSectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+    ckSectionBadge: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    ckSectionBadgeTxt: { fontSize: 12, fontWeight: '700', color: C.purple, textTransform: 'uppercase' },
+    ckSectionCount: { fontSize: 11, color: C.textMuted },
     ckBlock: { marginBottom: 8 },
     ckItem: {
-      backgroundColor: C.surfaceSoft,
+      flexDirection: 'row',
+      gap: 8,
+      backgroundColor: C.card,
       borderRadius: Radii.sm,
       padding: 8,
       marginBottom: 8,
       borderWidth: 1,
       borderColor: C.borderSoft,
     },
+    ckItemBadge: {
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      backgroundColor: 'rgba(168,85,247,0.14)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: 2,
+    },
+    ckItemBadgeTxt: { fontSize: 11, fontWeight: '700', color: C.purple },
+    ckItemBody: { flex: 1 },
     ckHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     ckTitle: { fontSize: 14, color: C.text },
     ckDone: { textDecorationLine: 'line-through', color: C.textMuted },
@@ -902,6 +979,7 @@ function makeStyles(C: ThemeColors) {
     saveNoteBtn: { alignSelf: 'flex-start', marginTop: 6, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: C.blueSoft, borderRadius: Radii.sm },
     saveNoteTxt: { color: C.blue, fontWeight: '600', fontSize: 12 },
     attList: { marginTop: 8, gap: 6 },
+    attScopeLabel: { fontSize: 10, fontWeight: '600', color: C.textMuted, textTransform: 'uppercase', marginBottom: 2 },
     attImgGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
     attImgWrap: { borderRadius: Radii.sm, overflow: 'hidden' },
     attImgTile: { width: 88, height: 88, backgroundColor: C.surfaceSoft },

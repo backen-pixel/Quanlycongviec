@@ -62,11 +62,20 @@ export type LeadTaskDocument = {
   checklist_title?: string | null;
 };
 
+export type CommentReactionSummary = { emoji: string; count: number };
+export type CommentReactions = {
+  summary: CommentReactionSummary[];
+  mine: string | null;
+};
+
 export type LeadComment = {
   id: number;
+  user_id?: string | null;
   body?: string | null;
   created_at?: string | null;
+  updated_at?: string | null;
   parent_id?: number | null;
+  reactions?: CommentReactions;
   user?: { id?: string; full_name?: string | null; avatar?: string | null } | null;
 };
 
@@ -152,12 +161,39 @@ export async function fetchLeadTaskDocuments(leadId: string): Promise<LeadTaskDo
 
 export async function fetchLeadComments(leadId: string): Promise<LeadComment[]> {
   const r = await api.get<LeadComment[]>(`/crm/leads/${leadId}/comments`);
-  return r.data || [];
+  return (r.data || []).map((c) => ({
+    ...c,
+    reactions: c.reactions || { summary: [], mine: null },
+  }));
 }
 
-export async function postLeadComment(leadId: string, body: string): Promise<LeadComment> {
-  const r = await api.post<LeadComment>(`/crm/leads/${leadId}/comments`, { body });
-  return r.data;
+export async function postLeadComment(
+  leadId: string,
+  body: string,
+  opts?: { parent_id?: number | null; mention_user_ids?: string[] },
+): Promise<LeadComment> {
+  const payload: Record<string, unknown> = { body };
+  if (opts?.parent_id != null) payload.parent_id = opts.parent_id;
+  if (opts?.mention_user_ids?.length) payload.mention_user_ids = opts.mention_user_ids;
+  const r = await api.post<LeadComment>(`/crm/leads/${leadId}/comments`, payload);
+  return { ...r.data, reactions: r.data.reactions || { summary: [], mine: null } };
+}
+
+export async function patchLeadComment(commentId: number, body: string): Promise<LeadComment> {
+  const r = await api.patch<LeadComment>(`/crm/lead-comments/${commentId}`, { body });
+  return { ...r.data, reactions: r.data.reactions || { summary: [], mine: null } };
+}
+
+export async function deleteLeadComment(commentId: number): Promise<void> {
+  await api.delete(`/crm/lead-comments/${commentId}`);
+}
+
+export async function setLeadCommentReaction(
+  commentId: number,
+  emoji: string | null,
+): Promise<CommentReactions> {
+  const r = await api.put<CommentReactions>(`/crm/lead-comments/${commentId}/reaction`, { emoji });
+  return r.data || { summary: [], mine: null };
 }
 
 export async function fetchLeadMembers(leadId: string): Promise<LeadMember[]> {
