@@ -47,6 +47,9 @@ class CrmFirebaseMessagingService : ExpoFirebaseMessagingService() {
   private fun handleIncomingCall(data: Map<String, String>): Boolean {
     val call = IncomingCallHelper.fromFcmData(data) ?: return false
     IncomingCallHelper.showIncomingCall(applicationContext, call)
+    if (LockScreenCallModule.hasLiveReactInstance()) {
+      LockScreenCallModule.emitIncomingCallPush(call)
+    }
     return true
   }
 

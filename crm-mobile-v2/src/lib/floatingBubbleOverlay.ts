@@ -2,7 +2,11 @@ import { AppState, NativeModules, Platform } from 'react-native';
 import { API_ORIGIN } from '../config';
 import { getMessengerActiveGroupId } from './messengerActiveGroup';
 import type { MessengerNotifPayload } from './localMessengerNotification';
-import type { CrmMobilePrefs } from './crmMobilePrefs';
+import {
+  DEFAULT_CRM_MOBILE_PREFS,
+  loadCrmMobilePrefs,
+  type CrmMobilePrefs,
+} from './crmMobilePrefs';
 
 export const Overlay = NativeModules.FloatingBubbleOverlay as
   | {
@@ -39,6 +43,10 @@ export const Overlay = NativeModules.FloatingBubbleOverlay as
     }
   | undefined;
 
+export function isFloatingBubbleSupported(): boolean {
+  return Platform.OS === 'android' && !!Overlay?.startOverlay;
+}
+
 function absolutizeAvatar(raw?: string | null): string {
   if (!raw?.trim()) return '';
   const u = raw.trim();
@@ -73,7 +81,11 @@ export async function showChatBubbleForMessage(
   opts?: { isActive?: boolean },
 ): Promise<void> {
   if (Platform.OS !== 'android' || !Overlay) return;
-  if (!prefs?.floatingChatBubbleEnabled || !prefs?.floatingChatBubbleSystemOverlay) return;
+
+  const effectivePrefs = prefs ?? await loadCrmMobilePrefs();
+  if (!effectivePrefs.floatingChatBubbleEnabled || !effectivePrefs.floatingChatBubbleSystemOverlay) {
+    return;
+  }
 
   const groupId = p.groupId?.trim();
   if (!groupId) return;
@@ -90,6 +102,7 @@ export async function showChatBubbleForMessage(
   const can = await Overlay.canDrawOverlays?.().catch(() => false);
   if (!can) return;
 
+  await Overlay.startOverlay?.().catch(() => false);
   pushBubble(groupId, title, letter, avatarUrl);
 
   if (isActive) {
@@ -123,3 +136,15 @@ export async function canDrawOverlays(): Promise<boolean> {
 export function openOverlaySettings(): void {
   Overlay?.openOverlaySettings?.();
 }
+
+export async function ensureBubbleOverlayReady(): Promise<boolean> {
+  if (!isFloatingBubbleSupported()) return false;
+  const prefs = await loadCrmMobilePrefs();
+  if (!prefs.floatingChatBubbleEnabled || !prefs.floatingChatBubbleSystemOverlay) return false;
+  const can = await canDrawOverlays();
+  if (!can) return false;
+  await Overlay?.startOverlay?.().catch(() => false);
+  return true;
+}
+
+export { DEFAULT_CRM_MOBILE_PREFS };

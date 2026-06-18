@@ -5,6 +5,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { currentVersionCode, currentVersionName } from '../lib/appUpdate';
+import { openOverlaySettings } from '../lib/floatingBubbleOverlay';
 import { loadCrmMobilePrefs, saveCrmMobilePrefs, type CrmMobilePrefs } from '../lib/crmMobilePrefs';
 import {
   startVoiceBackgroundSyncLoop,
@@ -162,6 +163,10 @@ export default function SettingsScreen() {
               trackColor={{ false: Colors.border, true: Colors.green }}
             />
           </View>
+          <Pressable style={styles.overlayBtn} onPress={() => openOverlaySettings()}>
+            <Ionicons name="layers-outline" size={18} color={Colors.green} />
+            <Text style={styles.overlayBtnTxt}>Cấp quyền hiển thị trên app khác</Text>
+          </Pressable>
         </View>
       ) : null}
 
@@ -280,5 +285,15 @@ const makeStyles = (Colors: ThemeColors) =>
     },
     shareHintTxt: { flex: 1, color: Colors.textMuted, fontSize: 12, lineHeight: 17, fontWeight: '600' },
     shareHintBold: { color: Colors.text, fontWeight: '800' },
+    overlayBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginTop: 10,
+      paddingTop: 10,
+      borderTopWidth: 1,
+      borderTopColor: Colors.borderSoft,
+    },
+    overlayBtnTxt: { color: Colors.green, fontSize: 13, fontWeight: '700' },
     infoRow: { flexDirection: 'row', alignItems: 'center', gap: 12, width: '100%' },
   });

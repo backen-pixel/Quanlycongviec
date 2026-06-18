@@ -14,7 +14,7 @@ export type CrmMobilePrefs = {
   floatingChatBubbleSystemOverlay: boolean;
 };
 
-const DEFAULTS: CrmMobilePrefs = {
+export const DEFAULT_CRM_MOBILE_PREFS: CrmMobilePrefs = {
   voiceCaptureEnabled: true,
   voiceBackgroundSyncEnabled: true,
   autoLinkVoiceByPhone: true,
@@ -26,10 +26,10 @@ const DEFAULTS: CrmMobilePrefs = {
 export async function loadCrmMobilePrefs(): Promise<CrmMobilePrefs> {
   try {
     const raw = await AsyncStorage.getItem(KEY);
-    if (!raw) return { ...DEFAULTS };
-    return { ...DEFAULTS, ...(JSON.parse(raw) as Partial<CrmMobilePrefs>) };
+    if (!raw) return { ...DEFAULT_CRM_MOBILE_PREFS };
+    return { ...DEFAULT_CRM_MOBILE_PREFS, ...(JSON.parse(raw) as Partial<CrmMobilePrefs>) };
   } catch {
-    return { ...DEFAULTS };
+    return { ...DEFAULT_CRM_MOBILE_PREFS };
   }
 }
 

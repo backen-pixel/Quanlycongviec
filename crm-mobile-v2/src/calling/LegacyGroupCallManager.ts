@@ -9,7 +9,7 @@ import {
   RTCIceCandidate,
 } from 'react-native-webrtc';
 import type { Socket } from 'socket.io-client';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import type { CallMedia, CallSession } from './types';
 import { getIceServers } from './turnConfig';
 import {
@@ -345,17 +345,18 @@ export class LegacyGroupCallManager {
     this.sessionRef.current = session;
     this.setSession(session);
     setCallSession(p.callId, 'incoming');
-    if (Platform.OS === 'android') dismissLockScreenCallUi();
     void startIncomingCallAlert();
-    void showIncomingCallNotification({
-      callId: p.callId,
-      fromUserId: p.fromUserId,
-      fromName: p.fromName,
-      kind: media,
-      isGroup: true,
-      groupId: p.groupId,
-      groupName: p.groupName,
-    });
+    if (AppState.currentState !== 'active') {
+      void showIncomingCallNotification({
+        callId: p.callId,
+        fromUserId: p.fromUserId,
+        fromName: p.fromName,
+        kind: media,
+        isGroup: true,
+        groupId: p.groupId,
+        groupName: p.groupName,
+      });
+    }
   }
 
   async acceptGroupCall() {

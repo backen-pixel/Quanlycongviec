@@ -150,9 +150,19 @@ export default function CallScreen() {
   };
 
   const voiceControls = isIncomingRinging ? (
-    <View style={styles.row}>
-      <RoundBtn icon="call" label="Nghe" onPress={acceptCall} />
-      <RoundBtn icon="close" label="Từ chối" danger onPress={rejectCall} />
+    <View style={styles.incomingActions}>
+      <View style={styles.incomingActionCol}>
+        <Pressable style={styles.incomingRejectBtn} onPress={rejectCall}>
+          <Ionicons name="close" size={28} color="#fff" />
+        </Pressable>
+        <Text style={styles.incomingBtnLabel}>Từ chối</Text>
+      </View>
+      <View style={styles.incomingActionCol}>
+        <Pressable style={styles.incomingAcceptBtn} onPress={() => { void acceptCall(); }}>
+          <Ionicons name="call" size={28} color="#fff" />
+        </Pressable>
+        <Text style={styles.incomingBtnLabel}>Trả lời</Text>
+      </View>
     </View>
   ) : (
     <>
@@ -286,6 +296,22 @@ export default function CallScreen() {
 
         {immersiveVideo ? (
           <>
+            {isIncomingRinging && (
+              <View style={[styles.incomingActionsOverlay, { paddingBottom: Math.max(insets.bottom, 20) }]}>
+                <View style={styles.incomingActionCol}>
+                  <Pressable style={styles.incomingRejectBtn} onPress={rejectCall}>
+                    <Ionicons name="close" size={28} color="#fff" />
+                  </Pressable>
+                  <Text style={styles.incomingBtnLabel}>Từ chối</Text>
+                </View>
+                <View style={styles.incomingActionCol}>
+                  <Pressable style={styles.incomingAcceptBtn} onPress={() => { void acceptCall(); }}>
+                    <Ionicons name="call" size={28} color="#fff" />
+                  </Pressable>
+                  <Text style={styles.incomingBtnLabel}>Trả lời</Text>
+                </View>
+              </View>
+            )}
             {videoControlsExpanded}
             {videoControlsCollapsed}
           </>
@@ -388,6 +414,49 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   row: { flexDirection: 'row', justifyContent: 'center', gap: 28, marginTop: 8 },
+  incomingActions: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+    gap: 48,
+    paddingVertical: 8,
+  },
+  incomingActionCol: { alignItems: 'center', gap: 10 },
+  incomingActionsOverlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 48,
+    paddingTop: 16,
+    paddingHorizontal: 24,
+    zIndex: 10,
+    backgroundColor: 'rgba(11,20,26,0.72)',
+  },
+  incomingAcceptBtn: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: '#22c55e',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  incomingRejectBtn: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: '#ef4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  incomingBtnLabel: {
+    color: '#e2e8f0',
+    fontSize: 13,
+    fontWeight: '700',
+  },
   ctrlWrap: { alignItems: 'center', gap: 6 },
   ctrl: {
     backgroundColor: 'rgba(0,0,0,0.42)',

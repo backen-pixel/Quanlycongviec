@@ -1,4 +1,5 @@
 import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
+import type { IncomingCallPayload } from './incomingCallNotifications';
 
 type LockScreenCallNative = {
   updateCallState?: (
@@ -109,6 +110,27 @@ export function subscribeLockScreenCallAccept(handler: (callId: string) => void)
   if (!emitter) return () => {};
   const sub = emitter.addListener('LockScreenCallAccept', (e: { callId?: string }) => {
     if (e?.callId) handler(String(e.callId));
+  });
+  return () => sub.remove();
+}
+
+export function subscribeIncomingCallPush(
+  handler: (payload: IncomingCallPayload) => void,
+): () => void {
+  if (!emitter) return () => {};
+  const sub = emitter.addListener('IncomingCallPush', (e: Record<string, unknown>) => {
+    const callId = String(e.callId || '').trim();
+    const fromUserId = String(e.fromUserId || '').trim();
+    if (!callId || !fromUserId) return;
+    handler({
+      callId,
+      fromUserId,
+      fromName: typeof e.fromName === 'string' ? e.fromName : undefined,
+      kind: typeof e.kind === 'string' ? e.kind : 'audio',
+      isGroup: e.isGroup === true || e.isGroup === 'true',
+      groupId: typeof e.groupId === 'string' ? e.groupId : undefined,
+      groupName: typeof e.groupName === 'string' ? e.groupName : undefined,
+    });
   });
   return () => sub.remove();
 }
