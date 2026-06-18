@@ -1,12 +1,12 @@
 /**
  * Presentation — màn hình cuộc gọi DUY NHẤT (overlay toàn màn hình).
- * Tự render theo state máy trạng thái: incoming (đổ chuông) → call (đang gọi/kết nối/đã nối).
- * Hỗ trợ voice + video (RTCView).
+ * Video: camera full màn + PiP, điều khiển cố định dưới cùng (không dùng native phone UI).
  */
 import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { RTCView } from 'react-native-webrtc';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCall } from './CallProvider';
 
 function fmtDuration(ms: number) {
@@ -36,7 +36,7 @@ function RoundBtn({ icon, label, active, danger, onPress }: {
         onPress={onPress}
         style={[styles.ctrl, active && styles.ctrlActive, danger && styles.ctrlDanger]}
       >
-        <Ionicons name={icon} size={26} color={danger || active ? '#fff' : '#fff'} />
+        <Ionicons name={icon} size={26} color="#fff" />
       </Pressable>
       {!!label && <Text style={styles.ctrlLabel}>{label}</Text>}
     </View>
@@ -44,6 +44,7 @@ function RoundBtn({ icon, label, active, danger, onPress }: {
 }
 
 export default function CallScreen() {
+  const insets = useSafeAreaInsets();
   const {
     session, localStream, remoteStream, groupPeers = [], groupJoinRequests = [],
     acceptCall, rejectCall, endCall,
@@ -68,42 +69,64 @@ export default function CallScreen() {
   const isVideo = session.media === 'video';
   const isGroup = session.mode === 'group';
   const isIncomingRinging = session.direction === 'incoming' && session.state === 'RINGING';
-  const showVideo = isVideo && session.state === 'CONNECTED' && !isGroup;
   const displayName = isGroup ? (session.groupName || 'Cuộc gọi nhóm') : session.peer.name;
+
+  const showRemoteVideo = isVideo && !isGroup && session.state === 'CONNECTED' && !!remoteStream;
+  const showLocalFull = isVideo && !isIncomingRinging && !showRemoteVideo && !!localStream && !session.isCameraOff;
+  const showLocalPip = showRemoteVideo && !!localStream && !session.isCameraOff;
+  const showVoiceStage = !isVideo || isIncomingRinging || (isVideo && !showRemoteVideo && !showLocalFull);
+
+  const statusText = session.joinPending
+    ? 'Đang chờ chủ phòng duyệt…'
+    : session.state === 'CONNECTED'
+      ? fmtDuration(duration)
+      : statusLabel(session.state, session.direction);
+
+  const controlsBottom = Math.max(insets.bottom, 20);
 
   return (
     <Modal visible animationType="fade" transparent={false} statusBarTranslucent onRequestClose={() => {}}>
       <View style={styles.root}>
-        {/* Remote video nền */}
-        {showVideo && remoteStream ? (
-          <RTCView streamURL={(remoteStream as any).toURL()} style={StyleSheet.absoluteFill} objectFit="cover" />
-        ) : null}
+        {showRemoteVideo && (
+          <RTCView
+            streamURL={(remoteStream as any).toURL()}
+            style={styles.videoLayer}
+            objectFit="cover"
+          />
+        )}
 
-        {/* Local video PiP */}
-        {showVideo && localStream && !session.isCameraOff ? (
-          <RTCView streamURL={(localStream as any).toURL()} style={styles.pip} objectFit="cover" zOrder={1} mirror />
-        ) : null}
+        {showLocalFull && (
+          <RTCView
+            streamURL={(localStream as any).toURL()}
+            style={styles.videoLayer}
+            objectFit="cover"
+            mirror
+          />
+        )}
 
-        {/* Thông tin người gọi (ẩn bớt khi video đã nối) */}
-        {!showVideo && (
-          <View style={styles.info}>
+        {showLocalPip && (
+          <RTCView
+            streamURL={(localStream as any).toURL()}
+            style={[styles.pip, { bottom: controlsBottom + 168 }]}
+            objectFit="cover"
+            zOrder={1}
+            mirror
+          />
+        )}
+
+        {showVoiceStage && (
+          <View style={[styles.voiceStage, { paddingTop: insets.top + 40 }]}>
             {session.peer.avatar ? (
               <Image source={{ uri: session.peer.avatar }} style={styles.avatar} />
             ) : (
               <View style={[styles.avatar, styles.avatarFallback]}>
-                <Text style={styles.avatarTxt}>{(session.peer.name || '?').slice(0, 1).toUpperCase()}</Text>
+                <Text style={styles.avatarTxt}>{(displayName || '?').slice(0, 1).toUpperCase()}</Text>
               </View>
             )}
             <Text style={styles.name}>{displayName}</Text>
             <Text style={styles.status}>
-              {session.joinPending
-                ? 'Đang chờ chủ phòng duyệt…'
-                : isGroup && groupPeers.length > 0
-                  ? `${1 + groupPeers.length} người · `
-                  : ''}
-              {!session.joinPending && (session.state === 'CONNECTED'
-                ? fmtDuration(duration)
-                : statusLabel(session.state, session.direction))}
+              {isGroup && groupPeers.length > 0 ? `${1 + groupPeers.length} người · ` : ''}
+              {statusText}
             </Text>
             {isGroup && groupPeers.length > 0 && (
               <Text style={styles.groupPeers}>
@@ -114,8 +137,16 @@ export default function CallScreen() {
           </View>
         )}
 
+        {isVideo && !showVoiceStage && (
+          <View style={[styles.videoTopBar, { paddingTop: insets.top + 12 }]}>
+            <Text style={styles.videoName}>{displayName}</Text>
+            <Text style={styles.videoStatus}>{statusText}</Text>
+            {!!session.error && <Text style={styles.error}>{session.error}</Text>}
+          </View>
+        )}
+
         {isGroup && groupJoinRequests.length > 0 && !isIncomingRinging && (
-          <View style={styles.joinPanel}>
+          <View style={[styles.joinPanel, { top: insets.top + 12 }]}>
             <Text style={styles.joinTitle}>Yêu cầu tham gia ({groupJoinRequests.length})</Text>
             {groupJoinRequests.map((req) => (
               <View key={req.requesterId} style={styles.joinRow}>
@@ -133,8 +164,7 @@ export default function CallScreen() {
           </View>
         )}
 
-        {/* Điều khiển */}
-        <View style={styles.controls}>
+        <View style={[styles.controlsBottom, { paddingBottom: controlsBottom }]}>
           {isIncomingRinging ? (
             <View style={styles.row}>
               <RoundBtn icon="call" label="Nghe" onPress={acceptCall} />
@@ -160,31 +190,68 @@ export default function CallScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0b141a', justifyContent: 'space-between', paddingVertical: 60 },
-  info: { alignItems: 'center', marginTop: 40 },
+  root: { flex: 1, backgroundColor: '#0b141a' },
+  videoLayer: { ...StyleSheet.absoluteFillObject, backgroundColor: '#000' },
+  voiceStage: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
   avatar: { width: 120, height: 120, borderRadius: 60, backgroundColor: '#1f2c34' },
   avatarFallback: { alignItems: 'center', justifyContent: 'center' },
   avatarTxt: { color: '#fff', fontSize: 48, fontWeight: '700' },
   name: { color: '#fff', fontSize: 26, fontWeight: '700', marginTop: 20 },
-  status: { color: '#aebac1', fontSize: 16, marginTop: 8 },
-  groupPeers: { color: '#9ca3af', fontSize: 13, marginTop: 10, textAlign: 'center', paddingHorizontal: 24 },
-  error: { color: '#f87171', fontSize: 14, marginTop: 10 },
-  pip: { position: 'absolute', top: 50, right: 16, width: 110, height: 160, borderRadius: 12, backgroundColor: '#1f2c34' },
-  controls: { paddingBottom: 24, gap: 24 },
+  status: { color: '#aebac1', fontSize: 16, marginTop: 8, textAlign: 'center' },
+  groupPeers: { color: '#9ca3af', fontSize: 13, marginTop: 10, textAlign: 'center' },
+  error: { color: '#f87171', fontSize: 14, marginTop: 8, textAlign: 'center' },
+  videoTopBar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    zIndex: 2,
+    backgroundColor: 'rgba(11,20,26,0.35)',
+  },
+  videoName: { color: '#fff', fontSize: 20, fontWeight: '700' },
+  videoStatus: { color: '#aebac1', fontSize: 14, marginTop: 4 },
+  pip: {
+    position: 'absolute',
+    right: 16,
+    width: 100,
+    height: 150,
+    borderRadius: 12,
+    backgroundColor: '#1f2c34',
+    overflow: 'hidden',
+    zIndex: 2,
+  },
+  controlsBottom: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingTop: 16,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(11,20,26,0.92)',
+    zIndex: 3,
+  },
   row: { flexDirection: 'row', justifyContent: 'center', gap: 28, marginTop: 8 },
   ctrlWrap: { alignItems: 'center', gap: 6 },
-  ctrl: { width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
+  ctrl: {
+    width: 64, height: 64, borderRadius: 32,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center', justifyContent: 'center',
+  },
   ctrlActive: { backgroundColor: '#374151' },
   ctrlDanger: { backgroundColor: '#ef4444' },
   ctrlLabel: { color: '#aebac1', fontSize: 12 },
   joinPanel: {
-    marginHorizontal: 20,
-    marginBottom: 12,
+    position: 'absolute',
+    left: 16,
+    right: 16,
     backgroundColor: 'rgba(31,44,52,0.95)',
     borderRadius: 12,
     padding: 12,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
+    zIndex: 4,
   },
   joinTitle: { color: '#aebac1', fontSize: 12, fontWeight: '600', marginBottom: 8 },
   joinRow: {

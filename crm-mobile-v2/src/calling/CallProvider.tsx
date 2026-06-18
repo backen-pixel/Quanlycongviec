@@ -12,7 +12,7 @@ import React, {
 } from 'react';
 import { Platform } from 'react-native';
 import type { MediaStream } from 'react-native-webrtc';
-import { subscribeAppSocket } from '../lib/appSocket';
+import { subscribeAppSocket, getAppSocket } from '../lib/appSocket';
 import {
   dismissIncomingCallNotification, showIncomingCallNotification, clearPendingIncomingCall,
   type IncomingCallPayload,
@@ -104,11 +104,16 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       setSession,
       patchSession: updateSession,
       localStreamRef,
+      onLocalStream: setLocalStream,
     });
     groupMgrRef.current.onPeersChange = setGroupPeers;
     groupMgrRef.current.onJoinRequestsChange = setGroupJoinRequests;
     return () => { groupMgrRef.current?.reset(); };
   }, [updateSession]);
+
+  useEffect(() => {
+    groupMgrRef.current?.setSocket(getAppSocket(), uid);
+  }, [uid]);
 
   const setState = useCallback((state: CallState) => updateSession({ state }), [updateSession]);
 
@@ -162,10 +167,14 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
           if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
           if (cur.state !== 'CONNECTED') {
             updateSession({ state: 'CONNECTED', connectedAt: Date.now() });
-            syncLockScreenCallState({
-              callId: cur.callId, status: 'active', peerName: cur.peer.name,
-              durationMs: 0, isMuted: cur.isMuted,
-            });
+            if (Platform.OS === 'android' && cur.media === 'video') {
+              dismissLockScreenCallUi();
+            } else if (Platform.OS === 'android') {
+              syncLockScreenCallState({
+                callId: cur.callId, status: 'active', peerName: cur.peer.name,
+                durationMs: 0, isMuted: cur.isMuted,
+              });
+            }
           }
         } else if (state === 'failed') {
           // Thử ICE restart (chỉ caller tạo offer mới). Quá hạn → kết thúc.
@@ -211,8 +220,12 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     }
 
     if (Platform.OS === 'android') {
-      showNativeOutgoingCall({ callId, peerName: peer.name, fromUserId: peer.id });
-      syncLockScreenCallState({ callId, status: 'outgoing', peerName: peer.name, durationMs: 0, isMuted: false });
+      if (media === 'audio') {
+        showNativeOutgoingCall({ callId, peerName: peer.name, fromUserId: peer.id });
+        syncLockScreenCallState({ callId, status: 'outgoing', peerName: peer.name, durationMs: 0, isMuted: false });
+      } else {
+        dismissLockScreenCallUi();
+      }
     }
     signalingRef.current?.callUser(callId, peer.id, media);
 
@@ -263,6 +276,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     };
     sessionRef.current = next; setSession(next);
     setCallSession(p.callId, 'incoming');
+    if (Platform.OS === 'android' && media === 'video') dismissLockScreenCallUi();
     void startIncomingCallAlert();
     void showIncomingCallNotification({ ...p, kind: media });
   }, []);
@@ -310,7 +324,8 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     setState('CONNECTING');
     setCallSession(cur.callId, 'connecting');
     if (Platform.OS === 'android') {
-      syncLockScreenCallState({ callId: cur.callId, status: 'connecting', peerName: cur.peer.name, durationMs: 0, isMuted: false });
+      if (cur.media === 'video') dismissLockScreenCallUi();
+      else syncLockScreenCallState({ callId: cur.callId, status: 'connecting', peerName: cur.peer.name, durationMs: 0, isMuted: false });
     }
     try {
       await buildRtc(cur.media);
@@ -371,13 +386,14 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     const next = !cur.isMuted;
     rtcRef.current?.setMuted(next);
     updateSession({ isMuted: next });
-    if (Platform.OS === 'android') {
+    if (Platform.OS === 'android' && cur.media === 'audio') {
       syncLockScreenCallState({ callId: cur.callId, status: cur.state === 'CONNECTED' ? 'active' : 'connecting', peerName: cur.peer.name, durationMs: 0, isMuted: next });
     }
   }, [updateSession]);
 
   const toggleSpeaker = useCallback(() => {
     const cur = sessionRef.current; if (!cur) return;
+    if (cur.mode === 'group') { groupMgrRef.current?.toggleSpeaker(); return; }
     const next = !cur.isSpeaker;
     rtcRef.current?.setSpeaker(next);
     updateSession({ isSpeaker: next });
@@ -385,6 +401,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
   const toggleCamera = useCallback(() => {
     const cur = sessionRef.current; if (!cur) return;
+    if (cur.mode === 'group') { groupMgrRef.current?.toggleCamera(); return; }
     const next = !cur.isCameraOff;
     rtcRef.current?.setCameraOff(next);
     updateSession({ isCameraOff: next });
@@ -392,6 +409,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
   const switchCamera = useCallback(() => {
     const cur = sessionRef.current; if (!cur) return;
+    if (cur.mode === 'group') { groupMgrRef.current?.switchCamera(); return; }
     rtcRef.current?.switchCamera();
     updateSession({ cameraFacing: cur.cameraFacing === 'front' ? 'back' : 'front' });
   }, [updateSession]);
