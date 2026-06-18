@@ -27,6 +27,7 @@ import {
   IconLoader2,
   IconTrendingUp,
   IconBuildingFactory,
+  IconPencil,
 } from '@tabler/icons-react';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
@@ -296,7 +297,6 @@ export default function PipelineSettingsPage() {
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
   const [selectedPipelineId, setSelectedPipelineId] = useState('');
   const [activeTab, setActiveTab] = useState('taxonomy');
-  const [stageEditOpen, setStageEditOpen] = useState(true);
   const [zaloGeneralOpen, setZaloGeneralOpen] = useState(false);
 
   const [zaloSettings, setZaloSettings] = useState(null);
@@ -422,10 +422,6 @@ export default function PipelineSettingsPage() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
-
-  useEffect(() => {
-    if (editId) setStageEditOpen(true);
-  }, [editId]);
 
   const loadZalo = async () => {
     setZaloLoading(true);
@@ -768,7 +764,6 @@ export default function PipelineSettingsPage() {
   };
 
   const startEdit = (stage) => {
-    setStageEditOpen(true);
     setEditId(stage.id);
     setAdding(null);
     setForm({
@@ -969,10 +964,11 @@ export default function PipelineSettingsPage() {
           <button
             type="button"
             onClick={() => startAdd(type)}
-            className="h-7 px-2.5 bg-gray-900 text-white rounded-lg text-[10px] hover:bg-black flex items-center gap-1 cursor-pointer shrink-0"
+            className="h-7 px-2.5 bg-emerald-600 text-white rounded-lg text-[10px] font-semibold hover:bg-emerald-700 flex items-center gap-1 cursor-pointer shrink-0 shadow-sm ring-1 ring-emerald-500/40"
             title="Thêm giai đoạn"
           >
             <IconPlus className="w-3.5 h-3.5" stroke={2} />
+            Thêm
           </button>
         </div>
         <PipelineMiniFlowBar stages={list} />
@@ -1044,7 +1040,7 @@ export default function PipelineSettingsPage() {
               )}
               <StageStatusBadges stage={s} linkedSx={linkedSx} linkedVc={linkedVc} syncRoleLabels={syncRoleLabels} />
             </div>
-            <div className="flex items-center gap-0.5 shrink-0 flex-wrap justify-end max-w-[200px]">
+              <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end max-w-[240px] border-l border-gray-200 pl-1.5 ml-1">
               {s.pipeline_type === 'deal' && s.sync_role === 'sx_production' && (
                 <button
                   type="button"
@@ -1171,14 +1167,36 @@ export default function PipelineSettingsPage() {
                   )}
                 </>
               )}
-              <button onClick={() => toggleActive(s)} className="p-1.5 rounded hover:bg-gray-100 cursor-pointer" title={s.is_active ? 'Ẩn' : 'Hiện'}>
-                {s.is_active ? <Eye className="h-3.5 w-3.5 text-gray-400" /> : <EyeOff className="h-3.5 w-3.5 text-orange-400" />}
+              <button
+                type="button"
+                onClick={() => toggleActive(s)}
+                className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border shadow-sm transition-colors ${
+                  s.is_active
+                    ? 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-orange-50 hover:text-orange-800 hover:border-orange-300'
+                    : 'bg-orange-100 text-orange-800 border-orange-300 ring-1 ring-orange-200'
+                }`}
+                title={s.is_active ? 'Ẩn cột trên Kanban' : 'Hiện lại cột'}
+              >
+                {s.is_active ? <IconEye className="w-3.5 h-3.5" stroke={2} /> : <IconEyeOff className="w-3.5 h-3.5" stroke={2} />}
+                {s.is_active ? 'Ẩn' : 'Hiện'}
               </button>
-              <button onClick={() => startEdit(s)} className="p-1.5 rounded hover:bg-blue-50 text-blue-600 cursor-pointer">
-                <Save className="h-3.5 w-3.5" />
+              <button
+                type="button"
+                onClick={() => startEdit(s)}
+                className="h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border shadow-sm bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 ring-1 ring-blue-100 transition-colors"
+                title="Sửa giai đoạn"
+              >
+                <IconPencil className="w-3.5 h-3.5" stroke={2} />
+                Sửa
               </button>
-              <button onClick={() => del(s.id)} className="p-1.5 rounded hover:bg-red-50 text-red-500 cursor-pointer">
-                <Trash2 className="h-3.5 w-3.5" />
+              <button
+                type="button"
+                onClick={() => del(s.id)}
+                className="h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border shadow-sm bg-red-50 text-red-700 border-red-200 hover:bg-red-100 ring-1 ring-red-100 transition-colors"
+                title="Xóa giai đoạn"
+              >
+                <IconTrash className="w-3.5 h-3.5" stroke={2} />
+                Xóa
               </button>
             </div>
           </div>
@@ -1514,41 +1532,6 @@ export default function PipelineSettingsPage() {
 
         {activeTab === 'stages' && (
           <div className="space-y-4 flex flex-col min-h-0">
-            {editId && (
-              <CollapsiblePanel
-                title="Sửa giai đoạn"
-                subtitle={
-                  form.name
-                    ? `${stages.find((s) => s.id === editId)?.pipeline_type === 'deal' ? 'Deal' : 'Lead'} · ${form.name}`
-                    : 'Chỉnh tên, màu, SLA, cờ Thắng/Mất…'
-                }
-                icon={IconDeviceFloppy}
-                iconClassName="text-violet-600"
-                open={stageEditOpen}
-                onOpenChange={setStageEditOpen}
-                highlight
-                badge={
-                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 font-medium">
-                    đang sửa
-                  </span>
-                }
-              >
-                <StageForm
-                  form={form}
-                  setForm={setForm}
-                  onSave={saveEdit}
-                  onCancel={() => { setEditId(null); setStageEditOpen(false); }}
-                  pipelineType={stages.find((s) => s.id === editId)?.pipeline_type || 'lead'}
-                  editingStageId={editId}
-                  sxStages={sxStages}
-                  vcStages={vcStages}
-                  onSetModuleTarget={setModuleStageTarget}
-                  onSetVcSyncType={setVcSyncType}
-                  onBulkSetVcSyncType={bulkSetVcSyncType}
-                />
-              </CollapsiblePanel>
-            )}
-
             {loading ? (
               <div className="text-center py-16 text-gray-400 text-xs flex flex-col items-center gap-2">
                 <IconLoader2 className="w-6 h-6 animate-spin" stroke={2} />
@@ -1902,6 +1885,51 @@ export default function PipelineSettingsPage() {
             onSave={saveNew}
             onCancel={() => setAdding(null)}
             pipelineType={adding}
+          />
+        </Modal>
+      )}
+
+      {editId && (
+        <Modal
+          open={!!editId}
+          onClose={() => setEditId(null)}
+          title={`Sửa giai đoạn ${stages.find((s) => s.id === editId)?.pipeline_type === 'deal' ? 'Deal' : 'Lead'}`}
+          size="lg"
+        >
+          <div className="mb-5 flex flex-wrap items-center gap-2">
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold ${
+                stages.find((s) => s.id === editId)?.pipeline_type === 'lead'
+                  ? 'bg-blue-100 text-blue-800 ring-1 ring-blue-200'
+                  : 'bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200'
+              }`}
+            >
+              {stages.find((s) => s.id === editId)?.pipeline_type === 'lead' ? (
+                <IconTags className="w-3.5 h-3.5" stroke={2} />
+              ) : (
+                <IconTrendingUp className="w-3.5 h-3.5" stroke={2} />
+              )}
+              {form.name || 'Giai đoạn'}
+            </span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 font-medium">
+              #{stages.find((s) => s.id === editId)?.order_index ?? '—'}
+            </span>
+            <span className="text-xs text-gray-500">
+              {visiblePipelines.find((p) => p.id === selectedPipelineId)?.name || 'Pipeline đang chọn'}
+            </span>
+          </div>
+          <StageForm
+            form={form}
+            setForm={setForm}
+            onSave={saveEdit}
+            onCancel={() => setEditId(null)}
+            pipelineType={stages.find((s) => s.id === editId)?.pipeline_type || 'lead'}
+            editingStageId={editId}
+            sxStages={sxStages}
+            vcStages={vcStages}
+            onSetModuleTarget={setModuleStageTarget}
+            onSetVcSyncType={setVcSyncType}
+            onBulkSetVcSyncType={bulkSetVcSyncType}
           />
         </Modal>
       )}
