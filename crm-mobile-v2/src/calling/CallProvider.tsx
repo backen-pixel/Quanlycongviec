@@ -50,6 +50,7 @@ type Ctx = {
   switchCamera: () => void;
   applyIncomingFromPush: (p: IncomingCallPayload) => void;
   handleNativeCallIntent: (p: IncomingCallPayload) => void;
+  dismissIncomingSilently: (callId: string) => void;
 };
 
 const CallCtx = createContext<Ctx | null>(null);
@@ -247,6 +248,24 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     );
   }, [presentIncoming]);
 
+  const dismissIncomingSilently = useCallback((callId: string) => {
+    const cur = sessionRef.current;
+    if (!cur || cur.callId !== callId) return;
+    if (cur.direction !== 'incoming' || cur.state !== 'RINGING') return;
+    markCallAnswered(callId);
+    releaseIncomingClaim(callId);
+    void stopIncomingCallAlert();
+    void dismissIncomingCallNotification(callId);
+    void clearPendingIncomingCall();
+    setCallSession(null, 'idle');
+    sessionRef.current = null;
+    setSession(null);
+  }, []);
+
+  const onIncomingCallDismiss = useCallback((p: { callId: string }) => {
+    if (p?.callId) dismissIncomingSilently(p.callId);
+  }, [dismissIncomingSilently]);
+
   // ─── Callee chấp nhận ───
   const acceptCall = useCallback(async () => {
     const cur = sessionRef.current;
@@ -370,6 +389,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       onCallEnded: () => teardown('ENDED'),
       onBusy: () => { updateSession({ error: 'Máy bận' }); teardown('REJECTED'); },
       onUnavailable: (q) => teardown(q.reason === 'timeout' ? 'MISSED' : 'ENDED'),
+      onIncomingCallDismiss,
     });
     sig.connect();
 
@@ -416,9 +436,10 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     session, localStream, remoteStream,
     startCall, acceptCall, rejectCall, endCall,
     toggleMute, toggleSpeaker, toggleCamera, switchCamera,
-    applyIncomingFromPush, handleNativeCallIntent,
+    applyIncomingFromPush, handleNativeCallIntent, dismissIncomingSilently,
   }), [session, localStream, remoteStream, startCall, acceptCall, rejectCall, endCall,
-    toggleMute, toggleSpeaker, toggleCamera, switchCamera, applyIncomingFromPush, handleNativeCallIntent]);
+    toggleMute, toggleSpeaker, toggleCamera, switchCamera, applyIncomingFromPush,
+    handleNativeCallIntent, dismissIncomingSilently]);
 
   return <CallCtx.Provider value={value}>{children}</CallCtx.Provider>;
 }

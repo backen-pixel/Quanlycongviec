@@ -1,6 +1,6 @@
 /**
  * Presentation — overlay cuộc gọi 1-1 DUY NHẤT (web). Render theo state máy trạng thái.
- * Voice: chỉ <audio> ẩn cho remote. Video: <video> remote nền + local PiP.
+ * Voice: avatar giữa màn hình. Video: khung 9:16 (mobile portrait) + nút điều khiển dưới cùng.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCall } from './CallProvider';
@@ -48,69 +48,213 @@ export default function CallOverlay() {
   if (!session || session.state === 'IDLE') return null;
 
   const incomingRinging = session.direction === 'incoming' && session.state === 'RINGING';
+  const statusText = session.state === 'CONNECTED'
+    ? fmt(duration)
+    : statusLabel(session.state, session.direction);
+
+  const controls = incomingRinging ? (
+    <>
+      <button type="button" style={{ ...S.btn, ...S.accept }} onClick={acceptCall}>Nghe</button>
+      <button type="button" style={{ ...S.btn, ...S.danger }} onClick={rejectCall}>Từ chối</button>
+    </>
+  ) : (
+    <>
+      <button type="button" style={{ ...S.btn, ...(session.isMuted ? S.active : {}) }} onClick={toggleMute}>
+        {session.isMuted ? 'Bật mic' : 'Tắt mic'}
+      </button>
+      {isVideo && (
+        <button type="button" style={{ ...S.btn, ...(session.isCameraOff ? S.active : {}) }} onClick={toggleCamera}>
+          {session.isCameraOff ? 'Bật cam' : 'Tắt cam'}
+        </button>
+      )}
+      {isVideo && <button type="button" style={S.btn} onClick={switchCamera}>Đổi cam</button>}
+      <button type="button" style={{ ...S.btn, ...S.danger }} onClick={endCall}>Kết thúc</button>
+    </>
+  );
 
   return (
     <div style={S.root}>
       <audio ref={remoteAudioRef} autoPlay />
-      {showVideo && <video ref={remoteVideoRef} autoPlay playsInline style={S.remoteVideo} />}
-      {showVideo && !session.isCameraOff && (
-        <video ref={localVideoRef} autoPlay playsInline muted style={S.pip} />
-      )}
 
-      {!showVideo && (
-        <div style={S.info}>
-          {session.peer.avatar
-            ? <img src={session.peer.avatar} alt="" style={S.avatar} />
-            : <div style={{ ...S.avatar, ...S.avatarFallback }}>{(session.peer.name || '?').slice(0, 1).toUpperCase()}</div>}
-          <div style={S.name}>{session.peer.name}</div>
-          <div style={S.status}>
-            {session.state === 'CONNECTED' ? fmt(duration) : statusLabel(session.state, session.direction)}
+      {isVideo ? (
+        <div style={S.videoStage}>
+          <div style={S.frame9x16}>
+            {showVideo && (
+              <video ref={remoteVideoRef} autoPlay playsInline style={S.remoteVideo} />
+            )}
+            {!showVideo && (
+              <div style={S.framePlaceholder}>
+                {session.peer.avatar
+                  ? <img src={session.peer.avatar} alt="" style={S.avatar} />
+                  : (
+                    <div style={{ ...S.avatar, ...S.avatarFallback }}>
+                      {(session.peer.name || '?').slice(0, 1).toUpperCase()}
+                    </div>
+                  )}
+              </div>
+            )}
+            {showVideo && !session.isCameraOff && (
+              <video ref={localVideoRef} autoPlay playsInline muted style={S.pip} />
+            )}
+            <div style={S.videoOverlayTop}>
+              <div style={S.name}>{session.peer.name}</div>
+              <div style={S.status}>{statusText}</div>
+              {!!session.error && <div style={S.error}>{session.error}</div>}
+            </div>
           </div>
-          {!!session.error && <div style={S.error}>{session.error}</div>}
+        </div>
+      ) : (
+        <div style={S.voiceStage}>
+          <div style={S.info}>
+            {session.peer.avatar
+              ? <img src={session.peer.avatar} alt="" style={S.avatar} />
+              : (
+                <div style={{ ...S.avatar, ...S.avatarFallback }}>
+                  {(session.peer.name || '?').slice(0, 1).toUpperCase()}
+                </div>
+              )}
+            <div style={S.name}>{session.peer.name}</div>
+            <div style={S.status}>{statusText}</div>
+            {!!session.error && <div style={S.error}>{session.error}</div>}
+          </div>
         </div>
       )}
 
-      <div style={S.controls}>
-        {incomingRinging ? (
-          <>
-            <button type="button" style={{ ...S.btn, ...S.accept }} onClick={acceptCall}>Nghe</button>
-            <button type="button" style={{ ...S.btn, ...S.danger }} onClick={rejectCall}>Từ chối</button>
-          </>
-        ) : (
-          <>
-            <button type="button" style={{ ...S.btn, ...(session.isMuted ? S.active : {}) }} onClick={toggleMute}>
-              {session.isMuted ? 'Bật mic' : 'Tắt mic'}
-            </button>
-            {isVideo && (
-              <button type="button" style={{ ...S.btn, ...(session.isCameraOff ? S.active : {}) }} onClick={toggleCamera}>
-                {session.isCameraOff ? 'Bật cam' : 'Tắt cam'}
-              </button>
-            )}
-            {isVideo && <button type="button" style={S.btn} onClick={switchCamera}>Đổi cam</button>}
-            <button type="button" style={{ ...S.btn, ...S.danger }} onClick={endCall}>Kết thúc</button>
-          </>
-        )}
-      </div>
+      <div style={S.controls}>{controls}</div>
     </div>
   );
 }
 
 const S = {
   root: {
-    position: 'fixed', inset: 0, zIndex: 4000, background: '#0b141a',
-    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between',
-    padding: '60px 0',
+    position: 'fixed',
+    inset: 0,
+    zIndex: 4000,
+    background: '#0b141a',
+    display: 'flex',
+    flexDirection: 'column',
   },
-  remoteVideo: { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' },
-  pip: { position: 'absolute', top: 24, right: 24, width: 160, height: 220, objectFit: 'cover', borderRadius: 12, background: '#1f2c34' },
-  info: { display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: 40, zIndex: 1 },
-  avatar: { width: 120, height: 120, borderRadius: '50%', objectFit: 'cover', background: '#1f2c34' },
-  avatarFallback: { display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 48, fontWeight: 700 },
-  name: { color: '#fff', fontSize: 26, fontWeight: 700, marginTop: 20 },
-  status: { color: '#aebac1', fontSize: 16, marginTop: 8 },
-  error: { color: '#f87171', fontSize: 14, marginTop: 10 },
-  controls: { display: 'flex', gap: 16, zIndex: 1, paddingBottom: 8 },
-  btn: { minWidth: 96, padding: '14px 18px', borderRadius: 999, border: 'none', background: 'rgba(255,255,255,0.15)', color: '#fff', fontSize: 15, cursor: 'pointer' },
+  videoStage: {
+    flex: 1,
+    minHeight: 0,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '16px 16px 0',
+  },
+  frame9x16: {
+    position: 'relative',
+    aspectRatio: '9 / 16',
+    height: '100%',
+    maxHeight: 'calc(100vh - 120px)',
+    maxWidth: 'min(100%, calc((100vh - 120px) * 9 / 16))',
+    width: 'auto',
+    borderRadius: 16,
+    overflow: 'hidden',
+    background: '#1f2c34',
+    boxShadow: '0 8px 32px rgba(0,0,0,0.45)',
+  },
+  remoteVideo: {
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover',
+    display: 'block',
+    background: '#000',
+  },
+  framePlaceholder: {
+    width: '100%',
+    height: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'linear-gradient(180deg, #1a2530 0%, #0b141a 100%)',
+  },
+  pip: {
+    position: 'absolute',
+    bottom: 16,
+    right: 16,
+    width: 96,
+    height: 170,
+    objectFit: 'cover',
+    borderRadius: 10,
+    background: '#1f2c34',
+    border: '2px solid rgba(255,255,255,0.25)',
+    zIndex: 2,
+  },
+  videoOverlayTop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    padding: '20px 16px 32px',
+    background: 'linear-gradient(to bottom, rgba(0,0,0,0.62) 0%, transparent 100%)',
+    zIndex: 1,
+    textAlign: 'center',
+  },
+  voiceStage: {
+    flex: 1,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '24px 16px 0',
+  },
+  info: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+  },
+  avatar: {
+    width: 120,
+    height: 120,
+    borderRadius: '50%',
+    objectFit: 'cover',
+    background: '#1f2c34',
+  },
+  avatarFallback: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: '#fff',
+    fontSize: 48,
+    fontWeight: 700,
+  },
+  name: {
+    color: '#fff',
+    fontSize: 22,
+    fontWeight: 700,
+    marginTop: 12,
+  },
+  status: {
+    color: '#aebac1',
+    fontSize: 15,
+    marginTop: 6,
+  },
+  error: {
+    color: '#f87171',
+    fontSize: 14,
+    marginTop: 8,
+  },
+  controls: {
+    flexShrink: 0,
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 2,
+    padding: '20px 16px max(24px, env(safe-area-inset-bottom, 24px))',
+    background: 'linear-gradient(to top, rgba(11,20,26,0.98) 70%, transparent)',
+  },
+  btn: {
+    minWidth: 88,
+    padding: '14px 16px',
+    borderRadius: 999,
+    border: 'none',
+    background: 'rgba(255,255,255,0.15)',
+    color: '#fff',
+    fontSize: 14,
+    cursor: 'pointer',
+  },
   active: { background: '#374151' },
   accept: { background: '#22c55e' },
   danger: { background: '#ef4444' },

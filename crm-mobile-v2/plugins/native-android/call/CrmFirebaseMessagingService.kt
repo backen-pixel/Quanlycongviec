@@ -12,6 +12,7 @@ class CrmFirebaseMessagingService : ExpoFirebaseMessagingService() {
 
   override fun onMessageReceived(remoteMessage: RemoteMessage) {
     val data = remoteMessage.data
+    if (handleCallDismiss(data)) return
     if (handleIncomingCall(data)) return
     super.onMessageReceived(remoteMessage)
   }
@@ -23,6 +24,7 @@ class CrmFirebaseMessagingService : ExpoFirebaseMessagingService() {
         val v = intent.extras!!.get(key)?.toString() ?: continue
         data[key] = v
       }
+      if (handleCallDismiss(data)) return
       if (handleIncomingCall(data)) return
     }
     super.handleIntent(intent)
@@ -42,6 +44,14 @@ class CrmFirebaseMessagingService : ExpoFirebaseMessagingService() {
   private fun handleIncomingCall(data: Map<String, String>): Boolean {
     val call = IncomingCallHelper.fromFcmData(data) ?: return false
     IncomingCallHelper.showIncomingCall(applicationContext, call)
+    return true
+  }
+
+  private fun handleCallDismiss(data: Map<String, String>): Boolean {
+    if (data["type"] != "call_dismiss") return false
+    val callId = data["call_id"]?.trim().orEmpty()
+    if (callId.isBlank()) return false
+    IncomingCallHelper.cancelCallNotification(applicationContext, callId)
     return true
   }
 }

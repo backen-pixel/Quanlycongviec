@@ -689,10 +689,73 @@ async function sendMobilePush(userId, notification) {
   }
 }
 
+/**
+ * Data-only — hủy thông báo cuộc gọi đến trên các thiết bị khác cùng tài khoản.
+ */
+async function sendCallDismissPush(userId, callId) {
+  if (!userId || !callId) return;
+  try {
+    const rows = await fetchUserTokens(userId);
+    const fcmRows = pickActiveFcmTokens({ fcm: rows.fcm || [], expo: [] }, 6);
+    const auth = await getFcmAccessToken();
+    if (auth && fcmRows.length) {
+      const url = `https://fcm.googleapis.com/v1/projects/${auth.projectId}/messages:send`;
+      const data = { type: 'call_dismiss', call_id: String(callId) };
+      for (const row of fcmRows) {
+        try {
+          const body = {
+            message: {
+              token: row.token,
+              data,
+              android: {
+                priority: 'HIGH',
+                ttl: '30s',
+                collapse_key: `call_dismiss_${callId}`,
+              },
+            },
+          };
+          const r = await fetch(url, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${auth.accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+          });
+          if (!r.ok) {
+            const txt = await r.text().catch(() => '');
+            if (r.status === 404 || /UNREGISTERED|NOT_FOUND/i.test(txt)) {
+              await deletePushTokenSafe(row.token);
+            }
+          }
+        } catch {
+          /* ignore per token */
+        }
+      }
+    }
+
+    const expoRows = (rows.expo || []).filter((r) => isExpoPushToken(r.token)).slice(0, 4);
+    if (expoRows.length) {
+      const messages = expoRows.map((r) => ({
+        to: r.token,
+        data: { type: 'call_dismiss', call_id: String(callId) },
+        priority: 'high',
+        _contentAvailable: true,
+      }));
+      for (let i = 0; i < messages.length; i += CHUNK_SIZE) {
+        await sendExpoChunk(messages.slice(i, i + CHUNK_SIZE));
+      }
+    }
+  } catch (e) {
+    console.warn('[pushSender] call_dismiss:', e.message || e);
+  }
+}
+
 module.exports = {
   sendMobilePush,
   buildPushPayload,
   sendFcmDataOnly,
   getPushInfraStatus,
   sendFcmIncomingCall,
+  sendCallDismissPush,
 };

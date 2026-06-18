@@ -182,6 +182,17 @@ export function CallProvider({ children }) {
     rtcRef.current?.switchCamera(facing); patch({ cameraFacing: facing });
   }, [patch]);
 
+  const dismissIncomingSilently = useCallback((callId) => {
+    const cur = sessionRef.current;
+    if (!cur || cur.callId !== callId) return;
+    if (cur.direction !== 'incoming' || cur.state !== 'RINGING') return;
+    clearTimers();
+    try { stopCallRingtone(); } catch { /* noop */ }
+    try { dismissIncomingCallDesktopAlert(); } catch { /* noop */ }
+    sessionRef.current = null;
+    setSession(null);
+  }, [clearTimers]);
+
   // ─── Bind signaling từ socket ───
   useEffect(() => {
     if (!socket) return undefined;
@@ -243,6 +254,10 @@ export function CallProvider({ children }) {
     const onBusy = () => { patch({ error: 'Máy bận' }); teardown('REJECTED'); };
     const onUnavailable = (q) => teardown(q?.reason === 'timeout' ? 'MISSED' : 'ENDED');
 
+    const onDismiss = (p) => {
+      if (p?.callId) dismissIncomingSilently(p.callId);
+    };
+
     socket.on('incoming-call', onIncoming);
     socket.on('call-answered', onAnswered);
     socket.on('sdp', onSdp);
@@ -251,6 +266,7 @@ export function CallProvider({ children }) {
     socket.on('call-ended', onEnded);
     socket.on('busy', onBusy);
     socket.on('call-unavailable', onUnavailable);
+    socket.on('incoming-call-dismiss', onDismiss);
 
     return () => {
       socket.off('incoming-call', onIncoming);
@@ -261,8 +277,9 @@ export function CallProvider({ children }) {
       socket.off('call-ended', onEnded);
       socket.off('busy', onBusy);
       socket.off('call-unavailable', onUnavailable);
+      socket.off('incoming-call-dismiss', onDismiss);
     };
-  }, [socket, patch, setState, teardown]);
+  }, [socket, patch, setState, teardown, dismissIncomingSilently]);
 
   // ── Tương thích ngược cho UI cũ (MessengerHubPage). Hệ thống mới chỉ 1-1. ──
   const legacyStatus = useMemo(() => {

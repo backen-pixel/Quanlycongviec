@@ -18,6 +18,7 @@ type Handlers = {
   onSdp?: (p: { callId: string; fromUserId: string; description: any }) => void;
   onBusy?: (p: { callId: string }) => void;
   onUnavailable?: (p: { callId: string; reason: string }) => void;
+  onIncomingCallDismiss?: (p: { callId: string }) => void;
 };
 
 const SERVER_EVENTS: Array<[keyof Handlers, string]> = [
@@ -29,6 +30,7 @@ const SERVER_EVENTS: Array<[keyof Handlers, string]> = [
   ['onSdp', 'sdp'],
   ['onBusy', 'busy'],
   ['onUnavailable', 'call-unavailable'],
+  ['onIncomingCallDismiss', 'incoming-call-dismiss'],
 ];
 
 export class SignalingClient {
