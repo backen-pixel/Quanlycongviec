@@ -106,7 +106,7 @@ export default function PermissionBootstrap() {
             <Text style={styles.title}>Cấp quyền cho ứng dụng</Text>
           </View>
           <Text style={styles.sub}>
-            CRM cần các quyền sau để ghi âm, nhận cuộc gọi (kể cả khi app tắt) và đồng bộ file lên server.
+            CRM cần các quyền sau để ghi âm, nhận cuộc gọi (kể cả khi app tắt), bong bóng chat và đồng bộ file lên server.
           </Text>
 
           <ScrollView style={styles.listScroll} showsVerticalScrollIndicator={false}>

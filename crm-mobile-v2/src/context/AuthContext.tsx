@@ -8,6 +8,7 @@ import {
 } from '../lib/voiceBackgroundSync';
 import { startDeviceHeartbeat, stopDeviceHeartbeat } from '../lib/deviceHeartbeat';
 import { registerPushTokenV2, unregisterPushTokenV2 } from '../lib/pushNotifications';
+import { syncNativeAuthPrefs } from '../lib/nativeAuthSync';
 
 const USER_KEY = 'crmv2_user_json';
 
@@ -92,6 +93,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     startDeviceHeartbeat();
     // Đăng ký FCM token để nhận thông báo trên thanh hệ thống (kể cả khi app đóng).
     void registerPushTokenV2();
+    syncNativeAuthPrefs({
+      token,
+      userId: user?.id || user?.userId || null,
+    });
     const controller = new AbortController();
     void (async () => {
       try {
@@ -109,7 +114,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })();
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [token, user?.id, user?.userId]);
 
   const loginWithSession = useCallback(async (auth: { token: string; user: AuthUser; session_id?: string }) => {
     invalidatePlannerCache();
@@ -119,6 +124,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(auth.token);
     setUser(auth.user);
     startDeviceHeartbeat();
+    syncNativeAuthPrefs({
+      token: auth.token,
+      userId: auth.user?.id || auth.user?.userId || null,
+    });
     void syncVoiceBackgroundTaskWithPrefs();
   }, []);
 

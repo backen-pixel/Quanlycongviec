@@ -16,6 +16,7 @@ import com.facebook.react.defaults.DefaultReactNativeHost
 import expo.modules.ApplicationLifecycleDispatcher
 import expo.modules.ReactNativeHostWrapper
 import vn.tubeppro.crmobilev2.call.LockScreenCallPackage
+import vn.tubeppro.crmobilev2.overlay.FloatingBubbleOverlayPackage
 
 class MainApplication : Application(), ReactApplication {
 
@@ -25,6 +26,7 @@ class MainApplication : Application(), ReactApplication {
         override fun getPackages(): List<ReactPackage> =
             PackageList(this).packages.apply {
               add(LockScreenCallPackage())
+              add(FloatingBubbleOverlayPackage())
             }
 
           override fun getJSMainModuleName(): String = ".expo/.virtual-metro-entry"

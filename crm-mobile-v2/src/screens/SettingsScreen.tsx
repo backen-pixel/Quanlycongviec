@@ -124,6 +124,47 @@ export default function SettingsScreen() {
         </View>
       ) : null}
 
+      <Text style={styles.secTitle}>Thông báo & bong bóng chat</Text>
+      {prefs ? (
+        <View style={styles.blockCard}>
+          <View style={styles.cardHead}>
+            <Ionicons name="chatbubbles" size={18} color={Colors.green} />
+            <Text style={styles.cardTitle}>Bong bóng chat nổi</Text>
+          </View>
+          <View style={styles.toggleRow}>
+            <Text style={styles.toggleLbl}>Bật bong bóng chat</Text>
+            <Switch
+              value={prefs.floatingChatBubbleEnabled}
+              onValueChange={(v) => void updatePrefs({ ...prefs, floatingChatBubbleEnabled: v })}
+              trackColor={{ false: Colors.border, true: Colors.green }}
+            />
+          </View>
+          <View style={styles.toggleRow}>
+            <View style={{ flex: 1, paddingRight: 10 }}>
+              <Text style={styles.toggleLbl}>Hiển thị trên app khác</Text>
+              <Text style={styles.toggleHint}>
+                Cần quyền «Hiển thị trên app khác» — bong bóng nổi khi thoát CRM hoặc dùng app khác.
+              </Text>
+            </View>
+            <Switch
+              value={prefs.floatingChatBubbleSystemOverlay}
+              onValueChange={(v) => void updatePrefs({ ...prefs, floatingChatBubbleSystemOverlay: v })}
+              disabled={!prefs.floatingChatBubbleEnabled}
+              trackColor={{ false: Colors.border, true: Colors.green }}
+            />
+          </View>
+          <View style={styles.toggleRow}>
+            <Text style={styles.toggleLbl}>Chỉ hiện khi có tin chưa đọc</Text>
+            <Switch
+              value={prefs.floatingChatBubbleOnlyWhenUnread}
+              onValueChange={(v) => void updatePrefs({ ...prefs, floatingChatBubbleOnlyWhenUnread: v })}
+              disabled={!prefs.floatingChatBubbleEnabled}
+              trackColor={{ false: Colors.border, true: Colors.green }}
+            />
+          </View>
+        </View>
+      ) : null}
+
       <Text style={styles.secTitle}>Thông tin</Text>
       <View style={styles.rowCard}>
         <View style={styles.infoRow}>

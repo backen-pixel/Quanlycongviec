@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
+const { restMarkCallAnswered, restRejectCall } = require('../realtime/callSignaling');
 const { isNotificationTypeAllowed } = require('../helpers/notificationPrefTypes');
 const { DEFAULT_PREFS, invalidateNotificationPrefsCache } = require('../helpers/notificationPrefsUser');
 const { isExpiryDeadlineNotificationType } = require('../helpers/notificationOperationalFilter');
@@ -336,22 +337,9 @@ r.post('/call-reject', async (req, res) => {
     }
 
     const io = req.app.get('io');
-    // Finalize log + dọn session giống socket handler `call:reject` — nếu không, khi app bị
-    // kill và từ chối qua REST sẽ chỉ tắt UI caller mà không ghi "cuộc gọi bị từ chối" và
-    // session vẫn treo trong activeDirectCalls (gây hiện lại cuộc gọi khi mở app).
     const activeDirectCalls = req.app.get('activeDirectCalls');
     const finalizeDirectCallLog = req.app.get('finalizeDirectCallLog');
-    if (io && activeDirectCalls && finalizeDirectCallLog) {
-      const session = activeDirectCalls.get(callId);
-      if (session && !session.logged) {
-        session.logged = true;
-        activeDirectCalls.delete(callId);
-        void finalizeDirectCallLog(io, session, { endedByUserId: uid, reason: 'rejected' });
-      }
-    }
-    if (io) {
-      io.to(`user:${toUserId}`).emit('call:rejected', { callId, reason: 'rejected' });
-    }
+    restRejectCall(io, activeDirectCalls, finalizeDirectCallLog, callId, uid, toUserId);
     res.json({ ok: true });
   } catch (e) {
     console.error('POST /push/call-reject:', e);
@@ -376,15 +364,7 @@ r.post('/call-accept', async (req, res) => {
 
     const io = req.app.get('io');
     const activeDirectCalls = req.app.get('activeDirectCalls');
-    // Đánh dấu đã nhận để vòng đời tiến trình có chết/khởi động lại thì server cũng KHÔNG
-    // re-emit call:incoming (syncPendingIncomingCalls bỏ qua session có answeredAt).
-    if (activeDirectCalls) {
-      const session = activeDirectCalls.get(callId);
-      if (session && !session.answeredAt) session.answeredAt = Date.now();
-    }
-    if (io) {
-      io.to(`user:${toUserId}`).emit('call:accepted', { callId });
-    }
+    restMarkCallAnswered(io, activeDirectCalls, callId, uid, toUserId);
     res.json({ ok: true });
   } catch (e) {
     console.error('POST /push/call-accept:', e);
