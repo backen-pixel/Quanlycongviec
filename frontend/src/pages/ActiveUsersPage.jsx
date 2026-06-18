@@ -5,8 +5,7 @@ import { useMessengerDock } from '../context/MessengerDockContext';
 import OnlineStatusDot from '../components/OnlineStatusDot';
 import LiveActivityMap from '../components/LiveActivityMap';
 import { getInitials, avatarColor } from '../lib/utils';
-import { Activity, Building2, ExternalLink, History, Laptop, LogIn, LogOut, Loader2, MapPin, MessageCircle, Monitor, RefreshCw, ShieldAlert, Smartphone, Users } from 'lucide-react';
-import ScopeFilterBar from '../shared/components/ScopeFilterBar';
+import { Activity, Building2, ExternalLink, History, Laptop, LayoutGrid, List, LogIn, LogOut, Loader2, MapPin, MessageCircle, Monitor, RefreshCw, Search, ShieldAlert, Smartphone, Users } from 'lucide-react';
 import { useScopeFilter } from '../shared/hooks/useScopeFilter';
 
 const ROLE_LABELS = {
@@ -103,14 +102,14 @@ function DeviceBadge({ device }) {
   return (
     <span
       title={tooltip}
-      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border ${color} ${
-        device.online ? '' : 'opacity-60'
+      className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded-md text-[9px] font-semibold border ${color} ${
+        device.online ? '' : 'opacity-55'
       }`}
     >
-      <Icon className="h-3 w-3" />
-      <span className="truncate max-w-[80px]">{device.device_name || label}</span>
-      {device.duplicate_count > 1 ? <span className="text-[9px] font-bold">x{device.duplicate_count}</span> : null}
-      {device.online ? <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> : null}
+      <Icon className="h-2.5 w-2.5 shrink-0" />
+      <span className="truncate max-w-[52px]">{device.device_name || label}</span>
+      {device.duplicate_count > 1 ? <span className="text-[8px] font-bold opacity-80">×{device.duplicate_count}</span> : null}
+      {device.online ? <span className="w-1 h-1 rounded-full bg-emerald-500 shrink-0" /> : null}
     </span>
   );
 }
@@ -129,7 +128,18 @@ export default function ActiveUsersPage() {
     persist: true,
     autoDefaultCompany: true,
   });
-  const { companyId, departmentId, companies, apiParams: scopeApiParams } = scope;
+  const {
+    companyId,
+    departmentId,
+    companies,
+    departmentsForCompany,
+    setCompanyId,
+    setDepartmentId,
+    search,
+    setSearch,
+    metaLoading,
+    apiParams: scopeApiParams,
+  } = scope;
   const [filter, setFilter] = useState('online');
   const [rows, setRows] = useState([]);
   const [stats, setStats] = useState({ online: 0, total: 0 });
@@ -426,70 +436,127 @@ export default function ActiveUsersPage() {
   };
 
   return (
-    <div className="flex flex-col h-full min-h-0">
-      <div className="shrink-0 border-b border-white/40 bg-white/55 backdrop-blur-xl px-4 py-4 sm:px-6 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-lg font-bold flex items-center gap-2" style={{ color: '#0f172a' }}>
-              <Activity className="h-5 w-5 text-emerald-600" />
-              Đang hoạt động
-            </h1>
-            <p className="text-xs mt-1 max-w-xl" style={{ color: '#475569' }}>
-              Ai đang mở app (có ping trong {thresholdMin} phút). Thiết bị trùng tên sẽ được gộp để tránh lặp. Tự làm mới mỗi 30 giây.
-            </p>
+    <div className="flex flex-col h-full min-h-0 bg-white">
+      <div className="shrink-0 border-b border-gray-200 bg-white px-4 py-3 sm:px-5">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center justify-center shrink-0">
+              <Activity className="h-4 w-4 text-emerald-600" />
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-base font-semibold text-gray-900">Đang hoạt động</h1>
+              <p className="text-[10px] text-gray-500 truncate">
+                Ping trong {thresholdMin} phút · Tự làm mới 30 giây
+              </p>
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={() => void load()}
-            disabled={loading}
-            className="h-9 px-3 rounded-lg border border-white/60 bg-white/70 backdrop-blur text-sm font-medium text-slate-700 hover:bg-white/90 inline-flex items-center gap-1.5 disabled:opacity-50 shadow-sm"
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            Làm mới
-          </button>
-        </div>
-
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50/90 backdrop-blur text-emerald-800 border border-emerald-200 px-3 py-1 text-xs font-semibold shadow-sm">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            {stats.online} đang hoạt động
-          </span>
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/70 backdrop-blur text-slate-700 border border-white/70 px-3 py-1 text-xs font-medium shadow-sm">
-            <Users className="h-3.5 w-3.5" />
-            {stats.total} nhân viên
-          </span>
-        </div>
-
-        <ScopeFilterBar
-          scope={scope}
-          className="mt-4"
-          searchPlaceholder="Tên hoặc email…"
-        />
-
-        <div className="mt-3 flex flex-wrap gap-1">
-          {[
-            { id: 'online', label: 'Đang hoạt động' },
-            { id: 'all', label: 'Tất cả' },
-            { id: 'offline', label: 'Offline' },
-            { id: 'auth_log', label: 'Lịch sử đăng nhập' },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setFilter(tab.id)}
-              className={`h-8 px-3 rounded-lg text-xs font-semibold transition-colors shadow-sm ${
-                filter === tab.id
-                  ? 'bg-sky-600 text-white ring-1 ring-sky-700'
-                  : 'bg-white/70 backdrop-blur border border-white/70 text-slate-700 hover:bg-white/90'
-              }`}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-semibold"
+              title="Đang online"
             >
-              {tab.label}
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              {stats.online}
+            </span>
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-50 text-gray-600 border border-gray-200 text-[10px] font-medium"
+              title="Tổng nhân viên"
+            >
+              <Users className="h-3 w-3" />
+              {stats.total}
+            </span>
+            <button
+              type="button"
+              onClick={() => void load()}
+              disabled={loading}
+              className="h-8 w-8 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 inline-flex items-center justify-center disabled:opacity-50"
+              title="Làm mới"
+            >
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             </button>
-          ))}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 items-center">
+          <div className="lg:col-span-2 flex items-center gap-1.5 min-w-0">
+            <Building2 className="h-4 w-4 text-gray-400 shrink-0" aria-hidden />
+            <select
+              value={companyId}
+              onChange={(e) => setCompanyId(e.target.value)}
+              disabled={metaLoading}
+              className="w-full h-8 px-2 rounded-lg border border-gray-200 text-xs bg-white text-gray-900 disabled:opacity-50"
+              title="Công ty"
+              aria-label="Công ty"
+            >
+              <option value="">Tất cả</option>
+              {companies.map((c) => (
+                <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="lg:col-span-2 flex items-center gap-1.5 min-w-0">
+            <LayoutGrid className="h-4 w-4 text-gray-400 shrink-0" aria-hidden />
+            <select
+              value={departmentId}
+              onChange={(e) => setDepartmentId(e.target.value)}
+              disabled={metaLoading || !companyId}
+              className="w-full h-8 px-2 rounded-lg border border-gray-200 text-xs bg-white text-gray-900 disabled:opacity-50"
+              title="Phòng ban"
+              aria-label="Phòng ban"
+            >
+              <option value="">Tất cả</option>
+              {departmentsForCompany.map((d) => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="lg:col-span-4 relative min-w-0">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400 pointer-events-none" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Tìm tên hoặc email…"
+              className="w-full h-8 pl-8 pr-3 rounded-lg border border-gray-200 text-xs bg-white text-gray-900 placeholder:text-gray-400"
+              aria-label="Tìm kiếm"
+            />
+          </div>
+          <div className="lg:col-span-4 flex items-center justify-start lg:justify-end gap-1 flex-wrap">
+            {[
+              { id: 'online', label: 'Online' },
+              { id: 'all', label: 'Tất cả' },
+              { id: 'offline', label: 'Offline' },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setFilter(tab.id)}
+                className={`h-8 px-2.5 rounded-lg text-[11px] font-semibold transition-colors ${
+                  filter === tab.id
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setFilter('auth_log')}
+              className={`h-8 w-8 rounded-lg inline-flex items-center justify-center transition-colors ${
+                filter === 'auth_log'
+                  ? 'bg-sky-600 text-white shadow-sm'
+                  : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
+              }`}
+              title="Lịch sử đăng nhập"
+              aria-label="Lịch sử đăng nhập"
+            >
+              <History className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+      <div className="flex-1 overflow-y-auto p-4 sm:p-5 bg-gray-50/40">
         {error && (
           <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
             {error}
@@ -497,49 +564,30 @@ export default function ActiveUsersPage() {
         )}
 
         {filter !== 'auth_log' && (
-        <div className="mb-4 rounded-2xl border border-white/50 bg-white/55 backdrop-blur-xl overflow-hidden shadow-lg">
-          <div className="px-3 sm:px-4 pt-3 sm:pt-4 pb-2 flex flex-wrap items-center justify-between gap-2 border-b border-white/40 bg-gradient-to-r from-sky-50/60 via-white/30 to-emerald-50/60">
-            <h2 className="text-sm font-semibold flex items-center gap-1.5" style={{ color: '#0f172a' }}>
-              <MapPin className="h-4 w-4 text-sky-600" />
-              Bản đồ chi nhánh + vị trí nhân viên
-            </h2>
-            <div className="flex items-center gap-2 text-[11px]">
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-50/90 text-indigo-700 border border-indigo-200 font-semibold">
-                <Building2 className="h-3 w-3" /> {branchLocations.length} chi nhánh
-              </span>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50/90 text-emerald-700 border border-emerald-200 font-semibold">
-                <MapPin className="h-3 w-3" /> {employeeLivePoints.length} NV có vị trí
-              </span>
-              {employeesWithoutLocation.length > 0 && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50/90 text-amber-800 border border-amber-200 font-semibold">
-                  {employeesWithoutLocation.length} chưa có
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div className="flex border-b border-white/40 px-3 sm:px-4 gap-0 overflow-x-auto bg-white/30">
+        <div className="mb-4 rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
+          <div className="flex border-b border-gray-200 px-2 sm:px-3 gap-0 overflow-x-auto bg-white">
             {[
-              { id: 'map', label: 'Bản đồ' },
-              { id: 'list', label: 'Danh sách điểm', count: mapPoints.length },
-              { id: 'missing', label: 'Chưa có vị trí', count: employeesWithoutLocation.length },
-            ].map((tab) => (
+              { id: 'map', label: 'Bản đồ', Icon: MapPin },
+              { id: 'list', label: 'Danh sách điểm', Icon: List, count: mapPoints.length },
+              { id: 'missing', label: 'Chưa có vị trí', Icon: MapPin, count: employeesWithoutLocation.length, warn: true },
+            ].map(({ id, label, Icon, count, warn }) => (
               <button
-                key={tab.id}
+                key={id}
                 type="button"
-                onClick={() => setMapSectionTab(tab.id)}
-                className={`shrink-0 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px transition-colors ${
-                  mapSectionTab === tab.id
-                    ? 'border-sky-600 text-sky-700'
-                    : 'border-transparent text-slate-600 hover:text-slate-900'
+                onClick={() => setMapSectionTab(id)}
+                className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-2.5 text-[11px] font-semibold border-b-2 -mb-px transition-all ${
+                  mapSectionTab === id
+                    ? 'border-emerald-600 text-emerald-700 bg-emerald-50/40'
+                    : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50/80'
                 }`}
               >
-                {tab.label}
-                {tab.count != null && tab.count > 0 ? (
-                  <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] ${
-                    tab.id === 'missing' ? 'bg-amber-100 text-amber-800' : 'bg-sky-100 text-sky-700'
+                <Icon className="h-3.5 w-3.5" />
+                {label}
+                {count != null && count > 0 ? (
+                  <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold ${
+                    warn ? 'bg-amber-400 text-amber-950' : 'bg-gray-100 text-gray-700'
                   }`}>
-                    {tab.count}
+                    {count}
                   </span>
                 ) : null}
               </button>
@@ -548,39 +596,40 @@ export default function ActiveUsersPage() {
 
           <div className="p-3 sm:p-4">
             <div className="mb-3 flex flex-wrap items-center gap-2">
-              <div className="inline-flex rounded-lg border border-white/60 overflow-hidden bg-white/70 backdrop-blur shadow-sm">
+              <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden bg-white">
                 <button
                   type="button"
                   onClick={() => setMapEmployeeScope('all')}
-                  className={`h-7 px-2.5 text-[11px] font-semibold transition ${mapEmployeeScope === 'all' ? 'bg-emerald-600 text-white' : 'text-slate-700 hover:bg-white/90'}`}
+                  className={`h-7 px-2.5 text-[10px] font-semibold transition ${mapEmployeeScope === 'all' ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
                 >
                   Tất cả NV
                 </button>
                 <button
                   type="button"
                   onClick={() => setMapEmployeeScope('online')}
-                  className={`h-7 px-2.5 text-[11px] font-semibold border-l border-white/60 transition ${mapEmployeeScope === 'online' ? 'bg-emerald-600 text-white' : 'text-slate-700 hover:bg-white/90'}`}
+                  className={`h-7 px-2.5 text-[10px] font-semibold border-l border-gray-200 transition ${mapEmployeeScope === 'online' ? 'bg-emerald-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
                 >
                   Chỉ online
                 </button>
               </div>
-              <span className="inline-flex items-center gap-3 px-3 py-1 rounded-lg bg-white/70 backdrop-blur border border-white/60 text-[11px] font-medium text-slate-700 shadow-sm">
-                <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-indigo-600 ring-2 ring-indigo-200" /> Chi nhánh</span>
-                <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-emerald-200 animate-pulse" /> NV online</span>
-                <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 ring-2 ring-slate-200" /> NV offline</span>
-              </span>
+              <div className="inline-flex items-center gap-2.5 px-2 py-1 rounded-lg bg-gray-50 border border-gray-100 text-[10px] text-gray-600">
+                <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-indigo-600" /> Chi nhánh</span>
+                <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" /> NV online</span>
+                <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-400" /> NV offline</span>
+              </div>
             </div>
 
+            <div className="transition-opacity duration-200">
             {mapSectionTab === 'map' && (
               mapPlottedPoints.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-6 text-xs text-slate-600 space-y-1 text-center">
-                  <p className="font-semibold text-slate-700">Chưa có toạ độ để vẽ bản đồ.</p>
+                <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-3 py-6 text-xs text-gray-600 space-y-1 text-center">
+                  <p className="font-semibold text-gray-800">Chưa có toạ độ để vẽ bản đồ.</p>
                   <p>
-                    Thêm địa chỉ chi nhánh (hệ thống sẽ tự xác định toạ độ trong vài phút) và yêu cầu nhân viên cho phép định vị trên web/mobile (Cài đặt → Vị trí làm việc → «Cập nhật ngay»).
+                    Thêm địa chỉ chi nhánh và yêu cầu nhân viên bật định vị (Cài đặt → Vị trí làm việc → «Cập nhật ngay»).
                   </p>
                   {branchesPending.length > 0 && (
                     <p className="text-amber-700">
-                      Đang chờ geocode {branchesPending.length} chi nhánh — thử bấm «Làm mới» sau ~30 giây.
+                      Đang chờ geocode {branchesPending.length} chi nhánh — thử «Làm mới» sau ~30 giây.
                     </p>
                   )}
                 </div>
@@ -589,11 +638,11 @@ export default function ActiveUsersPage() {
                   <LiveActivityMap
                     branches={branchLocations}
                     employees={employeeLivePoints}
-                    height="min(480px, 60vh)"
+                    height="min(420px, 55vh)"
                   />
-                  <p className="text-xs text-slate-600">
-                    Bản đồ chỉ hiển thị marker chi nhánh và nhân viên có vị trí hợp lệ — lược bỏ mọi điểm khác. Trang tự làm mới vị trí mỗi 30 giây.
-                    {branchesPending.length > 0 ? ` ${branchesPending.length} chi nhánh đang chờ xác định toạ độ.` : ''}
+                  <p className="text-[11px] text-gray-500">
+                    Tự làm mới vị trí mỗi 30 giây.
+                    {branchesPending.length > 0 ? ` ${branchesPending.length} chi nhánh đang chờ geocode.` : ''}
                   </p>
                 </div>
               )
@@ -601,16 +650,16 @@ export default function ActiveUsersPage() {
 
             {mapSectionTab === 'list' && (
               mapPoints.length === 0 ? (
-                <p className="text-sm text-slate-600 py-6 text-center">Chưa có điểm nào trên bản đồ.</p>
+                <p className="text-sm text-gray-500 py-6 text-center">Chưa có điểm nào trên bản đồ.</p>
               ) : (
-                <ul className="divide-y divide-white/40 max-h-[min(480px,60vh)] overflow-y-auto rounded-lg border border-white/50 bg-white/40 backdrop-blur [scrollbar-width:thin]">
+                <ul className="divide-y divide-gray-100 max-h-[min(420px,55vh)] overflow-y-auto rounded-lg border border-gray-200 bg-white [scrollbar-width:thin]">
                   {mapPoints.map((loc) => {
                     const href = mapOpenHref(loc);
                     const hasGeo = Number.isFinite(Number(loc.lat)) && Number.isFinite(Number(loc.lng));
                     const coordsLabel = hasGeo ? `${Number(loc.lat).toFixed(5)}, ${Number(loc.lng).toFixed(5)}` : '';
                     const isBranch = loc.type === 'branch';
                     return (
-                      <li key={loc.key} className="px-3 py-2.5 hover:bg-slate-200/70 transition-colors flex items-start gap-2.5">
+                      <li key={loc.key} className="px-3 py-2 hover:bg-gray-50 transition-colors flex items-start gap-2.5">
                         <div className={`shrink-0 w-8 h-8 rounded-lg inline-flex items-center justify-center shadow-sm ${
                           isBranch
                             ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-200'
@@ -673,17 +722,16 @@ export default function ActiveUsersPage() {
                 </p>
               ) : (
                 <div className="space-y-3">
-                  <p className="text-xs bg-amber-50/90 backdrop-blur border border-amber-200 rounded-lg px-3 py-2" style={{ color: '#7c2d12' }}>
+                  <p className="text-xs bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-amber-900">
                     <strong>{employeesWithoutLocation.length} nhân viên</strong> chưa có vị trí hợp lệ ({mapEmployeeScope === 'online' ? 'đang online' : 'trong bộ lọc'}).
                     Nhắc mở app/web → Cài đặt → <strong>Vị trí làm việc</strong> → «Cập nhật ngay» và cho phép định vị.
                   </p>
-                  <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 max-h-[min(480px,60vh)] overflow-y-auto [scrollbar-width:thin]">
+                  <ul className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-[min(420px,55vh)] overflow-y-auto [scrollbar-width:thin]">
                     {employeesWithoutLocation.map((u) => (
                       <li
                         key={u.id}
-                        className="text-[11px] px-2.5 py-1.5 rounded-lg border border-white/60 bg-white/65 backdrop-blur truncate hover:bg-white/85 transition flex items-center gap-1.5"
+                        className="text-[11px] px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white truncate hover:bg-amber-50/50 transition flex items-center gap-1.5 text-gray-900"
                         title={u.email || ''}
-                        style={{ color: '#0f172a' }}
                       >
                         <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${u.online ? 'bg-emerald-500' : 'bg-slate-300'}`} />
                         <span className="font-medium truncate flex-1">{u.full_name || u.email}</span>
@@ -696,19 +744,33 @@ export default function ActiveUsersPage() {
                 </div>
               )
             )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 border-t border-gray-100 bg-gray-50/80 text-center text-[11px]">
+            <div className="py-2.5 border-r border-gray-100">
+              <p className="text-lg font-bold text-gray-900">{branchLocations.length}</p>
+              <p className="text-gray-500">chi nhánh</p>
+            </div>
+            <div className="py-2.5 border-r border-gray-100">
+              <p className="text-lg font-bold text-emerald-600">{employeeLivePoints.length}</p>
+              <p className="text-gray-500">NV có vị trí</p>
+            </div>
+            <div className="py-2.5">
+              <p className="text-lg font-bold text-amber-500">{employeesWithoutLocation.length}</p>
+              <p className="text-gray-500">chưa có vị trí</p>
+            </div>
           </div>
         </div>
         )}
 
         {filter === 'auth_log' && (
-          <div className="mb-4 rounded-2xl border border-white/50 bg-white/55 backdrop-blur-xl overflow-hidden shadow-lg">
-            <div className="px-3 sm:px-4 pt-3 sm:pt-4 pb-3 border-b border-white/40 flex flex-wrap items-center justify-between gap-2 bg-gradient-to-r from-sky-50/60 via-white/30 to-sky-50/60">
-              <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
+          <div className="mb-4 rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
+            <div className="px-3 sm:px-4 py-3 border-b border-gray-100 flex flex-wrap items-center justify-between gap-2 bg-white">
+              <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
                 <History className="h-4 w-4 text-sky-600" />
-                Lịch sử đăng nhập / đăng xuất
-                <span className="text-[11px] font-normal text-slate-500">
-                  (chi tiết đến giây)
-                </span>
+                Lịch sử đăng nhập
+                <span className="text-[10px] font-normal text-gray-400">(chi tiết đến giây)</span>
               </h2>
               <div className="flex flex-wrap items-center gap-2">
                 <select
@@ -770,7 +832,7 @@ export default function ActiveUsersPage() {
                 style={{ maxHeight: 'calc(100vh - 380px)', minHeight: 240 }}
               >
                 <table className="w-full text-xs">
-                  <thead className="bg-white/85 backdrop-blur text-slate-700 sticky top-0 z-10 shadow-sm">
+                  <thead className="bg-gray-50 text-gray-700 sticky top-0 z-10 shadow-sm border-b border-gray-100">
                     <tr>
                       <th className="text-left font-semibold px-3 py-2 whitespace-nowrap">Thời gian</th>
                       <th className="text-left font-semibold px-3 py-2 whitespace-nowrap">Nhân viên</th>
@@ -833,7 +895,7 @@ export default function ActiveUsersPage() {
                   </tbody>
                 </table>
               </div>
-              <div className="px-3 sm:px-4 py-2 border-t border-white/40 bg-white/30 backdrop-blur flex flex-wrap items-center justify-between gap-2 text-[11px]" style={{ color: '#475569' }}>
+              <div className="px-3 sm:px-4 py-2 border-t border-gray-100 bg-gray-50 flex flex-wrap items-center justify-between gap-2 text-[11px] text-gray-500">
                 <span>Hiển thị <strong>{authSessions.length}</strong> sự kiện</span>
                 {authSessions.length > 8 && <span className="text-slate-500">Cuộn để xem thêm</span>}
               </div>
@@ -847,19 +909,17 @@ export default function ActiveUsersPage() {
             <Loader2 className="h-8 w-8 animate-spin text-sky-600" />
           </div>
         ) : displayRows.length === 0 ? (
-          <div className="text-center py-16 text-sm" style={{ color: '#475569' }}>
+          <div className="text-center py-16 text-sm text-gray-500">
             {filter === 'online' ? 'Chưa có ai đang hoạt động trong bộ lọc này.' : 'Không có nhân viên phù hợp.'}
           </div>
         ) : (
           <div
             className="overflow-y-auto pr-1 [scrollbar-width:thin]"
-            style={{ maxHeight: 'calc(100vh - 320px)', minHeight: 360 }}
+            style={{ maxHeight: 'calc(100vh - 280px)', minHeight: 280 }}
           >
-            <ul className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-              {/* Sticky count header — bám trên khi cuộn */}
-              <li className="col-span-full sticky top-0 z-10 -mt-1 mb-1 px-3 py-1.5 rounded-lg bg-white/75 backdrop-blur border border-white/60 text-[11px] flex items-center justify-between shadow-sm" style={{ color: '#475569' }}>
-                <span>Hiển thị <strong style={{ color: '#0f172a' }}>{displayRows.length}</strong> nhân viên</span>
-                {displayRows.length > 9 && <span>Cuộn dọc để xem thêm</span>}
+            <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <li className="col-span-full sticky top-0 z-10 mb-0.5 px-2.5 py-1 rounded-lg bg-white/95 border border-gray-200 text-[10px] flex items-center justify-between text-gray-500 shadow-sm">
+                <span>Hiển thị <strong className="text-gray-900">{displayRows.length}</strong> nhân viên</span>
               </li>
               {displayRows.map((u) => {
               const loc = resolveUserLocation(u);
@@ -868,14 +928,14 @@ export default function ActiveUsersPage() {
               return (
                 <li
                   key={u.id}
-                  className={`group rounded-2xl border bg-white/65 backdrop-blur-xl p-4 shadow-md transition hover:shadow-xl hover:bg-white/80 hover:-translate-y-0.5 ${
-                    u.online ? 'border-emerald-200/80' : 'border-white/60'
+                  className={`rounded-xl border bg-white p-3 shadow-sm transition hover:shadow-md ${
+                    u.online ? 'border-emerald-200' : 'border-gray-200'
                   }`}
                 >
-                  <div className="flex items-start gap-3">
+                  <div className="flex items-start gap-2.5">
                     <div className="relative shrink-0">
                       <div
-                        className={`w-12 h-12 rounded-full flex items-center justify-center text-sm font-bold text-white shadow-md ring-2 ring-white/80 ${avatarColor(u.full_name || u.email)}`}
+                        className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-sm ring-2 ring-white ${avatarColor(u.full_name || u.email)}`}
                       >
                         {u.avatar ? (
                           <img src={u.avatar} alt="" className="w-full h-full rounded-full object-cover" />
@@ -883,83 +943,67 @@ export default function ActiveUsersPage() {
                           getInitials(u.full_name || u.email)
                         )}
                       </div>
-                      <OnlineStatusDot online={u.online} className="absolute -bottom-0.5 -right-0.5" size="md" />
+                      <OnlineStatusDot online={u.online} className="absolute -bottom-0.5 -right-0.5 ring-2 ring-white" size="md" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="font-semibold truncate" style={{ color: '#0f172a' }}>{u.full_name || u.email}</p>
-                      <p className="text-xs truncate" style={{ color: '#64748b' }}>{u.email}</p>
-                      <p className="text-[11px] mt-1 flex items-center gap-1 flex-wrap" style={{ color: '#475569' }}>
+                      <p className="text-sm font-semibold text-gray-900 truncate">{u.full_name || u.email}</p>
+                      <p className="text-[10px] text-gray-500 truncate">{u.email}</p>
+                      <p className="text-[10px] mt-0.5 flex items-center gap-1 flex-wrap text-gray-600">
                         <Building2 className="h-3 w-3 shrink-0" />
                         <span className="truncate">{u.department?.name || '—'}</span>
                         {u.role && (
-                          <span className="ml-1 px-1.5 py-0.5 rounded bg-slate-100/90 text-slate-700 font-semibold">
+                          <span className="px-1 py-0.5 rounded bg-gray-100 text-gray-700 font-semibold text-[9px]">
                             {ROLE_LABELS[u.role] || u.role}
                           </span>
                         )}
                       </p>
-                      <p className={`text-[11px] mt-1.5 font-semibold ${u.online ? 'text-emerald-700' : 'text-slate-500'}`}>
-                        {u.online ? '● Đang hoạt động' : `○ Offline · ${formatRelativeTime(u.last_ping_at)}`}
+                      <p className={`text-[10px] mt-1 font-semibold ${u.online ? 'text-emerald-600' : 'text-gray-400'}`}>
+                        {u.online ? '● Online' : `○ ${formatRelativeTime(u.last_ping_at)}`}
                       </p>
                     </div>
                   </div>
 
-                  {/* Vị trí — nổi bật, click mở map */}
                   {loc ? (
                     <a
                       href={locHref}
                       target="_blank"
                       rel="noreferrer"
-                      className="mt-3 flex items-start gap-2 rounded-xl border border-sky-200/80 bg-gradient-to-br from-sky-50/95 to-blue-50/80 backdrop-blur p-2.5 hover:from-sky-100 hover:to-blue-100/90 hover:border-sky-300 transition group/loc"
+                      className="mt-2 flex items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50/80 px-2 py-1.5 hover:bg-sky-100 transition group/loc"
                       title="Mở vị trí trên Google Maps"
                     >
-                      <div className="shrink-0 w-8 h-8 rounded-lg bg-sky-600 text-white inline-flex items-center justify-center shadow-md ring-2 ring-white">
-                        <MapPin className="h-4 w-4" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[10px] font-bold text-sky-700 uppercase tracking-wide">
-                          Vị trí hiện tại
-                        </p>
-                        <p className="text-[12px] font-semibold leading-snug truncate" style={{ color: '#0c4a6e' }} title={locLabel}>
-                          {locLabel}
-                        </p>
-                        <p className="text-[10px] text-sky-700/80 mt-0.5 flex items-center gap-1.5">
-                          <span className="font-mono">{loc.lat.toFixed(4)}, {loc.lng.toFixed(4)}</span>
-                          {loc.captured_at && <span>· {formatRelativeTime(loc.captured_at)}</span>}
-                        </p>
-                      </div>
-                      <ExternalLink className="h-3.5 w-3.5 text-sky-600 shrink-0 mt-0.5 opacity-60 group-hover/loc:opacity-100" />
+                      <MapPin className="h-3.5 w-3.5 text-sky-600 shrink-0" />
+                      <span className="text-[10px] font-medium text-sky-900 truncate flex-1">{locLabel}</span>
+                      <ExternalLink className="h-3 w-3 text-sky-500 opacity-60 group-hover/loc:opacity-100 shrink-0" />
                     </a>
                   ) : (
-                    <div className="mt-3 flex items-center gap-2 rounded-xl border border-dashed border-amber-300/80 bg-amber-50/70 backdrop-blur px-2.5 py-2 text-[11px]" style={{ color: '#78350f' }}>
-                      <MapPin className="h-3.5 w-3.5 text-amber-600 shrink-0" />
-                      <span>Chưa có vị trí — bật định vị trong Cài đặt</span>
+                    <div className="mt-2 flex items-center gap-1.5 rounded-lg border border-dashed border-amber-300 bg-amber-50 px-2 py-1.5 text-[10px] text-amber-800">
+                      <MapPin className="h-3 w-3 shrink-0" />
+                      <span>Chưa có vị trí</span>
                     </div>
                   )}
 
                   {Array.isArray(u.devices) && u.devices.length > 0 ? (
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {u.devices.slice(0, 4).map((d, idx) => (
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {u.devices.slice(0, 5).map((d, idx) => (
                         <DeviceBadge key={`${d.platform}-${idx}`} device={d} />
                       ))}
-                      {u.devices.length > 4 ? (
-                        <span className="text-[10px] text-slate-500 font-semibold self-center">
-                          +{u.devices.length - 4}
-                        </span>
+                      {u.devices.length > 5 ? (
+                        <span className="text-[9px] text-gray-400 font-semibold self-center">+{u.devices.length - 5}</span>
                       ) : null}
                     </div>
                   ) : null}
 
-                  <div className="mt-3 pt-3 border-t border-white/60 flex justify-end">
+                  <div className="mt-2 pt-2 border-t border-gray-100 flex justify-end">
                     <button
                       type="button"
                       disabled={chatLoadingId === u.id || String(u.id) === String(uid)}
                       onClick={() => void startDirectChat(u)}
-                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-sky-700 hover:text-white hover:bg-sky-600 disabled:opacity-50 px-2.5 py-1 rounded-md transition-colors"
+                      className="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-700 hover:text-white hover:bg-sky-600 disabled:opacity-50 px-2 py-1 rounded-md transition-colors border border-sky-200 hover:border-sky-600"
                     >
                       {chatLoadingId === u.id ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <Loader2 className="h-3 w-3 animate-spin" />
                       ) : (
-                        <MessageCircle className="h-3.5 w-3.5" />
+                        <MessageCircle className="h-3 w-3" />
                       )}
                       Nhắn tin
                     </button>
