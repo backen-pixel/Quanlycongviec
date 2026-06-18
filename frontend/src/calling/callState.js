@@ -18,3 +18,8 @@ export function statusLabel(state, direction) {
     default: return '';
   }
 }
+
+/** Cuộc gọi đang hoạt động (không phải IDLE/ENDED/MISSED/REJECTED). */
+export function isActiveState(state) {
+  return state === 'RINGING' || state === 'CONNECTING' || state === 'CONNECTED';
+}

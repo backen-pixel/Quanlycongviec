@@ -10,7 +10,7 @@ import { dismissIncomingCallDesktopAlert, showIncomingCallDesktopAlert } from '.
 import { playCallRingtone, stopCallRingtone } from '../lib/callRingtonePlayer';
 import { WebRTCService } from './webrtcService';
 import { getIceServers } from './turnConfig';
-import { CALL_TIMEOUT_MS, RECONNECT_TIMEOUT_MS } from './callState';
+import { CALL_TIMEOUT_MS, RECONNECT_TIMEOUT_MS, isActiveState } from './callState';
 
 const CallCtx = createContext(null);
 
@@ -110,7 +110,7 @@ export function CallProvider({ children }) {
   // ─── Caller ───
   // media: 'audio'|'video' HOẶC object tương thích cũ { video?: boolean }.
   const startCall = useCallback(async (peer, media = 'audio') => {
-    if (sessionRef.current && sessionRef.current.state !== 'IDLE') return;
+    if (sessionRef.current && isActiveState(sessionRef.current.state)) return;
     if (!peer?.id) return;
     const mediaKind = typeof media === 'string' ? media : (media?.video ? 'video' : 'audio');
     const callId = genCallId();
@@ -187,7 +187,7 @@ export function CallProvider({ children }) {
     if (!socket) return undefined;
 
     const onIncoming = (p) => {
-      if (sessionRef.current && sessionRef.current.state !== 'IDLE') {
+      if (sessionRef.current && isActiveState(sessionRef.current.state)) {
         socket.emit('reject-call', { callId: p.callId, toUserId: p.fromUserId, reason: 'busy' });
         return;
       }

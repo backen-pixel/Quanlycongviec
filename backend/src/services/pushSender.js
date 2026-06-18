@@ -420,6 +420,76 @@ async function deletePushTokenSafe(token) {
   }
 }
 
+/** FCM có notification + data — CRM Mobile v2 (expo-notifications) hiển thị tray + JS parse incoming_call. */
+async function sendFcmIncomingCallV2Tray(tokens, notification) {
+  if (!tokens.length) return;
+  const auth = await getFcmAccessToken();
+  if (!auth) {
+    console.warn('[pushSender] incoming_call v2: thiếu FCM credentials');
+    return;
+  }
+  const meta = (notification.metadata && typeof notification.metadata === 'object')
+    ? notification.metadata
+    : {};
+  const payload = buildPushPayload(notification);
+  const url = `https://fcm.googleapis.com/v1/projects/${auth.projectId}/messages:send`;
+  const data = {
+    type: 'incoming_call',
+    call_id: String(meta.call_id || ''),
+    kind: String(meta.kind || 'audio'),
+    from_user_id: String(meta.from_user_id || ''),
+    from_name: String(meta.from_name || ''),
+    is_group: meta.is_group ? 'true' : 'false',
+    group_id: String(meta.group_id || ''),
+    group_name: String(meta.group_name || ''),
+    channelId: CHANNEL_CALL,
+  };
+  for (const row of tokens) {
+    try {
+      const body = {
+        message: {
+          token: row.token,
+          notification: {
+            title: payload.title,
+            body: payload.body,
+          },
+          data,
+          android: {
+            priority: 'HIGH',
+            ttl: '60s',
+            ...(data.call_id ? { collapse_key: `call_${data.call_id}` } : {}),
+            notification: {
+              channel_id: CHANNEL_CALL,
+              sound: 'default',
+              notification_priority: 'PRIORITY_MAX',
+            },
+          },
+        },
+      };
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${auth.accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const txt = await r.text().catch(() => '');
+        if (r.status === 404 || /UNREGISTERED|NOT_FOUND/i.test(txt)) {
+          await deletePushTokenSafe(row.token);
+        } else {
+          console.warn('[pushSender] FCM call v2 tray error:', r.status, txt.slice(0, 200));
+        }
+      } else {
+        console.log('[pushSender] FCM incoming_call v2 tray →', row.token.slice(0, 12) + '…');
+      }
+    } catch (e) {
+      console.warn('[pushSender] FCM call v2 send error:', e.message || e);
+    }
+  }
+}
+
 async function sendFcmIncomingCall(tokens, notification) {
   if (!tokens.length) return;
   const auth = await getFcmAccessToken();
@@ -599,9 +669,10 @@ async function sendMobilePush(userId, notification) {
       await sendExpoChunk(messages.slice(i, i + CHUNK_SIZE));
     }
 
-    // FCM: cuộc gọi đến (notification hiển thị) hoặc chat (data-only wake bubble)
-    if (fcmRows.length && isCall) {
-      await sendFcmIncomingCall(fcmRows, notification);
+    // FCM cuộc gọi đến: legacy app (data-only → native service) + v2 (tray + data cho expo)
+    if (isCall) {
+      if (fcmRows.length) await sendFcmIncomingCall(fcmRows, notification);
+      if (v2FcmRows.length) await sendFcmIncomingCallV2Tray(v2FcmRows, notification);
     } else if (fcmRows.length && isChatType(notification.type)) {
       await sendFcmDataOnly(fcmRows, notification);
       await sendFcmTrayNotification(fcmRows, notification);
@@ -609,8 +680,7 @@ async function sendMobilePush(userId, notification) {
       await sendFcmTrayNotification(fcmRows, notification);
     }
 
-    // CRM Mobile v2: FCM native hiển thị tray cho MỌI loại thông báo (trừ cuộc gọi —
-    // v2 chưa có service hiển thị cuộc gọi native). Tôn trọng pref đã kiểm tra ở trên.
+    // CRM Mobile v2: tray cho chat/thông báo thường (cuộc gọi xử lý ở nhánh isCall phía trên).
     if (v2FcmRows.length && !isCall) {
       await sendFcmTrayNotification(v2FcmRows, notification);
     }

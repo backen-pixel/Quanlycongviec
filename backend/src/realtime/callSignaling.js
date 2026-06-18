@@ -156,8 +156,9 @@ function attachCallSignaling(io) {
         media: entry.media,
       });
 
-      // B offline → đánh thức bằng FCM (native dựng màn cuộc gọi đến).
-      if (!isOnline(callee)) void pushIncoming(callee, entry);
+      // Luôn gửi FCM — CRM Mobile v2 cần push kể cả khi socket online (app nền / expo).
+      // Client dedupe theo callId nếu socket đã hiện màn cuộc gọi.
+      void pushIncoming(callee, entry);
 
       // Hết giờ đổ chuông → MISSED.
       entry.ringTimer = setTimeout(() => {
