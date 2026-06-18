@@ -51,9 +51,6 @@ export function MessengerDockProvider({ children }) {
   const [myDepartmentIds, setMyDepartmentIds] = useState([]);
   /** Cache metadata phòng ban (name, color) để bật bong bóng với tiêu đề đúng */
   const [deptMetaMap, setDeptMetaMap] = useState({});
-  /** Toast tin nhắn đến (avatar + người gửi + preview) — auto ẩn sau ~7s */
-  const [chatToasts, setChatToasts] = useState([]);
-  const toastTimersRef = useRef(new Map());
   const unreadLeadHydratedRef = useRef(false);
   const unreadGroupHydratedRef = useRef(false);
   const unreadDeptHydratedRef = useRef(false);
@@ -241,31 +238,6 @@ export function MessengerDockProvider({ children }) {
       document.removeEventListener('visibilitychange', tick);
     };
   }, [uid]);
-
-  const dismissChatToast = useCallback((id) => {
-    setChatToasts((prev) => prev.filter((t) => t.id !== id));
-    const tm = toastTimersRef.current.get(id);
-    if (tm) {
-      clearTimeout(tm);
-      toastTimersRef.current.delete(id);
-    }
-  }, []);
-
-  const pushChatToast = useCallback((toast) => {
-    setChatToasts((prev) => {
-      // Gộp toast cùng thread (lead/group) — giữ tối đa 4 toast
-      const sameThread = prev.filter(
-        (t) => !(t.leadId && t.leadId === toast.leadId) && !(t.groupId && t.groupId === toast.groupId),
-      );
-      const next = [toast, ...sameThread].slice(0, 4);
-      return next;
-    });
-  }, []);
-
-  useEffect(() => () => {
-    toastTimersRef.current.forEach((t) => clearTimeout(t));
-    toastTimersRef.current.clear();
-  }, []);
 
   const markLeadRead = useCallback((leadId) => {
     if (!leadId) return;
@@ -558,20 +530,6 @@ export function MessengerDockProvider({ children }) {
         code: msg.lead?.code || msg.lead_code || '',
         type: msg.lead?.type || 'lead',
       });
-      pushChatToast({
-        id: `lead-${leadId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        kind: 'lead',
-        leadId,
-        groupId: null,
-        sender: {
-          id: msg.user?.id || msg.user_id,
-          name: senderName,
-          avatar: msg.user?.avatar || null,
-        },
-        title: leadTitle,
-        preview,
-        ts: msg.created_at || new Date().toISOString(),
-      });
       if (isNotificationTypeEnabled('lead_chat', 'lead')) {
         void alertIncomingNotification({ type: 'lead_chat', entityType: 'lead' });
       }
@@ -621,20 +579,6 @@ export function MessengerDockProvider({ children }) {
         msg.content || (Array.isArray(msg.attachments) && msg.attachments.length ? '[Tệp đính kèm]' : '');
       const senderName = msg.user?.full_name || 'Ai đó';
       openMessengerGroupChat({ id: gid, name: groupTitle, title: groupTitle });
-      pushChatToast({
-        id: `grp-${gid}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        kind: 'group',
-        leadId: null,
-        groupId: gid,
-        sender: {
-          id: msg.user?.id || msg.user_id,
-          name: senderName,
-          avatar: msg.user?.avatar || null,
-        },
-        title: groupTitle,
-        preview,
-        ts: msg.created_at || new Date().toISOString(),
-      });
       if (isNotificationTypeEnabled('messenger_chat', 'messenger_group')) {
         void alertIncomingNotification({ type: 'messenger_chat', entityType: 'messenger_group' });
       }
@@ -677,21 +621,6 @@ export function MessengerDockProvider({ children }) {
         (Array.isArray(msg.attachments) && msg.attachments.length ? '[Tệp đính kèm]' : 'Tin nhắn mới');
       // Tự mở bong bóng chat phòng ban (giống Lead/Group hiện tại)
       openDepartmentChat({ id: deptId, name: deptName, color: deptColor });
-      pushChatToast({
-        id: `dept-${deptId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        kind: 'department',
-        leadId: null,
-        groupId: null,
-        deptId,
-        sender: {
-          id: msg.sender?.id || msg.sender_id,
-          name: senderName,
-          avatar: msg.sender?.avatar || null,
-        },
-        title: deptName,
-        preview,
-        ts: msg.created_at || new Date().toISOString(),
-      });
       if (isNotificationTypeEnabled('department_chat', 'department')) {
         void alertIncomingNotification({ type: 'department_chat', entityType: 'department' });
       }
@@ -709,7 +638,7 @@ export function MessengerDockProvider({ children }) {
       socket.off('messenger_group:chat', onGroupChat);
       socket.off('department_message', onDeptChat);
     };
-  }, [socket, uid, markLeadRead, markGroupRead, markDeptRead, pushChatToast, openLeadChat, openMessengerGroupChat, openDepartmentChat, deptMetaMap]);
+  }, [socket, uid, markLeadRead, markGroupRead, markDeptRead, openLeadChat, openMessengerGroupChat, openDepartmentChat, deptMetaMap]);
 
   const value = useMemo(
     () => ({
@@ -718,8 +647,6 @@ export function MessengerDockProvider({ children }) {
       unreadByGroupId,
       unreadByDeptId,
       deptMetaMap,
-      chatToasts,
-      dismissChatToast,
       openLeadChat,
       openMessengerGroupChat,
       openDepartmentChat,
@@ -740,8 +667,6 @@ export function MessengerDockProvider({ children }) {
       unreadByGroupId,
       unreadByDeptId,
       deptMetaMap,
-      chatToasts,
-      dismissChatToast,
       openLeadChat,
       openMessengerGroupChat,
       openDepartmentChat,
