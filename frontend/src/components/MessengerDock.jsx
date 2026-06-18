@@ -9,6 +9,7 @@ import { MessageCircle, X, Minus, Maximize2, Search, Users, Loader2, ChevronRigh
 import api from '../lib/api';
 import { publicFileUrl } from '../lib/publicFileUrl';
 import OnlineStatusDot, { isUserOnline } from './OnlineStatusDot';
+import FloatingNotificationCard from './FloatingNotificationCard';
 import { usePresence } from '../shared/context/PresenceContext';
 
 export const MESSENGER_DOCK_W = 52;
@@ -21,7 +22,7 @@ const Z_BUBBLE = 100;
 const Z_LAUNCHER = 110;
 const Z_DOCK = 120;
 const Z_TOAST = 125;
-const TOAST_W = 280;
+const TOAST_W = 380;
 const TOAST_GAP = 10;
 
 function avatarUrl(av) {
@@ -551,18 +552,30 @@ export default function MessengerDock() {
         </div>
       ) : null}
 
-      {/* Toast tin nhắn đến — pop từ phải sang trái, đè cạnh dock */}
+      {/* Toast tin nhắn đến — glassmorphism, slide phải, progress 5s */}
       <div
-        className="fixed flex flex-col gap-2 pointer-events-none"
+        className="fixed flex flex-col gap-2.5 pointer-events-none"
         style={{
           zIndex: Z_TOAST,
           right: DOCK_W + TOAST_GAP,
-          top: 70,
+          top: 'max(70px, env(safe-area-inset-top, 0px) + 56px)',
           width: TOAST_W,
+          maxWidth: 'calc(100vw - 4.5rem)',
         }}
       >
         {(chatToasts || []).map((t) => {
           const av = avatarUrl(t.sender?.avatar);
+          const unread =
+            t.kind === 'group' && t.groupId
+              ? unreadByGroupId[t.groupId] || 1
+              : t.kind === 'lead' && t.leadId
+                ? unreadByLeadId[t.leadId] || 1
+                : t.kind === 'department' && t.deptId
+                  ? unreadByDeptId[t.deptId] || 1
+                  : 1;
+          const contextLabel = t.title
+            ? `${t.kind === 'group' ? 'Nhóm · ' : t.kind === 'department' ? 'Phòng ban · ' : 'Lead · '}${t.title}`
+            : null;
           const onOpen = () => {
             if (t.kind === 'group' && t.groupId) {
               openMessengerGroupChat({ id: t.groupId, name: t.title });
@@ -571,60 +584,21 @@ export default function MessengerDock() {
             } else if (t.kind === 'department' && t.deptId) {
               openDepartmentChat({ id: t.deptId, name: t.title });
             }
-            dismissChatToast(t.id);
           };
           return (
-            <div
+            <FloatingNotificationCard
               key={t.id}
-              role="button"
-              tabIndex={0}
+              className="pointer-events-auto"
+              userName={t.sender?.name || 'Ai đó'}
+              contextLabel={contextLabel}
+              message={t.preview || '(tin nhắn mới)'}
+              avatarSrc={av}
+              avatarFallback={t.sender?.name}
+              online={isUserOnline(presenceByUser, t.sender?.id)}
+              unreadCount={unread}
+              onDismiss={() => dismissChatToast(t.id)}
               onClick={onOpen}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onOpen(); }}
-              className="pointer-events-auto group relative flex items-start gap-2.5 px-3 py-2.5 rounded-2xl border border-white/60 bg-white/90 backdrop-blur-xl shadow-xl hover:shadow-2xl hover:border-sky-300 hover:bg-white cursor-pointer transition-all hover:-translate-x-0.5"
-              title={`${t.sender?.name || ''} • ${t.title || ''}`}
-            >
-              <div className="shrink-0 relative">
-                {av ? (
-                  <img
-                    src={av}
-                    alt={t.sender?.name || ''}
-                    className="w-10 h-10 rounded-full object-cover ring-2 ring-white shadow"
-                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                  />
-                ) : (
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-sky-500 to-cyan-600 text-white flex items-center justify-center text-xs font-bold ring-2 ring-white shadow">
-                    {initialsOf(t.sender?.name)}
-                  </div>
-                )}
-                <OnlineStatusDot
-                  online={isUserOnline(presenceByUser, t.sender?.id)}
-                  size="lg"
-                  className="absolute -bottom-0.5 -right-0.5"
-                />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-1">
-                  <p className="text-xs font-semibold text-slate-800 truncate">{t.sender?.name || 'Ai đó'}</p>
-                  <span className="text-[10px] text-slate-400 shrink-0">vừa xong</span>
-                </div>
-                {t.title ? (
-                  <p className="text-[10px] text-slate-500 truncate">
-                    {t.kind === 'group' ? 'Nhóm: ' : t.kind === 'department' ? 'Phòng ban: ' : ''}
-                    {t.title}
-                  </p>
-                ) : null}
-                <p className="text-xs text-slate-700 line-clamp-2 mt-0.5 break-words">{t.preview || '(tin nhắn mới)'}</p>
-              </div>
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); dismissChatToast(t.id); }}
-                className="shrink-0 -mr-1 -mt-1 p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 opacity-0 group-hover:opacity-100 transition"
-                title="Đóng"
-                aria-label="Đóng thông báo"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
+            />
           );
         })}
       </div>

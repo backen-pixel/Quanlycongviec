@@ -260,9 +260,7 @@ export function MessengerDockProvider({ children }) {
       const next = [toast, ...sameThread].slice(0, 4);
       return next;
     });
-    const tm = setTimeout(() => dismissChatToast(toast.id), 7000);
-    toastTimersRef.current.set(toast.id, tm);
-  }, [dismissChatToast]);
+  }, []);
 
   useEffect(() => () => {
     toastTimersRef.current.forEach((t) => clearTimeout(t));
