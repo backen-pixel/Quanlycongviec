@@ -1,9 +1,11 @@
 /**
- * Kiểm tra cập nhật APK lúc mở app — giống TuBep Demo.
+ * Kiểm tra cập nhật APK — lúc mở app, định kỳ và khi quay lại foreground.
+ * Modal chỉ hiện lần đầu; sau đó dùng banner nhẹ trong lúc dùng app.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   Modal,
   Pressable,
   ScrollView,
@@ -12,22 +14,30 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   checkForUpdate,
   consumeUpdateSuccessMessage,
-  currentVersionCode,
-  currentVersionName,
+  dismissUpdateForRelease,
   downloadApkToCache,
+  isUpToDate,
   openDownloadedApk,
+  shouldSuppressUpdateModal,
   type UpdateCheckResult,
 } from '../lib/appUpdate';
 import { Radii, useColors, type ThemeColors } from '../theme';
 
+const CHECK_INTERVAL_MS = 30 * 60 * 1000;
+const FOREGROUND_DEBOUNCE_MS = 90 * 1000;
+
 export default function UpdateGate() {
   const Colors = useColors();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
+
   const [info, setInfo] = useState<UpdateCheckResult | null>(null);
   const [visible, setVisible] = useState(false);
+  const [bannerVisible, setBannerVisible] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [readyUri, setReadyUri] = useState<string | null>(null);
@@ -35,37 +45,89 @@ export default function UpdateGate() {
   const [toast, setToast] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let mounted = true;
-    void (async () => {
+  const lastCheckAt = useRef(0);
+  const checkingRef = useRef(false);
+
+  const runCheck = useCallback(async (opts: { allowModal?: boolean } = {}) => {
+    if (checkingRef.current) return;
+    checkingRef.current = true;
+    try {
       const successMsg = await consumeUpdateSuccessMessage();
-      if (mounted && successMsg) setToast(successMsg);
-      const res = await checkForUpdate();
-      if (!mounted) return;
-
-      const localCode = currentVersionCode();
-      const localVer = currentVersionName();
-      const latestCode = res.latestVersionCode ?? null;
-      const latestVer = res.latestVersion ?? null;
-      const alreadyLatest =
-        (localCode != null && latestCode != null && localCode >= latestCode)
-        || (!!localVer && !!latestVer && localVer === latestVer && localCode != null && latestCode != null && localCode >= latestCode);
-
-      if (alreadyLatest) return;
-
-      if (res.updateAvailable && res.downloadUrl) {
-        setInfo(res);
-        setVisible(true);
+      if (successMsg) {
+        setToast(successMsg);
+        setInfo(null);
+        setVisible(false);
+        setBannerVisible(false);
+        setReadyUri(null);
+        return;
       }
-    })();
-    return () => {
-      mounted = false;
-    };
+
+      const res = await checkForUpdate();
+      lastCheckAt.current = Date.now();
+
+      if (isUpToDate(res)) {
+        setInfo(null);
+        setVisible(false);
+        setBannerVisible(false);
+        return;
+      }
+
+      if (!res.updateAvailable || !res.downloadUrl) {
+        setInfo(null);
+        setVisible(false);
+        setBannerVisible(false);
+        return;
+      }
+
+      setInfo(res);
+      const suppressed = await shouldSuppressUpdateModal(res);
+
+      if (res.mandatory) {
+        setVisible(true);
+        setBannerVisible(false);
+        return;
+      }
+
+      if (suppressed) {
+        setVisible(false);
+        setBannerVisible(true);
+        return;
+      }
+
+      if (opts.allowModal) {
+        setVisible(true);
+        setBannerVisible(false);
+      } else {
+        setVisible(false);
+        setBannerVisible(true);
+      }
+    } finally {
+      checkingRef.current = false;
+    }
   }, []);
 
   useEffect(() => {
+    void runCheck({ allowModal: true });
+
+    const interval = setInterval(() => {
+      void runCheck({ allowModal: false });
+    }, CHECK_INTERVAL_MS);
+
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      if (Date.now() - lastCheckAt.current < FOREGROUND_DEBOUNCE_MS) return;
+      void runCheck({ allowModal: false });
+    });
+
+    return () => {
+      clearInterval(interval);
+      sub.remove();
+    };
+  }, [runCheck]);
+
+  useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(null), 6000);
+    const t = setTimeout(() => setToast(null), 7000);
     return () => clearTimeout(t);
   }, [toast]);
 
@@ -85,23 +147,23 @@ export default function UpdateGate() {
           version: info.latestVersion || null,
           versionCode: info.latestVersionCode ?? null,
         });
-        setToast('Đã mở màn hình cài đặt. Sau khi cài xong, mở lại app để nhận thông báo thành công.');
-        if (!info.mandatory) setVisible(false);
+        setVisible(false);
+        setBannerVisible(true);
+        setToast('Đã mở màn hình cài đặt. Sau khi cài xong, mở lại app một lần để hết thông báo cập nhật.');
       } else {
         setReadyUri(apk.uri);
         setReadyVersion(info.latestVersion || null);
-        setToast(
-          `Đã tải xong bản ${info.latestVersion || ''}. Bạn có thể cài đặt ngay khi thuận tiện.`,
-        );
+        setBannerVisible(true);
+        setToast(`Đã tải xong bản ${info.latestVersion || ''}. Bạn có thể cài khi thuận tiện.`);
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Cập nhật thất bại';
       setError(msg);
-      if (!visible) setToast(msg);
+      setToast(msg);
     } finally {
       setDownloading(false);
     }
-  }, [info, visible]);
+  }, [info]);
 
   const installReadyApk = useCallback(async () => {
     if (!readyUri || !info) return;
@@ -110,7 +172,9 @@ export default function UpdateGate() {
         version: readyVersion || info.latestVersion || null,
         versionCode: info.latestVersionCode ?? null,
       });
-      setToast('Đã mở màn hình cài đặt bản cập nhật.');
+      setVisible(false);
+      setBannerVisible(true);
+      setToast('Đã mở màn hình cài đặt. Mở lại app sau khi cài xong.');
       setReadyUri(null);
       setReadyVersion(null);
     } catch (e: unknown) {
@@ -118,19 +182,61 @@ export default function UpdateGate() {
     }
   }, [readyUri, readyVersion, info]);
 
-  const pct = Math.round(progress * 100);
+  const dismissForNow = useCallback(async () => {
+    if (info) await dismissUpdateForRelease(info);
+    setVisible(false);
+    setBannerVisible(true);
+  }, [info]);
 
-  if (!info && !toast) return null;
+  const hideBanner = useCallback(async () => {
+    if (info) await dismissUpdateForRelease(info);
+    setBannerVisible(false);
+  }, [info]);
+
+  const openModalFromBanner = useCallback(() => {
+    setBannerVisible(false);
+    setVisible(true);
+  }, []);
+
+  const pct = Math.round(progress * 100);
+  const showBanner = !!info && bannerVisible && !visible && !info.mandatory;
+
+  if (!info && !toast && !showBanner) return null;
 
   return (
     <>
+      {showBanner ? (
+        <View style={[styles.banner, { top: insets.top + 8 }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.bannerTitle}>Có bản mới {info.latestVersion}</Text>
+            <Text style={styles.bannerSub} numberOfLines={2}>
+              {readyUri
+                ? 'APK đã tải — bấm Cài để cập nhật'
+                : 'Cập nhật ngay hoặc để sau — không cần tắt app'}
+            </Text>
+          </View>
+          {readyUri ? (
+            <Pressable style={styles.bannerBtn} onPress={() => void installReadyApk()}>
+              <Text style={styles.bannerBtnTxt}>Cài</Text>
+            </Pressable>
+          ) : (
+            <Pressable style={styles.bannerBtn} onPress={() => void startDownload(true, true)}>
+              <Text style={styles.bannerBtnTxt}>Cập nhật</Text>
+            </Pressable>
+          )}
+          <Pressable hitSlop={8} onPress={() => void hideBanner()}>
+            <Text style={styles.bannerClose}>✕</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
       {!!info && (
         <Modal
           visible={visible}
           transparent
           animationType="fade"
           onRequestClose={() => {
-            if (!info.mandatory) setVisible(false);
+            if (!info.mandatory) void dismissForNow();
           }}
         >
           <View style={styles.backdrop}>
@@ -158,7 +264,7 @@ export default function UpdateGate() {
                     <View style={[styles.barFill, { width: `${pct}%` }]} />
                   </View>
                   {!info.mandatory ? (
-                    <TouchableOpacity style={styles.secondaryBtn} onPress={() => setVisible(false)}>
+                    <TouchableOpacity style={styles.secondaryBtn} onPress={() => void dismissForNow()}>
                       <Text style={styles.secondaryBtnText}>Tiếp tục dùng app</Text>
                     </TouchableOpacity>
                   ) : null}
@@ -181,8 +287,8 @@ export default function UpdateGate() {
                     </TouchableOpacity>
                   )}
                   {!info.mandatory && (
-                    <TouchableOpacity style={styles.secondaryBtn} onPress={() => setVisible(false)}>
-                      <Text style={styles.secondaryBtnText}>Để sau</Text>
+                    <TouchableOpacity style={styles.secondaryBtn} onPress={() => void dismissForNow()}>
+                      <Text style={styles.secondaryBtnText}>Để sau (nhắc nhẹ sau)</Text>
                     </TouchableOpacity>
                   )}
                 </>
@@ -193,7 +299,7 @@ export default function UpdateGate() {
       )}
 
       {!!info && downloading && !visible && (
-        <View style={styles.floating}>
+        <View style={[styles.floating, { bottom: insets.bottom + 24 }]}>
           <Text style={styles.floatingText}>Đang tải bản {info.latestVersion}… {pct}%</Text>
           <View style={styles.bar}>
             <View style={[styles.barFill, { width: `${pct}%` }]} />
@@ -201,19 +307,22 @@ export default function UpdateGate() {
         </View>
       )}
 
-      {!!info && !!readyUri && !downloading && (
-        <View style={styles.floating}>
+      {!!info && !!readyUri && !downloading && !showBanner && (
+        <View style={[styles.floating, { bottom: insets.bottom + 24 }]}>
           <Text style={styles.floatingText}>
             Đã tải xong bản {readyVersion || info.latestVersion}. Bạn có thể cài ngay.
           </Text>
           <Pressable style={styles.installBtn} onPress={() => void installReadyApk()}>
             <Text style={styles.installBtnText}>Cài đặt ngay</Text>
           </Pressable>
+          <Pressable style={styles.secondaryBtn} onPress={openModalFromBanner}>
+            <Text style={styles.secondaryBtnText}>Chi tiết</Text>
+          </Pressable>
         </View>
       )}
 
       {!!toast && (
-        <View style={styles.toast}>
+        <View style={[styles.toast, { top: insets.top + (showBanner ? 72 : 8) }]}>
           <Text style={styles.toastTxt}>{toast}</Text>
         </View>
       )}
@@ -222,6 +331,35 @@ export default function UpdateGate() {
 }
 
 const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
+  banner: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    zIndex: 80,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: Colors.bgElevated,
+    borderRadius: Radii.lg,
+    borderWidth: 1,
+    borderColor: Colors.blue,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  bannerTitle: { fontSize: 13, fontWeight: '800', color: Colors.text },
+  bannerSub: { fontSize: 11, color: Colors.textMuted, marginTop: 2 },
+  bannerBtn: {
+    backgroundColor: Colors.blue,
+    borderRadius: Radii.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  bannerBtnTxt: { color: '#fff', fontWeight: '800', fontSize: 12 },
+  bannerClose: { color: Colors.textMuted, fontSize: 16, paddingHorizontal: 4 },
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.65)',
@@ -279,7 +417,6 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     position: 'absolute',
     left: 14,
     right: 14,
-    bottom: 24,
     backgroundColor: Colors.bgElevated,
     borderRadius: Radii.lg,
     borderWidth: 1,
@@ -301,14 +438,13 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     position: 'absolute',
     left: 14,
     right: 14,
-    top: 56,
     backgroundColor: Colors.greenSoft,
     borderWidth: 1,
     borderColor: 'rgba(34,197,94,0.35)',
     borderRadius: Radii.md,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    zIndex: 70,
+    zIndex: 90,
   },
   toastTxt: { color: Colors.green, fontSize: 12, fontWeight: '700' },
 });
