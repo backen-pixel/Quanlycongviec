@@ -9,6 +9,7 @@ import {
   type MediaStream,
 } from 'react-native-webrtc';
 import type { Socket } from 'socket.io-client';
+import { Platform } from 'react-native';
 import type { CallMedia, CallSession } from './types';
 import { getIceServers } from './turnConfig';
 import {
@@ -16,6 +17,7 @@ import {
 } from '../lib/incomingCallNotifications';
 import { startIncomingCallAlert, stopIncomingCallAlert } from '../lib/callRingtone';
 import { tryClaimIncomingCall, markCallAnswered, setCallSession, releaseIncomingClaim } from '../lib/callSessionGuard';
+import { dismissLockScreenCallUi } from '../lib/lockScreenCall';
 
 const GROUP_TIMEOUT_MS = 60_000;
 
@@ -79,17 +81,20 @@ export class LegacyGroupCallManager {
   onPeersChange?: (peers: GroupPeerInfo[]) => void;
   onJoinRequestsChange?: (requests: GroupJoinRequest[]) => void;
   private joinRequests: GroupJoinRequest[] = [];
+  private onLocalStream?: (stream: MediaStream | null) => void;
 
   constructor(opts: {
     sessionRef: { current: CallSession | null };
     setSession: (s: CallSession | null) => void;
     patchSession: (p: Partial<CallSession>) => void;
     localStreamRef: { current: MediaStream | null };
+    onLocalStream?: (stream: MediaStream | null) => void;
   }) {
     this.sessionRef = opts.sessionRef;
     this.setSession = opts.setSession;
     this.patchSession = opts.patchSession;
     this.localStreamRef = opts.localStreamRef;
+    this.onLocalStream = opts.onLocalStream;
   }
 
   setSocket(socket: Socket | null, uid: string) {
@@ -126,6 +131,7 @@ export class LegacyGroupCallManager {
     this.syncJoinRequests();
     try { this.localStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* noop */ }
     this.localStreamRef.current = null;
+    this.onLocalStream?.(null);
   }
 
   private async ensureLocal(media: CallMedia) {
@@ -135,6 +141,7 @@ export class LegacyGroupCallManager {
       video: media === 'video',
     });
     this.localStreamRef.current = stream;
+    this.onLocalStream?.(stream);
     return stream;
   }
 
@@ -203,6 +210,8 @@ export class LegacyGroupCallManager {
     };
     this.sessionRef.current = session;
     this.setSession(session);
+    setCallSession(callId, 'outgoing');
+    if (Platform.OS === 'android') dismissLockScreenCallUi();
     try {
       await this.ensureLocal(media);
       socket.emit('call:group_start', {
@@ -289,6 +298,7 @@ export class LegacyGroupCallManager {
     this.sessionRef.current = session;
     this.setSession(session);
     setCallSession(p.callId, 'incoming');
+    if (Platform.OS === 'android') dismissLockScreenCallUi();
     void startIncomingCallAlert();
     void showIncomingCallNotification({
       callId: p.callId,
@@ -348,6 +358,26 @@ export class LegacyGroupCallManager {
     const next = !cur.isMuted;
     this.localStreamRef.current?.getAudioTracks().forEach((t) => { t.enabled = !next; });
     this.patchSession({ isMuted: next });
+  }
+
+  toggleSpeaker() {
+    const cur = this.sessionRef.current;
+    if (!cur) return;
+    this.patchSession({ isSpeaker: !cur.isSpeaker });
+  }
+
+  toggleCamera() {
+    const cur = this.sessionRef.current;
+    if (!cur) return;
+    const next = !cur.isCameraOff;
+    this.localStreamRef.current?.getVideoTracks().forEach((t) => { t.enabled = !next; });
+    this.patchSession({ isCameraOff: next });
+  }
+
+  switchCamera() {
+    const cur = this.sessionRef.current;
+    if (!cur) return;
+    this.patchSession({ cameraFacing: cur.cameraFacing === 'front' ? 'back' : 'front' });
   }
 
   denyJoin(requesterId: string) {

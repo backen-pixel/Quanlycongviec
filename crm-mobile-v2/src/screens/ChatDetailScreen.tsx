@@ -31,7 +31,9 @@ import MessageActionSheet from '../components/messenger/MessageActionSheet';
 import TapHighlight from '../components/TapHighlight';
 import Toast, { type ToastState } from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
+import { useCall } from '../context/CallContext';
 import { useMessenger } from '../context/MessengerContext';
+import { getAppSocket, subscribeAppSocket } from '../lib/appSocket';
 import { useTheme } from '../theme';
 import {
   fetchMessengerGroupDetail,
@@ -69,6 +71,15 @@ import type { MessengerMessage, MessengerReadReceipt } from '../types/messenger'
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ChatDetail'>;
 
+type ActiveGroupCallInfo = {
+  callId: string;
+  groupId: string;
+  groupName?: string;
+  kind?: string;
+  hostId?: string;
+  hostName?: string;
+};
+
 export default function ChatDetailScreen({ navigation, route }: Props) {
   const { threadId, title, openSearch: openSearchParam } = route.params;
   const { colors, isDark } = useTheme();
@@ -85,6 +96,8 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
     setActiveGroupId,
     getPeerPresence,
   } = useMessenger();
+  const { joinGroupCall, status: callStatus } = useCall();
+  const [activeGroupCall, setActiveGroupCall] = useState<ActiveGroupCallInfo | null>(null);
 
   const thread = threads.find((t) => t.id === threadId);
   const displayName = thread?.name || title || 'Chat';
@@ -220,6 +233,42 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
     setActiveGroupId(threadId);
     return () => setActiveGroupId(null);
   }, [threadId, setActiveGroupId]);
+
+  useEffect(() => {
+    if (isDirect) return undefined;
+    const bind = (socket: NonNullable<ReturnType<typeof getAppSocket>>) => {
+      const onStarted = (info: ActiveGroupCallInfo) => {
+        if (info?.groupId && String(info.groupId) === String(threadId)) {
+          setActiveGroupCall(info);
+        }
+      };
+      const onEnded = ({ groupId, callId }: { groupId?: string; callId?: string }) => {
+        setActiveGroupCall((cur) => {
+          if (!cur) return null;
+          if (groupId && String(groupId) !== String(threadId)) return cur;
+          if (callId && cur.callId !== callId) return cur;
+          return null;
+        });
+      };
+      socket.on('call:group_room_started', onStarted);
+      socket.on('call:group_room_ended', onEnded);
+      socket.emit('call:group_room_query', { groupId: threadId });
+      return () => {
+        socket.off('call:group_room_started', onStarted);
+        socket.off('call:group_room_ended', onEnded);
+      };
+    };
+    const socket = getAppSocket();
+    let unbind = socket ? bind(socket) : undefined;
+    const unsub = subscribeAppSocket((s) => {
+      unbind?.();
+      unbind = bind(s);
+    });
+    return () => {
+      unbind?.();
+      unsub();
+    };
+  }, [threadId, isDirect]);
 
   useEffect(() => {
     if (!openSearchParam) return;
@@ -602,6 +651,28 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
           fontSize: 11,
           paddingVertical: 6,
         },
+        groupCallBanner: {
+          marginHorizontal: Spacing.md,
+          marginBottom: 8,
+          paddingHorizontal: 14,
+          paddingVertical: 12,
+          borderRadius: 12,
+          backgroundColor: mc.accentSoft,
+          borderWidth: 1,
+          borderColor: mc.accent,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+        },
+        groupCallTitle: { flex: 1, color: colors.text, fontSize: 13, fontWeight: '700' },
+        groupCallSub: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
+        groupCallBtn: {
+          paddingHorizontal: 14,
+          paddingVertical: 8,
+          borderRadius: 999,
+          backgroundColor: mc.accent,
+        },
+        groupCallBtnTxt: { color: '#fff', fontSize: 12, fontWeight: '700' },
       }),
     [colors, mc],
   );
@@ -622,6 +693,22 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
         onBack={() => navigation.goBack()}
         onOpenDetails={openDetails}
       />
+
+      {!isDirect && activeGroupCall && callStatus === 'idle' && (
+        <View style={styles.groupCallBanner}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.groupCallTitle}>
+              Cuộc gọi {activeGroupCall.kind === 'video' ? 'video' : 'thoại'} đang diễn ra
+            </Text>
+            <Text style={styles.groupCallSub} numberOfLines={1}>
+              {activeGroupCall.hostName ? `${activeGroupCall.hostName} đã bắt đầu` : 'Có cuộc gọi trong nhóm'}
+            </Text>
+          </View>
+          <Pressable style={styles.groupCallBtn} onPress={() => joinGroupCall(activeGroupCall)}>
+            <Text style={styles.groupCallBtnTxt}>Tham gia</Text>
+          </Pressable>
+        </View>
+      )}
 
       <KeyboardAvoidingView
         style={styles.body}
