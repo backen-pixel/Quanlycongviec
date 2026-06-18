@@ -3,7 +3,8 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import {
   MessageCircle, Settings, Send, Search, RefreshCw, Plus, Save, Trash2,
-  ExternalLink, Copy, Check, Users, Bell, Zap, UserCircle,
+  ExternalLink, Copy, Check, Users, Bell, Zap, UserCircle, BadgeCheck,
+  Filter, CheckCheck, ChevronRight,
 } from 'lucide-react';
 import ZaloAutoToolPanel from '../components/ZaloAutoToolPanel';
 import ZaloContactsTab from '../components/ZaloContactsTab';
@@ -32,6 +33,19 @@ function formatTime(iso) {
   const time = d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
   if (isToday) return time;
   return `${d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })} ${time}`;
+}
+
+function formatListTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const now = new Date();
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (d.toDateString() === now.toDateString()) {
+    return d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  }
+  if (d.toDateString() === yesterday.toDateString()) return 'Hôm qua';
+  return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
 }
 
 function looksLikePlaceholderName(name, userId) {
@@ -280,11 +294,12 @@ export default function ZaloPage() {
   }, []);
 
   useEffect(() => {
-    if (tab === 'inbox') {
-      loadStats();
-      loadContacts();
-    }
-  }, [tab, loadStats, loadContacts]);
+    loadStats();
+  }, [loadStats]);
+
+  useEffect(() => {
+    if (tab === 'inbox') loadContacts();
+  }, [tab, loadContacts]);
 
   useEffect(() => {
     if (tab === 'settings' || tab === 'contacts') loadAccounts();
@@ -505,42 +520,74 @@ export default function ZaloPage() {
   };
 
   return (
-    <div className="p-4 md:p-6 max-w-[1400px] mx-auto">
-      <div className="flex flex-wrap items-center gap-3 mb-4">
-        <h1 className="text-xl font-bold flex items-center gap-2">
-          <span className="text-2xl">💬</span> Zalo OA
-        </h1>
-        {stats && (
-          <div className="flex gap-3 text-sm text-slate-600 ml-auto">
-            <span className="flex items-center gap-1"><Users size={14} /> {stats.contacts} liên hệ</span>
-            <span className="flex items-center gap-1"><Bell size={14} /> {stats.unread} chưa đọc</span>
-            <span>{stats.messages_today} tin hôm nay</span>
+    <div className="flex flex-col h-[calc(100vh-64px)] min-h-0 max-h-[calc(100vh-64px)] overflow-hidden bg-white">
+      {/* Header */}
+      <div className="shrink-0 border-b border-gray-200 bg-white px-4 sm:px-6 py-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-sky-50 border border-sky-100 flex items-center justify-center shrink-0 text-lg">
+              💬
+            </div>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <h1 className="text-base font-bold text-gray-900">Zalo OA</h1>
+              <BadgeCheck className="h-4 w-4 text-sky-500 shrink-0" aria-label="Official Account" />
+            </div>
           </div>
-        )}
+          {stats && (
+            <div className="flex flex-wrap items-center gap-1.5 ml-auto">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-50 border border-gray-200 text-[10px] font-semibold text-gray-700 tabular-nums">
+                <Users className="h-3 w-3 text-gray-500" />
+                {stats.contacts} liên hệ
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-sky-50 border border-sky-200 text-[10px] font-semibold text-sky-800 tabular-nums">
+                <Bell className="h-3 w-3 text-sky-600" />
+                {stats.unread} chưa đọc
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[10px] font-semibold text-emerald-800 tabular-nums">
+                {stats.messages_today} tin hôm nay
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-0 mt-3 -mb-px overflow-x-auto">
+          {[
+            { id: 'inbox', label: 'Hộp thư', icon: MessageCircle, badge: stats?.unread },
+            { id: 'contacts', label: 'Danh bạ', icon: Users },
+            { id: 'tools', label: 'Công cụ Lead', icon: Zap },
+            { id: 'settings', label: 'Cài đặt', icon: Settings },
+          ].map(({ id, label, icon: Icon, badge }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => switchTab(id)}
+              className={`shrink-0 flex items-center gap-1.5 px-4 py-2.5 text-[13px] font-semibold border-b-2 transition-colors ${
+                tab === id
+                  ? 'border-sky-600 text-sky-700 bg-sky-50/40'
+                  : 'border-transparent text-gray-500 hover:text-gray-800 hover:bg-gray-50/80'
+              }`}
+            >
+              <Icon size={15} strokeWidth={2} />
+              {label}
+              {badge > 0 ? (
+                <span className="bg-red-500 text-white text-[9px] rounded-full min-w-[16px] h-4 flex items-center justify-center px-1 font-bold">
+                  {badge > 99 ? '99+' : badge}
+                </span>
+              ) : null}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <div className="flex gap-2 mb-4 border-b border-slate-200">
-        {[
-          { id: 'inbox', label: 'Hộp thư', icon: MessageCircle },
-          { id: 'contacts', label: 'Danh bạ', icon: Users },
-          { id: 'tools', label: 'Công cụ Lead', icon: Zap },
-          { id: 'settings', label: 'Cài đặt', icon: Settings },
-        ].map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => switchTab(id)}
-            className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
-              tab === id ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <Icon size={16} /> {label}
-          </button>
-        ))}
-      </div>
+      <div
+        className={`flex-1 min-h-0 flex flex-col p-4 sm:p-5 bg-gray-50/40 ${
+          tab === 'inbox' || tab === 'contacts' ? 'overflow-hidden' : 'overflow-y-auto'
+        }`}
+      >
 
       {(tab === 'inbox' || tab === 'tools') && (
-        <div className="mb-4">
+        <div className={`shrink-0 ${tab === 'inbox' ? 'mb-3' : 'mb-4'}`}>
           <ZaloAutoToolPanel
             batchProgress={batchProgress}
             onComplete={() => { loadStats(); loadContacts(); }}
@@ -549,141 +596,205 @@ export default function ZaloPage() {
       )}
 
       {tab === 'tools' && (
-        <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-blue-900 space-y-2 mb-4">
-          <p className="font-medium">Luồng giống Facebook (rút gọn)</p>
-          <ol className="list-decimal list-inside text-xs space-y-1 text-blue-800">
-            <li><strong>Lấy tên KH</strong> — gọi Zalo OA API lấy display_name / avatar (webhook hoặc nút Tên KH)</li>
-            <li><strong>Quét SĐT</strong> — đọc tin inbound đã lưu, trích SĐT/địa chỉ → cập nhật KH & lead</li>
-            <li><strong>Tạo Lead</strong> — contact chưa có lead (ưu tiên có SĐT)</li>
-            <li><strong>Kanban</strong> — sau khi cấu hình OA, bấm «Áp dụng routing OA» nếu lead cũ chưa vào cột pipeline</li>
-            <li><strong>Auto</strong> — lặp quét + tạo lead theo batch (bật công tắc Auto)</li>
+        <div className="bg-sky-50/80 border border-sky-100 rounded-xl p-4 text-sm text-sky-950 space-y-2 mb-4">
+          <p className="font-bold text-gray-900">Luồng xử lý Lead từ Zalo OA</p>
+          <ol className="list-decimal list-inside text-xs space-y-1.5 text-gray-700">
+            <li><strong className="text-gray-900">Lấy tên KH</strong> — display_name / avatar từ Zalo OA API</li>
+            <li><strong className="text-gray-900">Quét SĐT</strong> — trích SĐT/địa chỉ từ tin inbound</li>
+            <li><strong className="text-gray-900">Tạo Lead</strong> — contact chưa có lead (ưu tiên có SĐT)</li>
+            <li><strong className="text-gray-900">Kanban</strong> — «Áp dụng routing OA» cho lead cũ</li>
+            <li><strong className="text-gray-900">Auto</strong> — lặp quét + tạo lead theo batch</li>
           </ol>
-          <div className="flex flex-wrap gap-2 mt-2">
+          <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-sky-100">
           <button
             type="button"
             onClick={refreshAllProfiles}
             disabled={refreshingNames}
-            className="px-3 py-1.5 text-xs font-medium bg-white border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-50 flex items-center gap-1"
+            className="px-3 py-1.5 text-xs font-semibold bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 flex items-center gap-1.5 text-gray-700"
           >
-            <UserCircle size={14} /> {refreshingNames ? 'Đang lấy tên...' : 'Cập nhật tên tất cả liên hệ'}
+            <UserCircle size={14} /> {refreshingNames ? 'Đang lấy tên…' : 'Cập nhật tên tất cả liên hệ'}
           </button>
           <button
             type="button"
             onClick={applyOaRoutingBatch}
             disabled={applyingRouting}
-            className="px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-1"
+            className="px-3 py-1.5 text-xs font-bold bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-1.5 shadow-sm"
           >
             <RefreshCw size={14} className={applyingRouting ? 'animate-spin' : ''} />
-            {applyingRouting ? 'Đang cập nhật...' : 'Áp dụng routing OA → Kanban'}
+            {applyingRouting ? 'Đang cập nhật…' : 'Áp dụng routing OA → Kanban'}
           </button>
           </div>
         </div>
       )}
 
       {tab === 'inbox' && (
-        <div className="grid grid-cols-1 md:grid-cols-[320px_1fr] gap-4 min-h-[520px] border border-slate-200 rounded-xl overflow-hidden bg-white shadow-sm">
-          <div className="border-r border-slate-200 flex flex-col">
-            <div className="p-3 border-b flex gap-2">
+        <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,340px)_1fr] gap-0 flex-1 min-h-0 h-0 border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm">
+          {/* Sidebar liên hệ */}
+          <div className="border-b lg:border-b-0 lg:border-r border-gray-200 flex flex-col bg-white min-h-0 h-full max-h-[min(420px,45vh)] lg:max-h-none overflow-hidden">
+            <div className="p-3 border-b border-gray-100 flex gap-2 shrink-0">
               <div className="relative flex-1">
-                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                 <input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && loadContacts()}
-                  placeholder="Tìm tên, SĐT..."
-                  className="w-full pl-8 pr-2 py-1.5 text-sm border rounded-lg"
+                  placeholder="Tìm tên, SĐT…"
+                  className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-full bg-gray-50/80 focus:bg-white focus:ring-2 focus:ring-sky-200 focus:border-sky-300 outline-none transition"
                 />
               </div>
-              <button type="button" onClick={loadContacts} className="p-2 border rounded-lg hover:bg-slate-50" title="Làm mới">
-                <RefreshCw size={16} className={loadingContacts ? 'animate-spin' : ''} />
+              <button
+                type="button"
+                onClick={loadContacts}
+                className="h-9 w-9 shrink-0 border border-gray-200 rounded-full hover:bg-gray-50 flex items-center justify-center text-gray-500"
+                title="Làm mới"
+              >
+                <RefreshCw size={15} className={loadingContacts ? 'animate-spin' : ''} />
+              </button>
+              <button
+                type="button"
+                className="h-9 w-9 shrink-0 border border-gray-200 rounded-full hover:bg-gray-50 flex items-center justify-center text-gray-500"
+                title="Bộ lọc"
+              >
+                <Filter size={15} />
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain [scrollbar-width:thin]">
               {loadingContacts && !contacts.length ? (
-                <p className="p-4 text-sm text-slate-500">Đang tải...</p>
+                <p className="p-6 text-sm text-gray-500 text-center">Đang tải…</p>
               ) : !contacts.length ? (
-                <p className="p-4 text-sm text-slate-500">Chưa có tin nhắn. Cấu hình webhook trong tab Cài đặt.</p>
+                <p className="p-6 text-sm text-gray-500 text-center leading-relaxed">
+                  Chưa có tin nhắn.
+                  <br />
+                  <span className="text-xs text-gray-400">Cấu hình webhook trong tab Cài đặt.</span>
+                </p>
               ) : (
-                contacts.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => setSelectedId(c.id)}
-                    className={`w-full text-left p-3 flex gap-3 border-b border-slate-100 hover:bg-slate-50 ${
-                      selectedId === c.id ? 'bg-blue-50' : ''
-                    }`}
-                  >
-                    <Avatar name={c.display_name} url={c.avatar_url} />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex justify-between gap-2">
-                        <span className="font-medium text-sm truncate">{c.display_name || c.user_id}</span>
-                        <span className="text-xs text-slate-400 shrink-0">{formatTime(c.last_message_at)}</span>
+                contacts.map((c) => {
+                  const isActive = selectedId === c.id;
+                  const hasUnread = (c.unread_count || 0) > 0;
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setSelectedId(c.id)}
+                      className={`w-full text-left px-3 py-2.5 flex gap-3 border-b border-gray-100 transition-colors relative ${
+                        isActive ? 'bg-sky-50/90 border-l-[3px] border-l-sky-500 pl-[9px]' : 'hover:bg-gray-50/90 border-l-[3px] border-l-transparent'
+                      }`}
+                    >
+                      <div className="relative shrink-0">
+                        <Avatar name={c.display_name} url={c.avatar_url} />
+                        {hasUnread ? (
+                          <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-sky-500 ring-2 ring-white" />
+                        ) : null}
                       </div>
-                      <p className="text-xs text-slate-500 truncate">{c.last_message_preview || '—'}</p>
-                      {c.lead?.code && (
-                        <Link to={`/crm/leads/${c.lead.id}`} className="text-xs text-blue-600 hover:underline" onClick={(e) => e.stopPropagation()}>
-                          {c.lead.code}
-                        </Link>
-                      )}
-                    </div>
-                    {(c.unread_count || 0) > 0 && (
-                      <span className="bg-red-500 text-white text-xs rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">
-                        {c.unread_count}
-                      </span>
-                    )}
-                  </button>
-                ))
+                      <div className="min-w-0 flex-1">
+                        <div className="flex justify-between gap-2 items-start">
+                          <span className={`text-sm truncate ${hasUnread ? 'font-bold text-gray-900' : 'font-semibold text-gray-800'}`}>
+                            {c.display_name || c.user_id}
+                          </span>
+                          <span className={`text-[10px] shrink-0 tabular-nums ${hasUnread ? 'text-sky-700 font-semibold' : 'text-gray-400'}`}>
+                            {formatListTime(c.last_message_at)}
+                          </span>
+                        </div>
+                        <p className={`text-xs truncate mt-0.5 ${hasUnread ? 'text-gray-700 font-medium' : 'text-gray-500'}`}>
+                          {c.last_message_preview || '—'}
+                        </p>
+                        {c.lead?.code ? (
+                          <Link
+                            to={`/crm/leads/${c.lead.id}`}
+                            className="inline-flex mt-1.5 px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-sky-100 text-sky-800 border border-sky-200 hover:bg-sky-200/80 transition-colors"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {c.lead.code}
+                          </Link>
+                        ) : (
+                          <span className="inline-flex mt-1.5 px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-gray-100 text-gray-500 border border-gray-200">
+                            Chưa có Lead
+                          </span>
+                        )}
+                      </div>
+                      {hasUnread ? (
+                        <span className="self-center shrink-0 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-sky-600 text-white text-[10px] font-bold px-1">
+                          {c.unread_count > 9 ? '9+' : c.unread_count}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })
               )}
             </div>
           </div>
 
-          <div className="flex flex-col min-h-[480px]">
+          {/* Khung chat */}
+          <div className="flex flex-col min-h-0 h-full max-h-[min(520px,55vh)] lg:max-h-none overflow-hidden bg-white">
             {!selectedId ? (
-              <div className="flex-1 flex items-center justify-center text-slate-400 text-sm">Chọn cuộc hội thoại</div>
+              <div className="flex-1 flex flex-col items-center justify-center text-gray-400 gap-2 p-8">
+                <MessageCircle className="h-10 w-10 text-gray-300" strokeWidth={1.5} />
+                <p className="text-sm font-medium">Chọn cuộc hội thoại để bắt đầu</p>
+              </div>
             ) : (
               <>
-                <div className="p-3 border-b flex items-center gap-3">
+                <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-3 bg-white shrink-0">
                   <Avatar name={activeContact?.display_name} url={activeContact?.avatar_url} />
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium truncate">{activeContact?.display_name || activeContact?.user_id || 'Khách Zalo'}</div>
-                    {activeContact?.phone && (
-                      <div className="text-xs text-green-600">📞 {activeContact.phone}</div>
+                    <div className="font-bold text-gray-900 truncate text-[15px]">
+                      {activeContact?.display_name || activeContact?.user_id || 'Khách Zalo'}
+                    </div>
+                    {activeContact?.phone ? (
+                      <div className="text-xs font-semibold text-sky-600 mt-0.5 tabular-nums">
+                        📞 {activeContact.phone}
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-amber-700 font-medium mt-0.5">Chưa có SĐT</div>
                     )}
-                    {activeContact?.lead_id && (
-                      <Link to={`/crm/leads/${activeContact.lead_id}`} className="text-xs text-blue-600 hover:underline">
-                        Xem lead CRM →
+                    {activeContact?.lead_id ? (
+                      <Link
+                        to={`/crm/leads/${activeContact.lead_id}`}
+                        className="inline-flex items-center gap-0.5 text-xs font-semibold text-sky-600 hover:text-sky-800 hover:underline mt-1"
+                      >
+                        Xem lead CRM
+                        <ChevronRight className="h-3.5 w-3.5" />
                       </Link>
-                    )}
+                    ) : null}
                   </div>
                   <button
                     type="button"
                     onClick={syncContactProfile}
                     disabled={syncingProfile}
-                    className="text-xs border rounded-lg px-2 py-1.5 hover:bg-slate-50 flex items-center gap-1 shrink-0 disabled:opacity-50"
+                    className="text-[11px] font-semibold border border-gray-200 rounded-lg px-2.5 py-1.5 hover:bg-gray-50 flex items-center gap-1 shrink-0 disabled:opacity-50 text-gray-700"
                     title="Lấy tên & avatar từ Zalo OA API"
                   >
-                    <UserCircle size={14} className={syncingProfile ? 'animate-pulse' : ''} /> Tên KH
+                    <UserCircle size={14} className={syncingProfile ? 'animate-pulse text-sky-600' : 'text-gray-500'} />
+                    Tên KH
                   </button>
                 </div>
-                <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50">
+
+                <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-4 space-y-3 bg-[#f4f6f8] [scrollbar-width:thin]">
                   {loadingMessages ? (
-                    <p className="text-sm text-slate-500">Đang tải tin nhắn...</p>
+                    <p className="text-sm text-gray-500 text-center py-8">Đang tải tin nhắn…</p>
+                  ) : messages.length === 0 ? (
+                    <p className="text-sm text-gray-400 text-center py-8">Chưa có tin nhắn trong hội thoại này.</p>
                   ) : (
                     messages.map((m) => (
                       <div key={m.id} className={`flex ${m.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
                         <div
-                          className={`max-w-[75%] rounded-2xl px-3 py-2 text-sm ${
+                          className={`max-w-[min(420px,78%)] rounded-2xl px-3.5 py-2 text-sm shadow-sm ${
                             m.direction === 'outbound'
-                              ? 'bg-blue-600 text-white rounded-br-md'
-                              : 'bg-white border border-slate-200 rounded-bl-md'
+                              ? 'bg-sky-600 text-white rounded-br-md'
+                              : 'bg-white border border-gray-200 text-gray-900 rounded-bl-md'
                           }`}
                         >
                           {m.attachment_url && m.message_type === 'image' ? (
-                            <img src={m.attachment_url} alt="" className="max-w-full rounded-lg mb-1" />
+                            <img src={m.attachment_url} alt="" className="max-w-full rounded-lg mb-1.5" />
                           ) : null}
-                          <div>{m.content}</div>
-                          <div className={`text-[10px] mt-1 ${m.direction === 'outbound' ? 'text-blue-100' : 'text-slate-400'}`}>
-                            {formatTime(m.created_at)}
+                          <div className="whitespace-pre-wrap break-words leading-relaxed">{m.content}</div>
+                          <div className={`flex items-center justify-end gap-1 text-[10px] mt-1 ${
+                            m.direction === 'outbound' ? 'text-sky-100' : 'text-gray-400'
+                          }`}>
+                            <span>{formatTime(m.created_at)}</span>
+                            {m.direction === 'outbound' ? (
+                              <CheckCheck size={12} className="text-sky-200 shrink-0" />
+                            ) : null}
                           </div>
                         </div>
                       </div>
@@ -691,31 +802,41 @@ export default function ZaloPage() {
                   )}
                   <div ref={messagesEndRef} />
                 </div>
-                <div className="p-3 border-t flex gap-2">
-                  <input
-                    value={reply}
-                    onChange={(e) => setReply(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendReply()}
-                    placeholder="Nhập tin trả lời (tin tư vấn — trong 7 ngày)..."
-                    className="flex-1 border rounded-lg px-3 py-2 text-sm"
-                  />
-                  <button
-                    type="button"
-                    onClick={sendReply}
-                    disabled={sending || !reply.trim()}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm flex items-center gap-1 disabled:opacity-50"
-                  >
-                    <Send size={16} /> Gửi
-                  </button>
+
+                <div className="p-3 border-t border-gray-100 bg-white shrink-0">
+                  <div className="flex gap-2 items-end">
+                    <input
+                      value={reply}
+                      onChange={(e) => setReply(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendReply()}
+                      placeholder="Nhập tin trả lời…"
+                      className="flex-1 border border-gray-200 rounded-full px-4 py-2.5 text-sm bg-gray-50/50 focus:bg-white focus:ring-2 focus:ring-sky-200 focus:border-sky-300 outline-none transition"
+                    />
+                    <button
+                      type="button"
+                      onClick={sendReply}
+                      disabled={sending || !reply.trim()}
+                      className="h-10 w-10 shrink-0 bg-sky-600 text-white rounded-full flex items-center justify-center hover:bg-sky-700 disabled:opacity-40 disabled:hover:bg-sky-600 transition-colors shadow-sm"
+                      title="Gửi"
+                    >
+                      <Send size={16} />
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-gray-400 mt-1.5 px-1">
+                    Tin tư vấn Zalo OA — khách phải nhắn trước trong vòng 7 ngày.
+                  </p>
                 </div>
               </>
             )}
           </div>
         </div>
+        </div>
       )}
 
       {tab === 'contacts' && (
-        <ZaloContactsTab accounts={accounts} onOpenInbox={openInboxContact} />
+        <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+          <ZaloContactsTab accounts={accounts} onOpenInbox={openInboxContact} />
+        </div>
       )}
 
       {tab === 'settings' && (
@@ -976,6 +1097,7 @@ export default function ZaloPage() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
