@@ -2237,6 +2237,7 @@ r.get('/dashboard', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }
       !selfAssigneeOnly && canUseAssigneeQuery && queryAssigneeUuid ? queryAssigneeUuid : null;
     const assigned_to_only = selfAssigneeOnly || assigneeFromQuery || null;
     const light = req.query.light === '1' || req.query.light === 'true';
+    const minimal = req.query.minimal === '1' || req.query.minimal === 'true';
     const phone_filter = req.query.phone_filter;
     const canUseLight =
       light &&
@@ -2297,10 +2298,12 @@ r.get('/dashboard', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }
       ? parseLeadIdsCsvQuery(req.query.lead_ids, 500)
       : (leads || []).map((l) => l.id).filter(Boolean);
     let overdue_tasks = 0;
-    try {
-      overdue_tasks = await countOpenOverdueCrmTasksForLeadIds(leadIdsScope);
-    } catch (e) {
-      console.warn('[crm/dashboard] overdue_tasks count:', e.message);
+    if (!minimal) {
+      try {
+        overdue_tasks = await countOpenOverdueCrmTasksForLeadIds(leadIdsScope);
+      } catch (e) {
+        console.warn('[crm/dashboard] overdue_tasks count:', e.message);
+      }
     }
 
     const rawLedgerPs = req.query.ledger_period_start && String(req.query.ledger_period_start).trim();
@@ -2308,14 +2311,16 @@ r.get('/dashboard', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }
       ? rawLedgerPs.slice(0, 10)
       : defaultKpiLedgerMonthStartYmd();
     let ledgerNetByLead = {};
-    try {
-      if (leadIdsScope.length) {
-        ledgerNetByLead = await sumCrmKpiLedgerNetByLeadIds(leadIdsScope, ledgerPeriodStart, 'monthly', {
-          userId: assigned_to_only || null,
-        });
+    if (!minimal) {
+      try {
+        if (leadIdsScope.length) {
+          ledgerNetByLead = await sumCrmKpiLedgerNetByLeadIds(leadIdsScope, ledgerPeriodStart, 'monthly', {
+            userId: assigned_to_only || null,
+          });
+        }
+      } catch (e) {
+        console.warn('[crm/dashboard] kpi ledger sums:', e.message);
       }
-    } catch (e) {
-      console.warn('[crm/dashboard] kpi ledger sums:', e.message);
     }
     const kpiLedgerMonthNetSum = Math.round(
       Object.values(ledgerNetByLead).reduce((a, b) => a + Number(b || 0), 0) * 100,
@@ -2336,27 +2341,30 @@ r.get('/dashboard', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }
 
     let kpis = {};
     if (type === 'lead') {
-      // Lead KPIs — tỷ lệ chuyển đổi: admin xem toàn DB; NV chỉ lead/deal của mình
-      const uid = req.user?.userId;
-      let allLeadsQ = supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'lead');
-      let dealsConvertedQ = supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal');
-      if (effectiveCompanyId) {
-        allLeadsQ = allLeadsQ.eq('company_id', effectiveCompanyId);
-        dealsConvertedQ = dealsConvertedQ.eq('company_id', effectiveCompanyId);
+      let conversionRate = 0;
+      let nDeals = 0;
+      if (!minimal) {
+        const uid = req.user?.userId;
+        let allLeadsQ = supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'lead');
+        let dealsConvertedQ = supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal');
+        if (effectiveCompanyId) {
+          allLeadsQ = allLeadsQ.eq('company_id', effectiveCompanyId);
+          dealsConvertedQ = dealsConvertedQ.eq('company_id', effectiveCompanyId);
+        }
+        allLeadsQ = applyCrmLeadRegionFilterToQuery(allLeadsQ, req);
+        dealsConvertedQ = applyCrmLeadRegionFilterToQuery(dealsConvertedQ, req);
+        if (uid && !userSeesAllCrmLeadsForScope(req.user)) {
+          allLeadsQ = allLeadsQ.or(`assigned_to.eq.${uid},lead_owner_id.eq.${uid}`);
+        }
+        if (uid && !userSeesAllCrmDealsForScope(req.user)) {
+          dealsConvertedQ = dealsConvertedQ.eq('assigned_to', uid);
+        }
+        const { count: allLeadsCount } = await allLeadsQ;
+        const { count: dealsConvertedCount } = await dealsConvertedQ;
+        const nLeads = allLeadsCount ?? 0;
+        nDeals = dealsConvertedCount ?? 0;
+        conversionRate = nLeads > 0 ? Math.round((nDeals / nLeads) * 100) : 0;
       }
-      allLeadsQ = applyCrmLeadRegionFilterToQuery(allLeadsQ, req);
-      dealsConvertedQ = applyCrmLeadRegionFilterToQuery(dealsConvertedQ, req);
-      if (uid && !userSeesAllCrmLeadsForScope(req.user)) {
-        allLeadsQ = allLeadsQ.or(`assigned_to.eq.${uid},lead_owner_id.eq.${uid}`);
-      }
-      if (uid && !userSeesAllCrmDealsForScope(req.user)) {
-        dealsConvertedQ = dealsConvertedQ.eq('assigned_to', uid);
-      }
-      const { count: allLeadsCount } = await allLeadsQ;
-      const { count: dealsConvertedCount } = await dealsConvertedQ;
-      const nLeads = allLeadsCount ?? 0;
-      const nDeals = dealsConvertedCount ?? 0;
-      const conversionRate = nLeads > 0 ? Math.round((nDeals / nLeads) * 100) : 0;
       kpis = {
         total_leads: totalItems,
         converted_to_deals: nDeals,
@@ -2366,6 +2374,7 @@ r.get('/dashboard', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }
         overdue_tasks,
         kpi_ledger_month_net_sum: kpiLedgerMonthNetSum,
         kpi_ledger_period_start: ledgerPeriodStart,
+        ...(minimal ? { deferred: true } : {}),
       };
     } else {
       // Deal KPIs
@@ -2378,12 +2387,13 @@ r.get('/dashboard', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }
         overdue_tasks,
         kpi_ledger_month_net_sum: kpiLedgerMonthNetSum,
         kpi_ledger_period_start: ledgerPeriodStart,
+        ...(minimal ? { deferred: true } : {}),
       };
     }
 
     // Recent quotations (only for deal dashboard)
     let recentQuotes = [];
-    if (type === 'deal') {
+    if (type === 'deal' && !minimal) {
       let qQ = supabase
         .from('quotations')
         .select('id, code, title, total, status, created_at, customer_name')
@@ -2397,7 +2407,7 @@ r.get('/dashboard', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }
 
     // Recent orders (only for deal dashboard)
     let recentOrders = [];
-    if (type === 'deal') {
+    if (type === 'deal' && !minimal) {
       let qO = supabase
         .from('orders')
         .select('id, code, title, total, status, payment_status, created_at, customer_name')
@@ -2415,6 +2425,7 @@ r.get('/dashboard', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }
       recent_quotations: recentQuotes,
       recent_orders: recentOrders,
       light: canUseLight,
+      minimal: !!minimal,
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -4504,6 +4515,13 @@ function resolveCrmLeadsKanbanLite(reqQuery, opts = {}) {
   return false;
 }
 
+function resolveCrmLeadsSkipDeadline(reqQuery, opts = {}) {
+  if (opts.skipDeadline === true) return true;
+  if (opts.skipDeadline === false) return false;
+  return reqQuery?.skip_deadline === '1' || reqQuery?.skip_deadline === 'true'
+    || reqQuery?.defer_deadline === '1' || reqQuery?.defer_deadline === 'true';
+}
+
 /** Parse danh sách UUID từ query `lead_ids` (CSV) — tối đa maxIds. */
 function parseLeadIdsCsvQuery(raw, maxIds = 500) {
   if (raw == null || raw === '') return [];
@@ -4827,19 +4845,28 @@ async function attachCrmNextOpenTaskDeadline(rows) {
   const byLeadNewest = new Map();
   // Giảm từ 400 xuống 200: response Supabase nhỏ hơn → tránh undici reset TLS giữa chừng trên local Windows.
   const chunkSize = 200;
+  const idChunks = [];
   for (let i = 0; i < list.length; i += chunkSize) {
     const chunk = list.slice(i, i + chunkSize).map((r) => String(r.id)).filter(Boolean);
-    if (chunk.length === 0) continue;
-    const { data, error } = await supabase
-      .from('crm_tasks')
-      .select('id, lead_id, deadline, created_at, updated_at')
-      .in('lead_id', chunk)
-      .in('status', ['pending', 'in_progress']);
-    if (error) {
-      console.warn('[crm] attachCrmNextOpenTaskDeadline:', error.message);
-      continue;
-    }
-    for (const t of data || []) {
+    if (chunk.length) idChunks.push(chunk);
+  }
+  const taskRows = (
+    await Promise.all(
+      idChunks.map(async (chunk) => {
+        const { data, error } = await supabase
+          .from('crm_tasks')
+          .select('id, lead_id, deadline, created_at, updated_at')
+          .in('lead_id', chunk)
+          .in('status', ['pending', 'in_progress']);
+        if (error) {
+          console.warn('[crm] attachCrmNextOpenTaskDeadline:', error.message);
+          return [];
+        }
+        return data || [];
+      }),
+    )
+  ).flat();
+  for (const t of taskRows) {
       const lid = String(t.lead_id);
       const updatedMs = new Date(t.updated_at || t.created_at || 0).getTime();
       const createdMs = new Date(t.created_at || 0).getTime();
@@ -4858,7 +4885,6 @@ async function attachCrmNextOpenTaskDeadline(rows) {
         if (!Number.isNaN(d)) deadlineTs = d;
       }
       byLeadNewest.set(lid, { updatedMs, createdMs, idNum: safeId, deadlineTs });
-    }
   }
   return list.map((row) => {
     const newest = byLeadNewest.get(String(row.id));
@@ -4955,6 +4981,7 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
   const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 2000);
   const parsedOffset = Math.max(parseInt(offset) || 0, 0);
   const useLite = resolveCrmLeadsKanbanLite(reqQuery, opts);
+  const skipDeadline = resolveCrmLeadsSkipDeadline(reqQuery, opts);
   let customerIdsForCompanyFilter = null;
   if (customerCompanyTrim && customerCompanyTrim !== '__none__') {
     const { data: custRows, error: custErr } = await supabase
@@ -5115,7 +5142,8 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
   const total = result.length;
   const page = result.slice(parsedOffset, parsedOffset + parsedLimit);
   if (useLite) {
-    const withDeadline = await attachCrmNextOpenTaskDeadline(page);
+    let withDeadline = page;
+    if (!skipDeadline) withDeadline = await attachCrmNextOpenTaskDeadline(page);
     const withNewFlag = attachLeadNewFlagForList(withDeadline, viewerUserId);
     return {
       data: withNewFlag,
@@ -5354,13 +5382,13 @@ async function resolveCrmLeadsMergedQuery(req, res) {
 }
 
 async function hydrateCrmLeadsRpcPage(parsedRpc, req, parsedOffset, parsedLimit, opts = {}) {
-  const { lite = false } = opts;
+  const { lite = false, skipDeadline = false } = opts;
   const { total, ids } = parsedRpc;
   const hydrated = await fetchCrmLeadsByIdsOrdered(ids, { skipEnrich: lite, lite });
   const windowLen = Array.isArray(ids) ? ids.length : hydrated.length;
   if (lite) {
     let page = attachLeadNewFlagForList(hydrated, req.user?.userId);
-    page = await attachCrmNextOpenTaskDeadline(page);
+    if (!skipDeadline) page = await attachCrmNextOpenTaskDeadline(page);
     return {
       data: page,
       total,
@@ -5486,6 +5514,156 @@ r.get('/stage-counts', responseCache({ ttl: 90, scope: 'user', tags: ['crm:list'
     }
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
     res.json({ total, counts, fallback: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Gom trang lead/deal qua RPC + hydrate — dùng chung /crm/leads và bootstrap. */
+async function fetchCrmLeadsPageViaRpc(req, mergedQuery, type, parsedOffset, parsedLimit, opts = {}) {
+  const forcedDealSelf = type === 'deal' && req.user?.userId && !userSeesAllCrmDealsForScope(req.user);
+  const forcedLeadSelf = type === 'lead' && req.user?.userId && !userSeesAllCrmLeadsForScope(req.user);
+  const dealAssigneeStrict = type === 'deal' && (!!uuidQueryOrNull(mergedQuery.assigned_to) || forcedDealSelf);
+  const leadAssigneeStrict = type === 'lead' && (!!uuidQueryOrNull(mergedQuery.assigned_to) || forcedLeadSelf);
+  const rpcAssigneeStrict = dealAssigneeStrict || leadAssigneeStrict;
+  const rcForRpc = getCrmLeadRegionConstraint(req);
+  const rpcRegionIds = rcForRpc.mode === 'in' && rcForRpc.ids?.length ? rcForRpc.ids : null;
+  const { assigned_to, source_id, search, company_id, date_from, date_to, phone_filter, stage_id } = mergedQuery;
+  const rpcParams = {
+    p_type: type,
+    p_stage_id: uuidQueryOrNull(stage_id),
+    p_assigned_to: uuidQueryOrNull(assigned_to),
+    p_source_id: uuidQueryOrNull(source_id),
+    p_company_id: uuidQueryOrNull(company_id),
+    p_date_from: sanitizeIsoDateQueryParam(date_from),
+    p_date_to: sanitizeIsoDateQueryParam(date_to),
+    p_search: search || null,
+    p_phone_filter: phone_filter || null,
+    p_limit: parsedLimit,
+    p_offset: parsedOffset,
+    p_assigned_strict: rpcAssigneeStrict,
+    p_region_ids: rpcRegionIds,
+  };
+  let { data: rpcData, error: rpcError } = await supabase.rpc('crm_leads_page_ids', rpcParams);
+  if (rpcError && /crm_leads_page_ids|does not exist|Could not find|argument/i.test(String(rpcError.message || ''))) {
+    const { p_region_ids: _reg, ...rpcNoRegion } = rpcParams;
+    let r2 = await supabase.rpc('crm_leads_page_ids', rpcNoRegion);
+    if (r2.error && /crm_leads_page_ids|does not exist|Could not find/i.test(String(r2.error.message || ''))) {
+      const { p_assigned_strict: _s, ...rpcLegacy } = rpcNoRegion;
+      r2 = await supabase.rpc('crm_leads_page_ids', rpcLegacy);
+    }
+    if (!r2.error) {
+      rpcData = r2.data;
+      rpcError = null;
+    }
+  }
+  const parsedRpc = !rpcError ? parseCrmLeadsPageRpc(rpcData) : null;
+  if (!parsedRpc) return null;
+  const lite = resolveCrmLeadsKanbanLite(mergedQuery, opts);
+  const skipDeadline = resolveCrmLeadsSkipDeadline(mergedQuery, opts);
+  return hydrateCrmLeadsRpcPage(parsedRpc, req, parsedOffset, parsedLimit, { lite, skipDeadline });
+}
+
+function buildCrmDashboardMinimalKpis(type, totalItems, wonItemCount, totalValue, wonValue, ledgerPeriodStart) {
+  if (type === 'lead') {
+    return {
+      total_leads: totalItems,
+      converted_to_deals: 0,
+      conversion_rate: 0,
+      total_value: totalValue,
+      conversion_value: wonValue,
+      overdue_tasks: 0,
+      kpi_ledger_month_net_sum: 0,
+      kpi_ledger_period_start: ledgerPeriodStart,
+      deferred: true,
+    };
+  }
+  return {
+    total_deals: totalItems,
+    won_deals: wonItemCount,
+    won_rate: totalItems > 0 ? Math.round(wonItemCount / totalItems * 100) : 0,
+    total_value: totalValue,
+    won_value: wonValue,
+    overdue_tasks: 0,
+    kpi_ledger_month_net_sum: 0,
+    kpi_ledger_period_start: ledgerPeriodStart,
+    deferred: true,
+  };
+}
+
+/** GET /crm/leads-deadlines — hạn task CRM mở theo lead_ids (nền sau bootstrap). */
+r.get('/leads-deadlines', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
+  try {
+    const leadIds = parseLeadIdsCsvQuery(req.query.lead_ids, 500);
+    if (!leadIds.length) return res.json({ deadlines: {} });
+    const stubRows = leadIds.map((id) => ({ id }));
+    const enriched = await attachCrmNextOpenTaskDeadline(stubRows);
+    const deadlines = {};
+    for (const row of enriched) {
+      deadlines[String(row.id)] = row.crm_next_open_task_deadline ?? null;
+    }
+    res.json({ deadlines });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * GET /crm/web-dashboard-bootstrap — 1 round-trip: stages + dashboard light + kanban trang đầu.
+ * Bỏ deadline task + KPI nặng lúc mở trang; frontend enrich nền sau.
+ */
+r.get('/web-dashboard-bootstrap', responseCache({ ttl: 15, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
+  try {
+    const ctx = await resolveCrmLeadsMergedQuery(req, res);
+    if (!ctx) return;
+    const { type, mergedQuery, rpcAssigneeStrict, rpcRegionIds } = ctx;
+    if (crmListUsesLegacyFilters(mergedQuery)) {
+      return res.status(400).json({ error: 'Bộ lọc hiện tại chưa hỗ trợ web-dashboard-bootstrap. Dùng GET /crm/leads.' });
+    }
+
+    const companyId = uuidQueryOrNull(mergedQuery.company_id);
+    const parsedLimit = Math.min(Math.max(parseInt(req.query.limit) || 250, 1), 2000);
+    const skipDeadline = resolveCrmLeadsSkipDeadline(mergedQuery, { skipDeadline: true });
+    const lite = resolveCrmLeadsKanbanLite(mergedQuery, { lite: true });
+    const ledgerPeriodStart = defaultKpiLedgerMonthStartYmd();
+
+    const stagesPromise = resolveKanbanStagesForCompany(type, companyId, mergedQuery.region_id, req);
+    const kanbanPromise = fetchCrmLeadsPageViaRpc(req, mergedQuery, type, 0, parsedLimit, {
+      lite,
+      skipDeadline,
+    });
+
+    const [stages, kanbanPage] = await Promise.all([stagesPromise, kanbanPromise]);
+    if (!kanbanPage) {
+      return res.status(500).json({ error: 'Không tải được dữ liệu kanban' });
+    }
+
+    const lightStats = await computeCrmDashboardLightStats(req, type, {
+      effectiveCompanyId: companyId,
+      stages: stages || [],
+      assigned_to_only: uuidQueryOrNull(mergedQuery.assigned_to),
+      date_from: mergedQuery.date_from,
+      date_to: mergedQuery.date_to,
+      phone_filter: mergedQuery.phone_filter,
+    });
+    const totalItems = lightStats.totalItems ?? kanbanPage.total ?? 0;
+    const wonItemCount = lightStats.wonCount || 0;
+    const kpis = buildCrmDashboardMinimalKpis(type, totalItems, wonItemCount, 0, 0, ledgerPeriodStart);
+
+    res.json({
+      type,
+      stages: stages || [],
+      dashboard: {
+        pipeline: lightStats.stageStats,
+        kpis,
+        ledger_net_by_lead: {},
+        recent_quotations: [],
+        recent_orders: [],
+        light: true,
+        minimal: true,
+      },
+      kanban: kanbanPage,
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -5687,9 +5865,10 @@ r.get('/leads', responseCache({ ttl: 15, scope: 'user', tags: ['crm:list'] }), a
     const parsedRpc = !rpcError ? parseCrmLeadsPageRpc(rpcData) : null;
     const rpcOk = !!parsedRpc;
     const lite = resolveCrmLeadsKanbanLite(mergedQuery);
+    const skipDeadline = resolveCrmLeadsSkipDeadline(mergedQuery);
 
     if (rpcOk) {
-      const pageResult = await hydrateCrmLeadsRpcPage(parsedRpc, req, parsedOffset, parsedLimit, { lite });
+      const pageResult = await hydrateCrmLeadsRpcPage(parsedRpc, req, parsedOffset, parsedLimit, { lite, skipDeadline });
       return res.json(pageResult);
     }
 

@@ -355,13 +355,24 @@ const TIME_PRESETS = [
   { key: 'custom', label: 'Tùy chỉnh' },
 ];
 
-const KANBAN_LOAD_OPTIONS = ['500', '1000', '2000', 'all'];
-/** Mặc định 500 — tránh tải «all» gây lag khi mở dashboard. */
-const KANBAN_DEFAULT_LOAD_LIMIT = '500';
+const KANBAN_LOAD_OPTIONS = ['250', '500', '1000', '2000', 'all'];
+/** Mặc định 250 — cân bằng tốc độ mở trang vs đủ thẻ Kanban. */
+const KANBAN_DEFAULT_LOAD_LIMIT = '250';
 /** Trần khi chọn «Tải tất cả» — tránh vòng lặp API vô hạn. */
 const KANBAN_LOAD_ALL_MAX = 5000;
 /** Query flags — backend trả select nhẹ + bỏ enrich nặng cho Kanban. */
-const CRM_KANBAN_LEAD_QUERY = { kanban: '1', lite: '1' };
+const CRM_KANBAN_LEAD_QUERY = { kanban: '1', lite: '1', skip_deadline: '1' };
+/** Trì hoãn pipeline/tab không active và số SĐT — tránh tranh băng thông lúc mở trang. */
+const CRM_INACTIVE_PIPELINE_DEFER_MS = 6000;
+const CRM_PHONE_TOTALS_DEFER_MS = 3500;
+
+function crmDashboardUsesLegacyListFilters({ filterLeadType, filterReferrer, filterCustomerCompany }) {
+  return !!(
+    filterLeadType
+    || (filterReferrer && filterReferrer !== '__none__')
+    || filterCustomerCompany
+  );
+}
 
 /** Tải lead/deal cho Kanban — dùng chung load(), refresh và tải thêm. */
 async function fetchCrmKanbanRowsPage(apiClient, common, kanbanLoadLimit) {
@@ -443,6 +454,24 @@ function mergeCrmDashWithLedger(dash, ledgerPayload) {
         }
       : dash.kpis,
   };
+}
+
+/** Gộp hạn task CRM vào rows đã tải (nền sau bootstrap). */
+async function enrichCrmKanbanRowsWithDeadlines(apiClient, rows) {
+  const ids = [...new Set((rows || []).map((r) => String(r.id)).filter(Boolean))];
+  if (!ids.length) return rows || [];
+  const deadlineMap = {};
+  const chunk = 500;
+  for (let i = 0; i < ids.length; i += chunk) {
+    const res = await apiClient
+      .get('/crm/leads-deadlines', { params: { lead_ids: ids.slice(i, i + chunk).join(',') } })
+      .catch(() => ({ data: {} }));
+    Object.assign(deadlineMap, res.data?.deadlines || {});
+  }
+  return (rows || []).map((r) => ({
+    ...r,
+    crm_next_open_task_deadline: deadlineMap[String(r.id)] ?? r.crm_next_open_task_deadline ?? null,
+  }));
 }
 
 /** Gom lead/deal theo cột pipeline — O(n) thay vì lọc lại từng cột. */
@@ -2003,10 +2032,8 @@ export default function CRMDashboard() {
 
       let stagesLeadParams = buildStagesParams('lead');
       let stagesDealParams = buildStagesParams('deal');
-      let pipelinesPreloaded = null;
-      if (isAdmin && resolvedCompanyId) {
-        const { data: plsPre } = await api.get('/crm/pipelines').catch(() => ({ data: [] }));
-        pipelinesPreloaded = Array.isArray(plsPre) ? plsPre : [];
+      const pipelinesPreloaded = pipelines.length ? pipelines : null;
+      if (pipelinesPreloaded && isAdmin && resolvedCompanyId) {
         const byCo = pipelinesPreloaded.filter((p) => String(p.company_id || '') === String(resolvedCompanyId));
         const def = byCo.find((p) => p.is_default) || byCo[0];
         const pid = def?.id;
@@ -2034,6 +2061,7 @@ export default function CRMDashboard() {
 
       const dashListParams = {
         light: '1',
+        minimal: '1',
         ...dateParams,
         ...(filterPhone ? { phone_filter: filterPhone } : {}),
         ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}),
@@ -2043,17 +2071,187 @@ export default function CRMDashboard() {
       const activeType = pipelineType === 'deal' ? 'deal' : 'lead';
       const inactiveType = activeType === 'lead' ? 'deal' : 'lead';
       const emptyDash = { pipeline: [], kpis: {}, ledger_net_by_lead: {}, recent_quotations: [], recent_orders: [] };
+      const loadAllKanban = String(kanbanLoadLimit ?? '').trim().toLowerCase() === 'all';
+      const canUseBootstrap =
+        !crmDashboardUsesLegacyListFilters({ filterLeadType, filterReferrer, filterCustomerCompany })
+        && !loadAllKanban;
 
+      const userKey = getCurrentUserKeyForLeadSeen(user);
+      const viewedLocal = getLocallyViewedLeadIdSet(userKey);
+      const mergeLeadSeenLocal = (rows) =>
+        (rows || []).map((l) =>
+          viewedLocal.has(String(l.id)) ? { ...l, is_new_for_current_user: false } : l,
+        );
+
+      const applyLedgerForPipeline = async (type, rows, dashSnapshot) => {
+        const ledgerPayload = await fetchCrmLedgerNetByLeadIds(api, {
+          type,
+          leadIds: (rows || []).map((l) => l.id).filter(Boolean),
+          assigned_to: filterAssignee || undefined,
+        });
+        if (isStale()) return;
+        const mergedDash = mergeCrmDashWithLedger(dashSnapshot, ledgerPayload);
+        if (type === 'lead') setDataLead(mergedDash);
+        else setDataDeal(mergedDash);
+      };
+
+      const runDeferredCrmEnrichment = (type, rows, dashSnapshot) => {
+        void applyLedgerForPipeline(type, rows, dashSnapshot);
+        void (async () => {
+          const withDl = await enrichCrmKanbanRowsWithDeadlines(api, rows);
+          if (isStale()) return;
+          const merged = dedupeCrmKanbanRows(mergeLeadSeenLocal(withDl));
+          if (type === 'lead') setAllLeads(merged);
+          else setAllDeals((prev) => preserveCrmKanbanPipelineBadges(prev, merged));
+        })();
+        window.setTimeout(() => {
+          if (!isStale()) void refreshPipelinePhoneTotalsForType(type);
+        }, CRM_PHONE_TOTALS_DEFER_MS);
+        if (type === 'lead') {
+          void (async () => {
+            const { minimal: _dropMinimal, ...dashKpiParams } = dashListParams;
+            const { data } = await api
+              .get('/crm/dashboard', { params: { type: 'lead', ...dashKpiParams } })
+              .catch(() => ({ data: null }));
+            if (isStale() || !data?.kpis) return;
+            setDataLead((prev) => (prev ? { ...prev, kpis: { ...prev.kpis, ...data.kpis } } : data));
+          })();
+        }
+      };
+
+      const scheduleInactivePipelineLoad = () => {
+        const bgSeq = ++inactiveKanbanLoadSeqRef.current;
+        window.setTimeout(() => {
+          void (async () => {
+            try {
+              const inactiveStagesParams = inactiveType === 'lead' ? stagesLeadParams : stagesDealParams;
+              const [dashInactiveRes, inactiveRows, inactiveStagesRes] = await Promise.all([
+                api.get('/crm/dashboard', { params: { type: inactiveType, ...dashListParams } }).catch(() => ({ data: emptyDash })),
+                fetchKanbanRows(inactiveType),
+                api.get('/crm/pipeline-stages', { params: inactiveStagesParams }).catch(() => ({ data: [] })),
+              ]);
+              if (isStale() || bgSeq !== inactiveKanbanLoadSeqRef.current) return;
+              const inactiveStages = sortAndDedupePipelineStages(inactiveStagesRes.data || []);
+              if (inactiveType === 'lead') setStagesLead(inactiveStages);
+              else setStagesDeal(inactiveStages);
+              const inactiveResult = inactiveRows || { rows: [], nextOffset: 0, total: null };
+              const inactiveData = Array.isArray(inactiveResult) ? inactiveResult : inactiveResult.rows;
+              const inactiveMerged = dedupeCrmKanbanRows(mergeLeadSeenLocal(inactiveData));
+              if (inactiveType === 'lead') {
+                setDataLead(dashInactiveRes.data);
+                setAllLeads(inactiveMerged);
+                setLoadMoreState((s) => ({
+                  ...s,
+                  leadOffset: inactiveResult.nextOffset ?? inactiveMerged.length,
+                  leadTotal: inactiveResult.total,
+                }));
+              } else {
+                setDataDeal(dashInactiveRes.data);
+                setAllDeals((prev) => preserveCrmKanbanPipelineBadges(prev, inactiveMerged));
+                setLoadMoreState((s) => ({
+                  ...s,
+                  dealOffset: inactiveResult.nextOffset ?? inactiveMerged.length,
+                  dealTotal: inactiveResult.total,
+                }));
+              }
+              runDeferredCrmEnrichment(inactiveType, inactiveMerged, dashInactiveRes.data);
+            } catch (bgErr) {
+              console.error('[load inactive pipeline]', bgErr);
+            }
+          })();
+        }, CRM_INACTIVE_PIPELINE_DEFER_MS);
+      };
+
+      let usedBootstrap = false;
+      if (canUseBootstrap) {
+        const limit = parseInt(kanbanLoadLimit, 10) || 250;
+        const bootstrapRes = await api
+          .get('/crm/web-dashboard-bootstrap', {
+            params: { type: activeType, limit, ...dashListParams, ...CRM_KANBAN_LEAD_QUERY },
+          })
+          .catch(() => null);
+
+        if (bootstrapRes?.data && !isStale()) {
+          usedBootstrap = true;
+          const boot = bootstrapRes.data;
+          const kanbanPage = boot.kanban || {};
+          const activeMerged = dedupeCrmKanbanRows(mergeLeadSeenLocal(kanbanPage.data || []));
+          const stagesActive = sortAndDedupePipelineStages(boot.stages || []);
+
+          if (activeType === 'lead') {
+            setDataLead(boot.dashboard);
+            setStagesLead(stagesActive);
+            setAllLeads(activeMerged);
+          } else {
+            setDataDeal(boot.dashboard);
+            setStagesDeal(stagesActive);
+            setAllDeals(preserveCrmKanbanPipelineBadges(allDeals, activeMerged));
+          }
+
+          setLoadMoreState({
+            leadOffset: activeType === 'lead' ? (kanbanPage.nextOffset ?? activeMerged.length) : loadMoreState.leadOffset,
+            dealOffset: activeType === 'deal' ? (kanbanPage.nextOffset ?? activeMerged.length) : loadMoreState.dealOffset,
+            leadTotal: activeType === 'lead' ? kanbanPage.total : loadMoreState.leadTotal,
+            dealTotal: activeType === 'deal' ? kanbanPage.total : loadMoreState.dealTotal,
+            loading: false,
+          });
+          if (!isStale()) setFirstLoading(false);
+          runDeferredCrmEnrichment(activeType, activeMerged, boot.dashboard);
+          scheduleInactivePipelineLoad();
+          void (async () => {
+            try {
+              const [
+                pipelinesRes,
+                sourcesRes,
+                leadTypesRes,
+                companiesRes,
+                usersRes,
+              ] = await Promise.all([
+                pipelinesPreloaded
+                  ? Promise.resolve({ data: pipelinesPreloaded })
+                  : api.get('/crm/pipelines').catch(() => ({ data: [] })),
+                api.get('/crm/sources', { params: { ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: [] })),
+                api.get('/crm/lead-types', { params: { ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: [] })),
+                companies.length
+                  ? Promise.resolve({ data: { companies } })
+                  : api.get('/companies', { params: { for_module: 'crm' } }).catch(() => ({ data: { companies: [] } })),
+                users.length
+                  ? Promise.resolve({ data: users })
+                  : api.get('/users').catch(() => ({ data: [] })),
+              ]);
+              if (isStale()) return;
+              const pipelinesValue = narrowPipelinesToDefaultForCompany(
+                Array.isArray(pipelinesRes.data) ? pipelinesRes.data : [],
+                resolvedCompanyId || null,
+              );
+              setPipelines(pipelinesValue);
+              const sourcesValue = sourcesRes.data?.sources || (Array.isArray(sourcesRes.data) ? sourcesRes.data : []);
+              const leadTypesValue = Array.isArray(leadTypesRes.data) ? leadTypesRes.data : [];
+              setSources(sourcesValue);
+              setLeadTypes(leadTypesValue);
+              if (sourcesRes.data?.fb_pages) setFbPages(sourcesRes.data.fb_pages);
+              const companiesValue = companiesRes.data?.companies || companiesRes.data || [];
+              const usersValue = Array.isArray(usersRes.data) ? usersRes.data : usersRes.data?.users || [];
+              if (companiesValue.length) setCompanies(companiesValue);
+              if (usersValue.length) setUsers(usersValue);
+            } catch (metaErr) {
+              console.error('[load crm meta bootstrap]', metaErr);
+            }
+          })();
+        }
+      }
+
+      if (!usedBootstrap) {
       const pipelinesPromise = pipelinesPreloaded
         ? Promise.resolve({ data: pipelinesPreloaded })
         : api.get('/crm/pipelines').catch(() => ({ data: [] }));
 
+      const activeStagesParams = activeType === 'lead' ? stagesLeadParams : stagesDealParams;
       const [
         dashActiveRes,
         kanbanActiveRows,
         pipelinesRes,
-        stagesLeadRes,
-        stagesDealRes,
+        activeStagesRes,
         sourcesRes,
         leadTypesRes,
         companiesRes,
@@ -2062,8 +2260,7 @@ export default function CRMDashboard() {
         api.get('/crm/dashboard', { params: { type: activeType, ...dashListParams } }).catch(() => ({ data: emptyDash })),
         fetchKanbanRows(activeType),
         pipelinesPromise,
-        api.get('/crm/pipeline-stages', { params: stagesLeadParams }).catch(() => ({ data: [] })),
-        api.get('/crm/pipeline-stages', { params: stagesDealParams }).catch(() => ({ data: [] })),
+        api.get('/crm/pipeline-stages', { params: activeStagesParams }).catch(() => ({ data: [] })),
         api.get('/crm/sources', { params: { ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: [] })),
         api.get('/crm/lead-types', { params: { ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: [] })),
         companies.length
@@ -2083,12 +2280,6 @@ export default function CRMDashboard() {
         resolvedCompanyId || null,
       );
       setPipelines(pipelinesValue);
-      const userKey = getCurrentUserKeyForLeadSeen(user);
-      const viewedLocal = getLocallyViewedLeadIdSet(userKey);
-      const mergeLeadSeenLocal = (rows) =>
-        (rows || []).map((l) =>
-          viewedLocal.has(String(l.id)) ? { ...l, is_new_for_current_user: false } : l,
-        );
 
       const activeResult = kanbanActiveRows || { rows: [], nextOffset: 0, total: null };
       const activeData = Array.isArray(activeResult) ? activeResult : activeResult.rows;
@@ -2126,10 +2317,21 @@ export default function CRMDashboard() {
         loading: false,
       };
       setLoadMoreState(loadMoreStateValue);
-      const stagesLeadValue = sortAndDedupePipelineStages(stagesLeadRes.data || []);
-      const stagesDealValue = sortAndDedupePipelineStages(stagesDealRes.data || []);
-      setStagesLead(stagesLeadValue);
-      setStagesDeal(stagesDealValue);
+      const stagesActiveValue = sortAndDedupePipelineStages(activeStagesRes.data || []);
+      const stagesLeadValue = activeType === 'lead' ? stagesActiveValue : stagesLead;
+      const stagesDealValue = activeType === 'deal' ? stagesActiveValue : stagesDeal;
+      if (activeType === 'lead') setStagesLead(stagesActiveValue);
+      else setStagesDeal(stagesActiveValue);
+      void (async () => {
+        const inactiveParams = inactiveType === 'lead' ? stagesLeadParams : stagesDealParams;
+        const { data: inactiveStages } = await api
+          .get('/crm/pipeline-stages', { params: inactiveParams })
+          .catch(() => ({ data: [] }));
+        if (isStale()) return;
+        const sorted = sortAndDedupePipelineStages(inactiveStages || []);
+        if (inactiveType === 'lead') setStagesLead(sorted);
+        else setStagesDeal(sorted);
+      })();
       const sourcesValue = sourcesRes.data?.sources || (Array.isArray(sourcesRes.data) ? sourcesRes.data : []);
       const leadTypesValue = Array.isArray(leadTypesRes.data) ? leadTypesRes.data : [];
       setSources(sourcesValue);
@@ -2192,55 +2394,10 @@ export default function CRMDashboard() {
       } catch {
         /* meta cache lỗi không ảnh hưởng dashboard */
       }
-      void refreshPipelinePhoneTotalsForType(activeType);
-
-      const applyLedgerForPipeline = async (type, rows, dashSnapshot) => {
-        const ledgerPayload = await fetchCrmLedgerNetByLeadIds(api, {
-          type,
-          leadIds: (rows || []).map((l) => l.id).filter(Boolean),
-          assigned_to: filterAssignee || undefined,
-        });
-        if (isStale()) return;
-        const mergedDash = mergeCrmDashWithLedger(dashSnapshot, ledgerPayload);
-        if (type === 'lead') setDataLead(mergedDash);
-        else setDataDeal(mergedDash);
-      };
-      void applyLedgerForPipeline(activeType, activeMerged, dashActiveRes.data);
-
-      const bgSeq = ++inactiveKanbanLoadSeqRef.current;
-      void (async () => {
-        try {
-          const [dashInactiveRes, inactiveRows] = await Promise.all([
-            api.get('/crm/dashboard', { params: { type: inactiveType, ...dashListParams } }).catch(() => ({ data: emptyDash })),
-            fetchKanbanRows(inactiveType),
-          ]);
-          if (isStale() || bgSeq !== inactiveKanbanLoadSeqRef.current) return;
-          const inactiveResult = inactiveRows || { rows: [], nextOffset: 0, total: null };
-          const inactiveData = Array.isArray(inactiveResult) ? inactiveResult : inactiveResult.rows;
-          const inactiveMerged = dedupeCrmKanbanRows(mergeLeadSeenLocal(inactiveData));
-          if (inactiveType === 'lead') {
-            setDataLead(dashInactiveRes.data);
-            setAllLeads(inactiveMerged);
-            setLoadMoreState((s) => ({
-              ...s,
-              leadOffset: inactiveResult.nextOffset ?? inactiveMerged.length,
-              leadTotal: inactiveResult.total,
-            }));
-          } else {
-            setDataDeal(dashInactiveRes.data);
-            setAllDeals((prev) => preserveCrmKanbanPipelineBadges(prev, inactiveMerged));
-            setLoadMoreState((s) => ({
-              ...s,
-              dealOffset: inactiveResult.nextOffset ?? inactiveMerged.length,
-              dealTotal: inactiveResult.total,
-            }));
-          }
-          void applyLedgerForPipeline(inactiveType, inactiveMerged, dashInactiveRes.data);
-          void refreshPipelinePhoneTotalsForType(inactiveType);
-        } catch (bgErr) {
-          console.error('[load inactive pipeline]', bgErr);
-        }
-      })();
+      runDeferredCrmEnrichment(activeType, activeMerged, dashActiveRes.data);
+      scheduleInactivePipelineLoad();
+      if (!isStale()) setFirstLoading(false);
+      }
     } catch (e) {
       console.error(e);
       if (silent && !isStale()) setSyncing(false);
