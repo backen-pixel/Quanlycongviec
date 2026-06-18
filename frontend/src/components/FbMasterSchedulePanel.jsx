@@ -67,6 +67,118 @@ function fmtTs(ts) {
   }
 }
 
+function remainingMs(targetIso, nowMs) {
+  if (!targetIso) return null;
+  return Math.max(0, new Date(targetIso).getTime() - nowMs);
+}
+
+/** Hiển thị đếm ngược: HH:MM:SS hoặc MM:SS */
+function formatCountdown(ms) {
+  if (ms == null) return '—';
+  const totalSec = Math.ceil(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function useCountdownTick(enabled, nextTransitionAt) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [enabled, nextTransitionAt]);
+  return now;
+}
+
+function MasterScheduleCountdownCards({ cfg, now, onExpired }) {
+  const remaining = remainingMs(cfg.next_transition_at, now);
+  const runTotalMs = Math.max(1, (cfg.run_minutes || 60) * 60_000);
+  const restTotalMs = Math.max(1, (cfg.rest_minutes || 30) * 60_000);
+  const isRun = cfg.phase === 'run';
+  const isRest = cfg.phase === 'rest';
+  const activeTotal = isRun ? runTotalMs : restTotalMs;
+  const progressPct = remaining != null && activeTotal > 0
+    ? Math.min(100, Math.max(0, Math.round(((activeTotal - remaining) / activeTotal) * 100)))
+    : 0;
+
+  useEffect(() => {
+    if (!cfg.enabled || remaining == null) return;
+    if (remaining <= 0) {
+      const t = setTimeout(() => onExpired?.(), 800);
+      return () => clearTimeout(t);
+    }
+    return undefined;
+  }, [cfg.enabled, remaining, onExpired]);
+
+  const offCountdown = isRun ? remaining : null;
+  const onCountdown = isRest ? remaining : null;
+
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div
+        className={`rounded-xl border p-3 transition-colors ${
+          isRun
+            ? 'border-green-200 bg-green-50/80 shadow-sm'
+            : 'border-gray-100 bg-gray-50/50 opacity-70'
+        }`}
+      >
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-green-800/80 mb-1">
+          Đếm ngược TẮT
+        </p>
+        <p className={`font-mono text-2xl font-bold tabular-nums ${isRun ? 'text-green-700' : 'text-gray-400'}`}>
+          {formatCountdown(offCountdown)}
+        </p>
+        <p className="text-[10px] text-gray-500 mt-1">
+          {isRun
+            ? `Sau đó TẮT · tổng ${formatMinutesLabel(cfg.run_minutes)}`
+            : `Chờ lượt bật · mỗi phiên ${formatMinutesLabel(cfg.run_minutes)}`}
+        </p>
+        {isRun && (
+          <div className="mt-2 h-1.5 bg-green-100 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-green-500 transition-all duration-1000 ease-linear"
+              style={{ width: `${progressPct}%` }}
+            />
+          </div>
+        )}
+      </div>
+
+      <div
+        className={`rounded-xl border p-3 transition-colors ${
+          isRest
+            ? 'border-slate-200 bg-slate-50/80 shadow-sm'
+            : 'border-gray-100 bg-gray-50/50 opacity-70'
+        }`}
+      >
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-700/80 mb-1">
+          Đếm ngược BẬT
+        </p>
+        <p className={`font-mono text-2xl font-bold tabular-nums ${isRest ? 'text-slate-700' : 'text-gray-400'}`}>
+          {formatCountdown(onCountdown)}
+        </p>
+        <p className="text-[10px] text-gray-500 mt-1">
+          {isRest
+            ? `Sau đó BẬT · tổng ${formatMinutesLabel(cfg.rest_minutes)}`
+            : `Chờ lượt tắt · mỗi phiên ${formatMinutesLabel(cfg.rest_minutes)}`}
+        </p>
+        {isRest && (
+          <div className="mt-2 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-slate-500 transition-all duration-1000 ease-linear"
+              style={{ width: `${progressPct}%` }}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function FbMasterSchedulePanel() {
   const { user } = useAuth();
   const canManage = isSystemAdmin(user);
@@ -111,6 +223,8 @@ export default function FbMasterSchedulePanel() {
     return () => clearInterval(id);
   }, [loadCfg, canManage]);
 
+  const now = useCountdownTick(cfg.enabled, cfg.next_transition_at);
+
   const saveCfg = async (patch) => {
     if (!canManage || saving) return;
     setSaving(true);
@@ -145,10 +259,11 @@ export default function FbMasterSchedulePanel() {
   const runOptions = buildIntervalOptions(RUN_PRESETS, cfg.run_minutes);
   const restOptions = buildIntervalOptions(REST_PRESETS, cfg.rest_minutes);
   const nextLabel = cfg.next_transition_at
-    ? new Date(cfg.next_transition_at).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+    ? new Date(cfg.next_transition_at).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
     : '—';
   const phaseLabel = cfg.phase === 'run' ? 'Đang chạy' : cfg.phase === 'rest' ? 'Đang nghỉ' : '—';
   const nextPhaseLabel = cfg.next_phase === 'run' ? 'bật công tắc' : cfg.next_phase === 'rest' ? 'tắt công tắc' : '—';
+  const liveRemaining = formatCountdown(remainingMs(cfg.next_transition_at, now));
 
   return (
     <div className="bg-white border border-indigo-100 rounded-xl shadow-sm overflow-hidden">
@@ -188,7 +303,9 @@ export default function FbMasterSchedulePanel() {
 
       <div className="px-4 py-3 space-y-3">
         {cfg.enabled && (
-          <div className="flex flex-wrap items-center gap-2 text-[11px]">
+          <>
+            <MasterScheduleCountdownCards cfg={cfg} now={now} onExpired={loadCfg} />
+            <div className="flex flex-wrap items-center gap-2 text-[11px]">
             <span className={`px-2 py-0.5 rounded-full font-medium ${
               cfg.phase === 'run' ? 'bg-green-100 text-green-800' : 'bg-slate-100 text-slate-600'
             }`}>
@@ -204,8 +321,11 @@ export default function FbMasterSchedulePanel() {
             }`}>
               {cfg.timer_active ? 'Đã hẹn lượt tiếp' : 'Chưa hẹn'}
             </span>
+            <span className="font-mono font-semibold text-indigo-700 tabular-nums">
+              {liveRemaining}
+            </span>
             <span className="text-gray-500">
-              Tiếp theo ({nextPhaseLabel}): <strong className="text-gray-800">{nextLabel}</strong>
+              → {nextPhaseLabel} lúc <strong className="text-gray-800">{nextLabel}</strong>
             </span>
             <button
               type="button"
@@ -216,6 +336,7 @@ export default function FbMasterSchedulePanel() {
               Làm mới
             </button>
           </div>
+          </>
         )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
