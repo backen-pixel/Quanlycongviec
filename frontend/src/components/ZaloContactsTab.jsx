@@ -258,10 +258,12 @@ export default function ZaloContactsTab({ onOpenInbox, accounts = [] }) {
   };
 
   return (
-    <div className="space-y-4">
-      <ZaloAutoToolPanel batchProgress={batchProgress} onComplete={() => load(false)} />
+    <div className="flex flex-col h-full min-h-0 gap-3 overflow-hidden">
+      <div className="shrink-0">
+        <ZaloAutoToolPanel batchProgress={batchProgress} onComplete={() => load(false)} />
+      </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="shrink-0 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-bold text-slate-800">Danh bạ Zalo OA</h2>
           <p className="text-xs text-slate-500">
@@ -294,7 +296,7 @@ export default function ZaloContactsTab({ onOpenInbox, accounts = [] }) {
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2 items-center">
+      <div className="shrink-0 flex flex-wrap gap-2 items-center">
         <div className="relative flex-1 min-w-[200px] max-w-md">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
@@ -326,7 +328,7 @@ export default function ZaloContactsTab({ onOpenInbox, accounts = [] }) {
         )}
       </div>
 
-      <div className="flex flex-wrap gap-1.5">
+      <div className="shrink-0 flex flex-wrap gap-1.5">
         {FILTER_CHIPS.map(({ key, label }) => (
           <button
             key={key}
@@ -343,10 +345,10 @@ export default function ZaloContactsTab({ onOpenInbox, accounts = [] }) {
         ))}
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-        <div className="overflow-x-auto">
+      <div className="flex-1 min-h-0 flex flex-col bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain [scrollbar-width:thin]">
           <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-slate-600 text-xs">
+            <thead className="bg-slate-50 text-slate-600 text-xs sticky top-0 z-10 shadow-[0_1px_0_rgba(0,0,0,0.06)]">
               <tr>
                 <th className="text-left p-3 font-medium">Khách hàng</th>
                 <th className="text-left p-3 font-medium">SĐT</th>
@@ -474,7 +476,7 @@ export default function ZaloContactsTab({ onOpenInbox, accounts = [] }) {
           </table>
         </div>
         {meta.hasMore && (
-          <div className="p-3 border-t text-center">
+          <div className="shrink-0 p-3 border-t border-slate-100 bg-white text-center">
             <button
               type="button"
               disabled={loading}

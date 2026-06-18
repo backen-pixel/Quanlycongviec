@@ -158,40 +158,41 @@ export default function ZaloAutoToolPanel({ onComplete = null, batchProgress = n
     : 0;
 
   return (
-    <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden space-y-0">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+    <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white">
         <button
           type="button"
           onClick={() => setExpanded(!expanded)}
-          className="flex items-center gap-2 hover:bg-slate-50 rounded-lg px-1 py-0.5"
+          className="flex items-center gap-2 hover:bg-gray-50 rounded-lg px-1 py-0.5 -ml-1"
         >
           <Zap className="h-4 w-4 text-amber-500" />
-          <span className="text-sm font-semibold text-slate-800">Công cụ quét SĐT → Lead</span>
+          <span className="text-sm font-bold text-gray-900">Công cụ quét SĐT → Lead</span>
           {running && (
-            <span className="text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full flex items-center gap-1 animate-pulse">
+            <span className="text-[10px] text-sky-700 bg-sky-50 border border-sky-200 px-2 py-0.5 rounded-full flex items-center gap-1">
               <Loader2 className="h-3 w-3 animate-spin" />
-              Vòng {auto.cycleCount} · {auto.processed}/{auto.totalContacts}
+              Vòng {auto.cycleCount}
             </span>
           )}
-          {expanded ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+          {expanded ? <ChevronUp className="h-4 w-4 text-gray-400" /> : <ChevronDown className="h-4 w-4 text-gray-400" />}
         </button>
         <div className="flex items-center gap-2">
+          <span className="text-[11px] font-semibold text-gray-500">{auto.enabled ? 'On' : 'Off'}</span>
           <button
             type="button"
             onClick={() => toggleZaloAutoTool()}
-            className={`relative w-10 h-5 rounded-full transition-colors ${auto.enabled ? 'bg-green-500' : 'bg-slate-300'}`}
+            className={`relative w-10 h-5 rounded-full transition-colors ${auto.enabled ? 'bg-emerald-500' : 'bg-gray-300'}`}
             title={auto.enabled ? 'Auto: Bật' : 'Auto: Tắt'}
           >
             <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${auto.enabled ? 'translate-x-5' : ''}`} />
           </button>
-          <span className="text-xs text-slate-500">{auto.enabled ? 'Auto' : 'Off'}</span>
         </div>
       </div>
 
       {expanded && (
-        <div className="p-4 space-y-4">
-          <p className="text-xs text-slate-600 leading-relaxed">
-            Tin Zalo đã lưu qua webhook — <strong>không cần đồng bộ Graph</strong>. Auto: quét tin inbound tìm SĐT → tạo/cập nhật Lead CRM (mặc định chỉ tạo khi có SĐT).
+        <div className="p-4 space-y-3 bg-gray-50/30">
+          <p className="text-[11px] text-gray-600 leading-relaxed">
+            Tin Zalo lưu qua webhook — <strong className="text-gray-800">quét SĐT</strong> từ tin inbound,{' '}
+            <strong className="text-gray-800">tạo/cập nhật Lead CRM</strong> (mặc định chỉ tạo khi có SĐT).
           </p>
 
           <div className="flex flex-wrap gap-2">
@@ -199,28 +200,28 @@ export default function ZaloAutoToolPanel({ onComplete = null, batchProgress = n
               type="button"
               disabled={!!batchLoading}
               onClick={() => runBatch('extract')}
-              className="px-3 py-1.5 text-xs font-medium border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 flex items-center gap-1"
+              className="px-3 py-1.5 text-xs font-semibold border border-gray-200 rounded-lg bg-white hover:bg-gray-50 disabled:opacity-50 flex items-center gap-1.5 text-gray-700"
             >
-              <Phone size={14} />
-              {batchLoading === 'extract' ? 'Đang quét...' : 'Quét SĐT'}
+              <Phone size={14} className="text-gray-500" />
+              {batchLoading === 'extract' ? 'Đang quét…' : 'Quét SĐT'}
             </button>
             <button
               type="button"
               disabled={!!batchLoading}
               onClick={() => runBatch('leads')}
-              className="px-3 py-1.5 text-xs font-medium border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 flex items-center gap-1"
+              className="px-3 py-1.5 text-xs font-semibold border border-gray-200 rounded-lg bg-white hover:bg-gray-50 disabled:opacity-50 flex items-center gap-1.5 text-gray-700"
             >
-              <UserPlus size={14} />
-              {batchLoading === 'leads' ? 'Đang tạo...' : 'Tạo Lead'}
+              <UserPlus size={14} className="text-gray-500" />
+              {batchLoading === 'leads' ? 'Đang tạo…' : 'Tạo Lead'}
             </button>
             <button
               type="button"
               disabled={!!batchLoading}
               onClick={() => runBatch('both')}
-              className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1"
+              className="px-3 py-1.5 text-xs font-bold bg-sky-600 text-white rounded-lg hover:bg-sky-700 disabled:opacity-50 flex items-center gap-1.5 shadow-sm"
             >
               <Play size={14} />
-              {batchLoading === 'both' ? 'Đang chạy...' : 'Quét + Tạo Lead'}
+              {batchLoading === 'both' ? 'Đang chạy…' : 'Quét + Tạo Lead'}
             </button>
             <label className="flex items-center gap-1.5 text-xs text-slate-600 ml-1">
               <input type="checkbox" checked={forceRescan} onChange={(e) => setForceRescan(e.target.checked)} />
@@ -252,13 +253,13 @@ export default function ZaloAutoToolPanel({ onComplete = null, batchProgress = n
             </div>
           )}
 
-          <div className="border border-slate-100 rounded-lg overflow-hidden">
+          <div className="border border-gray-200 rounded-lg overflow-hidden bg-white">
             <button
               type="button"
               onClick={() => setCfgOpen(!cfgOpen)}
-              className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              className="w-full flex items-center justify-between px-3 py-2.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
             >
-              <span className="flex items-center gap-2"><Settings2 size={14} /> Cấu hình Auto</span>
+              <span className="flex items-center gap-2"><Settings2 size={14} className="text-gray-500" /> Cấu hình Auto</span>
               {cfgOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             </button>
             {cfgOpen && (
