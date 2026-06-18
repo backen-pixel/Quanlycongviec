@@ -3866,21 +3866,20 @@ export default function CRMDashboard() {
         </div>
       )}
 
-      {/* Pill-style Tab Switcher + Pin — kích thước cố định, không nhảy cỡ theo tab đang active.
-          min-width để 2 nút Lead/Deal luôn cân nhau dù số lượng (Leads/Deals) lệch nhau. */}
+      {/* Pill-style Tab Switcher + Pin */}
       <div className="flex items-center gap-2">
         <div data-tour="pipeline-tabs" className="inline-flex gap-1 bg-gray-200 rounded-full p-0.5">
           <button
             onClick={() => switchTab('lead')}
-            className={`rounded-full font-medium transition-all duration-200 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs min-w-[7.5rem] ${pipelineType === 'lead' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+            className={`rounded-full font-medium transition-all duration-200 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs min-w-[5.5rem] ${pipelineType === 'lead' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
           >
-            💼 Leads ({leads.length}) {pinnedTab === 'lead' && <Pin className="h-3.5 w-3.5 text-amber-500 rotate-45" />}
+            💼 Leads {pinnedTab === 'lead' && <Pin className="h-3.5 w-3.5 text-amber-500 rotate-45" />}
           </button>
           <button
             onClick={() => switchTab('deal')}
-            className={`rounded-full font-medium transition-all duration-200 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs min-w-[7.5rem] ${pipelineType === 'deal' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+            className={`rounded-full font-medium transition-all duration-200 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs min-w-[5.5rem] ${pipelineType === 'deal' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
           >
-            🎯 Deals ({deals.length}) {pinnedTab === 'deal' && <Pin className="h-3.5 w-3.5 text-amber-500 rotate-45" />}
+            🎯 Deals {pinnedTab === 'deal' && <Pin className="h-3.5 w-3.5 text-amber-500 rotate-45" />}
           </button>
         </div>
         <button
