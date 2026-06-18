@@ -14,6 +14,7 @@ import vn.tubeppro.crmobilev2.call.IncomingCallActivity
 
 class MainActivity : ReactActivity() {
   private var lockScreenCallBoot = false
+  private var lockScreenCallBootHandled = false
 
   override fun onCreate(savedInstanceState: Bundle?) {
     lockScreenCallBoot = isLockScreenCallBootIntent(intent)
@@ -33,7 +34,10 @@ class MainActivity : ReactActivity() {
     super.onNewIntent(intent)
     setIntent(intent)
     val lockBoot = isLockScreenCallBootIntent(intent)
-    if (lockBoot) lockScreenCallBoot = true
+    if (lockBoot) {
+      lockScreenCallBoot = true
+      lockScreenCallBootHandled = false
+    }
     stashIncomingCallIntent(intent)
     if (lockBoot) {
       scheduleLockScreenCallBootUi()
@@ -42,24 +46,34 @@ class MainActivity : ReactActivity() {
 
   override fun onResume() {
     super.onResume()
-    if (lockScreenCallBoot) {
+    if (lockScreenCallBoot && !lockScreenCallBootHandled) {
       scheduleLockScreenCallBootUi()
     }
   }
 
   override fun onWindowFocusChanged(hasFocus: Boolean) {
     super.onWindowFocusChanged(hasFocus)
-    if (lockScreenCallBoot && hasFocus) {
+    if (lockScreenCallBoot && !lockScreenCallBootHandled && hasFocus) {
       scheduleLockScreenCallBootUi()
     }
   }
 
   private fun scheduleLockScreenCallBootUi() {
+    if (lockScreenCallBootHandled) return
+    lockScreenCallBootHandled = true
     hideForBackgroundCallBoot()
     bringCallUiToFront()
     window.decorView.postDelayed({ moveTaskToBack(true) }, 250L)
     window.decorView.postDelayed({ bringCallUiToFront() }, 450L)
     window.decorView.postDelayed({ bringCallUiToFront() }, 900L)
+    clearLockScreenBootIntentExtras()
+    lockScreenCallBoot = false
+  }
+
+  private fun clearLockScreenBootIntentExtras() {
+    intent?.removeExtra("lock_screen_call")
+    intent?.removeExtra("call_action")
+    intent?.removeExtra("incoming_call")
   }
 
   private fun hideForBackgroundCallBoot() {

@@ -27,6 +27,10 @@ export type AppPermissionItem = {
   granted: boolean;
 };
 
+const OPTIONAL_PERMISSION_KINDS = new Set<AppPermissionKind>(['overlay', 'fullScreenCall']);
+
+export { OPTIONAL_PERMISSION_KINDS };
+
 export const APP_PERMISSION_CATALOG: Omit<AppPermissionItem, 'granted'>[] = [
   {
     kind: 'microphone',
@@ -131,13 +135,7 @@ export async function grantAllPermissionsQuick(): Promise<void> {
       /* ignore */
     }
     void registerPushTokenV2();
-    const api = Number(Platform.Version) || 0;
-    if (api >= 34) {
-      const ok = await canUseFullScreenCallIntent();
-      if (!ok) openFullScreenCallIntentSettings();
-    }
-    const overlayOk = await canDrawOverlays();
-    if (!overlayOk) openOverlaySettings();
+    // Không tự mở màn Cài đặt hệ thống — user bấm riêng trong Cài đặt app.
   }
 }
 
