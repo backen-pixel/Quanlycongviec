@@ -4,7 +4,6 @@ import {
   Search, RefreshCw, Trash2, Edit3, Check, X, UserPlus, MessageCircle, ExternalLink, Phone,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
-import ZaloAutoToolPanel from './ZaloAutoToolPanel';
 
 const API = import.meta.env.VITE_API_URL || '';
 const hdr = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' });
@@ -59,7 +58,6 @@ export default function ZaloContactsTab({ onOpenInbox, accounts = [] }) {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({});
   const [actionLoading, setActionLoading] = useState(null);
-  const [batchProgress, setBatchProgress] = useState(null);
 
   const sortContacts = useCallback((list) => {
     return [...(list || [])].sort((a, b) => {
@@ -143,25 +141,11 @@ export default function ZaloContactsTab({ onOpenInbox, accounts = [] }) {
         })
         .catch(() => {});
     };
-    const onBatch = (p) => {
-      if (!p?.type?.startsWith('zalo_')) return;
-      if (p.phase === 'start') setBatchProgress(`${p.type}: 0/${p.total}`);
-      else if (p.current != null) setBatchProgress(`${p.type}: ${p.current}/${p.total}${p.name ? ` · ${p.name}` : ''}`);
-    };
-    const onBatchDone = (p) => {
-      if (!p?.type?.startsWith('zalo_')) return;
-      setBatchProgress(null);
-      load(false);
-    };
     socket.on('zalo_message', onMsg);
-    socket.on('batch_progress', onBatch);
-    socket.on('batch_done', onBatchDone);
     return () => {
       socket.off('zalo_message', onMsg);
-      socket.off('batch_progress', onBatch);
-      socket.off('batch_done', onBatchDone);
     };
-  }, [socket, sortContacts, load]);
+  }, [socket, sortContacts]);
 
   const filtered = useMemo(() => {
     return contacts.filter((c) => {
@@ -259,10 +243,6 @@ export default function ZaloContactsTab({ onOpenInbox, accounts = [] }) {
 
   return (
     <div className="flex flex-col h-full min-h-0 gap-3 overflow-hidden">
-      <div className="shrink-0">
-        <ZaloAutoToolPanel batchProgress={batchProgress} onComplete={() => load(false)} />
-      </div>
-
       <div className="shrink-0 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-bold text-slate-800">Danh bạ Zalo OA</h2>

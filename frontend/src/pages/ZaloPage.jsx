@@ -637,9 +637,9 @@ export default function ZaloPage() {
 
       {tab === 'inbox' && (
         <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,340px)_1fr] gap-0 flex-1 min-h-0 h-0 rounded-2xl overflow-hidden bg-white shadow-xl shadow-sky-100/50 ring-1 ring-sky-100/80">
+        <div className="flex flex-col lg:flex-row flex-1 min-h-0 overflow-hidden rounded-2xl bg-white shadow-xl shadow-sky-100/50 ring-1 ring-sky-100/80">
           {/* Sidebar liên hệ */}
-          <div className="border-b lg:border-b-0 lg:border-r border-gray-100 flex flex-col bg-gradient-to-b from-white to-sky-50/20 min-h-0 h-full max-h-[min(420px,45vh)] lg:max-h-none overflow-hidden">
+          <div className="flex flex-col border-b lg:border-b-0 lg:border-r border-gray-100 bg-gradient-to-b from-white to-sky-50/20 min-h-0 shrink-0 max-h-[36vh] lg:max-h-none lg:w-[min(340px,34%)] lg:max-w-[340px] lg:h-full overflow-hidden">
             <div className="px-3 pt-3 pb-2 border-b border-gray-100 shrink-0 bg-white/80 backdrop-blur-sm">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-[#0068FF]">Hội thoại</span>
@@ -734,8 +734,8 @@ export default function ZaloPage() {
             </div>
           </div>
 
-          {/* Khung chat */}
-          <div className="flex flex-col min-h-0 h-full max-h-[min(520px,55vh)] lg:max-h-none overflow-hidden bg-white">
+          {/* Khung chat — flex-1 để thanh nhập dính đáy panel */}
+          <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-white">
             {!selectedId ? (
               <div className="flex-1 flex flex-col items-center justify-center gap-3 p-8 bg-gradient-to-br from-sky-50/40 via-white to-indigo-50/30">
                 <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#0068FF] to-[#0047b3] flex items-center justify-center shadow-xl shadow-sky-200/60">
@@ -817,8 +817,8 @@ export default function ZaloPage() {
                   <div ref={messagesEndRef} />
                 </div>
 
-                <div className="p-3 border-t border-sky-100 bg-white shrink-0 shadow-[0_-4px_20px_rgba(0,104,255,0.06)]">
-                  <div className="flex gap-2 items-end">
+                <div className="mt-auto shrink-0 border-t border-sky-100 bg-white shadow-[0_-4px_20px_rgba(0,104,255,0.06)] px-4 pt-2.5 pb-3">
+                  <div className="flex gap-2 items-center">
                     <input
                       value={reply}
                       onChange={(e) => setReply(e.target.value)}
@@ -836,7 +836,7 @@ export default function ZaloPage() {
                       <Send size={16} />
                     </button>
                   </div>
-                  <p className="text-[10px] text-gray-400 mt-1.5 px-1">
+                  <p className="text-[10px] text-gray-400 mt-1 px-0.5">
                     Tin tư vấn Zalo OA — khách phải nhắn trước trong vòng 7 ngày.
                   </p>
                 </div>
