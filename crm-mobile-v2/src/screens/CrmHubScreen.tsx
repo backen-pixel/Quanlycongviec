@@ -22,6 +22,7 @@ import ColumnPickerModal from '../components/ColumnPickerModal';
 import CrmFilterSheet from '../components/CrmFilterSheet';
 import CrmSearchFieldBar from '../components/CrmSearchFieldBar';
 import MoveStageModal from '../components/MoveStageModal';
+import PickerSheet from '../components/PickerSheet';
 import {
   fetchCrmCompanies,
   fetchCrmEmployeesByCompany,
@@ -40,6 +41,7 @@ import {
   invalidatePipelineStagesCache,
   KANBAN_PAGE_SIZE,
   moveCrmItemStage,
+  updateCrmAssignee,
   peekCrmHubCache,
   peekCrmTotalsCache,
   setCrmHubCache,
@@ -64,6 +66,13 @@ import {
   type CrmHubFilters,
   type SearchField,
 } from '../lib/crmFilters';
+import {
+  buildAssignPickerOptions,
+  canAssignCrmCard,
+  canClearCrmAssignee,
+  canViewAllCrm,
+  itemHasAssignee,
+} from '../lib/crmAssignee';
 import { Radii, Spacing, stageColor, useColors, type ThemeColors } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
 import type { CrmHubData, CrmKanbanItem, CrmPipelineStage, CrmStageCache, LeadTemp } from '../types';
@@ -151,12 +160,20 @@ const KanbanCard = React.memo(function KanbanCard({
   item,
   accent,
   isMoving,
+  isAssigning,
+  canAssign,
+  onPress,
   onMove,
+  onAssign,
 }: {
   item: CrmKanbanItem;
   accent: string;
   isMoving: boolean;
+  isAssigning: boolean;
+  canAssign: boolean;
+  onPress: () => void;
   onMove: () => void;
+  onAssign: () => void;
 }) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
@@ -166,7 +183,12 @@ const KanbanCard = React.memo(function KanbanCard({
 
   return (
     <View style={[styles.card, { borderLeftColor: accent }]}>
-      <View style={styles.cardRow1}>
+      <Pressable
+        onPress={onPress}
+        disabled={isMoving || isAssigning}
+        style={({ pressed }) => [pressed && { opacity: 0.92 }]}
+      >
+        <View style={styles.cardRow1}>
         <Text style={styles.cardCode}>{item.code}</Text>
         <ScrollView
           horizontal
@@ -219,6 +241,7 @@ const KanbanCard = React.memo(function KanbanCard({
         <Text style={styles.personLabel}>Phụ trách:</Text>
         <Text style={styles.personName} numberOfLines={1}>{item.ownerName || 'Chưa gán'}</Text>
       </View>
+      </Pressable>
 
       <View style={styles.cardBottom}>
         <View style={styles.cardBottomLeft}>
@@ -258,18 +281,38 @@ const KanbanCard = React.memo(function KanbanCard({
             </View>
           </View>
         </View>
-        <TouchableOpacity
-          style={[styles.cardActionBtn, styles.cardActionBtnPrimary]}
-          onPress={onMove}
-          disabled={isMoving}
-          activeOpacity={0.75}
-        >
-          {isMoving ? (
-            <ActivityIndicator size="small" color={Colors.white} />
-          ) : (
-            <Ionicons name="swap-horizontal" size={18} color={Colors.white} />
-          )}
-        </TouchableOpacity>
+        <View style={styles.cardActions}>
+          {canAssign ? (
+            <TouchableOpacity
+              style={styles.cardActionBtn}
+              onPress={onAssign}
+              disabled={isAssigning || isMoving}
+              activeOpacity={0.75}
+            >
+              {isAssigning ? (
+                <ActivityIndicator size="small" color={Colors.purple} />
+              ) : (
+                <Ionicons
+                  name={itemHasAssignee(item) ? 'person-outline' : 'person-add-outline'}
+                  size={18}
+                  color={Colors.purple}
+                />
+              )}
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity
+            style={[styles.cardActionBtn, styles.cardActionBtnPrimary]}
+            onPress={onMove}
+            disabled={isMoving || isAssigning}
+            activeOpacity={0.75}
+          >
+            {isMoving ? (
+              <ActivityIndicator size="small" color={Colors.white} />
+            ) : (
+              <Ionicons name="swap-horizontal" size={18} color={Colors.white} />
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
     </View>
   );
@@ -295,22 +338,7 @@ function resetCrmFilters(
   return base;
 }
 
-/** Vai trò xem được toàn bộ CRM — không mặc định lọc "Của tôi". */
-const ELEVATED_CRM_ROLES = new Set([
-  'admin',
-  'sales_admin',
-  'manager',
-  'region_admin',
-  'super_admin',
-  'superadmin',
-  'owner',
-  'director',
-]);
-
-function canViewAllCrm(user: { role?: string } | null): boolean {
-  return ELEVATED_CRM_ROLES.has(String(user?.role ?? '').trim().toLowerCase());
-}
-
+/** Vai trò xem được toàn bộ CRM — re-export từ lib gán NV. */
 function initialFiltersFromRoute(
   params: RootStackParamList['CrmHub'] | undefined,
   user: { role?: string } | null,
@@ -367,7 +395,11 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   const [metaLoading, setMetaLoading] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [movingId, setMovingId] = useState<string | null>(null);
+  const [assigningId, setAssigningId] = useState<string | null>(null);
   const [moveItem, setMoveItem] = useState<CrmKanbanItem | null>(null);
+  const [assignItem, setAssignItem] = useState<CrmKanbanItem | null>(null);
+  const [assignEmployees, setAssignEmployees] = useState<CrmEmployee[]>([]);
+  const [assignEmployeesLoading, setAssignEmployeesLoading] = useState(false);
   const [columnPickerOpen, setColumnPickerOpen] = useState(false);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
@@ -988,6 +1020,138 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     [displayStages, setHub, showToast, loadBootstrap, mode, activeStageId],
   );
 
+  const patchItemInHub = useCallback(
+    (itemId: string, patch: Partial<CrmKanbanItem>, opts?: { remove?: boolean }) => {
+      setHub((prev) => {
+        const nextCache = { ...prev.cache };
+        for (const sid of Object.keys(nextCache)) {
+          const col = nextCache[sid];
+          if (!col?.items?.some((it) => it.id === itemId)) continue;
+          if (opts?.remove) {
+            nextCache[sid] = {
+              ...col,
+              items: col.items.filter((it) => it.id !== itemId),
+            };
+          } else {
+            nextCache[sid] = {
+              ...col,
+              items: col.items.map((it) => (it.id === itemId ? { ...it, ...patch } : it)),
+            };
+          }
+          break;
+        }
+        return { ...prev, cache: nextCache };
+      });
+    },
+    [setHub],
+  );
+
+  const shouldRemoveAfterAssign = useCallback(
+    (assignedToId: string | null) => {
+      if (filters.assignee === 'mine' && assignedToId && String(assignedToId) !== String(myId)) {
+        return true;
+      }
+      if (
+        filters.assignee === 'user' &&
+        filters.assigneeUserId &&
+        String(assignedToId || '') !== String(filters.assigneeUserId)
+      ) {
+        return true;
+      }
+      if (filters.assignee === 'mine' && !assignedToId) return true;
+      return false;
+    },
+    [filters.assignee, filters.assigneeUserId, myId],
+  );
+
+  const openAssignForItem = useCallback(
+    (item: CrmKanbanItem) => {
+      const companyId = item.companyId || filters.companyId || user?.company_id || '';
+      if (!companyId) {
+        showToast('Thẻ chưa có công ty — không gán được phụ trách', false);
+        return;
+      }
+      setAssignItem(item);
+      if (companyId === filters.companyId && employees.length) {
+        setAssignEmployees(employees);
+        return;
+      }
+      setAssignEmployeesLoading(true);
+      void (async () => {
+        try {
+          const org = await fetchCrmEmployeesByCompany(companyId);
+          setAssignEmployees(org.users);
+        } catch {
+          setAssignEmployees([]);
+        } finally {
+          setAssignEmployeesLoading(false);
+        }
+      })();
+    },
+    [employees, filters.companyId, user?.company_id, showToast],
+  );
+
+  const assignCardTo = useCallback(
+    async (item: CrmKanbanItem, userId: string | null) => {
+      const pick = assignEmployees.find((u) => String(u.id) === String(userId || ''));
+      const ownerName = userId
+        ? (pick?.full_name || pick?.email || '—').trim()
+        : 'Chưa gán';
+      const ownerId = userId || 'unassigned';
+      const patch: Partial<CrmKanbanItem> = {
+        assignedToId: userId || '',
+        leadOwnerId: userId || '',
+        ownerId,
+        ownerName,
+        ownerInitials: initialsFromName(ownerName),
+        ownerColor: colorFromName(ownerName),
+      };
+      const remove = shouldRemoveAfterAssign(userId);
+      setAssigningId(item.id);
+      if (!remove) patchItemInHub(item.id, patch);
+      else patchItemInHub(item.id, patch, { remove: true });
+      try {
+        const res = await updateCrmAssignee(item.id, userId);
+        const finalName = res.ownerName || ownerName;
+        if (!remove) {
+          patchItemInHub(item.id, {
+            assignedToId: res.assignedToId,
+            leadOwnerId: res.assignedToId,
+            ownerId: res.assignedToId || 'unassigned',
+            ownerName: finalName,
+            ownerInitials: initialsFromName(finalName),
+            ownerColor: colorFromName(finalName),
+          });
+        }
+        showToast(
+          userId
+            ? `Đã gán ${item.code} → ${finalName}`
+            : `Đã bỏ gán phụ trách ${item.code}`,
+          true,
+        );
+      } catch (e) {
+        void loadBootstrap(mode, true, activeStageId);
+        showToast(formatApiError(e), false);
+      } finally {
+        setAssigningId(null);
+      }
+    },
+    [
+      assignEmployees,
+      patchItemInHub,
+      shouldRemoveAfterAssign,
+      showToast,
+      loadBootstrap,
+      mode,
+      activeStageId,
+    ],
+  );
+
+  const assignPickerOptions = useMemo(
+    () => buildAssignPickerOptions(assignEmployees, user, myId),
+    [assignEmployees, user, myId],
+  );
+
   if (showFullScreenLoad) {
     const fullScreenHint = waitingForCrm
       ? 'Đang lấy thông tin công ty và pipeline.'
@@ -1262,14 +1426,29 @@ export default function CrmHubScreen({ navigation, route }: Props) {
         maxToRenderPerBatch={8}
         windowSize={7}
         initialNumToRender={10}
-        renderItem={({ item }) => (
-          <KanbanCard
-            item={item}
-            accent={accent}
-            isMoving={movingId === item.id}
-            onMove={() => setMoveItem(item)}
-          />
-        )}
+        renderItem={({ item }) => {
+          const cardCompanyId = item.companyId || filters.companyId || user?.company_id || '';
+          const canAssign = canAssignCrmCard(user, item, myId, cardCompanyId);
+          return (
+            <KanbanCard
+              item={item}
+              accent={accent}
+              isMoving={movingId === item.id}
+              isAssigning={assigningId === item.id}
+              canAssign={canAssign}
+              onPress={() =>
+                navigation.navigate('LeadDealDetail', {
+                  leadId: item.id,
+                  kind: item.kind,
+                  code: item.code,
+                  title: item.title,
+                })
+              }
+              onMove={() => setMoveItem(item)}
+              onAssign={() => openAssignForItem(item)}
+            />
+          );
+        }}
         ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
       />
 
@@ -1329,6 +1508,24 @@ export default function CrmHubScreen({ navigation, route }: Props) {
           setMoveItem(null);
         }}
         onClose={() => setMoveItem(null)}
+      />
+
+      <PickerSheet
+        visible={!!assignItem}
+        title={assignItem?.kind === 'deal' ? 'Gán phụ trách Deal' : 'Gán phụ trách Lead'}
+        options={assignPickerOptions}
+        selectedId={assignItem?.assignedToId || assignItem?.leadOwnerId || null}
+        searchable={canViewAllCrm(user)}
+        emptyLabel={canClearCrmAssignee(user) ? '— Bỏ gán —' : undefined}
+        loading={assignEmployeesLoading || metaLoading}
+        accent={Colors.purple}
+        onSelect={(opt) => {
+          if (!assignItem) return;
+          const nextId = opt?.id || null;
+          void assignCardTo(assignItem, nextId);
+          setAssignItem(null);
+        }}
+        onClose={() => setAssignItem(null)}
       />
 
       {toast ? (
@@ -1606,6 +1803,7 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     gap: 10,
   },
   cardBottomLeft: { flex: 1 },
+  cardActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   dateMetaBox: {
     flexDirection: 'row',
     backgroundColor: Colors.surfaceSoft,

@@ -41,7 +41,8 @@ type ApiLead = {
   expected_close_date?: string | null;
   stage?: ApiStage | null;
   customer?: { full_name?: string | null; phone?: string | null; address?: string | null } | null;
-  company?: { name?: string | null; short_name?: string | null } | null;
+  company?: { id?: string | null; name?: string | null; short_name?: string | null } | null;
+  company_id?: string | null;
   assignee?: { id?: string | null; full_name?: string | null } | null;
   lead_owner?: { id?: string | null; full_name?: string | null } | null;
   source?: { name?: string | null } | null;
@@ -211,6 +212,7 @@ function mapKanbanItem(it: ApiLead, kind: 'lead' | 'deal'): CrmKanbanItem {
     contactName: it.customer?.full_name || '—',
     phone: it.customer?.phone || it.phone || '',
     companyName: it.company?.name || it.company?.short_name || undefined,
+    companyId: String(it.company_id || it.company?.id || ''),
     sourceLabel: it.source?.name || undefined,
     valueLabel: kind === 'deal' ? formatVnd(it.estimated_value) : undefined,
     temp: kind === 'lead' ? tempFromStage(it.stage?.name) : undefined,
@@ -804,6 +806,29 @@ export async function fetchCrmBoard(type: 'lead' | 'deal', signal?: AbortSignal)
 /** Chuyển lead/deal sang cột pipeline khác. */
 export async function moveCrmItemStage(id: string, stageId: string): Promise<void> {
   await api.patch(`/crm/leads/${id}/stage`, { stage_id: stageId });
+}
+
+/** Gán / đổi người phụ trách lead/deal (assigned_to ↔ lead_owner_id trên server). */
+export async function updateCrmAssignee(
+  leadId: string,
+  assignedTo: string | null,
+): Promise<{ assignedToId: string; ownerName: string }> {
+  const { data } = await api.put<{
+    assigned_to?: string | null;
+    lead_owner_id?: string | null;
+    assignee?: { id?: string | null; full_name?: string | null } | null;
+    lead_owner?: { id?: string | null; full_name?: string | null } | null;
+  }>(`/crm/leads/${leadId}`, { assigned_to: assignedTo });
+
+  const assignedToId = String(
+    data?.assigned_to || data?.assignee?.id || data?.lead_owner_id || data?.lead_owner?.id || assignedTo || '',
+  );
+  const ownerName =
+    data?.assignee?.full_name ||
+    data?.lead_owner?.full_name ||
+    (assignedTo ? '—' : 'Chưa gán');
+
+  return { assignedToId, ownerName };
 }
 
 /** Lấy một trang leads (dùng cho infinite scroll trong CrmHub). */

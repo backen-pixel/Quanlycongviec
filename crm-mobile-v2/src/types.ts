@@ -98,6 +98,7 @@ export type CrmKanbanItem = {
   contactName: string;
   phone: string;
   companyName?: string;
+  companyId?: string;
   sourceLabel?: string;
   valueLabel?: string;
   temp?: LeadTemp;

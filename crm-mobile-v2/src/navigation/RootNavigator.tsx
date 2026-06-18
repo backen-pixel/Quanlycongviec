@@ -6,6 +6,7 @@ import ChatDetailScreen from '../screens/ChatDetailScreen';
 import MessengerForwardScreen from '../screens/MessengerForwardScreen';
 import CreateEntityScreen from '../screens/CreateEntityScreen';
 import CrmHubScreen from '../screens/CrmHubScreen';
+import LeadDealDetailScreen from '../screens/LeadDealDetailScreen';
 import DriveScreen from '../screens/DriveScreen';
 import EventsScreen from '../screens/EventsScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
@@ -28,6 +29,7 @@ export default function RootNavigator() {
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="Tabs" component={RootTabs} />
       <Stack.Screen name="CrmHub" component={CrmHubScreen} />
+      <Stack.Screen name="LeadDealDetail" component={LeadDealDetailScreen} />
       <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
       <Stack.Screen
         name="MessengerForward"

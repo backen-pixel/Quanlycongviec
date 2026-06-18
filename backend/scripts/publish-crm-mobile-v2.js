@@ -15,15 +15,15 @@ const { supabase } = require('../src/config/supabase');
 const { buildStandardApkFilename } = require('../src/helpers/appReleaseFilename');
 
 const APP_KEY = 'crm-mobile-v2';
-const VERSION = process.env.PUB_VERSION || '2.0.44';
-const VERSION_CODE = parseInt(process.env.PUB_CODE || '45', 10);
+const VERSION = process.env.PUB_VERSION || '2.0.47';
+const VERSION_CODE = parseInt(process.env.PUB_CODE || '48', 10);
 const PUBLIC_HOST = (process.env.PUB_HOST || 'https://tubep-backend.onrender.com').replace(/\/$/, '');
 const FILE_NAME = buildStandardApkFilename(APP_KEY, VERSION, VERSION_CODE, { release: true });
 const APK = path.resolve(__dirname, `../uploads/app-releases/crm-mobile-v2/${FILE_NAME}`);
 const FILE_URL = `${PUBLIC_HOST}/uploads/app-releases/crm-mobile-v2/${FILE_NAME}`;
 const RELEASE_NOTES =
   process.env.PUB_NOTES
-  || 'Nhận ghi âm qua Chia sẻ (Share) từ Google Phone — tự upload lên CRM.';
+  || 'Xem ảnh trong app: gallery lưới thumbnail, vuốt qua lại, dải ảnh nhỏ. Tab Tài liệu + đính kèm nhiệm vụ. Nhiệm vụ/Drive đầy đủ.';
 
 async function uploadApkToProduction(releaseId) {
   if (process.env.SKIP_UPLOAD === '1' || process.env.SKIP_UPLOAD === 'true') {
