@@ -5,6 +5,7 @@ import {
   canUseFullScreenCallIntent,
   openFullScreenCallIntentSettings,
 } from './nativeCallNotification';
+import { canDrawOverlays, openOverlaySettings } from './floatingBubbleOverlay';
 import { registerPushTokenV2 } from './pushNotifications';
 import { requestVoicePermissionsQuick } from './voicePermissions';
 
@@ -16,7 +17,8 @@ export type AppPermissionKind =
   | 'callLog'
   | 'readMediaAudio'
   | 'notifications'
-  | 'fullScreenCall';
+  | 'fullScreenCall'
+  | 'overlay';
 
 export type AppPermissionItem = {
   kind: AppPermissionKind;
@@ -55,6 +57,11 @@ export const APP_PERMISSION_CATALOG: Omit<AppPermissionItem, 'granted'>[] = [
     kind: 'fullScreenCall',
     label: 'Cuộc gọi toàn màn hình',
     description: 'Hiện màn gọi khi app tắt / màn hình khóa (Android 14+)',
+  },
+  {
+    kind: 'overlay',
+    label: 'Hiển thị trên app khác',
+    description: 'Bong bóng chat nổi & thông báo tin nhắn khi dùng app khác',
   },
 ];
 
@@ -98,6 +105,7 @@ async function checkKind(kind: AppPermissionKind): Promise<boolean> {
     if (api >= 34) return canUseFullScreenCallIntent();
     return true;
   }
+  if (kind === 'overlay') return canDrawOverlays();
   return true;
 }
 
@@ -128,6 +136,8 @@ export async function grantAllPermissionsQuick(): Promise<void> {
       const ok = await canUseFullScreenCallIntent();
       if (!ok) openFullScreenCallIntentSettings();
     }
+    const overlayOk = await canDrawOverlays();
+    if (!overlayOk) openOverlaySettings();
   }
 }
 

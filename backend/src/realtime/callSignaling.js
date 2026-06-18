@@ -16,12 +16,17 @@ const {
 
 const RING_TIMEOUT_MS = 35_000; // > 30s timeout phía client một chút để dọn registry
 
+/** Registry dùng cho REST accept/reject từ native khi app bị kill. */
+const callRegistry = { calls: /** @type {Map<string, CallEntry> | null} */ (null), io: null };
+
 /**
  * @param {import('socket.io').Server} io
  */
 function attachCallSignaling(io) {
   /** @type {Map<string, CallEntry>} */
   const calls = new Map();
+  callRegistry.calls = calls;
+  callRegistry.io = io;
 
   const room = (uid) => `user:${String(uid)}`;
   const isOnline = (uid) => {
@@ -244,4 +249,88 @@ function attachCallSignaling(io) {
   };
 }
 
-module.exports = { attachCallSignaling };
+/** Native REST: callee đã bấm nghe — cập nhật registry mới (call-user) + legacy activeDirectCalls. */
+function restMarkCallAnswered(io, activeDirectCalls, callId, calleeId, toUserId) {
+  const uid = String(calleeId || '');
+  const callerId = String(toUserId || '');
+  const entry = callRegistry.calls?.get(callId);
+  if (entry && !entry.ended && entry.calleeId === uid && !entry.answeredAt) {
+    entry.answeredAt = Date.now();
+    if (entry.ringTimer) {
+      clearTimeout(entry.ringTimer);
+      entry.ringTimer = null;
+    }
+    if (io && callerId) {
+      io.to(`user:${callerId}`).emit('call-answered', { callId, byUserId: uid });
+    }
+    try {
+      const { sendCallDismissPush } = require('../services/pushSender');
+      void sendCallDismissPush(uid, callId);
+    } catch {
+      /* ignore */
+    }
+    return true;
+  }
+  if (activeDirectCalls) {
+    const session = activeDirectCalls.get(callId);
+    if (session && !session.answeredAt) session.answeredAt = Date.now();
+  }
+  if (io && callerId) {
+    io.to(`user:${callerId}`).emit('call-answered', { callId, byUserId: uid });
+    io.to(`user:${callerId}`).emit('call:accepted', { callId });
+  }
+  return false;
+}
+
+/** Native REST: callee từ chối — registry mới + legacy. */
+function restRejectCall(io, activeDirectCalls, finalizeDirectCallLog, callId, calleeId, toUserId) {
+  const uid = String(calleeId || '');
+  const callerId = String(toUserId || '');
+  const entry = callRegistry.calls?.get(callId);
+  if (entry && entry.calleeId === uid) {
+    try {
+      const { sendCallDismissPush } = require('../services/pushSender');
+      void sendCallDismissPush(uid, callId);
+    } catch {
+      /* ignore */
+    }
+    if (io && callerId) {
+      io.to(`user:${callerId}`).emit('call-rejected', { callId, reason: 'rejected' });
+    }
+    if (entry && !entry.ended) {
+      entry.ended = true;
+      if (entry.ringTimer) {
+        clearTimeout(entry.ringTimer);
+        entry.ringTimer = null;
+      }
+      callRegistry.calls?.delete(callId);
+      if (finalizeDirectCallLog) {
+        void finalizeDirectCallLog(io, {
+          groupId: entry.groupId,
+          callerId: entry.callerId,
+          calleeId: entry.calleeId,
+          fromName: entry.fromName,
+          kind: entry.media || 'audio',
+          startedAt: entry.startedAt,
+          answeredAt: entry.answeredAt,
+        }, { endedByUserId: uid, reason: 'rejected' });
+      }
+    }
+    return true;
+  }
+  if (io && activeDirectCalls && finalizeDirectCallLog) {
+    const session = activeDirectCalls.get(callId);
+    if (session && !session.logged) {
+      session.logged = true;
+      activeDirectCalls.delete(callId);
+      void finalizeDirectCallLog(io, session, { endedByUserId: uid, reason: 'rejected' });
+    }
+  }
+  if (io && callerId) {
+    io.to(`user:${callerId}`).emit('call-rejected', { callId, reason: 'rejected' });
+    io.to(`user:${callerId}`).emit('call:rejected', { callId, reason: 'rejected' });
+  }
+  return false;
+}
+
+module.exports = { attachCallSignaling, restMarkCallAnswered, restRejectCall };

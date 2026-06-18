@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import com.google.firebase.messaging.RemoteMessage
 import expo.modules.notifications.service.ExpoFirebaseMessagingService
+import vn.tubeppro.crmobilev2.overlay.BubbleFcmWake
 
 /**
  * FCM: cuộc gọi đến (incoming_call) khi app tắt / nền + chuyển tiếp cho expo-notifications.
@@ -14,6 +15,7 @@ class CrmFirebaseMessagingService : ExpoFirebaseMessagingService() {
     val data = remoteMessage.data
     if (handleCallDismiss(data)) return
     if (handleIncomingCall(data)) return
+    maybeWakeBubble(data)
     super.onMessageReceived(remoteMessage)
   }
 
@@ -26,6 +28,7 @@ class CrmFirebaseMessagingService : ExpoFirebaseMessagingService() {
       }
       if (handleCallDismiss(data)) return
       if (handleIncomingCall(data)) return
+      maybeWakeBubble(data)
     }
     super.handleIntent(intent)
   }
@@ -45,6 +48,12 @@ class CrmFirebaseMessagingService : ExpoFirebaseMessagingService() {
     val call = IncomingCallHelper.fromFcmData(data) ?: return false
     IncomingCallHelper.showIncomingCall(applicationContext, call)
     return true
+  }
+
+  private fun maybeWakeBubble(data: Map<String, String>) {
+    if (data.isNotEmpty() && data["bubble_wake"] == "1" && data["type"] == "messenger_chat") {
+      BubbleFcmWake.handle(applicationContext, data)
+    }
   }
 
   private fun handleCallDismiss(data: Map<String, String>): Boolean {

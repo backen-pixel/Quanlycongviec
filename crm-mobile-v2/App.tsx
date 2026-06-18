@@ -10,6 +10,7 @@ import React, { useMemo } from 'react';
 import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import CreateMenuSheet from './src/components/CreateMenuSheet';
+import SystemBubbleSync from './src/components/SystemBubbleSync';
 import PermissionBootstrap from './src/components/PermissionBootstrap';
 import VoiceSyncRunner from './src/components/VoiceSyncRunner';
 import VoiceShareHandler, { VoiceShareLoginHint } from './src/components/VoiceShareHandler';
@@ -79,6 +80,7 @@ function Gate() {
               </NavigationContainer>
               <CreateMenuSheet />
               <PermissionBootstrap />
+              <SystemBubbleSync />
               <VoiceSyncRunner />
             </View>
             </FileActionsProvider>

@@ -3,10 +3,17 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { withDangerousMod, withAndroidManifest } = require('@expo/config-plugins');
+const { withDangerousMod, withAndroidManifest, withAppBuildGradle } = require('@expo/config-plugins');
 
 const SOURCE_ROOT = path.join(__dirname, 'native-android');
 const JAVA_PKG = ['vn', 'tubeppro', 'crmobilev2'];
+
+const OVERLAY_FILES = [
+  'overlay/OverlayBubbleService.kt',
+  'overlay/FloatingBubbleModule.kt',
+  'overlay/FloatingBubbleOverlayPackage.kt',
+  'overlay/BubbleFcmWake.kt',
+];
 
 const CALL_FILES = [
   'call/IncomingCallHelper.kt',
@@ -40,11 +47,15 @@ const RES_FILES = [
   'res/drawable/call_action_btn_bg.xml',
   'res/drawable/call_decor_circle.xml',
   'res/drawable/call_pulse_ring.xml',
+  'res/values/ids.xml',
 ];
 
 const APP_FILES = ['MainActivity.kt', 'MainApplication.kt'];
 
 const CALL_PERMISSIONS = [
+  'android.permission.SYSTEM_ALERT_WINDOW',
+  'android.permission.FOREGROUND_SERVICE',
+  'android.permission.FOREGROUND_SERVICE_SPECIAL_USE',
   'android.permission.RECORD_AUDIO',
   'android.permission.MODIFY_AUDIO_SETTINGS',
   'android.permission.CAMERA',
@@ -59,7 +70,7 @@ function copyCallNative(projectRoot) {
   const androidJava = path.join(projectRoot, 'android', 'app', 'src', 'main', 'java', ...JAVA_PKG);
   const resRoot = path.join(projectRoot, 'android', 'app', 'src', 'main', 'res');
 
-  for (const rel of [...CALL_FILES, ...APP_FILES]) {
+  for (const rel of [...CALL_FILES, ...OVERLAY_FILES, ...APP_FILES]) {
     const src = path.join(SOURCE_ROOT, rel);
     const dest = path.join(androidJava, rel);
     if (!fs.existsSync(src)) continue;
@@ -120,6 +131,24 @@ function withIncomingCallManifest(config) {
     addService('.call.IncomingCallRingService', 'mediaPlayback');
     addService('.call.InCallForegroundService', 'microphone');
 
+    if (!app.service.some((s) => s.$?.['android:name'] === '.overlay.OverlayBubbleService')) {
+      app.service.push({
+        $: {
+          'android:name': '.overlay.OverlayBubbleService',
+          'android:exported': 'false',
+          'android:foregroundServiceType': 'specialUse',
+        },
+        property: [
+          {
+            $: {
+              'android:name': 'android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE',
+              'android:value': 'chat_bubble_overlay',
+            },
+          },
+        ],
+      });
+    }
+
     // Thay ExpoFirebaseMessagingService mặc định — thêm xử lý incoming_call native.
     app.service = app.service.filter((s) => {
       const n = String(s.$?.['android:name'] || '');
@@ -171,6 +200,19 @@ function withIncomingCallAndroid(config) {
     },
   ]);
   cfg = withIncomingCallManifest(cfg);
+  cfg = withAppBuildGradle(cfg, (mod) => {
+    let contents = mod.modResults.contents;
+    if (!contents.includes('firebase-messaging')) {
+      contents = contents.replace(
+        /implementation\("com\.facebook\.react:react-android"\)/,
+        'implementation("com.facebook.react:react-android")\n' +
+          '    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))\n' +
+          '    implementation("com.google.firebase:firebase-messaging")',
+      );
+    }
+    mod.modResults.contents = contents;
+    return mod;
+  });
   return cfg;
 }
 
