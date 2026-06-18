@@ -4,7 +4,7 @@ import { useAuth } from '../lib/auth';
 import {
   MessageCircle, Settings, Send, Search, RefreshCw, Plus, Save, Trash2,
   ExternalLink, Copy, Check, Users, Bell, Zap, UserCircle, BadgeCheck,
-  Filter, CheckCheck, ChevronRight,
+  CheckCheck, ChevronRight,
 } from 'lucide-react';
 import ZaloAutoToolPanel from '../components/ZaloAutoToolPanel';
 import ZaloContactsTab from '../components/ZaloContactsTab';
@@ -13,13 +13,15 @@ import IntegrationLeadRoutingFields from '../components/IntegrationLeadRoutingFi
 const API = import.meta.env.VITE_API_URL || '';
 const hdr = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' });
 
-function Avatar({ name, url }) {
+function Avatar({ name, url, size = 'md' }) {
+  const sz = size === 'lg' ? 'w-11 h-11 text-[15px]' : 'w-10 h-10 text-sm';
+  const ring = 'ring-2 ring-white shadow-md';
   if (url) {
-    return <img src={url} alt="" className="w-10 h-10 rounded-full object-cover bg-slate-200" />;
+    return <img src={url} alt="" className={`${sz} rounded-full object-cover bg-slate-200 ${ring}`} />;
   }
   const letter = (name || 'Z')[0].toUpperCase();
   return (
-    <div className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center text-white text-sm font-bold">
+    <div className={`${sz} rounded-full bg-gradient-to-br from-[#0068FF] to-[#0047b3] flex items-center justify-center text-white font-bold ${ring}`}>
       {letter}
     </div>
   );
@@ -520,38 +522,44 @@ export default function ZaloPage() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-64px)] min-h-0 max-h-[calc(100vh-64px)] overflow-hidden bg-white">
+    <div className="flex flex-col h-[calc(100vh-3rem)] min-h-0 max-h-[calc(100vh-3rem)] overflow-hidden bg-white -m-6">
       {/* Header */}
-      <div className="shrink-0 border-b border-gray-200 bg-white px-4 sm:px-6 py-3">
+      <div className="shrink-0 border-b border-sky-100 bg-gradient-to-r from-sky-50/90 via-white to-white px-4 sm:px-6 py-3.5 shadow-sm">
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-sky-50 border border-sky-100 flex items-center justify-center shrink-0 text-lg">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-[#0068FF] to-[#0047b3] flex items-center justify-center shrink-0 shadow-lg shadow-sky-200/60 text-lg">
               💬
             </div>
-            <div className="flex items-center gap-1.5 min-w-0">
-              <h1 className="text-base font-bold text-gray-900">Zalo OA</h1>
-              <BadgeCheck className="h-4 w-4 text-sky-500 shrink-0" aria-label="Official Account" />
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <h1 className="text-lg font-bold text-gray-900 tracking-tight">Zalo OA</h1>
+                <BadgeCheck className="h-4 w-4 text-[#0068FF] shrink-0" aria-label="Official Account" />
+              </div>
+              <p className="text-[10px] text-gray-500 font-medium">Hộp thư & quản lý khách hàng</p>
             </div>
           </div>
           {stats && (
-            <div className="flex flex-wrap items-center gap-1.5 ml-auto">
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-50 border border-gray-200 text-[10px] font-semibold text-gray-700 tabular-nums">
-                <Users className="h-3 w-3 text-gray-500" />
-                {stats.contacts} liên hệ
+            <div className="flex flex-wrap items-center gap-2 ml-auto">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white border border-gray-200 text-[11px] font-bold text-gray-800 tabular-nums shadow-sm">
+                <Users className="h-3.5 w-3.5 text-gray-500" />
+                {stats.contacts}
+                <span className="font-normal text-gray-500">liên hệ</span>
               </span>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-sky-50 border border-sky-200 text-[10px] font-semibold text-sky-800 tabular-nums">
-                <Bell className="h-3 w-3 text-sky-600" />
-                {stats.unread} chưa đọc
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#0068FF] text-white text-[11px] font-bold tabular-nums shadow-md shadow-sky-300/40">
+                <Bell className="h-3.5 w-3.5" />
+                {stats.unread}
+                <span className="font-semibold opacity-90">chưa đọc</span>
               </span>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[10px] font-semibold text-emerald-800 tabular-nums">
-                {stats.messages_today} tin hôm nay
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500 text-white text-[11px] font-bold tabular-nums shadow-md shadow-emerald-300/40">
+                {stats.messages_today}
+                <span className="font-semibold opacity-90">tin hôm nay</span>
               </span>
             </div>
           )}
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-0 mt-3 -mb-px overflow-x-auto">
+        <div className="flex gap-1 mt-3.5 -mb-px overflow-x-auto">
           {[
             { id: 'inbox', label: 'Hộp thư', icon: MessageCircle, badge: stats?.unread },
             { id: 'contacts', label: 'Danh bạ', icon: Users },
@@ -562,16 +570,16 @@ export default function ZaloPage() {
               key={id}
               type="button"
               onClick={() => switchTab(id)}
-              className={`shrink-0 flex items-center gap-1.5 px-4 py-2.5 text-[13px] font-semibold border-b-2 transition-colors ${
+              className={`shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-t-lg text-[13px] font-bold border-b-2 transition-all ${
                 tab === id
-                  ? 'border-sky-600 text-sky-700 bg-sky-50/40'
-                  : 'border-transparent text-gray-500 hover:text-gray-800 hover:bg-gray-50/80'
+                  ? 'border-[#0068FF] text-[#0068FF] bg-white shadow-sm'
+                  : 'border-transparent text-gray-500 hover:text-gray-800 hover:bg-white/60'
               }`}
             >
-              <Icon size={15} strokeWidth={2} />
+              <Icon size={15} strokeWidth={2.25} />
               {label}
               {badge > 0 ? (
-                <span className="bg-red-500 text-white text-[9px] rounded-full min-w-[16px] h-4 flex items-center justify-center px-1 font-bold">
+                <span className="bg-red-500 text-white text-[9px] rounded-full min-w-[16px] h-4 flex items-center justify-center px-1 font-bold animate-pulse">
                   {badge > 99 ? '99+' : badge}
                 </span>
               ) : null}
@@ -581,13 +589,13 @@ export default function ZaloPage() {
       </div>
 
       <div
-        className={`flex-1 min-h-0 flex flex-col p-4 sm:p-5 bg-gray-50/40 ${
-          tab === 'inbox' || tab === 'contacts' ? 'overflow-hidden' : 'overflow-y-auto'
-        }`}
+        className={`flex-1 min-h-0 flex flex-col ${
+          tab === 'inbox' ? 'p-3 sm:p-4 bg-gradient-to-b from-sky-50/30 to-gray-50/50' : 'p-4 sm:p-5 bg-gray-50/40'
+        } ${tab === 'inbox' || tab === 'contacts' ? 'overflow-hidden' : 'overflow-y-auto'}`}
       >
 
-      {(tab === 'inbox' || tab === 'tools') && (
-        <div className={`shrink-0 ${tab === 'inbox' ? 'mb-3' : 'mb-4'}`}>
+      {tab === 'tools' && (
+        <div className="shrink-0 mb-4">
           <ZaloAutoToolPanel
             batchProgress={batchProgress}
             onComplete={() => { loadStats(); loadContacts(); }}
@@ -629,10 +637,15 @@ export default function ZaloPage() {
 
       {tab === 'inbox' && (
         <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,340px)_1fr] gap-0 flex-1 min-h-0 h-0 border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm">
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,340px)_1fr] gap-0 flex-1 min-h-0 h-0 rounded-2xl overflow-hidden bg-white shadow-xl shadow-sky-100/50 ring-1 ring-sky-100/80">
           {/* Sidebar liên hệ */}
-          <div className="border-b lg:border-b-0 lg:border-r border-gray-200 flex flex-col bg-white min-h-0 h-full max-h-[min(420px,45vh)] lg:max-h-none overflow-hidden">
-            <div className="p-3 border-b border-gray-100 flex gap-2 shrink-0">
+          <div className="border-b lg:border-b-0 lg:border-r border-gray-100 flex flex-col bg-gradient-to-b from-white to-sky-50/20 min-h-0 h-full max-h-[min(420px,45vh)] lg:max-h-none overflow-hidden">
+            <div className="px-3 pt-3 pb-2 border-b border-gray-100 shrink-0 bg-white/80 backdrop-blur-sm">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-[#0068FF]">Hội thoại</span>
+                <span className="text-[10px] font-semibold text-gray-400 tabular-nums">{contacts.length} cuộc</span>
+              </div>
+              <div className="flex gap-2">
               <div className="relative flex-1">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                 <input
@@ -640,24 +653,18 @@ export default function ZaloPage() {
                   onChange={(e) => setSearch(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && loadContacts()}
                   placeholder="Tìm tên, SĐT…"
-                  className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-full bg-gray-50/80 focus:bg-white focus:ring-2 focus:ring-sky-200 focus:border-sky-300 outline-none transition"
+                  className="w-full pl-9 pr-3 py-2 text-sm border border-sky-100 rounded-full bg-sky-50/50 focus:bg-white focus:ring-2 focus:ring-[#0068FF]/20 focus:border-[#0068FF]/40 outline-none transition shadow-inner"
                 />
               </div>
               <button
                 type="button"
                 onClick={loadContacts}
-                className="h-9 w-9 shrink-0 border border-gray-200 rounded-full hover:bg-gray-50 flex items-center justify-center text-gray-500"
+                className="h-9 w-9 shrink-0 border border-sky-100 rounded-full hover:bg-sky-50 flex items-center justify-center text-[#0068FF] bg-white shadow-sm"
                 title="Làm mới"
               >
                 <RefreshCw size={15} className={loadingContacts ? 'animate-spin' : ''} />
               </button>
-              <button
-                type="button"
-                className="h-9 w-9 shrink-0 border border-gray-200 rounded-full hover:bg-gray-50 flex items-center justify-center text-gray-500"
-                title="Bộ lọc"
-              >
-                <Filter size={15} />
-              </button>
+              </div>
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain [scrollbar-width:thin]">
               {loadingContacts && !contacts.length ? (
@@ -677,8 +684,10 @@ export default function ZaloPage() {
                       key={c.id}
                       type="button"
                       onClick={() => setSelectedId(c.id)}
-                      className={`w-full text-left px-3 py-2.5 flex gap-3 border-b border-gray-100 transition-colors relative ${
-                        isActive ? 'bg-sky-50/90 border-l-[3px] border-l-sky-500 pl-[9px]' : 'hover:bg-gray-50/90 border-l-[3px] border-l-transparent'
+                      className={`w-full text-left px-3 py-2.5 flex gap-3 border-b border-gray-100/80 transition-all relative ${
+                        isActive
+                          ? 'bg-gradient-to-r from-sky-100/90 to-sky-50/40 border-l-[3px] border-l-[#0068FF] pl-[9px] shadow-sm'
+                          : 'hover:bg-sky-50/50 border-l-[3px] border-l-transparent'
                       }`}
                     >
                       <div className="relative shrink-0">
@@ -702,19 +711,19 @@ export default function ZaloPage() {
                         {c.lead?.code ? (
                           <Link
                             to={`/crm/leads/${c.lead.id}`}
-                            className="inline-flex mt-1.5 px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-sky-100 text-sky-800 border border-sky-200 hover:bg-sky-200/80 transition-colors"
+                            className="inline-flex mt-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold bg-gradient-to-r from-sky-100 to-indigo-50 text-[#0047b3] border border-sky-200/80 hover:shadow-sm transition-shadow"
                             onClick={(e) => e.stopPropagation()}
                           >
                             {c.lead.code}
                           </Link>
                         ) : (
-                          <span className="inline-flex mt-1.5 px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-gray-100 text-gray-500 border border-gray-200">
+                          <span className="inline-flex mt-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
                             Chưa có Lead
                           </span>
                         )}
                       </div>
                       {hasUnread ? (
-                        <span className="self-center shrink-0 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-sky-600 text-white text-[10px] font-bold px-1">
+                        <span className="self-center shrink-0 min-w-[20px] h-5 flex items-center justify-center rounded-full bg-[#0068FF] text-white text-[10px] font-bold px-1.5 shadow-md shadow-sky-300/50">
                           {c.unread_count > 9 ? '9+' : c.unread_count}
                         </span>
                       ) : null}
@@ -728,29 +737,34 @@ export default function ZaloPage() {
           {/* Khung chat */}
           <div className="flex flex-col min-h-0 h-full max-h-[min(520px,55vh)] lg:max-h-none overflow-hidden bg-white">
             {!selectedId ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-gray-400 gap-2 p-8">
-                <MessageCircle className="h-10 w-10 text-gray-300" strokeWidth={1.5} />
-                <p className="text-sm font-medium">Chọn cuộc hội thoại để bắt đầu</p>
+              <div className="flex-1 flex flex-col items-center justify-center gap-3 p-8 bg-gradient-to-br from-sky-50/40 via-white to-indigo-50/30">
+                <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#0068FF] to-[#0047b3] flex items-center justify-center shadow-xl shadow-sky-200/60">
+                  <MessageCircle className="h-8 w-8 text-white" strokeWidth={1.75} />
+                </div>
+                <p className="text-sm font-bold text-gray-800">Chọn cuộc hội thoại</p>
+                <p className="text-xs text-gray-500 text-center max-w-[220px]">Tin nhắn Zalo OA hiển thị tại đây — phản hồi khách trong vòng 7 ngày</p>
               </div>
             ) : (
               <>
-                <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-3 bg-white shrink-0">
-                  <Avatar name={activeContact?.display_name} url={activeContact?.avatar_url} />
+                <div className="px-4 py-3 border-b border-sky-100 flex items-center gap-3 bg-gradient-to-r from-white via-sky-50/30 to-white shrink-0">
+                  <Avatar name={activeContact?.display_name} url={activeContact?.avatar_url} size="lg" />
                   <div className="flex-1 min-w-0">
-                    <div className="font-bold text-gray-900 truncate text-[15px]">
+                    <div className="font-bold text-gray-900 truncate text-[16px]">
                       {activeContact?.display_name || activeContact?.user_id || 'Khách Zalo'}
                     </div>
                     {activeContact?.phone ? (
-                      <div className="text-xs font-semibold text-sky-600 mt-0.5 tabular-nums">
+                      <div className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-800 tabular-nums">
                         📞 {activeContact.phone}
                       </div>
                     ) : (
-                      <div className="text-[11px] text-amber-700 font-medium mt-0.5">Chưa có SĐT</div>
+                      <div className="inline-flex mt-1 px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-[11px] font-bold text-amber-800">
+                        Chưa có SĐT
+                      </div>
                     )}
                     {activeContact?.lead_id ? (
                       <Link
                         to={`/crm/leads/${activeContact.lead_id}`}
-                        className="inline-flex items-center gap-0.5 text-xs font-semibold text-sky-600 hover:text-sky-800 hover:underline mt-1"
+                        className="inline-flex items-center gap-0.5 mt-1.5 text-xs font-bold text-[#0068FF] hover:underline"
                       >
                         Xem lead CRM
                         <ChevronRight className="h-3.5 w-3.5" />
@@ -761,15 +775,15 @@ export default function ZaloPage() {
                     type="button"
                     onClick={syncContactProfile}
                     disabled={syncingProfile}
-                    className="text-[11px] font-semibold border border-gray-200 rounded-lg px-2.5 py-1.5 hover:bg-gray-50 flex items-center gap-1 shrink-0 disabled:opacity-50 text-gray-700"
+                    className="text-[11px] font-bold border-2 border-sky-100 rounded-xl px-3 py-2 hover:bg-sky-50 flex items-center gap-1.5 shrink-0 disabled:opacity-50 text-[#0068FF] bg-white shadow-sm"
                     title="Lấy tên & avatar từ Zalo OA API"
                   >
-                    <UserCircle size={14} className={syncingProfile ? 'animate-pulse text-sky-600' : 'text-gray-500'} />
+                    <UserCircle size={15} className={syncingProfile ? 'animate-pulse' : ''} />
                     Tên KH
                   </button>
                 </div>
 
-                <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-4 space-y-3 bg-[#f4f6f8] [scrollbar-width:thin]">
+                <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-4 space-y-3 bg-[#eef2f6] [scrollbar-width:thin]">
                   {loadingMessages ? (
                     <p className="text-sm text-gray-500 text-center py-8">Đang tải tin nhắn…</p>
                   ) : messages.length === 0 ? (
@@ -778,10 +792,10 @@ export default function ZaloPage() {
                     messages.map((m) => (
                       <div key={m.id} className={`flex ${m.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
                         <div
-                          className={`max-w-[min(420px,78%)] rounded-2xl px-3.5 py-2 text-sm shadow-sm ${
+                          className={`max-w-[min(420px,78%)] rounded-2xl px-3.5 py-2.5 text-sm shadow-md ${
                             m.direction === 'outbound'
-                              ? 'bg-sky-600 text-white rounded-br-md'
-                              : 'bg-white border border-gray-200 text-gray-900 rounded-bl-md'
+                              ? 'bg-gradient-to-br from-[#0068FF] to-[#0050d4] text-white rounded-br-sm'
+                              : 'bg-white border border-gray-100 text-gray-900 rounded-bl-sm shadow-sm'
                           }`}
                         >
                           {m.attachment_url && m.message_type === 'image' ? (
@@ -803,20 +817,20 @@ export default function ZaloPage() {
                   <div ref={messagesEndRef} />
                 </div>
 
-                <div className="p-3 border-t border-gray-100 bg-white shrink-0">
+                <div className="p-3 border-t border-sky-100 bg-white shrink-0 shadow-[0_-4px_20px_rgba(0,104,255,0.06)]">
                   <div className="flex gap-2 items-end">
                     <input
                       value={reply}
                       onChange={(e) => setReply(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendReply()}
                       placeholder="Nhập tin trả lời…"
-                      className="flex-1 border border-gray-200 rounded-full px-4 py-2.5 text-sm bg-gray-50/50 focus:bg-white focus:ring-2 focus:ring-sky-200 focus:border-sky-300 outline-none transition"
+                      className="flex-1 border-2 border-sky-100 rounded-full px-4 py-2.5 text-sm bg-sky-50/30 focus:bg-white focus:ring-2 focus:ring-[#0068FF]/25 focus:border-[#0068FF]/30 outline-none transition"
                     />
                     <button
                       type="button"
                       onClick={sendReply}
                       disabled={sending || !reply.trim()}
-                      className="h-10 w-10 shrink-0 bg-sky-600 text-white rounded-full flex items-center justify-center hover:bg-sky-700 disabled:opacity-40 disabled:hover:bg-sky-600 transition-colors shadow-sm"
+                      className="h-11 w-11 shrink-0 bg-gradient-to-br from-[#0068FF] to-[#0050d4] text-white rounded-full flex items-center justify-center hover:brightness-110 disabled:opacity-40 transition-all shadow-lg shadow-sky-300/40"
                       title="Gửi"
                     >
                       <Send size={16} />
