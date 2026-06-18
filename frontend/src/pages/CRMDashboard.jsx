@@ -391,6 +391,29 @@ function resolveKanbanBatchLimit(kanbanLoadLimit, offset, loadedCount) {
   if (remaining <= 0) return 0;
   return Math.min(KANBAN_PAGE_SIZE, remaining);
 }
+
+function companyHasPipelineInList(list, companyId) {
+  if (!companyId) return true;
+  return (list || []).some((p) => String(p.company_id || '') === String(companyId));
+}
+
+/** Chỉ tái dùng cache pipeline khi danh sách đủ pipeline của công ty đang lọc. */
+function resolvePreloadedPipelinesList(pipelinesAllRef, narrowedPipelines, companyId) {
+  const full = pipelinesAllRef?.current;
+  if (Array.isArray(full) && full.length && companyHasPipelineInList(full, companyId)) return full;
+  if (Array.isArray(narrowedPipelines) && narrowedPipelines.length && companyHasPipelineInList(narrowedPipelines, companyId)) {
+    return narrowedPipelines;
+  }
+  return null;
+}
+
+function applyCrmPipelinesFromApi(allPipelines, companyId, pipelinesAllRef, setPipelines) {
+  const all = Array.isArray(allPipelines) ? allPipelines : [];
+  if (pipelinesAllRef) pipelinesAllRef.current = all;
+  setPipelines(narrowPipelinesToDefaultForCompany(all, companyId || null));
+  return all;
+}
+
 /** Query flags — backend trả select nhẹ + bỏ enrich nặng cho Kanban. */
 const CRM_KANBAN_LEAD_QUERY = { kanban: '1', lite: '1', skip_deadline: '1' };
 /** Trì hoãn pipeline/tab không active và số SĐT — tránh tranh băng thông lúc mở trang. */
@@ -895,6 +918,8 @@ export default function CRMDashboard() {
   const loadDebounceTimerRef = useRef(null);
   /** Cache key vừa hydrate — tránh hydrate lại liên tục cùng 1 filter combo */
   const lastHydratedCacheKeyRef = useRef(null);
+  /** Toàn bộ pipeline từ API — dùng resolve pipeline khi admin đổi công ty (state `pipelines` chỉ giữ 1 pipeline/công ty). */
+  const pipelinesAllRef = useRef([]);
   /** Giá trị GET /crm/live-version gần nhất — đổi → silent reload Kanban/KPI */
   const inactiveKanbanLoadSeqRef = useRef(0);
   /** Giá trị GET /crm/live-version gần nhất — đổi → silent reload Kanban/KPI */
@@ -1209,8 +1234,14 @@ export default function CRMDashboard() {
           if (Array.isArray(m.users) && m.users.length && users.length === 0) {
             setUsers(m.users);
           }
-          if (Array.isArray(m.pipelines) && m.pipelines.length && pipelines.length === 0) {
+          if (Array.isArray(m.pipelinesAll) && m.pipelinesAll.length) {
+            pipelinesAllRef.current = m.pipelinesAll;
+            if (pipelines.length === 0) {
+              setPipelines(narrowPipelinesToDefaultForCompany(m.pipelinesAll, filterCompany || ''));
+            }
+          } else if (Array.isArray(m.pipelines) && m.pipelines.length && pipelines.length === 0) {
             setPipelines(m.pipelines);
+            if (m.pipelines.length > 1) pipelinesAllRef.current = m.pipelines;
           }
           if (Array.isArray(m.sources) && m.sources.length && sources.length === 0) {
             setSources(m.sources);
@@ -1673,11 +1704,30 @@ export default function CRMDashboard() {
 
   const resolvePipelineIdForCompany = useCallback((companyId) => {
     if (!companyId) return null;
-    const list = pipelines || [];
+    const list = pipelinesAllRef.current?.length
+      ? pipelinesAllRef.current
+      : (pipelines || []);
     const byCompany = list.filter((p) => String(p.company_id || '') === String(companyId));
     const def = byCompany.find((p) => p.is_default);
     return (def || byCompany[0] || null)?.id || null;
   }, [pipelines]);
+
+  /** Xóa Kanban cũ ngay khi đổi công ty (tránh hiển thị nhầm dữ liệu công ty trước). */
+  const resetKanbanForFilterChange = useCallback(() => {
+    lastHydratedCacheKeyRef.current = null;
+    setSyncing(true);
+    startTransition(() => {
+      setAllLeads([]);
+      setAllDeals([]);
+      setLoadMoreState({
+        leadOffset: 0,
+        dealOffset: 0,
+        leadTotal: null,
+        dealTotal: null,
+        loading: false,
+      });
+    });
+  }, []);
 
   /** Công ty đang áp dụng cho dashboard (admin: theo bộ lọc; user: theo company_id). */
   const dashboardScopeCompanyId = useMemo(() => {
@@ -2101,7 +2151,11 @@ export default function CRMDashboard() {
 
       let stagesLeadParams = buildStagesParams('lead');
       let stagesDealParams = buildStagesParams('deal');
-      const pipelinesPreloaded = pipelines.length ? pipelines : null;
+      const pipelinesPreloaded = resolvePreloadedPipelinesList(
+        pipelinesAllRef,
+        pipelines,
+        resolvedCompanyId || null,
+      );
       if (pipelinesPreloaded && isAdmin && resolvedCompanyId) {
         const byCo = pipelinesPreloaded.filter((p) => String(p.company_id || '') === String(resolvedCompanyId));
         const def = byCo.find((p) => p.is_default) || byCo[0];
@@ -2173,9 +2227,40 @@ export default function CRMDashboard() {
         void (async () => {
           const withDl = await enrichCrmKanbanRowsWithDeadlines(api, rows);
           if (isStale()) return;
-          const merged = dedupeCrmKanbanRows(mergeLeadSeenLocal(withDl));
-          if (type === 'lead') setAllLeads(merged);
-          else setAllDeals((prev) => preserveCrmKanbanPipelineBadges(prev, merged));
+          const patchMap = new Map(
+            (withDl || []).map((r) => [String(r.id), r.crm_next_open_task_deadline]),
+          );
+          if (!patchMap.size) return;
+          startTransition(() => {
+            if (type === 'lead') {
+              setAllLeads((prev) =>
+                dedupeCrmKanbanRows(
+                  prev.map((r) => {
+                    if (!patchMap.has(String(r.id))) return r;
+                    return {
+                      ...r,
+                      crm_next_open_task_deadline: patchMap.get(String(r.id)) ?? r.crm_next_open_task_deadline ?? null,
+                    };
+                  }),
+                ),
+              );
+            } else {
+              setAllDeals((prev) =>
+                preserveCrmKanbanPipelineBadges(
+                  prev,
+                  dedupeCrmKanbanRows(
+                    prev.map((r) => {
+                      if (!patchMap.has(String(r.id))) return r;
+                      return {
+                        ...r,
+                        crm_next_open_task_deadline: patchMap.get(String(r.id)) ?? r.crm_next_open_task_deadline ?? null,
+                      };
+                    }),
+                  ),
+                ),
+              );
+            }
+          });
         })();
         window.setTimeout(() => {
           if (!isStale()) void refreshPipelinePhoneTotalsForType(type);
@@ -2251,22 +2336,23 @@ export default function CRMDashboard() {
           const activeMerged = dedupeCrmKanbanRows(mergeLeadSeenLocal(kanbanPage.data || []));
           const stagesActive = sortAndDedupePipelineStages(boot.stages || []);
 
-          if (activeType === 'lead') {
-            setDataLead(boot.dashboard);
-            setStagesLead(stagesActive);
-            setAllLeads(activeMerged);
-          } else {
-            setDataDeal(boot.dashboard);
-            setStagesDeal(stagesActive);
-            setAllDeals(preserveCrmKanbanPipelineBadges(allDeals, activeMerged));
-          }
-
-          setLoadMoreState({
-            leadOffset: activeType === 'lead' ? (kanbanPage.nextOffset ?? activeMerged.length) : loadMoreState.leadOffset,
-            dealOffset: activeType === 'deal' ? (kanbanPage.nextOffset ?? activeMerged.length) : loadMoreState.dealOffset,
-            leadTotal: activeType === 'lead' ? kanbanPage.total : loadMoreState.leadTotal,
-            dealTotal: activeType === 'deal' ? kanbanPage.total : loadMoreState.dealTotal,
-            loading: false,
+          startTransition(() => {
+            if (activeType === 'lead') {
+              setDataLead(boot.dashboard);
+              setStagesLead(stagesActive);
+              setAllLeads(activeMerged);
+            } else {
+              setDataDeal(boot.dashboard);
+              setStagesDeal(stagesActive);
+              setAllDeals(preserveCrmKanbanPipelineBadges(allDeals, activeMerged));
+            }
+            setLoadMoreState({
+              leadOffset: activeType === 'lead' ? (kanbanPage.nextOffset ?? activeMerged.length) : loadMoreState.leadOffset,
+              dealOffset: activeType === 'deal' ? (kanbanPage.nextOffset ?? activeMerged.length) : loadMoreState.dealOffset,
+              leadTotal: activeType === 'lead' ? kanbanPage.total : loadMoreState.leadTotal,
+              dealTotal: activeType === 'deal' ? kanbanPage.total : loadMoreState.dealTotal,
+              loading: false,
+            });
           });
           if (!isStale()) setFirstLoading(false);
           runDeferredCrmEnrichment(activeType, activeMerged, boot.dashboard);
@@ -2293,11 +2379,12 @@ export default function CRMDashboard() {
                   : api.get('/users').catch(() => ({ data: [] })),
               ]);
               if (isStale()) return;
-              const pipelinesValue = narrowPipelinesToDefaultForCompany(
-                Array.isArray(pipelinesRes.data) ? pipelinesRes.data : [],
+              const pipelinesAll = applyCrmPipelinesFromApi(
+                pipelinesRes.data,
                 resolvedCompanyId || null,
+                pipelinesAllRef,
+                setPipelines,
               );
-              setPipelines(pipelinesValue);
               const sourcesValue = sourcesRes.data?.sources || (Array.isArray(sourcesRes.data) ? sourcesRes.data : []);
               const leadTypesValue = Array.isArray(leadTypesRes.data) ? leadTypesRes.data : [];
               setSources(sourcesValue);
@@ -2336,11 +2423,13 @@ export default function CRMDashboard() {
         return;
       }
 
-      const pipelinesValue = narrowPipelinesToDefaultForCompany(
-        Array.isArray(pipelinesRes.data) ? pipelinesRes.data : [],
+      const pipelinesAll = applyCrmPipelinesFromApi(
+        pipelinesRes.data,
         resolvedCompanyId || null,
+        pipelinesAllRef,
+        setPipelines,
       );
-      setPipelines(pipelinesValue);
+      const pipelinesValue = narrowPipelinesToDefaultForCompany(pipelinesAll, resolvedCompanyId || null);
 
       const activeResult = kanbanActiveRows || { rows: [], nextOffset: 0, total: null };
       const activeData = Array.isArray(activeResult) ? activeResult : activeResult.rows;
@@ -2353,17 +2442,13 @@ export default function CRMDashboard() {
 
       if (activeType === 'lead') {
         dashLeadSnapshot = dashActiveRes.data;
-        setDataLead(dashActiveRes.data);
         allLeadsValue = activeMerged;
-        setAllLeads(activeMerged);
       } else {
         dashDealSnapshot = dashActiveRes.data;
-        setDataDeal(dashActiveRes.data);
         allDealsValue = preserveCrmKanbanPipelineBadges(
           allDeals,
           dedupeCrmKanbanRows(mergeLeadSeenLocal(activeData)),
         );
-        setAllDeals(allDealsValue);
       }
 
       const loadMoreStateValue = {
@@ -2377,12 +2462,22 @@ export default function CRMDashboard() {
         dealTotal: activeType === 'deal' ? activeResult.total : loadMoreState.dealTotal,
         loading: false,
       };
-      setLoadMoreState(loadMoreStateValue);
       const stagesActiveValue = sortAndDedupePipelineStages(activeStagesRes.data || []);
       const stagesLeadValue = activeType === 'lead' ? stagesActiveValue : stagesLead;
       const stagesDealValue = activeType === 'deal' ? stagesActiveValue : stagesDeal;
-      if (activeType === 'lead') setStagesLead(stagesActiveValue);
-      else setStagesDeal(stagesActiveValue);
+
+      startTransition(() => {
+        if (activeType === 'lead') {
+          setDataLead(dashLeadSnapshot);
+          setAllLeads(allLeadsValue);
+        } else {
+          setDataDeal(dashDealSnapshot);
+          setAllDeals(allDealsValue);
+        }
+        setLoadMoreState(loadMoreStateValue);
+        if (activeType === 'lead') setStagesLead(stagesActiveValue);
+        else setStagesDeal(stagesActiveValue);
+      });
       if (!isStale()) setFirstLoading(false);
       runDeferredCrmEnrichment(activeType, activeMerged, dashActiveRes.data);
       scheduleInactivePipelineLoad();
@@ -2464,6 +2559,7 @@ export default function CRMDashboard() {
                 companies: companiesValue.length ? companiesValue : companies,
                 users: usersValue.length ? usersValue : users,
                 pipelines: pipelinesValue,
+                pipelinesAll: pipelinesAllRef.current,
                 stagesLead: stagesLeadValue,
                 stagesDeal: stagesDealValue,
                 sources: sourcesValue,
@@ -4224,10 +4320,17 @@ export default function CRMDashboard() {
                     <select
                       value={filterCompany}
                       onChange={(e) => {
-                        setFilterCompany(e.target.value);
+                        const v = e.target.value;
+                        setFilterCompany(v);
                         setFilterRegion('');
                         setFilterAssignee('');
                         setFilterAssigneeName('');
+                        try {
+                          setStoredCrmFilterCompanyId(v ? String(v) : '');
+                        } catch {
+                          /* ignore */
+                        }
+                        resetKanbanForFilterChange();
                       }}
                       className="h-9 w-44 px-2 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
                     >
@@ -6136,23 +6239,28 @@ const KanbanStageCard = memo(function KanbanStageCard({
           </div>
         ) : (
           (items || []).map((item) => (
-            <KanbanCard
+            <div
               key={item.id}
-              item={item}
-              stage={stage}
-              onMoveStage={onMoveStage}
-              pipelineType={pipelineType}
-              mergeSelectedIds={mergeSelectedIds}
-              onToggleMergeSelect={onToggleMergeSelect}
-              compact={compact}
-              showCompanyOnCard={showCompanyOnCard}
-              leadTypes={leadTypes}
-              kpiLedgerPeriodStart={kpiLedgerPeriodStart}
-              onOpenKanbanComment={onOpenKanbanComment}
-              onTogglePin={onTogglePin}
-              onToggleInteracted={onToggleInteracted}
-              onOpenDeadline={onOpenDeadline}
-            />
+              className="crm-kanban-card-slot"
+              style={{ contentVisibility: 'auto', containIntrinsicSize: '0 132px' }}
+            >
+              <KanbanCard
+                item={item}
+                stage={stage}
+                onMoveStage={onMoveStage}
+                pipelineType={pipelineType}
+                mergeSelectedIds={mergeSelectedIds}
+                onToggleMergeSelect={onToggleMergeSelect}
+                compact={compact}
+                showCompanyOnCard={showCompanyOnCard}
+                leadTypes={leadTypes}
+                kpiLedgerPeriodStart={kpiLedgerPeriodStart}
+                onOpenKanbanComment={onOpenKanbanComment}
+                onTogglePin={onTogglePin}
+                onToggleInteracted={onToggleInteracted}
+                onOpenDeadline={onOpenDeadline}
+              />
+            </div>
           ))
         )}
       </div>
@@ -6646,7 +6754,24 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
       </div>
     </div>
   );
-});
+}, (prev, next) => (
+  prev.item?.id === next.item?.id
+  && prev.item?.updated_at === next.item?.updated_at
+  && prev.item?.stage_id === next.item?.stage_id
+  && prev.item?.is_pinned === next.item?.is_pinned
+  && prev.item?.is_interacted === next.item?.is_interacted
+  && prev.item?.is_new_for_current_user === next.item?.is_new_for_current_user
+  && prev.item?.kpi_ledger_month_net === next.item?.kpi_ledger_month_net
+  && prev.item?.crm_next_open_task_deadline === next.item?.crm_next_open_task_deadline
+  && prev.stage?.id === next.stage?.id
+  && prev.compact === next.compact
+  && prev.pipelineType === next.pipelineType
+  && prev.showCompanyOnCard === next.showCompanyOnCard
+  && prev.kpiLedgerPeriodStart === next.kpiLedgerPeriodStart
+  && (prev.mergeSelectedIds || []).length === (next.mergeSelectedIds || []).length
+  && (prev.mergeSelectedIds || []).some((x) => String(x) === String(prev.item?.id))
+    === (next.mergeSelectedIds || []).some((x) => String(x) === String(next.item?.id))
+));
 
 // Kanban View Container - MISA Style
 function KanbanView({
