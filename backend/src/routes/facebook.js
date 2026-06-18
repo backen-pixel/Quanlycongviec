@@ -1749,6 +1749,7 @@ function getFbMasterScheduleStatus() {
     master_current: getFbMasterEnabledSync(),
     next_transition_at: fbMasterSchedule.enabled ? nextAt : null,
     next_phase: fbMasterSchedule.enabled ? (phase === 'run' ? 'rest' : 'run') : null,
+    remaining_seconds: reconciled.delayMs != null ? Math.ceil(reconciled.delayMs / 1000) : null,
     last_action: fbMasterScheduleLastAction,
     last_action_at: fbMasterScheduleLastActionAt,
   };
