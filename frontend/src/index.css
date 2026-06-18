@@ -154,7 +154,7 @@ select.input {
 }
 .animate-pulse-dot { animation: pulse-dot 1.5s ease-in-out infinite; }
 
-/* Floating notification toast — CRM/Messenger dark navy + neon green */
+/* Floating notification toast — nền trắng sáng + accent xanh lá */
 @keyframes toast-slide-in-right {
   from { transform: translate3d(calc(100% + 1.25rem), 0, 0); opacity: 0; }
   to { transform: translate3d(0, 0, 0); opacity: 1; }
@@ -187,30 +187,27 @@ select.input {
   animation-play-state: paused;
 }
 .toast-crm {
-  background: rgba(8, 24, 39, 0.9);
+  background: rgba(255, 255, 255, 0.96);
   box-shadow:
-    0 22px 56px rgba(0, 0, 0, 0.52),
-    0 8px 24px rgba(0, 0, 0, 0.35),
-    inset 0 1px 0 rgba(255, 255, 255, 0.07),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.25),
-    0 0 28px rgba(0, 230, 118, 0.07);
+    0 16px 40px rgba(15, 23, 42, 0.12),
+    0 4px 14px rgba(15, 23, 42, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 1),
+    inset 0 -1px 0 rgba(15, 23, 42, 0.04);
 }
 .toast-crm:hover {
   box-shadow:
-    0 28px 64px rgba(0, 0, 0, 0.58),
-    0 12px 32px rgba(0, 0, 0, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.09),
-    0 0 36px rgba(0, 230, 118, 0.14);
+    0 22px 48px rgba(15, 23, 42, 0.14),
+    0 8px 20px rgba(16, 185, 129, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 1);
 }
 .toast-crm-avatar {
   box-shadow:
-    0 0 0 2px rgba(0, 230, 118, 0.55),
-    0 0 18px rgba(0, 230, 118, 0.4),
-    inset 0 0 8px rgba(0, 230, 118, 0.15);
+    0 0 0 2px rgba(16, 185, 129, 0.35),
+    0 0 12px rgba(16, 185, 129, 0.2);
 }
 .toast-crm-progress {
-  background: linear-gradient(90deg, #00E676 0%, #69f0ae 100%);
-  box-shadow: 0 0 10px rgba(0, 230, 118, 0.85);
+  background: linear-gradient(90deg, #00C853 0%, #00E676 100%);
+  box-shadow: 0 0 6px rgba(0, 200, 83, 0.35);
 }
 
 /* Print styles for PDF export */

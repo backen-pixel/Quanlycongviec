@@ -9,7 +9,6 @@ import { MessageCircle, X, Minus, Maximize2, Search, Users, Loader2, ChevronRigh
 import api from '../lib/api';
 import { publicFileUrl } from '../lib/publicFileUrl';
 import OnlineStatusDot, { isUserOnline } from './OnlineStatusDot';
-import FloatingNotificationCard from './FloatingNotificationCard';
 import { usePresence } from '../shared/context/PresenceContext';
 
 export const MESSENGER_DOCK_W = 52;
@@ -21,9 +20,6 @@ const LAUNCHER_W = 300;
 const Z_BUBBLE = 100;
 const Z_LAUNCHER = 110;
 const Z_DOCK = 120;
-const Z_TOAST = 125;
-const TOAST_W = 380;
-const TOAST_GAP = 10;
 
 function avatarUrl(av) {
   if (!av || typeof av !== 'string') return null;
@@ -100,8 +96,6 @@ export default function MessengerDock() {
     openMessengerGroupChat,
     openLeadChat,
     openDepartmentChat,
-    chatToasts,
-    dismissChatToast,
   } = useMessengerDock();
   const [launcherOpen, setLauncherOpen] = useState(false);
   const [groups, setGroups] = useState([]);
@@ -215,11 +209,8 @@ export default function MessengerDock() {
         ids.add(groupPeerById.get(String(w.groupId)));
       }
     });
-    (chatToasts || []).forEach((t) => {
-      if (t.sender?.id) ids.add(String(t.sender.id));
-    });
     return [...ids];
-  }, [staffRows, groups, windows, chatToasts, groupPeerById]);
+  }, [staffRows, groups, windows, groupPeerById]);
 
   const presenceByUser = usePresence(presenceUserIds, { enabled: !!uid });
 
@@ -551,57 +542,6 @@ export default function MessengerDock() {
           </div>
         </div>
       ) : null}
-
-      {/* Toast tin nhắn đến — glassmorphism, slide phải, progress 5s */}
-      <div
-        className="fixed flex flex-col gap-2.5 pointer-events-none"
-        style={{
-          zIndex: Z_TOAST,
-          right: DOCK_W + TOAST_GAP,
-          top: 'max(70px, env(safe-area-inset-top, 0px) + 56px)',
-          width: TOAST_W,
-          maxWidth: 'calc(100vw - 4.5rem)',
-        }}
-      >
-        {(chatToasts || []).map((t) => {
-          const av = avatarUrl(t.sender?.avatar);
-          const unread =
-            t.kind === 'group' && t.groupId
-              ? unreadByGroupId[t.groupId] || 1
-              : t.kind === 'lead' && t.leadId
-                ? unreadByLeadId[t.leadId] || 1
-                : t.kind === 'department' && t.deptId
-                  ? unreadByDeptId[t.deptId] || 1
-                  : 1;
-          const contextLabel = t.title
-            ? `${t.kind === 'group' ? 'Nhóm · ' : t.kind === 'department' ? 'Phòng ban · ' : 'Lead · '}${t.title}`
-            : null;
-          const onOpen = () => {
-            if (t.kind === 'group' && t.groupId) {
-              openMessengerGroupChat({ id: t.groupId, name: t.title });
-            } else if (t.kind === 'lead' && t.leadId) {
-              openLeadChat({ id: t.leadId, title: t.title });
-            } else if (t.kind === 'department' && t.deptId) {
-              openDepartmentChat({ id: t.deptId, name: t.title });
-            }
-          };
-          return (
-            <FloatingNotificationCard
-              key={t.id}
-              className="pointer-events-auto"
-              userName={t.sender?.name || 'Ai đó'}
-              contextLabel={contextLabel}
-              message={t.preview || '(tin nhắn mới)'}
-              avatarSrc={av}
-              avatarFallback={t.sender?.name}
-              online={isUserOnline(presenceByUser, t.sender?.id)}
-              unreadCount={unread}
-              onDismiss={() => dismissChatToast(t.id)}
-              onClick={onOpen}
-            />
-          );
-        })}
-      </div>
 
       <div
         ref={dockBarRef}

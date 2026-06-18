@@ -3,11 +3,10 @@ import { X } from 'lucide-react';
 
 const AUTO_DISMISS_MS = 5000;
 const EXIT_MS = 300;
-const ACCENT = '#00E676';
-const NAVY = '#081827';
+const ACCENT = '#00C853';
 
 /**
- * Toast CRM/Messenger — Dark Navy + neon green (#00E676), glassmorphism, progress 5s.
+ * Toast thông báo tổng — nền trắng sáng, accent xanh lá, progress 5s.
  */
 export default function FloatingNotificationCard({
   onDismiss,
@@ -108,12 +107,10 @@ export default function FloatingNotificationCard({
       style={{
         ...style,
         ['--toast-progress-ms']: `${autoDismissMs}ms`,
-        ['--toast-accent']: ACCENT,
-        ['--toast-navy']: NAVY,
       }}
       className={[
         'toast-crm group relative w-full min-w-[320px] max-w-[380px] min-h-[90px] max-h-[110px] overflow-hidden rounded-[18px] cursor-pointer',
-        'border border-[rgba(0,230,118,0.14)] backdrop-blur-[16px]',
+        'border border-slate-200/90 backdrop-blur-[12px]',
         'transition-[transform,box-shadow,opacity] duration-300 ease-out will-change-transform',
         phase === 'enter' ? 'toast-slide-in-right opacity-0' : '',
         phase === 'visible' ? 'toast-slide-in-right toast-slide-in-right-active opacity-100 hover:-translate-y-[3px]' : '',
@@ -122,7 +119,6 @@ export default function FloatingNotificationCard({
       ].filter(Boolean).join(' ')}
     >
       <div className="flex h-full min-h-[90px] items-center gap-3 px-3.5 py-3 pr-3">
-        {/* Avatar 48×48 — viền neon xanh lá */}
         <div className="relative shrink-0">
           {showImg ? (
             <img
@@ -133,42 +129,39 @@ export default function FloatingNotificationCard({
             />
           ) : (
             <div
-              className="toast-crm-avatar flex h-12 w-12 items-center justify-center rounded-full text-sm font-bold text-[#081827]"
-              style={{ background: `linear-gradient(135deg, ${ACCENT} 0%, #00c853 100%)` }}
+              className="toast-crm-avatar flex h-12 w-12 items-center justify-center rounded-full text-sm font-bold text-white"
+              style={{ background: `linear-gradient(135deg, ${ACCENT} 0%, #00E676 100%)` }}
             >
               {iconEmoji || initials}
             </div>
           )}
         </div>
 
-        {/* Nội dung giữa */}
         <div className="min-w-0 flex-1 self-center">
-          <p className="truncate text-[14px] font-bold leading-tight text-white">
+          <p className="truncate text-[14px] font-bold leading-tight text-gray-900">
             {userName || 'Thông báo'}
           </p>
           {online === true && (
-            <p className="mt-0.5 flex items-center gap-1 text-[11px] font-semibold" style={{ color: ACCENT }}>
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#00E676] shadow-[0_0_6px_#00E676]" aria-hidden />
+            <p className="mt-0.5 flex items-center gap-1 text-[11px] font-semibold text-emerald-600">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.6)]" aria-hidden />
               Online
             </p>
           )}
           {online !== true && contextLabel && !previewLine.includes(contextLabel) && (
-            <p className="mt-0.5 truncate text-[11px] font-medium text-[rgba(0,230,118,0.75)]">
+            <p className="mt-0.5 truncate text-[11px] font-medium text-sky-700">
               {contextLabel}
             </p>
           )}
           {previewLine ? (
-            <p className="mt-1 truncate text-[12px] leading-snug text-slate-300/95">
+            <p className="mt-1 truncate text-[12px] leading-snug text-gray-600">
               {previewLine}
             </p>
           ) : null}
         </div>
 
-        {/* Badge chưa đọc — góc phải */}
         {unreadCount > 0 && (
           <span
-            className="flex h-7 min-w-[28px] shrink-0 items-center justify-center self-start rounded-full px-1.5 text-[11px] font-bold shadow-[0_0_14px_rgba(0,230,118,0.55)]"
-            style={{ backgroundColor: ACCENT, color: NAVY }}
+            className="flex h-7 min-w-[28px] shrink-0 items-center justify-center self-start rounded-full bg-emerald-500 px-1.5 text-[11px] font-bold text-white shadow-[0_2px_8px_rgba(16,185,129,0.35)]"
           >
             {unreadCount > 99 ? '99+' : unreadCount}
           </span>
@@ -178,7 +171,7 @@ export default function FloatingNotificationCard({
           <button
             type="button"
             onClick={handleClose}
-            className="absolute right-2 top-2 rounded-lg p-1 text-slate-500 opacity-0 transition hover:bg-white/10 hover:text-slate-200 group-hover:opacity-100"
+            className="absolute right-2 top-2 rounded-lg p-1 text-gray-400 opacity-0 transition hover:bg-gray-100 hover:text-gray-700 group-hover:opacity-100"
             aria-label="Đóng thông báo"
           >
             <X className="h-3.5 w-3.5" />
@@ -186,8 +179,7 @@ export default function FloatingNotificationCard({
         )}
       </div>
 
-      {/* Progress bar — neon, bo tròn, giảm dần 5s */}
-      <div className="absolute bottom-0 left-0 right-0 h-1 bg-[rgba(255,255,255,0.06)]" aria-hidden>
+      <div className="absolute bottom-0 left-0 right-0 h-1 bg-slate-100" aria-hidden>
         <div className={`toast-progress-bar toast-crm-progress h-full rounded-full ${paused ? 'toast-progress-paused' : ''}`} />
       </div>
     </div>
