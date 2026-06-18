@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <style name="Theme.IncomingCall" parent="Theme.AppCompat.NoActionBar">
+    <item name="android:windowBackground">#0A1628</item>
+    <item name="android:statusBarColor">#0A1628</item>
+    <item name="android:navigationBarColor">#0A1628</item>
+  </style>
+  <!-- MainActivity nạp RN ngầm khi trả lời từ màn khóa — không che UI cuộc gọi -->
+  <style name="Theme.MainCallBoot" parent="Theme.AppCompat.NoActionBar">
+    <item name="android:windowIsTranslucent">true</item>
+    <item name="android:windowBackground">@android:color/transparent</item>
+    <item name="android:windowAnimationStyle">@null</item>
+    <item name="android:backgroundDimEnabled">false</item>
+  </style>
+</resources>

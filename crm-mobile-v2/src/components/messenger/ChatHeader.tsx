@@ -84,7 +84,7 @@ export default function ChatHeader({
 
   const mc = getMessengerColors(colors, isDark);
 
-  const { startCall, startGroupCall, status: callStatus } = useCall();
+  const { startCall, startVideoCall, startGroupCall, status: callStatus } = useCall();
 
   const [calling, setCalling] = useState(false);
 
@@ -162,10 +162,25 @@ export default function ChatHeader({
 
 
 
-  const onVideoCall = () => {
-
-    Alert.alert('Gọi video', 'Gọi video sẽ được bổ sung trong bản cập nhật tiếp theo.');
-
+  const onVideoCall = async () => {
+    if (callStatus !== 'idle' || calling) {
+      Alert.alert('Cuộc gọi', 'Đang có cuộc gọi khác.');
+      return;
+    }
+    if (!isDirect) {
+      Alert.alert('Gọi video', 'Gọi video nhóm chưa hỗ trợ.');
+      return;
+    }
+    if (!peerId) {
+      Alert.alert('Gọi video', 'Không xác định được người nhận.');
+      return;
+    }
+    setCalling(true);
+    try {
+      await startVideoCall({ id: String(peerId), name: displayName, avatar: avatarUrl || null });
+    } finally {
+      setCalling(false);
+    }
   };
 
 
@@ -328,7 +343,7 @@ export default function ChatHeader({
 
         </TapHighlight>
 
-        <TapHighlight style={styles.callBtn} onPress={onVideoCall}>
+        <TapHighlight style={styles.callBtn} onPress={onVideoCall} disabled={calling}>
 
           <Ionicons name="videocam" size={18} color={mc.accent} />
 
