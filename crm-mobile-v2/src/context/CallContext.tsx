@@ -1,5 +1,4 @@
 import React, { createContext, useContext, useMemo } from 'react';
-import { Alert } from 'react-native';
 import {
   CallProvider as BaseCallProvider,
   useCall as useBaseCall,
@@ -13,11 +12,6 @@ type Ctx = ReturnType<typeof useBaseCall> & {
   status: CallStatus;
   startCall: (peer: CallPeer) => Promise<void>;
   startVideoCall: (peer: CallPeer) => Promise<void>;
-  startGroupCall: (_group: {
-    id: string;
-    name: string;
-    members: { id: string; name: string; avatar?: string | null }[];
-  }) => Promise<void>;
 };
 
 const CallCtx = createContext<Ctx | null>(null);
@@ -39,9 +33,6 @@ function CallBridge({ children }: { children: React.ReactNode }) {
       status: busy ? 'busy' : 'idle',
       startCall: (peer) => base.startCall(peer, 'audio'),
       startVideoCall: (peer) => base.startCall(peer, 'video'),
-      startGroupCall: async () => {
-        Alert.alert('Cuộc gọi nhóm', 'Cuộc gọi nhóm sẽ được bổ sung trong bản cập nhật tiếp theo.');
-      },
     };
   }, [base]);
   return <CallCtx.Provider value={value}>{children}</CallCtx.Provider>;

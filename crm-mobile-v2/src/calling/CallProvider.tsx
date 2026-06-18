@@ -35,12 +35,17 @@ import {
   type CallMedia, type CallPeer, type CallSession, type CallState,
 } from './types';
 import { startIncomingCallAlert, stopIncomingCallAlert } from '../lib/callRingtone';
+import { LegacyGroupCallManager, type GroupPeerInfo } from './LegacyGroupCallManager';
+import { useAuth } from '../context/AuthContext';
 
 type Ctx = {
   session: CallSession | null;
   localStream: MediaStream | null;
   remoteStream: MediaStream | null;
+  groupPeers: GroupPeerInfo[];
   startCall: (peer: CallPeer, media?: CallMedia) => Promise<void>;
+  startGroupCall: (group: { id: string; name?: string; members: { id: string; name?: string }[] }, media?: CallMedia) => Promise<void>;
+  joinGroupCall: (info: Record<string, unknown>) => void;
   acceptCall: () => Promise<void>;
   rejectCall: () => void;
   endCall: () => void;
@@ -60,13 +65,18 @@ function genCallId() {
 }
 
 export function CallProvider({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  const uid = String(user?.id || user?.userId || '');
   const [session, setSession] = useState<CallSession | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [groupPeers, setGroupPeers] = useState<GroupPeerInfo[]>([]);
 
   const signalingRef = useRef<SignalingClient | null>(null);
   const rtcRef = useRef<WebRTCService | null>(null);
   const sessionRef = useRef<CallSession | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const groupMgrRef = useRef<LegacyGroupCallManager | null>(null);
   const ringTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastOfferRef = useRef<any>(null);
@@ -83,6 +93,17 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       return next;
     });
   }, []);
+
+  useEffect(() => {
+    groupMgrRef.current = new LegacyGroupCallManager({
+      sessionRef,
+      setSession,
+      patchSession: updateSession,
+      localStreamRef,
+    });
+    groupMgrRef.current.onPeersChange = setGroupPeers;
+    return () => { groupMgrRef.current?.reset(); };
+  }, [updateSession]);
 
   const setState = useCallback((state: CallState) => updateSession({ state }), [updateSession]);
 
@@ -108,6 +129,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       releaseIncomingClaim(s.callId);
       void dismissIncomingCallNotification(s.callId);
     }
+    if (s?.mode === 'group') groupMgrRef.current?.reset();
     if (Platform.OS === 'android') dismissLockScreenCallUi();
     void clearPendingIncomingCall();
     setCallSession(null, 'idle');
@@ -269,7 +291,12 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   // ─── Callee chấp nhận ───
   const acceptCall = useCallback(async () => {
     const cur = sessionRef.current;
-    if (!cur || cur.direction !== 'incoming' || cur.state !== 'RINGING') return;
+    if (!cur || cur.state !== 'RINGING') return;
+    if (cur.mode === 'group') {
+      await groupMgrRef.current?.acceptGroupCall();
+      return;
+    }
+    if (cur.direction !== 'incoming') return;
     // Chặn reo lại NGAY khi bấm nghe (trước cả khi build WebRTC / kiểm tra socket).
     markCallAnswered(cur.callId);
     markNativeCallAnswered(cur.callId);
@@ -319,6 +346,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const rejectCall = useCallback(() => {
     const cur = sessionRef.current;
     if (!cur) return;
+    if (cur.mode === 'group') { groupMgrRef.current?.rejectGroupCall(); return; }
     signalingRef.current?.rejectCall(cur.callId, cur.peer.id, 'rejected');
     teardown('REJECTED');
   }, [teardown]);
@@ -326,6 +354,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const endCall = useCallback(() => {
     const cur = sessionRef.current;
     if (!cur) return;
+    if (cur.mode === 'group') { groupMgrRef.current?.endGroupCall(); return; }
     signalingRef.current?.endCall(cur.callId, cur.peer.id);
     teardown('ENDED');
   }, [teardown]);
@@ -333,6 +362,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   // ─── Media controls ───
   const toggleMute = useCallback(() => {
     const cur = sessionRef.current; if (!cur) return;
+    if (cur.mode === 'group') { groupMgrRef.current?.toggleMute(); return; }
     const next = !cur.isMuted;
     rtcRef.current?.setMuted(next);
     updateSession({ isMuted: next });
@@ -363,11 +393,33 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
   // ─── Đầu vào từ FCM / native intent ───
   const applyIncomingFromPush = useCallback((p: IncomingCallPayload) => {
+    if (p.isGroup) {
+      groupMgrRef.current?.applyIncomingFromPush({
+        callId: p.callId,
+        fromUserId: p.fromUserId,
+        fromName: p.fromName,
+        groupId: p.groupId,
+        groupName: p.groupName,
+        kind: p.kind,
+      });
+      return;
+    }
     presentIncoming(p, p.kind === 'video' ? 'video' : 'audio');
   }, [presentIncoming]);
 
   const handleNativeCallIntent = useCallback((p: IncomingCallPayload) => {
-    presentIncoming(p, p.kind === 'video' ? 'video' : 'audio');
+    if (p.isGroup) {
+      groupMgrRef.current?.applyIncomingFromPush({
+        callId: p.callId,
+        fromUserId: p.fromUserId,
+        fromName: p.fromName,
+        groupId: p.groupId,
+        groupName: p.groupName,
+        kind: p.kind,
+      });
+    } else {
+      presentIncoming(p, p.kind === 'video' ? 'video' : 'audio');
+    }
     if (p.callAction === 'accept') {
       // chờ state set xong rồi accept
       setTimeout(() => { void acceptCall(); }, 0);
@@ -394,10 +446,14 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     sig.connect();
 
     // Flush answer-call bị hoãn khi socket vừa kết nối lại (boot từ màn khóa).
+    let unbindGroup: (() => void) | undefined;
     const unsubSock = subscribeAppSocket((socket) => {
+      unbindGroup?.();
+      groupMgrRef.current?.setSocket(socket, uid);
+      unbindGroup = groupMgrRef.current?.bind(socket);
       const flush = () => {
         const cur = sessionRef.current;
-        if (pendingAnswerRef.current && cur && cur.direction === 'incoming') {
+        if (pendingAnswerRef.current && cur && cur.direction === 'incoming' && cur.mode !== 'group') {
           pendingAnswerRef.current = false;
           sig.answerCall(cur.callId, cur.peer.id);
         }
@@ -425,6 +481,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     });
 
     return () => {
+      unbindGroup?.();
       sig.destroy();
       unsubSock();
       unsubAccept(); unsubReject(); unsubEnd(); unsubMute();
@@ -432,14 +489,26 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const startGroupCall = useCallback(async (
+    group: { id: string; name?: string; members: { id: string; name?: string }[] },
+    media: CallMedia = 'audio',
+  ) => {
+    await groupMgrRef.current?.startGroupCall(group, media);
+  }, []);
+
+  const joinGroupCall = useCallback((info: Record<string, unknown>) => {
+    groupMgrRef.current?.joinGroupCall(info as any);
+  }, []);
+
   const value = useMemo<Ctx>(() => ({
-    session, localStream, remoteStream,
-    startCall, acceptCall, rejectCall, endCall,
+    session, localStream, remoteStream, groupPeers,
+    startCall, startGroupCall, joinGroupCall,
+    acceptCall, rejectCall, endCall,
     toggleMute, toggleSpeaker, toggleCamera, switchCamera,
     applyIncomingFromPush, handleNativeCallIntent, dismissIncomingSilently,
-  }), [session, localStream, remoteStream, startCall, acceptCall, rejectCall, endCall,
-    toggleMute, toggleSpeaker, toggleCamera, switchCamera, applyIncomingFromPush,
-    handleNativeCallIntent, dismissIncomingSilently]);
+  }), [session, localStream, remoteStream, groupPeers, startCall, startGroupCall, joinGroupCall,
+    acceptCall, rejectCall, endCall, toggleMute, toggleSpeaker, toggleCamera, switchCamera,
+    applyIncomingFromPush, handleNativeCallIntent, dismissIncomingSilently]);
 
   return <CallCtx.Provider value={value}>{children}</CallCtx.Provider>;
 }

@@ -11,6 +11,7 @@ import { playCallRingtone, stopCallRingtone } from '../lib/callRingtonePlayer';
 import { WebRTCService } from './webrtcService';
 import { getIceServers } from './turnConfig';
 import { CALL_TIMEOUT_MS, RECONNECT_TIMEOUT_MS, isActiveState } from './callState';
+import { useGroupCall } from './useGroupCall';
 
 const CallCtx = createContext(null);
 
@@ -47,6 +48,20 @@ export function CallProvider({ children }) {
     });
   }, []);
 
+  const isBusyFn = useCallback(() => {
+    const s = sessionRef.current;
+    return !!(s && isActiveState(s.state));
+  }, []);
+
+  const group = useGroupCall({
+    socket,
+    uid,
+    isBusy: isBusyFn,
+    setSession,
+    sessionRef,
+    patchSession: patch,
+  });
+
   const setState = useCallback((state) => patch({ state }), [patch]);
 
   const clearTimers = useCallback(() => {
@@ -57,8 +72,11 @@ export function CallProvider({ children }) {
   const teardown = useCallback((finalState) => {
     const s = sessionRef.current;
     clearTimers();
-    try { stopCallRingtone(); } catch { /* noop */ }
-    try { dismissIncomingCallDesktopAlert(); } catch { /* noop */ }
+    if (s?.mode === 'group') group.resetGroup();
+    else {
+      try { stopCallRingtone(); } catch { /* noop */ }
+      try { dismissIncomingCallDesktopAlert(); } catch { /* noop */ }
+    }
     try { rtcRef.current?.close(); } catch { /* noop */ }
     rtcRef.current = null;
     setLocalStream(null);
@@ -69,7 +87,7 @@ export function CallProvider({ children }) {
     setTimeout(() => {
       if (sessionRef.current?.callId === s?.callId) { sessionRef.current = null; setSession(null); }
     }, 1200);
-  }, [clearTimers, patch]);
+  }, [clearTimers, patch, group]);
 
   const buildRtc = useCallback(async (media) => {
     const iceServers = await getIceServers();
@@ -137,7 +155,9 @@ export function CallProvider({ children }) {
   // ─── Callee chấp nhận ───
   const acceptCall = useCallback(async () => {
     const cur = sessionRef.current;
-    if (!cur || cur.direction !== 'incoming' || cur.state !== 'RINGING') return;
+    if (!cur) return;
+    if (cur.mode === 'group') { await group.acceptGroupCall(); return; }
+    if (cur.direction !== 'incoming' || cur.state !== 'RINGING') return;
     try { stopCallRingtone(); } catch { /* noop */ }
     try { dismissIncomingCallDesktopAlert(); } catch { /* noop */ }
     setState('CONNECTING');
@@ -150,24 +170,27 @@ export function CallProvider({ children }) {
       return;
     }
     socketRef.current?.emit('answer-call', { callId: cur.callId, toUserId: cur.peer.id });
-  }, [buildRtc, patch, setState, teardown]);
+  }, [buildRtc, patch, setState, teardown, group]);
 
   const rejectCall = useCallback(() => {
     const cur = sessionRef.current;
     if (!cur) return;
+    if (cur.mode === 'group') { group.rejectGroupCall(); return; }
     socketRef.current?.emit('reject-call', { callId: cur.callId, toUserId: cur.peer.id, reason: 'rejected' });
     teardown('REJECTED');
-  }, [teardown]);
+  }, [teardown, group]);
 
   const endCall = useCallback(() => {
     const cur = sessionRef.current;
     if (!cur) return;
+    if (cur.mode === 'group') { group.endGroupCall(); return; }
     socketRef.current?.emit('end-call', { callId: cur.callId, toUserId: cur.peer.id });
     teardown('ENDED');
-  }, [teardown]);
+  }, [teardown, group]);
 
   const toggleMute = useCallback(() => {
     const cur = sessionRef.current; if (!cur) return;
+    if (cur.mode === 'group') { group.toggleGroupMute(); return; }
     const next = !cur.isMuted; rtcRef.current?.setMuted(next); patch({ isMuted: next });
   }, [patch]);
 
@@ -281,33 +304,35 @@ export function CallProvider({ children }) {
     };
   }, [socket, patch, setState, teardown, dismissIncomingSilently]);
 
-  // ── Tương thích ngược cho UI cũ (MessengerHubPage). Hệ thống mới chỉ 1-1. ──
+  // ─── Group call (legacy mesh) ───
+  useEffect(() => {
+    if (!socket) return undefined;
+    return group.bindGroupHandlers(socket);
+  }, [socket, group.bindGroupHandlers]);
+
+  // ── Tương thích ngược cho UI cũ (MessengerHubPage). ──
   const legacyStatus = useMemo(() => {
     const st = session?.state;
     if (!st || st === 'IDLE' || st === 'ENDED' || st === 'MISSED' || st === 'REJECTED') return 'idle';
     if (st === 'CONNECTING') return 'connecting';
     if (st === 'CONNECTED') return 'active';
+    if (session?.joinPending) return 'outgoing';
     return session?.direction === 'incoming' ? 'incoming' : 'outgoing';
-  }, [session?.state, session?.direction]);
-
-  const notSupportedGroup = useCallback(() => {
-    // eslint-disable-next-line no-alert
-    if (typeof window !== 'undefined') window.alert('Cuộc gọi nhóm tạm thời chưa khả dụng ở phiên bản mới.');
-  }, []);
+  }, [session?.state, session?.direction, session?.joinPending]);
 
   const value = useMemo(() => ({
     session, localStream, remoteStream, uid,
+    groupPeers: group.groupPeers,
     startCall, acceptCall, rejectCall, endCall,
     toggleMute, toggleCamera, switchCamera,
-    // legacy compat
     status: legacyStatus,
     callId: session?.callId || null,
     kind: session?.media || 'audio',
     isMuted: !!session?.isMuted,
-    startGroupCall: notSupportedGroup,
-    joinGroupCall: notSupportedGroup,
-  }), [session, localStream, remoteStream, uid, startCall, acceptCall, rejectCall, endCall,
-    toggleMute, toggleCamera, switchCamera, legacyStatus, notSupportedGroup]);
+    startGroupCall: group.startGroupCall,
+    joinGroupCall: group.joinGroupCall,
+  }), [session, localStream, remoteStream, uid, group.groupPeers, startCall, acceptCall, rejectCall, endCall,
+    toggleMute, toggleCamera, switchCamera, legacyStatus, group.startGroupCall, group.joinGroupCall]);
 
   return <CallCtx.Provider value={value}>{children}</CallCtx.Provider>;
 }
