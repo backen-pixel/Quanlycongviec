@@ -18,14 +18,11 @@ import {
 import { formatApiError } from '../../api/client';
 import {
   fetchFacebookLeadMessages,
-  fetchLeadComments,
   fetchLeadMembers,
-  postLeadComment,
   sendFacebookReply,
   sendZaloReply,
   fetchZaloLeadMessages,
   type FacebookMessage,
-  type LeadComment,
   type LeadMember,
   type ZaloMessage,
 } from '../../api/leadDetail';
@@ -37,6 +34,7 @@ import { Radii, Spacing, useColors, type ThemeColors } from '../../theme';
 export { default as LeadTasksTab } from './LeadTasksTab';
 export { default as LeadDriveTab } from './LeadDriveTab';
 export { default as LeadDocumentsTab } from './LeadDocumentsTab';
+export { default as LeadCommentsTab } from './LeadCommentsTab';
 
 export type LeadDetailTabKey =
   | 'tasks'
@@ -94,95 +92,6 @@ function ErrorBanner({ message, onRetry }: { message: string; onRetry?: () => vo
         </Pressable>
       ) : null}
     </View>
-  );
-}
-
-// ── Comments ─────────────────────────────────────────────────────────────────
-
-export function LeadCommentsTab({ leadId }: { leadId: string }) {
-  const Colors = useColors();
-  const styles = useMemo(() => makeStyles(Colors), [Colors]);
-  const [items, setItems] = useState<LeadComment[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [draft, setDraft] = useState('');
-  const [sending, setSending] = useState(false);
-
-  const load = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    setError(null);
-    try {
-      setItems(await fetchLeadComments(leadId));
-    } catch (e) {
-      setError(formatApiError(e));
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [leadId]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const send = async () => {
-    const body = draft.trim();
-    if (!body || sending) return;
-    setSending(true);
-    try {
-      const row = await postLeadComment(leadId, body);
-      setItems((prev) => [...prev, row]);
-      setDraft('');
-    } catch (e) {
-      setError(formatApiError(e));
-    } finally {
-      setSending(false);
-    }
-  };
-
-  if (loading && !items.length) {
-    return <ActivityIndicator color={Colors.blue} style={{ marginTop: 32 }} />;
-  }
-
-  return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <FlatList
-        data={items}
-        keyExtractor={(c) => String(c.id)}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(true); }} tintColor={Colors.blue} />}
-        contentContainerStyle={items.length ? styles.listPad : styles.listPadGrow}
-        ListHeaderComponent={error ? <ErrorBanner message={error} onRetry={() => void load()} /> : null}
-        ListEmptyComponent={<EmptyState icon="chatbubbles-outline" title="Chưa có bình luận" hint="Thảo luận nội bộ về lead/deal này." />}
-        renderItem={({ item }) => {
-          const name = item.user?.full_name || 'Người dùng';
-          return (
-            <View style={styles.commentRow}>
-              <Avatar name={name} initials={initialsFromName(name)} size={34} color={colorFromName(name)} />
-              <View style={styles.commentBody}>
-                <Text style={styles.commentAuthor}>{name}</Text>
-                <Text style={styles.commentText}>{item.body}</Text>
-                <Text style={styles.metaFaint}>{fmtDate(item.created_at)}</Text>
-              </View>
-            </View>
-          );
-        }}
-      />
-      <View style={styles.composer}>
-        <TextInput
-          style={styles.composerInput}
-          placeholder="Viết bình luận…"
-          placeholderTextColor={Colors.textFaint}
-          value={draft}
-          onChangeText={setDraft}
-          multiline
-          maxLength={4000}
-        />
-        <Pressable style={[styles.sendBtn, (!draft.trim() || sending) && styles.sendBtnDisabled]} onPress={() => void send()} disabled={!draft.trim() || sending}>
-          {sending ? <ActivityIndicator size="small" color={Colors.white} /> : <Ionicons name="send" size={18} color={Colors.white} />}
-        </Pressable>
-      </View>
-    </KeyboardAvoidingView>
   );
 }
 
