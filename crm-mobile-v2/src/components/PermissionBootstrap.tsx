@@ -19,6 +19,7 @@ import {
   getAppPermissionStatus,
   grantAllPermissionsQuick,
   openAppSettings,
+  OPTIONAL_PERMISSION_KINDS,
   type AppPermissionItem,
 } from '../lib/appPermissions';
 import { syncVoiceBackgroundTaskWithPrefs } from '../lib/voiceBackgroundSync';
@@ -50,7 +51,9 @@ export default function PermissionBootstrap() {
     void (async () => {
       const status = await refresh();
       const introDone = await AsyncStorage.getItem(introKeyForUser(userId));
-      const missing = status.filter((s) => !s.granted);
+      const missing = status.filter(
+        (s) => !s.granted && !OPTIONAL_PERMISSION_KINDS.has(s.kind),
+      );
       if (!introDone || missing.length > 0) {
         setVisible(true);
       }
