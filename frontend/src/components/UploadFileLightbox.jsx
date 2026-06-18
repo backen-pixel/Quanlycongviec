@@ -1,9 +1,12 @@
-import { useEffect } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Download, ChevronLeft, ChevronRight } from 'lucide-react';
+import { X, Download, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, ExternalLink } from 'lucide-react';
 import { getFileDownloadAnchorProps, publicFileUrl } from '../lib/publicFileUrl';
 
-/** Xem ảnh upload (/uploads/...) full màn hình — hỗ trợ gallery qua lại giữa các ảnh liền kề. */
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 4;
+
+/** Xem ảnh upload (/uploads/...) full màn hình — gallery + phóng to cuộn chuột / double-click. */
 export default function UploadFileLightbox({
   url,
   title,
@@ -22,6 +25,18 @@ export default function UploadFileLightbox({
   const multi = items.length > 1;
   const canPrev = multi && index > 0;
   const canNext = multi && index < items.length - 1;
+  const [zoom, setZoom] = useState(1);
+
+  const adjustZoom = useCallback((delta) => {
+    setZoom((z) => {
+      const next = Math.round((z + delta) * 100) / 100;
+      return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
+    });
+  }, []);
+
+  useEffect(() => {
+    setZoom(1);
+  }, [index, cur?.url]);
 
   const goPrev = () => {
     if (!canPrev) return;
@@ -69,12 +84,43 @@ export default function UploadFileLightbox({
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0 pointer-events-auto">
+          <span className="hidden sm:inline text-[11px] text-white/50 mr-1">Cuộn chuột / double-click để phóng to</span>
+          <button
+            type="button"
+            onClick={() => adjustZoom(-0.25)}
+            disabled={zoom <= MIN_ZOOM}
+            className="p-2 text-white hover:bg-white/10 rounded-full disabled:opacity-40"
+            aria-label="Thu nhỏ"
+          >
+            <ZoomOut size={18} />
+          </button>
+          <span className="text-xs text-white/80 tabular-nums min-w-[3rem] text-center">{Math.round(zoom * 100)}%</span>
+          <button
+            type="button"
+            onClick={() => adjustZoom(0.25)}
+            disabled={zoom >= MAX_ZOOM}
+            className="p-2 text-white hover:bg-white/10 rounded-full disabled:opacity-40"
+            aria-label="Phóng to"
+          >
+            <ZoomIn size={18} />
+          </button>
           {downloadProps && (
             <a
               {...downloadProps}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm"
             >
               <Download size={16} /> Tải xuống
+            </a>
+          )}
+          {!downloadProps && cur.url && (
+            <a
+              href={cur.url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <ExternalLink size={16} /> Mở gốc
             </a>
           )}
           <button
@@ -88,7 +134,15 @@ export default function UploadFileLightbox({
         </div>
       </div>
 
-      <div className="relative flex items-center justify-center w-full max-w-[96vw] min-h-[50vh]" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="relative flex items-center justify-center w-full max-w-[96vw] min-h-[50vh]"
+        onClick={(e) => e.stopPropagation()}
+        onWheel={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          adjustZoom(e.deltaY < 0 ? 0.15 : -0.15);
+        }}
+      >
         {multi && (
           <button
             type="button"
@@ -102,11 +156,19 @@ export default function UploadFileLightbox({
             <ChevronLeft size={32} />
           </button>
         )}
-        <img
-          src={cur.url}
-          alt={cur.title || ''}
-          className="max-h-[85vh] max-w-[calc(100%-7rem)] rounded-lg object-contain shadow-2xl"
-        />
+        <div className={`overflow-auto max-h-[85vh] max-w-[calc(100%-7rem)] ${zoom > 1 ? 'cursor-grab' : ''}`}>
+          <img
+            src={cur.url}
+            alt={cur.title || ''}
+            draggable={false}
+            style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }}
+            className="max-h-[85vh] max-w-full rounded-lg object-contain shadow-2xl transition-transform duration-150 cursor-zoom-in"
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              setZoom((z) => (z > 1 ? 1 : 2));
+            }}
+          />
+        </div>
         {multi && (
           <button
             type="button"
@@ -172,4 +234,18 @@ export function findUploadLightboxIndex(items, rawPathOrUrl) {
     const u = String(it.url || '').trim();
     return target === rp || target === u || targetUrl === u || publicFileUrl(rp) === targetUrl;
   });
+}
+
+/** Gom ảnh trong luồng chat (Zalo OA, Messenger, …). */
+export function collectMessageImageGallery(messages) {
+  return collectUploadLightboxItems(
+    (messages || [])
+      .filter((m) => m?.attachment_url && (m.message_type === 'image' || isUploadImageFile(null, m.attachment_url)))
+      .map((m) => ({
+        attachment_url: m.attachment_url,
+        url: m.attachment_url,
+        mime_type: m.attachment_mime || 'image/jpeg',
+        file_name: m.attachment_name || 'Ảnh',
+      })),
+  );
 }

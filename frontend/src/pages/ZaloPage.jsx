@@ -9,7 +9,7 @@ import {
 import ZaloAutoToolPanel from '../components/ZaloAutoToolPanel';
 import ZaloContactsTab from '../components/ZaloContactsTab';
 import IntegrationLeadRoutingFields from '../components/IntegrationLeadRoutingFields';
-import UploadFileLightbox, { collectUploadLightboxItems, findUploadLightboxIndex } from '../components/UploadFileLightbox';
+import UploadFileLightbox, { collectMessageImageGallery, findUploadLightboxIndex } from '../components/UploadFileLightbox';
 
 const API = import.meta.env.VITE_API_URL || '';
 const hdr = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' });
@@ -242,19 +242,7 @@ export default function ZaloPage() {
   const [imageLightboxIndex, setImageLightboxIndex] = useState(null);
   const messagesEndRef = useRef(null);
 
-  const chatImageGallery = useMemo(
-    () => collectUploadLightboxItems(
-      messages
-        .filter((m) => m.attachment_url && m.message_type === 'image')
-        .map((m) => ({
-          attachment_url: m.attachment_url,
-          url: m.attachment_url,
-          mime_type: 'image/jpeg',
-          file_name: 'Ảnh',
-        })),
-    ),
-    [messages],
-  );
+  const chatImageGallery = useMemo(() => collectMessageImageGallery(messages), [messages]);
 
   useEffect(() => {
     setImageLightboxIndex(null);
