@@ -17,3 +17,17 @@ export function openProjectCommentFromNotif(projectId: string): void {
   if (!navigationRef.isReady()) return;
   navigationRef.navigate('ProjectDetail', { projectId });
 }
+
+export function navigateToShareToChat(): void {
+  const go = () => {
+    if (!navigationRef.isReady()) return false;
+    navigationRef.navigate('ShareToChat');
+    return true;
+  };
+  if (go()) return;
+  let tries = 0;
+  const timer = setInterval(() => {
+    tries += 1;
+    if (go() || tries >= 20) clearInterval(timer);
+  }, 150);
+}

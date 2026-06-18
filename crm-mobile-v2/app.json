@@ -67,7 +67,18 @@
           "disableAndroid": true
         }
       ],
-      "./plugins/withAndroidShareIntentFilters.js"
+      [
+        "../mobile-shared/share-intent/plugins/withAndroidShareIntentFilters",
+        {
+          "mimeTypes": [
+            "audio/*",
+            "application/octet-stream",
+            "video/mp4",
+            "video/*",
+            "*/*"
+          ]
+        }
+      ]
     ]
   }
 }
