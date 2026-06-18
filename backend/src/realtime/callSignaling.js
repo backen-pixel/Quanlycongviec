@@ -4,7 +4,7 @@
  *
  * Client → Server: call-user, answer-call, reject-call, end-call, ice-candidate, sdp
  * Server → Client: incoming-call, call-answered, call-rejected, call-ended,
- *                  ice-candidate, sdp, busy, call-unavailable
+ *                  incoming-call-dismiss, ice-candidate, sdp, busy, call-unavailable
  *
  * Server chỉ relay (SDP/ICE) theo room `user:<id>` — bền vững khi client reconnect.
  * Media (WebRTC) đi P2P/TURN, KHÔNG qua server.
@@ -59,6 +59,18 @@ function attachCallSignaling(io) {
       });
     } catch (e) {
       console.warn('[callSignaling] pushIncoming:', e.message || e);
+    }
+  }
+
+  /** Tắt chuông/thông báo trên các thiết bị khác cùng tài khoản khi một máy đã bắt/từ chối. */
+  function dismissIncomingOnOtherDevices(calleeId, callId, excludeSocket) {
+    if (!calleeId || !callId || !excludeSocket) return;
+    excludeSocket.to(room(calleeId)).emit('incoming-call-dismiss', { callId });
+    try {
+      const { sendCallDismissPush } = require('../services/pushSender');
+      void sendCallDismissPush(String(calleeId), callId);
+    } catch (e) {
+      console.warn('[callSignaling] pushCallDismiss:', e.message || e);
     }
   }
 
@@ -176,6 +188,7 @@ function attachCallSignaling(io) {
       if (entry.calleeId !== uid) return;
       if (!entry.answeredAt) entry.answeredAt = Date.now();
       clearRing(entry);
+      dismissIncomingOnOtherDevices(entry.calleeId, callId, socket);
       // Báo caller: tạo offer.
       io.to(room(toUserId || entry.callerId)).emit('call-answered', { callId, byUserId: uid });
     });
@@ -183,6 +196,9 @@ function attachCallSignaling(io) {
     // ─── B từ chối ───
     socket.on('reject-call', ({ callId, toUserId, reason = 'rejected' } = {}) => {
       const entry = calls.get(callId);
+      if (entry && entry.calleeId === uid) {
+        dismissIncomingOnOtherDevices(entry.calleeId, callId, socket);
+      }
       const caller = toUserId || entry?.callerId;
       if (caller) io.to(room(caller)).emit('call-rejected', { callId, reason });
       if (entry) void finalize(entry, { endedByUserId: uid, reason });

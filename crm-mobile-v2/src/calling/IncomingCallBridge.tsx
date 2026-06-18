@@ -8,14 +8,16 @@ import { useEffect } from 'react';
 import * as Notifications from 'expo-notifications';
 import {
   consumePendingIncomingCall, dismissIncomingCallNotification,
-  parseIncomingCallData, storePendingIncomingCall, type IncomingCallPayload,
+  parseCallDismissData, parseIncomingCallData, storePendingIncomingCall, type IncomingCallPayload,
 } from '../lib/incomingCallNotifications';
 import { consumeNativeCallIntent } from '../lib/nativeCallNotification';
 import { shouldSuppressIncomingRing } from '../lib/callSessionGuard';
 import { useCall } from './CallProvider';
 
 export default function IncomingCallBridge() {
-  const { applyIncomingFromPush, handleNativeCallIntent, rejectCall, acceptCall } = useCall();
+  const {
+    applyIncomingFromPush, handleNativeCallIntent, rejectCall, acceptCall, dismissIncomingSilently,
+  } = useCall();
 
   useEffect(() => {
     void consumeNativeCallIntent().then((p) => { if (p) handleNativeCallIntent(p); });
@@ -27,6 +29,11 @@ export default function IncomingCallBridge() {
     const subResponse = Notifications.addNotificationResponseReceivedListener((r) =>
       handleResponse(r, applyIncomingFromPush, rejectCall, acceptCall));
     const subReceived = Notifications.addNotificationReceivedListener((n) => {
+      const dismissId = parseCallDismissData(n.request.content.data);
+      if (dismissId) {
+        dismissIncomingSilently(dismissId);
+        return;
+      }
       const payload = parseIncomingCallData(n.request.content.data);
       if (!payload || shouldSuppressIncomingRing(payload.callId)) return;
       void storePendingIncomingCall(payload);
@@ -34,7 +41,7 @@ export default function IncomingCallBridge() {
     });
 
     return () => { subResponse.remove(); subReceived.remove(); };
-  }, [applyIncomingFromPush, handleNativeCallIntent, rejectCall, acceptCall]);
+  }, [applyIncomingFromPush, handleNativeCallIntent, rejectCall, acceptCall, dismissIncomingSilently]);
 
   return null;
 }

@@ -48,6 +48,14 @@ async function ensureCallCategories() {
   }
 }
 
+export function parseCallDismissData(data: unknown): string | null {
+  if (!data || typeof data !== 'object') return null;
+  const d = data as Record<string, unknown>;
+  if (String(d.type || '') !== 'call_dismiss') return null;
+  const callId = String(d.call_id || d.callId || '').trim();
+  return callId || null;
+}
+
 export function parseIncomingCallData(data: unknown): IncomingCallPayload | null {
   if (!data || typeof data !== 'object') return null;
   const d = data as Record<string, unknown>;
