@@ -5,6 +5,10 @@ const { supabase } = require('../config/supabase');
 const config = require('../config');
 const { auth } = require('../middleware/auth');
 const { logAuthEvent } = require('../helpers/authEventLog');
+const { buildAuthSessionForUser } = require('../helpers/authSession');
+const {
+  createQrSession, parseQrText, confirmQrSession, consumeSessionAuth,
+} = require('../helpers/qrLoginSessions');
 
 const r = Router();
 
@@ -32,7 +36,6 @@ r.post('/login', async (req, res) => {
     }
 
     await supabase.from('users').update({ last_login_at: new Date().toISOString() }).eq('id', user.id);
-    // Sinh session_id ngắn nếu client không gửi (UUID v4 đơn giản).
     const sessionId = clientSessionId || `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
     void logAuthEvent({
       event: 'login_success',
@@ -42,56 +45,80 @@ r.post('/login', async (req, res) => {
       reason: 'password',
       req,
     });
-    // Resolve company_id from department
-    let company_id = user.company_id || null;
-    if (!company_id && user.department_id) {
-      try {
-        const { data: dept } = await supabase.from('departments').select('company_id').eq('id', user.department_id).single();
-        company_id = dept?.company_id || null;
-      } catch (_) {}
-    }
-
-    let crm_region_ids = [];
-    try {
-      const { data: ur } = await supabase.from('user_company_regions').select('region_id').eq('user_id', user.id);
-      crm_region_ids = (ur || []).map((r) => r.region_id).filter(Boolean);
-    } catch (_) {
-      crm_region_ids = [];
-    }
-
-    // Không đặt expiresIn — JWT không có `exp`, phiên chỉ hết khi đăng xuất hoặc đổi JWT_SECRET.
-    // Include company_id so CRM pipeline scoping works immediately.
-    const token = jwt.sign({
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-      fullName: user.full_name,
-      company_id,
-      department_id: user.department_id || null,
-      crm_region_ids,
-    }, config.jwtSecret);
-
-    res.json({
-      token,
-      session_id: sessionId,
-      user: {
-        id: user.id,
-        userId: user.id,
-        email: user.email,
-        fullName: user.full_name,
-        full_name: user.full_name,
-        role: user.role,
-        avatar: user.avatar,
-        phone: user.phone,
-        department_id: user.department_id || null,
-        company_id,
-        crm_region_ids,
-        position: user.position || null,
-      },
-    });
+    const auth = await buildAuthSessionForUser(user, { sessionId });
+    res.json(auth);
   } catch (e) {
     console.error(e);
     void logAuthEvent({ event: 'login_failed', email: req.body?.email || null, reason: 'server_error', req });
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// ─── QR đăng nhập chéo web ↔ app ───
+
+/** Thiết bị cần đăng nhập tạo phiên QR (không cần auth). */
+r.post('/qr/create', async (req, res) => {
+  try {
+    const target = req.body?.target === 'app' ? 'app' : 'web';
+    const created = createQrSession(target);
+    res.json(created);
+  } catch (e) {
+    console.error('[auth/qr/create]', e);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+/** Poll trạng thái — nhận token một lần khi đã xác nhận. */
+r.get('/qr/:sessionId/status', async (req, res) => {
+  try {
+    const sessionId = String(req.params.sessionId || '').trim();
+    if (!sessionId) return res.status(400).json({ error: 'Thiếu mã phiên' });
+    const result = consumeSessionAuth(sessionId);
+    if (result.status === 'confirmed') {
+      const io = req.app.get('io');
+      io?.to(`qr:${sessionId}`).emit('qr-login:confirmed', {
+        sessionId,
+        token: result.token,
+        user: result.user,
+        session_id: result.session_id,
+      });
+    }
+    res.json(result);
+  } catch (e) {
+    console.error('[auth/qr/status]', e);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+/** Thiết bị đã đăng nhập quét QR và xác nhận đăng nhập thiết bị kia. */
+r.post('/qr/confirm', auth, async (req, res) => {
+  try {
+    let sessionId = req.body?.sessionId ? String(req.body.sessionId).trim() : '';
+    if (!sessionId && req.body?.qrText) {
+      const parsed = parseQrText(String(req.body.qrText));
+      if (parsed) sessionId = parsed.sessionId;
+    }
+    if (!sessionId) return res.status(400).json({ error: 'Thiếu mã QR' });
+
+    const confirmerId = req.user?.userId || req.user?.id;
+    const result = await confirmQrSession(sessionId, confirmerId, req);
+    if (result.error) return res.status(result.status || 400).json({ error: result.error });
+
+    const io = req.app.get('io');
+    io?.to(`qr:${sessionId}`).emit('qr-login:confirmed', {
+      sessionId,
+      token: result.auth.token,
+      user: result.auth.user,
+      session_id: result.auth.session_id,
+    });
+
+    res.json({
+      ok: true,
+      target: result.session.target,
+      sessionId,
+    });
+  } catch (e) {
+    console.error('[auth/qr/confirm]', e);
     res.status(500).json({ error: 'Lỗi server' });
   }
 });

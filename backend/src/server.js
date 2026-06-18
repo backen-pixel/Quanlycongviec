@@ -474,16 +474,15 @@ io.on('connection', (socket) => {
         fromUserId: uid,
         fromName: socket.user?.fullName || socket.user?.full_name || 'Người gọi',
       });
-      if (!isUserSocketOnline(toUserId)) {
-        void pushIncomingCall(String(toUserId), {
-          callId,
-          kind,
-          groupId,
-          fromUserId: uid,
-          fromName: socket.user?.fullName || socket.user?.full_name || 'Người gọi',
-          isGroup: false,
-        });
-      }
+      // Luôn FCM — app nền/kill cần native full-screen dù socket còn online.
+      void pushIncomingCall(String(toUserId), {
+        callId,
+        kind,
+        groupId,
+        fromUserId: uid,
+        fromName: socket.user?.fullName || socket.user?.full_name || 'Người gọi',
+        isGroup: false,
+      });
     })();
   });
 
@@ -568,17 +567,15 @@ io.on('connection', (socket) => {
         fromUserId: uid,
         fromName: hostName,
       });
-      if (!isUserSocketOnline(mid)) {
-        void pushIncomingCall(mid, {
-          callId,
-          kind,
-          fromUserId: uid,
-          fromName: hostName,
-          isGroup: true,
-          groupId,
-          groupName: groupName || 'Cuộc gọi nhóm',
-        });
-      }
+      void pushIncomingCall(mid, {
+        callId,
+        kind,
+        fromUserId: uid,
+        fromName: hostName,
+        isGroup: true,
+        groupId,
+        groupName: groupName || 'Cuộc gọi nhóm',
+      });
     });
     // Broadcast cho TẤT CẢ thành viên nhóm (kể cả người không nằm trong danh sách mời)
     // → họ sẽ thấy banner "Có cuộc gọi đang diễn ra" với nút Tham gia.

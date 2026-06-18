@@ -3,7 +3,7 @@
     "name": "CRM Mobile",
     "slug": "crm-mobile-v2",
     "scheme": "crmv2",
-    "version": "2.0.55",
+    "version": "2.0.56",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -18,12 +18,12 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Ứng dụng cần micro để gọi thoại và ghi âm cuộc gọi trên CRM.",
-        "NSCameraUsageDescription": "Ứng dụng cần camera cho cuộc gọi video."
+        "NSCameraUsageDescription": "Ứng dụng cần camera cho cuộc gọi video và quét mã QR đăng nhập."
       }
     },
     "android": {
       "package": "vn.tubeppro.crmobilev2",
-      "versionCode": 56,
+      "versionCode": 57,
       "edgeToEdgeEnabled": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -54,6 +54,12 @@
     },
     "plugins": [
       "expo-font",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Cho phép camera để quét mã QR đăng nhập và gọi video."
+        }
+      ],
       [
         "expo-media-library",
         {

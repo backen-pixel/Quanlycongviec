@@ -17,6 +17,8 @@ type LockScreenCallNative = {
   setIncomingCallClaim?: (callId: string) => void;
   clearIncomingCallClaim?: (callId: string) => void;
   consumePendingCallIntent?: () => Promise<string | null>;
+  canUseFullScreenIntent?: () => Promise<boolean>;
+  openFullScreenIntentSettings?: () => void;
 };
 
 const Native = NativeModules.LockScreenCall as LockScreenCallNative | undefined;
@@ -103,5 +105,23 @@ export async function consumeNativeCallIntent(): Promise<IncomingCallPayload | n
     return parsed;
   } catch {
     return null;
+  }
+}
+
+/** Android 14+: cần bật «Hiển thị toàn màn hình» để cuộc gọi bật lên khi app tắt. */
+export async function canUseFullScreenCallIntent(): Promise<boolean> {
+  if (Platform.OS !== 'android' || !Native?.canUseFullScreenIntent) return true;
+  try {
+    return await Native.canUseFullScreenIntent();
+  } catch {
+    return true;
+  }
+}
+
+export function openFullScreenCallIntentSettings(): void {
+  try {
+    Native?.openFullScreenIntentSettings?.();
+  } catch {
+    /* ignore */
   }
 }

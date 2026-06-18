@@ -10,6 +10,8 @@ import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.os.Build
 import android.os.PowerManager
+import android.provider.Settings
+import android.net.Uri
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import org.json.JSONObject
@@ -82,8 +84,30 @@ object IncomingCallHelper {
     LockScreenCallBridge.setUiActive(true, data)
     wakeScreen(context)
     ensureCallChannel(context)
+    postCallNotification(context, data)
     startRingServiceWithCall(context, data)
     tryLaunchFullScreenActivity(context, data)
+  }
+
+  fun canUseFullScreenIntent(context: Context): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return true
+    return try {
+      val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+      nm.canUseFullScreenIntent()
+    } catch (_: Exception) {
+      true
+    }
+  }
+
+  fun openFullScreenIntentSettings(context: Context) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return
+    try {
+      val intent = Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+        data = Uri.parse("package:${context.packageName}")
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      }
+      context.startActivity(intent)
+    } catch (_: Exception) { }
   }
 
   /**
@@ -127,6 +151,7 @@ object IncomingCallHelper {
         putExtra("group_name", data.groupName)
         putExtra("title", data.title)
         putExtra("body", data.body)
+        putExtra("kind", data.kind)
       }
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         context.startForegroundService(svc)
@@ -359,7 +384,7 @@ object IncomingCallHelper {
     val channel = NotificationChannel(
       CALL_CHANNEL,
       "Cuộc gọi",
-      NotificationManager.IMPORTANCE_HIGH,
+      NotificationManager.IMPORTANCE_MAX,
     )
     channel.description = "Thông báo cuộc gọi đến từ Messenger CRM"
     channel.enableVibration(true)

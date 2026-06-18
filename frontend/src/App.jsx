@@ -170,6 +170,7 @@ const ThemeSettingsPage = lazyWithRetry(() => import('./pages/ThemeSettingsPage'
 const PasswordSettingsPage = lazyWithRetry(() => import('./pages/PasswordSettingsPage'));
 const LocationSettingsPage = lazyWithRetry(() => import('./pages/LocationSettingsPage'));
 const MyDevicesPage = lazyWithRetry(() => import('./pages/MyDevicesPage'));
+const QrScanPage = lazyWithRetry(() => import('./pages/QrScanPage'));
 const CalcModuleHome = lazyWithRetry(() => import('./pages/calc/CalcModuleHome'));
 const CalcSetupPage = lazyWithRetry(() => import('./pages/calc/CalcSetupPage'));
 const CalcRunPage = lazyWithRetry(() => import('./pages/calc/CalcRunPage'));
@@ -410,6 +411,7 @@ export default function App() {
             <Route path="/settings/password" element={<PasswordSettingsPage />} />
             <Route path="/settings/location" element={<LocationSettingsPage />} />
             <Route path="/settings/devices" element={<MyDevicesPage />} />
+            <Route path="/settings/qr-scan" element={<QrScanPage />} />
             <Route path="/settings/theme" element={<ThemeSettingsPage />} />
             <Route path="/settings/misa" element={<RequireCrmElevated><MisaSettingsPage /></RequireCrmElevated>} />
             <Route path="/settings/api-keys" element={<RequireCrmElevated><ApiKeysSettingsPage /></RequireCrmElevated>} />

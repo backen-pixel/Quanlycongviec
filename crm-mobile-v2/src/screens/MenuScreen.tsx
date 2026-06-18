@@ -21,7 +21,7 @@ type Item = {
   label: string;
   color: string;
   target?: ItemTarget;
-  action?: 'logout' | 'drive' | 'settings' | 'notifications' | 'events' | 'quotations' | 'orders' | 'products' | 'customers' | 'tasks' | 'account' | 'devices';
+  action?: 'logout' | 'drive' | 'settings' | 'notifications' | 'events' | 'quotations' | 'orders' | 'products' | 'customers' | 'tasks' | 'account' | 'devices' | 'qr-scan';
 };
 
 function buildSections(Colors: ThemeColors): { title: string; items: Item[] }[] {
@@ -51,6 +51,7 @@ function buildSections(Colors: ThemeColors): { title: string; items: Item[] }[] 
       title: 'Hệ thống',
       items: [
         { icon: 'person-circle', label: 'Tài khoản', color: Colors.blue, action: 'account' },
+        { icon: 'qr-code', label: 'Quét QR web', color: Colors.orange, action: 'qr-scan' },
         { icon: 'phone-portrait', label: 'Thiết bị', color: Colors.purple, action: 'devices' },
         { icon: 'settings', label: 'Cài đặt', color: Colors.textMuted, action: 'settings' },
         { icon: 'log-out', label: 'Đăng xuất', color: Colors.red, action: 'logout' },
@@ -127,6 +128,10 @@ export default function MenuScreen() {
     }
     if (it.action === 'devices') {
       navigation.navigate('Devices');
+      return;
+    }
+    if (it.action === 'qr-scan') {
+      navigation.navigate('QrScan');
       return;
     }
     if (it.target) navigation.navigate('CrmHub', { initialMode: it.target.kind });

@@ -39,6 +39,7 @@ type AuthCtx = {
   token: string | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  loginWithSession: (auth: { token: string; user: AuthUser; session_id?: string }) => Promise<void>;
   logout: () => Promise<void>;
   refreshProfile: (next?: AuthUser | null) => Promise<void>;
 };
@@ -110,17 +111,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  const loginWithSession = useCallback(async (auth: { token: string; user: AuthUser; session_id?: string }) => {
+    invalidatePlannerCache();
+    invalidateCrmHubCache();
+    await setStoredToken(auth.token);
+    await AsyncStorage.setItem(USER_KEY, JSON.stringify(auth.user));
+    setToken(auth.token);
+    setUser(auth.user);
+    startDeviceHeartbeat();
+    void syncVoiceBackgroundTaskWithPrefs();
+  }, []);
+
   const login = useCallback(async (email: string, password: string) => {
     invalidatePlannerCache();
     invalidateCrmHubCache();
     const { data } = await api.post('/auth/login', { email: email.trim(), password });
-    await setStoredToken(data.token);
-    await AsyncStorage.setItem(USER_KEY, JSON.stringify(data.user));
-    setToken(data.token);
-    setUser(data.user);
-    startDeviceHeartbeat();
-    void syncVoiceBackgroundTaskWithPrefs();
-  }, []);
+    await loginWithSession({ token: data.token, user: data.user, session_id: data.session_id });
+  }, [loginWithSession]);
 
   const logout = useCallback(async () => {
     invalidatePlannerCache();
@@ -144,8 +151,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ user, token, loading, login, logout, refreshProfile }),
-    [user, token, loading, login, logout, refreshProfile],
+    () => ({ user, token, loading, login, loginWithSession, logout, refreshProfile }),
+    [user, token, loading, login, loginWithSession, logout, refreshProfile],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

@@ -669,10 +669,11 @@ async function sendMobilePush(userId, notification) {
       await sendExpoChunk(messages.slice(i, i + CHUNK_SIZE));
     }
 
-    // FCM cuộc gọi đến: legacy app (data-only → native service) + v2 (tray + data cho expo)
+    // FCM cuộc gọi: data-only → CrmFirebaseMessagingService hiện full-screen kể cả app kill.
+    // Gộp token legacy + v2; không dùng notification payload (Android bỏ qua onMessageReceived).
     if (isCall) {
-      if (fcmRows.length) await sendFcmIncomingCall(fcmRows, notification);
-      if (v2FcmRows.length) await sendFcmIncomingCallV2Tray(v2FcmRows, notification);
+      const callFcmRows = pickActiveFcmTokens({ fcm: allFcm, expo: [] }, 3);
+      if (callFcmRows.length) await sendFcmIncomingCall(callFcmRows, notification);
     } else if (fcmRows.length && isChatType(notification.type)) {
       await sendFcmDataOnly(fcmRows, notification);
       await sendFcmTrayNotification(fcmRows, notification);
