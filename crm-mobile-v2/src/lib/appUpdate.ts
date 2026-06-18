@@ -64,7 +64,13 @@ export function currentVersionCode(): number | null {
 }
 
 export function currentVersionName(): string {
-  return Application.nativeApplicationVersion || '';
+  const v = (
+    Application.nativeApplicationVersion
+    || Constants.nativeAppVersion
+    || Constants.expoConfig?.version
+    || ''
+  ).trim();
+  return v;
 }
 
 export function isUpToDate(res: UpdateCheckResult): boolean {
@@ -152,7 +158,22 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
       headers: { Accept: 'application/json' },
     });
     if (!res.ok) return { updateAvailable: false };
-    return (await res.json()) as UpdateCheckResult;
+    const data = (await res.json()) as UpdateCheckResult;
+
+    // Máy đã cùng tên bản (2.0.57) → không bắt cập nhật dù versionCode lệch metadata server.
+    const localVer = currentVersionName();
+    const latestVer = (data.latestVersion || '').trim();
+    if (localVer && latestVer && compareVersionNames(localVer, latestVer) >= 0) {
+      return {
+        ...data,
+        updateAvailable: false,
+        mandatory: false,
+        needsUpdate: false,
+        downloadUrl: null,
+      };
+    }
+
+    return data;
   } catch {
     return { updateAvailable: false };
   }

@@ -146,6 +146,9 @@ function clientNeedsUpdate(clientCode, clientVersion, latest) {
   const latestVer = String(latest.version || '').trim();
   const clientVer = String(clientVersion || '').trim();
 
+  // Khớp chính xác tên bản (vd. 2.0.57 === 2.0.57)
+  if (clientVer && latestVer && clientVer === latestVer) return false;
+
   // Tên phiên bản đã khớp / mới hơn → coi là đã cập nhật (tránh loop khi versionCode lệch tên).
   if (clientVer && latestVer) {
     const byName = compareVersionNames(clientVer, latestVer);
