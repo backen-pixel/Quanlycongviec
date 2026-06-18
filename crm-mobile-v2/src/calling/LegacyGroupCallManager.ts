@@ -59,6 +59,12 @@ async function applySignal(
 
 export type GroupPeerInfo = { userId: string; name: string };
 
+export type GroupJoinRequest = {
+  requesterId: string;
+  requesterName: string;
+  requestedAt?: number;
+};
+
 type PeerEntry = { pc: RTCPeerConnection; pending: RTCIceCandidateInit[]; name: string };
 
 export class LegacyGroupCallManager {
@@ -71,6 +77,8 @@ export class LegacyGroupCallManager {
   private peersRef = new Map<string, PeerEntry>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   onPeersChange?: (peers: GroupPeerInfo[]) => void;
+  onJoinRequestsChange?: (requests: GroupJoinRequest[]) => void;
+  private joinRequests: GroupJoinRequest[] = [];
 
   constructor(opts: {
     sessionRef: { current: CallSession | null };
@@ -100,6 +108,10 @@ export class LegacyGroupCallManager {
     })));
   }
 
+  private syncJoinRequests() {
+    this.onJoinRequestsChange?.([...this.joinRequests]);
+  }
+
   private clearTimer() {
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
   }
@@ -110,6 +122,8 @@ export class LegacyGroupCallManager {
     for (const e of this.peersRef.values()) { try { e.pc.close(); } catch { /* noop */ } }
     this.peersRef.clear();
     this.syncPeers();
+    this.joinRequests = [];
+    this.syncJoinRequests();
     try { this.localStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* noop */ }
     this.localStreamRef.current = null;
   }
@@ -336,6 +350,22 @@ export class LegacyGroupCallManager {
     this.patchSession({ isMuted: next });
   }
 
+  denyJoin(requesterId: string) {
+    const cur = this.sessionRef.current;
+    if (!cur || cur.mode !== 'group' || !requesterId) return;
+    this.socket?.emit('call:group_deny_join', { callId: cur.callId, requesterId });
+    this.joinRequests = this.joinRequests.filter((r) => r.requesterId !== requesterId);
+    this.syncJoinRequests();
+  }
+
+  approveJoin(requesterId: string) {
+    const cur = this.sessionRef.current;
+    if (!cur || cur.mode !== 'group' || !requesterId) return;
+    this.socket?.emit('call:group_approve_join', { callId: cur.callId, requesterId });
+    this.joinRequests = this.joinRequests.filter((r) => r.requesterId !== requesterId);
+    this.syncJoinRequests();
+  }
+
   bind(socket: Socket) {
     const onIncoming = (p: any) => {
       if (!p?.isGroup || !p.callId) return;
@@ -381,6 +411,37 @@ export class LegacyGroupCallManager {
         setTimeout(() => this.setSession(null), 1200);
       }
     };
+    const onJoinRequest = ({ callId, requesterId, requesterName, requestedAt }: any) => {
+      const cur = this.sessionRef.current;
+      if (!cur || cur.mode !== 'group' || cur.callId !== callId || !requesterId) return;
+      if (this.joinRequests.some((r) => r.requesterId === requesterId)) return;
+      this.joinRequests = [...this.joinRequests, {
+        requesterId,
+        requesterName: requesterName || 'Thành viên',
+        requestedAt: requestedAt || Date.now(),
+      }];
+      this.syncJoinRequests();
+    };
+    const onJoinCancelled = ({ callId, requesterId }: any) => {
+      const cur = this.sessionRef.current;
+      if (!cur || cur.mode !== 'group' || cur.callId !== callId || !requesterId) return;
+      this.joinRequests = this.joinRequests.filter((r) => r.requesterId !== requesterId);
+      this.syncJoinRequests();
+    };
+    const onHostChanged = ({ callId, newHostId }: any) => {
+      const cur = this.sessionRef.current;
+      if (!cur || cur.mode !== 'group' || cur.callId !== callId) return;
+      if (String(newHostId) !== this.uid) {
+        this.joinRequests = [];
+        this.syncJoinRequests();
+      }
+    };
+    const onJoinPending = ({ callId }: any) => {
+      const cur = this.sessionRef.current;
+      if (cur?.mode === 'group' && cur.callId === callId && cur.joinPending) {
+        this.patchSession({ state: 'RINGING', joinPending: true });
+      }
+    };
 
     socket.on('call:incoming', onIncoming);
     socket.on('call:group_participants', onParticipants);
@@ -388,6 +449,10 @@ export class LegacyGroupCallManager {
     socket.on('call:signal', onSignal);
     socket.on('call:ended', onEnded);
     socket.on('call:group_join_denied', onDenied);
+    socket.on('call:group_join_request', onJoinRequest);
+    socket.on('call:group_join_cancelled', onJoinCancelled);
+    socket.on('call:group_host_changed', onHostChanged);
+    socket.on('call:group_join_pending', onJoinPending);
 
     return () => {
       socket.off('call:incoming', onIncoming);
@@ -396,6 +461,10 @@ export class LegacyGroupCallManager {
       socket.off('call:signal', onSignal);
       socket.off('call:ended', onEnded);
       socket.off('call:group_join_denied', onDenied);
+      socket.off('call:group_join_request', onJoinRequest);
+      socket.off('call:group_join_cancelled', onJoinCancelled);
+      socket.off('call:group_host_changed', onHostChanged);
+      socket.off('call:group_join_pending', onJoinPending);
     };
   }
 }

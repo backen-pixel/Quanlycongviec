@@ -45,9 +45,10 @@ function RoundBtn({ icon, label, active, danger, onPress }: {
 
 export default function CallScreen() {
   const {
-    session, localStream, remoteStream, groupPeers = [],
+    session, localStream, remoteStream, groupPeers = [], groupJoinRequests = [],
     acceptCall, rejectCall, endCall,
     toggleMute, toggleSpeaker, toggleCamera, switchCamera,
+    approveGroupJoin, denyGroupJoin,
   } = useCall();
 
   const [now, setNow] = useState(Date.now());
@@ -95,10 +96,14 @@ export default function CallScreen() {
             )}
             <Text style={styles.name}>{displayName}</Text>
             <Text style={styles.status}>
-              {isGroup && groupPeers.length > 0
-                ? `${1 + groupPeers.length} người · `
-                : ''}
-              {session.state === 'CONNECTED' ? fmtDuration(duration) : statusLabel(session.state, session.direction)}
+              {session.joinPending
+                ? 'Đang chờ chủ phòng duyệt…'
+                : isGroup && groupPeers.length > 0
+                  ? `${1 + groupPeers.length} người · `
+                  : ''}
+              {!session.joinPending && (session.state === 'CONNECTED'
+                ? fmtDuration(duration)
+                : statusLabel(session.state, session.direction))}
             </Text>
             {isGroup && groupPeers.length > 0 && (
               <Text style={styles.groupPeers}>
@@ -106,6 +111,25 @@ export default function CallScreen() {
               </Text>
             )}
             {!!session.error && <Text style={styles.error}>{session.error}</Text>}
+          </View>
+        )}
+
+        {isGroup && groupJoinRequests.length > 0 && !isIncomingRinging && (
+          <View style={styles.joinPanel}>
+            <Text style={styles.joinTitle}>Yêu cầu tham gia ({groupJoinRequests.length})</Text>
+            {groupJoinRequests.map((req) => (
+              <View key={req.requesterId} style={styles.joinRow}>
+                <Text style={styles.joinName} numberOfLines={1}>{req.requesterName}</Text>
+                <View style={styles.joinActions}>
+                  <Pressable style={[styles.joinBtn, styles.joinApprove]} onPress={() => approveGroupJoin(req.requesterId)}>
+                    <Text style={styles.joinBtnTxt}>Duyệt</Text>
+                  </Pressable>
+                  <Pressable style={[styles.joinBtn, styles.joinDeny]} onPress={() => denyGroupJoin(req.requesterId)}>
+                    <Text style={styles.joinBtnTxt}>Từ chối</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ))}
           </View>
         )}
 
@@ -153,4 +177,29 @@ const styles = StyleSheet.create({
   ctrlActive: { backgroundColor: '#374151' },
   ctrlDanger: { backgroundColor: '#ef4444' },
   ctrlLabel: { color: '#aebac1', fontSize: 12 },
+  joinPanel: {
+    marginHorizontal: 20,
+    marginBottom: 12,
+    backgroundColor: 'rgba(31,44,52,0.95)',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  joinTitle: { color: '#aebac1', fontSize: 12, fontWeight: '600', marginBottom: 8 },
+  joinRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.06)',
+  },
+  joinName: { color: '#fff', fontSize: 14, flex: 1 },
+  joinActions: { flexDirection: 'row', gap: 8 },
+  joinBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+  joinApprove: { backgroundColor: '#22c55e' },
+  joinDeny: { backgroundColor: '#ef4444' },
+  joinBtnTxt: { color: '#fff', fontSize: 13, fontWeight: '600' },
 });

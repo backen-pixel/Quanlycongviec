@@ -323,6 +323,7 @@ export function CallProvider({ children }) {
   const value = useMemo(() => ({
     session, localStream, remoteStream, uid,
     groupPeers: group.groupPeers,
+    groupJoinRequests: group.groupJoinRequests,
     startCall, acceptCall, rejectCall, endCall,
     toggleMute, toggleCamera, switchCamera,
     status: legacyStatus,
@@ -331,8 +332,11 @@ export function CallProvider({ children }) {
     isMuted: !!session?.isMuted,
     startGroupCall: group.startGroupCall,
     joinGroupCall: group.joinGroupCall,
-  }), [session, localStream, remoteStream, uid, group.groupPeers, startCall, acceptCall, rejectCall, endCall,
-    toggleMute, toggleCamera, switchCamera, legacyStatus, group.startGroupCall, group.joinGroupCall]);
+    approveGroupJoin: group.approveGroupJoin,
+    denyGroupJoin: group.denyGroupJoin,
+  }), [session, localStream, remoteStream, uid, group.groupPeers, group.groupJoinRequests, startCall, acceptCall, rejectCall, endCall,
+    toggleMute, toggleCamera, switchCamera, legacyStatus, group.startGroupCall, group.joinGroupCall,
+    group.approveGroupJoin, group.denyGroupJoin]);
 
   return <CallCtx.Provider value={value}>{children}</CallCtx.Provider>;
 }

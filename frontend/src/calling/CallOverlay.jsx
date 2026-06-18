@@ -13,8 +13,9 @@ function fmt(ms) {
 
 export default function CallOverlay() {
   const {
-    session, localStream, remoteStream, groupPeers = [],
+    session, localStream, remoteStream, groupPeers = [], groupJoinRequests = [],
     acceptCall, rejectCall, endCall, toggleMute, toggleCamera, switchCamera,
+    approveGroupJoin, denyGroupJoin,
   } = useCall();
 
   const remoteVideoRef = useRef(null);
@@ -150,6 +151,25 @@ export default function CallOverlay() {
             <div style={S.status}>{statusText}</div>
             {!!session.error && <div style={S.error}>{session.error}</div>}
           </div>
+        </div>
+      )}
+
+      {isGroup && groupJoinRequests.length > 0 && !incomingRinging && (
+        <div style={S.joinPanel}>
+          <div style={S.joinPanelTitle}>Yêu cầu tham gia ({groupJoinRequests.length})</div>
+          {groupJoinRequests.map((req) => (
+            <div key={req.requesterId} style={S.joinRow}>
+              <span style={S.joinName}>{req.requesterName}</span>
+              <div style={S.joinActions}>
+                <button type="button" style={{ ...S.joinBtn, ...S.joinApprove }} onClick={() => approveGroupJoin(req.requesterId)}>
+                  Duyệt
+                </button>
+                <button type="button" style={{ ...S.joinBtn, ...S.joinDeny }} onClick={() => denyGroupJoin(req.requesterId)}>
+                  Từ chối
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
@@ -305,4 +325,56 @@ const S = {
     borderRadius: 999,
     background: 'rgba(255,255,255,0.08)',
   },
+  joinPanel: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    right: 16,
+    zIndex: 3,
+    background: 'rgba(31,44,52,0.95)',
+    borderRadius: 12,
+    padding: '12px 14px',
+    border: '1px solid rgba(255,255,255,0.08)',
+  },
+  joinPanelTitle: {
+    color: '#aebac1',
+    fontSize: 12,
+    fontWeight: 600,
+    marginBottom: 10,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  joinRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    padding: '8px 0',
+    borderTop: '1px solid rgba(255,255,255,0.06)',
+  },
+  joinName: {
+    color: '#fff',
+    fontSize: 14,
+    flex: 1,
+    minWidth: 0,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  joinActions: {
+    display: 'flex',
+    gap: 8,
+    flexShrink: 0,
+  },
+  joinBtn: {
+    padding: '6px 12px',
+    borderRadius: 8,
+    border: 'none',
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: 'pointer',
+    color: '#fff',
+  },
+  joinApprove: { background: '#22c55e' },
+  joinDeny: { background: '#ef4444' },
 };
