@@ -32,6 +32,7 @@ import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { resolveDefaultCrmAdminCompanyId, setStoredCrmFilterCompanyId } from '../lib/crmCompanyFilter';
 import { isPipelineStageSlaDisabled } from '../lib/crmPipelineSla';
+import Modal from '../components/Modal';
 
 /** Hai mẫu theo tài liệu Zalo / ví dụ template ngắn — ID chỉ để thử form; OA thật cần template_id của bạn */
 const ZALO_TEST_PRESETS = [
@@ -1184,13 +1185,6 @@ export default function PipelineSettingsPage() {
           );
         })}
       </div>
-
-      {/* Add Form */}
-      {adding === type && (
-        <div className="p-4 border-t bg-blue-50/50 shrink-0 max-h-[40vh] overflow-y-auto">
-          <StageForm form={form} setForm={setForm} onSave={saveNew} onCancel={() => setAdding(null)} pipelineType={type} />
-        </div>
-      )}
     </div>
   );
 
@@ -1876,6 +1870,40 @@ export default function PipelineSettingsPage() {
           onClose={() => setSxAssignModal(null)}
           onSaved={() => { setSxAssignModal(null); load(); }}
         />
+      )}
+
+      {adding && (
+        <Modal
+          open={!!adding}
+          onClose={() => setAdding(null)}
+          title={`Thêm giai đoạn ${adding === 'lead' ? 'Lead' : 'Deal'}`}
+          size="lg"
+        >
+          <div className="mb-5 flex flex-wrap items-center gap-2">
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold ${
+                adding === 'lead' ? 'bg-blue-100 text-blue-800 ring-1 ring-blue-200' : 'bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200'
+              }`}
+            >
+              {adding === 'lead' ? (
+                <IconTags className="w-3.5 h-3.5" stroke={2} />
+              ) : (
+                <IconTrendingUp className="w-3.5 h-3.5" stroke={2} />
+              )}
+              Pipeline {adding === 'lead' ? 'Lead' : 'Deal'}
+            </span>
+            <span className="text-xs text-gray-500">
+              {visiblePipelines.find((p) => p.id === selectedPipelineId)?.name || 'Pipeline đang chọn'}
+            </span>
+          </div>
+          <StageForm
+            form={form}
+            setForm={setForm}
+            onSave={saveNew}
+            onCancel={() => setAdding(null)}
+            pipelineType={adding}
+          />
+        </Modal>
       )}
       </div>
     </div>
