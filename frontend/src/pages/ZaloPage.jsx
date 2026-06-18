@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import {
@@ -9,6 +9,7 @@ import {
 import ZaloAutoToolPanel from '../components/ZaloAutoToolPanel';
 import ZaloContactsTab from '../components/ZaloContactsTab';
 import IntegrationLeadRoutingFields from '../components/IntegrationLeadRoutingFields';
+import UploadFileLightbox, { collectUploadLightboxItems, findUploadLightboxIndex } from '../components/UploadFileLightbox';
 
 const API = import.meta.env.VITE_API_URL || '';
 const hdr = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' });
@@ -238,7 +239,26 @@ export default function ZaloPage() {
   const [applyingRouting, setApplyingRouting] = useState(false);
   const [n8nTriggerDisplay, setN8nTriggerDisplay] = useState(null);
   const [showN8nOverride, setShowN8nOverride] = useState(false);
+  const [imageLightboxIndex, setImageLightboxIndex] = useState(null);
   const messagesEndRef = useRef(null);
+
+  const chatImageGallery = useMemo(
+    () => collectUploadLightboxItems(
+      messages
+        .filter((m) => m.attachment_url && m.message_type === 'image')
+        .map((m) => ({
+          attachment_url: m.attachment_url,
+          url: m.attachment_url,
+          mime_type: 'image/jpeg',
+          file_name: 'Ảnh',
+        })),
+    ),
+    [messages],
+  );
+
+  useEffect(() => {
+    setImageLightboxIndex(null);
+  }, [selectedId]);
 
   const loadStats = useCallback(() => {
     fetch(`${API}/api/zalo/stats`, { headers: hdr() })
@@ -522,7 +542,7 @@ export default function ZaloPage() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] min-h-0 max-h-[calc(100vh-3rem)] overflow-hidden bg-white -m-6">
+    <div className="flex flex-col h-screen min-h-0 max-h-screen overflow-hidden bg-white -m-6">
       {/* Header */}
       <div className="shrink-0 border-b border-sky-100 bg-gradient-to-r from-sky-50/90 via-white to-white px-4 sm:px-6 py-3.5 shadow-sm">
         <div className="flex flex-wrap items-center gap-3">
@@ -590,7 +610,7 @@ export default function ZaloPage() {
 
       <div
         className={`flex-1 min-h-0 flex flex-col ${
-          tab === 'inbox' ? 'px-3 pt-3 pb-0 sm:px-4 sm:pt-4 bg-gradient-to-b from-sky-50/30 to-gray-50/50' : 'p-4 sm:p-5 bg-gray-50/40'
+          tab === 'inbox' ? 'px-3 pt-2 pb-0 sm:px-4 sm:pt-3 bg-gradient-to-b from-sky-50/30 to-gray-50/50' : 'p-4 sm:p-5 bg-gray-50/40'
         } ${tab === 'inbox' || tab === 'contacts' ? 'overflow-hidden' : 'overflow-y-auto'}`}
       >
 
@@ -735,7 +755,7 @@ export default function ZaloPage() {
           </div>
 
           {/* Khung chat — flex-1 để thanh nhập dính đáy panel */}
-          <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-white">
+          <div className="flex flex-col flex-1 min-h-0 h-full overflow-hidden bg-white">
             {!selectedId ? (
               <div className="flex-1 flex flex-col items-center justify-center gap-3 p-8 bg-gradient-to-br from-sky-50/40 via-white to-indigo-50/30">
                 <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#0068FF] to-[#0047b3] flex items-center justify-center shadow-xl shadow-sky-200/60">
@@ -745,7 +765,7 @@ export default function ZaloPage() {
                 <p className="text-xs text-gray-500 text-center max-w-[220px]">Tin nhắn Zalo OA hiển thị tại đây — phản hồi khách trong vòng 7 ngày</p>
               </div>
             ) : (
-              <>
+              <div className="flex flex-col flex-1 min-h-0 h-full">
                 <div className="px-4 py-3 border-b border-sky-100 flex items-center gap-3 bg-gradient-to-r from-white via-sky-50/30 to-white shrink-0">
                   <Avatar name={activeContact?.display_name} url={activeContact?.avatar_url} size="lg" />
                   <div className="flex-1 min-w-0">
@@ -799,7 +819,21 @@ export default function ZaloPage() {
                           }`}
                         >
                           {m.attachment_url && m.message_type === 'image' ? (
-                            <img src={m.attachment_url} alt="" className="max-w-full rounded-lg mb-1.5" />
+                            <button
+                              type="button"
+                              className="block max-w-full rounded-lg mb-1.5 overflow-hidden cursor-zoom-in focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+                              onClick={() => {
+                                const idx = findUploadLightboxIndex(chatImageGallery, m.attachment_url);
+                                if (idx >= 0) setImageLightboxIndex(idx);
+                              }}
+                              title="Xem ảnh lớn"
+                            >
+                              <img
+                                src={m.attachment_url}
+                                alt=""
+                                className="max-w-full rounded-lg hover:brightness-95 transition-[filter]"
+                              />
+                            </button>
                           ) : null}
                           <div className="whitespace-pre-wrap break-words leading-relaxed">{m.content}</div>
                           <div className={`flex items-center justify-end gap-1 text-[10px] mt-1 ${
@@ -817,7 +851,7 @@ export default function ZaloPage() {
                   <div ref={messagesEndRef} />
                 </div>
 
-                <div className="mt-auto shrink-0 border-t border-sky-100 bg-white shadow-[0_-4px_20px_rgba(0,104,255,0.06)] px-4 pt-2.5 pb-4">
+                <div className="mt-auto shrink-0 border-t border-sky-100 bg-white shadow-[0_-4px_20px_rgba(0,104,255,0.06)] px-4 pt-2.5 pb-[max(1rem,env(safe-area-inset-bottom,0px))]">
                   <div className="flex gap-2 items-center">
                     <input
                       value={reply}
@@ -840,7 +874,7 @@ export default function ZaloPage() {
                     Tin tư vấn Zalo OA — khách phải nhắn trước trong vòng 7 ngày.
                   </p>
                 </div>
-              </>
+              </div>
             )}
           </div>
         </div>
@@ -1112,6 +1146,15 @@ export default function ZaloPage() {
         </div>
       )}
       </div>
+
+      {imageLightboxIndex != null && chatImageGallery.length > 0 && (
+        <UploadFileLightbox
+          items={chatImageGallery}
+          index={imageLightboxIndex}
+          onIndexChange={setImageLightboxIndex}
+          onClose={() => setImageLightboxIndex(null)}
+        />
+      )}
     </div>
   );
 }
