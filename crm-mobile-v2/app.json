@@ -3,7 +3,7 @@
     "name": "CRM Mobile",
     "slug": "crm-mobile-v2",
     "scheme": "crmv2",
-    "version": "2.0.49",
+    "version": "2.0.50",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -17,12 +17,13 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "Ứng dụng cần micro để ghi âm cuộc gọi và lưu vào lead/deal trên CRM."
+        "NSMicrophoneUsageDescription": "Ứng dụng cần micro để gọi thoại và ghi âm cuộc gọi trên CRM.",
+        "NSCameraUsageDescription": "Ứng dụng cần camera cho cuộc gọi video."
       }
     },
     "android": {
       "package": "vn.tubeppro.crmobilev2",
-      "versionCode": 50,
+      "versionCode": 51,
       "edgeToEdgeEnabled": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -37,7 +38,15 @@
         "android.permission.READ_MEDIA_AUDIO",
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.REQUEST_INSTALL_PACKAGES",
-        "android.permission.RECEIVE_BOOT_COMPLETED"
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.CAMERA",
+        "android.permission.USE_FULL_SCREEN_INTENT",
+        "android.permission.WAKE_LOCK",
+        "android.permission.DISABLE_KEYGUARD",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MICROPHONE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.VIBRATE"
       ]
     },
     "web": {
@@ -67,6 +76,14 @@
           "disableAndroid": true
         }
       ],
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "cameraPermission": "Cho phép camera cho cuộc gọi video.",
+          "microphonePermission": "Cho phép micro cho cuộc gọi thoại."
+        }
+      ],
+      "./plugins/withIncomingCallAndroid.js",
       [
         "../mobile-shared/share-intent/plugins/withAndroidShareIntentFilters",
         {

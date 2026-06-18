@@ -17,6 +17,7 @@ import UpdateGate from './src/components/UpdateGate';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { FileActionsProvider } from './src/context/FileActionsContext';
 import { CallProvider } from './src/context/CallContext';
+import { CallScreen, IncomingCallBridge } from './src/calling';
 import { CreateMenuProvider } from './src/context/CreateMenuContext';
 import { MessengerProvider } from './src/context/MessengerContext';
 import { MessengerRealtimeProvider } from './src/context/MessengerRealtimeContext';
@@ -73,6 +74,8 @@ function Gate() {
             <View style={styles.root}>
               <NavigationContainer ref={navigationRef} theme={navTheme}>
                 <RootNavigator />
+                <CallScreen />
+                <IncomingCallBridge />
               </NavigationContainer>
               <CreateMenuSheet />
               <PermissionBootstrap />
