@@ -26,6 +26,7 @@ function syncPeersState(groupPeersRef, setGroupPeers) {
 
 export function useGroupCall({ socket, uid, isBusy, setSession, sessionRef, patchSession }) {
   const [groupPeers, setGroupPeers] = useState([]);
+  const [groupJoinRequests, setGroupJoinRequests] = useState([]);
   const groupPeersRef = useRef(new Map());
   const localStreamRef = useRef(null);
   const ringTimerRef = useRef(null);
@@ -43,6 +44,7 @@ export function useGroupCall({ socket, uid, isBusy, setSession, sessionRef, patc
     }
     groupPeersRef.current.clear();
     syncPeersState(groupPeersRef, setGroupPeers);
+    setGroupJoinRequests([]);
     try { localStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* noop */ }
     localStreamRef.current = null;
   }, [clearGroupTimers]);
@@ -242,6 +244,20 @@ export function useGroupCall({ socket, uid, isBusy, setSession, sessionRef, patc
     patchSession({ isMuted: next });
   }, [sessionRef, patchSession]);
 
+  const approveGroupJoin = useCallback((requesterId) => {
+    const cur = sessionRef.current;
+    if (!cur || cur.mode !== 'group' || !requesterId) return;
+    socket?.emit('call:group_approve_join', { callId: cur.callId, requesterId });
+    setGroupJoinRequests((prev) => prev.filter((r) => r.requesterId !== requesterId));
+  }, [socket, sessionRef]);
+
+  const denyGroupJoin = useCallback((requesterId) => {
+    const cur = sessionRef.current;
+    if (!cur || cur.mode !== 'group' || !requesterId) return;
+    socket?.emit('call:group_deny_join', { callId: cur.callId, requesterId });
+    setGroupJoinRequests((prev) => prev.filter((r) => r.requesterId !== requesterId));
+  }, [socket, sessionRef]);
+
   const bindGroupHandlers = useCallback((sock) => {
     if (!sock) return () => {};
 
@@ -337,6 +353,31 @@ export function useGroupCall({ socket, uid, isBusy, setSession, sessionRef, patc
       }
     };
 
+    const onJoinRequest = ({ callId, requesterId, requesterName, requestedAt }) => {
+      const cur = sessionRef.current;
+      if (!cur || cur.mode !== 'group' || cur.callId !== callId || !requesterId) return;
+      setGroupJoinRequests((prev) => {
+        if (prev.some((r) => r.requesterId === requesterId)) return prev;
+        return [...prev, {
+          requesterId,
+          requesterName: requesterName || 'Thành viên',
+          requestedAt: requestedAt || Date.now(),
+        }];
+      });
+    };
+
+    const onJoinCancelled = ({ callId, requesterId }) => {
+      const cur = sessionRef.current;
+      if (!cur || cur.mode !== 'group' || cur.callId !== callId || !requesterId) return;
+      setGroupJoinRequests((prev) => prev.filter((r) => r.requesterId !== requesterId));
+    };
+
+    const onHostChanged = ({ callId, newHostId }) => {
+      const cur = sessionRef.current;
+      if (!cur || cur.mode !== 'group' || cur.callId !== callId) return;
+      if (String(newHostId) !== String(uid)) setGroupJoinRequests([]);
+    };
+
     sock.on('call:incoming', onLegacyIncoming);
     sock.on('call:group_participants', onGroupParticipants);
     sock.on('call:group_member_joined', onGroupMemberJoined);
@@ -345,6 +386,9 @@ export function useGroupCall({ socket, uid, isBusy, setSession, sessionRef, patc
     sock.on('call:rejected', onRejected);
     sock.on('call:group_join_pending', onJoinPending);
     sock.on('call:group_join_denied', onJoinDenied);
+    sock.on('call:group_join_request', onJoinRequest);
+    sock.on('call:group_join_cancelled', onJoinCancelled);
+    sock.on('call:group_host_changed', onHostChanged);
 
     return () => {
       sock.off('call:incoming', onLegacyIncoming);
@@ -355,6 +399,9 @@ export function useGroupCall({ socket, uid, isBusy, setSession, sessionRef, patc
       sock.off('call:rejected', onRejected);
       sock.off('call:group_join_pending', onJoinPending);
       sock.off('call:group_join_denied', onJoinDenied);
+      sock.off('call:group_join_request', onJoinRequest);
+      sock.off('call:group_join_cancelled', onJoinCancelled);
+      sock.off('call:group_host_changed', onHostChanged);
     };
   }, [
     uid, presentGroupIncoming, getOrCreateGroupPc, attachTracksToAllPeers,
@@ -363,6 +410,7 @@ export function useGroupCall({ socket, uid, isBusy, setSession, sessionRef, patc
 
   return {
     groupPeers,
+    groupJoinRequests,
     localStreamRef,
     startGroupCall,
     joinGroupCall,
@@ -370,6 +418,8 @@ export function useGroupCall({ socket, uid, isBusy, setSession, sessionRef, patc
     rejectGroupCall,
     endGroupCall,
     toggleGroupMute,
+    approveGroupJoin,
+    denyGroupJoin,
     bindGroupHandlers,
     resetGroup,
   };

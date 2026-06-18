@@ -15,15 +15,15 @@ const { supabase } = require('../src/config/supabase');
 const { buildStandardApkFilename } = require('../src/helpers/appReleaseFilename');
 
 const APP_KEY = 'crm-mobile-v2';
-const VERSION = process.env.PUB_VERSION || '2.0.52';
-const VERSION_CODE = parseInt(process.env.PUB_CODE || '53', 10);
+const VERSION = process.env.PUB_VERSION || '2.0.53';
+const VERSION_CODE = parseInt(process.env.PUB_CODE || '54', 10);
 const PUBLIC_HOST = (process.env.PUB_HOST || 'https://tubep-backend.onrender.com').replace(/\/$/, '');
 const FILE_NAME = buildStandardApkFilename(APP_KEY, VERSION, VERSION_CODE, { release: true });
 const APK = path.resolve(__dirname, `../uploads/app-releases/crm-mobile-v2/${FILE_NAME}`);
 const FILE_URL = `${PUBLIC_HOST}/uploads/app-releases/crm-mobile-v2/${FILE_NAME}`;
 const RELEASE_NOTES =
   process.env.PUB_NOTES
-  || 'Sửa thông báo cuộc gọi đến Web↔App; video 9:16 trên web; tắt chuông thiết bị khác khi đã bắt máy.';
+  || 'Gọi nhóm voice/video; duyệt thành viên vào muộn; cải thiện cuộc gọi Web↔App.';
 
 async function uploadApkToProduction(releaseId) {
   if (process.env.SKIP_UPLOAD === '1' || process.env.SKIP_UPLOAD === 'true') {

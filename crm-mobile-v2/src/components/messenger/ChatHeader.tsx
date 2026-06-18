@@ -167,17 +167,33 @@ export default function ChatHeader({
       Alert.alert('Cuộc gọi', 'Đang có cuộc gọi khác.');
       return;
     }
-    if (!isDirect) {
-      Alert.alert('Gọi video', 'Gọi video nhóm chưa hỗ trợ.');
+    if (isDirect) {
+      if (!peerId) {
+        Alert.alert('Gọi video', 'Không xác định được người nhận.');
+        return;
+      }
+      setCalling(true);
+      try {
+        await startVideoCall({ id: String(peerId), name: displayName, avatar: avatarUrl || null });
+      } finally {
+        setCalling(false);
+      }
       return;
     }
-    if (!peerId) {
-      Alert.alert('Gọi video', 'Không xác định được người nhận.');
-      return;
-    }
+
     setCalling(true);
     try {
-      await startVideoCall({ id: String(peerId), name: displayName, avatar: avatarUrl || null });
+      const detail = await fetchMessengerGroupDetail(threadId);
+      const members = (detail.members || [])
+        .filter((m) => String(m.id) !== String(myUserId))
+        .map((m) => ({ id: m.id, name: m.name, avatar: m.avatar }));
+      if (!members.length) {
+        Alert.alert('Cuộc gọi nhóm', 'Nhóm không có thành viên khác.');
+        return;
+      }
+      await startGroupCall({ id: threadId, name: displayName, members }, 'video');
+    } catch {
+      Alert.alert('Cuộc gọi nhóm', 'Không thể bắt đầu cuộc gọi video nhóm.');
     } finally {
       setCalling(false);
     }

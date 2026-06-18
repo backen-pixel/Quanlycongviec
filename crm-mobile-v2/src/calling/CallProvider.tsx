@@ -35,7 +35,7 @@ import {
   type CallMedia, type CallPeer, type CallSession, type CallState,
 } from './types';
 import { startIncomingCallAlert, stopIncomingCallAlert } from '../lib/callRingtone';
-import { LegacyGroupCallManager, type GroupPeerInfo } from './LegacyGroupCallManager';
+import { LegacyGroupCallManager, type GroupPeerInfo, type GroupJoinRequest } from './LegacyGroupCallManager';
 import { useAuth } from '../context/AuthContext';
 
 type Ctx = {
@@ -43,9 +43,12 @@ type Ctx = {
   localStream: MediaStream | null;
   remoteStream: MediaStream | null;
   groupPeers: GroupPeerInfo[];
+  groupJoinRequests: GroupJoinRequest[];
   startCall: (peer: CallPeer, media?: CallMedia) => Promise<void>;
   startGroupCall: (group: { id: string; name?: string; members: { id: string; name?: string }[] }, media?: CallMedia) => Promise<void>;
   joinGroupCall: (info: Record<string, unknown>) => void;
+  approveGroupJoin: (requesterId: string) => void;
+  denyGroupJoin: (requesterId: string) => void;
   acceptCall: () => Promise<void>;
   rejectCall: () => void;
   endCall: () => void;
@@ -71,6 +74,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [groupPeers, setGroupPeers] = useState<GroupPeerInfo[]>([]);
+  const [groupJoinRequests, setGroupJoinRequests] = useState<GroupJoinRequest[]>([]);
 
   const signalingRef = useRef<SignalingClient | null>(null);
   const rtcRef = useRef<WebRTCService | null>(null);
@@ -102,6 +106,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       localStreamRef,
     });
     groupMgrRef.current.onPeersChange = setGroupPeers;
+    groupMgrRef.current.onJoinRequestsChange = setGroupJoinRequests;
     return () => { groupMgrRef.current?.reset(); };
   }, [updateSession]);
 
@@ -500,14 +505,23 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     groupMgrRef.current?.joinGroupCall(info as any);
   }, []);
 
+  const approveGroupJoin = useCallback((requesterId: string) => {
+    groupMgrRef.current?.approveJoin(requesterId);
+  }, []);
+
+  const denyGroupJoin = useCallback((requesterId: string) => {
+    groupMgrRef.current?.denyJoin(requesterId);
+  }, []);
+
   const value = useMemo<Ctx>(() => ({
-    session, localStream, remoteStream, groupPeers,
+    session, localStream, remoteStream, groupPeers, groupJoinRequests,
     startCall, startGroupCall, joinGroupCall,
+    approveGroupJoin, denyGroupJoin,
     acceptCall, rejectCall, endCall,
     toggleMute, toggleSpeaker, toggleCamera, switchCamera,
     applyIncomingFromPush, handleNativeCallIntent, dismissIncomingSilently,
-  }), [session, localStream, remoteStream, groupPeers, startCall, startGroupCall, joinGroupCall,
-    acceptCall, rejectCall, endCall, toggleMute, toggleSpeaker, toggleCamera, switchCamera,
+  }), [session, localStream, remoteStream, groupPeers, groupJoinRequests, startCall, startGroupCall, joinGroupCall,
+    approveGroupJoin, denyGroupJoin, acceptCall, rejectCall, endCall, toggleMute, toggleSpeaker, toggleCamera, switchCamera,
     applyIncomingFromPush, handleNativeCallIntent, dismissIncomingSilently]);
 
   return <CallCtx.Provider value={value}>{children}</CallCtx.Provider>;
