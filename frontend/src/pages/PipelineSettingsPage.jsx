@@ -1,6 +1,32 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
 import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2, Calendar, CheckCircle2, Clock, Factory, Search, X, TrendingUp, RotateCcw } from 'lucide-react';
+import {
+  IconSettings,
+  IconTags,
+  IconLayoutKanban,
+  IconMessageCircle,
+  IconCopy,
+  IconRefresh,
+  IconPlus,
+  IconTrash,
+  IconDeviceFloppy,
+  IconGripVertical,
+  IconEye,
+  IconEyeOff,
+  IconTrophy,
+  IconX,
+  IconClock,
+  IconPercentage,
+  IconCalendar,
+  IconMessage,
+  IconRotateClockwise,
+  IconChevronRight,
+  IconBuilding,
+  IconLoader2,
+  IconTrendingUp,
+  IconBuildingFactory,
+} from '@tabler/icons-react';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { resolveDefaultCrmAdminCompanyId, setStoredCrmFilterCompanyId } from '../lib/crmCompanyFilter';
@@ -63,6 +89,102 @@ const DEFAULT_ZALO_TEMPLATE_STRUCTURE_DISPLAY = `{
 const COLORS = ['#94A3B8','#3B82F6','#8B5CF6','#F59E0B','#F97316','#10B981','#EF4444','#EC4899','#06B6D4','#6366F1'];
 const ICONS = ['🆕','📞','💬','📋','📧','⏳','🤝','💰','📝','✅','❌','🎯','🔥','⭐','🏆'];
 
+const SETTINGS_TABS = [
+  { id: 'taxonomy', label: 'Phân loại', Icon: IconTags },
+  { id: 'stages', label: 'Giai đoạn', Icon: IconLayoutKanban },
+  { id: 'zalo', label: 'Zalo OA', Icon: IconMessageCircle },
+  { id: 'copy', label: 'Sao chép pipeline', Icon: IconCopy, adminOnly: true },
+];
+
+function ToggleSwitch({ checked, onChange, disabled, title }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={!!checked}
+      disabled={disabled}
+      title={title}
+      onClick={() => !disabled && onChange?.(!checked)}
+      className={`relative h-5 w-9 rounded-full transition-colors shrink-0 ${
+        checked ? 'bg-violet-600' : 'bg-gray-200'
+      } ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
+    >
+      <span
+        className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
+          checked ? 'translate-x-4' : 'translate-x-0'
+        }`}
+      />
+    </button>
+  );
+}
+
+function PipelineMiniFlowBar({ stages, className = '' }) {
+  const list = (stages || []).filter((s) => s.is_active !== false);
+  if (!list.length) return null;
+  return (
+    <div
+      className={`flex h-1.5 rounded-full overflow-hidden gap-px bg-gray-100 ${className}`}
+      title="Toàn cảnh flow pipeline"
+    >
+      {list.map((s) => (
+        <div
+          key={s.id}
+          className="flex-1 min-w-[3px]"
+          style={{ backgroundColor: s.color || '#94A3B8' }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function StageStatusBadges({ stage, linkedSx, linkedVc, syncRoleLabels }) {
+  const s = stage;
+  const badges = [];
+  if (s.is_won) badges.push({ key: 'won', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: IconTrophy, text: 'Thắng' });
+  if (s.is_lost) badges.push({ key: 'lost', cls: 'bg-red-50 text-red-700 border-red-200', icon: IconX, text: 'Mất' });
+  if (!s.is_active) badges.push({ key: 'hidden', cls: 'bg-orange-50 text-orange-700 border-orange-200', icon: IconEyeOff, text: 'Ẩn' });
+  if (s.default_probability != null && s.default_probability !== '') {
+    badges.push({ key: 'prob', cls: 'bg-violet-50 text-violet-700 border-violet-200', icon: IconPercentage, text: `${s.default_probability}%` });
+  }
+  if (!s.is_won && !s.is_lost) {
+    if (isPipelineStageSlaDisabled(s.sla_days)) {
+      badges.push({ key: 'sla-off', cls: 'bg-gray-50 text-gray-600 border-gray-200', icon: IconClock, text: 'Bỏ QH' });
+    } else {
+      const days = s.sla_days != null && s.sla_days !== '' ? s.sla_days : 7;
+      badges.push({ key: 'sla', cls: 'bg-sky-50 text-sky-700 border-sky-200', icon: IconClock, text: `SLA ${days}d` });
+    }
+  }
+  if (s.requires_deadline && !s.is_won && !s.is_lost) {
+    badges.push({ key: 'deadline', cls: 'bg-rose-50 text-rose-700 border-rose-200', icon: IconCalendar, text: 'Deadline' });
+  }
+  if (s.send_zalo_on_enter) badges.push({ key: 'zalo', cls: 'bg-sky-50 text-sky-800 border-sky-200', icon: IconMessage, text: 'Zalo' });
+  if (s.create_event_on_enter) badges.push({ key: 'event', cls: 'bg-emerald-50 text-emerald-800 border-emerald-200', icon: IconCalendar, text: 'Sự kiện' });
+  if (s.allow_revert_to_lead) badges.push({ key: 'revert', cls: 'bg-amber-50 text-amber-800 border-amber-200', icon: IconRotateClockwise, text: 'Trả Lead' });
+  if (s.sync_role) {
+    badges.push({ key: 'sync', cls: 'bg-indigo-50 text-indigo-700 border-indigo-200', icon: IconBuildingFactory, text: syncRoleLabels[s.sync_role] || s.sync_role });
+  }
+  if (linkedSx?.length) badges.push({ key: 'sx', cls: 'bg-teal-50 text-teal-700 border-teal-200', icon: IconBuildingFactory, text: `SX×${linkedSx.length}` });
+  if (linkedVc?.length) badges.push({ key: 'vc', cls: 'bg-orange-50 text-orange-700 border-orange-200', icon: IconTrendingUp, text: `VC×${linkedVc.length}` });
+
+  if (!badges.length) return null;
+  return (
+    <div className="flex flex-wrap gap-1 mt-1">
+      {badges.map((b) => {
+        const Ico = b.icon;
+        return (
+          <span
+            key={b.key}
+            className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md border text-[9px] font-medium ${b.cls}`}
+          >
+            <Ico className="w-3 h-3 shrink-0" stroke={1.75} />
+            {b.text}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function PipelineSettingsPage() {
   const { user } = useAuth();
   const [stages, setStages] = useState([]);
@@ -96,8 +218,7 @@ export default function PipelineSettingsPage() {
   const [companies, setCompanies] = useState([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
   const [selectedPipelineId, setSelectedPipelineId] = useState('');
-  const [zaloExpanded, setZaloExpanded] = useState(false);
-  const [zaloPipelineExpanded, setZaloPipelineExpanded] = useState(false);
+  const [activeTab, setActiveTab] = useState('taxonomy');
 
   const [zaloSettings, setZaloSettings] = useState(null);
   const [zaloLoading, setZaloLoading] = useState(false);
@@ -531,10 +652,10 @@ export default function PipelineSettingsPage() {
 
   useEffect(() => {
     if (!zaloPlId) return;
-    if (!zaloPipelineExpanded) return;
+    if (activeTab !== 'zalo') return;
     const ok = visiblePipelines.some((p) => p.id === zaloPlId);
     if (!ok) setZaloPlId(visiblePipelines[0]?.id || '');
-  }, [zaloPlId, visiblePipelines, zaloPipelineExpanded]);
+  }, [zaloPlId, visiblePipelines, activeTab]);
 
   const filtered = stages.filter(s => s.pipeline_type === activeType).sort((a, b) => a.order_index - b.order_index);
   const otherType = activeType === 'lead' ? 'deal' : 'lead';
@@ -745,56 +866,62 @@ export default function PipelineSettingsPage() {
   };
 
   const renderPipeline = (type, list) => (
-    <div className="bg-white rounded-xl border overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b bg-gradient-to-r from-gray-50 to-white">
-        <div className="flex items-center gap-3">
-          <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm ${type === 'lead' ? 'bg-blue-600' : 'bg-emerald-600'}`}>
-            {type === 'lead' ? '🎯' : '💰'}
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+      <div className="px-4 py-3 border-b border-gray-100 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${type === 'lead' ? 'bg-blue-600' : 'bg-emerald-600'}`}>
+              {type === 'lead' ? (
+                <IconTags className="w-4 h-4 text-white" stroke={2} />
+              ) : (
+                <IconTrendingUp className="w-4 h-4 text-white" stroke={2} />
+              )}
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-xs font-semibold text-gray-900">Pipeline {type === 'lead' ? 'Lead' : 'Deal'}</h2>
+              <p className="text-[10px] text-gray-400">{list.length} giai đoạn</p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-sm font-bold text-gray-900">Pipeline {type === 'lead' ? 'Lead' : 'Deal'}</h2>
-            <p className="text-[10px] text-gray-500">
-              {list.length} giai đoạn — «Bỏ quá hạn» khi lead/deal đứng cột lâu không cần tính trễ SLA
-            </p>
-          </div>
+          <button
+            type="button"
+            onClick={() => startAdd(type)}
+            className="h-7 px-2.5 bg-gray-900 text-white rounded-lg text-[10px] hover:bg-black flex items-center gap-1 cursor-pointer shrink-0"
+            title="Thêm giai đoạn"
+          >
+            <IconPlus className="w-3.5 h-3.5" stroke={2} />
+          </button>
         </div>
-        <button onClick={() => startAdd(type)}
-          className="h-8 px-3 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700 flex items-center gap-1.5 cursor-pointer">
-          <Plus className="h-3.5 w-3.5" /> Thêm
-        </button>
-      </div>
-
-      {/* Pipeline Visual */}
-      <div className="p-4">
-        <div className="flex items-center gap-1 overflow-x-auto pb-2">
+        <PipelineMiniFlowBar stages={list} />
+        <div className="flex items-center gap-0.5 overflow-x-auto pb-0.5">
           {list.map((s, i) => (
             <div key={s.id} className="flex items-center shrink-0">
-              <div
+              <button
+                type="button"
                 onClick={() => startEdit(s)}
-                className={`px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer transition-all hover:scale-105 border-2 ${
+                className={`px-2 py-1 rounded-md text-[10px] font-medium cursor-pointer transition-all border ${
                   !s.is_active ? 'opacity-40 border-dashed' : 'border-transparent'
-                } ${editId === s.id ? 'ring-2 ring-blue-500' : ''}`}
-                style={{ backgroundColor: s.color + '20', color: s.color, borderColor: editId === s.id ? '#3B82F6' : s.is_active ? 'transparent' : s.color }}
+                } ${editId === s.id ? 'ring-2 ring-violet-400 ring-offset-1' : ''}`}
+                style={{ backgroundColor: `${s.color}18`, color: s.color, borderColor: editId === s.id ? '#8B5CF6' : 'transparent' }}
+                title={s.name}
               >
-                {s.icon && <span className="mr-1">{s.icon}</span>}
-                {s.name}
-                {s.is_won && <Trophy className="inline h-3 w-3 ml-1" />}
-                {s.is_lost && <XCircle className="inline h-3 w-3 ml-1" />}
-              </div>
-              {i < list.length - 1 && <ChevronRight className="h-4 w-4 text-gray-300 mx-0.5 shrink-0" />}
+                {s.icon && <span className="mr-0.5">{s.icon}</span>}
+                <span className="max-w-[72px] truncate inline-block align-middle">{s.name}</span>
+              </button>
+              {i < list.length - 1 && <IconChevronRight className="w-3 h-3 text-gray-300 mx-0.5 shrink-0" stroke={2} />}
             </div>
           ))}
         </div>
       </div>
 
-      {/* Stages List */}
-      <div className="border-t">
+      <div className="divide-y divide-gray-100">
         {list.map((s, i) => {
           const linkedSx = sxStages.filter((sx) => sx.crm_target_stage_id === s.id);
           const linkedVc = vcStages.filter((vc) => vc.crm_target_stage_id === s.id);
           const syncRoleLabels = {
-            sx_production: '🏭 SX', vc_delivery: '🚚 VC Giao', vc_installation: '🔧 VC Lắp', vc_customer_care: '🤝 VC CSKH',
+            sx_production: 'SX',
+            vc_delivery: 'VC Giao',
+            vc_installation: 'VC Lắp',
+            vc_customer_care: 'VC CSKH',
           };
           const isDragging = draggingId === s.id;
           const isDragOver = dragOverId === s.id;
@@ -807,84 +934,41 @@ export default function PipelineSettingsPage() {
             onDragOver={(e) => handleDragOver(e, s)}
             onDragLeave={() => setDragOverId(null)}
             onDrop={(e) => handleDrop(e, s)}
-            className={`flex items-center gap-3 px-4 py-2.5 border-b last:border-b-0 transition-all
-              ${isDragging ? 'opacity-40 bg-blue-50' : 'hover:bg-gray-50'}
-              ${isDragOver ? 'border-t-2 border-t-blue-500 bg-blue-50/50' : ''}
-              ${!s.is_active ? 'opacity-50' : ''}`}
+            className={`flex items-start gap-2 px-3 py-2 transition-all
+              ${isDragging ? 'opacity-40 bg-violet-50/50' : 'hover:bg-gray-50/80'}
+              ${isDragOver ? 'bg-violet-50/60 ring-1 ring-inset ring-violet-300' : ''}
+              ${!s.is_active ? 'opacity-55' : ''}`}
           >
-            <div className="flex items-center gap-1">
-              <span className="cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-700 select-none px-0.5"
-                title="Kéo để sắp xếp lại">⋮⋮</span>
-              <div className="flex flex-col gap-0.5">
-                <button type="button" onClick={() => moveStage(s, -1)} disabled={i === 0}
-                  className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]"
-                  title="Lên 1 vị trí">▲</button>
-                <button type="button" onClick={() => moveStage(s, 1)} disabled={i === list.length - 1}
-                  className="text-gray-400 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[10px]"
-                  title="Xuống 1 vị trí">▼</button>
+            <div className="flex items-center gap-0.5 pt-1 shrink-0">
+              <span className="cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 select-none" title="Kéo sắp xếp">
+                <IconGripVertical className="w-4 h-4" stroke={1.5} />
+              </span>
+            </div>
+            <div
+              className="w-1 self-stretch rounded-full shrink-0 min-h-[2.5rem]"
+              style={{ backgroundColor: s.color || '#94A3B8' }}
+            />
+            <div className="flex-1 min-w-0 py-0.5">
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm leading-none">{s.icon || '📋'}</span>
+                <p className="text-xs font-semibold text-gray-900 truncate">{s.name}</p>
+                <span className="text-[9px] text-gray-400 font-mono">#{s.order_index}</span>
               </div>
+              {s.description && (
+                <p className="text-[10px] text-gray-400 mt-0.5 line-clamp-1">{s.description}</p>
+              )}
+              <StageStatusBadges stage={s} linkedSx={linkedSx} linkedVc={linkedVc} syncRoleLabels={syncRoleLabels} />
             </div>
-            <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0" style={{ backgroundColor: s.color }}>
-              {s.order_index}
-            </div>
-            <span className="text-lg shrink-0">{s.icon || '📋'}</span>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-gray-900">{s.name}</p>
-              <div className="flex items-center gap-1.5 text-[10px] text-gray-400 flex-wrap mt-0.5">
-                {s.is_won && <span className="text-emerald-600 font-bold">✅ Thắng</span>}
-                {s.is_lost && <span className="text-red-500 font-bold">❌ Thua</span>}
-                {!s.is_active && <span className="text-orange-500">Ẩn</span>}
-                {s.default_probability != null && s.default_probability !== '' && (
-                  <span className="text-violet-600 font-medium">◎ {s.default_probability}% mặc định</span>
-                )}
-                {!s.is_won && !s.is_lost && isPipelineStageSlaDisabled(s.sla_days) && (
-                  <span className="bg-gray-100 text-gray-600 border border-gray-200 px-1.5 py-0.5 rounded font-medium">
-                    ⏱ Bỏ quá hạn cột
-                  </span>
-                )}
-                {!s.is_won && !s.is_lost && !isPipelineStageSlaDisabled(s.sla_days) && (
-                  <span className="text-gray-500">
-                    SLA {s.sla_days != null && s.sla_days !== '' ? `${s.sla_days} ngày` : '7 ngày (mặc định)'}
-                  </span>
-                )}
-                {s.counts_as_completed_revenue && (
-                  <span className="text-teal-700 font-medium">✓ DT hoàn thành</span>
-                )}
-                {s.counts_as_expected_revenue && (
-                  <span className="text-violet-700 font-medium">◎ KV</span>
-                )}
-                {s.sync_role && (
-                  <span className="bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 rounded font-medium">
-                    {syncRoleLabels[s.sync_role] || s.sync_role}
-                  </span>
-                )}
-                {s.requires_deadline && !s.is_won && !s.is_lost && (
-                  <span className="bg-rose-50 text-rose-700 border border-rose-200 px-1.5 py-0.5 rounded font-medium">
-                    ⏰ Bắt buộc deadline
-                  </span>
-                )}
-                {linkedSx.map((sx) => (
-                  <span key={sx.id} className="bg-teal-50 text-teal-700 border border-teal-200 px-1.5 py-0.5 rounded font-medium">
-                    🏭 {sx.icon || ''}{sx.name}
-                  </span>
-                ))}
-                {linkedVc.map((vc) => (
-                  <span key={vc.id} className="bg-orange-50 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded font-medium">
-                    🚚 {vc.icon || ''}{vc.name}
-                  </span>
-                ))}
-              </div>
-            </div>
-            <div className="flex items-center gap-1 shrink-0">
+            <div className="flex items-center gap-0.5 shrink-0 flex-wrap justify-end max-w-[200px]">
               {s.pipeline_type === 'deal' && s.sync_role === 'sx_production' && (
                 <button
                   type="button"
                   onClick={() => setSxAssignModal({ stageId: s.id, stageName: s.name })}
-                  className="h-7 px-2.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 cursor-pointer border bg-teal-600 text-white border-teal-700 hover:bg-teal-700 shadow-sm"
-                  title="Gán nhiều cột pipeline Sản xuất (đa công ty / đa phân loại) cùng map về cột CRM này"
+                  className="h-6 px-1.5 rounded-md text-[9px] font-semibold flex items-center gap-0.5 cursor-pointer border bg-teal-600 text-white border-teal-700 hover:bg-teal-700"
+                  title="Gán cột Sản xuất"
                 >
-                  <Factory className="h-3.5 w-3.5" /> Gán cột SX
-                  <span className="bg-white/20 px-1 rounded">{linkedSx.length}</span>
+                  <IconBuildingFactory className="w-3 h-3" stroke={2} />
+                  {linkedSx.length || ''}
                 </button>
               )}
               {!s.is_won && !s.is_lost && (
@@ -1026,651 +1110,662 @@ export default function PipelineSettingsPage() {
     </div>
   );
 
+  const leadStagesSorted = stages.filter((s) => s.pipeline_type === 'lead').sort((a, b) => a.order_index - b.order_index);
+  const dealStagesSorted = stages.filter((s) => s.pipeline_type === 'deal').sort((a, b) => a.order_index - b.order_index);
+  const visibleTabs = SETTINGS_TABS.filter((t) => !t.adminOnly || isAdminLike(user));
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Settings className="h-6 w-6 text-blue-600" />
+    <div className="min-h-full bg-white">
+      <div className="p-4 md:p-6 max-w-[1400px] mx-auto space-y-5">
+        <div className="flex items-start gap-3">
+          <IconSettings className="w-6 h-6 text-violet-600 shrink-0" stroke={1.75} />
           <div>
-            <h1 className="text-xl font-bold text-gray-900">Cài đặt Pipeline</h1>
-            <p className="text-sm text-gray-500">
-              Bấm <strong>Sửa</strong> trên từng giai đoạn và điền <strong>Mô tả cột Kanban</strong> — lưu vào database và hiện ngay dưới tên cột trên Kanban CRM.
+            <h1 className="text-lg font-semibold text-gray-900">Cài đặt Pipeline CRM</h1>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Quản lý giai đoạn, phân loại deal và tích hợp Zalo OA
             </p>
           </div>
         </div>
-      </div>
 
-      {/* Company + Pipeline selector */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-wrap gap-3 items-end">
-        {isAdmin ? (
-          <label className="flex flex-col gap-1 text-[11px] text-gray-700 min-w-[260px]">
-            <span className="font-semibold">Công ty</span>
+        <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 flex flex-wrap gap-3 items-end shadow-sm">
+          {isAdmin ? (
+            <label className="flex flex-col gap-1 text-[10px] text-gray-500 min-w-[220px]">
+              <span className="font-semibold uppercase tracking-wide flex items-center gap-1">
+                <IconBuilding className="w-3.5 h-3.5" stroke={2} /> Công ty
+              </span>
+              <select
+                className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white text-gray-900"
+                value={selectedCompanyId}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setSelectedCompanyId(v);
+                  if (v) setStoredCrmFilterCompanyId(v);
+                  setSelectedPipelineId('');
+                  setAdding(null);
+                  setEditId(null);
+                }}
+              >
+                {companies.length === 0 && <option value="">— Chưa có công ty —</option>}
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <div className="text-xs text-violet-800 bg-violet-50 border border-violet-100 rounded-lg px-3 py-2">
+              Pipeline của công ty bạn
+            </div>
+          )}
+
+          <label className="flex flex-col gap-1 text-[10px] text-gray-500 min-w-[240px] flex-1">
+            <span className="font-semibold uppercase tracking-wide">Pipeline CRM</span>
             <select
-              className="border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white"
-              value={selectedCompanyId}
-              onChange={(e) => {
-                const v = e.target.value;
-                setSelectedCompanyId(v);
-                if (v) setStoredCrmFilterCompanyId(v);
-                setSelectedPipelineId('');
-                setAdding(null);
-                setEditId(null);
-              }}
+              className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white text-gray-900"
+              value={selectedPipelineId}
+              onChange={(e) => { setSelectedPipelineId(e.target.value); setAdding(null); setEditId(null); }}
             >
-              {companies.length === 0 && <option value="">— Chưa có công ty —</option>}
-              {companies.map((c) => (
-                <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+              {visiblePipelines.length === 0 && <option value="">— Chưa có pipeline —</option>}
+              {visiblePipelines.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}{p.is_default ? ' (default)' : ''}
+                </option>
               ))}
             </select>
           </label>
-        ) : (
-          <div className="text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
-            Đang quản lý pipeline của công ty bạn
-          </div>
-        )}
 
-        <label className="flex flex-col gap-1 text-[11px] text-gray-700 min-w-[320px] flex-1">
-          <span className="font-semibold">Pipeline CRM (thuộc công ty đang chọn)</span>
-          <select
-            className="border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white"
-            value={selectedPipelineId}
-            onChange={(e) => { setSelectedPipelineId(e.target.value); setAdding(null); setEditId(null); }}
-          >
-            {visiblePipelines.length === 0 && <option value="">— Chưa có pipeline —</option>}
-            {visiblePipelines.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}{p.is_default ? ' (default)' : ''}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <button
-          type="button"
-          onClick={() => load()}
-          className="h-9 px-4 rounded-lg bg-gray-100 text-gray-700 text-sm font-medium hover:bg-gray-200 cursor-pointer"
-          title="Tải lại stages theo pipeline đang chọn"
-        >
-          Tải lại
-        </button>
-      </div>
-      {isAdmin && selectedCompanyId && visiblePipelines.length === 0 && (
-        <div className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-          Công ty này chưa có pipeline CRM. Hãy tạo pipeline mới hoặc copy từ công ty khác.
-        </div>
-      )}
-
-      {/* Lead/Deal types */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-bold text-gray-900 flex items-center gap-2">
-            <Settings className="h-4 w-4 text-indigo-600" />
-            Phân loại Lead/Deal (theo công ty)
-          </h2>
-          {leadTypesLoading && <Loader2 className="h-4 w-4 animate-spin text-indigo-600" />}
-        </div>
-
-        <p className="text-[11px] text-gray-600">
-          Mỗi công ty có danh mục riêng. Khi tạo Lead/Deal, hệ thống sẽ chỉ cho chọn loại thuộc đúng công ty đó.
-          Với Deal: có thể bật «SX mẫu» để khi tạo deal loại đó, hệ thống tự sinh nhiệm vụ pipeline SX (sx_*) theo bộ mẫu xưởng của công ty (công ty phải thuộc module Sản xuất).
-          Cột «Công ty SX mặc định»: khi deal loại đó chuyển <strong>Thắng</strong> hoặc cột <strong>Sản xuất</strong> (chưa có dự án), hệ thống dùng công ty xưởng này nếu không chọn tay — có thể bỏ trống để luôn hỏi khi kéo Kanban.
-        </p>
-
-        {/* Add new type */}
-        <div className="grid gap-2 sm:grid-cols-4 items-end">
-          <label className="flex flex-col gap-1 text-[11px] text-gray-700 sm:col-span-2">
-            <span className="font-semibold">Tên loại</span>
-            <input
-              value={leadTypeNew.name}
-              onChange={(e) => setLeadTypeNew((v) => ({ ...v, name: e.target.value }))}
-              className="border border-gray-200 rounded-lg px-2 py-2 text-sm"
-              placeholder="VD: Chung cư, Nhà phố, Dự án lớn..."
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-[11px] text-gray-700">
-            <span className="font-semibold">Áp dụng</span>
-            <select
-              value={leadTypeNew.applies_to}
-              onChange={(e) => setLeadTypeNew((v) => ({ ...v, applies_to: e.target.value }))}
-              className="border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white"
-            >
-              <option value="both">Lead + Deal</option>
-              <option value="lead">Chỉ Lead</option>
-              <option value="deal">Chỉ Deal</option>
-            </select>
-          </label>
           <button
             type="button"
-            disabled={!selectedCompanyId || !leadTypeNew.name.trim()}
-            onClick={async () => {
-              try {
-                const { data } = await api.post('/crm/lead-types', {
-                  company_id: selectedCompanyId || null,
-                  name: leadTypeNew.name.trim(),
-                  applies_to: leadTypeNew.applies_to,
-                  is_active: leadTypeNew.is_active !== false,
-                  workshop_production_templates: !!leadTypeNew.workshop_production_templates,
-                  default_production_company_id: leadTypeNew.default_production_company_id || null,
-                });
-                setLeadTypes((prev) => [data, ...(prev || [])]);
-                setLeadTypeNew({
-                  name: '',
-                  applies_to: 'both',
-                  is_active: true,
-                  workshop_production_templates: false,
-                  default_production_company_id: '',
-                });
-              } catch (e) {
-                alert(e.response?.data?.error || 'Lỗi tạo loại');
-              }
-            }}
-            className="h-9 px-4 rounded-lg bg-indigo-700 text-white text-sm font-medium hover:bg-indigo-800 disabled:opacity-50 cursor-pointer"
-            title={!selectedCompanyId ? 'Chọn công ty trước' : ''}
+            onClick={() => load()}
+            className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100 cursor-pointer"
+            title="Tải lại"
           >
-            + Thêm loại
+            <IconRefresh className="w-4 h-4" stroke={2} />
           </button>
         </div>
-        <label className="flex items-start gap-2 text-[11px] text-teal-900 bg-teal-50/80 border border-teal-100 rounded-lg px-3 py-2 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            className="mt-0.5 rounded border-teal-400 text-teal-700"
-            checked={!!leadTypeNew.workshop_production_templates}
-            onChange={(e) => setLeadTypeNew((v) => ({ ...v, workshop_production_templates: e.target.checked }))}
-          />
-          <span>
-            <strong>Deal Sản xuất:</strong> khi tạo Deal chọn loại này, tự tạo nhiệm vụ SX theo bộ mẫu đã cấu hình cho công ty (workshop — khu vực Sản xuất).
-          </span>
-        </label>
-        <label className="flex flex-col gap-1 text-[11px] text-gray-700 max-w-md">
-          <span className="font-semibold">Công ty SX mặc định (khi chốt deal loại mới)</span>
-          <select
-            value={leadTypeNew.default_production_company_id || ''}
-            onChange={(e) => setLeadTypeNew((v) => ({ ...v, default_production_company_id: e.target.value }))}
-            className="border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white"
-          >
-            <option value="">— Chưa gán —</option>
-            {productionCompaniesForSx.map((c) => (
-              <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-            ))}
-          </select>
-        </label>
 
-        {/* List */}
-        {leadTypes.length === 0 ? (
-          <div className="text-[11px] text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
-            Chưa có loại nào cho công ty này.
+        {isAdmin && selectedCompanyId && visiblePipelines.length === 0 && (
+          <div className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            Công ty này chưa có pipeline CRM. Hãy tạo pipeline mới hoặc copy từ công ty khác (tab Sao chép pipeline).
           </div>
-        ) : (
-          <div className="space-y-2">
-            {leadTypes
-              .slice()
-              .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
-              .map((t) => (
-                <div key={t.id} className="flex flex-wrap items-center gap-2 border border-gray-200 rounded-lg px-3 py-2">
-                  <input
-                    value={t.name || ''}
-                    onChange={(e) => setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? { ...x, name: e.target.value } : x))}
-                    className="flex-1 min-w-[200px] border border-gray-200 rounded-lg px-2 py-1.5 text-sm"
-                  />
-                  <select
-                    value={t.applies_to || 'both'}
-                    onChange={(e) => setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? { ...x, applies_to: e.target.value } : x))}
-                    className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white"
-                    title="Áp dụng"
-                  >
-                    <option value="both">Lead+Deal</option>
-                    <option value="lead">Lead</option>
-                    <option value="deal">Deal</option>
-                  </select>
-                  <input
-                    type="number"
-                    value={t.order_index ?? 0}
-                    onChange={(e) => setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? { ...x, order_index: parseInt(e.target.value || '0', 10) } : x))}
-                    className="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-sm"
-                    title="Thứ tự"
-                  />
-                  <label className="flex items-center gap-2 text-[11px] text-gray-700 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={t.is_active !== false}
-                      onChange={(e) => setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? { ...x, is_active: e.target.checked } : x))}
-                    />
-                    Hiện
-                  </label>
-                  <label
-                    className="flex items-center gap-1.5 text-[10px] text-teal-800 cursor-pointer select-none shrink-0"
-                    title="Tạo nhiệm vụ sx_* từ bộ mẫu xưởng khi tạo Deal loại này"
-                  >
-                    <input
-                      type="checkbox"
-                      className="rounded border-teal-400"
-                      checked={!!t.workshop_production_templates}
-                      onChange={(e) => setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? { ...x, workshop_production_templates: e.target.checked } : x))}
-                    />
-                    SX mẫu
-                  </label>
-                  <select
-                    value={t.default_production_company_id || ''}
-                    onChange={(e) =>
-                      setLeadTypes((prev) =>
-                        (prev || []).map((x) =>
-                          x.id === t.id ? { ...x, default_production_company_id: e.target.value || null } : x,
-                        ),
-                      )
+        )}
+
+        <div className="flex gap-1 border-b border-gray-200 overflow-x-auto">
+          {visibleTabs.map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setActiveTab(id)}
+              className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 -mb-px whitespace-nowrap transition-colors cursor-pointer ${
+                activeTab === id
+                  ? 'border-violet-600 text-violet-700 bg-violet-50/50 rounded-t-lg'
+                  : 'border-transparent text-gray-500 hover:text-gray-900'
+              }`}
+            >
+              <Icon className="w-3.5 h-3.5" stroke={2} />
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {activeTab === 'taxonomy' && (
+          <div className="rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <IconTags className="w-4 h-4 text-violet-600" stroke={2} />
+                <h2 className="text-xs font-semibold text-gray-900">Phân loại Lead / Deal</h2>
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600">{leadTypes.length} loại</span>
+              </div>
+              {leadTypesLoading && <IconLoader2 className="w-4 h-4 animate-spin text-violet-600" stroke={2} />}
+            </div>
+
+            <p className="px-4 pt-3 pb-2 text-[11px] text-gray-500 leading-relaxed">
+              Mỗi công ty có danh mục riêng. Tích «Deal Sản xuất» để hệ thống tự tạo nhiệm vụ SX theo bộ mẫu đã cấu hình.
+            </p>
+
+            <div className="px-4 pb-3 grid grid-cols-12 gap-2 items-end border-b border-gray-50">
+              <label className="col-span-12 sm:col-span-5 flex flex-col gap-1 text-[10px] text-gray-500">
+                <span className="font-semibold uppercase tracking-wide">Tên loại mới</span>
+                <input
+                  value={leadTypeNew.name}
+                  onChange={(e) => setLeadTypeNew((v) => ({ ...v, name: e.target.value }))}
+                  className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white"
+                  placeholder="VD: Chung cư, Nhà phố…"
+                />
+              </label>
+              <label className="col-span-6 sm:col-span-3 flex flex-col gap-1 text-[10px] text-gray-500">
+                <span className="font-semibold uppercase tracking-wide">Áp dụng cho</span>
+                <select
+                  value={leadTypeNew.applies_to}
+                  onChange={(e) => setLeadTypeNew((v) => ({ ...v, applies_to: e.target.value }))}
+                  className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white"
+                >
+                  <option value="both">Lead + Deal</option>
+                  <option value="lead">Chỉ Lead</option>
+                  <option value="deal">Chỉ Deal</option>
+                </select>
+              </label>
+              <div className="col-span-6 sm:col-span-2 flex flex-col gap-1 text-[10px] text-gray-500">
+                <span className="font-semibold uppercase tracking-wide">Deal SX</span>
+                <ToggleSwitch
+                  checked={!!leadTypeNew.workshop_production_templates}
+                  onChange={(v) => setLeadTypeNew((prev) => ({ ...prev, workshop_production_templates: v }))}
+                  title="Tự tạo nhiệm vụ SX khi tạo Deal loại này"
+                />
+              </div>
+              <div className="col-span-12 sm:col-span-2 flex justify-end">
+                <button
+                  type="button"
+                  disabled={!selectedCompanyId || !leadTypeNew.name.trim()}
+                  onClick={async () => {
+                    try {
+                      const { data } = await api.post('/crm/lead-types', {
+                        company_id: selectedCompanyId || null,
+                        name: leadTypeNew.name.trim(),
+                        applies_to: leadTypeNew.applies_to,
+                        is_active: leadTypeNew.is_active !== false,
+                        workshop_production_templates: !!leadTypeNew.workshop_production_templates,
+                        default_production_company_id: leadTypeNew.default_production_company_id || null,
+                      });
+                      setLeadTypes((prev) => [data, ...(prev || [])]);
+                      setLeadTypeNew({
+                        name: '',
+                        applies_to: 'both',
+                        is_active: true,
+                        workshop_production_templates: false,
+                        default_production_company_id: '',
+                      });
+                    } catch (e) {
+                      alert(e.response?.data?.error || 'Lỗi tạo loại');
                     }
-                    className="min-w-[140px] max-w-[200px] border border-gray-200 rounded-lg px-2 py-1.5 text-[10px] bg-white"
-                    title="Công ty xưởng mặc định khi chốt deal (Thắng / Sản xuất)"
-                  >
-                    <option value="">SX mặc định…</option>
-                    {productionCompaniesForSx.map((c) => (
-                      <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                    ))}
-                  </select>
+                  }}
+                  className="h-8 px-3 rounded-lg bg-gray-900 text-white text-xs font-medium hover:bg-black disabled:opacity-50 cursor-pointer inline-flex items-center gap-1"
+                  title={!selectedCompanyId ? 'Chọn công ty trước' : 'Thêm loại'}
+                >
+                  <IconPlus className="w-3.5 h-3.5" stroke={2} />
+                  Thêm
+                </button>
+              </div>
+            </div>
+
+            <div className="px-4 py-2.5 border-b border-gray-50 bg-gray-50/40">
+              <label className="flex flex-col gap-1 text-[10px] text-gray-500 max-w-md">
+                <span className="font-semibold uppercase tracking-wide">Công ty SX mặc định</span>
+                <select
+                  value={leadTypeNew.default_production_company_id || ''}
+                  onChange={(e) => setLeadTypeNew((v) => ({ ...v, default_production_company_id: e.target.value }))}
+                  className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white"
+                >
+                  <option value="">— Chưa gán —</option>
+                  {productionCompaniesForSx.map((c) => (
+                    <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="hidden md:grid grid-cols-12 gap-2 px-4 py-2 bg-gray-50/80 text-[9px] font-semibold text-gray-400 uppercase tracking-wider border-b border-gray-100">
+              <div className="col-span-3">Tên loại</div>
+              <div className="col-span-2">Áp dụng</div>
+              <div className="col-span-1">TT</div>
+              <div className="col-span-1 text-center">Hiện</div>
+              <div className="col-span-1 text-center">SX mẫu</div>
+              <div className="col-span-2">SX mặc định</div>
+              <div className="col-span-2 text-right">Thao tác</div>
+            </div>
+
+            {leadTypes.length === 0 ? (
+              <div className="text-[11px] text-gray-400 px-4 py-8 text-center">
+                Chưa có loại nào cho công ty này.
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-100">
+                {leadTypes
+                  .slice()
+                  .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+                  .map((t) => (
+                    <div
+                      key={t.id}
+                      className="grid grid-cols-12 gap-2 px-4 py-2.5 items-center hover:bg-gray-50/50"
+                    >
+                      <div className="col-span-12 md:col-span-3 flex items-center gap-1.5 min-w-0">
+                        <IconGripVertical className="w-4 h-4 text-gray-300 shrink-0 hidden md:block" stroke={1.5} />
+                        <input
+                          value={t.name || ''}
+                          onChange={(e) => setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? { ...x, name: e.target.value } : x))}
+                          className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-white"
+                        />
+                      </div>
+                      <div className="col-span-6 md:col-span-2">
+                        <select
+                          value={t.applies_to || 'both'}
+                          onChange={(e) => setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? { ...x, applies_to: e.target.value } : x))}
+                          className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-white"
+                        >
+                          <option value="both">Lead+Deal</option>
+                          <option value="lead">Lead</option>
+                          <option value="deal">Deal</option>
+                        </select>
+                      </div>
+                      <div className="col-span-3 md:col-span-1">
+                        <input
+                          type="number"
+                          value={t.order_index ?? 0}
+                          onChange={(e) => setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? { ...x, order_index: parseInt(e.target.value || '0', 10) } : x))}
+                          className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-center"
+                        />
+                      </div>
+                      <div className="col-span-3 md:col-span-1 flex justify-center">
+                        <ToggleSwitch
+                          checked={t.is_active !== false}
+                          onChange={(v) => setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? { ...x, is_active: v } : x))}
+                          title={t.is_active !== false ? 'Đang hiện' : 'Đang ẩn'}
+                        />
+                      </div>
+                      <div className="col-span-3 md:col-span-1 flex justify-center">
+                        <ToggleSwitch
+                          checked={!!t.workshop_production_templates}
+                          onChange={(v) => setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? { ...x, workshop_production_templates: v } : x))}
+                          title="Deal Sản xuất — tự tạo nhiệm vụ SX"
+                        />
+                      </div>
+                      <div className="col-span-12 md:col-span-2">
+                        <select
+                          value={t.default_production_company_id || ''}
+                          onChange={(e) =>
+                            setLeadTypes((prev) =>
+                              (prev || []).map((x) =>
+                                x.id === t.id ? { ...x, default_production_company_id: e.target.value || null } : x,
+                              ),
+                            )
+                          }
+                          className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-[10px] bg-white"
+                        >
+                          <option value="">— Chưa gán —</option>
+                          {productionCompaniesForSx.map((c) => (
+                            <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="col-span-12 md:col-span-2 flex justify-end gap-1">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              const payload = {
+                                name: (t.name || '').trim(),
+                                applies_to: t.applies_to,
+                                order_index: t.order_index ?? 0,
+                                is_active: t.is_active !== false,
+                                workshop_production_templates: !!t.workshop_production_templates,
+                                default_production_company_id: t.default_production_company_id || null,
+                              };
+                              const { data } = await api.put(`/crm/lead-types/${t.id}`, payload);
+                              setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? data : x));
+                            } catch (e) {
+                              alert(e.response?.data?.error || 'Lỗi lưu');
+                            }
+                          }}
+                          className="h-7 w-7 inline-flex items-center justify-center rounded-lg bg-gray-900 text-white hover:bg-black cursor-pointer"
+                          title="Lưu"
+                        >
+                          <IconDeviceFloppy className="w-3.5 h-3.5" stroke={2} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!confirm('Xóa loại này?')) return;
+                            try {
+                              await api.delete(`/crm/lead-types/${t.id}`);
+                              setLeadTypes((prev) => (prev || []).filter((x) => x.id !== t.id));
+                            } catch (e) {
+                              alert(e.response?.data?.error || 'Lỗi xóa');
+                            }
+                          }}
+                          className="h-7 w-7 inline-flex items-center justify-center rounded-lg border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 cursor-pointer"
+                          title="Xóa"
+                        >
+                          <IconTrash className="w-3.5 h-3.5" stroke={2} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'stages' && (
+          <div className="space-y-4">
+            {editId && (
+              <div className="bg-white rounded-xl border border-violet-200 p-4 shadow-sm">
+                <h3 className="text-xs font-semibold text-gray-800 mb-3 flex items-center gap-1.5">
+                  <IconDeviceFloppy className="w-4 h-4 text-violet-600" stroke={2} />
+                  Sửa giai đoạn
+                </h3>
+                <StageForm
+                  form={form}
+                  setForm={setForm}
+                  onSave={saveEdit}
+                  onCancel={() => setEditId(null)}
+                  pipelineType={stages.find((s) => s.id === editId)?.pipeline_type || 'lead'}
+                  editingStageId={editId}
+                  sxStages={sxStages}
+                  vcStages={vcStages}
+                  onSetModuleTarget={setModuleStageTarget}
+                  onSetVcSyncType={setVcSyncType}
+                  onBulkSetVcSyncType={bulkSetVcSyncType}
+                />
+              </div>
+            )}
+
+            {loading ? (
+              <div className="text-center py-16 text-gray-400 text-xs flex flex-col items-center gap-2">
+                <IconLoader2 className="w-6 h-6 animate-spin" stroke={2} />
+                Đang tải giai đoạn…
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                {renderPipeline('lead', leadStagesSorted)}
+                {renderPipeline('deal', dealStagesSorted)}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'zalo' && (
+          <div className="space-y-4">
+            <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-4 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-xs font-semibold text-gray-900 flex items-center gap-2">
+                  <IconMessageCircle className="w-4 h-4 text-sky-600" stroke={2} />
+                  Zalo OA — cấu hình chung
+                </h2>
+                <div className="flex items-center gap-2">
+                  {zaloLoading ? (
+                    <IconLoader2 className="w-4 h-4 animate-spin text-sky-600" stroke={2} />
+                  ) : (
+                    <div className="flex items-center gap-2 text-[11px] text-gray-600">
+                      <span>Bật gửi Zalo</span>
+                      <ToggleSwitch
+                        checked={!!zaloSettings?.enabled}
+                        onChange={(v) => saveZaloMaster({ enabled: v })}
+                        title="Gửi Zalo khi deal vào cột đã bật Zalo"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+              <p className="text-[11px] text-gray-500 leading-relaxed">
+                Lưu access_token từ Zalo Cloud. Template mặc định <strong>566121</strong> — bật «Zalo» trên cột Deal «Hoàn thành» ở tab Giai đoạn.
+              </p>
+              <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-3 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Cấu trúc template_data</label>
                   <button
                     type="button"
-                    onClick={async () => {
-                      try {
-                        const payload = {
-                          name: (t.name || '').trim(),
-                          applies_to: t.applies_to,
-                          order_index: t.order_index ?? 0,
-                          is_active: t.is_active !== false,
-                          workshop_production_templates: !!t.workshop_production_templates,
-                          default_production_company_id: t.default_production_company_id || null,
-                        };
-                        const { data } = await api.put(`/crm/lead-types/${t.id}`, payload);
-                        setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? data : x));
-                      } catch (e) {
-                        alert(e.response?.data?.error || 'Lỗi lưu');
-                      }
-                    }}
-                    className="h-8 px-3 rounded-lg bg-gray-900 text-white text-xs font-medium hover:bg-black cursor-pointer"
+                    onClick={() => setZaloStructureJson(DEFAULT_ZALO_TEMPLATE_STRUCTURE_DISPLAY)}
+                    className="text-[10px] px-2 py-1 rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 cursor-pointer"
                   >
-                    Lưu
-                  </button>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      if (!confirm('Xóa loại này?')) return;
-                      try {
-                        await api.delete(`/crm/lead-types/${t.id}`);
-                        setLeadTypes((prev) => (prev || []).filter((x) => x.id !== t.id));
-                      } catch (e) {
-                        alert(e.response?.data?.error || 'Lỗi xóa');
-                      }
-                    }}
-                    className="h-8 w-8 inline-flex items-center justify-center rounded-lg bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 cursor-pointer"
-                    title="Xóa"
-                  >
-                    <Trash2 className="h-4 w-4" />
+                    Mặc định 4 biến
                   </button>
                 </div>
-              ))}
-          </div>
-        )}
-      </div>
-
-      {/* Zalo OA — bật/tắt + test gửi tin */}
-      <div className="bg-sky-50 border border-sky-200 rounded-xl p-4 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-bold text-sky-900 flex items-center gap-2">
-            <MessageCircle className="h-4 w-4" /> Zalo OA — tin qua SĐT
-          </h2>
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setZaloExpanded((v) => !v)}
-              className="text-[10px] px-2 py-1 rounded-md border border-sky-200 bg-white/70 text-sky-900 hover:bg-white cursor-pointer"
-            >
-              {zaloExpanded ? 'Thu gọn' : 'Mở cấu hình'}
-            </button>
-            {zaloLoading ? (
-              <Loader2 className="h-4 w-4 animate-spin text-sky-600" />
-            ) : (
-              <label className="flex items-center gap-2 text-xs font-medium text-sky-900 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={!!zaloSettings?.enabled}
-                  onChange={(e) => {
-                    saveZaloMaster({ enabled: e.target.checked });
-                  }}
-                  className="rounded border-sky-400"
+                <textarea
+                  value={zaloStructureJson}
+                  onChange={(e) => setZaloStructureJson(e.target.value)}
+                  rows={6}
+                  spellCheck={false}
+                  className="w-full font-mono text-[11px] border border-gray-200 rounded-lg px-2 py-1.5 bg-white"
                 />
-                Bật gửi Zalo khi deal vào cột đã tích «Zalo»
-              </label>
-            )}
-          </div>
-        </div>
-        {!zaloExpanded && (
-          <p className="text-[11px] text-sky-900/70">
-            (Đang thu gọn) Bấm <strong>Mở cấu hình</strong> để xem token, template, test gửi.
-          </p>
-        )}
-        {zaloExpanded && (
-          <>
-            <p className="text-[11px] text-sky-800 leading-relaxed">
-              Lưu <strong>access_token</strong> từ Zalo Cloud. <strong>template_id</strong> là mẫu “tin qua SĐT” của OA bạn — để trống thì hệ thống dùng mặc định <strong>566121</strong> (biến{' '}
-              <code className="text-[10px] bg-white/80 px-0.5 rounded">ten_san_pham</code>,{' '}
-              <code className="text-[10px] bg-white/80 px-0.5 rounded">order_code</code>,{' '}
-              <code className="text-[10px] bg-white/80 px-0.5 rounded">date</code>,{' '}
-              <code className="text-[10px] bg-white/80 px-0.5 rounded">ten_khach_hang</code> — tự lấy từ deal/khách khi deal vào cột <strong>Hoàn thành</strong>). Ở pipeline <strong>Deal</strong>, thêm cột tên «Hoàn thành» (nếu chưa có), rồi bấm <strong>Zalo</strong> trên đúng cột đó để bật tự gửi (mỗi deal + cột tối đa một lần gửi thành công). Chế độ <strong>3</strong> chỉ khi OA được whitelist vượt hạn mức.
-            </p>
-            <div className="rounded-lg border border-sky-200 bg-white/90 p-3 space-y-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <label className="text-[10px] font-semibold text-sky-800 uppercase">Cấu trúc template_data (key = biến OA)</label>
-            <button
-              type="button"
-              onClick={() => setZaloStructureJson(DEFAULT_ZALO_TEMPLATE_STRUCTURE_DISPLAY)}
-              className="text-[10px] px-2 py-1 rounded-md border border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100 cursor-pointer"
-            >
-              Mặc định 4 biến
-            </button>
-          </div>
-          <p className="text-[10px] text-sky-800 leading-relaxed">
-            Chỉnh các <strong>key</strong> cho khớp template trên Zalo Cloud. Nút <strong>Gửi Zalo</strong> trên chi tiết deal đọc cấu hình này từ server — không cần chỉnh trình duyệt. Xóa hết nội dung ô rồi lưu = dùng lại mặc định 4 biến phía server.
-          </p>
-          <textarea
-            value={zaloStructureJson}
-            onChange={(e) => setZaloStructureJson(e.target.value)}
-            rows={8}
-            spellCheck={false}
-            className="w-full font-mono text-[11px] border border-sky-200 rounded-lg px-2 py-1.5 bg-white"
-          />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Template ID</label>
+                  <input
+                    value={zaloSettings?.template_id || ''}
+                    onChange={(e) => setZaloSettings((p) => ({ ...(p || {}), template_id: e.target.value }))}
+                    className="w-full h-8 px-2 rounded-lg border border-gray-200 text-xs bg-white"
+                    placeholder="566121 — để trống = mặc định"
+                  />
+                  <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Chế độ gửi</label>
+                  <select
+                    value={zaloSettings?.sending_mode || '1'}
+                    onChange={(e) => setZaloSettings((p) => ({ ...(p || {}), sending_mode: e.target.value }))}
+                    className="w-full h-8 px-2 rounded-lg border border-gray-200 text-xs bg-white"
+                  >
+                    <option value="1">1 — Gửi thường</option>
+                    <option value="3">3 — Vượt hạn mức (OA whitelist)</option>
+                  </select>
+                  <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Access token</label>
+                  <input
+                    type="password"
+                    value={zaloTestToken}
+                    onChange={(e) => setZaloTestToken(e.target.value)}
+                    className="w-full h-8 px-2 rounded-lg border border-gray-200 text-xs bg-white"
+                    placeholder={zaloSettings?.has_token ? '•••• đã lưu — nhập mới để thay' : 'Dán access_token'}
+                    autoComplete="off"
+                  />
+                  <button
+                    type="button"
+                    onClick={saveZaloForm}
+                    className="h-8 px-3 rounded-lg bg-sky-600 text-white text-xs font-medium hover:bg-sky-700 cursor-pointer inline-flex items-center gap-1"
+                  >
+                    <IconDeviceFloppy className="w-3.5 h-3.5" stroke={2} />
+                    Lưu cấu hình
+                  </button>
+                  <p className="text-[10px] text-gray-400">Token đã lưu: {zaloSettings?.has_token ? 'Có' : 'Chưa'}</p>
+                </div>
+                <div className="space-y-2 rounded-lg p-3 border border-gray-200 bg-gray-50/30">
+                  <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Gửi thử API</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {ZALO_TEST_PRESETS.map((p) => (
+                      <button
+                        key={p.key}
+                        type="button"
+                        onClick={() => applyZaloTestPreset(p)}
+                        className="text-[10px] px-2 py-1 rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 cursor-pointer"
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    value={zaloTestPhone}
+                    onChange={(e) => setZaloTestPhone(e.target.value)}
+                    className="w-full h-8 px-2 rounded-lg border border-gray-200 text-xs bg-white"
+                    placeholder="SĐT (84987654321)"
+                  />
+                  <input
+                    value={zaloTestTemplateId}
+                    onChange={(e) => setZaloTestTemplateId(e.target.value)}
+                    className="w-full h-8 px-2 rounded-lg border border-gray-200 text-xs bg-white"
+                    placeholder="Template ID (tuỳ chọn)"
+                  />
+                  <textarea
+                    value={zaloTestJson}
+                    onChange={(e) => setZaloTestJson(e.target.value)}
+                    rows={6}
+                    className="w-full px-2 py-1.5 rounded-lg border border-gray-200 text-[11px] font-mono bg-white"
+                    spellCheck={false}
+                  />
+                  <button
+                    type="button"
+                    disabled={zaloTestSending}
+                    onClick={runZaloTest}
+                    className="h-8 px-3 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 cursor-pointer disabled:opacity-50 inline-flex items-center gap-1"
+                  >
+                    {zaloTestSending ? <IconLoader2 className="w-3.5 h-3.5 animate-spin" stroke={2} /> : null}
+                    Gửi thử
+                  </button>
+                  {zaloTestResult && (
+                    <>
+                      <pre className="text-[10px] bg-gray-900 text-green-200 p-2 rounded overflow-x-auto max-h-40">
+                        {JSON.stringify(zaloTestResult, null, 2)}
+                      </pre>
+                      {!zaloTestResult.ok && zaloTestResult.hint_vi && (
+                        <p className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
+                          {zaloTestResult.hint_vi}
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div className="space-y-2">
-            <label className="text-[10px] font-semibold text-sky-800 uppercase">Template ID</label>
-            <input
-              value={zaloSettings?.template_id || ''}
-              onChange={(e) => setZaloSettings((p) => ({ ...(p || {}), template_id: e.target.value }))}
-              className="w-full h-8 px-2 rounded-lg border border-sky-200 text-xs bg-white"
-              placeholder="566121 hoặc ID mẫu OA — để trống = 566121"
-            />
-            <label className="text-[10px] font-semibold text-sky-800 uppercase">Chế độ gửi</label>
-            <select
-              value={zaloSettings?.sending_mode || '1'}
-              onChange={(e) => setZaloSettings((p) => ({ ...(p || {}), sending_mode: e.target.value }))}
-              className="w-full h-8 px-2 rounded-lg border border-sky-200 text-xs bg-white"
-            >
-              <option value="1">1 — Gửi thường</option>
-              <option value="3">3 — Vượt hạn mức (OA whitelist)</option>
-            </select>
-            <label className="text-[10px] font-semibold text-sky-800 uppercase">Access token (để trống nếu giữ token đã lưu)</label>
-            <input
-              type="password"
-              value={zaloTestToken}
-              onChange={(e) => setZaloTestToken(e.target.value)}
-              className="w-full h-8 px-2 rounded-lg border border-sky-200 text-xs bg-white"
-              placeholder={zaloSettings?.has_token ? '•••• đã lưu — nhập mới để thay' : 'Dán access_token'}
-              autoComplete="off"
-            />
-            <button
-              type="button"
-              onClick={saveZaloForm}
-              className="h-8 px-3 rounded-lg bg-sky-600 text-white text-xs font-medium hover:bg-sky-700 cursor-pointer"
-            >
-              Lưu cấu hình Zalo
-            </button>
-            <p className="text-[10px] text-sky-700">Token đã lưu: {zaloSettings?.has_token ? 'Có' : 'Chưa'}</p>
-          </div>
-          <div className="space-y-2 bg-white/80 rounded-lg p-3 border border-sky-100">
-            <p className="text-[10px] font-bold text-gray-700 uppercase">Gửi thử API</p>
-            <div className="flex flex-wrap gap-1.5">
-              {ZALO_TEST_PRESETS.map((p) => (
-                <button
-                  key={p.key}
-                  type="button"
-                  onClick={() => applyZaloTestPreset(p)}
-                  className="text-[10px] px-2 py-1 rounded-md border border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100 cursor-pointer"
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-            <input
-              value={zaloTestPhone}
-              onChange={(e) => setZaloTestPhone(e.target.value)}
-              className="w-full h-8 px-2 rounded border text-xs"
-              placeholder="SĐT (VD 0987654321 hoặc 84987654321)"
-            />
-            <input
-              value={zaloTestTemplateId}
-              onChange={(e) => setZaloTestTemplateId(e.target.value)}
-              className="w-full h-8 px-2 rounded border text-xs"
-              placeholder="Template ID (tuỳ chọn, mặc định lấy từ cấu hình)"
-            />
-            <textarea
-              value={zaloTestJson}
-              onChange={(e) => setZaloTestJson(e.target.value)}
-              rows={8}
-              className="w-full px-2 py-1.5 rounded border text-[11px] font-mono leading-snug"
-              spellCheck={false}
-            />
-            <button
-              type="button"
-              disabled={zaloTestSending}
-              onClick={runZaloTest}
-              className="h-8 px-3 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 cursor-pointer disabled:opacity-50 flex items-center gap-1"
-            >
-              {zaloTestSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-              Gửi thử
-            </button>
-            {zaloTestResult && (
-              <>
-                <pre className="text-[10px] bg-gray-900 text-green-200 p-2 rounded overflow-x-auto max-h-40">
-                  {JSON.stringify(zaloTestResult, null, 2)}
-                </pre>
-                {!zaloTestResult.ok && zaloTestResult.hint_vi && (
-                  <p className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 leading-snug">
-                    {zaloTestResult.hint_vi}
-                  </p>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-          </>
-        )}
-      </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 shadow-sm">
-        <h2 className="text-sm font-bold text-gray-900 flex items-center gap-2">
-          <MessageCircle className="h-4 w-4 text-violet-600" />
-          Zalo OA theo từng pipeline CRM
-        </h2>
-        {pipelinesLoadError && (
-          <div
-            className={`rounded-lg border px-3 py-2 text-[11px] leading-relaxed ${
-              pipelinesLoadError.code === 'CRM_PIPELINES_TABLE_MISSING'
-                ? 'bg-amber-50 border-amber-200 text-amber-950'
-                : 'bg-red-50 border-red-200 text-red-900'
-            }`}
-          >
-            <p className="font-semibold mb-1">
-              {pipelinesLoadError.code === 'CRM_PIPELINES_TABLE_MISSING'
-                ? 'Chưa có bảng crm_pipelines trên database'
-                : 'Không tải pipeline'}
-            </p>
-            <p className="whitespace-pre-wrap">{pipelinesLoadError.message}</p>
-          </div>
-        )}
-        <p className="text-[11px] text-gray-600 leading-relaxed">
-          Deal có trường <strong>pipeline</strong>: khi gửi Zalo (deal ở cột «Hoàn thành»), hệ thống lấy{' '}
-          <strong>template_id</strong> và <strong>merge_template_data</strong> của pipeline đó; nếu để trống thì dùng cấu hình chung ở khối «Zalo OA — tin qua SĐT» phía trên. Merge của pipeline <strong>ghi đè</strong> key trùng với merge chung.
-        </p>
-        <button
-          type="button"
-          onClick={() => setZaloPipelineExpanded((v) => !v)}
-          className="h-7 px-3 rounded-lg bg-violet-50 border border-violet-200 text-violet-900 text-xs font-semibold hover:bg-violet-100 cursor-pointer"
-        >
-          {zaloPipelineExpanded ? 'Thu gọn' : 'Mở cấu hình'}
-        </button>
-        {!zaloPipelineExpanded && (
-          <p className="text-[11px] text-gray-500">(Đang thu gọn) Bấm <strong>Mở cấu hình</strong> để chỉnh theo từng pipeline.</p>
-        )}
-        {zaloPipelineExpanded && (
-          <>
-            <div className="flex flex-wrap gap-3 items-end">
-              <label className="flex flex-col gap-1 text-[11px] text-gray-700 min-w-[220px] flex-1">
-                <span className="font-semibold">Chọn pipeline</span>
+            <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3 shadow-sm">
+              <h2 className="text-xs font-semibold text-gray-900 flex items-center gap-2">
+                <IconMessageCircle className="w-4 h-4 text-violet-600" stroke={2} />
+                Zalo OA theo pipeline
+              </h2>
+              {pipelinesLoadError && (
+                <div
+                  className={`rounded-lg border px-3 py-2 text-[11px] ${
+                    pipelinesLoadError.code === 'CRM_PIPELINES_TABLE_MISSING'
+                      ? 'bg-amber-50 border-amber-200 text-amber-950'
+                      : 'bg-red-50 border-red-200 text-red-900'
+                  }`}
+                >
+                  <p className="font-semibold mb-1">
+                    {pipelinesLoadError.code === 'CRM_PIPELINES_TABLE_MISSING'
+                      ? 'Chưa có bảng crm_pipelines'
+                      : 'Không tải pipeline'}
+                  </p>
+                  <p className="whitespace-pre-wrap">{pipelinesLoadError.message}</p>
+                </div>
+              )}
+              <p className="text-[11px] text-gray-500">
+                Merge của pipeline ghi đè key trùng với cấu hình chung phía trên.
+              </p>
+              <label className="flex flex-col gap-1 text-[10px] text-gray-500 max-w-md">
+                <span className="font-semibold uppercase tracking-wide">Chọn pipeline</span>
                 <select
-                  className="border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white"
+                  className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white"
                   value={zaloPlId}
                   onChange={(e) => setZaloPlId(e.target.value)}
                 >
                   {visiblePipelines.length === 0 && <option value="">— Chưa có pipeline —</option>}
                   {visiblePipelines.map((p) => (
                     <option key={p.id} value={p.id}>
-                      {p.name}
-                      {p.company?.name ? ` — ${p.company.name}` : ''}
+                      {p.name}{p.company?.name ? ` — ${p.company.name}` : ''}
                     </option>
                   ))}
                 </select>
               </label>
+              {zaloPlId && (
+                <div className="space-y-2 pt-2 border-t border-gray-100">
+                  <label className="flex flex-col gap-1 text-[10px] text-gray-500">
+                    <span className="font-semibold uppercase tracking-wide">Template ID (riêng pipeline)</span>
+                    <input
+                      value={zaloPlTemplateId}
+                      onChange={(e) => setZaloPlTemplateId(e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white"
+                      placeholder="566121 — để trống: dùng chung"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-[10px] text-gray-500">
+                    <span className="font-semibold uppercase tracking-wide">merge_template_data (JSON)</span>
+                    <textarea
+                      value={zaloPlMergeJson}
+                      onChange={(e) => setZaloPlMergeJson(e.target.value)}
+                      rows={5}
+                      className="w-full font-mono text-[11px] border border-gray-200 rounded-lg px-2 py-1.5 bg-white"
+                      spellCheck={false}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    disabled={zaloPlSaving}
+                    onClick={savePipelineZalo}
+                    className="h-8 px-3 rounded-lg bg-violet-700 text-white text-xs font-medium hover:bg-violet-800 disabled:opacity-50 cursor-pointer inline-flex items-center gap-1"
+                  >
+                    <IconDeviceFloppy className="w-3.5 h-3.5" stroke={2} />
+                    {zaloPlSaving ? 'Đang lưu…' : 'Lưu cho pipeline này'}
+                  </button>
+                </div>
+              )}
             </div>
-            {zaloPlId && (
-              <div className="space-y-2 border-t border-gray-100 pt-3">
-                <label className="flex flex-col gap-1 text-[11px]">
-                  <span className="text-gray-700 font-semibold">Template ID (riêng pipeline)</span>
-                  <input
-                    value={zaloPlTemplateId}
-                    onChange={(e) => setZaloPlTemplateId(e.target.value)}
-                    className="w-full border border-gray-200 rounded-lg px-2 py-2 text-sm"
-                    placeholder="VD 566121 — để trống: dùng template chung / mặc định"
-                  />
-                </label>
-                <label className="flex flex-col gap-1 text-[11px]">
-                  <span className="text-gray-700 font-semibold">merge_template_data (JSON object, tùy chọn)</span>
-                  <textarea
-                    value={zaloPlMergeJson}
-                    onChange={(e) => setZaloPlMergeJson(e.target.value)}
-                    rows={6}
-                    className="w-full font-mono text-[11px] border border-gray-200 rounded-lg px-2 py-1.5"
-                    spellCheck={false}
-                  />
-                </label>
-                <button
-                  type="button"
-                  disabled={zaloPlSaving}
-                  onClick={savePipelineZalo}
-                  className="h-9 px-4 rounded-lg bg-violet-700 text-white text-sm font-medium hover:bg-violet-800 disabled:opacity-50 cursor-pointer"
-                >
-                  {zaloPlSaving ? 'Đang lưu…' : 'Lưu Zalo cho pipeline này'}
-                </button>
-              </div>
-            )}
-          </>
-        )}
-      </div>
-
-      {isAdminLike(user) && (
-        <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 shadow-sm">
-          <h2 className="text-sm font-bold text-gray-900 flex items-center gap-2">
-            <Settings className="h-4 w-4 text-emerald-600" />
-            Copy pipeline CRM giữa công ty
-          </h2>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <label className="flex flex-col gap-1 text-[11px] text-gray-700">
-              <span className="font-semibold">Pipeline nguồn</span>
-              <select
-                className="border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white"
-                value={copyFromId}
-                onChange={(e) => setCopyFromId(e.target.value)}
-              >
-                {pipelines.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                    {p.company?.name ? ` — ${p.company.name}` : ''}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-1 text-[11px] text-gray-700">
-              <span className="font-semibold">Công ty đích (ID)</span>
-              <input
-                value={copyToCompanyId}
-                onChange={(e) => setCopyToCompanyId(e.target.value)}
-                className="border border-gray-200 rounded-lg px-2 py-2 text-sm"
-                placeholder="UUID company_id"
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-[11px] text-gray-700">
-              <span className="font-semibold">Tên pipeline mới</span>
-              <input
-                value={copyName}
-                onChange={(e) => setCopyName(e.target.value)}
-                className="border border-gray-200 rounded-lg px-2 py-2 text-sm"
-                placeholder="Để trống: tự đặt (Copy)"
-              />
-            </label>
           </div>
-          <label className="flex items-center gap-2 text-[11px] text-gray-700">
-            <input
-              type="checkbox"
-              checked={copySetDefault}
-              onChange={(e) => setCopySetDefault(e.target.checked)}
-            />
-            Đặt làm pipeline mặc định của công ty đích
-          </label>
-          <button
-            type="button"
-            disabled={copying || !copyFromId || !copyToCompanyId.trim()}
-            onClick={async () => {
-              setCopying(true);
-              try {
-                await api.post(`/crm/pipelines/${copyFromId}/copy`, {
-                  target_company_id: copyToCompanyId.trim(),
-                  name: copyName.trim() || null,
-                  set_default: copySetDefault,
-                });
-                alert('Đã copy pipeline');
-                // reload pipelines list
-                const { data } = await api.get('/crm/pipelines');
-                setPipelines(Array.isArray(data) ? data : []);
-              } catch (e) {
-                alert(e.response?.data?.error || 'Lỗi copy pipeline');
-              } finally {
-                setCopying(false);
-              }
-            }}
-            className="h-9 px-4 rounded-lg bg-emerald-700 text-white text-sm font-medium hover:bg-emerald-800 disabled:opacity-50 cursor-pointer"
-          >
-            {copying ? 'Đang copy…' : 'Copy pipeline'}
-          </button>
-          <p className="text-[11px] text-gray-500 leading-snug">
-            Ghi chú: hiện form nhận <strong>company_id</strong> dạng UUID. Nếu bạn muốn chọn từ danh sách công ty thay vì nhập UUID, mình có thể bổ sung dropdown lấy từ API /companies.
-          </p>
-        </div>
-      )}
+        )}
 
-      {/* Edit Form (floating) */}
-      {editId && (
-        <div className="bg-white rounded-xl border border-blue-200 p-4 shadow-lg">
-          <h3 className="text-sm font-bold text-gray-800 mb-3">✏️ Sửa giai đoạn</h3>
-          <StageForm
-            form={form}
-            setForm={setForm}
-            onSave={saveEdit}
-            onCancel={() => setEditId(null)}
-            pipelineType={stages.find((s) => s.id === editId)?.pipeline_type || 'lead'}
-            editingStageId={editId}
-            sxStages={sxStages}
-            vcStages={vcStages}
-            onSetModuleTarget={setModuleStageTarget}
-            onSetVcSyncType={setVcSyncType}
-            onBulkSetVcSyncType={bulkSetVcSyncType}
-          />
-        </div>
-      )}
-
-      {loading ? (
-        <div className="text-center py-10 text-gray-400">Đang tải...</div>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {renderPipeline('lead', stages.filter(s => s.pipeline_type === 'lead').sort((a, b) => a.order_index - b.order_index))}
-          {renderPipeline('deal', stages.filter(s => s.pipeline_type === 'deal').sort((a, b) => a.order_index - b.order_index))}
-        </div>
-      )}
+        {activeTab === 'copy' && isAdminLike(user) && (
+          <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-4 shadow-sm max-w-2xl">
+            <h2 className="text-xs font-semibold text-gray-900 flex items-center gap-2">
+              <IconCopy className="w-4 h-4 text-emerald-600" stroke={2} />
+              Sao chép pipeline CRM
+            </h2>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="flex flex-col gap-1 text-[10px] text-gray-500 sm:col-span-2">
+                <span className="font-semibold uppercase tracking-wide">Pipeline nguồn</span>
+                <select
+                  className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white"
+                  value={copyFromId}
+                  onChange={(e) => setCopyFromId(e.target.value)}
+                >
+                  {pipelines.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}{p.company?.name ? ` — ${p.company.name}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-[10px] text-gray-500">
+                <span className="font-semibold uppercase tracking-wide">Công ty đích</span>
+                <select
+                  className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white"
+                  value={copyToCompanyId}
+                  onChange={(e) => setCopyToCompanyId(e.target.value)}
+                >
+                  <option value="">— Chọn công ty —</option>
+                  {companies.map((c) => (
+                    <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-[10px] text-gray-500">
+                <span className="font-semibold uppercase tracking-wide">Tên pipeline mới</span>
+                <input
+                  value={copyName}
+                  onChange={(e) => setCopyName(e.target.value)}
+                  className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white"
+                  placeholder="Để trống: tự đặt (Copy)"
+                />
+              </label>
+            </div>
+            <div className="flex items-center gap-2 text-[11px] text-gray-600">
+              <ToggleSwitch
+                checked={copySetDefault}
+                onChange={setCopySetDefault}
+                title="Đặt làm pipeline mặc định của công ty đích"
+              />
+              <span>Đặt làm pipeline mặc định</span>
+            </div>
+            <button
+              type="button"
+              disabled={copying || !copyFromId || !copyToCompanyId.trim()}
+              onClick={async () => {
+                setCopying(true);
+                try {
+                  await api.post(`/crm/pipelines/${copyFromId}/copy`, {
+                    target_company_id: copyToCompanyId.trim(),
+                    name: copyName.trim() || null,
+                    set_default: copySetDefault,
+                  });
+                  alert('Đã copy pipeline');
+                  const { data } = await api.get('/crm/pipelines');
+                  setPipelines(Array.isArray(data) ? data : []);
+                } catch (e) {
+                  alert(e.response?.data?.error || 'Lỗi copy pipeline');
+                } finally {
+                  setCopying(false);
+                }
+              }}
+              className="h-8 px-4 rounded-lg bg-emerald-700 text-white text-xs font-medium hover:bg-emerald-800 disabled:opacity-50 cursor-pointer inline-flex items-center gap-1"
+            >
+              <IconCopy className="w-3.5 h-3.5" stroke={2} />
+              {copying ? 'Đang copy…' : 'Copy pipeline'}
+            </button>
+          </div>
+        )}
 
       {sxAssignModal && (
         <SxAssignModal
@@ -1680,6 +1775,7 @@ export default function PipelineSettingsPage() {
           onSaved={() => { setSxAssignModal(null); load(); }}
         />
       )}
+      </div>
     </div>
   );
 }
