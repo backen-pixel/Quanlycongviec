@@ -331,6 +331,7 @@ export default function ActiveUsersPage() {
         address: cl.address || '',
         captured_at: cl.captured_at || cl.updated_at || null,
         source: cl.source || null,
+        fromGps: true,
       };
     }
     const d = (u.devices || []).find((x) => isValid(x.geo_lat, x.geo_lng));
@@ -341,35 +342,109 @@ export default function ActiveUsersPage() {
       address: d.geo_address || '',
       captured_at: d.last_ping_at || null,
       source: d.platform || null,
+      fromGps: false,
+    };
+  }, []);
+
+  const hasWorkLocation = useCallback((u) => {
+    const cl = u?.current_location;
+    const la = Number(cl?.lat);
+    const ln = Number(cl?.lng);
+    if (!Number.isFinite(la) || !Number.isFinite(ln)) return false;
+    if (Math.abs(la) < 0.0001 && Math.abs(ln) < 0.0001) return false;
+    return la >= 6.0 && la <= 24.0 && ln >= 101.5 && ln <= 118.0;
+  }, []);
+
+  const computeMapSpreadCenter = useCallback((locatedPoints, branches) => {
+    const valid = [
+      ...(locatedPoints || []),
+      ...(branches || []).filter((b) => Number.isFinite(Number(b.lat)) && Number.isFinite(Number(b.lng))),
+    ];
+    if (valid.length === 0) return { lat: 16.047079, lng: 108.20623 };
+    const lat = valid.reduce((sum, p) => sum + Number(p.lat), 0) / valid.length;
+    const lng = valid.reduce((sum, p) => sum + Number(p.lng), 0) / valid.length;
+    return { lat, lng };
+  }, []);
+
+  const spreadFallbackPosition = useCallback((center, index) => {
+    const ring = Math.floor(index / 10);
+    const radiusDeg = 0.006 + ring * 0.004;
+    const angle = (index * 2.399963) % (Math.PI * 2);
+    return {
+      lat: center.lat + radiusDeg * Math.sin(angle),
+      lng: center.lng + radiusDeg * Math.cos(angle),
     };
   }, []);
 
   const employeeLivePoints = useMemo(() => {
     const list = (rows || []).filter((u) => mapEmployeeScope !== 'online' || u.online);
-    return list
-      .map((u) => {
-        const loc = resolveUserLocation(u);
-        if (!loc) return null;
-        return {
+    const located = [];
+    const fallbackQueue = [];
+
+    for (const u of list) {
+      const loc = resolveUserLocation(u);
+      const markerStatus = u.online ? (hasWorkLocation(u) ? 'green' : 'yellow') : 'gray';
+
+      if (loc) {
+        located.push({
           key: `employee:${u.id}`,
           type: 'employee',
+          userId: u.id,
           label: u.full_name || u.email || 'Nhân viên',
+          email: u.email || '',
+          department: u.department?.name || '',
+          avatar: u.avatar || null,
           lat: loc.lat,
           lng: loc.lng,
           address: loc.address,
           online: !!u.online,
+          markerStatus,
+          hasRealLocation: true,
+          isFallbackPosition: false,
           captured_at: loc.captured_at,
           source: loc.source,
-          users: [{ id: u.id, full_name: u.full_name, email: u.email }],
-        };
-      })
-      .filter(Boolean);
-  }, [rows, mapEmployeeScope, resolveUserLocation]);
+          devices: u.devices || [],
+        });
+        continue;
+      }
+
+      if (u.online) {
+        fallbackQueue.push({
+          key: `employee:${u.id}`,
+          type: 'employee',
+          userId: u.id,
+          label: u.full_name || u.email || 'Nhân viên',
+          email: u.email || '',
+          department: u.department?.name || '',
+          avatar: u.avatar || null,
+          address: '',
+          online: true,
+          markerStatus: 'yellow',
+          hasRealLocation: false,
+          isFallbackPosition: true,
+          captured_at: u.last_ping_at || null,
+          source: null,
+          devices: u.devices || [],
+        });
+      }
+    }
+
+    if (fallbackQueue.length === 0) return located;
+
+    const center = computeMapSpreadCenter(located, branchLocations);
+    return [
+      ...located,
+      ...fallbackQueue.map((point, index) => {
+        const pos = spreadFallbackPosition(center, index);
+        return { ...point, lat: pos.lat, lng: pos.lng };
+      }),
+    ];
+  }, [rows, mapEmployeeScope, resolveUserLocation, hasWorkLocation, branchLocations, computeMapSpreadCenter, spreadFallbackPosition]);
 
   const employeesWithoutLocation = useMemo(() => {
     const list = (rows || []).filter((u) => mapEmployeeScope !== 'online' || u.online);
-    return list.filter((u) => !resolveUserLocation(u));
-  }, [rows, mapEmployeeScope, resolveUserLocation]);
+    return list.filter((u) => !hasWorkLocation(u));
+  }, [rows, mapEmployeeScope, hasWorkLocation]);
 
   const mapPoints = useMemo(() => {
     return [...branchLocations, ...employeeLivePoints];
@@ -614,7 +689,8 @@ export default function ActiveUsersPage() {
               </div>
               <div className="inline-flex items-center gap-2.5 px-2 py-1 rounded-lg bg-gray-50 border border-gray-100 text-[10px] text-gray-600">
                 <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-indigo-600" /> Chi nhánh</span>
-                <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" /> NV online</span>
+                <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" /> NV online có vị trí</span>
+                <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400" /> NV online chưa định vị</span>
                 <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-400" /> NV offline</span>
               </div>
             </div>
@@ -639,6 +715,13 @@ export default function ActiveUsersPage() {
                     branches={branchLocations}
                     employees={employeeLivePoints}
                     height="min(420px, 55vh)"
+                    messagingUserId={chatLoadingId}
+                    onMessageUser={(point) => void startDirectChat({
+                      id: point.userId,
+                      full_name: point.label,
+                      email: point.email,
+                      avatar: point.avatar,
+                    })}
                   />
                   <p className="text-[11px] text-gray-500">
                     Tự làm mới vị trí mỗi 30 giây.
@@ -658,14 +741,23 @@ export default function ActiveUsersPage() {
                     const hasGeo = Number.isFinite(Number(loc.lat)) && Number.isFinite(Number(loc.lng));
                     const coordsLabel = hasGeo ? `${Number(loc.lat).toFixed(5)}, ${Number(loc.lng).toFixed(5)}` : '';
                     const isBranch = loc.type === 'branch';
+                    const markerTone = isBranch
+                      ? 'indigo'
+                      : loc.markerStatus === 'green'
+                        ? 'emerald'
+                        : loc.markerStatus === 'yellow'
+                          ? 'amber'
+                          : 'slate';
                     return (
                       <li key={loc.key} className="px-3 py-2 hover:bg-gray-50 transition-colors flex items-start gap-2.5">
                         <div className={`shrink-0 w-8 h-8 rounded-lg inline-flex items-center justify-center shadow-sm ${
-                          isBranch
+                          markerTone === 'indigo'
                             ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-200'
-                            : loc.online
+                            : markerTone === 'emerald'
                               ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200'
-                              : 'bg-slate-100 text-slate-600 ring-1 ring-slate-200'
+                              : markerTone === 'amber'
+                                ? 'bg-amber-100 text-amber-700 ring-1 ring-amber-200'
+                                : 'bg-slate-100 text-slate-600 ring-1 ring-slate-200'
                         }`}>
                           {isBranch ? <Building2 className="h-4 w-4" /> : <MapPin className="h-4 w-4" />}
                         </div>
@@ -673,13 +765,21 @@ export default function ActiveUsersPage() {
                           <p className="text-sm font-semibold truncate" style={{ color: '#0f172a' }}>{loc.label}</p>
                           <div className="text-[11px] mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5" style={{ color: '#475569' }}>
                             <span className={`inline-flex items-center gap-1 px-1.5 rounded text-[10px] font-semibold ${
-                              isBranch
+                              markerTone === 'indigo'
                                 ? 'bg-indigo-50 text-indigo-700'
-                                : loc.online
+                                : markerTone === 'emerald'
                                   ? 'bg-emerald-50 text-emerald-700'
-                                  : 'bg-slate-100 text-slate-600'
+                                  : markerTone === 'amber'
+                                    ? 'bg-amber-50 text-amber-800'
+                                    : 'bg-slate-100 text-slate-600'
                             }`}>
-                              {isBranch ? 'Chi nhánh' : loc.online ? '● Online' : '○ Offline'}
+                              {isBranch
+                                ? 'Chi nhánh'
+                                : loc.markerStatus === 'green'
+                                  ? '● Online · có vị trí'
+                                  : loc.markerStatus === 'yellow'
+                                    ? '● Online · chưa định vị'
+                                    : (loc.online ? '● Online' : '○ Offline')}
                             </span>
                             {loc.address && <span className="truncate">{loc.address}</span>}
                             {!hasGeo
@@ -753,7 +853,7 @@ export default function ActiveUsersPage() {
               <p className="text-gray-500">chi nhánh</p>
             </div>
             <div className="py-2.5 border-r border-gray-100">
-              <p className="text-lg font-bold text-emerald-600">{employeeLivePoints.length}</p>
+              <p className="text-lg font-bold text-emerald-600">{employeeLivePoints.filter((p) => p.hasRealLocation).length}</p>
               <p className="text-gray-500">NV có vị trí</p>
             </div>
             <div className="py-2.5">
