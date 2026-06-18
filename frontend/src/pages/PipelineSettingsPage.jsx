@@ -22,6 +22,7 @@ import {
   IconMessage,
   IconRotateClockwise,
   IconChevronRight,
+  IconChevronDown,
   IconBuilding,
   IconLoader2,
   IconTrendingUp,
@@ -95,6 +96,81 @@ const SETTINGS_TABS = [
   { id: 'zalo', label: 'Zalo OA', Icon: IconMessageCircle },
   { id: 'copy', label: 'Sao chép pipeline', Icon: IconCopy, adminOnly: true },
 ];
+
+/** Ô chọn / nhập quan trọng — viền và nền nhẹ để dễ phân biệt */
+const FIELD_KEY = 'border-violet-300 bg-violet-50/50 text-gray-900 ring-1 ring-violet-100 focus:ring-2 focus:ring-violet-400 focus:border-violet-400';
+const FIELD_NAME = 'border-gray-300 bg-white font-semibold text-gray-900 ring-1 ring-gray-100 focus:ring-2 focus:ring-violet-300';
+
+function CollapsiblePanel({
+  title,
+  subtitle,
+  icon: Icon,
+  iconClassName = 'text-violet-600',
+  open,
+  defaultOpen = false,
+  onOpenChange,
+  headerExtra,
+  badge,
+  children,
+  className = '',
+  highlight = false,
+  bodyClassName = 'p-4 space-y-3',
+}) {
+  const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const isControlled = open !== undefined;
+  const expanded = isControlled ? open : internalOpen;
+  const setExpanded = (v) => {
+    if (!isControlled) setInternalOpen(v);
+    onOpenChange?.(v);
+  };
+
+  return (
+    <div
+      className={`rounded-xl border overflow-hidden shadow-sm ${
+        highlight ? 'border-violet-200 bg-violet-50/15' : 'border-gray-200 bg-white'
+      } ${className}`}
+    >
+      <div className="flex items-stretch border-b border-gray-100">
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          className="flex-1 flex items-center gap-2 px-4 py-3 text-left hover:bg-gray-50/80 transition-colors cursor-pointer min-w-0"
+          aria-expanded={expanded}
+        >
+          {Icon && <Icon className={`w-4 h-4 shrink-0 ${iconClassName}`} stroke={2} />}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-semibold text-gray-900">{title}</span>
+              {badge}
+            </div>
+            {subtitle && (
+              <p className={`text-[10px] mt-0.5 truncate ${expanded ? 'text-gray-400' : 'text-gray-500'}`}>
+                {subtitle}
+              </p>
+            )}
+          </div>
+          <IconChevronDown
+            className={`w-4 h-4 text-gray-400 shrink-0 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+            stroke={2}
+          />
+        </button>
+        {headerExtra && (
+          <div
+            className="flex items-center gap-2 px-3 border-l border-gray-100 shrink-0"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {headerExtra}
+          </div>
+        )}
+      </div>
+      {expanded && (
+        <div className={`border-t border-gray-100 ${bodyClassName}`}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ToggleSwitch({ checked, onChange, disabled, title }) {
   return (
@@ -219,6 +295,8 @@ export default function PipelineSettingsPage() {
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
   const [selectedPipelineId, setSelectedPipelineId] = useState('');
   const [activeTab, setActiveTab] = useState('taxonomy');
+  const [stageEditOpen, setStageEditOpen] = useState(true);
+  const [zaloGeneralOpen, setZaloGeneralOpen] = useState(false);
 
   const [zaloSettings, setZaloSettings] = useState(null);
   const [zaloLoading, setZaloLoading] = useState(false);
@@ -343,6 +421,10 @@ export default function PipelineSettingsPage() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (editId) setStageEditOpen(true);
+  }, [editId]);
 
   const loadZalo = async () => {
     setZaloLoading(true);
@@ -685,6 +767,7 @@ export default function PipelineSettingsPage() {
   };
 
   const startEdit = (stage) => {
+    setStageEditOpen(true);
     setEditId(stage.id);
     setAdding(null);
     setForm({
@@ -866,11 +949,11 @@ export default function PipelineSettingsPage() {
   };
 
   const renderPipeline = (type, list) => (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
-      <div className="px-4 py-3 border-b border-gray-100 space-y-2">
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm flex flex-col max-h-[min(72vh,680px)] min-h-[360px]">
+      <div className="px-4 py-3 border-b border-gray-100 space-y-2 shrink-0 bg-white">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${type === 'lead' ? 'bg-blue-600' : 'bg-emerald-600'}`}>
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ring-2 ring-offset-1 ${type === 'lead' ? 'bg-blue-600 ring-blue-200' : 'bg-emerald-600 ring-emerald-200'}`}>
               {type === 'lead' ? (
                 <IconTags className="w-4 h-4 text-white" stroke={2} />
               ) : (
@@ -913,7 +996,7 @@ export default function PipelineSettingsPage() {
         </div>
       </div>
 
-      <div className="divide-y divide-gray-100">
+      <div className="divide-y divide-gray-100 overflow-y-auto flex-1 min-h-0 overscroll-contain">
         {list.map((s, i) => {
           const linkedSx = sxStages.filter((sx) => sx.crm_target_stage_id === s.id);
           const linkedVc = vcStages.filter((vc) => vc.crm_target_stage_id === s.id);
@@ -937,7 +1020,8 @@ export default function PipelineSettingsPage() {
             className={`flex items-start gap-2 px-3 py-2 transition-all
               ${isDragging ? 'opacity-40 bg-violet-50/50' : 'hover:bg-gray-50/80'}
               ${isDragOver ? 'bg-violet-50/60 ring-1 ring-inset ring-violet-300' : ''}
-              ${!s.is_active ? 'opacity-55' : ''}`}
+              ${!s.is_active ? 'opacity-55' : ''}
+              ${editId === s.id ? 'bg-violet-50/40 ring-1 ring-inset ring-violet-200' : ''}`}
           >
             <div className="flex items-center gap-0.5 pt-1 shrink-0">
               <span className="cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 select-none" title="Kéo sắp xếp">
@@ -951,8 +1035,8 @@ export default function PipelineSettingsPage() {
             <div className="flex-1 min-w-0 py-0.5">
               <div className="flex items-center gap-1.5">
                 <span className="text-sm leading-none">{s.icon || '📋'}</span>
-                <p className="text-xs font-semibold text-gray-900 truncate">{s.name}</p>
-                <span className="text-[9px] text-gray-400 font-mono">#{s.order_index}</span>
+                <p className="text-xs font-bold text-gray-900 truncate">{s.name}</p>
+                <span className="text-[9px] font-semibold text-violet-600 bg-violet-50 px-1 py-0.5 rounded font-mono">#{s.order_index}</span>
               </div>
               {s.description && (
                 <p className="text-[10px] text-gray-400 mt-0.5 line-clamp-1">{s.description}</p>
@@ -1103,7 +1187,7 @@ export default function PipelineSettingsPage() {
 
       {/* Add Form */}
       {adding === type && (
-        <div className="p-4 border-t bg-blue-50/50">
+        <div className="p-4 border-t bg-blue-50/50 shrink-0 max-h-[40vh] overflow-y-auto">
           <StageForm form={form} setForm={setForm} onSave={saveNew} onCancel={() => setAdding(null)} pipelineType={type} />
         </div>
       )}
@@ -1127,14 +1211,14 @@ export default function PipelineSettingsPage() {
           </div>
         </div>
 
-        <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 flex flex-wrap gap-3 items-end shadow-sm">
+        <div className="rounded-xl border border-violet-200 bg-violet-50/30 px-4 py-3 flex flex-wrap gap-3 items-end shadow-sm">
           {isAdmin ? (
-            <label className="flex flex-col gap-1 text-[10px] text-gray-500 min-w-[220px]">
+            <label className="flex flex-col gap-1 text-[10px] text-violet-800 min-w-[220px]">
               <span className="font-semibold uppercase tracking-wide flex items-center gap-1">
                 <IconBuilding className="w-3.5 h-3.5" stroke={2} /> Công ty
               </span>
               <select
-                className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white text-gray-900"
+                className={`rounded-lg px-2.5 py-1.5 text-xs ${FIELD_KEY}`}
                 value={selectedCompanyId}
                 onChange={(e) => {
                   const v = e.target.value;
@@ -1157,10 +1241,10 @@ export default function PipelineSettingsPage() {
             </div>
           )}
 
-          <label className="flex flex-col gap-1 text-[10px] text-gray-500 min-w-[240px] flex-1">
+          <label className="flex flex-col gap-1 text-[10px] text-violet-800 min-w-[240px] flex-1">
             <span className="font-semibold uppercase tracking-wide">Pipeline CRM</span>
             <select
-              className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white text-gray-900"
+              className={`rounded-lg px-2.5 py-1.5 text-xs ${FIELD_KEY}`}
               value={selectedPipelineId}
               onChange={(e) => { setSelectedPipelineId(e.target.value); setAdding(null); setEditId(null); }}
             >
@@ -1228,7 +1312,7 @@ export default function PipelineSettingsPage() {
                 <input
                   value={leadTypeNew.name}
                   onChange={(e) => setLeadTypeNew((v) => ({ ...v, name: e.target.value }))}
-                  className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white"
+                  className={`rounded-lg px-2.5 py-1.5 text-xs ${FIELD_NAME}`}
                   placeholder="VD: Chung cư, Nhà phố…"
                 />
               </label>
@@ -1303,7 +1387,7 @@ export default function PipelineSettingsPage() {
               </label>
             </div>
 
-            <div className="hidden md:grid grid-cols-12 gap-2 px-4 py-2 bg-gray-50/80 text-[9px] font-semibold text-gray-400 uppercase tracking-wider border-b border-gray-100">
+            <div className="hidden md:grid grid-cols-12 gap-2 px-4 py-2 bg-violet-50/70 text-[9px] font-bold text-violet-800/80 uppercase tracking-wider border-b border-violet-100">
               <div className="col-span-3">Tên loại</div>
               <div className="col-span-2">Áp dụng</div>
               <div className="col-span-1">TT</div>
@@ -1332,7 +1416,7 @@ export default function PipelineSettingsPage() {
                         <input
                           value={t.name || ''}
                           onChange={(e) => setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? { ...x, name: e.target.value } : x))}
-                          className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-white"
+                          className={`w-full rounded-lg px-2 py-1.5 text-xs ${FIELD_NAME}`}
                         />
                       </div>
                       <div className="col-span-6 md:col-span-2">
@@ -1435,18 +1519,31 @@ export default function PipelineSettingsPage() {
         )}
 
         {activeTab === 'stages' && (
-          <div className="space-y-4">
+          <div className="space-y-4 flex flex-col min-h-0">
             {editId && (
-              <div className="bg-white rounded-xl border border-violet-200 p-4 shadow-sm">
-                <h3 className="text-xs font-semibold text-gray-800 mb-3 flex items-center gap-1.5">
-                  <IconDeviceFloppy className="w-4 h-4 text-violet-600" stroke={2} />
-                  Sửa giai đoạn
-                </h3>
+              <CollapsiblePanel
+                title="Sửa giai đoạn"
+                subtitle={
+                  form.name
+                    ? `${stages.find((s) => s.id === editId)?.pipeline_type === 'deal' ? 'Deal' : 'Lead'} · ${form.name}`
+                    : 'Chỉnh tên, màu, SLA, cờ Thắng/Mất…'
+                }
+                icon={IconDeviceFloppy}
+                iconClassName="text-violet-600"
+                open={stageEditOpen}
+                onOpenChange={setStageEditOpen}
+                highlight
+                badge={
+                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 font-medium">
+                    đang sửa
+                  </span>
+                }
+              >
                 <StageForm
                   form={form}
                   setForm={setForm}
                   onSave={saveEdit}
-                  onCancel={() => setEditId(null)}
+                  onCancel={() => { setEditId(null); setStageEditOpen(false); }}
                   pipelineType={stages.find((s) => s.id === editId)?.pipeline_type || 'lead'}
                   editingStageId={editId}
                   sxStages={sxStages}
@@ -1455,7 +1552,7 @@ export default function PipelineSettingsPage() {
                   onSetVcSyncType={setVcSyncType}
                   onBulkSetVcSyncType={bulkSetVcSyncType}
                 />
-              </div>
+              </CollapsiblePanel>
             )}
 
             {loading ? (
@@ -1464,7 +1561,7 @@ export default function PipelineSettingsPage() {
                 Đang tải giai đoạn…
               </div>
             ) : (
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 min-h-0">
                 {renderPipeline('lead', leadStagesSorted)}
                 {renderPipeline('deal', dealStagesSorted)}
               </div>
@@ -1474,33 +1571,38 @@ export default function PipelineSettingsPage() {
 
         {activeTab === 'zalo' && (
           <div className="space-y-4">
-            <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-4 shadow-sm">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h2 className="text-xs font-semibold text-gray-900 flex items-center gap-2">
-                  <IconMessageCircle className="w-4 h-4 text-sky-600" stroke={2} />
-                  Zalo OA — cấu hình chung
-                </h2>
-                <div className="flex items-center gap-2">
-                  {zaloLoading ? (
-                    <IconLoader2 className="w-4 h-4 animate-spin text-sky-600" stroke={2} />
-                  ) : (
-                    <div className="flex items-center gap-2 text-[11px] text-gray-600">
-                      <span>Bật gửi Zalo</span>
-                      <ToggleSwitch
-                        checked={!!zaloSettings?.enabled}
-                        onChange={(v) => saveZaloMaster({ enabled: v })}
-                        title="Gửi Zalo khi deal vào cột đã bật Zalo"
-                      />
-                    </div>
-                  )}
-                </div>
-              </div>
+            <CollapsiblePanel
+              title="Zalo OA — cấu hình chung"
+              subtitle={
+                zaloSettings?.enabled
+                  ? `Đang bật · Template ${zaloSettings?.template_id || '566121'} · Token ${zaloSettings?.has_token ? 'đã lưu' : 'chưa có'}`
+                  : 'Đang tắt · Bấm để mở cấu hình token, template, gửi thử'
+              }
+              icon={IconMessageCircle}
+              iconClassName="text-sky-600"
+              open={zaloGeneralOpen}
+              onOpenChange={setZaloGeneralOpen}
+              headerExtra={
+                zaloLoading ? (
+                  <IconLoader2 className="w-4 h-4 animate-spin text-sky-600" stroke={2} />
+                ) : (
+                  <div className="flex items-center gap-2 text-[10px] text-gray-600 whitespace-nowrap">
+                    <span className="font-medium">Bật Zalo</span>
+                    <ToggleSwitch
+                      checked={!!zaloSettings?.enabled}
+                      onChange={(v) => saveZaloMaster({ enabled: v })}
+                      title="Gửi Zalo khi deal vào cột đã bật Zalo"
+                    />
+                  </div>
+                )
+              }
+            >
               <p className="text-[11px] text-gray-500 leading-relaxed">
-                Lưu access_token từ Zalo Cloud. Template mặc định <strong>566121</strong> — bật «Zalo» trên cột Deal «Hoàn thành» ở tab Giai đoạn.
+                Lưu access_token từ Zalo Cloud. Template mặc định <strong className="text-sky-700">566121</strong> — bật «Zalo» trên cột Deal «Hoàn thành» ở tab Giai đoạn.
               </p>
-              <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-3 space-y-2">
+              <div className="rounded-lg border border-sky-200 bg-sky-50/40 p-3 space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Cấu trúc template_data</label>
+                  <label className="text-[10px] font-bold text-sky-800 uppercase tracking-wide">Cấu trúc template_data</label>
                   <button
                     type="button"
                     onClick={() => setZaloStructureJson(DEFAULT_ZALO_TEMPLATE_STRUCTURE_DISPLAY)}
@@ -1519,11 +1621,11 @@ export default function PipelineSettingsPage() {
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Template ID</label>
+                  <label className="text-[10px] font-bold text-gray-700 uppercase tracking-wide">Template ID</label>
                   <input
                     value={zaloSettings?.template_id || ''}
                     onChange={(e) => setZaloSettings((p) => ({ ...(p || {}), template_id: e.target.value }))}
-                    className="w-full h-8 px-2 rounded-lg border border-gray-200 text-xs bg-white"
+                    className={`w-full h-8 px-2 rounded-lg text-xs ${FIELD_KEY}`}
                     placeholder="566121 — để trống = mặc định"
                   />
                   <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Chế độ gửi</label>
@@ -1535,12 +1637,12 @@ export default function PipelineSettingsPage() {
                     <option value="1">1 — Gửi thường</option>
                     <option value="3">3 — Vượt hạn mức (OA whitelist)</option>
                   </select>
-                  <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Access token</label>
+                  <label className="text-[10px] font-bold text-gray-700 uppercase tracking-wide">Access token</label>
                   <input
                     type="password"
                     value={zaloTestToken}
                     onChange={(e) => setZaloTestToken(e.target.value)}
-                    className="w-full h-8 px-2 rounded-lg border border-gray-200 text-xs bg-white"
+                    className={`w-full h-8 px-2 rounded-lg text-xs ${FIELD_KEY}`}
                     placeholder={zaloSettings?.has_token ? '•••• đã lưu — nhập mới để thay' : 'Dán access_token'}
                     autoComplete="off"
                   />
@@ -1610,7 +1712,7 @@ export default function PipelineSettingsPage() {
                   )}
                 </div>
               </div>
-            </div>
+            </CollapsiblePanel>
 
             <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3 shadow-sm">
               <h2 className="text-xs font-semibold text-gray-900 flex items-center gap-2">
