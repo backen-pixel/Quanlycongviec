@@ -660,8 +660,15 @@ function emitAutoState(st) {
 const pushAutoLogImpl = pushAutoLog;
 const emitAutoStateImpl = emitAutoState;
 
-function getInternalAutoHeaders() {
-  const token = jwt.sign({ userId: 'auto-pipeline', role: 'system', fullName: 'Auto Pipeline' }, config.jwtSecret, { expiresIn: '1h' });
+function getInternalAutoHeaders(companyId = null) {
+  const payload = {
+    role: 'system',
+    service: 'auto-pipeline',
+    fullName: 'Auto Pipeline',
+  };
+  const co = companyId != null && String(companyId).trim() !== '' ? String(companyId).trim() : null;
+  if (co) payload.company_id = co;
+  const token = jwt.sign(payload, config.jwtSecret, { expiresIn: '1h' });
   return {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${token}`,
@@ -671,8 +678,10 @@ function getInternalAutoHeaders() {
 
 /** Gọi nội bộ từ vòng lặp auto-pipeline (localhost) — tin cậy company_id trong body. */
 function isInternalAutoPipelineRequest(req) {
-  return String(req.headers['x-auto-pipeline-internal'] || '') === '1'
-    && String(req.user?.userId || req.user?.id || '') === 'auto-pipeline';
+  if (String(req.headers['x-auto-pipeline-internal'] || '') !== '1') return false;
+  if (req.user?.role === 'system' && req.user?.service === 'auto-pipeline') return true;
+  // Token cũ (trước khi bỏ userId giả) — vẫn nhận trong thời gian chuyển đổi
+  return String(req.user?.userId || req.user?.id || '') === 'auto-pipeline';
 }
 
 /** Giới hạn dòng chi tiết gửi qua socket (mỗi batch). */
@@ -715,7 +724,7 @@ async function autoPipelineInternalPostJson(apiPath, body = {}) {
   const url = `http://127.0.0.1:${config.port}/api${apiPath}`;
   const init = {
     method: 'POST',
-    headers: getInternalAutoHeaders(),
+    headers: getInternalAutoHeaders(body?.company_id),
     body: JSON.stringify(body),
   };
   let resp;
@@ -1673,26 +1682,105 @@ function isPlaceholderFacebookName(name) {
   );
 }
 
+/** Avatar giả (ui-avatars) hoặc chưa có — cần thử lấy ảnh Facebook thật. */
+function isPlaceholderFacebookAvatar(url) {
+  if (!url) return true;
+  return String(url).includes('ui-avatars.com');
+}
+
+function buildUiAvatarUrl(name) {
+  return `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=0D8ABC&color=fff&size=200&bold=true`;
+}
+
+/** GET /{psid}/picture — avatar Facebook thật (URL có thể hết hạn). */
+async function fetchFacebookPictureUrl(psid, token) {
+  if (!psid || !token) return null;
+  try {
+    const uid = encodeURIComponent(String(psid).trim());
+    const resp = await fetch(
+      `https://graph.facebook.com/v22.0/${uid}/picture?redirect=0&type=large`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const data = await resp.json();
+    if (data?.data?.url && !data.error) return data.data.url;
+  } catch (_) { /* ignore */ }
+  return null;
+}
+
+/**
+ * User Profile API: GET /{psid}?fields=first_name,last_name,name,profile_pic
+ * Cần user đã nhắn Page; profile_pic có thể cần Advanced Access trên app Meta.
+ */
+async function fetchFacebookUserProfileFromGraph(psid, token) {
+  if (!psid || !token) return null;
+  const headers = { Authorization: `Bearer ${token}` };
+  const uid = encodeURIComponent(String(psid).trim());
+  try {
+    const resp = await fetch(
+      `https://graph.facebook.com/v22.0/${uid}?fields=first_name,last_name,name,profile_pic`,
+      { headers },
+    );
+    const data = await resp.json();
+    if (data.error) return null;
+    const name = String(data.name || [data.first_name, data.last_name].filter(Boolean).join(' ')).trim();
+    let profilePic = data.profile_pic || null;
+    if (name && !isPlaceholderFacebookName(name)) {
+      if (!profilePic || isPlaceholderFacebookAvatar(profilePic)) {
+        profilePic = await fetchFacebookPictureUrl(psid, token) || buildUiAvatarUrl(name);
+      }
+      return { name, profilePic };
+    }
+    if (profilePic && !isPlaceholderFacebookAvatar(profilePic)) {
+      return { name: name || null, profilePic };
+    }
+  } catch (_) { /* ignore */ }
+  return null;
+}
+
+async function resolveProfilePicForName(psid, token, name) {
+  const realPic = await fetchFacebookPictureUrl(psid, token);
+  if (realPic) return realPic;
+  return name ? buildUiAvatarUrl(name) : null;
+}
+
+function shouldUpdateFacebookProfilePic(currentPic, newPic) {
+  if (!newPic) return false;
+  if (!currentPic) return true;
+  if (isPlaceholderFacebookAvatar(currentPic) && !isPlaceholderFacebookAvatar(newPic)) return true;
+  return false;
+}
+
 const _fbMessengerNameResolveInFlight = new Set();
 
-/** Một request Conversations API / contact; emit socket để UI đổi tên ngay. */
-async function tryResolveMessengerDisplayName(pageId, psid, contactId, io) {
+/** Resolve tên + avatar qua Graph; emit socket để UI cập nhật ngay. */
+async function tryResolveMessengerDisplayName(pageId, psid, contactId, io, contactSnapshot = null) {
   if (!pageId || !psid || !contactId || _fbMessengerNameResolveInFlight.has(contactId)) return;
   _fbMessengerNameResolveInFlight.add(contactId);
   try {
     const profile = await fetchProfileViaConversations(pageId, psid);
-    if (!profile?.name || isPlaceholderFacebookName(profile.name)) return;
-    const upd = {
-      fb_name: profile.name,
-      updated_at: new Date().toISOString(),
-    };
-    if (profile.profilePic) upd.fb_profile_pic = profile.profilePic;
+    if (!profile) return;
+
+    const curName = contactSnapshot?.fb_name;
+    const curPic = contactSnapshot?.fb_profile_pic;
+    const upd = { updated_at: new Date().toISOString() };
+    let hasUpdate = false;
+
+    if (profile.name && !isPlaceholderFacebookName(profile.name) && profile.name !== curName) {
+      upd.fb_name = profile.name;
+      hasUpdate = true;
+    }
+    if (shouldUpdateFacebookProfilePic(curPic, profile.profilePic)) {
+      upd.fb_profile_pic = profile.profilePic;
+      hasUpdate = true;
+    }
+    if (!hasUpdate) return;
+
     await supabase.from('facebook_contacts').update(upd).eq('id', contactId);
     if (io) {
       io.emit('fb_contact_updated', {
         contact_id: contactId,
-        fb_name: profile.name,
-        fb_profile_pic: profile.profilePic || null,
+        fb_name: upd.fb_name || curName || profile.name,
+        fb_profile_pic: upd.fb_profile_pic ?? curPic ?? profile.profilePic ?? null,
       });
     }
   } catch (e) {
@@ -1714,16 +1802,29 @@ async function logFetchResult(pageId, psid, status, details) {
   } catch (e) { /* ignore */ }
 }
 
-// Lấy tên user qua Conversations API (không cần Advanced Access)
-// Flow: resolve thread Page+PSID → GET /CONV_ID?fields=participants hoặc /messages?fields=from
+// Lấy tên + avatar: User Profile API → Conversations API → ui-avatars fallback
 async function fetchProfileViaConversations(pageId, psid) {
   try {
     const page = await getPageConfig(pageId);
     if (!page?.access_token) { await logFetchResult(pageId, psid, 'no_token', null); return null; }
     const token = page.access_token;
 
+    // Step 1: User Profile API — avatar Facebook thật (nếu app có quyền)
+    const graphProfile = await fetchFacebookUserProfileFromGraph(psid, token);
+    if (graphProfile?.name && !isPlaceholderFacebookName(graphProfile.name)) {
+      await logFetchResult(pageId, psid, 'success_graph_profile', {
+        name: graphProfile.name,
+        real_pic: !isPlaceholderFacebookAvatar(graphProfile.profilePic),
+      });
+      return graphProfile;
+    }
+
     const { convId, lastError } = await graphResolveConversationIdForPsid(pageId, psid, token);
     if (!convId) {
+      if (graphProfile?.profilePic) {
+        await logFetchResult(pageId, psid, 'success_graph_pic_only', { real_pic: true });
+        return graphProfile;
+      }
       await logFetchResult(pageId, psid, 'no_conversation', lastError || null);
       return null;
     }
@@ -1736,9 +1837,12 @@ async function fetchProfileViaConversations(pageId, psid) {
       const partData = await partResp.json();
       const participant = partData.participants?.data?.find(p => p.id === psid);
       if (participant?.name && participant.name !== 'Facebook User') {
-        const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(participant.name)}&background=0D8ABC&color=fff&size=200&bold=true`;
-        await logFetchResult(pageId, psid, 'success_participants', { name: participant.name });
-        return { name: participant.name, profilePic: avatarUrl };
+        const profilePic = await resolveProfilePicForName(psid, token, participant.name);
+        await logFetchResult(pageId, psid, 'success_participants', {
+          name: participant.name,
+          real_pic: profilePic && !isPlaceholderFacebookAvatar(profilePic),
+        });
+        return { name: participant.name, profilePic };
       }
     } catch (e) { /* fallthrough */ }
 
@@ -1747,19 +1851,33 @@ async function fetchProfileViaConversations(pageId, psid) {
       headers: { Authorization: `Bearer ${token}` },
     });
     const msgData = await msgResp.json();
-    if (!msgData.data?.length) { await logFetchResult(pageId, psid, 'no_messages', null); return null; }
+    if (!msgData.data?.length) {
+      if (graphProfile?.profilePic) {
+        await logFetchResult(pageId, psid, 'success_graph_pic_only', { real_pic: true });
+        return graphProfile;
+      }
+      await logFetchResult(pageId, psid, 'no_messages', null);
+      return null;
+    }
 
     const userMsg = msgData.data.find(m => m.from?.id === psid);
     if (!userMsg?.from?.name) {
+      if (graphProfile?.profilePic) {
+        await logFetchResult(pageId, psid, 'success_graph_pic_only', { real_pic: true });
+        return graphProfile;
+      }
       await logFetchResult(pageId, psid, 'no_name', null);
       return null;
     }
 
     const userName = userMsg.from.name;
-    const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(userName)}&background=0D8ABC&color=fff&size=200&bold=true`;
-    await logFetchResult(pageId, psid, 'success_messages', { name: userName });
+    const profilePic = await resolveProfilePicForName(psid, token, userName);
+    await logFetchResult(pageId, psid, 'success_messages', {
+      name: userName,
+      real_pic: profilePic && !isPlaceholderFacebookAvatar(profilePic),
+    });
 
-    return { name: userName, profilePic: avatarUrl };
+    return { name: userName, profilePic };
   } catch (e) {
     console.warn('[FB] fetchProfileViaConversations error:', e.message);
     return null;
@@ -2444,8 +2562,8 @@ async function handleMessagingInner(pageId, event, io, partnerPsid) {
   const contact = await getOrCreateContact(pageId, partnerPsid, senderLabel);
   if (!contact) return;
 
-  if (isPlaceholderFacebookName(contact.fb_name)) {
-    void tryResolveMessengerDisplayName(pageId, partnerPsid, contact.id, io);
+  if (isPlaceholderFacebookName(contact.fb_name) || isPlaceholderFacebookAvatar(contact.fb_profile_pic)) {
+    void tryResolveMessengerDisplayName(pageId, partnerPsid, contact.id, io, contact);
   }
 
   console.log(`[FB] 👤 Contact: ${contact.fb_name || 'Unknown'} (ID: ${contact.id})`);
@@ -2565,7 +2683,7 @@ async function handleMessagingInner(pageId, event, io, partnerPsid) {
           });
         }
       } catch (_) { /* ignore */ }
-      void tryResolveMessengerDisplayName(pageId, partnerPsid, contact.id, io);
+      void tryResolveMessengerDisplayName(pageId, partnerPsid, contact.id, io, contact);
       return;
     }
 
@@ -6597,15 +6715,15 @@ r.get('/lead-scan/preview', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── Refresh tên cho các contact đang bị "Facebook User" ──
+// ── Refresh tên/avatar cho contact placeholder ──
 r.post('/refresh-names', authMiddleware, async (req, res) => {
   try {
     const io = r._ioRef;
     const pageIds = await resolvePageIdsForCompanyScoped(req, res, req.body?.company_id);
     if (pageIds === undefined) return;
     const { data: stuckContacts } = await applyPageIdsFilter(supabase.from('facebook_contacts')
-      .select('id, page_id, psid, fb_name, lead_id, last_message_at, created_at')
-      .or('fb_name.eq.Facebook User,fb_name.eq.User,fb_name.is.null'), pageIds)
+      .select('id, page_id, psid, fb_name, fb_profile_pic, lead_id, last_message_at, created_at')
+      .or('fb_name.eq.Facebook User,fb_name.eq.User,fb_name.is.null,fb_profile_pic.is.null,fb_profile_pic.ilike.%ui-avatars.com%'), pageIds)
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
       .limit(100);
@@ -6618,26 +6736,51 @@ r.post('/refresh-names', authMiddleware, async (req, res) => {
     for (let i = 0; i < stuckContacts.length; i++) {
       const c = stuckContacts[i];
       const profile = await fetchProfileViaConversations(c.page_id, c.psid);
-      if (profile?.name && profile.name !== 'Facebook User') {
-        const upd = { fb_name: profile.name, updated_at: new Date().toISOString() };
-        if (profile.profilePic) upd.fb_profile_pic = profile.profilePic;
+      const upd = { updated_at: new Date().toISOString() };
+      let changed = false;
+
+      if (profile?.name && !isPlaceholderFacebookName(profile.name) && profile.name !== c.fb_name) {
+        upd.fb_name = profile.name;
+        changed = true;
+      }
+      if (shouldUpdateFacebookProfilePic(c.fb_profile_pic, profile?.profilePic)) {
+        upd.fb_profile_pic = profile.profilePic;
+        changed = true;
+      }
+
+      if (changed) {
         await supabase.from('facebook_contacts').update(upd).eq('id', c.id);
 
-        if (c.lead_id) {
+        const resolvedName = upd.fb_name || c.fb_name;
+        if (c.lead_id && upd.fb_name) {
           await supabase.from('crm_leads')
-            .update({ title: `[FB] ${profile.name}`, updated_at: new Date().toISOString() })
+            .update({ title: `[FB] ${resolvedName}`, updated_at: new Date().toISOString() })
             .eq('id', c.lead_id).or('title.ilike.%Facebook User%,title.ilike.%[FB] User%');
           const { data: leadData } = await supabase.from('crm_leads')
             .select('customer_id').eq('id', c.lead_id).single();
           if (leadData?.customer_id) {
             await supabase.from('customers')
-              .update({ full_name: profile.name, updated_at: new Date().toISOString() })
+              .update({ full_name: resolvedName, updated_at: new Date().toISOString() })
               .eq('id', leadData.customer_id).ilike('full_name', '%Facebook%');
           }
         }
         updated++;
-        if (io) io.emit('batch_progress', { type: 'refresh_names', current: i + 1, total, name: profile.name, oldName: c.fb_name, status: 'updated' });
-        console.log(`[FB Refresh] ${c.psid}: "${c.fb_name}" → "${profile.name}"`);
+        if (io) {
+          io.emit('batch_progress', {
+            type: 'refresh_names',
+            current: i + 1,
+            total,
+            name: resolvedName,
+            oldName: c.fb_name,
+            status: 'updated',
+          });
+          io.emit('fb_contact_updated', {
+            contact_id: c.id,
+            fb_name: resolvedName,
+            fb_profile_pic: upd.fb_profile_pic ?? c.fb_profile_pic ?? null,
+          });
+        }
+        console.log(`[FB Refresh] ${c.psid}: "${c.fb_name}" → "${resolvedName}"`);
       } else {
         if (io) io.emit('batch_progress', { type: 'refresh_names', current: i + 1, total, name: c.fb_name, status: 'unchanged' });
       }
