@@ -2236,33 +2236,66 @@ r.get('/dashboard', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }
     const assigneeFromQuery =
       !selfAssigneeOnly && canUseAssigneeQuery && queryAssigneeUuid ? queryAssigneeUuid : null;
     const assigned_to_only = selfAssigneeOnly || assigneeFromQuery || null;
+    const light = req.query.light === '1' || req.query.light === 'true';
+    const phone_filter = req.query.phone_filter;
+    const canUseLight =
+      light &&
+      !crmListUsesLegacyFilters({
+        ...req.query,
+        type,
+        company_id: effectiveCompanyId || undefined,
+        assigned_to: assigned_to_only || undefined,
+        date_from,
+        date_to,
+        phone_filter,
+      });
 
-    // Leads/Deals theo filter (đủ trang) — tránh trần 1000 dòng của Supabase
-    const leads = await fetchCrmLeadsForDashboardBatched(type, {
-      company_id: effectiveCompanyId || undefined,
-      date_from,
-      date_to,
-      assigned_to_only,
-      req,
-    });
+    let leads = [];
+    let stageStats;
+    let totalItems;
+    let wonCountLight = null;
 
-    const stageStats = (stages || []).map(s => {
-      const stageLeads = (leads || []).filter(l => l.stage_id === s.id);
-      const probPct = (l) => {
-        const raw = l.probability;
-        const fallback = s.default_probability;
-        const p = raw != null && raw !== '' ? Number(raw) : (fallback != null && fallback !== '' ? Number(fallback) : 0);
-        return Number.isFinite(p) ? Math.max(0, Math.min(100, p)) : 0;
-      };
-      return {
-        ...s,
-        count: stageLeads.length,
-        value: stageLeads.reduce((sum, l) => sum + (l.estimated_value || 0), 0),
-        weighted: stageLeads.reduce((sum, l) => sum + (l.estimated_value || 0) * probPct(l) / 100, 0),
-      };
-    });
+    if (canUseLight) {
+      const lightStats = await computeCrmDashboardLightStats(req, type, {
+        effectiveCompanyId,
+        stages: stages || [],
+        assigned_to_only,
+        date_from,
+        date_to,
+        phone_filter,
+      });
+      stageStats = lightStats.stageStats;
+      totalItems = lightStats.totalItems;
+      wonCountLight = lightStats.wonCount;
+    } else {
+      leads = await fetchCrmLeadsForDashboardBatched(type, {
+        company_id: effectiveCompanyId || undefined,
+        date_from,
+        date_to,
+        assigned_to_only,
+        req,
+      });
+      stageStats = (stages || []).map((s) => {
+        const stageLeads = (leads || []).filter((l) => l.stage_id === s.id);
+        const probPct = (l) => {
+          const raw = l.probability;
+          const fallback = s.default_probability;
+          const p = raw != null && raw !== '' ? Number(raw) : (fallback != null && fallback !== '' ? Number(fallback) : 0);
+          return Number.isFinite(p) ? Math.max(0, Math.min(100, p)) : 0;
+        };
+        return {
+          ...s,
+          count: stageLeads.length,
+          value: stageLeads.reduce((sum, l) => sum + (l.estimated_value || 0), 0),
+          weighted: stageLeads.reduce((sum, l) => sum + (l.estimated_value || 0) * probPct(l) / 100, 0),
+        };
+      });
+      totalItems = (leads || []).length;
+    }
 
-    const leadIdsScope = (leads || []).map((l) => l.id).filter(Boolean);
+    const leadIdsScope = canUseLight
+      ? parseLeadIdsCsvQuery(req.query.lead_ids, 500)
+      : (leads || []).map((l) => l.id).filter(Boolean);
     let overdue_tasks = 0;
     try {
       overdue_tasks = await countOpenOverdueCrmTasksForLeadIds(leadIdsScope);
@@ -2289,13 +2322,17 @@ r.get('/dashboard', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }
     ) / 100;
 
     // KPIs split by type
-    const totalItems = (leads || []).length;
-    const wonItems = (leads || []).filter(l => {
-      const st = (stages || []).find(s => s.id === l.stage_id);
-      return st?.is_won;
-    });
-    const totalValue = (leads || []).reduce((s, l) => s + (l.estimated_value || 0), 0);
-    const wonValue = wonItems.reduce((s, l) => s + (l.estimated_value || 0), 0);
+    const wonItems = canUseLight
+      ? { length: wonCountLight || 0 }
+      : (leads || []).filter((l) => {
+          const st = (stages || []).find((s) => s.id === l.stage_id);
+          return st?.is_won;
+        });
+    const totalValue = canUseLight ? 0 : (leads || []).reduce((s, l) => s + (l.estimated_value || 0), 0);
+    const wonValue = canUseLight
+      ? 0
+      : (Array.isArray(wonItems) ? wonItems : []).reduce((s, l) => s + (l.estimated_value || 0), 0);
+    const wonItemCount = Array.isArray(wonItems) ? wonItems.length : (wonItems?.length ?? 0);
 
     let kpis = {};
     if (type === 'lead') {
@@ -2334,8 +2371,8 @@ r.get('/dashboard', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }
       // Deal KPIs
       kpis = {
         total_deals: totalItems,
-        won_deals: wonItems.length,
-        won_rate: totalItems > 0 ? Math.round(wonItems.length / totalItems * 100) : 0,
+        won_deals: wonItemCount,
+        won_rate: totalItems > 0 ? Math.round(wonItemCount / totalItems * 100) : 0,
         total_value: totalValue,
         won_value: wonValue,
         overdue_tasks,
@@ -2377,6 +2414,41 @@ r.get('/dashboard', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }
       ledger_net_by_lead: ledgerNetByLead,
       recent_quotations: recentQuotes,
       recent_orders: recentOrders,
+      light: canUseLight,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** GET /crm/ledger-net-by-leads — điểm KPI tháng theo danh sách lead (tối đa 500 id), dùng sau khi tải Kanban. */
+r.get('/ledger-net-by-leads', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
+  try {
+    const leadIds = parseLeadIdsCsvQuery(req.query.lead_ids, 500);
+    if (!leadIds.length) {
+      return res.json({ ledger_net_by_lead: {}, kpi_ledger_period_start: defaultKpiLedgerMonthStartYmd() });
+    }
+    const rawLedgerPs = req.query.ledger_period_start && String(req.query.ledger_period_start).trim();
+    const ledgerPeriodStart = (rawLedgerPs && /^\d{4}-\d{2}-\d{2}$/.test(rawLedgerPs.slice(0, 10)))
+      ? rawLedgerPs.slice(0, 10)
+      : defaultKpiLedgerMonthStartYmd();
+    const queryAssigneeUuid = uuidQueryOrNull(req.query.assigned_to);
+    const type = req.query.type === 'deal' ? 'deal' : 'lead';
+    const selfAssignee =
+      type === 'deal' && req.user?.userId && !userSeesAllCrmDealsForScope(req.user)
+        ? req.user.userId
+        : type === 'lead' && req.user?.userId && !userSeesAllCrmLeadsForScope(req.user)
+          ? req.user.userId
+          : null;
+    const canUseAssigneeQuery =
+      type === 'deal' ? userSeesAllCrmDealsForScope(req.user) : userSeesAllCrmLeadsForScope(req.user);
+    const ledgerUserId = selfAssignee || (canUseAssigneeQuery && queryAssigneeUuid ? queryAssigneeUuid : null);
+    const ledgerNetByLead = await sumCrmKpiLedgerNetByLeadIds(leadIds, ledgerPeriodStart, 'monthly', {
+      userId: ledgerUserId || null,
+    });
+    res.json({
+      ledger_net_by_lead: ledgerNetByLead,
+      kpi_ledger_period_start: ledgerPeriodStart,
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -4409,15 +4481,41 @@ const CRM_LEAD_LIST_SELECT_EXTRA = ', linked_project:projects!crm_leads_project_
 const CRM_LEAD_REGION_EMBED = ', crm_region:company_regions!crm_leads_region_id_fkey(id, name, code)';
 const CRM_LEAD_LIST_SELECT_BASE =
   `*, customer:customers(id, full_name, phone, email, company), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type, sync_role, order_index), source:crm_sources(id, name, icon), lead_type:crm_lead_types(id, name, color), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies!crm_leads_company_id_fkey(id, name, short_name)${CRM_LEAD_REGION_EMBED}, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name)), vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)`;
-/** Select tối thiểu cho Kanban mobile — giảm payload hydrate ~70%. */
+/** Select tối ưu cho Kanban web/mobile — đủ field thẻ CRM, nhẹ hơn getCrmLeadListSelect ~60%. */
 const CRM_LEAD_KANBAN_LITE_SELECT =
-  'id, code, title, type, phone, estimated_value, created_at, assigned_to, lead_owner_id, stage_id, region_id, next_follow_up, expected_close_date, ' +
-  'customer:customers(id, full_name, phone), ' +
-  'stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon), ' +
-  'source:crm_sources(id, name), ' +
+  'id, code, title, type, phone, estimated_value, probability, created_at, updated_at, assigned_to, lead_owner_id, stage_id, region_id, company_id, lead_type_id, project_id, stage_entered_at, kanban_deadline_at, kanban_deadline_reason, next_follow_up, expected_close_date, ' +
+  'customer:customers(id, full_name, phone, company), ' +
+  'stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, counts_as_completed_revenue, sla_days, sync_role, pipeline_type, order_index, default_probability), ' +
+  'source:crm_sources(id, name, icon), ' +
+  'lead_type:crm_lead_types(id, name, color), ' +
   'assignee:users!crm_leads_assigned_to_fkey(id, full_name), ' +
   'lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), ' +
-  'company:companies!crm_leads_company_id_fkey(id, name, short_name)';
+  'company:companies!crm_leads_company_id_fkey(id, name, short_name)' +
+  CRM_LEAD_REGION_EMBED +
+  ', sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name)), vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)' +
+  CRM_LEAD_LIST_SELECT_EXTRA;
+
+function resolveCrmLeadsKanbanLite(reqQuery, opts = {}) {
+  if (opts.lite === false) return false;
+  if (opts.lite === true) return true;
+  if (reqQuery?.full === '1' || reqQuery?.full === 'true') return false;
+  if (reqQuery?.lite === '1' || reqQuery?.lite === 'true') return true;
+  if (reqQuery?.kanban === '1' || reqQuery?.kanban === 'true') return true;
+  return false;
+}
+
+/** Parse danh sách UUID từ query `lead_ids` (CSV) — tối đa maxIds. */
+function parseLeadIdsCsvQuery(raw, maxIds = 500) {
+  if (raw == null || raw === '') return [];
+  const parts = String(raw).split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean);
+  const out = [];
+  for (const p of parts) {
+    if (!/^[0-9a-f-]{36}$/i.test(p)) continue;
+    out.push(p);
+    if (out.length >= maxIds) break;
+  }
+  return out;
+}
 let CRM_LEAD_LIST_SELECT = CRM_LEAD_LIST_SELECT_BASE + CRM_LEAD_LIST_SELECT_EXTRA;
 let _crmLeadSelectMigrationChecked = false;
 let _vcPipelineStageAvailable = true; // migration 81
@@ -4856,6 +4954,7 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
   const customerCompanyTrim = String(customer_company || '').trim();
   const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 2000);
   const parsedOffset = Math.max(parseInt(offset) || 0, 0);
+  const useLite = resolveCrmLeadsKanbanLite(reqQuery, opts);
   let customerIdsForCompanyFilter = null;
   if (customerCompanyTrim && customerCompanyTrim !== '__none__') {
     const { data: custRows, error: custErr } = await supabase
@@ -4883,7 +4982,7 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
   const pipeId = uuidQueryOrNull(pipeline_id);
   const orderByFollowUp = !!(nfFrom || nfTo || nfEmpty);
 
-  const selectStr = await getCrmLeadListSelect();
+  const selectStr = useLite ? CRM_LEAD_KANBAN_LITE_SELECT : await getCrmLeadListSelect();
   const applyPipelineFollowUpFilters = (q) => {
     let x = q;
     if (pipeId) x = x.eq('pipeline_id', pipeId);
@@ -5015,6 +5114,18 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
 
   const total = result.length;
   const page = result.slice(parsedOffset, parsedOffset + parsedLimit);
+  if (useLite) {
+    const withDeadline = await attachCrmNextOpenTaskDeadline(page);
+    const withNewFlag = attachLeadNewFlagForList(withDeadline, viewerUserId);
+    return {
+      data: withNewFlag,
+      total,
+      offset: parsedOffset,
+      limit: parsedLimit,
+      hasMore: parsedOffset + page.length < total,
+      nextOffset: parsedOffset + page.length,
+    };
+  }
   const pageWithDeadline = await attachCrmNextOpenTaskDeadline(page);
   const withNewFlag = attachLeadNewFlagForList(pageWithDeadline, viewerUserId);
   const withUserFlags = await attachLeadUserFlagsForList(withNewFlag, viewerUserId);
@@ -5175,6 +5286,50 @@ function buildCrmLeadsRpcFilterParams(mergedQuery, type, rpcAssigneeStrict, rpcR
   };
 }
 
+/** Dashboard `light=1`: stage counts qua RPC — không quét toàn bộ crm_leads. */
+async function computeCrmDashboardLightStats(req, type, {
+  effectiveCompanyId,
+  stages,
+  assigned_to_only,
+  date_from,
+  date_to,
+  phone_filter,
+}) {
+  const mergedQuery = {
+    type,
+    company_id: effectiveCompanyId || undefined,
+    assigned_to: assigned_to_only || undefined,
+    date_from,
+    date_to,
+    phone_filter: phone_filter || undefined,
+  };
+  const dealAssigneeStrict = type === 'deal' && !!uuidQueryOrNull(assigned_to_only);
+  const leadAssigneeStrict = type === 'lead' && !!uuidQueryOrNull(assigned_to_only);
+  const rpcAssigneeStrict = dealAssigneeStrict || leadAssigneeStrict;
+  const rcForRpc = getCrmLeadRegionConstraint(req);
+  const rpcRegionIds = rcForRpc.mode === 'in' && rcForRpc.ids?.length ? rcForRpc.ids : null;
+  const filterParams = buildCrmLeadsRpcFilterParams(mergedQuery, type, rpcAssigneeStrict, rpcRegionIds);
+  const stageIds = (stages || []).map((s) => s.id).filter(Boolean);
+  const countsParsed = await invokeCrmLeadsStageCountsRpc({
+    ...filterParams,
+    p_pipeline_stage_ids: stageIds.length ? stageIds : null,
+  });
+  const counts = countsParsed?.counts || {};
+  const totalItems = countsParsed?.total ?? 0;
+  const wonStageIdSet = new Set((stages || []).filter((s) => s.is_won).map((s) => String(s.id)));
+  let wonCount = 0;
+  for (const [sid, n] of Object.entries(counts)) {
+    if (wonStageIdSet.has(String(sid))) wonCount += Number(n) || 0;
+  }
+  const stageStats = (stages || []).map((s) => ({
+    ...s,
+    count: counts[String(s.id)] || 0,
+    value: 0,
+    weighted: 0,
+  }));
+  return { stageStats, totalItems, wonCount, countsParsed };
+}
+
 async function resolveCrmLeadsMergedQuery(req, res) {
   const type = req.query.type || 'lead';
   const forcedDealSelf = type === 'deal' && req.user?.userId && !userSeesAllCrmDealsForScope(req.user);
@@ -5204,7 +5359,8 @@ async function hydrateCrmLeadsRpcPage(parsedRpc, req, parsedOffset, parsedLimit,
   const hydrated = await fetchCrmLeadsByIdsOrdered(ids, { skipEnrich: lite, lite });
   const windowLen = Array.isArray(ids) ? ids.length : hydrated.length;
   if (lite) {
-    const page = attachLeadNewFlagForList(hydrated, req.user?.userId);
+    let page = attachLeadNewFlagForList(hydrated, req.user?.userId);
+    page = await attachCrmNextOpenTaskDeadline(page);
     return {
       data: page,
       total,
@@ -5468,6 +5624,7 @@ r.get('/leads', responseCache({ ttl: 15, scope: 'user', tags: ['crm:list'] }), a
         assigneeStrict: rpcAssigneeStrict,
         viewerUserId: req.user?.userId,
         req,
+        lite: resolveCrmLeadsKanbanLite(mergedQuery),
       });
       return res.json(legacy);
     }
@@ -5488,6 +5645,7 @@ r.get('/leads', responseCache({ ttl: 15, scope: 'user', tags: ['crm:list'] }), a
         assigneeStrict: rpcAssigneeStrict,
         viewerUserId: req.user?.userId,
         req,
+        lite: resolveCrmLeadsKanbanLite(mergedQuery),
       });
       return res.json(legacy);
     }
@@ -5528,7 +5686,7 @@ r.get('/leads', responseCache({ ttl: 15, scope: 'user', tags: ['crm:list'] }), a
 
     const parsedRpc = !rpcError ? parseCrmLeadsPageRpc(rpcData) : null;
     const rpcOk = !!parsedRpc;
-    const lite = req.query.lite === '1' || req.query.lite === 'true';
+    const lite = resolveCrmLeadsKanbanLite(mergedQuery);
 
     if (rpcOk) {
       const pageResult = await hydrateCrmLeadsRpcPage(parsedRpc, req, parsedOffset, parsedLimit, { lite });
@@ -5542,6 +5700,7 @@ r.get('/leads', responseCache({ ttl: 15, scope: 'user', tags: ['crm:list'] }), a
       assigneeStrict: rpcAssigneeStrict,
       viewerUserId: req.user?.userId,
       req,
+      lite,
     });
     return res.json(legacy);
   } catch (e) {
