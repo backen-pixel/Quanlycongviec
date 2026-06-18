@@ -106,7 +106,7 @@ export default function PermissionBootstrap() {
             <Text style={styles.title}>Cấp quyền cho ứng dụng</Text>
           </View>
           <Text style={styles.sub}>
-            CRM cần các quyền sau để ghi âm, đọc file ghi sẵn trên máy và tự đồng bộ lên server khi có cuộc gọi mới.
+            CRM cần các quyền sau để ghi âm, nhận cuộc gọi (kể cả khi app tắt) và đồng bộ file lên server.
           </Text>
 
           <ScrollView style={styles.listScroll} showsVerticalScrollIndicator={false}>
@@ -129,7 +129,8 @@ export default function PermissionBootstrap() {
 
           {Platform.OS === 'android' && missing.length > 0 ? (
             <Text style={styles.note}>
-              Sau khi bấm «Cấp quyền», nếu vẫn thiếu hãy mở Cài đặt ứng dụng và bật thủ công (đặc biệt «File âm thanh» / «Thông báo»).
+              Bật «Thông báo» và «Cuộc gọi toàn màn hình» để nhận cuộc gọi khi app đóng hoặc màn hình khóa.
+              Nếu vẫn thiếu, mở Cài đặt ứng dụng và bật thủ công.
             </Text>
           ) : null}
 

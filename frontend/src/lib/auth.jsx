@@ -57,14 +57,20 @@ export function AuthProvider({ children }) {
     // session_id sinh ở client → ghép cặp login → logout audit. Lưu cùng token để khi logout gửi lại.
     const sessionId = `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
     const { data } = await api.post('/auth/login', { email, password, session_id: sessionId });
-    localStorage.setItem('token', data.token);
-    localStorage.setItem('user', JSON.stringify(data.user));
-    localStorage.setItem('session_id', data.session_id || sessionId);
+    return applyAuthSession(data, sessionId);
+  };
+
+  const applyAuthSession = async (auth, fallbackSessionId) => {
+    const sessionId = auth.session_id || fallbackSessionId
+      || `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem('token', auth.token);
+    localStorage.setItem('user', JSON.stringify(auth.user));
+    localStorage.setItem('session_id', sessionId);
     localStorage.setItem('login_ts', String(Date.now()));
-    setUser(data.user);
+    setUser(auth.user);
     const s = connectSocket();
     setSocket(s);
-    return data.user;
+    return auth.user;
   };
 
   const logout = async (reason = 'manual') => {
@@ -92,7 +98,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthCtx.Provider value={{ user, loading, login, logout, socket }}>
+    <AuthCtx.Provider value={{ user, loading, login, logout, applyAuthSession, socket }}>
       <ActivityPingGate user={user} onLogout={logout}>{children}</ActivityPingGate>
     </AuthCtx.Provider>
   );

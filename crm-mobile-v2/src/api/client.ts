@@ -22,7 +22,7 @@ api.interceptors.response.use(
   async (error) => {
     const status = error?.response?.status;
     const url = String(error?.config?.url || '');
-    const skip = ['/auth/login', '/auth/me'].some((p) => url.includes(p));
+    const skip = ['/auth/login', '/auth/me', '/auth/qr/create', '/auth/qr/'].some((p) => url.includes(p));
     if (status === 401 && !skip) {
       await setStoredToken(null);
       onUnauthorized?.();

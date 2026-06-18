@@ -1,7 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Mail, Lock, Eye, EyeOff, ArrowRight, Home, MoreHorizontal } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, ArrowRight, Home, MoreHorizontal, QrCode } from 'lucide-react';
 import { useAuth } from '../lib/auth';
+import QrLoginPanel from '../components/qr/QrLoginPanel';
 
 const FEATURES = [
   'Quản lý kho & sản phẩm theo thời gian thực',
@@ -16,7 +17,8 @@ export default function Login() {
   const [showPwd, setShowPwd] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
+  const [mode, setMode] = useState('password');
+  const { login, applyAuthSession } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -44,6 +46,15 @@ export default function Login() {
       setLoading(false);
     }
   };
+
+  const onQrSuccess = useCallback(async (auth) => {
+    try {
+      await applyAuthSession(auth);
+      navigate('/');
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Lỗi đăng nhập QR');
+    }
+  }, [applyAuthSession, navigate]);
 
   return (
     <div className="min-h-screen flex" style={{ background: '#f5ede2' }}>
@@ -202,6 +213,38 @@ export default function Login() {
               </div>
             )}
 
+            {/* Tab chọn phương thức */}
+            <div className="flex gap-2 mb-6 p-1 rounded-xl bg-white/60 border" style={{ borderColor: '#e3d8c5' }}>
+              <button
+                type="button"
+                onClick={() => { setMode('password'); setError(''); }}
+                className="flex-1 py-2.5 rounded-lg text-sm font-semibold transition"
+                style={mode === 'password'
+                  ? { background: 'white', color: '#0d1726', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }
+                  : { color: '#64748b' }}
+              >
+                Email
+              </button>
+              <button
+                type="button"
+                onClick={() => { setMode('qr'); setError(''); }}
+                className="flex-1 py-2.5 rounded-lg text-sm font-semibold transition inline-flex items-center justify-center gap-1.5"
+                style={mode === 'qr'
+                  ? { background: 'white', color: '#0d1726', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }
+                  : { color: '#64748b' }}
+              >
+                <QrCode className="h-4 w-4" />
+                QR Code
+              </button>
+            </div>
+
+            {mode === 'qr' ? (
+              <QrLoginPanel
+                target="web"
+                onSuccess={onQrSuccess}
+                onError={(msg) => setError(msg)}
+              />
+            ) : (
             <form onSubmit={submit} className="space-y-5">
               {/* Email */}
               <div>
@@ -297,6 +340,7 @@ export default function Login() {
                 )}
               </button>
             </form>
+            )}
 
             {/* Footer */}
             <p className="text-center text-[11px] text-slate-500 mt-8">

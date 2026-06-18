@@ -10,7 +10,7 @@
 import React, {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from 'react';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import type { MediaStream } from 'react-native-webrtc';
 import { subscribeAppSocket, getAppSocket } from '../lib/appSocket';
 import {
@@ -450,6 +450,26 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       setTimeout(() => rejectCall(), 0);
     }
   }, [presentIncoming, acceptCall, rejectCall]);
+
+  // App vào nền trong lúc đang reo → đảm bảo native full-screen / notification vẫn hiện.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') return;
+      const cur = sessionRef.current;
+      if (!cur || cur.state !== 'RINGING' || cur.direction !== 'incoming') return;
+      void showIncomingCallNotification({
+        callId: cur.callId,
+        fromUserId: cur.peer.id,
+        fromName: cur.peer.name,
+        kind: cur.media,
+        isGroup: cur.mode === 'group',
+        groupId: cur.groupId,
+        groupName: cur.groupName,
+      });
+    });
+    return () => sub.remove();
+  }, []);
 
   // ─── Đăng ký signaling + native bridges (1 lần) ───
   useEffect(() => {

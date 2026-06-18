@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Smartphone, Monitor, Laptop, LogOut, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Smartphone, Monitor, Laptop, LogOut, RefreshCw, ShieldCheck, QrCode } from 'lucide-react';
 import api from '../lib/api';
 import { getOrCreateDeviceId } from '../lib/deviceHeartbeat';
 
@@ -97,6 +98,13 @@ export default function MyDevicesPage() {
           Tài khoản bạn đang hoạt động trên {onlineCount} thiết bị (ping mỗi 60 giây). Có thể đăng xuất từ xa nếu nghi ngờ.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
+          <Link
+            to="/settings/qr-scan"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold bg-orange-600 hover:bg-orange-700 text-white px-3 py-1.5 rounded-md"
+          >
+            <QrCode className="h-3.5 w-3.5" />
+            Quét QR đăng nhập app
+          </Link>
           <button
             type="button"
             onClick={() => sendTestPush('chat')}

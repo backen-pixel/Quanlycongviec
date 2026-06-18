@@ -1,7 +1,12 @@
 import { Linking, PermissionsAndroid, Platform } from 'react-native';
 import { Audio } from 'expo-av';
 import * as MediaLibrary from 'expo-media-library';
-import { buildAndroidVoicePermissions, requestVoicePermissionsQuick } from './voicePermissions';
+import {
+  canUseFullScreenCallIntent,
+  openFullScreenCallIntentSettings,
+} from './nativeCallNotification';
+import { registerPushTokenV2 } from './pushNotifications';
+import { requestVoicePermissionsQuick } from './voicePermissions';
 
 export const CRMV2_PERMISSION_ONBOARDING_DONE_KEY = '@crmv2_perm_onboarding_done';
 
@@ -10,7 +15,8 @@ export type AppPermissionKind =
   | 'phoneState'
   | 'callLog'
   | 'readMediaAudio'
-  | 'notifications';
+  | 'notifications'
+  | 'fullScreenCall';
 
 export type AppPermissionItem = {
   kind: AppPermissionKind;
@@ -43,7 +49,12 @@ export const APP_PERMISSION_CATALOG: Omit<AppPermissionItem, 'granted'>[] = [
   {
     kind: 'notifications',
     label: 'Thông báo',
-    description: 'Thông báo đồng bộ & dịch vụ nền (Android 13+)',
+    description: 'Cuộc gọi đến & đồng bộ nền (Android 13+)',
+  },
+  {
+    kind: 'fullScreenCall',
+    label: 'Cuộc gọi toàn màn hình',
+    description: 'Hiện màn gọi khi app tắt / màn hình khóa (Android 14+)',
   },
 ];
 
@@ -83,6 +94,10 @@ async function checkKind(kind: AppPermissionKind): Promise<boolean> {
     if (api >= 33) return androidPermGranted(P.POST_NOTIFICATIONS);
     return true;
   }
+  if (kind === 'fullScreenCall') {
+    if (api >= 34) return canUseFullScreenCallIntent();
+    return true;
+  }
   return true;
 }
 
@@ -106,6 +121,12 @@ export async function grantAllPermissionsQuick(): Promise<void> {
       await MediaLibrary.requestPermissionsAsync();
     } catch {
       /* ignore */
+    }
+    void registerPushTokenV2();
+    const api = Number(Platform.Version) || 0;
+    if (api >= 34) {
+      const ok = await canUseFullScreenCallIntent();
+      if (!ok) openFullScreenCallIntentSettings();
     }
   }
 }

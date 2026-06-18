@@ -50,4 +50,5 @@ export type RootStackParamList = {
   Tasks: undefined;
   Account: undefined;
   Devices: undefined;
+  QrScan: undefined;
 };

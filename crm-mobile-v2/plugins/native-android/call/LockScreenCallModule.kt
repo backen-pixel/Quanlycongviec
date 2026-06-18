@@ -55,6 +55,20 @@ class LockScreenCallModule(private val reactContext: ReactApplicationContext) :
   }
 
   @ReactMethod
+  fun canUseFullScreenIntent(promise: Promise) {
+    try {
+      promise.resolve(IncomingCallHelper.canUseFullScreenIntent(reactContext.applicationContext))
+    } catch (e: Exception) {
+      promise.resolve(true)
+    }
+  }
+
+  @ReactMethod
+  fun openFullScreenIntentSettings() {
+    IncomingCallHelper.openFullScreenIntentSettings(reactContext.applicationContext)
+  }
+
+  @ReactMethod
   fun postIncomingCallNotification(
     callId: String?,
     title: String?,
