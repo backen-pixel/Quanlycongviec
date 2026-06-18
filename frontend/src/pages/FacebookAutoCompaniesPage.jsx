@@ -11,6 +11,7 @@ import {
   triggerPipelineNow,
   loadStatusAll,
 } from '../hooks/useBatchAutoRun';
+import FbMasterSchedulePanel from '../components/FbMasterSchedulePanel';
 
 const GLOBAL_KEY = '__global__';
 
@@ -270,10 +271,14 @@ export function FacebookAutoCompaniesPanel({ embedded = false }) {
         </div>
       </div>
 
+      <div className="mb-4">
+        <FbMasterSchedulePanel />
+      </div>
+
       {!all.master_enabled && (
         <div className="mb-4 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl px-4 py-2.5 text-sm flex items-center gap-2">
           <AlertTriangle size={16} className="shrink-0" />
-          Công tắc tổng đang TẮT — không công ty nào chạy auto. Bật để cho phép các công ty đã bật chạy lại.
+          Công tắc tổng đang TẮT — không công ty nào chạy auto. Bật thủ công hoặc bật chu kỳ lịch phía trên.
         </div>
       )}
 
