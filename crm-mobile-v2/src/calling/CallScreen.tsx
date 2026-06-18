@@ -223,6 +223,17 @@ export default function CallScreen() {
           />
         )}
 
+        {isGroup && groupPeers.map((p) => (
+          p.remoteStream ? (
+            <RTCView
+              key={p.userId}
+              streamURL={(p.remoteStream as any).toURL()}
+              style={styles.hiddenPeerAudio}
+              objectFit="cover"
+            />
+          ) : null
+        ))}
+
         {showVoiceStage && (
           <View style={[styles.voiceStage, { paddingTop: insets.top + 40 }]}>
             {session.peer.avatar ? (
@@ -296,6 +307,7 @@ const shadow = {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#0b141a' },
+  hiddenPeerAudio: { position: 'absolute', width: 1, height: 1, opacity: 0, left: -9999 },
   rootVideo: { backgroundColor: '#000' },
   videoLayer: { ...StyleSheet.absoluteFillObject, backgroundColor: '#000' },
   videoTapLayer: {

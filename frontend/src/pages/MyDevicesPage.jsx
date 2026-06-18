@@ -103,7 +103,7 @@ export default function MyDevicesPage() {
             className="inline-flex items-center gap-1.5 text-xs font-semibold bg-orange-600 hover:bg-orange-700 text-white px-3 py-1.5 rounded-md"
           >
             <QrCode className="h-3.5 w-3.5" />
-            Quét QR đăng nhập app
+            Mã QR đăng nhập app
           </Link>
           <button
             type="button"

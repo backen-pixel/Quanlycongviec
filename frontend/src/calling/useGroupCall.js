@@ -143,7 +143,10 @@ export function useGroupCall({ socket, uid, isBusy, setSession, sessionRef, patc
   }, [socket, isBusy, setSession, sessionRef, ensureLocalStream, resetGroup, patchSession]);
 
   const joinGroupCall = useCallback(async (info) => {
-    if (!socket || !info?.callId || isBusy()) return;
+    if (!socket || !info?.callId) return;
+    const cur = sessionRef.current;
+    if (isBusy() && cur?.callId !== info.callId) return;
+    if (cur?.callId === info.callId && (cur.state === 'CONNECTING' || cur.state === 'CONNECTED')) return;
     const media = info.kind === 'video' ? 'video' : 'audio';
     const next = {
       mode: 'group',
@@ -153,7 +156,7 @@ export function useGroupCall({ socket, uid, isBusy, setSession, sessionRef, patc
       peer: { id: info.hostId || '', name: info.hostName || 'Chủ phòng', avatar: null },
       direction: 'outgoing',
       media,
-      state: 'RINGING',
+      state: 'CONNECTING',
       connectedAt: null,
       isMuted: false,
       isCameraOff: false,
@@ -162,8 +165,17 @@ export function useGroupCall({ socket, uid, isBusy, setSession, sessionRef, patc
     };
     sessionRef.current = next;
     setSession(next);
-    socket.emit('call:group_request_join', { callId: info.callId });
-  }, [socket, isBusy, setSession, sessionRef]);
+    try {
+      await ensureLocalStream(media);
+      attachTracksToAllPeers();
+      socket.emit('call:group_request_join', { callId: info.callId });
+    } catch (e) {
+      patchSession({ error: e?.message || 'Không truy cập được mic/camera', state: 'ENDED' });
+      resetGroup();
+      sessionRef.current = null;
+      setSession(null);
+    }
+  }, [socket, isBusy, setSession, sessionRef, ensureLocalStream, attachTracksToAllPeers, resetGroup, patchSession]);
 
   const presentGroupIncoming = useCallback((p) => {
     if (isBusy() && sessionRef.current?.callId !== p.callId) return;
@@ -204,10 +216,10 @@ export function useGroupCall({ socket, uid, isBusy, setSession, sessionRef, patc
     try { stopCallRingtone(); } catch { /* noop */ }
     try { dismissIncomingCallDesktopAlert(); } catch { /* noop */ }
     patchSession({ state: 'CONNECTING' });
-    socket?.emit('call:group_join', { callId: cur.callId });
     try {
       await ensureLocalStream(cur.media);
       attachTracksToAllPeers();
+      socket?.emit('call:group_join', { callId: cur.callId });
     } catch (e) {
       patchSession({ error: e?.message || 'Không truy cập được mic/camera' });
       socket?.emit('call:reject', { callId: cur.callId, reason: 'rejected' });
@@ -266,9 +278,14 @@ export function useGroupCall({ socket, uid, isBusy, setSession, sessionRef, patc
       presentGroupIncoming(p);
     };
 
-    const onGroupParticipants = ({ callId, participants }) => {
+    const onGroupParticipants = async ({ callId, participants }) => {
       const cur = sessionRef.current;
       if (!cur || cur.mode !== 'group' || cur.callId !== callId || !participants?.length) return;
+      patchSession({ state: 'CONNECTING', joinPending: false });
+      try {
+        await ensureLocalStream(cur.media);
+        attachTracksToAllPeers();
+      } catch { return; }
       for (const p of participants) {
         if (String(p.userId) === String(uid)) continue;
         const entry = getOrCreateGroupPc(callId, String(p.userId), p.name, cur.media);
@@ -283,10 +300,14 @@ export function useGroupCall({ socket, uid, isBusy, setSession, sessionRef, patc
       }
     };
 
-    const onGroupMemberJoined = ({ callId, userId, name }) => {
+    const onGroupMemberJoined = async ({ callId, userId, name }) => {
       const cur = sessionRef.current;
       if (!cur || cur.mode !== 'group' || cur.callId !== callId || !userId) return;
       if (String(userId) === String(uid)) return;
+      try {
+        await ensureLocalStream(cur.media);
+        attachTracksToAllPeers();
+      } catch { return; }
       const entry = getOrCreateGroupPc(callId, String(userId), name, cur.media);
       attachTracksToAllPeers();
       const tryOffer = async () => {
@@ -404,7 +425,7 @@ export function useGroupCall({ socket, uid, isBusy, setSession, sessionRef, patc
       sock.off('call:group_host_changed', onHostChanged);
     };
   }, [
-    uid, presentGroupIncoming, getOrCreateGroupPc, attachTracksToAllPeers,
+    uid, presentGroupIncoming, getOrCreateGroupPc, attachTracksToAllPeers, ensureLocalStream,
     sessionRef, setSession, resetGroup, patchSession, clearGroupTimers,
   ]);
 

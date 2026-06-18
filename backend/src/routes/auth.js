@@ -8,9 +8,47 @@ const { logAuthEvent } = require('../helpers/authEventLog');
 const { buildAuthSessionForUser } = require('../helpers/authSession');
 const {
   createQrSession, parseQrText, confirmQrSession, consumeSessionAuth,
+  getSessionPublicInfo, targetLabel, deviceFromReq,
 } = require('../helpers/qrLoginSessions');
+const { createNotification } = require('../helpers/notifications');
 
 const r = Router();
+
+async function notifyQrDeviceLogin(req, userId, { target, loginDevice, confirmerDevice }) {
+  if (!userId || !req) return;
+  const loginName = loginDevice?.device_name || targetLabel(target);
+  const confirmerName = confirmerDevice?.device_name || 'thiết bị đã đăng nhập';
+  const title = 'Đăng nhập QR — thiết bị mới';
+  const message = `${loginName} vừa đăng nhập qua QR (${targetLabel(target)}). Xác nhận từ ${confirmerName}.`;
+
+  void createNotification(
+    req,
+    userId,
+    'device_qr_login',
+    title,
+    message,
+    'device',
+    String(userId),
+    {
+      nav_url: '/settings/devices',
+      target,
+      login_device: loginDevice,
+      confirmer_device: confirmerDevice,
+    },
+  );
+
+  const io = req.app?.get('io');
+  io?.to(`user:${userId}`).emit('qr-login:completed', {
+    target,
+    loginDevice,
+    confirmerDevice,
+    message,
+  });
+}
+
+function emitQrLoginPayload(io, sessionId, payload) {
+  io?.to(`qr:${sessionId}`).emit('qr-login:confirmed', { sessionId, ...payload });
+}
 
 // Đăng nhập
 r.post('/login', async (req, res) => {
@@ -56,7 +94,7 @@ r.post('/login', async (req, res) => {
 
 // ─── QR đăng nhập chéo web ↔ app ───
 
-/** Thiết bị cần đăng nhập tạo phiên QR (không cần auth). */
+/** Thiết bị cần đăng nhập tạo phiên QR (không cần auth) — dùng cho đăng nhập web. */
 r.post('/qr/create', async (req, res) => {
   try {
     const target = req.body?.target === 'app' ? 'app' : 'web';
@@ -68,24 +106,76 @@ r.post('/qr/create', async (req, res) => {
   }
 });
 
+/**
+ * Web đã đăng nhập tạo mã QR để app quét (target=app).
+ * Phiên được xác nhận ngay bằng tài khoản web — app chỉ cần quét rồi poll token.
+ */
+r.post('/qr/create-invite', auth, async (req, res) => {
+  try {
+    const target = req.body?.target === 'web' ? 'web' : 'app';
+    const confirmerId = req.user?.userId || req.user?.id;
+    if (!confirmerId) return res.status(401).json({ error: 'Chưa đăng nhập' });
+
+    const created = createQrSession(target);
+    const result = await confirmQrSession(created.sessionId, confirmerId, req, req.body || {});
+    if (result.error) {
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+
+    res.json({
+      sessionId: created.sessionId,
+      qrText: created.qrText,
+      expiresAt: created.expiresAt,
+      target,
+      confirmerDevice: result.session.confirmerDevice || deviceFromReq(req, req.body || {}),
+    });
+  } catch (e) {
+    console.error('[auth/qr/create-invite]', e);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
 /** Poll trạng thái — nhận token một lần khi đã xác nhận. */
 r.get('/qr/:sessionId/status', async (req, res) => {
   try {
     const sessionId = String(req.params.sessionId || '').trim();
     if (!sessionId) return res.status(400).json({ error: 'Thiếu mã phiên' });
-    const result = consumeSessionAuth(sessionId);
+    const result = consumeSessionAuth(sessionId, req, {
+      device_name: req.query?.device_name,
+      platform: req.query?.platform,
+    });
     if (result.status === 'confirmed') {
       const io = req.app.get('io');
-      io?.to(`qr:${sessionId}`).emit('qr-login:confirmed', {
-        sessionId,
+      emitQrLoginPayload(io, sessionId, {
         token: result.token,
         user: result.user,
         session_id: result.session_id,
+        loginDevice: result.loginDevice,
+        confirmerDevice: result.confirmerDevice,
+        qrTarget: result.qrTarget,
+      });
+      const uid = result.user?.id || result.user?.userId;
+      void notifyQrDeviceLogin(req, uid, {
+        target: result.qrTarget,
+        loginDevice: result.loginDevice,
+        confirmerDevice: result.confirmerDevice,
       });
     }
     res.json(result);
   } catch (e) {
     console.error('[auth/qr/status]', e);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+/** Theo dõi phiên QR (web đã đăng nhập — không tiêu thụ token). */
+r.get('/qr/:sessionId/info', auth, async (req, res) => {
+  try {
+    const sessionId = String(req.params.sessionId || '').trim();
+    if (!sessionId) return res.status(400).json({ error: 'Thiếu mã phiên' });
+    res.json(getSessionPublicInfo(sessionId));
+  } catch (e) {
+    console.error('[auth/qr/info]', e);
     res.status(500).json({ error: 'Lỗi server' });
   }
 });
@@ -101,21 +191,26 @@ r.post('/qr/confirm', auth, async (req, res) => {
     if (!sessionId) return res.status(400).json({ error: 'Thiếu mã QR' });
 
     const confirmerId = req.user?.userId || req.user?.id;
-    const result = await confirmQrSession(sessionId, confirmerId, req);
+    const result = await confirmQrSession(sessionId, confirmerId, req, req.body || {});
     if (result.error) return res.status(result.status || 400).json({ error: result.error });
 
     const io = req.app.get('io');
-    io?.to(`qr:${sessionId}`).emit('qr-login:confirmed', {
-      sessionId,
+    emitQrLoginPayload(io, sessionId, {
       token: result.auth.token,
       user: result.auth.user,
       session_id: result.auth.session_id,
+      confirmerDevice: result.session.confirmerDevice,
+      qrTarget: result.session.target,
     });
 
+    const confirmerDevice = result.session.confirmerDevice || deviceFromReq(req, req.body || {});
     res.json({
       ok: true,
       target: result.session.target,
+      targetLabel: targetLabel(result.session.target),
       sessionId,
+      confirmerDevice,
+      message: `Đã xác nhận đăng nhập ${targetLabel(result.session.target)}. Thiết bị đích sẽ nhận phiên trong giây lát.`,
     });
   } catch (e) {
     console.error('[auth/qr/confirm]', e);

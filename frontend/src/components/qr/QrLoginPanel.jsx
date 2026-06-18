@@ -15,6 +15,7 @@ export default function QrLoginPanel({ target = 'web', onSuccess, onError }) {
   const [expiresAt, setExpiresAt] = useState(null);
   const [status, setStatus] = useState('loading');
   const [secondsLeft, setSecondsLeft] = useState(0);
+  const [deviceMsg, setDeviceMsg] = useState('');
   const pollRef = useRef(null);
   const doneRef = useRef(false);
 
@@ -71,10 +72,19 @@ export default function QrLoginPanel({ target = 'web', onSuccess, onError }) {
           doneRef.current = true;
           clearPoll();
           setStatus('confirmed');
+          const loginName = data.loginDevice?.device_name || 'Thiết bị này';
+          const confirmerName = data.confirmerDevice?.device_name;
+          setDeviceMsg(
+            confirmerName
+              ? `Đăng nhập từ ${loginName} (xác nhận: ${confirmerName})`
+              : `Đăng nhập thành công trên ${loginName}`,
+          );
           onSuccess?.({
             token: data.token,
             user: data.user,
             session_id: data.session_id,
+            loginDevice: data.loginDevice,
+            confirmerDevice: data.confirmerDevice,
           });
         } else if (data.status === 'expired') {
           setStatus('expired');
@@ -91,7 +101,7 @@ export default function QrLoginPanel({ target = 'web', onSuccess, onError }) {
 
   const hint = target === 'web'
     ? 'Mở app CRM Mobile (đã đăng nhập) → Menu → Quét QR web'
-    : 'Trên web đã đăng nhập: Cài đặt → Thiết bị → Quét QR app';
+    : 'Trên web đã đăng nhập: Cài đặt → Thiết bị → Mã QR đăng nhập app';
 
   return (
     <div className="flex flex-col items-center text-center">
@@ -122,9 +132,14 @@ export default function QrLoginPanel({ target = 'web', onSuccess, onError }) {
         </p>
       )}
       {status === 'confirmed' && (
-        <p className="mt-3 text-sm font-medium" style={{ color: '#16a34a' }}>
-          Đăng nhập thành công!
-        </p>
+        <>
+          <p className="mt-3 text-sm font-medium" style={{ color: '#16a34a' }}>
+            Đăng nhập thành công!
+          </p>
+          {deviceMsg ? (
+            <p className="mt-1 text-xs text-slate-500 max-w-xs">{deviceMsg}</p>
+          ) : null}
+        </>
       )}
 
       {(status === 'expired' || status === 'error') && (

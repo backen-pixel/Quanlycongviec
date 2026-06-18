@@ -3,10 +3,10 @@
  */
 import {
   mediaDevices,
+  MediaStream,
   RTCPeerConnection,
   RTCSessionDescription,
   RTCIceCandidate,
-  type MediaStream,
 } from 'react-native-webrtc';
 import type { Socket } from 'socket.io-client';
 import { Platform } from 'react-native';
@@ -59,7 +59,7 @@ async function applySignal(
   }
 }
 
-export type GroupPeerInfo = { userId: string; name: string };
+export type GroupPeerInfo = { userId: string; name: string; remoteStream?: MediaStream | null };
 
 export type GroupJoinRequest = {
   requesterId: string;
@@ -67,7 +67,12 @@ export type GroupJoinRequest = {
   requestedAt?: number;
 };
 
-type PeerEntry = { pc: RTCPeerConnection; pending: RTCIceCandidateInit[]; name: string };
+type PeerEntry = {
+  pc: RTCPeerConnection;
+  pending: RTCIceCandidateInit[];
+  name: string;
+  remoteStream: MediaStream;
+};
 
 export class LegacyGroupCallManager {
   private socket: Socket | null = null;
@@ -109,8 +114,21 @@ export class LegacyGroupCallManager {
 
   private syncPeers() {
     this.onPeersChange?.([...this.peersRef.entries()].map(([userId, e]) => ({
-      userId, name: e.name || 'Thành viên',
+      userId,
+      name: e.name || 'Thành viên',
+      remoteStream: e.remoteStream,
     })));
+  }
+
+  private attachLocalTracksToPeers() {
+    const stream = this.localStreamRef.current;
+    if (!stream) return;
+    for (const entry of this.peersRef.values()) {
+      const senders = typeof entry.pc.getSenders === 'function' ? entry.pc.getSenders() : [];
+      if (!senders.length) {
+        stream.getTracks().forEach((t) => entry.pc.addTrack(t as never, stream as never));
+      }
+    }
   }
 
   private syncJoinRequests() {
@@ -149,9 +167,10 @@ export class LegacyGroupCallManager {
     let entry = this.peersRef.get(peerId);
     if (entry) return entry;
     const pending: RTCIceCandidateInit[] = [];
+    const remoteStream = new MediaStream();
     const pc = new RTCPeerConnection({ iceServers: [] });
     void getIceServers().then((ice) => { pc.setConfiguration({ iceServers: ice }); });
-    entry = { pc, pending, name };
+    entry = { pc, pending, name, remoteStream };
     this.peersRef.set(peerId, entry);
     this.syncPeers();
     pc.onicecandidate = (e) => {
@@ -161,6 +180,21 @@ export class LegacyGroupCallManager {
           signal: { type: 'candidate', candidate: e.candidate },
         });
       }
+    };
+    pc.ontrack = (e: { track?: { kind?: string }; streams?: MediaStream[] }) => {
+      const track = e.track;
+      if (track) {
+        try { remoteStream.addTrack(track as never); } catch { /* noop */ }
+        this.syncPeers();
+      }
+      e.streams?.[0]?.getTracks().forEach((t) => {
+        try {
+          if (!remoteStream.getTracks().some((rt) => rt.id === t.id)) {
+            remoteStream.addTrack(t as never);
+          }
+        } catch { /* noop */ }
+      });
+      if (e.streams?.[0]) this.syncPeers();
     };
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'connected') {
@@ -241,7 +275,10 @@ export class LegacyGroupCallManager {
     kind?: string; hostId?: string; hostName?: string;
   }) {
     const socket = this.socket;
-    if (!socket || !info?.callId || this.isBusy()) return;
+    if (!socket || !info?.callId) return;
+    const cur = this.sessionRef.current;
+    if (this.isBusy() && cur?.callId !== info.callId) return;
+    if (cur?.callId === info.callId && (cur.state === 'CONNECTING' || cur.state === 'CONNECTED')) return;
     const media: CallMedia = info.kind === 'video' ? 'video' : 'audio';
     const session: CallSession = {
       callId: info.callId,
@@ -251,7 +288,7 @@ export class LegacyGroupCallManager {
       peer: { id: info.hostId || '', name: info.hostName || 'Chủ phòng' },
       direction: 'outgoing',
       media,
-      state: 'RINGING',
+      state: 'CONNECTING',
       connectedAt: null,
       isMuted: false,
       isSpeaker: media === 'video',
@@ -262,7 +299,17 @@ export class LegacyGroupCallManager {
     };
     this.sessionRef.current = session;
     this.setSession(session);
-    socket.emit('call:group_request_join', { callId: info.callId });
+    void (async () => {
+      try {
+        await this.ensureLocal(media);
+        this.attachLocalTracksToPeers();
+        socket.emit('call:group_request_join', { callId: info.callId });
+      } catch (e: any) {
+        this.patchSession({ error: e?.message || 'Không truy cập mic', state: 'ENDED' });
+        this.reset();
+        this.setSession(null);
+      }
+    })();
   }
 
   applyIncomingFromPush(payload: {
@@ -321,9 +368,10 @@ export class LegacyGroupCallManager {
     void dismissIncomingCallNotification(cur.callId);
     this.patchSession({ state: 'CONNECTING' });
     setCallSession(cur.callId, 'connecting');
-    socket.emit('call:group_join', { callId: cur.callId });
     try {
       await this.ensureLocal(cur.media);
+      this.attachLocalTracksToPeers();
+      socket.emit('call:group_join', { callId: cur.callId });
     } catch (e: any) {
       this.patchSession({ error: e?.message || 'Không truy cập mic' });
       socket.emit('call:reject', { callId: cur.callId, reason: 'rejected' });
@@ -401,18 +449,28 @@ export class LegacyGroupCallManager {
       if (!p?.isGroup || !p.callId) return;
       this.presentIncoming(p);
     };
-    const onParticipants = ({ callId, participants }: any) => {
+    const onParticipants = async ({ callId, participants }: any) => {
       const cur = this.sessionRef.current;
       if (!cur || cur.mode !== 'group' || cur.callId !== callId) return;
+      this.clearTimer();
+      this.patchSession({ state: 'CONNECTING', joinPending: false });
+      try {
+        await this.ensureLocal(cur.media);
+        this.attachLocalTracksToPeers();
+      } catch { return; }
       for (const p of participants || []) {
         if (String(p.userId) === this.uid) continue;
         void this.offerTo(callId, String(p.userId), p.name || '', cur.media);
       }
     };
-    const onJoined = ({ callId, userId, name }: any) => {
+    const onJoined = async ({ callId, userId, name }: any) => {
       const cur = this.sessionRef.current;
       if (!cur || cur.mode !== 'group' || cur.callId !== callId || !userId) return;
       if (String(userId) === this.uid) return;
+      try {
+        await this.ensureLocal(cur.media);
+        this.attachLocalTracksToPeers();
+      } catch { return; }
       void this.offerTo(callId, String(userId), name || '', cur.media);
       if (cur.direction === 'outgoing' && cur.state === 'RINGING') {
         this.clearTimer();
@@ -424,6 +482,7 @@ export class LegacyGroupCallManager {
       if (!cur || cur.mode !== 'group' || cur.callId !== callId || !fromUserId || !signal) return;
       const pid = String(fromUserId);
       const entry = this.getOrCreatePc(callId, pid, '', cur.media);
+      this.attachLocalTracksToPeers();
       await applySignal(entry.pc, entry.pending, signal, (reply) => {
         socket.emit('call:signal', { callId, toUserId: pid, signal: reply });
       });

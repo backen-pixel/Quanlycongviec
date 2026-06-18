@@ -597,20 +597,30 @@ io.on('connection', (socket) => {
     const call = activeGroupCalls.get(callId);
     if (!call) return;
     const myName = socket.user?.fullName || socket.user?.full_name || 'Thành viên';
-    const existingIds = [...call.participants.keys()].filter((id) => id !== uid);
-    const existing = existingIds.map((id) => ({ userId: id, name: call.participants.get(id)?.name || '' }));
+    admitUserToGroupCall(call, callId, uid, socket, myName);
+  });
+
+  /** Cho user vào phòng mesh — dùng chung cho group_join và request_join (đã mời). */
+  function admitUserToGroupCall(call, callId, uid, joiningSocket, myName) {
+    const u = String(uid);
+    call.pendingJoinRequests?.delete(u);
+    const existingIds = [...call.participants.keys()].filter((id) => id !== u);
+    const existing = existingIds.map((id) => ({
+      userId: id,
+      name: call.participants.get(id)?.name || '',
+    }));
     const prevSize = call.participants.size;
-    call.participants.set(uid, { name: myName, joinedAt: Date.now() });
+    if (!call.participants.has(u)) {
+      call.participants.set(u, { name: myName, joinedAt: Date.now() });
+    }
     if (!call.connectedAt && call.participants.size >= 2 && prevSize < 2) {
       call.connectedAt = Date.now();
     }
-    // Báo cho người mới biết ai đang có trong cuộc — để họ chờ offer từ các participants này
-    socket.emit('call:group_participants', { callId, participants: existing, hostId: call.hostId });
-    // Báo cho mọi người khác biết có thành viên mới → họ sẽ tạo offer
+    joiningSocket.emit('call:group_participants', { callId, participants: existing, hostId: call.hostId });
     existingIds.forEach((pid) => {
-      io.to(`user:${pid}`).emit('call:group_member_joined', { callId, userId: uid, name: myName });
+      io.to(`user:${pid}`).emit('call:group_member_joined', { callId, userId: u, name: myName });
     });
-  });
+  }
 
   /**
    * Khi user rời cuộc gọi nhóm. Hỗ trợ cả reject (chưa join) lẫn leave (đã join).
@@ -727,16 +737,8 @@ io.on('connection', (socket) => {
     const isInvited = call.invitedIds?.has(String(uid));
 
     if (isInvited) {
-      // Đã được host mời từ đầu nhưng từng từ chối / chưa kịp accept → cho vào thẳng.
-      socket.emit('call:incoming', {
-        callId,
-        kind: call.kind,
-        isGroup: true,
-        groupId: call.groupId,
-        groupName: call.groupName,
-        fromUserId: call.hostId,
-        fromName: call.participants.get(call.hostId)?.name || 'Người gọi',
-      });
+      // Đã được host mời — vào thẳng (banner «Tham gia» / bấm lại sau khi bỏ lỡ).
+      admitUserToGroupCall(call, callId, uid, socket, myName);
       return;
     }
 
