@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api, formatApiError } from '../api/client';
+import { getQrDeviceInfo, formatQrDeviceLabel } from '../lib/qrDeviceInfo';
 import type { RootStackParamList } from '../navigation/types';
 import { Radii, useColors, type ThemeColors } from '../theme';
 
@@ -42,15 +43,24 @@ export default function QrScanScreen({ navigation }: Props) {
       setMessage('Mã QR không hợp lệ.');
       return;
     }
+    if (parsed.target !== 'web') {
+      setMessage('Đây là mã đăng nhập app. Trên app: Đăng nhập → tab QR → quét mã từ web.');
+      return;
+    }
     busyRef.current = true;
     setPhase('confirming');
+    const dev = getQrDeviceInfo();
     try {
-      await api.post('/auth/qr/confirm', { sessionId: parsed.id, qrText });
+      const { data } = await api.post<{
+        message?: string;
+        confirmerDevice?: { device_name?: string };
+        targetLabel?: string;
+      }>('/auth/qr/confirm', { sessionId: parsed.id, qrText, ...dev });
       setPhase('done');
+      const who = formatQrDeviceLabel(data?.confirmerDevice || dev);
       setMessage(
-        parsed.target === 'web'
-          ? 'Đã xác nhận đăng nhập web.'
-          : 'Đã xác nhận đăng nhập app.',
+        data?.message
+          || `${who} đã xác nhận đăng nhập ${data?.targetLabel || 'web'}. Thiết bị web sẽ nhận phiên trong giây lát.`,
       );
     } catch (e) {
       setPhase('error');
@@ -107,7 +117,7 @@ export default function QrScanScreen({ navigation }: Props) {
             barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
             onBarcodeScanned={onBarcode}
           />
-          <Text style={styles.scanHint}>Hướng camera vào mã QR trên màn hình đăng nhập</Text>
+          <Text style={styles.scanHint}>Hướng camera vào mã QR trên trang đăng nhập web</Text>
         </View>
       ) : (
         <View style={[styles.center, { flex: 1, padding: 24 }]}>

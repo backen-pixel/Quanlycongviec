@@ -1,10 +1,25 @@
 const crypto = require('crypto');
 const { supabase } = require('../config/supabase');
 const { buildAuthSessionForUser } = require('./authSession');
-const { logAuthEvent } = require('./authEventLog');
+const { logAuthEvent, parseDevice } = require('./authEventLog');
 
 const TTL_MS = 120_000;
+const CONSUMED_TTL_MS = 60_000;
 const sessions = new Map();
+
+function deviceFromReq(req, body = {}) {
+  const ua = parseDevice(req?.headers?.['user-agent']);
+  const name = body?.device_name || req?.headers?.['x-device-name'];
+  const platform = body?.platform || req?.headers?.['x-device-platform'];
+  return {
+    platform: platform ? String(platform).slice(0, 40) : ua.platform,
+    device_name: name ? String(name).slice(0, 160) : ua.device_name,
+  };
+}
+
+function targetLabel(target) {
+  return target === 'app' ? 'ứng dụng mobile' : 'trình duyệt web';
+}
 
 function genSessionId() {
   return `qr_${Date.now().toString(36)}_${crypto.randomBytes(8).toString('hex')}`;
@@ -18,7 +33,9 @@ function pruneExpired() {
 }
 
 /**
- * @param {'web'|'app'} target — thiết bị cần đăng nhập (web hiện QR → target web; app hiện QR → target app)
+ * @param {'web'|'app'} target — thiết bị sẽ nhận phiên đăng nhập sau khi xác nhận
+ *   - web: trang đăng nhập web hiện QR → app đã đăng nhập quét xác nhận
+ *   - app: web đã đăng nhập hiện QR (create-invite) → app quét và poll token
  */
 function createQrSession(target) {
   pruneExpired();
@@ -76,7 +93,7 @@ function parseQrText(raw) {
 /**
  * Thiết bị đã đăng nhập xác nhận phiên QR của thiết bị kia.
  */
-async function confirmQrSession(sessionId, confirmerUserId, req) {
+async function confirmQrSession(sessionId, confirmerUserId, req, extra = {}) {
   const session = getSession(sessionId);
   if (!session) return { error: 'Mã QR hết hạn hoặc không hợp lệ', status: 404 };
   if (session.status !== 'pending') return { error: 'Mã QR đã được dùng', status: 409 };
@@ -98,6 +115,7 @@ async function confirmQrSession(sessionId, confirmerUserId, req) {
   session.status = 'confirmed';
   session.userId = user.id;
   session.confirmedBy = confirmerUserId;
+  session.confirmerDevice = deviceFromReq(req, extra);
   session.auth = auth;
 
   void logAuthEvent({
@@ -106,24 +124,62 @@ async function confirmQrSession(sessionId, confirmerUserId, req) {
     email: user.email,
     session_id: auth.session_id,
     reason: `qr_${session.target}`,
+    metadata: {
+      qr_target: session.target,
+      confirmer_device: session.confirmerDevice,
+    },
     req,
   });
 
   return { session, auth };
 }
 
-function consumeSessionAuth(sessionId) {
+function consumeSessionAuth(sessionId, req, extra = {}) {
   const session = getSession(sessionId);
   if (!session) return { status: 'expired' };
-  if (session.status === 'pending') return { status: 'pending', expiresAt: session.expiresAt };
+  if (session.status === 'pending') {
+    return { status: 'pending', expiresAt: session.expiresAt };
+  }
+  if (session.status === 'consumed') {
+    return {
+      status: 'consumed',
+      qrTarget: session.target,
+      loginDevice: session.consumerDevice || null,
+      confirmerDevice: session.confirmerDevice || null,
+    };
+  }
   if (session.status === 'confirmed' && session.auth) {
     const auth = session.auth;
+    const loginDevice = deviceFromReq(req, extra);
+    session.consumerDevice = loginDevice;
     session.status = 'consumed';
     session.auth = null;
-    sessions.delete(sessionId);
-    return { status: 'confirmed', ...auth };
+    session.consumedAt = Date.now();
+    setTimeout(() => {
+      if (sessions.get(sessionId)?.status === 'consumed') sessions.delete(sessionId);
+    }, CONSUMED_TTL_MS);
+    return {
+      status: 'confirmed',
+      ...auth,
+      qrTarget: session.target,
+      loginDevice,
+      confirmerDevice: session.confirmerDevice || null,
+    };
   }
   return { status: 'expired' };
+}
+
+function getSessionPublicInfo(sessionId) {
+  const session = getSession(sessionId);
+  if (!session) return { status: 'expired' };
+  return {
+    status: session.status,
+    target: session.target,
+    targetLabel: targetLabel(session.target),
+    expiresAt: session.expiresAt,
+    confirmerDevice: session.confirmerDevice || null,
+    consumerDevice: session.consumerDevice || null,
+  };
 }
 
 module.exports = {
@@ -132,4 +188,7 @@ module.exports = {
   parseQrText,
   confirmQrSession,
   consumeSessionAuth,
+  getSessionPublicInfo,
+  targetLabel,
+  deviceFromReq,
 };

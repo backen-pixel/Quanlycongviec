@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
-import QrLoginPanel from '../components/qr/QrLoginPanel';
+import QrLoginScanner from '../components/qr/QrLoginScanner';
 import { useAuth, type AuthUser } from '../context/AuthContext';
 import { CreateGradient, Radii, useColors, type ThemeColors } from '../theme';
 
@@ -87,7 +87,7 @@ export default function LoginScreen() {
         </View>
 
         {mode === 'qr' ? (
-          <QrLoginPanel target="app" onSuccess={onQrSuccess} />
+          <QrLoginScanner onSuccess={onQrSuccess} />
         ) : (
           <>
             <View style={styles.field}>
