@@ -3,6 +3,7 @@
  * Hỏi server /api/app-updates/check, tải APK và mở trình cài đặt Android.
  */
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 import * as Application from 'expo-application';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -25,15 +26,39 @@ export type UpdateCheckResult = {
   needsUpdate?: boolean;
 };
 
+const UPDATE_PENDING_CODE_KEY = '@crmv2_update_pending_code';
+const UPDATE_PENDING_VERSION_KEY = '@crmv2_update_pending_version';
+const UPDATE_DISMISSED_CODE_KEY = '@crmv2_update_dismissed_code';
+const UPDATE_DISMISSED_VERSION_KEY = '@crmv2_update_dismissed_version';
+
+/** So sánh semver đơn giản — khớp backend appUpdates.js */
+export function compareVersionNames(a: string, b: string): number {
+  const pa = String(a || '').trim().split('.').map((x) => parseInt(x, 10) || 0);
+  const pb = String(b || '').trim().split('.').map((x) => parseInt(x, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const da = pa[i] || 0;
+    const db = pb[i] || 0;
+    if (da !== db) return da - db;
+  }
+  return 0;
+}
+
 export function currentVersionCode(): number | null {
   if (Platform.OS !== 'android') return null;
+
   const raw = String(Application.nativeBuildVersion ?? '').trim();
-  if (!raw) return null;
-  // Android versionCode là số nguyên; tránh parseInt("2.0.43") === 2
   if (/^\d+$/.test(raw)) {
     const n = parseInt(raw, 10);
-    return Number.isFinite(n) ? n : null;
+    if (Number.isFinite(n)) return n;
   }
+
+  const fromConfig = Constants.expoConfig?.android?.versionCode;
+  if (typeof fromConfig === 'number' && Number.isFinite(fromConfig)) return fromConfig;
+  if (typeof fromConfig === 'string' && /^\d+$/.test(fromConfig)) {
+    return parseInt(fromConfig, 10);
+  }
+
   return null;
 }
 
@@ -41,8 +66,70 @@ export function currentVersionName(): string {
   return Application.nativeApplicationVersion || '';
 }
 
-const UPDATE_PENDING_CODE_KEY = '@crmv2_update_pending_code';
-const UPDATE_PENDING_VERSION_KEY = '@crmv2_update_pending_version';
+export function isUpToDate(res: UpdateCheckResult): boolean {
+  if (res.needsUpdate === false) return true;
+  if (!res.updateAvailable && res.needsUpdate !== true) return true;
+
+  const localCode = currentVersionCode();
+  const localVer = currentVersionName();
+  const latestCode = res.latestVersionCode ?? null;
+  const latestVer = res.latestVersion ?? null;
+
+  if (localCode != null && latestCode != null && localCode >= latestCode) return true;
+  if (localVer && latestVer && compareVersionNames(localVer, latestVer) >= 0) return true;
+  return false;
+}
+
+export async function dismissUpdateForRelease(res: UpdateCheckResult): Promise<void> {
+  try {
+    const code = res.latestVersionCode;
+    const ver = (res.latestVersion || '').trim();
+    const ops: Promise<void>[] = [];
+    if (code != null && Number.isFinite(code)) {
+      ops.push(AsyncStorage.setItem(UPDATE_DISMISSED_CODE_KEY, String(code)));
+    }
+    if (ver) ops.push(AsyncStorage.setItem(UPDATE_DISMISSED_VERSION_KEY, ver));
+    await Promise.all(ops);
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function clearDismissedUpdate(): Promise<void> {
+  try {
+    await Promise.all([
+      AsyncStorage.removeItem(UPDATE_DISMISSED_CODE_KEY),
+      AsyncStorage.removeItem(UPDATE_DISMISSED_VERSION_KEY),
+    ]);
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function shouldSuppressUpdateModal(res: UpdateCheckResult): Promise<boolean> {
+  try {
+    const [dismissedCodeRaw, dismissedVer, pendingCodeRaw, pendingVer] = await Promise.all([
+      AsyncStorage.getItem(UPDATE_DISMISSED_CODE_KEY),
+      AsyncStorage.getItem(UPDATE_DISMISSED_VERSION_KEY),
+      AsyncStorage.getItem(UPDATE_PENDING_CODE_KEY),
+      AsyncStorage.getItem(UPDATE_PENDING_VERSION_KEY),
+    ]);
+
+    const latestCode = res.latestVersionCode != null ? String(res.latestVersionCode) : '';
+    const latestVer = (res.latestVersion || '').trim();
+
+    if (dismissedCodeRaw && latestCode && dismissedCodeRaw === latestCode) return true;
+    if (dismissedVer && latestVer && dismissedVer === latestVer) return true;
+
+    // Đã mở màn cài — không chặn modal lại cho tới khi app khởi động lại với bản mới
+    if (pendingCodeRaw && latestCode && pendingCodeRaw === latestCode) return true;
+    if (pendingVer && latestVer && pendingVer === latestVer) return true;
+
+    return false;
+  } catch {
+    return false;
+  }
+}
 
 export async function checkForUpdate(): Promise<UpdateCheckResult> {
   if (Platform.OS !== 'android') return { updateAvailable: false };
@@ -209,6 +296,11 @@ export async function openDownloadedApk(
   if (Platform.OS !== 'android') throw new Error('Chỉ hỗ trợ Android');
   const contentUri = await FileSystem.getContentUriAsync(apkUri);
   await markPendingUpdateInstall(opts);
+  await dismissUpdateForRelease({
+    updateAvailable: true,
+    latestVersion: opts.version,
+    latestVersionCode: opts.versionCode,
+  });
   await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
     data: contentUri,
     flags: 1,
@@ -250,13 +342,18 @@ export async function consumeUpdateSuccessMessage(): Promise<string | null> {
       currentCode != null &&
       Number.isFinite(currentCode) &&
       currentCode >= pendingCode;
-    const okByVersion = !!pendingVer && !!currentVer && pendingVer === currentVer;
+    const okByVersion =
+      !!pendingVer &&
+      !!currentVer &&
+      (pendingVer === currentVer || compareVersionNames(currentVer, pendingVer) >= 0);
 
     if (!okByCode && !okByVersion) return null;
 
     await Promise.all([
       AsyncStorage.removeItem(UPDATE_PENDING_CODE_KEY),
       AsyncStorage.removeItem(UPDATE_PENDING_VERSION_KEY),
+      AsyncStorage.removeItem(UPDATE_DISMISSED_CODE_KEY),
+      AsyncStorage.removeItem(UPDATE_DISMISSED_VERSION_KEY),
     ]);
     return `Đã cập nhật thành công lên phiên bản ${currentVer || pendingVer || ''}`.trim();
   } catch {
