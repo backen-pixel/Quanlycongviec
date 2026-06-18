@@ -47,16 +47,17 @@ export function compareVersionNames(a: string, b: string): number {
 export function currentVersionCode(): number | null {
   if (Platform.OS !== 'android') return null;
 
-  const raw = String(Application.nativeBuildVersion ?? '').trim();
-  if (/^\d+$/.test(raw)) {
-    const n = parseInt(raw, 10);
-    if (Number.isFinite(n)) return n;
-  }
+  const candidates = [
+    Application.nativeBuildVersion,
+    Constants.nativeBuildVersion,
+    Constants.expoConfig?.android?.versionCode,
+  ];
 
-  const fromConfig = Constants.expoConfig?.android?.versionCode;
-  if (typeof fromConfig === 'number' && Number.isFinite(fromConfig)) return fromConfig;
-  if (typeof fromConfig === 'string' && /^\d+$/.test(fromConfig)) {
-    return parseInt(fromConfig, 10);
+  for (const c of candidates) {
+    const raw = String(c ?? '').trim();
+    if (!/^\d+$/.test(raw)) continue;
+    const n = parseInt(raw, 10);
+    if (Number.isFinite(n) && n > 0) return n;
   }
 
   return null;
@@ -67,16 +68,17 @@ export function currentVersionName(): string {
 }
 
 export function isUpToDate(res: UpdateCheckResult): boolean {
-  if (res.needsUpdate === false) return true;
-  if (!res.updateAvailable && res.needsUpdate !== true) return true;
-
   const localCode = currentVersionCode();
   const localVer = currentVersionName();
   const latestCode = res.latestVersionCode ?? null;
   const latestVer = res.latestVersion ?? null;
 
-  if (localCode != null && latestCode != null && localCode >= latestCode) return true;
+  // Ưu tiên đọc phiên bản trên máy — không tin server nếu local đã >= latest.
   if (localVer && latestVer && compareVersionNames(localVer, latestVer) >= 0) return true;
+  if (localCode != null && latestCode != null && localCode >= latestCode) return true;
+
+  if (res.needsUpdate === false) return true;
+  if (!res.updateAvailable && res.needsUpdate !== true) return true;
   return false;
 }
 
@@ -100,6 +102,8 @@ export async function clearDismissedUpdate(): Promise<void> {
     await Promise.all([
       AsyncStorage.removeItem(UPDATE_DISMISSED_CODE_KEY),
       AsyncStorage.removeItem(UPDATE_DISMISSED_VERSION_KEY),
+      AsyncStorage.removeItem(UPDATE_PENDING_CODE_KEY),
+      AsyncStorage.removeItem(UPDATE_PENDING_VERSION_KEY),
     ]);
   } catch {
     /* ignore */

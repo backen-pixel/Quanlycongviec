@@ -146,14 +146,18 @@ function clientNeedsUpdate(clientCode, clientVersion, latest) {
   const latestVer = String(latest.version || '').trim();
   const clientVer = String(clientVersion || '').trim();
 
-  if (Number.isFinite(clientCode) && latestCode != null) {
-    if (clientCode >= latestCode) return false;
-  } else if (clientVer && latestVer) {
-    if (compareVersionNames(clientVer, latestVer) >= 0) return false;
+  // Tên phiên bản đã khớp / mới hơn → coi là đã cập nhật (tránh loop khi versionCode lệch tên).
+  if (clientVer && latestVer) {
+    const byName = compareVersionNames(clientVer, latestVer);
+    if (byName >= 0) return false;
   }
 
-  if (Number.isFinite(clientCode) && latestCode != null && clientCode < latestCode) return true;
+  if (Number.isFinite(clientCode) && latestCode != null) {
+    if (clientCode >= latestCode) return false;
+  }
+
   if (clientVer && latestVer && compareVersionNames(clientVer, latestVer) < 0) return true;
+  if (Number.isFinite(clientCode) && latestCode != null && clientCode < latestCode) return true;
   return false;
 }
 

@@ -17,6 +17,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   checkForUpdate,
+  clearDismissedUpdate,
   consumeUpdateSuccessMessage,
   dismissUpdateForRelease,
   downloadApkToCache,
@@ -66,9 +67,11 @@ export default function UpdateGate() {
       lastCheckAt.current = Date.now();
 
       if (isUpToDate(res)) {
+        await clearDismissedUpdate();
         setInfo(null);
         setVisible(false);
         setBannerVisible(false);
+        setReadyUri(null);
         return;
       }
 
