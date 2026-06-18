@@ -590,7 +590,7 @@ export default function ZaloPage() {
 
       <div
         className={`flex-1 min-h-0 flex flex-col ${
-          tab === 'inbox' ? 'p-3 sm:p-4 bg-gradient-to-b from-sky-50/30 to-gray-50/50' : 'p-4 sm:p-5 bg-gray-50/40'
+          tab === 'inbox' ? 'px-3 pt-3 pb-0 sm:px-4 sm:pt-4 bg-gradient-to-b from-sky-50/30 to-gray-50/50' : 'p-4 sm:p-5 bg-gray-50/40'
         } ${tab === 'inbox' || tab === 'contacts' ? 'overflow-hidden' : 'overflow-y-auto'}`}
       >
 
@@ -637,7 +637,7 @@ export default function ZaloPage() {
 
       {tab === 'inbox' && (
         <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-        <div className="flex flex-col lg:flex-row flex-1 min-h-0 overflow-hidden rounded-2xl bg-white shadow-xl shadow-sky-100/50 ring-1 ring-sky-100/80">
+        <div className="flex flex-col lg:flex-row flex-1 min-h-0 overflow-hidden rounded-t-2xl rounded-b-none bg-white shadow-xl shadow-sky-100/50 ring-1 ring-sky-100/80 ring-b-0">
           {/* Sidebar liên hệ */}
           <div className="flex flex-col border-b lg:border-b-0 lg:border-r border-gray-100 bg-gradient-to-b from-white to-sky-50/20 min-h-0 shrink-0 max-h-[36vh] lg:max-h-none lg:w-[min(340px,34%)] lg:max-w-[340px] lg:h-full overflow-hidden">
             <div className="px-3 pt-3 pb-2 border-b border-gray-100 shrink-0 bg-white/80 backdrop-blur-sm">
@@ -817,7 +817,7 @@ export default function ZaloPage() {
                   <div ref={messagesEndRef} />
                 </div>
 
-                <div className="mt-auto shrink-0 border-t border-sky-100 bg-white shadow-[0_-4px_20px_rgba(0,104,255,0.06)] px-4 pt-2.5 pb-3">
+                <div className="mt-auto shrink-0 border-t border-sky-100 bg-white shadow-[0_-4px_20px_rgba(0,104,255,0.06)] px-4 pt-2.5 pb-4">
                   <div className="flex gap-2 items-center">
                     <input
                       value={reply}
