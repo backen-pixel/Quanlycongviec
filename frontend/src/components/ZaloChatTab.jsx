@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Send, RefreshCw, ExternalLink, UserCircle } from 'lucide-react';
 import { useAuth } from '../lib/auth';
+import UploadFileLightbox, { collectMessageImageGallery, findUploadLightboxIndex } from './UploadFileLightbox';
 
 const API = import.meta.env.VITE_API_URL || '';
 const hdr = () => ({
@@ -30,6 +31,7 @@ export default function ZaloChatTab({ leadId }) {
   const [syncingProfile, setSyncingProfile] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
+  const [imageLightboxIndex, setImageLightboxIndex] = useState(null);
   const messagesEndRef = useRef(null);
   const contactRef = useRef(null);
   contactRef.current = contact;
@@ -43,6 +45,8 @@ export default function ZaloChatTab({ leadId }) {
       return true;
     });
   }, [messages]);
+
+  const chatImageGallery = useMemo(() => collectMessageImageGallery(uniqueMessages), [uniqueMessages]);
 
   const syncProfile = useCallback(async (contactId) => {
     if (!contactId) return null;
@@ -245,14 +249,23 @@ export default function ZaloChatTab({ leadId }) {
                       : 'bg-gray-100 text-gray-800 rounded-bl-md'
                   }`}
                 >
-                  {m.attachment_url && m.message_type === 'image' && (
-                    <img
-                      src={m.attachment_url}
-                      className="max-w-[240px] rounded-xl mb-1 cursor-pointer"
-                      alt=""
-                      onClick={() => window.open(m.attachment_url, '_blank')}
-                    />
-                  )}
+                  {m.attachment_url && m.message_type === 'image' ? (
+                    <button
+                      type="button"
+                      className="block max-w-[240px] rounded-xl mb-1 overflow-hidden cursor-zoom-in focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
+                      onClick={() => {
+                        const idx = findUploadLightboxIndex(chatImageGallery, m.attachment_url);
+                        if (idx >= 0) setImageLightboxIndex(idx);
+                      }}
+                      title="Xem ảnh lớn"
+                    >
+                      <img
+                        src={m.attachment_url}
+                        className="max-w-[240px] rounded-xl hover:brightness-95 transition-[filter]"
+                        alt=""
+                      />
+                    </button>
+                  ) : null}
                   {m.content && (
                     <p className="text-[13px] leading-relaxed whitespace-pre-wrap break-words">{m.content}</p>
                   )}
@@ -287,6 +300,15 @@ export default function ZaloChatTab({ leadId }) {
         </div>
         <p className="text-[10px] text-gray-400 mt-1.5">Tin tư vấn Zalo OA — khách phải nhắn trước trong vòng 7 ngày.</p>
       </div>
+
+      {imageLightboxIndex != null && chatImageGallery.length > 0 && (
+        <UploadFileLightbox
+          items={chatImageGallery}
+          index={imageLightboxIndex}
+          onIndexChange={setImageLightboxIndex}
+          onClose={() => setImageLightboxIndex(null)}
+        />
+      )}
     </div>
   );
 }
