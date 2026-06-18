@@ -33,6 +33,21 @@ function Sync-AndroidVersionFromAppJson {
 
 Sync-AndroidVersionFromAppJson
 
+function Set-Arm64OnlyApk {
+  $gp = Join-Path $root 'android\gradle.properties'
+  if (-not (Test-Path $gp)) { return }
+  $content = Get-Content $gp -Raw
+  if ($content -match 'reactNativeArchitectures=arm64-v8a(\r?\n|$)') {
+    Write-Host '>> ABI: arm64-v8a only (already set)'
+    return
+  }
+  $content = $content -replace 'reactNativeArchitectures=.*', 'reactNativeArchitectures=arm64-v8a'
+  Set-Content -Path $gp -Value $content -NoNewline
+  Write-Host '>> ABI: arm64-v8a only (giảm kích thước APK cho upload server)'
+}
+
+Set-Arm64OnlyApk
+
 Write-Host '>> gradlew assembleRelease...'
 Set-Location android
 .\gradlew.bat assembleRelease --no-daemon

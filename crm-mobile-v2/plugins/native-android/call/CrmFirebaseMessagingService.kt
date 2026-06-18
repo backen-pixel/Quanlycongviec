@@ -2,20 +2,18 @@ package vn.tubeppro.crmobilev2.call
 
 import android.content.Context
 import android.content.Intent
-import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import expo.modules.notifications.service.ExpoFirebaseMessagingService
 
 /**
- * Bước 6–7 trong luồng cuộc gọi khi app tắt:
- * FCM data-only → onMessageReceived → hiện màn hình cuộc gọi + chuông.
+ * FCM: cuộc gọi đến (incoming_call) khi app tắt / nền + chuyển tiếp cho expo-notifications.
  */
-class CrmFirebaseMessagingService : FirebaseMessagingService() {
+class CrmFirebaseMessagingService : ExpoFirebaseMessagingService() {
 
-  override fun onMessageReceived(message: RemoteMessage) {
-    val data = message.data
-    if (data.isEmpty()) return
-    val call = IncomingCallHelper.fromFcmData(data) ?: return
-    IncomingCallHelper.showIncomingCall(applicationContext, call)
+  override fun onMessageReceived(remoteMessage: RemoteMessage) {
+    val data = remoteMessage.data
+    if (handleIncomingCall(data)) return
+    super.onMessageReceived(remoteMessage)
   }
 
   override fun handleIntent(intent: Intent?) {
@@ -25,11 +23,7 @@ class CrmFirebaseMessagingService : FirebaseMessagingService() {
         val v = intent.extras!!.get(key)?.toString() ?: continue
         data[key] = v
       }
-      val call = IncomingCallHelper.fromFcmData(data)
-      if (call != null) {
-        IncomingCallHelper.showIncomingCall(applicationContext, call)
-        return
-      }
+      if (handleIncomingCall(data)) return
     }
     super.handleIntent(intent)
   }
@@ -43,5 +37,11 @@ class CrmFirebaseMessagingService : FirebaseMessagingService() {
       .putString(IncomingCallHelper.FCM_TOKEN_KEY, trimmed)
       .apply()
     PushTokenRegistrar.registerAsync(applicationContext, trimmed)
+  }
+
+  private fun handleIncomingCall(data: Map<String, String>): Boolean {
+    val call = IncomingCallHelper.fromFcmData(data) ?: return false
+    IncomingCallHelper.showIncomingCall(applicationContext, call)
+    return true
   }
 }

@@ -31,9 +31,10 @@ import { SignalingClient } from './SignalingClient';
 import { WebRTCService } from './WebRTCService';
 import { getIceServers } from './turnConfig';
 import {
-  CALL_TIMEOUT_MS, RECONNECT_TIMEOUT_MS,
+  CALL_TIMEOUT_MS, RECONNECT_TIMEOUT_MS, isActiveState,
   type CallMedia, type CallPeer, type CallSession, type CallState,
 } from './types';
+import { startIncomingCallAlert, stopIncomingCallAlert } from '../lib/callRingtone';
 
 type Ctx = {
   session: CallSession | null;
@@ -93,6 +94,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const teardown = useCallback((finalState: CallState) => {
     const s = sessionRef.current;
     clearTimers();
+    void stopIncomingCallAlert();
     try { rtcRef.current?.close(); } catch { /* noop */ }
     rtcRef.current = null;
     setLocalStream(null);
@@ -161,7 +163,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
   // ─── Caller ───
   const startCall = useCallback(async (peer: CallPeer, media: CallMedia = 'audio') => {
-    if (sessionRef.current && sessionRef.current.state !== 'IDLE') return; // đang có cuộc gọi
+    if (sessionRef.current && isActiveState(sessionRef.current.state)) return; // đang có cuộc gọi
     const callId = genCallId();
     const next: CallSession = {
       callId, peer, direction: 'outgoing', media, state: 'RINGING',
@@ -219,8 +221,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   // ─── Incoming (từ socket khi app đang mở) ───
   const presentIncoming = useCallback((p: IncomingCallPayload, media: CallMedia) => {
     if (shouldSuppressIncomingRing(p.callId)) return;
-    // Đang có cuộc gọi khác → tự từ chối busy, không làm phiền.
-    if (sessionRef.current && sessionRef.current.state !== 'IDLE') {
+    if (sessionRef.current && isActiveState(sessionRef.current.state)) {
       signalingRef.current?.rejectCall(p.callId, p.fromUserId, 'busy');
       return;
     }
@@ -234,6 +235,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     };
     sessionRef.current = next; setSession(next);
     setCallSession(p.callId, 'incoming');
+    void startIncomingCallAlert();
     void showIncomingCallNotification({ ...p, kind: media });
   }, []);
 
@@ -252,6 +254,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     // Chặn reo lại NGAY khi bấm nghe (trước cả khi build WebRTC / kiểm tra socket).
     markCallAnswered(cur.callId);
     markNativeCallAnswered(cur.callId);
+    void stopIncomingCallAlert();
     void dismissIncomingCallNotification(cur.callId);
     setState('CONNECTING');
     setCallSession(cur.callId, 'connecting');

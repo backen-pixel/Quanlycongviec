@@ -51,8 +51,17 @@ async function ensureCallCategories() {
 export function parseIncomingCallData(data: unknown): IncomingCallPayload | null {
   if (!data || typeof data !== 'object') return null;
   const d = data as Record<string, unknown>;
-  const meta =
-    d.metadata && typeof d.metadata === 'object' ? (d.metadata as Record<string, unknown>) : null;
+  let meta: Record<string, unknown> | null = null;
+  if (d.metadata && typeof d.metadata === 'object') {
+    meta = d.metadata as Record<string, unknown>;
+  } else if (typeof d.metadata === 'string' && d.metadata.trim()) {
+    try {
+      const parsed = JSON.parse(d.metadata) as unknown;
+      if (parsed && typeof parsed === 'object') meta = parsed as Record<string, unknown>;
+    } catch {
+      /* ignore */
+    }
+  }
   const type = String(d.type || meta?.type || '');
   if (type !== 'incoming_call') return null;
 

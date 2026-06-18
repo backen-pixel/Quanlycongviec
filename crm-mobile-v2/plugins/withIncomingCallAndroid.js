@@ -20,6 +20,7 @@ const CALL_FILES = [
   'call/CallRejectApi.kt',
   'call/CallAcceptApi.kt',
   'call/PushTokenRegistrar.kt',
+  'call/CrmFirebaseMessagingService.kt',
 ];
 
 const RES_FILES = [
@@ -118,6 +119,37 @@ function withIncomingCallManifest(config) {
     };
     addService('.call.IncomingCallRingService', 'mediaPlayback');
     addService('.call.InCallForegroundService', 'microphone');
+
+    // Thay ExpoFirebaseMessagingService mặc định — thêm xử lý incoming_call native.
+    app.service = app.service.filter((s) => {
+      const n = String(s.$?.['android:name'] || '');
+      return n !== '.call.CrmFirebaseMessagingService'
+        && n !== 'vn.tubeppro.crmobilev2.call.CrmFirebaseMessagingService';
+    });
+    const hasRemoveExpo = app.service.some(
+      (s) => s.$?.['android:name'] === 'expo.modules.notifications.service.ExpoFirebaseMessagingService'
+        && s.$?.['tools:node'] === 'remove',
+    );
+    if (!hasRemoveExpo) {
+      app.service.push({
+        $: {
+          'android:name': 'expo.modules.notifications.service.ExpoFirebaseMessagingService',
+          'tools:node': 'remove',
+        },
+      });
+    }
+    if (!app.service.some((s) => String(s.$?.['android:name'] || '').includes('CrmFirebaseMessagingService'))) {
+      app.service.push({
+        $: {
+          'android:name': '.call.CrmFirebaseMessagingService',
+          'android:exported': 'false',
+        },
+        'intent-filter': [{
+          $: { 'android:priority': '1' },
+          action: [{ $: { 'android:name': 'com.google.firebase.MESSAGING_EVENT' } }],
+        }],
+      });
+    }
 
     app.receiver = app.receiver || [];
     if (!app.receiver.some((r) => r.$?.['android:name'] === '.call.IncomingCallActionReceiver')) {
