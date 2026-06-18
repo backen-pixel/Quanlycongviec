@@ -356,6 +356,113 @@ const TIME_PRESETS = [
 ];
 
 const KANBAN_LOAD_OPTIONS = ['500', '1000', '2000', 'all'];
+/** Mặc định 500 — tránh tải «all» gây lag khi mở dashboard. */
+const KANBAN_DEFAULT_LOAD_LIMIT = '500';
+/** Trần khi chọn «Tải tất cả» — tránh vòng lặp API vô hạn. */
+const KANBAN_LOAD_ALL_MAX = 5000;
+/** Query flags — backend trả select nhẹ + bỏ enrich nặng cho Kanban. */
+const CRM_KANBAN_LEAD_QUERY = { kanban: '1', lite: '1' };
+
+/** Tải lead/deal cho Kanban — dùng chung load(), refresh và tải thêm. */
+async function fetchCrmKanbanRowsPage(apiClient, common, kanbanLoadLimit) {
+  const leadParams = { ...CRM_KANBAN_LEAD_QUERY, ...common };
+  const loadAll = String(kanbanLoadLimit ?? '').trim().toLowerCase() === 'all';
+  if (loadAll) {
+    const chunk = 1000;
+    let offset = 0;
+    const out = [];
+    let guard = 0;
+    while (guard < 500 && out.length < KANBAN_LOAD_ALL_MAX) {
+      guard += 1;
+      const res = await apiClient.get('/crm/leads', { params: { ...leadParams, limit: chunk, offset } }).catch(() => ({ data: {} }));
+      const payload = res.data || {};
+      const page = Array.isArray(payload) ? payload : (payload.data || []);
+      out.push(...page);
+      if (page.length === 0) break;
+      if (out.length >= KANBAN_LOAD_ALL_MAX) break;
+      const totalKnown = typeof payload.total === 'number' ? payload.total : null;
+      const nextOffset = typeof payload.nextOffset === 'number' ? payload.nextOffset : offset + page.length;
+      const hasMore =
+        typeof payload.hasMore === 'boolean'
+          ? payload.hasMore
+          : totalKnown != null
+            ? nextOffset < totalKnown
+            : page.length >= chunk;
+      if (!hasMore) break;
+      offset = nextOffset;
+    }
+    return { rows: out, nextOffset: null, total: out.length };
+  }
+  const limit = parseInt(kanbanLoadLimit, 10) || 500;
+  const res = await apiClient.get('/crm/leads', { params: { ...leadParams, limit, offset: 0 } }).catch(() => ({ data: {} }));
+  const d = res.data;
+  const rows = Array.isArray(d) ? d : (d?.data || []);
+  const total = typeof d?.total === 'number' ? d.total : null;
+  const nextOffset = typeof d?.nextOffset === 'number' ? d.nextOffset : rows.length;
+  return { rows, nextOffset, total };
+}
+
+/** KPI sổ cái theo danh sách lead đã tải (batch 500 id/request). */
+async function fetchCrmLedgerNetByLeadIds(apiClient, { type, leadIds, assigned_to }) {
+  const ids = [...new Set((leadIds || []).map((id) => String(id)).filter(Boolean))];
+  if (!ids.length) return { ledger_net_by_lead: {}, kpi_ledger_period_start: null };
+  const chunk = 500;
+  const merged = {};
+  let periodStart = null;
+  for (let i = 0; i < ids.length; i += chunk) {
+    const slice = ids.slice(i, i + chunk);
+    const res = await apiClient
+      .get('/crm/ledger-net-by-leads', {
+        params: {
+          type,
+          lead_ids: slice.join(','),
+          ...(assigned_to ? { assigned_to } : {}),
+        },
+      })
+      .catch(() => ({ data: {} }));
+    Object.assign(merged, res.data?.ledger_net_by_lead || {});
+    if (res.data?.kpi_ledger_period_start) periodStart = res.data.kpi_ledger_period_start;
+  }
+  return { ledger_net_by_lead: merged, kpi_ledger_period_start: periodStart };
+}
+
+function mergeCrmDashWithLedger(dash, ledgerPayload) {
+  if (!dash || !ledgerPayload?.ledger_net_by_lead) return dash;
+  return {
+    ...dash,
+    ledger_net_by_lead: {
+      ...(dash.ledger_net_by_lead || {}),
+      ...ledgerPayload.ledger_net_by_lead,
+    },
+    kpis: dash.kpis
+      ? {
+          ...dash.kpis,
+          ...(ledgerPayload.kpi_ledger_period_start
+            ? { kpi_ledger_period_start: ledgerPayload.kpi_ledger_period_start }
+            : {}),
+        }
+      : dash.kpis,
+  };
+}
+
+/** Gom lead/deal theo cột pipeline — O(n) thay vì lọc lại từng cột. */
+function buildCrmPipelineColumns(stages, rows, ledgerMap) {
+  if (!stages?.length) return [];
+  const buckets = new Map(stages.map((s) => [String(s.id), []]));
+  for (const l of rows || []) {
+    const sid = String(l.stage_id || '');
+    const bucket = buckets.get(sid);
+    if (!bucket) continue;
+    const raw = ledgerMap[String(l.id)];
+    bucket.push(raw !== undefined ? { ...l, kpi_ledger_month_net: raw } : { ...l, kpi_ledger_month_net: null });
+  }
+  return stages.map((s) => {
+    const items = buckets.get(String(s.id)) || [];
+    let totalValue = 0;
+    for (const it of items) totalValue += it.estimated_value || 0;
+    return { ...s, items, totalValue };
+  });
+}
 
 /** Phân loại lead/deal trên dashboard (localStorage; khác key với công ty) */
 const LS_CRM_DASH_LEAD_TYPE = 'crm_dash_filter_lead_type_id';
@@ -729,13 +836,15 @@ export default function CRMDashboard() {
   /** Cache key vừa hydrate — tránh hydrate lại liên tục cùng 1 filter combo */
   const lastHydratedCacheKeyRef = useRef(null);
   /** Giá trị GET /crm/live-version gần nhất — đổi → silent reload Kanban/KPI */
+  const inactiveKanbanLoadSeqRef = useRef(0);
+  /** Giá trị GET /crm/live-version gần nhất — đổi → silent reload Kanban/KPI */
   const crmLiveVersionRef = useRef(null);
   /** Số bản ghi lead/deal tải cho Kanban (API /crm/leads có phân trang; "all" = lặp offset đến hết) */
   const [kanbanLoadLimit, setKanbanLoadLimit] = useState(() => {
     const fromP = P?.kanbanLoadLimit != null ? String(P.kanbanLoadLimit) : null;
     if (fromP && KANBAN_LOAD_OPTIONS.includes(fromP)) return fromP;
     const s = localStorage.getItem('crm_kanban_load_limit');
-    return KANBAN_LOAD_OPTIONS.includes(s) ? s : 'all';
+    return KANBAN_LOAD_OPTIONS.includes(s) ? s : KANBAN_DEFAULT_LOAD_LIMIT;
   });
 
   /** Tổng số lead/deal theo SĐT từ API (limit=1, chỉ đọc `total`) — không phụ thuộc mức tải Kanban; theo NV + ngày trên server */
@@ -1403,7 +1512,7 @@ export default function CRMDashboard() {
       const dateParams = {};
       if (customDateFrom) dateParams.date_from = customDateFrom;
       if (customDateTo) dateParams.date_to = customDateTo;
-      const common = { type, phone_filter: filterPhone || undefined, ...dateParams, limit: 1000, offset };
+      const common = { type, phone_filter: filterPhone || undefined, ...dateParams, ...CRM_KANBAN_LEAD_QUERY, limit: 1000, offset };
       if (filterAssignee) common.assigned_to = filterAssignee;
       if (filterCompany) common.company_id = filterCompany;
       if (filterLeadType) common.lead_type_id = filterLeadType;
@@ -1425,6 +1534,19 @@ export default function CRMDashboard() {
       } else {
         setAllDeals((prev) => dedupeCrmKanbanRows([...prev, ...merged]));
         setLoadMoreState((s) => ({ ...s, dealOffset: newNextOffset, dealTotal: newTotal, loading: false }));
+      }
+      const newIds = merged.map((l) => l.id).filter(Boolean);
+      if (newIds.length) {
+        const ledgerPayload = await fetchCrmLedgerNetByLeadIds(api, {
+          type,
+          leadIds: newIds,
+          assigned_to: filterAssignee || undefined,
+        });
+        if (type === 'lead') {
+          setDataLead((prev) => mergeCrmDashWithLedger(prev, ledgerPayload));
+        } else {
+          setDataDeal((prev) => mergeCrmDashWithLedger(prev, ledgerPayload));
+        }
       }
     } catch (e) {
       console.error('[loadMore]', e);
@@ -1585,44 +1707,11 @@ export default function CRMDashboard() {
       if (filterReferrer && filterReferrer !== '__none__') common.referrer_name = filterReferrer;
       if (filterCustomerCompany) common.customer_company = filterCustomerCompany;
 
-      const loadAll = String(kanbanLoadLimit ?? '').trim().toLowerCase() === 'all';
-      let rows = [];
-      let nextOffset = 0;
-      let total = null;
-
       try {
-        if (loadAll) {
-          const chunk = 1000;
-          let offset = 0;
-          let guard = 0;
-          while (guard < 500) {
-            guard += 1;
-            const res = await api.get('/crm/leads', { params: { ...common, limit: chunk, offset } }).catch(() => ({ data: {} }));
-            const payload = res.data || {};
-            const page = Array.isArray(payload) ? payload : (payload.data || []);
-            rows.push(...page);
-            if (page.length === 0) break;
-            const totalKnown = typeof payload.total === 'number' ? payload.total : null;
-            const nextOff = typeof payload.nextOffset === 'number' ? payload.nextOffset : offset + page.length;
-            const hasMore =
-              typeof payload.hasMore === 'boolean'
-                ? payload.hasMore
-                : totalKnown != null
-                  ? nextOff < totalKnown
-                  : page.length >= chunk;
-            if (!hasMore) break;
-            offset = nextOff;
-          }
-          nextOffset = null;
-          total = rows.length;
-        } else {
-          const limit = parseInt(kanbanLoadLimit, 10) || 1000;
-          const res = await api.get('/crm/leads', { params: { ...common, limit, offset: 0 } }).catch(() => ({ data: {} }));
-          const d = res.data;
-          rows = Array.isArray(d) ? d : (d?.data || []);
-          total = typeof d?.total === 'number' ? d.total : null;
-          nextOffset = typeof d?.nextOffset === 'number' ? d.nextOffset : rows.length;
-        }
+        const result = await fetchCrmKanbanRowsPage(api, common, kanbanLoadLimit);
+        const rows = result.rows;
+        const nextOffset = result.nextOffset;
+        const total = result.total;
 
         const userKey = getCurrentUserKeyForLeadSeen(user);
         const viewedLocal = getLocallyViewedLeadIdSet(userKey);
@@ -1646,6 +1735,16 @@ export default function CRMDashboard() {
             dealTotal: total,
             loading: false,
           }));
+        }
+        const ledgerPayload = await fetchCrmLedgerNetByLeadIds(api, {
+          type,
+          leadIds: merged.map((l) => l.id).filter(Boolean),
+          assigned_to: filterAssignee || undefined,
+        });
+        if (type === 'lead') {
+          setDataLead((prev) => mergeCrmDashWithLedger(prev, ledgerPayload));
+        } else {
+          setDataDeal((prev) => mergeCrmDashWithLedger(prev, ledgerPayload));
         }
       } catch (e) {
         console.error('[refreshKanbanListAfterCreate]', e);
@@ -1674,6 +1773,7 @@ export default function CRMDashboard() {
         const { data } = await api.get('/crm/dashboard', {
           params: {
             type,
+            light: '1',
             ...dateParams,
             ...(dashboardScopeCompanyId ? { company_id: dashboardScopeCompanyId } : {}),
             ...(filterAssignee ? { assigned_to: filterAssignee } : {}),
@@ -1903,10 +2003,11 @@ export default function CRMDashboard() {
 
       let stagesLeadParams = buildStagesParams('lead');
       let stagesDealParams = buildStagesParams('deal');
+      let pipelinesPreloaded = null;
       if (isAdmin && resolvedCompanyId) {
         const { data: plsPre } = await api.get('/crm/pipelines').catch(() => ({ data: [] }));
-        const plist = Array.isArray(plsPre) ? plsPre : [];
-        const byCo = plist.filter((p) => String(p.company_id || '') === String(resolvedCompanyId));
+        pipelinesPreloaded = Array.isArray(plsPre) ? plsPre : [];
+        const byCo = pipelinesPreloaded.filter((p) => String(p.company_id || '') === String(resolvedCompanyId));
         const def = byCo.find((p) => p.is_default) || byCo[0];
         const pid = def?.id;
         if (pid) {
@@ -1915,69 +2016,52 @@ export default function CRMDashboard() {
         }
       }
 
-      // Build date params for API
       const dateParams = {};
       if (customDateFrom) dateParams.date_from = customDateFrom;
       if (customDateTo) dateParams.date_to = customDateTo;
 
-      const fetchKanbanRows = async (type) => {
+      const buildKanbanCommon = (type) => {
         const common = { type, phone_filter: filterPhone || undefined, ...dateParams };
         if (filterAssignee) common.assigned_to = filterAssignee;
         if (resolvedCompanyId) common.company_id = resolvedCompanyId;
         if (filterLeadType) common.lead_type_id = filterLeadType;
         if (filterReferrer && filterReferrer !== '__none__') common.referrer_name = filterReferrer;
         if (filterCustomerCompany) common.customer_company = filterCustomerCompany;
-        const loadAll =
-          String(kanbanLoadLimit ?? '')
-            .trim()
-            .toLowerCase() === 'all';
-        if (loadAll) {
-          const chunk = 1000;
-          let offset = 0;
-          const out = [];
-          let guard = 0;
-          while (guard < 500) {
-            guard += 1;
-            const res = await api.get('/crm/leads', { params: { ...common, limit: chunk, offset } }).catch(() => ({ data: {} }));
-            const payload = res.data || {};
-            const page = Array.isArray(payload) ? payload : (payload.data || []);
-            out.push(...page);
-            if (page.length === 0) break;
-            const totalKnown = typeof payload.total === 'number' ? payload.total : null;
-            const nextOffset =
-              typeof payload.nextOffset === 'number' ? payload.nextOffset : offset + page.length;
-            const hasMore =
-              typeof payload.hasMore === 'boolean'
-                ? payload.hasMore
-                : totalKnown != null
-                  ? nextOffset < totalKnown
-                  : page.length >= chunk;
-            if (!hasMore) break;
-            offset = nextOffset;
-          }
-          return { rows: out, nextOffset: null, total: out.length };
-        }
-        const limit = parseInt(kanbanLoadLimit, 10) || 1000;
-        const res = await api.get('/crm/leads', { params: { ...common, limit, offset: 0 } }).catch(() => ({ data: {} }));
-        const d = res.data;
-        const rows = Array.isArray(d) ? d : (d?.data || []);
-        const total = typeof d?.total === 'number' ? d.total : null;
-        const nextOffset = typeof d?.nextOffset === 'number' ? d.nextOffset : rows.length;
-        return { rows, nextOffset, total };
+        return common;
       };
 
+      const fetchKanbanRows = (type) => fetchCrmKanbanRowsPage(api, buildKanbanCommon(type), kanbanLoadLimit);
+
       const dashListParams = {
+        light: '1',
         ...dateParams,
+        ...(filterPhone ? { phone_filter: filterPhone } : {}),
         ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}),
         ...(filterAssignee ? { assigned_to: filterAssignee } : {}),
       };
 
-      const [dashLeadRes, dashDealRes, leadsRows, dealsRows, pipelinesRes, stagesLeadRes, stagesDealRes, sourcesRes, leadTypesRes, companiesRes, usersRes] = await Promise.all([
-        api.get('/crm/dashboard', { params: { type: 'lead', ...dashListParams } }).catch(() => ({ data: { pipeline: [], kpis: {}, ledger_net_by_lead: {}, recent_quotations: [], recent_orders: [] } })),
-        api.get('/crm/dashboard', { params: { type: 'deal', ...dashListParams } }).catch(() => ({ data: { pipeline: [], kpis: {}, ledger_net_by_lead: {}, recent_quotations: [], recent_orders: [] } })),
-        fetchKanbanRows('lead'),
-        fetchKanbanRows('deal'),
-        api.get('/crm/pipelines').catch(() => ({ data: [] })),
+      const activeType = pipelineType === 'deal' ? 'deal' : 'lead';
+      const inactiveType = activeType === 'lead' ? 'deal' : 'lead';
+      const emptyDash = { pipeline: [], kpis: {}, ledger_net_by_lead: {}, recent_quotations: [], recent_orders: [] };
+
+      const pipelinesPromise = pipelinesPreloaded
+        ? Promise.resolve({ data: pipelinesPreloaded })
+        : api.get('/crm/pipelines').catch(() => ({ data: [] }));
+
+      const [
+        dashActiveRes,
+        kanbanActiveRows,
+        pipelinesRes,
+        stagesLeadRes,
+        stagesDealRes,
+        sourcesRes,
+        leadTypesRes,
+        companiesRes,
+        usersRes,
+      ] = await Promise.all([
+        api.get('/crm/dashboard', { params: { type: activeType, ...dashListParams } }).catch(() => ({ data: emptyDash })),
+        fetchKanbanRows(activeType),
+        pipelinesPromise,
         api.get('/crm/pipeline-stages', { params: stagesLeadParams }).catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: stagesDealParams }).catch(() => ({ data: [] })),
         api.get('/crm/sources', { params: { ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: [] })),
@@ -1985,14 +2069,15 @@ export default function CRMDashboard() {
         companies.length
           ? Promise.resolve({ data: { companies } })
           : api.get('/companies', { params: { for_module: 'crm' } }).catch(() => ({ data: { companies: [] } })),
-        api.get('/users').catch(() => ({ data: [] })),
+        users.length
+          ? Promise.resolve({ data: users })
+          : api.get('/users').catch(() => ({ data: [] })),
       ]);
       if (isStale()) {
         if (silent) setSyncing(false);
         return;
       }
-      setDataLead(dashLeadRes.data);
-      setDataDeal(dashDealRes.data);
+
       const pipelinesValue = narrowPipelinesToDefaultForCompany(
         Array.isArray(pipelinesRes.data) ? pipelinesRes.data : [],
         resolvedCompanyId || null,
@@ -2004,22 +2089,40 @@ export default function CRMDashboard() {
         (rows || []).map((l) =>
           viewedLocal.has(String(l.id)) ? { ...l, is_new_for_current_user: false } : l,
         );
-      const leadsResult = leadsRows || { rows: [], nextOffset: 0, total: null };
-      const dealsResult = dealsRows || { rows: [], nextOffset: 0, total: null };
-      const leadsData = Array.isArray(leadsResult) ? leadsResult : leadsResult.rows;
-      const dealsData = Array.isArray(dealsResult) ? dealsResult : dealsResult.rows;
-      const allLeadsValue = dedupeCrmKanbanRows(mergeLeadSeenLocal(leadsData));
-      setAllLeads(allLeadsValue);
-      let allDealsValue = dedupeCrmKanbanRows(mergeLeadSeenLocal(dealsData));
-      setAllDeals((prev) => {
-        allDealsValue = preserveCrmKanbanPipelineBadges(prev, allDealsValue);
-        return allDealsValue;
-      });
+
+      const activeResult = kanbanActiveRows || { rows: [], nextOffset: 0, total: null };
+      const activeData = Array.isArray(activeResult) ? activeResult : activeResult.rows;
+      const activeMerged = dedupeCrmKanbanRows(mergeLeadSeenLocal(activeData));
+
+      let dashLeadSnapshot = dataLead;
+      let dashDealSnapshot = dataDeal;
+      let allLeadsValue = allLeads;
+      let allDealsValue = allDeals;
+
+      if (activeType === 'lead') {
+        dashLeadSnapshot = dashActiveRes.data;
+        setDataLead(dashActiveRes.data);
+        allLeadsValue = activeMerged;
+        setAllLeads(activeMerged);
+      } else {
+        dashDealSnapshot = dashActiveRes.data;
+        setDataDeal(dashActiveRes.data);
+        allDealsValue = preserveCrmKanbanPipelineBadges(
+          allDeals,
+          dedupeCrmKanbanRows(mergeLeadSeenLocal(activeData)),
+        );
+        setAllDeals(allDealsValue);
+      }
+
       const loadMoreStateValue = {
-        leadOffset: Array.isArray(leadsResult) ? leadsData.length : (leadsResult.nextOffset ?? leadsData.length),
-        dealOffset: Array.isArray(dealsResult) ? dealsData.length : (dealsResult.nextOffset ?? dealsData.length),
-        leadTotal: Array.isArray(leadsResult) ? null : leadsResult.total,
-        dealTotal: Array.isArray(dealsResult) ? null : dealsResult.total,
+        leadOffset: activeType === 'lead'
+          ? (activeResult.nextOffset ?? activeMerged.length)
+          : loadMoreState.leadOffset,
+        dealOffset: activeType === 'deal'
+          ? (activeResult.nextOffset ?? activeMerged.length)
+          : loadMoreState.dealOffset,
+        leadTotal: activeType === 'lead' ? activeResult.total : loadMoreState.leadTotal,
+        dealTotal: activeType === 'deal' ? activeResult.total : loadMoreState.dealTotal,
         loading: false,
       };
       setLoadMoreState(loadMoreStateValue);
@@ -2055,8 +2158,8 @@ export default function CRMDashboard() {
           kanbanLoadLimit,
         });
         saveCrmDashboardCache(cacheKey, {
-          dataLead: dashLeadRes.data,
-          dataDeal: dashDealRes.data,
+          dataLead: dashLeadSnapshot,
+          dataDeal: dashDealSnapshot,
           pipelines: pipelinesValue,
           allLeads: allLeadsValue,
           allDeals: allDealsValue,
@@ -2089,11 +2192,55 @@ export default function CRMDashboard() {
       } catch {
         /* meta cache lỗi không ảnh hưởng dashboard */
       }
-      void refreshPipelinePhoneTotalsForType(pipelineType);
-      if (!isStale()) {
-        const otherType = pipelineType === 'lead' ? 'deal' : 'lead';
-        void refreshPipelinePhoneTotalsForType(otherType);
-      }
+      void refreshPipelinePhoneTotalsForType(activeType);
+
+      const applyLedgerForPipeline = async (type, rows, dashSnapshot) => {
+        const ledgerPayload = await fetchCrmLedgerNetByLeadIds(api, {
+          type,
+          leadIds: (rows || []).map((l) => l.id).filter(Boolean),
+          assigned_to: filterAssignee || undefined,
+        });
+        if (isStale()) return;
+        const mergedDash = mergeCrmDashWithLedger(dashSnapshot, ledgerPayload);
+        if (type === 'lead') setDataLead(mergedDash);
+        else setDataDeal(mergedDash);
+      };
+      void applyLedgerForPipeline(activeType, activeMerged, dashActiveRes.data);
+
+      const bgSeq = ++inactiveKanbanLoadSeqRef.current;
+      void (async () => {
+        try {
+          const [dashInactiveRes, inactiveRows] = await Promise.all([
+            api.get('/crm/dashboard', { params: { type: inactiveType, ...dashListParams } }).catch(() => ({ data: emptyDash })),
+            fetchKanbanRows(inactiveType),
+          ]);
+          if (isStale() || bgSeq !== inactiveKanbanLoadSeqRef.current) return;
+          const inactiveResult = inactiveRows || { rows: [], nextOffset: 0, total: null };
+          const inactiveData = Array.isArray(inactiveResult) ? inactiveResult : inactiveResult.rows;
+          const inactiveMerged = dedupeCrmKanbanRows(mergeLeadSeenLocal(inactiveData));
+          if (inactiveType === 'lead') {
+            setDataLead(dashInactiveRes.data);
+            setAllLeads(inactiveMerged);
+            setLoadMoreState((s) => ({
+              ...s,
+              leadOffset: inactiveResult.nextOffset ?? inactiveMerged.length,
+              leadTotal: inactiveResult.total,
+            }));
+          } else {
+            setDataDeal(dashInactiveRes.data);
+            setAllDeals((prev) => preserveCrmKanbanPipelineBadges(prev, inactiveMerged));
+            setLoadMoreState((s) => ({
+              ...s,
+              dealOffset: inactiveResult.nextOffset ?? inactiveMerged.length,
+              dealTotal: inactiveResult.total,
+            }));
+          }
+          void applyLedgerForPipeline(inactiveType, inactiveMerged, dashInactiveRes.data);
+          void refreshPipelinePhoneTotalsForType(inactiveType);
+        } catch (bgErr) {
+          console.error('[load inactive pipeline]', bgErr);
+        }
+      })();
     } catch (e) {
       console.error(e);
       if (silent && !isStale()) setSyncing(false);
@@ -2549,37 +2696,15 @@ export default function CRMDashboard() {
   }, [pipelineType, leads, deals, ledgerMapLead, ledgerMapDeal]);
 
   // Pipeline view: group leads/deals by stage
-  const pipelineLead = useMemo(() => {
-    if (!stagesLead.length) return [];
-    const attachLedger = (l) => {
-      const raw = ledgerMapLead[String(l.id)];
-      const kpi_ledger_month_net = raw !== undefined ? raw : null;
-      return { ...l, kpi_ledger_month_net };
-    };
-    return stagesLead.map((s) => ({
-      ...s,
-      items: leads
-        .filter((l) => String(l.stage_id || '') === String(s.id))
-        .map(attachLedger),
-      totalValue: leads.filter((l) => String(l.stage_id || '') === String(s.id)).reduce((sum, l) => sum + (l.estimated_value || 0), 0),
-    }));
-  }, [stagesLead, leads, ledgerMapLead]);
+  const pipelineLead = useMemo(
+    () => buildCrmPipelineColumns(stagesLead, leads, ledgerMapLead),
+    [stagesLead, leads, ledgerMapLead],
+  );
 
-  const pipelineDeal = useMemo(() => {
-    if (!stagesDeal.length) return [];
-    const attachLedger = (l) => {
-      const raw = ledgerMapDeal[String(l.id)];
-      const kpi_ledger_month_net = raw !== undefined ? raw : null;
-      return { ...l, kpi_ledger_month_net };
-    };
-    return stagesDeal.map((s) => ({
-      ...s,
-      items: deals
-        .filter((l) => String(l.stage_id || '') === String(s.id))
-        .map(attachLedger),
-      totalValue: deals.filter((l) => String(l.stage_id || '') === String(s.id)).reduce((sum, l) => sum + (l.estimated_value || 0), 0),
-    }));
-  }, [stagesDeal, deals, ledgerMapDeal]);
+  const pipelineDeal = useMemo(
+    () => buildCrmPipelineColumns(stagesDeal, deals, ledgerMapDeal),
+    [stagesDeal, deals, ledgerMapDeal],
+  );
 
   const currentData = pipelineType === 'lead' ? dataLead : dataDeal;
   const currentPipeline = pipelineType === 'lead' ? pipelineLead : pipelineDeal;
@@ -3615,7 +3740,7 @@ export default function CRMDashboard() {
           </div>
 
           {/* Số bản ghi pipeline (lead + deal) tải từ API */}
-          <div className="relative" title="Giới hạn số lead/deal tải cho Kanban (mỗi loại). Tải tất cả = gọi API lặp theo trang tối đa 5000/trang.">
+          <div className="relative" title="Giới hạn số lead/deal tải cho Kanban (mỗi loại). Mặc định 500 — chọn «Tải tất cả» nếu cần xem hết (tối đa 5.000/bên).">
             <select
               value={kanbanLoadLimit}
               onChange={(e) => {
