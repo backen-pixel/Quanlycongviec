@@ -356,10 +356,8 @@ const TIME_PRESETS = [
 ];
 
 const KANBAN_LOAD_OPTIONS = ['500', '1000', '2000', 'all'];
-/** Trang đầu — hiện Kanban nhanh, phần còn lại tải khi cuộn. */
-const KANBAN_INITIAL_PAGE_SIZE = 80;
-/** Mỗi lần cuộn gần cuối Kanban. */
-const KANBAN_SCROLL_PAGE_SIZE = 100;
+/** Mỗi lần tải Kanban (trang đầu + cuộn) — 500 thẻ/lần. */
+const KANBAN_PAGE_SIZE = 500;
 /** Mặc định trần auto-load khi cuộn (chọn «Tải tất cả» để vượt trần). */
 const KANBAN_DEFAULT_LOAD_LIMIT = '500';
 /** Trần khi chọn «Tải tất cả» — tránh vòng lặp API vô hạn. */
@@ -373,18 +371,25 @@ function resolveKanbanAutoLoadCap(kanbanLoadLimit) {
 
 function normalizeCrmKanbanLoadSpec(loadSpec) {
   if (loadSpec == null || loadSpec === 'initial') {
-    return { offset: 0, limit: KANBAN_INITIAL_PAGE_SIZE, loadAll: false };
+    return { offset: 0, limit: KANBAN_PAGE_SIZE, loadAll: false };
   }
   if (typeof loadSpec === 'string') {
     if (loadSpec.toLowerCase() === 'all') return { loadAll: true };
     const n = parseInt(loadSpec, 10);
     if (Number.isFinite(n) && n > 0) return { offset: 0, limit: n, loadAll: false };
-    return { offset: 0, limit: KANBAN_INITIAL_PAGE_SIZE, loadAll: false };
+    return { offset: 0, limit: KANBAN_PAGE_SIZE, loadAll: false };
   }
   const offset = Math.max(parseInt(loadSpec.offset, 10) || 0, 0);
-  const limit = loadSpec.limit
-    ?? (offset > 0 ? KANBAN_SCROLL_PAGE_SIZE : KANBAN_INITIAL_PAGE_SIZE);
+  const limit = loadSpec.limit ?? KANBAN_PAGE_SIZE;
   return { offset, limit, loadAll: !!loadSpec.loadAll };
+}
+
+/** Giới hạn 1 batch tải Kanban — luôn 500 (hoặc phần còn lại tới trần cap). */
+function resolveKanbanBatchLimit(kanbanLoadLimit, offset, loadedCount) {
+  const cap = resolveKanbanAutoLoadCap(kanbanLoadLimit);
+  const remaining = cap - (typeof loadedCount === 'number' ? loadedCount : offset);
+  if (remaining <= 0) return 0;
+  return Math.min(KANBAN_PAGE_SIZE, remaining);
 }
 /** Query flags — backend trả select nhẹ + bỏ enrich nặng cho Kanban. */
 const CRM_KANBAN_LEAD_QUERY = { kanban: '1', lite: '1', skip_deadline: '1' };
@@ -1564,21 +1569,21 @@ export default function CRMDashboard() {
     const loaded = type === 'lead' ? allLeads.length : allDeals.length;
     const cap = resolveKanbanAutoLoadCap(kanbanLoadLimit);
     if (total !== null && offset >= total) return;
-    if (loaded >= cap) return;
-    setLoadMoreState((s) => ({ ...s, loading: true }));
-    try {
-      const dateParams = {};
-      if (customDateFrom) dateParams.date_from = customDateFrom;
-      if (customDateTo) dateParams.date_to = customDateTo;
-      const pageLimit = Math.min(KANBAN_SCROLL_PAGE_SIZE, cap - loaded);
-      const common = {
-        type,
-        phone_filter: filterPhone || undefined,
-        ...dateParams,
-        ...CRM_KANBAN_LEAD_QUERY,
-        limit: pageLimit,
-        offset,
-      };
+      const pageLimit = resolveKanbanBatchLimit(kanbanLoadLimit, offset, loaded);
+      if (pageLimit <= 0) return;
+      setLoadMoreState((s) => ({ ...s, loading: true }));
+      try {
+        const dateParams = {};
+        if (customDateFrom) dateParams.date_from = customDateFrom;
+        if (customDateTo) dateParams.date_to = customDateTo;
+        const common = {
+          type,
+          phone_filter: filterPhone || undefined,
+          ...dateParams,
+          ...CRM_KANBAN_LEAD_QUERY,
+          limit: pageLimit,
+          offset,
+        };
       if (filterAssignee) common.assigned_to = filterAssignee;
       if (filterCompany) common.company_id = filterCompany;
       if (filterLeadType) common.lead_type_id = filterLeadType;
@@ -1794,9 +1799,11 @@ export default function CRMDashboard() {
       if (filterCustomerCompany) common.customer_company = filterCustomerCompany;
 
       try {
-        const cap = resolveKanbanAutoLoadCap(kanbanLoadLimit);
         const prevLen = type === 'lead' ? allLeads.length : allDeals.length;
-        const refreshLimit = Math.min(Math.max(KANBAN_INITIAL_PAGE_SIZE, prevLen || KANBAN_INITIAL_PAGE_SIZE), cap);
+        const refreshLimit = Math.min(
+          Math.max(KANBAN_PAGE_SIZE, prevLen || KANBAN_PAGE_SIZE),
+          resolveKanbanAutoLoadCap(kanbanLoadLimit),
+        );
         const result = await fetchCrmKanbanRowsPage(api, common, { offset: 0, limit: refreshLimit });
         const rows = result.rows;
         const nextOffset = result.nextOffset;
@@ -2119,7 +2126,11 @@ export default function CRMDashboard() {
         return common;
       };
 
-      const fetchKanbanRows = (type) => fetchCrmKanbanRowsPage(api, buildKanbanCommon(type), 'initial');
+      const fetchKanbanRows = (type, offset = 0) => {
+        const loaded = type === 'lead' ? allLeads.length : allDeals.length;
+        const limit = resolveKanbanBatchLimit(kanbanLoadLimit, offset, offset > 0 ? loaded : 0);
+        return fetchCrmKanbanRowsPage(api, buildKanbanCommon(type), { offset, limit });
+      };
 
       const dashListParams = {
         light: '1',
@@ -2226,7 +2237,7 @@ export default function CRMDashboard() {
 
       let usedBootstrap = false;
       if (canUseBootstrap) {
-        const limit = KANBAN_INITIAL_PAGE_SIZE;
+        const limit = resolveKanbanBatchLimit(kanbanLoadLimit, 0, 0);
         const bootstrapRes = await api
           .get('/crm/web-dashboard-bootstrap', {
             params: { type: activeType, limit, ...dashListParams, ...CRM_KANBAN_LEAD_QUERY },
@@ -2314,23 +2325,11 @@ export default function CRMDashboard() {
         kanbanActiveRows,
         pipelinesRes,
         activeStagesRes,
-        sourcesRes,
-        leadTypesRes,
-        companiesRes,
-        usersRes,
       ] = await Promise.all([
         api.get('/crm/dashboard', { params: { type: activeType, ...dashListParams } }).catch(() => ({ data: emptyDash })),
         fetchKanbanRows(activeType),
         pipelinesPromise,
         api.get('/crm/pipeline-stages', { params: activeStagesParams }).catch(() => ({ data: [] })),
-        api.get('/crm/sources', { params: { ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: [] })),
-        api.get('/crm/lead-types', { params: { ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: [] })),
-        companies.length
-          ? Promise.resolve({ data: { companies } })
-          : api.get('/companies', { params: { for_module: 'crm' } }).catch(() => ({ data: { companies: [] } })),
-        users.length
-          ? Promise.resolve({ data: users })
-          : api.get('/users').catch(() => ({ data: [] })),
       ]);
       if (isStale()) {
         if (silent) setSyncing(false);
@@ -2384,6 +2383,9 @@ export default function CRMDashboard() {
       const stagesDealValue = activeType === 'deal' ? stagesActiveValue : stagesDeal;
       if (activeType === 'lead') setStagesLead(stagesActiveValue);
       else setStagesDeal(stagesActiveValue);
+      if (!isStale()) setFirstLoading(false);
+      runDeferredCrmEnrichment(activeType, activeMerged, dashActiveRes.data);
+      scheduleInactivePipelineLoad();
       void (async () => {
         const inactiveParams = inactiveType === 'lead' ? stagesLeadParams : stagesDealParams;
         const { data: inactiveStages } = await api
@@ -2394,71 +2396,88 @@ export default function CRMDashboard() {
         if (inactiveType === 'lead') setStagesLead(sorted);
         else setStagesDeal(sorted);
       })();
-      const sourcesValue = sourcesRes.data?.sources || (Array.isArray(sourcesRes.data) ? sourcesRes.data : []);
-      const leadTypesValue = Array.isArray(leadTypesRes.data) ? leadTypesRes.data : [];
-      setSources(sourcesValue);
-      setLeadTypes(leadTypesValue);
-      let fbPagesValue = null;
-      if (sourcesRes.data?.fb_pages) {
-        fbPagesValue = sourcesRes.data.fb_pages;
-        setFbPages(fbPagesValue);
-      }
-      const companiesValue = companiesRes.data?.companies || companiesRes.data || [];
-      const usersValue = Array.isArray(usersRes.data) ? usersRes.data : usersRes.data?.users || [];
-      setCompanies(companiesValue);
-      setUsers(usersValue);
-      // ─── Lưu cache để lần sau mở/đổi filter render tức thì ───
-      try {
-        const cacheKey = buildCrmDashboardCacheKey({
-          userId: user?.id,
-          filterCompany: resolvedCompanyId || filterCompany,
-          filterAssignee,
-          filterPhone,
-          filterLeadType,
-          filterReferrer,
-          filterCustomerCompany,
-          customDateFrom,
-          customDateTo,
-          kanbanLoadLimit,
-        });
-        saveCrmDashboardCache(cacheKey, {
-          dataLead: dashLeadSnapshot,
-          dataDeal: dashDealSnapshot,
-          pipelines: pipelinesValue,
-          allLeads: allLeadsValue,
-          allDeals: allDealsValue,
-          loadMoreState: loadMoreStateValue,
-          stagesLead: stagesLeadValue,
-          stagesDeal: stagesDealValue,
-          sources: sourcesValue,
-          leadTypes: leadTypesValue,
-          fbPages: fbPagesValue,
-          companies: companiesValue,
-          users: usersValue,
-        });
-      } catch {
-        /* cache lỗi không ảnh hưởng dashboard */
-      }
-      // ─── Lưu metadata cache (localStorage) — sống qua đóng tab ───
-      try {
-        if (user?.id) {
-          saveCrmDashboardMetaCache(user.id, {
-            companies: companiesValue,
-            users: usersValue,
-            pipelines: pipelinesValue,
-            stagesLead: stagesLeadValue,
-            stagesDeal: stagesDealValue,
-            sources: sourcesValue,
-            leadTypes: leadTypesValue,
-            fbPages: fbPagesValue,
-          });
+      void (async () => {
+        try {
+          const [
+            sourcesRes,
+            leadTypesRes,
+            companiesRes,
+            usersRes,
+          ] = await Promise.all([
+            api.get('/crm/sources', { params: { ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: [] })),
+            api.get('/crm/lead-types', { params: { ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: [] })),
+            companies.length
+              ? Promise.resolve({ data: { companies } })
+              : api.get('/companies', { params: { for_module: 'crm' } }).catch(() => ({ data: { companies: [] } })),
+            users.length
+              ? Promise.resolve({ data: users })
+              : api.get('/users').catch(() => ({ data: [] })),
+          ]);
+          if (isStale()) return;
+          const sourcesValue = sourcesRes.data?.sources || (Array.isArray(sourcesRes.data) ? sourcesRes.data : []);
+          const leadTypesValue = Array.isArray(leadTypesRes.data) ? leadTypesRes.data : [];
+          setSources(sourcesValue);
+          setLeadTypes(leadTypesValue);
+          let fbPagesValue = null;
+          if (sourcesRes.data?.fb_pages) {
+            fbPagesValue = sourcesRes.data.fb_pages;
+            setFbPages(fbPagesValue);
+          }
+          const companiesValue = companiesRes.data?.companies || companiesRes.data || [];
+          const usersValue = Array.isArray(usersRes.data) ? usersRes.data : usersRes.data?.users || [];
+          if (companiesValue.length) setCompanies(companiesValue);
+          if (usersValue.length) setUsers(usersValue);
+          try {
+            const cacheKey = buildCrmDashboardCacheKey({
+              userId: user?.id,
+              filterCompany: resolvedCompanyId || filterCompany,
+              filterAssignee,
+              filterPhone,
+              filterLeadType,
+              filterReferrer,
+              filterCustomerCompany,
+              customDateFrom,
+              customDateTo,
+              kanbanLoadLimit,
+            });
+            saveCrmDashboardCache(cacheKey, {
+              dataLead: dashLeadSnapshot,
+              dataDeal: dashDealSnapshot,
+              pipelines: pipelinesValue,
+              allLeads: allLeadsValue,
+              allDeals: allDealsValue,
+              loadMoreState: loadMoreStateValue,
+              stagesLead: stagesLeadValue,
+              stagesDeal: stagesDealValue,
+              sources: sourcesValue,
+              leadTypes: leadTypesValue,
+              fbPages: fbPagesValue,
+              companies: companiesValue.length ? companiesValue : companies,
+              users: usersValue.length ? usersValue : users,
+            });
+          } catch {
+            /* cache lỗi không ảnh hưởng dashboard */
+          }
+          try {
+            if (user?.id) {
+              saveCrmDashboardMetaCache(user.id, {
+                companies: companiesValue.length ? companiesValue : companies,
+                users: usersValue.length ? usersValue : users,
+                pipelines: pipelinesValue,
+                stagesLead: stagesLeadValue,
+                stagesDeal: stagesDealValue,
+                sources: sourcesValue,
+                leadTypes: leadTypesValue,
+                fbPages: fbPagesValue,
+              });
+            }
+          } catch {
+            /* meta cache lỗi không ảnh hưởng dashboard */
+          }
+        } catch (metaErr) {
+          console.error('[load crm meta fallback]', metaErr);
         }
-      } catch {
-        /* meta cache lỗi không ảnh hưởng dashboard */
-      }
-      runDeferredCrmEnrichment(activeType, activeMerged, dashActiveRes.data);
-      scheduleInactivePipelineLoad();
-      if (!isStale()) setFirstLoading(false);
+      })();
       }
     } catch (e) {
       console.error(e);
@@ -2974,7 +2993,7 @@ export default function CRMDashboard() {
   /** Defer pipeline render — tránh block main thread khi vừa load thêm bản ghi. */
   const kanbanPipelineForView = useDeferredValue(kanbanPipeline);
 
-  /** Cuộn Kanban → tải thêm từ API (trang đầu 80, mỗi lần +100). */
+  /** Cuộn Kanban → tải thêm từ API (mỗi lần 500 thẻ). */
   const kanbanScrollLoad = useMemo(() => {
     const type = pipelineType;
     const offset = type === 'lead' ? loadMoreState.leadOffset : loadMoreState.dealOffset;
