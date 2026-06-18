@@ -1462,6 +1462,298 @@ async function applyFbPipelineMaster(enabled) {
   return getFbMasterEnabledSync();
 }
 
+// ═══════════════════════════════════════════════════════════════
+// MASTER SCHEDULE — Chu kỳ bật/tắt công tắc TỔNG: chạy X phút → nghỉ Y phút → lặp
+// ═══════════════════════════════════════════════════════════════
+const DEFAULT_FB_MASTER_SCHEDULE = {
+  enabled: false,
+  run_minutes: 60,
+  rest_minutes: 30,
+  phase: 'rest',
+  phase_started_at: null,
+};
+const FB_MASTER_SCHEDULE_ROW_ID = 1;
+let fbMasterSchedule = { ...DEFAULT_FB_MASTER_SCHEDULE };
+let fbMasterScheduleTimeoutId = null;
+let fbMasterScheduleLastActionAt = null;
+let fbMasterScheduleLastAction = null;
+let fbMasterScheduleTableOk = null;
+
+function normalizeMasterScheduleRow(row) {
+  if (!row || typeof row !== 'object') return { ...DEFAULT_FB_MASTER_SCHEDULE };
+  return {
+    enabled: !!row.enabled,
+    run_minutes: clampMasterScheduleMinutes(row.run_minutes, { min: 1, max: 24 * 60, fallback: 60 }),
+    rest_minutes: clampMasterScheduleMinutes(row.rest_minutes, { min: 1, max: 24 * 60, fallback: 30 }),
+    phase: row.phase === 'run' ? 'run' : 'rest',
+    phase_started_at: row.phase_started_at || null,
+  };
+}
+
+async function detectFbMasterScheduleTable() {
+  if (fbMasterScheduleTableOk !== null) return fbMasterScheduleTableOk;
+  const { error } = await supabase.from('facebook_auto_master_schedule').select('id').eq('id', FB_MASTER_SCHEDULE_ROW_ID).maybeSingle();
+  if (!error) {
+    fbMasterScheduleTableOk = true;
+    return true;
+  }
+  const msg = String(error.message || '');
+  if (/does not exist|relation.*facebook_auto_master_schedule/i.test(msg)) {
+    fbMasterScheduleTableOk = false;
+    console.warn('[FB MasterSchedule] Bảng facebook_auto_master_schedule chưa có — dùng app_settings. Chạy database/361_facebook_auto_master_schedule.sql');
+    return false;
+  }
+  fbMasterScheduleTableOk = false;
+  return false;
+}
+
+async function loadFbMasterScheduleFromLegacyAppSettings() {
+  try {
+    const { data } = await supabase.from('app_settings')
+      .select('value').eq('key', 'fb_master_schedule').maybeSingle();
+    if (data?.value && typeof data.value === 'object') {
+      return normalizeMasterScheduleRow(data.value);
+    }
+  } catch (_) { /* ignore */ }
+  return { ...DEFAULT_FB_MASTER_SCHEDULE };
+}
+
+async function upsertFbMasterScheduleRow(patch) {
+  const merged = normalizeMasterScheduleRow({ ...fbMasterSchedule, ...(patch || {}) });
+  fbMasterSchedule = merged;
+  const row = {
+    id: FB_MASTER_SCHEDULE_ROW_ID,
+    enabled: merged.enabled,
+    run_minutes: merged.run_minutes,
+    rest_minutes: merged.rest_minutes,
+    phase: merged.phase,
+    phase_started_at: merged.phase_started_at,
+    updated_at: new Date().toISOString(),
+  };
+  const useTable = await detectFbMasterScheduleTable();
+  if (useTable) {
+    const { error } = await supabase.from('facebook_auto_master_schedule').upsert(row, { onConflict: 'id' });
+    if (error) throw new Error(error.message);
+    return merged;
+  }
+  await supabase.from('app_settings').upsert({
+    key: 'fb_master_schedule',
+    value: merged,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'key' });
+  return merged;
+}
+
+async function logMasterScheduleTransition({ action, phase, source = 'schedule', phaseStartedAtMs = null }) {
+  const startedAt = phaseStartedAtMs != null
+    ? new Date(phaseStartedAtMs).toISOString()
+    : fbMasterSchedule.phase_started_at;
+  const phaseEndsAt = startedAt
+    ? new Date(new Date(startedAt).getTime() + masterSchedulePhaseDurationMs(phase)).toISOString()
+    : null;
+  fbMasterScheduleLastAction = action;
+  fbMasterScheduleLastActionAt = new Date().toISOString();
+  const useTable = await detectFbMasterScheduleTable();
+  if (!useTable) return;
+  try {
+    await supabase.from('facebook_auto_master_schedule_logs').insert({
+      action,
+      phase,
+      run_minutes: fbMasterSchedule.run_minutes,
+      rest_minutes: fbMasterSchedule.rest_minutes,
+      master_enabled: action === 'on',
+      phase_started_at: startedAt,
+      phase_ends_at: phaseEndsAt,
+      source,
+    });
+  } catch (e) {
+    console.warn('[FB MasterSchedule] log:', e.message);
+  }
+}
+
+async function loadFbMasterScheduleLogs(limit = 30) {
+  const useTable = await detectFbMasterScheduleTable();
+  if (!useTable) return [];
+  const lim = Math.min(200, Math.max(1, parseInt(limit, 10) || 30));
+  const { data, error } = await supabase
+    .from('facebook_auto_master_schedule_logs')
+    .select('id, action, phase, run_minutes, rest_minutes, master_enabled, phase_started_at, phase_ends_at, source, created_at')
+    .order('created_at', { ascending: false })
+    .limit(lim);
+  if (error) {
+    console.warn('[FB MasterSchedule] load logs:', error.message);
+    return [];
+  }
+  return data || [];
+}
+
+function clampMasterScheduleMinutes(raw, { min = 1, max = 24 * 60, fallback = 60 } = {}) {
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+function masterScheduleRunMs(schedule = fbMasterSchedule) {
+  return clampMasterScheduleMinutes(schedule.run_minutes, { min: 1, max: 24 * 60, fallback: 60 }) * 60_000;
+}
+
+function masterScheduleRestMs(schedule = fbMasterSchedule) {
+  return clampMasterScheduleMinutes(schedule.rest_minutes, { min: 1, max: 24 * 60, fallback: 30 }) * 60_000;
+}
+
+function masterSchedulePhaseDurationMs(phase, schedule = fbMasterSchedule) {
+  return phase === 'run' ? masterScheduleRunMs(schedule) : masterScheduleRestMs(schedule);
+}
+
+/** Sau reboot / downtime dài: tua nhanh chu kỳ đến phase hiện tại + delay còn lại. */
+function reconcileMasterSchedulePhase(schedule) {
+  const runMs = masterScheduleRunMs(schedule);
+  const restMs = masterScheduleRestMs(schedule);
+  let phase = schedule.phase === 'run' ? 'run' : 'rest';
+  let startedAt = schedule.phase_started_at
+    ? new Date(schedule.phase_started_at).getTime()
+    : Date.now();
+  if (!Number.isFinite(startedAt)) startedAt = Date.now();
+  const now = Date.now();
+  while (now - startedAt >= masterSchedulePhaseDurationMs(phase, schedule)) {
+    startedAt += masterSchedulePhaseDurationMs(phase, schedule);
+    phase = phase === 'run' ? 'rest' : 'run';
+  }
+  const delayMs = Math.max(0, startedAt + masterSchedulePhaseDurationMs(phase, schedule) - now);
+  return { phase, startedAt, delayMs };
+}
+
+async function persistMasterSchedulePhase(phase, startedAtMs) {
+  fbMasterSchedule.phase = phase;
+  fbMasterSchedule.phase_started_at = new Date(startedAtMs).toISOString();
+  try {
+    await upsertFbMasterScheduleRow({
+      phase,
+      phase_started_at: fbMasterSchedule.phase_started_at,
+    });
+  } catch (e) {
+    console.warn('[FB MasterSchedule] persist phase:', e.message);
+  }
+}
+
+async function enterMasterSchedulePhase(phase, startedAtMs = Date.now(), source = 'schedule') {
+  const wantOn = phase === 'run';
+  const current = getFbMasterEnabledSync();
+  if (wantOn !== current) {
+    await applyFbPipelineMaster(wantOn);
+    await logMasterScheduleTransition({
+      action: wantOn ? 'on' : 'off',
+      phase,
+      source,
+      phaseStartedAtMs: startedAtMs,
+    });
+    console.log(`[FB MasterSchedule] ${wantOn ? '▶ BẬT' : '⏹ TẮT'} công tắc tổng (phiên ${phase === 'run' ? 'chạy' : 'nghỉ'})`);
+  }
+  await persistMasterSchedulePhase(phase, startedAtMs);
+}
+
+function clearFbMasterScheduleTimer() {
+  if (fbMasterScheduleTimeoutId) {
+    clearTimeout(fbMasterScheduleTimeoutId);
+    fbMasterScheduleTimeoutId = null;
+  }
+}
+
+function armFbMasterSchedule(delayMs) {
+  clearFbMasterScheduleTimer();
+  if (!fbMasterSchedule.enabled) return;
+  const d = Math.max(0, Number(delayMs) || 0);
+  fbMasterScheduleTimeoutId = setTimeout(() => {
+    fbMasterScheduleTimeoutId = null;
+    advanceMasterScheduleCycle().catch((e) => console.error('[FB MasterSchedule] cycle:', e.message));
+  }, d);
+}
+
+async function advanceMasterScheduleCycle() {
+  if (!fbMasterSchedule.enabled) return;
+  const nextPhase = fbMasterSchedule.phase === 'run' ? 'rest' : 'run';
+  const startedAt = Date.now();
+  await enterMasterSchedulePhase(nextPhase, startedAt);
+  armFbMasterSchedule(masterSchedulePhaseDurationMs(nextPhase));
+}
+
+async function startFbMasterScheduleCycle({ restart = false, source = 'schedule' } = {}) {
+  clearFbMasterScheduleTimer();
+  if (!fbMasterSchedule.enabled) return;
+  let phase;
+  let startedAt;
+  let delayMs;
+  if (restart || !fbMasterSchedule.phase_started_at) {
+    phase = 'run';
+    startedAt = Date.now();
+    delayMs = masterScheduleRunMs();
+  } else {
+    ({ phase, startedAt, delayMs } = reconcileMasterSchedulePhase(fbMasterSchedule));
+  }
+  await enterMasterSchedulePhase(phase, startedAt, restart ? 'config' : source);
+  armFbMasterSchedule(delayMs);
+  console.log(
+    `[FB MasterSchedule] ⏰ Chu kỳ: chạy ${fbMasterSchedule.run_minutes}p / nghỉ ${fbMasterSchedule.rest_minutes}p — phase=${phase}, tiếp sau ${Math.round(delayMs / 1000)}s`,
+  );
+}
+
+function stopFbMasterScheduleTimer() {
+  clearFbMasterScheduleTimer();
+}
+
+async function loadFbMasterScheduleConfig() {
+  try {
+    const useTable = await detectFbMasterScheduleTable();
+    if (useTable) {
+      const { data, error } = await supabase
+        .from('facebook_auto_master_schedule')
+        .select('enabled, run_minutes, rest_minutes, phase, phase_started_at')
+        .eq('id', FB_MASTER_SCHEDULE_ROW_ID)
+        .maybeSingle();
+      if (!error && data) {
+        fbMasterSchedule = normalizeMasterScheduleRow(data);
+        return fbMasterSchedule;
+      }
+    }
+    fbMasterSchedule = await loadFbMasterScheduleFromLegacyAppSettings();
+  } catch (e) {
+    console.warn('[FB MasterSchedule] load:', e.message);
+  }
+  return fbMasterSchedule;
+}
+
+async function saveFbMasterScheduleConfig(patch) {
+  const merged = normalizeMasterScheduleRow({ ...fbMasterSchedule, ...(patch && typeof patch === 'object' ? patch : {}) });
+  if (merged.phase_started_at != null && merged.phase_started_at !== '') {
+    merged.phase_started_at = String(merged.phase_started_at);
+  } else {
+    merged.phase_started_at = null;
+  }
+  fbMasterSchedule = await upsertFbMasterScheduleRow(merged);
+  return fbMasterSchedule;
+}
+
+function getFbMasterScheduleStatus() {
+  const reconciled = fbMasterSchedule.enabled && fbMasterSchedule.phase_started_at
+    ? reconcileMasterSchedulePhase(fbMasterSchedule)
+    : { phase: fbMasterSchedule.phase, delayMs: null };
+  const phase = fbMasterSchedule.enabled ? reconciled.phase : null;
+  const nextAt = reconciled.delayMs != null ? new Date(Date.now() + reconciled.delayMs).toISOString() : null;
+  return {
+    enabled: fbMasterSchedule.enabled,
+    run_minutes: fbMasterSchedule.run_minutes,
+    rest_minutes: fbMasterSchedule.rest_minutes,
+    phase,
+    phase_started_at: fbMasterSchedule.phase_started_at,
+    timer_active: !!fbMasterScheduleTimeoutId,
+    master_current: getFbMasterEnabledSync(),
+    next_transition_at: fbMasterSchedule.enabled ? nextAt : null,
+    next_phase: fbMasterSchedule.enabled ? (phase === 'run' ? 'rest' : 'run') : null,
+    last_action: fbMasterScheduleLastAction,
+    last_action_at: fbMasterScheduleLastActionAt,
+  };
+}
+
 // ── Auto-migration: thêm cột mới nếu chưa có ──
 (async () => {
   try {
@@ -1692,55 +1984,98 @@ function buildUiAvatarUrl(name) {
   return `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=0D8ABC&color=fff&size=200&bold=true`;
 }
 
-/** GET /{psid}/picture — avatar Facebook thật (URL có thể hết hạn). */
-async function fetchFacebookPictureUrl(psid, token) {
-  if (!psid || !token) return null;
-  try {
-    const uid = encodeURIComponent(String(psid).trim());
-    const resp = await fetch(
-      `https://graph.facebook.com/v22.0/${uid}/picture?redirect=0&type=large`,
-      { headers: { Authorization: `Bearer ${token}` } },
-    );
+const FB_GRAPH_USER_PROFILE_FIELDS = 'first_name,last_name,name,profile_pic,picture.type(large){url,is_silhouette}';
+
+function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isGraphProfilePermissionDenied(err) {
+  if (!err) return false;
+  return err.code === 100 && (err.error_subcode === 33 || err.error_subcode === 2018218);
+}
+
+function isGraphRateLimited(err) {
+  if (!err) return false;
+  return err.code === 4 || err.code === 17 || err.is_transient === true;
+}
+
+async function graphGetJson(url, token, { retries = 3 } = {}) {
+  const headers = { Authorization: `Bearer ${token}` };
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const resp = await fetch(url, { headers });
     const data = await resp.json();
-    if (data?.data?.url && !data.error) return data.data.url;
-  } catch (_) { /* ignore */ }
-  return null;
+    if (!data.error) return data;
+    if (isGraphRateLimited(data.error) && attempt < retries) {
+      await sleepMs(900 * (attempt + 1));
+      continue;
+    }
+    return data;
+  }
+  return { error: { message: 'graph_retry_exhausted' } };
+}
+
+function parseGraphUserProfile(data) {
+  if (!data || data.error) {
+    return { name: null, profilePic: null, graphError: data?.error || null };
+  }
+  const name = String(data.name || [data.first_name, data.last_name].filter(Boolean).join(' ')).trim();
+  let profilePic = data.profile_pic || null;
+  const picData = data.picture?.data;
+  if ((!profilePic || isPlaceholderFacebookAvatar(profilePic)) && picData?.url && !picData.is_silhouette) {
+    profilePic = picData.url;
+  }
+  return { name: name || null, profilePic: profilePic || null, graphError: null };
 }
 
 /**
- * User Profile API: GET /{psid}?fields=first_name,last_name,name,profile_pic
- * Cần user đã nhắn Page; profile_pic có thể cần Advanced Access trên app Meta.
+ * User Profile API — một request duy nhất (name + profile_pic + picture).
+ * Tránh gọi thêm /picture (dễ dính rate limit khi quét hàng loạt).
  */
 async function fetchFacebookUserProfileFromGraph(psid, token) {
   if (!psid || !token) return null;
-  const headers = { Authorization: `Bearer ${token}` };
   const uid = encodeURIComponent(String(psid).trim());
-  try {
-    const resp = await fetch(
-      `https://graph.facebook.com/v22.0/${uid}?fields=first_name,last_name,name,profile_pic`,
-      { headers },
-    );
-    const data = await resp.json();
-    if (data.error) return null;
-    const name = String(data.name || [data.first_name, data.last_name].filter(Boolean).join(' ')).trim();
-    let profilePic = data.profile_pic || null;
-    if (name && !isPlaceholderFacebookName(name)) {
-      if (!profilePic || isPlaceholderFacebookAvatar(profilePic)) {
-        profilePic = await fetchFacebookPictureUrl(psid, token) || buildUiAvatarUrl(name);
-      }
-      return { name, profilePic };
-    }
-    if (profilePic && !isPlaceholderFacebookAvatar(profilePic)) {
-      return { name: name || null, profilePic };
-    }
-  } catch (_) { /* ignore */ }
-  return null;
+  const url = `https://graph.facebook.com/v22.0/${uid}?fields=${encodeURIComponent(FB_GRAPH_USER_PROFILE_FIELDS)}`;
+  const data = await graphGetJson(url, token);
+  const parsed = parseGraphUserProfile(data);
+  if (parsed.graphError) {
+    return {
+      name: null,
+      profilePic: null,
+      graphDenied: isGraphProfilePermissionDenied(parsed.graphError),
+      graphError: parsed.graphError,
+    };
+  }
+  const name = parsed.name && !isPlaceholderFacebookName(parsed.name) ? parsed.name : null;
+  let profilePic = parsed.profilePic;
+  if (name && (!profilePic || isPlaceholderFacebookAvatar(profilePic))) {
+    profilePic = buildUiAvatarUrl(name);
+  }
+  if (!name && (!profilePic || isPlaceholderFacebookAvatar(profilePic))) return null;
+  return { name, profilePic, graphDenied: false };
 }
 
-async function resolveProfilePicForName(psid, token, name) {
-  const realPic = await fetchFacebookPictureUrl(psid, token);
-  if (realPic) return realPic;
+function finalizeProfilePic(name, graphProfile) {
+  if (graphProfile?.profilePic && !isPlaceholderFacebookAvatar(graphProfile.profilePic)) {
+    return graphProfile.profilePic;
+  }
   return name ? buildUiAvatarUrl(name) : null;
+}
+
+/** Log avatar refresh — console backend + tùy chọn gửi socket UI. */
+function logFbAvatarStep(pageId, psid, step, details = {}) {
+  const realPic = details.profilePic && !isPlaceholderFacebookAvatar(details.profilePic);
+  const line = {
+    ts: new Date().toISOString(),
+    pageId: pageId || null,
+    psid: psid || null,
+    step,
+    real_pic: !!realPic,
+    ...details,
+  };
+  const msg = `[FB Avatar] ${step} psid=${psid || '?'} name=${details.name || '-'} real=${realPic ? 'yes' : 'no'}${details.graph_denied ? ' denied' : ''}${details.graph_error ? ` err=${details.graph_error.code}/${details.graph_error.error_subcode || ''}` : ''}${details.reason ? ` (${details.reason})` : ''}`;
+  console.log(msg);
+  return line;
 }
 
 function shouldUpdateFacebookProfilePic(currentPic, newPic) {
@@ -1803,28 +2138,58 @@ async function logFetchResult(pageId, psid, status, details) {
 }
 
 // Lấy tên + avatar: User Profile API → Conversations API → ui-avatars fallback
-async function fetchProfileViaConversations(pageId, psid) {
+async function fetchProfileViaConversations(pageId, psid, { logContext = null } = {}) {
+  const pushLog = (step, details) => {
+    const line = logFbAvatarStep(pageId, psid, step, details);
+    if (logContext?.lines) logContext.lines.push(line);
+    return line;
+  };
   try {
     const page = await getPageConfig(pageId);
-    if (!page?.access_token) { await logFetchResult(pageId, psid, 'no_token', null); return null; }
+    if (!page?.access_token) {
+      pushLog('no_token', { reason: 'missing_page_token' });
+      await logFetchResult(pageId, psid, 'no_token', null);
+      return null;
+    }
     const token = page.access_token;
 
     // Step 1: User Profile API — avatar Facebook thật (nếu app có quyền)
     const graphProfile = await fetchFacebookUserProfileFromGraph(psid, token);
-    if (graphProfile?.name && !isPlaceholderFacebookName(graphProfile.name)) {
+    if (graphProfile?.graphError) {
+      pushLog('graph_error', {
+        graph_denied: !!graphProfile.graphDenied,
+        graph_error: graphProfile.graphError,
+        reason: graphProfile.graphDenied ? 'meta_permission_denied' : 'graph_failed',
+      });
+    } else if (graphProfile?.name && !isPlaceholderFacebookName(graphProfile.name)) {
+      pushLog('graph_profile_ok', {
+        name: graphProfile.name,
+        profilePic: graphProfile.profilePic,
+        graph_denied: false,
+        source: 'graph_profile',
+      });
       await logFetchResult(pageId, psid, 'success_graph_profile', {
         name: graphProfile.name,
         real_pic: !isPlaceholderFacebookAvatar(graphProfile.profilePic),
+        graph_denied: !!graphProfile.graphDenied,
       });
-      return graphProfile;
+      return { ...graphProfile, source: 'graph_profile' };
+    } else if (graphProfile?.profilePic && !isPlaceholderFacebookAvatar(graphProfile.profilePic)) {
+      pushLog('graph_pic_only', {
+        profilePic: graphProfile.profilePic,
+        source: 'graph_pic_only',
+      });
+    } else {
+      pushLog('graph_miss', { reason: 'no_name_no_real_pic', graph_denied: !!graphProfile?.graphDenied });
     }
 
     const { convId, lastError } = await graphResolveConversationIdForPsid(pageId, psid, token);
     if (!convId) {
-      if (graphProfile?.profilePic) {
+      if (graphProfile?.profilePic && !isPlaceholderFacebookAvatar(graphProfile.profilePic)) {
         await logFetchResult(pageId, psid, 'success_graph_pic_only', { real_pic: true });
-        return graphProfile;
+        return { ...graphProfile, source: 'graph_pic_only' };
       }
+      pushLog('no_conversation', { reason: lastError?.message || 'no_conv_id' });
       await logFetchResult(pageId, psid, 'no_conversation', lastError || null);
       return null;
     }
@@ -1837,14 +2202,21 @@ async function fetchProfileViaConversations(pageId, psid) {
       const partData = await partResp.json();
       const participant = partData.participants?.data?.find(p => p.id === psid);
       if (participant?.name && participant.name !== 'Facebook User') {
-        const profilePic = await resolveProfilePicForName(psid, token, participant.name);
+        const profilePic = finalizeProfilePic(participant.name, graphProfile);
+        pushLog('participants_ok', {
+          name: participant.name,
+          profilePic,
+          graph_denied: !!graphProfile?.graphDenied,
+          source: 'participants',
+        });
         await logFetchResult(pageId, psid, 'success_participants', {
           name: participant.name,
           real_pic: profilePic && !isPlaceholderFacebookAvatar(profilePic),
+          graph_denied: !!graphProfile?.graphDenied,
         });
-        return { name: participant.name, profilePic };
+        return { name: participant.name, profilePic, graphDenied: !!graphProfile?.graphDenied, source: 'participants' };
       }
-    } catch (e) { /* fallthrough */ }
+    } catch (e) { pushLog('participants_error', { reason: e.message }); }
 
     // Step 2b: Fallback — messages with from.name
     const msgResp = await fetch(`https://graph.facebook.com/v22.0/${convId}/messages?fields=from&limit=5`, {
@@ -1852,33 +2224,43 @@ async function fetchProfileViaConversations(pageId, psid) {
     });
     const msgData = await msgResp.json();
     if (!msgData.data?.length) {
-      if (graphProfile?.profilePic) {
+      if (graphProfile?.profilePic && !isPlaceholderFacebookAvatar(graphProfile.profilePic)) {
         await logFetchResult(pageId, psid, 'success_graph_pic_only', { real_pic: true });
-        return graphProfile;
+        return { ...graphProfile, source: 'graph_pic_only' };
       }
+      pushLog('no_messages', { reason: 'empty_thread' });
       await logFetchResult(pageId, psid, 'no_messages', null);
       return null;
     }
 
     const userMsg = msgData.data.find(m => m.from?.id === psid);
     if (!userMsg?.from?.name) {
-      if (graphProfile?.profilePic) {
+      if (graphProfile?.profilePic && !isPlaceholderFacebookAvatar(graphProfile.profilePic)) {
         await logFetchResult(pageId, psid, 'success_graph_pic_only', { real_pic: true });
-        return graphProfile;
+        return { ...graphProfile, source: 'graph_pic_only' };
       }
+      pushLog('no_name', { reason: 'messages_without_name' });
       await logFetchResult(pageId, psid, 'no_name', null);
       return null;
     }
 
     const userName = userMsg.from.name;
-    const profilePic = await resolveProfilePicForName(psid, token, userName);
+    const profilePic = finalizeProfilePic(userName, graphProfile);
+    pushLog('messages_ok', {
+      name: userName,
+      profilePic,
+      graph_denied: !!graphProfile?.graphDenied,
+      source: 'messages',
+    });
     await logFetchResult(pageId, psid, 'success_messages', {
       name: userName,
       real_pic: profilePic && !isPlaceholderFacebookAvatar(profilePic),
+      graph_denied: !!graphProfile?.graphDenied,
     });
 
-    return { name: userName, profilePic };
+    return { name: userName, profilePic, graphDenied: !!graphProfile?.graphDenied, source: 'messages' };
   } catch (e) {
+    pushLog('exception', { reason: e.message });
     console.warn('[FB] fetchProfileViaConversations error:', e.message);
     return null;
   }
@@ -6558,6 +6940,10 @@ loadRescanPhonesScheduleConfig().then((cfg) => {
   if (cfg?.enabled) startRescanPhonesSchedule(false);
 }).catch(() => {});
 
+loadFbMasterScheduleConfig().then((cfg) => {
+  if (cfg?.enabled) startFbMasterScheduleCycle().catch(() => {});
+}).catch(() => {});
+
 // GET /facebook/audit-phone-sync — đối soát contact/customer/lead
 r.get('/audit-phone-sync', authMiddleware, async (req, res) => {
   try {
@@ -6727,31 +7113,72 @@ r.post('/refresh-names', authMiddleware, async (req, res) => {
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
       .limit(100);
-    if (!stuckContacts?.length) return res.json({ updated: 0, message: 'Không có contact nào cần cập nhật' });
+    if (!stuckContacts?.length) {
+      console.log('[FB Avatar Refresh] Không có contact placeholder trong scope');
+      return res.json({ updated: 0, message: 'Không có contact nào cần cập nhật', log_lines: [] });
+    }
 
     const total = stuckContacts.length;
     let updated = 0;
-    if (io) io.emit('batch_progress', { type: 'refresh_names', phase: 'start', total, current: 0 });
+    let realAvatarUpdated = 0;
+    let avatarDenied = 0;
+    const logLines = [];
+    const emitRefreshLog = (entry) => {
+      logLines.push(entry);
+      if (logLines.length > 120) logLines.shift();
+      if (io) io.emit('batch_progress', { type: 'refresh_names', ...entry });
+    };
+
+    console.log(`[FB Avatar Refresh] Bắt đầu: ${total} contact, company=${req.body?.company_id || 'all'}`);
+    emitRefreshLog({ phase: 'start', total, current: 0, message: `Bắt đầu refresh ${total} contact` });
 
     for (let i = 0; i < stuckContacts.length; i++) {
       const c = stuckContacts[i];
-      const profile = await fetchProfileViaConversations(c.page_id, c.psid);
+      if (i > 0) await sleepMs(450);
+      const ctx = { lines: [] };
+      const profile = await fetchProfileViaConversations(c.page_id, c.psid, { logContext: ctx });
+      if (profile?.graphDenied) avatarDenied += 1;
+
+      const realPic = profile?.profilePic && !isPlaceholderFacebookAvatar(profile.profilePic);
       const upd = { updated_at: new Date().toISOString() };
       let changed = false;
+      let changeParts = [];
 
       if (profile?.name && !isPlaceholderFacebookName(profile.name) && profile.name !== c.fb_name) {
         upd.fb_name = profile.name;
         changed = true;
+        changeParts.push('name');
       }
       if (shouldUpdateFacebookProfilePic(c.fb_profile_pic, profile?.profilePic)) {
         upd.fb_profile_pic = profile.profilePic;
         changed = true;
+        changeParts.push(realPic ? 'real_avatar' : 'placeholder_avatar');
+        if (realPic) realAvatarUpdated += 1;
       }
+
+      const resolvedName = upd.fb_name || c.fb_name || profile?.name || c.fb_name;
+      const progressEntry = {
+        current: i + 1,
+        total,
+        contact_id: c.id,
+        psid: c.psid,
+        name: resolvedName,
+        oldName: c.fb_name,
+        source: profile?.source || ctx.lines[ctx.lines.length - 1]?.step || 'none',
+        real_pic: !!realPic,
+        graph_denied: !!profile?.graphDenied,
+        status: changed ? 'updated' : 'unchanged',
+        changed: changeParts,
+        message: changed
+          ? `${resolvedName}: ${changeParts.join(', ') || 'updated'}${realPic ? ' · ảnh FB thật' : profile?.graphDenied ? ' · Meta từ chối ảnh' : ' · avatar chữ'}`
+          : `${resolvedName}: không đổi${profile?.graphDenied ? ' (Meta từ chối ảnh)' : ''}`,
+      };
+      emitRefreshLog(progressEntry);
+      console.log(`[FB Avatar Refresh] [${i + 1}/${total}] ${progressEntry.message} source=${progressEntry.source}`);
 
       if (changed) {
         await supabase.from('facebook_contacts').update(upd).eq('id', c.id);
 
-        const resolvedName = upd.fb_name || c.fb_name;
         if (c.lead_id && upd.fb_name) {
           await supabase.from('crm_leads')
             .update({ title: `[FB] ${resolvedName}`, updated_at: new Date().toISOString() })
@@ -6766,29 +7193,29 @@ r.post('/refresh-names', authMiddleware, async (req, res) => {
         }
         updated++;
         if (io) {
-          io.emit('batch_progress', {
-            type: 'refresh_names',
-            current: i + 1,
-            total,
-            name: resolvedName,
-            oldName: c.fb_name,
-            status: 'updated',
-          });
           io.emit('fb_contact_updated', {
             contact_id: c.id,
             fb_name: resolvedName,
             fb_profile_pic: upd.fb_profile_pic ?? c.fb_profile_pic ?? null,
           });
         }
-        console.log(`[FB Refresh] ${c.psid}: "${c.fb_name}" → "${resolvedName}"`);
-      } else {
-        if (io) io.emit('batch_progress', { type: 'refresh_names', current: i + 1, total, name: c.fb_name, status: 'unchanged' });
       }
     }
-    const summary = { updated, total };
+    const summary = {
+      updated,
+      total,
+      real_avatar_updated: realAvatarUpdated,
+      avatar_not_available: avatarDenied,
+      note: 'Avatar Facebook thật chỉ lấy được khi Meta cho phép (Advanced Access). Còn lại giữ avatar chữ.',
+      log_lines: logLines.slice(-50),
+    };
+    console.log(`[FB Avatar Refresh] Xong: updated=${updated}/${total}, real_avatar=${realAvatarUpdated}, denied=${avatarDenied}`);
     if (io) io.emit('batch_done', { type: 'refresh_names', ...summary });
     res.json(summary);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('[FB Avatar Refresh] Lỗi:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 r.get('/webhook-logs', authMiddleware, async (req, res) => {
@@ -6924,6 +7351,46 @@ r.post('/auto-pipeline/master', authMiddleware, async (req, res) => {
     const enabled = !!req.body?.enabled;
     await applyFbPipelineMaster(enabled);
     res.json({ ok: true, master_enabled: getFbMasterEnabledSync() });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Hẹn giờ bật/tắt công tắc TỔNG — chỉ admin hệ thống
+r.get('/auto-pipeline/master-schedule/config', authMiddleware, async (req, res) => {
+  if (!isSystemAdmin(req.user)) return res.status(403).json({ error: 'Chỉ admin được xem lịch công tắc tổng.' });
+  await loadFbMasterScheduleConfig();
+  res.json(getFbMasterScheduleStatus());
+});
+
+r.get('/auto-pipeline/master-schedule/logs', authMiddleware, async (req, res) => {
+  if (!isSystemAdmin(req.user)) return res.status(403).json({ error: 'Chỉ admin được xem nhật ký lịch công tắc tổng.' });
+  const limit = Math.min(200, Math.max(1, parseInt(req.query?.limit, 10) || 30));
+  const logs = await loadFbMasterScheduleLogs(limit);
+  res.json({ logs });
+});
+
+r.put('/auto-pipeline/master-schedule/config', authMiddleware, async (req, res) => {
+  try {
+    if (!isSystemAdmin(req.user)) return res.status(403).json({ error: 'Chỉ admin được cấu hình lịch công tắc tổng.' });
+    const prevEnabled = fbMasterSchedule.enabled;
+    stopFbMasterScheduleTimer();
+    const body = req.body || {};
+    const patch = { ...body };
+    if (body.enabled === true && !prevEnabled) {
+      patch.phase = 'run';
+      patch.phase_started_at = null;
+    }
+    if (body.enabled === false) {
+      patch.phase = 'rest';
+      patch.phase_started_at = null;
+    }
+    await saveFbMasterScheduleConfig(patch);
+    if (fbMasterSchedule.enabled) {
+      const paramsChanged = body.run_minutes != null || body.rest_minutes != null;
+      await startFbMasterScheduleCycle({ restart: !prevEnabled || paramsChanged });
+    }
+    res.json(getFbMasterScheduleStatus());
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
