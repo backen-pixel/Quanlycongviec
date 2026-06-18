@@ -5622,7 +5622,7 @@ r.get('/web-dashboard-bootstrap', responseCache({ ttl: 15, scope: 'user', tags: 
     }
 
     const companyId = uuidQueryOrNull(mergedQuery.company_id);
-    const parsedLimit = Math.min(Math.max(parseInt(req.query.limit) || 250, 1), 2000);
+    const parsedLimit = Math.min(Math.max(parseInt(req.query.limit) || 500, 1), 2000);
     const skipDeadline = resolveCrmLeadsSkipDeadline(mergedQuery, { skipDeadline: true });
     const lite = resolveCrmLeadsKanbanLite(mergedQuery, { lite: true });
     const ledgerPeriodStart = defaultKpiLedgerMonthStartYmd();
