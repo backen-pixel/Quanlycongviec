@@ -1,10 +1,8 @@
 /**
- * Phát hành APK crm-mobile-v2 lên chức năng "Cập nhật app" (production).
+ * Phát hành APK sx-mobile lên chức năng "Cập nhật app" (production).
  *
- *   node scripts/publish-crm-mobile-v2.js
- *   SKIP_UPLOAD=1 node scripts/publish-crm-mobile-v2.js   # chỉ metadata DB
- *
- * Sau publish, tự upload APK lên disk production (Render) để link tải hoạt động ngay.
+ *   node scripts/publish-sx-mobile.js
+ *   SKIP_UPLOAD=1 node scripts/publish-sx-mobile.js
  */
 const fs = require('fs');
 const path = require('path');
@@ -14,16 +12,16 @@ const { supabase } = require('../src/config/supabase');
 
 const { buildStandardApkFilename } = require('../src/helpers/appReleaseFilename');
 
-const APP_KEY = 'crm-mobile-v2';
-const VERSION = process.env.PUB_VERSION || '2.0.44';
-const VERSION_CODE = parseInt(process.env.PUB_CODE || '45', 10);
+const APP_KEY = 'sx-mobile';
+const VERSION = process.env.PUB_VERSION || '1.0.56';
+const VERSION_CODE = parseInt(process.env.PUB_CODE || '59', 10);
 const PUBLIC_HOST = (process.env.PUB_HOST || 'https://tubep-backend.onrender.com').replace(/\/$/, '');
 const FILE_NAME = buildStandardApkFilename(APP_KEY, VERSION, VERSION_CODE, { release: true });
-const APK = path.resolve(__dirname, `../uploads/app-releases/crm-mobile-v2/${FILE_NAME}`);
-const FILE_URL = `${PUBLIC_HOST}/uploads/app-releases/crm-mobile-v2/${FILE_NAME}`;
+const APK = path.resolve(__dirname, `../uploads/app-releases/sx-mobile/${FILE_NAME}`);
+const FILE_URL = `${PUBLIC_HOST}/uploads/app-releases/sx-mobile/${FILE_NAME}`;
 const RELEASE_NOTES =
   process.env.PUB_NOTES
-  || 'Nhận ghi âm qua Chia sẻ (Share) từ Google Phone — tự upload lên CRM.';
+  || 'Chia sẻ ảnh/PDF từ app khác vào chat nội bộ (Share → Quản lý sản xuất).';
 
 async function uploadApkToProduction(releaseId) {
   if (process.env.SKIP_UPLOAD === '1' || process.env.SKIP_UPLOAD === 'true') {
