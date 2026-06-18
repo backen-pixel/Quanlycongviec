@@ -355,11 +355,40 @@ const TIME_PRESETS = [
   { key: 'custom', label: 'Tùy chỉnh' },
 ];
 
-const KANBAN_LOAD_OPTIONS = ['250', '500', '1000', '2000', 'all'];
-/** Mặc định 250 — cân bằng tốc độ mở trang vs đủ thẻ Kanban. */
-const KANBAN_DEFAULT_LOAD_LIMIT = '250';
+const KANBAN_LOAD_OPTIONS = ['500', '1000', '2000', 'all'];
+/** Trang đầu — hiện Kanban nhanh, phần còn lại tải khi cuộn. */
+const KANBAN_INITIAL_PAGE_SIZE = 80;
+/** Mỗi lần cuộn gần cuối Kanban. */
+const KANBAN_SCROLL_PAGE_SIZE = 100;
+/** Số thẻ render ban đầu trong mỗi cột (mở rộng khi cuộn tới sentinel). */
+const KANBAN_COLUMN_INITIAL_CARDS = 10;
+const KANBAN_COLUMN_CARD_STEP = 8;
+/** Mặc định trần auto-load khi cuộn (chọn «Tải tất cả» để vượt trần). */
+const KANBAN_DEFAULT_LOAD_LIMIT = '500';
 /** Trần khi chọn «Tải tất cả» — tránh vòng lặp API vô hạn. */
 const KANBAN_LOAD_ALL_MAX = 5000;
+
+function resolveKanbanAutoLoadCap(kanbanLoadLimit) {
+  if (String(kanbanLoadLimit ?? '').trim().toLowerCase() === 'all') return KANBAN_LOAD_ALL_MAX;
+  const n = parseInt(kanbanLoadLimit, 10);
+  return Number.isFinite(n) && n > 0 ? n : 500;
+}
+
+function normalizeCrmKanbanLoadSpec(loadSpec) {
+  if (loadSpec == null || loadSpec === 'initial') {
+    return { offset: 0, limit: KANBAN_INITIAL_PAGE_SIZE, loadAll: false };
+  }
+  if (typeof loadSpec === 'string') {
+    if (loadSpec.toLowerCase() === 'all') return { loadAll: true };
+    const n = parseInt(loadSpec, 10);
+    if (Number.isFinite(n) && n > 0) return { offset: 0, limit: n, loadAll: false };
+    return { offset: 0, limit: KANBAN_INITIAL_PAGE_SIZE, loadAll: false };
+  }
+  const offset = Math.max(parseInt(loadSpec.offset, 10) || 0, 0);
+  const limit = loadSpec.limit
+    ?? (offset > 0 ? KANBAN_SCROLL_PAGE_SIZE : KANBAN_INITIAL_PAGE_SIZE);
+  return { offset, limit, loadAll: !!loadSpec.loadAll };
+}
 /** Query flags — backend trả select nhẹ + bỏ enrich nặng cho Kanban. */
 const CRM_KANBAN_LEAD_QUERY = { kanban: '1', lite: '1', skip_deadline: '1' };
 /** Trì hoãn pipeline/tab không active và số SĐT — tránh tranh băng thông lúc mở trang. */
@@ -375,10 +404,10 @@ function crmDashboardUsesLegacyListFilters({ filterLeadType, filterReferrer, fil
 }
 
 /** Tải lead/deal cho Kanban — dùng chung load(), refresh và tải thêm. */
-async function fetchCrmKanbanRowsPage(apiClient, common, kanbanLoadLimit) {
+async function fetchCrmKanbanRowsPage(apiClient, common, loadSpec = 'initial') {
   const leadParams = { ...CRM_KANBAN_LEAD_QUERY, ...common };
-  const loadAll = String(kanbanLoadLimit ?? '').trim().toLowerCase() === 'all';
-  if (loadAll) {
+  const spec = normalizeCrmKanbanLoadSpec(loadSpec);
+  if (spec.loadAll) {
     const chunk = 1000;
     let offset = 0;
     const out = [];
@@ -404,8 +433,8 @@ async function fetchCrmKanbanRowsPage(apiClient, common, kanbanLoadLimit) {
     }
     return { rows: out, nextOffset: null, total: out.length };
   }
-  const limit = parseInt(kanbanLoadLimit, 10) || 500;
-  const res = await apiClient.get('/crm/leads', { params: { ...leadParams, limit, offset: 0 } }).catch(() => ({ data: {} }));
+  const { limit, offset } = spec;
+  const res = await apiClient.get('/crm/leads', { params: { ...leadParams, limit, offset } }).catch(() => ({ data: {} }));
   const d = res.data;
   const rows = Array.isArray(d) ? d : (d?.data || []);
   const total = typeof d?.total === 'number' ? d.total : null;
@@ -1529,19 +1558,30 @@ export default function CRMDashboard() {
     return () => window.removeEventListener(EVENT, onRefresh);
   }, []);
 
-  /** Tải thêm 1000 records tiếp theo (append, không reload lại) */
+  /** Tải thêm khi cuộn Kanban (append, không reload lại) */
   const handleLoadMore = useCallback(async () => {
     if (loadMoreState.loading) return;
     const type = pipelineType;
     const offset = type === 'lead' ? loadMoreState.leadOffset : loadMoreState.dealOffset;
     const total = type === 'lead' ? loadMoreState.leadTotal : loadMoreState.dealTotal;
-    if (total !== null && offset >= total) return; // hết rồi
+    const loaded = type === 'lead' ? allLeads.length : allDeals.length;
+    const cap = resolveKanbanAutoLoadCap(kanbanLoadLimit);
+    if (total !== null && offset >= total) return;
+    if (loaded >= cap) return;
     setLoadMoreState((s) => ({ ...s, loading: true }));
     try {
       const dateParams = {};
       if (customDateFrom) dateParams.date_from = customDateFrom;
       if (customDateTo) dateParams.date_to = customDateTo;
-      const common = { type, phone_filter: filterPhone || undefined, ...dateParams, ...CRM_KANBAN_LEAD_QUERY, limit: 1000, offset };
+      const pageLimit = Math.min(KANBAN_SCROLL_PAGE_SIZE, cap - loaded);
+      const common = {
+        type,
+        phone_filter: filterPhone || undefined,
+        ...dateParams,
+        ...CRM_KANBAN_LEAD_QUERY,
+        limit: pageLimit,
+        offset,
+      };
       if (filterAssignee) common.assigned_to = filterAssignee;
       if (filterCompany) common.company_id = filterCompany;
       if (filterLeadType) common.lead_type_id = filterLeadType;
@@ -1576,6 +1616,19 @@ export default function CRMDashboard() {
         } else {
           setDataDeal((prev) => mergeCrmDashWithLedger(prev, ledgerPayload));
         }
+        void enrichCrmKanbanRowsWithDeadlines(api, merged).then((withDl) => {
+          if (type === 'lead') {
+            setAllLeads((prev) => {
+              const map = new Map(withDl.map((r) => [String(r.id), r]));
+              return dedupeCrmKanbanRows(prev.map((r) => map.get(String(r.id)) || r));
+            });
+          } else {
+            setAllDeals((prev) => {
+              const map = new Map(withDl.map((r) => [String(r.id), r]));
+              return dedupeCrmKanbanRows(prev.map((r) => map.get(String(r.id)) || r));
+            });
+          }
+        });
       }
     } catch (e) {
       console.error('[loadMore]', e);
@@ -1584,6 +1637,9 @@ export default function CRMDashboard() {
   }, [
     loadMoreState,
     pipelineType,
+    allLeads.length,
+    allDeals.length,
+    kanbanLoadLimit,
     filterPhone,
     filterAssignee,
     filterCompany,
@@ -1737,7 +1793,10 @@ export default function CRMDashboard() {
       if (filterCustomerCompany) common.customer_company = filterCustomerCompany;
 
       try {
-        const result = await fetchCrmKanbanRowsPage(api, common, kanbanLoadLimit);
+        const cap = resolveKanbanAutoLoadCap(kanbanLoadLimit);
+        const prevLen = type === 'lead' ? allLeads.length : allDeals.length;
+        const refreshLimit = Math.min(Math.max(KANBAN_INITIAL_PAGE_SIZE, prevLen || KANBAN_INITIAL_PAGE_SIZE), cap);
+        const result = await fetchCrmKanbanRowsPage(api, common, { offset: 0, limit: refreshLimit });
         const rows = result.rows;
         const nextOffset = result.nextOffset;
         const total = result.total;
@@ -1789,6 +1848,8 @@ export default function CRMDashboard() {
       filterReferrer,
       filterCustomerCompany,
       kanbanLoadLimit,
+      allLeads.length,
+      allDeals.length,
       user,
     ],
   );
@@ -2057,7 +2118,7 @@ export default function CRMDashboard() {
         return common;
       };
 
-      const fetchKanbanRows = (type) => fetchCrmKanbanRowsPage(api, buildKanbanCommon(type), kanbanLoadLimit);
+      const fetchKanbanRows = (type) => fetchCrmKanbanRowsPage(api, buildKanbanCommon(type), 'initial');
 
       const dashListParams = {
         light: '1',
@@ -2164,7 +2225,7 @@ export default function CRMDashboard() {
 
       let usedBootstrap = false;
       if (canUseBootstrap) {
-        const limit = parseInt(kanbanLoadLimit, 10) || 250;
+        const limit = KANBAN_INITIAL_PAGE_SIZE;
         const bootstrapRes = await api
           .get('/crm/web-dashboard-bootstrap', {
             params: { type: activeType, limit, ...dashListParams, ...CRM_KANBAN_LEAD_QUERY },
@@ -2908,6 +2969,30 @@ export default function CRMDashboard() {
     if (orphanDealColumn) return [...currentPipeline, orphanDealColumn];
     return currentPipeline;
   }, [currentPipeline, orphanDealColumn]);
+
+  /** Cuộn Kanban → tải thêm từ API (trang đầu 80, mỗi lần +100). */
+  const kanbanScrollLoad = useMemo(() => {
+    const type = pipelineType;
+    const offset = type === 'lead' ? loadMoreState.leadOffset : loadMoreState.dealOffset;
+    const total = type === 'lead' ? loadMoreState.leadTotal : loadMoreState.dealTotal;
+    const loaded = type === 'lead' ? allLeads.length : allDeals.length;
+    const cap = resolveKanbanAutoLoadCap(kanbanLoadLimit);
+    const hasMoreServer = total == null || offset < total;
+    const hasMoreCap = loaded < cap;
+    return {
+      hasMore: hasMoreServer && hasMoreCap,
+      loaded,
+      total,
+      loading: loadMoreState.loading,
+      cap,
+    };
+  }, [
+    pipelineType,
+    loadMoreState,
+    allLeads.length,
+    allDeals.length,
+    kanbanLoadLimit,
+  ]);
 
   /**
    * Danh sách lead/deal QUÁ HẠN theo pipeline đang xem.
@@ -3897,7 +3982,7 @@ export default function CRMDashboard() {
           </div>
 
           {/* Số bản ghi pipeline (lead + deal) tải từ API */}
-          <div className="relative" title="Giới hạn số lead/deal tải cho Kanban (mỗi loại). Mặc định 500 — chọn «Tải tất cả» nếu cần xem hết (tối đa 5.000/bên).">
+          <div className="relative" title="Trần số lead/deal tự tải khi cuộn Kanban. Trang đầu ~80 bản ghi; cuộn xuống tải thêm. Chọn «Tải tất cả» để xem hết.">
             <select
               value={kanbanLoadLimit}
               onChange={(e) => {
@@ -4674,6 +4759,8 @@ export default function CRMDashboard() {
               onOpenDeadline={openDeadlineFromCard}
               remeasureToken={showAdvSearch ? 1 : 0}
               explicitExpectedKv={explicitExpectedKvStages}
+              onLoadMore={handleLoadMore}
+              scrollLoad={kanbanScrollLoad}
             />
             {/* Chú thích màu sắc thẻ Kanban — chỉ hiện sau khi load xong dữ liệu */}
             {!firstLoading && (
@@ -4693,38 +4780,42 @@ export default function CRMDashboard() {
                 </span>
               </div>
             )}
-            {/* Nút Tải thêm 1000 */}
-            {kanbanLoadLimit !== 'all' && (() => {
-              const offset = pipelineType === 'lead' ? loadMoreState.leadOffset : loadMoreState.dealOffset;
-              const total = pipelineType === 'lead' ? loadMoreState.leadTotal : loadMoreState.dealTotal;
-              const loaded = pipelineType === 'lead' ? allLeads.length : allDeals.length;
-              const hasMore = total === null || offset < total;
-              if (!hasMore) return null;
-              return (
+            {/* Tải thêm khi cuộn — trạng thái + nút tải hết */}
+            {kanbanLoadLimit !== 'all' && kanbanScrollLoad.hasMore && (
                 <div className="flex items-center justify-center gap-3 py-3 border-t border-gray-100 bg-gray-50/50 rounded-b-xl">
                   <span className="text-xs text-gray-500">
-                    Đã tải <span className="font-semibold text-gray-700">{loaded.toLocaleString()}</span>
-                    {total !== null && <> / <span className="font-semibold text-indigo-600">{total.toLocaleString()}</span> lead</>}
+                    Đã tải <span className="font-semibold text-gray-700">{kanbanScrollLoad.loaded.toLocaleString()}</span>
+                    {kanbanScrollLoad.total != null && (
+                      <> / <span className="font-semibold text-indigo-600">{kanbanScrollLoad.total.toLocaleString()}</span></>
+                    )}
+                    {' '}{pipelineType === 'lead' ? 'lead' : 'deal'}
+                    <span className="text-gray-400"> · cuộn xuống để tải thêm</span>
                   </span>
+                  {kanbanScrollLoad.loading && (
+                    <span className="inline-flex items-center gap-1.5 text-xs text-indigo-600">
+                      <span className="animate-spin inline-block w-3 h-3 border-2 border-indigo-600 border-t-transparent rounded-full" />
+                      Đang tải…
+                    </span>
+                  )}
                   <button
-                    onClick={handleLoadMore}
-                    disabled={loadMoreState.loading}
-                    className="flex items-center gap-1.5 h-8 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg disabled:opacity-60 transition-colors"
-                  >
-                    {loadMoreState.loading
-                      ? <><span className="animate-spin inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full" /> Đang tải...</>
-                      : <>📥 Tải thêm 1.000 {pipelineType === 'lead' ? 'lead' : 'deal'}</>
-                    }
-                  </button>
-                  <button
-                    onClick={() => { setKanbanLoadLimit('all'); localStorage.setItem('crm_kanban_load_limit', 'all'); }}
+                    onClick={() => { setKanbanLoadLimit('all'); localStorage.setItem('crm_kanban_load_limit', 'all'); void load({ silent: true }); }}
                     className="h-8 px-3 border border-gray-200 bg-white text-xs text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
                   >
                     Tải tất cả
                   </button>
                 </div>
-              );
-            })()}
+            )}
+            {kanbanLoadLimit !== 'all' && !kanbanScrollLoad.hasMore && kanbanScrollLoad.loaded > 0 && kanbanScrollLoad.total != null && kanbanScrollLoad.loaded < kanbanScrollLoad.total && (
+                <div className="flex items-center justify-center gap-3 py-2 border-t border-gray-100 bg-amber-50/40 rounded-b-xl text-xs text-amber-800">
+                  <span>Đã tải {kanbanScrollLoad.loaded.toLocaleString()} / {kanbanScrollLoad.total.toLocaleString()} (giới hạn {kanbanScrollLoad.cap.toLocaleString()})</span>
+                  <button
+                    onClick={() => { setKanbanLoadLimit('all'); localStorage.setItem('crm_kanban_load_limit', 'all'); void load({ silent: true }); }}
+                    className="h-7 px-2.5 border border-amber-200 bg-white rounded-lg hover:bg-amber-50"
+                  >
+                    Tải tất cả
+                  </button>
+                </div>
+            )}
           </div>
           )}
 
@@ -5890,7 +5981,29 @@ function KanbanStageCard({
   explicitExpectedKv,
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(KANBAN_COLUMN_INITIAL_CARDS);
   const containerRef = useRef(null);
+  const columnSentinelRef = useRef(null);
+
+  useEffect(() => {
+    setVisibleCount(KANBAN_COLUMN_INITIAL_CARDS);
+  }, [stage.id]);
+
+  useEffect(() => {
+    const node = columnSentinelRef.current;
+    const total = items?.length || 0;
+    if (!node || visibleCount >= total) return undefined;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setVisibleCount((c) => Math.min(total, c + KANBAN_COLUMN_CARD_STEP));
+        }
+      },
+      { root: null, rootMargin: '120px', threshold: 0.01 },
+    );
+    obs.observe(node);
+    return () => obs.disconnect();
+  }, [items?.length, visibleCount]);
 
   const stageColor = stage.color || '#e5e7eb';
   const columnItemIds = (items || []).map((i) => i.id);
@@ -5907,6 +6020,9 @@ function KanbanStageCard({
     columnItemIds.every((id) => (mergeSelectedIds || []).some((x) => String(x) === String(id)));
 
   const isVirtualColumn = !!stage?.__virtual;
+  const totalInColumn = items?.length || 0;
+  const visibleItems = (items || []).slice(0, visibleCount);
+  const hiddenInColumn = Math.max(0, totalInColumn - visibleCount);
 
   const handleColumnDragOver = (e) => {
     if (isVirtualColumn) return;
@@ -5985,7 +6101,7 @@ function KanbanStageCard({
               </button>
             )}
             <span className={`px-2 py-1 bg-gray-100 text-gray-700 font-bold rounded ${compact ? 'text-[10px]' : 'text-xs'}`}>
-              {items.length}
+              {totalInColumn}
             </span>
           </div>
         </div>
@@ -6014,14 +6130,15 @@ function KanbanStageCard({
         } ${isOverColumn ? 'bg-blue-50/60' : ''}`}
         style={{ minHeight: compact ? '160px' : '180px' }}
       >
-        {items.length === 0 ? (
+        {totalInColumn === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-400">
             <p className="text-sm flex items-center gap-1">
               {isOverColumn ? '⬇️ Thả vào đây' : '📥 Kéo lead vào đây'}
             </p>
           </div>
         ) : (
-          items.map(item => (
+          <>
+          {visibleItems.map(item => (
             <KanbanCard
               key={item.id}
               item={item}
@@ -6039,7 +6156,16 @@ function KanbanStageCard({
               onToggleInteracted={onToggleInteracted}
               onOpenDeadline={onOpenDeadline}
             />
-          ))
+          ))}
+          {hiddenInColumn > 0 && (
+            <div
+              ref={columnSentinelRef}
+              className="py-2 text-center text-[10px] text-gray-400 border border-dashed border-gray-200 rounded-md bg-gray-50/80"
+            >
+              +{hiddenInColumn} thẻ — cuộn để xem thêm
+            </div>
+          )}
+          </>
         )}
       </div>
     </div>
@@ -6552,14 +6678,53 @@ function KanbanView({
   onOpenDeadline,
   remeasureToken,
   explicitExpectedKv,
+  onLoadMore,
+  scrollLoad,
 }) {
   const kanbanHScrollRef = useRef(null);
   const kanbanWrapRef = useRef(null);
+  const kanbanLoadSentinelRef = useRef(null);
   const pipelineDraggingRef = useRef(false);
   const scrollRafRef = useRef(0);
   const lastPointerRef = useRef({ x: 0, y: 0 });
   const [isDraggingCard, setIsDraggingCard] = useState(false);
   const [scrollMaxH, setScrollMaxH] = useState('70vh');
+
+  const tryLoadMore = useCallback(() => {
+    if (!scrollLoad?.hasMore || scrollLoad?.loading || !onLoadMore) return;
+    onLoadMore();
+  }, [scrollLoad?.hasMore, scrollLoad?.loading, onLoadMore]);
+
+  useEffect(() => {
+    const root = kanbanHScrollRef.current;
+    const sentinel = kanbanLoadSentinelRef.current;
+    if (!root || !sentinel || !scrollLoad?.hasMore) return undefined;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) tryLoadMore();
+      },
+      { root, rootMargin: '120px', threshold: 0.01 },
+    );
+    obs.observe(sentinel);
+    return () => obs.disconnect();
+  }, [scrollLoad?.hasMore, scrollLoad?.loading, tryLoadMore]);
+
+  useEffect(() => {
+    const el = kanbanHScrollRef.current;
+    if (!el || !scrollLoad?.hasMore) return undefined;
+    let ticking = false;
+    const onScroll = () => {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(() => {
+        ticking = false;
+        const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 140;
+        if (nearBottom) tryLoadMore();
+      });
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [scrollLoad?.hasMore, scrollLoad?.loading, tryLoadMore]);
 
   // Chiều cao Kanban cố định ~3 card mỗi cột (~720px). Không phụ thuộc viewport
   // để bố cục đồng nhất trên mọi màn hình; phần còn lại scroll trong cột.
@@ -6753,6 +6918,17 @@ function KanbanView({
               explicitExpectedKv={explicitExpectedKv}
             />
           ))}
+          {scrollLoad?.hasMore && (
+            <div
+              ref={kanbanLoadSentinelRef}
+              className="flex-shrink-0 w-8 self-stretch flex items-end justify-center pb-6"
+              aria-hidden
+            >
+              {scrollLoad.loading && (
+                <span className="animate-spin inline-block w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full" />
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
