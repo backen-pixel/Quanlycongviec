@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Download, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, ExternalLink } from 'lucide-react';
 import { getFileDownloadAnchorProps, publicFileUrl } from '../lib/publicFileUrl';
@@ -6,7 +6,7 @@ import { getFileDownloadAnchorProps, publicFileUrl } from '../lib/publicFileUrl'
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
 
-/** Xem ảnh upload (/uploads/...) full màn hình — gallery + phóng to cuộn chuột / double-click. */
+/** Xem ảnh upload (/uploads/...) full màn hình — gallery, phóng to và kéo xem vùng ảnh. */
 export default function UploadFileLightbox({
   url,
   title,
@@ -26,17 +26,60 @@ export default function UploadFileLightbox({
   const canPrev = multi && index > 0;
   const canNext = multi && index < items.length - 1;
   const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const dragStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+  const draggingRef = useRef(false);
 
   const adjustZoom = useCallback((delta) => {
     setZoom((z) => {
       const next = Math.round((z + delta) * 100) / 100;
-      return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
+      const clamped = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
+      if (clamped <= MIN_ZOOM) setPan({ x: 0, y: 0 });
+      return clamped;
     });
   }, []);
 
   useEffect(() => {
     setZoom(1);
+    setPan({ x: 0, y: 0 });
   }, [index, cur?.url]);
+
+  const onImagePointerDown = (e) => {
+    if (zoom <= MIN_ZOOM) return;
+    e.preventDefault();
+    e.stopPropagation();
+    draggingRef.current = true;
+    setDragging(true);
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      panX: pan.x,
+      panY: pan.y,
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const onImagePointerMove = (e) => {
+    if (!draggingRef.current || zoom <= MIN_ZOOM) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setPan({
+      x: dragStartRef.current.panX + (e.clientX - dragStartRef.current.x),
+      y: dragStartRef.current.panY + (e.clientY - dragStartRef.current.y),
+    });
+  };
+
+  const endImageDrag = (e) => {
+    if (!draggingRef.current) return;
+    draggingRef.current = false;
+    setDragging(false);
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+  };
 
   const goPrev = () => {
     if (!canPrev) return;
@@ -84,7 +127,7 @@ export default function UploadFileLightbox({
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0 pointer-events-auto">
-          <span className="hidden sm:inline text-[11px] text-white/50 mr-1">Cuộn chuột / double-click để phóng to</span>
+          <span className="hidden sm:inline text-[11px] text-white/50 mr-1">Cuộn/double-click phóng to · kéo ảnh khi đã phóng to</span>
           <button
             type="button"
             onClick={() => adjustZoom(-0.25)}
@@ -156,16 +199,33 @@ export default function UploadFileLightbox({
             <ChevronLeft size={32} />
           </button>
         )}
-        <div className={`overflow-auto max-h-[85vh] max-w-[calc(100%-7rem)] ${zoom > 1 ? 'cursor-grab' : ''}`}>
+        <div
+          className="relative overflow-hidden max-h-[85vh] max-w-[calc(100%-7rem)] w-full flex items-center justify-center select-none"
+          style={{ touchAction: zoom > MIN_ZOOM ? 'none' : 'auto' }}
+        >
           <img
             src={cur.url}
             alt={cur.title || ''}
             draggable={false}
-            style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }}
-            className="max-h-[85vh] max-w-full rounded-lg object-contain shadow-2xl transition-transform duration-150 cursor-zoom-in"
+            style={{
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              transformOrigin: 'center center',
+              transition: dragging ? 'none' : 'transform 0.15s ease-out',
+            }}
+            className={`max-h-[85vh] max-w-full rounded-lg object-contain shadow-2xl ${
+              zoom > MIN_ZOOM ? (dragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'
+            }`}
+            onPointerDown={onImagePointerDown}
+            onPointerMove={onImagePointerMove}
+            onPointerUp={endImageDrag}
+            onPointerCancel={endImageDrag}
             onDoubleClick={(e) => {
               e.stopPropagation();
-              setZoom((z) => (z > 1 ? 1 : 2));
+              setZoom((z) => {
+                const next = z > MIN_ZOOM ? MIN_ZOOM : 2;
+                if (next <= MIN_ZOOM) setPan({ x: 0, y: 0 });
+                return next;
+              });
             }}
           />
         </div>
