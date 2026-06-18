@@ -45,7 +45,7 @@ function RoundBtn({ icon, label, active, danger, onPress }: {
 
 export default function CallScreen() {
   const {
-    session, localStream, remoteStream,
+    session, localStream, remoteStream, groupPeers = [],
     acceptCall, rejectCall, endCall,
     toggleMute, toggleSpeaker, toggleCamera, switchCamera,
   } = useCall();
@@ -65,8 +65,10 @@ export default function CallScreen() {
   if (!session || session.state === 'IDLE') return null;
 
   const isVideo = session.media === 'video';
+  const isGroup = session.mode === 'group';
   const isIncomingRinging = session.direction === 'incoming' && session.state === 'RINGING';
-  const showVideo = isVideo && session.state === 'CONNECTED';
+  const showVideo = isVideo && session.state === 'CONNECTED' && !isGroup;
+  const displayName = isGroup ? (session.groupName || 'Cuộc gọi nhóm') : session.peer.name;
 
   return (
     <Modal visible animationType="fade" transparent={false} statusBarTranslucent onRequestClose={() => {}}>
@@ -91,10 +93,18 @@ export default function CallScreen() {
                 <Text style={styles.avatarTxt}>{(session.peer.name || '?').slice(0, 1).toUpperCase()}</Text>
               </View>
             )}
-            <Text style={styles.name}>{session.peer.name}</Text>
+            <Text style={styles.name}>{displayName}</Text>
             <Text style={styles.status}>
+              {isGroup && groupPeers.length > 0
+                ? `${1 + groupPeers.length} người · `
+                : ''}
               {session.state === 'CONNECTED' ? fmtDuration(duration) : statusLabel(session.state, session.direction)}
             </Text>
+            {isGroup && groupPeers.length > 0 && (
+              <Text style={styles.groupPeers}>
+                {groupPeers.map((p) => p.name || 'Thành viên').join(', ')}
+              </Text>
+            )}
             {!!session.error && <Text style={styles.error}>{session.error}</Text>}
           </View>
         )}
@@ -133,6 +143,7 @@ const styles = StyleSheet.create({
   avatarTxt: { color: '#fff', fontSize: 48, fontWeight: '700' },
   name: { color: '#fff', fontSize: 26, fontWeight: '700', marginTop: 20 },
   status: { color: '#aebac1', fontSize: 16, marginTop: 8 },
+  groupPeers: { color: '#9ca3af', fontSize: 13, marginTop: 10, textAlign: 'center', paddingHorizontal: 24 },
   error: { color: '#f87171', fontSize: 14, marginTop: 10 },
   pip: { position: 'absolute', top: 50, right: 16, width: 110, height: 160, borderRadius: 12, backgroundColor: '#1f2c34' },
   controls: { paddingBottom: 24, gap: 24 },

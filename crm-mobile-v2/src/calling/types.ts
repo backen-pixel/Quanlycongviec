@@ -31,6 +31,11 @@ export interface CallSession {
   direction: CallDirection;
   media: CallMedia;
   state: CallState;
+  /** direct (1-1) hoặc group */
+  mode?: 'direct' | 'group';
+  groupId?: string;
+  groupName?: string;
+  joinPending?: boolean;
   /** Mốc CONNECTED để tính thời lượng. */
   connectedAt: number | null;
   isMuted: boolean;

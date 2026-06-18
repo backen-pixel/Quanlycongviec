@@ -13,7 +13,7 @@ function fmt(ms) {
 
 export default function CallOverlay() {
   const {
-    session, localStream, remoteStream,
+    session, localStream, remoteStream, groupPeers = [],
     acceptCall, rejectCall, endCall, toggleMute, toggleCamera, switchCamera,
   } = useCall();
 
@@ -23,7 +23,8 @@ export default function CallOverlay() {
   const [now, setNow] = useState(Date.now());
 
   const isVideo = session?.media === 'video';
-  const showVideo = isVideo && session?.state === 'CONNECTED';
+  const isGroup = session?.mode === 'group';
+  const showVideo = isVideo && session?.state === 'CONNECTED' && !isGroup;
 
   useEffect(() => {
     if (remoteAudioRef.current && remoteStream) remoteAudioRef.current.srcObject = remoteStream;
@@ -50,7 +51,12 @@ export default function CallOverlay() {
   const incomingRinging = session.direction === 'incoming' && session.state === 'RINGING';
   const statusText = session.state === 'CONNECTED'
     ? fmt(duration)
-    : statusLabel(session.state, session.direction);
+    : (session.joinPending ? 'Đang chờ chủ phòng duyệt…' : statusLabel(session.state, session.direction));
+
+  const displayName = isGroup ? (session.groupName || 'Cuộc gọi nhóm') : session.peer.name;
+  const participantLine = isGroup
+    ? `${1 + groupPeers.length} người trong cuộc gọi`
+    : null;
 
   const controls = incomingRinging ? (
     <>
@@ -76,7 +82,34 @@ export default function CallOverlay() {
     <div style={S.root}>
       <audio ref={remoteAudioRef} autoPlay />
 
-      {isVideo ? (
+      {isGroup && groupPeers.map((p) => (
+        <audio
+          key={p.userId}
+          ref={(el) => { if (el && p.stream) el.srcObject = p.stream; }}
+          autoPlay
+        />
+      ))}
+
+      {isGroup ? (
+        <div style={S.voiceStage}>
+          <div style={S.info}>
+            <div style={{ ...S.avatar, ...S.avatarFallback, fontSize: 36 }}>
+              {(displayName || 'N').slice(0, 1).toUpperCase()}
+            </div>
+            <div style={S.name}>{displayName}</div>
+            {participantLine && <div style={S.status}>{participantLine}</div>}
+            <div style={S.status}>{statusText}</div>
+            {groupPeers.length > 0 && (
+              <div style={S.groupPeerList}>
+                {groupPeers.map((p) => (
+                  <div key={p.userId} style={S.groupPeerItem}>{p.name || 'Thành viên'}</div>
+                ))}
+              </div>
+            )}
+            {!!session.error && <div style={S.error}>{session.error}</div>}
+          </div>
+        </div>
+      ) : isVideo ? (
         <div style={S.videoStage}>
           <div style={S.frame9x16}>
             {showVideo && (
@@ -258,4 +291,18 @@ const S = {
   active: { background: '#374151' },
   accept: { background: '#22c55e' },
   danger: { background: '#ef4444' },
+  groupPeerList: {
+    marginTop: 16,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+    alignItems: 'center',
+  },
+  groupPeerItem: {
+    color: '#d1d5db',
+    fontSize: 14,
+    padding: '4px 12px',
+    borderRadius: 999,
+    background: 'rgba(255,255,255,0.08)',
+  },
 };
