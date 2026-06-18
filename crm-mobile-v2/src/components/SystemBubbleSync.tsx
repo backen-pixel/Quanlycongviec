@@ -9,7 +9,7 @@ import {
   type CrmMobilePrefs,
 } from '../lib/crmMobilePrefs';
 import { syncNativeAuthPrefs } from '../lib/nativeAuthSync';
-import { Overlay, showChatBubbleForMessage } from '../lib/floatingBubbleOverlay';
+import { Overlay, showChatBubbleForMessage, ensureBubbleOverlayReady } from '../lib/floatingBubbleOverlay';
 import { buildMessengerNotifFromSocket } from '../lib/messengerNotifFromSocket';
 import { navigationRef } from '../navigation/navigationRef';
 import type { MessengerNotifPayload } from '../lib/localMessengerNotification';
@@ -83,6 +83,7 @@ export default function SystemBubbleSync() {
 
   useEffect(() => {
     syncNativeAuthPrefs({ token, userId: uid });
+    if (token && uid) void ensureBubbleOverlayReady();
   }, [token, uid]);
 
   useEffect(() => {

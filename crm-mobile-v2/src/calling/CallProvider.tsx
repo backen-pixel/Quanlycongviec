@@ -22,6 +22,7 @@ import {
   dismissLockScreenCallUi, showNativeOutgoingCall, syncLockScreenCallState,
   subscribeLockScreenCallAccept, subscribeLockScreenCallEnd,
   subscribeLockScreenCallReject, subscribeLockScreenToggleMute,
+  subscribeIncomingCallPush,
 } from '../lib/lockScreenCall';
 import {
   markCallAnswered, releaseIncomingClaim, setCallSession,
@@ -276,9 +277,11 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     };
     sessionRef.current = next; setSession(next);
     setCallSession(p.callId, 'incoming');
-    if (Platform.OS === 'android' && media === 'video') dismissLockScreenCallUi();
     void startIncomingCallAlert();
-    void showIncomingCallNotification({ ...p, kind: media });
+    // App đang mở → chỉ hiện CallScreen in-app (có nút Trả lời). Native full-screen khi nền/kill.
+    if (AppState.currentState !== 'active') {
+      void showIncomingCallNotification({ ...p, kind: media });
+    }
   }, []);
 
   const onIncomingCall = useCallback((p: any) => {
@@ -522,12 +525,15 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     const unsubMute = subscribeLockScreenToggleMute((cid) => {
       if (sessionRef.current?.callId === cid) toggleMute();
     });
+    const unsubPush = subscribeIncomingCallPush((p) => {
+      applyIncomingFromPush(p);
+    });
 
     return () => {
       unbindGroup?.();
       sig.destroy();
       unsubSock();
-      unsubAccept(); unsubReject(); unsubEnd(); unsubMute();
+      unsubAccept(); unsubReject(); unsubEnd(); unsubMute(); unsubPush();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

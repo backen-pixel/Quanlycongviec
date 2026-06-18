@@ -185,6 +185,21 @@ class LockScreenCallModule(private val reactContext: ReactApplicationContext) :
       emitEvent("LockScreenCallAccept", callId)
     }
 
+    fun emitIncomingCallPush(data: IncomingCallHelper.CallData) {
+      val ctx = instance?.reactContext ?: return
+      if (!ctx.hasActiveReactInstance()) return
+      val map = Arguments.createMap()
+      map.putString("callId", data.callId)
+      map.putString("fromUserId", data.fromUserId)
+      map.putString("fromName", data.fromName)
+      map.putString("kind", data.kind)
+      map.putBoolean("isGroup", data.isGroup)
+      map.putString("groupId", data.groupId)
+      map.putString("groupName", data.groupName)
+      ctx.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+        .emit("IncomingCallPush", map)
+    }
+
     fun emitToggleMute(callId: String) {
       emitEvent("LockScreenCallToggleMute", callId)
     }

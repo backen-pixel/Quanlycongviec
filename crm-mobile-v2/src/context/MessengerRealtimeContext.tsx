@@ -17,6 +17,7 @@ import {
   showLocalMessengerNotification,
   type MessengerNotifPayload,
 } from '../lib/localMessengerNotification';
+import { showChatBubbleForMessage } from '../lib/floatingBubbleOverlay';
 import type { MessengerMessage, MessengerReaction } from '../types/messenger';
 import { useAuth } from './AuthContext';
 
@@ -87,7 +88,9 @@ export function MessengerRealtimeProvider({ children }: { children: React.ReactN
     const last = recentNotifRef.current.get(dedupeKey);
     if (last != null && now - last < 12_000) return;
     recentNotifRef.current.set(dedupeKey, now);
-    if (AppState.currentState !== 'active') {
+    const isActive = AppState.currentState === 'active';
+    void showChatBubbleForMessage(payload, null, { isActive });
+    if (!isActive) {
       void showLocalMessengerNotification(payload);
     }
   }, []);
