@@ -22,15 +22,21 @@ import {
   formatLastActiveShort,
 } from '../lib/userPresenceDisplay';
 
-export const QUICK_CHAT_DOCK_W = 72;
-export const QUICK_CHAT_DOCK_MINI_W = 52;
+export const QUICK_CHAT_DOCK_W = 84;
+export const QUICK_CHAT_DOCK_MINI_W = 56;
+/** Chiều rộng thực tế trên màn hình (gồm padding badge) */
+export const QUICK_CHAT_DOCK_VISUAL_W = QUICK_CHAT_DOCK_W + 12;
 export const QUICK_CHAT_PANEL_W = 320;
 const MAX_COMPACT_AVATARS = 8;
 const DOCK_SHADOW = '0 12px 40px rgba(15, 23, 42, 0.12)';
 const DOCK_SHADOW_SUNK = '0 4px 16px rgba(15, 23, 42, 0.06)';
 const DOCK_COLLAPSED_KEY = 'messenger_quick_dock_collapsed';
 /** Phần lộ ra mép phải khi thanh đang chìm */
-const SUNK_PEEK_PX = 16;
+const SUNK_PEEK_PX = 24;
+/** Khoảng cách mép phải viewport — chừa chỗ cho badge */
+const DOCK_VIEWPORT_RIGHT = 16;
+/** Padding trong mỗi ô avatar (badge/status không bị cắt) */
+const COMPACT_ITEM_PAD = 6;
 /** Trễ trước khi hiện thẻ hover avatar (ms) */
 const HOVER_CARD_SHOW_MS = 480;
 /** Trễ trước khi thanh dock chìm lại sau khi rời chuột (ms) */
@@ -173,11 +179,11 @@ function UnreadBadge({ count, className = '', prominent = false, pulseRing = fal
   const label = count > 99 ? '99+' : count;
   if (prominent) {
     return (
-      <span className={`absolute -top-1.5 -right-1.5 flex items-center justify-center ${className}`}>
+      <span className={`absolute top-0 right-0 z-10 flex items-center justify-center ${className}`}>
         {pulseRing ? (
-          <span className="absolute inline-flex h-[26px] w-[26px] rounded-full bg-[#EF4444] opacity-40 animate-ping" />
+          <span className="absolute inline-flex h-[24px] w-[24px] rounded-full bg-[#EF4444] opacity-40 animate-ping" />
         ) : null}
-        <span className="relative min-w-[22px] h-[22px] px-1.5 rounded-full bg-gradient-to-br from-[#EF4444] to-[#DC2626] text-white text-[11px] font-extrabold flex items-center justify-center border-[2.5px] border-white shadow-[0_2px_10px_rgba(239,68,68,0.55)]">
+        <span className="relative min-w-[20px] h-[20px] px-1 rounded-full bg-gradient-to-br from-[#EF4444] to-[#DC2626] text-white text-[10px] font-extrabold flex items-center justify-center border-2 border-white shadow-[0_2px_8px_rgba(239,68,68,0.5)]">
           {label}
         </span>
       </span>
@@ -185,7 +191,7 @@ function UnreadBadge({ count, className = '', prominent = false, pulseRing = fal
   }
   return (
     <span
-      className={`absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-[#EF4444] text-white text-[10px] font-bold flex items-center justify-center border-2 border-white shadow-sm ${className}`}
+      className={`absolute top-0.5 right-0.5 z-10 min-w-[16px] h-[16px] px-0.5 rounded-full bg-[#EF4444] text-white text-[9px] font-bold flex items-center justify-center border-2 border-white shadow-sm ${className}`}
     >
       {label}
     </span>
@@ -249,7 +255,7 @@ export default function MessengerQuickChatDock({
 
   const dockActive = raised || expanded;
   const compactWidth = avatarsCollapsed ? QUICK_CHAT_DOCK_MINI_W : QUICK_CHAT_DOCK_W;
-  const sunkOffset = Math.max(0, compactWidth - SUNK_PEEK_PX);
+  const compactOuterWidth = compactWidth + COMPACT_ITEM_PAD * 2;
 
   const compactItems = items.slice(0, MAX_COMPACT_AVATARS);
   const overflowCount = Math.max(0, items.length - MAX_COMPACT_AVATARS);
@@ -310,15 +316,23 @@ export default function MessengerQuickChatDock({
     const isGroup = item.kind === 'group' || item.kind === 'window';
 
     return (
-      <div key={item.key} className="relative shrink-0">
+      <div
+        key={item.key}
+        className="relative shrink-0 overflow-visible"
+        style={{ padding: COMPACT_ITEM_PAD }}
+      >
         <button
           type="button"
           onClick={() => onItemClick(item)}
           onContextMenu={item.pinned != null ? (e) => onTogglePin?.(item, e) : undefined}
           onMouseEnter={(e) => showHover(item, e.currentTarget)}
           onMouseLeave={hideHover}
-          className="block transition-transform duration-300 ease-out hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] rounded-2xl"
-          title={item.title}
+          className="relative block transition-transform duration-300 ease-out hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] rounded-2xl overflow-visible"
+          title={
+            item.lastPreview
+              ? `${item.title} — ${item.lastPreview}`
+              : item.title
+          }
         >
           {item.kind === 'department' ? (
             <span
@@ -346,7 +360,7 @@ export default function MessengerQuickChatDock({
               publicFileUrl={publicFileUrl}
             >
               {item.peerId ? (
-                <span className="absolute -bottom-0.5 -right-0.5">
+                <span className="absolute bottom-0 right-0 z-10">
                   {presence?.online ? (
                     <span className="relative flex h-2.5 w-2.5">
                       <span className="absolute inline-flex h-full w-full rounded-full bg-[#22C55E] opacity-50 animate-ping" />
@@ -360,7 +374,7 @@ export default function MessengerQuickChatDock({
             </DockAvatar>
           )}
           {item.pinned ? (
-            <span className="absolute -top-0.5 -left-0.5 h-3.5 w-3.5 rounded-full bg-[#F59E0B] flex items-center justify-center ring-1 ring-white shadow">
+            <span className="absolute top-0 left-0 z-10 h-3.5 w-3.5 rounded-full bg-[#F59E0B] flex items-center justify-center ring-1 ring-white shadow">
               <Pin className="h-2 w-2 text-white fill-white" />
             </span>
           ) : null}
@@ -385,8 +399,8 @@ export default function MessengerQuickChatDock({
 
       <div
         ref={dockRef}
-        className="fixed top-1/2 -translate-y-1/2 z-[120] flex flex-row-reverse items-stretch gap-3 font-[Inter,system-ui,sans-serif]"
-        style={{ right: 12 }}
+        className="fixed top-1/2 -translate-y-1/2 z-[120] flex flex-row-reverse items-stretch gap-3 font-[Inter,system-ui,sans-serif] overflow-visible"
+        style={{ right: DOCK_VIEWPORT_RIGHT }}
         onMouseEnter={handleDockEnter}
         onMouseLeave={handleDockLeave}
       >
@@ -621,23 +635,26 @@ export default function MessengerQuickChatDock({
 
         {/* Compact dock — chìm khi không hover; thu gọn được */}
         <div
-          className={`relative shrink-0 flex flex-col items-center rounded-[24px] border py-3 px-2 gap-2 transition-all duration-500 ease-out ${
+          className={`relative shrink-0 flex flex-col items-center rounded-[24px] border py-3 gap-2 transition-all duration-500 ease-out overflow-visible ${
             dockActive
-              ? 'opacity-100 border-[#E5E7EB] bg-white'
+              ? 'opacity-100 border-[#E5E7EB] bg-white px-2.5'
               : totalUnread > 0
-                ? 'opacity-95 border-[#FECACA] bg-white shadow-[0_0_0_2px_rgba(239,68,68,0.25)]'
-                : 'opacity-[0.42] border-transparent bg-white/75 backdrop-blur-sm'
+                ? 'opacity-95 border-[#FECACA] bg-white shadow-[0_0_0_2px_rgba(239,68,68,0.25)] px-2.5'
+                : 'opacity-[0.42] border-transparent bg-white/75 backdrop-blur-sm px-2'
           }`}
           style={{
-            width: compactWidth,
+            width: compactOuterWidth,
             boxShadow: dockActive ? DOCK_SHADOW : totalUnread > 0 ? '0 8px 28px rgba(239,68,68,0.22)' : DOCK_SHADOW_SUNK,
-            transform: dockActive ? 'translateX(0)' : totalUnread > 0 ? `translateX(${Math.max(0, sunkOffset - 8)}px)` : `translateX(${sunkOffset}px)`,
+            transform:
+              dockActive || totalUnread > 0
+                ? 'translateX(0)'
+                : `translateX(${Math.max(0, compactOuterWidth - SUNK_PEEK_PX)}px)`,
           }}
         >
           <button
             type="button"
             onClick={onToggleExpanded}
-            className={`relative w-11 h-11 rounded-2xl flex items-center justify-center transition-all duration-200 shrink-0 ${
+            className={`relative w-11 h-11 rounded-2xl flex items-center justify-center transition-all duration-200 shrink-0 overflow-visible ${
               expanded
                 ? 'bg-gradient-to-br from-[#2563EB] to-[#7C3AED] text-white shadow-md scale-95'
                 : totalUnread > 0 && !dockActive
@@ -674,9 +691,9 @@ export default function MessengerQuickChatDock({
               <div className={`w-8 border-t shrink-0 transition-colors ${dockActive ? 'border-[#E5E7EB]' : 'border-slate-200/60'}`} />
 
               <div
-                className={`flex flex-col items-center gap-2 w-full min-h-0 transition-all duration-500 ease-out ${
+                className={`flex flex-col items-center gap-1 w-full min-h-0 overflow-y-auto overflow-x-visible py-1 transition-all duration-500 ease-out [scrollbar-width:thin] ${
                   dockActive ? 'opacity-100 max-h-[min(420px,50vh)]' : 'opacity-80 max-h-[min(320px,40vh)]'
-                } overflow-hidden`}
+                }`}
               >
                 {groupsLoading && items.length === 0 ? (
                   <Loader2 className="h-5 w-5 animate-spin text-slate-400 my-2" />

@@ -19,14 +19,18 @@ import {
   pickNewestMessengerPreview,
 } from '../lib/messengerPreview';
 import { isMessengerCallLogMessage } from '../lib/messengerCallLog';
+import { messengerThreadKey } from '../lib/messengerHubStorage';
 import { useRelativeTimeTick } from '../hooks/useRelativeTimeTick';
-import MessengerQuickChatDock, { QUICK_CHAT_DOCK_W, QUICK_CHAT_PANEL_W } from './MessengerQuickChatDock';
+import MessengerQuickChatDock, {
+  QUICK_CHAT_DOCK_VISUAL_W,
+  QUICK_CHAT_DOCK_PANEL_W,
+} from './MessengerQuickChatDock';
 
-export const MESSENGER_DOCK_W = QUICK_CHAT_DOCK_W;
+export const MESSENGER_DOCK_W = QUICK_CHAT_DOCK_VISUAL_W;
 const BUBBLE_W = 340;
 const BUBBLE_GAP = 14;
 const BUBBLE_MAX_H = 520;
-const DOCK_FIXED_RIGHT = 12;
+const DOCK_FIXED_RIGHT = 16;
 const DOCK_PANEL_GAP = 12;
 const VIEWPORT_MARGIN = 8;
 /** Trên layout CRM (main z-10); dưới modal toàn trang (vd. z-220) nhờ createPortal ra document.body */
@@ -49,7 +53,7 @@ function useViewportSize() {
 /** Bubble chat — bên trái dock cố định */
 function computeBubbleLayout(index, viewport, panelExpanded) {
   const margin = VIEWPORT_MARGIN;
-  const dockOffset = DOCK_FIXED_RIGHT + QUICK_CHAT_DOCK_W + (panelExpanded ? QUICK_CHAT_PANEL_W + DOCK_PANEL_GAP : 0);
+  const dockOffset = DOCK_FIXED_RIGHT + QUICK_CHAT_DOCK_VISUAL_W + (panelExpanded ? QUICK_CHAT_PANEL_W + DOCK_PANEL_GAP : 0);
   const bubbleH = Math.min(BUBBLE_MAX_H, viewport.h - margin * 2);
 
   let right = dockOffset + BUBBLE_GAP + index * (BUBBLE_W + BUBBLE_GAP);
@@ -82,6 +86,58 @@ function compareDockItems(a, b) {
   const aTime = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
   const bTime = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
   return bTime - aTime;
+}
+
+function readLsMessengerThreads(uid) {
+  if (!uid) return [];
+  try {
+    const raw = localStorage.getItem(messengerThreadKey(uid));
+    const ls = raw ? JSON.parse(raw) : [];
+    return (Array.isArray(ls) ? ls : []).filter((t) => t.kind === 'messenger' && t.groupId);
+  } catch {
+    return [];
+  }
+}
+
+function mergeApiGroupsWithPreviewCache(apiList, uid, prevGroups = []) {
+  const lsById = new Map(readLsMessengerThreads(uid).map((t) => [String(t.groupId), t]));
+  const prevById = new Map((prevGroups || []).map((g) => [String(g.id), g]));
+  return (Array.isArray(apiList) ? apiList : []).map((g) => {
+    const ls = lsById.get(String(g.id));
+    const prev = prevById.get(String(g.id));
+    const { preview, lastMessageAt } = pickNewestMessengerPreview([
+      { preview: g.last_message, at: g.last_message_at || g.created_at },
+      { preview: ls?.lastPreview, at: ls?.lastMessageAt || ls?.updatedAt },
+      { preview: prev?.last_message, at: prev?.last_message_at || prev?.created_at },
+    ]);
+    return {
+      ...g,
+      last_message: preview || g.last_message || null,
+      last_message_at: lastMessageAt || g.last_message_at || g.created_at,
+    };
+  });
+}
+
+function persistDockThreadPreview(uid, groupId, preview, at) {
+  if (!uid || !groupId || !preview) return;
+  try {
+    const raw = localStorage.getItem(messengerThreadKey(uid));
+    const parsed = raw ? JSON.parse(raw) : [];
+    const arr = Array.isArray(parsed) ? parsed : [];
+    const idx = arr.findIndex((t) => t.kind === 'messenger' && String(t.groupId) === String(groupId));
+    const patch = {
+      kind: 'messenger',
+      groupId,
+      lastPreview: preview,
+      lastMessageAt: at,
+      updatedAt: at,
+    };
+    if (idx >= 0) arr[idx] = { ...arr[idx], ...patch };
+    else arr.push(patch);
+    localStorage.setItem(messengerThreadKey(uid), JSON.stringify(arr));
+  } catch {
+    /* ignore */
+  }
 }
 
 function avatarUrl(av) {
@@ -200,15 +256,15 @@ export default function MessengerDock() {
         api.get('/messenger/groups'),
         api.get('/messenger/pins').catch(() => ({ data: { group_ids: [] } })),
       ]);
-      setGroups(Array.isArray(apiList) ? apiList : []);
+      setGroups((prev) => mergeApiGroupsWithPreviewCache(apiList, uid, prev));
       setPinnedGroupIds(Array.isArray(pinPayload?.group_ids) ? pinPayload.group_ids : []);
     } catch {
-      setGroups([]);
+      setGroups((prev) => (prev.length ? prev : []));
       setPinnedGroupIds([]);
     } finally {
       setGroupsLoading(false);
     }
-  }, []);
+  }, [uid]);
 
   const toggleDockExpanded = useCallback(() => {
     setDockExpanded((v) => {
@@ -255,25 +311,32 @@ export default function MessengerDock() {
       const livePreview = body ? normalizeMessengerPreviewText(isCallLog ? body : `${prefix}${body}`) : '';
       setGroups((prev) => {
         const idx = prev.findIndex((g) => String(g.id) === String(groupId));
-        if (idx === -1) return prev;
+        if (idx === -1) {
+          clearTimeout(reloadT);
+          reloadT = setTimeout(() => void loadDockData(), 500);
+          return prev;
+        }
         return prev.map((g) => {
           if (String(g.id) !== String(groupId)) return g;
           const nextTs = new Date(created_at).getTime();
           const curTs = new Date(g.last_message_at || g.created_at || 0).getTime();
           if (nextTs < curTs) return g;
+          const ls = readLsMessengerThreads(uid).find((t) => String(t.groupId) === String(groupId));
           const { preview, lastMessageAt } = pickNewestMessengerPreview([
             { preview: livePreview, at: created_at },
             { preview: g.last_message, at: g.last_message_at || g.created_at },
+            { preview: ls?.lastPreview, at: ls?.lastMessageAt || ls?.updatedAt },
           ]);
+          const nextPreview = preview || g.last_message;
+          const nextAt = lastMessageAt || created_at;
+          if (nextPreview) persistDockThreadPreview(uid, groupId, nextPreview, nextAt);
           return {
             ...g,
-            last_message: preview || g.last_message,
-            last_message_at: lastMessageAt || created_at,
+            last_message: nextPreview,
+            last_message_at: nextAt,
           };
         });
       });
-      clearTimeout(reloadT);
-      reloadT = setTimeout(() => void loadDockData(), 800);
     };
     window.addEventListener('messenger:group-chat-activity', onGroupActivity);
     return () => {
