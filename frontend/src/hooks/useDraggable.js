@@ -2,18 +2,33 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 
 const STORAGE_PREFIX = 'tubep_widget_pos_';
 
-export default function useDraggable(id, defaultPos = { right: 24, bottom: 24 }) {
+export default function useDraggable(id, defaultPos = { right: 24, bottom: 24 }, options = {}) {
+  const edgeW = options.edgeWidth ?? 100;
+  const edgeH = options.edgeHeight ?? edgeW;
+  const margin = options.margin ?? 8;
+
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(STORAGE_PREFIX + id)); } catch {}
 
-  const [pos, setPos] = useState(saved || defaultPos);
+  const clampPos = useCallback((p) => ({
+    right: Math.max(margin, Math.min(window.innerWidth - edgeW - margin, p.right)),
+    bottom: Math.max(margin, Math.min(window.innerHeight - edgeH - margin, p.bottom)),
+  }), [edgeW, edgeH, margin]);
+
+  const [pos, setPos] = useState(() => clampPos(saved || defaultPos));
   const [dragging, setDragging] = useState(false);
   const startRef = useRef({ x: 0, y: 0, pos: { right: 24, bottom: 24 } });
   const movedRef = useRef(false);
 
+  useEffect(() => {
+    const onResize = () => setPos((p) => clampPos(p));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [clampPos]);
+
   const onDragStart = useCallback((e) => {
-    // Don't drag if clicking buttons/inputs/links
-    if (e.target.closest('button, input, a, [data-no-drag]')) return;
+    // Don't drag if clicking buttons/inputs/links (unless marked as drag handle)
+    if (!e.target.closest('[data-drag-handle]') && e.target.closest('button, input, a, [data-no-drag]')) return;
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
     movedRef.current = false;
@@ -31,9 +46,10 @@ export default function useDraggable(id, defaultPos = { right: 24, bottom: 24 })
       const dx = startRef.current.x - clientX;
       const dy = startRef.current.y - clientY;
       if (Math.abs(dx) > 3 || Math.abs(dy) > 3) movedRef.current = true;
-      const newRight = Math.max(8, Math.min(window.innerWidth - 100, startRef.current.pos.right + dx));
-      const newBottom = Math.max(8, Math.min(window.innerHeight - 100, startRef.current.pos.bottom + dy));
-      setPos({ right: newRight, bottom: newBottom });
+      setPos(clampPos({
+        right: startRef.current.pos.right + dx,
+        bottom: startRef.current.pos.bottom + dy,
+      }));
     };
 
     const onEnd = () => {
@@ -53,7 +69,9 @@ export default function useDraggable(id, defaultPos = { right: 24, bottom: 24 })
       window.removeEventListener('touchmove', onMove);
       window.removeEventListener('touchend', onEnd);
     };
-  }, [dragging, id]);
+  }, [dragging, id, clampPos]);
 
-  return { pos, dragging, onDragStart, didDrag: () => movedRef.current };
+  const didDrag = useCallback(() => movedRef.current, []);
+
+  return { pos, dragging, onDragStart, didDrag };
 }
