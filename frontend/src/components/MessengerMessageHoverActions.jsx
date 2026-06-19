@@ -20,6 +20,7 @@ import {
   getFirstDownloadableAttachment,
   getFirstImageAttachment,
 } from '../lib/messengerMessageActions';
+import { showCopyToast } from '../lib/copyToast';
 
 const QUICK_BTN =
   'w-6 h-6 rounded-full bg-white border border-slate-200/90 shadow-sm flex items-center justify-center text-slate-600 hover:bg-slate-50 hover:text-violet-600 transition-colors';
@@ -298,7 +299,10 @@ function MoreMenuPanel({
           icon={Copy}
           label="Sao chép tin nhắn"
           onClick={() =>
-            void runMenuAction(() => copyTextToClipboard(buildMessengerShareText(message, { groupTitle })))
+            void runMenuAction(async () => {
+              await copyTextToClipboard(buildMessengerShareText(message, { groupTitle }));
+              showCopyToast('Đã sao chép');
+            })
           }
         />
       ) : null}
@@ -310,7 +314,9 @@ function MoreMenuPanel({
             void runMenuAction(async () => {
               const kind = await copyImageToClipboard(img.url);
               if (kind === 'url') {
-                alert('Trình duyệt không hỗ trợ sao chép ảnh trực tiếp — đã sao chép link ảnh.');
+                showCopyToast('Đã sao chép link ảnh');
+              } else {
+                showCopyToast('Đã sao chép');
               }
             })
           }
