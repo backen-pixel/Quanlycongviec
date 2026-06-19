@@ -1,11 +1,75 @@
 import { resolveMediaUrl } from './mediaUrl';
 
-/** Nội dung text để chia sẻ / copy. */
+/** Ký tự Latin mở rộng (tiếng Việt có dấu, gồm Ứ ư ự …). */
+const VIETNAMESE_NAME_CHARS = 'a-zA-Z0-9.\\u00C0-\\u024F\\u1E00-\\u1EFF\\u0100-\\u017F';
+
+/** Có dấu hiệu UTF-8 bị đọc nhầm Latin-1 (Multer). */
+function looksLikeUtf8Mojibake(name) {
+  return /Ã[\u0080-\u00BF]|Â[\u0080-\u00BF]|Ä[\u0080-\u00BF]|Æ|Ð|á»|Ã©|Ã¨|Ãª|Ã­|Ã³|Ã´|Ãº|Ã½|Äƒ|Ä‘|Æ°|Æ¡/i.test(String(name || ''));
+}
+
+/** Sửa tên file bị Multer encode sai (Latin-1 → UTF-8). */
+function decodeMulterFilename(name) {
+  if (name == null || name === '') return '';
+  const s = String(name).trim();
+  if (/[\u1E00-\u1EFF]/.test(s) && !looksLikeUtf8Mojibake(s)) return s;
+  try {
+    const bytes = Uint8Array.from([...s].map((ch) => ch.charCodeAt(0) & 0xff));
+    const decoded = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+    if (decoded && !decoded.includes('\uFFFD') && decoded !== s) return decoded.trim();
+  } catch {
+    /* ignore */
+  }
+  return s;
+}
+
+/** @deprecated alias */
+export function fixMessengerFilename(name) {
+  return decodeMulterFilename(name);
+}
+
+/** Bỏ prefix timestamp/hash khi DB chỉ còn tên object storage. */
+function unwrapStorageAttachmentName(name) {
+  const s = String(name || '').trim();
+  if (!s) return '';
+  const m = s.match(/^\d{10,}_[a-f0-9]{6,16}_(.+)$/i);
+  if (!m) return s;
+  const base = m[1];
+  return base.includes('_') ? base.replace(/_/g, ' ') : base;
+}
+
+/** Tên hiển thị tệp đính kèm messenger (ưu tiên metadata, fallback URL). */
+export function displayMessengerFilename(source) {
+  const att = typeof source === 'string' ? { name: source } : source;
+  const raw = att?.name || att?.attachment_name || att?.file_name || '';
+  let name = decodeMulterFilename(raw);
+  if (!name) {
+    const url = att?.url || att?.attachment_url || '';
+    const base = decodeURIComponent(String(url).split('/').pop()?.split('?')[0] || '');
+    if (/^\d{10,}_[a-f0-9]{6,16}_/i.test(base)) {
+      name = decodeMulterFilename(unwrapStorageAttachmentName(base));
+    } else {
+      name = decodeMulterFilename(base);
+    }
+  } else if (/^\d{10,}_[a-f0-9]{6,16}_/i.test(name)) {
+    name = decodeMulterFilename(unwrapStorageAttachmentName(name));
+  }
+  return name || 'Tệp đính kèm';
+}
+
+/** Chuẩn hoá attachment — tên file hiển thị đúng tiếng Việt. */
+export function normalizeMessengerAttachment(att) {
+  if (!att || typeof att !== 'object') return att;
+  const name = displayMessengerFilename(att);
+  return name !== att.name ? { ...att, name } : att;
+}
+
+/** Nội dung text để chia sẻ (có tên người gửi). */
 export function buildMessengerShareText(msg, { groupTitle } = {}) {
   if (!msg) return '';
   const header = groupTitle ? `[${groupTitle}] ` : '';
   const who = msg.user?.full_name || 'Ai đó';
-  const body = (msg.content || '').trim();
+  const body = extractMessengerMessagePlainText(msg);
   const atts = collectMessengerAttachments(msg);
   const lines = [`${header}${who}:`];
   if (body) lines.push(body);
@@ -19,17 +83,44 @@ export function buildMessengerShareText(msg, { groupTitle } = {}) {
   return lines.filter(Boolean).join('\n').trim();
 }
 
+/** Nội dung thuần để sao chép — không kèm tên người gửi / header nhóm. */
+export function extractMessengerMessagePlainText(msg) {
+  if (!msg) return '';
+  let body = normalizeForwardDisplayContent(String(msg.content || '').trim()) || String(msg.content || '').trim();
+  if (body.startsWith(':sticker:')) {
+    body = body.slice(':sticker:'.length).trim();
+  }
+  return body;
+}
+
+/** Sao chép tin nhắn — chỉ nội dung, không prefix tên người gửi. */
+export function buildMessengerCopyText(msg) {
+  if (!msg) return '';
+  const body = extractMessengerMessagePlainText(msg);
+  const atts = collectMessengerAttachments(msg);
+  const lines = [];
+  if (body) lines.push(body);
+  for (const a of atts) {
+    const u = resolveMediaUrl(a.url);
+    if (u) lines.push(u);
+  }
+  if (!body && !atts.length && msg.attachment_url) {
+    lines.push(resolveMediaUrl(msg.attachment_url) || '');
+  }
+  return lines.filter(Boolean).join('\n').trim();
+}
+
 export function collectMessengerAttachments(message) {
   if (Array.isArray(message?.attachments) && message.attachments.length) {
-    return message.attachments;
+    return message.attachments.map(normalizeMessengerAttachment);
   }
   if (message?.attachment_url) {
-    return [{
+    return [normalizeMessengerAttachment({
       url: message.attachment_url,
       name: message.attachment_name,
       type: message.attachment_mime,
       size: message.attachment_size,
-    }];
+    })];
   }
   return [];
 }
@@ -124,15 +215,56 @@ export async function copyImageToClipboard(url) {
 
 export function downloadMessengerFile(url, name) {
   const full = resolveMediaUrl(url);
+  if (!full) return Promise.reject(new Error('URL không hợp lệ'));
+  const fileName = fixMessengerFilename(name) || 'download';
+
+  return fetch(full, { mode: 'cors', credentials: 'omit' })
+    .then((res) => {
+      if (!res.ok) throw new Error('Không tải được tệp');
+      return res.blob();
+    })
+    .then((blob) => {
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = fileName;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+    })
+    .catch(() => {
+      const a = document.createElement('a');
+      a.href = full;
+      a.download = fileName;
+      a.rel = 'noopener';
+      a.target = '_blank';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
+}
+
+/** Mở tệp trong tab mới (blob URL — tránh cross-origin chặn mở trực tiếp). */
+export async function openMessengerFile(url, name) {
+  const full = resolveMediaUrl(url);
   if (!full) throw new Error('URL không hợp lệ');
-  const a = document.createElement('a');
-  a.href = full;
-  a.download = name || 'download';
-  a.rel = 'noopener';
-  a.target = '_blank';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  try {
+    const res = await fetch(full, { mode: 'cors', credentials: 'omit' });
+    if (!res.ok) throw new Error('fetch failed');
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const opened = window.open(blobUrl, '_blank', 'noopener,noreferrer');
+    if (!opened) {
+      await downloadMessengerFile(url, name);
+      URL.revokeObjectURL(blobUrl);
+      return;
+    }
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 120000);
+  } catch {
+    window.open(full, '_blank', 'noopener,noreferrer');
+  }
 }
 
 /** Tên nguồn chia sẻ (chat / người gửi gốc) — một nhãn, không lặp. */
@@ -173,7 +305,14 @@ export function buildForwardMessageContent(msg, { sourceTitle, note } = {}) {
   return lines.filter(Boolean).join('\n\n');
 }
 
-/** Gộp nhiều tin để sao chép / chia sẻ hàng loạt. */
+/** Gộp nhiều tin để sao chép — chỉ nội dung từng tin. */
+export function buildBulkMessengerCopyText(messages) {
+  const list = (Array.isArray(messages) ? messages : []).filter(Boolean);
+  if (!list.length) return '';
+  return list.map((m) => buildMessengerCopyText(m)).filter(Boolean).join('\n\n———\n\n');
+}
+
+/** Gộp nhiều tin để chia sẻ hàng loạt. */
 export function buildBulkMessengerShareText(messages, opts = {}) {
   const list = (Array.isArray(messages) ? messages : []).filter(Boolean);
   if (!list.length) return '';

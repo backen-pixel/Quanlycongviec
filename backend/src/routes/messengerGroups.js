@@ -337,12 +337,34 @@ function formatGroupListPreview(preview, { isDirect, lastUserId, viewerId, userN
   return name ? `${name}: ${text}` : text;
 }
 
+function fixUploadFilename(originalname) {
+  if (!originalname) return 'file';
+  const s = String(originalname);
+  if (/[\u1E00-\u1EFF]/.test(s) && !/Ã|Æ|Ä|á»|Ð/.test(s)) return s;
+  try {
+    const buf = Buffer.from(s, 'latin1');
+    const utf8Name = buf.toString('utf8');
+    if (utf8Name && !utf8Name.includes('\uFFFD') && utf8Name !== s) return utf8Name;
+  } catch {
+    /* ignore */
+  }
+  return s;
+}
+
+function sanitizeMessengerStorageBaseName(original, ext) {
+  return path
+    .basename(original || 'file', ext)
+    .replace(/[^a-zA-Z0-9.\u00C0-\u024F\u1E00-\u1EFF\u0100-\u017F_\s-]/g, '_')
+    .replace(/\s+/g, '_')
+    .slice(0, 100);
+}
+
 function writeMessengerBufferLocal(buffer, originalName) {
   fs.mkdirSync(MESSENGER_CHAT_UPLOAD, { recursive: true });
   const ext = path.extname(originalName || '') || '';
   const base = path
     .basename(originalName || 'file', ext)
-    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .replace(/[^a-zA-Z0-9.\u00C0-\u024F\u1E00-\u1EFF\u0100-\u017F._\s-]/g, '_')
     .slice(0, 80);
   const fname = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}_${base}${ext}`;
   const full = path.join(MESSENGER_CHAT_UPLOAD, fname);
@@ -357,13 +379,9 @@ function writeMessengerBufferLocal(buffer, originalName) {
  */
 async function storeMessengerUploadedFile(groupId, file) {
   const mime = file.mimetype || 'application/octet-stream';
-  const original = file.originalname || 'file';
+  const original = fixUploadFilename(file.originalname || 'file');
   const ext = path.extname(original) || '';
-  const safeBase = path
-    .basename(original, ext)
-    .replace(/[^a-zA-Z0-9.\u00C0-\u024F_\s-]/g, '_')
-    .replace(/\s+/g, '_')
-    .slice(0, 100);
+  const safeBase = sanitizeMessengerStorageBaseName(original, ext);
 
   if (supabaseMessengerStorageEnabled()) {
     const prefix = `${MESSENGER_STORAGE_FOLDER}/${groupId}`.replace(/\/+/g, '/');
@@ -1724,6 +1742,7 @@ r.post('/groups/:id/chat', messengerChatJsonOrMultipart, async (req, res) => {
     const files = req.files || [];
     const attachments = [];
     for (const f of files) {
+      f.originalname = fixUploadFilename(f.originalname);
       attachments.push(await storeMessengerUploadedFile(req.params.id, f));
     }
     if (!content && !attachments.length) return res.status(400).json({ error: 'Thiếu nội dung' });
@@ -1805,6 +1824,7 @@ r.post('/groups/:id/chat/upload', messengerMemoryUpload.single('file'), async (r
     const ok = await assertGroupMember(req.params.id, req.authUserId);
     if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
     if (!req.file) return res.status(400).json({ error: 'Không có file' });
+    req.file.originalname = fixUploadFilename(req.file.originalname);
     const mime = req.file.mimetype;
     let message_type = 'file';
     if (mime.startsWith('image/')) message_type = 'image';
@@ -1820,7 +1840,7 @@ r.post('/groups/:id/chat/upload', messengerMemoryUpload.single('file'), async (r
         content: req.body.content || '',
         message_type,
         attachment_url,
-        attachment_name: req.file.originalname,
+        attachment_name: stored.name || req.file.originalname,
         attachment_size: req.file.size,
         attachment_mime: mime,
         reply_to: req.body.reply_to || null,

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
-import { Download, FolderOpen, Check } from 'lucide-react';
+import { Download, Check, Loader2 } from 'lucide-react';
 import { resolveMediaUrl } from '../lib/mediaUrl';
-import { downloadMessengerFile } from '../lib/messengerMessageActions';
+import { displayMessengerFilename, downloadMessengerFile } from '../lib/messengerMessageActions';
 
 function formatFileSize(bytes) {
   const n = Number(bytes);
@@ -24,7 +24,7 @@ function fileExtension(name, mime = '') {
 }
 
 /**
- * Thẻ file đính kèm kiểu Zalo — icon, tên, dung lượng, mở / tải.
+ * Thẻ file đính kèm kiểu Zalo — icon, tên, dung lượng, tải xuống.
  */
 export function FileTypeBadge({ name, mime, compact = false }) {
   const ext = fileExtension(name, mime);
@@ -79,25 +79,28 @@ function wasDownloaded(url) {
 }
 
 /**
- * Thẻ file đính kèm kiểu Zalo — icon, tên, dung lượng, mở / tải.
+ * Thẻ file đính kèm kiểu Zalo — icon, tên, dung lượng, tải xuống.
  */
 export default function MessengerFileAttachmentCard({ attachment, compact = false, alignEnd = false }) {
   const [downloaded, setDownloaded] = useState(false);
+  const [busy, setBusy] = useState(false);
   const fileUrl = resolveMediaUrl(attachment?.url);
-  const name = attachment?.name || 'Tệp đính kèm';
+  const name = displayMessengerFilename(attachment);
   const sizeLabel = formatFileSize(attachment?.size);
   const showCached = downloaded || (fileUrl && wasDownloaded(fileUrl));
 
-  const openFile = () => {
-    if (!fileUrl) return;
-    window.open(fileUrl, '_blank', 'noopener,noreferrer');
-  };
-
-  const handleDownload = () => {
-    if (!fileUrl) return;
-    downloadMessengerFile(fileUrl, name);
-    markDownloaded(fileUrl);
-    setDownloaded(true);
+  const handleDownload = async () => {
+    if (!attachment?.url || busy) return;
+    setBusy(true);
+    try {
+      await downloadMessengerFile(attachment.url, name);
+      if (fileUrl) markDownloaded(fileUrl);
+      setDownloaded(true);
+    } catch (e) {
+      alert(e?.message || 'Không tải được tệp');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -125,24 +128,15 @@ export default function MessengerFileAttachmentCard({ attachment, compact = fals
         </div>
       </div>
 
-      <div className="flex items-center gap-1.5 shrink-0">
+      <div className="flex items-center shrink-0">
         <button
           type="button"
-          onClick={openFile}
-          disabled={!fileUrl}
-          className="w-8 h-8 rounded-lg border border-slate-200/90 bg-white hover:bg-slate-50 text-slate-600 flex items-center justify-center transition disabled:opacity-40"
-          title="Mở tệp"
-        >
-          <FolderOpen className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          onClick={handleDownload}
-          disabled={!fileUrl}
+          onClick={() => void handleDownload()}
+          disabled={!fileUrl || busy}
           className="w-8 h-8 rounded-lg border border-slate-200/90 bg-white hover:bg-slate-50 text-slate-600 flex items-center justify-center transition disabled:opacity-40"
           title="Tải xuống"
         >
-          <Download className="h-4 w-4" />
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
         </button>
       </div>
     </div>

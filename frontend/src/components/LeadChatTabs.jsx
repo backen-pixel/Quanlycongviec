@@ -6,7 +6,7 @@ import { formatDate } from '../lib/utils';
 import {
   Trash2, Send, Users, Crown, Shield, Building2, Eye, Paperclip, X, Mic, Reply,
   CornerDownRight, Smile, Zap, Undo2, Check, CheckCheck, Phone, Loader2, ClipboardList,
-  Calendar, CheckCircle2, Circle, Clock, Plus, HardDrive,
+  Calendar, CheckCircle2, Circle, Clock, Plus, HardDrive, Image as ImageIcon,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
@@ -18,8 +18,9 @@ import MessengerMessageSelectionBar from './MessengerMessageSelectionBar';
 import MessengerForwardMessageModal from './MessengerForwardMessageModal';
 import MessengerFileAttachmentCard from './MessengerFileAttachmentCard';
 import {
-  buildBulkMessengerShareText,
+  buildBulkMessengerCopyText,
   copyTextToClipboard,
+  displayMessengerFilename,
   normalizeForwardDisplayContent,
 } from '../lib/messengerMessageActions';
 import DriveFilePicker from './drive/DriveFilePicker';
@@ -1744,9 +1745,19 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
 }
 
 function collectMessengerAttachments(message) {
-  if (Array.isArray(message.attachments) && message.attachments.length) return message.attachments;
+  if (Array.isArray(message.attachments) && message.attachments.length) {
+    return message.attachments.map((att) => {
+      const name = displayMessengerFilename(att);
+      return name !== att.name ? { ...att, name } : att;
+    });
+  }
   if (message.attachment_url) {
-    return [{ url: message.attachment_url, name: message.attachment_name, type: message.attachment_mime, size: message.attachment_size }];
+    return [{
+      url: message.attachment_url,
+      name: displayMessengerFilename(message),
+      type: message.attachment_mime,
+      size: message.attachment_size,
+    }];
   }
   return [];
 }
@@ -1911,6 +1922,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
   /** { fileIndex, fileTotal, fileName, percent } khi đang upload file */
   const [uploadState, setUploadState] = useState(null);
   const [mediaPreview, setMediaPreview] = useState(null);
+  const [imageLightboxIndex, setImageLightboxIndex] = useState(null);
   const [groupMeta, setGroupMeta] = useState(null);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionStart, setMentionStart] = useState(0);
@@ -1943,6 +1955,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
   const typingThrottleRef = useRef(0);
   const groupMetaRef = useRef(null);
   const fileInputRef = useRef(null);
+  const imageInputRef = useRef(null);
   const audioInputRef = useRef(null);
   const messagesEndRef = useRef(null);
   const scrollContainerRef = useRef(null);
@@ -1964,6 +1977,23 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
     if (!historyLoadedRef.current) return;
     emitMessages(messages, { loaded: true });
   }, [messages, emitMessages]);
+
+  const chatImageGallery = useMemo(() => {
+    const refs = [];
+    for (const m of messages || []) {
+      const items = Array.isArray(m.attachments) && m.attachments.length
+        ? m.attachments
+        : m.attachment_url
+          ? [{ url: m.attachment_url, name: m.attachment_name, type: m.attachment_mime }]
+          : [];
+      for (const att of items) {
+        if (att.is_drive || att.drive_file_id) continue;
+        if (!att.type?.startsWith('image/')) continue;
+        refs.push({ ...att, url: att.url || m.attachment_url });
+      }
+    }
+    return collectUploadLightboxItems(refs);
+  }, [messages]);
 
   const applyReadReceipt = useCallback((payload) => {
     if (!payload?.user_id || !payload?.last_read_at) return;
@@ -2032,6 +2062,21 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
     setSelectMode(false);
     setSelectedMsgIds(new Set());
     setMoreMenuMsgId(null);
+  }, [groupId]);
+
+  useEffect(() => {
+    const onHiddenUpdated = (e) => {
+      if (String(e.detail?.groupId) !== String(groupId)) return;
+      try {
+        const raw = localStorage.getItem(`messenger_hidden_${groupId}`);
+        const ids = raw ? JSON.parse(raw) : [];
+        setHiddenMsgIds(new Set(Array.isArray(ids) ? ids.map(String) : []));
+      } catch {
+        setHiddenMsgIds(new Set());
+      }
+    };
+    window.addEventListener('messenger:hidden-updated', onHiddenUpdated);
+    return () => window.removeEventListener('messenger:hidden-updated', onHiddenUpdated);
   }, [groupId]);
 
   const persistHidden = useCallback(
@@ -2630,7 +2675,11 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                         e.currentTarget.onerror = null;
                         e.currentTarget.src = BROKEN_MEDIA_PLACEHOLDER;
                       }}
-                      onClick={() => setMediaPreview({ ...att, url: fileUrl })}
+                      onClick={() => {
+                        const idx = findUploadLightboxIndex(chatImageGallery, att.url || fileUrl);
+                        if (idx >= 0) setImageLightboxIndex(idx);
+                        else setMediaPreview({ ...att, url: fileUrl });
+                      }}
                     />
                   ) : isVideo ? (
                     <video
@@ -2660,27 +2709,24 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
   };
 
   const uid = user?.userId || user?.id;
+  const hubLayout = fillParent && !compact;
 
   return (
     <div className={fillParent ? 'flex flex-col flex-1 min-h-0' : 'flex flex-col'} style={fillParent ? undefined : { height: '450px' }}>
-      {mediaPreview && (
+      {imageLightboxIndex != null && chatImageGallery.length > 0 && (
+        <UploadFileLightbox
+          items={chatImageGallery}
+          index={imageLightboxIndex}
+          onIndexChange={setImageLightboxIndex}
+          onClose={() => setImageLightboxIndex(null)}
+        />
+      )}
+      {mediaPreview && !mediaPreview.type?.startsWith('image/') && (
         <div className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center p-4">
           <button type="button" onClick={() => setMediaPreview(null)} className="absolute top-4 right-4 text-white p-2 hover:bg-white/10 rounded-full">
             <X />
           </button>
-          {mediaPreview.type?.startsWith('image/') ? (
-            <img
-              src={resolveMediaUrl(mediaPreview.url)}
-              className="max-h-[80vh] max-w-full rounded-lg object-contain"
-              alt=""
-              onError={(e) => {
-                e.currentTarget.onerror = null;
-                e.currentTarget.src = BROKEN_MEDIA_PLACEHOLDER;
-              }}
-            />
-          ) : (
-            <video src={resolveMediaUrl(mediaPreview.url)} controls autoPlay className="max-h-[80vh] max-w-full rounded-lg" />
-          )}
+          <video src={resolveMediaUrl(mediaPreview.url)} controls autoPlay className="max-h-[80vh] max-w-full rounded-lg" />
         </div>
       )}
 
@@ -2692,7 +2738,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
         </div>
       ) : null}
 
-      <div ref={scrollContainerRef} className={`flex-1 min-h-0 overflow-y-auto ${compact ? 'px-2.5 py-2' : 'px-4 py-3'} space-y-1 bg-gradient-to-b from-slate-50/60 via-white/40 to-violet-50/40 rounded-t-xl`}>
+      <div ref={scrollContainerRef} className={`flex-1 min-h-0 overflow-y-auto ${compact ? 'px-2.5 py-2' : 'px-4 py-3'} space-y-1 ${hubLayout ? 'bg-slate-50/60' : 'bg-gradient-to-b from-slate-50/60 via-white/40 to-violet-50/40 rounded-t-xl'}`}>
         {messages.map((m, idx) => {
           if (hiddenMsgIds.has(String(m.id))) return null;
           const isMe = String(m.user_id) === String(uid);
@@ -2709,13 +2755,36 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
           const mentioned = mentionedIds.map(String).includes(String(uid));
           if (isCallLog && !isBot) {
             const sysText = callLogDisplayText(m, uid);
+            const callActorName = m.user?.full_name || m.user?.email || 'Thành viên';
+            const callOnCallerSide = isMe;
             return (
-              <div key={m.id} className="flex justify-center my-2">
-                <span className="text-[10px] text-emerald-800 bg-emerald-50 px-3 py-1.5 rounded-full shadow-sm border border-emerald-100 max-w-[95%] text-center leading-snug inline-flex items-center gap-1.5">
-                  <Phone className="h-3 w-3 shrink-0 opacity-80" aria-hidden />
-                  <span>{sysText}</span>
-                  <span className="text-emerald-500"> · {formatTime(m.created_at)}</span>
-                </span>
+              <div
+                key={m.id}
+                className={`flex items-start gap-2 my-1 ${callOnCallerSide ? 'justify-end' : 'justify-start'}`}
+              >
+                {!callOnCallerSide && (
+                  <div className="shrink-0 mt-0.5">
+                    <Avatar name={callActorName} url={m.user?.avatar} size={7} />
+                  </div>
+                )}
+                <div className={`max-w-[78%] min-w-0 ${callOnCallerSide ? 'text-right' : 'text-left'}`}>
+                  {!callOnCallerSide && (
+                    <p className="text-[10px] font-semibold mb-0.5 px-1 text-violet-600 truncate">{callActorName}</p>
+                  )}
+                  <span
+                    className={`inline-flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-2xl border max-w-full leading-snug ${
+                      callOnCallerSide
+                        ? 'bg-violet-50 text-violet-800 border-violet-200/80 rounded-br-md'
+                        : 'bg-white text-slate-700 border-slate-200/80 rounded-bl-md shadow-sm'
+                    }`}
+                  >
+                    <Phone className={`h-3 w-3 shrink-0 ${callOnCallerSide ? 'text-violet-500' : 'text-emerald-600'}`} aria-hidden />
+                    <span className="text-left">{sysText}</span>
+                    <span className={`shrink-0 ${callOnCallerSide ? 'text-violet-400' : 'text-slate-400'}`}>
+                      · {formatTime(m.created_at)}
+                    </span>
+                  </span>
+                </div>
               </div>
             );
           }
@@ -2991,11 +3060,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
               return;
             }
             try {
-              await copyTextToClipboard(
-                buildBulkMessengerShareText(selectedMessages, {
-                  groupTitle: groupTitle || groupMeta?.name || '',
-                }),
-              );
+              await copyTextToClipboard(buildBulkMessengerCopyText(selectedMessages));
               showCopyToast(
                 selectedMessages.length > 1
                   ? `Đã sao chép ${selectedMessages.length} tin`
@@ -3045,7 +3110,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
         />
       ) : null}
 
-      <div className={`${compact ? 'px-2.5 pt-1.5 pb-2' : 'px-3 pt-2 pb-3'} border-t border-slate-200/70 bg-white/85 backdrop-blur-xl rounded-b-xl shrink-0 relative`}>
+      <div className={`${compact ? 'px-2.5 pt-1.5 pb-2' : hubLayout ? 'px-4 pt-3 pb-4' : 'px-3 pt-2 pb-3'} border-t border-slate-200/80 ${hubLayout ? 'bg-white' : 'bg-white/85 backdrop-blur-xl rounded-b-xl'} shrink-0 relative`}>
         <ReplyComposerBar replyTo={replyTo} onCancel={() => setReplyTo(null)} />
 
         {/* Quick reply chips — phản hồi 1 chạm */}
@@ -3099,6 +3164,17 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
           <input type="file" multiple className="hidden" ref={fileInputRef} onChange={(e) => handlePickedFiles(e.target.files)} />
           <input
             type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            ref={imageInputRef}
+            onChange={(e) => {
+              handlePickedFiles(e.target.files);
+              e.target.value = '';
+            }}
+          />
+          <input
+            type="file"
             accept="audio/*"
             className="hidden"
             ref={audioInputRef}
@@ -3108,16 +3184,29 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
             }}
           />
 
-          {/* Input pill — bao gọn paperclip + textarea + mic + emoji */}
-          <div className={`flex-1 min-w-0 flex items-center gap-0.5 ${compact ? 'px-1 py-0.5 min-h-[36px]' : 'px-2 py-1 min-h-[42px] gap-1'} rounded-full bg-slate-100/90 border border-slate-200/80 focus-within:border-violet-400 focus-within:bg-white focus-within:ring-2 focus-within:ring-violet-200/60 transition-all`}>
+          <div className={`flex-1 min-w-0 flex items-center gap-0.5 ${
+            hubLayout
+              ? 'px-3 py-1.5 min-h-[46px] gap-2 rounded-2xl bg-white border border-slate-200 shadow-sm focus-within:border-violet-400 focus-within:ring-2 focus-within:ring-violet-100'
+              : `${compact ? 'px-1 py-0.5 min-h-[36px]' : 'px-2 py-1 min-h-[42px] gap-1'} rounded-full bg-slate-100/90 border border-slate-200/80 focus-within:border-violet-400 focus-within:bg-white focus-within:ring-2 focus-within:ring-violet-200/60`
+          } transition-all`}>
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className={`shrink-0 ${compact ? 'w-7 h-7' : 'w-8 h-8'} rounded-full text-slate-500 hover:text-violet-600 hover:bg-white/80 flex items-center justify-center transition-colors`}
+              className={`shrink-0 ${compact ? 'w-7 h-7' : 'w-8 h-8'} rounded-full text-slate-500 hover:text-violet-600 hover:bg-violet-50 flex items-center justify-center transition-colors`}
               title={`Đính kèm — ${MESSENGER_ATTACH_HINT}. ${CHAT_DRIVE_REMIND_HINT}.`}
             >
               <Paperclip size={compact ? 14 : 16} />
             </button>
+            {hubLayout ? (
+              <button
+                type="button"
+                onClick={() => imageInputRef.current?.click()}
+                className="shrink-0 w-8 h-8 rounded-full text-slate-500 hover:text-violet-600 hover:bg-violet-50 flex items-center justify-center transition-colors"
+                title="Chọn ảnh — Ctrl+V để dán"
+              >
+                <ImageIcon size={16} />
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => setDrivePickerOpen(true)}
@@ -3259,12 +3348,14 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
         <ChatPendingImagesBar
           items={pendingImages}
           onRemove={removeImage}
-          onAddClick={() => fileInputRef.current?.click()}
+          onAddClick={() => (hubLayout ? imageInputRef : fileInputRef).current?.click()}
           disabled={sending}
         />
         {!compact ? (
-        <p className="mt-1.5 text-slate-400 leading-snug text-[11px]">
-          {CHAT_DRIVE_REMIND_HINT}. Giới hạn đính kèm trực tiếp: {MESSENGER_MAX_FILE_MB} MB/file.
+        <p className={`mt-2 text-slate-400 leading-snug ${hubLayout ? 'text-[11px] text-center' : 'text-[11px]'}`}>
+          {hubLayout
+            ? `File tối đa ${MESSENGER_MAX_FILE_MB} MB mỗi tệp. Ctrl+V để dán ảnh. ${CHAT_DRIVE_REMIND_HINT}.`
+            : `${CHAT_DRIVE_REMIND_HINT}. Giới hạn đính kèm trực tiếp: ${MESSENGER_MAX_FILE_MB} MB/file.`}
         </p>
         ) : null}
       </div>
