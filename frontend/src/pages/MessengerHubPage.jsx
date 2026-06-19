@@ -26,6 +26,7 @@ import { useMessengerDock } from '../context/MessengerDockContext';
 import { useCall } from '../calling';
 import GroupCallMemberPickerModal from '../components/GroupCallMemberPickerModal';
 import MessengerConversationDetailPanel from '../components/MessengerConversationDetailPanel';
+import MessengerCreateGroupModal from '../components/MessengerCreateGroupModal';
 import { MessengerGroupChatTab } from '../components/LeadChatTabs';
 import { useAuth } from '../lib/auth';
 import { messengerThreadKey } from '../lib/messengerHubStorage';
@@ -37,6 +38,10 @@ import {
   resolveThreadPreviewLabel,
 } from '../lib/messengerPreview';
 import { isMessengerCallLogMessage } from '../lib/messengerCallLog';
+import {
+  isMessengerMessageHidden,
+  loadMessengerHiddenConfig,
+} from '../lib/messengerHiddenHistory';
 import {
   formatChatHeaderPresenceLabel,
   formatLastActiveShort,
@@ -96,12 +101,6 @@ function formatRelativeTime(iso) {
   if (diff < 86400 * 7) return `${Math.floor(diff / 86400)} ngày`;
   return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
 }
-
-const ROLE_UI = [
-  { value: 'responsible', label: 'Trưởng nhóm' },
-  { value: 'supervisor', label: 'Phó / giám sát' },
-  { value: 'member', label: 'Thành viên' },
-];
 
 function threadRowKey(t) {
   return `g:${t.groupId}`;
@@ -221,6 +220,7 @@ export default function MessengerHubPage() {
   const [threadFilter, setThreadFilter] = useState('');
   const [selectedGroupId, setSelectedGroupId] = useState(() => searchParams.get('openGroup') || null);
   const [messages, setMessages] = useState([]);
+  const [hiddenHistoryVersion, setHiddenHistoryVersion] = useState(0);
   /** Nhóm đang mở chat nhưng tin chưa load xong — tránh flash "Chưa có tin nhắn". */
   const [chatLoadingGroupId, setChatLoadingGroupId] = useState(null);
   const [rightOpen, setRightOpen] = useState(() => {
@@ -529,8 +529,12 @@ export default function MessengerHubPage() {
       if (!meta?.loaded) return;
       if (selectedGroupId) setChatLoadingGroupId(null);
 
-      const preview = previewFromMessengerMessages(msgs, { forUserId: uid, maxLen: 80 });
-      const lastMsg = (msgs || []).length ? msgs[msgs.length - 1] : null;
+      const hiddenConfig = selectedGroupId ? loadMessengerHiddenConfig(selectedGroupId) : null;
+      const visible = hiddenConfig
+        ? (msgs || []).filter((m) => !isMessengerMessageHidden(m, hiddenConfig))
+        : msgs || [];
+      const preview = previewFromMessengerMessages(visible, { forUserId: uid, maxLen: 80 });
+      const lastMsg = visible.length ? visible[visible.length - 1] : null;
       const lastAt = lastMsg?.created_at || null;
       if (!selectedGroupId) return;
 
@@ -539,19 +543,43 @@ export default function MessengerHubPage() {
           if (t.kind !== 'messenger' || t.groupId !== selectedGroupId) return t;
           const nextPreview =
             preview ||
-            (meta.loaded && !msgs?.length ? 'Chưa có tin nhắn' : t.lastPreview);
+            (meta.loaded && !visible?.length ? 'Chưa có tin nhắn' : t.lastPreview);
           return {
             ...t,
             lastPreview: nextPreview,
             updatedAt: lastAt || t.updatedAt,
             lastMessageAt: lastAt || t.lastMessageAt,
-            messageCount: msgs?.length || t.messageCount,
+            messageCount: visible?.length || t.messageCount,
           };
         }),
       );
     },
     [selectedGroupId, uid],
   );
+
+  useEffect(() => {
+    const onHiddenUpdated = (e) => {
+      const gid = e.detail?.groupId;
+      if (!gid) return;
+      setHiddenHistoryVersion((v) => v + 1);
+      if (String(gid) !== String(selectedGroupId)) return;
+      const hiddenConfig = loadMessengerHiddenConfig(gid);
+      const visible = messages.filter((m) => !isMessengerMessageHidden(m, hiddenConfig));
+      const preview = previewFromMessengerMessages(visible, { forUserId: uid, maxLen: 80 });
+      setThreads((prev) =>
+        prev.map((t) => {
+          if (t.kind !== 'messenger' || String(t.groupId) !== String(gid)) return t;
+          return {
+            ...t,
+            lastPreview: preview || 'Chưa có tin nhắn',
+            messageCount: visible.length,
+          };
+        }),
+      );
+    };
+    window.addEventListener('messenger:hidden-updated', onHiddenUpdated);
+    return () => window.removeEventListener('messenger:hidden-updated', onHiddenUpdated);
+  }, [messages, selectedGroupId, uid]);
 
   const selected = useMemo(
     () => threads.find((t) => t.kind === 'messenger' && t.groupId === selectedGroupId) || null,
@@ -756,7 +784,12 @@ export default function MessengerHubPage() {
     });
   }, [threads, listTab, threadFilter, unreadByGroupId]);
 
-  const mediaBundle = useMemo(() => collectMediaAndFiles(messages), [messages]);
+  const mediaBundle = useMemo(() => {
+    if (!selectedGroupId) return collectMediaAndFiles([]);
+    const hiddenConfig = loadMessengerHiddenConfig(selectedGroupId);
+    const visible = messages.filter((m) => !isMessengerMessageHidden(m, hiddenConfig));
+    return collectMediaAndFiles(visible);
+  }, [messages, selectedGroupId, hiddenHistoryVersion]);
 
   const callCapabilities = useMemo(() => {
     const isIdle = callStatus === 'idle';
@@ -864,19 +897,6 @@ export default function MessengerHubPage() {
     }
   };
 
-  const filteredUsersForPick = useMemo(() => {
-    const q = userPickQ.trim().toLowerCase();
-    return (allUsers || [])
-      .filter((u) => (u.id || u.user_id) !== uid)
-      .filter((u) => {
-        if (!q) return true;
-        const name = (u.full_name || '').toLowerCase();
-        const mail = (u.email || '').toLowerCase();
-        return name.includes(q) || mail.includes(q);
-      })
-      .slice(0, 40);
-  }, [allUsers, userPickQ, uid]);
-
   /* ── Member management actions ── */
   const onAddMembers = async () => {
     if (!selectedGroupId || !addMemberPicks.length) return;
@@ -934,12 +954,6 @@ export default function MessengerHubPage() {
       })
       .slice(0, 30);
   }, [allUsers, addMemberQ, groupMembers]);
-
-  const addPick = (u) => {
-    const id = u.id || u.user_id;
-    if (!id || picks.some((p) => p.user_id === id)) return;
-    setPicks((p) => [...p, { user_id: id, role: 'member', name: u.full_name || u.email }]);
-  };
 
   const closeCreateModal = () => {
     if (creating || selectingCompanyMembers) return;
@@ -1669,151 +1683,27 @@ export default function MessengerHubPage() {
         </section>
       </div>
 
-      {/* Modal tạo nhóm */}
-      {createOpen && (
-        <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white/95 backdrop-blur-xl shadow-2xl border border-white/60 overflow-hidden ring-1 ring-black/5">
-            <div className="px-4 py-3 border-b border-white/60 flex items-center justify-between bg-gradient-to-r from-sky-50 via-cyan-50 to-violet-50">
-              <h2 className="text-sm font-bold flex items-center gap-2" style={{ color: '#0f172a' }}>
-                <div className="h-7 w-7 rounded-xl bg-gradient-to-br from-sky-500 to-cyan-600 text-white flex items-center justify-center shadow-md">
-                  <Users className="h-3.5 w-3.5" />
-                </div>
-                Tạo nhóm chat mới
-              </h2>
-              <button type="button" className="h-8 w-8 rounded-lg hover:bg-white/70 text-slate-500 hover:text-slate-700 flex items-center justify-center transition" onClick={closeCreateModal}>
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="p-4 space-y-3 max-h-[70vh] overflow-y-auto">
-              <div className="rounded-xl border border-sky-100 bg-sky-50/80 p-3 space-y-2">
-                <p className="text-xs font-bold text-sky-900 flex items-center gap-1.5">
-                  <Building2 className="h-3.5 w-3.5" />
-                  Nhóm chat theo công ty
-                </p>
-                <p className="text-[11px] text-sky-800/90 leading-relaxed">
-                  Chọn công ty rồi bấm <strong>Chọn tất cả NV</strong> để mời mọi nhân viên đang active của công ty đó.
-                </p>
-                <select
-                  value={createCompanyId}
-                  onChange={(e) => setCreateCompanyId(e.target.value)}
-                  disabled={creating || selectingCompanyMembers}
-                  className="w-full h-9 px-2 rounded-lg border border-sky-200 bg-white text-sm"
-                >
-                  <option value="">— Chọn công ty —</option>
-                  {companies.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.short_name || c.name}
-                    </option>
-                  ))}
-                </select>
-                <div className="flex flex-wrap gap-1.5">
-                  <button
-                    type="button"
-                    disabled={creating || selectingCompanyMembers || !createCompanyId}
-                    onClick={() => void selectAllCompanyEmployees({ replace: true })}
-                    className="h-8 px-2.5 rounded-lg bg-sky-600 text-white text-[11px] font-semibold hover:bg-sky-700 disabled:opacity-50 inline-flex items-center gap-1"
-                  >
-                    {selectingCompanyMembers ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <UsersRound className="h-3.5 w-3.5" />
-                    )}
-                    Chọn tất cả NV
-                  </button>
-                  <button
-                    type="button"
-                    disabled={creating || selectingCompanyMembers || !createCompanyId}
-                    onClick={() => void selectAllCompanyEmployees({ replace: false })}
-                    className="h-8 px-2.5 rounded-lg border border-sky-300 bg-white text-sky-800 text-[11px] font-semibold hover:bg-sky-50 disabled:opacity-50"
-                  >
-                    Thêm vào danh sách
-                  </button>
-                </div>
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-slate-600">Tên nhóm</label>
-                <input
-                  value={groupName}
-                  onChange={(e) => setGroupName(e.target.value)}
-                  className="mt-1 w-full h-10 px-3 rounded-lg border border-slate-200 text-sm"
-                  placeholder="VD: Nhóm dự án A"
-                  disabled={creating}
-                />
-              </div>
-              <p className="text-[11px] text-slate-500 leading-relaxed">
-                Tạo <strong>nhóm Messenger</strong> (không tạo Lead/Deal trên CRM). Bạn được thêm tự động là{' '}
-                <span className="text-rose-600 font-medium">trưởng nhóm</span>. Các người bạn chọn bên dưới được mời
-                vào nhóm; vai trò phó / thành viên áp dụng cho họ.
-              </p>
-              <div>
-                <label className="text-xs font-semibold text-slate-600">
-                  Thêm người{picks.length > 0 ? ` (${picks.length} đã chọn)` : ''}
-                </label>
-                <input
-                  value={userPickQ}
-                  onChange={(e) => setUserPickQ(e.target.value)}
-                  className="mt-1 w-full h-9 px-3 rounded-lg border border-slate-200 text-xs"
-                  placeholder="Gõ tên hoặc email…"
-                  disabled={creating}
-                />
-                <ul className="mt-1 max-h-28 overflow-y-auto rounded-lg border border-slate-100 divide-y divide-slate-50">
-                  {filteredUsersForPick.map((u) => (
-                    <li key={u.id || u.user_id || u.email}>
-                      <button
-                        type="button"
-                        className="w-full px-2 py-1.5 text-left text-xs hover:bg-sky-50 flex justify-between"
-                        onClick={() => addPick(u)}
-                        disabled={creating}
-                      >
-                        <span>{u.full_name || u.email}</span>
-                        <span className="text-slate-400">+</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              {picks.length > 0 && (
-                <ul className="space-y-1.5">
-                  {picks.map((p) => (
-                    <li key={p.user_id} className="flex items-center gap-2 text-xs bg-slate-50 rounded-lg px-2 py-1.5 border border-slate-100">
-                      <span className="flex-1 truncate font-medium">{p.name}</span>
-                      <select
-                        value={p.role}
-                        onChange={(e) => setPicks((prev) => prev.map((x) => (x.user_id === p.user_id ? { ...x, role: e.target.value } : x)))}
-                        className="text-[11px] border border-slate-200 rounded-md px-1 py-0.5 bg-white"
-                        disabled={creating}
-                      >
-                        {ROLE_UI.map((r) => (
-                          <option key={r.value} value={r.value}>
-                            {r.label}
-                          </option>
-                        ))}
-                      </select>
-                      <button type="button" className="text-rose-600 px-1" onClick={() => setPicks((prev) => prev.filter((x) => x.user_id !== p.user_id))}>
-                        ✕
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-            <div className="px-4 py-3 border-t border-slate-100 flex justify-end gap-2 bg-slate-50">
-              <button type="button" className="h-9 px-4 rounded-lg border border-slate-200 text-sm" disabled={creating} onClick={closeCreateModal}>
-                Hủy
-              </button>
-              <button
-                type="button"
-                className="h-9 px-4 rounded-lg bg-sky-600 text-white text-sm font-medium hover:bg-sky-700 disabled:opacity-50 flex items-center gap-2"
-                disabled={creating}
-                onClick={() => void createChatGroup()}
-              >
-                {creating && <Loader2 className="h-4 w-4 animate-spin" />}
-                Tạo nhóm
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <MessengerCreateGroupModal
+        open={createOpen}
+        onClose={closeCreateModal}
+        groupName={groupName}
+        onGroupNameChange={setGroupName}
+        createCompanyId={createCompanyId}
+        onCompanyChange={setCreateCompanyId}
+        companies={companies}
+        allUsers={allUsers}
+        picks={picks}
+        onPicksChange={setPicks}
+        userPickQ={userPickQ}
+        onUserPickQChange={setUserPickQ}
+        presenceByUser={presenceByUser}
+        onPresenceUpdate={(patch) => setPresenceByUser((prev) => ({ ...prev, ...patch }))}
+        uid={uid}
+        creating={creating}
+        selectingCompanyMembers={selectingCompanyMembers}
+        onSelectAllCompany={selectAllCompanyEmployees}
+        onCreate={createChatGroup}
+      />
 
       {/* Modal thêm thành viên */}
       {addMemberOpen && (
