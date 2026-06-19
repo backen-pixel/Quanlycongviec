@@ -18,7 +18,15 @@ export type RootStackParamList = {
     title?: string;
     initialTab?: string;
   };
-  ChatDetail: { threadId: string; title: string; peerId?: string | null; openSearch?: boolean };
+  ChatDetail: {
+    threadId: string;
+    title: string;
+    peerId?: string | null;
+    openSearch?: boolean;
+    fromBubble?: boolean;
+  };
+  /** Chat mở từ bong bóng overlay — back thu nhỏ app. */
+  BubbleChat: { threadId: string; title: string };
   MessengerForward: {
     excludeGroupId: string;
     sourceTitle: string;

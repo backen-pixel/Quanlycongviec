@@ -15,6 +15,7 @@ import type { MediaStream } from 'react-native-webrtc';
 import { subscribeAppSocket, getAppSocket } from '../lib/appSocket';
 import {
   dismissIncomingCallNotification, showIncomingCallNotification, clearPendingIncomingCall,
+  storePendingIncomingCall,
   type IncomingCallPayload,
 } from '../lib/incomingCallNotifications';
 import { markNativeCallAnswered } from '../lib/nativeCallNotification';
@@ -36,6 +37,7 @@ import {
   type CallMedia, type CallPeer, type CallSession, type CallState,
 } from './types';
 import { startIncomingCallAlert, stopIncomingCallAlert } from '../lib/callRingtone';
+import { hideCallOverlayPeek, showCallOverlayPeek } from '../lib/floatingBubbleOverlay';
 import { LegacyGroupCallManager, type GroupPeerInfo, type GroupJoinRequest } from './LegacyGroupCallManager';
 import { useAuth } from '../context/AuthContext';
 
@@ -139,6 +141,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       markCallAnswered(s.callId);
       releaseIncomingClaim(s.callId);
       void dismissIncomingCallNotification(s.callId);
+      hideCallOverlayPeek(s.callId);
     }
     if (s?.mode === 'group') groupMgrRef.current?.reset();
     if (Platform.OS === 'android') dismissLockScreenCallUi();
@@ -280,7 +283,9 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     void startIncomingCallAlert();
     // App đang mở → chỉ hiện CallScreen in-app (có nút Trả lời). Native full-screen khi nền/kill.
     if (AppState.currentState !== 'active') {
+      void storePendingIncomingCall({ ...p, kind: media });
       void showIncomingCallNotification({ ...p, kind: media });
+      showCallOverlayPeek({ ...p, kind: media });
     }
   }, []);
 
@@ -300,6 +305,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     releaseIncomingClaim(callId);
     void stopIncomingCallAlert();
     void dismissIncomingCallNotification(callId);
+    hideCallOverlayPeek(callId);
     void clearPendingIncomingCall();
     setCallSession(null, 'idle');
     sessionRef.current = null;
@@ -462,6 +468,15 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       const cur = sessionRef.current;
       if (!cur || cur.state !== 'RINGING' || cur.direction !== 'incoming') return;
       void showIncomingCallNotification({
+        callId: cur.callId,
+        fromUserId: cur.peer.id,
+        fromName: cur.peer.name,
+        kind: cur.media,
+        isGroup: cur.mode === 'group',
+        groupId: cur.groupId,
+        groupName: cur.groupName,
+      });
+      showCallOverlayPeek({
         callId: cur.callId,
         fromUserId: cur.peer.id,
         fromName: cur.peer.name,

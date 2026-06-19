@@ -1317,6 +1317,7 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
   const [form, setForm] = useState({});
   const [batchStatus, setBatchStatus] = useState(null); // { type, loading, result }
   const [batchProgress, setBatchProgress] = useState(null);
+  const [refreshAvatarLogs, setRefreshAvatarLogs] = useState([]);
   const [audit, setAudit] = useState(null);
   const [auditLoading, setAuditLoading] = useState(false);
   const limitSize = 200;
@@ -1556,9 +1557,27 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
       if (data.type === 'extract_phones' || data.type === 'sync_then_extract_phones') {
         setBatchProgress(data);
       }
+      if (data.type === 'refresh_names') {
+        setBatchProgress(data);
+        if (data.message || data.phase === 'start') {
+          setRefreshAvatarLogs((prev) => {
+            const next = [...prev, { ts: new Date().toISOString(), ...data }];
+            return next.slice(-80);
+          });
+        }
+      }
     };
 
     const onBatchDone = (data) => {
+      if (data.type === 'refresh_names') {
+        setBatchProgress(null);
+        setBatchStatus({ type: 'names', loading: false, result: data });
+        if (Array.isArray(data.log_lines) && data.log_lines.length) {
+          setRefreshAvatarLogs(data.log_lines.slice(-80));
+        }
+        load();
+        return;
+      }
       if (data.type !== 'extract_phones') return;
       setBatchProgress(null);
       setBatchStatus({ type: 'phones', loading: false, result: data });
@@ -1841,17 +1860,32 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
 
   // Refresh tên các contact bị "Facebook User"
   const refreshNames = async () => {
-    const stuckCount = contacts.filter(c => !c.fb_name || c.fb_name === 'Facebook User' || c.fb_name === 'User').length;
-    if (!stuckCount) return alert('Tất cả liên hệ đã có tên!');
-    if (!confirm(`Cập nhật tên cho ${stuckCount} liên hệ đang thiếu tên?`)) return;
+    const stuckNameCount = contacts.filter((c) => !c.fb_name || c.fb_name === 'Facebook User' || c.fb_name === 'User').length;
+    if (!stuckNameCount) return alert('Tất cả liên hệ đã có tên!');
+    if (!confirm(`Cập nhật tên cho tối đa 100 liên hệ đang thiếu tên (${stuckNameCount} trên trang hiện tại)?`)) return;
+    setRefreshAvatarLogs([]);
     setBatchStatus({ type: 'names', loading: true, result: null });
+    setBatchProgress({ type: 'refresh_names', phase: 'start', current: 0, total: 100, message: 'Đang refresh tên…' });
     try {
-      const res = await fetch(`${API}/api/facebook/refresh-names`, { method: 'POST', headers: hdr() });
+      const res = await fetch(`${API}/api/facebook/refresh-names`, {
+        method: 'POST',
+        headers: { ...hdr(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_id: toolCompanyId }),
+      });
       const data = await res.json();
       setBatchStatus({ type: 'names', loading: false, result: data });
+      setBatchProgress(null);
+      if (Array.isArray(data.log_lines) && data.log_lines.length) {
+        setRefreshAvatarLogs(data.log_lines.slice(-80));
+      }
+      if (!res.ok) {
+        alert(data.error || 'Lỗi refresh');
+        return;
+      }
       load();
     } catch (e) {
       setBatchStatus({ type: 'names', loading: false, result: { error: e.message } });
+      setBatchProgress(null);
     }
   };
 
@@ -1900,6 +1934,25 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
       <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
         <div>
           <h2 className="text-lg font-bold">👥 Danh bạ Facebook ({contacts.length}/{meta.total || 0})</h2>
+          {batchStatus?.loading && batchProgress && batchStatus?.type === 'names' && (
+            <div className="mt-2 text-xs text-purple-800 bg-purple-50 border border-purple-100 rounded-lg px-2 py-1.5 space-y-1">
+              <div>
+                🔄 Refresh tên:{' '}
+                <span className="font-medium">{batchProgress.name || batchProgress.message || '…'}</span>
+                {batchProgress.total ? (
+                  <span> ({batchProgress.current || 0}/{batchProgress.total})</span>
+                ) : null}
+              </div>
+              {batchProgress.total > 0 && (
+                <div className="h-1.5 bg-purple-100 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-purple-500 rounded-full transition-all"
+                    style={{ width: `${Math.min(100, ((batchProgress.current || 0) / batchProgress.total) * 100)}%` }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
           {batchStatus?.loading && batchProgress && (batchStatus?.type === 'phones' || batchStatus?.type === 'sync_then_phones') && (
             <div className="mt-2 text-xs text-gray-600 space-y-1">
               <div>
@@ -2289,6 +2342,10 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
                 <span>✅ Đã tạo <strong>{batchStatus.result.created || 0}</strong> Lead mới — Bỏ qua: {batchStatus.result.skipped || 0} (đã có Lead)</span>
               ) : batchStatus.type === 'dedup' ? (
                 <span>✅ {batchStatus.result.message}</span>
+              ) : batchStatus.type === 'names' ? (
+                <span>
+                  ✅ Refresh tên: <strong>{batchStatus.result.updated ?? 0}</strong>/{batchStatus.result.total ?? 0} contact
+                </span>
               ) : batchStatus.type === 'sync_then_phones' ? (
                 <span>
                   {batchStatus.result.leadsCreated != null ? (
@@ -2329,8 +2386,28 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
                 <span>✅ Quét <strong>{batchStatus.result.total || 0}</strong> liên hệ — Tìm thấy: <strong>{batchStatus.result.foundPhones || 0}</strong> SĐT mới</span>
               )}
             </div>
-            <button onClick={() => setBatchStatus(null)} className="text-gray-400 hover:text-gray-600 cursor-pointer">✕</button>
+            <button onClick={() => { setBatchStatus(null); setRefreshAvatarLogs([]); }} className="text-gray-400 hover:text-gray-600 cursor-pointer">✕</button>
           </div>
+
+          {batchStatus.type === 'names' && refreshAvatarLogs.length > 0 && (
+            <details open className="mt-3 text-xs">
+              <summary className="cursor-pointer text-purple-800 font-medium hover:underline">
+                📋 Log refresh tên ({refreshAvatarLogs.length} dòng)
+              </summary>
+              <div className="mt-2 max-h-56 overflow-y-auto border border-purple-100 rounded-lg bg-white font-mono text-[10px] leading-relaxed">
+                {refreshAvatarLogs.map((line, idx) => (
+                  <div
+                    key={`${line.ts || idx}-${line.psid || idx}`}
+                    className={`px-2 py-1 border-b border-gray-50 ${line.real_pic ? 'text-green-700 bg-green-50/40' : line.graph_denied ? 'text-amber-800 bg-amber-50/40' : line.status === 'updated' ? 'text-blue-800' : 'text-gray-600'}`}
+                  >
+                    {line.message || `${line.phase || line.step || ''} ${line.name || ''}`.trim()}
+                    {line.source ? <span className="text-gray-400"> · {line.source}</span> : null}
+                    {line.current && line.total ? <span className="text-gray-400"> · {line.current}/{line.total}</span> : null}
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
 
           {/* Chi tiết kết quả quét SĐT */}
           {batchStatus.type === 'phones' && !batchStatus.result.error && batchStatus.result.leadsUpdatedPhone != null && (

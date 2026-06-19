@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AppState, type AppStateStatus, DeviceEventEmitter, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
+import { api } from '../api/client';
 import { useAuth, currentUserId } from '../context/AuthContext';
 import { useMessengerRealtime } from '../context/MessengerRealtimeContext';
 import {
@@ -11,7 +12,9 @@ import {
 import { syncNativeAuthPrefs } from '../lib/nativeAuthSync';
 import { Overlay, showChatBubbleForMessage } from '../lib/floatingBubbleOverlay';
 import { buildMessengerNotifFromSocket } from '../lib/messengerNotifFromSocket';
-import { navigationRef } from '../navigation/navigationRef';
+import { markMessengerGroupRead } from '../lib/messengerApi';
+import { buildMessengerMessagePreview } from '../lib/messengerPreview';
+import { mapMessageRow } from '../lib/messengerApi';
 import type { MessengerNotifPayload } from '../lib/localMessengerNotification';
 
 function notifFromPush(
@@ -59,13 +62,42 @@ function notifFromPush(
   };
 }
 
-/** Đồng bộ bong bóng chat native + auth prefs cho cuộc gọi khi app tắt. */
+async function seedNativePanelHistory(groupId: string, myUserId: string) {
+  if (!Overlay?.seedConversationMessages) return;
+  try {
+    const { data } = await api.get<unknown[]>(`/messenger/groups/${groupId}/chat`);
+    const rows = Array.isArray(data) ? data : [];
+    const mapped = rows.slice(-50).map((row) => {
+      const m = mapMessageRow(row as Record<string, unknown>);
+      const sender = m.is_system
+        ? 'Hệ thống'
+        : m.user?.full_name?.trim() || 'Người dùng';
+      return {
+        id: m.id || '',
+        user_id: m.user_id || m.user?.id || '',
+        sender,
+        text: buildMessengerMessagePreview(m, { forUserId: myUserId, maxLen: 500 })
+          || m.content
+          || '',
+        ts: m.created_at ? new Date(m.created_at).getTime() : Date.now(),
+        message_type: m.message_type || '',
+      };
+    });
+    Overlay.seedConversationMessages(groupId, JSON.stringify(mapped));
+    void markMessengerGroupRead(groupId).catch(() => {});
+  } catch {
+    /* native panel tự fetch nếu JS không kịp */
+  }
+}
+
+/** Đồng bộ bong bóng chat native — panel overlay không mở MainActivity. */
 export default function SystemBubbleSync() {
   const { token, user } = useAuth();
   const uid = currentUserId(user);
   const { subscribeMessengerChat } = useMessengerRealtime();
   const [prefs, setPrefs] = useState<CrmMobilePrefs | null>(null);
   const unreadRef = useRef(0);
+  const openPanelGroupRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -86,26 +118,26 @@ export default function SystemBubbleSync() {
   }, [token, uid]);
 
   useEffect(() => {
-    if (Platform.OS !== 'android' || !Overlay) return;
+    const overlay = Overlay;
+    if (Platform.OS !== 'android' || !overlay) return;
 
     const syncOverlay = () => {
-      // Chỉ bật bong bóng khi app ra nền — tránh cướp focus lúc đang dùng CRM.
       if (AppState.currentState === 'active') return;
       void (async () => {
         if (!token || !uid || !prefs?.floatingChatBubbleEnabled || !prefs.floatingChatBubbleSystemOverlay) {
-          await Overlay.stopOverlay?.().catch(() => {});
+          await overlay.stopOverlay?.().catch(() => {});
           return;
         }
         if (prefs.floatingChatBubbleOnlyWhenUnread && unreadRef.current <= 0) {
-          await Overlay.stopOverlay?.().catch(() => {});
+          await overlay.stopOverlay?.().catch(() => {});
           return;
         }
-        const can = await Overlay.canDrawOverlays?.().catch(() => false);
+        const can = await overlay.canDrawOverlays?.().catch(() => false);
         if (!can) {
-          await Overlay.stopOverlay?.().catch(() => {});
+          await overlay.stopOverlay?.().catch(() => {});
           return;
         }
-        await Overlay.startOverlay?.().catch(() => {});
+        await overlay.startOverlay?.().catch(() => {});
       })();
     };
 
@@ -124,6 +156,15 @@ export default function SystemBubbleSync() {
       void showChatBubbleForMessage(built, prefs, {
         isActive: AppState.currentState === 'active',
       });
+      const gid = String(row.group_id ?? row.groupId ?? '');
+      if (gid && gid === openPanelGroupRef.current) {
+        const msg = mapMessageRow({ ...row, group_id: gid } as Record<string, unknown>);
+        const preview = buildMessengerMessagePreview(msg, { forUserId: uid, maxLen: 500 });
+        const sender = msg.user?.full_name?.trim() || 'Người dùng';
+        if (preview) {
+          Overlay.appendPanelMessage?.(gid, sender, preview);
+        }
+      }
     });
     return unsub;
   }, [subscribeMessengerChat, prefs, uid]);
@@ -147,33 +188,20 @@ export default function SystemBubbleSync() {
     return () => sub.remove();
   }, [prefs]);
 
+  /** Native panel mở → seed lịch sử từ JS nếu app đang chạy (bổ sung cho fetch native). */
   useEffect(() => {
-    if (Platform.OS !== 'android' || !Overlay?.consumePendingGroup) return;
-
-    const goChat = (groupId: string) => {
-      let tries = 0;
-      const nav = () => {
-        if (!navigationRef.isReady()) {
-          if (tries++ < 50) setTimeout(nav, 80);
-          return;
-        }
-        navigationRef.navigate('ChatDetail', { groupId });
-      };
-      nav();
-    };
-
-    const tryOpen = () => {
-      void Overlay.consumePendingGroup?.().then((gid) => {
-        if (gid) goChat(gid);
-      });
-    };
-
-    tryOpen();
-    const sub = AppState.addEventListener('change', (s) => {
-      if (s === 'active') tryOpen();
-    });
+    if (Platform.OS !== 'android' || !uid) return;
+    const sub = DeviceEventEmitter.addListener(
+      'BubblePanelOpened',
+      (p: { key?: string } | null) => {
+        const groupId = p?.key?.trim();
+        if (!groupId) return;
+        openPanelGroupRef.current = groupId;
+        void seedNativePanelHistory(groupId, uid);
+      },
+    );
     return () => sub.remove();
-  }, []);
+  }, [uid]);
 
   return null;
 }

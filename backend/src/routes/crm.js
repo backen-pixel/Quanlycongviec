@@ -16130,6 +16130,31 @@ function commentsTableMissing(error) {
   return String(error?.message || '').toLowerCase().includes('crm_lead_comments');
 }
 
+function crmLeadCommentAttachmentsColumnMissing(error) {
+  return String(error?.message || '').toLowerCase().includes('attachments')
+    && String(error?.message || '').toLowerCase().includes('crm_lead_comments');
+}
+
+/** Chuẩn hóa đính kèm bình luận lead — nhận {url|file_url, name|file_name, type|mime_type, size|file_size}. */
+function normalizeCrmLeadCommentAttachments(raw) {
+  if (raw == null) return [];
+  const arr = Array.isArray(raw) ? raw : [];
+  const out = [];
+  for (const a of arr) {
+    if (!a || typeof a !== 'object') continue;
+    const url = typeof a.url === 'string' ? a.url.trim()
+      : (typeof a.file_url === 'string' ? a.file_url.trim() : '');
+    if (!url || !url.startsWith('/uploads/')) continue;
+    out.push({
+      url: url.slice(0, 600),
+      name: String(a.name != null ? a.name : (a.file_name != null ? a.file_name : '')).slice(0, 400),
+      type: String(a.type != null ? a.type : (a.mime_type != null ? a.mime_type : '')).slice(0, 120),
+      size: Number.isFinite(Number(a.size != null ? a.size : a.file_size)) ? Number(a.size != null ? a.size : a.file_size) : 0,
+    });
+  }
+  return out;
+}
+
 function reactionsTableMissing(error) {
   return String(error?.message || '').toLowerCase().includes('crm_lead_comment_reactions');
 }
@@ -16181,12 +16206,20 @@ r.get('/leads/:id/comments', async (req, res) => {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
     const leadId = String(req.params.id || '').trim();
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('crm_lead_comments')
-      .select('id, lead_id, user_id, parent_id, body, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
+      .select('id, lead_id, user_id, parent_id, body, attachments, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
       .eq('lead_id', leadId)
       .is('deleted_at', null)
       .order('created_at', { ascending: true });
+    if (error && crmLeadCommentAttachmentsColumnMissing(error)) {
+      ({ data, error } = await supabase
+        .from('crm_lead_comments')
+        .select('id, lead_id, user_id, parent_id, body, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
+        .eq('lead_id', leadId)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: true }));
+    }
     if (error) {
       if (commentsTableMissing(error)) return res.json([]);
       throw error;
@@ -16201,6 +16234,7 @@ r.get('/leads/:id/comments', async (req, res) => {
     }
     const out = list.map((c) => ({
       ...c,
+      attachments: normalizeCrmLeadCommentAttachments(c.attachments),
       reactions: rxMap.get(c.id) || { summary: [], mine: null },
     }));
     res.json(out);
@@ -16217,7 +16251,8 @@ r.post('/leads/:id/comments', async (req, res) => {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
     const leadId = String(req.params.id || '').trim();
     const body = String(req.body?.body || '').trim();
-    if (!body) return res.status(400).json({ error: 'Nội dung bắt buộc' });
+    const attachments = normalizeCrmLeadCommentAttachments(req.body?.attachments);
+    if (!body && !attachments.length) return res.status(400).json({ error: 'Nội dung hoặc đính kèm bắt buộc' });
 
     let parentId = null;
     const parentRaw = req.body?.parent_id;
@@ -16236,11 +16271,22 @@ r.post('/leads/:id/comments', async (req, res) => {
       parentId = n;
     }
 
-    const { data, error } = await supabase
+    const insertRow = { lead_id: leadId, user_id: userId, body, parent_id: parentId };
+    if (attachments.length) insertRow.attachments = attachments;
+
+    let { data, error } = await supabase
       .from('crm_lead_comments')
-      .insert({ lead_id: leadId, user_id: userId, body, parent_id: parentId })
-      .select('id, lead_id, user_id, parent_id, body, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
+      .insert(insertRow)
+      .select('id, lead_id, user_id, parent_id, body, attachments, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
       .single();
+    if (error && crmLeadCommentAttachmentsColumnMissing(error)) {
+      delete insertRow.attachments;
+      ({ data, error } = await supabase
+        .from('crm_lead_comments')
+        .insert(insertRow)
+        .select('id, lead_id, user_id, parent_id, body, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
+        .single());
+    }
     if (error) {
       if (commentsTableMissing(error)) {
         return res.status(500).json({
@@ -16249,7 +16295,11 @@ r.post('/leads/:id/comments', async (req, res) => {
       }
       throw error;
     }
-    const row = { ...data, reactions: { summary: [], mine: null } };
+    const row = {
+      ...data,
+      attachments: normalizeCrmLeadCommentAttachments(data.attachments),
+      reactions: { summary: [], mine: null },
+    };
     const io = req.app.get('io');
     if (io) io.to(`lead:${leadId}`).emit('lead:comment', { lead_id: leadId, action: 'created', comment: row });
 

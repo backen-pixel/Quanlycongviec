@@ -10,6 +10,9 @@ const JAVA_PKG = ['vn', 'tubeppro', 'crmobilev2'];
 
 const OVERLAY_FILES = [
   'overlay/OverlayBubbleService.kt',
+  'overlay/OverlayChatPanel.kt',
+  'overlay/BubbleChatApi.kt',
+  'overlay/FloatingBubbleBridge.kt',
   'overlay/FloatingBubbleModule.kt',
   'overlay/FloatingBubbleOverlayPackage.kt',
   'overlay/BubbleFcmWake.kt',

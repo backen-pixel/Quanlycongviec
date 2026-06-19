@@ -15,6 +15,7 @@ import { getIceServers } from './turnConfig';
 import {
   dismissIncomingCallNotification, showIncomingCallNotification,
 } from '../lib/incomingCallNotifications';
+import { hideCallOverlayPeek, showCallOverlayPeek } from '../lib/floatingBubbleOverlay';
 import { startIncomingCallAlert, stopIncomingCallAlert } from '../lib/callRingtone';
 import { tryClaimIncomingCall, markCallAnswered, setCallSession, releaseIncomingClaim } from '../lib/callSessionGuard';
 import { dismissLockScreenCallUi } from '../lib/lockScreenCall';
@@ -356,6 +357,15 @@ export class LegacyGroupCallManager {
         groupId: p.groupId,
         groupName: p.groupName,
       });
+      showCallOverlayPeek({
+        callId: p.callId,
+        fromUserId: p.fromUserId,
+        fromName: p.fromName,
+        kind: media,
+        isGroup: true,
+        groupId: p.groupId,
+        groupName: p.groupName,
+      });
     }
   }
 
@@ -367,6 +377,7 @@ export class LegacyGroupCallManager {
     markCallAnswered(cur.callId);
     void stopIncomingCallAlert();
     void dismissIncomingCallNotification(cur.callId);
+    hideCallOverlayPeek(cur.callId);
     this.patchSession({ state: 'CONNECTING' });
     setCallSession(cur.callId, 'connecting');
     try {

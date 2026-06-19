@@ -27,8 +27,14 @@ const COMPANY_CACHE_MS = 60_000;
 const _companyCache = new Map(); // userId -> { company_id, at }
 const _regionCache = new Map(); // userId -> { crm_region_ids, at }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isUuidLike(v) {
+  return UUID_RE.test(String(v || '').trim());
+}
+
 async function resolveCrmRegionIdsForUser(userId) {
-  if (!userId) return [];
+  if (!userId || !isUuidLike(userId)) return [];
   const key = String(userId);
   const hit = _regionCache.get(key);
   const now = Date.now();
@@ -48,7 +54,7 @@ async function resolveCrmRegionIdsForUser(userId) {
 }
 
 async function resolveCompanyIdForUser(userId) {
-  if (!userId) return null;
+  if (!userId || !isUuidLike(userId)) return null;
   const key = String(userId);
   const hit = _companyCache.get(key);
   const now = Date.now();
@@ -96,9 +102,20 @@ function auth(req, res, next) {
     if (req.user.userId == null && req.user.id != null) req.user.userId = req.user.id;
     if (req.user.id == null && req.user.userId != null) req.user.id = req.user.userId;
     const uid = req.user.userId;
+    const isSystemToken = req.user.role === 'system';
     const needCompany = req.user.company_id == null;
     const needRegions = !Array.isArray(req.user.crm_region_ids);
+    if (isSystemToken) {
+      if (needRegions) req.user.crm_region_ids = [];
+      next();
+      return;
+    }
     if (needCompany || needRegions) {
+      if (!isUuidLike(uid)) {
+        if (needRegions) req.user.crm_region_ids = [];
+        next();
+        return;
+      }
       Promise.resolve()
         .then(async () => {
           if (needCompany) {
@@ -144,5 +161,6 @@ module.exports = {
   authWithQueryToken,
   midnightVnTodayMs,
   isStaleAcrossMidnight,
+  isUuidLike,
   resolveCompanyIdForUser,
 };

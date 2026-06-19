@@ -77,11 +77,13 @@ async function logAuthEvent({ event, user_id = null, email = null, reason = null
   if (!VALID_EVENTS.has(event)) {
     return { ok: false, error: 'invalid_event' };
   }
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const safeUserId = user_id && uuidRe.test(String(user_id).trim()) ? user_id : null;
   const ua = req?.headers?.['user-agent'] || null;
   const { platform, device_name } = parseDevice(ua);
   const row = {
     event,
-    user_id,
+    user_id: safeUserId,
     email: email ? String(email).slice(0, 200) : null,
     reason: reason ? String(reason).slice(0, 80) : null,
     session_id: session_id ? String(session_id).slice(0, 80) : null,

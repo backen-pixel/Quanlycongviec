@@ -23,6 +23,8 @@ export function CrmCommentMentionComposer({
   submitLabel = 'Đăng',
   minRows = 1,
   autoFocus = false,
+  canSubmit,
+  attachSlot = null,
 }) {
   const textareaRef = useRef(null);
   const pickedIdsRef = useRef(new Set());
@@ -178,16 +180,18 @@ export function CrmCommentMentionComposer({
       <div className="flex items-end gap-2 px-3 py-2.5 bg-white">
         <FbCrmAvatar user={user} className="h-8 w-8 shrink-0 mb-px" />
         <div className="flex-1 min-w-0 rounded-[22px] bg-[#f0f2f5] px-3 py-2 border border-transparent focus-within:border-[#1877f2]/30 transition-colors">
-          <textarea
-            ref={textareaRef}
-            autoFocus={autoFocus}
-            value={value}
-            onChange={handleChange}
-            onSelect={(e) => syncMentionUi(e.target.selectionStart ?? 0)}
-            onClick={(e) => syncMentionUi(e.target.selectionStart ?? 0)}
-            onKeyUp={(e) => syncMentionUi(e.target.selectionStart ?? 0)}
-            rows={minRows}
-            placeholder={placeholder}
+          <div className="flex items-start gap-1.5">
+            {attachSlot ? <div className="shrink-0 pt-0.5">{attachSlot}</div> : null}
+            <textarea
+              ref={textareaRef}
+              autoFocus={autoFocus}
+              value={value}
+              onChange={handleChange}
+              onSelect={(e) => syncMentionUi(e.target.selectionStart ?? 0)}
+              onClick={(e) => syncMentionUi(e.target.selectionStart ?? 0)}
+              onKeyUp={(e) => syncMentionUi(e.target.selectionStart ?? 0)}
+              rows={minRows}
+              placeholder={placeholder}
             onKeyDown={(e) => {
               if (mentionOpen && pickerItems.length) {
                 if (e.key === 'ArrowDown') {
@@ -215,13 +219,14 @@ export function CrmCommentMentionComposer({
                 handleSubmit();
               }
             }}
-            className="w-full bg-transparent border-0 p-0 text-[15px] leading-snug text-[#050505] placeholder:text-[#65676b] focus:ring-0 resize-none min-h-[22px] overflow-hidden"
+            className="min-w-0 flex-1 w-full bg-transparent border-0 p-0 text-[15px] leading-snug text-[#050505] placeholder:text-[#65676b] focus:ring-0 resize-none min-h-[22px] overflow-hidden"
             style={{ maxHeight: COMPOSER_MAX_H }}
           />
+          </div>
         </div>
         <button
           type="button"
-          disabled={posting || !String(value || '').trim()}
+          disabled={posting || !(canSubmit ?? String(value || '').trim())}
           onClick={handleSubmit}
           className="shrink-0 rounded-full bg-[#1877f2] px-4 py-2 text-[13px] font-semibold text-white shadow-sm hover:bg-[#166fe5] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
         >

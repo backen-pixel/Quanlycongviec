@@ -105,6 +105,7 @@ class MainActivity : ReactActivity() {
     var isGroup = intent.getBooleanExtra("is_group", false)
     var groupId = intent.getStringExtra("group_id") ?: ""
     var groupName = intent.getStringExtra("group_name") ?: ""
+    var callKind = intent.getStringExtra("kind") ?: "audio"
     var callAction = intent.getStringExtra("call_action")?.trim().orEmpty()
     lockScreenCallBoot = isLockScreenCallBootIntent(intent)
 
@@ -115,6 +116,7 @@ class MainActivity : ReactActivity() {
       isGroup = intent.getStringExtra("is_group") == "true"
       groupId = intent.getStringExtra("group_id") ?: groupId
       groupName = intent.getStringExtra("group_name") ?: groupName
+      callKind = intent.getStringExtra("kind") ?: callKind
     }
 
     if (intent.getBooleanExtra("incoming_call", false) != true && callId.isNullOrBlank()) return
@@ -129,7 +131,7 @@ class MainActivity : ReactActivity() {
       obj.put("isGroup", isGroup)
       obj.put("groupId", groupId)
       obj.put("groupName", groupName)
-      obj.put("kind", "audio")
+      obj.put("kind", callKind)
       obj.put("stashedAt", System.currentTimeMillis())
       if (callAction.isNotBlank()) obj.put("callAction", callAction)
       getSharedPreferences(vn.tubeppro.crmobilev2.call.IncomingCallHelper.PREFS, MODE_PRIVATE)

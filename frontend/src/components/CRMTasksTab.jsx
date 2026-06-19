@@ -21,6 +21,11 @@ import ExcelQuotationImport from './ExcelQuotationImport';
 import CrmArtifactShareModal from './CrmArtifactShareModal';
 import { shareModuleLabels } from '../lib/documentShareScope';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
+import UploadFileLightbox, {
+  collectUploadLightboxItems,
+  findUploadLightboxIndex,
+  isUploadImageFile,
+} from './UploadFileLightbox';
 import { formatEvidenceTypesList, formatEvidenceTypesShort, checklistItemRequiresEvidence } from '../lib/evidenceFileTypes';
 import TaskQuickVerdictBar from './TaskQuickVerdictBar';
 import EmployeePicker from './EmployeePicker';
@@ -1981,6 +1986,8 @@ export default function CRMTasksTab({
   const [excelImportTaskId, setExcelImportTaskId] = useState(null); // taskId đang mở Excel import modal
   const [importingExcel, setImportingExcel] = useState(null); // taskId đang import
   const [importToast, setImportToast] = useState(null); // { message, type }
+  const [attLightboxIndex, setAttLightboxIndex] = useState(null);
+  const [attLightboxItems, setAttLightboxItems] = useState([]);
 
   if (loading) return <div className="flex items-center justify-center py-8"><div className="animate-spin h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full" /></div>;
 
@@ -2284,11 +2291,58 @@ export default function CRMTasksTab({
 
   const ATT_ICONS = { image: ImageIcon, video: Film, drawing: FileText, task_note: MessageSquare, other: FileText };
 
-  const renderChecklistAttachmentList = (taskId, ckAtts) => {
-    if (!ckAtts.length) return null;
+  const isImageAtt = (att) => {
+    if (!att?.file_url) return false;
+    if (att.doc_type === 'image') return true;
+    if (att.mime_type?.startsWith('image/')) return true;
+    return isUploadImageFile(att.mime_type, att.file_name || att.file_url);
+  };
+
+  const openAttLightbox = (atts, rawPath) => {
+    const items = collectUploadLightboxItems(
+      (atts || []).filter((a) => a.doc_type !== 'checklist_inline_note'),
+    );
+    if (!items.length) return;
+    const idx = rawPath ? findUploadLightboxIndex(items, rawPath) : 0;
+    setAttLightboxItems(items);
+    setAttLightboxIndex(Math.max(idx, 0));
+  };
+
+  const renderImageThumbnailGrid = (atts, { size = 'md', className = '' } = {}) => {
+    const imageAtts = (atts || []).filter(
+      (a) => a.doc_type !== 'checklist_inline_note' && isImageAtt(a),
+    );
+    if (!imageAtts.length) return null;
+    const dim = size === 'sm' ? 'h-10 w-10' : 'h-14 w-14';
     return (
-      <div className="space-y-1 mt-2">
-        {ckAtts.map((att) => {
+      <div className={`flex flex-wrap gap-1.5 ${className}`}>
+        {imageAtts.map((att) => (
+          <button
+            key={att.id || att.file_url}
+            type="button"
+            onClick={(e) => { e.stopPropagation(); openAttLightbox(atts, att.file_url); }}
+            className={`${dim} rounded-md border border-gray-200 overflow-hidden shrink-0 cursor-zoom-in hover:ring-2 hover:ring-blue-400 transition-shadow bg-gray-50`}
+            title={att.name || att.file_name || 'Xem ảnh'}
+          >
+            <img
+              src={publicFileUrl(att.file_url)}
+              alt={att.name || ''}
+              loading="lazy"
+              className="h-full w-full object-cover"
+            />
+          </button>
+        ))}
+      </div>
+    );
+  };
+
+  const renderChecklistAttachmentList = (taskId, ckAtts) => {
+    const fileAtts = ckAtts.filter((a) => !isImageAtt(a));
+    if (!ckAtts.some((a) => isImageAtt(a)) && !fileAtts.length) return null;
+    return (
+      <div className="space-y-1.5 mt-2">
+        {renderImageThumbnailGrid(ckAtts, { size: 'md' })}
+        {fileAtts.map((att) => {
           const AttIcon = ATT_ICONS[att.doc_type] || FileText;
           const attOpen = att.file_url ? getFileOpenAnchorProps(att.file_url, { fileName: att.file_name }) : null;
           return (
@@ -2300,7 +2354,7 @@ export default function CRMTasksTab({
                   {att.notes && att.doc_type !== 'checklist_inline_note' && (
                     <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{att.notes}</p>
                   )}
-                  {att.file_url && !att.mime_type?.startsWith('image/') && attOpen && (
+                  {att.file_url && attOpen && (
                     <a {...attOpen} className="text-[10px] text-blue-600 hover:underline">{att.file_name || 'Mở file'}</a>
                   )}
                 </div>
@@ -2309,11 +2363,6 @@ export default function CRMTasksTab({
                   <Trash2 className="h-2.5 w-2.5" />
                 </button>
               </div>
-              {att.file_url && att.mime_type?.startsWith('image/') && attOpen && (
-                <a {...attOpen} className="block mt-1.5 ml-5">
-                  <img src={publicFileUrl(att.file_url)} alt={att.name} className="max-h-32 max-w-full rounded border object-contain" />
-                </a>
-              )}
             </div>
           );
         })}
@@ -2357,6 +2406,10 @@ export default function CRMTasksTab({
               )}
               {!isCkExpanded && ckHasNotes && (
                 <p className="text-[11px] text-amber-600 line-clamp-1 mt-0.5 italic">💬 {(ck.notes || '').slice(0, 80)}</p>
+              )}
+              {!isCkExpanded && renderImageThumbnailGrid(
+                ckAtts.filter((a) => a.doc_type !== 'checklist_inline_note' && a.doc_type !== 'task_note'),
+                { size: 'sm', className: 'mt-1' },
               )}
               <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                 {ckFileCount > 0 && (
@@ -2895,6 +2948,10 @@ export default function CRMTasksTab({
                               {!isCkExpanded && ckHasNotes && (
                                 <p className="text-[11px] text-amber-600 line-clamp-1 mt-0.5 italic">💬 {(ck.notes || '').slice(0, 60)}</p>
                               )}
+                              {!isCkExpanded && renderImageThumbnailGrid(
+                                ckAtts.filter((a) => a.doc_type !== 'checklist_inline_note' && a.doc_type !== 'task_note'),
+                                { size: 'sm', className: 'mt-1' },
+                              )}
                               <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                                 {ckFileCount > 0 && (
                                   <span className="text-[9px] text-blue-600 bg-blue-50 px-1 py-0.5 rounded-full flex items-center gap-0.5">
@@ -3189,8 +3246,9 @@ export default function CRMTasksTab({
 
               {/* Attachment list */}
               {atts.length > 0 && (
-                <div className="space-y-1">
-                  {atts.map(att => {
+                <div className="space-y-1.5">
+                  {renderImageThumbnailGrid(atts, { size: 'md', className: 'mb-1' })}
+                  {atts.filter((att) => !isImageAtt(att)).map(att => {
                     const AttIcon = ATT_ICONS[att.doc_type] || FileText;
                     const attOpen = att.file_url ? getFileOpenAnchorProps(att.file_url, { fileName: att.file_name }) : null;
                     return (
@@ -3205,7 +3263,7 @@ export default function CRMTasksTab({
                               )}
                             </div>
                             {att.notes && <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{att.notes}</p>}
-                            {att.file_url && !att.mime_type?.startsWith('image/') && attOpen && (
+                            {att.file_url && attOpen && (
                               <a {...attOpen}
                                 className="text-[10px] text-blue-600 hover:underline">{att.file_name || 'Mở file'}</a>
                             )}
@@ -3224,12 +3282,6 @@ export default function CRMTasksTab({
                             </button>
                           </div>
                         </div>
-                        {/* Image preview */}
-                        {att.file_url && att.mime_type?.startsWith('image/') && attOpen && (
-                          <a {...attOpen} className="block mt-1.5 ml-5">
-                            <img src={publicFileUrl(att.file_url)} alt={att.name} className="max-h-40 max-w-full rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity" />
-                          </a>
-                        )}
                         {/* Video preview */}
                         {att.file_url && (att.mime_type?.startsWith('video/') || att.doc_type === 'video') && (
                           <div className="mt-1.5 ml-5">
@@ -4085,6 +4137,15 @@ export default function CRMTasksTab({
         onClose={() => setShareModal(null)}
         onSaved={onShareModalSaved}
       />
+
+      {attLightboxIndex != null && attLightboxItems.length > 0 && (
+        <UploadFileLightbox
+          items={attLightboxItems}
+          index={attLightboxIndex}
+          onIndexChange={setAttLightboxIndex}
+          onClose={() => { setAttLightboxIndex(null); setAttLightboxItems([]); }}
+        />
+      )}
     </div>
   );
 }
