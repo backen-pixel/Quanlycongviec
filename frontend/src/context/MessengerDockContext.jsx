@@ -32,6 +32,14 @@ function winKeyDept(deptId) {
   return `d:${deptId}`;
 }
 
+/** Chỉ một bong bóng chat mở rộng — tránh sổ ngang hết màn hình. */
+function withSingleExpanded(windows, focusedKey) {
+  return windows.map((x) => ({
+    ...x,
+    minimized: x.windowKey !== focusedKey,
+  }));
+}
+
 const DEPT_UNREAD_KEY_PREFIX = 'messenger:dept-unread:';
 function deptUnreadKey(uid) {
   return `${DEPT_UNREAD_KEY_PREFIX}${uid}`;
@@ -320,8 +328,9 @@ export function MessengerDockProvider({ children }) {
       const wk = winKeyLead(id);
       setWindows((w) => {
         const exists = w.some((x) => x.windowKey === wk);
+        let next;
         if (exists) {
-          return w.map((x) =>
+          next = w.map((x) =>
             x.windowKey === wk
               ? {
                   ...x,
@@ -332,20 +341,22 @@ export function MessengerDockProvider({ children }) {
                 }
               : x,
           );
+        } else {
+          next = [
+            ...w,
+            {
+              windowKey: wk,
+              chatType: 'lead',
+              leadId: id,
+              groupId: null,
+              title: lead.title || 'Chat',
+              code: lead.code || '',
+              type: lead.type || 'lead',
+              minimized: false,
+            },
+          ];
         }
-        return [
-          ...w,
-          {
-            windowKey: wk,
-            chatType: 'lead',
-            leadId: id,
-            groupId: null,
-            title: lead.title || 'Chat',
-            code: lead.code || '',
-            type: lead.type || 'lead',
-            minimized: false,
-          },
-        ];
+        return withSingleExpanded(next, wk);
       });
     },
     [markLeadRead],
@@ -364,8 +375,9 @@ export function MessengerDockProvider({ children }) {
       const wk = winKeyGroup(g.id);
       setWindows((w) => {
         const exists = w.some((x) => x.windowKey === wk);
+        let next;
         if (exists) {
-          return w.map((x) =>
+          next = w.map((x) =>
             x.windowKey === wk
               ? {
                   ...x,
@@ -377,23 +389,25 @@ export function MessengerDockProvider({ children }) {
                 }
               : x,
           );
+        } else {
+          next = [
+            ...w,
+            {
+              windowKey: wk,
+              chatType: 'messenger_group',
+              leadId: null,
+              groupId: g.id,
+              title,
+              code: '',
+              type: 'group',
+              minimized: false,
+              peerUserId,
+              isDirect,
+              avatar,
+            },
+          ];
         }
-        return [
-          ...w,
-          {
-            windowKey: wk,
-            chatType: 'messenger_group',
-            leadId: null,
-            groupId: g.id,
-            title,
-            code: '',
-            type: 'group',
-            minimized: false,
-            peerUserId,
-            isDirect,
-            avatar,
-          },
-        ];
+        return withSingleExpanded(next, wk);
       });
     },
     [markGroupRead],
@@ -410,8 +424,9 @@ export function MessengerDockProvider({ children }) {
       setDeptMetaMap((prev) => ({ ...prev, [d.id]: { id: d.id, name: title, color } }));
       setWindows((w) => {
         const exists = w.some((x) => x.windowKey === wk);
+        let next;
         if (exists) {
-          return w.map((x) =>
+          next = w.map((x) =>
             x.windowKey === wk
               ? {
                   ...x,
@@ -421,22 +436,24 @@ export function MessengerDockProvider({ children }) {
                 }
               : x,
           );
+        } else {
+          next = [
+            ...w,
+            {
+              windowKey: wk,
+              chatType: 'department',
+              leadId: null,
+              groupId: null,
+              deptId: d.id,
+              title,
+              code: '',
+              type: 'department',
+              color,
+              minimized: false,
+            },
+          ];
         }
-        return [
-          ...w,
-          {
-            windowKey: wk,
-            chatType: 'department',
-            leadId: null,
-            groupId: null,
-            deptId: d.id,
-            title,
-            code: '',
-            type: 'department',
-            color,
-            minimized: false,
-          },
-        ];
+        return withSingleExpanded(next, wk);
       });
     },
     [markDeptRead, deptMetaMap],
@@ -450,14 +467,21 @@ export function MessengerDockProvider({ children }) {
     (windowKey) => {
       setWindows((w) => {
         const hit = w.find((x) => x.windowKey === windowKey);
-        const nextMin = hit ? !hit.minimized : false;
-        const next = w.map((x) => (x.windowKey === windowKey ? { ...x, minimized: nextMin } : x));
-        if (hit && !nextMin) {
-          if (hit.chatType === 'messenger_group' && hit.groupId) markGroupRead(hit.groupId);
-          else if (hit.chatType === 'department' && hit.deptId) markDeptRead(hit.deptId);
-          else if (hit.leadId) markLeadRead(hit.leadId);
+        if (!hit) return w;
+        if (hit.minimized) {
+          const next = w.map((x) =>
+            x.windowKey === windowKey ? { ...x, minimized: false } : x,
+          );
+          const expanded = withSingleExpanded(next, windowKey);
+          const focused = expanded.find((x) => x.windowKey === windowKey);
+          if (focused && !focused.minimized) {
+            if (focused.chatType === 'messenger_group' && focused.groupId) markGroupRead(focused.groupId);
+            else if (focused.chatType === 'department' && focused.deptId) markDeptRead(focused.deptId);
+            else if (focused.leadId) markLeadRead(focused.leadId);
+          }
+          return expanded;
         }
-        return next;
+        return w.map((x) => (x.windowKey === windowKey ? { ...x, minimized: true } : x));
       });
     },
     [markLeadRead, markGroupRead, markDeptRead],
@@ -525,12 +549,10 @@ export function MessengerDockProvider({ children }) {
       const preview =
         msg.content || (Array.isArray(msg.attachments) && msg.attachments.length ? '[Tệp đính kèm]' : '');
       const senderName = msg.user?.full_name || 'Ai đó';
-      openLeadChat({
-        id: leadId,
-        title: leadTitle,
-        code: msg.lead?.code || msg.lead_code || '',
-        type: msg.lead?.type || 'lead',
-      });
+      setUnreadByLeadId((prev) => ({
+        ...prev,
+        [leadId]: (Number(prev[leadId]) || 0) + 1,
+      }));
       if (isNotificationTypeEnabled('lead_chat', 'lead')) {
         void alertIncomingNotification({ type: 'lead_chat', entityType: 'lead' });
       }
@@ -581,7 +603,6 @@ export function MessengerDockProvider({ children }) {
       const preview =
         msg.content || (Array.isArray(msg.attachments) && msg.attachments.length ? '[Tệp đính kèm]' : '');
       const senderName = msg.user?.full_name || 'Ai đó';
-      openMessengerGroupChat({ id: gid, name: groupTitle, title: groupTitle }, { markRead: false });
       if (isNotificationTypeEnabled('messenger_chat', 'messenger_group')) {
         void alertIncomingNotification({ type: 'messenger_chat', entityType: 'messenger_group' });
       }
@@ -617,13 +638,10 @@ export function MessengerDockProvider({ children }) {
       }
       const meta = deptMetaMap[deptId] || {};
       const deptName = meta.name || 'Phòng ban';
-      const deptColor = meta.color || '#6366F1';
       const senderName = msg.sender?.full_name || 'Ai đó';
       const preview =
         msg.content ||
         (Array.isArray(msg.attachments) && msg.attachments.length ? '[Tệp đính kèm]' : 'Tin nhắn mới');
-      // Tự mở bong bóng chat phòng ban (giống Lead/Group hiện tại)
-      openDepartmentChat({ id: deptId, name: deptName, color: deptColor });
       if (isNotificationTypeEnabled('department_chat', 'department')) {
         void alertIncomingNotification({ type: 'department_chat', entityType: 'department' });
       }
@@ -641,7 +659,7 @@ export function MessengerDockProvider({ children }) {
       socket.off('messenger_group:chat', onGroupChat);
       socket.off('department_message', onDeptChat);
     };
-  }, [socket, uid, markLeadRead, markGroupRead, markDeptRead, openLeadChat, openMessengerGroupChat, openDepartmentChat, deptMetaMap]);
+  }, [socket, uid, markLeadRead, markGroupRead, markDeptRead, deptMetaMap]);
 
   const value = useMemo(
     () => ({
