@@ -306,7 +306,14 @@ function MoreMenuPanel({
         <MenuRow
           icon={ImageIcon}
           label="Sao chép ảnh"
-          onClick={() => void runMenuAction(() => copyImageToClipboard(img.url))}
+          onClick={() =>
+            void runMenuAction(async () => {
+              const kind = await copyImageToClipboard(img.url);
+              if (kind === 'url') {
+                alert('Trình duyệt không hỗ trợ sao chép ảnh trực tiếp — đã sao chép link ảnh.');
+              }
+            })
+          }
         />
       ) : null}
       {file?.url ? (
