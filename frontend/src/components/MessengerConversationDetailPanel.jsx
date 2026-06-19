@@ -28,6 +28,7 @@ import { resolveMediaUrl, BROKEN_MEDIA_PLACEHOLDER } from '../lib/mediaUrl';
 import { publicFileUrl } from '../lib/publicFileUrl';
 import { displayMessengerFilename, downloadMessengerFile } from '../lib/messengerMessageActions';
 import GroupSenderName from './GroupSenderName';
+import { dispatchMessengerClearHistory } from '../lib/messengerHiddenHistory';
 import UploadFileLightbox, { collectUploadLightboxItems, findUploadLightboxIndex } from './UploadFileLightbox';
 import {
   formatChatHeaderPresenceLabel,
@@ -305,18 +306,9 @@ export default function MessengerConversationDetailPanel({
   };
 
   const onClearHistory = () => {
-    if (!selectedGroupId || !messages.length) {
-      alert('Không có tin nhắn để xóa');
-      return;
-    }
+    if (!selectedGroupId) return;
     if (!window.confirm('Ẩn toàn bộ lịch sử hội thoại chỉ ở phía bạn?')) return;
-    const ids = messages.map((m) => m.id).filter(Boolean).map(String);
-    try {
-      localStorage.setItem(`messenger_hidden_${selectedGroupId}`, JSON.stringify(ids));
-      window.dispatchEvent(new CustomEvent('messenger:hidden-updated', { detail: { groupId: selectedGroupId } }));
-    } catch {
-      alert('Không lưu được cài đặt');
-    }
+    dispatchMessengerClearHistory(selectedGroupId);
   };
 
   return (

@@ -58,6 +58,13 @@ import {
   mergeMessengerMessage,
   normalizeMessengerReactions,
 } from '../lib/messengerReactions';
+import {
+  addHiddenMessageIds,
+  clearMessengerHistoryForMe,
+  dispatchMessengerHiddenUpdated,
+  isMessengerMessageHidden,
+  loadMessengerHiddenConfig,
+} from '../lib/messengerHiddenHistory';
 
 function clearChatFileInputs(...refs) {
   refs.filter(Boolean).forEach((r) => {
@@ -1960,7 +1967,10 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
   const [forwardMsgs, setForwardMsgs] = useState(null);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedMsgIds, setSelectedMsgIds] = useState(() => new Set());
-  const [hiddenMsgIds, setHiddenMsgIds] = useState(() => new Set());
+  const [hiddenConfig, setHiddenConfig] = useState(() => ({
+    hiddenIds: new Set(),
+    clearedBefore: null,
+  }));
   // Typing indicator: Map<userId, { name, isBot, ts }>
   const [typingMap, setTypingMap] = useState(() => new Map());
   const typingThrottleRef = useRef(0);
@@ -1979,6 +1989,8 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
   const onMessagesChangeRef = useRef(onMessagesChange);
   onMessagesChangeRef.current = onMessagesChange;
   const historyLoadedRef = useRef(false);
+  const messagesRef = useRef([]);
+  messagesRef.current = messages;
 
   const emitMessages = useCallback((list, meta) => {
     onMessagesChangeRef.current?.(list, meta);
@@ -2063,37 +2075,38 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
   useEffect(() => {
     if (!groupId) return;
     clearPendingImages();
-    try {
-      const raw = localStorage.getItem(`messenger_hidden_${groupId}`);
-      const ids = raw ? JSON.parse(raw) : [];
-      setHiddenMsgIds(new Set(Array.isArray(ids) ? ids.map(String) : []));
-    } catch {
-      setHiddenMsgIds(new Set());
-    }
+    setHiddenConfig(loadMessengerHiddenConfig(groupId));
     setSelectMode(false);
     setSelectedMsgIds(new Set());
     setMoreMenuMsgId(null);
   }, [groupId]);
 
   useEffect(() => {
-    const onHiddenUpdated = (e) => {
+    const reloadHidden = (e) => {
       if (String(e.detail?.groupId) !== String(groupId)) return;
-      try {
-        const raw = localStorage.getItem(`messenger_hidden_${groupId}`);
-        const ids = raw ? JSON.parse(raw) : [];
-        setHiddenMsgIds(new Set(Array.isArray(ids) ? ids.map(String) : []));
-      } catch {
-        setHiddenMsgIds(new Set());
-      }
+      setHiddenConfig(loadMessengerHiddenConfig(groupId));
     };
-    window.addEventListener('messenger:hidden-updated', onHiddenUpdated);
-    return () => window.removeEventListener('messenger:hidden-updated', onHiddenUpdated);
+    window.addEventListener('messenger:hidden-updated', reloadHidden);
+    return () => window.removeEventListener('messenger:hidden-updated', reloadHidden);
+  }, [groupId]);
+
+  useEffect(() => {
+    const onClearHistory = (e) => {
+      if (String(e.detail?.groupId) !== String(groupId)) return;
+      const ids = (messagesRef.current || []).map((m) => m.id).filter(Boolean);
+      const config = clearMessengerHistoryForMe(groupId, ids);
+      setHiddenConfig(config);
+      dispatchMessengerHiddenUpdated(groupId);
+    };
+    window.addEventListener('messenger:clear-history', onClearHistory);
+    return () => window.removeEventListener('messenger:clear-history', onClearHistory);
   }, [groupId]);
 
   const persistHidden = useCallback(
-    (ids) => {
-      if (!groupId) return;
-      localStorage.setItem(`messenger_hidden_${groupId}`, JSON.stringify([...ids]));
+    (config) => {
+      if (!groupId || !config) return;
+      setHiddenConfig(config);
+      dispatchMessengerHiddenUpdated(groupId);
     },
     [groupId],
   );
@@ -2239,8 +2252,8 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
   const selectedMessages = useMemo(() => {
     if (!selectedMsgIds.size) return [];
     const idSet = selectedMsgIds;
-    return messages.filter((m) => idSet.has(String(m.id)) && !hiddenMsgIds.has(String(m.id)));
-  }, [messages, selectedMsgIds, hiddenMsgIds]);
+    return messages.filter((m) => idSet.has(String(m.id)) && !isMessengerMessageHidden(m, hiddenConfig));
+  }, [messages, selectedMsgIds, hiddenConfig]);
 
   const bulkRecallEligible = useMemo(
     () => selectedMessages.filter((m) => canRecallMessage(m)),
@@ -2250,16 +2263,12 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
   const hideMessagesForMe = useCallback(
     (ids) => {
       const list = [...ids].map(String);
-      if (!list.length) return;
-      setHiddenMsgIds((prev) => {
-        const next = new Set(prev);
-        list.forEach((id) => next.add(id));
-        persistHidden(next);
-        return next;
-      });
+      if (!list.length || !groupId) return;
+      const config = addHiddenMessageIds(groupId, list);
+      persistHidden(config);
       exitSelectMode();
     },
-    [persistHidden, exitSelectMode],
+    [groupId, persistHidden, exitSelectMode],
   );
 
   const applyReactionUpdate = useCallback((ev) => {
@@ -2765,7 +2774,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
 
       <div ref={scrollContainerRef} className={`flex-1 min-h-0 overflow-y-auto ${compact ? 'px-2.5 py-2' : 'px-4 py-3'} space-y-1 ${hubLayout ? 'bg-slate-50/60' : 'bg-gradient-to-b from-slate-50/60 via-white/40 to-violet-50/40 rounded-t-xl'}`}>
         {messages.map((m, idx) => {
-          if (hiddenMsgIds.has(String(m.id))) return null;
+          if (isMessengerMessageHidden(m, hiddenConfig)) return null;
           const isMe = String(m.user_id) === String(uid);
           const msgSelected = selectedMsgIds.has(String(m.id));
           const isCallLog = isMessengerCallLogMessage(m);
