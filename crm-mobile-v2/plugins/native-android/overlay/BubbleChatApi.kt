@@ -8,6 +8,8 @@ import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 /** Gọi REST messenger từ overlay (không cần mở React Native). */
 object BubbleChatApi {
@@ -17,7 +19,34 @@ object BubbleChatApi {
     val sender: String,
     val text: String,
     val isMine: Boolean,
+    val createdAtMs: Long = 0L,
   )
+
+  data class GroupMeta(
+    val name: String,
+    val isDirect: Boolean,
+    val statusLabel: String,
+  )
+
+  fun fetchGroupMeta(ctx: Context, groupId: String): GroupMeta? {
+    if (groupId.isBlank()) return null
+    val base = apiBase(ctx)
+    val auth = authHeader(ctx) ?: return null
+    return try {
+      val conn = openJson("$base/messenger/groups/$groupId", auth, "GET")
+      val code = conn.responseCode
+      val body = readBody(conn, code in 200..299)
+      conn.disconnect()
+      if (code !in 200..299 || body.isBlank()) return null
+      val o = JSONObject(body)
+      val name = o.optString("name", "").trim().ifBlank { "Chat" }
+      val isDirect = o.optBoolean("is_direct", false)
+      val status = if (isDirect) "Trực tiếp" else "Nhóm chat · realtime"
+      GroupMeta(name, isDirect, status)
+    } catch (_: Exception) {
+      null
+    }
+  }
 
   private fun prefs(ctx: Context) =
     ctx.getSharedPreferences(OverlayBubbleService.PREF_NAME, Context.MODE_PRIVATE)
@@ -113,10 +142,29 @@ object BubbleChatApi {
           sender = sender,
           text = text.ifBlank { "…" },
           isMine = myUserId.isNotBlank() && userId == myUserId,
+          createdAtMs = o.optLong("ts", 0L).takeIf { it > 0 }
+            ?: parseIsoTime(o.optString("created_at", "")),
         ),
       )
     }
     return out
+  }
+
+  private fun parseIsoTime(raw: String): Long {
+    if (raw.isBlank()) return 0L
+    val patterns = arrayOf(
+      "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+      "yyyy-MM-dd'T'HH:mm:ss'Z'",
+      "yyyy-MM-dd'T'HH:mm:ss",
+    )
+    for (p in patterns) {
+      try {
+        val sdf = SimpleDateFormat(p, Locale.US)
+        sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
+        return sdf.parse(raw)?.time ?: continue
+      } catch (_: Exception) { }
+    }
+    return 0L
   }
 
   private fun previewText(o: JSONObject): String {

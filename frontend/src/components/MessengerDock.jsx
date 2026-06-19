@@ -5,7 +5,7 @@ import { useAuth } from '../lib/auth';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import { LeadChatTab, MessengerGroupChatTab } from './LeadChatTabs';
 import DepartmentChatBubble from './DepartmentChatBubble';
-import { MessageCircle, X, Minus, Maximize2, Search, Users, Loader2, ChevronRight, Building2 } from 'lucide-react';
+import { MessageCircle, X, Minus, Maximize2, Search, Users, Loader2, ChevronRight, Building2, User, UserPlus, Pin } from 'lucide-react';
 import api from '../lib/api';
 import { publicFileUrl } from '../lib/publicFileUrl';
 import OnlineStatusDot, { getUserPresence } from './OnlineStatusDot';
@@ -25,6 +25,9 @@ const LAUNCHER_W = 300;
 const Z_BUBBLE = 100;
 const Z_LAUNCHER = 110;
 const Z_DOCK = 120;
+/** Thanh dock neo sát mép phải, trên cùng viewport */
+const DOCK_TOP_PX = 12;
+const DOCK_MAX_SHORTCUTS = 15;
 
 function avatarUrl(av) {
   if (!av || typeof av !== 'string') return null;
@@ -103,7 +106,11 @@ export default function MessengerDock() {
     openDepartmentChat,
   } = useMessengerDock();
   const [launcherOpen, setLauncherOpen] = useState(false);
+  /** 'direct' | 'group' — mở launcher theo mục menu chat */
+  const [launcherMode, setLauncherMode] = useState(null);
+  const [quickMenuOpen, setQuickMenuOpen] = useState(false);
   const [groups, setGroups] = useState([]);
+  const [pinnedGroupIds, setPinnedGroupIds] = useState([]);
   const [groupsLoading, setGroupsLoading] = useState(false);
   const [staffQ, setStaffQ] = useState('');
   const [staffRows, setStaffRows] = useState([]);
@@ -112,34 +119,66 @@ export default function MessengerDock() {
 
   const launcherRef = useRef(null);
   const dockBarRef = useRef(null);
+  const quickMenuRef = useRef(null);
 
   useEffect(() => {
-    if (!launcherOpen) return;
+    if (!launcherOpen && !quickMenuOpen) return;
     const onDown = (e) => {
       const t = e.target;
-      if (launcherRef.current?.contains(t) || dockBarRef.current?.contains(t)) return;
+      if (
+        launcherRef.current?.contains(t) ||
+        dockBarRef.current?.contains(t) ||
+        quickMenuRef.current?.contains(t)
+      ) {
+        return;
+      }
       setLauncherOpen(false);
+      setQuickMenuOpen(false);
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
-  }, [launcherOpen]);
+  }, [launcherOpen, quickMenuOpen]);
 
-  const loadGroups = useCallback(async () => {
+  const openLauncher = useCallback((mode) => {
+    setLauncherMode(mode);
+    setQuickMenuOpen(false);
+    setLauncherOpen(true);
+  }, []);
+
+  const closeLauncher = useCallback(() => {
+    setLauncherOpen(false);
+    setLauncherMode(null);
+    setStaffQ('');
+    setStaffRows([]);
+    setGroupFilter('');
+  }, []);
+
+  const loadDockData = useCallback(async () => {
     setGroupsLoading(true);
     try {
-      const { data } = await api.get('/messenger/groups');
-      setGroups(Array.isArray(data) ? data : []);
+      const [{ data: apiList }, { data: pinPayload }] = await Promise.all([
+        api.get('/messenger/groups'),
+        api.get('/messenger/pins').catch(() => ({ data: { group_ids: [] } })),
+      ]);
+      setGroups(Array.isArray(apiList) ? apiList : []);
+      setPinnedGroupIds(Array.isArray(pinPayload?.group_ids) ? pinPayload.group_ids : []);
     } catch {
       setGroups([]);
+      setPinnedGroupIds([]);
     } finally {
       setGroupsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    if (!launcherOpen && !windows.some((w) => w.chatType === 'messenger_group')) return;
-    void loadGroups();
-  }, [launcherOpen, loadGroups, windows]);
+    if (!user) return;
+    void loadDockData();
+  }, [user, loadDockData]);
+
+  useEffect(() => {
+    if (!launcherOpen) return;
+    void loadDockData();
+  }, [launcherOpen, loadDockData]);
 
   const expanded = useMemo(() => windows.filter((w) => !w.minimized), [windows]);
 
@@ -174,13 +213,47 @@ export default function MessengerDock() {
 
   const filteredGroups = useMemo(() => {
     const f = groupFilter.trim().toLowerCase();
-    if (!f) return groups;
-    return groups.filter((g) => {
+    let list = groups;
+    if (launcherMode === 'group') list = list.filter((g) => !g.is_direct);
+    else if (launcherMode === 'direct') list = list.filter((g) => g.is_direct);
+    if (!f) return list;
+    return list.filter((g) => {
       const n = (g.name || '').toLowerCase();
       const r = (g.raw_name || '').toLowerCase();
       return n.includes(f) || r.includes(f);
     });
-  }, [groups, groupFilter]);
+  }, [groups, groupFilter, launcherMode]);
+
+  const dockShortcuts = useMemo(() => {
+    const pinSet = new Set(pinnedGroupIds.map(String));
+    const sorted = [...groups].sort((a, b) => {
+      const aPin = pinSet.has(String(a.id));
+      const bPin = pinSet.has(String(b.id));
+      if (aPin && !bPin) return -1;
+      if (!aPin && bPin) return 1;
+      return new Date(b.last_message_at || b.created_at || 0) - new Date(a.last_message_at || a.created_at || 0);
+    });
+    return sorted.slice(0, DOCK_MAX_SHORTCUTS).map((g) => ({
+      ...g,
+      pinned: pinSet.has(String(g.id)),
+    }));
+  }, [groups, pinnedGroupIds]);
+
+  const toggleGroupPin = useCallback(async (groupId, currentlyPinned, e) => {
+    e?.stopPropagation?.();
+    e?.preventDefault?.();
+    const next = !currentlyPinned;
+    try {
+      await api.put(`/messenger/pins/${groupId}`, { pinned: next });
+      setPinnedGroupIds((prev) => {
+        const id = String(groupId);
+        if (next) return prev.some((x) => String(x) === id) ? prev : [...prev, groupId];
+        return prev.filter((x) => String(x) !== id);
+      });
+    } catch (err) {
+      alert(err.response?.data?.error || 'Không ghim được hội thoại');
+    }
+  }, []);
 
   const groupAvatarById = useMemo(() => {
     const m = new Map();
@@ -208,6 +281,9 @@ export default function MessengerDock() {
     groups.forEach((g) => {
       if (g.is_direct && g.peer_id) ids.add(String(g.peer_id));
     });
+    dockShortcuts.forEach((g) => {
+      if (g.is_direct && g.peer_id) ids.add(String(g.peer_id));
+    });
     windows.forEach((w) => {
       if (w.peerUserId) ids.add(String(w.peerUserId));
       else if (w.groupId && groupPeerById.has(String(w.groupId))) {
@@ -215,7 +291,7 @@ export default function MessengerDock() {
       }
     });
     return [...ids];
-  }, [staffRows, groups, windows, groupPeerById]);
+  }, [staffRows, groups, dockShortcuts, windows, groupPeerById]);
 
   const presenceByUser = usePresence(presenceUserIds, { enabled: !!uid });
 
@@ -235,9 +311,7 @@ export default function MessengerDock() {
           peer_avatar: data.peer_avatar || u.avatar || null,
         });
       }
-      setLauncherOpen(false);
-      setStaffQ('');
-      setStaffRows([]);
+      closeLauncher();
     } catch (e) {
       alert(e.response?.data?.error || 'Không mở được chat 1-1');
     }
@@ -251,8 +325,21 @@ export default function MessengerDock() {
       is_direct: !!g.is_direct,
       peer_id: g.peer_id || null,
       peer_avatar: g.peer_avatar || null,
+      avatar: g.avatar || null,
     });
-    setLauncherOpen(false);
+    closeLauncher();
+  };
+
+  const onDockShortcutClick = (g) => {
+    if (!g?.id) return;
+    openMessengerGroupChat({
+      id: g.id,
+      name: g.name || g.raw_name,
+      is_direct: !!g.is_direct,
+      peer_id: g.peer_id || null,
+      peer_avatar: g.peer_avatar || null,
+      avatar: g.avatar || null,
+    });
   };
 
   if (!user) return null;
@@ -401,8 +488,7 @@ export default function MessengerDock() {
             width: LAUNCHER_W,
             maxHeight: 'min(72vh, 580px)',
             right: DOCK_W,
-            top: '50%',
-            transform: 'translateY(-50%)',
+            top: DOCK_TOP_PX,
           }}
         >
           {/* Header hero */}
@@ -411,18 +497,22 @@ export default function MessengerDock() {
             <div className="relative flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <div className="h-8 w-8 rounded-xl bg-white/25 backdrop-blur ring-2 ring-white/40 flex items-center justify-center shadow">
-                  <MessageCircle className="h-4 w-4" />
+                  {launcherMode === 'group' ? <Users className="h-4 w-4" /> : <User className="h-4 w-4" />}
                 </div>
                 <div>
-                  <p className="text-xs font-bold drop-shadow-sm">Chat nhanh</p>
-                  <p className="text-[10px] text-white/85">Tìm NV hoặc chọn nhóm</p>
+                  <p className="text-xs font-bold drop-shadow-sm">
+                    {launcherMode === 'group' ? 'Nhóm chat' : 'Chat 1-1'}
+                  </p>
+                  <p className="text-[10px] text-white/85">
+                    {launcherMode === 'group' ? 'Chọn nhóm hoặc tạo mới' : 'Tìm nhân viên hoặc hội thoại gần đây'}
+                  </p>
                 </div>
               </div>
               <div className="flex items-center gap-1">
                 <Link
                   to="/crm/messenger"
                   className="text-[10px] font-semibold text-white px-2 py-1 rounded-lg bg-white/15 hover:bg-white/25 backdrop-blur transition"
-                  onClick={() => setLauncherOpen(false)}
+                  onClick={() => closeLauncher()}
                 >
                   Trang đầy đủ
                 </Link>
@@ -430,7 +520,7 @@ export default function MessengerDock() {
                   type="button"
                   className="p-1.5 rounded-lg text-white hover:bg-white/20 transition"
                   title="Đóng"
-                  onClick={() => setLauncherOpen(false)}
+                  onClick={() => closeLauncher()}
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
@@ -439,6 +529,7 @@ export default function MessengerDock() {
           </div>
 
           <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-4 [scrollbar-width:thin]">
+            {(launcherMode === 'direct' || launcherMode === null) && (
             <div>
               <label className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
                 <Search className="h-3 w-3" /> Tìm nhân viên
@@ -494,16 +585,34 @@ export default function MessengerDock() {
                 <p className="text-[11px] text-slate-400 py-1.5 text-center">Không có kết quả</p>
               ) : null}
             </div>
+            )}
 
+            {(launcherMode === 'group' || launcherMode === 'direct' || launcherMode === null) && (
             <div>
-              <label className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
-                <Users className="h-3 w-3" /> Nhóm của tôi
-              </label>
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <label className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                  <Users className="h-3 w-3" />
+                  {launcherMode === 'direct'
+                    ? 'Hội thoại gần đây'
+                    : launcherMode === 'group'
+                      ? 'Nhóm của tôi'
+                      : 'Nhóm & hội thoại'}
+                </label>
+                {launcherMode === 'group' && (
+                  <Link
+                    to="/crm/messenger"
+                    className="text-[10px] font-semibold text-sky-600 hover:text-sky-800 hover:underline shrink-0 inline-flex items-center gap-0.5"
+                    onClick={() => closeLauncher()}
+                  >
+                    <UserPlus className="h-3 w-3" /> Tạo nhóm
+                  </Link>
+                )}
+              </div>
               <input
                 type="search"
                 value={groupFilter}
                 onChange={(e) => setGroupFilter(e.target.value)}
-                placeholder="Lọc tên nhóm…"
+                placeholder={launcherMode === 'direct' ? 'Lọc tên người…' : 'Lọc tên nhóm…'}
                 className="w-full text-sm border border-white/60 bg-white/70 backdrop-blur rounded-xl px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-sky-300/70 focus:bg-white shadow-sm mb-1.5 transition"
               />
               {groupsLoading ? (
@@ -516,143 +625,225 @@ export default function MessengerDock() {
                     const n = unreadByGroupId[g.id] || 0;
                     const peerPresence = g.is_direct && g.peer_id ? getUserPresence(presenceByUser, g.peer_id) : null;
                     const peerOnline = !!peerPresence?.online;
+                    const isPinned = pinnedGroupIds.some((id) => String(id) === String(g.id));
                     return (
                       <li key={g.id}>
-                        <button
-                          type="button"
-                          onClick={() => onPickGroup(g)}
-                          className="w-full text-left px-2 py-1.5 text-xs hover:bg-cyan-50 rounded-lg flex items-center justify-between gap-2 transition group"
-                        >
-                          <span className="flex items-center gap-2 min-w-0 flex-1">
-                            <DockAvatar
-                              src={g.is_direct ? g.peer_avatar : null}
-                              name={g.name || g.raw_name}
-                              size="sm"
-                            >
-                              {g.is_direct && g.peer_id ? (
-                                <OnlineStatusDot presence={peerPresence} size="md" className="absolute -bottom-0.5 -right-0.5" />
-                              ) : null}
-                            </DockAvatar>
-                            <span className="min-w-0 flex-1">
-                              <span className="truncate font-semibold text-slate-800 block">{g.name || 'Nhóm'}</span>
-                              <span className="text-[10px] text-slate-500">
-                                {g.is_direct
-                                  ? (peerOnline ? 'Đang hoạt động' : formatLastActiveShort(peerPresence?.last_ping_at))
-                                  : 'Nhóm chat'}
+                        <div className="flex items-center gap-0.5 group/row">
+                          <button
+                            type="button"
+                            onClick={() => onPickGroup(g)}
+                            className="flex-1 min-w-0 text-left px-2 py-1.5 text-xs hover:bg-cyan-50 rounded-lg flex items-center justify-between gap-2 transition"
+                          >
+                            <span className="flex items-center gap-2 min-w-0 flex-1">
+                              <DockAvatar
+                                src={g.is_direct ? g.peer_avatar : g.avatar}
+                                name={g.name || g.raw_name}
+                                size="sm"
+                              >
+                                {g.is_direct && g.peer_id ? (
+                                  <OnlineStatusDot presence={peerPresence} size="md" className="absolute -bottom-0.5 -right-0.5" />
+                                ) : null}
+                              </DockAvatar>
+                              <span className="min-w-0 flex-1">
+                                <span className="truncate font-semibold text-slate-800 block flex items-center gap-1">
+                                  {isPinned ? <Pin className="h-2.5 w-2.5 text-amber-500 fill-amber-500 shrink-0" /> : null}
+                                  {g.name || 'Nhóm'}
+                                </span>
+                                <span className="text-[10px] text-slate-500">
+                                  {g.is_direct
+                                    ? (peerOnline ? 'Đang hoạt động' : formatLastActiveShort(peerPresence?.last_ping_at))
+                                    : 'Nhóm chat'}
+                                </span>
                               </span>
                             </span>
-                          </span>
-                          {n > 0 ? (
-                            <span className="shrink-0 min-w-[20px] h-[20px] px-1.5 rounded-full bg-gradient-to-br from-rose-500 to-pink-500 text-white text-[10px] font-bold flex items-center justify-center shadow">
-                              {n > 99 ? '…' : n}
-                            </span>
-                          ) : (
-                            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-400 group-hover:text-sky-600 transition" />
-                          )}
-                        </button>
+                            {n > 0 ? (
+                              <span className="shrink-0 min-w-[20px] h-[20px] px-1.5 rounded-full bg-gradient-to-br from-rose-500 to-pink-500 text-white text-[10px] font-bold flex items-center justify-center shadow">
+                                {n > 99 ? '…' : n}
+                              </span>
+                            ) : (
+                              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-400 group-hover/row:text-sky-600 transition" />
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            title={isPinned ? 'Bỏ ghim' : 'Ghim lên dock'}
+                            onClick={(e) => void toggleGroupPin(g.id, isPinned, e)}
+                            className={`shrink-0 p-1 rounded-lg transition ${
+                              isPinned ? 'text-amber-500' : 'text-slate-300 opacity-0 group-hover/row:opacity-100 hover:text-amber-500'
+                            }`}
+                          >
+                            <Pin className={`h-3.5 w-3.5 ${isPinned ? 'fill-amber-500' : ''}`} />
+                          </button>
+                        </div>
                       </li>
                     );
                   })}
                 </ul>
               ) : (
-                <p className="text-[11px] text-slate-400 py-1.5 text-center">Chưa có nhóm hoặc không khớp lọc</p>
+                <p className="text-[11px] text-slate-400 py-1.5 text-center">
+                  {launcherMode === 'direct'
+                    ? 'Chưa có hội thoại 1-1'
+                    : launcherMode === 'group'
+                      ? 'Chưa có nhóm hoặc không khớp lọc'
+                      : 'Chưa có nhóm hoặc không khớp lọc'}
+                </p>
               )}
             </div>
+            )}
           </div>
+        </div>
+      ) : null}
+
+      {quickMenuOpen && !launcherOpen ? (
+        <div
+          ref={quickMenuRef}
+          className="fixed flex flex-col gap-1 p-1.5 rounded-l-2xl border border-white/50 bg-white/90 shadow-xl backdrop-blur-xl ring-1 ring-black/5 min-w-[148px]"
+          style={{ zIndex: Z_LAUNCHER, right: DOCK_W + 4, top: DOCK_TOP_PX }}
+        >
+          <p className="px-2 pt-1 pb-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Menu chat</p>
+          <button
+            type="button"
+            onClick={() => openLauncher('direct')}
+            className="flex items-center gap-2 w-full text-left px-2.5 py-2 text-xs font-semibold text-slate-800 rounded-xl hover:bg-sky-50 transition"
+          >
+            <span className="h-7 w-7 rounded-lg bg-gradient-to-br from-sky-500 to-cyan-500 text-white flex items-center justify-center shrink-0">
+              <User className="h-3.5 w-3.5" />
+            </span>
+            Chat 1-1
+          </button>
+          <button
+            type="button"
+            onClick={() => openLauncher('group')}
+            className="flex items-center gap-2 w-full text-left px-2.5 py-2 text-xs font-semibold text-slate-800 rounded-xl hover:bg-violet-50 transition"
+          >
+            <span className="h-7 w-7 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-500 text-white flex items-center justify-center shrink-0">
+              <Users className="h-3.5 w-3.5" />
+            </span>
+            Nhóm chat
+          </button>
+          <Link
+            to="/crm/messenger"
+            className="flex items-center gap-2 w-full text-left px-2.5 py-2 text-xs font-medium text-slate-600 rounded-xl hover:bg-slate-50 transition border-t border-slate-100 mt-0.5 pt-2"
+            onClick={() => setQuickMenuOpen(false)}
+          >
+            <MessageCircle className="h-3.5 w-3.5 text-sky-500 shrink-0" />
+            Trang chat đầy đủ
+          </Link>
         </div>
       ) : null}
 
       <div
         ref={dockBarRef}
-        className="fixed flex flex-col items-center gap-2 py-3 px-1.5 rounded-l-2xl border border-white/50 bg-white/75 shadow-xl backdrop-blur-xl ring-1 ring-black/5"
-        style={{ zIndex: Z_DOCK, right: 0, top: '50%', transform: 'translateY(-50%)', width: DOCK_W }}
+        className="group/dock fixed flex flex-col items-center gap-1.5 py-2 px-1.5 rounded-l-2xl border border-white/50 bg-white/75 shadow-xl backdrop-blur-xl ring-1 ring-black/5 max-h-[calc(100vh-24px)] overflow-y-auto [scrollbar-width:thin] opacity-30 hover:opacity-100 transition-opacity duration-200"
+        style={{ zIndex: Z_DOCK, right: 0, top: DOCK_TOP_PX, width: DOCK_W }}
       >
         <button
           type="button"
-          onClick={() => setLauncherOpen((v) => !v)}
-          className={`relative w-11 h-11 rounded-2xl flex items-center justify-center shadow-md transition-all ${
-            launcherOpen
-              ? 'bg-slate-800 text-white ring-2 ring-sky-400 scale-95'
+          onClick={() => {
+            if (launcherOpen) {
+              closeLauncher();
+              return;
+            }
+            setQuickMenuOpen((v) => !v);
+          }}
+          className={`relative w-11 h-11 rounded-2xl flex items-center justify-center shadow-md transition-all shrink-0 ${
+            launcherOpen || quickMenuOpen
+              ? 'bg-slate-800 text-white ring-2 ring-sky-400 scale-95 opacity-100'
               : 'bg-gradient-to-br from-sky-500 via-cyan-500 to-violet-500 text-white hover:scale-105 hover:shadow-lg ring-2 ring-white/60'
           }`}
-          title={launcherOpen ? 'Đóng danh sách' : 'Tìm nhân viên & nhóm chat'}
+          title={launcherOpen || quickMenuOpen ? 'Đóng menu chat' : 'Menu chat — 1-1 & nhóm'}
         >
           <MessageCircle className="h-5 w-5" />
-          {!launcherOpen && totalUnread > 0 && (
+          {!launcherOpen && !quickMenuOpen && totalUnread > 0 && (
             <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-gradient-to-br from-rose-500 to-pink-500 text-white text-[10px] font-bold flex items-center justify-center border-2 border-white shadow">
               {totalUnread > 99 ? '99+' : totalUnread}
             </span>
           )}
         </button>
-        {windows.length > 0 && <div className="w-7 border-t border-slate-300/60 my-0.5" />}
-        {windows.map((w) => {
-          const n =
-            w.chatType === 'messenger_group' && w.groupId
-              ? unreadByGroupId[w.groupId] || 0
-              : w.chatType === 'department' && w.deptId
-                ? unreadByDeptId[w.deptId] || 0
-                : w.leadId
-                  ? unreadByLeadId[w.leadId] || 0
-                  : 0;
-          const peerId =
-            w.peerUserId || (w.groupId ? groupPeerById.get(String(w.groupId)) : null);
+
+        {(dockShortcuts.length > 0 || groupsLoading) && (
+          <div className="w-7 border-t border-slate-300/60 my-0.5 shrink-0" />
+        )}
+
+        {groupsLoading && dockShortcuts.length === 0 ? (
+          <Loader2 className="h-4 w-4 animate-spin text-slate-400 shrink-0" />
+        ) : null}
+
+        {dockShortcuts.map((g) => {
+          const n = unreadByGroupId[g.id] || 0;
+          const peerId = g.is_direct ? g.peer_id : null;
           const peerPresence = peerId ? getUserPresence(presenceByUser, peerId) : null;
-          const showPeerDot = !!(w.isDirect || peerId) && w.chatType !== 'department';
-          const isDept = w.chatType === 'department';
-          const dockAvatar =
-            w.avatar || (w.groupId ? groupAvatarById.get(String(w.groupId)) : null) || null;
-          const deptBg = isDept && w.color
-            ? `linear-gradient(135deg, ${w.color}, ${w.color}cc)`
-            : null;
+          const openWin = windows.find(
+            (w) => w.chatType === 'messenger_group' && String(w.groupId) === String(g.id),
+          );
+          const isActive = openWin && !openWin.minimized;
+          const avatarSrc = g.is_direct ? g.peer_avatar : g.avatar;
+          const title = g.name || g.raw_name || (g.is_direct ? 'Chat 1-1' : 'Nhóm');
+
           return (
-            <button
-              key={w.windowKey}
-              type="button"
-              title={w.title}
-              onClick={() => toggleMinimize(w.windowKey)}
-              className={`relative transition-all ${
-                w.minimized
-                  ? 'opacity-50 hover:opacity-100 hover:scale-105'
-                  : 'hover:scale-110 hover:shadow-md'
-              }`}
-            >
-              {isDept ? (
-                <span
-                  className="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm ring-2 ring-white/60"
-                  style={{ background: deptBg || bubbleGradientFor(w.title) }}
-                >
-                  <Building2 className="h-4 w-4" />
-                </span>
-              ) : (
-                <DockAvatar
-                  src={dockAvatar}
-                  name={w.title || w.code}
-                  size="dock"
-                  ringClass={`ring-2 shadow-sm ${w.minimized ? 'ring-white/30' : 'ring-white/60'}`}
-                  maxInitials={2}
-                >
-                  {showPeerDot ? (
-                    <OnlineStatusDot
-                      presence={peerPresence}
-                      size="md"
-                      className="absolute -bottom-0.5 -right-0.5"
-                    />
-                  ) : null}
-                </DockAvatar>
-              )}
-              {isDept && showPeerDot ? (
-                <OnlineStatusDot
-                  presence={peerPresence}
-                  size="md"
-                  className="absolute -bottom-0.5 -right-0.5"
-                />
-              ) : null}
-              {n > 0 && (
-                <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-0.5 rounded-full bg-gradient-to-br from-rose-500 to-pink-500 text-white text-[9px] font-bold flex items-center justify-center border border-white shadow">
-                  {n > 99 ? '…' : n}
-                </span>
-              )}
-            </button>
+            <div key={g.id} className="relative shrink-0">
+              <button
+                type="button"
+                title={
+                  g.pinned
+                    ? `${title} — Chuột phải để bỏ ghim`
+                    : `${title} — Chuột phải để ghim`
+                }
+                onClick={() => onDockShortcutClick(g)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  void toggleGroupPin(g.id, g.pinned, e);
+                }}
+                className={`relative block transition-all hover:scale-110 hover:shadow-md ${
+                  isActive ? 'ring-2 ring-sky-400 rounded-xl scale-105' : ''
+                }`}
+              >
+                {g.is_direct ? (
+                  <DockAvatar
+                    src={avatarSrc}
+                    name={title}
+                    size="dock"
+                    ringClass={`ring-2 shadow-sm ${g.pinned ? 'ring-amber-400/80' : 'ring-white/60'}`}
+                    maxInitials={2}
+                  >
+                    {peerId ? (
+                      <OnlineStatusDot
+                        presence={peerPresence}
+                        size="md"
+                        className="absolute -bottom-0.5 -right-0.5"
+                      />
+                    ) : null}
+                  </DockAvatar>
+                ) : avatarSrc ? (
+                  <DockAvatar
+                    src={avatarSrc}
+                    name={title}
+                    size="dock"
+                    ringClass={`ring-2 shadow-sm ${g.pinned ? 'ring-amber-400/80' : 'ring-white/60'}`}
+                    maxInitials={2}
+                  />
+                ) : (
+                  <span
+                    className={`w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm ring-2 ${
+                      g.pinned ? 'ring-amber-400/80' : 'ring-white/60'
+                    }`}
+                    style={{ background: bubbleGradientFor(title) }}
+                  >
+                    <Users className="h-4 w-4" />
+                  </span>
+                )}
+                {g.pinned ? (
+                  <span className="absolute -top-0.5 -left-0.5 h-3.5 w-3.5 rounded-full bg-amber-400 flex items-center justify-center ring-1 ring-white shadow">
+                    <Pin className="h-2 w-2 text-white fill-white" />
+                  </span>
+                ) : null}
+                {n > 0 ? (
+                  <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-0.5 rounded-full bg-gradient-to-br from-rose-500 to-pink-500 text-white text-[9px] font-bold flex items-center justify-center border border-white shadow">
+                    {n > 99 ? '…' : n}
+                  </span>
+                ) : null}
+              </button>
+            </div>
           );
         })}
       </div>

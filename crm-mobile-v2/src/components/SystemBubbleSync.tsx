@@ -3,6 +3,7 @@ import { AppState, type AppStateStatus, DeviceEventEmitter, Platform } from 'rea
 import * as Notifications from 'expo-notifications';
 import { api } from '../api/client';
 import { useAuth, currentUserId } from '../context/AuthContext';
+import { useTheme } from '../theme';
 import { useMessengerRealtime } from '../context/MessengerRealtimeContext';
 import {
   CRMV2_PREFS_CHANGED,
@@ -93,6 +94,7 @@ async function seedNativePanelHistory(groupId: string, myUserId: string) {
 /** Đồng bộ bong bóng chat native — panel overlay không mở MainActivity. */
 export default function SystemBubbleSync() {
   const { token, user } = useAuth();
+  const { mode: themeMode } = useTheme();
   const uid = currentUserId(user);
   const { subscribeMessengerChat } = useMessengerRealtime();
   const [prefs, setPrefs] = useState<CrmMobilePrefs | null>(null);
@@ -114,8 +116,8 @@ export default function SystemBubbleSync() {
   }, []);
 
   useEffect(() => {
-    syncNativeAuthPrefs({ token, userId: uid });
-  }, [token, uid]);
+    syncNativeAuthPrefs({ token, userId: uid, themeMode });
+  }, [token, uid, themeMode]);
 
   useEffect(() => {
     const overlay = Overlay;
@@ -162,7 +164,7 @@ export default function SystemBubbleSync() {
         const preview = buildMessengerMessagePreview(msg, { forUserId: uid, maxLen: 500 });
         const sender = msg.user?.full_name?.trim() || 'Người dùng';
         if (preview) {
-          Overlay.appendPanelMessage?.(gid, sender, preview);
+          Overlay?.appendPanelMessage?.(gid, sender, preview);
         }
       }
     });
