@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { isMessengerMessageRecalled, MESSENGER_QUICK_REACTIONS } from '../lib/messengerReactions';
 import {
-  buildMessengerShareText,
+  buildMessengerCopyText,
   copyImageToClipboard,
   copyTextToClipboard,
   downloadMessengerFile,
@@ -300,7 +300,7 @@ function MoreMenuPanel({
           label="Sao chép tin nhắn"
           onClick={() =>
             void runMenuAction(async () => {
-              await copyTextToClipboard(buildMessengerShareText(message, { groupTitle }));
+              await copyTextToClipboard(buildMessengerCopyText(message));
               showCopyToast('Đã sao chép');
             })
           }

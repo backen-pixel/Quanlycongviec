@@ -13,27 +13,22 @@ import {
   UserPlus,
   Building2,
   UsersRound,
-  Image as ImageIcon,
-  FileText,
-  Link2,
   Phone,
   Video,
-  ExternalLink,
   Loader2,
-  Crown,
-  Shield,
   X,
   Check,
-  Camera,
   PhoneCall,
+  MoreHorizontal,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import { useCall } from '../calling';
 import GroupCallMemberPickerModal from '../components/GroupCallMemberPickerModal';
+import MessengerConversationDetailPanel from '../components/MessengerConversationDetailPanel';
 import { MessengerGroupChatTab } from '../components/LeadChatTabs';
 import { useAuth } from '../lib/auth';
 import { messengerThreadKey } from '../lib/messengerHubStorage';
-import { resolveMediaUrl, BROKEN_MEDIA_PLACEHOLDER } from '../lib/mediaUrl';
 import { publicFileUrl } from '../lib/publicFileUrl';
 import {
   buildMessengerMessagePreview,
@@ -221,9 +216,13 @@ export default function MessengerHubPage() {
   const [messages, setMessages] = useState([]);
   /** Nhóm đang mở chat nhưng tin chưa load xong — tránh flash "Chưa có tin nhắn". */
   const [chatLoadingGroupId, setChatLoadingGroupId] = useState(null);
-  const [rightOpen, setRightOpen] = useState(false);
+  const [rightOpen, setRightOpen] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(min-width: 1024px)').matches;
+  });
+  const detailPanelClosedByUserRef = useRef(false);
   const [leftOpen, setLeftOpen] = useState(true);
-  const [rightSection, setRightSection] = useState('media');
+  const [rightSection, setRightSection] = useState('members');
   const [createOpen, setCreateOpen] = useState(false);
   const [groupName, setGroupName] = useState('');
   const [createCompanyId, setCreateCompanyId] = useState('');
@@ -245,8 +244,6 @@ export default function MessengerHubPage() {
   const [companies, setCompanies] = useState([]);
   const [departmentsList, setDepartmentsList] = useState([]);
   const [presenceByUser, setPresenceByUser] = useState({});
-
-  /* ── Quản lý thành viên nhóm (right panel tab) ── */
   const [groupDetail, setGroupDetail] = useState(null);     // { id, created_by, is_direct, ... }
   const [groupMembers, setGroupMembers] = useState([]);     // [{ user_id, role, user: {full_name, avatar} }]
   const [addMemberOpen, setAddMemberOpen] = useState(false);
@@ -547,6 +544,19 @@ export default function MessengerHubPage() {
     void reloadGroupMembers(selectedGroupId);
   }, [selectedGroupId, reloadGroupMembers]);
 
+  /** Mở panel chi tiết (thành viên / ảnh / tệp / link) khi chọn hội thoại — trừ khi user vừa đóng thủ công. */
+  useEffect(() => {
+    if (!selectedGroupId) {
+      setRightOpen(false);
+      return;
+    }
+    detailPanelClosedByUserRef.current = false;
+    setRightSection('media');
+    if (typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches) {
+      setRightOpen(true);
+    }
+  }, [selectedGroupId, selected?.is_direct]);
+
   // Đổi sang chat trực tiếp mà đang ở tab 'members' → fallback về 'media'
   useEffect(() => {
     if (selected?.is_direct && rightSection === 'members') {
@@ -707,6 +717,75 @@ export default function MessengerHubPage() {
   }, [threads, listTab, threadFilter, unreadByGroupId]);
 
   const mediaBundle = useMemo(() => collectMediaAndFiles(messages), [messages]);
+
+  const callCapabilities = useMemo(() => {
+    const isIdle = callStatus === 'idle';
+    const isDirect = !!selected?.is_direct && !!selected?.peer_id;
+    const otherMembers = !isDirect
+      ? groupMembers.filter((m) => String(m.user_id) !== String(uid))
+      : [];
+    const isGroupCallable = !isDirect && !!selectedGroupId && otherMembers.length > 0;
+    return {
+      isDirect,
+      canCall: isIdle && (isDirect || isGroupCallable),
+      canVideo: isIdle && (isDirect || isGroupCallable),
+    };
+  }, [callStatus, selected, groupMembers, selectedGroupId, uid]);
+
+  const openAddMemberModal = () => {
+    setAddMemberOpen(true);
+    setAddMemberPicks([]);
+    setAddMemberQ('');
+  };
+
+  const renameGroup = async (name) => {
+    if (!selectedGroupId) return;
+    await api.patch(`/messenger/groups/${selectedGroupId}`, { name });
+    setThreads((cur) =>
+      cur.map((t) =>
+        t.kind === 'messenger' && String(t.groupId) === String(selectedGroupId) ? { ...t, title: name } : t,
+      ),
+    );
+    setGroupDetail((cur) => (cur ? { ...cur, name } : cur));
+  };
+
+  const leaveSelectedGroup = async () => {
+    if (!selectedGroupId || selected?.is_direct) return;
+    if (!window.confirm('Rời khỏi nhóm? Bạn sẽ không nhận tin nhắn từ nhóm này nữa.')) return;
+    try {
+      await api.post(`/messenger/groups/${selectedGroupId}/leave`);
+      setSelectedGroupId(null);
+      setRightOpen(false);
+      await reloadMessengerThreads();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Không rời được nhóm');
+    }
+  };
+
+  const setPinnedForSelected = async (nextPinned) => {
+    if (!selected?.groupId) return;
+    try {
+      await api.put(`/messenger/pins/${selected.groupId}`, { pinned: nextPinned });
+      setThreads((prev) =>
+        prev.map((row) =>
+          row.kind === 'messenger' && row.groupId === selected.groupId ? { ...row, pinned: nextPinned } : row,
+        ),
+      );
+    } catch (err) {
+      alert(err.response?.data?.error || err.message || 'Không cập nhật được ghim');
+    }
+  };
+
+  const openDetailPanel = (section) => {
+    detailPanelClosedByUserRef.current = false;
+    setRightSection(section || 'media');
+    setRightOpen(true);
+  };
+
+  const closeDetailPanel = () => {
+    detailPanelClosedByUserRef.current = true;
+    setRightOpen(false);
+  };
 
   const openMessengerThread = (t) => {
     if (!t.groupId) return;
@@ -904,23 +983,16 @@ export default function MessengerHubPage() {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col text-slate-800 relative">
-      {/* gradient backdrop trên nền page-bg để cảm giác có chiều sâu */}
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          background: 'radial-gradient(ellipse at top left, rgba(14,165,233,0.10), transparent 55%), radial-gradient(ellipse at bottom right, rgba(168,85,247,0.10), transparent 55%)',
-        }}
-      />
-      <div className="relative flex min-h-0 flex-1 border-t border-white/30">
+    <div className="flex h-full min-h-0 flex-1 flex-col text-slate-800 bg-slate-50/80">
+      <div className="relative flex min-h-0 flex-1 border-t border-slate-200/80">
         {!leftOpen && (
-          <div className="flex w-[56px] shrink-0 flex-col border-r border-white/30 bg-white/55 backdrop-blur-xl shadow-sm z-[1]">
-            <div className="flex shrink-0 justify-center border-b border-white/30 py-2">
+          <div className="flex w-[56px] shrink-0 flex-col border-r border-slate-200 bg-white z-[1]">
+            <div className="flex shrink-0 justify-center border-b border-slate-100 py-2">
               <button
                 type="button"
                 title="Mở danh sách đầy đủ"
                 onClick={() => setLeftOpen(true)}
-                className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/60 bg-white/70 backdrop-blur text-slate-700 hover:border-sky-300 hover:bg-sky-50 hover:text-sky-700 transition shadow-sm"
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700 transition shadow-sm"
               >
                 <PanelLeftOpen className="h-4 w-4" />
               </button>
@@ -935,8 +1007,8 @@ export default function MessengerHubPage() {
                     type="button"
                     title={t.title || 'Hội thoại'}
                     onClick={() => openMessengerThread(t)}
-                    className={`relative flex h-11 w-11 shrink-0 items-center justify-center transition hover:scale-105 hover:shadow-lg ${
-                      isSel ? 'ring-2 ring-sky-500 ring-offset-2 ring-offset-white/40 rounded-2xl' : ''
+                    className={`relative flex h-11 w-11 shrink-0 items-center justify-center transition hover:scale-105 ${
+                      isSel ? 'ring-2 ring-violet-500 ring-offset-2 ring-offset-white rounded-2xl' : ''
                     }`}
                   >
                     <HubAvatar
@@ -945,10 +1017,10 @@ export default function MessengerHubPage() {
                       className="h-11 w-11"
                       textClass="text-[13px]"
                       rounded="rounded-2xl"
-                      ringClass={isSel ? 'ring-2 ring-sky-500' : 'ring-2 ring-transparent'}
+                      ringClass={isSel ? 'ring-2 ring-violet-500' : 'ring-2 ring-transparent'}
                     />
                     {unread > 0 ? (
-                      <span className="absolute -right-1 -top-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full border-2 border-white bg-rose-500 px-0.5 text-[9px] font-bold text-white shadow">
+                      <span className="absolute -right-1 -top-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full border-2 border-white bg-violet-600 px-0.5 text-[9px] font-bold text-white shadow">
                         {unread > 99 ? '…' : unread}
                       </span>
                     ) : null}
@@ -960,95 +1032,91 @@ export default function MessengerHubPage() {
         )}
         {/* —— Cột trái: danh sách —— */}
         {leftOpen && (
-        <aside className="w-[320px] shrink-0 flex flex-col bg-white/65 backdrop-blur-xl border-r border-white/30 shadow-sm">
-          {/* Hero header — Messenger title + tổng quan */}
-          <div className="px-3.5 pt-3 pb-2 bg-gradient-to-r from-sky-50/70 via-white/30 to-violet-50/70 border-b border-white/40">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <div className="h-9 w-9 rounded-2xl bg-gradient-to-br from-sky-500 via-cyan-500 to-violet-600 text-white flex items-center justify-center shadow-md ring-2 ring-white/70">
-                  <MessageCircle className="h-4 w-4" />
-                </div>
-                <div>
-                  <h1 className="text-[15px] font-bold leading-none flex items-center gap-1.5" style={{ color: '#0f172a' }}>
-                    Tin nhắn
-                    {totalUnreadCount > 0 && (
-                      <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-violet-100 text-violet-700 text-[10px] font-bold">
-                        {totalUnreadCount > 99 ? '99+' : totalUnreadCount}
-                      </span>
-                    )}
-                  </h1>
-                  <p className="text-[10px] text-slate-500 mt-0.5">{filteredThreads.length} hội thoại</p>
-                </div>
+        <aside className="w-[320px] shrink-0 flex flex-col bg-white border-r border-slate-200 shadow-sm">
+          <div className="px-4 pt-4 pb-3 border-b border-slate-100 bg-white">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h1 className="text-[17px] font-bold leading-none flex items-center gap-2 text-slate-900">
+                  Tin nhắn
+                  {totalUnreadCount > 0 && (
+                    <span className="inline-flex items-center justify-center min-w-[22px] h-[22px] px-1.5 rounded-full bg-violet-600 text-white text-[11px] font-bold shadow-sm">
+                      {totalUnreadCount > 99 ? '99+' : totalUnreadCount}
+                    </span>
+                  )}
+                </h1>
+                <p className="text-[11px] text-slate-500 mt-1">{filteredThreads.length} hội thoại</p>
               </div>
-              <button
-                type="button"
-                title="Thu gọn danh sách hội thoại"
-                onClick={() => setLeftOpen(false)}
-                className="h-8 w-8 shrink-0 rounded-lg border border-white/60 bg-white/70 backdrop-blur text-slate-600 hover:bg-white hover:text-slate-800 hover:shadow-sm flex items-center justify-center transition"
-              >
-                <PanelLeftClose className="h-4 w-4" />
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  title="Tạo nhóm chat"
+                  onClick={() => setCreateOpen(true)}
+                  className="h-9 w-9 shrink-0 rounded-full bg-violet-600 text-white flex items-center justify-center hover:bg-violet-700 shadow-md transition"
+                >
+                  <UserPlus className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  title="Thu gọn danh sách hội thoại"
+                  onClick={() => setLeftOpen(false)}
+                  className="h-9 w-9 shrink-0 rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-700 flex items-center justify-center transition"
+                >
+                  <PanelLeftClose className="h-4 w-4" />
+                </button>
+              </div>
             </div>
-            <div className="flex gap-1.5 items-center">
+            <div className="flex gap-2 items-center">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                 <input
                   value={threadFilter}
                   onChange={(e) => setThreadFilter(e.target.value)}
-                  placeholder="Tìm hội thoại…"
-                  className="w-full h-9 pl-9 pr-3 rounded-full bg-white/80 backdrop-blur border border-white/70 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-300/60 focus:bg-white shadow-sm transition"
+                  placeholder="Tìm hội thoại, tên hoặc số điện thoại…"
+                  className="w-full h-10 pl-9 pr-3 rounded-full bg-slate-50 border border-slate-200 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-300/70 focus:border-violet-300 focus:bg-white transition"
                 />
               </div>
               <button
                 type="button"
-                title="Tạo nhóm chat"
-                onClick={() => setCreateOpen(true)}
-                className="h-9 w-9 shrink-0 rounded-full bg-gradient-to-br from-sky-500 to-cyan-600 text-white flex items-center justify-center hover:from-sky-600 hover:to-cyan-700 hover:shadow-lg shadow-md transition"
+                title="Lọc / tìm nhân viên"
+                onClick={() => setStaffPanelOpen((v) => !v)}
+                className={`h-10 w-10 shrink-0 rounded-full border flex items-center justify-center transition ${
+                  staffPanelOpen
+                    ? 'border-violet-300 bg-violet-50 text-violet-700'
+                    : 'border-slate-200 bg-white text-slate-500 hover:bg-violet-50 hover:text-violet-700 hover:border-violet-200'
+                }`}
               >
-                <UserPlus className="h-4 w-4" />
+                <SlidersHorizontal className="h-4 w-4" />
               </button>
             </div>
           </div>
-          {/* Tabs — segmented control glass */}
-          <div className="px-3 pt-2 pb-1 border-b border-white/40">
-            <div className="flex gap-1 p-1 rounded-xl bg-white/55 backdrop-blur border border-white/60">
-              {[
-                { id: 'all', label: 'Tất cả' },
-                { id: 'pinned', label: 'Ưu tiên' },
-                { id: 'unread', label: 'Chưa đọc' },
-              ].map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => setListTab(t.id)}
-                  className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition ${
-                    listTab === t.id
-                      ? 'bg-white text-sky-700 shadow-sm ring-1 ring-sky-200'
-                      : 'text-slate-600 hover:text-slate-800 hover:bg-white/60'
-                  }`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="px-2.5 py-2 border-b border-white/40 bg-white/30 shrink-0">
-            {!staffPanelOpen ? (
+          <div className="flex border-b border-slate-200 px-2 bg-white shrink-0">
+            {[
+              { id: 'all', label: 'Tất cả' },
+              { id: 'pinned', label: 'Ưu tiên' },
+              { id: 'unread', label: 'Chưa đọc' },
+            ].map((t) => (
               <button
+                key={t.id}
                 type="button"
-                onClick={() => setStaffPanelOpen(true)}
-                className="w-full h-9 rounded-xl border border-white/70 bg-white/75 backdrop-blur text-[11px] font-semibold text-slate-700 hover:bg-white hover:shadow-sm flex items-center justify-center gap-1.5 transition"
+                onClick={() => setListTab(t.id)}
+                className={`flex-1 py-2.5 text-[13px] font-semibold border-b-2 transition -mb-px ${
+                  listTab === t.id
+                    ? 'border-violet-600 text-violet-700'
+                    : 'border-transparent text-slate-500 hover:text-slate-800'
+                }`}
               >
-                <Search className="h-3.5 w-3.5 text-sky-600" />
-                Tìm nhân viên
+                {t.label}
               </button>
-            ) : (
+            ))}
+          </div>
+          {staffPanelOpen ? (
+          <div className="px-3 py-2 border-b border-slate-100 bg-violet-50/40 shrink-0">
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between gap-1">
-                  <p className="text-[10px] font-semibold text-slate-500 uppercase">Nhân viên</p>
+                  <p className="text-[10px] font-bold text-violet-700 uppercase tracking-wide">Tìm nhân viên</p>
                   <button
                     type="button"
-                    className="text-[10px] text-sky-600 font-medium hover:underline"
+                    className="text-[10px] text-violet-600 font-medium hover:underline"
                     onClick={() => {
                       setStaffPanelOpen(false);
                       setStaffListLoaded(false);
@@ -1058,7 +1126,7 @@ export default function MessengerHubPage() {
                       setStaffListQ('');
                     }}
                   >
-                    Thu gọn
+                    Đóng
                   </button>
                 </div>
                 <select
@@ -1101,7 +1169,7 @@ export default function MessengerHubPage() {
                   <p className="text-[10px] text-slate-500 text-center py-1">Chọn công ty hoặc phòng ban để hiện danh sách.</p>
                 ) : staffLoading ? (
                   <div className="flex justify-center py-2">
-                    <Loader2 className="h-5 w-5 animate-spin text-sky-600" />
+                    <Loader2 className="h-5 w-5 animate-spin text-violet-600" />
                   </div>
                 ) : null}
                 <button
@@ -1150,7 +1218,7 @@ export default function MessengerHubPage() {
                                 title="Mở chat Messenger"
                                 disabled={directLoadingId === id}
                                 onClick={() => void startChatWithEmployee(u)}
-                                className="shrink-0 px-1.5 py-0.5 rounded-md bg-sky-600 text-white text-[10px] font-semibold hover:bg-sky-700 disabled:opacity-60 flex items-center gap-0.5"
+                                className="shrink-0 px-1.5 py-0.5 rounded-md bg-violet-600 text-white text-[10px] font-semibold hover:bg-violet-700 disabled:opacity-60 flex items-center gap-0.5"
                               >
                                 {directLoadingId === id ? (
                                   <Loader2 className="h-3 w-3 animate-spin" />
@@ -1171,17 +1239,17 @@ export default function MessengerHubPage() {
                   </div>
                 )}
               </div>
-            )}
           </div>
-          <div className="flex-1 overflow-y-auto px-1.5 py-1 [scrollbar-width:thin]">
+          ) : null}
+          <div className="flex-1 overflow-y-auto px-2 py-2 [scrollbar-width:thin]">
             {filteredThreads.length === 0 && (
-              <div className="p-6 text-center">
-                <div className="mx-auto w-12 h-12 mb-2 rounded-full bg-gradient-to-br from-sky-100 to-violet-100 flex items-center justify-center">
-                  <MessageCircle className="h-5 w-5 text-sky-500" />
+              <div className="p-8 text-center">
+                <div className="mx-auto w-14 h-14 mb-3 rounded-2xl bg-violet-100 flex items-center justify-center">
+                  <MessageCircle className="h-7 w-7 text-violet-600" />
                 </div>
-                <p className="text-xs text-slate-500 leading-relaxed">
-                  Chưa có nhóm hoặc chat trực tiếp.<br/>
-                  Bấm <strong>+</strong> ở trên hoặc tìm nhân viên để bắt đầu.
+                <p className="text-sm font-semibold text-slate-800">Chưa có hội thoại</p>
+                <p className="text-xs text-slate-500 leading-relaxed mt-1">
+                  Bấm <strong className="text-violet-700">+</strong> để tạo nhóm hoặc dùng bộ lọc để tìm nhân viên.
                 </p>
               </div>
             )}
@@ -1193,42 +1261,44 @@ export default function MessengerHubPage() {
                   key={threadRowKey(t)}
                   role="presentation"
                   onClick={() => openMessengerThread(t)}
-                  className={`group w-full flex items-start gap-2.5 px-2.5 py-2.5 rounded-xl mb-1 text-left cursor-pointer transition-all ${
+                  className={`group w-full flex items-start gap-3 px-3 py-3 rounded-xl mb-0.5 text-left cursor-pointer transition-all border-l-[3px] ${
                     isSel
-                      ? 'bg-gradient-to-r from-sky-100/90 to-cyan-50/90 shadow-sm ring-1 ring-sky-200'
-                      : 'hover:bg-white/85'
+                      ? 'bg-violet-50 border-violet-600 shadow-sm ring-1 ring-violet-100'
+                      : unread > 0
+                        ? 'bg-violet-50/40 border-transparent hover:bg-violet-50/70'
+                        : 'border-transparent hover:bg-slate-50'
                   }`}
                 >
                   <div className="relative shrink-0">
                     <HubAvatar
                       src={threadAvatarSrc(t)}
                       name={t.title}
-                      className="w-11 h-11"
+                      className="w-12 h-12"
                       textClass="text-sm"
+                      rounded="rounded-full"
                     />
                     {t.is_direct && t.peer_id && (() => {
                       const pres = presenceByUser[t.peer_id] || presenceByUser[String(t.peer_id)];
                       const online = !!pres?.online;
                       return (
                         <span
-                          className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white shadow-sm ${
+                          className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white ${
                             online ? 'bg-emerald-500' : 'bg-slate-300'
                           }`}
                           title={online ? 'Đang hoạt động' : 'Không hoạt động'}
                         />
                       );
                     })()}
-                    {unread > 0 && (
-                      <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-0.5 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center border-2 border-white shadow">
-                        {unread > 99 ? '99+' : unread}
-                      </span>
-                    )}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className={`text-[13px] truncate ${unread > 0 ? 'font-bold text-slate-900' : 'font-semibold text-slate-800'}`}>{t.title}</span>
+                      <span className={`text-[14px] truncate ${unread > 0 ? 'font-bold text-slate-900' : 'font-semibold text-slate-800'}`}>
+                        {t.title}
+                      </span>
                       {!t.is_direct && (
-                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 shrink-0">Nhóm</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-violet-600 text-white shrink-0 shadow-sm">
+                          Nhóm
+                        </span>
                       )}
                       {t.pinned && <Pin className="h-3 w-3 text-amber-500 shrink-0 fill-amber-500" />}
                     </div>
@@ -1239,12 +1309,14 @@ export default function MessengerHubPage() {
                       }) || '—'}
                     </p>
                   </div>
-                  <div className="flex flex-col items-end gap-1.5 shrink-0">
-                    <span className="text-[10px] text-slate-400 whitespace-nowrap">
+                  <div className="flex flex-col items-end gap-1.5 shrink-0 min-w-[44px]">
+                    <span className={`text-[11px] whitespace-nowrap ${unread > 0 ? 'text-violet-700 font-semibold' : 'text-slate-400'}`}>
                       {formatRelativeTime(t.lastMessageAt || t.updatedAt)}
                     </span>
                     {unread > 0 ? (
-                      <span className="w-2 h-2 rounded-full bg-violet-500" title={`${unread} tin chưa đọc`} />
+                      <span className="inline-flex h-5 min-w-[20px] px-1.5 items-center justify-center rounded-full bg-violet-600 text-white text-[10px] font-bold shadow-sm">
+                        {unread > 99 ? '99+' : unread}
+                      </span>
                     ) : (
                       <button
                         type="button"
@@ -1266,34 +1338,41 @@ export default function MessengerHubPage() {
         )}
 
         {/* —— Giữa: chat —— */}
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-transparent">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-white">
           {!selectedGroupId ? (
-            <div className="flex flex-1 flex-col items-center justify-center p-8 text-slate-400">
-              <div className="w-20 h-20 mb-4 rounded-full bg-gradient-to-br from-sky-100 via-cyan-100 to-violet-100 backdrop-blur flex items-center justify-center shadow-md ring-4 ring-white/40">
-                <MessageCircle className="h-10 w-10 text-sky-500" />
+            <div className="flex flex-1 flex-col items-center justify-center p-8 bg-slate-50/50">
+              <div className="relative w-28 h-24 mb-6">
+                <div className="absolute left-3 top-1 w-16 h-16 rounded-2xl bg-violet-600 shadow-lg rotate-[-10deg] flex items-center justify-center">
+                  <MessageCircle className="h-8 w-8 text-white/90" />
+                </div>
+                <div className="absolute right-2 bottom-0 w-16 h-16 rounded-2xl bg-white border-2 border-violet-200 shadow-md rotate-[8deg] flex items-center justify-center">
+                  <MessageCircle className="h-8 w-8 text-violet-400" />
+                </div>
               </div>
-              <p className="text-base font-bold" style={{ color: '#0f172a' }}>Chọn một cuộc trò chuyện</p>
-              <p className="text-sm mt-2 text-center max-w-sm text-slate-500 leading-relaxed">
-                Trang này dành cho <strong>nhóm chat nội bộ</strong> và <strong>chat 1-1</strong> giữa nhân viên.
+              <p className="text-lg font-bold text-slate-900">Chọn một cuộc trò chuyện</p>
+              <p className="text-sm mt-2 text-center max-w-md text-slate-500 leading-relaxed">
+                Trang này dành cho <strong className="text-violet-700">nhóm chat nội bộ</strong> và{' '}
+                <strong className="text-violet-700">chat 1-1</strong> giữa nhân viên.
                 Chat Lead/Deal sẽ nằm trong CRM.
               </p>
             </div>
           ) : (
             <>
-              <header className="h-16 shrink-0 flex items-center gap-3 px-4 bg-white/80 backdrop-blur-xl border-b border-white/40 shadow-sm">
+              <header className="h-[60px] shrink-0 flex items-center gap-3 px-4 bg-white border-b border-slate-200">
                 <div className="relative shrink-0">
                   <HubAvatar
                     src={threadAvatarSrc(selected)}
                     name={selected?.title}
                     className="w-11 h-11"
                     textClass="text-sm"
+                    rounded="rounded-full"
                   />
                   {selected?.is_direct && selected?.peer_id && (() => {
                     const pres = presenceByUser[selected.peer_id] || presenceByUser[String(selected.peer_id)];
                     const online = !!pres?.online;
                     return (
                       <span
-                        className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white shadow-sm ${
+                        className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white ${
                           online ? 'bg-emerald-500' : 'bg-slate-300'
                         }`}
                         title={online ? 'Đang hoạt động' : 'Không hoạt động'}
@@ -1302,25 +1381,33 @@ export default function MessengerHubPage() {
                   })()}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-[15px] font-bold truncate" style={{ color: '#0f172a' }}>{selected?.title}</p>
-                  <p className="text-[11px] text-slate-500 truncate flex items-center gap-1.5 mt-0.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-[16px] font-bold truncate text-slate-900">{selected?.title}</p>
+                    {!selected?.is_direct && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-violet-600 text-white shrink-0">Nhóm</span>
+                    )}
+                  </div>
+                  <p className="text-[12px] truncate flex items-center gap-1.5 mt-0.5">
                     {selected?.is_direct ? (() => {
                       const pres = presenceByUser[selected.peer_id] || presenceByUser[String(selected.peer_id)];
                       const online = !!pres?.online;
                       return (
-                        <span className="inline-flex items-center gap-1">
+                        <span className="inline-flex items-center gap-1.5">
                           <span className={`w-2 h-2 rounded-full ${online ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                          <span className={online ? 'text-emerald-600 font-medium' : 'text-slate-500 font-medium'}>
+                          <span className={online ? 'text-emerald-600 font-semibold' : 'text-slate-500 font-medium'}>
                             {online ? 'Đang hoạt động' : 'Không hoạt động'}
                           </span>
                         </span>
                       );
                     })() : (
-                      <><Users className="h-3 w-3" /> Nhóm chat · {groupMembers.length || '—'} thành viên</>
+                      <span className="text-slate-500 font-medium inline-flex items-center gap-1">
+                        <Users className="h-3.5 w-3.5 text-violet-500" />
+                        {groupMembers.length || '—'} thành viên
+                      </span>
                     )}
                   </p>
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="flex items-center gap-0.5 shrink-0">
                   {(() => {
                     const isIdle = callStatus === 'idle';
                     const isDirect = !!selected?.is_direct && !!selected?.peer_id;
@@ -1355,8 +1442,8 @@ export default function MessengerHubPage() {
                         disabled={!canCall}
                         className={`w-9 h-9 rounded-full transition flex items-center justify-center ${
                           canCall
-                            ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
-                            : 'text-slate-400 bg-slate-100/80 cursor-not-allowed'
+                            ? 'text-violet-700 bg-violet-50 hover:bg-violet-100'
+                            : 'text-slate-400 bg-slate-100 cursor-not-allowed'
                         }`}
                         title={disabledReason}
                       >
@@ -1398,8 +1485,8 @@ export default function MessengerHubPage() {
                         disabled={!canVideo}
                         className={`w-9 h-9 rounded-full transition flex items-center justify-center ${
                           canVideo
-                            ? 'text-sky-700 bg-sky-50 hover:bg-sky-100'
-                            : 'text-slate-400 bg-slate-100/80 cursor-not-allowed'
+                            ? 'text-violet-700 bg-violet-50 hover:bg-violet-100'
+                            : 'text-slate-400 bg-slate-100 cursor-not-allowed'
                         }`}
                         title={disabledReason}
                       >
@@ -1409,28 +1496,17 @@ export default function MessengerHubPage() {
                   })()}
                   <button
                     type="button"
-                    className="w-9 h-9 rounded-full text-slate-600 bg-slate-100/80 hover:bg-violet-100 hover:text-violet-700 transition flex items-center justify-center"
-                    title={rightOpen ? 'Ẩn bảng phải' : 'Thông tin hội thoại'}
-                    onClick={() => setRightOpen((v) => !v)}
+                    onClick={() => (rightOpen ? closeDetailPanel() : openDetailPanel())}
+                    className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-full text-[12px] font-semibold transition shrink-0 ${
+                      rightOpen
+                        ? 'bg-violet-600 text-white shadow-sm'
+                        : 'bg-violet-50 text-violet-700 hover:bg-violet-100 border border-violet-200'
+                    }`}
+                    title="Thành viên, ảnh/video, tệp, link trong hội thoại"
                   >
                     {rightOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
+                    Chi tiết
                   </button>
-                  {!selected?.is_direct && (
-                    <button
-                      type="button"
-                      onClick={() => { setRightOpen(true); setRightSection('members'); }}
-                      className="text-xs font-semibold px-3 h-9 rounded-full bg-white/70 backdrop-blur border border-slate-200 text-slate-700 hover:bg-white hover:shadow-sm inline-flex items-center gap-1.5 transition"
-                      title="Quản lý thành viên"
-                    >
-                      <Users className="h-3.5 w-3.5" />
-                      Thành viên
-                      {groupMembers.length > 0 && (
-                        <span className="ml-0.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-sky-100 px-1 text-[10px] font-bold text-sky-700">
-                          {groupMembers.length}
-                        </span>
-                      )}
-                    </button>
-                  )}
                 </div>
               </header>
               {/* Banner: có cuộc gọi nhóm đang diễn ra → cho phép user tham gia */}
@@ -1487,7 +1563,7 @@ export default function MessengerHubPage() {
                 );
               })()}
               <div className="flex min-h-0 flex-1">
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white/50 backdrop-blur-sm">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-slate-50/40">
                   <MessengerGroupChatTab
                     groupId={selectedGroupId}
                     socket={socket}
@@ -1497,257 +1573,48 @@ export default function MessengerHubPage() {
                   />
                 </div>
                 {rightOpen && (
-                  <aside className="flex w-[288px] shrink-0 flex-col border-l border-white/40 bg-white/65 backdrop-blur-xl shadow-sm">
-                    <div className="p-4 border-b border-white/40 text-center bg-gradient-to-b from-sky-50/60 to-transparent">
-                      <HubAvatar
-                        src={threadAvatarSrc(selected)}
-                        name={selected?.title}
-                        className="w-20 h-20 mx-auto mb-2"
-                        textClass="text-2xl"
-                        rounded="rounded-3xl"
-                        ringClass="ring-4 ring-white/70"
-                      />
-                      <p className="text-sm font-bold truncate px-1" style={{ color: '#0f172a' }}>{selected?.title}</p>
-                      <p className="text-[11px] text-slate-500 mt-0.5 inline-flex items-center gap-1 justify-center">
-                        {selected?.is_direct ? (
-                          <><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Chat trực tiếp</>
-                        ) : (
-                          <><Users className="h-3 w-3" /> Nhóm Messenger</>
-                        )}
-                      </p>
-                      <p className="text-[10px] text-slate-500 px-2 mt-3 text-center leading-relaxed">
-                        Hội thoại nội bộ, không gắn Lead/Deal trên CRM.
-                      </p>
-                    </div>
-                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider px-3 py-1.5 bg-white/40 border-y border-white/40">Thông tin hội thoại</p>
-                    <div className="flex border-b border-white/40 text-[11px] font-semibold bg-white/30">
-                      {[
-                        !selected?.is_direct && {
-                          id: 'members',
-                          label: `Thành viên${groupMembers.length ? ` (${groupMembers.length})` : ''}`,
-                          Icon: Users,
-                        },
-                        { id: 'media', label: 'Ảnh/Video', Icon: ImageIcon },
-                        { id: 'files', label: 'Tệp', Icon: FileText },
-                        { id: 'links', label: 'Link', Icon: Link2 },
-                      ].filter(Boolean).map(({ id, label, Icon }) => (
-                        <button
-                          key={id}
-                          type="button"
-                          onClick={() => setRightSection(id)}
-                          className={`flex-1 py-2 flex items-center justify-center gap-1 border-b-2 transition ${
-                            rightSection === id ? 'border-sky-500 text-sky-700 bg-white/60' : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-white/40'
-                          }`}
-                        >
-                          <Icon className="h-3.5 w-3.5" />
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="flex-1 overflow-y-auto p-2 text-xs">
-                      {rightSection === 'members' && !selected?.is_direct && (
-                        <div className="space-y-2">
-                          {/* Avatar nhóm — chỉ leader/deputy/admin được sửa */}
-                          <div className="flex flex-col items-center py-3 px-2 rounded-2xl bg-white/70 border border-white/60">
-                            <div className="relative">
-                              <HubAvatar
-                                src={groupDetail?.avatar || selected?.avatar}
-                                name={selected?.title}
-                                className="h-20 w-20"
-                                textClass="text-2xl"
-                                rounded="rounded-full"
-                                ringClass="ring-2 ring-white"
-                              />
-                              {canManageGroup && (
-                                <button
-                                  type="button"
-                                  disabled={busyAvatar}
-                                  onClick={() => groupAvatarInputRef.current?.click()}
-                                  className="absolute bottom-0 right-0 h-7 w-7 rounded-full bg-sky-600 hover:bg-sky-700 text-white shadow-md flex items-center justify-center ring-2 ring-white disabled:opacity-50"
-                                  title="Đổi avatar nhóm"
-                                >
-                                  {busyAvatar ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
-                                </button>
-                              )}
-                            </div>
-                            <p className="mt-2 text-[13px] font-semibold text-slate-800 truncate max-w-full">{selected?.title}</p>
-                            {canManageGroup && (groupDetail?.avatar || selected?.avatar) && (
-                              <button
-                                type="button"
-                                disabled={busyAvatar}
-                                onClick={onRemoveGroupAvatar}
-                                className="mt-1 text-[11px] text-rose-600 hover:text-rose-700 hover:underline disabled:opacity-50"
-                              >
-                                Xoá avatar
-                              </button>
-                            )}
-                            <input
-                              ref={groupAvatarInputRef}
-                              type="file"
-                              accept="image/*"
-                              hidden
-                              onChange={(e) => {
-                                const f = e.target.files?.[0];
-                                if (f) void onChangeGroupAvatar(f);
-                              }}
-                            />
-                          </div>
-
-                          {canManageGroup && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setAddMemberOpen(true);
-                                setAddMemberPicks([]);
-                                setAddMemberQ('');
-                              }}
-                              className="w-full h-9 inline-flex items-center justify-center gap-2 rounded-lg bg-sky-600 text-white text-[12px] font-semibold hover:bg-sky-700"
-                            >
-                              <UserPlus className="h-3.5 w-3.5" />
-                              Thêm thành viên
-                            </button>
-                          )}
-                          <ul className="space-y-1">
-                            {groupMembers.map((m) => {
-                              const u = m.user || {};
-                              const isCreator =
-                                groupDetail?.created_by && String(groupDetail.created_by) === String(m.user_id);
-                              const isLeader = m.role === 'leader' || isCreator;
-                              const isDeputy = m.role === 'deputy';
-                              const isMe = String(m.user_id) === String(uid);
-                              const busy = busyMember === m.user_id;
-                              return (
-                                <li
-                                  key={m.user_id}
-                                  className="flex items-center gap-2 rounded-xl border border-white/60 p-2 bg-white/70 backdrop-blur hover:bg-white hover:shadow-sm transition"
-                                >
-                                  <HubAvatar
-                                    src={u.avatar}
-                                    name={u.full_name || u.email}
-                                    className="h-9 w-9"
-                                    textClass="text-[12px]"
-                                  />
-                                  <div className="min-w-0 flex-1">
-                                    <p className="text-[12px] font-semibold text-slate-800 truncate flex items-center gap-1">
-                                      {u.full_name || 'Người dùng'}
-                                      {isMe && <span className="text-[9px] text-slate-400">(bạn)</span>}
-                                    </p>
-                                    <p className="text-[10px] text-slate-500 truncate flex items-center gap-1">
-                                      {isLeader && <Crown className="h-3 w-3 text-amber-500" />}
-                                      {isDeputy && <Shield className="h-3 w-3 text-indigo-500" />}
-                                      {isLeader
-                                        ? 'Trưởng nhóm'
-                                        : isDeputy
-                                        ? 'Phó nhóm'
-                                        : 'Thành viên'}
-                                    </p>
-                                  </div>
-                                  {canManageGroup && !isCreator && !isMe && (
-                                    <div className="flex items-center gap-1">
-                                      <select
-                                        disabled={busy}
-                                        value={isDeputy ? 'deputy' : 'member'}
-                                        onChange={(e) => onChangeMemberRole(m, e.target.value)}
-                                        className="h-7 px-1 rounded border border-slate-200 text-[10px] bg-white"
-                                        title="Đổi vai trò"
-                                      >
-                                        <option value="member">Thành viên</option>
-                                        <option value="deputy">Phó nhóm</option>
-                                      </select>
-                                      <button
-                                        type="button"
-                                        disabled={busy}
-                                        onClick={() => onRemoveMember(m)}
-                                        title="Xoá khỏi nhóm"
-                                        className="h-7 w-7 inline-flex items-center justify-center rounded-md text-rose-600 hover:bg-rose-50 disabled:opacity-50"
-                                      >
-                                        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
-                                      </button>
-                                    </div>
-                                  )}
-                                </li>
-                              );
-                            })}
-                            {groupMembers.length === 0 && (
-                              <li className="text-slate-400 text-center py-6">Chưa có thành viên</li>
-                            )}
-                          </ul>
-                        </div>
-                      )}
-                      {rightSection === 'media' && (
-                        <div className="space-y-2">
-                          <p className="text-[10px] text-slate-400 px-1">Ảnh & video đã gửi trong hội thoại</p>
-                          <div className="grid grid-cols-3 gap-1">
-                            {[...mediaBundle.images, ...mediaBundle.videos].slice(0, 18).map((att, i) => {
-                              const u = resolveMediaUrl(att.url);
-                              return (
-                                <a
-                                  key={`${att.url}-${i}`}
-                                  href={u}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="aspect-square rounded-md overflow-hidden bg-slate-100 border border-slate-200"
-                                >
-                                  {att.type?.startsWith('video/') ? (
-                                    <video src={u} className="w-full h-full object-cover" muted playsInline />
-                                  ) : (
-                                    <img
-                                      src={u}
-                                      alt=""
-                                      className="w-full h-full object-cover"
-                                      onError={(e) => {
-                                        e.currentTarget.onerror = null;
-                                        e.currentTarget.src = BROKEN_MEDIA_PLACEHOLDER;
-                                      }}
-                                    />
-                                  )}
-                                </a>
-                              );
-                            })}
-                          </div>
-                          {[...mediaBundle.images, ...mediaBundle.videos].length === 0 && (
-                            <p className="text-slate-400 text-center py-6">Chưa có ảnh/video</p>
-                          )}
-                        </div>
-                      )}
-                      {rightSection === 'files' && (
-                        <ul className="space-y-1">
-                          {mediaBundle.files.map((f, i) => (
-                            <li key={`${f.url}-${i}`}>
-                              <a
-                                href={resolveMediaUrl(f.url)}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="flex items-center gap-2 p-2 rounded-lg border border-slate-100 hover:bg-slate-50"
-                              >
-                                <FileText className="h-4 w-4 text-sky-600 shrink-0" />
-                                <span className="truncate text-slate-700">{f.name || 'Tệp'}</span>
-                              </a>
-                            </li>
-                          ))}
-                          {mediaBundle.files.length === 0 && <p className="text-slate-400 text-center py-6">Chưa có tệp</p>}
-                        </ul>
-                      )}
-                      {rightSection === 'links' && (
-                        <ul className="space-y-1">
-                          {mediaBundle.links.map((l) => (
-                            <li key={l.url}>
-                              <a
-                                href={l.url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="flex items-start gap-2 p-2 rounded-lg border border-slate-100 hover:bg-slate-50 text-sky-700"
-                              >
-                                <ExternalLink className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                                <span className="break-all">{l.label}</span>
-                              </a>
-                            </li>
-                          ))}
-                          {mediaBundle.links.length === 0 && <p className="text-slate-400 text-center py-6">Chưa có link trong tin nhắn</p>}
-                        </ul>
-                      )}
-                    </div>
-                  </aside>
+                  <MessengerConversationDetailPanel
+                    selected={selected}
+                    groupDetail={groupDetail}
+                    groupMembers={groupMembers}
+                    mediaBundle={mediaBundle}
+                    messages={messages}
+                    selectedGroupId={selectedGroupId}
+                    uid={uid}
+                    rightSection={rightSection}
+                    onSectionChange={setRightSection}
+                    canManageGroup={canManageGroup}
+                    presenceByUser={presenceByUser}
+                    pinned={!!selected?.pinned}
+                    busyAvatar={busyAvatar}
+                    busyMember={busyMember}
+                    avatarSrc={threadAvatarSrc(selected)}
+                    groupAvatarInputRef={groupAvatarInputRef}
+                    onAddMember={openAddMemberModal}
+                    onRemoveMember={onRemoveMember}
+                    onChangeMemberRole={onChangeMemberRole}
+                    onChangeGroupAvatar={onChangeGroupAvatar}
+                    onRenameGroup={renameGroup}
+                    onTogglePin={setPinnedForSelected}
+                    onLeaveGroup={() => void leaveSelectedGroup()}
+                    onGroupCall={(kind) => setGroupCallPicker({ kind })}
+                    canCall={callCapabilities.canCall}
+                    canVideo={callCapabilities.canVideo}
+                    onDirectCall={() => {
+                      if (!callCapabilities.canCall || !selected?.peer_id) return;
+                      startCall(
+                        { id: selected.peer_id, name: selected.title, avatar: selected.peer_avatar },
+                        { groupId: selectedGroupId },
+                      );
+                    }}
+                    onDirectVideo={() => {
+                      if (!callCapabilities.canVideo || !selected?.peer_id) return;
+                      startCall(
+                        { id: selected.peer_id, name: selected.title, avatar: selected.peer_avatar },
+                        { video: true, groupId: selectedGroupId },
+                      );
+                    }}
+                  />
                 )}
               </div>
             </>
