@@ -219,8 +219,12 @@ export function MessengerDockProvider({ children }) {
         setUnreadByGroupId((prev) => {
           const next = { ...prev };
           for (const g of data) {
-            const n = Number(g?.unread_count) || 0;
-            if (g?.id && n > 0) next[g.id] = n;
+            if (!g?.id) continue;
+            const serverN = Number(g?.unread_count) || 0;
+            const localN = Number(prev[g.id]) || 0;
+            const merged = Math.max(serverN, localN);
+            if (merged > 0) next[g.id] = merged;
+            else delete next[g.id];
           }
           return next;
         });
@@ -246,10 +250,32 @@ export function MessengerDockProvider({ children }) {
 
   const markGroupRead = useCallback((groupId, { skipPatch = false } = {}) => {
     if (!groupId) return;
-    setUnreadByGroupId((prev) => ({ ...prev, [groupId]: 0 }));
+    setUnreadByGroupId((prev) => {
+      if (!prev[groupId]) return prev;
+      const next = { ...prev };
+      delete next[groupId];
+      return next;
+    });
     if (skipPatch) return;
     // Đồng bộ read receipt lên server để lần hydrate sau không khôi phục badge.
     api.patch(`/messenger/groups/${groupId}/read`).catch(() => { /* ignore */ });
+  }, []);
+
+  /** Gộp unread_count từ GET /messenger/groups với số đang giữ local (realtime). */
+  const syncUnreadFromGroups = useCallback((apiList) => {
+    if (!Array.isArray(apiList)) return;
+    setUnreadByGroupId((prev) => {
+      const next = { ...prev };
+      for (const g of apiList) {
+        if (!g?.id) continue;
+        const serverN = Number(g?.unread_count) || 0;
+        const localN = Number(prev[g.id]) || 0;
+        const merged = Math.max(serverN, localN);
+        if (merged > 0) next[g.id] = merged;
+        else delete next[g.id];
+      }
+      return next;
+    });
   }, []);
 
   const markDeptRead = useCallback((deptId) => {
@@ -351,9 +377,9 @@ export function MessengerDockProvider({ children }) {
   );
 
   const openMessengerGroupChat = useCallback(
-    (g) => {
+    (g, { markRead = true } = {}) => {
       if (!g?.id) return;
-      markGroupRead(g.id);
+      if (markRead) markGroupRead(g.id);
       const isDirect = !!g.is_direct;
       const peerUserId = g.peer_id || g.peerUserId || null;
       const title = isDirect
@@ -563,22 +589,24 @@ export function MessengerDockProvider({ children }) {
         markGroupRead(gid);
         return;
       }
-      if ((presenceGroupRef.current.get(gid) || 0) > 0) {
+      const activelyViewing =
+        (presenceGroupRef.current.get(gid) || 0) > 0 ||
+        windowsRef.current.some(
+          (w) => w.chatType === 'messenger_group' && w.groupId === gid && !w.minimized,
+        );
+      if (activelyViewing) {
         markGroupRead(gid);
         return;
       }
-      const expandedDock = windowsRef.current.some(
-        (w) => w.chatType === 'messenger_group' && w.groupId === gid && !w.minimized,
-      );
-      if (expandedDock) {
-        markGroupRead(gid);
-        return;
-      }
+      setUnreadByGroupId((prev) => ({
+        ...prev,
+        [gid]: (Number(prev[gid]) || 0) + 1,
+      }));
       const groupTitle = msg.group?.name || msg.group_name || 'Nhóm chat';
       const preview =
         msg.content || (Array.isArray(msg.attachments) && msg.attachments.length ? '[Tệp đính kèm]' : '');
       const senderName = msg.user?.full_name || 'Ai đó';
-      openMessengerGroupChat({ id: gid, name: groupTitle, title: groupTitle });
+      openMessengerGroupChat({ id: gid, name: groupTitle, title: groupTitle }, { markRead: false });
       if (isNotificationTypeEnabled('messenger_chat', 'messenger_group')) {
         void alertIncomingNotification({ type: 'messenger_chat', entityType: 'messenger_group' });
       }
@@ -655,6 +683,7 @@ export function MessengerDockProvider({ children }) {
       markLeadRead,
       markGroupRead,
       markDeptRead,
+      syncUnreadFromGroups,
       registerLeadChatPresence,
       registerMessengerGroupPresence,
       registerDepartmentChatPresence,
@@ -675,6 +704,7 @@ export function MessengerDockProvider({ children }) {
       markLeadRead,
       markGroupRead,
       markDeptRead,
+      syncUnreadFromGroups,
       registerLeadChatPresence,
       registerMessengerGroupPresence,
       registerDepartmentChatPresence,

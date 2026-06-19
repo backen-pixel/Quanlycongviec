@@ -200,7 +200,7 @@ function buildMessengerThreads(apiList, lsMessengerRows, pinnedGroupIds) {
 export default function MessengerHubPage() {
   const { user, socket } = useAuth();
   const uid = user?.userId || user?.id;
-  const { markGroupRead, syncHubThreadLeadIds, syncHubMessengerGroupIds, unreadByGroupId } =
+  const { markGroupRead, syncHubThreadLeadIds, syncHubMessengerGroupIds, syncUnreadFromGroups, unreadByGroupId } =
     useMessengerDock();
   const { startCall, startGroupCall, joinGroupCall, status: callStatus, callId: currentCallId } = useCall();
   /** Modal chọn thành viên trước khi bắt đầu cuộc gọi nhóm. */
@@ -268,10 +268,11 @@ export default function MessengerHubPage() {
     ])
       .then(([{ data: apiList }, { data: pinPayload }]) => {
         const pinnedIds = pinPayload?.group_ids || [];
+        syncUnreadFromGroups(apiList);
         setThreads(buildMessengerThreads(apiList, lsMessenger, pinnedIds));
       })
       .catch(() => setThreads(buildMessengerThreads([], lsMessenger, [])));
-  }, [uid]);
+  }, [uid, syncUnreadFromGroups]);
 
   useEffect(() => {
     if (!uid) return;
