@@ -5,7 +5,7 @@ import { useAuth } from '../lib/auth';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import { LeadChatTab, MessengerGroupChatTab } from './LeadChatTabs';
 import DepartmentChatBubble from './DepartmentChatBubble';
-import { X, Minus, Maximize2, Users, Building2 } from 'lucide-react';
+import { X, Minus, Maximize2, Users, Building2, Pin } from 'lucide-react';
 import api from '../lib/api';
 import { publicFileUrl } from '../lib/publicFileUrl';
 import OnlineStatusDot, { getUserPresence } from './OnlineStatusDot';
@@ -408,6 +408,8 @@ export default function MessengerDock() {
     }
   }, []);
 
+  const pinnedGroupIdSet = useMemo(() => new Set(pinnedGroupIds.map(String)), [pinnedGroupIds]);
+
   const groupAvatarById = useMemo(() => {
     const m = new Map();
     for (const g of groups) {
@@ -491,7 +493,11 @@ export default function MessengerDock() {
   };
 
   const onDockItemPin = (item, e) => {
-    if (item.rawGroup) void toggleGroupPin(item.rawGroup.id, item.pinned, e);
+    e?.stopPropagation?.();
+    e?.preventDefault?.();
+    const gid = item.groupId ?? item.rawGroup?.id ?? item.rawWindow?.groupId;
+    if (!gid) return;
+    void toggleGroupPin(gid, pinnedGroupIdSet.has(String(gid)), e);
   };
 
   const dockShortcutIdSet = useMemo(
@@ -544,15 +550,17 @@ export default function MessengerDock() {
               : 0;
       items.push({
         key: w.windowKey,
-        kind: w.chatType === 'department' ? 'department' : 'window',
+        kind: w.chatType === 'department' ? 'department' : w.chatType === 'messenger_group' ? (w.isDirect ? 'direct' : 'group') : 'window',
         title: w.title || w.code || 'Chat',
         avatar: w.avatar || (w.groupId ? groupAvatarById.get(String(w.groupId)) : null),
         peerId: w.peerUserId || (w.groupId ? groupPeerById.get(String(w.groupId)) : null),
+        groupId: w.chatType === 'messenger_group' ? w.groupId : null,
         unread: n,
-        pinned: false,
+        pinned: w.groupId ? pinSet.has(String(w.groupId)) : false,
         department: w.chatType === 'department' ? 'Phòng ban' : w.chatType === 'lead' ? 'Lead / CRM' : null,
         color: w.color || null,
         lastMessageAt: w.lastMessageAt || w.updatedAt || null,
+        lastPreview: w.groupId ? normalizeMessengerPreviewText(groups.find((g) => String(g.id) === String(w.groupId))?.last_message) || '' : '',
         rawWindow: w,
       });
     }
@@ -700,6 +708,36 @@ export default function MessengerDock() {
                 >
                   <Maximize2 className="h-4 w-4" />
                 </Link>
+              ) : w.chatType === 'messenger_group' && w.groupId ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={(e) =>
+                      void toggleGroupPin(w.groupId, pinnedGroupIdSet.has(String(w.groupId)), e)
+                    }
+                    className={`p-1.5 rounded-lg transition ${
+                      pinnedGroupIdSet.has(String(w.groupId))
+                        ? 'bg-white/25 text-amber-200 hover:bg-white/30'
+                        : 'hover:bg-white/20'
+                    }`}
+                    title={
+                      pinnedGroupIdSet.has(String(w.groupId))
+                        ? 'Bỏ ghim trên thanh chat nhanh'
+                        : 'Ghim lên thanh chat nhanh'
+                    }
+                  >
+                    <Pin
+                      className={`h-4 w-4 ${pinnedGroupIdSet.has(String(w.groupId)) ? 'fill-current' : ''}`}
+                    />
+                  </button>
+                  <Link
+                    to={`/crm/messenger?openGroup=${encodeURIComponent(w.groupId)}`}
+                    className="p-1.5 rounded-lg hover:bg-white/20 transition"
+                    title={w.isDirect ? 'Mở chat 1-1 trong trang Nhóm chat' : 'Mở nhóm chat trong trang Nhóm chat'}
+                  >
+                    <Maximize2 className="h-4 w-4" />
+                  </Link>
+                </>
               ) : (
                 <Link
                   to="/crm/messenger"

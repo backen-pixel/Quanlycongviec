@@ -303,13 +303,12 @@ export default function MessengerHubPage() {
     void reloadMessengerThreads();
   }, [uid, reloadMessengerThreads]);
 
-  // Khi mở từ bong bóng chat (overlay WebView) với ?openGroup=ID
+  // Mở hội thoại từ bong bóng chat / URL ?openGroup=
   useEffect(() => {
     const targetId = searchParams.get('openGroup');
-    if (!targetId || !threads.length) return;
-    const found = threads.find((t) => t.kind === 'messenger' && String(t.groupId) === String(targetId));
-    if (found) setSelectedGroupId(targetId);
-  }, [searchParams, threads]);
+    if (!targetId) return;
+    setSelectedGroupId(targetId);
+  }, [searchParams]);
 
   useEffect(() => {
     const onLeft = (e) => {
@@ -1317,7 +1316,7 @@ export default function MessengerHubPage() {
               </div>
           </div>
           ) : null}
-          <div className="flex-1 overflow-y-auto px-2 py-2 [scrollbar-width:thin]">
+          <div className="flex-1 overflow-y-auto overscroll-contain px-2 py-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             {filteredThreads.length === 0 && (
               <div className="p-8 text-center">
                 <div className="mx-auto w-14 h-14 mb-3 rounded-2xl bg-violet-100 flex items-center justify-center">
@@ -1337,9 +1336,9 @@ export default function MessengerHubPage() {
                   key={threadRowKey(t)}
                   role="presentation"
                   onClick={() => openMessengerThread(t)}
-                  className={`group w-full flex items-start gap-3 px-3 py-3 rounded-xl mb-0.5 text-left cursor-pointer transition-all border-l-[3px] ${
+                  className={`group w-full flex items-start gap-3 px-3 py-3 rounded-xl mb-0.5 text-left cursor-pointer transition-all border-l-[4px] ${
                     isSel
-                      ? 'bg-violet-50 border-violet-600 shadow-sm ring-1 ring-violet-100'
+                      ? 'bg-violet-100/95 border-violet-700 shadow-md shadow-violet-200/50 ring-1 ring-violet-300/70'
                       : unread > 0
                         ? 'bg-violet-50/40 border-transparent hover:bg-violet-50/70'
                         : 'border-transparent hover:bg-slate-50'
@@ -1368,7 +1367,15 @@ export default function MessengerHubPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className={`text-[14px] truncate ${unread > 0 ? 'font-bold text-slate-900' : 'font-semibold text-slate-800'}`}>
+                      <span
+                        className={`text-[14px] truncate ${
+                          isSel
+                            ? 'font-bold text-violet-950'
+                            : unread > 0
+                              ? 'font-bold text-slate-900'
+                              : 'font-semibold text-slate-800'
+                        }`}
+                      >
                         {t.title}
                       </span>
                       {!t.is_direct && (
@@ -1387,11 +1394,13 @@ export default function MessengerHubPage() {
                       return (
                         <p
                           className={`text-[12px] truncate mt-1 px-2 py-1 rounded-lg border transition-colors ${
-                            unread > 0
-                              ? 'font-semibold text-violet-900 bg-violet-100/90 border-violet-200/80 shadow-sm'
-                              : hasPreview
-                                ? 'font-medium text-slate-700 bg-slate-50 border-slate-100'
-                                : 'text-slate-500 border-transparent px-0 py-0 bg-transparent'
+                            isSel
+                              ? 'font-semibold text-violet-900 bg-violet-200/55 border-violet-300/80'
+                              : unread > 0
+                                ? 'font-semibold text-violet-900 bg-violet-100/90 border-violet-200/80 shadow-sm'
+                                : hasPreview
+                                  ? 'font-medium text-slate-700 bg-slate-50 border-slate-100'
+                                  : 'text-slate-500 border-transparent px-0 py-0 bg-transparent'
                           }`}
                           title={previewLabel}
                         >
@@ -1401,7 +1410,11 @@ export default function MessengerHubPage() {
                     })()}
                   </div>
                   <div className="flex flex-col items-end gap-1.5 shrink-0 min-w-[44px]">
-                    <span className={`text-[11px] whitespace-nowrap ${unread > 0 ? 'text-violet-700 font-semibold' : 'text-slate-400'}`}>
+                    <span
+                      className={`text-[11px] whitespace-nowrap ${
+                        isSel ? 'text-violet-800 font-bold' : unread > 0 ? 'text-violet-700 font-semibold' : 'text-slate-400'
+                      }`}
+                    >
                       {formatRelativeTime(t.lastMessageAt || t.updatedAt)}
                     </span>
                     {unread > 0 ? (
