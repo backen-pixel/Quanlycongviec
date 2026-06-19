@@ -56,6 +56,7 @@ const {
   notifyDealCommentParticipants,
 } = require('../helpers/dealCommentNotifications');
 const { userCanAccessCrmLeadAsParticipant } = require('../helpers/crmLeadParticipantAccess');
+const { isVptCompanyCommercialDocViewer } = require('../helpers/dealParticipantProduction');
 const { DEFAULT_CHECKLISTS } = require('../helpers/defaultChecklists');
 const { generateFlowTasks, generateStepTasks } = require('../helpers/generateFlowTasks');
 const { autoCreateProjectFromWonDeal } = require('../helpers/autoDealWonProject');
@@ -267,6 +268,50 @@ function scopedCrmCompanyIdForWrite(req) {
   if (sac) return sac;
   if (isCrmRegionAdminUser(req.user) && req.user.company_id) return String(req.user.company_id).trim();
   return null;
+}
+
+/** Báo giá / đơn hàng / hóa đơn — list: admin công ty & NV theo JWT; admin hệ thống theo query (tùy chọn). */
+function resolveCommercialDocListCompanyScope(req, res, queryCompanyId) {
+  const sac = scopedAdminCompanyId(req);
+  if (sac) {
+    return { ok: true, companyId: sac, restrictToCreator: false };
+  }
+  if (userIsAdmin(req.user?.role)) {
+    const q = queryCompanyId && String(queryCompanyId).trim();
+    const companyId = (q && /^[0-9a-f-]{36}$/i.test(q)) ? q : null;
+    return { ok: true, companyId, restrictToCreator: false };
+  }
+  const cid = req.user?.company_id;
+  if (!cid) {
+    if (res) {
+      res.status(400).json({ error: 'Thiếu company_id của user. Vui lòng đăng xuất/đăng nhập lại hoặc gán company cho tài khoản.' });
+    }
+    return { ok: false, companyId: null, restrictToCreator: false };
+  }
+  const restrictToCreator = !isVptCompanyCommercialDocViewer(req.user);
+  return { ok: true, companyId: String(cid).trim(), restrictToCreator };
+}
+
+/** Báo giá / đơn hàng / hóa đơn — ghi: khóa company_id theo tài khoản (admin công ty / NV). */
+function enforceCommercialDocCompanyOnWrite(req, res, payloadCompanyId, entityLabel = 'Chứng từ') {
+  const sac = scopedAdminCompanyId(req);
+  if (!userIsAdmin(req.user?.role)) {
+    const uc = requireUserCompanyId(req, res);
+    if (!uc) return { ok: false, companyId: null };
+    if (payloadCompanyId && String(payloadCompanyId) !== String(uc)) {
+      res.status(403).json({ error: `${entityLabel} phải cùng công ty với tài khoản` });
+      return { ok: false, companyId: null };
+    }
+    return { ok: true, companyId: payloadCompanyId || uc };
+  }
+  if (sac) {
+    if (payloadCompanyId && String(payloadCompanyId) !== String(sac)) {
+      res.status(403).json({ error: `${entityLabel} phải cùng công ty với tài khoản` });
+      return { ok: false, companyId: null };
+    }
+    return { ok: true, companyId: payloadCompanyId || sac };
+  }
+  return { ok: true, companyId: payloadCompanyId || null };
 }
 
 function requireUserCompanyId(req, res) {
@@ -9133,14 +9178,17 @@ async function applyLeadOrCustomerSalesFilter(queryBuilder, leadIdVal) {
   return queryBuilder.eq('lead_id', lid);
 }
 
-/** Admin hệ thống xem/sửa mọi báo giá; NV chỉ báo giá do chính họ tạo (cùng company). */
+/** Admin hệ thống xem/sửa mọi báo giá; admin công ty toàn công ty; NV chỉ báo giá do mình tạo. */
 function userMayAccessQuotationRow(req, row) {
   if (!row) return false;
+  const sac = scopedAdminCompanyId(req);
+  if (sac) return String(row.company_id || '') === String(sac);
   if (userIsAdmin(req.user?.role)) return true;
   const uid = req.user?.userId;
   const cid = req.user?.company_id;
   if (!uid || !cid) return false;
   if (String(row.company_id || '') !== String(cid)) return false;
+  if (isVptCompanyCommercialDocViewer(req.user)) return true;
   return String(row.created_by || '') === String(uid);
 }
 
@@ -9162,14 +9210,10 @@ r.get('/quotations', async (req, res) => {
       )
       .order('created_at', { ascending: false })
       .limit(parseInt(limit));
-    if (!userIsAdmin(req.user?.role)) {
-      const cid = requireUserCompanyId(req, res);
-      if (!cid) return;
-      q = q.eq('company_id', cid);
-      if (req.user?.userId) q = q.eq('created_by', req.user.userId);
-    } else if (coQ && /^[0-9a-f-]{36}$/i.test(String(coQ))) {
-      q = q.eq('company_id', coQ);
-    }
+    const qScope = resolveCommercialDocListCompanyScope(req, res, coQ);
+    if (!qScope.ok) return;
+    if (qScope.companyId) q = q.eq('company_id', qScope.companyId);
+    if (qScope.restrictToCreator && req.user?.userId) q = q.eq('created_by', req.user.userId);
     if (regQ && /^[0-9a-f-]{36}$/i.test(String(regQ))) q = q.eq('region_id', regQ);
     if (userIsAdmin(req.user?.role) && createdByQ && /^[0-9a-f-]{36}$/i.test(String(createdByQ))) {
       q = q.eq('created_by', createdByQ);
@@ -9192,10 +9236,8 @@ r.get('/quotations', async (req, res) => {
         )
         .order('created_at', { ascending: false })
         .limit(parseInt(limit));
-      if (!userIsAdmin(req.user?.role)) {
-        q2 = q2.eq('company_id', req.user.company_id);
-        if (req.user?.userId) q2 = q2.eq('created_by', req.user.userId);
-      } else if (coQ && /^[0-9a-f-]{36}$/i.test(String(coQ))) q2 = q2.eq('company_id', coQ);
+      if (qScope.companyId) q2 = q2.eq('company_id', qScope.companyId);
+      if (qScope.restrictToCreator && req.user?.userId) q2 = q2.eq('created_by', req.user.userId);
       if (userIsAdmin(req.user?.role) && createdByQ && /^[0-9a-f-]{36}$/i.test(String(createdByQ))) {
         q2 = q2.eq('created_by', createdByQ);
       }
@@ -9341,14 +9383,9 @@ r.post('/quotations', async (req, res) => {
       if (lrow?.company_id) commercialCo = lrow.company_id;
       if (lrow?.region_id) leadRegionId = lrow.region_id;
     }
-    if (!userIsAdmin(req.user?.role)) {
-      const uc = requireUserCompanyId(req, res);
-      if (!uc) return;
-      if (commercialCo && String(commercialCo) !== String(uc)) {
-        return res.status(403).json({ error: 'Báo giá phải cùng công ty với tài khoản' });
-      }
-      commercialCo = commercialCo || uc;
-    }
+    const qCoWrite = enforceCommercialDocCompanyOnWrite(req, res, commercialCo, 'Báo giá');
+    if (!qCoWrite.ok) return;
+    commercialCo = qCoWrite.companyId;
     quoteData.company_id = commercialCo;
 
     // region_id: nếu client gửi → kiểm tra cùng company; nếu rỗng → kế thừa từ lead.
@@ -9693,14 +9730,9 @@ r.put('/quotations/:id', async (req, res) => {
       if (lrowPut?.company_id) commercialCoPut = lrowPut.company_id;
       if (lrowPut?.region_id) leadRegionIdPut = lrowPut.region_id;
     }
-    if (!userIsAdmin(req.user?.role)) {
-      const uc = requireUserCompanyId(req, res);
-      if (!uc) return;
-      if (commercialCoPut && String(commercialCoPut) !== String(uc)) {
-        return res.status(403).json({ error: 'Báo giá phải cùng công ty với tài khoản' });
-      }
-      commercialCoPut = commercialCoPut || uc;
-    }
+    const qCoPut = enforceCommercialDocCompanyOnWrite(req, res, commercialCoPut, 'Báo giá');
+    if (!qCoPut.ok) return;
+    commercialCoPut = qCoPut.companyId;
     quoteData.company_id = commercialCoPut;
 
     // region_id (PUT): nếu client gửi region_id rỗng & lead có region → kế thừa; nếu có → kiểm tra cùng company.
@@ -9939,13 +9971,9 @@ r.get('/orders', async (req, res) => {
     let q = supabase.from('orders')
       .select('*, customer:customers(id, full_name, phone), creator:users!orders_created_by_fkey(id, full_name)')
       .order('created_at', { ascending: false }).limit(parseInt(limit));
-    if (!userIsAdmin(req.user?.role)) {
-      const cid = requireUserCompanyId(req, res);
-      if (!cid) return;
-      q = q.eq('company_id', cid);
-    } else if (coQ && /^[0-9a-f-]{36}$/i.test(String(coQ))) {
-      q = q.eq('company_id', coQ);
-    }
+    const oScope = resolveCommercialDocListCompanyScope(req, res, coQ);
+    if (!oScope.ok) return;
+    if (oScope.companyId) q = q.eq('company_id', oScope.companyId);
     if (status) q = q.eq('status', status);
     if (search) q = q.or(`code.ilike.%${search}%,title.ilike.%${search}%,customer_name.ilike.%${search}%`);
     if (lead_id && /^[0-9a-f-]{36}$/i.test(String(lead_id))) q = await applyLeadOrCustomerSalesFilter(q, lead_id);
@@ -10046,14 +10074,9 @@ r.post('/orders', async (req, res) => {
         if (l2?.company_id) orderCo = l2.company_id;
       }
     }
-    if (!userIsAdmin(req.user?.role)) {
-      const uc = requireUserCompanyId(req, res);
-      if (!uc) return;
-      if (orderCo && String(orderCo) !== String(uc)) {
-        return res.status(403).json({ error: 'Đơn hàng phải cùng công ty với tài khoản' });
-      }
-      orderCo = orderCo || uc;
-    }
+    const oCoWrite = enforceCommercialDocCompanyOnWrite(req, res, orderCo, 'Đơn hàng');
+    if (!oCoWrite.ok) return;
+    orderCo = oCoWrite.companyId;
     orderData.company_id = orderCo;
 
     const processedItems = (items || []).map(item => {
@@ -10190,13 +10213,9 @@ r.get('/invoices', async (req, res) => {
     let q = supabase.from('invoices')
       .select('*, customer:customers(id, full_name, phone), creator:users!invoices_created_by_fkey(id, full_name)')
       .order('created_at', { ascending: false }).limit(parseInt(limit));
-    if (!userIsAdmin(req.user?.role)) {
-      const cid = requireUserCompanyId(req, res);
-      if (!cid) return;
-      q = q.eq('company_id', cid);
-    } else if (coQ && /^[0-9a-f-]{36}$/i.test(String(coQ))) {
-      q = q.eq('company_id', coQ);
-    }
+    const iScope = resolveCommercialDocListCompanyScope(req, res, coQ);
+    if (!iScope.ok) return;
+    if (iScope.companyId) q = q.eq('company_id', iScope.companyId);
     if (status) q = q.eq('status', status);
     if (search) q = q.or(`code.ilike.%${search}%,title.ilike.%${search}%,customer_name.ilike.%${search}%`);
     if (lead_id && /^[0-9a-f-]{36}$/i.test(String(lead_id))) q = await applyLeadOrCustomerSalesFilter(q, lead_id);
@@ -10243,15 +10262,10 @@ r.post('/invoices', async (req, res) => {
       const { data: qr } = await supabase.from('quotations').select('company_id').eq('id', invoiceData.quotation_id).maybeSingle();
       if (qr?.company_id) invCo = qr.company_id;
     }
-    if (!userIsAdmin(req.user?.role)) {
-      const uc = requireUserCompanyId(req, res);
-      if (!uc) return;
-      if (invCo && String(invCo) !== String(uc)) {
-        return res.status(403).json({ error: 'Hóa đơn phải cùng công ty với tài khoản' });
-      }
-      invCo = invCo || uc;
-    }
-    
+    const iCoWrite = enforceCommercialDocCompanyOnWrite(req, res, invCo, 'Hóa đơn');
+    if (!iCoWrite.ok) return;
+    invCo = iCoWrite.companyId;
+
     const { data: inv, error } = await supabase.from('invoices').insert({
       code,
       company_id: invCo,
@@ -10988,12 +11002,9 @@ r.get('/customers-overview/:id', async (req, res) => {
 r.get('/products-list', async (req, res) => {
   try {
     const rawQ = req.query.company_id && String(req.query.company_id).trim();
-    let effectiveCompanyId = rawQ || null;
-    if (!userIsAdmin(req.user?.role)) {
-      const cid = requireUserCompanyId(req, res);
-      if (!cid) return;
-      effectiveCompanyId = cid;
-    }
+    const pScope = resolveCommercialDocListCompanyScope(req, res, rawQ);
+    if (!pScope.ok) return;
+    const effectiveCompanyId = pScope.companyId;
     let q = supabase.from('products').select('*').order('name');
     if (effectiveCompanyId) q = q.eq('company_id', effectiveCompanyId);
     const { data, error } = await q;
