@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bot,
   Building2,
@@ -74,6 +74,8 @@ export default function MessengerCreateGroupModal({
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [aiBot, setAiBot] = useState(null);
   const [nameFocused, setNameFocused] = useState(false);
+  const onPresenceUpdateRef = useRef(onPresenceUpdate);
+  onPresenceUpdateRef.current = onPresenceUpdate;
 
   useEffect(() => {
     if (!open) return;
@@ -97,10 +99,10 @@ export default function MessengerCreateGroupModal({
         const users = (r.data?.users || []).filter((u) => String(u.id || u.user_id) !== String(uid));
         setCompanyUsers(users);
         const ids = users.map((u) => u.id || u.user_id).filter(Boolean);
-        if (ids.length && onPresenceUpdate) {
+        if (ids.length) {
           api
             .post('/users/presence', { user_ids: ids })
-            .then((pr) => onPresenceUpdate(pr.data?.presence || {}))
+            .then((pr) => onPresenceUpdateRef.current?.(pr.data?.presence || {}))
             .catch(() => {});
         }
       })
@@ -113,7 +115,7 @@ export default function MessengerCreateGroupModal({
     return () => {
       cancelled = true;
     };
-  }, [open, createCompanyId, uid, onPresenceUpdate]);
+  }, [open, createCompanyId, uid]);
 
   const pickIdSet = useMemo(() => new Set(picks.map((p) => String(p.user_id))), [picks]);
 
@@ -188,10 +190,10 @@ export default function MessengerCreateGroupModal({
   const canCreate = groupName.trim().length > 0 && !creating;
 
   return (
-    <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-900/55 backdrop-blur-sm p-4">
-      <div className="flex w-full max-w-[920px] max-h-[min(92vh,760px)] flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-2xl ring-1 ring-black/5">
+    <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-900/55 backdrop-blur-sm p-3 sm:p-4">
+      <div className="flex h-[min(90vh,680px)] w-full max-w-[920px] flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-2xl ring-1 ring-black/5">
         {/* Header */}
-        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 bg-gradient-to-r from-violet-50 via-white to-indigo-50 px-5 py-4">
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 bg-gradient-to-r from-violet-50 via-white to-indigo-50 px-4 py-3 sm:px-5 sm:py-4">
           <div className="flex items-start gap-3 min-w-0">
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-600 to-indigo-600 text-white shadow-md">
               <Users className="h-5 w-5" />
@@ -214,14 +216,15 @@ export default function MessengerCreateGroupModal({
         </div>
 
         {/* Body — two columns */}
-        <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[1fr_300px] divide-y lg:divide-y-0 lg:divide-x divide-slate-100">
+        <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[1fr_280px] lg:divide-x divide-slate-100">
           {/* Left — group info & pick list */}
-          <div className="flex min-h-0 flex-col overflow-hidden p-5">
-            <p className="text-[13px] font-bold text-slate-800 mb-3">Thông tin nhóm</p>
+          <div className="flex min-h-0 flex-col overflow-hidden p-4 sm:p-5">
+            <p className="text-[13px] font-bold text-slate-800 mb-2 shrink-0">Thông tin nhóm</p>
 
+            <div className="shrink-0 space-y-2 mb-2">
             {/* Group name — highlighted */}
             <div
-              className={`rounded-xl border-2 p-3 mb-3 transition ${
+              className={`rounded-xl border-2 p-2.5 transition ${
                 nameFocused
                   ? 'border-violet-400 bg-violet-50/60 shadow-[0_0_0_3px_rgba(139,92,246,0.12)]'
                   : 'border-violet-200 bg-violet-50/40'
@@ -250,7 +253,7 @@ export default function MessengerCreateGroupModal({
             </div>
 
             {/* Company — highlighted */}
-            <div className="rounded-xl border-2 border-sky-200 bg-sky-50/50 p-3 mb-3">
+            <div className="rounded-xl border-2 border-sky-200 bg-sky-50/50 p-2.5">
               <label className="text-[12px] font-semibold text-slate-700 mb-1.5 block">Chọn công ty</label>
               <div className="relative">
                 <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-sky-600 pointer-events-none" />
@@ -272,7 +275,7 @@ export default function MessengerCreateGroupModal({
             </div>
 
             {/* Actions row */}
-            <div className="flex flex-wrap items-center gap-2 mb-3">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 disabled={creating || selectingCompanyMembers || !createCompanyId}
@@ -301,7 +304,7 @@ export default function MessengerCreateGroupModal({
             </div>
 
             {/* Search */}
-            <div className="relative mb-3">
+            <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
               <input
                 value={userPickQ}
@@ -314,7 +317,7 @@ export default function MessengerCreateGroupModal({
 
             {/* AI promo */}
             {aiBot?.id ? (
-              <div className="flex items-center gap-3 rounded-xl border border-violet-200 bg-violet-50/70 px-3 py-2.5 mb-3">
+              <div className="flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50/70 px-2.5 py-2">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-violet-600 shadow-sm">
                   <Bot className="h-5 w-5" />
                 </div>
@@ -334,9 +337,10 @@ export default function MessengerCreateGroupModal({
                 </button>
               </div>
             ) : null}
+            </div>
 
-            {/* Member list */}
-            <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-slate-200 bg-white [scrollbar-width:thin]">
+            {/* Member list — luôn chiếm phần còn lại và scroll */}
+            <div className="mt-2 min-h-[140px] flex-1 overflow-y-auto rounded-xl border border-slate-200 bg-white [scrollbar-width:thin]">
               {loadingUsers ? (
                 <div className="flex items-center justify-center gap-2 py-10 text-sm text-slate-500">
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -406,8 +410,8 @@ export default function MessengerCreateGroupModal({
           </div>
 
           {/* Right — selected members */}
-          <div className="flex min-h-0 flex-col bg-slate-50/60 p-4">
-            <div className="flex items-center gap-2 mb-3">
+          <div className="flex min-h-0 flex-col border-t border-slate-100 bg-slate-50/60 p-3 sm:p-4 lg:border-t-0">
+            <div className="flex items-center gap-2 mb-2 shrink-0">
               <h3 className="text-[13px] font-bold text-slate-800">Thành viên đã chọn</h3>
               <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-violet-600 px-1.5 text-[11px] font-bold text-white">
                 {picks.length}
@@ -449,7 +453,7 @@ export default function MessengerCreateGroupModal({
               )}
             </div>
 
-            <div className="mt-3 rounded-xl border border-violet-100 bg-violet-50/80 px-3 py-2.5 flex gap-2">
+            <div className="mt-2 shrink-0 rounded-xl border border-violet-100 bg-violet-50/80 px-3 py-2 flex gap-2">
               <Sparkles className="h-4 w-4 shrink-0 text-violet-500 mt-0.5" />
               <p className="text-[11px] text-violet-800/90 leading-relaxed">
                 <span className="font-semibold">Mẹo:</span> Bạn có thể chọn nhiều thành viên cùng lúc bằng{' '}
@@ -460,7 +464,7 @@ export default function MessengerCreateGroupModal({
         </div>
 
         {/* Footer */}
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/80 px-5 py-3">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/80 px-4 py-2.5 sm:px-5 sm:py-3">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700">
               <UsersRound className="h-4 w-4" />

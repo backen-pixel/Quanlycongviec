@@ -35,6 +35,7 @@ import {
   buildMessengerMessagePreview,
   normalizeMessengerPreviewText,
   previewFromMessengerMessages,
+  pickNewestMessengerPreview,
   resolveThreadPreviewLabel,
 } from '../lib/messengerPreview';
 import { isMessengerCallLogMessage } from '../lib/messengerCallLog';
@@ -165,16 +166,18 @@ function threadAvatarSrc(t) {
 }
 
 /** Gộp API /messenger/groups với preview local; ghim lấy từ DB (pinnedGroupIds). */
-function buildMessengerThreads(apiList, lsMessengerRows, pinnedGroupIds) {
+function buildMessengerThreads(apiList, lsMessengerRows, pinnedGroupIds, prevByGid = new Map()) {
   const pinSet = new Set(pinnedGroupIds || []);
   const lsByGid = new Map((lsMessengerRows || []).filter((t) => t.groupId).map((t) => [t.groupId, t]));
   const groups = Array.isArray(apiList) ? apiList : [];
   const mergedMessenger = groups.map((g) => {
     const hit = lsByGid.get(g.id);
-    // Ưu tiên preview API (đến từ RPC v2 — `last_message`), fallback localStorage cuối cùng dùng placeholder.
-    const apiPreview = normalizeMessengerPreviewText(g.last_message);
-    const lsPreview = normalizeMessengerPreviewText(hit?.lastPreview);
-    const preview = apiPreview || lsPreview || '';
+    const prev = prevByGid.get(g.id);
+    const { preview, lastMessageAt } = pickNewestMessengerPreview([
+      { preview: g.last_message, at: g.last_message_at || g.created_at },
+      { preview: hit?.lastPreview, at: hit?.lastMessageAt || hit?.updatedAt },
+      { preview: prev?.lastPreview, at: prev?.lastMessageAt || prev?.updatedAt },
+    ]);
     return {
       kind: 'messenger',
       groupId: g.id,
@@ -189,8 +192,8 @@ function buildMessengerThreads(apiList, lsMessengerRows, pinnedGroupIds) {
       pinned: pinSet.has(g.id),
       lastPreview: preview,
       messageCount: typeof g.message_count === 'number' ? g.message_count : 0,
-      lastMessageAt: g.last_message_at || g.created_at,
-      updatedAt: hit?.updatedAt || g.last_message_at || g.created_at,
+      lastMessageAt: lastMessageAt || g.last_message_at || g.created_at,
+      updatedAt: lastMessageAt || hit?.updatedAt || g.last_message_at || g.created_at,
     };
   });
   const gidSet = new Set(groups.map((g) => g.id));
@@ -278,9 +281,21 @@ export default function MessengerHubPage() {
       .then(([{ data: apiList }, { data: pinPayload }]) => {
         const pinnedIds = pinPayload?.group_ids || [];
         syncUnreadFromGroups(apiList);
-        setThreads(buildMessengerThreads(apiList, lsMessenger, pinnedIds));
+        setThreads((prev) => {
+          const prevByGid = new Map(
+            (prev || []).filter((t) => t.kind === 'messenger' && t.groupId).map((t) => [t.groupId, t]),
+          );
+          return buildMessengerThreads(apiList, lsMessenger, pinnedIds, prevByGid);
+        });
       })
-      .catch(() => setThreads(buildMessengerThreads([], lsMessenger, [])));
+      .catch(() =>
+        setThreads((prev) => {
+          const prevByGid = new Map(
+            (prev || []).filter((t) => t.kind === 'messenger' && t.groupId).map((t) => [t.groupId, t]),
+          );
+          return buildMessengerThreads([], lsMessenger, [], prevByGid);
+        }),
+      );
   }, [uid, syncUnreadFromGroups]);
 
   useEffect(() => {
@@ -362,11 +377,11 @@ export default function MessengerHubPage() {
           if (t.kind !== 'messenger' || t.groupId !== groupId) return t;
           const nextTs = new Date(created_at).getTime();
           const curTs = new Date(t.lastMessageAt || t.updatedAt || 0).getTime();
-          const bumpTime = nextTs >= curTs ? created_at : t.lastMessageAt;
+          if (nextTs < curTs) return t;
           return {
             ...t,
-            updatedAt: bumpTime || t.updatedAt,
-            lastMessageAt: bumpTime || t.lastMessageAt,
+            updatedAt: created_at,
+            lastMessageAt: created_at,
             lastPreview: livePreview || t.lastPreview,
           };
         });
@@ -1363,12 +1378,27 @@ export default function MessengerHubPage() {
                       )}
                       {t.pinned && <Pin className="h-3 w-3 text-amber-500 shrink-0 fill-amber-500" />}
                     </div>
-                    <p className={`text-[12px] truncate mt-0.5 ${unread > 0 ? 'text-slate-700 font-medium' : 'text-slate-500'}`}>
-                      {resolveThreadPreviewLabel(t, {
+                    {(() => {
+                      const previewLabel = resolveThreadPreviewLabel(t, {
                         loadingGroupId: chatLoadingGroupId,
                         forUserId: uid,
-                      }) || '—'}
-                    </p>
+                      }) || '—';
+                      const hasPreview = previewLabel && previewLabel !== '—' && previewLabel !== 'Chưa có tin nhắn';
+                      return (
+                        <p
+                          className={`text-[12px] truncate mt-1 px-2 py-1 rounded-lg border transition-colors ${
+                            unread > 0
+                              ? 'font-semibold text-violet-900 bg-violet-100/90 border-violet-200/80 shadow-sm'
+                              : hasPreview
+                                ? 'font-medium text-slate-700 bg-slate-50 border-slate-100'
+                                : 'text-slate-500 border-transparent px-0 py-0 bg-transparent'
+                          }`}
+                          title={previewLabel}
+                        >
+                          {previewLabel}
+                        </p>
+                      );
+                    })()}
                   </div>
                   <div className="flex flex-col items-end gap-1.5 shrink-0 min-w-[44px]">
                     <span className={`text-[11px] whitespace-nowrap ${unread > 0 ? 'text-violet-700 font-semibold' : 'text-slate-400'}`}>
