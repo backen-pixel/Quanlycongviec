@@ -160,10 +160,18 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
     if (!res.ok) return { updateAvailable: false };
     const data = (await res.json()) as UpdateCheckResult;
 
-    // Máy đã cùng tên bản (2.0.57) → không bắt cập nhật dù versionCode lệch metadata server.
     const localVer = currentVersionName();
+    const localCode = currentVersionCode();
     const latestVer = (data.latestVersion || '').trim();
-    if (localVer && latestVer && compareVersionNames(localVer, latestVer) >= 0) {
+    const latestCode = data.latestVersionCode ?? null;
+
+    // Máy đã >= bản server → không bắt cập nhật (theo tên hoặc versionCode).
+    const upToDateByName = !!(localVer && latestVer && compareVersionNames(localVer, latestVer) >= 0);
+    const upToDateByCode =
+      localCode != null && latestCode != null && Number.isFinite(latestCode) && localCode >= latestCode;
+
+    if (upToDateByName || upToDateByCode) {
+      void clearDismissedUpdate();
       return {
         ...data,
         updateAvailable: false,

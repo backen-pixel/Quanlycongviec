@@ -6,10 +6,11 @@ import {
 } from '@react-navigation/native';
 import { ShareIntentProvider } from 'expo-share-intent';
 import { StatusBar } from 'expo-status-bar';
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import CreateMenuSheet from './src/components/CreateMenuSheet';
+import BubbleChatOverlayLauncher from './src/components/BubbleChatOverlayLauncher';
 import SystemBubbleSync from './src/components/SystemBubbleSync';
 import PermissionBootstrap from './src/components/PermissionBootstrap';
 import VoiceSyncRunner from './src/components/VoiceSyncRunner';
@@ -23,9 +24,14 @@ import { CreateMenuProvider } from './src/context/CreateMenuContext';
 import { MessengerProvider } from './src/context/MessengerContext';
 import { MessengerRealtimeProvider } from './src/context/MessengerRealtimeContext';
 import RootNavigator from './src/navigation/RootNavigator';
-import { navigationRef } from './src/navigation/navigationRef';
+import { navigationRef, resetToBubbleChat } from './src/navigation/navigationRef';
 import LoginScreen from './src/screens/LoginScreen';
 import { ThemeProvider, useColors, useTheme, type ThemeColors } from './src/theme';
+import {
+  getBubbleChatInitialNavState,
+  isBubbleChatNavState,
+} from './src/lib/bubbleNavInitialState';
+import { hasPendingBubbleChat, peekPendingBubbleChatSync } from './src/lib/bubbleChatPending';
 
 function buildNavTheme(Colors: ThemeColors, mode: 'light' | 'dark'): Theme {
   const base = mode === 'dark' ? DarkTheme : DefaultTheme;
@@ -48,11 +54,54 @@ function Gate() {
   const { mode } = useTheme();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const navTheme = useMemo(() => buildNavTheme(Colors, mode), [Colors, mode]);
+  const bubbleInitialState = useMemo(() => getBubbleChatInitialNavState(), []);
+  const [bubbleOverlayUi, setBubbleOverlayUi] = useState(
+    () => isBubbleChatNavState(bubbleInitialState) || hasPendingBubbleChat(),
+  );
+  const bubbleBoot = bubbleOverlayUi || hasPendingBubbleChat();
+
+  useEffect(() => {
+    if (!token || loading) return undefined;
+    if (!hasPendingBubbleChat()) return undefined;
+
+    const open = () => {
+      const pending = peekPendingBubbleChatSync();
+      if (!pending?.threadId || !navigationRef.isReady()) return;
+      resetToBubbleChat(pending.threadId, pending.title);
+    };
+
+    if (navigationRef.isReady()) {
+      open();
+      return undefined;
+    }
+
+    const started = Date.now();
+    const timer = setInterval(() => {
+      if (navigationRef.isReady()) {
+        clearInterval(timer);
+        open();
+      } else if (Date.now() - started > 15000) {
+        clearInterval(timer);
+      }
+    }, 40);
+
+    return () => clearInterval(timer);
+  }, [token, loading]);
+
+  useEffect(() => {
+    if (!navigationRef.isReady()) return undefined;
+    const sync = () => {
+      const route = navigationRef.getCurrentRoute();
+      setBubbleOverlayUi(route?.name === 'BubbleChat');
+    };
+    sync();
+    return navigationRef.addListener('state', sync);
+  }, [token, loading]);
 
   if (loading) {
     return (
-      <View style={[styles.root, styles.center]}>
-        <ActivityIndicator color={Colors.blue} size="large" />
+      <View style={[styles.root, bubbleBoot && styles.rootTransparent, !bubbleBoot && styles.center]}>
+        {!bubbleBoot ? <ActivityIndicator color={Colors.blue} size="large" /> : null}
       </View>
     );
   }
@@ -72,8 +121,12 @@ function Gate() {
         <MessengerProvider>
           <CallProvider>
             <FileActionsProvider>
-            <View style={styles.root}>
-              <NavigationContainer ref={navigationRef} theme={navTheme}>
+            <View style={[styles.root, bubbleOverlayUi && styles.rootTransparent]}>
+              <NavigationContainer
+                ref={navigationRef}
+                theme={navTheme}
+                initialState={bubbleInitialState}
+              >
                 <RootNavigator />
                 <CallScreen />
                 <IncomingCallBridge />
@@ -81,6 +134,7 @@ function Gate() {
               <CreateMenuSheet />
               <PermissionBootstrap />
               <SystemBubbleSync />
+              <BubbleChatOverlayLauncher />
               <VoiceSyncRunner />
             </View>
             </FileActionsProvider>
@@ -130,5 +184,6 @@ export default function App() {
 const makeStyles = (Colors: ThemeColors) =>
   StyleSheet.create({
     root: { flex: 1, backgroundColor: Colors.bg },
+    rootTransparent: { backgroundColor: 'transparent' },
     center: { alignItems: 'center', justifyContent: 'center' },
   });

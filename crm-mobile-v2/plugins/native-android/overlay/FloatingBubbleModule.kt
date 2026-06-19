@@ -294,12 +294,48 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
 
 
 
+  @ReactMethod(isBlockingSynchronousMethod = true)
+  fun peekPendingBubbleChat(): com.facebook.react.bridge.WritableMap? {
+    return readPendingBubbleChatMap(removeAfterRead = false)
+  }
+
   @ReactMethod
-
   fun consumePendingChat(promise: Promise) {
+    try {
+      val map = readPendingBubbleChatMap(removeAfterRead = true)
+      promise.resolve(map)
+    } catch (_: Exception) {
+      promise.resolve(null)
+    }
+  }
 
-    promise.resolve(null)
-
+  private fun readPendingBubbleChatMap(removeAfterRead: Boolean): com.facebook.react.bridge.WritableMap? {
+    val prefs = reactContext.getSharedPreferences(
+      OverlayBubbleService.PREF_NAME,
+      android.content.Context.MODE_PRIVATE,
+    )
+    val raw = prefs.getString(OverlayBubbleService.PREF_PENDING_BUBBLE_CHAT, null)?.trim()
+    if (raw.isNullOrBlank()) return null
+    val obj = try {
+      org.json.JSONObject(raw)
+    } catch (_: Exception) {
+      if (removeAfterRead) prefs.edit().remove(OverlayBubbleService.PREF_PENDING_BUBBLE_CHAT).apply()
+      return null
+    }
+    val ts = obj.optLong("ts", 0L)
+    if (ts > 0L && System.currentTimeMillis() - ts > 120_000L) {
+      prefs.edit().remove(OverlayBubbleService.PREF_PENDING_BUBBLE_CHAT).apply()
+      return null
+    }
+    val threadId = obj.optString("threadId", "").trim()
+    if (threadId.isBlank()) return null
+    val map = com.facebook.react.bridge.Arguments.createMap()
+    map.putString("threadId", threadId)
+    map.putString("title", obj.optString("title", ""))
+    if (removeAfterRead) {
+      prefs.edit().remove(OverlayBubbleService.PREF_PENDING_BUBBLE_CHAT).apply()
+    }
+    return map
   }
 
 
@@ -308,7 +344,9 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
 
   fun minimizeApp() {
 
-    reactContext.currentActivity?.moveTaskToBack(true)
+    val act = reactContext.currentActivity ?: return
+    act.moveTaskToBack(true)
+    act.overridePendingTransition(0, 0)
 
   }
 

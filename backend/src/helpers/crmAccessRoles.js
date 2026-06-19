@@ -42,18 +42,29 @@ function isCrmSalesAdminUser(user) {
   return (r === 'sales_admin' || r === 'crm_production_admin') && hasCompany;
 }
 
+/** Kế toán công ty — xem mọi deal/lead thuộc công ty (company_id hoặc external_company_id). */
+function isCrmAccountingUser(user) {
+  return normalizeCrmUserRole(user?.role) === 'accounting'
+    && user?.company_id != null
+    && String(user.company_id).trim() !== '';
+}
+
 /** Giống userSeesAllCrmLeads(role) nhưng gồm admin khu vực + sales_admin (phạm vi công ty). */
 function userSeesAllCrmLeadsForScope(user) {
   if (userSeesAllCrmLeads(user?.role)) return true;
   if (isCrmRegionAdminUser(user)) return true;
-  return isCrmSalesAdminUser(user);
+  if (isCrmSalesAdminUser(user)) return true;
+  if (isCrmAccountingUser(user)) return true;
+  return false;
 }
 
 /** Giống userSeesAllCrmDeals(role) nhưng gồm admin khu vực + sales_admin. */
 function userSeesAllCrmDealsForScope(user) {
   if (userSeesAllCrmDeals(user?.role)) return true;
   if (isCrmRegionAdminUser(user)) return true;
-  return isCrmSalesAdminUser(user);
+  if (isCrmSalesAdminUser(user)) return true;
+  if (isCrmAccountingUser(user)) return true;
+  return false;
 }
 
 function userSeesAllCrmDeals(role) {
@@ -142,6 +153,7 @@ module.exports = {
   isCrmCompanyAdminUser,
   isCrmRegionAdminUser,
   isCrmSalesAdminUser,
+  isCrmAccountingUser,
   userSeesAllCrmLeadsForScope,
   userSeesAllCrmDealsForScope,
   isAdminLike,

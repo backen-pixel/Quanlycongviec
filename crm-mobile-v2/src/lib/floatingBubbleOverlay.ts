@@ -42,6 +42,9 @@ export const Overlay = NativeModules.FloatingBubbleOverlay as
       ) => void;
       seedConversationMessages?: (groupId: string, msgsJson: string) => void;
       appendPanelMessage?: (groupId: string, sender: string, message: string) => void;
+      consumePendingChat?: () => Promise<{ threadId?: string; title?: string } | null>;
+      peekPendingBubbleChat?: () => { threadId?: string; title?: string } | null;
+      minimizeApp?: () => void;
       openChatPanel?: (groupId: string, title: string) => void;
       closeChatPanel?: () => void;
       showCallOverlay?: (

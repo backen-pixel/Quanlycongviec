@@ -70,6 +70,7 @@ export function FbCrmCommentComposer({
   autoFocus = false,
   canSubmit,
   attachSlot = null,
+  onPaste,
 }) {
   const textareaRef = useRef(null);
 
@@ -102,6 +103,7 @@ export function FbCrmCommentComposer({
           autoFocus={autoFocus}
           value={value}
           onChange={handleChange}
+          onPaste={onPaste}
           rows={minRows}
           placeholder={placeholder}
           onKeyDown={(e) => {

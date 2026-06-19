@@ -894,7 +894,15 @@ async function fetchCrmLeadsForDashboardBatched(type, { company_id, date_from, d
       .from('crm_leads')
       .select('id, stage_id, estimated_value, probability, type, assigned_to, lead_owner_id, pipeline_id')
       .eq('type', type);
-    if (company_id) q = q.eq('company_id', company_id);
+    if (company_id) {
+      const { isCrmAccountingUser } = require('../helpers/crmAccessRoles');
+      const { applyAccountingCrmCompanyFilter } = require('../helpers/accountingScope');
+      if (req?.user && isCrmAccountingUser(req.user)) {
+        q = applyAccountingCrmCompanyFilter(q, company_id);
+      } else {
+        q = q.eq('company_id', company_id);
+      }
+    }
     if (req) q = applyCrmLeadRegionFilterToQuery(q, req);
     if (assigned_to_only) {
       if (type === 'lead') {

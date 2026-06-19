@@ -33,7 +33,7 @@ async function insertCrmLeadResilient(insertRow, selectCols = 'id, code, title')
     if (!r.error) return r;
   }
 
-  for (const col of ['lead_owner_id', 'pipeline_id', 'stage_id', 'created_by', 'region_id', 'stage_entered_at', 'external_company_name']) {
+  for (const col of ['lead_owner_id', 'pipeline_id', 'stage_id', 'created_by', 'region_id', 'stage_entered_at', 'external_company_name', 'external_company_id']) {
     if (missing(col) && Object.prototype.hasOwnProperty.call(row, col)) {
       const { [col]: _x, ...rest } = row;
       row = rest;

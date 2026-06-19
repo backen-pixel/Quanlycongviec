@@ -23,7 +23,7 @@ import { messengerThreadKey } from '../lib/messengerHubStorage';
 import { useRelativeTimeTick } from '../hooks/useRelativeTimeTick';
 import MessengerQuickChatDock, {
   QUICK_CHAT_DOCK_VISUAL_W,
-  QUICK_CHAT_DOCK_PANEL_W,
+  QUICK_CHAT_PANEL_W,
 } from './MessengerQuickChatDock';
 
 export const MESSENGER_DOCK_W = QUICK_CHAT_DOCK_VISUAL_W;

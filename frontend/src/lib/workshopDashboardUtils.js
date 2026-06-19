@@ -48,9 +48,9 @@ export function workshopCreatedInRange(iso, from, to) {
  * Lấy nhiều trang projects từ /production/projects hoặc /logistics/projects.
  * @param {import('axios').AxiosInstance} api
  * @param {string} path
- * @param {{ companyId?: string, workshopTypeId?: string, maxRecords: number, pageSize?: number, bustCache?: boolean }} opt
+ * @param {{ companyId?: string, workshopTypeId?: string, sxWorkshopCompanyId?: string, maxRecords: number, pageSize?: number, bustCache?: boolean }} opt
  */
-export async function fetchWorkshopProjectPages(api, path, { companyId, workshopTypeId, maxRecords, pageSize = 500, bustCache = false }) {
+export async function fetchWorkshopProjectPages(api, path, { companyId, workshopTypeId, sxWorkshopCompanyId, maxRecords, pageSize = 500, bustCache = false }) {
   const cap = Math.min(Math.max(maxRecords, 1), 5000);
   const all = [];
   let page = 1;
@@ -62,6 +62,7 @@ export async function fetchWorkshopProjectPages(api, path, { companyId, workshop
       page,
       ...(companyId ? { company_id: companyId } : {}),
       ...(workshopTypeId ? { workshop_type_id: workshopTypeId } : {}),
+      ...(sxWorkshopCompanyId ? { sx_workshop_company_id: sxWorkshopCompanyId } : {}),
     };
     const { data } = await api.get(path, {
       params,

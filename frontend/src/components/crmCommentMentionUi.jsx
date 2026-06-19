@@ -25,6 +25,7 @@ export function CrmCommentMentionComposer({
   autoFocus = false,
   canSubmit,
   attachSlot = null,
+  onPaste,
 }) {
   const textareaRef = useRef(null);
   const pickedIdsRef = useRef(new Set());
@@ -188,6 +189,7 @@ export function CrmCommentMentionComposer({
               autoFocus={autoFocus}
               value={value}
               onChange={handleChange}
+              onPaste={onPaste}
               onSelect={(e) => syncMentionUi(e.target.selectionStart ?? 0)}
               onClick={(e) => syncMentionUi(e.target.selectionStart ?? 0)}
               onKeyUp={(e) => syncMentionUi(e.target.selectionStart ?? 0)}

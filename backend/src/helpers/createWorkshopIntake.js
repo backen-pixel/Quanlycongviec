@@ -12,6 +12,8 @@ const { syncCrmLeadSxPipelineFromProject } = require('./workshopKanban');
 const { applyWorkshopTypeDefaultStaffToProject } = require('./productionWorkshopTypeStaff');
 const { notifyMultiple } = require('./notifications');
 const { insertCrmLeadResilient } = require('./crmLeadInsert');
+const { isMetallaOrHucabiCompanyId } = require('./dealParticipantProduction');
+const { ensureWorkshopClientCompanyLink } = require('./productionClientCompanies');
 
 const PIPELINE_CACHE_TTL_MS = 5 * 60 * 1000;
 const pipelineCache = new Map();
@@ -245,6 +247,8 @@ function scheduleWorkshopIntakeBackground({ req, dealId, projectId, userId, comp
  * @param {number} [opts.estimatedValue]
  * @param {string} [opts.description]
  * @param {string} [opts.externalCompanyName]
+ * @param {string} [opts.externalCompanyId]
+ * @param {string} [opts.externalCatalogId]
  */
 async function createWorkshopIntakeOrder(opts) {
   const {
@@ -262,6 +266,8 @@ async function createWorkshopIntakeOrder(opts) {
     estimatedValue,
     description,
     externalCompanyName,
+    externalCompanyId,
+    externalCatalogId,
   } = opts;
 
   const titleTrim = String(title || '').trim();
@@ -292,8 +298,81 @@ async function createWorkshopIntakeOrder(opts) {
   }
 
   const nowIso = new Date().toISOString();
+  const isPartnerWorkshop = await isMetallaOrHucabiCompanyId(companyUuid);
+  let resolvedExternalId = externalCompanyId ? String(externalCompanyId).trim() : null;
   let externalCoTrim = String(externalCompanyName || '').trim() || null;
-  if (externalCoTrim) {
+
+  if (isPartnerWorkshop && (externalCatalogId || (resolvedExternalId && String(resolvedExternalId).startsWith('ext:')))) {
+    const { resolveClientCompanyPick } = require('./productionClientCompanies');
+    const pick = String(resolvedExternalId || '').startsWith('ext:')
+      ? resolvedExternalId
+      : `ext:${externalCatalogId}`;
+    const resolved = await resolveClientCompanyPick(companyUuid, pick);
+    if (resolved.clientCompanyId) resolvedExternalId = resolved.clientCompanyId;
+    if (resolved.externalName) externalCoTrim = resolved.externalName;
+    else if (!resolvedExternalId && resolved.externalName) externalCoTrim = resolved.externalName;
+  } else if (resolvedExternalId && String(resolvedExternalId).startsWith('ext:')) {
+    const { resolveClientCompanyPick } = require('./productionClientCompanies');
+    const resolved = await resolveClientCompanyPick(companyUuid, resolvedExternalId);
+    if (resolved.clientCompanyId) resolvedExternalId = resolved.clientCompanyId;
+    if (resolved.externalName) externalCoTrim = resolved.externalName;
+  }
+
+  if (isPartnerWorkshop) {
+    if (!resolvedExternalId && !externalCoTrim) {
+      return {
+        ok: false,
+        error: 'Chọn công ty chủ deal (công ty đặt hàng từ CRM)',
+        statusCode: 400,
+      };
+    }
+    if (resolvedExternalId) {
+      const { data: clientCo, error: coErr } = await supabase
+        .from('companies')
+        .select('id, name, short_name, is_active')
+        .eq('id', resolvedExternalId)
+        .maybeSingle();
+      if (coErr || !clientCo?.id || clientCo.is_active === false) {
+        return { ok: false, error: 'Công ty chủ deal không hợp lệ', statusCode: 400 };
+      }
+      if (String(clientCo.id) === String(companyUuid)) {
+        return { ok: false, error: 'Công ty chủ deal phải khác công ty SX', statusCode: 400 };
+      }
+      externalCoTrim = clientCo.short_name || clientCo.name;
+      try {
+        await ensureWorkshopClientCompanyLink(companyUuid, clientCo.id);
+        const { upsertProductionExternalCompany, normalizeExternalCompanyName } = require('./productionExternalCompanies');
+        const saved = await upsertProductionExternalCompany({
+          productionCompanyId: companyUuid,
+          name: externalCoTrim,
+          userId,
+          linkedCompanyId: clientCo.id,
+        });
+        if (saved?.name) externalCoTrim = normalizeExternalCompanyName(saved.name);
+      } catch (e) {
+        console.warn('[workshop-intake] external company catalog:', e.message);
+      }
+    } else if (externalCoTrim) {
+      try {
+        const { upsertProductionExternalCompany, normalizeExternalCompanyName } = require('./productionExternalCompanies');
+        const saved = await upsertProductionExternalCompany({
+          productionCompanyId: companyUuid,
+          name: externalCoTrim,
+          userId,
+        });
+        if (saved?.name) externalCoTrim = normalizeExternalCompanyName(saved.name);
+      } catch (e) {
+        console.warn('[workshop-intake] external company catalog:', e.message);
+      }
+    }
+  } else if (resolvedExternalId) {
+    const { data: clientCo } = await supabase
+      .from('companies')
+      .select('id, name, short_name')
+      .eq('id', resolvedExternalId)
+      .maybeSingle();
+    if (clientCo?.id) externalCoTrim = clientCo.short_name || clientCo.name;
+  } else if (externalCoTrim) {
     try {
       const { upsertProductionExternalCompany, normalizeExternalCompanyName } = require('./productionExternalCompanies');
       const saved = await upsertProductionExternalCompany({
@@ -306,6 +385,7 @@ async function createWorkshopIntakeOrder(opts) {
       console.warn('[workshop-intake] external company catalog:', e.message);
     }
   }
+
   const dealRow = {
     code: dealCode,
     title: titleTrim,
@@ -323,12 +403,24 @@ async function createWorkshopIntakeOrder(opts) {
     install_address: installAddress || null,
     description: description ? `[Xưởng] ${description}` : '[Xưởng] Tạo trực tiếp từ module Sản xuất',
     external_company_name: externalCoTrim,
+    external_company_id: resolvedExternalId,
     stage_entered_at: nowIso,
     actual_close_date: nowIso.split('T')[0],
   };
 
   const { data: deal, error: dealErr } = await insertCrmLeadResilient(dealRow, 'id, code, title');
   if (dealErr) return { ok: false, error: dealErr.message, statusCode: 500 };
+
+  try {
+    const { ensureDealProductionAutoParticipants } = require('./dealParticipantProduction');
+    await ensureDealProductionAutoParticipants({
+      dealId: deal.id,
+      dealCompanyId: companyUuid,
+      addedBy: userId,
+    });
+  } catch (partErr) {
+    console.warn('[workshop-intake] auto participants:', partErr.message);
+  }
 
   let project;
   try {

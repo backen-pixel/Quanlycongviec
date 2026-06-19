@@ -7,8 +7,9 @@ import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { FbCrmAvatar, FbCrmCommentComposer, formatCrmCommentFullDateTime, formatCrmFbRelativeTime } from './crmFbCommentUi';
 import { CrmCommentMentionComposer, renderCrmCommentBody } from './crmCommentMentionUi';
-import { FilePreview, FileUploadButton } from './FileUpload';
+import { FilePreview, FileUploadButton, uploadFilesBatch } from './FileUpload';
 import { publicFileUrl as pubUrl } from '../lib/publicFileUrl';
+import { handleCommentFilePaste } from '../lib/chatClipboard';
 
 const REACTION_PICKER = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
@@ -373,6 +374,35 @@ function ReactionCornerBadge({ comment }) {
   );
 }
 
+function useCommentPasteUpload(onFilesUploaded) {
+  const [uploadingPaste, setUploadingPaste] = useState(false);
+
+  const handlePasteFiles = useCallback(async (rawFiles) => {
+    const files = Array.from(rawFiles || []).filter(Boolean).slice(0, 20);
+    if (!files.length) return;
+    setUploadingPaste(true);
+    try {
+      const uploaded = await uploadFilesBatch(files);
+      onFilesUploaded?.(uploaded);
+    } catch (e) {
+      alert(e?.response?.data?.error || e?.message || 'Không upload được file dán');
+    } finally {
+      setUploadingPaste(false);
+    }
+  }, [onFilesUploaded]);
+
+  return { handlePasteFiles, uploadingPaste };
+}
+
+function commentComposerPlaceholder(replyTo, user, { withPasteHint = false, withMentionHint = false } = {}) {
+  if (replyTo) return `Trả lời ${replyTo.name}…`;
+  const who = user?.full_name || user?.email || 'bạn';
+  let text = `Bình luận với tư cách ${who}…`;
+  if (withMentionHint) text += ' (@ nhắc thành viên)';
+  if (withPasteHint) text += ' · Ctrl+V dán ảnh/file';
+  return text;
+}
+
 function CommentThread({
   comments,
   loading,
@@ -401,6 +431,7 @@ function CommentThread({
   pendingFiles = [],
   onFilesUploaded,
   onRemovePendingFile,
+  onPasteFiles,
   canSubmit,
   readReceipts,
   commentMembers = [],
@@ -410,6 +441,16 @@ function CommentThread({
 }) {
   const selfUid = user?.userId || user?.id;
   const commentsByParent = useMemo(() => groupByParent(comments), [comments]);
+
+  const handleComposerPaste = useCallback((e) => {
+    if (!enableAttachments || !onPasteFiles) return;
+    handleCommentFilePaste(e, onPasteFiles);
+  }, [enableAttachments, onPasteFiles]);
+
+  const composerPlaceholder = commentComposerPlaceholder(replyTo, user, {
+    withPasteHint: enableAttachments,
+    withMentionHint: enableMentions,
+  });
 
   const renderBranch = (parentKey, depth) => {
     const list = commentsByParent.get(parentKey) || [];
@@ -532,10 +573,11 @@ function CommentThread({
             value={bodyField}
             onChange={(e) => setBody(e.target.value)}
             onSubmit={onSubmit}
+            onPaste={enableAttachments ? handleComposerPaste : undefined}
             posting={posting}
             canSubmit={canSubmit}
             attachSlot={enableAttachments ? <FileUploadButton compact onFilesUploaded={onFilesUploaded} /> : null}
-            placeholder={replyTo ? `Trả lời ${replyTo.name}…` : `Bình luận với tư cách ${user?.full_name || user?.email || 'bạn'}…`}
+            placeholder={composerPlaceholder}
           />
         ) : (
           <FbCrmCommentComposer
@@ -543,10 +585,11 @@ function CommentThread({
             value={bodyField}
             onChange={(e) => setBody(e.target.value)}
             onSubmit={onSubmit}
+            onPaste={enableAttachments ? handleComposerPaste : undefined}
             posting={posting}
             canSubmit={canSubmit}
             attachSlot={enableAttachments ? <FileUploadButton compact onFilesUploaded={onFilesUploaded} /> : null}
-            placeholder={replyTo ? `Trả lời ${replyTo.name}…` : `Bình luận với tư cách ${user?.full_name || user?.email || 'bạn'}…`}
+            placeholder={composerPlaceholder}
           />
         )}
       </div>
@@ -658,12 +701,10 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
   const handleFilesUploaded = useCallback((files) => {
     const uploaded = (files || []).filter((f) => f?.file_url || f?.url);
     if (!uploaded.length) return;
-    if (!body.trim()) {
-      void submit({ attachmentList: uploaded });
-      return;
-    }
     setPendingFiles((prev) => [...prev, ...uploaded]);
-  }, [body, submit]);
+  }, []);
+
+  const { handlePasteFiles, uploadingPaste } = useCommentPasteUpload(handleFilesUploaded);
 
   const saveEdit = async () => {
     const v = editingBody.trim();
@@ -722,7 +763,7 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
       setEditingBody={setEditingBody}
       replyTo={replyTo}
       setReplyTo={setReplyTo}
-      posting={posting}
+      posting={posting || uploadingPaste}
       reactionBusy={reactionBusy}
       onSubmit={submit}
       onSaveEdit={saveEdit}
@@ -734,6 +775,7 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
       enableAttachments
       pendingFiles={pendingFiles}
       onFilesUploaded={handleFilesUploaded}
+      onPasteFiles={handlePasteFiles}
       onRemovePendingFile={(i) => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i))}
       canSubmit={Boolean(body.trim() || pendingFiles.length)}
       renderBody={(text) => renderCrmCommentBody(text, members)}
@@ -877,12 +919,10 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
   const handleFilesUploaded = useCallback((files) => {
     const uploaded = (files || []).filter((f) => f?.file_url || f?.url);
     if (!uploaded.length) return;
-    if (!body.trim()) {
-      void submit(uploaded);
-      return;
-    }
     setPendingFiles((prev) => [...prev, ...uploaded]);
-  }, [body, submit]);
+  }, []);
+
+  const { handlePasteFiles, uploadingPaste } = useCommentPasteUpload(handleFilesUploaded);
 
   const saveEdit = async () => {
     const v = editingBody.trim();
@@ -940,7 +980,7 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
       setEditingBody={setEditingBody}
       replyTo={replyTo}
       setReplyTo={setReplyTo}
-      posting={posting}
+      posting={posting || uploadingPaste}
       reactionBusy={reactionBusy}
       onSubmit={submit}
       onSaveEdit={saveEdit}
@@ -950,6 +990,7 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
       enableAttachments
       pendingFiles={pendingFiles}
       onFilesUploaded={handleFilesUploaded}
+      onPasteFiles={handlePasteFiles}
       onRemovePendingFile={(i) => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i))}
       canSubmit={Boolean(body.trim() || pendingFiles.length)}
       readReceipts={readReceipts}

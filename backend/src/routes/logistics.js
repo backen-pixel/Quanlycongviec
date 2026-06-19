@@ -10,6 +10,7 @@ const { requirePermission } = require('../middleware/newPermission');
 const { notifyMultiple: notifyMultipleShared } = require('../helpers/notifications');
 const { syncCrmLeadFromLogisticsStage, syncVcPipelineStageToLead, emitCrmBadgeUpdateForProject } = require('../helpers/workshopKanban');
 const { effectiveWorkshopCompanyId, normalizeWorkshopCompanyId } = require('../helpers/workshopCompanyScope');
+const { applyWorkshopProjectVisibilityScope, userCanAccessCrossWorkshopProductionProject, isCrossWorkshopProductionViewer, isMetallaOrHucabiCompanyIdSync, userNeedsParticipantOnlyProductionScopeForWorkshop, userCanAccessProductionProjectAsParticipant } = require('../helpers/dealParticipantProduction');
 const { leadDocVisibleForModuleAndUser } = require('../helpers/documentShareScope');
 const { writeAuditLog } = require('../helpers/auditLog');
 
@@ -402,6 +403,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
     if (division_id) query = query.eq('division_id', division_id);
     if (company_id) query = query.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
     if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
+    ({ query } = await applyWorkshopProjectVisibilityScope(query, req.user, company_id, null));
 
     let { data: projectsRaw, error: dashErr } = await query.order('created_at', { ascending: false });
     if (dashErr && IS_VC_DELETED_AT_MISSING(dashErr)) {
@@ -546,6 +548,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
     if (division_id) query = query.eq('division_id', division_id);
     if (company_id) query = query.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
     if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
+    ({ query } = await applyWorkshopProjectVisibilityScope(query, req.user, company_id, null));
 
     let { data: projectsRaw, error } = await query
       .order('created_at', { ascending: false })
@@ -837,6 +840,32 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
 
     if (!inScope) {
       return res.status(403).json({ error: 'Dự án này chưa ở giai đoạn vận chuyển' });
+    }
+
+    const workshopCoId = project.logistics_company_id || project.company_id;
+    if (await userNeedsParticipantOnlyProductionScopeForWorkshop(req.user, workshopCoId)) {
+      const okParticipant = await userCanAccessProductionProjectAsParticipant(
+        req.user.userId,
+        rowId,
+        req.user,
+      );
+      if (!okParticipant) {
+        return res.status(403).json({ error: 'Chỉ xem dự án các deal bạn tham gia' });
+      }
+    } else if (isCrossWorkshopProductionViewer(req.user) && isMetallaOrHucabiCompanyIdSync(workshopCoId)) {
+      const crossOk = await userCanAccessCrossWorkshopProductionProject(req.user, rowId);
+      if (!crossOk) {
+        return res.status(403).json({ error: 'Dự án không thuộc deal công ty của bạn tại xưởng này' });
+      }
+    }
+
+    const viewerCompanyId = req.user?.company_id || null;
+    const ownerCompanyId = project.company_id || project.logistics_company_id || null;
+    if (viewerCompanyId && ownerCompanyId && String(viewerCompanyId) !== String(ownerCompanyId)) {
+      const crossOk = await userCanAccessCrossWorkshopProductionProject(req.user, rowId);
+      if (!crossOk) {
+        return res.status(403).json({ error: 'Dự án không thuộc phạm vi công ty của bạn' });
+      }
     }
 
     // A) VC/LĐ dùng chung tài liệu CRM (lead_documents) đã chia sẻ sang xưởng.
