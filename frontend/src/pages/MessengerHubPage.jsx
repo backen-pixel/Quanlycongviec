@@ -689,10 +689,15 @@ export default function MessengerHubPage() {
     return myMember && (myMember.role === 'leader' || myMember.role === 'deputy');
   }, [groupDetail, myMember, user?.role]);
 
-  const totalUnreadCount = useMemo(
-    () => Object.values(unreadByGroupId || {}).reduce((a, b) => a + (Number(b) || 0), 0),
-    [unreadByGroupId],
-  );
+  const totalUnreadCount = useMemo(() => {
+    const visibleGroupIds = new Set(
+      threads.filter((t) => t.kind === 'messenger' && t.groupId).map((t) => String(t.groupId)),
+    );
+    return Object.entries(unreadByGroupId || {}).reduce((sum, [gid, n]) => {
+      if (visibleGroupIds.size > 0 && !visibleGroupIds.has(String(gid))) return sum;
+      return sum + (Number(n) || 0);
+    }, 0);
+  }, [unreadByGroupId, threads]);
 
   const filteredThreads = useMemo(() => {
     const f = threadFilter.trim().toLowerCase();
