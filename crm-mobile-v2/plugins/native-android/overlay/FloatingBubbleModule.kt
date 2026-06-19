@@ -414,6 +414,15 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
 
   }
 
+  @ReactMethod fun saveUiTheme(mode: String) {
+    val m = mode.trim().lowercase()
+    if (m != "light" && m != "dark") return
+    reactContext.getSharedPreferences(OverlayBubbleService.PREF_NAME, 0)
+      .edit()
+      .putString(OverlayChatTheme.PREF_UI_THEME, m)
+      .apply()
+  }
+
   @ReactMethod fun saveWebOrigin(origin: String) { /* noop */ }
 
   @ReactMethod fun setPreferBubblesApi(prefer: Boolean) { /* noop */ }

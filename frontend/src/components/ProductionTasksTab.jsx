@@ -3,16 +3,16 @@ import { createPortal } from 'react-dom';
 import api from '../lib/api';
 import { formatDate } from '../lib/utils';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
+import { AttachmentFileIcon, inferAttachmentDocType } from '../lib/attachmentFileIcon';
 import {
   Plus, CheckCircle2, Circle, Clock, User, Trash2, ChevronDown, ChevronRight,
   Calendar, List, Users, AlertTriangle, X, Save, ListChecks, ClipboardList,
-  Edit3, Paperclip, FileUp, FileText, ImageIcon, Film, MessageSquare,
+  Edit3, Paperclip, FileUp, FileText, MessageSquare,
 } from 'lucide-react';
 
 const PRIORITY_COLORS = { low: 'bg-gray-100 text-gray-600', medium: 'bg-blue-100 text-blue-700', high: 'bg-orange-100 text-orange-700', urgent: 'bg-red-100 text-red-700' };
 const PRIORITY_LABELS = { low: 'Thấp', medium: 'TB', high: 'Cao', urgent: 'Gấp' };
 const STATUS_ICONS = { completed: CheckCircle2, in_progress: Clock, pending: Circle };
-const ATT_ICONS = { image: ImageIcon, video: Film, drawing: FileText, task_note: MessageSquare, other: FileText };
 
 function taskStatus(t) {
   if (t.status === 'done' || t.status === 'completed') return 'completed';
@@ -199,6 +199,7 @@ export default function ProductionTasksTab({
           file_url: up.file_url,
           file_size: up.file_size,
           mime_type: up.mime_type,
+          doc_type: inferAttachmentDocType(up),
           allowed_share_modules: [shareModule],
         }));
         await api.post(`/tasks/${taskId}/attachments/bulk`, { items });
@@ -213,12 +214,147 @@ export default function ProductionTasksTab({
     input.click();
   };
 
-  const deleteAttachment = async (taskId, attId) => {
-    if (!confirm('Xóa file đính kèm này?')) return;
+  const deleteAttachment = async (taskId, attId, { skipConfirm = false } = {}) => {
+    if (!skipConfirm && !confirm('Xóa file đính kèm này?')) return;
     try {
       await api.delete(`/tasks/${taskId}/attachments/${attId}`);
       loadAttachments(taskId);
     } catch (e) { alert('Lỗi xóa file'); }
+  };
+
+  const uploadOneRawFile = async (file) => {
+    if (file.type.startsWith('image/') && file.size >= 500 * 1024) {
+      const compressed = await compressImage(file);
+      const formData = new FormData();
+      formData.append('files', compressed);
+      const { data: uploadRes } = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+      const rows = uploadRes.files || (Array.isArray(uploadRes) ? uploadRes : [uploadRes]);
+      return rows[0];
+    }
+    if (file.type.startsWith('image/')) {
+      const formData = new FormData();
+      formData.append('files', file);
+      const { data: uploadRes } = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+      const rows = uploadRes.files || (Array.isArray(uploadRes) ? uploadRes : [uploadRes]);
+      return rows[0];
+    }
+    const isLarge = file.size > 10 * 1024 * 1024;
+    const endpoint = isLarge ? '/upload/stream' : '/upload/single';
+    const formData = new FormData();
+    formData.append('file', file);
+    const { data } = await api.post(endpoint, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+    return data;
+  };
+
+  const replaceAttachment = (taskId, attId) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.dwg,.dxf,.mp4,.mov,.webm,.avi';
+    input.onchange = async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      setUploadingTask(taskId);
+      try {
+        const up = await uploadOneRawFile(file);
+        if (!up?.file_url) throw new Error('Upload không trả về file');
+        await api.post(`/tasks/${taskId}/attachments/bulk`, {
+          items: [{
+            original_name: up.original_name || up.file_name || 'File',
+            file_name: up.file_name,
+            file_url: up.file_url,
+            file_size: up.file_size,
+            mime_type: up.mime_type,
+            doc_type: inferAttachmentDocType(up),
+            allowed_share_modules: [shareModule],
+          }],
+        });
+        await deleteAttachment(taskId, attId, { skipConfirm: true });
+        loadAttachments(taskId);
+        loadTasks();
+      } catch (err) {
+        alert(err.response?.data?.error || err.message || 'Thay thế file lỗi');
+      }
+      setUploadingTask(null);
+    };
+    input.click();
+  };
+
+  const isImageAtt = (att) =>
+    att.mime_type?.startsWith('image/') || att.doc_type === 'image' ||
+    /\.(jpe?g|png|gif|webp|bmp|svg)$/i.test(att.file_name || att.original_name || '');
+
+  const renderAttachmentActionButtons = (taskId, att) => (
+    <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        onClick={() => replaceAttachment(taskId, att.id)}
+        className="text-[10px] font-medium text-blue-600 hover:text-blue-800 px-1.5 py-0.5 rounded hover:bg-blue-50 cursor-pointer"
+        title="Thay thế file"
+      >
+        Thay thế
+      </button>
+      <button
+        type="button"
+        onClick={() => deleteAttachment(taskId, att.id)}
+        className="text-[10px] font-medium text-red-500 hover:text-red-700 px-1.5 py-0.5 rounded hover:bg-red-50 cursor-pointer"
+        title="Xóa file"
+      >
+        Xóa
+      </button>
+    </div>
+  );
+
+  const renderCollapsedAttachments = (atts, taskId) => {
+    const files = (atts || []).filter((a) => a.file_url);
+    if (!files.length) return null;
+    const images = files.filter(isImageAtt);
+    const nonImages = files.filter((a) => !isImageAtt(a));
+    return (
+      <div className="mt-1 space-y-1" onClick={(e) => e.stopPropagation()}>
+        {images.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {images.map((att) => {
+              const attOpen = att.file_url ? getFileOpenAnchorProps(att.file_url, { fileName: att.file_name }) : null;
+              return (
+                <div key={att.id} className="flex flex-col items-start gap-1 shrink-0">
+                  {attOpen ? (
+                    <a {...attOpen} className="h-20 w-20 rounded-md border border-gray-200 overflow-hidden shrink-0 bg-gray-50 block">
+                      <img
+                        src={publicFileUrl(att.file_url)}
+                        alt={att.file_name || ''}
+                        loading="lazy"
+                        className="h-full w-full object-cover"
+                      />
+                    </a>
+                  ) : (
+                    <div className="h-20 w-20 rounded-md border border-gray-200 overflow-hidden shrink-0 bg-gray-50">
+                      <img
+                        src={publicFileUrl(att.file_url)}
+                        alt={att.file_name || ''}
+                        loading="lazy"
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
+                  )}
+                  {taskId && att.id && renderAttachmentActionButtons(taskId, att)}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {nonImages.length > 0 && (
+          <div className="space-y-1">
+            {nonImages.slice(0, 4).map((att) => (
+              <div key={att.id} className="flex items-center gap-1.5 text-[10px] text-gray-800 bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5 max-w-full">
+                <AttachmentFileIcon att={att} className="h-3.5 w-3.5" />
+                <span className="truncate flex-1 min-w-0">{att.file_name || att.original_name || 'File'}</span>
+                {taskId && att.id && renderAttachmentActionButtons(taskId, att)}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
   };
 
   const addTask = async (stageId) => {
@@ -461,11 +597,12 @@ export default function ProductionTasksTab({
             title="Click: ghi chú & đính kèm · Double-click: chỉnh sửa nhiệm vụ"
           >
             <p className={`text-sm ${task.status === 'done' ? 'line-through text-gray-400' : 'text-gray-900'}`}>{task.title}</p>
-            {hasNotes && !isExpanded && (
-              <p className="text-sm text-gray-500 mt-0.5 line-clamp-1 italic">
-                💬 {(task.description || task.notes || '').slice(0, 80)}
-              </p>
-            )}
+              {hasNotes && !isExpanded && (
+                <p className="text-sm text-gray-500 mt-0.5 line-clamp-1 italic">
+                  💬 {(task.description || task.notes || '').slice(0, 80)}
+                </p>
+              )}
+              {!isExpanded && atts.length > 0 && renderCollapsedAttachments(atts, task.id)}
             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
               {task.due_date && editingDeadline !== task.id && (
                 <span onClick={e => { e.stopPropagation(); setEditingDeadline(task.id); }}
@@ -606,36 +743,46 @@ export default function ProductionTasksTab({
               {atts.length > 0 && (
                 <div className="space-y-1">
                   {atts.map(att => {
-                    const AttIcon = ATT_ICONS[att.doc_type] || FileText;
                     const attOpen = att.file_url ? getFileOpenAnchorProps(att.file_url, { fileName: att.file_name }) : null;
+                    const img = att.mime_type?.startsWith('image/') || att.doc_type === 'image';
                     return (
-                      <div key={att.id} className="py-1.5 px-2 rounded bg-white border group/att">
+                      <div key={att.id} className="py-1.5 px-2 rounded bg-white border">
                         <div className="flex items-start gap-2">
-                          <AttIcon className="h-3.5 w-3.5 text-gray-400 mt-0.5 shrink-0" />
+                          <AttachmentFileIcon att={att} className="h-4 w-4 mt-0.5" />
                           <div className="flex-1 min-w-0">
-                            <p className="text-xs font-medium text-gray-800 truncate">{att.file_name}</p>
-                            {att.file_url && !att.mime_type?.startsWith('image/') && attOpen && (
+                            <p className="text-xs font-medium text-gray-800 truncate">{att.file_name || att.original_name || 'File'}</p>
+                            {att.file_url && !img && attOpen && (
                               <a {...attOpen} className="text-[10px] text-blue-600 hover:underline">{att.file_name || 'Mở file'}</a>
                             )}
                             <span className="text-[9px] text-gray-400 ml-1">{att.uploader?.full_name}</span>
                           </div>
-                          <div className="opacity-0 group-hover/att:opacity-100 flex items-center gap-0.5 shrink-0">
-                            <button onClick={() => deleteAttachment(task.id, att.id)}
-                              className="p-0.5 text-gray-400 hover:text-red-500 cursor-pointer">
-                              <Trash2 className="h-2.5 w-2.5" />
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => replaceAttachment(task.id, att.id)}
+                              className="text-[10px] font-medium text-blue-600 hover:text-blue-800 px-1.5 py-0.5 rounded hover:bg-blue-50 cursor-pointer"
+                            >
+                              Thay thế
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => deleteAttachment(task.id, att.id)}
+                              className="text-[10px] font-medium text-red-500 hover:text-red-700 px-1.5 py-0.5 rounded hover:bg-red-50 cursor-pointer"
+                            >
+                              Xóa
                             </button>
                           </div>
                         </div>
-                        {att.file_url && att.mime_type?.startsWith('image/') && attOpen && (
+                        {att.file_url && img && attOpen && (
                           <a {...attOpen} className="block mt-1.5 ml-5">
                             <img src={publicFileUrl(att.file_url)} alt={att.file_name}
-                              className="max-h-40 max-w-full rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity" />
+                              className="max-h-80 max-w-full rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity" />
                           </a>
                         )}
                         {att.file_url && (att.mime_type?.startsWith('video/') || att.doc_type === 'video') && (
                           <div className="mt-1.5 ml-5">
                             <video src={publicFileUrl(att.file_url)} controls preload="metadata"
-                              className="max-h-52 max-w-full rounded-lg border border-gray-200 bg-black" />
+                              className="max-h-[26rem] max-w-full rounded-lg border border-gray-200 bg-black" />
                           </div>
                         )}
                       </div>

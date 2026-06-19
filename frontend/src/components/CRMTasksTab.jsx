@@ -11,7 +11,7 @@ import { isoToDatetimeLocalValue, datetimeLocalValueToIso } from '../lib/datetim
 import {
   Plus, CheckCircle2, Circle, Clock, User, Eye, Trash2, ChevronDown, ChevronRight,
   Calendar, List, Users, Target, AlertTriangle, X, Save, ListChecks, ClipboardList,
-  Paperclip, FileUp, MessageSquare, FileText, Image as ImageIcon, Share2, Lock, Film,
+  Paperclip, FileUp, MessageSquare, FileText, Share2, Lock,
   FileSpreadsheet, Edit3, UserPlus, GripVertical, Globe,
 } from 'lucide-react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
@@ -27,6 +27,7 @@ import UploadFileLightbox, {
   isUploadImageFile,
 } from './UploadFileLightbox';
 import { formatEvidenceTypesList, formatEvidenceTypesShort, checklistItemRequiresEvidence } from '../lib/evidenceFileTypes';
+import { AttachmentFileIcon, inferAttachmentDocType } from '../lib/attachmentFileIcon';
 import TaskQuickVerdictBar from './TaskQuickVerdictBar';
 import EmployeePicker from './EmployeePicker';
 
@@ -2108,7 +2109,7 @@ export default function CRMTasksTab({
         // Tạo attachments
         const items = allUploaded.map(up => ({
           name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
-          doc_type: (up.mime_type || '').startsWith('image/') ? 'image' : (up.mime_type || '').startsWith('video/') ? 'video' : (up.file_name || '').match(/\.(dwg|dxf)$/i) ? 'drawing' : 'other',
+          doc_type: inferAttachmentDocType(up),
           file_url: up.file_url,
           file_name: up.file_name,
           file_size: up.file_size,
@@ -2143,13 +2144,62 @@ export default function CRMTasksTab({
     } catch (e) { alert(e.response?.data?.error || 'Lỗi thêm ghi chú'); }
   };
 
-  const deleteAttachment = async (taskId, attId) => {
-    if (!confirm('Xóa đính kèm này?')) return;
+  const deleteAttachment = async (taskId, attId, { skipConfirm = false } = {}) => {
+    if (!skipConfirm && !confirm('Xóa đính kèm này?')) return;
     try {
       await api.delete(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/${attId}`);
       loadAttachments({ id: taskId });
+      loadTasks();
       notifyArtifactsSynced(taskId);
     } catch (e) { alert('Lỗi'); }
+  };
+
+  const uploadOneRawFile = async (file) => {
+    if (file.type.startsWith('image/')) {
+      const compressed = await compressImage(file);
+      const formData = new FormData();
+      formData.append('files', compressed);
+      const { data: uploadRes } = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+      const rows = uploadRes.files || (Array.isArray(uploadRes) ? uploadRes : [uploadRes]);
+      return rows[0];
+    }
+    const isLarge = file.size > 10 * 1024 * 1024;
+    const endpoint = isLarge ? '/upload/stream' : '/upload/single';
+    const formData = new FormData();
+    formData.append('file', file);
+    const { data } = await api.post(endpoint, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+    return data;
+  };
+
+  const buildAttachmentItemFromUpload = (up) => ({
+    name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
+    doc_type: inferAttachmentDocType(up),
+    file_url: up.file_url,
+    file_name: up.file_name,
+    file_size: up.file_size,
+    mime_type: up.mime_type,
+  });
+
+  const replaceAttachmentFile = (taskId, attId, checklistId = null) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.dwg,.dxf,.mp4,.mov,.webm,.avi';
+    input.onchange = async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        const up = await uploadOneRawFile(file);
+        if (!up?.file_url) throw new Error('Upload không trả về file');
+        await api.post(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/bulk`, {
+          items: [buildAttachmentItemFromUpload(up)],
+          ...(checklistId ? { checklist_id: checklistId } : {}),
+        });
+        await deleteAttachment(taskId, attId, { skipConfirm: true });
+      } catch (err) {
+        alert(err.response?.data?.error || err.message || 'Thay thế file lỗi');
+      }
+    };
+    input.click();
   };
 
   const filterChecklistAttachments = (atts, ckId) => (
@@ -2266,9 +2316,7 @@ export default function CRMTasksTab({
         if (!allUploaded.length) throw new Error('Upload không trả về file');
         const items = allUploaded.map((up) => ({
           name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
-          doc_type: (up.mime_type || '').startsWith('image/') ? 'image'
-            : (up.mime_type || '').startsWith('video/') ? 'video'
-            : (up.file_name || '').match(/\.(dwg|dxf)$/i) ? 'drawing' : 'other',
+          doc_type: inferAttachmentDocType(up),
           file_url: up.file_url,
           file_name: up.file_name,
           file_size: up.file_size,
@@ -2289,8 +2337,6 @@ export default function CRMTasksTab({
     input.click();
   };
 
-  const ATT_ICONS = { image: ImageIcon, video: Film, drawing: FileText, task_note: MessageSquare, other: FileText };
-
   const isImageAtt = (att) => {
     if (!att?.file_url) return false;
     if (att.doc_type === 'image') return true;
@@ -2308,61 +2354,149 @@ export default function CRMTasksTab({
     setAttLightboxIndex(Math.max(idx, 0));
   };
 
-  const renderImageThumbnailGrid = (atts, { size = 'md', className = '' } = {}) => {
+  const filterChecklistFileAtts = (ckAtts) => (
+    (ckAtts || []).filter(
+      (a) => a.doc_type !== 'checklist_inline_note' && a.doc_type !== 'task_note' && a.file_url,
+    )
+  );
+
+  const renderImageThumbnailGrid = (atts, { size = 'md', className = '', taskId = null, checklistId = null, showActions = false } = {}) => {
     const imageAtts = (atts || []).filter(
       (a) => a.doc_type !== 'checklist_inline_note' && isImageAtt(a),
     );
     if (!imageAtts.length) return null;
-    const dim = size === 'sm' ? 'h-10 w-10' : 'h-14 w-14';
+    if (size === 'lg') {
+      return (
+        <div className={`flex flex-wrap gap-2 ${className}`}>
+          {imageAtts.map((att) => (
+            <button
+              key={att.id || att.file_url}
+              type="button"
+              onClick={(e) => { e.stopPropagation(); openAttLightbox(atts, att.file_url); }}
+              className="block max-w-full rounded-lg border border-gray-200 overflow-hidden shrink-0 cursor-zoom-in hover:ring-2 hover:ring-blue-400 transition-shadow bg-gray-50"
+              title={att.name || att.file_name || 'Xem ảnh'}
+            >
+              <img
+                src={publicFileUrl(att.file_url)}
+                alt={att.name || att.file_name || ''}
+                loading="lazy"
+                className="max-h-[26rem] max-w-full object-contain"
+              />
+            </button>
+          ))}
+        </div>
+      );
+    }
+    const dim = size === 'sm' ? 'h-20 w-20' : 'h-28 w-28';
     return (
-      <div className={`flex flex-wrap gap-1.5 ${className}`}>
+      <div className={`flex flex-wrap gap-2 ${className}`} onClick={(e) => e.stopPropagation()}>
         {imageAtts.map((att) => (
-          <button
-            key={att.id || att.file_url}
-            type="button"
-            onClick={(e) => { e.stopPropagation(); openAttLightbox(atts, att.file_url); }}
-            className={`${dim} rounded-md border border-gray-200 overflow-hidden shrink-0 cursor-zoom-in hover:ring-2 hover:ring-blue-400 transition-shadow bg-gray-50`}
-            title={att.name || att.file_name || 'Xem ảnh'}
-          >
-            <img
-              src={publicFileUrl(att.file_url)}
-              alt={att.name || ''}
-              loading="lazy"
-              className="h-full w-full object-cover"
-            />
-          </button>
+          <div key={att.id || att.file_url} className="flex flex-col items-start gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); openAttLightbox(atts, att.file_url); }}
+              className={`${dim} rounded-md border border-gray-200 overflow-hidden shrink-0 cursor-zoom-in hover:ring-2 hover:ring-blue-400 transition-shadow bg-gray-50`}
+              title={att.name || att.file_name || 'Xem ảnh'}
+            >
+              <img
+                src={publicFileUrl(att.file_url)}
+                alt={att.name || ''}
+                loading="lazy"
+                className="h-full w-full object-cover"
+              />
+            </button>
+            {showActions && taskId && att.id && renderAttachmentActionButtons(taskId, att, checklistId)}
+          </div>
         ))}
       </div>
     );
   };
 
-  const renderChecklistAttachmentList = (taskId, ckAtts) => {
-    const fileAtts = ckAtts.filter((a) => !isImageAtt(a));
-    if (!ckAtts.some((a) => isImageAtt(a)) && !fileAtts.length) return null;
+  const renderChecklistCollapsedFiles = (ckAtts, taskId, checklistId = null) => {
+    const files = filterChecklistFileAtts(ckAtts);
+    if (!files.length) return null;
+    const nonImages = files.filter((a) => !isImageAtt(a));
+    return (
+      <div className="mt-1 space-y-1" onClick={(e) => e.stopPropagation()}>
+        {renderImageThumbnailGrid(files, { size: 'sm', taskId, checklistId, showActions: !!taskId })}
+        {nonImages.length > 0 && (
+          <div className="space-y-1">
+            {nonImages.slice(0, 4).map((att) => (
+              <div key={att.id} className="flex items-center gap-1.5 text-[10px] text-gray-800 bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5 max-w-full">
+                <AttachmentFileIcon att={att} className="h-3.5 w-3.5" />
+                <span className="truncate flex-1 min-w-0">{att.name || att.file_name || 'File'}</span>
+                {taskId && att.id && renderAttachmentActionButtons(taskId, att, checklistId)}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderAttachmentActionButtons = (taskId, att, checklistId = null) => (
+    <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        onClick={() => replaceAttachmentFile(taskId, att.id, checklistId)}
+        className="text-[10px] font-medium text-blue-600 hover:text-blue-800 px-1.5 py-0.5 rounded hover:bg-blue-50 cursor-pointer"
+        title="Thay thế file"
+      >
+        Thay thế
+      </button>
+      <button
+        type="button"
+        onClick={() => deleteAttachment(taskId, att.id)}
+        className="text-[10px] font-medium text-red-500 hover:text-red-700 px-1.5 py-0.5 rounded hover:bg-red-50 cursor-pointer"
+        title="Xóa file"
+      >
+        Xóa
+      </button>
+    </div>
+  );
+
+  const renderChecklistAttachmentList = (taskId, ckAtts, checklistId = null) => {
+    const fileAtts = filterChecklistFileAtts(ckAtts);
+    if (!fileAtts.length) return null;
     return (
       <div className="space-y-1.5 mt-2">
-        {renderImageThumbnailGrid(ckAtts, { size: 'md' })}
         {fileAtts.map((att) => {
-          const AttIcon = ATT_ICONS[att.doc_type] || FileText;
           const attOpen = att.file_url ? getFileOpenAnchorProps(att.file_url, { fileName: att.file_name }) : null;
+          const img = isImageAtt(att);
           return (
-            <div key={att.id} className="py-1.5 px-2 rounded bg-white border group/att">
+            <div key={att.id} className="py-1.5 px-2 rounded bg-white border">
               <div className="flex items-start gap-2">
-                <AttIcon className="h-3.5 w-3.5 text-gray-400 mt-0.5 shrink-0" />
+                <AttachmentFileIcon att={att} className="h-4 w-4 mt-0.5" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium text-gray-800 truncate">{att.name}</p>
-                  {att.notes && att.doc_type !== 'checklist_inline_note' && (
+                  <p className="text-xs font-medium text-gray-800 truncate">{att.name || att.file_name}</p>
+                  {att.notes && (
                     <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{att.notes}</p>
                   )}
-                  {att.file_url && attOpen && (
+                  {att.file_url && !img && attOpen && (
                     <a {...attOpen} className="text-[10px] text-blue-600 hover:underline">{att.file_name || 'Mở file'}</a>
                   )}
                 </div>
-                <button onClick={() => deleteAttachment(taskId, att.id)}
-                  className="p-0.5 text-gray-400 hover:text-red-500 cursor-pointer opacity-0 group-hover/att:opacity-100">
-                  <Trash2 className="h-2.5 w-2.5" />
-                </button>
+                {renderAttachmentActionButtons(taskId, att, checklistId)}
               </div>
+              {img && attOpen && (
+                <a {...attOpen} className="block mt-1.5 ml-5">
+                  <img
+                    src={publicFileUrl(att.file_url)}
+                    alt={att.file_name || att.name || ''}
+                    className="max-h-80 max-w-full rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity"
+                  />
+                </a>
+              )}
+              {att.file_url && (att.mime_type?.startsWith('video/') || att.doc_type === 'video') && (
+                <div className="mt-1.5 ml-5">
+                  <video
+                    src={publicFileUrl(att.file_url)}
+                    controls
+                    preload="metadata"
+                    className="max-h-[26rem] max-w-full rounded-lg border border-gray-200 bg-black"
+                  />
+                </div>
+              )}
             </div>
           );
         })}
@@ -2407,10 +2541,7 @@ export default function CRMTasksTab({
               {!isCkExpanded && ckHasNotes && (
                 <p className="text-[11px] text-amber-600 line-clamp-1 mt-0.5 italic">💬 {(ck.notes || '').slice(0, 80)}</p>
               )}
-              {!isCkExpanded && renderImageThumbnailGrid(
-                ckAtts.filter((a) => a.doc_type !== 'checklist_inline_note' && a.doc_type !== 'task_note'),
-                { size: 'sm', className: 'mt-1' },
-              )}
+              {!isCkExpanded && ckFileCount > 0 && renderChecklistCollapsedFiles(ckAtts, task.id, ck.id)}
               <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                 {ckFileCount > 0 && (
                   <span className="text-[9px] text-blue-600 bg-blue-50 px-1 py-0.5 rounded-full flex items-center gap-0.5">
@@ -2514,6 +2645,10 @@ export default function CRMTasksTab({
 
           {isCkExpanded && !isCkEditing && (
             <div className="px-3 pb-3 border-t border-teal-100 pt-2 space-y-2" onClick={(e) => e.stopPropagation()}>
+              {renderImageThumbnailGrid(
+                filterChecklistFileAtts(ckAtts),
+                { size: 'lg', className: 'mb-1' },
+              )}
               {ck.description?.trim() && (
                 <div className="rounded bg-slate-50 border border-slate-100 px-2 py-1.5">
                   <p className="text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Mô tả</p>
@@ -2548,7 +2683,7 @@ export default function CRMTasksTab({
                     {savingChecklistNote === ckKey ? 'Đang lưu...' : savingChecklistNote === `saved-${ckKey}` ? '✓ Đã lưu' : 'Lưu ghi chú'}
                   </button>
                 </div>
-                {renderChecklistAttachmentList(task.id, ckAtts.filter((a) => a.doc_type !== 'checklist_inline_note'))}
+                {renderChecklistAttachmentList(task.id, ckAtts.filter((a) => a.doc_type !== 'checklist_inline_note'), ck.id)}
               </div>
             </div>
           )}
@@ -2685,6 +2820,7 @@ export default function CRMTasksTab({
                 💬 {task.notes.slice(0, 80)}{task.notes.length > 80 ? '...' : ''}
               </p>
             )}
+            {!isExpanded && atts.length > 0 && renderChecklistCollapsedFiles(atts, task.id, null)}
             {!isExpanded && !hasNotes && hasDesc && (
               <p className="text-sm text-slate-600 mt-0.5 line-clamp-2" title={descText}>
                 📋 {descText.slice(0, 120)}{descText.length > 120 ? '…' : ''}
@@ -2948,10 +3084,7 @@ export default function CRMTasksTab({
                               {!isCkExpanded && ckHasNotes && (
                                 <p className="text-[11px] text-amber-600 line-clamp-1 mt-0.5 italic">💬 {(ck.notes || '').slice(0, 60)}</p>
                               )}
-                              {!isCkExpanded && renderImageThumbnailGrid(
-                                ckAtts.filter((a) => a.doc_type !== 'checklist_inline_note' && a.doc_type !== 'task_note'),
-                                { size: 'sm', className: 'mt-1' },
-                              )}
+                              {!isCkExpanded && ckFileCount > 0 && renderChecklistCollapsedFiles(ckAtts, task.id, ck.id)}
                               <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                                 {ckFileCount > 0 && (
                                   <span className="text-[9px] text-blue-600 bg-blue-50 px-1 py-0.5 rounded-full flex items-center gap-0.5">
@@ -3104,6 +3237,10 @@ export default function CRMTasksTab({
 
                           {isCkExpanded && !isCkEditing && (
                             <div className="px-2 pb-2 border-t border-emerald-100 pt-2 space-y-2" onClick={(e) => e.stopPropagation()}>
+                              {renderImageThumbnailGrid(
+                                filterChecklistFileAtts(ckAtts),
+                                { size: 'lg', className: 'mb-1' },
+                              )}
                               {ck.description?.trim() && (
                                 <div className="rounded bg-slate-50 border border-slate-100 px-2 py-1.5">
                                   <p className="text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Mô tả</p>
@@ -3138,7 +3275,7 @@ export default function CRMTasksTab({
                                     {savingChecklistNote === ckKey ? 'Đang lưu...' : savingChecklistNote === `saved-${ckKey}` ? '✓ Đã lưu' : 'Lưu ghi chú'}
                                   </button>
                                 </div>
-                                {renderChecklistAttachmentList(task.id, ckAtts.filter((a) => a.doc_type !== 'checklist_inline_note'))}
+                                {renderChecklistAttachmentList(task.id, ckAtts.filter((a) => a.doc_type !== 'checklist_inline_note'), ck.id)}
                               </div>
                             </div>
                           )}
@@ -3247,46 +3384,48 @@ export default function CRMTasksTab({
               {/* Attachment list */}
               {atts.length > 0 && (
                 <div className="space-y-1.5">
-                  {renderImageThumbnailGrid(atts, { size: 'md', className: 'mb-1' })}
-                  {atts.filter((att) => !isImageAtt(att)).map(att => {
-                    const AttIcon = ATT_ICONS[att.doc_type] || FileText;
+                  {atts.filter((att) => att.file_url).map((att) => {
                     const attOpen = att.file_url ? getFileOpenAnchorProps(att.file_url, { fileName: att.file_name }) : null;
+                    const img = isImageAtt(att);
                     return (
-                      <div key={att.id} className="py-1.5 px-2 rounded bg-white border group/att">
+                      <div key={att.id} className="py-1.5 px-2 rounded bg-white border">
                         <div className="flex items-start gap-2">
-                          <AttIcon className="h-3.5 w-3.5 text-gray-400 mt-0.5 shrink-0" />
+                          <AttachmentFileIcon att={att} className="h-4 w-4 mt-0.5" />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1">
-                              <p className="text-xs font-medium text-gray-800 truncate">{att.name}</p>
+                              <p className="text-xs font-medium text-gray-800 truncate">{att.name || att.file_name}</p>
                               {att.shared_to_project && (
                                 <span className="text-[9px] text-green-600 bg-green-50 px-1 py-0.5 rounded shrink-0">🔗 Đã chia sẻ</span>
                               )}
                             </div>
                             {att.notes && <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{att.notes}</p>}
-                            {att.file_url && attOpen && (
-                              <a {...attOpen}
-                                className="text-[10px] text-blue-600 hover:underline">{att.file_name || 'Mở file'}</a>
+                            {att.file_url && !img && attOpen && (
+                              <a {...attOpen} className="text-[10px] text-blue-600 hover:underline">{att.file_name || 'Mở file'}</a>
                             )}
                             <span className="text-[9px] text-gray-400 ml-1">{att.creator?.full_name}</span>
                           </div>
-                          <div className="opacity-0 group-hover/att:opacity-100 flex items-center gap-0.5 shrink-0">
-                            <button onClick={() => handleShareClick(task.id, att.id)}
-                              onDoubleClick={() => { if (att.shared_to_project) openShareModal(task.id, att.id); }}
-                              className={`p-0.5 cursor-pointer ${att.shared_to_project ? 'text-green-500 hover:text-green-700' : 'text-gray-400 hover:text-green-500'}`}
-                              title={att.shared_to_project ? 'Click: tắt · Double-click: đổi khối' : 'Chia sẻ file sang khối SX / VC / CV'}>
-                              {att.shared_to_project ? <Share2 className="h-2.5 w-2.5" /> : <Lock className="h-2.5 w-2.5" />}
-                            </button>
-                            <button onClick={() => deleteAttachment(task.id, att.id)}
-                              className="p-0.5 text-gray-400 hover:text-red-500 cursor-pointer">
-                              <Trash2 className="h-2.5 w-2.5" />
-                            </button>
+                          <div className="flex flex-col items-end gap-1 shrink-0">
+                            <div className="flex items-center gap-0.5">
+                              <button onClick={() => handleShareClick(task.id, att.id)}
+                                onDoubleClick={() => { if (att.shared_to_project) openShareModal(task.id, att.id); }}
+                                className={`p-0.5 cursor-pointer ${att.shared_to_project ? 'text-green-500 hover:text-green-700' : 'text-gray-400 hover:text-green-500'}`}
+                                title={att.shared_to_project ? 'Click: tắt · Double-click: đổi khối' : 'Chia sẻ file sang khối SX / VC / CV'}>
+                                {att.shared_to_project ? <Share2 className="h-2.5 w-2.5" /> : <Lock className="h-2.5 w-2.5" />}
+                              </button>
+                            </div>
+                            {renderAttachmentActionButtons(task.id, att)}
                           </div>
                         </div>
-                        {/* Video preview */}
+                        {img && attOpen && (
+                          <a {...attOpen} className="block mt-1.5 ml-5">
+                            <img src={publicFileUrl(att.file_url)} alt={att.file_name || att.name || ''}
+                              className="max-h-80 max-w-full rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity" />
+                          </a>
+                        )}
                         {att.file_url && (att.mime_type?.startsWith('video/') || att.doc_type === 'video') && (
                           <div className="mt-1.5 ml-5">
                             <video src={publicFileUrl(att.file_url)} controls preload="metadata"
-                              className="max-h-52 max-w-full rounded-lg border border-gray-200 bg-black" />
+                              className="max-h-[26rem] max-w-full rounded-lg border border-gray-200 bg-black" />
                           </div>
                         )}
                       </div>
