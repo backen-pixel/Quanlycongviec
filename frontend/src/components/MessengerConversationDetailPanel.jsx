@@ -4,6 +4,7 @@ import {
   Crown,
   ExternalLink,
   FileText,
+  Download,
   Image as ImageIcon,
   Link2,
   Loader2,
@@ -25,8 +26,15 @@ import {
 } from 'lucide-react';
 import { resolveMediaUrl, BROKEN_MEDIA_PLACEHOLDER } from '../lib/mediaUrl';
 import { publicFileUrl } from '../lib/publicFileUrl';
-import { displayMessengerFilename } from '../lib/messengerMessageActions';
+import { displayMessengerFilename, downloadMessengerFile } from '../lib/messengerMessageActions';
 import UploadFileLightbox, { collectUploadLightboxItems, findUploadLightboxIndex } from './UploadFileLightbox';
+import {
+  formatChatHeaderPresenceLabel,
+  formatLastActiveAgo,
+  formatPresenceDotTitle,
+  getUserPresence,
+} from '../lib/userPresenceDisplay';
+import { useRelativeTimeTick } from '../hooks/useRelativeTimeTick';
 
 const AVATAR_GRADIENTS = [
   'linear-gradient(135deg, #f43f5e, #ec4899)',
@@ -106,6 +114,53 @@ function memberRoleLabel(m, groupDetail) {
   return 'Thành viên';
 }
 
+function DetailPanelFileRow({ file }) {
+  const [busy, setBusy] = useState(false);
+  const name = displayMessengerFilename(file);
+  const fileUrl = resolveMediaUrl(file?.url);
+
+  const handleDownload = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!file?.url || busy) return;
+    setBusy(true);
+    try {
+      await downloadMessengerFile(file.url, name);
+    } catch (err) {
+      alert(err?.message || 'Không tải được tệp');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <li>
+      <div className="flex items-center gap-2 p-2.5 rounded-xl hover:bg-slate-50">
+        <FileText className="h-4 w-4 text-violet-600 shrink-0" />
+        <a
+          href={fileUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="flex-1 min-w-0 truncate text-sm text-slate-700 hover:text-violet-700"
+          title={name}
+        >
+          {name}
+        </a>
+        <button
+          type="button"
+          onClick={(e) => void handleDownload(e)}
+          disabled={!fileUrl || busy}
+          className="shrink-0 w-8 h-8 rounded-lg border border-slate-200 bg-white hover:bg-violet-50 hover:text-violet-700 text-slate-500 flex items-center justify-center transition disabled:opacity-40"
+          title="Tải xuống"
+          aria-label={`Tải xuống ${name}`}
+        >
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+        </button>
+      </div>
+    </li>
+  );
+}
+
 export default function MessengerConversationDetailPanel({
   selected,
   groupDetail,
@@ -156,6 +211,8 @@ export default function MessengerConversationDetailPanel({
   const notifyKey = selectedGroupId ? `messenger_notify_${selectedGroupId}` : '';
   const [notifyOn, setNotifyOn] = useState(true);
 
+  useRelativeTimeTick();
+
   useEffect(() => {
     if (!notifyKey) return;
     try {
@@ -177,15 +234,15 @@ export default function MessengerConversationDetailPanel({
 
   const onlineLabel = useMemo(() => {
     if (isDirect && selected?.peer_id) {
-      const pres = presenceByUser[selected.peer_id] || presenceByUser[String(selected.peer_id)];
-      return pres?.online ? 'Đang hoạt động' : 'Hoạt động gần đây';
+      const pres = getUserPresence(presenceByUser, selected.peer_id);
+      return formatChatHeaderPresenceLabel(pres);
     }
     const onlineCount = groupMembers.filter((m) => {
-      const pres = presenceByUser[m.user_id] || presenceByUser[String(m.user_id)];
+      const pres = getUserPresence(presenceByUser, m.user_id);
       return !!pres?.online;
     }).length;
     if (onlineCount > 0) return `${onlineCount} đang hoạt động`;
-    return 'Hoạt động gần đây';
+    return `${groupMembers.length} thành viên`;
   }, [isDirect, selected?.peer_id, groupMembers, presenceByUser]);
 
   const previewMembers = groupMembers.slice(0, 4);
@@ -408,7 +465,7 @@ export default function MessengerConversationDetailPanel({
                   const isDeputy = m.role === 'deputy';
                   const isMe = String(m.user_id) === String(uid);
                   const busy = busyMember === m.user_id;
-                  const pres = presenceByUser[m.user_id] || presenceByUser[String(m.user_id)];
+                  const pres = getUserPresence(presenceByUser, m.user_id);
                   const online = !!pres?.online;
                   return (
                     <li
@@ -421,6 +478,7 @@ export default function MessengerConversationDetailPanel({
                           className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-white ${
                             online ? 'bg-emerald-500' : 'bg-slate-300'
                           }`}
+                          title={formatPresenceDotTitle(pres)}
                         />
                       </div>
                       <div className="min-w-0 flex-1">
@@ -430,7 +488,14 @@ export default function MessengerConversationDetailPanel({
                           {isLeader && <Crown className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
                           {isDeputy && !isLeader && <Shield className="h-3.5 w-3.5 text-indigo-500 shrink-0" />}
                         </p>
-                        <p className="text-[11px] text-slate-500">{memberRoleLabel(m, groupDetail)}</p>
+                        <p className="text-[11px] text-slate-500">
+                          {memberRoleLabel(m, groupDetail)}
+                          {online ? (
+                            <span className="text-emerald-600"> · Đang hoạt động</span>
+                          ) : (
+                            <span> · {formatLastActiveAgo(pres?.last_ping_at)}</span>
+                          )}
+                        </p>
                       </div>
                       {canManageGroup && !isCreator && !isMe ? (
                         <div className="relative shrink-0" ref={memberMenuId === m.user_id ? memberMenuRef : null}>
@@ -570,17 +635,7 @@ export default function MessengerConversationDetailPanel({
           {rightSection === 'files' && (
             <ul className="space-y-1">
               {(mediaBundle?.files || []).map((f, i) => (
-                <li key={`${f.url}-${i}`}>
-                  <a
-                    href={resolveMediaUrl(f.url)}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex items-center gap-2 p-2.5 rounded-xl hover:bg-slate-50"
-                  >
-                    <FileText className="h-4 w-4 text-violet-600 shrink-0" />
-                    <span className="truncate text-slate-700">{displayMessengerFilename(f)}</span>
-                  </a>
-                </li>
+                <DetailPanelFileRow key={`${f.url}-${i}`} file={f} />
               ))}
               {fileCount === 0 && <p className="text-slate-400 text-center py-8">Chưa có tệp</p>}
             </ul>

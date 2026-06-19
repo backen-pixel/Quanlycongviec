@@ -37,6 +37,13 @@ import {
   resolveThreadPreviewLabel,
 } from '../lib/messengerPreview';
 import { isMessengerCallLogMessage } from '../lib/messengerCallLog';
+import {
+  formatChatHeaderPresenceLabel,
+  formatLastActiveShort,
+  formatPresenceDotTitle,
+  getUserPresence,
+} from '../lib/userPresenceDisplay';
+import { useRelativeTimeTick } from '../hooks/useRelativeTimeTick';
 
 const URL_IN_TEXT = /(https?:\/\/[^\s<]+[^<.,:;"')\]\s])/gi;
 
@@ -253,6 +260,8 @@ export default function MessengerHubPage() {
   const [busyAvatar, setBusyAvatar] = useState(false);      // đang upload avatar nhóm
   const groupAvatarInputRef = useRef(null);
 
+  useRelativeTimeTick();
+
   const reloadMessengerThreads = useCallback(() => {
     let lsMessenger = [];
     try {
@@ -466,6 +475,31 @@ export default function MessengerHubPage() {
       document.removeEventListener('visibilitychange', fetchPresence);
     };
   }, [threads]);
+
+  // Presence thành viên nhóm (panel chi tiết — hiển thị offline bao lâu).
+  useEffect(() => {
+    const memberIds = [...new Set(groupMembers.map((m) => m.user_id).filter(Boolean).map(String))];
+    if (!memberIds.length) return undefined;
+    let cancelled = false;
+    const fetchPresence = () => {
+      if (document.hidden) return;
+      api
+        .post('/users/presence', { user_ids: memberIds })
+        .then((r) => {
+          if (cancelled) return;
+          setPresenceByUser((prev) => ({ ...prev, ...(r.data?.presence || {}) }));
+        })
+        .catch(() => {});
+    };
+    fetchPresence();
+    const intervalId = setInterval(fetchPresence, 45 * 1000);
+    document.addEventListener('visibilitychange', fetchPresence);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', fetchPresence);
+    };
+  }, [groupMembers]);
 
   useEffect(() => {
     if (!staffPanelOpen || !staffListLoaded || staffRows.length === 0) return undefined;
@@ -1194,7 +1228,7 @@ export default function MessengerHubPage() {
                       staffRows.map((u) => {
                         const id = u.id || u.user_id;
                         const isSelf = String(id) === String(uid);
-                        const pres = presenceByUser[id] || presenceByUser[String(id)];
+                        const pres = getUserPresence(presenceByUser, id);
                         const online = !!pres?.online;
                         return (
                           <div
@@ -1214,10 +1248,17 @@ export default function MessengerHubPage() {
                                 className={`absolute bottom-0 right-0 w-2 h-2 rounded-full border border-white ${
                                   online ? 'bg-emerald-500' : 'bg-slate-300'
                                 }`}
-                                title={online ? 'Đang hoạt động' : 'Offline (>2 phút không ping)'}
+                                title={formatPresenceDotTitle(pres)}
                               />
                             </span>
-                            <span className="flex-1 min-w-0 truncate font-medium">{u.full_name || u.email}</span>
+                            <span className="flex-1 min-w-0">
+                              <span className="block truncate font-medium">{u.full_name || u.email}</span>
+                              {!online && (
+                                <span className="block truncate text-[10px] text-slate-400">
+                                  {formatLastActiveShort(pres?.last_ping_at)}
+                                </span>
+                              )}
+                            </span>
                             {!isSelf ? (
                               <button
                                 type="button"
@@ -1284,14 +1325,14 @@ export default function MessengerHubPage() {
                       rounded="rounded-full"
                     />
                     {t.is_direct && t.peer_id && (() => {
-                      const pres = presenceByUser[t.peer_id] || presenceByUser[String(t.peer_id)];
+                      const pres = getUserPresence(presenceByUser, t.peer_id);
                       const online = !!pres?.online;
                       return (
                         <span
                           className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white ${
                             online ? 'bg-emerald-500' : 'bg-slate-300'
                           }`}
-                          title={online ? 'Đang hoạt động' : 'Không hoạt động'}
+                          title={formatPresenceDotTitle(pres)}
                         />
                       );
                     })()}
@@ -1374,14 +1415,14 @@ export default function MessengerHubPage() {
                     rounded="rounded-full"
                   />
                   {selected?.is_direct && selected?.peer_id && (() => {
-                    const pres = presenceByUser[selected.peer_id] || presenceByUser[String(selected.peer_id)];
+                    const pres = getUserPresence(presenceByUser, selected.peer_id);
                     const online = !!pres?.online;
                     return (
                       <span
                         className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white ${
                           online ? 'bg-emerald-500' : 'bg-slate-300'
                         }`}
-                        title={online ? 'Đang hoạt động' : 'Không hoạt động'}
+                        title={formatPresenceDotTitle(pres)}
                       />
                     );
                   })()}
@@ -1395,13 +1436,13 @@ export default function MessengerHubPage() {
                   </div>
                   <p className="text-[12px] truncate flex items-center gap-1.5 mt-0.5">
                     {selected?.is_direct ? (() => {
-                      const pres = presenceByUser[selected.peer_id] || presenceByUser[String(selected.peer_id)];
+                      const pres = getUserPresence(presenceByUser, selected.peer_id);
                       const online = !!pres?.online;
                       return (
                         <span className="inline-flex items-center gap-1.5">
                           <span className={`w-2 h-2 rounded-full ${online ? 'bg-emerald-500' : 'bg-slate-300'}`} />
                           <span className={online ? 'text-emerald-600 font-semibold' : 'text-slate-500 font-medium'}>
-                            {online ? 'Đang hoạt động' : 'Không hoạt động'}
+                            {formatChatHeaderPresenceLabel(pres)}
                           </span>
                         </span>
                       );
