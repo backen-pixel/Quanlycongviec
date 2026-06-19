@@ -31,6 +31,10 @@ const MAX_COMPACT_AVATARS = 8;
 const DOCK_SHADOW = '0 12px 40px rgba(15, 23, 42, 0.12)';
 const DOCK_SHADOW_SUNK = '0 4px 16px rgba(15, 23, 42, 0.06)';
 const DOCK_COLLAPSED_KEY = 'messenger_quick_dock_collapsed';
+const DOCK_PINNED_KEY = 'messenger_quick_dock_pinned';
+/** Class ẩn scrollbar nhưng vẫn cuộn được */
+const DOCK_STRIP_SCROLL_CLS =
+  'overflow-y-auto overscroll-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden';
 /** Phần lộ ra mép phải khi thanh đang chìm */
 const SUNK_PEEK_PX = 24;
 /** Khoảng cách mép phải viewport — chừa chỗ cho badge */
@@ -248,12 +252,38 @@ export default function MessengerQuickChatDock({
       return false;
     }
   });
+  const [dockPinned, setDockPinned] = useState(() => {
+    try {
+      return localStorage.getItem(DOCK_PINNED_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
   const [hoverItem, setHoverItem] = useState(null);
   const [hoverRect, setHoverRect] = useState(null);
   const hoverTimer = useRef(null);
   const leaveTimer = useRef(null);
+  const stripScrollRef = useRef(null);
+  const [stripScrollFade, setStripScrollFade] = useState({ top: false, bottom: false });
 
-  const dockActive = raised || expanded;
+  const updateStripScrollFade = useCallback(() => {
+    const el = stripScrollRef.current;
+    if (!el) {
+      setStripScrollFade({ top: false, bottom: false });
+      return;
+    }
+    const { scrollTop, scrollHeight, clientHeight } = el;
+    setStripScrollFade({
+      top: scrollTop > 6,
+      bottom: scrollTop + clientHeight < scrollHeight - 6,
+    });
+  }, []);
+
+  const dockActive = raised || expanded || dockPinned;
+
+  useEffect(() => {
+    if (dockPinned) setRaised(true);
+  }, [dockPinned]);
   const compactWidth = avatarsCollapsed ? QUICK_CHAT_DOCK_MINI_W : QUICK_CHAT_DOCK_W;
   const compactOuterWidth = compactWidth + COMPACT_ITEM_PAD * 2;
 
@@ -266,11 +296,25 @@ export default function MessengerQuickChatDock({
   }, []);
 
   const handleDockLeave = useCallback(() => {
+    if (dockPinned) return;
     clearTimeout(leaveTimer.current);
     leaveTimer.current = setTimeout(() => {
       if (!expanded) setRaised(false);
     }, DOCK_SINK_DELAY_MS);
-  }, [expanded]);
+  }, [expanded, dockPinned]);
+
+  const toggleDockPinned = useCallback(() => {
+    setDockPinned((v) => {
+      const next = !v;
+      if (next) setRaised(true);
+      try {
+        localStorage.setItem(DOCK_PINNED_KEY, next ? '1' : '0');
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
 
   const toggleAvatarsCollapsed = useCallback(() => {
     setAvatarsCollapsed((v) => {
@@ -301,6 +345,10 @@ export default function MessengerQuickChatDock({
   useEffect(() => {
     if (expanded) setRaised(true);
   }, [expanded]);
+
+  useEffect(() => {
+    updateStripScrollFade();
+  }, [compactItems.length, avatarsCollapsed, dockActive, updateStripScrollFade]);
 
   useEffect(
     () => () => {
@@ -452,7 +500,7 @@ export default function MessengerQuickChatDock({
               </button>
             </div>
 
-            <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-4 [scrollbar-width:thin]">
+            <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
               {panelSearch.trim() && (
                 <section>
                   <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5">
@@ -637,7 +685,7 @@ export default function MessengerQuickChatDock({
         <div
           className={`relative shrink-0 flex flex-col items-center rounded-[24px] border py-3 gap-2 transition-all duration-500 ease-out overflow-visible ${
             dockActive
-              ? 'opacity-100 border-[#E5E7EB] bg-white px-2.5'
+              ? `opacity-100 border-[#E5E7EB] bg-white px-2.5${dockPinned ? ' ring-2 ring-[#F59E0B]/35 shadow-[0_0_0_1px_rgba(245,158,11,0.15)]' : ''}`
               : totalUnread > 0
                 ? 'opacity-95 border-[#FECACA] bg-white shadow-[0_0_0_2px_rgba(239,68,68,0.25)] px-2.5'
                 : 'opacity-[0.42] border-transparent bg-white/75 backdrop-blur-sm px-2'
@@ -645,10 +693,7 @@ export default function MessengerQuickChatDock({
           style={{
             width: compactOuterWidth,
             boxShadow: dockActive ? DOCK_SHADOW : totalUnread > 0 ? '0 8px 28px rgba(239,68,68,0.22)' : DOCK_SHADOW_SUNK,
-            transform:
-              dockActive || totalUnread > 0
-                ? 'translateX(0)'
-                : `translateX(${Math.max(0, compactOuterWidth - SUNK_PEEK_PX)}px)`,
+            transform: dockActive ? 'translateX(0)' : `translateX(${Math.max(0, compactOuterWidth - SUNK_PEEK_PX)}px)`,
           }}
         >
           <button
@@ -666,54 +711,92 @@ export default function MessengerQuickChatDock({
             title={expanded ? 'Thu gọn danh sách' : totalUnread > 0 ? `${totalUnread} tin nhắn mới` : 'Mở danh sách chat'}
           >
             <MessageCircle className="h-5 w-5" />
+            {dockPinned && !expanded ? (
+              <span className="absolute bottom-0 left-0 z-10 h-3.5 w-3.5 rounded-full bg-[#F59E0B] flex items-center justify-center ring-1 ring-white shadow">
+                <Pin className="h-2 w-2 text-white fill-white" />
+              </span>
+            ) : null}
             {!expanded && totalUnread > 0 ? (
               <UnreadBadge count={totalUnread} prominent pulseRing={!dockActive} />
             ) : null}
           </button>
 
-          <button
-            type="button"
-            onClick={toggleAvatarsCollapsed}
-            className={`w-8 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-[#2563EB] hover:bg-[#2563EB]/5 transition shrink-0 ${
-              dockActive ? 'opacity-100' : 'opacity-70'
-            }`}
-            title={avatarsCollapsed ? 'Mở rộng thanh avatar' : 'Thu gọn — chỉ giữ nút chat'}
-          >
-            {avatarsCollapsed ? (
-              <PanelRightOpen className="h-3.5 w-3.5" />
-            ) : (
-              <PanelRightClose className="h-3.5 w-3.5" />
-            )}
-          </button>
+          <div className="flex flex-col items-center gap-0.5 shrink-0">
+            <button
+              type="button"
+              onClick={toggleDockPinned}
+              className={`w-8 h-7 rounded-lg flex items-center justify-center transition shrink-0 ${
+                dockPinned
+                  ? 'text-[#F59E0B] bg-[#F59E0B]/12 hover:bg-[#F59E0B]/20'
+                  : 'text-slate-400 hover:text-[#2563EB] hover:bg-[#2563EB]/5'
+              } ${dockActive ? 'opacity-100' : 'opacity-70'}`}
+              title={dockPinned ? 'Bỏ ghim — thanh chat có thể tự chìm' : 'Ghim thanh chat — luôn hiển thị đầy đủ'}
+            >
+              <Pin className={`h-3.5 w-3.5 ${dockPinned ? 'fill-[#F59E0B]' : ''}`} />
+            </button>
+
+            <button
+              type="button"
+              onClick={toggleAvatarsCollapsed}
+              className={`w-8 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-[#2563EB] hover:bg-[#2563EB]/5 transition shrink-0 ${
+                dockActive ? 'opacity-100' : 'opacity-70'
+              }`}
+              title={avatarsCollapsed ? 'Mở rộng thanh avatar' : 'Thu gọn — chỉ giữ nút chat'}
+            >
+              {avatarsCollapsed ? (
+                <PanelRightOpen className="h-3.5 w-3.5" />
+              ) : (
+                <PanelRightClose className="h-3.5 w-3.5" />
+              )}
+            </button>
+          </div>
 
           {!avatarsCollapsed ? (
             <>
               <div className={`w-8 border-t shrink-0 transition-colors ${dockActive ? 'border-[#E5E7EB]' : 'border-slate-200/60'}`} />
 
               <div
-                className={`flex flex-col items-center gap-1 w-full min-h-0 overflow-y-auto overflow-x-visible py-1 transition-all duration-500 ease-out [scrollbar-width:thin] ${
-                  dockActive ? 'opacity-100 max-h-[min(420px,50vh)]' : 'opacity-80 max-h-[min(320px,40vh)]'
-                }`}
+                className={`relative w-full min-h-0 flex-1 ${dockActive ? 'max-h-[min(380px,46vh)]' : 'max-h-[min(280px,36vh)]'}`}
               >
-                {groupsLoading && items.length === 0 ? (
-                  <Loader2 className="h-5 w-5 animate-spin text-slate-400 my-2" />
+                <div
+                  ref={stripScrollRef}
+                  onScroll={updateStripScrollFade}
+                  className={`flex flex-col items-center gap-1 w-full h-full py-1 transition-opacity duration-500 ease-out ${DOCK_STRIP_SCROLL_CLS} ${
+                    dockActive ? 'opacity-100' : 'opacity-80'
+                  }`}
+                >
+                  {groupsLoading && items.length === 0 ? (
+                    <Loader2 className="h-5 w-5 animate-spin text-slate-400 my-2 shrink-0" />
+                  ) : null}
+
+                  {compactItems.map(renderCompactButton)}
+
+                  {overflowCount > 0 ? (
+                    <button
+                      type="button"
+                      onClick={onToggleExpanded}
+                      className="w-10 h-10 rounded-2xl bg-slate-100 border border-[#E5E7EB] text-xs font-bold text-slate-600 hover:bg-gradient-to-br hover:from-[#2563EB]/10 hover:to-[#7C3AED]/10 hover:text-[#2563EB] transition-all duration-200 shrink-0"
+                      title={`Xem thêm ${overflowCount} hội thoại`}
+                    >
+                      +{overflowCount}
+                    </button>
+                  ) : null}
+
+                  {!groupsLoading && items.length === 0 ? (
+                    <p className="text-[9px] text-slate-400 text-center leading-tight px-1 py-1 shrink-0">Chưa có chat</p>
+                  ) : null}
+                </div>
+                {stripScrollFade.top ? (
+                  <div
+                    className="pointer-events-none absolute inset-x-0 top-0 h-4 bg-gradient-to-b from-white to-transparent rounded-t-xl"
+                    aria-hidden
+                  />
                 ) : null}
-
-                {compactItems.map(renderCompactButton)}
-
-                {overflowCount > 0 ? (
-                  <button
-                    type="button"
-                    onClick={onToggleExpanded}
-                    className="w-10 h-10 rounded-2xl bg-slate-100 border border-[#E5E7EB] text-xs font-bold text-slate-600 hover:bg-gradient-to-br hover:from-[#2563EB]/10 hover:to-[#7C3AED]/10 hover:text-[#2563EB] transition-all duration-200 shrink-0"
-                    title={`Xem thêm ${overflowCount} hội thoại`}
-                  >
-                    +{overflowCount}
-                  </button>
-                ) : null}
-
-                {!groupsLoading && items.length === 0 ? (
-                  <p className="text-[9px] text-slate-400 text-center leading-tight px-1 py-1">Chưa có chat</p>
+                {stripScrollFade.bottom ? (
+                  <div
+                    className="pointer-events-none absolute inset-x-0 bottom-0 h-4 bg-gradient-to-t from-white to-transparent rounded-b-xl"
+                    aria-hidden
+                  />
                 ) : null}
               </div>
             </>
