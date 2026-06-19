@@ -8,8 +8,13 @@ import DepartmentChatBubble from './DepartmentChatBubble';
 import { MessageCircle, X, Minus, Maximize2, Search, Users, Loader2, ChevronRight, Building2 } from 'lucide-react';
 import api from '../lib/api';
 import { publicFileUrl } from '../lib/publicFileUrl';
-import OnlineStatusDot, { isUserOnline } from './OnlineStatusDot';
+import OnlineStatusDot, { getUserPresence } from './OnlineStatusDot';
 import { usePresence } from '../shared/context/PresenceContext';
+import {
+  formatChatHeaderPresenceLabel,
+  formatLastActiveShort,
+} from '../lib/userPresenceDisplay';
+import { useRelativeTimeTick } from '../hooks/useRelativeTimeTick';
 
 export const MESSENGER_DOCK_W = 52;
 const BUBBLE_W = 340;
@@ -214,6 +219,8 @@ export default function MessengerDock() {
 
   const presenceByUser = usePresence(presenceUserIds, { enabled: !!uid });
 
+  useRelativeTimeTick();
+
   const onPickStaff = async (u) => {
     if (!u?.id || String(u.id) === String(uid)) return;
     try {
@@ -260,8 +267,9 @@ export default function MessengerDock() {
       {expanded.map((w, i) => {
         const peerForHeader =
           w.peerUserId || (w.groupId ? groupPeerById.get(String(w.groupId)) : null);
+        const peerPresence = peerForHeader ? getUserPresence(presenceByUser, peerForHeader) : null;
         const showPeerDot = w.chatType !== 'department' && (w.isDirect || peerForHeader);
-        const peerOnline = showPeerDot ? isUserOnline(presenceByUser, peerForHeader) : false;
+        const peerOnline = showPeerDot ? !!peerPresence?.online : false;
         const windowAvatar =
           w.avatar || (w.groupId ? groupAvatarById.get(String(w.groupId)) : null) || null;
         const headerGradient =
@@ -292,7 +300,7 @@ export default function MessengerDock() {
               <div className="relative w-9 h-9 rounded-2xl bg-white/25 backdrop-blur flex items-center justify-center shrink-0 ring-2 ring-white/40 shadow-md">
                 <Building2 className="h-4 w-4" />
                 {showPeerDot ? (
-                  <OnlineStatusDot online={peerOnline} size="md" className="absolute -bottom-0.5 -right-0.5" />
+                  <OnlineStatusDot presence={peerPresence} size="md" className="absolute -bottom-0.5 -right-0.5" />
                 ) : null}
               </div>
             ) : (
@@ -304,7 +312,7 @@ export default function MessengerDock() {
                 maxInitials={1}
               >
                 {showPeerDot ? (
-                  <OnlineStatusDot online={peerOnline} size="md" className="absolute -bottom-0.5 -right-0.5" />
+                  <OnlineStatusDot presence={peerPresence} size="md" className="absolute -bottom-0.5 -right-0.5" />
                 ) : null}
               </DockAvatar>
             )}
@@ -319,7 +327,7 @@ export default function MessengerDock() {
                   {showPeerDot ? (
                     <>
                       <span className={`w-1.5 h-1.5 rounded-full ${peerOnline ? 'bg-emerald-300' : 'bg-white/50'}`} />
-                      {peerOnline ? 'Đang hoạt động' : 'Offline'}
+                      {formatChatHeaderPresenceLabel(peerPresence)}
                     </>
                   ) : (
                     <><Users className="h-2.5 w-2.5" /> Nhóm chat nội bộ</>
@@ -452,7 +460,8 @@ export default function MessengerDock() {
               ) : staffRows.length ? (
                 <ul className="mt-1.5 space-y-0.5 border border-white/60 bg-white/55 backdrop-blur rounded-xl max-h-40 overflow-y-auto p-1 [scrollbar-width:thin]">
                   {staffRows.map((u) => {
-                    const online = isUserOnline(presenceByUser, u.id);
+                    const pres = getUserPresence(presenceByUser, u.id);
+                    const online = !!pres?.online;
                     return (
                     <li key={u.id}>
                       <button
@@ -462,13 +471,18 @@ export default function MessengerDock() {
                         className="w-full text-left px-2 py-1.5 text-xs hover:bg-sky-50 rounded-lg disabled:opacity-40 flex items-center gap-2 transition"
                       >
                         <DockAvatar src={u.avatar} name={u.full_name || u.email} size="sm">
-                          <OnlineStatusDot online={online} className="absolute -bottom-0.5 -right-0.5" />
+                          <OnlineStatusDot presence={pres} className="absolute -bottom-0.5 -right-0.5" />
                         </DockAvatar>
                         <span className="truncate flex-1 min-w-0">
                           <span className="font-semibold text-slate-800 block truncate">{u.full_name || u.email}</span>
                           {u.email && u.full_name ? (
                             <span className="block text-[10px] text-slate-500 truncate">{u.email}</span>
                           ) : null}
+                          {!online && (
+                            <span className="block text-[10px] text-slate-400 truncate">
+                              {formatLastActiveShort(pres?.last_ping_at)}
+                            </span>
+                          )}
                         </span>
                         <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                       </button>
@@ -500,7 +514,8 @@ export default function MessengerDock() {
                 <ul className="space-y-0.5 border border-white/60 bg-white/55 backdrop-blur rounded-xl max-h-52 overflow-y-auto p-1 [scrollbar-width:thin]">
                   {filteredGroups.map((g) => {
                     const n = unreadByGroupId[g.id] || 0;
-                    const peerOnline = g.is_direct && g.peer_id ? isUserOnline(presenceByUser, g.peer_id) : false;
+                    const peerPresence = g.is_direct && g.peer_id ? getUserPresence(presenceByUser, g.peer_id) : null;
+                    const peerOnline = !!peerPresence?.online;
                     return (
                       <li key={g.id}>
                         <button
@@ -515,12 +530,16 @@ export default function MessengerDock() {
                               size="sm"
                             >
                               {g.is_direct && g.peer_id ? (
-                                <OnlineStatusDot online={peerOnline} size="md" className="absolute -bottom-0.5 -right-0.5" />
+                                <OnlineStatusDot presence={peerPresence} size="md" className="absolute -bottom-0.5 -right-0.5" />
                               ) : null}
                             </DockAvatar>
                             <span className="min-w-0 flex-1">
                               <span className="truncate font-semibold text-slate-800 block">{g.name || 'Nhóm'}</span>
-                              <span className="text-[10px] text-slate-500">{g.is_direct ? 'Trực tiếp' : 'Nhóm chat'}</span>
+                              <span className="text-[10px] text-slate-500">
+                                {g.is_direct
+                                  ? (peerOnline ? 'Đang hoạt động' : formatLastActiveShort(peerPresence?.last_ping_at))
+                                  : 'Nhóm chat'}
+                              </span>
                             </span>
                           </span>
                           {n > 0 ? (
@@ -577,6 +596,7 @@ export default function MessengerDock() {
                   : 0;
           const peerId =
             w.peerUserId || (w.groupId ? groupPeerById.get(String(w.groupId)) : null);
+          const peerPresence = peerId ? getUserPresence(presenceByUser, peerId) : null;
           const showPeerDot = !!(w.isDirect || peerId) && w.chatType !== 'department';
           const isDept = w.chatType === 'department';
           const dockAvatar =
@@ -613,7 +633,7 @@ export default function MessengerDock() {
                 >
                   {showPeerDot ? (
                     <OnlineStatusDot
-                      online={isUserOnline(presenceByUser, peerId)}
+                      presence={peerPresence}
                       size="md"
                       className="absolute -bottom-0.5 -right-0.5"
                     />
@@ -622,7 +642,7 @@ export default function MessengerDock() {
               )}
               {isDept && showPeerDot ? (
                 <OnlineStatusDot
-                  online={isUserOnline(presenceByUser, peerId)}
+                  presence={peerPresence}
                   size="md"
                   className="absolute -bottom-0.5 -right-0.5"
                 />
