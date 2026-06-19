@@ -846,6 +846,78 @@ export default function MessengerDock() {
             </div>
           );
         })}
+
+        {windows.length > 0 && <div className="w-7 border-t border-slate-300/60 my-0.5 shrink-0" />}
+        {windows.map((w) => {
+          const n =
+            w.chatType === 'messenger_group' && w.groupId
+              ? unreadByGroupId[w.groupId] || 0
+              : w.chatType === 'department' && w.deptId
+                ? unreadByDeptId[w.deptId] || 0
+                : w.leadId
+                  ? unreadByLeadId[w.leadId] || 0
+                  : 0;
+          const peerId =
+            w.peerUserId || (w.groupId ? groupPeerById.get(String(w.groupId)) : null);
+          const peerPresence = peerId ? getUserPresence(presenceByUser, peerId) : null;
+          const showPeerDot = !!(w.isDirect || peerId) && w.chatType !== 'department';
+          const isDept = w.chatType === 'department';
+          const dockAvatar =
+            w.avatar || (w.groupId ? groupAvatarById.get(String(w.groupId)) : null) || null;
+          const deptBg = isDept && w.color
+            ? `linear-gradient(135deg, ${w.color}, ${w.color}cc)`
+            : null;
+          return (
+            <button
+              key={w.windowKey}
+              type="button"
+              title={w.title}
+              onClick={() => toggleMinimize(w.windowKey)}
+              className={`relative transition-all shrink-0 ${
+                w.minimized
+                  ? 'opacity-50 hover:opacity-100 hover:scale-105'
+                  : 'hover:scale-110 hover:shadow-md'
+              }`}
+            >
+              {isDept ? (
+                <span
+                  className="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm ring-2 ring-white/60"
+                  style={{ background: deptBg || bubbleGradientFor(w.title) }}
+                >
+                  <Building2 className="h-4 w-4" />
+                </span>
+              ) : (
+                <DockAvatar
+                  src={dockAvatar}
+                  name={w.title || w.code}
+                  size="dock"
+                  ringClass={`ring-2 shadow-sm ${w.minimized ? 'ring-white/30' : 'ring-white/60'}`}
+                  maxInitials={2}
+                >
+                  {showPeerDot ? (
+                    <OnlineStatusDot
+                      presence={peerPresence}
+                      size="md"
+                      className="absolute -bottom-0.5 -right-0.5"
+                    />
+                  ) : null}
+                </DockAvatar>
+              )}
+              {isDept && showPeerDot ? (
+                <OnlineStatusDot
+                  presence={peerPresence}
+                  size="md"
+                  className="absolute -bottom-0.5 -right-0.5"
+                />
+              ) : null}
+              {n > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-0.5 rounded-full bg-gradient-to-br from-rose-500 to-pink-500 text-white text-[9px] font-bold flex items-center justify-center border border-white shadow">
+                  {n > 99 ? '…' : n}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
     </>
   );
