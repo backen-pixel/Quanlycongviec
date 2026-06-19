@@ -33,6 +33,96 @@ export function formatDuration(sec) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+/** Thời lượng cuộc gọi dạng "22 giây" / "2 phút 5 giây". */
+export function formatCallDurationVi(sec) {
+  const n = Math.max(0, Math.floor(Number(sec) || 0));
+  if (n < 60) return `${n} giây`;
+  const m = Math.floor(n / 60);
+  const s = n % 60;
+  if (s === 0) return `${m} phút`;
+  return `${m} phút ${s} giây`;
+}
+
+export function getCallLogCardTitle(payload) {
+  if (!payload || payload.v !== 1) return 'Cuộc gọi';
+  return payload.kind === 'video' ? 'Cuộc gọi video' : 'Cuộc gọi thoại';
+}
+
+export function getCallLogCardSubtitle(payload, viewerUserId) {
+  if (!payload || payload.v !== 1) return '';
+  if (payload.status === 'completed' && payload.durationSec != null) {
+    return formatCallDurationVi(payload.durationSec);
+  }
+  const me = viewerUserId != null ? String(viewerUserId) : '';
+  const callerId = String(payload.callerId || payload.hostId || '');
+  const isOutgoing = !!(me && callerId && me === callerId);
+
+  if (payload.isGroup) {
+    switch (payload.status) {
+      case 'missed':
+        return 'Cuộc gọi nhóm nhỡ';
+      case 'cancelled':
+        return 'Đã huỷ';
+      default:
+        return '';
+    }
+  }
+
+  switch (payload.status) {
+    case 'missed':
+      return isOutgoing ? 'Không có phản hồi' : 'Cuộc gọi nhỡ';
+    case 'rejected':
+      return isOutgoing ? 'Bị từ chối' : 'Đã từ chối';
+    case 'busy':
+      return 'Máy bận';
+    case 'cancelled':
+      return isOutgoing ? 'Đã huỷ' : 'Cuộc gọi nhỡ';
+    default:
+      return '';
+  }
+}
+
+/** Mục tiêu khi bấm Gọi lại — direct peer hoặc group call. */
+export function resolveCallBackTarget(payload, message, viewerUserId, groupMeta, groupId, groupTitle) {
+  if (!payload || payload.v !== 1) return null;
+  const kind = payload.kind === 'video' ? 'video' : 'audio';
+
+  if (payload.isGroup) {
+    const members = (groupMeta?.members || [])
+      .filter((m) => String(m.user_id) !== String(viewerUserId))
+      .map((m) => ({
+        id: m.user_id,
+        name: m.user?.full_name || m.user?.email || 'Thành viên',
+        avatar: m.user?.avatar || null,
+      }));
+    if (!members.length || !groupId) return null;
+    return {
+      type: 'group',
+      kind,
+      group: { id: groupId, name: groupTitle || 'Nhóm chat', members },
+    };
+  }
+
+  const me = String(viewerUserId);
+  const callerId = String(payload.callerId || message?.user_id || '');
+  const calleeId = String(payload.calleeId || '');
+  const peerId = me === callerId ? calleeId : callerId;
+  if (!peerId || peerId === me) return null;
+
+  const mem = (groupMeta?.members || []).find((m) => String(m.user_id) === peerId);
+  const peerName =
+    mem?.user?.full_name
+    || mem?.user?.email
+    || (me === callerId ? payload.calleeName : payload.callerName)
+    || 'Thành viên';
+
+  return {
+    type: 'direct',
+    kind,
+    peer: { id: peerId, name: peerName, avatar: mem?.user?.avatar || null },
+  };
+}
+
 /** Nhãn cuộc gọi trong chat theo người đang xem. */
 export function formatCallLogLine(payload, viewerUserId) {
   if (!payload || payload.v !== 1) return null;

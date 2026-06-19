@@ -29,8 +29,10 @@ import { driveShareToLeadChat, driveShareToMessengerChat } from '../lib/drive';
 import UploadFileLightbox, { collectUploadLightboxItems, findUploadLightboxIndex } from './UploadFileLightbox';
 import { buildMessengerMessagePreview } from '../lib/messengerPreview';
 import GroupSenderName from './GroupSenderName';
+import MessengerCallLogCard from './MessengerCallLogCard';
+import { useCall } from '../calling/CallProvider';
+import { isActiveState } from '../calling/callState';
 import {
-  callLogDisplayText,
   formatCallLogLine,
   isMessengerCallLogMessage,
   parseCallLogPayload,
@@ -2628,6 +2630,20 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
     setTimeout(() => setHighlightId(null), 1600);
   }, []);
 
+  const { startCall, startGroupCall, session: callSession } = useCall();
+  const callBusy = !!(callSession && isActiveState(callSession.state));
+  const handleCallLogCallBack = useCallback(
+    (target) => {
+      if (!target || callBusy) return;
+      if (target.type === 'group') {
+        startGroupCall(target.group, target.kind === 'video' ? { video: true } : {});
+      } else if (target.peer?.id) {
+        startCall(target.peer, target.kind === 'video' ? 'video' : 'audio');
+      }
+    },
+    [callBusy, startCall, startGroupCall],
+  );
+
   const renderAttachmentsGrouped = (message, opts = {}) => {
     const bare = !!opts.bare;
     const alignEnd = !!opts.alignEnd;
@@ -2764,20 +2780,19 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
             : [];
           const mentioned = mentionedIds.map(String).includes(String(uid));
           if (isCallLog && !isBot) {
-            const sysText = callLogDisplayText(m, uid);
             const callActorName = m.user?.full_name || m.user?.email || 'Thành viên';
             const callOnCallerSide = isMe;
             return (
               <div
                 key={m.id}
-                className={`flex items-start gap-2 my-1 ${callOnCallerSide ? 'justify-end' : 'justify-start'}`}
+                className={`flex items-start gap-2 my-1.5 ${callOnCallerSide ? 'justify-end' : 'justify-start'}`}
               >
                 {!callOnCallerSide && (
                   <div className="shrink-0 mt-0.5">
                     <Avatar name={callActorName} url={m.user?.avatar} size={7} />
                   </div>
                 )}
-                <div className={`max-w-[78%] min-w-0 ${callOnCallerSide ? 'text-right' : 'text-left'}`}>
+                <div className={`max-w-[78%] min-w-0 ${callOnCallerSide ? 'flex flex-col items-end' : ''}`}>
                   {!callOnCallerSide && (
                     <GroupSenderName
                       userId={m.user_id}
@@ -2786,18 +2801,17 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                       className="text-[10px] mb-0.5 block"
                     />
                   )}
-                  <span
-                    className={`inline-flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-2xl border max-w-full leading-snug ${
-                      callOnCallerSide
-                        ? 'bg-violet-50 text-violet-800 border-violet-200/80 rounded-br-md'
-                        : 'bg-white text-slate-700 border-slate-200/80 rounded-bl-md shadow-sm'
-                    }`}
-                  >
-                    <Phone className={`h-3 w-3 shrink-0 ${callOnCallerSide ? 'text-violet-500' : 'text-emerald-600'}`} aria-hidden />
-                    <span className="text-left">{sysText}</span>
-                    <span className={`shrink-0 ${callOnCallerSide ? 'text-violet-400' : 'text-slate-400'}`}>
-                      · {formatTime(m.created_at)}
-                    </span>
+                  <MessengerCallLogCard
+                    message={m}
+                    viewerUserId={uid}
+                    groupMeta={groupMeta}
+                    groupId={groupId}
+                    groupTitle={groupTitle}
+                    callBusy={callBusy}
+                    onCallBack={handleCallLogCallBack}
+                  />
+                  <span className="text-[9px] mt-0.5 block text-slate-400">
+                    {formatTime(m.created_at)}
                   </span>
                 </div>
               </div>
