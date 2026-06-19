@@ -2,6 +2,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import React from 'react';
 import ChatDetailInfoScreen from '../screens/ChatDetailInfoScreen';
 import CreateGroupChatScreen from '../screens/CreateGroupChatScreen';
+import BubbleChatScreen from '../screens/BubbleChatScreen';
 import ChatDetailScreen from '../screens/ChatDetailScreen';
 import MessengerForwardScreen from '../screens/MessengerForwardScreen';
 import CreateEntityScreen from '../screens/CreateEntityScreen';
@@ -32,6 +33,11 @@ export default function RootNavigator() {
       <Stack.Screen name="CrmHub" component={CrmHubScreen} />
       <Stack.Screen name="LeadDealDetail" component={LeadDealDetailScreen} />
       <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
+      <Stack.Screen
+        name="BubbleChat"
+        component={BubbleChatScreen}
+        options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }}
+      />
       <Stack.Screen
         name="MessengerForward"
         component={MessengerForwardScreen}

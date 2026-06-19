@@ -526,43 +526,28 @@ function CommentThread({
           </div>
         )}
         {enableMentions ? (
-          <div className="flex items-end gap-1">
-            {enableAttachments && (
-              <div className="shrink-0 pb-2 pl-2">
-                <FileUploadButton compact onFilesUploaded={onFilesUploaded} />
-              </div>
-            )}
-            <div className="min-w-0 flex-1">
-              <CrmCommentMentionComposer
-                user={user}
-                members={members}
-                value={bodyField}
-                onChange={(e) => setBody(e.target.value)}
-                onSubmit={onSubmit}
-                posting={posting}
-                placeholder={replyTo ? `Trả lời ${replyTo.name}…` : `Bình luận với tư cách ${user?.full_name || user?.email || 'bạn'}…`}
-              />
-            </div>
-          </div>
+          <CrmCommentMentionComposer
+            user={user}
+            members={members}
+            value={bodyField}
+            onChange={(e) => setBody(e.target.value)}
+            onSubmit={onSubmit}
+            posting={posting}
+            canSubmit={canSubmit}
+            attachSlot={enableAttachments ? <FileUploadButton compact onFilesUploaded={onFilesUploaded} /> : null}
+            placeholder={replyTo ? `Trả lời ${replyTo.name}…` : `Bình luận với tư cách ${user?.full_name || user?.email || 'bạn'}…`}
+          />
         ) : (
-          <div className="flex items-end gap-1">
-            {enableAttachments && (
-              <div className="shrink-0 pb-2 pl-2">
-                <FileUploadButton compact onFilesUploaded={onFilesUploaded} />
-              </div>
-            )}
-            <div className="min-w-0 flex-1">
-              <FbCrmCommentComposer
-                user={user}
-                value={bodyField}
-                onChange={(e) => setBody(e.target.value)}
-                onSubmit={onSubmit}
-                posting={posting}
-                canSubmit={canSubmit}
-                placeholder={replyTo ? `Trả lời ${replyTo.name}…` : `Bình luận với tư cách ${user?.full_name || user?.email || 'bạn'}…`}
-              />
-            </div>
-          </div>
+          <FbCrmCommentComposer
+            user={user}
+            value={bodyField}
+            onChange={(e) => setBody(e.target.value)}
+            onSubmit={onSubmit}
+            posting={posting}
+            canSubmit={canSubmit}
+            attachSlot={enableAttachments ? <FileUploadButton compact onFilesUploaded={onFilesUploaded} /> : null}
+            placeholder={replyTo ? `Trả lời ${replyTo.name}…` : `Bình luận với tư cách ${user?.full_name || user?.email || 'bạn'}…`}
+          />
         )}
       </div>
     </div>
@@ -575,6 +560,7 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
   const [comments, setComments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [body, setBody] = useState('');
+  const [pendingFiles, setPendingFiles] = useState([]);
   const [posting, setPosting] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editingBody, setEditingBody] = useState('');
@@ -644,12 +630,13 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
 
   const submit = async ({ mention_user_ids } = {}) => {
     const v = body.trim();
-    if (!v) return;
+    if (!v && !pendingFiles.length) return;
     setPosting(true);
     try {
       const payload = { body: v };
       if (replyTo?.id != null) payload.parent_id = replyTo.id;
       if (mention_user_ids?.length) payload.mention_user_ids = mention_user_ids;
+      if (pendingFiles.length) payload.attachments = pendingFiles;
       const r = await api.post(`/crm/leads/${leadId}/comments`, payload);
       const row = r.data || {};
       setComments((prev) => {
@@ -658,6 +645,7 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
         return next;
       });
       setBody('');
+      setPendingFiles([]);
       setReplyTo(null);
     } catch (e) {
       alert(e?.response?.data?.error || 'Lỗi gửi bình luận');
@@ -732,6 +720,11 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
       onReaction={pickReaction}
       members={members}
       enableMentions
+      enableAttachments
+      pendingFiles={pendingFiles}
+      onFilesUploaded={(files) => setPendingFiles((prev) => [...prev, ...(files || [])])}
+      onRemovePendingFile={(i) => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i))}
+      canSubmit={Boolean(body.trim() || pendingFiles.length)}
       renderBody={(text) => renderCrmCommentBody(text, members)}
     />
   );

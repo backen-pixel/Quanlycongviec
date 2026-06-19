@@ -50,6 +50,8 @@ class OverlayBubbleService : Service() {
   private var bubbleTitle = "Chat"
   private var bubbleGroupId = ""
   private var bubbleAvatarUrl = ""
+  private var callOverlayCallId = ""
+  private var chatPanel: OverlayChatPanel? = null
   private val handler = Handler(Looper.getMainLooper())
   private var peekHideRunnable: Runnable? = null
   private var foregroundStarted = false
@@ -100,6 +102,57 @@ class OverlayBubbleService : Service() {
         }
         if (bubbleRoot == null) ensureOverlay()
         showPeek(sender, message)
+        return START_STICKY
+      }
+      ACTION_SHOW_CALL_OVERLAY -> {
+        val callId = intent.getStringExtra(EXTRA_CALL_ID).orEmpty()
+        val fromName = intent.getStringExtra(EXTRA_CALL_FROM).orEmpty()
+        val kind = intent.getStringExtra(EXTRA_CALL_KIND).orEmpty().ifBlank { "audio" }
+        val isGroup = intent.getBooleanExtra(EXTRA_CALL_IS_GROUP, false)
+        val groupName = intent.getStringExtra(EXTRA_CALL_GROUP_NAME).orEmpty()
+        if (callId.isBlank()) return START_STICKY
+        callOverlayCallId = callId
+        if (bubbleRoot == null) ensureOverlay()
+        showCallPeek(fromName, kind, isGroup, groupName)
+        return START_STICKY
+      }
+      ACTION_HIDE_CALL_OVERLAY -> {
+        val callId = intent.getStringExtra(EXTRA_CALL_ID).orEmpty()
+        if (callId.isBlank() || callId == callOverlayCallId) {
+          callOverlayCallId = ""
+          removePeek()
+        }
+        return START_STICKY
+      }
+      ACTION_OPEN_CHAT_PANEL -> {
+        val gid = intent.getStringExtra(EXTRA_GROUP_ID).orEmpty()
+        val t = intent.getStringExtra(EXTRA_TITLE).orEmpty()
+        if (gid.isNotBlank()) {
+          bubbleGroupId = gid
+          if (t.isNotBlank()) bubbleTitle = t
+        }
+        openChatPanel()
+        return START_STICKY
+      }
+      ACTION_CLOSE_CHAT_PANEL -> {
+        closeChatPanel()
+        return START_STICKY
+      }
+      ACTION_SEED_MESSAGES -> {
+        val gid = intent.getStringExtra(EXTRA_GROUP_ID).orEmpty()
+        val json = intent.getStringExtra(EXTRA_MESSAGES_JSON).orEmpty()
+        if (gid.isNotBlank() && gid == bubbleGroupId) {
+          chatPanel?.seedMessages(json)
+        }
+        return START_STICKY
+      }
+      ACTION_APPEND_MESSAGE -> {
+        val gid = intent.getStringExtra(EXTRA_GROUP_ID).orEmpty()
+        val sender = intent.getStringExtra(EXTRA_SENDER).orEmpty()
+        val message = intent.getStringExtra(EXTRA_MESSAGE).orEmpty()
+        if (gid.isNotBlank() && gid == bubbleGroupId && chatPanel?.isShowing() == true) {
+          chatPanel?.appendIncoming(sender, message)
+        }
         return START_STICKY
       }
       else -> return START_STICKY
@@ -215,21 +268,7 @@ class OverlayBubbleService : Service() {
     root.addView(outer)
 
     attachDrag(root, params)
-    root.setOnClickListener {
-      badgeCount = 0
-      saveBadgeToPrefs()
-      updateBadge()
-      if (bubbleGroupId.isNotBlank()) {
-        prefs().edit()
-          .putString(PREF_PENDING_GROUP, bubbleGroupId)
-          .putString(PREF_PENDING_TITLE, bubbleTitle)
-          .apply()
-      }
-      val launch = Intent(this, MainActivity::class.java).apply {
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-      }
-      startActivity(launch)
-    }
+    root.setOnClickListener { openPendingChat() }
 
     windowManager?.addView(root, params)
     bubbleRoot = root
@@ -326,6 +365,113 @@ class OverlayBubbleService : Service() {
     params.y = params.y.coerceIn(dp(72), dm.heightPixels - bubbleSize - dp(96))
   }
 
+  private fun showCallPeek(fromName: String, kind: String, isGroup: Boolean, groupName: String) {
+    removePeek()
+    if (!Settings.canDrawOverlays(this)) return
+    val wm = windowManager ?: return
+    val lp = layoutParams ?: return
+    val dm = resources.displayMetrics
+
+    val peek = LinearLayout(this)
+    peek.orientation = LinearLayout.VERTICAL
+    peek.id = R.id.sx_bubble_peek
+    val bg = GradientDrawable()
+    bg.cornerRadius = dp(12).toFloat()
+    bg.setColor(Color.parseColor("#FFF0FDF4"))
+    bg.setStroke(dp(2), Color.parseColor("#3310B981"))
+    peek.background = bg
+    peek.setPadding(dp(12), dp(10), dp(12), dp(10))
+    peek.elevation = dp(8).toFloat()
+
+    val titleTv = TextView(this)
+    titleTv.setTextColor(Color.parseColor("#047857"))
+    titleTv.setTypeface(titleTv.typeface, Typeface.BOLD)
+    titleTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+    titleTv.text = when {
+      isGroup -> "Cuộc gọi nhóm ${if (kind == "video") "video" else "thoại"}"
+      kind == "video" -> "Cuộc gọi video đến"
+      else -> "Cuộc gọi đến"
+    }
+
+    val nameTv = TextView(this)
+    nameTv.setTextColor(Color.parseColor("#1E293B"))
+    nameTv.setTypeface(nameTv.typeface, Typeface.BOLD)
+    nameTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+    nameTv.maxLines = 2
+    nameTv.text = when {
+      isGroup && groupName.isNotBlank() -> "${fromName.ifBlank { "Ai đó" }} · $groupName"
+      else -> fromName.ifBlank { "Người gọi" }
+    }
+
+    val hintTv = TextView(this)
+    hintTv.setTextColor(Color.parseColor("#475569"))
+    hintTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+    hintTv.text = "Chạm để trả lời"
+
+    peek.addView(titleTv)
+    peek.addView(nameTv)
+    peek.addView(hintTv)
+    peek.setOnClickListener { openIncomingCall() }
+
+    val bubbleOnRight = lp.x + lp.width / 2 >= dm.widthPixels / 2
+    val peekParams = WindowManager.LayoutParams(
+      dp(220),
+      WindowManager.LayoutParams.WRAP_CONTENT,
+      overlayType(),
+      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+      PixelFormat.TRANSLUCENT,
+    )
+    peekParams.gravity = Gravity.TOP or Gravity.START
+    peekParams.x = if (bubbleOnRight) {
+      (lp.x - dp(228)).coerceAtLeast(dp(4))
+    } else {
+      lp.x + lp.width + dp(8)
+    }
+    peekParams.y = lp.y - dp(6)
+    wm.addView(peek, peekParams)
+    peekRoot = peek
+
+    peekHideRunnable?.let { handler.removeCallbacks(it) }
+    peekHideRunnable = Runnable { removePeek() }
+    handler.postDelayed(peekHideRunnable!!, 35000)
+  }
+
+  private fun openIncomingCall() {
+    val launch = Intent(this, MainActivity::class.java).apply {
+      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+      putExtra("incoming_call", true)
+      if (callOverlayCallId.isNotBlank()) putExtra("call_id", callOverlayCallId)
+    }
+    startActivity(launch)
+  }
+
+  private fun openPendingChat() {
+    openChatPanel()
+  }
+
+  private fun openChatPanel() {
+    if (bubbleGroupId.isBlank()) return
+    badgeCount = 0
+    saveBadgeToPrefs()
+    updateBadge()
+    removePeek()
+    val wm = windowManager ?: return
+    if (chatPanel == null) {
+      chatPanel = OverlayChatPanel(this, wm) {
+        chatPanel = null
+        bubbleRoot?.visibility = View.VISIBLE
+      }
+    }
+    bubbleRoot?.visibility = View.GONE
+    chatPanel?.show(bubbleGroupId, bubbleTitle)
+  }
+
+  private fun closeChatPanel() {
+    chatPanel?.hide()
+    chatPanel = null
+    bubbleRoot?.visibility = View.VISIBLE
+  }
+
   private fun showPeek(sender: String, message: String) {
     removePeek()
     if (!Settings.canDrawOverlays(this)) return
@@ -359,6 +505,8 @@ class OverlayBubbleService : Service() {
 
     peek.addView(senderTv)
     peek.addView(msgTv)
+
+    peek.setOnClickListener { openPendingChat() }
 
     val bubbleOnRight = lp.x + lp.width / 2 >= dm.widthPixels / 2
     val peekParams = WindowManager.LayoutParams(
@@ -491,6 +639,7 @@ class OverlayBubbleService : Service() {
   }
 
   private fun removeOverlay() {
+    closeChatPanel()
     removePeek()
     bubbleRoot?.let {
       try {
@@ -573,6 +722,12 @@ class OverlayBubbleService : Service() {
     const val ACTION_SET_BADGE = "vn.tubeppro.crmobilev2.overlay.SET_BADGE"
     const val ACTION_SHOW_BUBBLE = "vn.tubeppro.crmobilev2.overlay.SHOW_BUBBLE"
     const val ACTION_SHOW_PEEK = "vn.tubeppro.crmobilev2.overlay.SHOW_PEEK"
+    const val ACTION_SHOW_CALL_OVERLAY = "vn.tubeppro.crmobilev2.overlay.SHOW_CALL_OVERLAY"
+    const val ACTION_HIDE_CALL_OVERLAY = "vn.tubeppro.crmobilev2.overlay.HIDE_CALL_OVERLAY"
+    const val ACTION_OPEN_CHAT_PANEL = "vn.tubeppro.crmobilev2.overlay.OPEN_CHAT_PANEL"
+    const val ACTION_CLOSE_CHAT_PANEL = "vn.tubeppro.crmobilev2.overlay.CLOSE_CHAT_PANEL"
+    const val ACTION_SEED_MESSAGES = "vn.tubeppro.crmobilev2.overlay.SEED_MESSAGES"
+    const val ACTION_APPEND_MESSAGE = "vn.tubeppro.crmobilev2.overlay.APPEND_MESSAGE"
 
     const val EXTRA_BADGE = "badge"
     const val EXTRA_GROUP_ID = "group_id"
@@ -582,6 +737,12 @@ class OverlayBubbleService : Service() {
     const val EXTRA_SENDER = "sender"
     const val EXTRA_MESSAGE = "message"
     const val EXTRA_INCREMENT_BADGE = "increment_badge"
+    const val EXTRA_CALL_ID = "call_id"
+    const val EXTRA_CALL_FROM = "call_from"
+    const val EXTRA_CALL_KIND = "call_kind"
+    const val EXTRA_CALL_IS_GROUP = "call_is_group"
+    const val EXTRA_CALL_GROUP_NAME = "call_group_name"
+    const val EXTRA_MESSAGES_JSON = "messages_json"
 
     fun start(ctx: Context) {
       val i = Intent(ctx, OverlayBubbleService::class.java).apply { action = ACTION_START }

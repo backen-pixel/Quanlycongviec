@@ -64,6 +64,7 @@ import { formatChatHeaderPresenceLabel, type UserPresence } from '../lib/messeng
 import { canRecallMessage, shareMessengerMessage } from '../lib/messengerShare';
 import { setMessengerFileForwardContext } from '../lib/messengerFileForwardContext';
 import { sendMessengerWithFiles } from '../lib/messengerUpload';
+import { Overlay } from '../lib/floatingBubbleOverlay';
 import { avatarColorFromName, getMessengerColors } from '../lib/messengerTheme';
 import type { RootStackParamList } from '../navigation/types';
 import { Spacing } from '../theme';
@@ -81,7 +82,7 @@ type ActiveGroupCallInfo = {
 };
 
 export default function ChatDetailScreen({ navigation, route }: Props) {
-  const { threadId, title, openSearch: openSearchParam } = route.params;
+  const { threadId, title, openSearch: openSearchParam, fromBubble } = route.params;
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
   const myUserId = user?.id || user?.userId || '';
@@ -690,7 +691,17 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
         peerId={thread?.peerId}
         myUserId={myUserId}
         paddingTop={Math.max(insets.top, 6) + 4}
-        onBack={() => navigation.goBack()}
+        onBack={() => {
+          if (fromBubble) {
+            try {
+              Overlay?.minimizeApp?.();
+            } catch {
+              navigation.goBack();
+            }
+            return;
+          }
+          navigation.goBack();
+        }}
         onOpenDetails={openDetails}
       />
 

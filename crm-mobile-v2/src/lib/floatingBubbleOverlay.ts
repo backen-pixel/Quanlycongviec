@@ -2,6 +2,7 @@ import { AppState, NativeModules, Platform } from 'react-native';
 import { API_ORIGIN } from '../config';
 import { getMessengerActiveGroupId } from './messengerActiveGroup';
 import type { MessengerNotifPayload } from './localMessengerNotification';
+import type { IncomingCallPayload } from './incomingCallNotifications';
 import {
   DEFAULT_CRM_MOBILE_PREFS,
   loadCrmMobilePrefs,
@@ -39,7 +40,18 @@ export const Overlay = NativeModules.FloatingBubbleOverlay as
         messageId: string | null,
         messageType: string | null,
       ) => void;
-      consumePendingGroup?: () => Promise<string | null>;
+      seedConversationMessages?: (groupId: string, msgsJson: string) => void;
+      appendPanelMessage?: (groupId: string, sender: string, message: string) => void;
+      openChatPanel?: (groupId: string, title: string) => void;
+      closeChatPanel?: () => void;
+      showCallOverlay?: (
+        callId: string,
+        fromName: string,
+        kind: string,
+        isGroup: boolean,
+        groupName: string,
+      ) => void;
+      hideCallOverlay?: (callId: string) => void;
     }
   | undefined;
 
@@ -145,6 +157,31 @@ export async function ensureBubbleOverlayReady(): Promise<boolean> {
   if (!can) return false;
   await Overlay?.startOverlay?.().catch(() => false);
   return true;
+}
+
+/** Overlay nổi cuộc gọi đến (audio/video) khi app ở nền. */
+export function showCallOverlayPeek(payload: IncomingCallPayload): void {
+  if (Platform.OS !== 'android' || !Overlay?.showCallOverlay) return;
+  try {
+    Overlay.showCallOverlay(
+      payload.callId,
+      payload.fromName || 'Người gọi',
+      payload.kind || 'audio',
+      !!payload.isGroup,
+      payload.groupName || '',
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
+export function hideCallOverlayPeek(callId?: string | null): void {
+  if (!callId || Platform.OS !== 'android' || !Overlay?.hideCallOverlay) return;
+  try {
+    Overlay.hideCallOverlay(callId);
+  } catch {
+    /* ignore */
+  }
 }
 
 export { DEFAULT_CRM_MOBILE_PREFS };

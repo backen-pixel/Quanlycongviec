@@ -69,6 +69,7 @@ export function FbCrmCommentComposer({
   minRows = 1,
   autoFocus = false,
   canSubmit,
+  attachSlot = null,
 }) {
   const textareaRef = useRef(null);
 
@@ -94,7 +95,9 @@ export function FbCrmCommentComposer({
     <div className="flex items-end gap-2 px-3 py-2.5 bg-white">
       <FbCrmAvatar user={user} className="h-8 w-8 shrink-0 mb-px" />
       <div className="flex-1 min-w-0 rounded-[22px] bg-[#f0f2f5] px-3 py-2 border border-transparent focus-within:border-[#1877f2]/30 transition-colors">
-        <textarea
+        <div className="flex items-start gap-1.5">
+          {attachSlot ? <div className="shrink-0 pt-0.5">{attachSlot}</div> : null}
+          <textarea
           ref={textareaRef}
           autoFocus={autoFocus}
           value={value}
@@ -107,9 +110,10 @@ export function FbCrmCommentComposer({
               onSubmit?.();
             }
           }}
-          className="w-full bg-transparent border-0 p-0 text-[15px] leading-snug text-[#050505] placeholder:text-[#65676b] focus:ring-0 resize-none min-h-[22px] overflow-hidden"
+          className="min-w-0 flex-1 w-full bg-transparent border-0 p-0 text-[15px] leading-snug text-[#050505] placeholder:text-[#65676b] focus:ring-0 resize-none min-h-[22px] overflow-hidden"
           style={{ maxHeight: COMPOSER_MAX_H }}
         />
+        </div>
       </div>
       <button
         type="button"

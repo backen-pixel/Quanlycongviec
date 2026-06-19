@@ -16,6 +16,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import org.json.JSONObject
 import vn.tubeppro.crmobilev2.MainActivity
+import vn.tubeppro.crmobilev2.overlay.OverlayBubbleService
 
 /** Hiển thị cuộc gọi đến khi app tắt / màn hình khóa (FCM + local notification). */
 object IncomingCallHelper {
@@ -87,6 +88,23 @@ object IncomingCallHelper {
     postCallNotification(context, data)
     startRingServiceWithCall(context, data)
     tryLaunchFullScreenActivity(context, data)
+    showCallOverlayPeek(context, data)
+  }
+
+  private fun showCallOverlayPeek(context: Context, data: CallData) {
+    if (!Settings.canDrawOverlays(context)) return
+    try {
+      val i = Intent(context, OverlayBubbleService::class.java).apply {
+        action = OverlayBubbleService.ACTION_SHOW_CALL_OVERLAY
+        putExtra(OverlayBubbleService.EXTRA_CALL_ID, data.callId)
+        putExtra(OverlayBubbleService.EXTRA_CALL_FROM, data.fromName)
+        putExtra(OverlayBubbleService.EXTRA_CALL_KIND, data.kind)
+        putExtra(OverlayBubbleService.EXTRA_CALL_IS_GROUP, data.isGroup)
+        putExtra(OverlayBubbleService.EXTRA_CALL_GROUP_NAME, data.groupName)
+      }
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(i)
+      else context.startService(i)
+    } catch (_: Exception) { }
   }
 
   fun canUseFullScreenIntent(context: Context): Boolean {
@@ -255,8 +273,20 @@ object IncomingCallHelper {
     clearJsIncomingCallClaim(context)
     if (activeRingingCallId == callId) activeRingingCallId = null
     NotificationManagerCompat.from(context).cancel(callId.hashCode())
+    hideCallOverlayPeek(context, callId)
     try {
       context.stopService(Intent(context, IncomingCallRingService::class.java))
+    } catch (_: Exception) { }
+  }
+
+  private fun hideCallOverlayPeek(context: Context, callId: String) {
+    if (callId.isBlank()) return
+    try {
+      val i = Intent(context, OverlayBubbleService::class.java).apply {
+        action = OverlayBubbleService.ACTION_HIDE_CALL_OVERLAY
+        putExtra(OverlayBubbleService.EXTRA_CALL_ID, callId)
+      }
+      context.startService(i)
     } catch (_: Exception) { }
   }
 
