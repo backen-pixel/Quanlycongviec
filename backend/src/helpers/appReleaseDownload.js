@@ -86,6 +86,27 @@ function downloadUrlForRelease(release, publicBase) {
     || null;
 }
 
+/** APK có thể tải được (file local, Supabase Storage, hoặc URL ngoài — không tin file_url /uploads khi chưa có trên disk). */
+function isReleaseApkAvailable(release, appKey) {
+  if (!release) return false;
+  if (release.update_type && release.update_type !== 'apk') return false;
+
+  const diskPath = resolveLocalApkPath(release, appKey) || resolveDiskPathFromFileUrl(release.file_url);
+  if (diskPath) return true;
+
+  if (release.storage_path && String(release.storage_path).trim()) return true;
+
+  const ext = String(release.external_url || '').trim();
+  if (ext && /^https?:\/\//i.test(ext)) return true;
+
+  const fileUrl = String(release.file_url || '').trim();
+  if (fileUrl && /^https?:\/\//i.test(fileUrl) && !/\/uploads\/app-releases\//i.test(fileUrl)) {
+    return true;
+  }
+
+  return false;
+}
+
 module.exports = {
   apkFilenameForRelease,
   resolveLocalApkPath,
@@ -93,4 +114,5 @@ module.exports = {
   statFileSizeSafe,
   buildPublicDownloadUrl,
   downloadUrlForRelease,
+  isReleaseApkAvailable,
 };
